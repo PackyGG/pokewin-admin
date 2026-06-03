@@ -817,6 +817,15 @@ const cachedLifetimeHouseTotals = unstable_cache(
       {
         total_deposited: string;
         total_wagered: string;
+        // Organic wager — Σ balances.total_wagered restricted to users who
+        // did NOT join under an official creator code (referred_by does not
+        // point to a role='creator' user). Drives the top-bar "Organic
+        // Wager" pill. Reuses the SAME organic attribution rule as the
+        // dashboard's Organic Wager KPI card (the `under_creator` flag in
+        // getPeriodAggregates): a user is creator-attributed iff their
+        // referred_by resolves to a creator. This is a separate figure from
+        // `total_wagered` — GGR below still uses the FULL total_wagered.
+        organic_wagered: string;
         total_won: string;
         card_withdrawn: string;
       }[]
@@ -836,6 +845,26 @@ const cachedLifetimeHouseTotals = unstable_cache(
             WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
           )
         ), 0)::text AS total_wagered,
+        -- Organic wager: same real-user population MINUS users who joined
+        -- under an official creator code. under_creator = referred_by
+        -- resolves to a role=creator user (NULL referred_by => organic) --
+        -- the SAME attribution rule as the dashboard Organic Wager KPI card.
+        -- Structured as a user_id IN (SELECT id FROM "user" ...) subquery
+        -- (mirroring the other legs above) so the SAME blacklistIdNotIn
+        -- (column id) drops in verbatim with no aliasing, and it stays a
+        -- single indexed aggregate on balances. Behind the 30-min cache, so
+        -- the extra creator-attribution filter is paid at most once/window.
+        COALESCE((
+          SELECT SUM(total_wagered::numeric) FROM balances
+          WHERE user_id IN (
+            SELECT id FROM "user"
+            WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+              AND NOT EXISTS (
+                SELECT 1 FROM "user" ref
+                WHERE ref.id = "user".referred_by AND ref.role = 'creator'
+              )
+          )
+        ), 0)::text AS organic_wagered,
         COALESCE((
           SELECT SUM(total_won::numeric) FROM balances
           WHERE user_id IN (
@@ -884,15 +913,24 @@ const cachedLifetimeHouseTotals = unstable_cache(
  * degrades to "—" pills instead of blocking the shell).
  *
  * Sources (all reconcile with the dashboard's lifetime figures):
- *   • wager       = Σ balances.total_wagered
+ *   • wager       = Σ balances.total_wagered for ORGANIC users only — users
+ *                   who did NOT join under an official creator code
+ *                   (referred_by does not resolve to a role='creator' user).
+ *                   This is the "Organic Wager" pill: it excludes wager that
+ *                   is downstream of creator marketing, reusing the SAME
+ *                   organic-attribution rule as the dashboard's Organic Wager
+ *                   KPI card. (The FULL total_wagered still backs GGR below —
+ *                   GGR is a house-margin figure and must net against the
+ *                   full wagered/won pair, not the organic slice.)
  *   • deposits    = Σ balances.total_deposited
  *   • withdrawals = Σ card_withdrawal_requests.total_value_usd
  *                   (status IN completed/shipped) — the AUTHORITATIVE
  *                   site-wide "money out" total (same source as the
  *                   dashboard Withdrawals StatCard + Analytics Revenue tab),
  *                   NOT balances.total_withdrawn (which under-counts).
- *   • ggr         = wager − Σ balances.total_won  (house gaming margin,
- *                   house POV: positive = house up)
+ *   • ggr         = (FULL) Σ balances.total_wagered − Σ balances.total_won
+ *                   (house gaming margin, house POV: positive = house up).
+ *                   Uses the FULL wager, NOT the organic pill figure.
  *
  * Staff + blacklisted users are excluded (same filter the dashboard uses),
  * so the figures match the dashboard's lifetime aggregates.
@@ -908,17 +946,22 @@ export async function getLifetimeHouseTotals(): Promise<{
     await getExcludedUserIds(),
   );
   const row = await cachedLifetimeHouseTotals(blacklistIdNotIn);
-  const wager = toNumber(row?.total_wagered);
+  // The pill shows ORGANIC wager (creator-code users dropped). GGR still
+  // uses the FULL total_wagered so the gaming margin nets the whole
+  // wagered/won pair — both legs come from the same cached row.
+  const totalWager = toNumber(row?.total_wagered);
+  const organicWager = toNumber(row?.organic_wagered);
   const deposits = toNumber(row?.total_deposited);
   const withdrawals = toNumber(row?.card_withdrawn);
   const won = toNumber(row?.total_won);
   return {
-    wager,
+    wager: organicWager,
     deposits,
     withdrawals,
-    // House gaming margin (GGR) = total staked − total paid out in wins.
-    // Both legs come from the same cached row, so this is free.
-    ggr: wager - won,
+    // House gaming margin (GGR) = FULL total staked − total paid out in
+    // wins. Uses the full wager (not the organic pill figure) so the margin
+    // is the true house gaming result; both legs are from the same row.
+    ggr: totalWager - won,
   };
 }
 

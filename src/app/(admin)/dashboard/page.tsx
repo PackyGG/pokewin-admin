@@ -21,6 +21,7 @@ import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
 import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
 import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today";
+import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
@@ -33,10 +34,10 @@ import {
   WagerStatCard,
   DepositsStatCard,
   WithdrawalsStatCard,
-  CreatorWithdrawalsStatCard,
 } from "./revenue-stat-card";
 import { TodayPnlStatCard } from "./today-pnl-stat-card";
 import { RewardCostsTodayCard } from "./reward-costs-today-card";
+import { CreatorCostsTodayCard } from "./creator-costs-today-card";
 import { AutoRefresh } from "./auto-refresh";
 import {
   WagerChart,
@@ -158,15 +159,16 @@ export default async function DashboardPage({
         <DashboardStatStrips period={period} />
       </Suspense>
 
-      {/* Today-since-00:00 tiles — P&L Today + Reward Costs Today. Both are
-          house figures for the CURRENT CALENDAR DAY since 00:00 UTC (NOT a
-          rolling past-24h window) and share the same UTC-midnight boundary,
-          so they reconcile. Each streams behind its OWN Suspense + safeQuery
-          so its today-window scan never blocks the period KPI strips above
-          and degrades to a tile fallback if it's slow. Period-independent
-          (always "today"), so neither re-keys on the global period selector.
-          Full-width-on-mobile, 2-up at sm so they sit as their own compact
-          KPI row under the primary strip. */}
+      {/* Today-since-00:00 tiles — P&L Today + Reward Costs Today +
+          Creators Costs Today. All three are house figures for the CURRENT
+          CALENDAR DAY since 00:00 UTC (NOT a rolling past-24h window) and
+          share the same UTC-midnight boundary, so they reconcile. Each
+          streams behind its OWN Suspense + safeQuery so its today-window
+          scan never blocks the period KPI strips above and degrades to a
+          tile fallback if it's slow. Period-independent (always "today"), so
+          none re-keys on the global period selector. Full-width-on-mobile,
+          2-up at sm, up to 4-up at lg so they sit as their own compact KPI
+          row under the primary strip. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
         <Suspense
           fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
@@ -177,6 +179,11 @@ export default async function DashboardPage({
           fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
         >
           <DashboardRewardCostsToday />
+        </Suspense>
+        <Suspense
+          fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
+        >
+          <DashboardCreatorCostsToday />
         </Suspense>
       </div>
 
@@ -313,8 +320,7 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           contain a 5-chip period selector + a hero currency value;
           squeezing 2-up at 380px crushed both). 2-up at sm, 4 at lg,
           6 across at xl (PnL, GGR, Wager, Organic Wager, Deposits,
-          Withdrawals). Creator Withdrawals lives on the secondary
-          row, next to Deposits / Hour. The previous "Raw Wager"
+          Withdrawals). The previous "Raw Wager"
           tile (creator-on-stream sponsored wager INCLUDED) was
           dropped — it only made sense alongside the customer-only
           "Total Wager" to show the gap, and admins didn't act on it.
@@ -375,7 +381,7 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           was one of the heaviest on the dashboard. The realized P&L
           snapshot still factors all three into the lifetime PnL tile,
           so the information isn't gone — just folded into PnL. */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-7">
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
         <StatCard
           title="Total Users"
           animatedValue={stats.users.total}
@@ -441,19 +447,10 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           icon={Gauge}
           color="emerald"
         />
-        {/* Creator Deal Payouts (withdrawn) — dollar value of creator
-            deal-payout vouchers (creator_fill_conversion +
-            creator_multiplier_payout) that left the house via a completed/
-            shipped withdrawal request in the period, with the count of such
-            requests on the sub-line. A REAL house creator cost (deal payouts
-            the creator actually cashed out), NOT a creator's personal
-            balance cash-out. House POV → rose. Lives in this secondary row
-            next to Deposits / Hour. */}
-        <CreatorWithdrawalsStatCard
-          count={stats.creatorWithdrawalsCount}
-          amount={stats.creatorWithdrawals}
-          periodLabel={stats.periodLabel}
-        />
+        {/* The "Creator Deal Payouts (withdrawn)" tile that used to sit here
+            (next to Deposits / Hour) was removed — the new "Creators Costs
+            (today)" box above (next to Reward Costs) now covers creator
+            spend, including creator deal-payout withdrawals. */}
         <StatCard
           title="Avg RTP"
           animatedValue={
@@ -557,6 +554,46 @@ async function DashboardRewardCostsToday() {
       lines={data.lines}
       dayLabel={dayLabel}
       hoursElapsed={data.hoursElapsed}
+    />
+  );
+}
+
+/**
+ * Creators Costs Today tile — house spend on CREATOR activity for the
+ * current calendar day since 00:00 UTC (NOT a rolling past-24h window;
+ * shares the boundary with the Reward Costs / P&L Today tiles). Its own
+ * standalone query (getCreatorCostsToday, cached 60s + keyed on the UTC day
+ * boundary), wrapped in safeQuery so a slow today-window scan degrades to a
+ * tile fallback instead of crashing the dashboard. Reuses the canonical
+ * creator-cost definitions: the Creator Deal Payouts withdrawal CTE, the
+ * tips-sponsor-spend tip leg, and affiliate_leaderboard_prize payouts split
+ * by the same sponsored-% house-share logic as creators/leaderboard-cost.
+ */
+async function DashboardCreatorCostsToday() {
+  const { data, error } = await safeQuery(
+    () => getCreatorCostsToday(),
+    null,
+    "dashboard.creatorCostsToday",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Creators Costs"
+        hint="The today-window creator-cost scan timed out — refresh to retry."
+        size="compact"
+      />
+    );
+  }
+  // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
+  // UTC calendar day this cost covers (matches the window boundary exactly).
+  const dayLabel = data.dayStartIso.slice(0, 10);
+  return (
+    <CreatorCostsTodayCard
+      total={data.total}
+      lines={data.lines}
+      leaderboardFull={data.leaderboardFull}
+      leaderboardOurCut={data.leaderboardOurCut}
+      dayLabel={dayLabel}
     />
   );
 }

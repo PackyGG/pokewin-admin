@@ -24,7 +24,11 @@ import { cn } from "@/lib/utils";
  *
  * HOUSE-POV colours (per CLAUDE.md — every figure is from the house's
  * perspective, NEVER the user's):
- *   • Wager       — user risking their money, the house takes it → emerald
+ *   • Organic Wager — user risking their money, the house takes it →
+ *                   emerald. ORGANIC only: excludes wager from users who
+ *                   joined under a creator code (creator-marketed play), so
+ *                   it reads as "real, non-creator-driven" volume. The GGR
+ *                   pill still uses the FULL wager (see getLifetimeHouseTotals).
  *   • Deposit     — capital into the house                       → emerald
  *   • Withdrawal  — money leaving the house (card_withdrawal_requests,
  *                   status completed/shipped — the authoritative
@@ -56,9 +60,11 @@ export async function TopbarHouseStats() {
         className="hidden md:inline-flex"
         tone="emerald"
         icon={<Coins className="size-3.5 shrink-0" aria-hidden />}
-        label="Wager"
+        label="Organic Wager"
         value={failed ? "—" : formatCompactUsd(data.wager)}
-        title={`All-time wager · ${failed ? "unavailable" : usd(data.wager)}`}
+        title={`All-time organic wager (excludes users who joined under a creator code) · ${
+          failed ? "unavailable" : usd(data.wager)
+        }`}
       />
       <HouseStatPill
         className="hidden md:inline-flex"
