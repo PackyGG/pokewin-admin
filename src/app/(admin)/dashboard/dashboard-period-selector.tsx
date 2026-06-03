@@ -2,8 +2,9 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
-import { Clock, Loader2 } from "lucide-react";
+import { Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Spinner, transition } from "@/components/ux";
 import {
   DASHBOARD_PERIODS,
   DEFAULT_DASHBOARD_PERIOD,
@@ -70,15 +71,25 @@ export function DashboardPeriodSelector() {
               onClick={() => pick(p)}
               disabled={active || isPending}
               className={cn(
-                "inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium transition-colors",
+                "inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium",
+                // Centralized motion: reduced-motion-safe colour transition so
+                // the hover / active-chip swap eases consistently with the rest
+                // of the app (and lands instantly under prefers-reduced-motion).
+                transition("colors", "fast"),
                 active
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                // During a refetch the page content stays put (the selector's
+                // useTransition keeps the prior render mounted); we only dim
+                // the OTHER chips + spin the active one so the pending state
+                // is legible without blanking anything.
                 isPending && !active && "opacity-50",
               )}
               title={`Switch dashboard to ${p}`}
             >
-              {active && isPending && <Loader2 className="size-3 animate-spin" />}
+              {active && isPending && (
+                <Spinner size={12} label={`Loading ${p} dashboard`} />
+              )}
               {p}
             </button>
           );

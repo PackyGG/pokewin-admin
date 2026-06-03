@@ -52,10 +52,11 @@ import { ActiveRainChip } from "./active-rain-chip";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import {
-  KpiStripSkeleton,
-  ChartRowSkeleton,
-} from "@/components/loading-skeletons";
+  SkeletonKpiStrip,
+  SkeletonChart,
+} from "@/components/ux";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ChartRowSkeleton, UpgraderPanelSkeleton } from "./dashboard-skeletons";
 
 export const metadata = { title: "Dashboard" };
 
@@ -127,13 +128,20 @@ export default async function DashboardPage({
           same getDashboardStats fetch, so splitting them into separate
           boundaries would just show two skeletons resolving at the same
           instant. Fallback mirrors the 6-up primary + 7-up secondary
-          grids in DashboardStatStrips. */}
+          grids in DashboardStatStrips.
+
+          No period-keyed Suspense here: keying on `period` would tear the
+          resolved strips down and re-show the skeleton on every chip click.
+          Instead the period selector flips the URL inside a useTransition,
+          so React keeps the PREVIOUS strips on screen while the next
+          payload streams (the selector shows the pending state). The
+          skeleton is reserved for the genuine cold load (loading.tsx /
+          first mount), where there's nothing to keep. */}
       <Suspense
-        key={`stats-${period}`}
         fallback={
           <>
-            <KpiStripSkeleton count={6} />
-            <KpiStripSkeleton count={7} />
+            <SkeletonKpiStrip count={6} />
+            <SkeletonKpiStrip count={7} />
           </>
         }
       >
@@ -159,17 +167,27 @@ export default async function DashboardPage({
           the chart's natural height from the first paint, regardless
           of which side resolves first. */}
       <div className="grid min-h-[400px] gap-3 sm:gap-4 lg:grid-cols-2 lg:items-stretch">
-        <Suspense
-          fallback={
-            <Skeleton className="h-full min-h-[400px] w-full rounded-2xl" />
-          }
-        >
+        {/* Upgrader Stats is a lifetime aggregate (period-independent), so it
+            never re-suspends on a chip click — its skeleton only shows on the
+            cold load. The fallback mirrors the panel's real internal layout
+            (hero / volume / activity rows + hit-rate band) so the swap is
+            shift-free instead of a flat grey block snapping into a dense
+            panel. */}
+        <Suspense fallback={<UpgraderPanelSkeleton />}>
           <DashboardUpgraderSection />
         </Suspense>
+        {/* Wager Attribution IS period-bound, but we intentionally DON'T key
+            it on `period` — keeping the prior chart on screen during a
+            refetch (driven by the selector's transition) reads far better
+            than blanking it back to a skeleton on every chip change. The
+            chart skeleton is matched to the card chrome + height for the
+            cold load. */}
         <Suspense
-          key={`wager-attr-${period}`}
           fallback={
-            <Skeleton className="h-full min-h-[400px] w-full rounded-xl" />
+            <SkeletonChart
+              height={400}
+              className="h-full min-h-[400px] rounded-xl"
+            />
           }
         >
           <DashboardWagerAttribution period={period} />
@@ -188,9 +206,15 @@ export default async function DashboardPage({
             Row 2: Daily P&L · Signups · Depositors.
             Single Suspense — the row-1/2 charts share the cached
             getDashboardStats and the standalone getDailyPnl runs in
-            parallel with it. */}
+            parallel with it.
+
+            Not period-keyed: the trend charts stay on screen during a
+            period refetch (the selector's transition keeps the prior
+            render) rather than flashing two rows of skeletons on each
+            chip change. The skeleton is for the cold load only and now
+            mirrors the chart-card chrome (rounded-xl, faux bars) so it
+            doesn't pop a flat block into a chart. */}
         <Suspense
-          key={`charts-${period}`}
           fallback={
             <>
               <ChartRowSkeleton count={3} height={300} />
