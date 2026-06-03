@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
@@ -89,7 +89,16 @@ export default async function AdminLayout({
           username={session.username}
           dbEnv={dbEnv}
         />
-        <div className="flex flex-1 flex-col min-w-0">
+        {/* SidebarInset is the shadcn shell partner to <Sidebar> — it's the
+            <main> landmark that flexes to fill the space beside the sidebar
+            and (in inset variants) gets the rounded/elevated treatment. We
+            keep the existing default ("sidebar") variant, so visually this is
+            the same full-bleed column the old plain <div> produced, just
+            wired through the primitive so the sidebar/inset geometry (gap,
+            collapse width) is owned in one place. `min-w-0` is preserved so
+            flex children (wide tables/charts) can shrink instead of forcing
+            the whole shell to scroll horizontally. */}
+        <SidebarInset className="min-w-0">
           {dbEnv === "dev" && <DevDbBanner />}
           <AdminHeader
             adminId={session.userId}
@@ -115,17 +124,20 @@ export default async function AdminLayout({
               ) : undefined
             }
           />
-          {/* `min-w-0` is required so flex children can shrink below their
-              intrinsic content width — without it, a wide table or chart
-              forces the entire shell to scroll horizontally instead of
-              just the offending element. `pb-[env(safe-area-inset-bottom)]`
-              gives iOS notched devices breathing room above the home bar. */}
-          <main
+          {/* Scrollable content region. This used to be a <main>, but the
+              SidebarInset wrapper above is now the page's single <main>
+              landmark, so this is a plain <div> (nesting <main> in <main> is
+              invalid). `min-w-0` is required so flex children can shrink below
+              their intrinsic content width — without it, a wide table or chart
+              forces the entire shell to scroll horizontally instead of just
+              the offending element. `pb-[env(safe-area-inset-bottom)]` gives
+              iOS notched devices breathing room above the home bar. */}
+          <div
             className="flex-1 overflow-auto min-w-0 p-3 sm:p-4 md:p-6 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-[max(1.5rem,env(safe-area-inset-bottom))]"
           >
             {children}
-          </main>
-        </div>
+          </div>
+        </SidebarInset>
         <CommandPalette role={session.role} allowedPages={allowedPages} />
         {/* Right-edge docked widgets — three slots, top → bottom:
               • LiveMoneyChat       (top)    deposits + withdrawals feed
