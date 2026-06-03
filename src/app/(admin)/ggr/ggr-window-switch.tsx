@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { LinkPendingShell } from "@/components/ux";
 
 /**
  * URL-driven window switcher for /ggr — 24h / 3d / 7d.
@@ -62,7 +63,7 @@ export function GgrWindowSwitch() {
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {label}
+            <LinkPendingShell>{label}</LinkPendingShell>
           </Link>
         );
       })}

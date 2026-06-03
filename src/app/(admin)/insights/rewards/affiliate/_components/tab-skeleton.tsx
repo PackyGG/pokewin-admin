@@ -4,7 +4,7 @@ import {
   ChartSkeleton,
   TableSkeleton,
 } from "@/components/loading-skeletons";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SkeletonChart } from "@/components/ux";
 
 /**
  * Default skeleton for /insights/rewards/affiliate tab swaps. KPI strip
@@ -26,13 +26,14 @@ export function AffiliateInsightsTabSkeleton() {
 
 /**
  * Compact variant for tabs without a chart — just KPIs + a single
- * panel (Inactive / Cadence / Code-switch use this).
+ * panel (Inactive / Cadence / Code-switch use this). The panel uses the
+ * chart-card silhouette so it reads as content rather than a flat box.
  */
 export function AffiliateInsightsCompactSkeleton() {
   return (
     <div className="space-y-6">
       <KpiStripSkeleton count={4} />
-      <Skeleton className="h-96 rounded-2xl" />
+      <SkeletonChart height={384} variant="area" />
     </div>
   );
 }

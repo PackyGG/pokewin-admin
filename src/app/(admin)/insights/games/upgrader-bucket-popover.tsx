@@ -10,6 +10,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SkeletonAvatar } from "@/components/ux";
 import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
 import type { UpgraderBucketTopUser } from "@/lib/queries/insights-games/upgrader-drilldown";
 import { fetchUpgraderBucketTopUsers } from "./drilldown-actions";
@@ -100,9 +102,17 @@ export function UpgraderBucketPopover({
         {state.error ? (
           <p className="px-1 py-2 text-[11px] text-rose-400">{state.error}</p>
         ) : !state.rows ? (
-          <p className="px-1 py-2 text-[11px] text-muted-foreground">
-            Loading top users…
-          </p>
+          // Skeleton rows match the avatar + name/handle list below so the
+          // popover body reads as "users are loading" and doesn't jump.
+          <div className="space-y-0.5" role="status" aria-busy="true">
+            <span className="sr-only">Loading top users…</span>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center justify-between gap-2 px-1 py-1">
+                <SkeletonAvatar size="xs" withLabel />
+                <Skeleton className="h-3 w-12 shrink-0 rounded" />
+              </div>
+            ))}
+          </div>
         ) : state.rows.length === 0 ? (
           <p className="px-1 py-2 text-[11px] text-muted-foreground/60">
             No users in this bucket for the period.

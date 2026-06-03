@@ -17,6 +17,7 @@ import {
   LineChart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LinkPendingShell } from "@/components/ux";
 
 /**
  * URL-driven tab switcher for /insights/rewards/signup. Twelve tabs
@@ -96,8 +97,10 @@ export function SignupInsightsTabSwitch() {
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            <Icon className="size-3.5" />
-            {label}
+            <LinkPendingShell>
+              <Icon className="size-3.5" />
+              {label}
+            </LinkPendingShell>
           </Link>
         );
       })}

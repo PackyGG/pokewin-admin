@@ -11,6 +11,7 @@ import {
   Percent,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LinkPendingShell } from "@/components/ux";
 import type { StreamerTab } from "./types";
 
 const TABS: { value: StreamerTab; label: string; icon: typeof BarChart3 }[] = [
@@ -62,8 +63,10 @@ export function StreamersTabNav() {
               : "text-muted-foreground hover:text-foreground",
           )}
         >
-          <Icon className="size-3.5" />
-          {label}
+          <LinkPendingShell>
+            <Icon className="size-3.5" />
+            {label}
+          </LinkPendingShell>
         </Link>
       ))}
     </div>

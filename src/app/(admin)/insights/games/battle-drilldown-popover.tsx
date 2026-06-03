@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { formatCompactUsd, formatDateTime } from "@/lib/utils/format";
 import type { BattleDrilldownData } from "@/lib/queries/insights-games/battle-drilldown";
 import { fetchBattleDrilldown } from "./drilldown-actions";
+import { DrilldownLoadingBody } from "./_drilldown-loading-body";
 
 /**
  * Per-battle drilldown popover — same lazy-load pattern as the pack
@@ -119,9 +120,7 @@ export function BattleDrilldownPopover({
         {state.error ? (
           <p className="px-1 py-2 text-[11px] text-rose-400">{state.error}</p>
         ) : !state.data ? (
-          <p className="px-1 py-2 text-[11px] text-muted-foreground">
-            Loading drilldown…
-          </p>
+          <DrilldownLoadingBody />
         ) : (
           <DrilldownBody data={state.data} />
         )}

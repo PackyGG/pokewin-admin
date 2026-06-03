@@ -16,6 +16,7 @@ import {
   Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LinkPendingShell } from "@/components/ux";
 
 export type AnalyticsTab =
   | "overview"
@@ -104,8 +105,13 @@ export function AnalyticsTabNav() {
               : "text-muted-foreground hover:text-foreground",
           )}
         >
-          <Icon className="size-3.5" />
-          {label}
+          {/* While THIS tab's navigation is pending, the row dims + shows a
+              trailing spinner so the click reads as "loading" immediately,
+              before the server segment streams in. Safe no-op when idle. */}
+          <LinkPendingShell>
+            <Icon className="size-3.5" />
+            {label}
+          </LinkPendingShell>
         </Link>
       ))}
     </div>

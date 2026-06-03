@@ -4,7 +4,7 @@ import { Sigma } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { ExportButton } from "@/components/export-button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SkeletonKpiStrip, SkeletonTable } from "@/components/ux";
 import {
   getPackEdgeRows,
   getUpgraderEdgeByTarget,
@@ -86,8 +86,8 @@ export default async function EdgeCalcPage({
         <Suspense
           fallback={
             <div className="space-y-4">
-              <Skeleton className="h-24 w-full" />
-              <Skeleton className="h-64 w-full" />
+              <SkeletonKpiStrip count={4} />
+              <SkeletonTable rows={8} columns={6} leadingAvatar={false} />
             </div>
           }
         >

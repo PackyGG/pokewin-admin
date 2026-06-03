@@ -4,12 +4,14 @@ import {
   ChartSkeleton,
   TableSkeleton,
 } from "@/components/loading-skeletons";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SkeletonChart } from "@/components/ux";
 
 /**
  * Default skeleton fallback for any in-progress tab on
  * /insights/rewards/race. Generic enough for the Overview / Per-type /
- * ROI / Budget shapes (KPI strip + chart + side-by-side panels).
+ * ROI / Budget shapes (KPI strip + chart + side-by-side panels). The
+ * side panels use the chart-card silhouette so the swap into real
+ * content stays dimension-stable instead of jumping from a flat box.
  */
 export function RaceInsightsTabSkeleton() {
   return (
@@ -19,11 +21,11 @@ export function RaceInsightsTabSkeleton() {
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="space-y-3">
           <SectionHeadingSkeleton titleWidth={220} />
-          <Skeleton className="h-64 rounded-2xl" />
+          <SkeletonChart height={256} variant="area" title={false} />
         </div>
         <div className="space-y-3">
           <SectionHeadingSkeleton titleWidth={220} />
-          <Skeleton className="h-64 rounded-2xl" />
+          <SkeletonChart height={256} variant="area" title={false} />
         </div>
       </div>
     </div>

@@ -4,7 +4,7 @@ import {
   ChartSkeleton,
   TableSkeleton,
 } from "@/components/loading-skeletons";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SkeletonChart } from "@/components/ux";
 
 /**
  * Generic skeleton used while a Deposit Bonus tab streams in.
@@ -12,7 +12,9 @@ import { Skeleton } from "@/components/ui/skeleton";
  * Covers the common shape: top KPI strip + one main chart + two
  * side-by-side panels + a wide data table. Per-tab fallbacks fall
  * back to this so a flickering rerender doesn't expose a different
- * placeholder shape per tab.
+ * placeholder shape per tab. The side panels use the chart-card
+ * silhouette so the loading state reads as content and the swap into
+ * the real panels stays dimension-stable.
  */
 export function DepositBonusTabSkeleton() {
   return (
@@ -22,11 +24,11 @@ export function DepositBonusTabSkeleton() {
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="space-y-3">
           <SectionHeadingSkeleton titleWidth={220} />
-          <Skeleton className="h-64 rounded-2xl" />
+          <SkeletonChart height={256} variant="area" title={false} />
         </div>
         <div className="space-y-3">
           <SectionHeadingSkeleton titleWidth={220} />
-          <Skeleton className="h-64 rounded-2xl" />
+          <SkeletonChart height={256} variant="area" title={false} />
         </div>
       </div>
       <div className="space-y-3">

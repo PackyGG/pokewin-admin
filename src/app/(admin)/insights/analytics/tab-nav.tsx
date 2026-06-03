@@ -15,6 +15,7 @@ import {
   Coins,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LinkPendingShell } from "@/components/ux";
 import { INSIGHTS_TABS, type InsightsTab } from "./types";
 
 const TAB_META: Record<InsightsTab, { label: string; icon: typeof BarChart3 }> = {
@@ -80,8 +81,10 @@ export function InsightsTabNav() {
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            <Icon className="size-3.5" />
-            {label}
+            <LinkPendingShell>
+              <Icon className="size-3.5" />
+              {label}
+            </LinkPendingShell>
           </Link>
         );
       })}

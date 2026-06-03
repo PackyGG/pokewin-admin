@@ -22,6 +22,7 @@ import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
 import type { PackDrilldownData } from "@/lib/queries/insights-games/pack-drilldown";
 import { fetchPackDrilldown } from "./drilldown-actions";
 import { formatPctOrNa } from "./_format-metrics";
+import { DrilldownLoadingBody } from "./_drilldown-loading-body";
 
 /**
  * Per-pack drilldown — clicking the trigger fetches and shows the
@@ -123,9 +124,7 @@ export function PackDrilldownPopover({
         {state.error ? (
           <p className="px-1 py-2 text-[11px] text-rose-400">{state.error}</p>
         ) : !state.data ? (
-          <p className="px-1 py-2 text-[11px] text-muted-foreground">
-            Loading drilldown…
-          </p>
+          <DrilldownLoadingBody />
         ) : (
           <DrilldownBody data={state.data} />
         )}

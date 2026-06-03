@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Package, ArrowUpCircle, Wand2, Coins } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { LinkPendingShell } from "@/components/ux";
 
 import { EDGE_CALC_TABS, type EdgeCalcTab } from "./types";
 
@@ -61,8 +62,10 @@ export function EdgeCalcTabNav() {
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            <Icon className="size-3.5" />
-            {label}
+            <LinkPendingShell>
+              <Icon className="size-3.5" />
+              {label}
+            </LinkPendingShell>
           </Link>
         );
       })}
