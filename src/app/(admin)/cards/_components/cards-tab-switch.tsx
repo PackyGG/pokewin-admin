@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { Inbox } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type CardSetTab = {
@@ -18,6 +19,11 @@ export type CardSetTab = {
   slug: string;
 };
 
+// The Unassigned (set_id IS NULL) backlog is a first-class tab — the most-
+// groomed pool, previously only reachable via a hidden SetFilter dropdown.
+// `?set=unassigned` is its slug; the page resolves it to a NULL-set filter.
+export const UNASSIGNED_TAB_SLUG = "unassigned";
+
 /**
  * URL-driven per-set tab switcher for /cards. Mirrors the Fill /
  * Multiplier split on /creators — plain `<Link>` (not router.replace)
@@ -25,18 +31,32 @@ export type CardSetTab = {
  *
  * Tabs are built server-side from the existing sets in the catalog,
  * with Pokemon + OnePiece pinned to the front (when they exist) and
- * the rest sorted alphabetically. There is no implicit "All" pill —
- * the catalog is always scoped to one of the well-known sets; missing
- * or unknown `?set=` params fall through to Pokemon server-side.
+ * the rest sorted alphabetically, plus a first-class "Unassigned"
+ * backlog tab (set_id IS NULL) appended at the end. There is no implicit
+ * "All" pill — the catalog is always scoped to one set; missing or
+ * unknown `?set=` params fall through to Pokemon server-side.
  *
- * Switching tabs drops `search` / `rarity` / `setId` / `minPrice` /
- * `maxPrice` / `page` deliberately — the two pools surface different
- * card vocabularies (Pokemon's "Rare Holo" vs OnePiece's "SR") so
- * carrying a filter across feels broken.
+ * Switching tabs PRESERVES the triage filters (`rarity` / `minPrice` /
+ * `maxPrice`) and the chosen `view`, but resets `page` and `search` and
+ * drops the now-redundant `setId` dropdown sentinel — so a price/rarity
+ * filter carries across sets (the discovery's "every set switch resets
+ * your triage context" gap) without stranding the operator on a stale
+ * page or search term.
  */
 export function CardsTabSwitch({ tabs }: { tabs: CardSetTab[] }) {
   const searchParams = useSearchParams();
   const current = searchParams.get("set") ?? "";
+
+  // Carry the triage filters + view across a tab switch.
+  function hrefFor(slug: string): string {
+    const next = new URLSearchParams();
+    next.set("set", slug);
+    for (const key of ["rarity", "minPrice", "maxPrice", "view"]) {
+      const v = searchParams.get(key);
+      if (v) next.set(key, v);
+    }
+    return `/cards?${next.toString()}`;
+  }
 
   return (
     <div
@@ -59,12 +79,18 @@ export function CardsTabSwitch({ tabs }: { tabs: CardSetTab[] }) {
         return (
           <TabPill
             key={tab.id}
-            href={`/cards?set=${tab.slug}`}
+            href={hrefFor(tab.slug)}
             active={active}
             label={tab.label}
           />
         );
       })}
+      <TabPill
+        href={hrefFor(UNASSIGNED_TAB_SLUG)}
+        active={current === UNASSIGNED_TAB_SLUG}
+        label="Unassigned"
+        icon={<Inbox className="size-3.5" />}
+      />
     </div>
   );
 }

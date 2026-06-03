@@ -12,36 +12,39 @@ export type CardListItem = {
   priceUsd: number;
   hp: number | null;
   rarity: string | null;
-  artist: string | null;
   type: string;
   cardNumber: string | null;
   setName: string | null;
+  /**
+   * How many packs reference this card (`pack_cards` relation count). Surfaced
+   * as a sortable-context column in the table view so the operator can spot
+   * orphan vs in-use cards while grooming. It's an aggregated `_count` in the
+   * same `findMany` (no N+1) — `artist` was dropped from the payload (the grid
+   * never rendered it) to offset the extra column on the wire.
+   */
+  inPacks: number;
 };
 
-export async function getCards(params: {
-  page?: number;
-  perPage?: number;
+/**
+ * Whitelisted sort fields for the cards list — shared by `getCards` and the
+ * page's `parseListParams` so a hand-edited `?sortBy=` can't reach an
+ * un-indexed column. `created_at` is the default (newest first).
+ */
+export const CARD_SORT_FIELDS = ["created_at", "name", "price"] as const;
+
+/**
+ * Translate the list filter params into a Prisma `where`. Pulled out of
+ * `getCards` so the (cached) count helper applies the EXACT same predicate as
+ * the page slice — the count and the rows can never drift apart.
+ */
+function buildCardsWhere(params: {
   search?: string;
   rarity?: string;
   setId?: string;
   minPrice?: string;
   maxPrice?: string;
-  sortBy?: string;
-  sortOrder?: string;
-}): Promise<PaginatedResult<CardListItem>> {
-  const {
-    page = 1,
-    perPage = 20,
-    search,
-    rarity,
-    setId,
-    minPrice,
-    maxPrice,
-    sortBy = "created_at",
-    sortOrder = "desc",
-  } = params;
-  const db = await getDb();
-
+}): Prisma.cardsWhereInput {
+  const { search, rarity, setId, minPrice, maxPrice } = params;
   const where: Prisma.cardsWhereInput = {};
 
   if (search) {
@@ -67,18 +70,88 @@ export async function getCards(params: {
     if (maxPrice) where.price.lte = parseFloat(maxPrice);
   }
 
+  return where;
+}
+
+/**
+ * Cached COUNT over the filtered predicate. The discovery flagged that the
+ * list's own total count ran uncached on every page/filter/search change
+ * against a ~50k-row table (only the KPI strip was cached). We cache it on a
+ * stable string key built from the filter params (NOT page/perPage/sort — the
+ * total is identical across those) for 60s, mirroring `getCardsStats`. The
+ * catalog mutates rarely, so 60s of count lag is acceptable and the deep-page
+ * navigations stop re-counting the whole predicate.
+ */
+async function fetchCardsListCount(
+  where: Prisma.cardsWhereInput,
+): Promise<number> {
+  const db = await getDb();
+  return db.cards.count({ where });
+}
+
+function getCardsListCount(
+  where: Prisma.cardsWhereInput,
+  cacheKey: string,
+): Promise<number> {
+  return unstable_cache(
+    () => fetchCardsListCount(where),
+    ["cards-list-count-v1", cacheKey],
+    { revalidate: 60, tags: ["cards-list-count"] },
+  )();
+}
+
+export async function getCards(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  rarity?: string;
+  setId?: string;
+  minPrice?: string;
+  maxPrice?: string;
+  sortBy?: string;
+  sortOrder?: string;
+}): Promise<PaginatedResult<CardListItem>> {
+  const {
+    page = 1,
+    perPage = 20,
+    search,
+    rarity,
+    setId,
+    minPrice,
+    maxPrice,
+    sortBy = "created_at",
+    sortOrder = "desc",
+  } = params;
+  const db = await getDb();
+
+  const where = buildCardsWhere({ search, rarity, setId, minPrice, maxPrice });
+
   const orderBy: Prisma.cardsOrderByWithRelationInput = {};
-  const validSortFields = ["created_at", "name", "price"];
-  const field = validSortFields.includes(sortBy) ? sortBy : "created_at";
+  const field = (CARD_SORT_FIELDS as readonly string[]).includes(sortBy)
+    ? sortBy
+    : "created_at";
   const order = sortOrder === "asc" ? "asc" : "desc";
   (orderBy as Record<string, string>)[field] = order;
 
-  // Explicit `select` listing only the columns the grid actually renders.
+  // Stable cache key for the COUNT — only the FILTER params change the total,
+  // not page/perPage/sort, so they're excluded. Empty string for an absent
+  // filter keeps the key compact + collision-free across param combinations.
+  const countKey = [
+    search ?? "",
+    rarity ?? "",
+    setId ?? "",
+    minPrice ?? "",
+    maxPrice ?? "",
+  ].join("|");
+
+  // Explicit `select` listing only the columns the views actually render.
   // Switching off `findMany`'s default "all columns" behaviour means a
   // newly-added schema field that hasn't reached the live DB (e.g. the
   // OnePiece `cost` / `power` columns added in commit a865aa8) cannot
   // crash this query on production. Pulling fewer columns also shrinks
-  // the Server → Client payload for the 40-card-per-page grid.
+  // the Server → Client payload for the per-page slice. `_count.pack_cards`
+  // is an aggregated subquery in the SAME findMany — it gives the table an
+  // "In Packs" column without an N+1 per-row fetch.
   const [cards, total] = await Promise.all([
     db.cards.findMany({
       where,
@@ -92,13 +165,13 @@ export async function getCards(params: {
         price: true,
         hp: true,
         rarity: true,
-        artist: true,
         type: true,
         card_number: true,
         sets: { select: { name: true } },
+        _count: { select: { pack_cards: true } },
       },
     }),
-    db.cards.count({ where }),
+    getCardsListCount(where, countKey),
   ]);
 
   return {
@@ -109,15 +182,138 @@ export async function getCards(params: {
       priceUsd: toNumber(c.price),
       hp: c.hp,
       rarity: c.rarity,
-      artist: c.artist,
       type: c.type,
       cardNumber: c.card_number,
       setName: c.sets?.name ?? null,
+      inPacks: c._count.pack_cards,
     })),
     total,
     page,
     perPage,
     totalPages: Math.ceil(total / perPage),
+  };
+}
+
+/**
+ * Card ids matching the current filter predicate, capped at `limit`. Powers
+ * the bulk toolbar's "Select all N matching" affordance — the operator can
+ * groom a backlog larger than one page in a single move. The cap matches
+ * `bulkMoveCardsToSet`'s own 500-id ceiling so a returned set is always
+ * movable in one action. Returns ONLY ids (no row payload) so even the capped
+ * 500 stays a tiny wire response. Ordered by `created_at desc` for stability.
+ */
+export async function getCardIdsForFilter(
+  params: {
+    search?: string;
+    rarity?: string;
+    setId?: string;
+    minPrice?: string;
+    maxPrice?: string;
+  },
+  limit: number,
+): Promise<string[]> {
+  const db = await getDb();
+  const where = buildCardsWhere(params);
+  const rows = await db.cards.findMany({
+    where,
+    orderBy: { created_at: "desc" },
+    take: limit,
+    select: { id: true },
+  });
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Lean detail read for the in-list INSPECTOR sheet — every scalar field the
+ * inspector renders plus the pack-usage count, in ONE typed `findUnique`.
+ *
+ * Deliberately lighter than {@link getCardDetail}: it does NOT run the
+ * unbounded `COUNT(*)` over `user_inventory` (the discovery flagged that as
+ * uncapped) and does NOT pull the full `pack_cards` → packs join. The
+ * inspector is a fast preview; the full `/cards/[id]` page (which still uses
+ * `getCardDetail`) owns the heavier inventory/pack breakdown. `cost`/`power`
+ * are read in a defensively-wrapped raw query so a DB without the OnePiece
+ * cost/power migration degrades those two fields to `null` instead of
+ * crashing (same pattern as `getCardDetail`).
+ */
+export type CardInspector = {
+  id: string;
+  name: string;
+  imageUrl: string;
+  priceUsd: number;
+  priceRawUsd: number;
+  hp: number | null;
+  cost: number | null;
+  power: number | null;
+  rarity: string | null;
+  artist: string | null;
+  tcgplayerId: number | null;
+  type: string;
+  cardNumber: string | null;
+  setId: string | null;
+  setName: string | null;
+  packCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function getCardInspector(
+  id: string,
+): Promise<CardInspector | null> {
+  const db = await getDb();
+  const [card, statsResult] = await Promise.all([
+    db.cards.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        image_url: true,
+        price: true,
+        price_raw: true,
+        hp: true,
+        rarity: true,
+        artist: true,
+        tcgplayer_id: true,
+        type: true,
+        card_number: true,
+        set_id: true,
+        created_at: true,
+        updated_at: true,
+        sets: { select: { name: true } },
+        _count: { select: { pack_cards: true } },
+      },
+    }),
+    safeQueryOrNull(
+      () =>
+        db.$queryRaw<{ cost: number | null; power: number | null }[]>`
+          SELECT cost, power FROM cards WHERE id = ${id}::uuid`,
+      "cards.getCardInspector.costPower",
+    ),
+  ]);
+
+  if (!card) return null;
+
+  const statsRow = statsResult.data?.[0] ?? null;
+
+  return {
+    id: card.id,
+    name: card.name,
+    imageUrl: card.image_url,
+    priceUsd: toNumber(card.price),
+    priceRawUsd: toNumber(card.price_raw),
+    hp: card.hp,
+    cost: statsRow?.cost ?? null,
+    power: statsRow?.power ?? null,
+    rarity: card.rarity,
+    artist: card.artist,
+    tcgplayerId: card.tcgplayer_id,
+    type: card.type,
+    cardNumber: card.card_number,
+    setId: card.set_id,
+    setName: card.sets?.name ?? null,
+    packCount: card._count.pack_cards,
+    createdAt: card.created_at.toISOString(),
+    updatedAt: card.updated_at.toISOString(),
   };
 }
 
@@ -277,15 +473,57 @@ export async function getDistinctSeries(): Promise<string[]> {
   return result.map((r) => r.series).filter((s) => s.trim().length > 0);
 }
 
-export async function getRarities() {
+/**
+ * Everything the bulk-move dialog needs (the enriched set list + the distinct
+ * series options for the create-new-set sub-form), fetched together. Lives
+ * behind {@link loadMoveDialogData} (a server action called only when the
+ * dialog OPENS) so the discovery's "hidden-component over-fetch" — these two
+ * queries used to run on EVERY list render even though the dialog is closed by
+ * default — is eliminated. The two queries are independent → run in parallel.
+ */
+export type MoveDialogData = {
+  sets: SetForMoveDialog[];
+  series: string[];
+};
+
+export async function getMoveDialogData(): Promise<MoveDialogData> {
+  const [sets, series] = await Promise.all([
+    getSetsForMoveDialog(),
+    getDistinctSeries(),
+  ]);
+  return { sets, series };
+}
+
+/**
+ * Distinct rarity values for the filter dropdown. SCOPED to the active set
+ * (the discovery flagged that the unscoped version made an admin on the
+ * Pokemon tab scan every OnePiece rarity too) and CACHED — a `groupBy` over a
+ * ~50k-row table on every keystroke/pagination was wasteful. `groupBy` lets
+ * Postgres hash-aggregate instead of the full row-scan-then-distinct
+ * `findMany` would do. `"all"` is the catalog-wide sentinel for the cache key.
+ */
+async function fetchRarities(setId?: string): Promise<(string | null)[]> {
   const db = await getDb();
-  // groupBy on `rarity` lets Postgres do an index-only / hash-aggregate
-  // pass instead of the full row-scan-then-distinct that findMany does.
+  const where =
+    setId && setId !== "unassigned"
+      ? { set_id: setId }
+      : setId === "unassigned"
+        ? { set_id: null }
+        : undefined;
   const result = await db.cards.groupBy({
     by: ["rarity"],
+    where,
     orderBy: { rarity: "asc" },
   });
   return result.map((r) => r.rarity);
+}
+
+export async function getRarities(setId?: string): Promise<(string | null)[]> {
+  return unstable_cache(
+    () => fetchRarities(setId),
+    ["cards-rarities-v1", setId ?? "all"],
+    { revalidate: 60, tags: ["cards-rarities"] },
+  )();
 }
 
 export type CardsStats = {

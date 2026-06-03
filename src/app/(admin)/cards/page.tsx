@@ -12,23 +12,18 @@ import {
   getCardsStats,
   getRarities,
   getSets,
-  getSetsForMoveDialog,
-  getDistinctSeries,
+  CARD_SORT_FIELDS,
 } from "@/lib/queries/cards";
 import { requirePageAccess } from "@/lib/dal";
-import { CardsGrid } from "./cards-grid";
-import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
-import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { Skeleton } from "@/components/ui/skeleton";
+import { CardsExplorer, type CardsFilter } from "./cards-explorer";
+import { CardsFilterBar } from "./cards-filter-bar";
 import {
-  PaginationSkeleton,
-  ToolbarSkeleton,
-} from "@/components/loading-skeletons";
+  UNASSIGNED_TAB_SLUG,
+  type CardSetTab,
+} from "./_components/cards-tab-switch";
+import { Skeleton } from "@/components/ui/skeleton";
+import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { CreateCardButton } from "./create-card-button";
-import { PriceFilter } from "./price-filter";
-import { SetFilter } from "./set-filter";
-import { CardsTabSwitch, type CardSetTab } from "./_components/cards-tab-switch";
-import { CardGridSkeleton } from "./_skeletons";
 import {
   PageHero,
   PageHeroIdentity,
@@ -37,7 +32,15 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
+import {
+  EntityTableSkeleton,
+  EntityGridSkeleton,
+  FilterBarSkeleton,
+  EntityPaginationSkeleton,
+} from "@/components/entity-surface";
+import { resolveEntityView } from "@/components/entity-surface";
 import { safeQuery } from "@/lib/errors/safe-query";
+import { loadPrimary, parseListParams } from "@/lib/entity-surface/loader";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 /**
@@ -70,77 +73,71 @@ function buildSetTabs(sets: { id: string; name: string }[]): CardSetTab[] {
   return tabs;
 }
 
+type ActiveSet =
+  | { kind: "set"; setId: string; label: string }
+  | { kind: "unassigned"; label: string };
+
 /**
- * Resolve the `?set=` URL param (slug like "pokemon"/"onepiece" OR a
- * raw UUID) to an actual setId from the tabs list.
+ * Resolve the `?set=` URL param (slug like "pokemon"/"onepiece", the
+ * "unassigned" backlog sentinel, OR a raw UUID) to an active scope.
  *
- * Falls back to the Pokemon tab when the param is missing or doesn't
- * match a known tab — there is no "All Sets" view anymore. If neither
- * Pokemon nor any other tab exists (empty catalog) returns `null` so
- * the page handles the no-sets case cleanly.
+ * Falls back to the Pokemon tab when the param is missing or doesn't match a
+ * known tab. If neither Pokemon nor any other tab exists (empty catalog)
+ * returns `null` so the page handles the no-sets case cleanly.
  */
 function resolveSetFromParam(
   raw: string | undefined,
   tabs: CardSetTab[],
-): { setId: string; label: string } | null {
+): ActiveSet | null {
+  if (raw === UNASSIGNED_TAB_SLUG) {
+    return { kind: "unassigned", label: "Unassigned" };
+  }
   if (tabs.length === 0) return null;
   if (raw) {
     const tab = tabs.find((t) => t.slug === raw || t.id === raw);
-    if (tab) return { setId: tab.id, label: tab.label };
+    if (tab) return { kind: "set", setId: tab.id, label: tab.label };
   }
   // Default to Pokemon when present; otherwise the first tab in the list.
   const fallback = tabs.find((t) => t.slug === "pokemon") ?? tabs[0];
-  return { setId: fallback.id, label: fallback.label };
+  return { kind: "set", setId: fallback.id, label: fallback.label };
 }
 
 export const metadata = { title: "Cards" };
 
 /**
- * Streaming server component for the cards grid + count summary +
- * pagination. The hero + KPI strip render immediately from `stats` /
- * `rarities` / `sets`; only the per-page slice waits on this query.
+ * Streaming server component for the active view (table or gallery) + count
+ * summary + pagination. The hero + KPI strip + filter bar render immediately
+ * from `stats` / `rarities` / `sets`; only the per-page slice waits here.
  *
- * `getCards()` is wrapped in safeQuery so a Prisma column drift
- * (e.g. a newly-added schema field that hasn't reached the live DB)
- * degrades to an inline error tile instead of crashing the whole
- * `(admin)` route group via error.tsx. The hero/KPI strip above
- * already rendered before this Suspense resolved.
+ * `getCards()` runs through `loadPrimary` (safeQuery + timeout) so a Prisma
+ * column drift or a pathological scan degrades to an inline error tile instead
+ * of crashing the whole `(admin)` route group via error.tsx.
  */
 async function CardsContent({
+  view,
+  filter,
   page,
   perPage,
-  search,
-  rarity,
-  setId,
-  minPrice,
-  maxPrice,
   sortBy,
   sortOrder,
-  setsForDialog,
-  seriesOptions,
 }: {
+  view: string;
+  filter: CardsFilter;
   page: number;
   perPage: number;
-  search?: string;
-  rarity?: string;
-  setId?: string;
-  minPrice?: string;
-  maxPrice?: string;
   sortBy?: string;
-  sortOrder?: string;
-  setsForDialog: Awaited<ReturnType<typeof getSetsForMoveDialog>>;
-  seriesOptions: string[];
+  sortOrder: "asc" | "desc";
 }) {
-  const { data: result, error } = await safeQuery(
+  const { data: result, error } = await loadPrimary(
     () =>
       getCards({
         page,
         perPage,
-        search,
-        rarity,
-        setId,
-        minPrice,
-        maxPrice,
+        search: filter.search,
+        rarity: filter.rarity,
+        setId: filter.setId,
+        minPrice: filter.minPrice,
+        maxPrice: filter.maxPrice,
         sortBy,
         sortOrder,
       }),
@@ -175,10 +172,11 @@ async function CardsContent({
         </span>
       </div>
       <FadeIn>
-        <CardsGrid
+        <CardsExplorer
           data={result.data}
-          sets={setsForDialog}
-          seriesOptions={seriesOptions}
+          total={result.total}
+          view={view}
+          filter={filter}
         />
       </FadeIn>
       <DataTablePagination
@@ -198,94 +196,108 @@ export default async function CardsPage({
 }) {
   await requirePageAccess("/cards");
   const params = await searchParams;
-  const page = Number(params.page) || 1;
-  // Bumped from 20 → 40 so the denser 10-per-row grid fills 4 rows by default.
-  const perPage = Number(params.perPage) || 40;
 
-  // Hero/KPI/toolbar dependencies — small, fast queries, awaited up-front
-  // so the static frame can render. The expensive paginated `getCards`
-  // call lives inside the Suspense boundary below.
-  //
-  // `setsForDialog` and `seriesOptions` power the bulk-move dialog that
-  // the cards grid opens from its selection toolbar. They're cheap enough
-  // to fetch alongside the rest.
-  //
-  // `sets` is fetched up-front so the tab switch + the (still-existing)
-  // SetFilter dropdown + the resolve-slug helper all share the same row
-  // set without re-querying.
-  //
-  // Each fetch is wrapped in safeQuery so a single failing query (most
-  // commonly a Prisma client/DB schema drift after a migration that
-  // hasn't reached the live DB yet) degrades that section's UI to a
-  // TileErrorFallback rather than crashing the whole page through the
-  // `(admin)` error boundary. The page itself keeps rendering with
-  // whatever subset of queries succeeded.
-  const [raritiesRes, setsRes, setsForDialogRes, seriesOptionsRes] =
-    await Promise.all([
-      safeQuery(() => getRarities(), [] as (string | null)[], "cards.rarities"),
-      safeQuery(
-        () => getSets(),
-        [] as Awaited<ReturnType<typeof getSets>>,
-        "cards.sets",
-      ),
-      safeQuery(
-        () => getSetsForMoveDialog(),
-        [] as Awaited<ReturnType<typeof getSetsForMoveDialog>>,
-        "cards.setsForDialog",
-      ),
-      safeQuery(() => getDistinctSeries(), [] as string[], "cards.series"),
-    ]);
-  const rarities = raritiesRes.data;
-  const sets = setsRes.data;
-  const setsForDialog = setsForDialogRes.data;
-  const seriesOptions = seriesOptionsRes.data;
+  // Normalize page / perPage(clamped to the allowed set) / sort(whitelisted).
+  // Default perPage 40 keeps the dense gallery at 4 rows; the table view reads
+  // the same slice.
+  const { page, perPage, search, sortBy, sortOrder } = parseListParams(params, {
+    defaultPerPage: 40,
+    allowedSortFields: CARD_SORT_FIELDS,
+    defaultSortBy: "created_at",
+    defaultSortOrder: "desc",
+  });
 
-  // Build the per-set tab pills (Pokemon + OnePiece first, rest A→Z) and
-  // resolve `?set=<slug|uuid>` to the actual set we'll narrow on. When
-  // the param is absent or unknown, `activeSet` is null → "All Sets" tab
-  // active, every aggregate / list query runs unscoped.
+  const view = resolveEntityView(params.view);
+
+  // ── Up-front frame deps (small, fast, cacheable) ──────────────────────────
+  // Only what the static frame needs: the set list (tabs), the active-set
+  // rarities (filter options), and the active-set stats (KPI strip). The
+  // bulk-move dialog's set list + series options are NO LONGER fetched here —
+  // they're deferred into the dialog's own on-open server action (CLAUDE.md
+  // hidden-component rule). `getSets` is the single set fetch reused by tabs.
+  //
+  // Each is safeQuery-wrapped so one failing query degrades only its own
+  // section (TileErrorFallback) instead of crashing the page.
+  const { data: sets } = await safeQuery(
+    () => getSets(),
+    [] as Awaited<ReturnType<typeof getSets>>,
+    "cards.sets",
+  );
+
+  // Build tabs + resolve the active scope (set tab / unassigned / default).
   const tabs = buildSetTabs(sets);
   const activeSet = resolveSetFromParam(params.set, tabs);
 
-  // Stats are now tab-scoped — when a tab is active the KPI strip
-  // (total / rare / ultra / avg price) reflects ONLY that set, matching
-  // the count under the toolbar. The dedicated cache key on
-  // `getCardsStats` keeps the catalog-wide and per-set variants in
-  // separate cache slots.
-  //
-  // Wrapped in safeQuery so a failing aggregate doesn't take down the
-  // whole page — the KPI strip simply degrades to a single
-  // TileErrorFallback row while the catalog grid below keeps rendering.
-  const { data: stats } = await safeQuery(
-    () => getCardsStats(activeSet?.setId),
-    null,
-    "cards.stats",
-  );
+  // The effective set filter passed to every scoped query: a real set UUID, the
+  // "unassigned" sentinel (set_id IS NULL), or undefined (no catalog at all).
+  const effectiveSetId =
+    activeSet?.kind === "set"
+      ? activeSet.setId
+      : activeSet?.kind === "unassigned"
+        ? "unassigned"
+        : undefined;
 
-  // Pull out a couple of rarity counts for dedicated KPI tiles. We care
-  // about the two that signal "quality" — anything with "rare" in the
-  // name (but not "ultra"/"secret") and the top-tier bucket rolled up.
-  // If the catalog doesn't have those rarities the tiles show 0. When
-  // `stats` is null (safeQuery returned the fallback) both counts are
-  // zeroed so the downstream tiles never read off undefined.
+  // Rarities scoped to the active set + stats scoped to the active set, both
+  // cached. Run in parallel.
+  const [raritiesRes, statsRes] = await Promise.all([
+    safeQuery(
+      () => getRarities(effectiveSetId),
+      [] as (string | null)[],
+      "cards.rarities",
+    ),
+    safeQuery(() => getCardsStats(effectiveSetId), null, "cards.stats"),
+  ]);
+  const rarities = raritiesRes.data.filter((r): r is string => r != null);
+  const stats = statsRes.data;
+
+  // Quality-bucket counts for dedicated KPI tiles — regex over rarity names
+  // (handles Pokemon "Ultra Rare"/"Secret" and OnePiece "SR"/"SEC" short
+  // codes). When `stats` is null both zero out.
   const rareCount = stats
     ? stats.byRarity
-        .filter((r) => /rare/i.test(r.rarity) && !/ultra/i.test(r.rarity))
+        .filter(
+          (r) =>
+            (/rare/i.test(r.rarity) && !/ultra/i.test(r.rarity)) ||
+            /^r$/i.test(r.rarity),
+        )
         .reduce((sum, r) => sum + r.count, 0)
     : 0;
   const ultraCount = stats
     ? stats.byRarity
-        .filter((r) => /(ultra|secret|legendary)/i.test(r.rarity))
+        .filter((r) =>
+          /(ultra|secret|legendary|^sr$|^sec$|^sp$|^tr$)/i.test(r.rarity),
+        )
         .reduce((sum, r) => sum + r.count, 0)
     : 0;
 
-  // When a tab is active, the tab's set wins over the toolbar's
-  // `?setId=` dropdown — the dropdown is hidden inside a tab view
-  // anyway (the tab already narrows). Outside a tab, `?setId=` still
-  // works for the "Unassigned" sentinel + ad-hoc filtering.
-  const effectiveSetId = activeSet?.setId ?? params.setId;
+  // Resolved filter predicate handed to the explorer (active-set folded in) so
+  // its "select all matching" action matches the visible list exactly.
+  const filter: CardsFilter = {
+    search,
+    rarity: params.rarity,
+    setId: effectiveSetId,
+    minPrice: params.minPrice,
+    maxPrice: params.maxPrice,
+  };
 
-  const suspenseKey = `${activeSet?.setId ?? ""}|${page}|${perPage}|${params.search ?? ""}|${params.rarity ?? ""}|${params.setId ?? ""}|${params.minPrice ?? ""}|${params.maxPrice ?? ""}|${params.sortBy ?? ""}|${params.sortOrder ?? ""}`;
+  // Suspense key — anything that changes the result set re-triggers the
+  // view-matched loading fallback (and the view itself, so switching grid⇄table
+  // swaps to the right skeleton).
+  const suspenseKey = [
+    view,
+    effectiveSetId ?? "",
+    page,
+    perPage,
+    search ?? "",
+    params.rarity ?? "",
+    params.minPrice ?? "",
+    params.maxPrice ?? "",
+    sortBy ?? "",
+    sortOrder,
+  ].join("|");
+
+  const defaultCreateSetId =
+    activeSet?.kind === "set" ? activeSet.setId : "";
 
   return (
     <div className="space-y-6">
@@ -296,19 +308,16 @@ export default async function CardsPage({
           title="Cards"
           subtitle="Browse and manage card assets across all sets."
           action={
-            <CreateCardButton
-              sets={sets}
-              defaultSetId={activeSet?.setId ?? ""}
-            />
+            <CreateCardButton sets={sets} defaultSetId={defaultCreateSetId} />
           }
         />
       </PageHero>
 
       {/* ── KPI STRIP ───────────────────────────────────────────────
            When the stats aggregate query failed (safeQuery returned
-           null), the entire strip collapses to a single
-           TileErrorFallback row instead of zero-ing out every tile.
-           The toolbar + grid below are unaffected. */}
+           null), the strip collapses to a single TileErrorFallback row
+           instead of zero-ing out every tile. The filter bar + list
+           below are unaffected. */}
       {stats ? (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
           <KpiTile
@@ -350,44 +359,21 @@ export default async function CardsPage({
       ) : (
         <TileErrorFallback
           label="Catalog stats"
-          hint="The aggregate stats query failed. The cards grid below is unaffected — refresh to retry."
+          hint="The aggregate stats query failed. The cards list below is unaffected — refresh to retry."
         />
       )}
 
-      {/* ── TAB SWITCH ────────────────────────────────────────────── */}
-      {tabs.length > 0 && (
-        <div className="flex">
-          <CardsTabSwitch tabs={tabs} />
-        </div>
-      )}
-
-      {/* ── TOOLBAR + GRID ────────────────────────────────────────── */}
+      {/* ── FILTER BAR + LIST ─────────────────────────────────────────
+           The filter bar carries the tab switch (leading), search,
+           rarity, price range, and the grid⇄table view toggle
+           (trailing), with always-visible active-filter chips. */}
       <div className="space-y-3">
         <SectionHeading
           icon={Layers}
           title={activeSet ? activeSet.label : "Catalog"}
         />
-        <Suspense fallback={<ToolbarSkeleton filters={activeSet ? 2 : 3} />}>
-          <DataTableToolbar
-            searchPlaceholder="Search by name..."
-            filters={[
-              {
-                name: "Rarity",
-                paramKey: "rarity",
-                options: rarities
-                  .filter((r): r is string => r != null)
-                  .map((r) => ({ label: r, value: r })),
-              },
-            ]}
-          >
-            {/* Hide the manual set-dropdown when a tab is active — the
-                tab already narrows the catalog, the second narrowing
-                would just be redundant UI. Outside a tab, keep the
-                dropdown for the "Unassigned" sentinel and ad-hoc
-                set-by-id filtering. */}
-            {!activeSet && <SetFilter sets={sets} />}
-            <PriceFilter />
-          </DataTableToolbar>
+        <Suspense fallback={<FilterBarSkeleton filters={1} />}>
+          <CardsFilterBar tabs={tabs} rarities={rarities} />
         </Suspense>
 
         <Suspense
@@ -396,23 +382,22 @@ export default async function CardsPage({
             <>
               {/* Count-summary line ("Showing N of M cards") placeholder. */}
               <Skeleton className="h-4 w-48" />
-              <CardGridSkeleton count={perPage} />
-              <PaginationSkeleton />
+              {view === "grid" ? (
+                <EntityGridSkeleton count={perPage} />
+              ) : (
+                <EntityTableSkeleton rows={Math.min(perPage, 14)} columns={7} />
+              )}
+              <EntityPaginationSkeleton />
             </>
           }
         >
           <CardsContent
+            view={view}
+            filter={filter}
             page={page}
             perPage={perPage}
-            search={params.search}
-            rarity={params.rarity}
-            setId={effectiveSetId}
-            minPrice={params.minPrice}
-            maxPrice={params.maxPrice}
-            sortBy={params.sortBy}
-            sortOrder={params.sortOrder}
-            setsForDialog={setsForDialog}
-            seriesOptions={seriesOptions}
+            sortBy={sortBy}
+            sortOrder={sortOrder}
           />
         </Suspense>
       </div>

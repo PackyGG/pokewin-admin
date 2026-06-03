@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -36,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/utils/format";
 import type { SetForMoveDialog } from "@/lib/queries/cards";
 import { bulkMoveCardsToSet, createSetForCards } from "./set-actions";
+import { loadMoveDialogData } from "./load-actions";
 
 const ADD_NEW_SERIES_SENTINEL = "__ADD_NEW__";
 
@@ -43,15 +45,11 @@ export function MoveToSetDialog({
   open,
   onOpenChange,
   selectedCardIds,
-  sets,
-  seriesOptions,
   onMoved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   selectedCardIds: string[];
-  sets: SetForMoveDialog[];
-  seriesOptions: string[];
   onMoved: () => void;
 }) {
   const router = useRouter();
@@ -59,15 +57,56 @@ export function MoveToSetDialog({
   const [search, setSearch] = useState("");
   const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
 
+  // Dialog data (set list + series options) is fetched ON OPEN via the server
+  // action — never eager-loaded on the list render (CLAUDE.md hidden-component
+  // rule). `loaded` gates the create-form's default series until the options
+  // arrive.
+  const [sets, setSets] = useState<SetForMoveDialog[]>([]);
+  const [seriesOptions, setSeriesOptions] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
   // Create-new-set sub-form
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newSeriesSelect, setNewSeriesSelect] = useState<string>(
-    seriesOptions[0] ?? ADD_NEW_SERIES_SENTINEL,
+    ADD_NEW_SERIES_SENTINEL,
   );
   const [newSeriesCustom, setNewSeriesCustom] = useState("");
   const [newLanguage, setNewLanguage] = useState("en");
   const [newReleaseDate, setNewReleaseDate] = useState("");
+
+  // Fetch the set list + series options the first time the dialog opens.
+  // Re-fetches on each open so a set created elsewhere (or via this dialog's
+  // own create-new flow) shows up without a full page reload.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    loadMoveDialogData()
+      .then((data) => {
+        if (cancelled) return;
+        setSets(data.sets);
+        setSeriesOptions(data.series);
+        // Default the series select to the first real option once loaded,
+        // unless the operator already picked something this session.
+        setNewSeriesSelect((prev) =>
+          prev === ADD_NEW_SERIES_SENTINEL && data.series.length > 0
+            ? data.series[0]
+            : prev,
+        );
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) toast.error("Couldn't load sets");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const filteredSets = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -210,7 +249,18 @@ export function MoveToSetDialog({
 
           {/* Existing sets list */}
           <div className="rounded-xl border bg-card/30 max-h-[260px] overflow-y-auto">
-            {filteredSets.length === 0 ? (
+            {loading && !loaded ? (
+              <ul className="divide-y divide-border/60">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <li key={i} className="flex items-center gap-3 px-3 py-2.5">
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <Skeleton className="h-3.5 w-32 rounded" />
+                      <Skeleton className="h-2.5 w-20 rounded" />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : filteredSets.length === 0 ? (
               <div className="px-4 py-6 text-center text-xs text-muted-foreground">
                 {sets.length === 0
                   ? "No sets yet — create the first one below."
