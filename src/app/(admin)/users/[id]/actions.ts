@@ -98,6 +98,9 @@ const adjustmentDetailsSchema = z
     // lossback
     lossbackPercent: z.number().finite().optional(),
     pnl7dUsd: z.number().finite().optional(),
+    // leaderboard — the linked creator (main-DB user id, better-auth
+    // nanoid). Required + validated per-category below.
+    creatorId: z.string().trim().min(1).max(64).optional(),
   })
   .optional();
 
@@ -135,6 +138,8 @@ type ResolvedAdjustmentMeta = {
   reasonText: string | null;
   lossbackPercent: number | null;
   pnl7dUsd: number | null;
+  /** Set only for `leaderboard` — the creator this removal is linked to. */
+  creatorId: string | null;
   /** Set only for `giveaway` — drives the legacy /marketing/giveaway feed. */
   giveawaySource: { url: string; sourceType: "twitter" | "discord" | "other" } | null;
 };
@@ -155,6 +160,7 @@ type ResolvedAdjustmentMeta = {
 function validateAdjustmentCategory(
   category: BalanceAdjustmentCategory,
   details: z.infer<typeof adjustmentDetailsSchema>,
+  amount: number,
 ): { ok: true; meta: ResolvedAdjustmentMeta } | { ok: false; error: string } {
   const d = details ?? {};
   const base: ResolvedAdjustmentMeta = {
@@ -164,6 +170,7 @@ function validateAdjustmentCategory(
     reasonText: null,
     lossbackPercent: null,
     pnl7dUsd: null,
+    creatorId: null,
     giveawaySource: null,
   };
 
@@ -230,6 +237,24 @@ function validateAdjustmentCategory(
         },
       };
     }
+    case "leaderboard": {
+      // Removal-only: the amount MUST remove balance (negative). A
+      // positive (credit) leaderboard adjustment is rejected — this
+      // category exists only for pulling balance off a user and linking
+      // it to a creator. (The dialog only offers the option in the
+      // remove direction; this is the authoritative server guard.)
+      if (amount >= 0) {
+        return {
+          ok: false,
+          error: "Leaderboard adjustments must remove balance (negative amount)",
+        };
+      }
+      const creatorId = (d.creatorId ?? "").trim();
+      if (!creatorId) {
+        return { ok: false, error: "Leaderboard requires a linked creator" };
+      }
+      return { ok: true, meta: { ...base, creatorId } };
+    }
     case "other": {
       const reasonText = (d.reasonText ?? "").trim();
       if (reasonText.length < 20) {
@@ -253,6 +278,7 @@ export async function adjustBalance(data: {
     reasonText?: string;
     lossbackPercent?: number;
     pnl7dUsd?: number;
+    creatorId?: string;
   };
 }): Promise<{ success: true } | { success: false; error: string }> {
   const db = await getDb();
@@ -264,12 +290,38 @@ export async function adjustBalance(data: {
   }
   const parsed = parseResult.data;
 
-  // Per-category required-input validation (single source of truth).
-  const categoryResult = validateAdjustmentCategory(parsed.category, parsed.details);
+  // Per-category required-input validation (single source of truth). The
+  // signed amount is passed so removal-only categories (leaderboard) can
+  // assert the debit direction server-side.
+  const categoryResult = validateAdjustmentCategory(
+    parsed.category,
+    parsed.details,
+    parsed.amount,
+  );
   if (!categoryResult.ok) {
     return { success: false, error: categoryResult.error };
   }
   const meta = categoryResult.meta;
+
+  // Leaderboard adjustments link to a creator — verify the linked id is a
+  // real creator on the main DB before writing. `user.role === 'creator'`
+  // is the established creator marker (same field `searchNonCreatorUsers`
+  // / `changeRole` use); no cross-DB join, no guessed schema.
+  if (parsed.category === "leaderboard") {
+    if (!meta.creatorId) {
+      return { success: false, error: "Leaderboard requires a linked creator" };
+    }
+    const creator = await db.user.findFirst({
+      where: { id: meta.creatorId, role: "creator" },
+      select: { id: true },
+    });
+    if (!creator) {
+      return {
+        success: false,
+        error: "Linked creator not found (or is no longer a creator)",
+      };
+    }
+  }
 
   // Admins can always adjust; non-admins need the __can_adjust_balance capability
   if (session.role !== "admin") {
@@ -345,7 +397,20 @@ export async function adjustBalance(data: {
           // are lifted into the reward-cost side via this exact field
           // (`metadata->>'adjustment_category'`), mirroring the existing
           // manual-voucher carve-out (`metadata->>'origin'`).
-          metadata: { adjustment_category: parsed.category },
+          //
+          // For a `leaderboard` removal we also stamp the linked creator
+          // id (`metadata->>'creator_id'`) so the debit is cleanly
+          // attributable to a creator with no schema migration. NOTE:
+          // wiring this into the dashboard "Creators Costs" /
+          // leaderboard-spend accounting is a deliberate follow-up — this
+          // only persists the link.
+          metadata:
+            parsed.category === "leaderboard" && meta.creatorId
+              ? {
+                  adjustment_category: parsed.category,
+                  creator_id: meta.creatorId,
+                }
+              : { adjustment_category: parsed.category },
           status: "completed",
         },
       });
@@ -369,7 +434,15 @@ export async function adjustBalance(data: {
     adminUserId: session.userId,
     eventType: "balance_adjustment",
     targetUserId: parsed.userId,
-    metadata: { amount: parsed.amount, reason: parsed.reason, category: parsed.category },
+    metadata: {
+      amount: parsed.amount,
+      reason: parsed.reason,
+      category: parsed.category,
+      // Linked creator for a leaderboard removal (omitted otherwise).
+      ...(parsed.category === "leaderboard" && meta.creatorId
+        ? { creatorId: meta.creatorId }
+        : {}),
+    },
   });
 
   // Persist the RICH admin-side metadata (category-specific inputs) to the

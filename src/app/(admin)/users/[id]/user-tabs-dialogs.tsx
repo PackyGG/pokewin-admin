@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ArrowDownToLine, Pencil, ShieldAlert, ShieldCheck } from "lucide-react";
@@ -29,8 +29,10 @@ import { parseUsdAmount } from "@/lib/utils/money";
 import {
   SELECTABLE_ADJUSTMENT_CATEGORY_KEYS,
   BALANCE_ADJUSTMENT_CATEGORY_META,
+  isRemovalOnlyAdjustmentCategory,
   type BalanceAdjustmentCategory,
 } from "@/lib/balance-adjustment-categories";
+import { CreatorLinkPicker } from "./creator-link-picker";
 import {
   adjustBalance,
   adjustXp,
@@ -151,12 +153,18 @@ export function DeleteUserDialog({
 // SELECTABLE set. Each option's `value` is written to the ledger row's
 // `metadata.adjustment_category` (single source of truth in
 // `@/lib/balance-adjustment-categories`) and drives the conditional inputs
-// below. All offered categories are counted in GGR/NGR/cost. (`Challenge`,
-// `Streamer` and `Other` were removed from the picker — `Other` stays a
-// valid stored category for back-compat display of existing records, it's
-// just no longer selectable here.)
+// below. The credit categories are counted in GGR/NGR/cost; the
+// removal-only `leaderboard` debit is NOT counted and is gated to the
+// remove-balance direction at render time (see `visibleCategories` below).
+// (`Challenge`, `Streamer` and `Other` were removed from the picker —
+// `Other` stays a valid stored category for back-compat display of
+// existing records, it's just no longer selectable here.)
 const BALANCE_ADJUST_CATEGORIES = SELECTABLE_ADJUSTMENT_CATEGORY_KEYS.map(
-  (key) => ({ value: key, label: BALANCE_ADJUSTMENT_CATEGORY_META[key].label }),
+  (key) => ({
+    value: key,
+    label: BALANCE_ADJUSTMENT_CATEGORY_META[key].label,
+    removalOnly: isRemovalOnlyAdjustmentCategory(key),
+  }),
 );
 
 // Lossback quick-pick rates + the hard cap on any custom rate. The cap is
@@ -197,6 +205,11 @@ export function BalanceAdjustDialog({
   const [socialLink, setSocialLink] = useState("");
   // bonus (exact reason ≥20 chars) / other (reason ≥20 chars) / lossback note
   const [reasonText, setReasonText] = useState("");
+  // leaderboard (removal-only) — the linked creator. `{ id, label }` so the
+  // trigger can show the chosen creator without re-fetching.
+  const [creatorLink, setCreatorLink] = useState<
+    { id: string; label: string } | null
+  >(null);
   // lossback
   const [lossbackPercent, setLossbackPercent] = useState("");
   // Only used as a manual fallback when the derived `pnl7d` isn't supplied
@@ -220,6 +233,7 @@ export function BalanceAdjustDialog({
     setTxHash("");
     setSocialLink("");
     setReasonText("");
+    setCreatorLink(null);
     setLossbackPercent("");
     setPnl7dManual("");
     setTotpCode("");
@@ -268,6 +282,17 @@ export function BalanceAdjustDialog({
     } else if (category === "lossback") {
       if (!pnl7dValue.trim()) return void toast.error("Lossback needs a 7-day PnL value");
       if (!lossbackPercent.trim()) return void toast.error("Lossback needs a lossback %");
+    } else if (category === "leaderboard") {
+      // Removal-only: the amount must REMOVE balance (negative). The
+      // server re-checks this; the inline toast is just friendlier.
+      if (numAmount > 0) {
+        return void toast.error(
+          "Leaderboard adjustments must remove balance — use a negative amount",
+        );
+      }
+      if (!creatorLink) {
+        return void toast.error("Pick the creator to link this leaderboard adjustment to");
+      }
     } else if (category === "other") {
       if (reasonText.trim().length < 20) return void toast.error("Other needs a reason (min 20 chars)");
     }
@@ -309,6 +334,8 @@ export function BalanceAdjustDialog({
                 : undefined,
             lossbackPercent: lossbackPercentNum,
             pnl7dUsd: pnl7dNum,
+            creatorId:
+              category === "leaderboard" ? creatorLink?.id : undefined,
           },
         });
         if (!result.success) {
@@ -340,6 +367,30 @@ export function BalanceAdjustDialog({
     previewValue !== null && availableBalance !== undefined
       ? availableBalance + previewValue
       : null;
+
+  // The category options to offer right now. Removal-only categories (e.g.
+  // Leaderboard) are gated to the REMOVE-balance direction: they only
+  // appear once the parsed amount is negative. Until the admin types a
+  // negative amount, the option is hidden entirely.
+  const visibleCategories = BALANCE_ADJUST_CATEGORIES.filter(
+    (c) => !c.removalOnly || isRemoval,
+  );
+
+  // If the direction flips away from "remove" (or the amount becomes
+  // invalid) while a removal-only category is selected, drop the selection
+  // + its linked creator so a stale Leaderboard pick can't be submitted in
+  // the add direction. Mirrors how the server rejects it, but keeps the UI
+  // honest instead of letting a now-hidden option stay chosen.
+  useEffect(() => {
+    if (
+      category &&
+      isRemovalOnlyAdjustmentCategory(category) &&
+      !isRemoval
+    ) {
+      setCategory("");
+      setCreatorLink(null);
+    }
+  }, [category, isRemoval]);
 
   // ── Lossback derivations (house POV) ──────────────────────────────
   // `pnl7d` is the rolling 7-day house P&L: POSITIVE = the house gained =
@@ -469,7 +520,7 @@ export function BalanceAdjustDialog({
                 <SelectValue placeholder="Pick a category..." />
               </SelectTrigger>
               <SelectContent>
-                {BALANCE_ADJUST_CATEGORIES.map((r) => (
+                {visibleCategories.map((r) => (
                   <SelectItem key={r.value} value={r.value}>
                     {r.label}
                   </SelectItem>
@@ -655,6 +706,24 @@ export function BalanceAdjustDialog({
                   onChange={(e) => setReasonText(e.target.value)}
                   rows={2}
                 />
+              </div>
+            )}
+
+            {/* Leaderboard (removal-only): link the creator this balance
+                removal belongs to. Searchable creator dropdown with a
+                search input pinned at the top. Only reachable when the
+                amount is negative (the option is hidden otherwise). */}
+            {category === "leaderboard" && (
+              <div className="mt-2 space-y-1">
+                <CreatorLinkPicker
+                  value={creatorLink}
+                  onSelect={setCreatorLink}
+                  disabled={isPending}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Removes balance from this user and links it to the selected
+                  creator. Search by username or email.
+                </p>
               </div>
             )}
 
