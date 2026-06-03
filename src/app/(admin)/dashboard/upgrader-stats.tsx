@@ -72,7 +72,7 @@ export function UpgraderStatsSection({
   const hitRateClamped = Math.max(0, Math.min(100, stats.hitRate));
 
   return (
-    <Card className="relative h-full overflow-hidden border-cyan-500/20 bg-gradient-to-br from-cyan-500/5 via-card to-card">
+    <Card className="surface-sheen relative h-full overflow-hidden ring-cyan-500/20 bg-gradient-to-br from-cyan-500/5 via-card to-card">
       {/* Corner glows mirror the modern-panels aesthetic from the
           user-detail page — two soft blurred circles in the accent
           color so the panel feels alive instead of being a flat box. */}
@@ -83,6 +83,13 @@ export function UpgraderStatsSection({
       <div
         aria-hidden
         className="pointer-events-none absolute -left-12 -bottom-12 size-40 rounded-full bg-cyan-500/10 blur-3xl"
+      />
+      {/* Hairline top highlight — the same crisp light catch the hero
+          boxes get from the shadcn Card ring, so this section panel
+          reads as part of the same lifted-edge family. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
       />
 
       <div className="relative flex h-full flex-col gap-3 p-3 sm:p-4">
@@ -109,13 +116,22 @@ export function UpgraderStatsSection({
 
         {/* Hero row — House P&L and House Edge. The two numbers
             operators open this section to read. Larger hero
-            typography and tinted backgrounds so they read first. */}
+            typography and tinted backgrounds so they read first. A
+            matching hairline ring in the state hue echoes the
+            dashboard hero boxes (P&L Today) so this panel's headline
+            tiles read as the same family. */}
         <div className="grid grid-cols-2 gap-3">
           <HeroCard
             label="House P&L"
             icon={PnlIcon}
             colorClass={pnlColor}
             gradientClass={pnlBg}
+            ringClass={pnlPositive ? "ring-emerald-500/20" : "ring-rose-500/20"}
+            chipClass={
+              pnlPositive
+                ? "bg-emerald-500/15 text-emerald-400"
+                : "bg-rose-500/15 text-rose-400"
+            }
             sign={pnlPositive ? "+" : "−"}
           >
             <AnimatedNumber
@@ -128,6 +144,12 @@ export function UpgraderStatsSection({
             icon={Percent}
             colorClass={edgeColor}
             gradientClass={edgeBg}
+            ringClass={edgePositive ? "ring-emerald-500/20" : "ring-rose-500/20"}
+            chipClass={
+              edgePositive
+                ? "bg-emerald-500/15 text-emerald-400"
+                : "bg-rose-500/15 text-rose-400"
+            }
           >
             <AnimatedNumber value={stats.edge} format="percent" />
           </HeroCard>
@@ -220,14 +242,19 @@ export function UpgraderStatsSection({
 
 /**
  * Hero card — top-row, larger typography, gradient tint behind the
- * value to lift it visually. Used for the two headline stats
- * operators read first: P&L and Edge.
+ * value to lift it visually, plus a matching hairline ring in the state
+ * hue (the dashboard hero-box treatment). The icon sits in a tinted
+ * chip so the headline tiles share the box system's icon-chip
+ * vocabulary. Used for the two headline stats operators read first:
+ * P&L and Edge.
  */
 function HeroCard({
   label,
   icon: Icon,
   colorClass,
   gradientClass,
+  ringClass,
+  chipClass,
   sign,
   children,
 }: {
@@ -235,18 +262,30 @@ function HeroCard({
   icon: React.ElementType;
   colorClass: string;
   gradientClass: string;
+  /** Hairline ring in the state hue (emerald/rose). */
+  ringClass: string;
+  /** Tinted icon-chip background + icon color. */
+  chipClass: string;
   sign?: string;
   children: React.ReactNode;
 }) {
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border bg-gradient-to-br px-3 py-2.5",
+        "relative overflow-hidden rounded-xl bg-gradient-to-br px-3 py-2.5 ring-1 ring-inset",
         gradientClass,
+        ringClass,
       )}
     >
       <div className="flex items-center gap-1.5">
-        <Icon className={cn("size-3.5", colorClass)} />
+        <span
+          className={cn(
+            "flex size-5 shrink-0 items-center justify-center rounded-md",
+            chipClass,
+          )}
+        >
+          <Icon className="size-3" />
+        </span>
         <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           {label}
         </p>

@@ -25,7 +25,7 @@ import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-toda
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
-import { StatCard } from "./stat-card";
+import { DashboardKpiBox } from "./_boxes";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
@@ -382,13 +382,13 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           snapshot still factors all three into the lifetime PnL tile,
           so the information isn't gone — just folded into PnL. */}
       <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
-        <StatCard
-          title="Total Users"
+        <DashboardKpiBox
+          label="Total Users"
           animatedValue={stats.users.total}
-          formatKind="number"
-          subtitle={`+${stats.users.today} today, +${stats.users.week} this week`}
+          format="number"
+          sub={`+${stats.users.today} today, +${stats.users.week} this week`}
           icon={Users}
-          color="blue"
+          accent="blue"
         />
         {/* FTDs — first-time depositors in the rolling last 24h: real
             users whose first-ever completed deposit landed today. The
@@ -396,24 +396,24 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
             Subtitle carries the summed + average first-deposit value.
             Amber accent — its own identity color, warm against the
             cool-toned Total Users / Depositors neighbours. */}
-        <StatCard
-          title="FTDs (24h)"
+        <DashboardKpiBox
+          label="FTDs (24h)"
           animatedValue={stats.financials.ftds24h}
-          formatKind="number"
-          subtitle={`${formatCurrency(stats.financials.ftdTotal24h)} total · ${formatCurrency(stats.financials.ftdAvg24h)} avg`}
+          format="number"
+          sub={`${formatCurrency(stats.financials.ftdTotal24h)} total · ${formatCurrency(stats.financials.ftdAvg24h)} avg`}
           icon={HandCoins}
-          color="amber"
+          accent="amber"
         />
         {/* Distinct depositors = how many real users have completed at
             least one deposit. Different from "Total Users" (signups,
             many of whom never deposit) and from "Avg Deposit" (per-
             transaction). Uses purple to read as a separate identity
             from the user-count tile. */}
-        <StatCard
-          title="Depositors"
+        <DashboardKpiBox
+          label="Depositors"
           animatedValue={stats.financials.uniqueDepositors}
-          formatKind="number"
-          subtitle={
+          format="number"
+          sub={
             stats.users.total > 0
               ? `${(
                   (stats.financials.uniqueDepositors / stats.users.total) *
@@ -422,17 +422,17 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
               : "Unique players who funded at least once"
           }
           icon={BadgeDollarSign}
-          color="purple"
+          accent="purple"
         />
         {/* Avg Deposit is an inflow stat. Using cyan here so each secondary
             card has its own identity color. */}
-        <StatCard
-          title="Avg Deposit"
+        <DashboardKpiBox
+          label="Avg Deposit"
           animatedValue={stats.financials.avgDeposit}
-          formatKind="currency"
-          subtitle="Across all users (lifetime)"
+          format="currency"
+          sub="Across all users (lifetime)"
           icon={Coins}
-          color="cyan"
+          accent="cyan"
         />
         {/* Deposits / Hour — average deposit transactions per hour.
             Hero is the last-24h rate (count ÷ 24); subtitle carries the
@@ -440,28 +440,28 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
             match the Deposits card. Uses `value` (not animatedValue)
             because AnimatedNumber rounds the "number" format to an
             integer and we want the .1 precision on a fractional rate. */}
-        <StatCard
-          title="Deposits / Hour"
+        <DashboardKpiBox
+          label="Deposits / Hour"
           value={depositsPerHour24h.toFixed(1)}
-          subtitle={`last 24h avg · 7d ${depositsPerHour7d.toFixed(1)}/hr`}
+          sub={`last 24h avg · 7d ${depositsPerHour7d.toFixed(1)}/hr`}
           icon={Gauge}
-          color="emerald"
+          accent="emerald"
         />
         {/* The "Creator Deal Payouts (withdrawn)" tile that used to sit here
             (next to Deposits / Hour) was removed — the new "Creators Costs
             (today)" box above (next to Reward Costs) now covers creator
             spend, including creator deal-payout withdrawals. */}
-        <StatCard
-          title="Avg RTP"
+        <DashboardKpiBox
+          label="Avg RTP"
           animatedValue={
             stats.financials.totalWagered > 0
               ? (stats.financials.totalWon / stats.financials.totalWagered) *
                 100
               : 0
           }
-          formatKind="percent"
+          format="percent"
           icon={Percent}
-          color="pink"
+          accent="pink"
         />
       </div>
     </>
