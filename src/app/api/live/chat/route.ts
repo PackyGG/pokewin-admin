@@ -44,10 +44,19 @@ export async function GET(request: Request): Promise<Response> {
   const session = await requirePageAccess("/chat");
   const userId = session.userId;
 
-  // Cap per-user concurrent SSE streams. Rejects the 4th with 429.
+  // Cap per-user concurrent SSE streams. Overflow rejected with 429 +
+  // `Retry-After` hint for any caller that reads headers (EventSource
+  // doesn't honour it natively but the use-sse hook's harder no-open
+  // backoff schedule handles the actual retry cadence).
   const currentOpen = openStreams.get(userId) ?? 0;
   if (currentOpen >= MAX_CONCURRENT) {
-    return new Response("Too many concurrent streams", { status: 429 });
+    return new Response("Too many concurrent streams", {
+      status: 429,
+      headers: {
+        "Retry-After": "30",
+        "Cache-Control": "no-store",
+      },
+    });
   }
   openStreams.set(userId, currentOpen + 1);
   let decremented = false;

@@ -21,12 +21,16 @@ import { sseResponse } from "@/lib/sse";
 //          old streams cleaned up (browsers keep dying EventSources
 //          alive briefly during navigation, and the ~4min stream
 //          rotation overlaps the old + new connection on the wire).
-//   • 16 → generous: an admin with 3 tabs × 2 active streams each, plus
-//          one rotation overlap, still has half the budget free. The
-//          real ceiling is still the client singleton + browser
-//          per-origin connection limit; this counter is just a backstop
-//          to stop a single instance from stacking duplicates.
-const MAX_CONCURRENT = 16;
+//   • 16 → still hit by admins with several tabs + a leaked stream
+//          on a warm instance (the rotation reconnect lands BEFORE the
+//          old cleanup propagates, so the counter spikes above 16 and
+//          the next genuine connect 429s).
+//   • 32 → roomy: 6 tabs × 2 (live + new during rotation) = 12; even
+//          with a stuck instance carrying a few ghost entries, fresh
+//          connects still slot in. Client-side singleton + the harder
+//          give-up schedule in `use-sse.ts` are the real guards; this
+//          counter is just a sanity backstop.
+const MAX_CONCURRENT = 32;
 const openStreams = new Map<string, number>();
 
 // This route streams and is expected to stay open for minutes at a time.
@@ -57,12 +61,22 @@ export async function GET(request: Request): Promise<Response> {
   const session = await verifySession();
   const userId = session.userId;
 
-  // Cap per-user concurrent SSE streams. The 4th attempt is rejected
-  // with 429 — the EventSource client surfaces this as `error` and the
-  // page can warn the user instead of silently piling on connections.
+  // Cap per-user concurrent SSE streams. Overflow is rejected with 429 —
+  // the EventSource client surfaces this as `error`, the use-sse hook
+  // backs off on the harder no-open schedule, and after a few failures
+  // the docked widget falls back to polling. The `Retry-After` hint is
+  // advisory (EventSource doesn't honour it natively), but it makes the
+  // 429 semantically correct for any caller that DOES read headers
+  // (curl, debugging tools, future hooks).
   const currentOpen = openStreams.get(userId) ?? 0;
   if (currentOpen >= MAX_CONCURRENT) {
-    return new Response("Too many concurrent streams", { status: 429 });
+    return new Response("Too many concurrent streams", {
+      status: 429,
+      headers: {
+        "Retry-After": "30",
+        "Cache-Control": "no-store",
+      },
+    });
   }
   openStreams.set(userId, currentOpen + 1);
   let decremented = false;

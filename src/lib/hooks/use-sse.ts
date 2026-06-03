@@ -213,20 +213,47 @@ function connect(conn: Connection) {
 
     const wasHealthy = conn.opened;
     if (wasHealthy) {
-      // First failure after a healthy run — treat as a soft retry.
-      conn.failures = 0;
-    } else {
-      conn.failures += 1;
+      // First failure after a healthy run — treat as a soft retry on
+      // the gentle schedule. The connection had at least one good
+      // session, so the network / server is probably fine. Start the
+      // failure counter at 1 so the backoff begins at 1s (not 0s).
+      conn.failures = 1;
+      const delay = Math.min(30_000, 1000 * 2 ** (conn.failures - 1));
+      conn.backoffTimer = setTimeout(() => {
+        conn.backoffTimer = null;
+        connect(conn);
+      }, delay);
+      return;
     }
 
-    if (conn.failures >= conn.maxFailures) {
+    // Never opened — almost certainly a server-side rejection (most
+    // commonly the per-user `MAX_CONCURRENT` 429 on the live routes,
+    // or an auth bounce). The previous behaviour was the same 1s →
+    // 2s → 4s → … schedule, which spammed the console with 429s for
+    // ~2 minutes before giving up and falling back to polling. Two
+    // changes mitigate that:
+    //   1. Harder backoff: 5s, 15s, 45s, 90s, 180s. The 429 isn't
+    //      transient — the server is genuinely overloaded for this
+    //      user, so retrying after 1s makes no difference.
+    //   2. Lower give-up threshold for the never-opened case: 3
+    //      attempts (~70s) instead of `maxFailures` (default 8 →
+    //      multiple minutes). The polling fallback uses a server
+    //      action that goes through a different path and is unaffected
+    //      by this route's per-instance counter, so falling back faster
+    //      is strictly better.
+    conn.failures += 1;
+    const NO_OPEN_GIVE_UP = 3;
+    if (conn.failures >= Math.min(conn.maxFailures, NO_OPEN_GIVE_UP)) {
       conn.gaveUp = true;
       emitGiveUp(conn);
       return;
     }
 
-    // Exponential backoff capped at 30s. 1s, 2s, 4s, 8s, 16s, 30s, 30s…
-    const delay = Math.min(30_000, 1000 * 2 ** conn.failures);
+    const NO_OPEN_BACKOFF_MS = [5_000, 15_000, 45_000, 90_000, 180_000];
+    const delay =
+      NO_OPEN_BACKOFF_MS[
+        Math.min(conn.failures - 1, NO_OPEN_BACKOFF_MS.length - 1)
+      ];
     conn.backoffTimer = setTimeout(() => {
       conn.backoffTimer = null;
       connect(conn);
