@@ -189,6 +189,20 @@ function InspectorLoaded({
     return opts;
   }, [data.rarity]);
 
+  // value → label map for the Set <Select>. base-ui's <Select.Value> renders
+  // the raw `value` (here a set UUID) unless it can look the value up in an
+  // `items` map — without this the trigger shows the card's set UUID instead
+  // of its name (the bug). Seeded with the card's OWN set so the name shows
+  // instantly on first paint (before the lazy `loadMoveDialogData` set list
+  // resolves), then overlaid with the full list once it arrives. Mirrors the
+  // proven pattern in create-card-form.tsx.
+  const setItems = React.useMemo<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    if (data.setId && data.setName) map[data.setId] = data.setName;
+    for (const s of sets) map[s.id] = s.name;
+    return map;
+  }, [data.setId, data.setName, sets]);
+
   const priceNum = parseFloat(price);
   const dirty =
     (Number.isFinite(priceNum) ? priceNum : 0) !== data.priceUsd ||
@@ -334,7 +348,11 @@ function InspectorLoaded({
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="inspect-set">Set</Label>
-          <Select value={setId} onValueChange={(v) => setSetId(v ?? "")}>
+          <Select
+            items={setItems}
+            value={setId}
+            onValueChange={(v) => setSetId(v ?? "")}
+          >
             <SelectTrigger id="inspect-set" className="w-full">
               <SelectValue placeholder="Unassigned" />
             </SelectTrigger>

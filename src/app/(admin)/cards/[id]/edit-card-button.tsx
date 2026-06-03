@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, useTransition } from "react";
+import { useCallback, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Pencil,
@@ -230,6 +230,18 @@ export function EditCardButton({
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(card.imageUrl);
 
+  // value → label map for the Set <Select>. base-ui's <Select.Value> renders
+  // the raw `value` (a set UUID) unless it can resolve it via an `items` map —
+  // without this the trigger shows the card's set UUID instead of its name.
+  // Seeded with the card's OWN set so the name shows even if `sets` is absent.
+  // Mirrors the proven pattern in create-card-form.tsx.
+  const setItems = useMemo<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    if (card.setId && card.setName) map[card.setId] = card.setName;
+    for (const s of sets ?? []) map[s.id] = s.name;
+    return map;
+  }, [card.setId, card.setName, sets]);
+
   const imageCleared = imagePreview === null && imageFile === null;
 
   function handleSubmit() {
@@ -368,7 +380,11 @@ export function EditCardButton({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="edit-card-set">Set</Label>
-                <Select value={setId} onValueChange={(v) => setSetId(v ?? "")}>
+                <Select
+                  items={setItems}
+                  value={setId}
+                  onValueChange={(v) => setSetId(v ?? "")}
+                >
                   <SelectTrigger id="edit-card-set" className="w-full">
                     <SelectValue placeholder="Select set..." />
                   </SelectTrigger>
