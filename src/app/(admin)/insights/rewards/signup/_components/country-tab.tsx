@@ -92,47 +92,56 @@ export async function CountryTab({
         <div className="space-y-3">
           <SectionHeading icon={Globe2} title={`Top 15 countries — ${label}`} />
           <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
-            <div className="grid grid-cols-[44px_minmax(0,1fr)_72px_64px_96px_64px] items-center gap-2 px-2 pb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              <span>Code</span>
-              <span>Share bar</span>
-              <span className="text-right">Signups</span>
-              <span className="text-right">Claim %</span>
-              <span className="text-right">Volume</span>
-              <span className="text-right">Ret 7d</span>
-            </div>
-            <div className="space-y-1.5">
-              {data.countries.map((c) => (
-                <div
-                  key={c.code}
-                  className="grid grid-cols-[44px_minmax(0,1fr)_72px_64px_96px_64px] items-center gap-2 rounded-lg border bg-muted/20 px-2 py-2"
-                >
-                  <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    {c.code}
-                  </span>
-                  <div className="h-2 overflow-hidden rounded-sm bg-muted">
-                    <div
-                      className="h-full bg-blue-500/60 transition-all"
-                      style={{
-                        width: `${data.totalSignups > 0 ? (c.signups / data.totalSignups) * 100 : 0}%`,
-                      }}
-                    />
-                  </div>
-                  <span className="text-right text-sm tabular-nums">
-                    {formatNumber(c.signups)}
-                  </span>
-                  <span className="text-right text-sm tabular-nums text-blue-600 dark:text-blue-400">
-                    {(c.claimRate * 100).toFixed(1)}%
-                  </span>
-                  <span className="text-right text-sm tabular-nums text-rose-600 dark:text-rose-400">
-                    {formatCurrency(c.claimVolume)}
-                  </span>
-                  <span className="text-right text-sm tabular-nums">
-                    {c.retention7dShare === null
-                      ? "—"
-                      : `${(c.retention7dShare * 100).toFixed(0)}%`}
-                  </span>
+            {/* Horizontal-scroll wrapper mirrors the sibling cohort /
+                heatmap tabs: the 5 fixed metric columns (≈396px with
+                gaps) would otherwise crush the share bar to zero and
+                crowd the row below ~400px. Scrolling keeps every column
+                at its intended width on phones instead. */}
+            <div className="overflow-x-auto">
+              <div className="inline-block min-w-full">
+                <div className="grid grid-cols-[44px_minmax(120px,1fr)_72px_64px_96px_64px] items-center gap-2 px-2 pb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <span>Code</span>
+                  <span>Share bar</span>
+                  <span className="text-right">Signups</span>
+                  <span className="text-right">Claim %</span>
+                  <span className="text-right">Volume</span>
+                  <span className="text-right">Ret 7d</span>
                 </div>
-              ))}
+                <div className="space-y-1.5">
+                  {data.countries.map((c) => (
+                    <div
+                      key={c.code}
+                      className="grid grid-cols-[44px_minmax(120px,1fr)_72px_64px_96px_64px] items-center gap-2 rounded-lg border bg-muted/20 px-2 py-2"
+                    >
+                      <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        {c.code}
+                      </span>
+                      <div className="h-2 overflow-hidden rounded-sm bg-muted">
+                        <div
+                          className="h-full bg-blue-500/60 transition-all"
+                          style={{
+                            width: `${data.totalSignups > 0 ? (c.signups / data.totalSignups) * 100 : 0}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="text-right text-sm tabular-nums">
+                        {formatNumber(c.signups)}
+                      </span>
+                      <span className="text-right text-sm tabular-nums text-blue-600 dark:text-blue-400">
+                        {(c.claimRate * 100).toFixed(1)}%
+                      </span>
+                      <span className="text-right text-sm tabular-nums text-rose-600 dark:text-rose-400">
+                        {formatCurrency(c.claimVolume)}
+                      </span>
+                      <span className="text-right text-sm tabular-nums">
+                        {c.retention7dShare === null
+                          ? "—"
+                          : `${(c.retention7dShare * 100).toFixed(0)}%`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
             <div className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground">
               <Users className="size-3.5" />
