@@ -6,10 +6,10 @@ import {
   PanelRow,
 } from "@/components/modern-panels";
 import { safeQuery } from "@/lib/errors/safe-query";
-import { getCreatorPnl } from "@/lib/queries/creators";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
+import { getCreatorPnlCached } from "./_queries/_pnl-cache";
 import { getCreatorLeaderboardCost } from "./_queries/leaderboard-cost-by-creator";
 import { getCreatorMultiplierCost } from "./_queries/multiplier-cost-by-creator";
 import { getCreatorFillConversionCost } from "./_queries/fill-conversion-cost-by-creator";
@@ -109,12 +109,15 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
         "creators.detail.tipsSponsorCost",
       ),
       // Affiliate-cohort P&L for the "Creator Net" block — the SAME
-      // getCreatorPnl(userId) source the CreatorPnlPanel above renders
+      // getCreatorPnlCached(userId) source the CreatorPnlPanel above renders
       // (lifetime capped 365d: cohort deposits − card withdrawals), so the
       // "Affiliates made us" figure here reconciles with the Affiliates P&L
-      // shown earlier on the page. Best-effort: a failure degrades to null →
-      // the Net block is hidden rather than blanking the panel.
-      getCreatorPnl(userId).catch((e) => {
+      // shown earlier on the page AND de-duplicates onto the single warmed
+      // cache entry (the scan runs once per render, not twice). Best-effort:
+      // a failure degrades to null → the Net block is hidden rather than
+      // blanking the panel; once the cohort scan resolves (warm or cold-
+      // populated), `showNet` flips true and the Net block reappears.
+      getCreatorPnlCached(userId).catch((e) => {
         console.error(
           "[creator-deal-cost] affiliate P&L fetch failed (Net block hidden):",
           e,

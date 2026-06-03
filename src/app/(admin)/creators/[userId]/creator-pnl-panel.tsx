@@ -1,11 +1,11 @@
 import { Coins, Info, LineChart, TrendingDown, TrendingUp } from "lucide-react";
 
-import { getCreatorPnl } from "@/lib/queries/creators";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { SectionHeading, StatPanel, PanelRow } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
+import { getCreatorPnlCached } from "./_queries/_pnl-cache";
 import { CreatorPnlUsersPopover } from "./_components/creator-pnl-users-popover";
 
 const DISPLAYED_PERIODS: Array<{
@@ -57,10 +57,19 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
   // a Main-DB hiccup here used to take the entire page down. Now it renders a
   // compact "unavailable" state for THIS band and the rest of the page is
   // unaffected — matching the "load till it's possible" rule.
+  //
+  // `getCreatorPnlCached` memoizes the scan per creator (prod-pinned, 5-min
+  // TTL) so repeat loads / retries don't re-pay it, and the underlying scan
+  // runs with a raised per-statement timeout so the COLD populating run
+  // actually completes and warms the cache. The safeQuery budget is sized to
+  // MATCH that cold-run budget (60s) so it doesn't cut the populating scan
+  // off before it can finish — a slow first load that then caches is fine;
+  // "always times out" is not. Subsequent loads resolve from the warm entry
+  // near-instantly.
   const { data } = await safeQueryOrNull(
-    () => getCreatorPnl(userId),
+    () => getCreatorPnlCached(userId),
     "creators.detail.pnl",
-    20_000,
+    60_000,
   );
 
   if (!data) {

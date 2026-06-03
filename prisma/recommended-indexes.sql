@@ -123,7 +123,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_upper_code_usage_created_at
 -- #5b ----------------------------------------------------------------
 -- affiliate_code_usages (referred_user_id, created_at DESC) — COVERAGE
 -- ===================================================================
--- Added by the 2026-06-03 /creators-list P&L perf pass.
+-- Added by the 2026-06-03 creator P&L perf pass (list + detail).
 --
 -- The creator coverage-attribution model ("which creator's code covered
 -- user U at event time T") probes acu with
@@ -137,7 +137,8 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_upper_code_usage_created_at
 --     getAllCreatorsLifetimePnl — the covered_deposits DISTINCT ON LEFT
 --     JOIN (Fill/Multiplier-Segment Net tile)
 --   • src/lib/queries/creators-pnl.ts COVERING_CREATOR_SQL — the single-
---     creator detail page (same shape, per-creator)
+--     creator detail page Affiliates P&L scan (same shape, per-creator;
+--     evaluated in the 30-day window block AND the 365-day lifetime block)
 --
 -- #5's idx_acu_referred_user_code_usage leads with referred_user_id but
 -- its SECOND column is `code`, not `created_at`, so it can satisfy the
@@ -145,13 +146,14 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_upper_code_usage_created_at
 -- rows to apply the created_at range + DESC ordering. This index puts
 -- created_at DESC immediately after referred_user_id, turning the coverage
 -- probe into a bounded index range scan (and the LATERAL's LIMIT 1 / the
--- DISTINCT ON's top-1 into an index seek). Without it, both list tiles run
--- the coverage join as a per-user seq scan of an UNINDEXED table — the
--- reason the cold (uncached) scan can exceed the tile timeout on prod-sized
--- affiliate_code_usages. The set-based rewrite + unstable_cache reduce HOW
--- OFTEN the cold scan runs (once per 5–15 min TTL) and let one pass serve
--- every creator at once, but this index is what makes that single cold pass
--- cheap rather than merely infrequent.
+-- DISTINCT ON's top-1 into an index seek). Without it, both list tiles AND
+-- the per-creator detail panel run the coverage join as a per-user seq scan
+-- of an UNINDEXED table — the reason the cold (uncached) scan can exceed the
+-- tile / panel timeout on prod-sized affiliate_code_usages. The set-based
+-- rewrites + unstable_cache reduce HOW OFTEN the cold scan runs (once per
+-- 5–15 min TTL) and, for the list, let one pass serve every creator at once,
+-- but this index is what makes that single cold pass cheap rather than
+-- merely infrequent.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_referred_user_created_at
   ON affiliate_code_usages (referred_user_id, created_at DESC);
 

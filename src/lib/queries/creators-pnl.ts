@@ -64,22 +64,43 @@ const WD_LIABILITY_STATUS_SQL = `(${WITHDRAWAL_LIABILITY_STATUSES.map(
  *
  * House POV: positive (emerald) = we kept value, negative (rose) =
  * physical cards out exceeded cash deposited under coverage.
+ *
+ * ─── PERF SHAPE (2026-06-03 set-based rewrite) ──────────────────────────
+ *
+ * The previous incarnation fired EIGHT raw queries, and the dominant cost
+ * — the correlated `COVERING_CREATOR_SQL` coverage subquery — was
+ * re-evaluated in SIX of them (per-period deposits, per-user deposits, the
+ * two card-WD depositor sub-selects, the depositor-id scan, and twice in
+ * the lifetime aggregate). On a prod main DB with no supporting index that
+ * is the scan that blows past the safeQuery timeout and degrades the panel.
+ *
+ * This version reconstructs the cohort ONCE per scan via CTEs and derives
+ * everything from them:
+ *   • the 30-day window block is now a SINGLE query that materializes the
+ *     attributed deposits / wagers / withdrawn-units once, then GROUP BYs
+ *     them per user × period. The five PER-PERIOD HEADLINE totals are
+ *     summed in JS from the (SQL-uncapped) per-user rows — the same filters
+ *     drive both, so the headline is identical to the old separate
+ *     per-period queries, just without re-scanning.
+ *   • the 365-day lifetime block is a SINGLE query that materializes the
+ *     same shapes over the wider window and returns the lifetime sums PLUS
+ *     the coverage-depositor id set (for the popover's isDepositor flag) in
+ *     one row — folding the old standalone depositor-id scan in.
+ * Result: 2 scans instead of 8, and the coverage subquery is evaluated
+ * once per deposit row per scan instead of six times. Numbers / scope /
+ * attribution are unchanged — speed only.
+ *
+ * The function runs behind `getCreatorPnlCached` (unstable_cache, prod-
+ * pinned) and a raised per-statement timeout so the COLD populating scan
+ * completes and warms the cache instead of falling back to "timed out".
  */
 const PERIODS = ["24h", "3d", "7d", "14d", "30d"] as const;
 
 type PeriodKey = (typeof PERIODS)[number];
 
-const PERIODS_VALUES_SQL = `(VALUES ('24h'),('3d'),('7d'),('14d'),('30d')) AS p(period)`;
-const PERIOD_INTERVAL_CASE = `CASE p.period
-  WHEN '24h' THEN INTERVAL '24 hours'
-  WHEN '3d'  THEN INTERVAL '3 days'
-  WHEN '7d'  THEN INTERVAL '7 days'
-  WHEN '14d' THEN INTERVAL '14 days'
-  WHEN '30d' THEN INTERVAL '30 days'
-END`;
-
-// Same period set with the interval inline — used by the per-user
-// breakdown queries that cross-join against each window.
+// Period set with the interval inline — the per-user breakdown query
+// cross-joins each row against every window so a single event lands in
+// every window it qualifies for.
 const PERIODS_WITH_INTERVAL_SQL = `(VALUES
   ('24h', INTERVAL '24 hours'),
   ('3d',  INTERVAL '3 days'),
@@ -103,10 +124,11 @@ const USERS_PER_PERIOD_CAP = 50;
 // when a user has switched codes.
 //
 // ── PERF / INDEX NOTE (the dominant remaining unlock) ──────────────────
-// This correlated subquery runs once per candidate ledger row. Its access
-// pattern is `referred_user_id = ? AND created_at <range> ORDER BY
-// created_at DESC LIMIT 1`. The form is already SARGABLE — the bottleneck
-// is the MISSING composite index. Prod has:
+// This correlated subquery runs once per candidate ledger row (now once
+// per deposit row in the `attr_dep` CTE, not six times across the call).
+// Its access pattern is `referred_user_id = ? AND created_at <range>
+// ORDER BY created_at DESC LIMIT 1`. The form is already SARGABLE — the
+// bottleneck is the MISSING composite index. Prod has:
 //   • idx_acu_referred_user_code_usage  (referred_user_id, code, usage_type)
 //   • idx_acu_affiliate_user_created_at (affiliate_user_id, created_at DESC)
 // Neither serves a `created_at` range + DESC sort keyed on
@@ -115,11 +137,7 @@ const USERS_PER_PERIOD_CAP = 50;
 // backward index seek (stop at the first row) is:
 //   CREATE INDEX CONCURRENTLY idx_acu_referred_user_created_at
 //     ON affiliate_code_usages (referred_user_id, created_at DESC);
-// (Add it to prisma/recommended-indexes.sql + apply on prod — owner task.)
-// Rewriting this to a doubly-nested EXISTS/NOT-EXISTS (cf. the unused
-// `creator-attribution-sql.ts` helper) does NOT avoid the index need — it
-// has the SAME (referred_user_id, created_at) access pattern — so we keep
-// the cheaper LIMIT-1 form and let the index do the work.
+// (Added to prisma/recommended-indexes.sql §5 — apply on prod, owner task.)
 const COVERING_CREATOR_SQL = `(
   SELECT acu_c.affiliate_user_id
     FROM affiliate_code_usages acu_c
@@ -130,12 +148,12 @@ const COVERING_CREATOR_SQL = `(
    LIMIT 1
 )`;
 
-// Lifetime-lookback cap (days) for the "All-time" aggregate queries.
+// Lifetime-lookback cap (days) for the "All-time" aggregate query.
 //
-// The per-PERIOD queries already bound their scan to the widest displayed
-// window (30 days) via `NOW() - INTERVAL '30 days'`, so they never touch
-// old rows. The "All-time" aggregate, by contrast, had NO lower bound — it
-// scanned the ENTIRE `ledger_transactions` deposit history and the full
+// The per-PERIOD query bounds its scan to the widest displayed window
+// (30 days), so it never touches old rows. The "All-time" aggregate, by
+// contrast, had NO lower bound — it scanned the ENTIRE
+// `ledger_transactions` deposit history and the full
 // `affiliate_code_usages` / withdrawn-unit history for every render. On
 // prod that is a full-history table scan and is the dominant cost of the
 // `getCreatorPnl` call that the /creators/[userId] PnL panel awaits.
@@ -153,6 +171,26 @@ const COVERING_CREATOR_SQL = `(
 // which creator a covered deposit attributes to.
 const LIFETIME_LOOKBACK_DAYS = 365;
 const LIFETIME_LOOKBACK_INTERVAL = `INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'`;
+
+// Per-statement timeout (ms) for the COLD populating scan. The global
+// pool statement_timeout (db.ts) is 30s, which aborts a cold uncached
+// scan before it can finish and warm the cache — so it would degrade to
+// "timed out" forever. These reads run at most once per cache TTL, so a
+// generous budget is safe: we raise the per-statement timeout to 55s via
+// `SET LOCAL` inside the transaction (LOCAL = reverts on commit, never
+// leaks to other pool users). The app-level safeQuery wrapper around the
+// panel uses a matching budget so it doesn't cut the populating scan off
+// early. Genuine failures still surface; the happy path now completes.
+const COLD_SCAN_STATEMENT_TIMEOUT_MS = 55_000;
+
+// Prisma interactive-transaction options. `timeout` must comfortably
+// exceed the per-statement budget above so Prisma doesn't tear the
+// transaction down mid-scan; `maxWait` bounds how long we wait for a free
+// pool connection before giving up.
+const PNL_TX_OPTIONS = {
+  timeout: COLD_SCAN_STATEMENT_TIMEOUT_MS + 5_000,
+  maxWait: 10_000,
+} as const;
 
 // "Withdrawn unit" derived table: emits one row per value-unit (card
 // OR session-linked voucher) leaving the house via a
@@ -228,325 +266,283 @@ async function buildBlacklistAnd(): Promise<string> {
     : "";
 }
 
+type PerUserPeriodRow = {
+  user_id: string;
+  username: string | null;
+  image: string | null;
+  period: string;
+  deposits: string;
+  wagered: string;
+  card_withdrawals: string;
+};
+
+type PeriodCardWdRow = {
+  period: string;
+  card_withdrawals: string;
+};
+
+type LifetimeRow = {
+  total_deposits: string;
+  total_wagered: string;
+  total_card_withdrawals: string;
+  depositor_ids: string[] | null;
+};
+
 export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   const db = await getDb();
   const blacklistAnd = await buildBlacklistAnd();
 
-  // Per-period coverage-attributed deposits. Source: ledger_transactions
-  // (the canonical record of every deposit) joined with the COVERING
-  // creator at the time of each deposit.
-  const depositRowsP = db.$queryRawUnsafe<
-    {
-      period: string;
-      deposits: string;
-    }[]
-  >(
-    `SELECT p.period,
-            COALESCE(SUM(CASE
-              WHEN lt.created_at >= NOW() - (${PERIOD_INTERVAL_CASE})
-                THEN lt.amount::numeric
-              ELSE 0
-            END), 0)::text AS deposits
-       FROM ${PERIODS_VALUES_SQL}
-       LEFT JOIN ledger_transactions lt
-         ON lt.type = 'deposit'
-        AND lt.status = 'completed'
-        AND lt.created_at >= NOW() - INTERVAL '30 days'
-       LEFT JOIN "user" u ON u.id = lt.user_id
-      WHERE lt.id IS NULL OR (
-            u.role NOT IN ('admin', 'support', 'creator')
-        AND u.id != $1${blacklistAnd}
-        AND $1 = ${COVERING_CREATOR_SQL}
-      )
-      GROUP BY p.period`,
-    userId,
-  );
-
-  // Per-period wagers — unchanged. acu.wager_amount_usd is correctly
-  // attributed at event time by the backend.
-  const wagerRowsP = db.$queryRawUnsafe<
-    {
-      period: string;
-      wagered: string;
-    }[]
-  >(
-    `SELECT p.period,
-            COALESCE(SUM(CASE
-              WHEN acu.created_at >= NOW() - (${PERIOD_INTERVAL_CASE})
-                THEN acu.wager_amount_usd::numeric
-              ELSE 0
-            END), 0)::text AS wagered
-       FROM ${PERIODS_VALUES_SQL}
-       LEFT JOIN affiliate_code_usages acu
-         ON acu.affiliate_user_id = $1
-        AND acu.usage_type::text = 'wager'
-        AND acu.created_at >= NOW() - INTERVAL '30 days'
-       LEFT JOIN "user" u ON u.id = acu.referred_user_id
-      WHERE acu.id IS NULL OR (
-            u.role NOT IN ('admin', 'support', 'creator')
-        AND u.id != $1${blacklistAnd}
-      )
-      GROUP BY p.period`,
-    userId,
-  );
-
-  // Per-period card withdrawals — value of physical cards AND
-  // session-linked vouchers that left the house in the window via a
-  // card_withdrawal_requests row. Sourced from WITHDRAWN_UNITS_SQL
-  // which unions inventory items (`cwr.inventory_item_ids`) and
-  // session-linked vouchers (`cwr.voucher_ids` for origins
-  // `battle_excess_to_voucher`, `pack_borrow_to_voucher`).
+  // ── 30-day WINDOW block ──────────────────────────────────────────────
   //
-  // Each unit must:
-  //   • come from a session wagered under this creator's code
-  //     (`wu.source_id ∈ creator's acu wager sessions`), AND
-  //   • belong to a user who has at least one coverage-attributed
-  //     deposit under this creator (depositor filter).
-  const cardWdRowsP = db.$queryRawUnsafe<
-    {
-      period: string;
-      card_withdrawals: string;
-    }[]
-  >(
-    `SELECT p.period,
+  // Materializes the attributed deposits / wagers / withdrawn-units ONCE
+  // (each CTE scans its source once; the coverage subquery runs once per
+  // deposit row), then GROUP BYs per user × period for the popover rows.
+  //
+  // HEADLINE derivation (numbers byte-identical to the old per-period
+  // queries):
+  //   • deposits + wagers headlines are summed in JS from the (SQL-uncapped)
+  //     per-user rows — the old per-period and per-user deposit/wager
+  //     queries used IDENTICAL filters, so Σ(per-user) ≡ the old headline.
+  //   • card-withdrawals headline is NOT derived from the per-user rows: the
+  //     old per-period cardWD query had NO staff/blacklist filter on the
+  //     WITHDRAWING user, while the per-user cardWD query DID. To preserve
+  //     the exact displayed number we keep a dedicated `cardWdHeadlineSql`
+  //     that mirrors the old per-period cardWD filters verbatim (no outer
+  //     user filter), and use the per-user cardWD rows only for the popover.
+  //
+  //   attr_dep30 — ledger deposits whose covering creator at deposit time
+  //                is THIS creator, last 30d, staff/blacklist-excluded.
+  //   creator_wager30 — this creator's acu wager rows, last 30d.
+  //   wd_sessions — distinct non-null game_session_id from ALL of this
+  //                 creator's wager rows (UNBOUNDED, matching the old
+  //                 per-period cardWD session sub-select which had no lower
+  //                 bound — the session a withdrawn card traces to may be
+  //                 older than 30d even when the withdrawal is recent).
+  //   wd_depositors — distinct coverage-depositor ids (UNBOUNDED outer
+  //                   scan, 7d-per-row coverage), matching the old
+  //                   per-period cardWD depositor sub-select exactly.
+  //   attr_wd30 — withdrawn units in the last 30d belonging to a
+  //               coverage-depositor AND one of this creator's sessions.
+  //   events — UNION of the three contribution streams per user/event time,
+  //            cross-joined against every window so each event lands in all
+  //            windows it qualifies for, then summed per user × period.
+  //
+  // NB the cardWD filter sets (wd_sessions / wd_depositors) are
+  // deliberately UNBOUNDED to preserve the OLD numbers exactly — the old
+  // 30-day-window cardWD query bounded only the withdrawal event
+  // (`wu.withdrawn_at >= NOW() - 30d`), never the depositor or session
+  // membership sub-selects. The supporting acu indexes
+  // (idx_acu_affiliate_user_created_at, idx_acu_referred_user_created_at)
+  // keep these unbounded membership scans fast; materializing them ONCE
+  // here (instead of re-running the sub-select per period as the old code
+  // did) is the speed win.
+  const perUserSql = `WITH attr_dep30 AS (
+       SELECT lt.user_id, u.username, u.image, lt.created_at,
+              lt.amount::numeric AS amount
+         FROM ledger_transactions lt
+         JOIN "user" u ON u.id = lt.user_id
+        WHERE lt.type = 'deposit'
+          AND lt.status = 'completed'
+          AND lt.created_at >= NOW() - INTERVAL '30 days'
+          AND u.role NOT IN ('admin', 'support', 'creator')
+          AND u.id != $1${blacklistAnd}
+          AND $1 = ${COVERING_CREATOR_SQL}
+     ),
+     creator_wager30 AS (
+       SELECT acu.referred_user_id AS user_id, u.username, u.image,
+              acu.created_at, acu.wager_amount_usd::numeric AS amount
+         FROM affiliate_code_usages acu
+         JOIN "user" u ON u.id = acu.referred_user_id
+        WHERE acu.affiliate_user_id = $1
+          AND acu.usage_type::text = 'wager'
+          AND acu.created_at >= NOW() - INTERVAL '30 days'
+          AND u.role NOT IN ('admin', 'support', 'creator')
+          AND u.id != $1${blacklistAnd}
+     ),
+     wd_sessions AS (
+       SELECT DISTINCT acu.game_session_id
+         FROM affiliate_code_usages acu
+         JOIN "user" u ON u.id = acu.referred_user_id
+        WHERE acu.affiliate_user_id = $1
+          AND acu.usage_type::text = 'wager'
+          AND acu.game_session_id IS NOT NULL
+          AND u.role NOT IN ('admin', 'support', 'creator')
+          AND u.id != $1${blacklistAnd}
+     ),
+     wd_depositors AS (
+       SELECT DISTINCT lt.user_id
+         FROM ledger_transactions lt
+        WHERE lt.type = 'deposit' AND lt.status = 'completed'
+          AND $1 = ${COVERING_CREATOR_SQL}
+     ),
+     attr_wd30 AS (
+       SELECT wu.user_id, u.username, u.image, wu.withdrawn_at AS created_at,
+              wu.value AS amount
+         FROM ${WITHDRAWN_UNITS_SQL} wu
+         JOIN "user" u ON u.id = wu.user_id
+        WHERE wu.withdrawn_at >= NOW() - INTERVAL '30 days'
+          AND wu.user_id IN (SELECT user_id FROM wd_depositors)
+          AND wu.source_id IN (SELECT game_session_id FROM wd_sessions)
+          AND u.role NOT IN ('admin', 'support', 'creator')
+          AND u.id != $1${blacklistAnd}
+     ),
+     events AS (
+       SELECT user_id, username, image, created_at,
+              amount AS dep, 0::numeric AS wag, 0::numeric AS cwd
+         FROM attr_dep30
+       UNION ALL
+       SELECT user_id, username, image, created_at,
+              0::numeric AS dep, amount AS wag, 0::numeric AS cwd
+         FROM creator_wager30
+       UNION ALL
+       SELECT user_id, username, image, created_at,
+              0::numeric AS dep, 0::numeric AS wag, amount AS cwd
+         FROM attr_wd30
+     )
+     SELECT e.user_id AS user_id,
+            MAX(e.username) AS username,
+            MAX(e.image) AS image,
+            p.period,
+            COALESCE(SUM(e.dep), 0)::text AS deposits,
+            COALESCE(SUM(e.wag), 0)::text AS wagered,
+            COALESCE(SUM(e.cwd), 0)::text AS card_withdrawals
+       FROM events e
+       CROSS JOIN ${PERIODS_WITH_INTERVAL_SQL}
+      WHERE e.created_at >= NOW() - p.intv
+      GROUP BY e.user_id, p.period
+     HAVING SUM(e.dep) > 0 OR SUM(e.wag) > 0 OR SUM(e.cwd) > 0`;
+
+  // Per-period card-withdrawal HEADLINE — mirrors the OLD per-period cardWD
+  // query verbatim (the displayed cardWithdrawals number). Unbounded
+  // depositor + session membership sets (only the withdrawal event is 30d-
+  // bounded), and — matching the old per-period query — NO staff/blacklist
+  // filter on the withdrawing user. Shares the same membership-set shape as
+  // the popover's `wd_depositors` / `wd_sessions`, materialized once.
+  const cardWdHeadlineSql = `WITH wd_sessions AS (
+       SELECT DISTINCT acu.game_session_id
+         FROM affiliate_code_usages acu
+         JOIN "user" u ON u.id = acu.referred_user_id
+        WHERE acu.affiliate_user_id = $1
+          AND acu.usage_type::text = 'wager'
+          AND acu.game_session_id IS NOT NULL
+          AND u.role NOT IN ('admin', 'support', 'creator')
+          AND u.id != $1${blacklistAnd}
+     ),
+     wd_depositors AS (
+       SELECT DISTINCT lt.user_id
+         FROM ledger_transactions lt
+        WHERE lt.type = 'deposit' AND lt.status = 'completed'
+          AND $1 = ${COVERING_CREATOR_SQL}
+     )
+     SELECT p.period,
             COALESCE(SUM(CASE
-              WHEN wu.withdrawn_at >= NOW() - (${PERIOD_INTERVAL_CASE})
-                THEN wu.value
+              WHEN wu.withdrawn_at >= NOW() - p.intv THEN wu.value
               ELSE 0
             END), 0)::text AS card_withdrawals
-       FROM ${PERIODS_VALUES_SQL}
+       FROM ${PERIODS_WITH_INTERVAL_SQL}
        LEFT JOIN ${WITHDRAWN_UNITS_SQL} wu
          ON wu.withdrawn_at >= NOW() - INTERVAL '30 days'
-        AND wu.user_id IN (
-          SELECT DISTINCT lt.user_id
-            FROM ledger_transactions lt
-           WHERE lt.type = 'deposit' AND lt.status = 'completed'
-             AND $1 = ${COVERING_CREATOR_SQL}
-        )
-        AND wu.source_id IN (
-          SELECT DISTINCT acu.game_session_id
-            FROM affiliate_code_usages acu
-            JOIN "user" u ON u.id = acu.referred_user_id
-           WHERE acu.affiliate_user_id = $1
-             AND acu.usage_type::text = 'wager'
-             AND acu.game_session_id IS NOT NULL
-             AND u.role NOT IN ('admin', 'support', 'creator')
-             AND u.id != $1${blacklistAnd}
-        )
-      GROUP BY p.period`,
-    userId,
+        AND wu.user_id IN (SELECT user_id FROM wd_depositors)
+        AND wu.source_id IN (SELECT game_session_id FROM wd_sessions)
+      GROUP BY p.period`;
+
+  // ── 365-day LIFETIME block (single scan) ─────────────────────────────
+  //
+  // Same shapes over the wider window, returning the lifetime sums PLUS the
+  // coverage-depositor id set (drives the popover isDepositor flag) in ONE
+  // row — folding in the old standalone depositor-id scan.
+  //
+  // Faithful-numbers note: the old lifetime query used TWO different
+  // depositor sets — `total_deposits` summed the STAFF-EXCLUDED cohort
+  // (`attr_dep` here), whereas the cardWD depositor membership AND the
+  // standalone depositor-id scan used a NO-staff-filter 365d set
+  // (`cov_depositors_raw` here). We keep both distinct so every figure
+  // matches byte-for-byte. The cardWD sum (`attr_wd`) has no outer-user
+  // staff filter either, exactly like the old lifetime cardWD sub-select.
+  const lifetimeSql = `WITH attr_dep AS (
+       SELECT lt.amount::numeric AS amount
+         FROM ledger_transactions lt
+         JOIN "user" u ON u.id = lt.user_id
+        WHERE lt.type = 'deposit'
+          AND lt.status = 'completed'
+          AND lt.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
+          AND u.role NOT IN ('admin', 'support', 'creator')
+          AND u.id != $1${blacklistAnd}
+          AND $1 = ${COVERING_CREATOR_SQL}
+     ),
+     cov_depositors_raw AS (
+       SELECT DISTINCT lt.user_id
+         FROM ledger_transactions lt
+        WHERE lt.type = 'deposit' AND lt.status = 'completed'
+          AND lt.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
+          AND $1 = ${COVERING_CREATOR_SQL}
+     ),
+     creator_wager AS (
+       SELECT acu.wager_amount_usd::numeric AS amount
+         FROM affiliate_code_usages acu
+         JOIN "user" u ON u.id = acu.referred_user_id
+        WHERE acu.affiliate_user_id = $1
+          AND acu.usage_type::text = 'wager'
+          AND acu.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
+          AND u.role NOT IN ('admin', 'support', 'creator')
+          AND u.id != $1${blacklistAnd}
+     ),
+     creator_sessions AS (
+       SELECT DISTINCT acu.game_session_id
+         FROM affiliate_code_usages acu
+         JOIN "user" u ON u.id = acu.referred_user_id
+        WHERE acu.affiliate_user_id = $1
+          AND acu.usage_type::text = 'wager'
+          AND acu.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
+          AND acu.game_session_id IS NOT NULL
+          AND u.role NOT IN ('admin', 'support', 'creator')
+          AND u.id != $1${blacklistAnd}
+     ),
+     attr_wd AS (
+       SELECT wu.value AS amount
+         FROM ${WITHDRAWN_UNITS_SQL} wu
+        WHERE wu.withdrawn_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
+          AND wu.user_id IN (SELECT user_id FROM cov_depositors_raw)
+          AND wu.source_id IN (SELECT game_session_id FROM creator_sessions)
+     )
+     SELECT
+       (SELECT COALESCE(SUM(amount), 0)::text FROM attr_dep)         AS total_deposits,
+       (SELECT COALESCE(SUM(amount), 0)::text FROM creator_wager)    AS total_wagered,
+       (SELECT COALESCE(SUM(amount), 0)::text FROM attr_wd)          AS total_card_withdrawals,
+       (SELECT COALESCE(ARRAY_AGG(user_id), ARRAY[]::text[]) FROM cov_depositors_raw) AS depositor_ids`;
+
+  // Run the three scans inside ONE interactive transaction with the per-
+  // statement timeout raised via `SET LOCAL` so the COLD populating scan
+  // can complete instead of being killed by the 30s global pool timeout.
+  // `SET LOCAL` reverts on commit, so it never leaks to other pool users.
+  // The scans run back-to-back on the single tx connection, but each is now
+  // a single-pass set-based scan (the coverage subquery is evaluated once
+  // per deposit row per scan instead of six times across the call), so the
+  // total stays well within the raised budget — and after the first run the
+  // 5-min cache serves every subsequent load.
+  const [perUserRows, cardWdHeadlineRows, lifetimeRows] = await db.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe(
+        `SET LOCAL statement_timeout = ${COLD_SCAN_STATEMENT_TIMEOUT_MS}`,
+      );
+      return Promise.all([
+        tx.$queryRawUnsafe<PerUserPeriodRow[]>(perUserSql, userId),
+        tx.$queryRawUnsafe<PeriodCardWdRow[]>(cardWdHeadlineSql, userId),
+        tx.$queryRawUnsafe<LifetimeRow[]>(lifetimeSql, userId),
+      ]);
+    },
+    PNL_TX_OPTIONS,
   );
 
-  // Lifetime aggregates — same shape as per-period, but bounded to a
-  // rolling LIFETIME_LOOKBACK_DAYS window (was unbounded / full-history).
-  // The lower bound on every outer scan (deposit / wager / withdrawn-unit)
-  // is what turns the previous full-table seq-scan into an index range — the
-  // dominant cost of getCreatorPnl. The correlated COVERING_CREATOR_SQL is
-  // already 7-day-bounded per row, so attribution is unchanged; we only stop
-  // scanning rows older than the cap (which carry no currently-relevant
-  // creator activity). The PnL panel labels this hero "Lifetime (capped)".
-  const lifetimeRowsP = db.$queryRawUnsafe<
-    {
-      total_deposits: string;
-      total_wagered: string;
-      total_card_withdrawals: string;
-    }[]
-  >(
-    `SELECT
-        (SELECT COALESCE(SUM(lt.amount::numeric), 0)::text
-           FROM ledger_transactions lt
-           JOIN "user" u ON u.id = lt.user_id
-          WHERE lt.type = 'deposit'
-            AND lt.status = 'completed'
-            AND lt.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
-            AND u.role NOT IN ('admin', 'support', 'creator')
-            AND u.id != $1${blacklistAnd}
-            AND $1 = ${COVERING_CREATOR_SQL}
-        ) AS total_deposits,
-        (SELECT COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text
-           FROM affiliate_code_usages acu
-           JOIN "user" u ON u.id = acu.referred_user_id
-          WHERE acu.affiliate_user_id = $1
-            AND acu.usage_type::text = 'wager'
-            AND acu.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
-            AND u.role NOT IN ('admin', 'support', 'creator')
-            AND u.id != $1${blacklistAnd}
-        ) AS total_wagered,
-        (SELECT COALESCE(SUM(wu.value), 0)::text
-           FROM ${WITHDRAWN_UNITS_SQL} wu
-          WHERE wu.withdrawn_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
-            AND wu.user_id IN (
-              SELECT DISTINCT lt.user_id
-                FROM ledger_transactions lt
-               WHERE lt.type = 'deposit' AND lt.status = 'completed'
-                 AND lt.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
-                 AND $1 = ${COVERING_CREATOR_SQL}
-            )
-            AND wu.source_id IN (
-              SELECT DISTINCT acu.game_session_id
-                FROM affiliate_code_usages acu
-                JOIN "user" u ON u.id = acu.referred_user_id
-               WHERE acu.affiliate_user_id = $1
-                 AND acu.usage_type::text = 'wager'
-                 AND acu.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
-                 AND acu.game_session_id IS NOT NULL
-                 AND u.role NOT IN ('admin', 'support', 'creator')
-                 AND u.id != $1${blacklistAnd}
-            )
-        ) AS total_card_withdrawals`,
-    userId,
-  );
+  return assemble(perUserRows, cardWdHeadlineRows, lifetimeRows);
+}
 
-  // Per-user-per-period coverage-attributed deposits.
-  const depositUserRowsP = db.$queryRawUnsafe<
-    {
-      user_id: string;
-      username: string | null;
-      image: string | null;
-      period: string;
-      amount: string;
-    }[]
-  >(
-    `SELECT lt.user_id AS user_id,
-            u.username,
-            u.image,
-            p.period,
-            SUM(lt.amount::numeric)::text AS amount
-       FROM ledger_transactions lt
-       JOIN "user" u ON u.id = lt.user_id
-       CROSS JOIN ${PERIODS_WITH_INTERVAL_SQL}
-      WHERE lt.type = 'deposit'
-        AND lt.status = 'completed'
-        AND lt.created_at >= NOW() - INTERVAL '30 days'
-        AND lt.created_at >= NOW() - p.intv
-        AND u.role NOT IN ('admin', 'support', 'creator')
-        AND u.id != $1${blacklistAnd}
-        AND $1 = ${COVERING_CREATOR_SQL}
-      GROUP BY lt.user_id, u.username, u.image, p.period
-     HAVING SUM(lt.amount::numeric) > 0`,
-    userId,
-  );
-
-  // Per-user-per-period wagers — unchanged from acu.
-  const wagerUserRowsP = db.$queryRawUnsafe<
-    {
-      user_id: string;
-      username: string | null;
-      image: string | null;
-      period: string;
-      amount: string;
-    }[]
-  >(
-    `SELECT acu.referred_user_id AS user_id,
-            u.username,
-            u.image,
-            p.period,
-            SUM(acu.wager_amount_usd::numeric)::text AS amount
-       FROM affiliate_code_usages acu
-       JOIN "user" u ON u.id = acu.referred_user_id
-       CROSS JOIN ${PERIODS_WITH_INTERVAL_SQL}
-      WHERE acu.affiliate_user_id = $1
-        AND acu.usage_type::text = 'wager'
-        AND acu.created_at >= NOW() - INTERVAL '30 days'
-        AND acu.created_at >= NOW() - p.intv
-        AND u.role NOT IN ('admin', 'support', 'creator')
-        AND u.id != $1${blacklistAnd}
-      GROUP BY acu.referred_user_id, u.username, u.image, p.period
-     HAVING SUM(acu.wager_amount_usd::numeric) > 0`,
-    userId,
-  );
-
-  // Per-user-per-period card withdrawals, with coverage-depositor
-  // filter for consistency with the headline. Includes both cards
-  // and session-linked vouchers via WITHDRAWN_UNITS_SQL.
-  const cardWdUserRowsP = db.$queryRawUnsafe<
-    {
-      user_id: string;
-      username: string | null;
-      image: string | null;
-      period: string;
-      amount: string;
-    }[]
-  >(
-    `SELECT wu.user_id AS user_id,
-            u.username,
-            u.image,
-            p.period,
-            SUM(wu.value)::text AS amount
-       FROM ${WITHDRAWN_UNITS_SQL} wu
-       JOIN "user" u ON u.id = wu.user_id
-       CROSS JOIN ${PERIODS_WITH_INTERVAL_SQL}
-      WHERE wu.withdrawn_at >= NOW() - INTERVAL '30 days'
-        AND wu.withdrawn_at >= NOW() - p.intv
-        AND wu.user_id IN (
-          SELECT DISTINCT lt.user_id
-            FROM ledger_transactions lt
-           WHERE lt.type = 'deposit' AND lt.status = 'completed'
-             AND $1 = ${COVERING_CREATOR_SQL}
-        )
-        AND wu.source_id IN (
-          SELECT DISTINCT acu.game_session_id
-            FROM affiliate_code_usages acu
-            JOIN "user" u2 ON u2.id = acu.referred_user_id
-           WHERE acu.affiliate_user_id = $1
-             AND acu.usage_type::text = 'wager'
-             AND acu.game_session_id IS NOT NULL
-             AND u2.role NOT IN ('admin', 'support', 'creator')
-             AND u2.id != $1${blacklistAnd.replace(/\bu\.id\b/g, "u2.id")}
-        )
-        AND u.role NOT IN ('admin', 'support', 'creator')
-        AND u.id != $1${blacklistAnd}
-      GROUP BY wu.user_id, u.username, u.image, p.period
-     HAVING SUM(wu.value) > 0`,
-    userId,
-  );
-
-  // Coverage-depositor set — users with at least one coverage-attributed
-  // deposit under this creator. Drives the isDepositor flag on popover
-  // rows; redefined from the old "any acu deposit row" to align with
-  // the new ledger+coverage model. Bounded to the same lifetime lookback
-  // as the headline (was an unbounded full-history deposit scan) — the
-  // popover rows it flags only span the 30-day windows, so a 365-day depositor
-  // set covers every flaggable user while dropping the full-table scan.
-  const depositorIdsP = db.$queryRawUnsafe<{ user_id: string }[]>(
-    `SELECT DISTINCT lt.user_id AS user_id
-       FROM ledger_transactions lt
-      WHERE lt.type = 'deposit'
-        AND lt.status = 'completed'
-        AND lt.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
-        AND $1 = ${COVERING_CREATOR_SQL}`,
-    userId,
-  );
-
-  const [
-    depositRows,
-    wagerRows,
-    cardWdRows,
-    lifetimeRows,
-    depositUserRows,
-    wagerUserRows,
-    cardWdUserRows,
-    depositorIdRows,
-  ] = await Promise.all([
-    depositRowsP,
-    wagerRowsP,
-    cardWdRowsP,
-    lifetimeRowsP,
-    depositUserRowsP,
-    wagerUserRowsP,
-    cardWdUserRowsP,
-    depositorIdsP,
-  ]);
-
-  const depositorIds = new Set(depositorIdRows.map((r) => r.user_id));
-
-  const depositsByPeriod = new Map(
-    depositRows.map((r) => [r.period, r.deposits]),
-  );
-  const wageredByPeriod = new Map(wagerRows.map((r) => [r.period, r.wagered]));
-  const cardWdByPeriod = new Map(
-    cardWdRows.map((r) => [r.period, r.card_withdrawals]),
-  );
+function assemble(
+  perUserRows: PerUserPeriodRow[],
+  cardWdHeadlineRows: PeriodCardWdRow[],
+  lifetimeRows: LifetimeRow[],
+): CreatorPnlData {
+  const depositorIds = new Set(lifetimeRows[0]?.depositor_ids ?? []);
 
   type Bucket = {
     username: string | null;
@@ -557,49 +553,46 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   };
   const usersByPeriod = new Map<string, Map<string, Bucket>>();
 
-  function bump(
-    period: string,
-    userId: string,
-    username: string | null,
-    image: string | null,
-    field: "deposits" | "wagered" | "cardWithdrawals",
-    amount: number,
-  ) {
-    let perPeriod = usersByPeriod.get(period);
+  // Per-period deposits + wagered HEADLINE totals, summed across ALL users.
+  // The per-user rows are SQL-uncapped (the 50-row cap is applied later in
+  // buildUsers), and the old per-period deposit/wager queries used filters
+  // IDENTICAL to the per-user ones, so these sums match the old headline
+  // exactly. (Card-withdrawals headline does NOT come from here — see below.)
+  const headline = new Map<string, { deposits: number; wagered: number }>();
+
+  for (const r of perUserRows) {
+    const deposits = Number(r.deposits);
+    const wagered = Number(r.wagered);
+    const cardWithdrawals = Number(r.card_withdrawals);
+
+    let perPeriod = usersByPeriod.get(r.period);
     if (!perPeriod) {
       perPeriod = new Map();
-      usersByPeriod.set(period, perPeriod);
+      usersByPeriod.set(r.period, perPeriod);
     }
-    let bucket = perPeriod.get(userId);
-    if (!bucket) {
-      bucket = {
-        username,
-        image,
-        deposits: 0,
-        wagered: 0,
-        cardWithdrawals: 0,
-      };
-      perPeriod.set(userId, bucket);
+    perPeriod.set(r.user_id, {
+      username: r.username,
+      image: r.image,
+      deposits,
+      wagered,
+      cardWithdrawals,
+    });
+
+    let h = headline.get(r.period);
+    if (!h) {
+      h = { deposits: 0, wagered: 0 };
+      headline.set(r.period, h);
     }
-    bucket[field] += amount;
+    h.deposits += deposits;
+    h.wagered += wagered;
   }
 
-  for (const r of depositUserRows) {
-    bump(r.period, r.user_id, r.username, r.image, "deposits", Number(r.amount));
-  }
-  for (const r of wagerUserRows) {
-    bump(r.period, r.user_id, r.username, r.image, "wagered", Number(r.amount));
-  }
-  for (const r of cardWdUserRows) {
-    bump(
-      r.period,
-      r.user_id,
-      r.username,
-      r.image,
-      "cardWithdrawals",
-      Number(r.amount),
-    );
-  }
+  // Card-withdrawals HEADLINE — from its dedicated query, which mirrors the
+  // old per-period cardWD filters verbatim (no staff filter on the
+  // withdrawing user), so the displayed number is byte-identical.
+  const cardWdByPeriod = new Map(
+    cardWdHeadlineRows.map((r) => [r.period, Number(r.card_withdrawals)]),
+  );
 
   function buildUsers(period: string): CreatorPnlPeriodUser[] {
     const perPeriod = usersByPeriod.get(period);
@@ -608,11 +601,10 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
     for (const [userId, b] of perPeriod) {
       const isDepositor = depositorIds.has(userId);
       // Non-depositors (no coverage-attributed deposit under this
-      // creator) don't contribute to PnL — the cardWD user query
-      // filters them out at the SQL level, so `b.cardWithdrawals` is
-      // always 0 for non-depositors. Force pnl=0 explicitly so the
-      // popover row reads as "excluded" rather than "happened to
-      // net 0".
+      // creator) don't contribute to PnL — the cardWD CTE filters them
+      // out at the SQL level, so `b.cardWithdrawals` is always 0 for
+      // non-depositors. Force pnl=0 explicitly so the popover row reads as
+      // "excluded" rather than "happened to net 0".
       const pnl = isDepositor ? b.deposits - b.cardWithdrawals : 0;
       rows.push({
         userId,
@@ -638,9 +630,10 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   }
 
   const byPeriod: CreatorPnlPeriod[] = PERIODS.map((period: PeriodKey) => {
-    const deposits = Number(depositsByPeriod.get(period) ?? 0);
-    const wagered = Number(wageredByPeriod.get(period) ?? 0);
-    const cardWithdrawals = Number(cardWdByPeriod.get(period) ?? 0);
+    const h = headline.get(period);
+    const deposits = h?.deposits ?? 0;
+    const wagered = h?.wagered ?? 0;
+    const cardWithdrawals = cardWdByPeriod.get(period) ?? 0;
     return {
       period,
       deposits,
