@@ -76,8 +76,10 @@ import {
 // 2. WIPE VAULT     — zero `balances.locked_balance` (the vault) and clear
 //                     `unlock_at`. Snapshot both + version first; restore
 //                     puts the locked pool AND its unlock window back.
-// 3. WIPE INVENTORY — hard-delete the user's `user_inventory` rows. Snapshot
-//                     the full rows first; restore re-inserts them verbatim.
+// 3. WIPE INVENTORY — hard-delete the user's CURRENTLY-HELD `user_inventory`
+//                     rows (sold/exchanged/withdrawal-locked rows are left as
+//                     historical record — see HELD_INVENTORY_FILTER). Snapshot
+//                     the held rows first; restore re-inserts them verbatim.
 //
 // ORDERING (CRITICAL, snapshot-first): the recovery snapshot is written to
 // the admin DB and confirmed BEFORE the destructive main-DB write. If the
@@ -204,6 +206,39 @@ const INVENTORY_VALUE_TIER_BANDS: ReadonlyArray<{ label: string; min: number; ma
   { label: "$500+", min: 500, max: null },
 ];
 
+// HELD-ONLY FILTER (CRITICAL) — the wipe must target ONLY the cards the user
+// CURRENTLY holds, i.e. the exact set the /users/[id] Balances card shows as
+// the "Inventory" value/count, NOT the user's lifetime inventory history.
+//
+// `user_inventory` rows are never hard-deleted by the platform on disposal —
+// a card leaves the user's holdings when one of three timestamps is set:
+//   • sold_at              — the card was sold back for balance,
+//   • exchanged_at         — the card was exchanged out,
+//   • withdrawal_locked_at — the card is locked for an in-flight physical/
+//                            crypto withdrawal (its id is bundled into a
+//                            pending `card_withdrawals.inventory_item_ids`).
+// A row with ANY of these set is no longer "held" and is left as historical
+// record. A row with ALL THREE null is currently held.
+//
+// This is the SAME predicate the displayed inventory uses:
+//   • the Balances "Inventory" VALUE → calculateUserPnl inventoryValue
+//     (src/lib/queries/pnl.ts: sold_at null + exchanged_at null +
+//     withdrawal_locked_at null) — the $-figure the owner compares against,
+//   • and the dashboard/users-list/users-mini inventory aggregates, which all
+//     filter the same way.
+// Matching it makes the wipe preview equal the displayed held inventory and
+// guarantees the wipe never deletes a card that is mid-withdrawal (which would
+// orphan an active card_withdrawals row). Disposed/withdrawn rows are NOT
+// counted, snapshotted, or deleted — they stay as the historical record.
+const HELD_INVENTORY_FILTER = {
+  sold_at: null,
+  exchanged_at: null,
+  withdrawal_locked_at: null,
+} satisfies Pick<
+  Prisma.user_inventoryWhereInput,
+  "sold_at" | "exchanged_at" | "withdrawal_locked_at"
+>;
+
 /** Current spendable balance the "wipe balance" action would zero. */
 export async function previewBalanceWipe(
   userId: string,
@@ -253,8 +288,10 @@ export async function previewVaultWipe(
 }
 
 /**
- * Count + summed value_at_obtained of the user_inventory rows the wipe would
- * delete, plus three views the admin reviews before the 2FA approve:
+ * Count + summed value_at_obtained of the CURRENTLY-HELD user_inventory rows
+ * the wipe would delete (HELD_INVENTORY_FILTER — the exact set shown as the
+ * Balances "Inventory" value/count; sold/exchanged/withdrawal-locked history
+ * is excluded), plus three views the admin reviews before the 2FA approve:
  *   1. a per-`source_type` breakdown (count + value) — confirms the inventory
  *      holds only won/granted cards (source_type ∈ pack/battle/reward/
  *      exchange/raffle/upgrader); there is no creator-deal source, so nothing
@@ -279,7 +316,13 @@ export async function previewInventoryWipe(
     return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid user id" };
   }
   const db = await getDb();
-  const userWhere = { user_id: parsed.data } satisfies Prisma.user_inventoryWhereInput;
+  // Scope to THIS user AND only their currently-held cards (HELD_INVENTORY_FILTER
+  // — sold/exchanged/withdrawal-locked rows are excluded so the preview equals
+  // the displayed Balances "Inventory" value/count, not the lifetime history).
+  const userWhere = {
+    user_id: parsed.data,
+    ...HELD_INVENTORY_FILTER,
+  } satisfies Prisma.user_inventoryWhereInput;
 
   // Run the three reads together — each is scoped by the indexed `user_id`, so
   // this is the single user's (small) inventory only, no global scan. Kept as
@@ -685,11 +728,15 @@ const wipeInventorySchema = z.object({
 const MAX_INVENTORY_ROWS = 50_000;
 
 /**
- * Hard-delete every `user_inventory` row owned by this user. Snapshot-first
- * (the FULL rows are written to admin_account_wipes), then a main-DB tx
- * deletes exactly this user's rows (and the `provably_fair_results` that FK
- * to them, which would otherwise block the delete). Restore re-inserts the
- * snapshotted rows verbatim.
+ * Hard-delete every CURRENTLY-HELD `user_inventory` row owned by this user —
+ * the same held set the /users/[id] Balances card shows as the "Inventory"
+ * value/count (HELD_INVENTORY_FILTER: sold_at null + exchanged_at null +
+ * withdrawal_locked_at null). Sold / exchanged / withdrawal-locked rows are
+ * the user's lifetime history and are NOT touched (left as record). Snapshot-
+ * first (the held rows are written to admin_account_wipes), then a main-DB tx
+ * deletes exactly this user's held rows (and the `provably_fair_results` that
+ * FK to those rows, which would otherwise block the delete). Restore re-inserts
+ * the snapshotted held rows verbatim.
  *
  * INVENTORY ↔ GGR NOTE (surfaced in the dialog + audit, metric logic NOT
  * changed here): `user_inventory.value_at_obtained` feeds the canonical
@@ -734,10 +781,13 @@ export async function wipeInventory(data: {
   const db = await getDb();
 
   // Read the FULL rows up front so the snapshot is exact. Scoped strictly to
-  // this user. Bounded by MAX_INVENTORY_ROWS+1 so we can detect an
-  // over-cap inventory without scanning unboundedly.
+  // this user AND only their currently-held cards (HELD_INVENTORY_FILTER) — we
+  // snapshot/delete exactly the held set shown on the Balances card, never the
+  // sold/exchanged/withdrawal-locked historical rows. Bounded by
+  // MAX_INVENTORY_ROWS+1 so we can detect an over-cap inventory without
+  // scanning unboundedly.
   const rows = await db.user_inventory.findMany({
-    where: { user_id: parsed.userId },
+    where: { user_id: parsed.userId, ...HELD_INVENTORY_FILTER },
     take: MAX_INVENTORY_ROWS + 1,
   });
 
@@ -799,24 +849,27 @@ export async function wipeInventory(data: {
     };
   }
 
-  // DESTRUCTIVE — delete the rows (+ their provably_fair_results children
-  // which FK to user_inventory.id) scoped to THIS user. The delete is
-  // re-scoped by user_id so it can't touch another user's rows even under a
-  // race, and the count is verified.
+  // DESTRUCTIVE — delete the HELD rows we snapshotted (+ their
+  // provably_fair_results children which FK to user_inventory.id) scoped to
+  // THIS user. The delete is re-scoped by user_id AND the held-filter so it
+  // can't touch another user's rows — nor this user's disposed/withdrawal-
+  // locked historical rows — even under a race, and the count is verified.
   try {
     await db.$transaction(async (tx) => {
-      // provably_fair_results.user_inventory_id → user_inventory.id. The full
-      // account wipe deletes these via the inventory relation; we do the same
-      // so the inventory deleteMany doesn't hit an FK constraint.
+      // provably_fair_results.inventory_item_id → user_inventory.id. Delete
+      // ONLY the PF children of the exact held inventory ids being wiped (NOT
+      // every PF row for the user) so the FK on those rows is cleared without
+      // touching PF data that belongs to surviving disposed/withdrawn rows.
       await tx.provably_fair_results.deleteMany({
-        where: { user_inventory: { user_id: parsed.userId } },
+        where: { inventory_item_id: { in: inventoryIds } },
       });
       const del = await tx.user_inventory.deleteMany({
-        where: { id: { in: inventoryIds }, user_id: parsed.userId },
+        where: { id: { in: inventoryIds }, user_id: parsed.userId, ...HELD_INVENTORY_FILTER },
       });
       if (del.count !== inventoryIds.length) {
-        // A row was added/removed concurrently between the snapshot read and
-        // the delete → abort so the snapshot and the actual delete agree.
+        // A row was added/removed/disposed concurrently between the snapshot
+        // read and the delete → abort so the snapshot and the actual delete
+        // agree.
         throw new Error("INV_GUARD: inventory changed concurrently — refresh and retry");
       }
     });
@@ -847,7 +900,8 @@ export async function wipeInventory(data: {
       totalValue,
       countBySource,
       recoverable: true,
-      note: "user_inventory rows deleted (their provably_fair_results cascade-delete and are NOT re-created on restore — historical PF leaf data, same tradeoff as deleted-user restore); value_at_obtained feeds GGR inv-leg (restorable). Inventory has no creator-deal source — deal payouts are vouchers, not inventory, and are untouched.",
+      heldOnly: true,
+      note: "CURRENTLY-HELD user_inventory rows deleted (sold_at null + exchanged_at null + withdrawal_locked_at null — matches the Balances 'Inventory' value/count; sold/exchanged/withdrawal-locked history left untouched). Their provably_fair_results cascade-delete and are NOT re-created on restore — historical PF leaf data, same tradeoff as deleted-user restore; value_at_obtained feeds GGR inv-leg (restorable). Inventory has no creator-deal source — deal payouts are vouchers, not inventory, and are untouched.",
     },
   });
 

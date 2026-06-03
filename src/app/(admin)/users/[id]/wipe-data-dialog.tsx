@@ -102,7 +102,8 @@ const CATEGORY_META: Record<
   inventory: {
     icon: Package,
     label: "Inventory",
-    blurb: "Hard-deletes every inventory item. Snapshotted + recoverable.",
+    blurb:
+      "Hard-deletes every currently-held inventory item (sold/exchanged/withdrawn items are left as historical record). Snapshotted + recoverable.",
   },
 };
 
