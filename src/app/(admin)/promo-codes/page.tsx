@@ -13,6 +13,8 @@ import { safeQuery } from "@/lib/errors/safe-query";
 import { formatCurrency } from "@/lib/utils/format";
 import { requirePageAccess } from "@/lib/dal";
 import { PromoCodesDataTable } from "./data-table";
+import { PromoCodesSelectionProvider } from "./promo-codes-selection-context";
+import { PromoCodesQuickSelect } from "./promo-codes-quick-select";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -122,37 +124,53 @@ export default async function PromoCodesPage({
 
       <div className="space-y-3">
         <SectionHeading icon={Ticket} title="All Codes" />
-        <div className="space-y-4">
-          <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-            <DataTableToolbar
-              searchPlaceholder="Search promo codes..."
-              filters={[
-                {
-                  name: "Status",
-                  paramKey: "status",
-                  options: [
-                    { label: "Active", value: "active" },
-                    { label: "Expired", value: "expired" },
-                  ],
-                },
-              ]}
-            />
-          </Suspense>
-          {/* Keyed on the table inputs so a filter / page change re-shows
-              the table skeleton instead of blocking on the previous
-              render — matches the rain / rewards pattern. */}
-          <Suspense
-            key={`${params.status ?? ""}|${params.region ?? ""}|${params.page ?? "1"}|${params.perPage ?? "20"}`}
-            fallback={
-              <>
-                <TableSkeleton rows={12} columns={7} />
-                <PaginationSkeleton />
-              </>
-            }
-          >
-            <PromoCodesListAsync params={params} />
-          </Suspense>
-        </div>
+        {/* Selection provider wraps BOTH the toolbar (outside the keyed
+            Suspense, so the search input stays mounted/focused while the
+            table streams) AND the table (inside it). This lets the
+            Quick-select buttons — rendered as the toolbar's trailing
+            `children`, so they share the search + status-filter row — drive
+            the table's row-selection, and lets the table publish the
+            exhausted / expired candidate sets back up to those buttons.
+            Mirrors CreatorsViewProvider / CreatorsSearchProvider. */}
+        <PromoCodesSelectionProvider>
+          <div className="space-y-4">
+            <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+              <DataTableToolbar
+                searchPlaceholder="Search promo codes..."
+                filters={[
+                  {
+                    name: "Status",
+                    paramKey: "status",
+                    options: [
+                      { label: "Active", value: "active" },
+                      { label: "Expired", value: "expired" },
+                    ],
+                  },
+                ]}
+              >
+                {/* One-click select of the spent codes on this page → hands
+                    them to the existing bulk-delete. Sits next to the status
+                    filter, same height; renders nothing when there are none
+                    (and while the table streams). */}
+                <PromoCodesQuickSelect />
+              </DataTableToolbar>
+            </Suspense>
+            {/* Keyed on the table inputs so a filter / page change re-shows
+                the table skeleton instead of blocking on the previous
+                render — matches the rain / rewards pattern. */}
+            <Suspense
+              key={`${params.status ?? ""}|${params.region ?? ""}|${params.page ?? "1"}|${params.perPage ?? "20"}`}
+              fallback={
+                <>
+                  <TableSkeleton rows={12} columns={7} />
+                  <PaginationSkeleton />
+                </>
+              }
+            >
+              <PromoCodesListAsync params={params} />
+            </Suspense>
+          </div>
+        </PromoCodesSelectionProvider>
       </div>
     </div>
   );

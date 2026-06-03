@@ -1,14 +1,13 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   flexRender,
   getCoreRowModel,
   useReactTable,
-  type RowSelectionState,
 } from "@tanstack/react-table";
-import { Trash2, Flame, Clock } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Table,
@@ -39,6 +38,7 @@ import { MobileCard } from "@/components/data-table/mobile-card-list";
 import { EmptyState } from "@/components/empty-state";
 import { deletePromoCodesBulk } from "./actions";
 import { PromoCodeDetailDialog } from "./promo-code-detail-dialog";
+import { usePromoCodesSelection } from "./promo-codes-selection-context";
 
 // "Exhausted" = the code's redemption cap has actually been reached.
 // `max_uses` of 0 means *no cap* (the schema/create form allow 0), so a
@@ -154,7 +154,14 @@ export function PromoCodesDataTable({ data }: { data: PromoCodeListItem[] }) {
   // TanStack stores selection keyed by row.id (defaults to row index);
   // we map back to the underlying promo_code.id via getRowId so refresh
   // doesn't shuffle which rows stay selected.
-  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  //
+  // Selection lives in <PromoCodesSelectionProvider> (not local state) so
+  // it's shared with the Quick-select buttons in the toolbar, which sit
+  // OUTSIDE this table's Suspense boundary. The table both reads the
+  // selection (for the bulk bar + checkboxes) and registers the candidate
+  // id sets the buttons select against — see the effect below.
+  const { rowSelection, setRowSelection, setCandidates } =
+    usePromoCodesSelection();
 
   const table = useReactTable({
     data,
@@ -182,10 +189,11 @@ export function PromoCodesDataTable({ data }: { data: PromoCodeListItem[] }) {
 
   // Ids of the codes on THIS page that are exhausted / expired. Derived
   // purely from the data the page already loaded (each row carries
-  // `redemptionCount` + `maxUses` + `expiresAt`) — no extra query. Powers
-  // the one-click "Select used-up" / "Select expired" quick-selects, which
-  // just write the existing row-selection state so the existing
-  // bulk-action bar + bulk-delete operate on them unchanged.
+  // `redemptionCount` + `maxUses` + `expiresAt`) — no extra query. These
+  // are the candidate sets the toolbar's "Select used-up" / "Select
+  // expired" buttons select against; the buttons just write the shared
+  // row-selection state so the existing bulk-action bar + bulk-delete
+  // operate on them unchanged.
   const exhaustedIds = useMemo(
     () => data.filter(isExhausted).map((d) => d.id),
     [data],
@@ -195,68 +203,23 @@ export function PromoCodesDataTable({ data }: { data: PromoCodeListItem[] }) {
     [data],
   );
 
-  // Set the existing selection to EXACTLY the given ids (replace, not
-  // merge) so the count in the bulk bar matches what the button promises.
-  function selectExactly(ids: string[]) {
-    if (ids.length === 0) return;
-    setRowSelection(Object.fromEntries(ids.map((id) => [id, true])));
-  }
+  // Publish the candidate sets to the provider so the toolbar Quick-select
+  // buttons (rendered outside this table's Suspense boundary) can act on
+  // them. Clear on unmount so a navigation that swaps the page doesn't
+  // leave stale counts on the buttons while the next table streams in.
+  useEffect(() => {
+    setCandidates({ exhaustedIds, expiredIds });
+    return () => setCandidates({ exhaustedIds: [], expiredIds: [] });
+  }, [exhaustedIds, expiredIds, setCandidates]);
 
   return (
-    // Stacked layout: each block (quick-select toolbar, bulk-action bar,
-    // table) is its own row with consistent vertical spacing. Without this
-    // wrapper the bare fragment let the quick-select toolbar sit flush
-    // against the bulk-action bar / table with no gap, so the buttons
-    // looked like they were nested inside the bulk box.
+    // Stacked layout: the bulk-action bar (when rows are selected) and the
+    // table are each their own row with consistent vertical spacing. The
+    // Quick-select buttons no longer live here — they sit in the toolbar
+    // row alongside the search + status filter (see page.tsx), driving the
+    // same shared selection state. Without this wrapper the bare fragment
+    // let the bulk-action bar sit flush against the table with no gap.
     <div className="space-y-3">
-      {/* Quick-select bar — one-click select of the spent codes on this
-          page so the owner can hand them straight to the existing
-          bulk-delete. Each button replaces the current selection with
-          exactly its set; the live count makes clear what gets selected
-          before the click. Its own distinct row above the table — sits
-          separately from the bulk-action bar (which only appears once rows
-          are selected). Only renders when there's at least one such code
-          on the page so the row stays clean otherwise. */}
-      {data.length > 0 && (exhaustedIds.length > 0 || expiredIds.length > 0) && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground">Quick select:</span>
-          {exhaustedIds.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => selectExactly(exhaustedIds)}
-              className="gap-1.5"
-            >
-              <Flame className="size-3.5 text-amber-500" />
-              Select used-up
-              <Badge
-                variant="outline"
-                className="ml-1 h-4 px-1 text-[10px] tabular-nums border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400"
-              >
-                {exhaustedIds.length}
-              </Badge>
-            </Button>
-          )}
-          {expiredIds.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => selectExactly(expiredIds)}
-              className="gap-1.5"
-            >
-              <Clock className="size-3.5 text-rose-500" />
-              Select expired
-              <Badge
-                variant="outline"
-                className="ml-1 h-4 px-1 text-[10px] tabular-nums border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
-              >
-                {expiredIds.length}
-              </Badge>
-            </Button>
-          )}
-        </div>
-      )}
-
       {/* Bulk-action bar — only renders when something is selected, so
           desktop and mobile see the same "delete N selected" entry
           point above the table. */}
