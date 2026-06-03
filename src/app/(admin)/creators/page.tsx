@@ -122,8 +122,9 @@ export default async function CreatorsPage({
           freezing the page on stale numbers. The single tab-aware
           tile inside (Fill Creators / Multiplier Creators) flips
           label, value, and icon from the active tab's cached count.
-          Layout: 4 compact KPI tiles + two wider panels (Leaderboard
-          Spend + Tips & Sponsor Spend) that each span 2 columns. */}
+          Layout: 5 compact KPI tiles (4 figures + the compact
+          Leaderboard Spend tile) + one wider Tips & Sponsor Spend
+          panel that spans 2 columns. */}
       <Suspense
         key={`kpi-${params.tab}-${params.filter ?? ""}`}
         fallback={<CreatorsKpiStripSkeleton />}
@@ -222,13 +223,14 @@ export default async function CreatorsPage({
 // Tab-aware: ONE swap tile (Fill Creators / Multiplier Creators) — its
 // value, label, and icon flip from the cached per-tab count. The other
 // figures (Net Code-User GGR, Global PnL, Converted) stay tab-
-// independent. Two wide panels (Leaderboard Spend + Tips & Sponsor
-// Spend) round out the strip — each spans 2 columns.
+// independent. The Leaderboard Spend tile is now compact (a single cell,
+// past-vs-active house cost); one wide Tips & Sponsor Spend panel (spans
+// 2 columns) rounds out the strip.
 //
-// Layout: 4 compact KpiTiles (swap / Net GGR / Global PnL / Converted)
-// + the two 2-column panels (Leaderboard Spend + Tips & Sponsor Spend)
-// = 8 column-units on an 8-col grid at xl, collapsing cleanly to a
-// 4-col then 2-col grid below.
+// Layout: 5 compact tiles (swap / Net GGR / Global PnL / Converted +
+// the compact Leaderboard Spend tile) + the 2-column Tips & Sponsor
+// Spend panel = 7 column-units on a 7-col grid at xl, collapsing cleanly
+// to a 4-col then 2-col grid below.
 
 async function CreatorsKpiStrip({
   tab,
@@ -332,7 +334,7 @@ async function CreatorsKpiStrip({
         };
 
   return (
-    <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-4 xl:grid-cols-8">
+    <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-4 xl:grid-cols-7">
       {/* Swap tile — flips between Fill and Multiplier counts based on
           the active tab. Replaces the previous Fill + Multiplier pair
           of tiles (one of which always rendered "—" on the inactive
@@ -402,24 +404,23 @@ async function CreatorsKpiStrip({
           <InfoHint text="Lifetime stream earnings minted into end-of-session payout vouchers (creator_fill_conversion) across ALL creators — not just live-deal creators. The sub-line shows how much of that has actually been withdrawn off-platform vs still in flight." />
         }
       />
-      {/* Leaderboard Spend — the wide member of the strip (spans 2 cols
-          at xl, full width below). Carries every scope of approved-
-          creator-leaderboard spend: the house-covered sponsored share
-          (rose hero, the actual house cost), the full 100% prize pool
-          (neutral), the effective coverage %, the approved-board count,
-          and a per-board mini-breakdown (top boards by house cost). Net
-          of refunds, each board weighted by its admin-set house share %
-          (set inline on /creators/leaderboards; defaults to 100%). The
-          per-board rows come from the SAME walk as the totals — no extra
-          query. */}
-      <div className="col-span-2 sm:col-span-4 xl:col-span-2">
-        <LeaderboardSpendPanel
-          totalPrizeUsd={leaderboardCost?.totalPrizeUsd ?? null}
-          houseCoveredUsd={leaderboardCost?.houseCoveredUsd ?? null}
-          boardCount={leaderboardCost?.boardCount ?? null}
-          boards={leaderboardCost?.boards ?? []}
-        />
-      </div>
+      {/* Leaderboard Spend — a COMPACT single-cell tile (1 col at xl, the
+          same footprint as the other KpiTiles). Splits creator-leaderboard
+          house cost by time: the rose HERO is what we're committed to on
+          the boards running RIGHT NOW (+ "· N active · X% we pay" — the
+          active board count and the blended house share we cover), and a
+          muted "Past: $Y spent" line is what we already spent on finished
+          boards. Net of refunds, each board weighted by its admin-set
+          house share % (set inline on /creators/leaderboards; defaults to
+          100%). The past/active split is derived from the SAME approved-
+          board walk as the totals — no extra query. */}
+      <LeaderboardSpendPanel
+        activeHouseCostUsd={leaderboardCost?.activeHouseCostUsd ?? null}
+        activeCoveragePct={leaderboardCost?.activeCoveragePct ?? null}
+        activeCount={leaderboardCost?.activeCount ?? null}
+        pastHouseCostUsd={leaderboardCost?.pastHouseCostUsd ?? null}
+        pastCount={leaderboardCost?.pastCount ?? null}
+      />
       {/* Tips & Sponsor Spend — the second wide member of the strip (spans
           2 cols at xl, alongside Leaderboard Spend; full width below). The
           lifetime house cost of the creator-funded tips/sponsor pool, split
@@ -751,15 +752,16 @@ async function CreatorsGridSection({
 // ─── Skeletons ────────────────────────────────────────────────────
 
 /**
- * KPI-strip skeleton — mirrors the active-tab strip layout exactly: 4
- * compact KpiTile-shaped boxes + the wider Leaderboard Spend panel that
- * spans 2 columns (and stands taller for its per-board breakdown). Shape
- * matches the real strip so there's no layout jank when the data lands.
+ * KPI-strip skeleton — mirrors the active-tab strip layout: 5 compact
+ * KpiTile-shaped boxes (the 4 figure tiles + the compact Leaderboard
+ * Spend tile) + the wider Tips & Sponsor Spend panel that spans 2
+ * columns. Shape matches the real strip so there's no layout jank when
+ * the data lands.
  */
 function CreatorsKpiStripSkeleton() {
   return (
-    <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-4 xl:grid-cols-8">
-      {Array.from({ length: 4 }).map((_, i) => (
+    <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-4 xl:grid-cols-7">
+      {Array.from({ length: 5 }).map((_, i) => (
         <div
           key={i}
           className="rounded-xl border bg-card px-3 py-2.5 sm:px-4 sm:py-3"
@@ -771,11 +773,8 @@ function CreatorsKpiStripSkeleton() {
           <Skeleton className="mt-1.5 h-5 w-16 sm:mt-2 sm:h-6 sm:w-20" />
         </div>
       ))}
-      {/* Two wider panels — Leaderboard Spend + Tips & Sponsor Spend. Taller
-          to reserve room for each hero figure + its breakdown rows. */}
-      <div className="col-span-2 sm:col-span-4 xl:col-span-2">
-        <Skeleton className="h-56 w-full rounded-xl sm:rounded-2xl" />
-      </div>
+      {/* Wider panel — Tips & Sponsor Spend. Taller to reserve room for its
+          hero figure + breakdown rows. */}
       <div className="col-span-2 sm:col-span-4 xl:col-span-2">
         <Skeleton className="h-40 w-full rounded-xl sm:rounded-2xl" />
       </div>

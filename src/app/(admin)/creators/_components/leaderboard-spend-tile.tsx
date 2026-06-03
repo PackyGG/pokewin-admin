@@ -2,170 +2,127 @@ import { Trophy } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { StatPanel, TILE_COLORS } from "@/components/modern-panels";
-import type { LeaderboardCostBoard } from "../_queries/leaderboard-cost";
+import { TILE_COLORS } from "@/components/modern-panels";
 import { InfoHint } from "./info-hint";
 
 /**
- * Leaderboard-spend panel for the /creators list KPI strip.
+ * Leaderboard-spend tile for the /creators list KPI strip.
  *
- * A wider `StatPanel`-style box (spans 2 grid columns on the strip) that
- * surfaces every scope of creator-leaderboard spend in one place — the
- * removal of the Active Deals + Live Now tiles freed the room for the
- * detail. House-POV throughout: money paid to players is a house cost
- * (rose); the full pool is neutral context.
+ * A COMPACT, single-cell tile (mirrors the <KpiTile> chrome — same border,
+ * accent bar, glassy sheen) that answers the owner's question in one glance:
+ * what we're committed to on creator leaderboards RIGHT NOW vs what we've
+ * already spent on finished boards.
  *
- * Headline figures:
- *   • House covered — the sponsored share the house actually pays. Hero
- *     number, ROSE (house cost). Mirrors the rose total-prize coloring
- *     on the /creators/leaderboards table.
- *   • Total prizes (100%) — the full committed prize pool, net of
- *     refunds. NEUTRAL: the creator funds the non-sponsored slice
- *     off-site, so the full pool isn't all our cost.
- *   • Effective coverage % — covered / total. Only shown when there's a
- *     pool AND the share is a real fraction (< 100%); at the 100%
- *     default it's redundant with "all of it".
- *   • Approved boards — how many APPROVED creator leaderboards the
- *     figures sum across.
+ *   • Active now — rose HERO: the house-covered cost of the boards running
+ *     at this moment (what we're committed to pay right now). Sub-line:
+ *     "· N active · X% we pay" — the active board count + the blended house
+ *     share across them (the % of the active pool we actually cover).
+ *   • Past: $Y spent — a muted secondary line: the house-covered cost of
+ *     boards whose run has finished (what we already spent on old boards).
  *
- * Per-board mini-breakdown: the top boards by house cost (creator-board
- * name, prize pool, house %, house cost), with a "+N more" line when the
- * full set is longer. The board list arrives pre-sorted (priciest first)
- * from the SAME walk that computes the totals — no extra query.
+ * House-POV: every dollar paid to players is a house cost → rose. The active
+ * gross pool (the 100% the creator partly funds off-site) is NOT shown as a
+ * figure here — the box is about OUR cost; the % already conveys our slice.
  *
- * Server-safe: takes serializable props + renders the string-only
- * <InfoHint> client component (no function props cross the RSC boundary).
+ * Server-safe: serializable props only + the string-only <InfoHint> client
+ * component (no function props cross the RSC boundary).
  */
 
-// How many boards the mini-breakdown lists before collapsing the rest
-// into a "+N more" line. Keeps the panel compact next to the KPI tiles.
-const TOP_BOARDS = 3;
-
 const INFO_TEXT =
-  "100% = the full creator-leaderboard prize pool committed (net of refunds). House covered = our sponsored share — the part we actually pay; the rest is funded by the creator off-site. Weighted by each approved board's admin-set house %. Money paid to players = house cost (rose).";
+  "Active now = the house-covered cost of the creator leaderboards running right now (what we're committed to pay). “X% we pay” is the house's sponsored share of those active boards — the creator funds the rest off-site. Past = what we already spent on finished boards. Net of refunds; money paid to players = house cost (rose).";
 
 export function LeaderboardSpendPanel({
-  totalPrizeUsd,
-  houseCoveredUsd,
-  boardCount,
-  boards,
+  activeHouseCostUsd,
+  activeCoveragePct,
+  activeCount,
+  pastHouseCostUsd,
+  pastCount,
 }: {
-  /** Full 100% prize pool committed (net of refunds), no weighting. */
-  totalPrizeUsd: number | null;
-  /** The house's sponsored share — the actual house cost (rose). */
-  houseCoveredUsd: number | null;
-  /** Count of APPROVED creator leaderboards behind the figures. */
-  boardCount: number | null;
-  /**
-   * Per-board contributions, pre-sorted by house cost DESC. Empty when
-   * the query failed or there are no approved boards.
-   */
-  boards: LeaderboardCostBoard[];
+  /** House-covered cost of boards running right now — the rose hero. */
+  activeHouseCostUsd: number | null;
+  /** Blended house share across the active boards ("% we pay"). */
+  activeCoveragePct: number | null;
+  /** Count of boards running right now. */
+  activeCount: number | null;
+  /** House-covered cost of finished boards — the muted "Past" line. */
+  pastHouseCostUsd: number | null;
+  /** Count of finished boards. */
+  pastCount: number | null;
 }) {
   const rose = TILE_COLORS.rose;
-  // Effective coverage % = covered / total. Only meaningful when there's
-  // a non-zero pool; suppressed at (or above) 100% where it reads as
-  // redundant noise next to "Total prizes (100%)".
-  const effectivePct =
-    totalPrizeUsd != null && houseCoveredUsd != null && totalPrizeUsd > 0
-      ? (houseCoveredUsd / totalPrizeUsd) * 100
-      : null;
-  const showPct = effectivePct != null && effectivePct < 99.95;
 
-  const topBoards = boards.slice(0, TOP_BOARDS);
-  const remaining = Math.max(0, boards.length - topBoards.length);
+  // Active sub-line: "· N active · X% we pay". The count always shows when
+  // known; the "% we pay" only joins when there's an active board (a 0%
+  // line on an empty board set reads as noise).
+  const subParts: string[] = [];
+  if (activeCount != null) {
+    subParts.push(`${formatNumber(activeCount)} active`);
+  }
+  if (activeCount != null && activeCount > 0 && activeCoveragePct != null) {
+    subParts.push(`${activeCoveragePct.toFixed(0)}% we pay`);
+  }
+  const activeSub = subParts.length > 0 ? subParts.join(" · ") : null;
 
   return (
-    <StatPanel
-      title="Leaderboard Spend"
-      icon={Trophy}
-      accent="rose"
-      action={<InfoHint text={INFO_TEXT} />}
+    <div
+      className={cn(
+        "hover-raise group surface-sheen relative overflow-hidden rounded-xl border px-3 py-2.5 sm:px-4 sm:py-3",
+        rose.bg,
+      )}
     >
-      {/* Hero — House covered (rose house cost) + effective-% sub-line. */}
-      <p
+      {/* Left accent bar — rose (house cost), matching <KpiTile>. */}
+      <div
+        aria-hidden
         className={cn(
-          "truncate text-2xl font-bold leading-none tracking-tight tabular-nums sm:text-3xl",
-          rose.text,
+          "pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 transition-opacity duration-200 group-hover:opacity-80",
+          rose.icon,
         )}
-      >
-        {houseCoveredUsd != null ? formatCurrency(houseCoveredUsd) : "—"}
-      </p>
-      <p className="mt-1 truncate text-[11px] text-muted-foreground sm:text-xs">
-        House covered
-        {showPct ? ` · ${effectivePct!.toFixed(0)}% of pool` : ""}
-      </p>
+      />
+      {/* Glassy diagonal sheen — neutral white so it never fights the
+          House-POV rose accent. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent"
+      />
 
-      {/* Headline secondary figures — total pool (neutral), coverage %,
-          and the approved-board count. */}
-      <div className="mt-3 space-y-0.5 border-t border-border/50 pt-2">
-        <div className="flex items-center justify-between gap-3 py-1 text-sm">
-          <span className="min-w-0 truncate text-muted-foreground">
-            Total prizes (100%)
-          </span>
-          <span className="shrink-0 font-medium tabular-nums text-foreground/80">
-            {totalPrizeUsd != null ? formatCurrency(totalPrizeUsd) : "—"}
+      {/* Header row — icon + label + the ⓘ hint in the top-right. */}
+      <div className="relative flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+          <Trophy className={cn("size-3.5 shrink-0 sm:size-4", rose.icon)} />
+          <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
+            Leaderboard Spend
           </span>
         </div>
-        <div className="flex items-center justify-between gap-3 py-1 text-sm">
-          <span className="min-w-0 truncate text-muted-foreground">
-            Effective coverage
-          </span>
-          <span className="shrink-0 font-medium tabular-nums text-foreground/80">
-            {effectivePct != null ? `${effectivePct.toFixed(0)}%` : "—"}
-          </span>
-        </div>
-        <div className="flex items-center justify-between gap-3 py-1 text-sm">
-          <span className="min-w-0 truncate text-muted-foreground">
-            Approved boards
-          </span>
-          <span className="shrink-0 font-medium tabular-nums text-foreground/80">
-            {boardCount != null ? formatNumber(boardCount) : "—"}
-          </span>
+        <div className="shrink-0">
+          <InfoHint text={INFO_TEXT} />
         </div>
       </div>
 
-      {/* Per-board mini-breakdown — top boards by house cost. Each row:
-          board name + house % chip (left), prize pool (muted) + house
-          cost (rose) (right). Collapses the tail into a "+N more" line. */}
-      {topBoards.length > 0 && (
-        <div className="mt-3 border-t border-border/50 pt-2">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Top boards by house cost
-          </p>
-          <ul className="space-y-1.5">
-            {topBoards.map((b) => (
-              <li
-                key={b.id}
-                className="flex items-center justify-between gap-3 text-xs"
-              >
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate font-medium text-foreground/90">
-                    {b.name || "Untitled board"}
-                  </span>
-                  <span className="shrink-0 rounded-full border border-border/60 bg-muted/40 px-1.5 py-px text-[10px] tabular-nums text-muted-foreground">
-                    {b.sponsoredPct.toFixed(0)}%
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-baseline gap-2 tabular-nums">
-                  <span className="text-muted-foreground/70">
-                    {formatCurrency(b.prizeUsd)}
-                  </span>
-                  <span className={cn("font-semibold", rose.text)}>
-                    {formatCurrency(b.houseCostUsd)}
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-          {remaining > 0 && (
-            <p className="mt-1.5 text-[10px] text-muted-foreground">
-              +{formatNumber(remaining)} more board
-              {remaining === 1 ? "" : "s"}
-            </p>
-          )}
-        </div>
-      )}
-    </StatPanel>
+      {/* Hero — Active now (rose house cost). */}
+      <p
+        className={cn(
+          "relative mt-1 truncate text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl",
+          rose.text,
+        )}
+      >
+        {activeHouseCostUsd != null ? formatCurrency(activeHouseCostUsd) : "—"}
+      </p>
+      <p className="relative mt-0.5 truncate text-[10px] text-muted-foreground sm:text-[11px]">
+        Active now
+        {activeSub ? ` · ${activeSub}` : ""}
+      </p>
+
+      {/* Secondary — what we already spent on finished boards. */}
+      <p className="relative mt-1 truncate text-[10px] text-muted-foreground sm:text-[11px]">
+        Past:{" "}
+        <span className="font-medium tabular-nums text-foreground/70">
+          {pastHouseCostUsd != null ? formatCurrency(pastHouseCostUsd) : "—"}
+        </span>{" "}
+        spent
+        {pastCount != null && pastCount > 0
+          ? ` · ${formatNumber(pastCount)} board${pastCount === 1 ? "" : "s"}`
+          : ""}
+      </p>
+    </div>
   );
 }

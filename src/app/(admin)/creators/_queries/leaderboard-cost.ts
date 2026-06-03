@@ -103,6 +103,46 @@ export type LeaderboardCostTotals = {
    * totals above — no extra round-trip.
    */
   boards: LeaderboardCostBoard[];
+
+  // ─── Time-split house cost (PAST vs ACTIVE vs UPCOMING) ──────────────
+  // Derived from the SAME approved-board walk above, partitioned by each
+  // board's run window relative to NOW — no extra query. Lets the
+  // /creators Leaderboard Spend box separate what we've ALREADY committed
+  // on finished boards from what we're committed to RIGHT NOW.
+
+  /**
+   * House-covered cost of boards whose run has finished (`end_date < now`):
+   *
+   *   pastHouseCostUsd = Σ (net prize × sponsored% / 100) over ended boards
+   *
+   * What we already spent on old/finished leaderboards (rose house cost).
+   */
+  pastHouseCostUsd: number;
+  /**
+   * House-covered cost of boards running RIGHT NOW (`now` ∈
+   * [start_date, end_date]) — what we're committed to at this moment
+   * (rose house cost). Same sponsored-% weighting as above.
+   */
+  activeHouseCostUsd: number;
+  /**
+   * Gross (100%, un-weighted) net prize pool of the ACTIVE boards — the
+   * denominator for the active coverage %. The creator funds the rest
+   * off-site; only `activeHouseCostUsd` of this is our cost.
+   */
+  activeGrossUsd: number;
+  /**
+   * Blended house share across the ACTIVE boards:
+   *
+   *   activeCoveragePct = activeHouseCostUsd / activeGrossUsd × 100
+   *
+   * The "% of the active boards we have to pay". 0 when there's no active
+   * gross prize (no boards running, or active pool fully refunded).
+   */
+  activeCoveragePct: number;
+  /** Count of boards running right now (folded into the ACTIVE figures). */
+  activeCount: number;
+  /** Count of finished boards (folded into the PAST figure). */
+  pastCount: number;
 };
 
 /**
@@ -127,6 +167,12 @@ export type LeaderboardCostTotals = {
  * — purely a cost-accounting input, set inline on /creators/leaderboards).
  * Leaderboards with no annotation default to 100% (full cost): when every
  * board is at the default, houseCoveredUsd === totalPrizeUsd.
+ *
+ * The same approved-board walk is ALSO partitioned by each board's run
+ * window relative to NOW — `pastHouseCostUsd` (finished boards),
+ * `activeHouseCostUsd` / `activeGrossUsd` / `activeCoveragePct` (running
+ * right now) — so the /creators box can split "already spent on old
+ * boards" from "committed right now + the % of it we pay". No extra query.
  */
 export async function getLeaderboardCostTotal(): Promise<LeaderboardCostTotals> {
   const all = await fetchAllApprovedLeaderboards();
@@ -145,8 +191,18 @@ export async function getLeaderboardCostTotal(): Promise<LeaderboardCostTotals> 
     sponsorship = new Map();
   }
 
+  // NOW once, reused for the past/active partition below so every board
+  // is bucketed against a single consistent clock.
+  const now = Date.now();
+
   let totalPrizeUsd = 0;
   let houseCoveredUsd = 0;
+  // Time-split house cost accumulators (same sponsored-% weighting).
+  let pastHouseCostUsd = 0;
+  let activeHouseCostUsd = 0;
+  let activeGrossUsd = 0;
+  let activeCount = 0;
+  let pastCount = 0;
   const boards: LeaderboardCostBoard[] = [];
   for (const lb of all) {
     const prize = Number(lb.total_prize_usd) || 0;
@@ -157,6 +213,29 @@ export async function getLeaderboardCostTotal(): Promise<LeaderboardCostTotals> 
     const houseCost = net * (pct / 100);
     totalPrizeUsd += net;
     houseCoveredUsd += houseCost;
+
+    // Bucket by run window relative to NOW (same date math as the
+    // per-creator 2-week projection below). ENDED = end_date strictly in
+    // the past; ACTIVE = now within [start, end]; everything else is
+    // UPCOMING (start in the future) and folds into neither past nor
+    // active. Unparseable dates (NaN) fall through to neither bucket
+    // rather than poison a total.
+    const start = new Date(lb.start_date).getTime();
+    const end = new Date(lb.end_date).getTime();
+    if (Number.isFinite(end) && end < now) {
+      pastHouseCostUsd += houseCost;
+      pastCount += 1;
+    } else if (
+      Number.isFinite(start) &&
+      Number.isFinite(end) &&
+      start <= now &&
+      end >= now
+    ) {
+      activeHouseCostUsd += houseCost;
+      activeGrossUsd += net;
+      activeCount += 1;
+    }
+
     boards.push({
       id: lb.id,
       name: lb.title,
@@ -170,11 +249,21 @@ export async function getLeaderboardCostTotal(): Promise<LeaderboardCostTotals> 
   // Priciest house cost first so the panel's mini-breakdown surfaces the
   // boards that move the headline most.
   boards.sort((a, b) => b.houseCostUsd - a.houseCostUsd);
+  // Blended "% we pay" across the active boards. 0 when there's no active
+  // gross prize (nothing running, or the active pool is fully refunded).
+  const activeCoveragePct =
+    activeGrossUsd > 0 ? (activeHouseCostUsd / activeGrossUsd) * 100 : 0;
   return {
     totalPrizeUsd,
     houseCoveredUsd,
     boardCount: boards.length,
     boards,
+    pastHouseCostUsd,
+    activeHouseCostUsd,
+    activeGrossUsd,
+    activeCoveragePct,
+    activeCount,
+    pastCount,
   };
 }
 
