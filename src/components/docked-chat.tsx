@@ -8,6 +8,7 @@ import {
   railSlotStyle,
   useRailWidget,
 } from "@/components/right-rail-context";
+import { useMounted } from "@/hooks/use-mounted";
 
 /**
  * Persistent docked Chat & Mutes widget on the right edge of the admin
@@ -27,6 +28,26 @@ const PANEL_WIDTH_PX = 320;
 
 export function DockedChat({ role }: { role: string }) {
   const { open, setOpen, allOpen, mounted } = useRailWidget("chat");
+  // `false` on the server render AND the first client paint, `true` after mount.
+  // The docked chat defaults to OPEN (DEFAULT_OPEN.chat), so its body is part of
+  // the SSR markup. That body — <ChatPanelContent>'s base-ui <Tabs> (Chat/Mutes
+  // triggers + the active tabpanel) and the search <Input> — derives its element
+  // `id`s from React `useId()` through base-ui's composite-list internals, and
+  // the SSR pass and the first client render allocate DIFFERENT `useId` values
+  // for those nodes. The id/aria attributes therefore disagree on hydration,
+  // which React reports as a recoverable hydration mismatch — minified React
+  // error #418 (args[]=HTML) in production — and it fires on EVERY admin page
+  // because the chat dock lives in the always-rendered shell (admin role).
+  // base-ui's <Menu> (the header profile dropdown) does NOT hit this, so it's
+  // specific to the Tabs/Field composite components painting at first load.
+  //
+  // Fix: keep the SSR-shaped open <aside> (chrome + a deterministic placeholder
+  // body) byte-identical between the server and the first client paint, and only
+  // mount the interactive ChatPanelContent AFTER hydration. The Tabs/Input then
+  // mount fresh on the client and never hydrate against the server HTML, so no
+  // id can diverge. The panel already bootstraps its messages in an effect
+  // (shows a skeleton first), so deferring its mount by one tick is invisible.
+  const mountedAfterHydration = useMounted();
 
   if (!open) {
     return (
@@ -94,9 +115,26 @@ export function DockedChat({ role }: { role: string }) {
           data fetching. Wrap in a flex container so the inner Tabs
           can stretch to fill the available height. `min-h-0` lets
           the tab content area shrink properly inside the flex parent
-          (so the inner scrolling list doesn't push the panel out). */}
+          (so the inner scrolling list doesn't push the panel out).
+
+          Mounted only AFTER hydration (see `mountedAfterHydration` above):
+          on the server + first client paint we render a deterministic
+          placeholder so the markup matches byte-for-byte; the base-ui
+          Tabs/Input then mount fresh on the client without hydrating, so
+          their `useId`-derived ids can't diverge (the #418 source). */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <ChatPanelContent role={role} />
+        {mountedAfterHydration ? (
+          <ChatPanelContent role={role} />
+        ) : (
+          <div
+            className="flex-1"
+            aria-hidden
+            // Matches the server markup exactly (an empty flex body) so the
+            // first client paint is identical to SSR. The real panel swaps in
+            // one tick later; it shows its own loading skeleton while it
+            // bootstraps, so there is no visible flash.
+          />
+        )}
       </div>
     </aside>
   );
