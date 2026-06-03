@@ -80,10 +80,47 @@ export type CreatorNetGgrRow = {
   upgraderPayout: number;
 };
 
+/**
+ * Roster-wide GGR legs — the SAME canonical components the dashboard's
+ * `getGgrBreakdown` surfaces, summed across the whole creator cohort
+ * (only `role = 'creator'` attributed ids — identical gate to
+ * `byCreator`). These are aggregated in-loop from the per-creator
+ * components already computed below, so they add NO extra query: the
+ * cohort breakdown reconciles to `totalGgr` by construction
+ * (`packBattleWager + upgraderWager − inventoryPayout − battleRefundLedger
+ * − upgraderPayout = totalGgr`).
+ *
+ * Mirrors the dashboard popover's wager-side (pack/battle stake + upgrader
+ * stake) and payout-side (pack/battle inventory wins + battle refunds +
+ * upgrader payout) split.
+ */
+export type CohortGgrLegs = {
+  /** Ledger pack/battle stake (upgrader carved out). Wager-side. */
+  packBattleWager: number;
+  /** Upgrader stake (`upgrader_games.bet_amount`). Wager-side. */
+  upgraderWager: number;
+  /** Pack/battle wins valued from inventory (the dominant payout). */
+  inventoryPayout: number;
+  /** Ledger cash gaming-payout legs — battle refunds. */
+  battleRefundLedger: number;
+  /** Upgrader payout (`upgrader_games.won_amount`). */
+  upgraderPayout: number;
+  /** Σ wager-side legs (packBattleWager + upgraderWager). */
+  wagersTotal: number;
+  /** Σ payout-side legs (inventoryPayout + battleRefundLedger + upgraderPayout). */
+  payoutsTotal: number;
+};
+
 export type AllCreatorsNetGgr = {
   period: DashboardPeriod;
   /** Σ ggr across all creators in the result (cohort-attributed). */
   totalGgr: number;
+  /**
+   * Roster-wide GGR legs (wager/payout per source) summed across the
+   * cohort — backs the breakdown list-down on the /creators "Net
+   * Code-User GGR" tile. Reconciles to `totalGgr` by construction.
+   */
+  legs: CohortGgrLegs;
   /** Per-creator rows, sorted by GGR descending (biggest house win first). */
   byCreator: CreatorNetGgrRow[];
 };
@@ -266,8 +303,18 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
       byId.set(r.creator_id, e);
     }
 
+    const emptyLegs: CohortGgrLegs = {
+      packBattleWager: 0,
+      upgraderWager: 0,
+      inventoryPayout: 0,
+      battleRefundLedger: 0,
+      upgraderPayout: 0,
+      wagersTotal: 0,
+      payoutsTotal: 0,
+    };
+
     if (byId.size === 0) {
-      return { period, totalGgr: 0, byCreator: [] };
+      return { period, totalGgr: 0, legs: emptyLegs, byCreator: [] };
     }
 
     // Resolve username/image for the attributed creators (Main DB),
@@ -285,6 +332,23 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
     });
     const userById = new Map(users.map((u) => [u.id, u]));
 
+    // Roster-wide GGR legs — accumulated from the SAME per-creator
+    // components, gated to `role = 'creator'` ids (the `if (!u) continue`
+    // skip below), so the cohort breakdown sums exactly the same set the
+    // tile's `totalGgr` does. `e.wager` is the ledger pack/battle stake
+    // (upgrader is a separate `e.upgraderWager` slice); `e.ledgerGamingPayout`
+    // is the ledger battle-refund cash leg. No extra query — pure in-loop
+    // summation over the already-fetched rows.
+    const legs: CohortGgrLegs = {
+      packBattleWager: 0,
+      upgraderWager: 0,
+      inventoryPayout: 0,
+      battleRefundLedger: 0,
+      upgraderPayout: 0,
+      wagersTotal: 0,
+      payoutsTotal: 0,
+    };
+
     let totalGgr = 0;
     const byCreator: CreatorNetGgrRow[] = [];
     for (const [creatorUserId, e] of byId) {
@@ -298,6 +362,13 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
         battleRefund: e.ledgerGamingPayout + e.upgraderPayout,
       });
       const ggr = ggrFormula({ wager, gamingPayout });
+      // Fold this creator's legs into the cohort breakdown (creator-gated,
+      // same as the row push below).
+      legs.packBattleWager += e.wager;
+      legs.upgraderWager += e.upgraderWager;
+      legs.inventoryPayout += e.inventoryPayout;
+      legs.battleRefundLedger += e.ledgerGamingPayout;
+      legs.upgraderPayout += e.upgraderPayout;
       byCreator.push({
         creatorUserId,
         username: u.username,
@@ -313,9 +384,18 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
       totalGgr += ggr;
     }
 
+    // Derive the bucket totals from the accumulated legs. These mirror
+    // the dashboard's `wagersTotal` / `payoutsTotal`, so
+    // `wagersTotal − payoutsTotal === totalGgr` holds by construction
+    // (each is the cohort sum of the same per-creator legs `totalGgr`
+    // already sums).
+    legs.wagersTotal = legs.packBattleWager + legs.upgraderWager;
+    legs.payoutsTotal =
+      legs.inventoryPayout + legs.battleRefundLedger + legs.upgraderPayout;
+
     // GGR descending — biggest house win first.
     byCreator.sort((a, b) => b.ggr - a.ggr);
 
-    return { period, totalGgr, byCreator };
+    return { period, totalGgr, legs, byCreator };
   });
 });

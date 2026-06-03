@@ -80,6 +80,7 @@ import {
   CreatorsPeriodControl,
 } from "./_components/creators-sort-control";
 import { GlobalPnlByCreatorPopover } from "./_components/global-pnl-by-creator-popover";
+import { NetGgrBreakdownPopover } from "./_components/net-ggr-breakdown-popover";
 import { InfoHint } from "./_components/info-hint";
 import { getAllCreatorsLifetimePnl } from "./_queries/all-creators-lifetime-pnl";
 import { getAllCreatorsNetGgr } from "./_queries/all-creators-net-pnl";
@@ -1029,8 +1030,14 @@ async function NetGgrTile({
   });
 
   const total = data?.totalGgr;
+  const legs = data?.legs;
   const accent: "emerald" | "rose" | "blue" =
     total == null || total === 0 ? "blue" : total > 0 ? "emerald" : "rose";
+  // Only surface the drill-in list-down when there's attributed activity
+  // in the window (a leg with a non-zero total) — otherwise the popover
+  // would just say "no activity" everywhere.
+  const hasLegs =
+    legs != null && (legs.wagersTotal > 0 || legs.payoutsTotal > 0);
 
   return (
     <KpiTile
@@ -1044,10 +1051,29 @@ async function NetGgrTile({
       icon={Sparkles}
       accent={accent}
       action={
-        <InfoHint
-          text="Gross gaming revenue (wager − payout) from every creator's code cohort, summed over the selected window. Counted only while each code was active (its 7-day attribution windows). House POV — emerald = players net-lost to us, rose = we net-paid them out."
-          side="bottom"
-        />
+        <div className="flex items-center gap-1.5">
+          <InfoHint
+            text="Gross gaming revenue (wager − payout) from every creator's code cohort, summed over the selected window. Counted only while each code was active (its 7-day attribution windows). House POV — emerald = players net-lost to us, rose = we net-paid them out."
+            side="bottom"
+          />
+          {/* Dashboard-style GGR list-down — decomposes the cohort GGR
+              into its wager / payout legs (packs & battles + upgrader),
+              mirroring the GgrStatCard popover on /dashboard. The legs
+              reconcile to the tile's headline by construction. */}
+          {hasLegs && (
+            <NetGgrBreakdownPopover
+              packBattleWager={legs.packBattleWager}
+              upgraderWager={legs.upgraderWager}
+              inventoryPayout={legs.inventoryPayout}
+              battleRefundLedger={legs.battleRefundLedger}
+              upgraderPayout={legs.upgraderPayout}
+              wagersTotal={legs.wagersTotal}
+              payoutsTotal={legs.payoutsTotal}
+              ggr={total ?? 0}
+              periodLabel={DASHBOARD_PERIOD_LABELS[period]}
+            />
+          )}
+        </div>
       }
     />
   );
