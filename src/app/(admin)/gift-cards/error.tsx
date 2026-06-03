@@ -7,11 +7,19 @@ import { Button } from "@/components/ui/button";
 import { PageHero } from "@/components/modern-panels";
 
 /**
- * Route-level error boundary for /transactions. Catches failures from
- * the ledger query (filters, date ranges, type facets) and surfaces a
- * clean message instead of falling through to Next.js's overlay.
+ * Route-level error boundary for /gift-cards.
+ *
+ * The gift-cards view lists redemption codes and their balance impact. A
+ * failed query or a stale Prisma column would otherwise bubble to the
+ * umbrella `(admin)/error.tsx`; this boundary scopes it to /gift-cards
+ * with a calm "the READ failed, the codes are fine" message so admins
+ * don't assume a redemption mis-fired. The reset path re-runs the server
+ * render without a full reload.
+ *
+ * SECURITY: the raw `error.message` is never rendered — only the digest
+ * (safe correlation handle) is shown. Full stack lives in server logs.
  */
-export default function TransactionsError({
+export default function GiftCardsError({
   error,
   reset,
 }: {
@@ -19,7 +27,7 @@ export default function TransactionsError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[transactions] page error boundary caught:", error);
+    console.error("[gift-cards] page error boundary caught:", error);
   }, [error]);
 
   return (
@@ -31,12 +39,12 @@ export default function TransactionsError({
           </div>
           <div className="flex-1">
             <h1 className="text-xl font-semibold leading-tight tracking-tight">
-              Couldn&apos;t load the ledger
+              Couldn&apos;t load gift cards
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              The transactions query failed before the page could render. The
-              error was logged — the ledger itself is intact, just temporarily
-              unreadable from this view.
+              The gift-cards query failed while rendering. The error was
+              logged — no gift card was issued, redeemed, or revoked as a
+              result of this error.
               {error.digest && (
                 <span className="ml-1 font-mono text-xs">
                   (digest {error.digest})
@@ -49,9 +57,10 @@ export default function TransactionsError({
 
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
-          Ledger entries are immutable and append-only — nothing has been
-          changed by this error. A bad filter combination or upstream timeout
-          is the most common cause. Server logs have the full stack trace.
+          Only the read path failed — gift-card balances and redemption
+          records are unchanged. A transient timeout or a stale Prisma
+          column is the most common cause. Server logs have the full stack —
+          search for the digest above.
         </p>
       </div>
 

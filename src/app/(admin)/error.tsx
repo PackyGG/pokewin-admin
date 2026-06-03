@@ -1,35 +1,44 @@
 "use client";
 
 import { useEffect } from "react";
-import { AlertTriangle, RefreshCcw } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { PageHero } from "@/components/modern-panels";
 
 /**
  * Catch-all error boundary for the entire `(admin)` route group.
  *
- * Next.js routes errors to the NEAREST `error.tsx` ancestor. Six admin
- * subtrees already define their own (creators, dashboard, salaries,
- * transactions, users, withdrawals). Every OTHER page under `(admin)/`
- * — promo-codes, analytics, battles, packs, gift-cards, vouchers, rain,
- * audit, settings, system, etc. — used to bubble straight up to the
- * generic Vercel "An error occurred in the Server Components render"
- * page. This boundary intercepts those before they leave the admin
- * shell.
+ * Next.js routes errors to the NEAREST `error.tsx` ancestor. Many admin
+ * subtrees define their own (analytics, battles, creators, dashboard,
+ * employees, marketing, packs, rewards, salaries, transactions, users,
+ * withdrawals, plus the heavier insights / ggr / cards / rain / etc.
+ * trees). Every OTHER page under `(admin)/` falls through to THIS
+ * umbrella instead of bubbling to the generic Vercel "An error occurred
+ * in the Server Components render" page. This boundary intercepts those
+ * before they leave the admin shell.
  *
- * Behavior:
- *   • Friendly title + the error's message + digest so admins can
- *     correlate with Vercel function logs without opening the console.
+ * Shared shape across every admin error boundary:
+ *   • Calm title + a generic recoverable message + the error's digest
+ *     shown small so admins can correlate with Vercel function logs.
  *   • "Try again" hits Next's `reset()` which re-renders the failed
  *     route segment without a full page reload — so a transient query
  *     blip doesn't force the admin to navigate away and back.
- *   • Logs the caught error to the console (server logs already
- *     capture the original throw; this duplicates onto the client
- *     side so devtools shows it without needing Vercel access).
+ *   • "Back to dashboard" is the always-available home affordance.
+ *   • Mirrors the caught error to the browser console (server logs
+ *     already capture the original throw; this duplicates onto the
+ *     client so devtools shows it without needing Vercel access).
+ *
+ * SECURITY: `error.message` is intentionally NOT rendered. Next 15
+ * strips it from production client payloads anyway, and an admin-facing
+ * surface should never echo a raw upstream error (Postgres errors can
+ * carry the failed SQL + params). The digest is the safe correlation
+ * handle; the full stack lives in the server logs only.
  *
  * Per-route boundaries (e.g. `creators/error.tsx`) still take
  * precedence and can show route-specific guidance (env vars to check,
- * etc.). This file is the umbrella for everything else.
+ * migrations to run, etc.). This file is the umbrella for everything else.
  */
 export default function AdminError({
   error,
@@ -39,56 +48,53 @@ export default function AdminError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[admin] error boundary caught:", error);
+    console.error("[admin] page error boundary caught:", error);
   }, [error]);
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center gap-3 border-b pb-4">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/10">
-          <AlertTriangle className="size-5 text-rose-500" />
+    <div className="space-y-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
+      <PageHero>
+        <div className="flex items-start gap-3">
+          <div className="flex size-11 items-center justify-center rounded-xl bg-rose-500/10 ring-1 ring-rose-500/30">
+            <AlertTriangle className="size-5 text-rose-500" />
+          </div>
+          <div className="flex-1">
+            <h1 className="text-xl font-semibold leading-tight tracking-tight">
+              Something broke on this page
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              An unexpected error happened while rendering this page. The
+              error was logged — most transient failures clear on a retry.
+              {error.digest && (
+                <span className="ml-1 font-mono text-xs">
+                  (digest {error.digest})
+                </span>
+              )}
+            </p>
+          </div>
         </div>
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold leading-tight tracking-tight">
-            Something broke on this page
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {/* `error.message` is omitted in production builds — Next 15
-                only ships the digest to clients to avoid leaking stacks.
-                Either way we render whatever's available so dev/local
-                gets the message and prod still gets the digest. */}
-            {error.message ||
-              "An unexpected error happened while rendering this page."}
-            {error.digest && (
-              <span className="ml-1 font-mono text-xs">
-                (digest {error.digest})
-              </span>
-            )}
-          </p>
-        </div>
-      </div>
+      </PageHero>
 
-      <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4 text-xs text-muted-foreground">
-        <p>
-          The page didn&apos;t load. Most common causes for this admin app:
-          a backend / DB query that errored, a Prisma schema field that
-          doesn&apos;t exist on the live DB yet, or a transient network
-          blip to the backend API. Server logs (Vercel Functions) have
-          the full stack — search for the digest above.
-        </p>
-        <p className="mt-2">
-          Hitting <span className="font-medium">Try again</span> below
-          re-runs the page&apos;s server-side render without a full
-          reload, which fixes most transient failures. If the same
-          error comes back, the issue is structural — escalate with
-          the digest.
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+        <p className="text-xs text-muted-foreground">
+          The most common causes for this admin app: a backend / DB query
+          that errored, a Prisma schema field that doesn&apos;t exist on the
+          live DB yet, or a transient network blip to the backend API.
+          Server logs (Vercel Functions) have the full stack — search for
+          the digest above.
         </p>
       </div>
 
-      <Button type="button" variant="outline" size="sm" onClick={reset}>
-        <RefreshCcw className="size-4" />
-        Try again
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="default" size="sm" onClick={reset}>
+          <RotateCw className="size-4" />
+          Try again
+        </Button>
+        <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
+          <ArrowLeft className="size-4" />
+          Back to dashboard
+        </Button>
+      </div>
     </div>
   );
 }

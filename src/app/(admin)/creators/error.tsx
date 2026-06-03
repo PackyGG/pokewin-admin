@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
-import { AlertTriangle, RefreshCcw } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PageHero } from "@/components/modern-panels";
 
 /**
  * Final safety net for the /creators tree. The page already catches
@@ -10,6 +12,9 @@ import { Button } from "@/components/ui/button";
  * else throws (rendering bug, unexpected runtime exception) this
  * boundary surfaces a clean message instead of Next.js's generic
  * "Application error" overlay.
+ *
+ * SECURITY: the raw `error.message` is never rendered — only the digest
+ * (safe correlation handle) is shown. Full stack lives in server logs.
  */
 export default function CreatorsError({
   error,
@@ -26,27 +31,30 @@ export default function CreatorsError({
   }, [error]);
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center gap-3 pb-4 border-b">
-        <div className="flex size-10 items-center justify-center rounded-xl bg-rose-500/10">
-          <AlertTriangle className="size-5 text-rose-500" />
+    <div className="space-y-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
+      <PageHero>
+        <div className="flex items-start gap-3">
+          <div className="flex size-11 items-center justify-center rounded-xl bg-rose-500/10 ring-1 ring-rose-500/30">
+            <AlertTriangle className="size-5 text-rose-500" />
+          </div>
+          <div className="flex-1">
+            <h1 className="text-xl font-semibold leading-tight tracking-tight">
+              Couldn&apos;t load creators
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              A creators query failed while rendering. The error was logged
+              — most transient failures clear on a retry.
+              {error.digest && (
+                <span className="ml-1 font-mono text-xs">
+                  (digest {error.digest})
+                </span>
+              )}
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-xl font-semibold leading-tight tracking-tight">
-            Creators page hit an error
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {error.message || "Something went wrong rendering this page."}
-            {error.digest && (
-              <span className="ml-1 font-mono text-xs">
-                (digest {error.digest})
-              </span>
-            )}
-          </p>
-        </div>
-      </div>
+      </PageHero>
 
-      <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4">
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
           The most common cause is the backend API not being reachable
           from this deployment — confirm{" "}
@@ -57,14 +65,21 @@ export default function CreatorsError({
           <code className="rounded bg-muted px-1 py-0.5 text-xs">
             BACKEND_ADMIN_KEY_PROD
           </code>{" "}
-          are set in the Vercel project. Server logs have the full stack.
+          are set in the Vercel project. Server logs have the full stack —
+          search for the digest above.
         </p>
       </div>
 
-      <Button type="button" variant="outline" size="sm" onClick={reset}>
-        <RefreshCcw className="size-4" />
-        Try again
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="default" size="sm" onClick={reset}>
+          <RotateCw className="size-4" />
+          Try again
+        </Button>
+        <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
+          <ArrowLeft className="size-4" />
+          Back to dashboard
+        </Button>
+      </div>
     </div>
   );
 }

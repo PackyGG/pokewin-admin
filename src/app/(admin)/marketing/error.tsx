@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { AlertTriangle, RotateCw, Megaphone } from "lucide-react";
+import { AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHero } from "@/components/modern-panels";
 
@@ -66,13 +66,9 @@ export default function MarketingError({
           <RotateCw className="size-4" />
           Try again
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          render={<Link href="/marketing/giveaway" />}
-        >
-          <Megaphone className="size-4" />
-          Reload marketing
+        <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
+          <ArrowLeft className="size-4" />
+          Back to dashboard
         </Button>
       </div>
     </div>

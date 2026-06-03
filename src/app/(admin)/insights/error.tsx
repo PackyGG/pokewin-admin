@@ -7,11 +7,23 @@ import { Button } from "@/components/ui/button";
 import { PageHero } from "@/components/modern-panels";
 
 /**
- * Route-level error boundary for /transactions. Catches failures from
- * the ledger query (filters, date ranges, type facets) and surfaces a
- * clean message instead of falling through to Next.js's overlay.
+ * Route-level error boundary for the entire /insights tree (analytics,
+ * games, cost-breakdown, balance-adjustments, edge-calc, streamers, and
+ * the rewards-insights sub-tree: affiliate / deposit-bonus / race /
+ * rakeback / signup).
+ *
+ * Insights is the heaviest read path in the admin: lifetime forward
+ * scans, multi-query reward-ROI batches, GGR/NGR fan-outs, percentile
+ * aggregates. A single slow upstream — or a Prisma column that drifted
+ * — can take a whole tab down. Without this boundary those throws bubble
+ * to the umbrella `(admin)/error.tsx`; with it, the failure is scoped to
+ * insights and the copy is accurate. The reset path re-runs the server
+ * render without a full reload, which clears most transient timeouts.
+ *
+ * SECURITY: the raw `error.message` is never rendered — only the digest
+ * (safe correlation handle) is shown. Full stack lives in server logs.
  */
-export default function TransactionsError({
+export default function InsightsError({
   error,
   reset,
 }: {
@@ -19,7 +31,7 @@ export default function TransactionsError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[transactions] page error boundary caught:", error);
+    console.error("[insights] page error boundary caught:", error);
   }, [error]);
 
   return (
@@ -31,12 +43,12 @@ export default function TransactionsError({
           </div>
           <div className="flex-1">
             <h1 className="text-xl font-semibold leading-tight tracking-tight">
-              Couldn&apos;t load the ledger
+              Couldn&apos;t load insights
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              The transactions query failed before the page could render. The
-              error was logged — the ledger itself is intact, just temporarily
-              unreadable from this view.
+              One of the insights aggregates failed while rendering. The
+              error was logged — the underlying ledger data is intact, just
+              temporarily unreadable from this report view.
               {error.digest && (
                 <span className="ml-1 font-mono text-xs">
                   (digest {error.digest})
@@ -49,9 +61,11 @@ export default function TransactionsError({
 
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
-          Ledger entries are immutable and append-only — nothing has been
-          changed by this error. A bad filter combination or upstream timeout
-          is the most common cause. Server logs have the full stack trace.
+          Insights queries fan out across reward-ROI batches, GGR/NGR
+          aggregates, and lifetime scans — a single slow upstream or a stale
+          Prisma column can collapse the whole report. Most are cached and
+          time-bounded, so a retry usually picks up a warmed result. Server
+          logs have the full stack — search for the digest above.
         </p>
       </div>
 

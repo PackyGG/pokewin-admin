@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { AlertTriangle, RotateCw, Package } from "lucide-react";
+import { AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHero } from "@/components/modern-panels";
 
@@ -64,13 +64,9 @@ export default function PacksError({
           <RotateCw className="size-4" />
           Try again
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          render={<Link href="/packs" />}
-        >
-          <Package className="size-4" />
-          Reload packs
+        <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
+          <ArrowLeft className="size-4" />
+          Back to dashboard
         </Button>
       </div>
     </div>

@@ -7,11 +7,20 @@ import { Button } from "@/components/ui/button";
 import { PageHero } from "@/components/modern-panels";
 
 /**
- * Route-level error boundary for /transactions. Catches failures from
- * the ledger query (filters, date ranges, type facets) and surfaces a
- * clean message instead of falling through to Next.js's overlay.
+ * Route-level error boundary for the /admin-users tree (list, [id],
+ * balance-limits).
+ *
+ * These pages read the admin DB (admin_users, admin_sessions,
+ * admin_balance_limits). A failed query or a stale column would
+ * otherwise bubble to the umbrella `(admin)/error.tsx`; this boundary
+ * scopes it to /admin-users with a calm "the READ failed, the accounts
+ * are fine" message. The reset path re-runs the server render without a
+ * full reload.
+ *
+ * SECURITY: the raw `error.message` is never rendered — only the digest
+ * (safe correlation handle) is shown. Full stack lives in server logs.
  */
-export default function TransactionsError({
+export default function AdminUsersError({
   error,
   reset,
 }: {
@@ -19,7 +28,7 @@ export default function TransactionsError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[transactions] page error boundary caught:", error);
+    console.error("[admin-users] page error boundary caught:", error);
   }, [error]);
 
   return (
@@ -31,12 +40,12 @@ export default function TransactionsError({
           </div>
           <div className="flex-1">
             <h1 className="text-xl font-semibold leading-tight tracking-tight">
-              Couldn&apos;t load the ledger
+              Couldn&apos;t load admin users
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              The transactions query failed before the page could render. The
-              error was logged — the ledger itself is intact, just temporarily
-              unreadable from this view.
+              The admin-users query failed while rendering. The error was
+              logged — no admin account, role, or balance limit was modified
+              by this error.
               {error.digest && (
                 <span className="ml-1 font-mono text-xs">
                   (digest {error.digest})
@@ -49,9 +58,11 @@ export default function TransactionsError({
 
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
-          Ledger entries are immutable and append-only — nothing has been
-          changed by this error. A bad filter combination or upstream timeout
-          is the most common cause. Server logs have the full stack trace.
+          These pages read the admin DB (admin_users, admin_sessions,
+          admin_balance_limits) — only the read path failed, the records are
+          unchanged. A transient timeout or a stale column is the most common
+          cause. Server logs have the full stack — search for the digest
+          above.
         </p>
       </div>
 

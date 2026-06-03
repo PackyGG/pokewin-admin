@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { AlertTriangle, RotateCw, Users } from "lucide-react";
+import { AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHero } from "@/components/modern-panels";
 
@@ -49,8 +49,10 @@ export default function UsersError({
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
           A single bad filter parameter or an upstream timeout against the
-          main DB can take this view down. Try clearing filters via the link
-          below if &quot;Try again&quot; keeps failing.
+          main DB can take this view down. If &quot;Try again&quot; keeps
+          failing, clear active filters from the URL or head back to the
+          dashboard. Server logs have the full stack — search for the digest
+          above.
         </p>
       </div>
 
@@ -59,13 +61,9 @@ export default function UsersError({
           <RotateCw className="size-4" />
           Try again
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          render={<Link href="/users" />}
-        >
-          <Users className="size-4" />
-          Reload user list
+        <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
+          <ArrowLeft className="size-4" />
+          Back to dashboard
         </Button>
       </div>
     </div>

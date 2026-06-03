@@ -7,11 +7,19 @@ import { Button } from "@/components/ui/button";
 import { PageHero } from "@/components/modern-panels";
 
 /**
- * Route-level error boundary for /transactions. Catches failures from
- * the ledger query (filters, date ranges, type facets) and surfaces a
- * clean message instead of falling through to Next.js's overlay.
+ * Route-level error boundary for /ggr.
+ *
+ * The GGR breakdown sums wagers, payouts, and house edge across every
+ * game mode (packs, battles, upgrader, rewards legs) — a single failed
+ * leg query or a stale Prisma column can collapse the whole view. This
+ * boundary scopes that failure to /ggr instead of bubbling to the
+ * umbrella. The reset path re-runs the server render without a full
+ * reload, which clears most transient timeouts.
+ *
+ * SECURITY: the raw `error.message` is never rendered — only the digest
+ * (safe correlation handle) is shown. Full stack lives in server logs.
  */
-export default function TransactionsError({
+export default function GgrError({
   error,
   reset,
 }: {
@@ -19,7 +27,7 @@ export default function TransactionsError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[transactions] page error boundary caught:", error);
+    console.error("[ggr] page error boundary caught:", error);
   }, [error]);
 
   return (
@@ -31,11 +39,11 @@ export default function TransactionsError({
           </div>
           <div className="flex-1">
             <h1 className="text-xl font-semibold leading-tight tracking-tight">
-              Couldn&apos;t load the ledger
+              Couldn&apos;t load GGR
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              The transactions query failed before the page could render. The
-              error was logged — the ledger itself is intact, just temporarily
+              A GGR aggregate failed while rendering. The error was logged —
+              the underlying ledger data is intact, just temporarily
               unreadable from this view.
               {error.digest && (
                 <span className="ml-1 font-mono text-xs">
@@ -49,9 +57,10 @@ export default function TransactionsError({
 
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
-          Ledger entries are immutable and append-only — nothing has been
-          changed by this error. A bad filter combination or upstream timeout
-          is the most common cause. Server logs have the full stack trace.
+          The GGR breakdown sums wager / payout legs across every game mode —
+          a single slow leg query or a stale Prisma column can collapse the
+          whole report. Server logs have the full stack — search for the
+          digest above.
         </p>
       </div>
 

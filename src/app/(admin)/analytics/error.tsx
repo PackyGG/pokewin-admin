@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
-import { AlertTriangle, RotateCw, BarChart3 } from "lucide-react";
+import { AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHero } from "@/components/modern-panels";
 
@@ -67,13 +67,9 @@ export default function AnalyticsError({
           <RotateCw className="size-4" />
           Try again
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          render={<Link href="/analytics" />}
-        >
-          <BarChart3 className="size-4" />
-          Reload analytics
+        <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
+          <ArrowLeft className="size-4" />
+          Back to dashboard
         </Button>
       </div>
     </div>
