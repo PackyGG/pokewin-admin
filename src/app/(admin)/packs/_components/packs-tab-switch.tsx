@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { LinkPendingShell } from "@/components/ux/route-transition";
 
 /**
  * One of the two well-known pack pools. `pokemon` is the implicit
@@ -94,7 +95,11 @@ function TabPill({
           : "text-muted-foreground hover:text-foreground",
       )}
     >
-      {label}
+      {/* Bridge the blank-list moment while the other pool streams in: this
+          link's own pending state dims the label + appends a small spinner
+          (motion-safe, dark-safe). Sits INSIDE the <Link> so useLinkStatus()
+          scopes to this pill only. */}
+      <LinkPendingShell spinnerSize={12}>{label}</LinkPendingShell>
     </Link>
   );
 }

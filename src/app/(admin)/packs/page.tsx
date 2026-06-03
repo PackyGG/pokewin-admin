@@ -323,7 +323,11 @@ export default async function PacksPage({
         <Suspense
           key={suspenseKey}
           fallback={
-            <>
+            // motion-safe duration-300 fade so the skeleton eases in when a
+            // tab switch / filter change blanks the list, instead of snapping.
+            // Matches the FadeIn the resolved list itself uses, so there's no
+            // jump on swap. Reduced-motion users get the final state instantly.
+            <FadeIn>
               {view === "grid" ? (
                 <EntityGridSkeleton count={perPage} />
               ) : (
@@ -334,7 +338,7 @@ export default async function PacksPage({
                 />
               )}
               <PaginationSkeleton />
-            </>
+            </FadeIn>
           }
         >
           <PacksContent
