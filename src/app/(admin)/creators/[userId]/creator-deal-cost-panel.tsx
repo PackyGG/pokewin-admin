@@ -31,8 +31,11 @@ import { getCreatorTipsSponsorCost } from "./_queries/tips-sponsor-cost-by-creat
  *     withdrawal cap they realized). The common fill-deal creator's main
  *     payout — previously invisible on this panel.
  *   • Tips & sponsor     — the house-funded tips / battle sponsors the
- *     creator handed out of their fill pool
- *     (`creator_fill_spend_tip` / `creator_fill_spend_battle`).
+ *     creator handed out of their fill pool, summed from the per-session
+ *     spend counters (`tips_spent_this_session_usd` +
+ *     `sponsorship_spent_this_session_usd`) across ALL the creator's
+ *     sessions, so it reconciles with the per-session figures on the
+ *     Sessions tab.
  *   • Multiplier Payouts — `creator_multiplier_payout` withdrawable
  *     vouchers issued at end-of-stream settlement. MULTIPLIER deals only.
  *   • Multiplier Fill (net) — net `creator_fill_*` the house funded
@@ -47,18 +50,20 @@ import { getCreatorTipsSponsorCost } from "./_queries/tips-sponsor-cost-by-creat
  *
  * Every sub-query is best-effort: a failure in one degrades that line to
  * 0 rather than blanking the whole panel. The tips/sponsor sum runs
- * through `safeQuery → 0` (and queries `type::text` against string
- * literals) so an environment whose ledger enum lacks the
- * `creator_fill_spend_*` members can't throw the panel down. The panel
- * itself is streamed via Suspense from the page so none of these backend
- * round-trips extends the rest of the page's TTFB.
+ * through `safeQuery → 0` (and is derived from the backend's per-session
+ * spend counters, walking every session page) so a backend outage or a
+ * 404 (user isn't a creator on the backend) degrades it to 0 instead of
+ * throwing the panel down. The panel itself is streamed via Suspense from
+ * the page so none of these backend round-trips extends the rest of the
+ * page's TTFB.
  */
 export async function CreatorDealCostPanel({ userId }: { userId: string }) {
   // Independent best-effort fetches — one blowing up shouldn't sink the
   // others (or the panel). The leaderboard / multiplier / fill-conversion
-  // fetches degrade to null → their lines hide; the tips/sponsor sum runs
-  // through safeQuery → 0 (enum-safe `::text`) so a missing-enum
-  // environment returns 0 instead of throwing.
+  // fetches degrade to null → their lines hide; the tips/sponsor sum
+  // (derived from the backend per-session spend counters) runs through
+  // safeQuery → 0 so a backend outage or a non-creator 404 returns 0
+  // instead of throwing.
   const [leaderboard, multiplier, fillConversion, tipsSponsorResult] =
     await Promise.all([
       getCreatorLeaderboardCost(userId).catch((e) => {
@@ -248,9 +253,10 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
           )}
 
           {/* Tips & sponsor — house-funded tips / battle sponsors the
-              creator handed out of their fill pool
-              (`creator_fill_spend_tip` / `creator_fill_spend_battle`).
-              Shown only when non-zero. */}
+              creator handed out of their fill pool, summed across ALL
+              sessions from the per-session spend counters (matches the
+              Sessions tab's per-row "Spent on community"). Shown only when
+              non-zero. */}
           {showTipsSponsor && (
             <PanelRow
               label="Tips & sponsor (house-funded)"

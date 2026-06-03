@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { cn } from "@/lib/utils";
-import { formatDateTime } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import type {
   CreatorSessionResponse,
   StreamSessionStatus,
@@ -107,6 +107,12 @@ export function SessionsTab({ userId, sessions, currentStatus }: Props) {
             <TableHead className="text-right">Spent</TableHead>
             <TableHead className="text-right">Remaining</TableHead>
             <TableHead className="text-right">Converted</TableHead>
+            <TableHead className="text-right">
+              Spent on community
+              <div className="text-[10px] font-normal normal-case text-muted-foreground/70">
+                tips + sponsor
+              </div>
+            </TableHead>
             <TableHead className="pr-4 text-right"></TableHead>
           </TableRow>
         </TableHeader>
@@ -181,6 +187,12 @@ const SessionRow = memo(function SessionRow({
           ? `$${session.converted_to_raw_usd}`
           : "—"}
       </TableCell>
+      {/* House-funded giveaways the creator handed out this session — the
+          tips gifted + balance sponsored, both paid from house-provided
+          fill. A real house outflow, so House-POV rose. */}
+      <TableCell className="text-right tabular-nums">
+        <CommunitySpend session={session} />
+      </TableCell>
       <TableCell className="pr-2 text-right">
         {session.status === "active" && (
           <ForceEndButton userId={userId} sessionId={session.id} />
@@ -246,6 +258,14 @@ const SessionMobileCard = memo(function SessionMobileCard({
             {session.converted_to_raw_usd != null
               ? `$${session.converted_to_raw_usd}`
               : "—"}
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Spent on community
+          </div>
+          <div className="tabular-nums">
+            <CommunitySpend session={session} />
           </div>
         </div>
       </div>
@@ -327,6 +347,35 @@ function ForceEndButton({
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+/**
+ * The house-funded amount a creator handed to their community in one
+ * session: the tips they gifted plus the balance they sponsored for
+ * battles, both drawn from house-provided fill (§3 of the creator model).
+ * Both arrive as decimal strings on the session object the list already
+ * fetched — no extra round-trip.
+ */
+function sessionCommunitySpendUsd(session: CreatorSessionResponse): number {
+  const tips = Number(session.tips_spent_this_session_usd);
+  const sponsor = Number(session.sponsorship_spent_this_session_usd);
+  return (Number.isFinite(tips) ? tips : 0) + (Number.isFinite(sponsor) ? sponsor : 0);
+}
+
+/**
+ * Per-session community spend cell. House-POV: money the house funded and
+ * the creator gave away, so a non-zero amount is rose; $0 reads muted "—".
+ */
+function CommunitySpend({ session }: { session: CreatorSessionResponse }) {
+  const total = sessionCommunitySpendUsd(session);
+  if (total <= 0) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="font-medium text-rose-600 dark:text-rose-400">
+      {formatCurrency(total)}
+    </span>
   );
 }
 

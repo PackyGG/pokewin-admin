@@ -25,7 +25,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { formatDate } from "@/lib/utils/format";
+import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import type {
   CreatorDealResponse,
@@ -126,6 +126,24 @@ export function DealsTab({ userId, deals }: Props) {
   );
 }
 
+/**
+ * Period (weekly) tip ceiling for a deal: the per-stream tip max times the
+ * number of fills the deal grants in its window. A creator gets one fill
+ * per stream, so `fills_allowed` is the streams-per-window frequency — the
+ * deal's whole-window tip ceiling is therefore `max_tip_per_stream × fills`.
+ * The deal window is a 7-day week (see the empty-state + "7-day window"
+ * hint), so the caller labels this "/ wk".
+ *
+ * Returns null when there's nothing meaningful to show (no per-stream tip
+ * allowance, or no fills granted) so the row doesn't render a "$0 / wk".
+ */
+function tipPerPeriod(deal: CreatorDealResponse): string | null {
+  const perStream = Number(deal.max_tip_per_stream_usd);
+  if (!Number.isFinite(perStream) || perStream <= 0) return null;
+  if (deal.fills_allowed <= 0) return null;
+  return formatCurrency(perStream * deal.fills_allowed);
+}
+
 function weekHint(status: CreatorDealStatus, start: Date, end: Date): string {
   const now = Date.now();
   const dayMs = 86_400_000;
@@ -190,6 +208,14 @@ const DealRow = memo(function DealRow({
           ${deal.max_tip_per_user_usd}
         </span>
         <span> / ${deal.max_tip_per_stream_usd}</span>
+        {/* Period tip ceiling — per-stream max × the fills the deal allows
+            in its (weekly) window. This is the most tips the creator can
+            hand out across the whole deal, not just one stream. */}
+        {tipPerPeriod(deal) !== null && (
+          <div className="text-[10px] text-muted-foreground/70">
+            {tipPerPeriod(deal)} / wk
+          </div>
+        )}
       </TableCell>
       <TableCell className="text-right tabular-nums text-muted-foreground">
         <span className="font-medium text-foreground">
@@ -276,6 +302,11 @@ const DealMobileCard = memo(function DealMobileCard({
           <div className="tabular-nums text-[11px]">
             ${deal.max_tip_per_user_usd} / ${deal.max_tip_per_stream_usd}
           </div>
+          {tipPerPeriod(deal) !== null && (
+            <div className="text-[10px] tabular-nums text-muted-foreground/70">
+              {tipPerPeriod(deal)} / wk
+            </div>
+          )}
         </div>
         <div>
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
