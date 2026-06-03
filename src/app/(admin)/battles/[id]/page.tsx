@@ -246,7 +246,10 @@ export default async function BattleDetailPage({
                             </span>
                           </div>
                           {player.cards.length > 0 && (
-                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                            <FadeIn
+                              speed="fast"
+                              className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2"
+                            >
                               {player.cards.map((card) => (
                                 <div
                                   key={card.id}
@@ -276,7 +279,7 @@ export default async function BattleDetailPage({
                                   </div>
                                 </div>
                               ))}
-                            </div>
+                            </FadeIn>
                           )}
                         </div>
                       ))}

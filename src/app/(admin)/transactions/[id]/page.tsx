@@ -392,7 +392,7 @@ export default async function TransactionDetailPage({
                           ? `Pack${data.gameSession.packs[0].quantity > 1 ? ` (×${data.gameSession.packs[0].quantity})` : ""}`
                           : "Packs"}
                       </p>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                      <FadeIn speed="fast" className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                         {data.gameSession.packs.map((pack, i) => (
                           <div key={i} className="rounded-lg border bg-card overflow-hidden">
                             <div className="aspect-[2/3] relative bg-muted">
@@ -410,7 +410,7 @@ export default async function TransactionDetailPage({
                             </div>
                           </div>
                         ))}
-                      </div>
+                      </FadeIn>
                     </div>
                   )}
                   {data.gameSession.cardsObtained.length > 0 && (
@@ -418,7 +418,7 @@ export default async function TransactionDetailPage({
                       <p className="text-xs text-muted-foreground font-medium">
                         Cards Obtained ({data.gameSession.cardsObtained.length})
                       </p>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                      <FadeIn speed="fast" className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                         {data.gameSession.cardsObtained.map((card, i) => (
                           <div key={i} className="rounded-lg border bg-card overflow-hidden">
                             <div className="aspect-[2/3] relative bg-muted">
@@ -448,7 +448,7 @@ export default async function TransactionDetailPage({
                             </div>
                           </div>
                         ))}
-                      </div>
+                      </FadeIn>
                       <div className="pt-1 border-t">
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-xs text-muted-foreground">Payout (at obtained)</span>
@@ -487,7 +487,7 @@ export default async function TransactionDetailPage({
                         : "rolls"}
                     </h3>
                   </div>
-                  <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
+                  <FadeIn speed="fast" className="grid gap-3 sm:gap-4 md:grid-cols-2">
                     {data.gameSession.pfResults.map((pf, i) => (
                       <div
                         key={pf.id}
@@ -609,7 +609,7 @@ export default async function TransactionDetailPage({
                         </div>
                       </div>
                     ))}
-                  </div>
+                  </FadeIn>
                 </div>
               </div>
             )}
