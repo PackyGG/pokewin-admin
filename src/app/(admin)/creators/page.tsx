@@ -140,9 +140,9 @@ export default async function CreatorsPage({
           freezing the page on stale numbers. The single tab-aware
           tile inside (Fill Creators / Multiplier Creators) flips
           label, value, and icon from the active tab's cached count.
-          Layout: 5 compact KPI tiles (4 figures + the compact
-          Leaderboard Spend tile) + one wider Tips & Sponsor Spend
-          panel that spans 2 columns. */}
+          Layout: 6 uniform compact KPI tiles (4 figures + the compact
+          Leaderboard Spend + Tips & Sponsor Spend tiles), 4 per row
+          (wrapping to a second row of 2 at lg). */}
       <Suspense
         key={`kpi-${params.tab}-${params.filter ?? ""}`}
         fallback={<CreatorsKpiStripSkeleton />}
@@ -241,14 +241,14 @@ export default async function CreatorsPage({
 // Tab-aware: ONE swap tile (Fill Creators / Multiplier Creators) — its
 // value, label, and icon flip from the cached per-tab count. The other
 // figures (Net Code-User GGR, Global PnL, Converted) stay tab-
-// independent. The Leaderboard Spend tile is now compact (a single cell,
-// past-vs-active house cost); one wide Tips & Sponsor Spend panel (spans
-// 2 columns) rounds out the strip.
+// independent. The Leaderboard Spend and Tips & Sponsor Spend tiles are
+// both compact single cells (past-vs-active house cost; tips + sponsor
+// legs) matching the figure tiles.
 //
-// Layout: 5 compact tiles (swap / Net GGR / Global PnL / Converted +
-// the compact Leaderboard Spend tile) + the 2-column Tips & Sponsor
-// Spend panel = 7 column-units on a 7-col grid at xl, collapsing cleanly
-// to a 4-col then 2-col grid below.
+// Layout: 6 uniform compact tiles (swap / Net GGR / Global PnL /
+// Converted / Leaderboard Spend / Tips & Sponsor Spend), 4 per row on a
+// 4-col grid at lg (wrapping to a second row of 2), collapsing to a
+// 2-col grid below.
 
 async function CreatorsKpiStrip({
   tab,
@@ -385,7 +385,7 @@ async function CreatorsKpiStrip({
         };
 
   return (
-    <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-4 xl:grid-cols-7">
+    <div className="grid grid-cols-2 items-stretch gap-3 lg:grid-cols-4">
       {/* Swap tile — flips between Fill and Multiplier counts based on
           the active tab. Replaces the previous Fill + Multiplier pair
           of tiles (one of which always rendered "—" on the inactive
@@ -463,8 +463,8 @@ async function CreatorsKpiStrip({
           </div>
         }
       />
-      {/* Leaderboard Spend — a COMPACT single-cell tile (1 col at xl, the
-          same footprint as the other KpiTiles). Splits creator-leaderboard
+      {/* Leaderboard Spend — a COMPACT single-cell tile (same footprint as
+          the other KpiTiles). Splits creator-leaderboard
           house cost by time: the rose HERO is what we're committed to on
           the boards running RIGHT NOW (+ "· N active · X% we pay" — the
           active board count and the blended house share we cover), and a
@@ -481,19 +481,17 @@ async function CreatorsKpiStrip({
         pastCount={leaderboardCost?.pastCount ?? null}
         backendUnavailable={leaderboardBackendDown}
       />
-      {/* Tips & Sponsor Spend — the second wide member of the strip (spans
-          2 cols at xl, alongside Leaderboard Spend; full width below). The
-          lifetime house cost of the creator-funded tips/sponsor pool, split
-          into its tip + battle-sponsorship legs (§3 of the creator model).
-          House-POV: house-funded → house cost → rose. Reads $0 until the
-          fill system is live (the underlying query is enum-safe). */}
-      <div className="col-span-2 sm:col-span-4 xl:col-span-2">
-        <TipsSponsorSpendPanel
-          tipSpendUsd={tipsSponsorSpend?.tipSpendUsd ?? null}
-          sponsorSpendUsd={tipsSponsorSpend?.sponsorSpendUsd ?? null}
-          totalUsd={tipsSponsorSpend?.totalUsd ?? null}
-        />
-      </div>
+      {/* Tips & Sponsor Spend — a COMPACT single-cell tile (same footprint
+          as every other tile in the strip). The lifetime house cost of the
+          creator-funded tips/sponsor pool, with its tip + battle-sponsorship
+          legs on the secondary line (§3 of the creator model). House-POV:
+          house-funded → house cost → rose. Reads $0 until the fill system is
+          live (the underlying query is enum-safe). */}
+      <TipsSponsorSpendPanel
+        tipSpendUsd={tipsSponsorSpend?.tipSpendUsd ?? null}
+        sponsorSpendUsd={tipsSponsorSpend?.sponsorSpendUsd ?? null}
+        totalUsd={tipsSponsorSpend?.totalUsd ?? null}
+      />
     </div>
   );
 }
@@ -840,16 +838,16 @@ async function CreatorsGridSection({
 // ─── Skeletons ────────────────────────────────────────────────────
 
 /**
- * KPI-strip skeleton — mirrors the active-tab strip layout: 5 compact
+ * KPI-strip skeleton — mirrors the active-tab strip layout: 6 uniform
  * KpiTile-shaped boxes (the 4 figure tiles + the compact Leaderboard
- * Spend tile) + the wider Tips & Sponsor Spend panel that spans 2
- * columns. Shape matches the real strip so there's no layout jank when
- * the data lands.
+ * Spend and Tips & Sponsor Spend tiles), laid out 4-per-row (wrapping to
+ * a second row of 2 at lg). Shape matches the real strip so there's no
+ * layout jank when the data lands.
  */
 function CreatorsKpiStripSkeleton() {
   return (
-    <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-4 xl:grid-cols-7">
-      {Array.from({ length: 5 }).map((_, i) => (
+    <div className="grid grid-cols-2 items-stretch gap-3 lg:grid-cols-4">
+      {Array.from({ length: 6 }).map((_, i) => (
         <div
           key={i}
           className="rounded-xl border bg-card px-3 py-2.5 sm:px-4 sm:py-3"
@@ -859,13 +857,9 @@ function CreatorsKpiStripSkeleton() {
             <Skeleton className="h-3 w-12 sm:w-16" />
           </div>
           <Skeleton className="mt-1.5 h-5 w-16 sm:mt-2 sm:h-6 sm:w-20" />
+          <Skeleton className="mt-1.5 h-3 w-20 sm:w-24" />
         </div>
       ))}
-      {/* Wider panel — Tips & Sponsor Spend. Taller to reserve room for its
-          hero figure + breakdown rows. */}
-      <div className="col-span-2 sm:col-span-4 xl:col-span-2">
-        <Skeleton className="h-40 w-full rounded-xl sm:rounded-2xl" />
-      </div>
     </div>
   );
 }
