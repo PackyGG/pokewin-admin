@@ -67,6 +67,24 @@ export const COUNTED_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS
   (k) => k !== "other",
 ) as readonly Exclude<BalanceAdjustmentCategory, "other">[];
 
+/**
+ * The SELECTABLE categories — the set an admin may pick in the
+ * Adjust-Balance dialog dropdown GOING FORWARD. `other` is intentionally
+ * excluded from the picker (it was an uncategorized residual escape hatch
+ * that we no longer want admins choosing).
+ *
+ * IMPORTANT — this is a PICKER-ONLY filter, not a removal from the model:
+ * `other` stays a fully valid `BalanceAdjustmentCategory` and stays in
+ * {@link BALANCE_ADJUSTMENT_CATEGORY_KEYS} + {@link BALANCE_ADJUSTMENT_CATEGORY_META}.
+ * Old ledger rows already stamped with `metadata->>'adjustment_category' =
+ * 'other'` still validate against the server enum, still resolve their
+ * display label via the META map, and still classify as RESIDUAL/EXCLUDED
+ * in GGR/NGR/cost exactly as before. Only the dropdown stops offering it.
+ */
+export const SELECTABLE_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS.filter(
+  (k) => k !== "other",
+) as readonly Exclude<BalanceAdjustmentCategory, "other">[];
+
 /** Type-guard: is this string one of the canonical category keys? */
 export function isBalanceAdjustmentCategory(
   value: unknown,

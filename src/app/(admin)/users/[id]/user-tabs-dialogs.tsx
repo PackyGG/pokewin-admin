@@ -27,7 +27,7 @@ import { ROLES } from "@/lib/constants";
 import { formatCurrency } from "@/lib/utils/format";
 import { parseUsdAmount } from "@/lib/utils/money";
 import {
-  BALANCE_ADJUSTMENT_CATEGORY_KEYS,
+  SELECTABLE_ADJUSTMENT_CATEGORY_KEYS,
   BALANCE_ADJUSTMENT_CATEGORY_META,
   type BalanceAdjustmentCategory,
 } from "@/lib/balance-adjustment-categories";
@@ -147,13 +147,15 @@ export function DeleteUserDialog({
   );
 }
 
-// Balance-adjust categories — the strict, canonical set. Each option's
-// `value` is written to the ledger row's `metadata.adjustment_category`
-// (single source of truth in `@/lib/balance-adjustment-categories`) and
-// drives the conditional inputs below. Every category EXCEPT `other` is
-// counted in GGR/NGR/cost; `other` shows a destructive "won't be tracked"
-// warning. (`Challenge` and `Streamer` were removed.)
-const BALANCE_ADJUST_CATEGORIES = BALANCE_ADJUSTMENT_CATEGORY_KEYS.map(
+// Balance-adjust categories OFFERED IN THE PICKER — the strict, canonical
+// SELECTABLE set. Each option's `value` is written to the ledger row's
+// `metadata.adjustment_category` (single source of truth in
+// `@/lib/balance-adjustment-categories`) and drives the conditional inputs
+// below. All offered categories are counted in GGR/NGR/cost. (`Challenge`,
+// `Streamer` and `Other` were removed from the picker — `Other` stays a
+// valid stored category for back-compat display of existing records, it's
+// just no longer selectable here.)
+const BALANCE_ADJUST_CATEGORIES = SELECTABLE_ADJUSTMENT_CATEGORY_KEYS.map(
   (key) => ({ value: key, label: BALANCE_ADJUSTMENT_CATEGORY_META[key].label }),
 );
 
