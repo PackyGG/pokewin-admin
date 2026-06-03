@@ -5,6 +5,7 @@ import {
   SectionHeadingSkeleton,
 } from "@/components/loading-skeletons";
 import { ChartRowSkeleton, UpgraderPanelSkeleton } from "./dashboard-skeletons";
+import { DASHBOARD_PERIODS } from "@/lib/queries/dashboard-period";
 
 /**
  * Full-page navigation skeleton for /dashboard — the entry surface (LCP).
@@ -13,8 +14,12 @@ import { ChartRowSkeleton, UpgraderPanelSkeleton } from "./dashboard-skeletons";
  * Suspense fallbacks agree, and the real content swaps in with zero layout
  * shift:
  *   • PageHero (with the trailing Active-Rain + load-time action chips).
- *   • Period selector bar.
- *   • Primary KPI strip (6 tiles) + secondary KPI strip (7 tiles).
+ *   • Period selector bar — one chip per entry in `DASHBOARD_PERIODS`
+ *     (currently 9: 1h/3h/6h/12h/24h/3d/7d/30d/all), sourced from the same
+ *     constant the real selector renders so the chip count never drifts.
+ *   • Primary KPI strip (6 tiles) + secondary KPI strip (6 tiles).
+ *   • Today-since-00:00 tiles — 3-up at lg+, matches the 3-tile row in
+ *     page.tsx (P&L Today + Reward Costs + Creators Costs).
  *   • Upgrader Stats panel + Wager Attribution chart (paired 50/50, min-h-400).
  *   • Trends section: two 3-up chart rows.
  *
@@ -28,19 +33,35 @@ export default function DashboardLoading() {
           so the right edge doesn't jump when they stream in. */}
       <PageHeroSkeleton action />
 
-      {/* Period selector bar — Clock label + chip row. */}
+      {/* Period selector bar — Clock label + chip row. Chip count is sourced
+          from the canonical `DASHBOARD_PERIODS` constant so adding / removing
+          a period chip never leaves the skeleton out of sync with the real
+          selector. */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card/40 px-3 py-2">
         <Skeleton className="h-4 w-16 rounded" />
         <div className="flex items-center gap-1">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-5 w-10 rounded" />
+          {DASHBOARD_PERIODS.map((p) => (
+            <Skeleton key={p} className="h-5 w-10 rounded" />
           ))}
         </div>
       </div>
 
-      {/* KPI strips — 6-up primary + 7-up secondary. */}
+      {/* KPI strips — 6-up primary (PnL · GGR · Wager · Organic Wager ·
+          Deposits · Withdrawals) + 6-up secondary (Total Users · FTDs ·
+          Depositors · Avg Deposit · Deposits/Hour · Avg RTP). */}
       <SkeletonKpiStrip count={6} />
-      <SkeletonKpiStrip count={7} />
+      <SkeletonKpiStrip count={6} />
+
+      {/* Today-since-00:00 tiles — P&L Today + Reward Costs + Creators Costs.
+          Matches the 3-tile lg:grid-cols-3 row in page.tsx so the skeleton
+          shape doesn't pop when the row streams in. Each Suspense fallback
+          in page.tsx is a h-[148px] rounded-xl block, so the per-tile shape
+          here matches exactly. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+        <Skeleton className="h-[148px] w-full rounded-xl" />
+        <Skeleton className="h-[148px] w-full rounded-xl" />
+        <Skeleton className="h-[148px] w-full rounded-xl" />
+      </div>
 
       {/* Upgrader Stats + Wager Attribution — paired 50/50 row. */}
       <div className="grid min-h-[400px] gap-3 sm:gap-4 lg:grid-cols-2 lg:items-stretch">

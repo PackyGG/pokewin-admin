@@ -167,9 +167,9 @@ export default async function DashboardPage({
           scan never blocks the period KPI strips above and degrades to a
           tile fallback if it's slow. Period-independent (always "today"), so
           none re-keys on the global period selector. Full-width-on-mobile,
-          2-up at sm, up to 4-up at lg so they sit as their own compact KPI
-          row under the primary strip. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+          2-up at sm, 3-up at lg+ — exactly matches the 3 children below so
+          there's no dead column on the right at lg+. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
         <Suspense
           fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
         >
