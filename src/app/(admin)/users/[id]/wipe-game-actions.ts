@@ -70,10 +70,15 @@ import {
 // GATING: requireAdmin + __can_wipe_accounts + 2FA. NOT creator-protected
 // (gameplay is the user's own activity).
 //
-// WINDOW: always BOUNDED (12 / 24 / 48 hours). Unlike the Wager wipe, there
-// is no "All" sentinel — the windowed wipes are designed to be repeatable per
-// window, not "wipe everything in one shot". Out-of-window rows survive and
-// are independently wipeable via a subsequent windowed run.
+// WINDOW: 12 / 24 / 48 hours, OR `null` for "All" (owner mandate 2026-06-03 —
+// the FloridaManJeff fix). The windowed (12/24/48h) wipes are designed to be
+// repeatable per window — out-of-window rows survive and are independently
+// wipeable via a subsequent run. "All" is the full-history reset: every row
+// is in scope AND the `total_won` counter is SET TO 0 directly (regardless
+// of the deleted row sum), so the user reads as freshly created. This
+// matches the Wager wipe's "All" semantics and is required when earlier
+// wipes have already removed the source rows (the deleted-row sum is 0 and
+// the lifetime counter would never zero on a delta-decrement path).
 // ---------------------------------------------------------------------------
 
 /**
@@ -135,7 +140,8 @@ export type GameWipePreview = {
   upgraderWon: number;
   upgraderTablePresent: boolean;
   windowHours: WipeWindowHours;
-  cutoff: string;
+  /** ISO cutoff, or null for "All" (the full-history reset — owner mandate). */
+  cutoff: string | null;
 };
 
 type RegclassRow = { exists: string | null };
@@ -171,7 +177,9 @@ export async function previewGameWipe(
     where: {
       user_id: parsed.data,
       type: { in: GAME_WIPE_LEDGER_TYPES as unknown as LedgerTransactionType[] },
-      created_at: { gte: cutoff },
+      // Bounded windows filter by created_at; "All" (cutoff = null) omits the
+      // filter entirely so every row of the user's gameplay is counted.
+      ...(cutoff ? { created_at: { gte: cutoff } } : {}),
     },
     _count: { _all: true },
     _sum: { amount: true },
@@ -194,7 +202,7 @@ export async function previewGameWipe(
         user_id: parsed.data,
         source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
         withdrawal_locked_at: null,
-        obtained_at: { gte: cutoff },
+        ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
       },
       _count: { _all: true },
       _sum: { value_at_obtained: true },
@@ -204,7 +212,7 @@ export async function previewGameWipe(
         user_id: parsed.data,
         source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
         withdrawal_locked_at: { not: null },
-        obtained_at: { gte: cutoff },
+        ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
       },
     }),
   ]);
@@ -215,14 +223,22 @@ export async function previewGameWipe(
   const upgraderTablePresent = await upgraderGamesPresent(db);
   if (upgraderTablePresent) {
     try {
-      const rows = await db.$queryRawUnsafe<UpgraderAggRow[]>(
-        `SELECT COUNT(*)::text AS cnt,
-                COALESCE(SUM(bet_amount), 0)::text AS bet,
-                COALESCE(SUM(won_amount), 0)::text AS won
-         FROM upgrader_games WHERE user_id = $1 AND created_at >= $2`,
-        parsed.data,
-        cutoff,
-      );
+      const rows = cutoff
+        ? await db.$queryRawUnsafe<UpgraderAggRow[]>(
+            `SELECT COUNT(*)::text AS cnt,
+                    COALESCE(SUM(bet_amount), 0)::text AS bet,
+                    COALESCE(SUM(won_amount), 0)::text AS won
+             FROM upgrader_games WHERE user_id = $1 AND created_at >= $2`,
+            parsed.data,
+            cutoff,
+          )
+        : await db.$queryRawUnsafe<UpgraderAggRow[]>(
+            `SELECT COUNT(*)::text AS cnt,
+                    COALESCE(SUM(bet_amount), 0)::text AS bet,
+                    COALESCE(SUM(won_amount), 0)::text AS won
+             FROM upgrader_games WHERE user_id = $1`,
+            parsed.data,
+          );
       const r = rows?.[0];
       upgraderGameCount = r ? Number(r.cnt ?? 0) : 0;
       upgraderBet = r ? toNumber(r.bet) : 0;
@@ -246,7 +262,7 @@ export async function previewGameWipe(
       upgraderWon,
       upgraderTablePresent,
       windowHours,
-      cutoff: cutoff.toISOString(),
+      cutoff: cutoff ? cutoff.toISOString() : null,
     },
   };
 }
@@ -260,7 +276,10 @@ export async function previewGameWipe(
 const wipeGameSchema = z.object({
   userId: z.string().min(1, "User id is required"),
   totpCode: z.string().min(1, "2FA code is required"),
-  windowHours: z.union([z.literal(12), z.literal(24), z.literal(48)]),
+  // 12 / 24 / 48 keep the original windowed behaviour; `null` is the "All"
+  // sentinel (owner mandate 2026-06-03 — the FloridaManJeff fix), in which
+  // case the wipe targets every row AND sets total_won to 0 directly.
+  windowHours: z.union([z.literal(12), z.literal(24), z.literal(48), z.null()]),
 });
 
 export async function wipeGame(data: {
@@ -308,14 +327,19 @@ export async function wipeGame(data: {
 
   const windowHours = normalizeWipeWindow(parsed.windowHours);
   const cutoff = resolveWipeCutoff(windowHours);
+  // "All" wipe (windowHours = null) → counter-reset path: SET total_won = 0
+  // directly + snapshot pre-wipe absolute. Windowed wipes keep the original
+  // delta-decrement path.
+  const isAllWindow = cutoff === null;
 
   // Read everything up front so the snapshot is exact. All scoped to user +
-  // the window cutoff.
+  // the window cutoff when bounded; the cutoff filter is omitted entirely for
+  // "All" so every relevant row is captured.
   const ledgerRows = await db.ledger_transactions.findMany({
     where: {
       user_id: parsed.userId,
       type: { in: GAME_WIPE_LEDGER_TYPES as unknown as LedgerTransactionType[] },
-      created_at: { gte: cutoff },
+      ...(cutoff ? { created_at: { gte: cutoff } } : {}),
     },
     take: MAX_GAME_ROWS + 1,
   });
@@ -324,7 +348,7 @@ export async function wipeGame(data: {
       user_id: parsed.userId,
       source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
       withdrawal_locked_at: null,
-      obtained_at: { gte: cutoff },
+      ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
     },
     take: MAX_GAME_ROWS + 1,
   });
@@ -333,7 +357,7 @@ export async function wipeGame(data: {
       user_id: parsed.userId,
       source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
       withdrawal_locked_at: { not: null },
-      obtained_at: { gte: cutoff },
+      ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
     },
   });
 
@@ -388,11 +412,16 @@ export async function wipeGame(data: {
   let upgraderGameRows: Array<Record<string, unknown>> = [];
   if (upgraderTablePresent) {
     try {
-      upgraderGameRows = await db.$queryRawUnsafe<Array<Record<string, unknown>>>(
-        `SELECT * FROM upgrader_games WHERE user_id = $1 AND created_at >= $2 LIMIT ${MAX_GAME_ROWS + 1}`,
-        parsed.userId,
-        cutoff,
-      );
+      upgraderGameRows = cutoff
+        ? await db.$queryRawUnsafe<Array<Record<string, unknown>>>(
+            `SELECT * FROM upgrader_games WHERE user_id = $1 AND created_at >= $2 LIMIT ${MAX_GAME_ROWS + 1}`,
+            parsed.userId,
+            cutoff,
+          )
+        : await db.$queryRawUnsafe<Array<Record<string, unknown>>>(
+            `SELECT * FROM upgrader_games WHERE user_id = $1 LIMIT ${MAX_GAME_ROWS + 1}`,
+            parsed.userId,
+          );
     } catch (err) {
       console.error("[wipeGame] upgrader_games read failed — aborting (nothing deleted):", err);
       return {
@@ -409,7 +438,20 @@ export async function wipeGame(data: {
   }
 
   if (ledgerRows.length === 0 && inventoryRows.length === 0 && upgraderGameRows.length === 0) {
-    return { success: false, error: "This user has no gameplay data to wipe in the selected window" };
+    // For an "All" wipe with zero rows we still allow the counter reset (the
+    // FloridaManJeff case — earlier wipes deleted the source rows but the
+    // counters still hold stale values). Only refuse the empty-payload case
+    // when the user genuinely has nothing AND the counters are already 0.
+    if (!isAllWindow) {
+      return { success: false, error: "This user has no gameplay data to wipe in the selected window" };
+    }
+    const counterCheck = await db.balances
+      .findUnique({ where: { user_id: parsed.userId }, select: { total_won: true } })
+      .catch(() => null);
+    if (!counterCheck || toNumber(counterCheck.total_won) <= 0) {
+      return { success: false, error: "This user has no gameplay data and total_won is already $0 — nothing to wipe" };
+    }
+    // Counters non-zero → fall through; the destructive UPDATE will reset them.
   }
 
   // BALANCE RULE: reduce ONLY by PAYOUT (credit) legs' magnitude. Wager
@@ -436,8 +478,13 @@ export async function wipeGame(data: {
   const balanceAfter = Math.max(0, balanceBefore - payoutMagnitude);
   const balanceReduction = balanceBefore - balanceAfter;
   const totalWonBefore = toNumber(balanceRow.total_won);
-  const totalWonReduction = Math.min(wonDeleted, totalWonBefore);
-  const totalWonClamped = wonDeleted > totalWonBefore;
+  // ALL-WINDOW path: counter "reduction" recorded for the audit is the FULL
+  // pre-wipe value (the actual zero-ing magnitude); restore uses the
+  // snapshotted absolute, not this delta. Windowed path UNCHANGED.
+  const totalWonReduction = isAllWindow
+    ? totalWonBefore
+    : Math.min(wonDeleted, totalWonBefore);
+  const totalWonClamped = isAllWindow ? false : wonDeleted > totalWonBefore;
 
   const userMeta = await db.user
     .findUnique({ where: { id: parsed.userId }, select: { username: true, email: true } })
@@ -454,7 +501,17 @@ export async function wipeGame(data: {
     balanceReduction: balanceReduction.toFixed(2),
     totalWonReduction: totalWonReduction.toFixed(2),
     windowHours,
-    windowCutoff: cutoff.toISOString(),
+    windowCutoff: cutoff ? cutoff.toISOString() : null,
+    // ALL-WINDOW COUNTER-RESET fields (owner mandate 2026-06-03). On an "All"
+    // wipe the destructive UPDATE sets total_won to 0 directly, so Restore
+    // needs the PRE-WIPE ABSOLUTE to put back. Windowed wipes leave these
+    // unset; Restore falls back to the existing additive-delta path.
+    ...(isAllWindow
+      ? {
+          countersFullyReset: true as const,
+          totalWonBefore: totalWonBefore.toFixed(2),
+        }
+      : {}),
   } satisfies { type: "game" } & GameWipeSnapshot;
 
   let wipeId: string;
@@ -522,14 +579,14 @@ export async function wipeGame(data: {
       }
 
       // (3) Delete the wager + payout ledger legs (re-scoped by user + type +
-      // window cutoff).
+      // window cutoff when bounded; the cutoff filter is omitted for "All").
       if (ledgerIds.length > 0) {
         const legDel = await tx.ledger_transactions.deleteMany({
           where: {
             id: { in: ledgerIds },
             user_id: parsed.userId,
             type: { in: GAME_WIPE_LEDGER_TYPES as unknown as LedgerTransactionType[] },
-            created_at: { gte: cutoff },
+            ...(cutoff ? { created_at: { gte: cutoff } } : {}),
           },
         });
         if (legDel.count !== ledgerIds.length) {
@@ -545,7 +602,7 @@ export async function wipeGame(data: {
             user_id: parsed.userId,
             source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
             withdrawal_locked_at: null,
-            obtained_at: { gte: cutoff },
+            ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
           },
         });
         if (invDel.count !== inventoryIds.length) {
@@ -553,21 +610,43 @@ export async function wipeGame(data: {
         }
       }
 
-      // (5) Delete upgrader_games rows (raw SQL).
+      // (5) Delete upgrader_games rows (raw SQL). "All" omits the cutoff bound.
       if (upgraderGameRows.length > 0) {
-        const deleted = await tx.$executeRawUnsafe(
-          `DELETE FROM upgrader_games WHERE user_id = $1 AND created_at >= $2`,
-          parsed.userId,
-          cutoff,
-        );
+        const deleted = cutoff
+          ? await tx.$executeRawUnsafe(
+              `DELETE FROM upgrader_games WHERE user_id = $1 AND created_at >= $2`,
+              parsed.userId,
+              cutoff,
+            )
+          : await tx.$executeRawUnsafe(
+              `DELETE FROM upgrader_games WHERE user_id = $1`,
+              parsed.userId,
+            );
         upgraderGamesDeleted = typeof deleted === "number" ? deleted : upgraderGameRows.length;
       }
 
-      // (6) PATTERN B — atomic clamped UPDATE. ONLY `available_balance` (the
-      // payout clawback) and `total_won` (the gaming-won counter) move.
-      // `total_wagered` is INTENTIONALLY LEFT ALONE (the disjoint distinction
-      // from the Wager wipe).
-      if (balanceReduction > 0 || totalWonReduction > 0) {
+      // (6) PATTERN B — atomic balance UPDATE.
+      //   WINDOWED (12 / 24 / 48h) — UNCHANGED original clamped-delta path
+      //     (GREATEST(0, current − reduction)).
+      //   "ALL" (cutoff = null) — owner mandate 2026-06-03: SET total_won = 0
+      //     DIRECTLY (regardless of deleted-row sums), so the user reads as
+      //     freshly created. `available_balance` still uses the clamped delta
+      //     path (the BALANCE RULE — never inflate; the payout-leg clawback
+      //     is the only legitimate balance change). `total_wagered` is
+      //     INTENTIONALLY LEFT ALONE in either branch (the disjoint
+      //     distinction from the Wager wipe — Wager wipe owns total_wagered).
+      if (isAllWindow) {
+        const updated = await tx.$executeRaw`
+          UPDATE "balances"
+          SET available_balance = GREATEST(0::numeric, available_balance - ${balanceReduction}::numeric),
+              total_won = 0::numeric,
+              version = version + 1
+          WHERE user_id = ${parsed.userId}
+        `;
+        if (updated !== 1) {
+          throw new Error("GAME_GUARD: user balances row not found — wipe aborted");
+        }
+      } else if (balanceReduction > 0 || totalWonReduction > 0) {
         const updated = await tx.$executeRaw`
           UPDATE "balances"
           SET available_balance = GREATEST(0::numeric, available_balance - ${balanceReduction}::numeric),
@@ -598,7 +677,9 @@ export async function wipeGame(data: {
       return {
         success: false,
         error:
-          "Wipe timed out — this account's gameplay history is unusually large for the selected window. Nothing was deleted (the data is safe). Please pick a shorter window or notify an administrator.",
+          isAllWindow
+            ? "Wipe timed out — this account's gameplay history is unusually large for an 'All' wipe. Nothing was deleted (the data is safe). Please pick a bounded window (12/24/48h) or notify an administrator."
+            : "Wipe timed out — this account's gameplay history is unusually large for the selected window. Nothing was deleted (the data is safe). Please pick a shorter window or notify an administrator.",
       };
     }
     return { success: false, error: "Wipe failed — please try again (nothing deleted)" };
@@ -618,7 +699,9 @@ export async function wipeGame(data: {
         admin_user_id: session.userId,
         target_user_id: parsed.userId,
         window_hours: windowHours,
-        cutoff_iso: cutoff.toISOString(),
+        cutoff_iso: cutoff ? cutoff.toISOString() : null,
+        // Owner mandate 2026-06-03: explicit flag on "All" wipes.
+        counters_fully_reset: isAllWindow,
         snapshot_id: wipeId,
         deleted_count:
           ledgerRows.length + inventoryRows.length + provablyFairDeleted + upgraderGamesDeleted,
@@ -637,7 +720,7 @@ export async function wipeGame(data: {
         totalWonReduced: totalWonReduction,
         totalWonClamped,
         recoverable: true,
-        note: `Game wipe (${windowHours}h window): deleted the user's wager+payout ledger legs (pack/battle/upgrader) + won pack/battle inventory + provably_fair_results + upgrader_games. Decremented total_won only (NOT total_wagered — that is the Wager wipe's distinction). Balance reduced ONLY by the windowed payout (credit) legs' clawback (clamped ≥0 via atomic UPDATE); wager (debit) legs left balance unchanged.`,
+        note: `Game wipe (${windowHours === null ? "ALL gameplay" : `${windowHours}h window`}): deleted the user's wager+payout ledger legs (pack/battle/upgrader) + won pack/battle inventory + provably_fair_results + upgrader_games. ${isAllWindow ? "ALL-WINDOW COUNTER RESET (owner mandate 2026-06-03): total_won SET TO 0 DIRECTLY (regardless of deleted row sums); restore puts back the PRE-WIPE absolute from the snapshot. " : "Decremented total_won only (NOT total_wagered — that is the Wager wipe's distinction). "}Balance reduced ONLY by the payout (credit) legs' clawback (clamped ≥0 via atomic UPDATE); wager (debit) legs left balance unchanged.`,
       },
     },
   });

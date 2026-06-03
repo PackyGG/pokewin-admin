@@ -688,26 +688,49 @@ export async function wipeWager(data: {
   // they back /users/[id] (Total Wagered / Total Won / Wager Loss) AND the
   // cost-breakdown "Who drove the gaming margin" contributors. The wipe deletes
   // the gameplay rows but the counters retain the old values, so a wiped user
-  // still shows in the contributors. We decrement each by exactly what was
-  // DELETED (the production composition isn't derivable here — see the COUNTER
-  // NOTE on WagerWipeSnapshot for the documented approximation):
-  //   • total_wagered −= Σ wager-leg magnitudes (the stake removed).
-  //   • total_won     −= Σ payout-leg magnitudes + Σ won-inventory
-  //                       value_at_obtained (the gaming-payout legs that DON'T
-  //                       move the balance — battle cash payouts + the won
-  //                       pack/battle cards' obtained value).
-  // Both CLAMPED ≥0 (never drive a counter negative). The clamped reduction is
-  // what we subtract AND what Restore re-adds (stored in the snapshot), so
-  // wipe/restore are symmetric even when a counter held less than the deleted
-  // sum. A full wager wipe removes effectively all gameplay → both land at ~0
-  // (the goal: the user drops off the contributors).
+  // still shows in the contributors.
+  //
+  // TWO MODES (owner mandate 2026-06-03 — the FloridaManJeff fix):
+  //
+  //   • WINDOWED (12 / 24 / 48h): decrement each counter by what was DELETED
+  //     in the chosen window — total_wagered −= Σ windowed wager-leg
+  //     magnitudes; total_won −= Σ windowed payout-leg magnitudes + Σ windowed
+  //     won-inventory value_at_obtained. Both CLAMPED ≥0 via the atomic
+  //     UPDATE. This is the original behaviour and is UNCHANGED for windowed
+  //     wipes — it must never zero a counter on a partial-window wipe.
+  //
+  //   • "ALL" (windowHours = null, cutoff = null): SET both counters DIRECTLY
+  //     to 0 in the atomic UPDATE, regardless of how many rows the destructive
+  //     delete actually touched. This is the FIX for the FloridaManJeff case:
+  //     after earlier wipes (e.g. inventory / voucher) already deleted the
+  //     source rows, a subsequent "All" Wager wipe finds nothing to subtract,
+  //     the decrement is $0, and the lifetime counter never zeroes — leaving
+  //     the Wagering Stats showing stale figures. The owner's intent for "All"
+  //     is "treat this user as freshly created", so the counters MUST reach 0.
+  //     The PRE-WIPE absolutes are snapshotted so Restore can put them back
+  //     EXACTLY (a delta of 0 cannot be re-added meaningfully).
+  //
+  // CONCURRENCY: the atomic UPDATE is wrapped by Pattern A (FOR UPDATE row
+  // lock) + Pattern B (computed against the LIVE row inside the same tx). For
+  // the All case the SET = 0 / 0 is value-independent so concurrency safety is
+  // trivial — no GREATEST needed.
   const totalWageredBefore = toNumber(balanceRow.total_wagered);
   const totalWonBefore = toNumber(balanceRow.total_won);
   const wonDeleted = payoutMagnitude + inventoryValue;
-  const totalWageredReduction = Math.min(wagerMagnitude, totalWageredBefore);
-  const totalWonReduction = Math.min(wonDeleted, totalWonBefore);
-  const totalWageredClamped = wagerMagnitude > totalWageredBefore;
-  const totalWonClamped = wonDeleted > totalWonBefore;
+  // All-window wipe → counter "reduction" recorded for the audit is the FULL
+  // pre-wipe value (so the audit log shows the actual zero-ing magnitude);
+  // restore uses the snapshotted absolute, not this delta.
+  const isAllWindow = cutoff === null;
+  const totalWageredReduction = isAllWindow
+    ? totalWageredBefore
+    : Math.min(wagerMagnitude, totalWageredBefore);
+  const totalWonReduction = isAllWindow
+    ? totalWonBefore
+    : Math.min(wonDeleted, totalWonBefore);
+  // "Clamped" only applies to windowed wipes — an All-wipe is not "clamped",
+  // it's an explicit reset (the audit log surfaces this via counters_fully_reset).
+  const totalWageredClamped = isAllWindow ? false : wagerMagnitude > totalWageredBefore;
+  const totalWonClamped = isAllWindow ? false : wonDeleted > totalWonBefore;
 
   const userMeta = await db.user
     .findUnique({ where: { id: parsed.userId }, select: { username: true, email: true } })
@@ -729,6 +752,18 @@ export async function wipeWager(data: {
     // holds ONLY the windowed rows, so restore re-adds exactly the windowed set).
     windowHours,
     windowCutoff: cutoff ? cutoff.toISOString() : null,
+    // ALL-WINDOW COUNTER-RESET fields (owner mandate 2026-06-03). On an "All"
+    // wipe the destructive UPDATE sets total_wagered + total_won to 0
+    // directly, so Restore needs the PRE-WIPE ABSOLUTES to put back — a zero
+    // delta cannot be re-added meaningfully. For windowed wipes these fields
+    // stay unset and Restore falls back to the existing additive-delta path.
+    ...(isAllWindow
+      ? {
+          countersFullyReset: true as const,
+          totalWageredBefore: totalWageredBefore.toFixed(2),
+          totalWonBefore: totalWonBefore.toFixed(2),
+        }
+      : {}),
   } satisfies { type: "wager" } & WagerWipeSnapshot;
 
   let wipeId: string;
@@ -874,25 +909,49 @@ export async function wipeWager(data: {
         upgraderGamesDeleted = typeof deleted === "number" ? deleted : upgraderGameRows.length;
       }
 
-      // (7) PATTERN B — atomic clamped balance UPDATE. ONE raw SQL UPDATE
-      // covering all three reductions using GREATEST(0, current − reduction)
-      // so the column values are computed FROM THE LIVE ROW inside the same
-      // transaction, NOT from the values we read earlier (which could be
-      // stale by even a few ms on a hot account). The FOR UPDATE row lock
-      // above already serializes concurrent writers behind this tx, so the
-      // live row's values reflect any tx that committed BEFORE we took the
-      // lock — and nothing else can move them until we commit.
+      // (7) PATTERN B — atomic balance UPDATE. ONE raw SQL UPDATE covering all
+      // three columns. The exact SET clause depends on the window:
       //
-      // No optimistic version check. No "Balance changed concurrently"
-      // failure path. The version is bumped so cached reads invalidate.
+      //   WINDOWED (12 / 24 / 48h) — UNCHANGED ORIGINAL BEHAVIOUR: clamped
+      //   delta subtraction via GREATEST(0, current − reduction). Values are
+      //   computed FROM THE LIVE ROW inside the same transaction, NOT from the
+      //   values we read earlier (which could be stale by even a few ms on a
+      //   hot account). The FOR UPDATE row lock above already serializes
+      //   concurrent writers behind this tx, so the live row's values reflect
+      //   any tx that committed BEFORE we took the lock — and nothing else can
+      //   move them until we commit. No optimistic version check.
       //
-      // Fired whenever ANY of the three has something to subtract — a pure-
-      // wager wipe (no payout legs) moves no balance but MUST still drop
-      // total_wagered, so this is NOT gated on balanceReduction alone. All
-      // numeric reductions are bound as parameters (never string-interpolated)
-      // and decimals (their string-toFixed form, parsed by Postgres as
-      // NUMERIC).
-      if (balanceReduction > 0 || totalWageredReduction > 0 || totalWonReduction > 0) {
+      //   "ALL" (cutoff = null, isAllWindow = true) — owner mandate 2026-06-03
+      //   FloridaManJeff fix: SET total_wagered = 0, total_won = 0 DIRECTLY.
+      //   Concurrency safety is trivial — value-independent SET. We still use
+      //   the same GREATEST clamp on available_balance (the balance is moved
+      //   by the actual payout-leg clawback regardless of window; an "All"
+      //   wipe doesn't claw back more than the payouts it actually deleted —
+      //   inflating the balance reduction would VIOLATE the BALANCE RULE).
+      //
+      // The version is bumped so cached reads invalidate.
+      //
+      // Fired whenever any column has something to do (a pure-wager wipe or an
+      // All-wipe with zero rows still resets counters, so this is NOT gated on
+      // balanceReduction alone). All numeric reductions are bound as
+      // parameters (never string-interpolated) and decimals (their
+      // string-toFixed form, parsed by Postgres as NUMERIC).
+      if (isAllWindow) {
+        // All-window: reset counters to 0 directly; balance still uses the
+        // clamped delta path (payout-leg clawback only — owner BALANCE RULE).
+        const updated = await tx.$executeRaw`
+          UPDATE "balances"
+          SET available_balance = GREATEST(0::numeric, available_balance - ${balanceReduction}::numeric),
+              total_wagered = 0::numeric,
+              total_won = 0::numeric,
+              version = version + 1
+          WHERE user_id = ${parsed.userId}
+        `;
+        if (updated !== 1) {
+          throw new Error("WAGER_GUARD: user balances row not found — wipe aborted");
+        }
+      } else if (balanceReduction > 0 || totalWageredReduction > 0 || totalWonReduction > 0) {
+        // Windowed: original clamped-delta path, UNCHANGED.
         const updated = await tx.$executeRaw`
           UPDATE "balances"
           SET available_balance = GREATEST(0::numeric, available_balance - ${balanceReduction}::numeric),
@@ -957,6 +1016,10 @@ export async function wipeWager(data: {
         wipeId,
         windowHours,
         windowCutoff: cutoff ? cutoff.toISOString() : null,
+        // OWNER MANDATE 2026-06-03 (FloridaManJeff fix): explicit flag on
+        // "All" wipes so wipe-history rendering can label them clearly. For
+        // 12/24/48 windowed wipes this is `false`.
+        counters_fully_reset: isAllWindow,
         ledgerLegsDeleted: ledgerRows.length,
         wagerMagnitude,
         payoutMagnitude,
@@ -977,7 +1040,7 @@ export async function wipeWager(data: {
         totalWonReduced: totalWonReduction,
         totalWonClamped,
         recoverable: true,
-        note: `Deleted the user's wager+payout ledger legs (pack/battle/upgrader) + won pack/battle inventory (+ their provably_fair_results) + upgrader_games, bounded to ${windowHours === null ? "ALL gameplay (no time window)" : `the last ${windowHours}h (created_at/obtained_at ≥ cutoff)`}. A WINDOWED wipe removes ONLY that window's gameplay — older gameplay (and its effect on lifetime stats / GGR) remains until wiped too. Balance reduced ONLY by the windowed payout (credit) legs' clawback (clamped ≥0); wager (debit) legs left the balance unchanged (never inflate). Lifetime balances.total_wagered reduced by Σ windowed wager-leg magnitudes; balances.total_won reduced by Σ windowed payout-leg magnitudes + windowed won-inventory value_at_obtained (the production composition isn't derivable here, so this decrements by what was DELETED — both clamped ≥0); restore re-adds EXACTLY these. game_sessions/battles shells LEFT intact (battle delete would cascade other participants); session bet pointer + balances.last_transaction_id nulled to break the FK cycle (self-heal). Withdrawal-locked won cards SKIPPED (back an in-flight withdrawal). Remaining ledger rows' balance_before/after not rewritten.`,
+        note: `Deleted the user's wager+payout ledger legs (pack/battle/upgrader) + won pack/battle inventory (+ their provably_fair_results) + upgrader_games, bounded to ${windowHours === null ? "ALL gameplay (no time window)" : `the last ${windowHours}h (created_at/obtained_at ≥ cutoff)`}. ${isAllWindow ? "ALL-WINDOW COUNTER RESET (owner mandate 2026-06-03): total_wagered AND total_won SET TO 0 DIRECTLY (regardless of deleted row sums) so the user reads as freshly created — restore puts back the PRE-WIPE absolutes from the snapshot. " : ""}A WINDOWED wipe removes ONLY that window's gameplay — older gameplay (and its effect on lifetime stats / GGR) remains until wiped too. Balance reduced ONLY by the windowed payout (credit) legs' clawback (clamped ≥0); wager (debit) legs left the balance unchanged (never inflate). ${isAllWindow ? "" : "Lifetime balances.total_wagered reduced by Σ windowed wager-leg magnitudes; balances.total_won reduced by Σ windowed payout-leg magnitudes + windowed won-inventory value_at_obtained (the production composition isn't derivable here, so this decrements by what was DELETED — both clamped ≥0); restore re-adds EXACTLY these. "}game_sessions/battles shells LEFT intact (battle delete would cascade other participants); session bet pointer + balances.last_transaction_id nulled to break the FK cycle (self-heal). Withdrawal-locked won cards SKIPPED (back an in-flight withdrawal). Remaining ledger rows' balance_before/after not rewritten.`,
       },
     },
   });

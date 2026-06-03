@@ -1316,9 +1316,11 @@ async function runCategory(
       res.withdrawalLockedSkipped > 0
         ? ` · ${res.withdrawalLockedSkipped} withdrawal-locked card${res.withdrawalLockedSkipped === 1 ? "" : "s"} skipped`
         : "";
+    const windowLabel =
+      res.windowHours === null ? "all gameplay" : `last ${res.windowHours}h`;
     return {
       success: true,
-      message: `Deleted ${parts.join(" · ") || "nothing"} (last ${res.windowHours}h) · ${formatCurrency(res.balanceReduced)} clawed back from balance${skipped}`,
+      message: `Deleted ${parts.join(" · ") || "nothing"} (${windowLabel}) · ${formatCurrency(res.balanceReduced)} clawed back from balance${skipped}`,
     };
   }
   if (category === "pnl") {
@@ -1337,9 +1339,11 @@ async function runCategory(
       res.withdrawalLockedSkipped > 0
         ? ` · ${res.withdrawalLockedSkipped} withdrawal-locked card${res.withdrawalLockedSkipped === 1 ? "" : "s"} skipped`
         : "";
+    const windowLabel =
+      res.windowHours === null ? "all PnL events" : `last ${res.windowHours}h`;
     return {
       success: true,
-      message: `Deleted ${parts.join(" · ") || "nothing"} (last ${res.windowHours}h) · ${formatCurrency(res.balanceReduced)} clawed back from balance${skipped}`,
+      message: `Deleted ${parts.join(" · ") || "nothing"} (${windowLabel}) · ${formatCurrency(res.balanceReduced)} clawed back from balance${skipped}`,
     };
   }
   // inventory
@@ -2135,16 +2139,28 @@ function GameInline({
           <p className="flex items-start gap-1.5 rounded border border-amber-500/30 bg-amber-500/[0.06] px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400">
             <Info className="mt-0.5 size-3.5 shrink-0" />
             <span>
-              Pure gameplay events in the last {window}h. Only{" "}
-              <span className="font-medium">total_won</span> is decremented —{" "}
-              <span className="font-medium">total_wagered</span> is left as
-              bookkeeping (Wager wipe&apos;s territory).
+              {window === null
+                ? "ALL gameplay events. total_won will be RESET TO 0 (regardless of deleted-row sums)."
+                : `Pure gameplay events in the last ${window}h. Only `}
+              {window !== null && (
+                <>
+                  <span className="font-medium">total_won</span> is decremented —{" "}
+                  <span className="font-medium">total_wagered</span> is left as
+                  bookkeeping (Wager wipe&apos;s territory).
+                </>
+              )}
             </span>
           </p>
           {state.data.ledgerLegCount === 0 &&
           state.data.inventoryCount === 0 &&
           state.data.upgraderGameCount === 0 ? (
-            <EmptyNote what={`gameplay events in the last ${window}h`} />
+            <EmptyNote
+              what={
+                window === null
+                  ? "gameplay rows (counters will still be RESET to 0)"
+                  : `gameplay events in the last ${window}h`
+              }
+            />
           ) : (
             <>
               <div className="flex items-center justify-between">
@@ -2237,18 +2253,22 @@ function PnlInline({
           <p className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/[0.07] px-2.5 py-1.5 text-xs text-rose-500">
             <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
             <span>
-              LARGEST scope of the three windowed wipes. Removes every
-              PnL-affecting event in the last {window}h — deposits, gameplay
-              legs + won inventory, rewards, vouchers, admin adjustments.
-              Counters: total_wagered / total_won / total_deposited
-              decremented. Snapshotted + restorable.
+              {window === null
+                ? "LARGEST scope. Removes every PnL-affecting event the user has — deposits, gameplay legs + won inventory, rewards, vouchers, admin adjustments. Counters total_wagered / total_won / total_deposited will be RESET TO 0 (regardless of deleted-row sums). total_withdrawn untouched (owner carve-out)."
+                : `LARGEST scope of the three windowed wipes. Removes every PnL-affecting event in the last ${window}h — deposits, gameplay legs + won inventory, rewards, vouchers, admin adjustments. Counters: total_wagered / total_won / total_deposited decremented. Snapshotted + restorable.`}
             </span>
           </p>
           {state.data.ledgerLegCount === 0 &&
           state.data.inventoryCount === 0 &&
           state.data.voucherCount === 0 &&
           state.data.upgraderGameCount === 0 ? (
-            <EmptyNote what={`PnL-affecting events in the last ${window}h`} />
+            <EmptyNote
+              what={
+                window === null
+                  ? "PnL-affecting rows (counters will still be RESET to 0)"
+                  : `PnL-affecting events in the last ${window}h`
+              }
+            />
           ) : (
             <>
               <div className="divide-y rounded border bg-background/50">
@@ -2329,8 +2349,11 @@ function PnlInline({
 }
 
 /**
- * Unified 12 / 24 / 48 hour selector used by the Game + PnL windowed wipes.
- * No "All" sentinel — these wipes are always bounded.
+ * Unified 12 / 24 / 48 / All selector used by the Game + PnL windowed wipes.
+ * "All" (null) is the full-history reset (owner mandate 2026-06-03 — the
+ * FloridaManJeff fix): the destructive UPDATE sets the relevant lifetime
+ * counters DIRECTLY to 0 instead of decrementing by the actually-deleted-row
+ * sums. 12/24/48 keep the original bounded windowed behaviour.
  */
 function WipeWindowSelector({
   value,
@@ -2339,20 +2362,27 @@ function WipeWindowSelector({
   value: WipeWindowHours;
   onChange: (hours: WipeWindowHours) => void;
 }) {
-  const options = Array.isArray(WIPE_WINDOW_OPTIONS) ? WIPE_WINDOW_OPTIONS : [];
+  // DEFENSIVE: derive bounded options from WIPE_WINDOW_OPTIONS only when it's
+  // genuinely an array — matches the WagerWindowSelector pattern (a future
+  // client/server-boundary regression would otherwise crash `.map` at render).
+  const boundedOptions = Array.isArray(WIPE_WINDOW_OPTIONS) ? WIPE_WINDOW_OPTIONS : [];
+  const options: ReadonlyArray<{ hours: WipeWindowHours; label: string }> = [
+    ...boundedOptions.map((h) => ({ hours: h as WipeWindowHours, label: `${h}h` })),
+    { hours: null, label: "All" },
+  ];
   return (
     <div className="space-y-1">
       <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         Time window
       </p>
       <div className="inline-flex rounded-md border bg-background/50 p-0.5">
-        {options.map((h) => {
-          const active = value === h;
+        {options.map((opt) => {
+          const active = value === opt.hours;
           return (
             <button
-              key={h}
+              key={opt.label}
               type="button"
-              onClick={() => onChange(h as WipeWindowHours)}
+              onClick={() => onChange(opt.hours)}
               aria-pressed={active}
               className={cn(
                 "rounded px-2.5 py-1 text-xs font-medium tabular-nums transition-colors",
@@ -2361,7 +2391,7 @@ function WipeWindowSelector({
                   : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
               )}
             >
-              {h}h
+              {opt.label}
             </button>
           );
         })}
@@ -2836,12 +2866,16 @@ function ConfirmPhase({
         {wantsPnl && pnlData && (
           <SummaryBlock
             icon={Receipt}
-            label={`PnL wipe · last ${pnlData.windowHours}h (${pnlData.ledgerLegCount.toLocaleString()} leg${pnlData.ledgerLegCount === 1 ? "" : "s"})`}
+            label={`PnL wipe${pnlData.windowHours === null ? " · ALL PnL events" : ` · last ${pnlData.windowHours}h`} (${pnlData.ledgerLegCount.toLocaleString()} leg${pnlData.ledgerLegCount === 1 ? "" : "s"})`}
             amount={pnlData.balanceClawback}
-            danger="LARGEST scope — deletes every PnL-affecting event in window (deposits, gameplay legs + won inventory, rewards, vouchers, admin adjustments). Counters: wagered/won/deposited decremented. Recoverable via snapshot."
+            danger={pnlData.windowHours === null
+              ? "LARGEST scope — deletes every PnL-affecting event the user has (deposits, gameplay legs + won inventory, rewards, vouchers, admin adjustments). Counters wagered/won/deposited RESET TO 0. Recoverable via snapshot."
+              : "LARGEST scope — deletes every PnL-affecting event in window (deposits, gameplay legs + won inventory, rewards, vouchers, admin adjustments). Counters: wagered/won/deposited decremented. Recoverable via snapshot."}
           >
             <p className="text-xs text-muted-foreground">
-              Last {pnlData.windowHours}h ·{" "}
+              {pnlData.windowHours === null
+                ? "All PnL events · "
+                : `Last ${pnlData.windowHours}h · `}
               {pnlData.ledgerLegCount.toLocaleString()} ledger leg
               {pnlData.ledgerLegCount === 1 ? "" : "s"} (deposits{" "}
               {formatCurrency(pnlData.depositSum)} · gameplay payouts{" "}
@@ -2869,12 +2903,16 @@ function ConfirmPhase({
         {wantsGame && gameData && (
           <SummaryBlock
             icon={Gamepad2}
-            label={`Game wipe · last ${gameData.windowHours}h (${gameData.ledgerLegCount.toLocaleString()} leg${gameData.ledgerLegCount === 1 ? "" : "s"})`}
+            label={`Game wipe${gameData.windowHours === null ? " · ALL gameplay" : ` · last ${gameData.windowHours}h`} (${gameData.ledgerLegCount.toLocaleString()} leg${gameData.ledgerLegCount === 1 ? "" : "s"})`}
             amount={gameData.payoutTotal}
-            danger="Pure gameplay events in window — decrements total_won only (not total_wagered). Recoverable via snapshot."
+            danger={gameData.windowHours === null
+              ? "All-gameplay reset — total_won RESET TO 0 (not just decremented). Recoverable via snapshot."
+              : "Pure gameplay events in window — decrements total_won only (not total_wagered). Recoverable via snapshot."}
           >
             <p className="text-xs text-muted-foreground">
-              Last {gameData.windowHours}h ·{" "}
+              {gameData.windowHours === null
+                ? "All gameplay · "
+                : `Last ${gameData.windowHours}h · `}
               {gameData.ledgerLegCount.toLocaleString()} wager + payout leg
               {gameData.ledgerLegCount === 1 ? "" : "s"} ·{" "}
               {gameData.inventoryCount.toLocaleString()} won item
@@ -3101,13 +3139,17 @@ function WipeAllPanel({
               {gameInAll && (
                 <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
                   <Info className="mt-px size-3 shrink-0" />
-                  Game wipe runs for the last {gameWindow}h.
+                  {gameWindow === null
+                    ? "Game wipe runs for ALL gameplay (total_won will be RESET TO 0)."
+                    : `Game wipe runs for the last ${gameWindow}h.`}
                 </p>
               )}
               {pnlInAll && (
                 <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
                   <Info className="mt-px size-3 shrink-0" />
-                  PnL wipe runs for the last {pnlWindow}h (largest scope).
+                  {pnlWindow === null
+                    ? "PnL wipe runs for ALL PnL events (total_wagered / total_won / total_deposited will be RESET TO 0, largest scope)."
+                    : `PnL wipe runs for the last ${pnlWindow}h (largest scope).`}
                 </p>
               )}
             </div>

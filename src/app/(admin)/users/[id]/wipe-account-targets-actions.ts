@@ -1257,6 +1257,21 @@ export async function restoreAccountWipe(
       // re-add — it didn't decrement them either).
       const addBackTotalWagered = toNumber(snapshot.totalWageredReduction);
       const addBackTotalWon = toNumber(snapshot.totalWonReduction);
+      // ALL-WINDOW COUNTER-RESET path (owner mandate 2026-06-03 — the
+      // FloridaManJeff fix): when the original wipe was an "All" wipe, the
+      // counters were SET TO 0 directly. A delta re-add does NOT restore them
+      // (the delta may legitimately be 0 even though the counter was reset),
+      // so for those snapshots we SET back to the captured PRE-WIPE
+      // ABSOLUTES instead. Detected via the explicit `countersFullyReset`
+      // flag (older snapshots lack it → fall back to the additive path
+      // unchanged).
+      const countersFullyReset = snapshot.countersFullyReset === true;
+      const restoreTotalWageredAbsolute = countersFullyReset
+        ? toNumber(snapshot.totalWageredBefore)
+        : 0;
+      const restoreTotalWonAbsolute = countersFullyReset
+        ? toNumber(snapshot.totalWonBefore)
+        : 0;
 
       await db.$transaction(async (tx) => {
         // (1) Ledger legs back first (skipDuplicates → retry-safe). Their
@@ -1306,15 +1321,32 @@ export async function restoreAccountWipe(
             }
           }
         }
-        // (5) Re-add EXACTLY the recorded reductions, additively to the LIVE
-        // values, under one optimistic version lock:
-        //   • available_balance += the payout clawback (payout legs only).
-        //   • total_wagered     += the wager-leg reduction.
-        //   • total_won         += the payout-leg + won-inventory reduction.
-        // Fired when ANY is > 0 (a pure-wager wipe re-adds total_wagered with no
-        // balance change). All re-adds are additive to whatever the value is now,
-        // so the restore is correct even if the user kept playing after the wipe.
-        if (addBackBalance > 0 || addBackTotalWagered > 0 || addBackTotalWon > 0) {
+        // (5) Re-apply the counter / balance restores.
+        //   • WINDOWED wipe (countersFullyReset false / missing) — original
+        //     ADDITIVE path: re-add the recorded reductions to the LIVE row.
+        //     Re-adds are computed in-SQL (current + addBack) so the restore
+        //     is correct even if the user kept playing after the wipe.
+        //   • "ALL" wipe (countersFullyReset true) — SET counters to the
+        //     SNAPSHOTTED PRE-WIPE ABSOLUTES so the restore is exact (a 0
+        //     delta cannot be re-added). The balance still uses the additive
+        //     path: the balance reduction was the actual payout clawback
+        //     (not a reset to 0), so re-adding it is correct.
+        if (countersFullyReset) {
+          // Always fired for an All-wipe (the counter restore writes even when
+          // pre-wipe absolutes were 0, so the version bump still invalidates
+          // cached reads).
+          const updated = await tx.$executeRaw`
+            UPDATE "balances"
+            SET available_balance = available_balance + ${addBackBalance}::numeric,
+                total_wagered = ${restoreTotalWageredAbsolute}::numeric,
+                total_won = ${restoreTotalWonAbsolute}::numeric,
+                version = version + 1
+            WHERE user_id = ${snapshot.userId}
+          `;
+          if (updated !== 1) throw new Error("User balances not found");
+        } else if (addBackBalance > 0 || addBackTotalWagered > 0 || addBackTotalWon > 0) {
+          // Windowed restore — UNCHANGED original additive path with optimistic
+          // version lock.
           const b = await tx.balances.findUnique({ where: { user_id: snapshot.userId } });
           if (!b) throw new Error("User balances not found");
           const updated = await tx.balances.updateMany({
@@ -1359,6 +1391,13 @@ export async function restoreAccountWipe(
       const upgraderForInsert = snapshot.upgraderGameRows.map(stripUndef);
       const addBackBalance = toNumber(snapshot.balanceReduction);
       const addBackTotalWon = toNumber(snapshot.totalWonReduction);
+      // ALL-WINDOW counter-reset path: SET total_won back to the snapshotted
+      // pre-wipe absolute (a delta of 0 cannot be re-added). Windowed wipes
+      // leave `countersFullyReset` unset and fall back to the additive path.
+      const countersFullyReset = snapshot.countersFullyReset === true;
+      const restoreTotalWonAbsolute = countersFullyReset
+        ? toNumber(snapshot.totalWonBefore)
+        : 0;
 
       await db.$transaction(async (tx) => {
         if (ledgerForInsert.length > 0) {
@@ -1397,12 +1436,26 @@ export async function restoreAccountWipe(
             }
           }
         }
-        // Re-add balance + total_won additively to the live row, NO optimistic
-        // version check (same Pattern A/B rationale as the destructive wipe;
-        // restore is additive so we can't lose data even if a writer landed
-        // between read and write — but we still bump version so cached reads
-        // invalidate).
-        if (addBackBalance > 0 || addBackTotalWon > 0) {
+        // Re-apply balance + total_won.
+        //   ALL-WINDOW restore: SET total_won = snapshotted absolute. Balance
+        //     still uses the additive path (the original wipe clawed back the
+        //     actual payout legs, not a full reset).
+        //   WINDOWED restore: UNCHANGED additive path.
+        if (countersFullyReset) {
+          const updated = await tx.$executeRaw`
+            UPDATE "balances"
+            SET available_balance = available_balance + ${addBackBalance}::numeric,
+                total_won = ${restoreTotalWonAbsolute}::numeric,
+                version = version + 1
+            WHERE user_id = ${snapshot.userId}
+          `;
+          if (updated !== 1) throw new Error("User balances not found");
+        } else if (addBackBalance > 0 || addBackTotalWon > 0) {
+          // Re-add balance + total_won additively to the live row, NO optimistic
+          // version check (same Pattern A/B rationale as the destructive wipe;
+          // restore is additive so we can't lose data even if a writer landed
+          // between read and write — but we still bump version so cached reads
+          // invalidate).
           const updated = await tx.$executeRaw`
             UPDATE "balances"
             SET available_balance = available_balance + ${addBackBalance}::numeric,
@@ -1445,6 +1498,21 @@ export async function restoreAccountWipe(
       const addBackWon = toNumber(snapshot.totalWonReduction);
       const addBackDeposited = toNumber(snapshot.totalDepositedReduction);
       const addBackWithdrawn = toNumber(snapshot.totalWithdrawnReduction);
+      // ALL-WINDOW COUNTER-RESET path: SET total_wagered / total_won /
+      // total_deposited back to the snapshotted pre-wipe absolutes (a delta
+      // of 0 cannot be re-added). Windowed wipes leave `countersFullyReset`
+      // unset and fall back to the existing additive path. total_withdrawn is
+      // owner-carve-out either way.
+      const countersFullyReset = snapshot.countersFullyReset === true;
+      const restoreWageredAbsolute = countersFullyReset
+        ? toNumber(snapshot.totalWageredBefore)
+        : 0;
+      const restoreWonAbsolute = countersFullyReset
+        ? toNumber(snapshot.totalWonBefore)
+        : 0;
+      const restoreDepositedAbsolute = countersFullyReset
+        ? toNumber(snapshot.totalDepositedBefore)
+        : 0;
 
       await db.$transaction(async (tx) => {
         if (ledgerForInsert.length > 0) {
@@ -1489,7 +1557,25 @@ export async function restoreAccountWipe(
             skipDuplicates: true,
           });
         }
-        if (
+        // Re-apply balance + counters.
+        //   ALL-WINDOW restore: SET total_wagered / total_won / total_deposited
+        //     back to snapshotted absolutes. available_balance + total_withdrawn
+        //     still use the additive path (the original wipe clawed the actual
+        //     payout/credit legs and never touched total_withdrawn).
+        //   WINDOWED restore: UNCHANGED additive path on all five.
+        if (countersFullyReset) {
+          const updated = await tx.$executeRaw`
+            UPDATE "balances"
+            SET available_balance = available_balance + ${addBackBalance}::numeric,
+                total_wagered = ${restoreWageredAbsolute}::numeric,
+                total_won = ${restoreWonAbsolute}::numeric,
+                total_deposited = ${restoreDepositedAbsolute}::numeric,
+                total_withdrawn = total_withdrawn + ${addBackWithdrawn}::numeric,
+                version = version + 1
+            WHERE user_id = ${snapshot.userId}
+          `;
+          if (updated !== 1) throw new Error("User balances not found");
+        } else if (
           addBackBalance > 0 ||
           addBackWagered > 0 ||
           addBackWon > 0 ||

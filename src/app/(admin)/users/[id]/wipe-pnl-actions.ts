@@ -110,6 +110,13 @@ import {
 // clamp) as Wager / Game. NO optimistic version check.
 //
 // ORDERING — snapshot-first. Snapshot write failure → abort.
+//
+// WINDOW — 12 / 24 / 48 hours, OR `null` for "All" (owner mandate 2026-06-03 —
+// the FloridaManJeff fix). The bounded windows keep the original repeatable
+// per-window behaviour; "All" is the full-history reset that SETS
+// `total_wagered` / `total_won` / `total_deposited` to 0 directly so the user
+// reads as freshly created (`total_withdrawn` stays out of scope — owner
+// carve-out). This matches Wager + Game "All" semantics.
 // ---------------------------------------------------------------------------
 
 /**
@@ -193,7 +200,8 @@ export type PnlWipePreview = {
   upgraderGameCount: number;
   upgraderTablePresent: boolean;
   windowHours: WipeWindowHours;
-  cutoff: string;
+  /** ISO cutoff, or null for "All" (the full-history reset). */
+  cutoff: string | null;
 };
 
 type RegclassRow = { exists: string | null };
@@ -224,13 +232,13 @@ export async function previewPnlWipe(
   const windowHours = normalizeWipeWindow(sinceHours);
   const cutoff = resolveWipeCutoff(windowHours);
 
-  // GroupBy on type for the legs aggregate.
+  // GroupBy on type for the legs aggregate. "All" omits the time filter.
   const ledgerGrouped = await db.ledger_transactions.groupBy({
     by: ["type"],
     where: {
       user_id: parsed.data,
       type: { in: PNL_WIPE_LEDGER_TYPES as unknown as LedgerTransactionType[] },
-      created_at: { gte: cutoff },
+      ...(cutoff ? { created_at: { gte: cutoff } } : {}),
     },
     _count: { _all: true },
     _sum: { amount: true },
@@ -243,7 +251,7 @@ export async function previewPnlWipe(
     where: {
       user_id: parsed.data,
       type: "admin_balance_adjustment",
-      created_at: { gte: cutoff },
+      ...(cutoff ? { created_at: { gte: cutoff } } : {}),
     },
     select: { amount: true },
   });
@@ -290,14 +298,14 @@ export async function previewPnlWipe(
   // adding to balance clawback, NOT to wagerSum either — it's NOT in
   // total_wagered conceptually unless production writes it that way).
 
-  // Inventory in window.
+  // Inventory in window. "All" omits the obtained_at bound.
   const [invAgg, lockedAgg] = await Promise.all([
     db.user_inventory.aggregate({
       where: {
         user_id: parsed.data,
         source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
         withdrawal_locked_at: null,
-        obtained_at: { gte: cutoff },
+        ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
       },
       _count: { _all: true },
       _sum: { value_at_obtained: true },
@@ -307,14 +315,17 @@ export async function previewPnlWipe(
         user_id: parsed.data,
         source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
         withdrawal_locked_at: { not: null },
-        obtained_at: { gte: cutoff },
+        ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
       },
     }),
   ]);
 
-  // Vouchers created in window.
+  // Vouchers created in window. "All" omits the created_at bound.
   const voucherAgg = await db.vouchers.aggregate({
-    where: { user_id: parsed.data, created_at: { gte: cutoff } },
+    where: {
+      user_id: parsed.data,
+      ...(cutoff ? { created_at: { gte: cutoff } } : {}),
+    },
     _count: { _all: true },
     _sum: { value: true },
   });
@@ -324,12 +335,18 @@ export async function previewPnlWipe(
   const upgraderTablePresent = await upgraderGamesPresent(db);
   if (upgraderTablePresent) {
     try {
-      const rows = await db.$queryRawUnsafe<UpgraderAggRow[]>(
-        `SELECT COUNT(*)::text AS cnt
-         FROM upgrader_games WHERE user_id = $1 AND created_at >= $2`,
-        parsed.data,
-        cutoff,
-      );
+      const rows = cutoff
+        ? await db.$queryRawUnsafe<UpgraderAggRow[]>(
+            `SELECT COUNT(*)::text AS cnt
+             FROM upgrader_games WHERE user_id = $1 AND created_at >= $2`,
+            parsed.data,
+            cutoff,
+          )
+        : await db.$queryRawUnsafe<UpgraderAggRow[]>(
+            `SELECT COUNT(*)::text AS cnt
+             FROM upgrader_games WHERE user_id = $1`,
+            parsed.data,
+          );
       const r = rows?.[0];
       upgraderGameCount = r ? Number(r.cnt ?? 0) : 0;
     } catch (err) {
@@ -354,7 +371,7 @@ export async function previewPnlWipe(
       upgraderGameCount,
       upgraderTablePresent,
       windowHours,
-      cutoff: cutoff.toISOString(),
+      cutoff: cutoff ? cutoff.toISOString() : null,
     },
   };
 }
@@ -368,7 +385,11 @@ export async function previewPnlWipe(
 const wipePnlSchema = z.object({
   userId: z.string().min(1, "User id is required"),
   totpCode: z.string().min(1, "2FA code is required"),
-  windowHours: z.union([z.literal(12), z.literal(24), z.literal(48)]),
+  // 12 / 24 / 48 keep the original windowed behaviour; `null` is the "All"
+  // sentinel (owner mandate 2026-06-03 — the FloridaManJeff fix). On an "All"
+  // wipe the action sets total_wagered / total_won / total_deposited to 0
+  // directly (total_withdrawn is the owner carve-out).
+  windowHours: z.union([z.literal(12), z.literal(24), z.literal(48), z.null()]),
 });
 
 export async function wipePnl(data: {
@@ -417,13 +438,19 @@ export async function wipePnl(data: {
 
   const windowHours = normalizeWipeWindow(parsed.windowHours);
   const cutoff = resolveWipeCutoff(windowHours);
+  // "All" wipe (windowHours = null) → counter-reset path: SET total_wagered,
+  // total_won, total_deposited = 0 directly + snapshot pre-wipe absolutes.
+  // Windowed wipes keep the original delta-decrement path. total_withdrawn is
+  // owner-carve-out in both branches.
+  const isAllWindow = cutoff === null;
 
-  // Read everything up front so the snapshot is exact.
+  // Read everything up front so the snapshot is exact. "All" omits the time
+  // filters so every relevant row is captured.
   const ledgerRows = await db.ledger_transactions.findMany({
     where: {
       user_id: parsed.userId,
       type: { in: PNL_WIPE_LEDGER_TYPES as unknown as LedgerTransactionType[] },
-      created_at: { gte: cutoff },
+      ...(cutoff ? { created_at: { gte: cutoff } } : {}),
     },
     take: MAX_PNL_ROWS + 1,
   });
@@ -439,7 +466,7 @@ export async function wipePnl(data: {
       user_id: parsed.userId,
       source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
       withdrawal_locked_at: null,
-      obtained_at: { gte: cutoff },
+      ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
     },
     take: MAX_PNL_ROWS + 1,
   });
@@ -454,12 +481,15 @@ export async function wipePnl(data: {
       user_id: parsed.userId,
       source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
       withdrawal_locked_at: { not: null },
-      obtained_at: { gte: cutoff },
+      ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
     },
   });
 
   const voucherRows = await db.vouchers.findMany({
-    where: { user_id: parsed.userId, created_at: { gte: cutoff } },
+    where: {
+      user_id: parsed.userId,
+      ...(cutoff ? { created_at: { gte: cutoff } } : {}),
+    },
     take: MAX_PNL_ROWS + 1,
   });
   if (voucherRows.length > MAX_PNL_ROWS) {
@@ -521,11 +551,16 @@ export async function wipePnl(data: {
   let upgraderGameRows: Array<Record<string, unknown>> = [];
   if (upgraderTablePresent) {
     try {
-      upgraderGameRows = await db.$queryRawUnsafe<Array<Record<string, unknown>>>(
-        `SELECT * FROM upgrader_games WHERE user_id = $1 AND created_at >= $2 LIMIT ${MAX_PNL_ROWS + 1}`,
-        parsed.userId,
-        cutoff,
-      );
+      upgraderGameRows = cutoff
+        ? await db.$queryRawUnsafe<Array<Record<string, unknown>>>(
+            `SELECT * FROM upgrader_games WHERE user_id = $1 AND created_at >= $2 LIMIT ${MAX_PNL_ROWS + 1}`,
+            parsed.userId,
+            cutoff,
+          )
+        : await db.$queryRawUnsafe<Array<Record<string, unknown>>>(
+            `SELECT * FROM upgrader_games WHERE user_id = $1 LIMIT ${MAX_PNL_ROWS + 1}`,
+            parsed.userId,
+          );
     } catch (err) {
       console.error("[wipePnl] upgrader_games read failed — aborting (nothing deleted):", err);
       return {
@@ -547,7 +582,32 @@ export async function wipePnl(data: {
     voucherRows.length === 0 &&
     upgraderGameRows.length === 0
   ) {
-    return { success: false, error: "This user has no PnL-affecting data to wipe in the selected window" };
+    // For an "All" wipe with zero rows we still allow the counter reset (the
+    // FloridaManJeff case — earlier wipes deleted the source rows but the
+    // counters still hold stale values). Only refuse when the user genuinely
+    // has nothing AND all three counters are already 0.
+    if (!isAllWindow) {
+      return { success: false, error: "This user has no PnL-affecting data to wipe in the selected window" };
+    }
+    const counterCheck = await db.balances
+      .findUnique({
+        where: { user_id: parsed.userId },
+        select: { total_wagered: true, total_won: true, total_deposited: true },
+      })
+      .catch(() => null);
+    if (
+      !counterCheck ||
+      (toNumber(counterCheck.total_wagered) <= 0 &&
+        toNumber(counterCheck.total_won) <= 0 &&
+        toNumber(counterCheck.total_deposited) <= 0)
+    ) {
+      return {
+        success: false,
+        error:
+          "This user has no PnL-affecting data and all three counters (total_wagered/won/deposited) are already $0 — nothing to wipe",
+      };
+    }
+    // Counters non-zero → fall through; the destructive UPDATE will reset them.
   }
 
   // Compute the per-counter / balance reductions from the snapshotted rows.
@@ -600,9 +660,18 @@ export async function wipePnl(data: {
   const balanceReduction = balanceBefore - balanceAfter;
 
   const wonDeleted = payoutMagnitude + inventoryValue;
-  const totalWageredReduction = Math.min(wagerMagnitude, totalWageredBefore);
-  const totalWonReduction = Math.min(wonDeleted, totalWonBefore);
-  const totalDepositedReduction = Math.min(depositSum, totalDepositedBefore);
+  // ALL-WINDOW path: counter "reductions" recorded for the audit are the FULL
+  // pre-wipe values (the actual zero-ing magnitudes); restore uses the
+  // snapshotted absolutes, not these deltas. Windowed path UNCHANGED.
+  const totalWageredReduction = isAllWindow
+    ? totalWageredBefore
+    : Math.min(wagerMagnitude, totalWageredBefore);
+  const totalWonReduction = isAllWindow
+    ? totalWonBefore
+    : Math.min(wonDeleted, totalWonBefore);
+  const totalDepositedReduction = isAllWindow
+    ? totalDepositedBefore
+    : Math.min(depositSum, totalDepositedBefore);
   // total_withdrawn is NOT decremented (owner carve-out, 2026-06-03). Kept at
   // 0 in the snapshot so restore re-adds 0 (no-op) — preserves the symmetric
   // snapshot shape required by PnlWipeSnapshot.
@@ -627,7 +696,20 @@ export async function wipePnl(data: {
     totalDepositedReduction: totalDepositedReduction.toFixed(2),
     totalWithdrawnReduction: totalWithdrawnReduction.toFixed(2),
     windowHours,
-    windowCutoff: cutoff.toISOString(),
+    windowCutoff: cutoff ? cutoff.toISOString() : null,
+    // ALL-WINDOW COUNTER-RESET fields (owner mandate 2026-06-03). On an "All"
+    // wipe the destructive UPDATE sets total_wagered / total_won /
+    // total_deposited to 0 directly, so Restore needs the PRE-WIPE ABSOLUTES
+    // to put back. Windowed wipes leave these unset and Restore falls back to
+    // the existing additive-delta path.
+    ...(isAllWindow
+      ? {
+          countersFullyReset: true as const,
+          totalWageredBefore: totalWageredBefore.toFixed(2),
+          totalWonBefore: totalWonBefore.toFixed(2),
+          totalDepositedBefore: totalDepositedBefore.toFixed(2),
+        }
+      : {}),
   } satisfies { type: "pnl" } & PnlWipeSnapshot;
 
   let wipeId: string;
@@ -694,14 +776,15 @@ export async function wipePnl(data: {
         provablyFairDeleted = pfDel.count;
       }
 
-      // (3) Delete the wide PnL ledger set (re-scoped).
+      // (3) Delete the wide PnL ledger set (re-scoped). "All" omits the
+      // cutoff bound; windowed re-scopes by created_at.
       if (ledgerIds.length > 0) {
         const legDel = await tx.ledger_transactions.deleteMany({
           where: {
             id: { in: ledgerIds },
             user_id: parsed.userId,
             type: { in: PNL_WIPE_LEDGER_TYPES as unknown as LedgerTransactionType[] },
-            created_at: { gte: cutoff },
+            ...(cutoff ? { created_at: { gte: cutoff } } : {}),
           },
         });
         if (legDel.count !== ledgerIds.length) {
@@ -717,7 +800,7 @@ export async function wipePnl(data: {
             user_id: parsed.userId,
             source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
             withdrawal_locked_at: null,
-            obtained_at: { gte: cutoff },
+            ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
           },
         });
         if (invDel.count !== inventoryIds.length) {
@@ -725,23 +808,28 @@ export async function wipePnl(data: {
         }
       }
 
-      // (5) Delete upgrader_games rows.
+      // (5) Delete upgrader_games rows. "All" omits the cutoff bound.
       if (upgraderGameRows.length > 0) {
-        const deleted = await tx.$executeRawUnsafe(
-          `DELETE FROM upgrader_games WHERE user_id = $1 AND created_at >= $2`,
-          parsed.userId,
-          cutoff,
-        );
+        const deleted = cutoff
+          ? await tx.$executeRawUnsafe(
+              `DELETE FROM upgrader_games WHERE user_id = $1 AND created_at >= $2`,
+              parsed.userId,
+              cutoff,
+            )
+          : await tx.$executeRawUnsafe(
+              `DELETE FROM upgrader_games WHERE user_id = $1`,
+              parsed.userId,
+            );
         upgraderGamesDeleted = typeof deleted === "number" ? deleted : upgraderGameRows.length;
       }
 
-      // (6) Delete vouchers created in window.
+      // (6) Delete vouchers (created in window when bounded; ALL for "All").
       if (voucherIds.length > 0) {
         const vDel = await tx.vouchers.deleteMany({
           where: {
             id: { in: voucherIds },
             user_id: parsed.userId,
-            created_at: { gte: cutoff },
+            ...(cutoff ? { created_at: { gte: cutoff } } : {}),
           },
         });
         vouchersDeleted = vDel.count;
@@ -750,12 +838,28 @@ export async function wipePnl(data: {
         }
       }
 
-      // (7) PATTERN B — atomic clamped UPDATE for the balance + the three
-      // lifetime counters we touch. ONE raw SQL UPDATE; GREATEST(0, …) clamps
-      // each independently. NO optimistic version check. `total_withdrawn`
-      // is NOT in this UPDATE (owner carve-out 2026-06-03 — withdrawals are
-      // not part of the PnL wipe scope).
-      if (
+      // (7) PATTERN B — atomic balance UPDATE.
+      //   WINDOWED — UNCHANGED original clamped-delta path
+      //     (GREATEST(0, current − reduction)) for balance + the three counters.
+      //   "ALL" (owner mandate 2026-06-03) — SET total_wagered, total_won,
+      //     total_deposited DIRECTLY to 0 (regardless of deleted-row sums).
+      //     `available_balance` still uses the clamped delta path (the
+      //     BALANCE RULE — never inflate). `total_withdrawn` is INTENTIONALLY
+      //     LEFT ALONE in BOTH branches (owner carve-out).
+      if (isAllWindow) {
+        const updated = await tx.$executeRaw`
+          UPDATE "balances"
+          SET available_balance = GREATEST(0::numeric, available_balance - ${balanceReduction}::numeric),
+              total_wagered = 0::numeric,
+              total_won = 0::numeric,
+              total_deposited = 0::numeric,
+              version = version + 1
+          WHERE user_id = ${parsed.userId}
+        `;
+        if (updated !== 1) {
+          throw new Error("PNL_GUARD: user balances row not found — wipe aborted");
+        }
+      } else if (
         balanceReduction > 0 ||
         totalWageredReduction > 0 ||
         totalWonReduction > 0 ||
@@ -793,7 +897,9 @@ export async function wipePnl(data: {
       return {
         success: false,
         error:
-          "Wipe timed out — this account's PnL history is unusually large for the selected window. Nothing was deleted (the data is safe). Please pick a shorter window or notify an administrator.",
+          isAllWindow
+            ? "Wipe timed out — this account's PnL history is unusually large for an 'All' wipe. Nothing was deleted (the data is safe). Please pick a bounded window (12/24/48h) or notify an administrator."
+            : "Wipe timed out — this account's PnL history is unusually large for the selected window. Nothing was deleted (the data is safe). Please pick a shorter window or notify an administrator.",
       };
     }
     return { success: false, error: "Wipe failed — please try again (nothing deleted)" };
@@ -813,7 +919,9 @@ export async function wipePnl(data: {
         admin_user_id: session.userId,
         target_user_id: parsed.userId,
         window_hours: windowHours,
-        cutoff_iso: cutoff.toISOString(),
+        cutoff_iso: cutoff ? cutoff.toISOString() : null,
+        // Owner mandate 2026-06-03: explicit flag on "All" wipes.
+        counters_fully_reset: isAllWindow,
         snapshot_id: wipeId,
         deleted_count:
           ledgerRows.length +
@@ -846,7 +954,7 @@ export async function wipePnl(data: {
         totalDepositedBefore,
         totalDepositedReduced: totalDepositedReduction,
         recoverable: true,
-        note: `PnL wipe (${windowHours}h window): deleted every PnL-affecting event in window — deposits, wager + payout legs (pack/battle/upgrader) + won pack/battle inventory + provably_fair_results + upgrader_games, reward-payout legs, in-window admin balance adjustments (credits clawed back, debits delete record only), vouchers created in window. Decremented total_wagered / total_won / total_deposited by the deleted sums (each clamped ≥0 via atomic UPDATE). available_balance reduced ONLY by credit legs' magnitude (deposits + payouts + rewards + adj credits) clamped ≥0; wager / debit-adjustments left balance unchanged. WITHDRAWALS CARVE-OUT (owner mandate 2026-06-03): card_withdrawal ledger legs are NOT in scope and total_withdrawn is NOT decremented; card_withdrawal_requests was already untouched. Restore re-inserts all snapshotted rows + re-adds the recorded reductions (symmetric).`,
+        note: `PnL wipe (${windowHours === null ? "ALL PnL events" : `${windowHours}h window`}): deleted every PnL-affecting event — deposits, wager + payout legs (pack/battle/upgrader) + won pack/battle inventory + provably_fair_results + upgrader_games, reward-payout legs, admin balance adjustments (credits clawed back, debits delete record only), vouchers. ${isAllWindow ? "ALL-WINDOW COUNTER RESET (owner mandate 2026-06-03): total_wagered / total_won / total_deposited SET TO 0 DIRECTLY (regardless of deleted-row sums); restore puts back the PRE-WIPE absolutes from the snapshot. " : "Decremented total_wagered / total_won / total_deposited by the deleted sums (each clamped ≥0 via atomic UPDATE). "}available_balance reduced ONLY by credit legs' magnitude (deposits + payouts + rewards + adj credits) clamped ≥0; wager / debit-adjustments left balance unchanged. WITHDRAWALS CARVE-OUT (owner mandate 2026-06-03): card_withdrawal ledger legs are NOT in scope and total_withdrawn is NOT decremented; card_withdrawal_requests was already untouched. Restore re-inserts all snapshotted rows + re-adds/restores the recorded reductions/absolutes (symmetric).`,
       },
     },
   });

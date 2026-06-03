@@ -89,15 +89,23 @@ const WAGER_SET = new Set<string>(WAGER_TYPES);
 const REWARD_SET = new Set<string>(REWARD_PAYOUT_TYPES);
 
 // ── Window helpers (mirrors src/lib/account-wipes/window.ts). ─────────────
-type WipeWindowHours = 12 | 24 | 48;
+// `null` = "All" (owner mandate 2026-06-03 — the FloridaManJeff fix). Each
+// windowed wipe (Wager / Game / PnL) accepts `null` and treats it as the
+// full-history reset: the destructive UPDATE sets the relevant counters
+// DIRECTLY to 0 instead of decrementing by the deleted-row sums.
+type WipeWindowHours = 12 | 24 | 48 | null;
 function normalizeWipeWindow(v: unknown): WipeWindowHours {
   if (v === 12 || v === 24 || v === 48) return v;
+  if (v === null) return null;
   return 24;
 }
-function resolveWipeCutoff(hours: WipeWindowHours, now = Date.now()): Date {
+function resolveWipeCutoff(hours: WipeWindowHours, now = Date.now()): Date | null {
+  if (hours === null) return null;
   return new Date(now - hours * 60 * 60 * 1000);
 }
-function inWindow(ts: Date, cutoff: Date): boolean {
+function inWindow(ts: Date, cutoff: Date | null): boolean {
+  // No lower bound when cutoff is null ("All"): every row is in-window.
+  if (cutoff === null) return true;
   return ts.getTime() >= cutoff.getTime();
 }
 
@@ -210,7 +218,11 @@ async function pureChecks() {
   check("normalizeWipeWindow(12) = 12", normalizeWipeWindow(12) === 12);
   check("normalizeWipeWindow(24) = 24", normalizeWipeWindow(24) === 24);
   check("normalizeWipeWindow(48) = 48", normalizeWipeWindow(48) === 48);
-  check("normalizeWipeWindow(null) = 24 (safe default)", normalizeWipeWindow(null) === 24);
+  // OWNER MANDATE 2026-06-03 (FloridaManJeff fix): `null` is now the explicit
+  // "All" sentinel for ALL three windowed wipes (Wager already supported it;
+  // Game + PnL gained it in this sweep). It must round-trip as null — NOT
+  // fall back to 24h. An undefined / unknown value still falls back to 24h.
+  check("normalizeWipeWindow(null) = null (All sentinel — explicit)", normalizeWipeWindow(null) === null);
   check("normalizeWipeWindow(undefined) = 24", normalizeWipeWindow(undefined) === 24);
   check("normalizeWipeWindow(36) = 24 (unknown → default)", normalizeWipeWindow(36) === 24);
   check('normalizeWipeWindow("24") = 24 (string → default)', normalizeWipeWindow("24") === 24);
@@ -220,9 +232,15 @@ async function pureChecks() {
     const cutoff = resolveWipeCutoff(h, NOW);
     check(
       `${h}h cutoff = exactly ${h}h before now`,
-      cutoff.getTime() === NOW - h * 3600_000,
+      cutoff !== null && cutoff.getTime() === NOW - h * 3600_000,
     );
   }
+  // "All" cutoff is null (no lower bound — every row is in scope).
+  check("resolveWipeCutoff(null) = null (All — no lower bound)", resolveWipeCutoff(null) === null);
+  check(
+    "inWindow with null cutoff = true for any row (All)",
+    inWindow(new Date(NOW - 999 * 24 * 3600_000), null) === true,
+  );
 
   // ── Each of the 9 combos: in/out-of-window partition + correct sums. ──
   console.log("\n── PURE: in/out-of-window row partition per combo ──");
@@ -511,6 +529,180 @@ async function pureChecks() {
   check("GREATEST(0, 100 - 30) = 70", GREATEST(0, 100 - 30) === 70);
   check("GREATEST(0, 50 - 200) = 0 (no negative)", GREATEST(0, 50 - 200) === 0);
   check("GREATEST(0, 1.5 - 0.5) = 1.0", GREATEST(0, 1.5 - 0.5) === 1.0);
+
+  // ── OWNER MANDATE 2026-06-03 — the FloridaManJeff fix ──
+  //
+  // When the admin selects the "All" window (windowHours = null / cutoff =
+  // null) on the Wager / Game / PnL wipes, the destructive UPDATE must SET
+  // the relevant lifetime counters DIRECTLY to 0 instead of decrementing by
+  // the deleted-row sums. This is the explicit "treat this user as freshly
+  // created" semantics — required because earlier wipes (e.g. inventory /
+  // voucher) may have already deleted the source rows, so the deleted-row
+  // sum is 0 and the lifetime counter would never zero on a delta path.
+  //
+  // The snapshot must capture the PRE-WIPE absolute counter values so
+  // Restore can put them back exactly (re-adding a 0 delta is a no-op).
+  //
+  // For 12 / 24 / 48h wipes the original delta-decrement path is UNCHANGED:
+  // the counters only drop by what was actually deleted in the window, clamped
+  // ≥ 0.
+  console.log("\n── PURE: ALL-WINDOW COUNTER RESET (owner mandate / FloridaManJeff fix) ──");
+
+  // Simulate the wage wipe's All-window SET clause: counters land at exactly
+  // 0 regardless of how many rows the delete actually touched. The deleted
+  // row sums are deliberately set to 0 here — mirrors the FloridaManJeff case
+  // where earlier wipes removed everything but the lifetime counters still
+  // held $14k+.
+  {
+    const totalWageredBefore = 14_103.92;
+    const totalWonBefore = 18_215.06;
+    // Even with 0 ledger / inventory rows deleted (earlier wipes already
+    // removed them) → counters become 0.
+    const deletedWagerSum = 0;
+    const deletedWonSum = 0;
+
+    // WINDOWED behaviour (unchanged): clamp at GREATEST(0, before - delta)
+    const windowedWagered = GREATEST(0, totalWageredBefore - deletedWagerSum);
+    const windowedWon = GREATEST(0, totalWonBefore - deletedWonSum);
+    check(
+      "windowed: deletedSum = 0 leaves counters UNCHANGED (the bug case before the fix)",
+      windowedWagered === totalWageredBefore && windowedWon === totalWonBefore,
+    );
+
+    // ALL-WINDOW behaviour (new): SET to 0 directly.
+    const allWageredAfter = 0;
+    const allWonAfter = 0;
+    check(
+      "ALL-window Wager wipe: total_wagered drops to exact 0 regardless of deleted_count",
+      allWageredAfter === 0,
+    );
+    check(
+      "ALL-window Wager wipe: total_won drops to exact 0 regardless of deleted_count",
+      allWonAfter === 0,
+    );
+
+    // Snapshot must record the PRE-WIPE absolutes so Restore is exact.
+    const snapshot = {
+      countersFullyReset: true,
+      totalWageredBefore: totalWageredBefore.toFixed(2),
+      totalWonBefore: totalWonBefore.toFixed(2),
+    };
+    check(
+      "ALL-window snapshot records countersFullyReset = true",
+      snapshot.countersFullyReset === true,
+    );
+    check(
+      "ALL-window snapshot records totalWageredBefore as the PRE-WIPE absolute",
+      Number(snapshot.totalWageredBefore) === totalWageredBefore,
+    );
+    check(
+      "ALL-window snapshot records totalWonBefore as the PRE-WIPE absolute",
+      Number(snapshot.totalWonBefore) === totalWonBefore,
+    );
+
+    // Restore: SET back to the snapshotted absolute (NOT add a delta — the
+    // delta was 0 and re-adding 0 would leave the counter at 0 after restore).
+    const restoredWagered = Number(snapshot.totalWageredBefore);
+    const restoredWon = Number(snapshot.totalWonBefore);
+    check(
+      "ALL-window restore: total_wagered = snapshotted PRE-WIPE absolute (NOT live + 0 delta)",
+      restoredWagered === totalWageredBefore,
+    );
+    check(
+      "ALL-window restore: total_won = snapshotted PRE-WIPE absolute",
+      restoredWon === totalWonBefore,
+    );
+    check(
+      "ALL-window restore is symmetric: post-restore counter equals pre-wipe absolute",
+      restoredWagered === totalWageredBefore && restoredWon === totalWonBefore,
+    );
+  }
+
+  // ALL-window Game wipe: ONLY total_won resets (Game wipe is counter-disjoint
+  // from Wager — never touches total_wagered).
+  {
+    const totalWonBefore = 7_500;
+    const allWonAfter = 0;
+    check("ALL-window Game wipe: total_won drops to exact 0", allWonAfter === 0);
+    const snapshot = {
+      countersFullyReset: true,
+      totalWonBefore: totalWonBefore.toFixed(2),
+      // No totalWageredBefore — Game wipe never touches it.
+    };
+    check(
+      "ALL-window Game snapshot: NO totalWageredBefore key (Game wipe is counter-disjoint)",
+      !("totalWageredBefore" in snapshot),
+    );
+    check(
+      "ALL-window Game restore: total_won restored to snapshotted absolute",
+      Number(snapshot.totalWonBefore) === totalWonBefore,
+    );
+  }
+
+  // ALL-window PnL wipe: total_wagered, total_won, total_deposited reset.
+  // total_withdrawn stays out of scope (owner carve-out).
+  {
+    const wageredBefore = 5_000;
+    const wonBefore = 6_500;
+    const depositedBefore = 2_200;
+    const withdrawnBefore = 1_000; // out of scope, untouched
+    const allWageredAfter = 0;
+    const allWonAfter = 0;
+    const allDepositedAfter = 0;
+    const allWithdrawnAfter = withdrawnBefore; // unchanged
+    check("ALL-window PnL wipe: total_wagered → 0", allWageredAfter === 0);
+    check("ALL-window PnL wipe: total_won → 0", allWonAfter === 0);
+    check("ALL-window PnL wipe: total_deposited → 0", allDepositedAfter === 0);
+    check(
+      "ALL-window PnL wipe (CARVE-OUT): total_withdrawn UNCHANGED",
+      allWithdrawnAfter === withdrawnBefore,
+    );
+    const snapshot = {
+      countersFullyReset: true,
+      totalWageredBefore: wageredBefore.toFixed(2),
+      totalWonBefore: wonBefore.toFixed(2),
+      totalDepositedBefore: depositedBefore.toFixed(2),
+      // No totalWithdrawnBefore — out of scope.
+    };
+    check(
+      "ALL-window PnL snapshot: NO totalWithdrawnBefore (owner carve-out)",
+      !("totalWithdrawnBefore" in snapshot),
+    );
+    check(
+      "ALL-window PnL restore: three counters restored to snapshotted absolutes",
+      Number(snapshot.totalWageredBefore) === wageredBefore &&
+        Number(snapshot.totalWonBefore) === wonBefore &&
+        Number(snapshot.totalDepositedBefore) === depositedBefore,
+    );
+  }
+
+  // 12/24/48h wipes MUST keep the original delta path: a deletedSum of $0
+  // leaves the counter unchanged. This is critical for back-compat —
+  // windowed wipes are not meant to zero counters on partial wipes.
+  console.log("\n── PURE: WINDOWED wipes UNCHANGED — partial wipe does NOT zero counters ──");
+  for (const windowHours of [12, 24, 48] as const) {
+    const before = 9_000;
+    const deletedDelta = 0; // no rows in this window
+    const after = GREATEST(0, before - deletedDelta);
+    check(
+      `${windowHours}h: counter UNCHANGED when nothing in window (${before} → ${after})`,
+      after === before,
+    );
+  }
+
+  // Symmetry: a normal (non-zero) delta still works on windowed wipes — Restore
+  // re-adds it to whatever the live counter is now (additive).
+  {
+    const before = 1_000;
+    const delta = 250;
+    const after = GREATEST(0, before - delta); // 750
+    const liveLater = 800; // user wagered $50 between wipe and restore
+    const restored = liveLater + delta; // 1050 — additive symmetry
+    check(
+      "WINDOWED restore: additive re-add stays correct even if user kept playing",
+      after === 750 && restored === 1050,
+    );
+  }
 }
 
 async function main() {

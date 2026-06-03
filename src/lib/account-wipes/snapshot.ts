@@ -212,6 +212,28 @@ export type WagerWipeSnapshot = {
   windowHours?: number | null;
   /** ISO cutoff the window resolved to (rows with ts ≥ this), or null for "All". Informational. */
   windowCutoff?: string | null;
+  /**
+   * ALL-WINDOW COUNTER-RESET fields (owner mandate 2026-06-03 — the
+   * FloridaManJeff fix). When the admin runs an "All" Wager wipe (windowHours
+   * = null), the wipe SETS counters to 0 directly instead of decrementing by
+   * the deleted-row sums (which can be 0 when earlier wipes already removed
+   * the source rows). For that case we snapshot the PRE-WIPE ABSOLUTE counter
+   * values so Restore can put them back EXACTLY — re-adding the (zero) delta
+   * would otherwise leave the counter at 0 after restore. For 12/24/48h wipes
+   * `countersFullyReset` is `false`/absent and the (existing) delta-based
+   * restore path is used.
+   *
+   * OPTIONAL for back-compat: older snapshots predate these fields. When
+   * `countersFullyReset` is missing/false the restore falls back to additive
+   * delta re-add (the original behaviour). Snapshots written by an All-wipe
+   * always set `countersFullyReset: true` AND populate the two absolute
+   * decimals.
+   */
+  countersFullyReset?: boolean;
+  /** balances.total_wagered IMMEDIATELY BEFORE the wipe (decimal string). Set on All-wipes only. */
+  totalWageredBefore?: string;
+  /** balances.total_won IMMEDIATELY BEFORE the wipe (decimal string). Set on All-wipes only. */
+  totalWonBefore?: string;
 };
 
 /**
@@ -242,10 +264,30 @@ export type GameWipeSnapshot = {
   balanceReduction: string;
   /** Exact amount subtracted from balances.total_won (clamped ≥0; decimal string). */
   totalWonReduction: string;
-  /** Window the wipe ran for (12 / 24 / 48 hours — Game wipe is always bounded). */
-  windowHours: number;
-  /** ISO cutoff the window resolved to (rows with ts ≥ this). Informational. */
-  windowCutoff: string;
+  /**
+   * Window the wipe ran for: 12 / 24 / 48 hours, or `null` for "All" (the
+   * full-history reset — owner mandate 2026-06-03). The 12/24/48 windowed
+   * runs are the original behaviour; "All" was added alongside the Wager
+   * wipe's All-window counter-reset path for uniform "treat this user as
+   * freshly created" behaviour across the three windowed wipes.
+   */
+  windowHours: number | null;
+  /** ISO cutoff the window resolved to (rows with ts ≥ this), or null for "All". Informational. */
+  windowCutoff: string | null;
+  /**
+   * ALL-WINDOW COUNTER-RESET fields (owner mandate 2026-06-03). On an "All"
+   * Game wipe the wipe SETS `total_won` to 0 directly (regardless of how many
+   * rows the actual delete found), so Restore must put back the PRE-WIPE
+   * ABSOLUTE — re-adding the (possibly zero) delta would leave the counter
+   * at 0. Game wipe never touches `total_wagered`, so only `total_won` is
+   * captured here.
+   *
+   * OPTIONAL for back-compat: 12/24/48 windowed runs leave these unset and
+   * Restore falls back to additive delta re-add (the original behaviour).
+   */
+  countersFullyReset?: boolean;
+  /** balances.total_won IMMEDIATELY BEFORE the wipe (decimal string). Set on All-wipes only. */
+  totalWonBefore?: string;
 };
 
 /**
@@ -302,10 +344,32 @@ export type PnlWipeSnapshot = {
    * decimal that Restore still re-adds, keeping wipe ↔ restore symmetric.
    */
   totalWithdrawnReduction: string;
-  /** Window the wipe ran for (12 / 24 / 48 hours). */
-  windowHours: number;
-  /** ISO cutoff the window resolved to (rows with ts ≥ this). */
-  windowCutoff: string;
+  /**
+   * Window the wipe ran for: 12 / 24 / 48 hours, or `null` for "All" (the
+   * full-history reset — owner mandate 2026-06-03). 12/24/48 are the original
+   * behaviour; "All" was added alongside the Wager wipe's All-window
+   * counter-reset path for uniform "treat this user as freshly created".
+   */
+  windowHours: number | null;
+  /** ISO cutoff the window resolved to (rows with ts ≥ this), or null for "All". */
+  windowCutoff: string | null;
+  /**
+   * ALL-WINDOW COUNTER-RESET fields (owner mandate 2026-06-03). On an "All"
+   * PnL wipe the wipe SETS `total_wagered` / `total_won` / `total_deposited`
+   * to 0 directly. Restore puts back the PRE-WIPE ABSOLUTES.
+   * `total_withdrawn` stays out of scope (owner carve-out) — no absolute is
+   * captured for it.
+   *
+   * OPTIONAL for back-compat: 12/24/48 windowed runs leave these unset and
+   * Restore falls back to additive delta re-add.
+   */
+  countersFullyReset?: boolean;
+  /** balances.total_wagered IMMEDIATELY BEFORE the wipe (decimal string). All-wipes only. */
+  totalWageredBefore?: string;
+  /** balances.total_won IMMEDIATELY BEFORE the wipe (decimal string). All-wipes only. */
+  totalWonBefore?: string;
+  /** balances.total_deposited IMMEDIATELY BEFORE the wipe (decimal string). All-wipes only. */
+  totalDepositedBefore?: string;
 };
 
 export type AccountWipeSnapshot =
