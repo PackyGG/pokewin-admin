@@ -431,14 +431,19 @@ async function CreatorAcquisitionPayouts({
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* ── Acquisition — the clicks → signups → FTDs funnel + per-game
-          wager-volume breakdown + geographic split. (The noisy hourly/daily
-          time-series chart was removed — at this per-creator granularity it
-          read as near-zero noise; the funnel + breakdowns below carry the
-          useful signal.) ─────────────────────────────────────────────── */}
+      {/* ── Acquisition + affiliate payouts — one aligned row of 4 equal
+          boxes: the clicks → signups → FTDs funnel, the per-game
+          wager-volume breakdown, the creator's affiliate-commission account
+          state (placed directly beside the wager-volume box), and the
+          geographic split. (The noisy hourly/daily time-series chart was
+          removed — at this per-creator granularity it read as near-zero
+          noise; the funnel + breakdowns here carry the useful signal.)
+          4-up on desktop, 2-up on tablet, 1-up on phone; `items-stretch`
+          so the boxes match heights regardless of their internal row
+          counts. ───────────────────────────────────────────────────────── */}
       <div className="space-y-3">
         <SectionHeading icon={TrendingUp} title="Acquisition" />
-        <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid items-stretch gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <FunnelTable
             clicks={profile.clicks}
             signups={profile.signups}
@@ -448,21 +453,16 @@ async function CreatorAcquisitionPayouts({
             wagerVolumeUsd={profile.totalWagerVolumeUsd}
             wagerBreakdown={profile.wagerBreakdown}
           />
-          <CountryBreakdown rows={profile.countryBreakdown} />
-        </div>
-      </div>
-
-      {/* ── Affiliate payouts — the creator's commission account state
-          (earned / available / paid-out / bonus). ──────────────────── */}
-      <div className="space-y-3">
-        <SectionHeading icon={HandCoins} title="Affiliate payouts" />
-        <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* Affiliate payouts — the creator's commission account state
+              (earned / available / paid-out / bonus). Placed directly next
+              to the wager-volume box per the owner's layout. */}
           <AffiliatePayoutsCard
             earnedUsd={profile.totalEarnedUsd}
             availableUsd={profile.availableUsd}
             paidOutUsd={profile.totalPaidOutUsd}
             bonusDistributedUsd={profile.totalBonusDistributedUsd}
           />
+          <CountryBreakdown rows={profile.countryBreakdown} />
         </div>
       </div>
     </div>
@@ -614,23 +614,19 @@ function CreatorKpiStripSkeleton() {
   );
 }
 
-// Placeholder matching the acquisition + affiliate-payouts section — the
-// acquisition heading + 3-card breakdown row, then the payouts heading + its
-// card — so the page doesn't reflow when the real content lands.
+// Placeholder matching the acquisition + affiliate-payouts section — one
+// heading + the single 4-card breakdown row (funnel / wager-volume /
+// affiliate-payouts / countries) so the page doesn't reflow when the real
+// content lands.
 function CreatorAcquisitionPayoutsSkeleton() {
   return (
     <div className="space-y-4 sm:space-y-6">
       <div className="space-y-3">
         <Skeleton className="h-6 w-32" />
-        <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid items-stretch gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Skeleton className="h-48 rounded-2xl" />
           <Skeleton className="h-48 rounded-2xl" />
           <Skeleton className="h-48 rounded-2xl" />
-        </div>
-      </div>
-      <div className="space-y-3">
-        <Skeleton className="h-6 w-32" />
-        <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Skeleton className="h-48 rounded-2xl" />
         </div>
       </div>
