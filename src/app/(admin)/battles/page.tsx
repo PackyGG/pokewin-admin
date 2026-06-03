@@ -14,6 +14,7 @@ import {
 import { cn } from "@/lib/utils";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { LinkPendingShell } from "@/components/ux";
 
 export const metadata = { title: "Battles" };
 
@@ -66,21 +67,23 @@ export default async function BattlesPage({
       </PageHero>
 
       <div className="space-y-4">
-        <div className="flex gap-1 rounded-lg bg-muted p-1">
-          {STATUS_TABS.map((t) => (
-            <Link
-              key={t.value}
-              href={`/battles?tab=${t.value}`}
-              className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                tab === t.value
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {t.label}
-            </Link>
-          ))}
+        <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
+            {STATUS_TABS.map((t) => (
+              <Link
+                key={t.value}
+                href={`/battles?tab=${t.value}`}
+                className={cn(
+                  "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  tab === t.value
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <LinkPendingShell spinnerSize={13}>{t.label}</LinkPendingShell>
+              </Link>
+            ))}
+          </div>
         </div>
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
           <DataTableToolbar

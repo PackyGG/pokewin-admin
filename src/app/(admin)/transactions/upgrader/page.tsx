@@ -18,6 +18,7 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { LinkPendingShell } from "@/components/ux";
 import {
   SortByMultiplierButton,
   SortByWonAmountButton,
@@ -97,7 +98,7 @@ export default async function UpgraderTransactionsPage({
                       : "text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  {t.label}
+                  <LinkPendingShell spinnerSize={13}>{t.label}</LinkPendingShell>
                 </Link>
               );
             })}

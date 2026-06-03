@@ -18,6 +18,7 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { LinkPendingShell } from "@/components/ux";
 
 export const metadata = { title: "Reward Transactions" };
 
@@ -72,7 +73,7 @@ export default async function RewardTransactionsPage({
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                {t.label}
+                <LinkPendingShell spinnerSize={13}>{t.label}</LinkPendingShell>
               </Link>
             ))}
           </div>

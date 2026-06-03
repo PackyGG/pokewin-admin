@@ -28,6 +28,7 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { LinkPendingShell } from "@/components/ux";
 import { AutoRefresh } from "@/app/(admin)/dashboard/auto-refresh";
 import { BigDepositsToggle } from "./big-deposits-toggle";
 
@@ -127,8 +128,10 @@ export default async function TransactionsPage({
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                <t.icon className="size-3.5" />
-                {t.label}
+                <LinkPendingShell spinnerSize={13}>
+                  <t.icon className="size-3.5" />
+                  {t.label}
+                </LinkPendingShell>
               </Link>
             );
           })}
