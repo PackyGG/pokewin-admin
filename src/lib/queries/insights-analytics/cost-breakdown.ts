@@ -6,13 +6,6 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
-import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windows";
-import {
-  WAGER_TYPES_SQL,
-  PAYOUT_TYPES_SQL,
-  WAGER_PAYOUT_WAGER_TYPES,
-  WAGER_PAYOUT_PAYOUT_TYPES,
-} from "@/lib/queries/_wager-payout-types";
 import { REWARD_PAYOUT_TYPES, RESIDUAL_TYPES } from "@/lib/metrics";
 import {
   getWindowMetrics,
@@ -158,11 +151,21 @@ export type CostMarginHealth = {
 export type CostBreakdownContributor = {
   userId: string;
   username: string | null;
-  /** Wager-side total (house-POV). */
+  /**
+   * Lifetime Total Wagered — the authoritative `balances.total_wagered`
+   * counter (the SAME figure shown on `/users/[id]`).
+   */
   wagerTotal: number;
-  /** Payout-side total (house-POV). */
+  /**
+   * Lifetime Total Won — the authoritative `balances.total_won` counter
+   * (the SAME figure shown on `/users/[id]`).
+   */
   payoutTotal: number;
-  /** wagerTotal − payoutTotal. Positive = user lost (house profited). */
+  /**
+   * wagerTotal − payoutTotal = the user's lifetime Wager Loss. House-POV:
+   * positive = user net-LOST = house won (emerald). Equals the Wager Loss
+   * tile on the user-detail page by construction.
+   */
   net: number;
 };
 
@@ -223,7 +226,13 @@ export type CostBreakdown = {
   /** Daily GGR / total-cost / P&L series for the trend chart. */
   trend: Array<{ date: string; ggr: number; cost: number; pnl: number }>;
 
-  /** Top users driving the gross gaming margin (the "who"). */
+  /**
+   * Top users by lifetime authoritative Wager Loss (the "who"). Sourced
+   * from `balances.total_wagered` / `total_won` — the SAME counters
+   * `/users/[id]` shows — so each row reconciles with that user's
+   * detail-page Wager Loss. Always lifetime (the counters are cumulative;
+   * the main DB has no windowed `won`), independent of the period chip.
+   */
   contributors: CostBreakdownContributor[];
 };
 
@@ -413,42 +422,57 @@ function residualGroup(type: string): {
 }
 
 /**
- * Top users driving the window's gross gaming margin — the "who".
+ * Top users by AUTHORITATIVE wager-loss — the "who drove the margin".
  *
- * Uses the legacy `_wager-payout-types.ts` canonical wager/payout sets +
- * the central creator-session-window filter (dropped symmetrically on
- * BOTH sides). This is the same contributor sweep the GGR page's
- * top-contributors uses, so the "who" lines up across surfaces. The
- * session-window filter is sourced from `getCreatorSessionWindowsCte`
- * (the single central definition) — no scope is hand-rolled here, so the
- * session-window fix propagates automatically.
+ * ─── Why this reads `balances`, not a ledger sweep ──────────────────
  *
- * NOTE: the per-user net here is a wager-vs-ledger-payout proxy for the
- * margin contribution (it cannot use the inventory-delta payout per user
- * without a heavy per-user inventory join); the page's HEADLINE GGR is
- * the canonical inventory-delta figure from `getWindowMetrics`. The
- * contributor list answers "who staked / won the most on the ledger",
- * not "who moved canonical GGR by exactly $X". NOT cached — GROUP BY
- * user_id is the heavy part and the page loads it once per render.
+ * The per-user wager / won shown on `/users/[id]` (Total Wagered /
+ * Total Won / Wager Loss) is sourced from the production-maintained
+ * `balances.total_wagered` / `balances.total_won` counters
+ * (`users-detail.ts`). Those are the AUTHORITATIVE figures the operator
+ * sees, and they are the reference this table must reconcile with.
+ *
+ * The previous implementation summed a LEGACY ledger payout set
+ * (`_wager-payout-types.ts` `WAGER_PAYOUT_PAYOUT_TYPES`) which folds
+ * `card_sale`, `voucher_redeemed`, `card_exchange` and every reward type
+ * into the payout side — disposals of value the user already owns +
+ * house-funded rewards, NOT gameplay winnings. That over-counted the
+ * payout by ~1.1×–3.9× per user (verified against `balances.total_won`),
+ * flipping the house-POV net deeply NEGATIVE for users the house was
+ * actually UP on. The canonical inventory-delta payout
+ * (`Σ value_at_obtained` + `battle_refund`) is ALSO not a faithful proxy
+ * here: production prunes sold-card inventory rows, so a high-volume
+ * user who has cashed out shows ~$0 inventory delta despite a large
+ * `total_won` (and a still-holding whale shows 3×+ their `total_won`).
+ * Neither ledger reconstruction matches the authoritative counter, so we
+ * read the counter directly — the SAME columns `/users/[id]` reads.
+ *
+ * Net is house-POV: `wager_loss = total_wagered − total_won`; positive =
+ * the user net-LOST = the house won (emerald). This equals the Wager
+ * Loss tile on the user-detail page by construction.
+ *
+ * SCOPE: real customers only — staff + admin blacklist dropped, and
+ * creators dropped wholesale by role (the same scope `getBridgeTerms`
+ * uses in this file). The per-row creator-on-session window exclusion
+ * the windowed legs use does NOT apply here: `balances.*` are cumulative
+ * lifetime counters with no per-row timestamp to test against a session
+ * window, so creators are excluded by role instead.
+ *
+ * LIFETIME: `balances.total_wagered` / `total_won` are cumulative
+ * lifetime counters — there is no windowed equivalent on the main DB
+ * (the production site keeps only `current_day/week/month_wagered_usd`,
+ * and no windowed `won`). This ranking is therefore always lifetime,
+ * independent of the page's period chip; the page footer states this so
+ * it is not mistaken for a windowed, headline-summing figure. NOT cached
+ * — one indexed scan over `balances`, loaded once per render.
  */
 async function getCostContributors(
-  cutoff: Date,
   limit: number,
 ): Promise<CostBreakdownContributor[]> {
   const safeLimit = Math.max(1, Math.min(limit, 50));
   const db = await getDb();
-  const [excluded, sessionWindowsCte] = await Promise.all([
-    getExcludedUserIds(),
-    getCreatorSessionWindowsCte(),
-  ]);
+  const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
-  const wagerIn = Prisma.raw(WAGER_TYPES_SQL);
-  const payoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
-  const allTypesIn = Prisma.raw(
-    `(${[...WAGER_PAYOUT_WAGER_TYPES, ...WAGER_PAYOUT_PAYOUT_TYPES]
-      .map((t) => `'${t}'`)
-      .join(",")})`,
-  );
 
   const rows = await db.$queryRaw<
     {
@@ -459,44 +483,18 @@ async function getCostContributors(
       net: string;
     }[]
   >`
-    WITH real_users AS (
-      SELECT u.id, u.username, u.role
-      FROM "user" u
-      WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-    ),
-    ${Prisma.raw(sessionWindowsCte)},
-    per_user AS (
-      SELECT
-        lt.user_id,
-        COALESCE(SUM(CASE WHEN lt.type IN ${wagerIn}
-                          THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager_total,
-        COALESCE(SUM(CASE WHEN lt.type IN ${payoutIn}
-                          THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payout_total
-      FROM ledger_transactions lt
-      JOIN real_users ru ON ru.id = lt.user_id
-      WHERE lt.status = 'completed'
-        AND lt.created_at >= ${cutoff}
-        AND lt.type IN ${allTypesIn}
-        AND NOT (
-          ru.role = 'creator'
-          AND EXISTS (
-            SELECT 1 FROM session_windows sw
-            WHERE sw.uid = lt.user_id
-              AND lt.created_at >= sw.win_start
-              AND lt.created_at <  sw.win_end
-          )
-        )
-      GROUP BY lt.user_id
-    )
     SELECT
-      ru.id::text AS user_id,
-      ru.username,
-      pu.wager_total::text AS wager_total,
-      pu.payout_total::text AS payout_total,
-      (pu.wager_total - pu.payout_total)::text AS net
-    FROM per_user pu
-    JOIN real_users ru ON ru.id = pu.user_id
-    ORDER BY ABS(pu.wager_total - pu.payout_total) DESC
+      u.id::text AS user_id,
+      u.username,
+      b.total_wagered::text AS wager_total,
+      b.total_won::text AS payout_total,
+      (b.total_wagered - b.total_won)::text AS net
+    FROM balances b
+    JOIN "user" u ON u.id = b.user_id
+    WHERE u.role NOT IN ('admin', 'support', 'creator')
+      ${Prisma.raw(blacklistIdNotIn)}
+      AND (b.total_wagered <> 0 OR b.total_won <> 0)
+    ORDER BY ABS(b.total_wagered - b.total_won) DESC
     LIMIT ${safeLimit}
   `;
   return rows.map((r) => ({
@@ -670,8 +668,9 @@ async function getCountedAdjustmentSumsByCategory(
  *   • calculateWindowedPnl (creators excluded) + getBridgeTerms — the
  *     balance-sheet bridge from NGR to realized P&L.
  *   • getDailyGamingMetrics — the canonical daily GGR/NGR trend.
- *   • getCostContributors — the per-user "who drove the margin" (uses
- *     the central creator-session-window filter).
+ *   • getCostContributors — the per-user "who drove the margin", ranked
+ *     by lifetime authoritative Wager Loss from `balances.total_wagered`
+ *     / `total_won` (the SAME counters `/users/[id]` shows).
  *
  * Read-only.
  */
@@ -707,7 +706,7 @@ export async function getCostBreakdown(
     calculateWindowedPnl({ since: cutoff, excludeUserIds: dropUserIds }),
     getBridgeTerms(cutoff, dropUserIds),
     getDailyGamingMetrics(window),
-    getCostContributors(cutoff, contributorLimit),
+    getCostContributors(contributorLimit),
     getCountedAdjustmentSumsByCategory(window),
   ]);
 

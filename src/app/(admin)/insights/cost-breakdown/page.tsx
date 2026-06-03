@@ -147,7 +147,7 @@ export default async function CostBreakdownPage({
               <section className="space-y-3">
                 <SectionHeading
                   icon={Users}
-                  title={`Who drove the gaming margin · ${periodLabel}`}
+                  title="Who drove the margin · lifetime wager loss"
                 />
                 <Contributors data={data} />
               </section>
@@ -581,10 +581,13 @@ function MarginHealth({ data }: { data: CostBreakdown }) {
 // ─── Contributors ───────────────────────────────────────────────────
 
 /**
- * Top users by absolute net contribution to the gross gaming margin
- * (the "who"). Reuses the same canonical wager/payout sets + filters as
- * /ggr, so this list reconciles with the GGR page's top-contributors.
- * House-POV: net > 0 (user lost) = emerald; net < 0 (user won) = rose.
+ * Top users by absolute lifetime Wager Loss (the "who"). Sourced from the
+ * authoritative `balances.total_wagered` / `total_won` counters — the
+ * SAME figures shown on `/users/[id]` — so each row reconciles with that
+ * user's detail-page Wager Loss tile. Always lifetime (the counters are
+ * cumulative; the main DB has no windowed `won`), so this list does not
+ * track the page's period chip. House-POV: net > 0 (user net-lost) =
+ * emerald; net < 0 (user up) = rose.
  */
 function Contributors({ data }: { data: CostBreakdown }) {
   return (
@@ -636,9 +639,12 @@ function Contributors({ data }: { data: CostBreakdown }) {
           ))}
         </ul>
         <p className="px-4 py-2 text-[10px] text-muted-foreground">
-          Net is house-POV: positive (emerald) = the user lost (house
-          profited); negative (rose) = the user won. Top{" "}
-          {formatNumber(data.contributors.length)} by absolute net.
+          Lifetime Wager = Total Wagered, Payouts = Total Won (the
+          authoritative per-user counters shown on each user&apos;s detail
+          page). Net is house-POV: positive (emerald) = the user net-lost
+          (house up); negative (rose) = the user is up. Top{" "}
+          {formatNumber(data.contributors.length)} by absolute lifetime
+          wager loss.
         </p>
       </CardContent>
     </Card>
