@@ -37,6 +37,15 @@ import {
 
 export const metadata = { title: "User Detail" };
 
+// Server Actions invoked from this route segment (e.g. the wager / gameplay
+// wipe in wipe-wager-actions.ts) inherit this function time budget. A wager
+// wipe on a HEAVY account legitimately raises its DB transaction's
+// statement_timeout to 180s, so the surrounding Vercel function must be
+// allowed to run at least that long — 300s is Vercel's default cap and gives
+// the 180s DB work comfortable headroom (plus the snapshot + finalize writes).
+// Page reads remain bounded by their own per-query safeQuery timeouts.
+export const maxDuration = 300;
+
 // Per-query wall-clock bound for the heavy detail fetches. Long enough that
 // a healthy query on prod-sized data finishes well inside it, short enough
 // that a pathological scan (e.g. an unbounded ledger join) degrades to a

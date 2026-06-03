@@ -26,6 +26,7 @@ import {
   WAGER_TYPES,
   GAMING_PAYOUT_TYPES,
   UPGRADER_LEDGER_TYPES,
+  UPGRADER_IN_LEDGER,
   type LedgerTransactionType,
 } from "@/lib/metrics/ledger-sets";
 
@@ -129,14 +130,64 @@ import {
 
 /**
  * The exact ledger types the wager wipe deletes — the canonical wager + payout
- * + upgrader set from ledger-sets.ts, unioned. Pinned as a literal so the SQL
- * IN-list is structurally injection-proof.
+ * set from ledger-sets.ts, unioned.
+ *
+ * ENUM HYGIENE (secondary fix): the upgrader LEDGER legs (`upgrader_bet` /
+ * `upgrader_payout`) are ONLY included when `UPGRADER_IN_LEDGER` is true. On
+ * prod that flag is `false` (the owner confirmed upgrader lives only in
+ * `upgrader_games`, NOT the ledger — see ledger-sets.ts UPGRADER note), so a
+ * Prisma `type: { in: [...] }` filter built from this list never references the
+ * upgrader enum members. That makes it structurally impossible for a
+ * migration-lagged DB that lacks those enum values to throw `22P02 invalid
+ * input value for enum` here. When the flag flips (prod confirmed the rows
+ * exist) the upgrader ledger legs are folded back in automatically. Upgrader
+ * GAMEPLAY is deleted regardless via the `upgrader_games` raw-SQL path below
+ * (`to_regclass`-guarded), which does not touch the enum.
  */
 const WAGER_WIPE_LEDGER_TYPES: readonly LedgerTransactionType[] = [
   ...WAGER_TYPES,
   ...GAMING_PAYOUT_TYPES,
-  ...UPGRADER_LEDGER_TYPES,
+  ...(UPGRADER_IN_LEDGER ? UPGRADER_LEDGER_TYPES : []),
 ];
+
+// ---------------------------------------------------------------------------
+// STATEMENT-TIMEOUT RAISE (PRIMARY fix). The pooled main-DB connection sets a
+// GLOBAL `statement_timeout` of 30s (src/lib/db.ts) so a runaway analytics
+// scan can't pin a pool slot. But a wager wipe on a HEAVY account
+// (thousands of gameplay rows) legitimately needs longer than 30s to delete
+// everything in one transaction — so the destructive tx was being KILLED at
+// 30s, the tx rolled back, and (snapshot-first) the result was the misleading
+// "Wipe failed — please try again (nothing deleted)" after a long wait.
+//
+// Fix (same technique as src/lib/queries/creators-pnl.ts): issue
+// `SET LOCAL statement_timeout = '180000'` as the FIRST statement inside the
+// destructive `db.$transaction`. `SET LOCAL` is scoped to the current
+// transaction and REVERTS on commit/rollback, so it NEVER leaks the raised
+// budget to other pool users (the global 30s cap is restored the moment this
+// tx ends). 180s is a rare, one-off, admin-gated + 2FA-gated action and sits
+// comfortably under Vercel's 300s function limit (the user page sets
+// maxDuration=300 so the server isn't cut off first).
+//
+// Prisma's INTERACTIVE-transaction wrapper ALSO has its own default `timeout`
+// of 5s (the time the whole interactive callback may run); that would abort
+// the long delete well before either Postgres limit, so it is raised to match
+// via WIPE_TX_OPTIONS below.
+// ---------------------------------------------------------------------------
+
+/** Postgres per-statement budget inside the destructive wipe tx (ms). */
+const WIPE_STATEMENT_TIMEOUT_MS = 180_000;
+
+/**
+ * Prisma interactive-transaction options for the destructive wipe. `timeout`
+ * is the max wall-clock the whole interactive callback may run — it MUST
+ * exceed the per-statement Postgres budget above (plus headroom) so Prisma
+ * doesn't tear the transaction down mid-delete; `maxWait` bounds how long we
+ * wait for a free pool connection before giving up.
+ */
+const WIPE_TX_OPTIONS = {
+  timeout: WIPE_STATEMENT_TIMEOUT_MS + 15_000,
+  maxWait: 15_000,
+} as const;
 
 /** O(1) membership test for the deletable ledger set. */
 const WAGER_WIPE_TYPE_SET: ReadonlySet<string> = new Set(WAGER_WIPE_LEDGER_TYPES);
@@ -599,6 +650,18 @@ export async function wipeWager(data: {
   let upgraderGamesDeleted = 0;
   try {
     await db.$transaction(async (tx) => {
+      // (0) Raise the per-statement timeout for THIS transaction only. The
+      // pooled connection's global 30s `statement_timeout` (src/lib/db.ts) is
+      // too low for a heavy account's full gameplay delete — it was killing
+      // the tx at 30s and yielding the misleading "nothing deleted" after a
+      // long wait. `SET LOCAL` is transaction-scoped and reverts on
+      // commit/rollback, so the global 30s cap is restored the instant this tx
+      // ends and never leaks to other pool users. (Same technique as
+      // creators-pnl.ts.)
+      await tx.$executeRawUnsafe(
+        `SET LOCAL statement_timeout = ${WIPE_STATEMENT_TIMEOUT_MS}`,
+      );
+
       // (1) Break the ledger↔session FK cycle: null any game_sessions pointer
       // to a ledger leg we're about to delete (RESTRICT would otherwise block
       // the delete). The session shell stays; the bet pointer self-heals.
@@ -690,17 +753,41 @@ export async function wipeWager(data: {
           throw new Error("Balance changed concurrently — please retry");
         }
       }
-    });
+    }, WIPE_TX_OPTIONS);
   } catch (err) {
     // Main-DB tx failed → nothing deleted. Mark the snapshot 'failed' (terminal,
     // restore refuses) rather than deleting it, for a reconcilable record.
     await markWipeFailed("account", wipeId);
     const message = err instanceof Error ? err.message : "Unknown error";
+    // ALWAYS log the real underlying error/stack (NOT just the redacted
+    // client message) so the Vercel logs show exactly why a wipe failed —
+    // statement-timeout (57014 / "canceling statement due to statement
+    // timeout"), an FK RESTRICT, a 22P02 enum, or the optimistic-lock retry.
+    // The redacted message returned to the client never leaks internals.
+    console.error(
+      "[wipeWager] delete transaction failed for user",
+      parsed.userId,
+      "— wipeId",
+      wipeId,
+      ":",
+      err,
+    );
     if (message.startsWith("WAGER_GUARD:")) {
       return { success: false, error: message.replace(/^WAGER_GUARD:\s*/, "") };
     }
     if (message.includes("concurrently")) return { success: false, error: message };
-    console.error("[wipeWager] delete transaction failed:", err);
+    // Surface a timeout distinctly so a still-too-large account is actionable
+    // (rather than the generic "try again" that hid the real cause). Postgres
+    // raises SQLSTATE 57014 with this message text when statement_timeout hits.
+    if (
+      /statement timeout|57014|canceling statement due to/i.test(message)
+    ) {
+      return {
+        success: false,
+        error:
+          "Wipe timed out — this account's gameplay history is unusually large. Nothing was deleted (the data is safe). Please notify an administrator.",
+      };
+    }
     return { success: false, error: "Wipe failed — please try again (nothing deleted)" };
   }
 

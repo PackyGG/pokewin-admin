@@ -37,6 +37,7 @@ import {
   WAGER_TYPES,
   GAMING_PAYOUT_TYPES,
   UPGRADER_LEDGER_TYPES,
+  UPGRADER_IN_LEDGER,
 } from "../src/lib/metrics/ledger-sets.js";
 
 loadEnv({ path: ".env" });
@@ -50,10 +51,15 @@ function check(label: string, cond: boolean) {
 }
 
 // ── The exact sets the wager wipe uses (mirrors wipe-wager-actions.ts). ──
+// ENUM HYGIENE: the upgrader LEDGER legs are only in the deletable set when
+// `UPGRADER_IN_LEDGER` is true. On prod the flag is false (upgrader lives in
+// `upgrader_games`, not the ledger), so the Prisma `type: { in: [...] }`
+// filter never names the upgrader enum members and can't throw 22P02 on a
+// migration-lagged DB.
 const WAGER_WIPE_LEDGER_TYPES = [
   ...WAGER_TYPES,
   ...GAMING_PAYOUT_TYPES,
-  ...UPGRADER_LEDGER_TYPES,
+  ...(UPGRADER_IN_LEDGER ? UPGRADER_LEDGER_TYPES : []),
 ];
 // Only the CREDIT legs claw back: battle cash legs + upgrader_payout. NOT
 // upgrader_bet (that's a wager/debit even though it lives in
@@ -113,32 +119,61 @@ function wagerCounterReductions(
 
 async function pureChecks() {
   console.log("── PURE: ledger partition the wager wipe deletes ──");
+  // The deletable set is flag-aware: with UPGRADER_IN_LEDGER off (prod) it is
+  // the 5 base wager+payout types; with it on, the 2 upgrader legs union in.
+  const expectedWipeSet = (
+    UPGRADER_IN_LEDGER
+      ? [
+          "battle_bet",
+          "battle_excess_to_voucher",
+          "battle_refund",
+          "battle_sponsorship",
+          "pack_opening",
+          "upgrader_bet",
+          "upgrader_payout",
+        ]
+      : [
+          "battle_bet",
+          "battle_excess_to_voucher",
+          "battle_refund",
+          "battle_sponsorship",
+          "pack_opening",
+        ]
+  )
+    .sort()
+    .join(",");
   check(
-    "wager-wipe set = WAGER ∪ GAMING_PAYOUT ∪ UPGRADER (7 types)",
-    [...new Set(WAGER_WIPE_LEDGER_TYPES)].sort().join(",") ===
-      [
-        "battle_bet",
-        "battle_excess_to_voucher",
-        "battle_refund",
-        "battle_sponsorship",
-        "pack_opening",
-        "upgrader_bet",
-        "upgrader_payout",
-      ]
-        .sort()
-        .join(","),
+    `wager-wipe set = WAGER ∪ GAMING_PAYOUT${UPGRADER_IN_LEDGER ? " ∪ UPGRADER (7 types)" : " (5 types; upgrader ledger legs gated OFF)"}`,
+    [...new Set(WAGER_WIPE_LEDGER_TYPES)].sort().join(",") === expectedWipeSet,
+  );
+  // ENUM HYGIENE: while the flag is off, the upgrader enum members must NOT be
+  // in the Prisma filter list (so a 22P02 on a migration-lagged DB is
+  // impossible). This is the secondary fix being asserted.
+  check(
+    "enum hygiene: upgrader ledger legs excluded from the delete filter while UPGRADER_IN_LEDGER is off",
+    UPGRADER_IN_LEDGER ||
+      (!WAGER_WIPE_LEDGER_TYPES.includes("upgrader_bet") &&
+        !WAGER_WIPE_LEDGER_TYPES.includes("upgrader_payout")),
   );
   check(
-    "payout (credit) legs = battle_refund, battle_excess_to_voucher, upgrader_payout",
+    "payout (credit) classification set = battle_refund, battle_excess_to_voucher, upgrader_payout",
     [...PAYOUT_SET].sort().join(",") ===
       ["battle_excess_to_voucher", "battle_refund", "upgrader_payout"].sort().join(","),
   );
+  // The wager (debit) legs ACTUALLY in the deletable set — flag-aware: with the
+  // upgrader ledger legs gated off, upgrader_bet is not present.
+  const expectedWagerDebits = (
+    UPGRADER_IN_LEDGER
+      ? ["battle_bet", "battle_sponsorship", "pack_opening", "upgrader_bet"]
+      : ["battle_bet", "battle_sponsorship", "pack_opening"]
+  )
+    .sort()
+    .join(",");
   check(
-    "wager (debit) legs = pack_opening, battle_bet, battle_sponsorship, upgrader_bet",
+    `wager (debit) legs in the delete set = ${expectedWagerDebits.replace(/,/g, ", ")}`,
     WAGER_WIPE_LEDGER_TYPES.filter((t) => !PAYOUT_SET.has(t))
       .sort()
-      .join(",") ===
-      ["battle_bet", "battle_sponsorship", "pack_opening", "upgrader_bet"].sort().join(","),
+      .join(",") === expectedWagerDebits,
   );
 
   console.log("\n── PURE: BALANCE RULE — deleting never inflates ──");

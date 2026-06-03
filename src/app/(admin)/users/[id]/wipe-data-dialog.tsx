@@ -1647,6 +1647,30 @@ function WagerInline({ state }: { state: LoadState<WagerPreview> | null }) {
                 </p>
               )}
 
+              {/* Heavy-account note: a large gameplay history can take a while
+                  to delete (the wipe raises its DB statement timeout to 180s).
+                  Surfaced so the admin expects the wait and keeps the dialog
+                  open instead of assuming it hung. */}
+              {state.data.ledgerLegCount +
+                state.data.inventoryCount +
+                state.data.upgraderGameCount >
+                2000 && (
+                <p className="flex items-start gap-1.5 rounded border border-amber-500/30 bg-amber-500/[0.06] px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400">
+                  <Info className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    Large account (
+                    {(
+                      state.data.ledgerLegCount +
+                      state.data.inventoryCount +
+                      state.data.upgraderGameCount
+                    ).toLocaleString()}{" "}
+                    rows) — this wipe can take up to a minute or two. Keep the
+                    dialog open until it finishes; it either fully completes or
+                    deletes nothing.
+                  </span>
+                </p>
+              )}
+
               <DangerWarning kind="wager" />
             </>
           )}
@@ -2370,6 +2394,17 @@ function RunningPhase({
   results: RunResult[];
   isWipeAll: boolean;
 }) {
+  // Whether the wager / gameplay category is part of this run AND still in
+  // flight (pending or running). The gameplay wipe is the one category that
+  // can legitimately take a long time on a heavy account (its DB transaction
+  // raises its own statement_timeout to 180s), so we surface a "don't close
+  // this" note while it's working — the spinner / dialog must stay open until
+  // the server returns the real result.
+  const wagerInFlight = results.some(
+    (r) =>
+      r.category === "wager" &&
+      (r.status === "running" || r.status === "pending"),
+  );
   return (
     <div className="space-y-2">
       {isWipeAll && (
@@ -2377,6 +2412,17 @@ function RunningPhase({
           <span className="flex items-center gap-1.5">
             <Skull className="size-3.5" />
             WIPE ALL in progress — running every enabled category.
+          </span>
+        </div>
+      )}
+      {wagerInFlight && (
+        <div className="flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+          <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />
+          <span>
+            Wiping gameplay can take up to a minute or two for a very heavy
+            account — please keep this dialog open and don&apos;t close the tab.
+            Nothing is left half-done: the delete either fully completes or
+            nothing is removed.
           </span>
         </div>
       )}
