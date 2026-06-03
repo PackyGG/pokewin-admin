@@ -90,7 +90,23 @@ export function CreatorCostsTodayCard({
         {topLines.length > 0 ? (
           <div className="grid grid-cols-2 gap-1.5 -mx-0.5">
             {topLines.map((l) => (
-              <CreatorCostChip key={l.key} label={l.label} value={l.amount} />
+              <CreatorCostChip
+                key={l.key}
+                label={l.label}
+                value={l.amount}
+                // Leaderboard chip carries BOTH figures on its face: the full
+                // 100% pool (context, muted) and our-cut (the house cost that
+                // sums into the total, rose/primary). Non-leaderboard chips
+                // stay single-value. Only surface the full pool when it's
+                // actually larger than our-cut (a sponsor % is in play) — at
+                // 100% sponsorship the two are equal and the "full /" prefix
+                // would just be noise.
+                fullPool={
+                  l.key === "leaderboard" && leaderboardFull > l.amount
+                    ? leaderboardFull
+                    : null
+                }
+              />
             ))}
           </div>
         ) : (
@@ -105,18 +121,55 @@ export function CreatorCostsTodayCard({
 
 /**
  * Small chip showing one creator-cost line on the card face. Always rose —
- * every line is a house cost (money paid out on creator activity) per
- * House-POV. Mirrors the RewardCostChip on the Reward Costs tile.
+ * the chip's primary figure is a house cost (money paid out on creator
+ * activity) per House-POV. Mirrors the RewardCostChip on the Reward Costs
+ * tile.
+ *
+ * When `fullPool` is supplied (the leaderboard line), the chip renders
+ * "full / our-cut" inline: the full 100% pool first (muted, context — money
+ * that went to players but whose off-site sponsor share never cost the house)
+ * then our cut (rose/primary — the actual house outflow that sums into the
+ * box total). A tiny "100% / ours" sub-label disambiguates which is which.
  */
-function CreatorCostChip({ label, value }: { label: string; value: number }) {
+function CreatorCostChip({
+  label,
+  value,
+  fullPool = null,
+}: {
+  label: string;
+  value: number;
+  /** Full 100% leaderboard pool to show alongside our-cut (context). */
+  fullPool?: number | null;
+}) {
+  const showFull = fullPool != null && fullPool > 0;
   return (
     <div className="rounded-md border border-rose-500/15 bg-background/40 px-2 py-1.5 min-w-0">
       <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
         {label}
+        {showFull && (
+          <span className="ml-1 normal-case tracking-normal text-muted-foreground/70">
+            · 100% / ours
+          </span>
+        )}
       </p>
-      <p className="text-xs font-semibold tabular-nums truncate text-rose-600 dark:text-rose-400">
-        <AnimatedNumber value={value} format="currency" />
-      </p>
+      {showFull ? (
+        <p
+          className="text-xs font-semibold tabular-nums truncate"
+          title={`${formatCurrency(fullPool)} full pool at 100% / ${formatCurrency(value)} our cut`}
+        >
+          <span className="text-muted-foreground">
+            {formatCurrency(fullPool)}
+          </span>
+          <span className="mx-0.5 text-muted-foreground/60">/</span>
+          <span className="text-rose-600 dark:text-rose-400">
+            <AnimatedNumber value={value} format="currency" />
+          </span>
+        </p>
+      ) : (
+        <p className="text-xs font-semibold tabular-nums truncate text-rose-600 dark:text-rose-400">
+          <AnimatedNumber value={value} format="currency" />
+        </p>
+      )}
     </div>
   );
 }
