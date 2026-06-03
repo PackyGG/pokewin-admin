@@ -7,13 +7,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/empty-state";
-import { formatDateTime } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 
 import { InfoHint } from "../_components/info-hint";
 import { CreateDialog } from "../leaderboards/_components/create-dialog";
 import { CancelLeaderboardButton } from "../leaderboards/_components/cancel-leaderboard-button";
 import { InlineSponsoredPercentage } from "../leaderboards/_components/inline-sponsored-percentage";
 import { getLeaderboardSponsorshipMap } from "../_queries/leaderboard-sponsorship";
+import { getCreatorLeaderboardWagerMap } from "./_queries/leaderboard-wager-by-board";
 
 type ApprovalStatus = "pending" | "approved" | "rejected";
 type TimeStatus = "upcoming" | "active" | "ended";
@@ -30,6 +31,12 @@ type LeaderboardRow = {
     approval_status: ApprovalStatus;
     cancelled_at: string | null;
     time_status: TimeStatus;
+    // Scoping fields the backend already returns (see LeaderboardAdminRow)
+    // — needed to compute each board's total wager against the same
+    // code set + window the detail-page standings use.
+    affiliate_codes: string[];
+    co_creator_user_ids: string[];
+    creator_user_id: string;
 };
 
 type ListResponse = {
@@ -109,11 +116,28 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
     const manageHref = `/creators/leaderboards?creator_user_id=${encodeURIComponent(userId)}`;
 
     // Admin-side sponsored % per leaderboard (admin DB) so each row can
-    // edit it inline — no trip to the leaderboards page. Best-effort:
-    // a failure just renders every row at the 100% default.
-    const sponsorshipMap = await getLeaderboardSponsorshipMap(
-        rows.map((r) => r.id),
-    ).catch(() => new Map<string, number>());
+    // edit it inline — no trip to the leaderboards page. Plus each
+    // board's TOTAL wager so the owner sees volume inline without
+    // clicking in. Both best-effort, fetched together: a sponsorship
+    // failure renders every row at the 100% default; a wager failure
+    // simply omits the "$X wagered" chip (name still renders). The wager
+    // map is a single batched scan over the visible boards (PREVIEW_LIMIT
+    // ≤ 10) — not N per-row queries — and is cached server-side.
+    const [sponsorshipMap, wagerMap] = await Promise.all([
+        getLeaderboardSponsorshipMap(rows.map((r) => r.id)).catch(
+            () => new Map<string, number>(),
+        ),
+        getCreatorLeaderboardWagerMap(
+            rows.map((r) => ({
+                id: r.id,
+                creatorUserId: r.creator_user_id,
+                coCreatorUserIds: r.co_creator_user_ids ?? [],
+                affiliateCodes: r.affiliate_codes ?? [],
+                startDate: new Date(r.start_date),
+                endDate: new Date(r.end_date),
+            })),
+        ).catch(() => new Map<string, number>()),
+    ]);
 
     return (
         <Card>
@@ -159,7 +183,17 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                     />
                 ) : (
                     <div className="space-y-2">
-                        {rows.map((r) => (
+                        {rows.map((r) => {
+                            // Total wager of this board — Σ of every standing's
+                            // wager over the board's code(s) + window, batched
+                            // above. Absent (undefined) when the board had no
+                            // qualifying activity OR the wager fetch degraded;
+                            // either way we just omit the chip and still render
+                            // the name. House-POV: wager is money INTO the house
+                            // treasury → emerald (matches the detail page's
+                            // emerald "Wagered" column).
+                            const wagered = wagerMap.get(r.id);
+                            return (
                             // Row split into a Link (body) + Cancel button
                             // sibling so the cancel control isn't trapped
                             // inside the row's click area. Hover state lives
@@ -175,6 +209,11 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                                     <div className="min-w-0 sm:flex-1">
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <span className="font-medium text-sm truncate">{r.title}</span>
+                                            {wagered != null && (
+                                                <span className="text-xs tabular-nums text-emerald-600 dark:text-emerald-400 shrink-0">
+                                                    · {formatCurrency(wagered)} wagered
+                                                </span>
+                                            )}
                                             {r.is_sponsored && (
                                                 <Badge variant="outline" className="text-[10px]">
                                                     sponsored
@@ -231,7 +270,8 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                                     />
                                 </div>
                             </div>
-                        ))}
+                            );
+                        })}
                         {total > rows.length && (
                             <Link
                                 href={manageHref}
