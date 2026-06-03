@@ -281,7 +281,17 @@ export default async function DashboardPage({
  * aggregate already measures.
  */
 async function DashboardLoadTime({ period }: { period: DashboardPeriod }) {
-  const stats = await getDashboardStats(period);
+  // Wrapped in safeQuery so a failing/slow stats aggregate degrades this
+  // hero chip to nothing instead of throwing up the route boundary (the
+  // chip is decorative — a missing load-time indicator must never take
+  // the page down). The KPI strip surfaces the same failure as a tile
+  // fallback, so the operator still sees the degraded state there.
+  const { data: stats, error } = await safeQuery(
+    () => getDashboardStats(period),
+    null,
+    "dashboard.loadTime",
+  );
+  if (error || !stats) return null;
   return (
     <LoadTimeIndicator
       queryMs={stats.queryMs}
@@ -299,10 +309,37 @@ async function DashboardLoadTime({ period }: { period: DashboardPeriod }) {
  * a second roundtrip on first paint.
  */
 async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
-  const [stats, ggrBreakdown] = await Promise.all([
-    getDashboardStats(period),
-    getGgrBreakdown(period),
+  // Each leg is wrapped in safeQuery so a throw degrades to a fallback
+  // tile instead of escaping to the route error boundary (which would
+  // white-screen the WHOLE dashboard — the failure mode this page hit in
+  // prod). getDashboardStats backs every tile in both strips, so if IT
+  // fails the strips degrade to a single panel fallback. getGgrBreakdown
+  // only feeds the GGR card's Info popover, so if only it fails we keep
+  // the strips and render the GGR card with an empty breakdown.
+  const [statsResult, ggrResult] = await Promise.all([
+    safeQuery(() => getDashboardStats(period), null, "dashboard.statStrips"),
+    safeQuery(() => getGgrBreakdown(period), null, "dashboard.ggrBreakdown"),
   ]);
+  if (statsResult.error || !statsResult.data) {
+    return (
+      <TileErrorFallback
+        label="Platform KPIs"
+        hint="A metrics query failed while loading the KPI strips — other sections still rendered. Refresh to retry."
+        size="panel"
+      />
+    );
+  }
+  const stats = statsResult.data;
+  // Empty-but-valid breakdown when only the popover query failed, so the
+  // GgrStatCard still renders its headline number (the popover just shows
+  // zeroed legs). Shape matches GgrBreakdown.
+  const ggrBreakdown = ggrResult.data ?? {
+    wagers: [],
+    payouts: [],
+    wagersTotal: 0,
+    payoutsTotal: 0,
+    ggr: 0,
+  };
 
   // Average deposit transactions per hour. depositCount24h / depositCount7d
   // are FIXED windows (not period-bound) so the tile's "last 24h avg ·
@@ -476,7 +513,26 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
  * mounting the section twice in one render is free.
  */
 async function DashboardUpgraderSection() {
-  const stats = await getUpgraderStats();
+  // getUpgraderStats is already to_regclass-guarded (it returns zeroed
+  // stats on a pre-upgrader DB rather than throwing 42P01), but wrap it
+  // in safeQuery anyway so ANY other failure (a slow scan, a connection
+  // blip) degrades this panel to a fallback instead of crashing the
+  // route. Panel-size fallback fills the 50/50 row slot.
+  const { data: stats, error } = await safeQuery(
+    () => getUpgraderStats(),
+    null,
+    "dashboard.upgrader",
+  );
+  if (error || !stats) {
+    return (
+      <TileErrorFallback
+        label="Upgrader Stats"
+        hint="The upgrader aggregate failed to load — other sections still rendered. Refresh to retry."
+        size="panel"
+        className="h-full min-h-[400px]"
+      />
+    );
+  }
   return <UpgraderStatsSection stats={stats} />;
 }
 
@@ -604,7 +660,15 @@ async function DashboardCreatorCostsToday() {
  * refreshes on the dashboard's 60s tick.
  */
 async function DashboardActiveRain() {
-  const rain = await getActiveRain();
+  // Wrapped in safeQuery so a failed rains lookup degrades this hero chip
+  // to its idle ("No active rain") state instead of throwing up the route
+  // boundary — a decorative chip must never take the page down. On error
+  // we pass `null`, which ActiveRainChip already renders as the idle chip.
+  const { data: rain } = await safeQuery(
+    () => getActiveRain(),
+    null,
+    "dashboard.activeRain",
+  );
   return <ActiveRainChip rain={rain} />;
 }
 
@@ -619,17 +683,28 @@ async function DashboardActiveRain() {
  * other section-level analytic instead of trailing the daily charts.
  */
 async function DashboardCharts({ period }: { period: DashboardPeriod }) {
-  // getDashboardStats backs the KPI strip + the wager/deposit/ftds/signup
-  // /depositor charts — if it throws, the page-level error.tsx already
-  // handles it (the KPI strip would also be down). getDailyPnl is its
-  // OWN standalone query and historically the most expensive part of the
-  // trend grid — wrap it in safeQuery so a slow / failing P&L scan only
-  // degrades the single P&L chart instead of blanking the whole trends
-  // section.
-  const [stats, pnlResult] = await Promise.all([
-    getDashboardStats(period),
+  // getDashboardStats backs the wager/deposit/ftds/signup/depositor
+  // charts; getDailyPnl is its OWN standalone query (historically the
+  // most expensive part of the trend grid). BOTH are wrapped in safeQuery
+  // so a throw degrades to a fallback instead of escaping to the route
+  // error boundary (which would white-screen the whole dashboard — the
+  // failure mode this page hit in prod). If getDashboardStats fails the
+  // whole trends grid degrades to one panel fallback; if only getDailyPnl
+  // fails just the single Daily P&L chart degrades (handled below).
+  const [statsResult, pnlResult] = await Promise.all([
+    safeQuery(() => getDashboardStats(period), null, "dashboard.charts"),
     safeQuery(() => getDailyPnl(), [], "dashboard.dailyPnl"),
   ]);
+  if (statsResult.error || !statsResult.data) {
+    return (
+      <TileErrorFallback
+        label="Trends"
+        hint="A metrics query failed while loading the trend charts — other sections still rendered. Refresh to retry."
+        size="panel"
+      />
+    );
+  }
+  const stats = statsResult.data;
   return (
     <FadeIn className="space-y-3 sm:space-y-4">
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -666,7 +741,25 @@ async function DashboardWagerAttribution({
 }: {
   period: DashboardPeriod;
 }) {
-  const stats = await getDashboardStats(period);
+  // Wrapped in safeQuery so a failing stats aggregate degrades this chart
+  // (the right half of the Upgrader/Attribution row) to a fallback panel
+  // instead of escaping to the route error boundary and white-screening
+  // the whole dashboard.
+  const { data: stats, error } = await safeQuery(
+    () => getDashboardStats(period),
+    null,
+    "dashboard.wagerAttribution",
+  );
+  if (error || !stats) {
+    return (
+      <TileErrorFallback
+        label="Wager Attribution"
+        hint="The wager-attribution series failed to load — other sections still rendered. Refresh to retry."
+        size="panel"
+        className="h-full min-h-[400px]"
+      />
+    );
+  }
   return <WagerAttributionChart data={stats.dailyWagerAttribution} />;
 }
 
