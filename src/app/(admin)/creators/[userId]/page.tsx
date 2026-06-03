@@ -35,7 +35,6 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { MaskedEmail } from "./masked-email";
 import { HeaderSocials } from "./header-socials";
 import { RoleSelect } from "./role-select";
-import { AcquisitionChart } from "./acquisition-chart";
 import { FunnelTable } from "./funnel-table";
 import { WagerBreakdownCard } from "./wager-breakdown-card";
 import { AffiliatePayoutsCard } from "./affiliate-payouts-card";
@@ -259,8 +258,8 @@ export default async function CreatorDetailPage({
         </Suspense>
 
         {/* 6 ── Everything else (below the PnL boxes):
-            • Affiliate payouts + Acquisition (chart / funnel / wager
-              breakdown / country) — the SECOND render slot of the shared
+            • Affiliate payouts + Acquisition (funnel / wager breakdown /
+              country) — the SECOND render slot of the shared
               getCreatorDetail() aggregate. Streamed in its own boundary off
               the same in-flight profileResultPromise as the KPI strip, so no
               extra round-trip.
@@ -418,7 +417,7 @@ async function CreatorKpiStrip({
 //
 // Second render slot of the SAME shared aggregate — awaits the same
 // in-flight `profileResultPromise` the KPI strip consumes, so no extra
-// round-trip is fired. Renders the acquisition chart/funnel/wager
+// round-trip is fired. Renders the acquisition funnel/wager
 // breakdown/country split + the affiliate-payouts card. If the aggregate
 // failed/timed out the KPI strip already surfaced the degraded banner, so
 // this slot renders nothing rather than repeating it.
@@ -432,16 +431,13 @@ async function CreatorAcquisitionPayouts({
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* ── Acquisition — the clicks/signups time-series chart + the
-          clicks → signups → FTDs funnel + per-game wager-volume breakdown +
-          geographic split. The chart's hourly/daily series come from the
-          SAME getCreatorDetail aggregate this section already resolved. ── */}
+      {/* ── Acquisition — the clicks → signups → FTDs funnel + per-game
+          wager-volume breakdown + geographic split. (The noisy hourly/daily
+          time-series chart was removed — at this per-creator granularity it
+          read as near-zero noise; the funnel + breakdowns below carry the
+          useful signal.) ─────────────────────────────────────────────── */}
       <div className="space-y-3">
         <SectionHeading icon={TrendingUp} title="Acquisition" />
-        <AcquisitionChart
-          hourly={profile.acquisition.hourly}
-          daily={profile.acquisition.daily}
-        />
         <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <FunnelTable
             clicks={profile.clicks}
@@ -581,10 +577,6 @@ function LeaderboardsSkeleton() {
   );
 }
 
-function AcquisitionChartSkeleton() {
-  return <Skeleton className="h-72 w-full rounded-2xl" />;
-}
-
 // Placeholder matching the deal-management band — a full-width tabbed deal
 // card (tab bar + a few rows).
 function CreatorDealBandSkeleton() {
@@ -623,15 +615,13 @@ function CreatorKpiStripSkeleton() {
 }
 
 // Placeholder matching the acquisition + affiliate-payouts section — the
-// acquisition heading + chart + 3-card breakdown row, then the payouts
-// heading + its card — so the page doesn't reflow when the real content
-// lands.
+// acquisition heading + 3-card breakdown row, then the payouts heading + its
+// card — so the page doesn't reflow when the real content lands.
 function CreatorAcquisitionPayoutsSkeleton() {
   return (
     <div className="space-y-4 sm:space-y-6">
       <div className="space-y-3">
         <Skeleton className="h-6 w-32" />
-        <AcquisitionChartSkeleton />
         <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Skeleton className="h-48 rounded-2xl" />
           <Skeleton className="h-48 rounded-2xl" />

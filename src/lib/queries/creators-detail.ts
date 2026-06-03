@@ -302,19 +302,12 @@ export async function getCreatorDetail(userId: string) {
   const now_clicks_14d = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
   const now_clicks_30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-  // Hourly (24 buckets) and daily (7 buckets) time-series for the
-  // acquisition chart. Uses generate_series + LEFT JOIN so empty buckets
-  // still appear as 0 instead of being skipped — required for a continuous
-  // bar chart. Runs a noop when the creator owns no codes.
+  // Gate the click/country aggregates on the creator actually owning codes —
+  // a creator with no codes runs a noop instead of scanning affiliate_clicks
+  // for an empty IN-list.
   const hasClickCodes = clickCodes.length > 0;
 
-  const [
-    clickCounts,
-    pendingSignups,
-    acquisitionHourly,
-    acquisitionDaily,
-    countryBreakdown,
-  ] = await Promise.all([
+  const [clickCounts, pendingSignups, countryBreakdown] = await Promise.all([
     // Single batched aggregate replaces 4 separate affiliate_clicks.count()
     // round-trips (total + 24h + 7d + 30d). One index scan with FILTER
     // clauses, no extra plans.
@@ -343,74 +336,6 @@ export async function getCreatorDetail(userId: string) {
     primaryCode
       ? db.affiliate_code_queue.count({ where: { code: primaryCode } })
       : Promise.resolve(0),
-    db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
-      `
-      WITH series AS (
-        SELECT generate_series(
-          date_trunc('hour', NOW() - INTERVAL '23 hours'),
-          date_trunc('hour', NOW()),
-          INTERVAL '1 hour'
-        ) AS bucket
-      ),
-      clicks_agg AS (
-        SELECT date_trunc('hour', created_at) AS bucket, COUNT(*)::int AS n
-        FROM affiliate_clicks
-        WHERE code = ANY($1::text[])
-          AND created_at >= NOW() - INTERVAL '24 hours'
-        GROUP BY 1
-      ),
-      signups_agg AS (
-        SELECT date_trunc('hour', created_at) AS bucket, COUNT(*)::int AS n
-        FROM "user"
-        WHERE referred_by = $2
-          AND created_at >= NOW() - INTERVAL '24 hours'
-        GROUP BY 1
-      )
-      SELECT s.bucket::text AS bucket,
-             COALESCE(c.n, 0) AS clicks,
-             COALESCE(su.n, 0) AS signups
-      FROM series s
-      LEFT JOIN clicks_agg c ON c.bucket = s.bucket
-      LEFT JOIN signups_agg su ON su.bucket = s.bucket
-      ORDER BY s.bucket ASC
-      `,
-      hasClickCodes ? clickCodes : ["__none__"],
-      userId,
-    ),
-    db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
-      `
-      WITH series AS (
-        SELECT generate_series(
-          date_trunc('day', NOW() - INTERVAL '6 days'),
-          date_trunc('day', NOW()),
-          INTERVAL '1 day'
-        ) AS bucket
-      ),
-      clicks_agg AS (
-        SELECT date_trunc('day', created_at) AS bucket, COUNT(*)::int AS n
-        FROM affiliate_clicks
-        WHERE code = ANY($1::text[])
-          AND created_at >= NOW() - INTERVAL '7 days'
-        GROUP BY 1
-      ),
-      signups_agg AS (
-        SELECT date_trunc('day', created_at) AS bucket, COUNT(*)::int AS n
-        FROM "user"
-        WHERE referred_by = $2
-          AND created_at >= NOW() - INTERVAL '7 days'
-        GROUP BY 1
-      )
-      SELECT s.bucket::text AS bucket,
-             COALESCE(c.n, 0) AS clicks,
-             COALESCE(su.n, 0) AS signups
-      FROM series s
-      LEFT JOIN clicks_agg c ON c.bucket = s.bucket
-      LEFT JOIN signups_agg su ON su.bucket = s.bucket
-      ORDER BY s.bucket ASC
-      `,
-      hasClickCodes ? clickCodes : ["__none__"],
-      userId,
-    ),
     // Country-level breakdown. Clicks are stored with the FULL country
     // name (affiliate_clicks.country, populated by the geolocation service
     // at track time). Signed-up users also carry a `country` column from
@@ -509,18 +434,6 @@ export async function getCreatorDetail(userId: string) {
       last7d: clicks7d,
       last14d: clicks14d,
       last30d: clicks30d,
-    },
-    acquisition: {
-      hourly: acquisitionHourly.map((r) => ({
-        bucket: r.bucket,
-        clicks: Number(r.clicks),
-        signups: Number(r.signups),
-      })),
-      daily: acquisitionDaily.map((r) => ({
-        bucket: r.bucket,
-        clicks: Number(r.clicks),
-        signups: Number(r.signups),
-      })),
     },
     countryBreakdown: countryBreakdown.map((r) => ({
       country: r.country,
