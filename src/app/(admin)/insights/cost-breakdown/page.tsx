@@ -50,9 +50,16 @@ import {
   InfoRow,
   InfoTotal,
   ValueChip,
-  SEMANTIC_TONES,
-  type SemanticTone,
 } from "./_components";
+// SEMANTIC_TONES is imported from the DIRECTIVE-FREE `./tones` module (not
+// `./_components`, which is "use client"). This page is a Server Component
+// and reads `SEMANTIC_TONES[tone].face/.icon/…` while rendering its tiles
+// and waterfall; importing that value from a "use client" module on the
+// server yields a client-reference proxy whose keys are undefined, so
+// `SEMANTIC_TONES[tone] ?? SEMANTIC_TONES.muted` collapses to `undefined`
+// and `.face` crashes during Flight serialize. The directive-free module
+// hands back the genuine object on both server and client.
+import { SEMANTIC_TONES, type SemanticTone } from "./tones";
 
 export const metadata = { title: "Cost Breakdown" };
 

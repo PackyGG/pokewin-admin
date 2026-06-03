@@ -3,7 +3,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
-import { SEMANTIC_TONES, type SemanticTone } from "./_components";
+import { SEMANTIC_TONES, type SemanticTone } from "./tones";
 
 type Sign = "+" | "−" | "=";
 

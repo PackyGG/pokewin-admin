@@ -9,6 +9,11 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
+import {
+  SEMANTIC_TONES,
+  type SemanticTone,
+  type ToneTokens,
+} from "./tones";
 
 /**
  * ─────────────────────────────────────────────────────────────────────
@@ -20,11 +25,7 @@ import { formatCurrency } from "@/lib/utils/format";
  * app-wide shared primitives (modern-panels.tsx / the dashboard box
  * system, both of which other pages depend on).
  *
- * What lives here:
- *   • SEMANTIC_TONES        — the page's restrained colour language. Held /
- *     unrealized liabilities get AMBER so they never read as a realized
- *     loss (rose); realized costs / money-back stay rose; the house keep
- *     (GGR/NGR/P&L positive) is emerald; the base wager is blue.
+ * What lives here (all "use client"):
  *   • MetricInfoPopover     — the "i" → breakdown-list popover the owner
  *     likes, standardized: a header (what it means) + signed breakdown
  *     rows + an optional "= total" math line. Same shape as the dashboard
@@ -33,89 +34,21 @@ import { formatCurrency } from "@/lib/utils/format";
  *   • InfoRow / InfoTotal    — the rows + total used inside a popover.
  *   • ValueChip              — a semantic, tone-tinted value pill.
  *
+ * The semantic tone vocabulary (SEMANTIC_TONES / SemanticTone) is DEFINED
+ * in the directive-free `./tones` module — NOT here — so the SERVER
+ * `page.tsx` can import the genuine object (importing a value from this
+ * "use client" module on the server yields a client-reference proxy whose
+ * `.face`/etc. are undefined → crash during Flight serialize). This file
+ * re-exports them below so existing `./_components` importers keep working.
+ *
  * All props are serializable primitives — no function props cross the RSC
  * boundary (these are "use client", fed plain data by the server page).
  */
 
-// ─── Semantic tone language ───────────────────────────────────────
-
-export type SemanticTone =
-  /** Money the house KEEPS / is up on (GGR, NGR, P&L positive). */
-  | "keep"
-  /** A realized cost — money that flowed BACK to users (rose). */
-  | "cost"
-  /** Held / unrealized liability the house still owes (amber, NOT a
-   *  realized loss). */
-  | "held"
-  /** The starting wager / a neutral cash-in (blue). */
-  | "base"
-  /** Honest leftover / rounding (muted). */
-  | "muted";
-
-type ToneTokens = {
-  /** Tinted face background. */
-  face: string;
-  /** Hairline ring in the tone hue. */
-  ring: string;
-  /** Icon-chip background. */
-  chip: string;
-  /** Value / accent text colour (light + dark). */
-  text: string;
-  /** Bare icon colour. */
-  icon: string;
-  /** Magnitude-bar fill. */
-  bar: string;
-  /** Focus ring for interactive triggers. */
-  focus: string;
-};
-
-export const SEMANTIC_TONES: Record<SemanticTone, ToneTokens> = {
-  keep: {
-    face: "bg-emerald-500/[0.07]",
-    ring: "ring-emerald-500/20",
-    chip: "bg-emerald-500/15 text-emerald-500 dark:text-emerald-400",
-    text: "text-emerald-600 dark:text-emerald-400",
-    icon: "text-emerald-500",
-    bar: "bg-emerald-500/55",
-    focus: "focus-visible:ring-emerald-500/40",
-  },
-  cost: {
-    face: "bg-rose-500/[0.06]",
-    ring: "ring-rose-500/20",
-    chip: "bg-rose-500/15 text-rose-500 dark:text-rose-400",
-    text: "text-rose-600 dark:text-rose-400",
-    icon: "text-rose-500",
-    bar: "bg-rose-500/55",
-    focus: "focus-visible:ring-rose-500/40",
-  },
-  held: {
-    face: "bg-amber-500/[0.07]",
-    ring: "ring-amber-500/20",
-    chip: "bg-amber-500/15 text-amber-500 dark:text-amber-400",
-    text: "text-amber-600 dark:text-amber-400",
-    icon: "text-amber-500",
-    bar: "bg-amber-500/55",
-    focus: "focus-visible:ring-amber-500/40",
-  },
-  base: {
-    face: "bg-blue-500/[0.06]",
-    ring: "ring-blue-500/20",
-    chip: "bg-blue-500/15 text-blue-500 dark:text-blue-400",
-    text: "text-blue-600 dark:text-blue-400",
-    icon: "text-blue-500",
-    bar: "bg-blue-500/55",
-    focus: "focus-visible:ring-blue-500/40",
-  },
-  muted: {
-    face: "bg-muted/40",
-    ring: "ring-border/60",
-    chip: "bg-muted text-muted-foreground",
-    text: "text-muted-foreground",
-    icon: "text-muted-foreground",
-    bar: "bg-muted-foreground/40",
-    focus: "focus-visible:ring-ring/40",
-  },
-};
+// Re-export the server-safe tone vocabulary so existing importers of this
+// module keep working. The tokens are DEFINED in `./tones` (a directive-
+// free module) so the server page reads the real object — see that file.
+export { SEMANTIC_TONES, type SemanticTone, type ToneTokens };
 
 // ─── MetricInfoPopover ────────────────────────────────────────────
 
