@@ -1,8 +1,11 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
+import { CREATOR_COST_CACHE_TTL_SECONDS } from "./_cost-cache";
 
 /**
  * Per-creator HOUSE-FUNDED tips & sponsor cost — the fill-program balance
@@ -66,7 +69,7 @@ export type CreatorTipsSponsorCost = {
   eventCount: number;
 };
 
-export async function getCreatorTipsSponsorCost(
+async function computeCreatorTipsSponsorCost(
   creatorUserId: string,
 ): Promise<CreatorTipsSponsorCost> {
   return withTiming("creators.netPnl.tipsSponsorCost", async () => {
@@ -90,4 +93,19 @@ export async function getCreatorTipsSponsorCost(
       eventCount: Number(rows[0]?.event_count ?? 0) || 0,
     };
   });
+}
+
+// Cached per creator id — the tip/sponsor spend Σ is a lifetime aggregate;
+// a few-minutes TTL stops repeat loads / "Refresh to retry" from re-scanning
+// the ledger. `getDb()` inside the cache → prod (see `_cost-cache.ts`).
+const cachedCreatorTipsSponsorCost = unstable_cache(
+  computeCreatorTipsSponsorCost,
+  ["creators-detail-tips-sponsor-cost-v1"],
+  { revalidate: CREATOR_COST_CACHE_TTL_SECONDS },
+);
+
+export async function getCreatorTipsSponsorCost(
+  creatorUserId: string,
+): Promise<CreatorTipsSponsorCost> {
+  return cachedCreatorTipsSponsorCost(creatorUserId);
 }

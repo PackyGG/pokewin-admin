@@ -14,6 +14,34 @@ function createClient(connectionString: string | undefined, label: string) {
       max: 5,
       idleTimeoutMillis: 10_000,
       connectionTimeoutMillis: 10_000,
+      // Server-side cap on how long ANY single statement may run on a
+      // pooled connection. `pg` issues `SET statement_timeout` per
+      // connection, so Postgres itself aborts (and frees the connection of)
+      // a query that exceeds this — independent of whether the Node caller
+      // is still awaiting it.
+      //
+      // Why it's needed: the app-level `safeQuery`/`withTimeout` wrappers
+      // (15–20s budgets on the heavy creator + insights aggregates) only
+      // stop US awaiting a slow query via Promise.race — they do NOT cancel
+      // the query in Postgres. A timed-out scan therefore keeps running and
+      // keeps holding one of the `max: 5` pool slots, so a couple of
+      // runaway scans can starve the whole pool and make even cheap reads
+      // queue behind them (the /creators/[userId] "analytics taking too
+      // long" failure mode). With this set, Postgres releases the
+      // connection when the statement is killed, so the slot returns to the
+      // pool instead of being pinned until the platform tears the request
+      // down.
+      //
+      // Value (30s, GLOBAL — chosen conservatively): every legitimate query
+      // in the app finishes well inside 30s on prod-sized data, and the
+      // heaviest paths are already bounded BELOW this by their own
+      // safeQuery budgets (creator detail 20s, Net-PnL/reward insights
+      // 15s). So 30s sits comfortably ABOVE every real budget and only
+      // fires on a genuinely pathological/runaway scan — it will not abort a
+      // healthy long query. Keep it >= the largest safeQuery timeout so the
+      // app-level fallback always wins the race first under normal slowness,
+      // and this only acts as the backstop that frees the connection.
+      statement_timeout: 30_000,
       maxLifetimeSeconds: 600,
       keepAlive: true,
       keepAliveInitialDelayMillis: 5_000,

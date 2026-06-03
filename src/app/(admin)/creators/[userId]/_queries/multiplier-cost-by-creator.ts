@@ -1,9 +1,12 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import {
   multiplierDealsApi,
   type MultiplierDealResponse,
 } from "@/lib/backend-api";
+import { CREATOR_COST_CACHE_TTL_SECONDS } from "./_cost-cache";
 
 // Backend caps `limit`; 100 per page mirrors the other creator walks. A
 // single creator with >100 multiplier deals is implausible, but
@@ -58,7 +61,7 @@ function num(v: string | null): number {
  * Best-effort by design: the caller (a Suspense'd panel) catches
  * failures and renders the metric in its empty state.
  */
-export async function getCreatorMultiplierCost(
+async function computeCreatorMultiplierCost(
   creatorUserId: string,
 ): Promise<CreatorMultiplierCost> {
   const firstPage = await multiplierDealsApi.list(creatorUserId, {
@@ -107,4 +110,23 @@ export async function getCreatorMultiplierCost(
     netFillUsd,
     dealCount: all.length,
   };
+}
+
+// Cached per creator id — the cost is a lifetime aggregate over every
+// multiplier deal this creator has, built from a paginated backend walk. A
+// few-minutes TTL stops repeat loads / "Refresh to retry" from re-walking
+// every page. The backend client resolves env via the same cookie→prod
+// fallback as getDb() inside an unstable_cache scope (see `_cost-cache.ts`).
+// A thrown error is NOT cached, so the caller's best-effort `.catch()` still
+// degrades the lines on a real failure.
+const cachedCreatorMultiplierCost = unstable_cache(
+  computeCreatorMultiplierCost,
+  ["creators-detail-multiplier-cost-v1"],
+  { revalidate: CREATOR_COST_CACHE_TTL_SECONDS },
+);
+
+export async function getCreatorMultiplierCost(
+  creatorUserId: string,
+): Promise<CreatorMultiplierCost> {
+  return cachedCreatorMultiplierCost(creatorUserId);
 }

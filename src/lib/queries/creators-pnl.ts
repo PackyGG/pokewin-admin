@@ -101,6 +101,25 @@ const USERS_PER_PERIOD_CAP = 50;
 // expires_at = NOW + 7d, so a code applied at T is covering through
 // T + 7d. The latest acu row picks the code-of-record at deposit time
 // when a user has switched codes.
+//
+// ── PERF / INDEX NOTE (the dominant remaining unlock) ──────────────────
+// This correlated subquery runs once per candidate ledger row. Its access
+// pattern is `referred_user_id = ? AND created_at <range> ORDER BY
+// created_at DESC LIMIT 1`. The form is already SARGABLE — the bottleneck
+// is the MISSING composite index. Prod has:
+//   • idx_acu_referred_user_code_usage  (referred_user_id, code, usage_type)
+//   • idx_acu_affiliate_user_created_at (affiliate_user_id, created_at DESC)
+// Neither serves a `created_at` range + DESC sort keyed on
+// `referred_user_id`, so today Postgres reads every acu row for that user
+// and sorts in memory per deposit. The index that turns this into a single
+// backward index seek (stop at the first row) is:
+//   CREATE INDEX CONCURRENTLY idx_acu_referred_user_created_at
+//     ON affiliate_code_usages (referred_user_id, created_at DESC);
+// (Add it to prisma/recommended-indexes.sql + apply on prod — owner task.)
+// Rewriting this to a doubly-nested EXISTS/NOT-EXISTS (cf. the unused
+// `creator-attribution-sql.ts` helper) does NOT avoid the index need — it
+// has the SAME (referred_user_id, created_at) access pattern — so we keep
+// the cheaper LIMIT-1 form and let the index do the work.
 const COVERING_CREATOR_SQL = `(
   SELECT acu_c.affiliate_user_id
     FROM affiliate_code_usages acu_c
@@ -110,6 +129,30 @@ const COVERING_CREATOR_SQL = `(
    ORDER BY acu_c.created_at DESC
    LIMIT 1
 )`;
+
+// Lifetime-lookback cap (days) for the "All-time" aggregate queries.
+//
+// The per-PERIOD queries already bound their scan to the widest displayed
+// window (30 days) via `NOW() - INTERVAL '30 days'`, so they never touch
+// old rows. The "All-time" aggregate, by contrast, had NO lower bound — it
+// scanned the ENTIRE `ledger_transactions` deposit history and the full
+// `affiliate_code_usages` / withdrawn-unit history for every render. On
+// prod that is a full-history table scan and is the dominant cost of the
+// `getCreatorPnl` call that the /creators/[userId] PnL panel awaits.
+//
+// We cap that scan at 365 days — the SAME lifetime guard the reward-insights
+// lifetime queries use (`LIFETIME_PAIRING_LOOKBACK_DAYS` in the deposit-bonus
+// `_shared.ts`). The affiliate / creator program is recent enough that a
+// rolling 365-day window covers effectively all real attributed activity,
+// so the displayed figure is unchanged in practice; the UI labels the hero
+// "Lifetime (capped)" with the exact window so the bound is never silent.
+//
+// NOTE the `COVERING_CREATOR_SQL` correlated subquery only ever looks 7
+// days back from each event, so it is already bounded per-row — capping the
+// OUTER scan is what removes the full-history seq-scan without changing
+// which creator a covered deposit attributes to.
+const LIFETIME_LOOKBACK_DAYS = 365;
+const LIFETIME_LOOKBACK_INTERVAL = `INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'`;
 
 // "Withdrawn unit" derived table: emits one row per value-unit (card
 // OR session-linked voucher) leaving the house via a
@@ -294,7 +337,14 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
     userId,
   );
 
-  // Lifetime aggregates — same shape as per-period, no window cap.
+  // Lifetime aggregates — same shape as per-period, but bounded to a
+  // rolling LIFETIME_LOOKBACK_DAYS window (was unbounded / full-history).
+  // The lower bound on every outer scan (deposit / wager / withdrawn-unit)
+  // is what turns the previous full-table seq-scan into an index range — the
+  // dominant cost of getCreatorPnl. The correlated COVERING_CREATOR_SQL is
+  // already 7-day-bounded per row, so attribution is unchanged; we only stop
+  // scanning rows older than the cap (which carry no currently-relevant
+  // creator activity). The PnL panel labels this hero "Lifetime (capped)".
   const lifetimeRowsP = db.$queryRawUnsafe<
     {
       total_deposits: string;
@@ -308,6 +358,7 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
            JOIN "user" u ON u.id = lt.user_id
           WHERE lt.type = 'deposit'
             AND lt.status = 'completed'
+            AND lt.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
             AND u.role NOT IN ('admin', 'support', 'creator')
             AND u.id != $1${blacklistAnd}
             AND $1 = ${COVERING_CREATOR_SQL}
@@ -317,15 +368,18 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
            JOIN "user" u ON u.id = acu.referred_user_id
           WHERE acu.affiliate_user_id = $1
             AND acu.usage_type::text = 'wager'
+            AND acu.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
             AND u.role NOT IN ('admin', 'support', 'creator')
             AND u.id != $1${blacklistAnd}
         ) AS total_wagered,
         (SELECT COALESCE(SUM(wu.value), 0)::text
            FROM ${WITHDRAWN_UNITS_SQL} wu
-          WHERE wu.user_id IN (
+          WHERE wu.withdrawn_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
+            AND wu.user_id IN (
               SELECT DISTINCT lt.user_id
                 FROM ledger_transactions lt
                WHERE lt.type = 'deposit' AND lt.status = 'completed'
+                 AND lt.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
                  AND $1 = ${COVERING_CREATOR_SQL}
             )
             AND wu.source_id IN (
@@ -334,6 +388,7 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
                 JOIN "user" u ON u.id = acu.referred_user_id
                WHERE acu.affiliate_user_id = $1
                  AND acu.usage_type::text = 'wager'
+                 AND acu.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
                  AND acu.game_session_id IS NOT NULL
                  AND u.role NOT IN ('admin', 'support', 'creator')
                  AND u.id != $1${blacklistAnd}
@@ -449,12 +504,16 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   // Coverage-depositor set — users with at least one coverage-attributed
   // deposit under this creator. Drives the isDepositor flag on popover
   // rows; redefined from the old "any acu deposit row" to align with
-  // the new ledger+coverage model.
+  // the new ledger+coverage model. Bounded to the same lifetime lookback
+  // as the headline (was an unbounded full-history deposit scan) — the
+  // popover rows it flags only span the 30-day windows, so a 365-day depositor
+  // set covers every flaggable user while dropping the full-table scan.
   const depositorIdsP = db.$queryRawUnsafe<{ user_id: string }[]>(
     `SELECT DISTINCT lt.user_id AS user_id
        FROM ledger_transactions lt
       WHERE lt.type = 'deposit'
         AND lt.status = 'completed'
+        AND lt.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
         AND $1 = ${COVERING_CREATOR_SQL}`,
     userId,
   );

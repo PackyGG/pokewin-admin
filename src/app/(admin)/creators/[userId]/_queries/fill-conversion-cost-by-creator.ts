@@ -1,8 +1,11 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
+import { CREATOR_COST_CACHE_TTL_SECONDS } from "./_cost-cache";
 
 /**
  * Per-creator FILL-DEAL payout cost — the lifetime value of every
@@ -60,7 +63,7 @@ export type CreatorFillConversionCost = {
   voucherCount: number;
 };
 
-export async function getCreatorFillConversionCost(
+async function computeCreatorFillConversionCost(
   creatorUserId: string,
 ): Promise<CreatorFillConversionCost> {
   return withTiming("creators.netPnl.fillConversionCost", async () => {
@@ -83,4 +86,21 @@ export async function getCreatorFillConversionCost(
       voucherCount: Number(rows[0]?.voucher_count ?? 0) || 0,
     };
   });
+}
+
+// Cached per creator id — the conversion-voucher Σ is a lifetime aggregate
+// that barely moves, so a few-minutes TTL stops repeat loads / "Refresh to
+// retry" presses from re-scanning. `getDb()` inside the cache → prod (see
+// `_cost-cache.ts`). The creator id is the cache key (passed as the fn arg
+// so unstable_cache folds it into the key).
+const cachedCreatorFillConversionCost = unstable_cache(
+  computeCreatorFillConversionCost,
+  ["creators-detail-fill-conversion-cost-v1"],
+  { revalidate: CREATOR_COST_CACHE_TTL_SECONDS },
+);
+
+export async function getCreatorFillConversionCost(
+  creatorUserId: string,
+): Promise<CreatorFillConversionCost> {
+  return cachedCreatorFillConversionCost(creatorUserId);
 }

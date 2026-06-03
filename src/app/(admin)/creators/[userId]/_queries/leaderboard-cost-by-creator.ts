@@ -1,10 +1,13 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import {
   affiliateLeaderboardsApi,
   type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsorship";
+import { CREATOR_COST_CACHE_TTL_SECONDS } from "./_cost-cache";
 
 // Backend caps `limit` per request; 100 mirrors the page size the
 // global leaderboard-cost walk uses. A single creator owning >100
@@ -63,7 +66,7 @@ export type CreatorLeaderboardCost = {
  * detail page) catches failures and renders the metric in its empty
  * state rather than crashing the page.
  */
-export async function getCreatorLeaderboardCost(
+async function computeCreatorLeaderboardCost(
   creatorUserId: string,
 ): Promise<CreatorLeaderboardCost> {
   // First page, then fan the rest out in parallel — same shape as the
@@ -132,4 +135,24 @@ export async function getCreatorLeaderboardCost(
     refundedUsd,
     leaderboardCount: all.length,
   };
+}
+
+// Cached per creator id — the cost is a lifetime aggregate over every
+// approved leaderboard this creator owns, built from a paginated backend
+// walk. A few-minutes TTL stops repeat loads / "Refresh to retry" from
+// re-walking every page. The backend client resolves env via the same
+// cookie→prod fallback as getDb() inside an unstable_cache scope (see
+// `_cost-cache.ts`). A thrown error is NOT cached (unstable_cache only
+// stores resolved values), so the caller's best-effort `.catch()` still
+// degrades the line on a real failure.
+const cachedCreatorLeaderboardCost = unstable_cache(
+  computeCreatorLeaderboardCost,
+  ["creators-detail-leaderboard-cost-v1"],
+  { revalidate: CREATOR_COST_CACHE_TTL_SECONDS },
+);
+
+export async function getCreatorLeaderboardCost(
+  creatorUserId: string,
+): Promise<CreatorLeaderboardCost> {
+  return cachedCreatorLeaderboardCost(creatorUserId);
 }

@@ -6,6 +6,17 @@ import "server-only";
  * deposit-coverage logic in `creators-pnl.ts` (`COVERING_CREATOR_SQL`) to
  * ALL gaming legs (wager, inventory payout, ledger gaming payout, upgrader).
  *
+ * ⚠️ STATUS: this helper currently has NO callers — the live per-creator
+ * P&L attribution runs through `COVERING_CREATOR_SQL` in
+ * `src/lib/queries/creators-pnl.ts`, NOT this function. It is therefore NOT
+ * on the /creators/[userId] timeout hot path; rewriting it changes no
+ * runtime behaviour. Kept as the intended generalised form for the broader
+ * per-creator GGR work. NOTE: like `COVERING_CREATOR_SQL`, its
+ * `(referred_user_id, created_at)` access pattern needs the composite index
+ * documented there — the doubly-nested EXISTS shape below does NOT remove
+ * that index requirement, so it is not a faster substitute for the LIMIT-1
+ * form when the index is present.
+ *
  * ─── WHY A COVERAGE WINDOW (not the acu wager row itself) ────────────
  *
  * The existing per-creator GGR-ish surfaces lean on `acu.wager_amount_usd`

@@ -65,10 +65,14 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
     <div className="space-y-3">
       <SectionHeading icon={LineChart} title="Affiliates PnL" />
 
-      {/* All-time hero — `deposits − cardWithdrawals` over the full
-          history of events booked against this creator's code. */}
+      {/* Lifetime (capped) hero — `deposits − cardWithdrawals` over the
+          last 365 days of events booked against this creator's code. The
+          window is capped (was full-history) so the lifetime scan stays an
+          index range instead of a full-table seq-scan; the affiliate program
+          is recent enough that 365 days covers effectively all attributed
+          activity, so the figure is unchanged in practice. */}
       <StatPanel
-        title="All-time"
+        title="Lifetime (capped)"
         icon={
           isLifetimeWin
             ? TrendingUp
@@ -89,7 +93,7 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
                     ? "text-rose-600 dark:text-rose-400"
                     : "text-muted-foreground",
               )}
-              title="Lifetime House P&L — deposits under this code minus physical card withdrawals from its sessions"
+              title="Lifetime House P&L (last 365 days) — deposits under this code minus physical card withdrawals from its sessions"
             >
               {lifetimePnl === 0
                 ? "—"
@@ -97,6 +101,8 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
             </div>
             <p className="text-xs text-muted-foreground">
               Lifetime House P&amp;L from this creator&apos;s affiliates
+              {" "}
+              <span className="text-[10px]">(last 365 days)</span>
               <br />
               <span className="text-[10px]">
                 Positive (emerald) = we kept value · Negative (rose) =
