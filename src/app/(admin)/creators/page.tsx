@@ -1000,13 +1000,20 @@ function pnlTileInfo(tab: CreatorsTab): string {
 }
 
 async function GlobalPnlTile({ tab }: { tab: CreatorsTab }) {
-  const lifetimePnl = await getAllCreatorsLifetimePnl(tab).catch((err) => {
-    console.error(
-      "[creators] global lifetime PnL query failed (tile will render '—'):",
-      err,
-    );
-    return null;
-  });
+  // safeQueryOrNull (not a bare `.catch`) so this tile degrades on BOTH a
+  // THROW and a HANG. `getAllCreatorsLifetimePnl` is mostly Main-DB, but it
+  // first resolves the tab's creator-id set via the BACKEND
+  // (getFillCreatorIds / getMultiplierCreatorIds). Those swallow a backend
+  // REJECT internally (→ null), but a `.catch()` can't rescue a backend that
+  // accepts the socket and never replies — the call would pin this streamed
+  // Server Component until the platform kills the whole request (the page's
+  // already-degraded shell included). The wall-clock timeout caps that wait
+  // so the tile drops to "—" instead, matching every other read on the page.
+  const { data: lifetimePnl } = await safeQueryOrNull(
+    () => getAllCreatorsLifetimePnl(tab),
+    "creators.global-lifetime-pnl",
+    BACKEND_READ_TIMEOUT_MS,
+  );
 
   const pnl = lifetimePnl?.pnl;
   const byCreator = lifetimePnl?.byCreator ?? [];
@@ -1069,13 +1076,18 @@ async function NetGgrTile({
 }: {
   period: CreatorsSearchParams["period"];
 }) {
-  const data = await getAllCreatorsNetGgr(period).catch((err) => {
-    console.error(
-      "[creators] roster-wide net GGR query failed (tile will render '—'):",
-      err,
-    );
-    return null;
-  });
+  // safeQueryOrNull (not a bare `.catch`) + wall-clock timeout: this is the
+  // heaviest read on the page (three correlated-subquery ledger scans), and
+  // CLAUDE.md requires heavy queries to run through the timeout wrapper so a
+  // pathological scan degrades to a fallback tile instead of pinning this
+  // streamed Server Component until the platform kills the whole request. On
+  // a throw OR a timeout `data` is null → the tile renders "—", identical to
+  // the prior `.catch(() => null)` degraded state.
+  const { data } = await safeQueryOrNull(
+    () => getAllCreatorsNetGgr(period),
+    "creators.roster-net-ggr",
+    BACKEND_READ_TIMEOUT_MS,
+  );
 
   const total = data?.totalGgr;
   const legs = data?.legs;
