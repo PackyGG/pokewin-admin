@@ -95,6 +95,11 @@ model affiliate_code_usages {
   user_affiliate_code_usages_affiliate_user_idTouser User                 @relation("affiliate_code_usages_affiliate_user_idTouser", fields: [affiliate_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "affiliate_code_usages_affiliate_user_id_user_id_fk")
   game_sessions                                      game_sessions?       @relation(fields: [game_session_id], references: [id], onUpdate: NoAction, map: "affiliate_code_usages_game_session_id_game_sessions_id_fk")
   user_affiliate_code_usages_referred_user_idTouser  User                 @relation("affiliate_code_usages_referred_user_idTouser", fields: [referred_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "affiliate_code_usages_referred_user_id_user_id_fk")
+
+  @@index([affiliate_user_id, created_at(sort: Desc)], map: "idx_acu_affiliate_user_created_at")
+  @@index([referred_user_id, code, usage_type], map: "idx_acu_referred_user_code_usage")
+  // Functional index — not expressible in Prisma schema; created in prod via prisma/recommended-indexes.sql:
+  //   CREATE INDEX idx_acu_upper_code_usage_created_at ON affiliate_code_usages (UPPER(code), usage_type, created_at);
 }
 
 model affiliate_payouts {
@@ -180,6 +185,8 @@ model battle_participants {
   bots            bots?         @relation(fields: [bot_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "battle_participants_bot_id_bots_id_fk")
   game_sessions   game_sessions @relation(fields: [game_session_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "battle_participants_game_session_id_game_sessions_id_fk")
   user            User?         @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "battle_participants_user_id_user_id_fk")
+
+  @@index([battle_id], map: "idx_battle_participants_battle_id")
 }
 
 model battles {
@@ -211,6 +218,7 @@ model battles {
   provably_fair_results     provably_fair_results[]
 
   @@index([status, created_at], map: "idx_battles_status_created_at")
+  @@index([user_id, status, created_at(sort: Desc)], map: "idx_battles_user_id_status_created_at")
 }
 
 model bots {
@@ -267,6 +275,9 @@ model card_withdrawal_requests {
   user_card_withdrawal_requests_processed_byTouser User?                  @relation("card_withdrawal_requests_processed_byTouser", fields: [processed_by], references: [id], onUpdate: NoAction, map: "card_withdrawal_requests_processed_by_user_id_fk")
   user_card_withdrawal_requests_shipped_byTouser   User?                  @relation("card_withdrawal_requests_shipped_byTouser", fields: [shipped_by], references: [id], onUpdate: NoAction, map: "card_withdrawal_requests_shipped_by_user_id_fk")
   user_card_withdrawal_requests_user_idTouser      User                   @relation("card_withdrawal_requests_user_idTouser", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "card_withdrawal_requests_user_id_user_id_fk")
+
+  @@index([status, completed_at(sort: Desc)], map: "idx_cwr_status_completed_at")
+  @@index([user_id, status], map: "idx_cwr_user_id_status")
 }
 
 model cards {
@@ -378,6 +389,10 @@ model game_sessions {
   user                                                                    User?                   @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "game_sessions_user_id_user_id_fk")
   ledger_transactions_ledger_transactions_game_session_idTogame_sessions  ledger_transactions[]   @relation("ledger_transactions_game_session_idTogame_sessions")
   provably_fair_results                                                   provably_fair_results[]
+
+  @@index([user_id, created_at(sort: Desc)], map: "idx_gs_user_id_created_at")
+  @@index([game_type, created_at(sort: Desc)], map: "idx_gs_game_type_created_at")
+  @@index([game_id], map: "idx_gs_game_id")
 }
 
 model gift_cards {
@@ -429,6 +444,13 @@ model ledger_transactions {
   promo_code_redemptions                                            promo_code_redemptions[]
   race_claims                                                       race_claims[]
   rakeback_claims                                                   rakeback_claims[]
+
+  @@index([status, type, created_at(sort: Desc)], map: "idx_ledger_tx_status_type_created_at")
+  @@index([user_id, type, status, created_at(sort: Desc)], map: "idx_ledger_tx_user_type_status_created_at")
+  @@index([user_id, created_at(sort: Desc)], map: "idx_ledger_tx_user_created_at_completed", where: { status: "completed" })
+  @@index([created_at(sort: Desc)], map: "idx_ledger_tx_created_at")
+  // Functional partial index — not expressible in Prisma schema; created in prod via prisma/recommended-indexes.sql:
+  //   CREATE INDEX idx_ledger_tx_metadata_affiliate_code ON ledger_transactions ((UPPER(metadata->>'affiliate_code'))) WHERE type = 'deposit_bonus';
 }
 
 model pack_cards {
@@ -548,6 +570,12 @@ model provably_fair_results {
   battles           battles?        @relation(fields: [battle_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "provably_fair_results_battle_id_battles_id_fk")
   game_sessions     game_sessions   @relation(fields: [game_session_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "provably_fair_results_game_session_id_game_sessions_id_fk")
   user_inventory    user_inventory? @relation(fields: [inventory_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "provably_fair_results_inventory_item_id_user_inventory_id_fk")
+
+  @@index([game_session_id], map: "idx_pf_game_session_id")
+  @@index([battle_id], map: "idx_pf_battle_id")
+  @@index([inventory_item_id], map: "idx_pf_inventory_item_id")
+  // Functional index — not expressible in Prisma schema; created in prod via prisma/recommended-indexes.sql:
+  //   CREATE INDEX idx_pf_result_metadata_pack_id_created_at ON provably_fair_results ((result_metadata->>'pack_id'), created_at DESC);
 }
 
 model race_claims {
@@ -957,6 +985,9 @@ model user_inventory {
   updated_at            DateTime                @default(now()) @db.Timestamp(6)
   provably_fair_results provably_fair_results[]
   user                  User                    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "user_inventory_user_id_user_id_fk")
+
+  @@index([user_id], map: "idx_user_inv_open_by_user", where: { sold_at: null, exchanged_at: null })
+  @@index([card_id], map: "idx_user_inv_card_id")
 }
 
 model user_mutes {
