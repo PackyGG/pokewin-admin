@@ -105,26 +105,39 @@ export const TIMEZONE_FLAT: TimezoneEntry[] = TIMEZONE_GROUPS.flatMap(
   (g) => g.zones,
 );
 
-/** Find the curated label for a stored IANA value. Returns the raw id if unknown. */
-export function timezoneLabel(value: string): string {
+// ---------------------------------------------------------------------------
+// Shared-layer integration
+// ---------------------------------------------------------------------------
+//
+// This module owns the CURATED city list. The generic timezone engine lives
+// in `@/lib/timezone/core`. We register our curated label lookup INTO core
+// (so `core.getTimeZoneLabel` can prefer city names) and re-export the
+// clock/label helpers FROM core — there is no second Intl implementation
+// here anymore. The named exports below keep their original signatures so
+// existing import sites (profile preferences-form, shift-board) don't change.
+// ---------------------------------------------------------------------------
+
+import { registerCuratedLabels, formatClockInZone } from "@/lib/timezone/core";
+
+/** Map an IANA value → curated "Label (value)", or null if not curated. */
+function curatedLabel(value: string): string | null {
   const hit = TIMEZONE_FLAT.find((z) => z.value === value);
-  return hit ? `${hit.label} (${hit.value})` : value;
+  return hit ? `${hit.label} (${hit.value})` : null;
 }
 
+// Wire the curated map into the core label resolver (module-load side effect).
+registerCuratedLabels(curatedLabel);
+
 /**
- * Format a Date in the given zone as a short "HH:mm" clock — used by the
- * profile editor's current-time preview. Uses Intl directly so we don't
- * need date-fns for this 2-field render.
+ * Find the curated label for a stored IANA value. Returns the raw id if
+ * unknown — preserves the prior contract (no offset suffix for non-curated
+ * zones, unlike core.getTimeZoneLabel which appends a live offset). Kept
+ * here so the dropdown/shift-board labels are byte-identical to before.
  */
-export function formatClockInZone(date: Date, tz: string): string {
-  try {
-    return new Intl.DateTimeFormat("en-GB", {
-      timeZone: tz,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(date);
-  } catch {
-    return "—";
-  }
+export function timezoneLabel(value: string): string {
+  return curatedLabel(value) ?? value;
 }
+
+// Short "HH:mm" clock in a zone — re-exported from the shared core engine
+// (formerly a local Intl block here).
+export { formatClockInZone };

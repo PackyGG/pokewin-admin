@@ -1,4 +1,8 @@
 import { format, formatDistanceToNow, formatDistanceToNowStrict } from "date-fns";
+import {
+  toZonedWallClock,
+  type DateInput,
+} from "@/lib/timezone/core";
 
 export function formatCurrency(amount: number): string {
   // Guard against NaN / Infinity sneaking through from a divide-by-zero
@@ -16,82 +20,55 @@ export function formatCurrency(amount: number): string {
 // Timezone-aware formatting
 // ---------------------------------------------------------------------------
 //
-// All date helpers below accept an optional `timezone` (IANA string, e.g.
-// "Europe/Berlin"). When omitted they format with the runtime's local zone
-// which keeps every existing call site working unchanged.
+// These helpers are the PUBLIC RENDERING FACE. Their signatures are frozen
+// (an optional trailing `timezone` IANA string) so the ~30 call sites and
+// the provider's hooks (useFormatDate{,Time}, useFormatMonthYear) keep
+// working with ZERO churn.
 //
-// Implementation note: date-fns v4 doesn't expose a built-in `timeZone`
-// option. To avoid pulling in `date-fns-tz` (extra dep — see CLAUDE.md)
-// we compute the offset-adjusted epoch via Intl.DateTimeFormat and then
-// hand the resulting "as if UTC" date to date-fns' `format`. This is
-// exact for whole-minute zones, including DST transitions, because the
-// offset is looked up for the original instant.
+// The zone PROJECTION now delegates to `src/lib/timezone/core.ts`
+// (`toZonedWallClock`) — there is no longer a duplicated Intl block here.
+// date-fns stays as the PATTERN-STRING formatter (so `formatWithPattern`
+// and the `dateFormat` presets — "MMM d, yyyy" / "dd/MM/yyyy" /
+// "yyyy-MM-dd" — render identically to before). `core.toZonedWallClock`
+// returns a Date whose UTC fields mirror the target-zone wall clock;
+// date-fns' `format` reads LOCAL fields, so when this process runs in any
+// zone the result is the target zone's wall clock. When `timezone` is
+// omitted, we pass the instant straight to date-fns (runtime-local
+// rendering), preserving the original no-arg behaviour exactly.
+//
+// Rationale for keeping date-fns here (vs core's Intl renderers): the
+// presets are date-fns pattern strings the profile UI persists; matching
+// them through Intl field options would risk subtle format drift
+// (separators, abbreviations). The Intl renderers in core.ts
+// (formatDate/formatDateTime/formatTime) exist for NEW callers; the
+// established surface keeps its exact date-fns output.
 // ---------------------------------------------------------------------------
 
-function resolveDate(d: Date | string | number): Date {
+function resolveDate(d: DateInput): Date {
   return d instanceof Date ? d : new Date(d);
 }
 
-/**
- * Return a Date whose UTC fields mirror the wall-clock time in `tz` for
- * the original instant. Passing this through date-fns' `format` (which
- * reads local fields) is equivalent to rendering in `tz`.
- */
-function toZonedWallClock(date: Date, tz: string): Date {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).formatToParts(date);
-
-  const lookup: Record<string, string> = {};
-  for (const p of parts) {
-    if (p.type !== "literal") lookup[p.type] = p.value;
-  }
-  const year = Number(lookup.year);
-  const month = Number(lookup.month);
-  const day = Number(lookup.day);
-  // Intl returns "24" for midnight in hour12:false mode on some platforms —
-  // normalize to 0 so Date.UTC doesn't roll forward a day.
-  let hour = Number(lookup.hour);
-  if (hour === 24) hour = 0;
-  const minute = Number(lookup.minute);
-  const second = Number(lookup.second);
-  return new Date(
-    Date.UTC(year, month - 1, day, hour, minute, second, date.getUTCMilliseconds()),
-  );
+/** Project an instant into the wall clock of `timezone` (or pass through). */
+function project(d: Date, timezone?: string | null): Date {
+  return timezone ? toZonedWallClock(d, timezone) : d;
 }
 
-export function formatDate(
-  date: Date | string | number,
-  timezone?: string | null,
-): string {
-  const d = resolveDate(date);
-  const source = timezone ? toZonedWallClock(d, timezone) : d;
-  return format(source, "MMM d, yyyy");
+export function formatDate(date: DateInput, timezone?: string | null): string {
+  return format(project(resolveDate(date), timezone), "MMM d, yyyy");
 }
 
 export function formatDateTime(
-  date: Date | string | number,
+  date: DateInput,
   timezone?: string | null,
 ): string {
-  const d = resolveDate(date);
-  const source = timezone ? toZonedWallClock(d, timezone) : d;
-  return format(source, "MMM d, yyyy HH:mm");
+  return format(project(resolveDate(date), timezone), "MMM d, yyyy HH:mm");
 }
 
 export function formatMonthYear(
-  date: Date | string | number,
+  date: DateInput,
   timezone?: string | null,
 ): string {
-  const d = resolveDate(date);
-  const source = timezone ? toZonedWallClock(d, timezone) : d;
-  return format(source, "MMM yyyy");
+  return format(project(resolveDate(date), timezone), "MMM yyyy");
 }
 
 /**
@@ -101,7 +78,7 @@ export function formatMonthYear(
  * (callers can pass `useTimezone()` blindly) but is ignored here.
  */
 export function formatRelative(
-  date: Date | string | number,
+  date: DateInput,
   _timezone?: string | null,
 ): string {
   void _timezone;
@@ -118,7 +95,7 @@ export function formatRelative(
  * deltas are zone-independent so the argument is ignored.
  */
 export function formatRelativeStrict(
-  date: Date | string | number,
+  date: DateInput,
   _timezone?: string | null,
 ): string {
   void _timezone;
@@ -143,11 +120,9 @@ export function formatCompactUsd(v: number): string {
  * format/timezone combo looks before saving.
  */
 export function formatWithPattern(
-  date: Date | string | number,
+  date: DateInput,
   pattern: string,
   timezone?: string | null,
 ): string {
-  const d = resolveDate(date);
-  const source = timezone ? toZonedWallClock(d, timezone) : d;
-  return format(source, pattern);
+  return format(project(resolveDate(date), timezone), pattern);
 }

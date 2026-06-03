@@ -4,6 +4,8 @@
  * server-only admin DB client across the RSC boundary.
  */
 
+import { zonedWallClockToUtc } from "@/lib/timezone/core";
+
 export type Worker = {
   id: string;
   username: string;
@@ -98,19 +100,11 @@ export function shiftWeek(weekStart: Date, weeks: number): Date {
  * half-hour offset). Every viewer then renders the stored UTC instant
  * back to their own zone for display.
  *
- * Algorithm (DST + half-hour-offset safe):
- *   1. Treat hh:mm as if it were UTC → produce a naive Date.
- *   2. Ask Intl.DateTimeFormat what wall-clock time that naive instant
- *      has in `tz`. The delta between that wall-clock (read as UTC)
- *      and the naive instant is the tz's offset at that moment.
- *   3. The real UTC we want is naive minus that offset.
- *
- * Verified against:
- *   - Europe/Berlin (summer +02:00, winter +01:00) — standard DST.
- *   - Asia/Kolkata (+05:30 year-round) — half-hour offset.
- *   - America/New_York (-04:00 / -05:00 DST).
- *   - America/St_Johns (-02:30 / -03:30 DST) — half-hour + DST.
- *   - UTC (no-op).
+ * The DST + half-hour-offset-safe offset algorithm this used to inline
+ * now lives in the shared layer as `core.zonedWallClockToUtc` (the SAME
+ * 3-step algorithm, verified against Berlin/Kolkata/New_York/St_Johns/UTC).
+ * This wrapper just derives the Y/M/D from the week-start + day-of-week
+ * and forwards to it — the duplicated Intl block is gone.
  */
 export function localHhMmToUtc(
   weekStart: Date,
@@ -119,72 +113,35 @@ export function localHhMmToUtc(
   tz: string,
 ): Date {
   const [hh, mm] = hhmm.split(":").map((n) => parseInt(n, 10));
-  const year = weekStart.getUTCFullYear();
-  const month = weekStart.getUTCMonth();
-  const day = weekStart.getUTCDate() + dayOfWeek;
   const safeHh = Number.isFinite(hh) ? hh : 0;
   const safeMm = Number.isFinite(mm) ? mm : 0;
-
-  // Step 1 — naive: pretend the local hh:mm is UTC.
-  const naive = new Date(Date.UTC(year, month, day, safeHh, safeMm, 0, 0));
-
-  // Step 2 — read the tz wall clock at this instant.
-  let offsetMs = 0;
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).formatToParts(naive);
-    const lookup: Record<string, number> = {};
-    for (const p of parts) {
-      if (p.type !== "literal") lookup[p.type] = Number(p.value);
-    }
-    // Intl may return "24" for midnight on some engines — normalize.
-    let h = lookup.hour;
-    if (h === 24) h = 0;
-    const tzWallAsUtc = Date.UTC(
-      lookup.year,
-      lookup.month - 1,
-      lookup.day,
-      h,
-      lookup.minute ?? 0,
-      lookup.second ?? 0,
-    );
-    offsetMs = tzWallAsUtc - naive.getTime();
-  } catch {
-    // Unknown tz → fall back to UTC-native interpretation. Tolerable.
-    offsetMs = 0;
-  }
-
-  // Step 3 — the real UTC instant the admin meant.
-  return new Date(naive.getTime() - offsetMs);
+  // weekStart is Monday 00:00 UTC; adding dayOfWeek as a UTC date offset
+  // (with normalization) yields the target calendar day. We then treat
+  // (Y,M,D,hh,mm) as LOCAL wall-clock in `tz`.
+  const target = new Date(
+    Date.UTC(
+      weekStart.getUTCFullYear(),
+      weekStart.getUTCMonth(),
+      weekStart.getUTCDate() + dayOfWeek,
+    ),
+  );
+  return zonedWallClockToUtc(
+    target.getUTCFullYear(),
+    target.getUTCMonth() + 1,
+    target.getUTCDate(),
+    safeHh,
+    safeMm,
+    tz,
+  );
 }
 
 /**
  * Extract "HH:mm" in the given IANA timezone from a UTC Date. Used by
  * the editor to pre-populate `<input type="time">` with the admin's
- * existing shift times rendered in their own zone.
+ * existing shift times rendered in their own zone. Re-exported from the
+ * shared core engine (formerly a local Intl block).
  */
-export function toZonedHhMm(instant: Date | string, tz: string): string {
-  const d = instant instanceof Date ? instant : new Date(instant);
-  try {
-    return new Intl.DateTimeFormat("en-GB", {
-      timeZone: tz,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(d);
-  } catch {
-    // Fallback to UTC if the tz string is bad.
-    return d.toISOString().slice(11, 16);
-  }
-}
+export { toZonedHhMm } from "@/lib/timezone/core";
 
 /** Human-friendly week label "Apr 20 – Apr 26, 2026". */
 export function formatWeekRange(weekStart: Date): string {

@@ -21,6 +21,7 @@ import { adminDb } from "@/lib/admin-db";
 import { getAdminPreferences } from "@/lib/admin-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
+import { readTzCookie } from "@/lib/timezone/server";
 import { DevDbBanner } from "@/components/dev-db-banner";
 import { isNextControlFlowError } from "@/lib/utils/action-error";
 
@@ -141,12 +142,18 @@ export default async function AdminLayout({
   // that white-screened /dashboard, /cards, /packs in prod after their
   // page-body queries were already hardened with safeQuery). Each wrapper
   // re-throws `redirect()` / `notFound()` so navigation still works.
-  const [allowedPages, profile, preferences, dbEnv] = await Promise.all([
-    loadUserPermissions(session.userId),
-    loadHeaderProfile(session.userId),
-    loadPreferences(session.userId),
-    readDbEnvFromCookie(),
-  ]);
+  const [allowedPages, profile, preferences, dbEnv, tzCookie] =
+    await Promise.all([
+      loadUserPermissions(session.userId),
+      loadHeaderProfile(session.userId),
+      loadPreferences(session.userId),
+      readDbEnvFromCookie(),
+      // Browser-detected zone from the `admin_tz` cookie. Passed to the
+      // TimezoneProvider so its first client paint matches this SSR render
+      // (no hydration flash) when the admin has no explicit pref. readTzCookie
+      // never throws (background-ctx safe) and returns null when absent.
+      readTzCookie(),
+    ]);
   // Only surface the switcher to admins on servers where a dev DB is
   // actually configured; otherwise the toggle would be a dead option.
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
@@ -159,6 +166,7 @@ export default async function AdminLayout({
   return (
     <TimezoneProvider
       initialTimezone={preferences.timezone}
+      cookieTimezone={tzCookie}
       initialDateFormat={preferences.dateFormat}
     >
       <SidebarProvider>

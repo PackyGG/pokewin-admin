@@ -8,6 +8,11 @@ import {
   formatRelative,
   formatWithPattern,
 } from "@/lib/utils/format";
+import {
+  getBrowserTimeZone,
+  getEffectiveTimeZone,
+} from "@/lib/timezone/core";
+import { tzCookieWriteString } from "@/lib/timezone/cookie";
 
 // ---------------------------------------------------------------------------
 // TimezoneProvider
@@ -16,16 +21,28 @@ import {
 // Renders a React context carrying the admin's preferred IANA timezone and
 // preferred date-fns format pattern. Pages + components consume via the
 // `useTimezone` / `useFormatDate{,Time}` / `useFormatRelative` hooks —
-// see src/lib/utils/format.ts for the underlying pure helpers.
+// see src/lib/utils/format.ts (rendering) + src/lib/timezone/core.ts
+// (the underlying pure Intl engine) for the helpers behind them.
 //
-// The initial timezone comes from the server (preferences row → null if
-// the admin hasn't set one yet). When null, the provider falls back to
-// the browser's detected zone on mount. `useTimezone()` always returns
-// a concrete string so consumers never need their own fallbacks.
+// Zone resolution precedence — IDENTICAL to the server
+// (`getServerTimeZone` in src/lib/timezone/server.ts) so SSR and the first
+// client paint compute the same zone from the same two inputs:
+//
+//   explicit DB preference  →  admin_tz cookie  →  "UTC"
+//
+// Hydration: the layout passes BOTH the explicit preference
+// (`initialTimezone`) AND the cookie value (`cookieTimezone`, read
+// server-side from `admin_tz`). The browser-fallback state is SEEDED from
+// the cookie (NOT hardcoded "UTC"), so when a cookie exists the first
+// client render matches SSR exactly → no flash. The post-mount effect then
+// detects the live browser zone; if it differs from the cookie it (a)
+// updates state and (b) re-writes the cookie so the NEXT request's SSR is
+// already correct. A first-ever visit (no cookie) accepts one benign
+// first-paint correction; every later navigation is flash-free.
 // ---------------------------------------------------------------------------
 
 type TimezoneContextValue = {
-  /** IANA tz — always concrete (browser fallback applied). */
+  /** IANA tz — always concrete (pref → cookie → browser → "UTC"). */
   timezone: string;
   /** Whether the admin has an explicit preference (vs auto-detect). */
   explicit: boolean;
@@ -43,49 +60,64 @@ type TimezoneContextValue = {
 
 const TimezoneContext = React.createContext<TimezoneContextValue | null>(null);
 
-/**
- * Detect the browser's IANA zone. Wrapped in try/catch because very old
- * engines may not implement Intl.DateTimeFormat().resolvedOptions() — we
- * fall back to UTC rather than crashing the layout.
- */
-function detectBrowserTimezone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  } catch {
-    return "UTC";
-  }
-}
-
 export function TimezoneProvider({
   initialTimezone,
+  cookieTimezone,
   initialDateFormat,
   children,
 }: {
-  /** Null means "admin hasn't picked one — use browser". */
+  /** Null means "admin hasn't picked one — use cookie/browser". */
   initialTimezone: string | null;
+  /**
+   * The browser-detected zone from the `admin_tz` cookie (read server-side
+   * in the layout). `null` on a first-ever visit before the cookie is
+   * written. Seeds the fallback so SSR and first client paint agree.
+   */
+  cookieTimezone?: string | null;
   initialDateFormat: string | undefined;
   children: React.ReactNode;
 }) {
-  // Two pieces of state so the provider can distinguish "explicit pref"
-  // from "auto-detected" when the profile UI wants to show the "Detect
-  // from browser" option. Initial render uses the server value; a
-  // post-mount effect fills in the browser fallback when the admin
-  // hasn't chosen one yet (can't run on the server).
+  // Two pieces of zone state so the provider can distinguish "explicit
+  // pref" from "auto-detected" (the profile UI surfaces a "Detect from
+  // browser" option). The fallback is SEEDED from the cookie so the
+  // initial render — server AND client — uses the same value with no flash.
   const [explicitTimezone, setExplicitTimezone] = React.useState<string | null>(
     initialTimezone,
   );
-  const [browserTimezone, setBrowserTimezone] = React.useState<string>("UTC");
+  const [browserTimezone, setBrowserTimezone] = React.useState<string>(
+    cookieTimezone ?? "UTC",
+  );
   const [dateFormat, setDateFormat] = React.useState<string | undefined>(
     initialDateFormat,
   );
 
   React.useEffect(() => {
-    setBrowserTimezone(detectBrowserTimezone());
+    // Detect the live browser zone (client-only; getBrowserTimeZone guards
+    // window). If it diverges from what SSR used (the cookie), adopt it AND
+    // persist it so the next request server-renders the right zone.
+    const detected = getBrowserTimeZone();
+    if (detected && detected !== (cookieTimezone ?? "UTC")) {
+      setBrowserTimezone(detected);
+    }
+    if (detected && detected !== cookieTimezone) {
+      try {
+        document.cookie = tzCookieWriteString(detected);
+      } catch {
+        // document.cookie can throw in locked-down embeds — non-fatal;
+        // the in-memory state above still corrects this session.
+      }
+    }
+    // Intentionally run once on mount. cookieTimezone is a server-provided
+    // constant for the life of the provider; re-running on its identity is
+    // unnecessary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const value = React.useMemo<TimezoneContextValue>(() => {
     return {
-      timezone: explicitTimezone ?? browserTimezone,
+      // Same precedence as the server: explicit pref → detected/cookie →
+      // "UTC". getEffectiveTimeZone validates each candidate.
+      timezone: getEffectiveTimeZone(explicitTimezone, browserTimezone),
       explicit: explicitTimezone !== null,
       dateFormat,
       setTimezone: (tz) => setExplicitTimezone(tz),
@@ -109,8 +141,9 @@ export function useTimezone(): string {
   if (ctx) return ctx.timezone;
   // Fallback: no provider mounted (login screen, storybook, etc.).
   // Server render returns "UTC" so the markup is deterministic; client
-  // render upgrades to the browser's detected zone.
-  return typeof window === "undefined" ? "UTC" : detectBrowserTimezone();
+  // render upgrades to the browser's detected zone. getBrowserTimeZone
+  // already guards `typeof window` and returns "UTC" on the server.
+  return getBrowserTimeZone();
 }
 
 /**

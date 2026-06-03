@@ -39,13 +39,11 @@ export const DATE_FORMAT_VALUES: ReadonlyArray<
  * IANA timezone check — uses `Intl.DateTimeFormat` which is available
  * in both Node and the browser. Returns true if the zone is accepted
  * by the runtime.
+ *
+ * Re-homed into the shared timezone layer (`@/lib/timezone/core`) so there
+ * is a single implementation. Re-exported here under the original name so
+ * the existing import sites (admin-preferences, profile form/actions) keep
+ * working unchanged. `core` is pure + isomorphic (no React, no server-only)
+ * so this client-safe types module can import it freely.
  */
-export function isValidTimezone(tz: string): boolean {
-  if (typeof tz !== "string" || tz.length === 0 || tz.length > 64) return false;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date());
-    return true;
-  } catch {
-    return false;
-  }
-}
+export { isValidTimeZone as isValidTimezone } from "@/lib/timezone/core";
