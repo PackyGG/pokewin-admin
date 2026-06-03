@@ -602,13 +602,18 @@ function readArray(
 // ─── THE CORRECTION (attributed to the ORIGINAL-EFFECTIVE DAY) ─────────────
 //
 // For each completed, un-restored balance-adjustment wipe we read the deleted
-// CREDIT rows out of the snapshot and, for each, take its original
-// `(balance_after − balance_before)` (= its `amount`, since these are credits)
-// and bucket it by the row's OWN `DATE(created_at)` — the day the credit
-// entered the balance (2026-06-02 for Jeff), NOT the wipe's `wiped_at` (the day
-// the clawback ran, 2026-06-03). Subtracting that per-day sum from the day's
-// balance-Δ term removes the inflation EXACTLY ONCE, so a fake-then-wiped credit
-// nets to ZERO house-P&L impact on the day it landed.
+// CREDIT rows out of the snapshot and, for each, take its ORIGINAL signed
+// `amount` (the verbatim delta `adjustBalance` wrote: `newBalance =
+// currentBalance + amount`, users/[id]/actions.ts — so the +$17,017.88 credit
+// carries `amount = 17017.88`) and bucket it by the row's OWN `DATE(created_at)`
+// — the day the credit entered the balance (2026-06-02 for Jeff), NOT the
+// wipe's `wiped_at` (the day the clawback ran, 2026-06-03). We use `amount`, not
+// the row's `balance_after − balance_before` spread: the two coincide for a
+// clean credit, but the stamped before/after can be anomalous (credit landed on
+// an already-elevated/partially-spent balance) and then under-report the full
+// rise the surviving-row sum still carries. Subtracting `amount` per-day removes
+// the inflation EXACTLY ONCE, so a fake-then-wiped credit nets to ZERO house-P&L
+// impact on the day it landed.
 //
 // WHY THIS IS NOT A DOUBLE-COUNT: the correction sources the amount-to-remove
 // SOLELY from the wipe snapshot's recorded credit rows and applies it ONCE per
@@ -618,10 +623,10 @@ function readArray(
 // DIFFERENT surface. Restored wipes (`restored_at IS NOT NULL`) are SKIPPED:
 // a restore re-inserts the credit rows AND re-adds the balance, so the
 // surviving-row sum sees them again and no correction is owed. Only POSITIVE
-// per-row deltas are subtracted (the wipe's balance reduction is credit-only,
-// matching `balance_before − balance_after`); a deleted DEBIT row left the
-// balance unchanged on wipe, and its own day's surviving sum already excludes
-// it because the row is gone, so it must NOT be corrected.
+// `amount` rows are subtracted (the wipe's balance reduction is credit-only);
+// a deleted DEBIT row (amount < 0) left the balance unchanged on wipe, and its
+// own day's surviving sum already excludes it because the row is gone, so it
+// must NOT be corrected.
 //
 // ─── ORTHOGONAL TO excludeUserIds / NO creator exclusion ───────────────────
 //
@@ -692,7 +697,16 @@ async function resolveInScopeWipedUsers(
 export type WipedCreditLeg = {
   /** The credit row's original `created_at` (the original-effective instant). */
   createdAt: Date;
-  /** `balance_after − balance_before` (> 0 — the rise the surviving sum carries). */
+  /**
+   * The credit's ORIGINAL signed amount (> 0 — the full rise the surviving sum
+   * still carries on the credit's own day). Sourced from the snapshot row's
+   * `amount` column, which `adjustBalance` writes VERBATIM as the applied delta
+   * (`newBalance = currentBalance + amount`, users/[id]/actions.ts) — so a fake
+   * +$17,017.88 credit carries `amount = 17017.88` exactly, independent of the
+   * row's `balance_before`/`balance_after` stamps (those can be anomalous /
+   * partially-spent and under-report the inflation, which is why we do NOT
+   * derive the leg from `balance_after − balance_before`).
+   */
   delta: number;
 };
 
@@ -749,14 +763,22 @@ async function getInScopeWipedCreditLegs(
       // A credit older than the lower bound cannot be in any rendered window's
       // surviving-row sum, so it owes no correction.
       if (createdAt.getTime() < sinceMs) continue;
-      const delta =
-        toNumberSafe(lr["balance_after"]) - toNumberSafe(lr["balance_before"]);
-      // CREDIT rows only: a credit raised the balance (delta > 0) and is the
+      // Use the snapshot row's ORIGINAL `amount` (the verbatim signed delta
+      // `adjustBalance` wrote: `newBalance = currentBalance + amount`,
+      // users/[id]/actions.ts) — NOT `balance_after − balance_before`. For a
+      // clean credit the two are equal, but the row's stamped before/after can
+      // be anomalous (e.g. the credit landed on an already-elevated/partially-
+      // spent balance), in which case the spread UNDER-reports the credit's
+      // full rise that the surviving-row sum still carries. `amount` is the
+      // canonical original credit value (the +$17,017.88 that inflated the
+      // day), so the correction subtracts the full inflation exactly once.
+      const amount = toNumberSafe(lr["amount"]);
+      // CREDIT rows only: a credit raised the balance (amount > 0) and is the
       // inflation the surviving-row sum still carries. A wiped DEBIT left the
       // balance untouched on wipe AND its own row is gone from the sum, so it
-      // owes no correction — skip non-positive deltas.
-      if (delta <= 0) continue;
-      legs.push({ createdAt, delta });
+      // owes no correction — skip non-positive amounts.
+      if (amount <= 0) continue;
+      legs.push({ createdAt, delta: amount });
     }
   }
   return legs;
@@ -767,10 +789,10 @@ async function getInScopeWipedCreditLegs(
  * day's "User Balance change" term in `getDailyPnl`. Keyed `YYYY-MM-DD` (UTC,
  * matching getDailyPnl's `dayKey`); a day with no wiped-credit inflation has no
  * entry (caller treats a missing key as 0). The amount for a day is
- * `Σ (balance_after − balance_before)` over the in-scope deleted CREDIT legs
- * whose `created_at` falls on that day — i.e. the exact rise the surviving-row
- * sum still carries for the now-wiped credit, attributed to the credit's OWN
- * day (NOT the wipe's `wiped_at`).
+ * `Σ amount` (the original signed credit delta) over the in-scope deleted CREDIT
+ * legs whose `created_at` falls on that day — i.e. the exact rise the
+ * surviving-row sum still carries for the now-wiped credit, attributed to the
+ * credit's OWN day (NOT the wipe's `wiped_at`).
  *
  * GENERAL for any wiped user (not hardcoded). Fail-soft to an EMPTY map.
  */
