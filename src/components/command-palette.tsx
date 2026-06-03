@@ -416,6 +416,22 @@ export function CommandPalette({
  * way of the existing bottom-right ChatPanel FAB.
  */
 function PaletteTriggerButton({ onClick }: { onClick: () => void }) {
+  // Platform-correct modifier symbol for the keyboard hint. This MUST be
+  // hydration-safe: the server has no `navigator`, so it always renders the
+  // "Ctrl" fallback. If we read `navigator.platform` during the initial
+  // client render, a Mac would hydrate "⌘" against the server's "Ctrl" and
+  // throw React #418 (a text-node hydration mismatch) — and because this
+  // trigger is mounted in the admin layout on EVERY page, that crash would
+  // surface site-wide. So we render "Ctrl" on first paint (byte-identical to
+  // the server) and upgrade to the real symbol only AFTER mount, in an
+  // effect, where `navigator` is guaranteed available.
+  const [modKey, setModKey] = useState("Ctrl");
+  useEffect(() => {
+    if (typeof navigator !== "undefined" && /mac/i.test(navigator.platform)) {
+      setModKey("⌘");
+    }
+  }, []);
+
   return (
     <Button
       onClick={onClick}
@@ -428,7 +444,7 @@ function PaletteTriggerButton({ onClick }: { onClick: () => void }) {
       <SearchIcon className="size-3.5 text-muted-foreground" />
       <span className="text-xs text-muted-foreground">Search</span>
       <kbd className="pointer-events-none ml-1 inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
-        <span className="text-[11px]">{typeof navigator !== "undefined" && /mac/i.test(navigator.platform) ? "⌘" : "Ctrl"}</span>
+        <span className="text-[11px]">{modKey}</span>
         K
       </kbd>
     </Button>
