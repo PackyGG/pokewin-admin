@@ -1419,13 +1419,13 @@ cw AS (
 d24 AS (
   SELECT COALESCE(SUM(amount::numeric), 0) AS v
   FROM ledger_transactions
-  WHERE user_id = $1 AND type = 'deposit' AND status = 'completed'
+  WHERE user_id = $1 AND type::text = 'deposit' AND status = 'completed'
     AND created_at >= NOW() - INTERVAL '24 hours'
 ),
 d7 AS (
   SELECT COALESCE(SUM(amount::numeric), 0) AS v
   FROM ledger_transactions
-  WHERE user_id = $1 AND type = 'deposit' AND status = 'completed'
+  WHERE user_id = $1 AND type::text = 'deposit' AND status = 'completed'
     AND created_at >= NOW() - INTERVAL '7 days'
 ),
 dall AS (
@@ -1435,13 +1435,13 @@ dall AS (
          MAX(created_at) AS last_at,
          COALESCE(MAX(amount::numeric), 0) AS max_single
   FROM ledger_transactions
-  WHERE user_id = $1 AND type = 'deposit' AND status = 'completed'
+  WHERE user_id = $1 AND type::text = 'deposit' AND status = 'completed'
 ),
 fw AS (
   SELECT MIN(created_at) AS first_at
   FROM ledger_transactions
   WHERE user_id = $1 AND status = 'completed'
-    AND type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+    AND type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
 ),
 wad AS (
   -- withdrawals initiated within 1h of any deposit.
@@ -1449,11 +1449,11 @@ wad AS (
   SELECT COUNT(*)::bigint AS c
   FROM ledger_transactions w
   WHERE w.user_id = $1
-    AND w.type = 'card_withdrawal'
+    AND w.type::text = 'card_withdrawal'
     AND w.status IN ('completed','pending')
     AND EXISTS (
       SELECT 1 FROM ledger_transactions d
-      WHERE d.user_id = $1 AND d.type = 'deposit' AND d.status = 'completed'
+      WHERE d.user_id = $1 AND d.type::text = 'deposit' AND d.status = 'completed'
         AND w.created_at BETWEEN d.created_at AND d.created_at + INTERVAL '1 hour'
     )
 ),
@@ -1462,12 +1462,12 @@ wab AS (
   SELECT COUNT(*)::bigint AS c
   FROM ledger_transactions w
   WHERE w.user_id = $1
-    AND w.type = 'card_withdrawal'
+    AND w.type::text = 'card_withdrawal'
     AND w.status IN ('completed','pending')
     AND EXISTS (
       SELECT 1 FROM ledger_transactions bonus
       WHERE bonus.user_id = $1 AND bonus.status = 'completed'
-        AND bonus.type IN (
+        AND bonus.type::text IN (
           'deposit_bonus','rakeback_claim','balance_reward_claim',
           'promo_code_redeemed','gift_card_redeemed','affiliate_claim'
         )
@@ -1478,7 +1478,7 @@ dbc AS (
   SELECT COUNT(*)::bigint AS c,
          COALESCE(SUM(amount::numeric), 0) AS v
   FROM ledger_transactions
-  WHERE user_id = $1 AND type = 'deposit_bonus' AND status = 'completed'
+  WHERE user_id = $1 AND type::text = 'deposit_bonus' AND status = 'completed'
 ),
 gcc AS (
   SELECT COUNT(*)::bigint AS c FROM gift_cards WHERE redeemed_by_user_id = $1
@@ -1490,35 +1490,35 @@ rnb AS (
   -- rakeback claims that land within 1h of any deposit_bonus.
   SELECT COUNT(*)::bigint AS c
   FROM ledger_transactions r
-  WHERE r.user_id = $1 AND r.type = 'rakeback_claim' AND r.status = 'completed'
+  WHERE r.user_id = $1 AND r.type::text = 'rakeback_claim' AND r.status = 'completed'
     AND EXISTS (
       SELECT 1 FROM ledger_transactions db
-      WHERE db.user_id = $1 AND db.type = 'deposit_bonus' AND db.status = 'completed'
+      WHERE db.user_id = $1 AND db.type::text = 'deposit_bonus' AND db.status = 'completed'
         AND ABS(EXTRACT(EPOCH FROM (r.created_at - db.created_at))) < 3600
     )
 ),
 rc AS (
   SELECT COUNT(*)::bigint AS c
-  FROM ledger_transactions WHERE user_id = $1 AND type = 'rakeback_claim' AND status = 'completed'
+  FROM ledger_transactions WHERE user_id = $1 AND type::text = 'rakeback_claim' AND status = 'completed'
 ),
 vr AS (
   SELECT COUNT(*)::bigint AS c
-  FROM ledger_transactions WHERE user_id = $1 AND type = 'voucher_redeemed' AND status = 'completed'
+  FROM ledger_transactions WHERE user_id = $1 AND type::text = 'voucher_redeemed' AND status = 'completed'
 ),
 po AS (
   SELECT COUNT(*)::bigint AS c
-  FROM ledger_transactions WHERE user_id = $1 AND type = 'pack_opening' AND status = 'completed'
+  FROM ledger_transactions WHERE user_id = $1 AND type::text = 'pack_opening' AND status = 'completed'
 ),
 bp AS (
   SELECT COUNT(*)::bigint AS c
-  FROM ledger_transactions WHERE user_id = $1 AND type = 'battle_bet' AND status = 'completed'
+  FROM ledger_transactions WHERE user_id = $1 AND type::text = 'battle_bet' AND status = 'completed'
 ),
 bsw AS (
   -- biggest single absolute wager amount across pack_opening/battle_bet/battle_sponsorship.
   SELECT COALESCE(MAX(ABS(amount::numeric)), 0) AS v
   FROM ledger_transactions
   WHERE user_id = $1 AND status = 'completed'
-    AND type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+    AND type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
 ),
 fl AS (
   SELECT (
@@ -1690,20 +1690,20 @@ LEFT JOIN (
 
 LEFT JOIN (
   SELECT user_id,
-    COALESCE(SUM(amount::numeric) FILTER (WHERE type='deposit' AND status='completed' AND created_at >= NOW() - INTERVAL '24 hours'), 0) AS deposits_24h_usd,
-    COALESCE(SUM(amount::numeric) FILTER (WHERE type='deposit' AND status='completed' AND created_at >= NOW() - INTERVAL '7 days'), 0) AS deposits_7d_usd,
-    COALESCE(SUM(amount::numeric) FILTER (WHERE type='deposit' AND status='completed'), 0) AS deposits_all_usd,
-    COUNT(*) FILTER (WHERE type='deposit' AND status='completed') AS deposit_count_all,
-    MIN(created_at) FILTER (WHERE type='deposit' AND status='completed') AS first_deposit_at,
-    MAX(created_at) FILTER (WHERE type='deposit' AND status='completed') AS last_deposit_at,
-    COALESCE(MAX(amount::numeric) FILTER (WHERE type='deposit' AND status='completed'), 0) AS max_single_deposit,
-    COUNT(*) FILTER (WHERE type='deposit_bonus' AND status='completed') AS deposit_bonus_count,
-    COALESCE(SUM(amount::numeric) FILTER (WHERE type='deposit_bonus' AND status='completed'), 0) AS deposit_bonus_value,
-    COUNT(*) FILTER (WHERE type='rakeback_claim' AND status='completed') AS rakeback_claim_count,
-    COUNT(*) FILTER (WHERE type='voucher_redeemed' AND status='completed') AS voucher_redeem_count,
-    COUNT(*) FILTER (WHERE type='pack_opening' AND status='completed') AS pack_opens,
-    COUNT(*) FILTER (WHERE type='battle_bet' AND status='completed') AS battles_played,
-    COALESCE(MAX(ABS(amount::numeric)) FILTER (WHERE status='completed' AND type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')), 0) AS biggest_single_wager
+    COALESCE(SUM(amount::numeric) FILTER (WHERE type::text='deposit' AND status='completed' AND created_at >= NOW() - INTERVAL '24 hours'), 0) AS deposits_24h_usd,
+    COALESCE(SUM(amount::numeric) FILTER (WHERE type::text='deposit' AND status='completed' AND created_at >= NOW() - INTERVAL '7 days'), 0) AS deposits_7d_usd,
+    COALESCE(SUM(amount::numeric) FILTER (WHERE type::text='deposit' AND status='completed'), 0) AS deposits_all_usd,
+    COUNT(*) FILTER (WHERE type::text='deposit' AND status='completed') AS deposit_count_all,
+    MIN(created_at) FILTER (WHERE type::text='deposit' AND status='completed') AS first_deposit_at,
+    MAX(created_at) FILTER (WHERE type::text='deposit' AND status='completed') AS last_deposit_at,
+    COALESCE(MAX(amount::numeric) FILTER (WHERE type::text='deposit' AND status='completed'), 0) AS max_single_deposit,
+    COUNT(*) FILTER (WHERE type::text='deposit_bonus' AND status='completed') AS deposit_bonus_count,
+    COALESCE(SUM(amount::numeric) FILTER (WHERE type::text='deposit_bonus' AND status='completed'), 0) AS deposit_bonus_value,
+    COUNT(*) FILTER (WHERE type::text='rakeback_claim' AND status='completed') AS rakeback_claim_count,
+    COUNT(*) FILTER (WHERE type::text='voucher_redeemed' AND status='completed') AS voucher_redeem_count,
+    COUNT(*) FILTER (WHERE type::text='pack_opening' AND status='completed') AS pack_opens,
+    COUNT(*) FILTER (WHERE type::text='battle_bet' AND status='completed') AS battles_played,
+    COALESCE(MAX(ABS(amount::numeric)) FILTER (WHERE status='completed' AND type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')), 0) AS biggest_single_wager
   FROM ledger_transactions
   WHERE user_id IN (SELECT user_id FROM ids)
   GROUP BY user_id
@@ -1715,7 +1715,7 @@ LEFT JOIN (
 LEFT JOIN (
   SELECT user_id, MIN(created_at) AS first_at
   FROM ledger_transactions
-  WHERE status='completed' AND type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+  WHERE status='completed' AND type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
     AND user_id IN (SELECT user_id FROM ids)
   GROUP BY user_id
 ) fw ON fw.user_id = u.id
@@ -1727,17 +1727,17 @@ LEFT JOIN (
   SELECT w.user_id,
     COUNT(*) FILTER (WHERE EXISTS (
       SELECT 1 FROM ledger_transactions d
-      WHERE d.user_id = w.user_id AND d.type='deposit' AND d.status='completed'
+      WHERE d.user_id = w.user_id AND d.type::text='deposit' AND d.status='completed'
         AND w.created_at BETWEEN d.created_at AND d.created_at + INTERVAL '1 hour'
     )) AS wad_count,
     COUNT(*) FILTER (WHERE EXISTS (
       SELECT 1 FROM ledger_transactions bonus
       WHERE bonus.user_id = w.user_id AND bonus.status='completed'
-        AND bonus.type IN ('deposit_bonus','rakeback_claim','balance_reward_claim','promo_code_redeemed','gift_card_redeemed','affiliate_claim')
+        AND bonus.type::text IN ('deposit_bonus','rakeback_claim','balance_reward_claim','promo_code_redeemed','gift_card_redeemed','affiliate_claim')
         AND w.created_at BETWEEN bonus.created_at AND bonus.created_at + INTERVAL '1 hour'
     )) AS wab_count
   FROM ledger_transactions w
-  WHERE w.type='card_withdrawal' AND w.status IN ('completed','pending')
+  WHERE w.type::text='card_withdrawal' AND w.status IN ('completed','pending')
     AND w.user_id IN (SELECT user_id FROM ids)
   GROUP BY w.user_id
 ) wp ON wp.user_id = u.id
@@ -1757,11 +1757,11 @@ LEFT JOIN (
 LEFT JOIN (
   SELECT r.user_id, COUNT(*) AS c
   FROM ledger_transactions r
-  WHERE r.type='rakeback_claim' AND r.status='completed'
+  WHERE r.type::text='rakeback_claim' AND r.status='completed'
     AND r.user_id IN (SELECT user_id FROM ids)
     AND EXISTS (
       SELECT 1 FROM ledger_transactions db
-      WHERE db.user_id=r.user_id AND db.type='deposit_bonus' AND db.status='completed'
+      WHERE db.user_id=r.user_id AND db.type::text='deposit_bonus' AND db.status='completed'
         AND ABS(EXTRACT(EPOCH FROM (r.created_at - db.created_at))) < 3600
     )
   GROUP BY r.user_id

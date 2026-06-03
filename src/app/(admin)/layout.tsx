@@ -13,11 +13,16 @@ import { LiveMoneyChat } from "@/components/live-money-chat";
 import { RightRailProvider } from "@/components/right-rail-context";
 import { CommandPalette } from "@/components/command-palette";
 import { TimezoneProvider } from "@/components/timezone-provider";
+import { redirect } from "next/navigation";
 import { verifySession, getUserPermissions } from "@/lib/dal";
+import { getSession, type SessionPayload } from "@/lib/session";
+import { getEffectiveRoles } from "@/lib/admin-roles";
 import { adminDb } from "@/lib/admin-db";
 import { getAdminPreferences } from "@/lib/admin-preferences";
+import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
 import { DevDbBanner } from "@/components/dev-db-banner";
+import { isNextControlFlowError } from "@/lib/utils/action-error";
 
 /**
  * Read the optional profile fields. This runs on every admin page load,
@@ -46,20 +51,100 @@ async function loadHeaderProfile(userId: string): Promise<{
   }
 }
 
+/**
+ * Resilient read of `getUserPermissions` for the layout. A transient
+ * adminDb failure (connection blip, statement timeout) here would otherwise
+ * crash the entire admin shell — which is exactly the failure mode
+ * /dashboard, /cards, /packs hit in prod after the page-body queries were
+ * already hardened with safeQuery. Falling back to an empty allow-list is
+ * conservative: non-admins effectively see a stripped sidebar and the
+ * page's own `requirePageAccess` gate decides whether to redirect; admins
+ * (`session.role === "admin"`) bypass the list entirely so the empty array
+ * has no effect on them. `redirect()` and `notFound()` signals from inside
+ * the call are RE-THROWN so Next can complete the navigation.
+ */
+async function loadUserPermissions(userId: string): Promise<string[]> {
+  try {
+    return await getUserPermissions(userId);
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error("[admin-layout] loadUserPermissions failed:", err);
+    return [];
+  }
+}
+
+/**
+ * Resilient read of `getAdminPreferences` for the layout. The preferences
+ * column already self-heals for the unapplied-migration case (P2022), but
+ * any OTHER throw — connection drop, timeout, unexpected shape — would
+ * propagate past the layout and white-screen the shell. Falling back to
+ * DEFAULT_PREFERENCES keeps the timezone provider's safe defaults so the
+ * page still renders; the admin just sees the system theme + browser-
+ * detected timezone until the next request recovers.
+ */
+async function loadPreferences(userId: string) {
+  try {
+    return await getAdminPreferences(userId);
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error("[admin-layout] loadPreferences failed:", err);
+    return { ...DEFAULT_PREFERENCES };
+  }
+}
+
+/**
+ * Resilient wrapper around `verifySession()`. The session check itself is
+ * cookie-only (cheap, can't throw for connectivity reasons), but the
+ * DB-side `is_active` / role re-read inside it can throw if adminDb has a
+ * transient fault — which would otherwise crash the entire admin shell at
+ * its very first await (the layout's gate). On a non-control-flow DB
+ * failure we fall back to the JWT payload alone: it was signed at login,
+ * so the user IS authenticated; the DB refresh only exists to surface
+ * stale role state. A few seconds of stale role data is the right trade
+ * vs white-screening every page. Cookie-missing / expired redirects are
+ * preserved verbatim.
+ */
+async function safeVerifySession(): Promise<SessionPayload> {
+  try {
+    return await verifySession();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[admin-layout] safeVerifySession DB lookup failed, falling back to JWT:",
+      err,
+    );
+    const session = await getSession();
+    if (!session) redirect("/login");
+    if (new Date(session.expiresAt) < new Date()) redirect("/login");
+    // The JWT carries `role` always; `roles` was added with multi-role and
+    // older cookies may omit it. Mirror verifySession's normalization so
+    // every downstream consumer sees a consistent shape.
+    const roles = getEffectiveRoles(session.role, session.roles);
+    return { ...session, roles };
+  }
+}
+
 export default async function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const session = await verifySession();
+  const session = await safeVerifySession();
   // Permissions, header profile, preferences, and the current DB env
   // are independent lookups keyed on the same userId/cookie jar.
   // Serializing them cost ~4 round-trips on every admin page load —
   // Promise.all collapses them into one.
+  //
+  // Every entry is wrapped by a layout-local helper that catches non-
+  // control-flow errors and returns a safe fallback so a transient
+  // adminDb fault can't take the whole admin shell down (the failure mode
+  // that white-screened /dashboard, /cards, /packs in prod after their
+  // page-body queries were already hardened with safeQuery). Each wrapper
+  // re-throws `redirect()` / `notFound()` so navigation still works.
   const [allowedPages, profile, preferences, dbEnv] = await Promise.all([
-    getUserPermissions(session.userId),
+    loadUserPermissions(session.userId),
     loadHeaderProfile(session.userId),
-    getAdminPreferences(session.userId),
+    loadPreferences(session.userId),
     readDbEnvFromCookie(),
   ]);
   // Only surface the switcher to admins on servers where a dev DB is
