@@ -127,16 +127,16 @@ async function getLifetimePnlWhales(): Promise<WhaleRow[]> {
     SELECT
       ru.id, ru.username, ru.image,
       (
-        COALESCE(SUM(CASE WHEN b.type IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN b.type IN ${ggrPayoutIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN b.type::text IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN b.type::text IN ${ggrPayoutIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
       )::text AS pnl,
-      COALESCE(SUM(CASE WHEN b.type IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS wager
+      COALESCE(SUM(CASE WHEN b.type::text IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS wager
     FROM real_users ru
     LEFT JOIN base b ON b.user_id = ru.id
     GROUP BY ru.id, ru.username, ru.image
     HAVING (
-      COALESCE(SUM(CASE WHEN b.type IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
-      - COALESCE(SUM(CASE WHEN b.type IN ${ggrPayoutIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
+      COALESCE(SUM(CASE WHEN b.type::text IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
+      - COALESCE(SUM(CASE WHEN b.type::text IN ${ggrPayoutIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
     ) > 0
     ORDER BY pnl::numeric DESC
     LIMIT ${LIMIT}
@@ -162,7 +162,7 @@ async function getLifetimeWagerWhales(): Promise<WhaleRow[]> {
            SUM(ABS(lt.amount::numeric))::text AS amount
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
-    WHERE lt.status = 'completed' AND lt.type IN ${ggrWagerIn}
+    WHERE lt.status = 'completed' AND lt.type::text IN ${ggrWagerIn}
       AND u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
     GROUP BY u.id, u.username, u.image
     ORDER BY SUM(ABS(lt.amount::numeric)) DESC
@@ -188,7 +188,7 @@ async function getWindowedWagerWhales(days: number): Promise<WhaleRow[]> {
            SUM(ABS(lt.amount::numeric))::text AS amount
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
-    WHERE lt.status = 'completed' AND lt.type IN ${WAGER_TYPES_SQL}
+    WHERE lt.status = 'completed' AND lt.type::text IN ${WAGER_TYPES_SQL}
       AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       AND lt.created_at >= NOW() - INTERVAL '${days} days'
     GROUP BY u.id, u.username, u.image
@@ -222,7 +222,7 @@ async function getBiggestSingleDeposit(): Promise<WhaleRow[]> {
            lt.created_at
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
-    WHERE lt.status = 'completed' AND lt.type = 'deposit'
+    WHERE lt.status = 'completed' AND lt.type::text = 'deposit'
       AND u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
     ORDER BY ABS(lt.amount::numeric) DESC
     LIMIT ${LIMIT}
@@ -293,7 +293,7 @@ async function getBiggestSingleLoss(): Promise<WhaleRow[]> {
            lt.created_at
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
-    WHERE lt.status = 'completed' AND lt.type IN ${ggrWagerIn}
+    WHERE lt.status = 'completed' AND lt.type::text IN ${ggrWagerIn}
       AND u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
     ORDER BY ABS(lt.amount::numeric) DESC
     LIMIT ${LIMIT}
@@ -331,7 +331,7 @@ async function getBiggestSingleWin(): Promise<WhaleRow[]> {
            lt.created_at
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
-    WHERE lt.status = 'completed' AND lt.type IN ${ggrPayoutIn}
+    WHERE lt.status = 'completed' AND lt.type::text IN ${ggrPayoutIn}
       AND u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
     ORDER BY ABS(lt.amount::numeric) DESC
     LIMIT ${LIMIT}

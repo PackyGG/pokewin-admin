@@ -124,7 +124,7 @@ async function computeCohortMatrix(
       LEFT JOIN ledger_transactions lt
         ON lt.user_id = cu.user_id
        AND lt.status = 'completed'
-       AND lt.type IN ${ALL_REWARD_TYPES_SQL}
+       AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
       GROUP BY cu.user_id
     ),
     user_wager AS (
@@ -133,7 +133,7 @@ async function computeCohortMatrix(
       LEFT JOIN ledger_transactions lt
         ON lt.user_id = cu.user_id
        AND lt.status = 'completed'
-       AND lt.type IN ${WAGER_TYPES_SQL}
+       AND lt.type::text IN ${WAGER_TYPES_SQL}
       GROUP BY cu.user_id
     ),
     user_payout AS (
@@ -142,7 +142,7 @@ async function computeCohortMatrix(
       LEFT JOIN ledger_transactions lt
         ON lt.user_id = cu.user_id
        AND lt.status = 'completed'
-       AND lt.type IN ${PAYOUT_TYPES_SQL}
+       AND lt.type::text IN ${PAYOUT_TYPES_SQL}
       GROUP BY cu.user_id
     ),
     per_user AS (

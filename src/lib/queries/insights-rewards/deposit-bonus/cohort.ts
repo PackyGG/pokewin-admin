@@ -138,7 +138,7 @@ async function computeCohortComparison(
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
-        AND d.type = 'deposit'
+        AND d.type::text = 'deposit'
         AND d.user_id IN ${userScope}
         ${dateFilter}
     ),
@@ -154,7 +154,7 @@ async function computeCohortComparison(
         SELECT ABS(lt.amount::numeric) AS bonus_usd
         FROM ledger_transactions lt
         WHERE lt.user_id = wd.user_id
-          AND lt.type = 'deposit_bonus'
+          AND lt.type::text = 'deposit_bonus'
           AND lt.status = 'completed'
           AND lt.balance_before::numeric = wd.bal_after
           AND lt.created_at >= wd.created_at
@@ -173,7 +173,7 @@ async function computeCohortComparison(
           SELECT 1 FROM ledger_transactions w
           WHERE w.user_id = p.user_id
             AND w.status = 'completed'
-            AND w.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+            AND w.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
             AND w.created_at > p.created_at + INTERVAL '1 hour'
             AND w.created_at <= p.created_at + INTERVAL '7 days'
         ) AS r7,
@@ -181,7 +181,7 @@ async function computeCohortComparison(
           SELECT 1 FROM ledger_transactions w
           WHERE w.user_id = p.user_id
             AND w.status = 'completed'
-            AND w.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+            AND w.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
             AND w.created_at > p.created_at + INTERVAL '1 hour'
             AND w.created_at <= p.created_at + INTERVAL '30 days'
         ) AS r30
@@ -279,7 +279,7 @@ async function computeRatioDistribution(
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
-        AND d.type = 'deposit'
+        AND d.type::text = 'deposit'
         AND d.user_id IN ${userScope}
         ${dateFilter}
     ),
@@ -293,7 +293,7 @@ async function computeRatioDistribution(
         SELECT ABS(lt.amount::numeric) AS bonus_usd
         FROM ledger_transactions lt
         WHERE lt.user_id = wd.user_id
-          AND lt.type = 'deposit_bonus'
+          AND lt.type::text = 'deposit_bonus'
           AND lt.status = 'completed'
           AND lt.balance_before::numeric = wd.bal_after
           AND lt.created_at >= wd.created_at
@@ -349,7 +349,7 @@ async function computeRatioDistribution(
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
-        AND d.type = 'deposit'
+        AND d.type::text = 'deposit'
         AND d.user_id IN ${userScope}
         ${dateFilter}
     ),
@@ -360,7 +360,7 @@ async function computeRatioDistribution(
         SELECT ABS(lt.amount::numeric) AS bonus_usd
         FROM ledger_transactions lt
         WHERE lt.user_id = wd.user_id
-          AND lt.type = 'deposit_bonus'
+          AND lt.type::text = 'deposit_bonus'
           AND lt.status = 'completed'
           AND lt.balance_before::numeric = wd.bal_after
           AND lt.created_at >= wd.created_at

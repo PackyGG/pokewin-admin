@@ -230,7 +230,7 @@ async function computeDepositTransactions(
   // paired bonus merged in via the LATERAL below — a per-page-row lookup,
   // not a whole-table scan.
   const baseWhere = `
-    WHERE t.type = 'deposit'
+    WHERE t.type::text = 'deposit'
       ${searchFilter}
       ${statusFilter}
       ${minAmountFilter}
@@ -267,7 +267,7 @@ async function computeDepositTransactions(
       SELECT amount, balance_after
       FROM ledger_transactions
       WHERE user_id = t.user_id
-        AND type = 'deposit_bonus'
+        AND type::text = 'deposit_bonus'
         AND balance_before = t.balance_after
         AND created_at >= t.created_at
         AND created_at < t.created_at + INTERVAL '2 minutes'
@@ -546,7 +546,7 @@ export async function getTransactions(params: {
         LEFT JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
         LEFT JOIN provably_fair_results pf ON pf.game_session_id = gs.id
         LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
-        WHERE lt.type = 'pack_opening'
+        WHERE lt.type::text = 'pack_opening'
           AND lt.status = 'completed'
           AND lt.amount::numeric > 0
         GROUP BY lt.id, lt.amount

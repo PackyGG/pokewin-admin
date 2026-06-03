@@ -206,16 +206,16 @@ async function computeAnalyticsData(
       >(`
         SELECT
           COALESCE(SUM(CASE
-            WHEN type = 'pack_opening'
+            WHEN type::text = 'pack_opening'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
           COALESCE(SUM(CASE
-            WHEN type IN ('battle_bet', 'battle_sponsorship')
+            WHEN type::text IN ('battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
           COALESCE(SUM(CASE
-            WHEN type = 'pack_opening' AND description ILIKE '%borrow%'
+            WHEN type::text = 'pack_opening' AND description ILIKE '%borrow%'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_borrowed,
           COALESCE(SUM(CASE
-            WHEN type = 'battle_bet' AND description ILIKE '%borrow%'
+            WHEN type::text = 'battle_bet' AND description ILIKE '%borrow%'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_borrowed
         FROM ledger_transactions
         WHERE status = 'completed' ${dateFilter} ${EXCL_STAFF_FRAG}
@@ -250,55 +250,55 @@ async function computeAnalyticsData(
         SELECT
           DATE(created_at) AS date,
           COALESCE(SUM(CASE
-            WHEN type = 'pack_opening'
+            WHEN type::text = 'pack_opening'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
           COALESCE(SUM(CASE
-            WHEN type IN ('battle_bet', 'battle_sponsorship')
+            WHEN type::text IN ('battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
           COUNT(DISTINCT user_id)::text AS unique_visitors,
           COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
-            CASE WHEN type = 'deposit'
+            CASE WHEN type::text = 'deposit'
               THEN ABS(amount::numeric) END
           ), 0)::text AS avg_deposit,
           COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
-            CASE WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            CASE WHEN type::text IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
               THEN ABS(amount::numeric) END
           ), 0)::text AS avg_bet,
           COALESCE(SUM(CASE
-            WHEN type = 'deposit'
+            WHEN type::text = 'deposit'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_deposit,
           COALESCE(SUM(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            WHEN type::text IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_bet,
           COALESCE(MIN(CASE
-            WHEN type = 'deposit'
+            WHEN type::text = 'deposit'
             THEN ABS(amount::numeric) END), 0)::text AS min_deposit,
           COALESCE(MAX(CASE
-            WHEN type = 'deposit'
+            WHEN type::text = 'deposit'
             THEN ABS(amount::numeric) END), 0)::text AS max_deposit,
           COALESCE(MIN(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            WHEN type::text IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) END), 0)::text AS min_bet,
           COALESCE(MAX(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            WHEN type::text IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) END), 0)::text AS max_bet,
           COALESCE(SUM(CASE
-            WHEN type = 'rakeback_claim'
+            WHEN type::text = 'rakeback_claim'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_rakeback,
           COALESCE(SUM(CASE
-            WHEN type = 'balance_reward_claim'
+            WHEN type::text = 'balance_reward_claim'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_signup_packs,
           COALESCE(SUM(CASE
-            WHEN type = 'race_prize'
+            WHEN type::text = 'race_prize'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_leaderboard,
           COALESCE(SUM(CASE
-            WHEN type = 'rain_win'
+            WHEN type::text = 'rain_win'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_rain,
           COALESCE(SUM(CASE
-            WHEN type = 'promo_code_redeemed'
+            WHEN type::text = 'promo_code_redeemed'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_promo,
           COALESCE(SUM(CASE
-            WHEN type = 'affiliate_claim'
+            WHEN type::text = 'affiliate_claim'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_affiliate
         FROM ledger_transactions
         WHERE status = 'completed' ${dateFilter} ${EXCL_STAFF_FRAG}
@@ -375,7 +375,7 @@ async function computeAnalyticsData(
         FROM ledger_transactions lt
         JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
         JOIN packs p ON gs.game_id = p.id
-        WHERE lt.type = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
+        WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
           AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})
         GROUP BY p.id, p.name
         ORDER BY COUNT(*) DESC
@@ -738,7 +738,7 @@ async function computePackAndBattleStats(
       FROM ledger_transactions lt
       JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
       JOIN packs p ON gs.game_id = p.id
-      WHERE lt.type = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
+      WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
       GROUP BY p.id, p.name
       ORDER BY COUNT(*) DESC

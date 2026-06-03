@@ -85,7 +85,7 @@ async function compute(
         COUNT(*)::text AS cnt
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'affiliate_claim'
+        AND lt.type::text = 'affiliate_claim'
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSub})
         ${ltDate}
     `),
@@ -111,7 +111,7 @@ async function compute(
         COUNT(*)::text AS cnt
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'affiliate_claim'
+        AND lt.type::text = 'affiliate_claim'
         AND lt.created_at >= NOW() - INTERVAL '${chartDays} days'
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSub})
       GROUP BY 1

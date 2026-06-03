@@ -280,10 +280,10 @@ function getPeriodAggregates(
       FROM card_withdrawal_requests cwr
       JOIN vouchers v ON v.id = ANY(cwr.voucher_ids)
       WHERE cwr.status IN ('completed', 'shipped')
-        AND v.origin IN ('creator_fill_conversion', 'creator_multiplier_payout')
+        AND v.origin::text IN ('creator_fill_conversion', 'creator_multiplier_payout')
     )
     SELECT
-      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS revenue,
+      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS revenue,
 
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal,
 
@@ -305,28 +305,28 @@ function getPeriodAggregates(
       -- voucher in the period (one request can bundle several vouchers).
       (SELECT COUNT(DISTINCT request_id) FROM creator_deal_payouts WHERE effective_at >= ${cutoff})::text AS creator_wd_count,
 
-      COALESCE(SUM(CASE WHEN type IN ${wagerTypesIn} AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager,
+      COALESCE(SUM(CASE WHEN type::text IN ${wagerTypesIn} AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager,
 
       -- Customer wager — the wager set MINUS wagers a creator made
       -- while live on a deal/stream (in_session). Creators wager
       -- house-funded "sponsored" balance on stream — recorded as
       -- ordinary pack_opening/battle_bet rows — which is not a real
       -- customer bet. A creator's OFF-session personal play stays in.
-      COALESCE(SUM(CASE WHEN type IN ${wagerTypesIn} AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_excl_session,
+      COALESCE(SUM(CASE WHEN type::text IN ${wagerTypesIn} AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_excl_session,
 
       -- Packs / Battles split of the customer GAMEPLAY wager. Same
       -- NOT in_session filter as wager_excl_session, so the two sum
       -- to it. Drives the "Where the wager comes from" chip row under
       -- the Total Wager card. Upgrader is added on top by the caller
       -- from upgrader_games (it is not a ledger wager source).
-      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session,
-      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session,
+      COALESCE(SUM(CASE WHEN type::text = 'pack_opening' AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session,
+      COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session,
 
       -- Organic wager — pack / battle gameplay wager from users who
       -- did NOT join under an official creator code (and isn't a
       -- creator's own on-stream play, via NOT in_session). Reads off
       -- the under_creator flag set on the real_users CTE above.
-      COALESCE(SUM(CASE WHEN type IN ${wagerTypesIn} AND NOT in_session AND NOT under_creator AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_organic,
+      COALESCE(SUM(CASE WHEN type::text IN ${wagerTypesIn} AND NOT in_session AND NOT under_creator AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_organic,
 
       -- NOTE: GGR is intentionally NOT computed here anymore. It is
       -- produced by the canonical @/lib/metrics inventory-delta
@@ -338,7 +338,7 @@ function getPeriodAggregates(
       -- Deposit COUNT — number of completed deposit transactions in
       -- the selected period. Pairs with revenue so the Deposits
       -- card can show "$X across N deposits".
-      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${cutoff} THEN 1 END)::text AS deposit_count,
+      COUNT(CASE WHEN type::text = 'deposit' AND created_at >= ${cutoff} THEN 1 END)::text AS deposit_count,
 
       -- Windowed balance-change + manual-withdrawal sums for the
       -- windowed P&L figure (was 24h-only, now scoped to the selected
@@ -351,7 +351,7 @@ function getPeriodAggregates(
         WHEN created_at >= ${cutoff}
         THEN (lt_balance_after - lt_balance_before)::numeric ELSE 0 END), 0)::text AS balance_change,
       COALESCE(SUM(CASE
-        WHEN type = 'admin_balance_adjustment'
+        WHEN type::text = 'admin_balance_adjustment'
              AND lt_description ILIKE 'Manual withdrawal:%'
              AND lt_balance_after < lt_balance_before
              AND created_at >= ${cutoff}
@@ -398,12 +398,12 @@ const cachedDailyChart = unstable_cache(
     }[]>`
       SELECT
         DATE(created_at) as date,
-        COALESCE(SUM(CASE WHEN type = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as packs,
-        COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text as battles,
-        COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount::numeric ELSE 0 END), 0)::text as deposits,
-        COUNT(DISTINCT CASE WHEN type = 'deposit' THEN user_id END)::text as active_depositors
+        COALESCE(SUM(CASE WHEN type::text = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as packs,
+        COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text as battles,
+        COALESCE(SUM(CASE WHEN type::text = 'deposit' THEN amount::numeric ELSE 0 END), 0)::text as deposits,
+        COUNT(DISTINCT CASE WHEN type::text = 'deposit' THEN user_id END)::text as active_depositors
       FROM ledger_transactions
-      WHERE type IN ('pack_opening','battle_bet','battle_sponsorship','deposit') AND status = 'completed'
+      WHERE type::text IN ('pack_opening','battle_bet','battle_sponsorship','deposit') AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '30 days'
         AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)})
       GROUP BY DATE(created_at)
@@ -498,7 +498,7 @@ const cachedDailyWagerAttribution = unstable_cache(
         -- anyway. Upgrader is intentionally absent from this attribution
         -- split (it cannot be keyed to a creator-code referral), matching
         -- the Total Wager card organic figure (wagersOrganic).
-        AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+        AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
         AND lt.created_at >= NOW() - INTERVAL '30 days'
       GROUP BY DATE(lt.created_at)
       ORDER BY date
@@ -521,7 +521,7 @@ const cachedFtdCombined = unstable_cache(
         SELECT DISTINCT ON (user_id)
           user_id, amount::numeric AS amount, created_at
         FROM ledger_transactions
-        WHERE type = 'deposit' AND status = 'completed'
+        WHERE type::text = 'deposit' AND status = 'completed'
           AND user_id IN (
             SELECT id FROM "user"
             WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
@@ -561,7 +561,7 @@ const cachedLifetimeDepositMetrics = unstable_cache(
         COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::text AS h24,
         COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::text AS d7
       FROM ledger_transactions
-      WHERE type = 'deposit'
+      WHERE type::text = 'deposit'
         AND status = 'completed'
         AND user_id IN (
           SELECT id FROM "user"
@@ -1910,7 +1910,7 @@ export async function getGgrTopContributors(
     ),
     non_borrow_pack_sessions AS (
       SELECT game_session_id FROM ledger_transactions
-      WHERE type = 'pack_opening' AND status = 'completed'
+      WHERE type::text = 'pack_opening' AND status = 'completed'
         AND game_session_id IS NOT NULL
         AND (description IS NULL OR description NOT ILIKE '%borrow%')
     ),
@@ -1931,9 +1931,9 @@ export async function getGgrTopContributors(
     ledger_leg AS (
       SELECT
         lt.user_id,
-        COALESCE(SUM(CASE WHEN lt.type IN ${wagerIn}
+        COALESCE(SUM(CASE WHEN lt.type::text IN ${wagerIn}
                           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager_total,
-        COALESCE(SUM(CASE WHEN lt.type IN ${gamingPayoutIn}
+        COALESCE(SUM(CASE WHEN lt.type::text IN ${gamingPayoutIn}
                           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS battle_refund_total
       FROM ledger_transactions lt
       JOIN real_users ru ON ru.id = lt.user_id
@@ -1941,20 +1941,20 @@ export async function getGgrTopContributors(
         AND ${notInSessionLedger}
         ${sinceLedger}
         AND (
-          lt.type NOT IN ('pack_opening','battle_bet','battle_sponsorship')
+          lt.type::text NOT IN ('pack_opening','battle_bet','battle_sponsorship')
           -- pack_opening: non-borrow AND not a reward/daily pack (Fix 2).
           -- The game_session_id IS NULL guard keeps a NULL-session open
           -- (definitionally not a reward pack) counted instead of dropped.
-          OR (lt.type = 'pack_opening'
+          OR (lt.type::text = 'pack_opening'
               AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
               AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN (SELECT id FROM reward_pack_sessions)))
           -- battle_bet keeps the borrow gate (its battle may be on borrow).
-          OR (lt.type = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+          OR (lt.type::text = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
           -- battle_sponsorship counted DIRECTLY — no borrow gate (Fix 1).
           -- Its game_session_id is NULL, so the IN-gate would drop every
           -- sponsorship row (the headline-omits-sponsorship bug); all
           -- sponsored battles are borrow_percentage=0 so no gate is needed.
-          OR lt.type = 'battle_sponsorship'
+          OR lt.type::text = 'battle_sponsorship'
         )
       GROUP BY lt.user_id
     ),

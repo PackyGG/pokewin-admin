@@ -293,11 +293,11 @@ const cachedPerUserLtv = unstable_cache(
         ru.role::text AS role,
         ru.referred_by,
         ru.referrer_is_creator,
-        COALESCE(SUM(CASE WHEN b.type = 'deposit' THEN b.amount ELSE 0 END), 0)::text AS deposits,
+        COALESCE(SUM(CASE WHEN b.type::text = 'deposit' THEN b.amount ELSE 0 END), 0)::text AS deposits,
         COALESCE(MAX(wa.amount), 0)::text AS withdrawals,
-        COALESCE(SUM(CASE WHEN b.type IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS wager,
-        COALESCE(SUM(CASE WHEN b.type IN ${ggrPayoutIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS payouts,
-        COALESCE(SUM(CASE WHEN b.type IN ${bonusTypesSql} THEN ABS(b.amount) ELSE 0 END), 0)::text AS bonuses
+        COALESCE(SUM(CASE WHEN b.type::text IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS wager,
+        COALESCE(SUM(CASE WHEN b.type::text IN ${ggrPayoutIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS payouts,
+        COALESCE(SUM(CASE WHEN b.type::text IN ${bonusTypesSql} THEN ABS(b.amount) ELSE 0 END), 0)::text AS bonuses
       FROM real_users ru
       LEFT JOIN base b ON b.user_id = ru.id
       LEFT JOIN withdrawal_amounts wa ON wa.user_id = ru.id

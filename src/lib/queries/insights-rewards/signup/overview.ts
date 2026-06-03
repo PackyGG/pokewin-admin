@@ -94,7 +94,7 @@ async function computeOverview(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
       GROUP BY c.user_id, c.signed_up_at
     )
     SELECT
@@ -124,7 +124,7 @@ async function computeOverview(
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
     WHERE lt.status = 'completed'
-      AND lt.type = 'deposit'
+      AND lt.type::text = 'deposit'
       AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
       ${signupDateFilter}
   `);
@@ -159,7 +159,7 @@ async function computeOverview(
         JOIN ledger_transactions lt
           ON lt.user_id = c.user_id
          AND lt.status = 'completed'
-         AND lt.type = 'balance_reward_claim'
+         AND lt.type::text = 'balance_reward_claim'
         GROUP BY c.user_id
       )
       SELECT

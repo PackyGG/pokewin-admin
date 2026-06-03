@@ -76,7 +76,7 @@ async function computeGeoSource(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type IN ${ALL_REWARD_TYPES_SQL}
+        AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${dateFilter}
       GROUP BY COALESCE(u.country_code, '??')
@@ -91,7 +91,7 @@ async function computeGeoSource(
         FROM ledger_transactions lt
         JOIN "user" u ON u.id = lt.user_id
         WHERE lt.status = 'completed'
-          AND lt.type IN ${ALL_REWARD_TYPES_SQL}
+          AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
           AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
           ${dateFilter}
       ),
@@ -118,7 +118,7 @@ async function computeGeoSource(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type IN ${ALL_REWARD_TYPES_SQL}
+        AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${dateFilter}
     `),

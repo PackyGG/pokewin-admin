@@ -101,7 +101,7 @@ export async function getInsightsRetention(
       FROM eligible e
       JOIN ledger_transactions lt ON lt.user_id = e.user_id
       WHERE lt.status = 'completed'
-        AND lt.type IN ${WAGER_TYPES}
+        AND lt.type::text IN ${WAGER_TYPES}
         AND lt.created_at >= e.created_at
         AND lt.created_at <= e.created_at + INTERVAL '${CURVE_LENGTH} days'
     )

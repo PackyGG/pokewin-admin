@@ -82,7 +82,7 @@ async function computeTopByCommission(
         COUNT(*) AS claims
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'affiliate_claim'
+        AND lt.type::text = 'affiliate_claim'
         ${ltDate}
       GROUP BY lt.user_id
     ),
@@ -153,7 +153,7 @@ async function computeTopByWager(
         SUM(ABS(lt.amount::numeric)) AS commission
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'affiliate_claim'
+        AND lt.type::text = 'affiliate_claim'
         ${ltDate}
       GROUP BY lt.user_id
     )

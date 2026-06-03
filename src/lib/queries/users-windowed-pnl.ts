@@ -66,13 +66,13 @@ export async function getUserWindowedPnlMulti(
     const ledgerDepositCase = windows
       .map(
         (_, i) =>
-          `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} AND lt.type = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits_${i}`,
+          `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} AND lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits_${i}`,
       )
       .join(", ");
     const ledgerManualWdCase = windows
       .map(
         (_, i) =>
-          `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} AND lt.type = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_${i}`,
+          `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} AND lt.type::text = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_${i}`,
       )
       .join(", ");
     const ledgerBalanceChangeCase = windows

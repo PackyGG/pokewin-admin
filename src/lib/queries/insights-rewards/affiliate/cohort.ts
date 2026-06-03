@@ -119,7 +119,7 @@ async function compute(
       FROM cohort c
       LEFT JOIN ledger_transactions lt
         ON lt.user_id = c.referred_user_id
-        AND lt.type = 'deposit'
+        AND lt.type::text = 'deposit'
         AND lt.status = 'completed'
       GROUP BY c.affiliate_user_id, c.referred_user_id
     ),

@@ -95,7 +95,7 @@ async function computeRoi(
         COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS cost
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         ${costDateClause}
       GROUP BY lt.user_id
@@ -106,7 +106,7 @@ async function computeRoi(
       JOIN ledger_transactions lt
         ON lt.user_id = cc.user_id
        AND lt.status = 'completed'
-       AND lt.type IN ${WAGER_TYPES_SQL}
+       AND lt.type::text IN ${WAGER_TYPES_SQL}
       WHERE 1=1 ${forwardWindowClause}
       GROUP BY cc.user_id
     ),
@@ -116,7 +116,7 @@ async function computeRoi(
       JOIN ledger_transactions lt
         ON lt.user_id = cc.user_id
        AND lt.status = 'completed'
-       AND lt.type IN ${PAYOUT_TYPES_SQL}
+       AND lt.type::text IN ${PAYOUT_TYPES_SQL}
       WHERE 1=1 ${forwardWindowClause}
       GROUP BY cc.user_id
     )

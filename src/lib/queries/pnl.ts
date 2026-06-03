@@ -241,8 +241,8 @@ export async function calculateWindowedPnl(opts: {
     const [ledger, card, inv, vch] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT
-           COALESCE(SUM(CASE WHEN lt.type = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
-           COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment'
+           COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
+           COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
                               AND lt.balance_after < lt.balance_before
                               AND lt.description ILIKE 'Manual withdrawal:%'
                              THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd,
@@ -456,8 +456,8 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
     const [ledger, card, inv, vch] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT DATE(lt.created_at) AS d,
-           COALESCE(SUM(CASE WHEN lt.type = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS deposits,
-           COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment'
+           COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS deposits,
+           COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
                               AND lt.balance_after < lt.balance_before
                               AND lt.description ILIKE 'Manual withdrawal:%'
                              THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS manual_wd,
@@ -747,9 +747,9 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
            COALESCE(SUM(CASE WHEN created_at >= $1 THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_h24,
            COALESCE(SUM(CASE WHEN created_at >= $2 THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_d3,
            COALESCE(SUM(CASE WHEN created_at >= $3 THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_d7,
-           COALESCE(SUM(CASE WHEN created_at >= $1 AND type = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_h24,
-           COALESCE(SUM(CASE WHEN created_at >= $2 AND type = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_d3,
-           COALESCE(SUM(CASE WHEN created_at >= $3 AND type = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_d7
+           COALESCE(SUM(CASE WHEN created_at >= $1 AND type::text = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_h24,
+           COALESCE(SUM(CASE WHEN created_at >= $2 AND type::text = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_d3,
+           COALESCE(SUM(CASE WHEN created_at >= $3 AND type::text = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_d7
          FROM ledger_transactions
          WHERE status = 'completed' AND created_at >= $3 AND ${scope}
          GROUP BY type`,
@@ -954,7 +954,7 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
     // plays only.
     const nonBorrowPackSessions = `(
       SELECT game_session_id FROM ledger_transactions
-      WHERE type = 'pack_opening' AND status = 'completed'
+      WHERE type::text = 'pack_opening' AND status = 'completed'
         AND game_session_id IS NOT NULL
         AND (description IS NULL OR description NOT ILIKE '%borrow%')
     )`;
@@ -1006,26 +1006,26 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
     const [ledger, inv] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT
-           COALESCE(SUM(CASE WHEN type = 'pack_opening' AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_h24,
-           COALESCE(SUM(CASE WHEN type = 'pack_opening' AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_d3,
-           COALESCE(SUM(CASE WHEN type = 'pack_opening' AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_d7,
-           COALESCE(SUM(CASE WHEN type = 'pack_opening'                                    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_all,
-           COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_h24,
-           COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_d3,
-           COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_d7,
-           COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship')                                    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_all,
+           COALESCE(SUM(CASE WHEN type::text = 'pack_opening' AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_h24,
+           COALESCE(SUM(CASE WHEN type::text = 'pack_opening' AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_d3,
+           COALESCE(SUM(CASE WHEN type::text = 'pack_opening' AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_d7,
+           COALESCE(SUM(CASE WHEN type::text = 'pack_opening'                                    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_all,
+           COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_h24,
+           COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_d3,
+           COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_d7,
+           COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship')                                    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_all,
            -- battle_excess_to_voucher payout legs (battle-win remainder).
            -- Bucketed by created_at (settlement time). Summed
            -- unconditionally — like battle_refund in the canonical metric
            -- layer, it is a battle-settlement leg with no borrow flag of
            -- its own; the WHERE's borrow branch below passes it through.
-           COALESCE(SUM(CASE WHEN type = 'battle_excess_to_voucher' AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_excess_h24,
-           COALESCE(SUM(CASE WHEN type = 'battle_excess_to_voucher' AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_excess_d3,
-           COALESCE(SUM(CASE WHEN type = 'battle_excess_to_voucher' AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_excess_d7,
-           COALESCE(SUM(CASE WHEN type = 'battle_excess_to_voucher'                                    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_excess_all
+           COALESCE(SUM(CASE WHEN type::text = 'battle_excess_to_voucher' AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_excess_h24,
+           COALESCE(SUM(CASE WHEN type::text = 'battle_excess_to_voucher' AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_excess_d3,
+           COALESCE(SUM(CASE WHEN type::text = 'battle_excess_to_voucher' AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_excess_d7,
+           COALESCE(SUM(CASE WHEN type::text = 'battle_excess_to_voucher'                                    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_excess_all
          FROM ledger_transactions
          WHERE status = 'completed'
-           AND type IN ('pack_opening','battle_bet','battle_sponsorship','battle_excess_to_voucher')
+           AND type::text IN ('pack_opening','battle_bet','battle_sponsorship','battle_excess_to_voucher')
            AND ${scope}
            -- Borrow mode exclusion: drop pack opens tagged "borrow"
            -- in their description, and drop battle_bet wagers whose
@@ -1045,12 +1045,12 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
            -- from the pack wager (≈$0 anyway) — a giveaway tracked as a
            -- reward cost, not gaming. Fix mirrors getGamingLegs.
            AND (
-             (type = 'pack_opening'
+             (type::text = 'pack_opening'
               AND (description IS NULL OR description NOT ILIKE '%borrow%')
               AND (game_session_id IS NULL OR game_session_id NOT IN ${rewardPackSessions}))
-             OR (type = 'battle_bet' AND game_session_id IN ${nonBorrowBattleSessions})
-             OR type = 'battle_sponsorship'
-             OR type = 'battle_excess_to_voucher'
+             OR (type::text = 'battle_bet' AND game_session_id IN ${nonBorrowBattleSessions})
+             OR type::text = 'battle_sponsorship'
+             OR type::text = 'battle_excess_to_voucher'
            )`,
         h24, d3, d7,
       ),

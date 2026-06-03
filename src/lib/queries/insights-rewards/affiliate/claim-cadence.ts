@@ -90,7 +90,7 @@ async function compute(
         )) / 3600.0 AS gap_hours
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'affiliate_claim'
+        AND lt.type::text = 'affiliate_claim'
         ${ltDate}
     ),
     per_user AS (

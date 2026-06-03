@@ -90,10 +90,10 @@ export async function getInsightsHeatmap(period: InsightsPeriod): Promise<Heatma
       SELECT
         EXTRACT(DOW FROM lt.created_at)::int AS dow,
         EXTRACT(HOUR FROM lt.created_at)::int AS hour,
-        COUNT(CASE WHEN lt.type = 'deposit' THEN 1 END)::text AS deposits,
-        COALESCE(SUM(CASE WHEN lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+        COUNT(CASE WHEN lt.type::text = 'deposit' THEN 1 END)::text AS deposits,
+        COALESCE(SUM(CASE WHEN lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wager,
-        COALESCE(SUM(CASE WHEN lt.type IN ('battle_refund','upgrader_payout','card_sale','reward_card_sale')
+        COALESCE(SUM(CASE WHEN lt.type::text IN ('battle_refund','upgrader_payout','card_sale','reward_card_sale')
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payouts,
         COUNT(DISTINCT lt.user_id)::text AS active
       FROM ledger_transactions lt

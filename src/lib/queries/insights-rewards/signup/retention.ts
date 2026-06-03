@@ -94,7 +94,7 @@ async function computeRetention(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
     )
     SELECT
       CASE WHEN cu.user_id IS NULL THEN 0 ELSE 1 END AS had_claim,
@@ -102,21 +102,21 @@ async function computeRetention(
         SELECT 1 FROM ledger_transactions lt
         WHERE lt.user_id = c.user_id
           AND lt.status = 'completed'
-          AND (lt.type = 'deposit' OR lt.type IN ${WAGER_TYPES_SQL})
+          AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
           AND lt.created_at <= c.signed_up_at + INTERVAL '1 day'
       ) THEN 1 ELSE 0 END AS retained_24h,
       CASE WHEN EXISTS (
         SELECT 1 FROM ledger_transactions lt
         WHERE lt.user_id = c.user_id
           AND lt.status = 'completed'
-          AND (lt.type = 'deposit' OR lt.type IN ${WAGER_TYPES_SQL})
+          AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
           AND lt.created_at <= c.signed_up_at + INTERVAL '7 days'
       ) THEN 1 ELSE 0 END AS retained_7d,
       CASE WHEN EXISTS (
         SELECT 1 FROM ledger_transactions lt
         WHERE lt.user_id = c.user_id
           AND lt.status = 'completed'
-          AND (lt.type = 'deposit' OR lt.type IN ${WAGER_TYPES_SQL})
+          AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
           AND lt.created_at <= c.signed_up_at + INTERVAL '30 days'
       ) THEN 1 ELSE 0 END AS retained_30d
     FROM cohort c

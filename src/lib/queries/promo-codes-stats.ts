@@ -67,7 +67,7 @@ const cachedPromoCodesMoneyStats = unstable_cache(
         SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
         FROM ledger_transactions
         WHERE status = 'completed'
-          AND type = 'promo_code_redeemed'
+          AND type::text = 'promo_code_redeemed'
       `,
       db.$queryRaw<{ total: string }[]>`
         SELECT COALESCE(SUM(value::numeric * max_uses), 0)::text AS total

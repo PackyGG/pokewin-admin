@@ -151,7 +151,7 @@ async function computeRetentionLift(
         FROM ledger_transactions lt
         JOIN "user" u ON u.id = lt.user_id
         WHERE lt.status = 'completed'
-          AND lt.type IN ${typesSql}
+          AND lt.type::text IN ${typesSql}
           AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
           ${claimWindowClause}
         GROUP BY lt.user_id
@@ -164,7 +164,7 @@ async function computeRetentionLift(
             FROM ledger_transactions w
             WHERE w.user_id = fc.user_id
               AND w.status = 'completed'
-              AND w.type IN ${WAGER_TYPES_SQL}
+              AND w.type::text IN ${WAGER_TYPES_SQL}
               AND w.created_at > fc.anchor + INTERVAL '1 hour'
               AND w.created_at <= fc.anchor + INTERVAL '7 days'
           ) THEN fc.user_id END)::text AS retain7d,
@@ -174,7 +174,7 @@ async function computeRetentionLift(
             FROM ledger_transactions w
             WHERE w.user_id = fc.user_id
               AND w.status = 'completed'
-              AND w.type IN ${WAGER_TYPES_SQL}
+              AND w.type::text IN ${WAGER_TYPES_SQL}
               AND w.created_at > fc.anchor + INTERVAL '1 hour'
               AND w.created_at <= fc.anchor + INTERVAL '30 days'
           ) THEN fc.user_id END)::text AS retain30d
@@ -196,7 +196,7 @@ async function computeRetentionLift(
       FROM ledger_transactions wager
       JOIN "user" u ON u.id = wager.user_id
       WHERE wager.status = 'completed'
-        AND wager.type IN ${WAGER_TYPES_SQL}
+        AND wager.type::text IN ${WAGER_TYPES_SQL}
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${baselineWindowClause}
       GROUP BY wager.user_id
@@ -209,7 +209,7 @@ async function computeRetentionLift(
         FROM ledger_transactions r
         WHERE r.user_id = fw.user_id
           AND r.status = 'completed'
-          AND r.type IN ${ALL_REWARD_TYPES_SQL}
+          AND r.type::text IN ${ALL_REWARD_TYPES_SQL}
           ${days !== null ? `AND r.created_at >= NOW() - INTERVAL '${days} days'` : ""}
       )
     )
@@ -221,7 +221,7 @@ async function computeRetentionLift(
           FROM ledger_transactions w
           WHERE w.user_id = nc.user_id
             AND w.status = 'completed'
-            AND w.type IN ${WAGER_TYPES_SQL}
+            AND w.type::text IN ${WAGER_TYPES_SQL}
             AND w.created_at > nc.anchor + INTERVAL '1 hour'
             AND w.created_at <= nc.anchor + INTERVAL '7 days'
         ) THEN nc.user_id END)::text AS retain7d,
@@ -231,7 +231,7 @@ async function computeRetentionLift(
           FROM ledger_transactions w
           WHERE w.user_id = nc.user_id
             AND w.status = 'completed'
-            AND w.type IN ${WAGER_TYPES_SQL}
+            AND w.type::text IN ${WAGER_TYPES_SQL}
             AND w.created_at > nc.anchor + INTERVAL '1 hour'
             AND w.created_at <= nc.anchor + INTERVAL '30 days'
         ) THEN nc.user_id END)::text AS retain30d

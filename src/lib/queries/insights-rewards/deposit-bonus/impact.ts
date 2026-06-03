@@ -138,7 +138,7 @@ async function computeDepositFrequency(
         COUNT(*)::int AS deposits
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit'
+        AND lt.type::text = 'deposit'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
       GROUP BY lt.user_id, DATE(lt.created_at AT TIME ZONE 'UTC')
@@ -172,7 +172,7 @@ async function computeDepositFrequency(
         COUNT(*)::int AS deposits
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit'
+        AND lt.type::text = 'deposit'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
       GROUP BY lt.user_id, DATE(lt.created_at AT TIME ZONE 'UTC')
@@ -288,7 +288,7 @@ async function computeDepositSizeDistribution(
       SELECT ABS(lt.amount::numeric) AS amt
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit'
+        AND lt.type::text = 'deposit'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
     )
@@ -316,7 +316,7 @@ async function computeDepositSizeDistribution(
       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ABS(lt.amount::numeric))::text AS median_usd
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.type = 'deposit'
+      AND lt.type::text = 'deposit'
       AND lt.user_id IN ${userScope}
       ${dateFilter}
   `);
@@ -418,7 +418,7 @@ async function computeCapHitters(
     SELECT MAX(ABS(lt.amount::numeric))::text AS max_amount
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.type = 'deposit_bonus'
+      AND lt.type::text = 'deposit_bonus'
       AND lt.user_id IN ${userScope}
       ${dateFilter}
   `);
@@ -450,7 +450,7 @@ async function computeCapHitters(
       SELECT DISTINCT lt.user_id
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit'
+        AND lt.type::text = 'deposit'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
     )
@@ -460,7 +460,7 @@ async function computeCapHitters(
         SELECT COALESCE(SUM(ABS(w.amount::numeric)), 0)::text
         FROM ledger_transactions w
         WHERE w.status = 'completed'
-          AND w.type IN ${WAGER_TYPES_SQL}
+          AND w.type::text IN ${WAGER_TYPES_SQL}
           AND w.user_id IN (SELECT user_id FROM depositors)
           ${windowDateFilter(period, "w")}
       ) AS depositor_wager
@@ -490,7 +490,7 @@ async function computeCapHitters(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         AND ABS(lt.amount::numeric) = ${capLiteral}
         ${dateFilter}
@@ -500,7 +500,7 @@ async function computeCapHitters(
       SELECT lt.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS bonus_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN (SELECT user_id FROM cap_hitters)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -509,7 +509,7 @@ async function computeCapHitters(
       SELECT lt.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS deposit_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit'
+        AND lt.type::text = 'deposit'
         AND lt.user_id IN (SELECT user_id FROM cap_hitters)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -518,7 +518,7 @@ async function computeCapHitters(
       SELECT lt.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ${WAGER_TYPES_SQL}
+        AND lt.type::text IN ${WAGER_TYPES_SQL}
         AND lt.user_id IN (SELECT user_id FROM cap_hitters)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -527,7 +527,7 @@ async function computeCapHitters(
       SELECT lt.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS payout_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ${PAYOUT_TYPES_SQL}
+        AND lt.type::text IN ${PAYOUT_TYPES_SQL}
         AND lt.user_id IN (SELECT user_id FROM cap_hitters)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -560,7 +560,7 @@ async function computeCapHitters(
       SELECT DISTINCT lt.user_id
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         AND ABS(lt.amount::numeric) = ${capLiteral}
         ${dateFilter}
@@ -571,7 +571,7 @@ async function computeCapHitters(
         SELECT COALESCE(SUM(ABS(w.amount::numeric)), 0)::text
         FROM ledger_transactions w
         WHERE w.status = 'completed'
-          AND w.type IN ${WAGER_TYPES_SQL}
+          AND w.type::text IN ${WAGER_TYPES_SQL}
           AND w.user_id IN (SELECT user_id FROM cap_hitters)
           ${windowDateFilter(period, "w")}
       ) AS combined_wager,
@@ -579,7 +579,7 @@ async function computeCapHitters(
         SELECT COALESCE(SUM(ABS(p.amount::numeric)), 0)::text
         FROM ledger_transactions p
         WHERE p.status = 'completed'
-          AND p.type IN ${PAYOUT_TYPES_SQL}
+          AND p.type::text IN ${PAYOUT_TYPES_SQL}
           AND p.user_id IN (SELECT user_id FROM cap_hitters)
           ${windowDateFilter(period, "p")}
       ) AS combined_payout
@@ -680,7 +680,7 @@ async function computeTimeBetween(
         ) AS prev_at
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit'
+        AND lt.type::text = 'deposit'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
     ),
@@ -722,7 +722,7 @@ async function computeTimeBetween(
         ) AS prev_at
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit'
+        AND lt.type::text = 'deposit'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
     ),
@@ -816,7 +816,7 @@ async function computeBonusWagerSegments(
         SUM(ABS(d.amount::numeric)) AS deposit_total
       FROM ledger_transactions d
       WHERE d.status = 'completed'
-        AND d.type = 'deposit'
+        AND d.type::text = 'deposit'
         AND d.user_id IN ${userScope}
         ${windowDateFilter(period, "d")}
       GROUP BY d.user_id
@@ -825,7 +825,7 @@ async function computeBonusWagerSegments(
       SELECT lt.user_id, SUM(ABS(lt.amount::numeric)) AS bonus_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN (SELECT user_id FROM per_user)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -834,7 +834,7 @@ async function computeBonusWagerSegments(
       SELECT lt.user_id, SUM(ABS(lt.amount::numeric)) AS wager_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ${WAGER_TYPES_SQL}
+        AND lt.type::text IN ${WAGER_TYPES_SQL}
         AND lt.user_id IN (SELECT user_id FROM per_user)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -923,7 +923,7 @@ async function computePostCapBehavior(
     SELECT MAX(ABS(lt.amount::numeric))::text AS max_amount
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.type = 'deposit_bonus'
+      AND lt.type::text = 'deposit_bonus'
       AND lt.user_id IN ${userScope}
       ${bonusDateFilter}
   `);
@@ -959,7 +959,7 @@ async function computePostCapBehavior(
       SELECT lt.user_id, MIN(lt.created_at) AS first_cap_at
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         AND ABS(lt.amount::numeric) = ${capLiteral}
         ${bonusDateFilter}
@@ -975,7 +975,7 @@ async function computePostCapBehavior(
       JOIN ledger_transactions d
         ON d.user_id = fc.user_id
         AND d.status = 'completed'
-        AND d.type = 'deposit'
+        AND d.type::text = 'deposit'
         AND d.created_at > fc.first_cap_at
         ${depositDateFilter}
     ),
@@ -987,7 +987,7 @@ async function computePostCapBehavior(
           SELECT 1
           FROM ledger_transactions b
           WHERE b.user_id = pd.user_id
-            AND b.type = 'deposit_bonus'
+            AND b.type::text = 'deposit_bonus'
             AND b.status = 'completed'
             AND b.balance_before::numeric = pd.bal_after
             AND b.created_at >= pd.created_at
@@ -1054,7 +1054,7 @@ async function computeCapHitterCohorts(
     SELECT MAX(ABS(lt.amount::numeric))::text AS max_amount
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.type = 'deposit_bonus'
+      AND lt.type::text = 'deposit_bonus'
       AND lt.user_id IN ${userScope}
       ${dateFilter}
   `);
@@ -1091,7 +1091,7 @@ async function computeCapHitterCohorts(
       SELECT lt.user_id, COUNT(*)::int AS cap_hits
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         AND ABS(lt.amount::numeric) = ${capLiteral}
         ${dateFilter}
@@ -1112,7 +1112,7 @@ async function computeCapHitterCohorts(
       SELECT lt.user_id, SUM(ABS(lt.amount::numeric)) AS deposit_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit'
+        AND lt.type::text = 'deposit'
         AND lt.user_id IN (SELECT user_id FROM classified)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -1121,7 +1121,7 @@ async function computeCapHitterCohorts(
       SELECT lt.user_id, SUM(ABS(lt.amount::numeric)) AS wager_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ${WAGER_TYPES_SQL}
+        AND lt.type::text IN ${WAGER_TYPES_SQL}
         AND lt.user_id IN (SELECT user_id FROM classified)
         ${dateFilter}
       GROUP BY lt.user_id

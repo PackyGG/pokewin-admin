@@ -131,7 +131,7 @@ export async function getTopDepositors(
     SELECT u.id, u.username, u.image, SUM(ABS(lt.amount::numeric))::text AS amount
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
-    WHERE lt.status = 'completed' AND lt.type = 'deposit'
+    WHERE lt.status = 'completed' AND lt.type::text = 'deposit'
       AND lt.user_id IN ${scope}
       ${periodFilter(period)}
     GROUP BY u.id, u.username, u.image
@@ -175,7 +175,7 @@ export async function getTopWagerers(
            SELECT lt.user_id, ABS(lt.amount::numeric) AS amount
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.type IN ${WAGER_TYPES_SQL}
+             AND lt.type::text IN ${WAGER_TYPES_SQL}
              AND lt.user_id IN ${scope}
              ${WAGER_NON_BORROW_FILTER}
              AND NOT EXISTS (
@@ -275,7 +275,7 @@ async function getUserGamingPnl(
                   0::numeric AS payout
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.type IN ${WAGER_TYPES_SQL}
+             AND lt.type::text IN ${WAGER_TYPES_SQL}
              AND lt.user_id IN ${scope}
              ${WAGER_NON_BORROW_FILTER}
              AND NOT EXISTS (
@@ -292,7 +292,7 @@ async function getUserGamingPnl(
                   ABS(lt.amount::numeric) AS payout
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.type IN ${GAMING_PAYOUT_TYPES_SQL}
+             AND lt.type::text IN ${GAMING_PAYOUT_TYPES_SQL}
              AND lt.user_id IN ${scope}
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw
@@ -433,14 +433,14 @@ export async function getTopCreatorsByVolume(
       SELECT acu.affiliate_user_id AS creator_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS vol
       FROM affiliate_code_usages acu
       JOIN ledger_transactions lt ON lt.user_id = acu.referred_user_id
-      WHERE lt.status = 'completed' AND lt.type IN ${WAGER_TYPES_SQL}
+      WHERE lt.status = 'completed' AND lt.type::text IN ${WAGER_TYPES_SQL}
         ${refWindow}
       GROUP BY acu.affiliate_user_id
     ),
     commissions AS (
       SELECT cl.user_id AS creator_id, COALESCE(SUM(ABS(cl.amount::numeric)), 0)::text AS amt
       FROM ledger_transactions cl
-      WHERE cl.status = 'completed' AND cl.type = 'affiliate_claim'
+      WHERE cl.status = 'completed' AND cl.type::text = 'affiliate_claim'
         ${commissionWindow}
       GROUP BY cl.user_id
     )
@@ -503,7 +503,7 @@ export async function getTopCountries(
                   0::numeric AS payout
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.type IN ${WAGER_TYPES_SQL}
+             AND lt.type::text IN ${WAGER_TYPES_SQL}
              AND lt.user_id IN ${scope}
              ${WAGER_NON_BORROW_FILTER}
              AND NOT EXISTS (
@@ -520,7 +520,7 @@ export async function getTopCountries(
                   ABS(lt.amount::numeric) AS payout
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.type IN ${GAMING_PAYOUT_TYPES_SQL}
+             AND lt.type::text IN ${GAMING_PAYOUT_TYPES_SQL}
              AND lt.user_id IN ${scope}
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw

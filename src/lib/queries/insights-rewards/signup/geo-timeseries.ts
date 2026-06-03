@@ -89,7 +89,7 @@ async function computeGeoTimeSeries(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
     )
     SELECT
       c.code,

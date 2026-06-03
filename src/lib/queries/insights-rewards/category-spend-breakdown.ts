@@ -114,24 +114,24 @@ async function computeCategorySpendBreakdown(
     >(`
       SELECT
         CASE
-          WHEN lt.type IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN 'bonuses'
-          WHEN lt.type = 'rakeback_claim' THEN 'rakeback'
-          WHEN lt.type = 'affiliate_claim' THEN 'affiliate'
-          WHEN lt.type = 'race_prize' THEN 'rainRace'
+          WHEN lt.type::text IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN 'bonuses'
+          WHEN lt.type::text = 'rakeback_claim' THEN 'rakeback'
+          WHEN lt.type::text = 'affiliate_claim' THEN 'affiliate'
+          WHEN lt.type::text = 'race_prize' THEN 'rainRace'
           -- rain_win / rain_tip kept as separate pseudo-buckets so the
           -- house slice can be netted (max(0, rain_win − rain_tip)) in JS
           -- before folding into the rainRace row.
-          WHEN lt.type = 'rain_win' THEN '__rain_win'
-          WHEN lt.type = 'rain_tip' THEN '__rain_tip'
-          WHEN lt.type = 'balance_reward_claim' THEN 'signupPack'
-          WHEN lt.type = 'waitlist_prize' THEN 'waitlist'
+          WHEN lt.type::text = 'rain_win' THEN '__rain_win'
+          WHEN lt.type::text = 'rain_tip' THEN '__rain_tip'
+          WHEN lt.type::text = 'balance_reward_claim' THEN 'signupPack'
+          WHEN lt.type::text = 'waitlist_prize' THEN 'waitlist'
         END AS category,
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total,
         COUNT(*)::text AS cnt,
         COUNT(DISTINCT lt.user_id)::text AS claimants
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ${ALL_REWARD_TYPES_SQL}
+        AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
         ${dateFilter}
       GROUP BY 1
@@ -142,23 +142,23 @@ async function computeCategorySpendBreakdown(
       SELECT
         DATE(lt.created_at) AS date,
         CASE
-          WHEN lt.type IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN 'bonuses'
-          WHEN lt.type = 'rakeback_claim' THEN 'rakeback'
-          WHEN lt.type = 'affiliate_claim' THEN 'affiliate'
-          WHEN lt.type = 'race_prize' THEN 'rainRace'
+          WHEN lt.type::text IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN 'bonuses'
+          WHEN lt.type::text = 'rakeback_claim' THEN 'rakeback'
+          WHEN lt.type::text = 'affiliate_claim' THEN 'affiliate'
+          WHEN lt.type::text = 'race_prize' THEN 'rainRace'
           -- rain_win / rain_tip emitted as separate per-day pseudo-buckets
           -- so the day's rain house slice can be netted before folding
           -- into the rainRace daily point (mirrors the canonical per-day
           -- net-rain model in lib/metrics/queries.ts).
-          WHEN lt.type = 'rain_win' THEN '__rain_win'
-          WHEN lt.type = 'rain_tip' THEN '__rain_tip'
-          WHEN lt.type = 'balance_reward_claim' THEN 'signupPack'
-          WHEN lt.type = 'waitlist_prize' THEN 'waitlist'
+          WHEN lt.type::text = 'rain_win' THEN '__rain_win'
+          WHEN lt.type::text = 'rain_tip' THEN '__rain_tip'
+          WHEN lt.type::text = 'balance_reward_claim' THEN 'signupPack'
+          WHEN lt.type::text = 'waitlist_prize' THEN 'waitlist'
         END AS category,
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ${ALL_REWARD_TYPES_SQL}
+        AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
         ${dateFilter}
       GROUP BY 1, 2

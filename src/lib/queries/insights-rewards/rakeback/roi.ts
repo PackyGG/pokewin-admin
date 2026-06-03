@@ -138,8 +138,8 @@ async function computeRoi(
     forward_play AS (
       SELECT
         fc.user_id,
-        COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager,
-        COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payouts
+        COALESCE(SUM(CASE WHEN lt.type::text IN ${WAGER_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager,
+        COALESCE(SUM(CASE WHEN lt.type::text IN ${PAYOUT_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payouts
       FROM first_claim fc
       LEFT JOIN ledger_transactions lt
         ON lt.user_id = fc.user_id

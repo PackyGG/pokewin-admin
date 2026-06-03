@@ -163,7 +163,7 @@ const cachedCreatorCostsToday = unstable_cache(
            FROM card_withdrawal_requests cwr
            JOIN vouchers v ON v.id = ANY(cwr.voucher_ids)
            WHERE cwr.status IN ('completed', 'shipped')
-             AND v.origin IN ('creator_fill_conversion', 'creator_multiplier_payout')
+             AND v.origin::text IN ('creator_fill_conversion', 'creator_multiplier_payout')
          )
          SELECT COALESCE(SUM(CASE WHEN effective_at >= ${since} THEN amount ELSE 0 END), 0)::text AS creator_withdrawals
          FROM creator_deal_payouts`,
@@ -200,7 +200,7 @@ const cachedCreatorCostsToday = unstable_cache(
            COALESCE(SUM(ABS(amount::numeric)), 0)::text AS prize
          FROM ledger_transactions
          WHERE status = 'completed'
-           AND type = 'affiliate_leaderboard_prize'
+           AND type::text = 'affiliate_leaderboard_prize'
            AND created_at >= ${since}
          GROUP BY metadata->>'leaderboard_id'`,
       );

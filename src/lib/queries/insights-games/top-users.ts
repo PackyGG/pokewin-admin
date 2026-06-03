@@ -150,7 +150,7 @@ export async function getGamesTopUsers(
     const wagerSrcPredicates: string[] = [];
     if (includeOnPacks) {
       wagerSrcPredicates.push(
-        "(lt.type = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))",
+        "(lt.type::text = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))",
       );
     }
     if (includeOnBattles) {
@@ -162,8 +162,8 @@ export async function getGamesTopUsers(
       // gate is needed; battle_bet keeps the borrow gate. Mirrors the
       // canonical WAGER_NON_BORROW_FILTER / gaming-sql WAGER_LEG_FILTER.
       wagerSrcPredicates.push(
-        "(lt.type = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))",
-        "lt.type = 'battle_sponsorship'",
+        "(lt.type::text = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))",
+        "lt.type::text = 'battle_sponsorship'",
       );
     }
     const wagerOrPredicate = wagerSrcPredicates.length > 0
@@ -207,7 +207,7 @@ export async function getGamesTopUsers(
         `WITH ${sessionWindowsCte},
               non_borrow_pack_sessions AS (
            SELECT game_session_id FROM ledger_transactions
-           WHERE type = 'pack_opening' AND status = 'completed'
+           WHERE type::text = 'pack_opening' AND status = 'completed'
              AND game_session_id IS NOT NULL
              AND (description IS NULL OR description NOT ILIKE '%borrow%')
          ),
@@ -304,7 +304,7 @@ export async function getGamesTopUsers(
                SELECT lt.user_id
                FROM ledger_transactions lt
                WHERE lt.status = 'completed'
-                 AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+                 AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
                  AND lt.user_id IN ${scope}
                  ${ltCutoff}
              )

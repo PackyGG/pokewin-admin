@@ -92,7 +92,7 @@ async function computeTimeToClaim(
       SELECT d.id, d.user_id, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
-        AND d.type = 'deposit'
+        AND d.type::text = 'deposit'
         AND d.user_id IN ${userScope}
         ${dateFilter}
     ),
@@ -104,7 +104,7 @@ async function computeTimeToClaim(
         SELECT lt.created_at AS bonus_at
         FROM ledger_transactions lt
         WHERE lt.user_id = wd.user_id
-          AND lt.type = 'deposit_bonus'
+          AND lt.type::text = 'deposit_bonus'
           AND lt.status = 'completed'
           AND lt.balance_before::numeric = wd.bal_after
           AND lt.created_at >= wd.created_at
@@ -158,7 +158,7 @@ async function computeTimeToClaim(
       SELECT d.id, d.user_id, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
-        AND d.type = 'deposit'
+        AND d.type::text = 'deposit'
         AND d.user_id IN ${userScope}
         ${dateFilter}
     ),
@@ -169,7 +169,7 @@ async function computeTimeToClaim(
         SELECT lt.created_at AS bonus_at
         FROM ledger_transactions lt
         WHERE lt.user_id = wd.user_id
-          AND lt.type = 'deposit_bonus'
+          AND lt.type::text = 'deposit_bonus'
           AND lt.status = 'completed'
           AND lt.balance_before::numeric = wd.bal_after
           AND lt.created_at >= wd.created_at
@@ -264,7 +264,7 @@ async function computeRepeatClaimants(
       SELECT DISTINCT lt.user_id
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
     ),
@@ -272,7 +272,7 @@ async function computeRepeatClaimants(
       SELECT lt.user_id, COUNT(*)::int AS lifetime_claims
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN (SELECT user_id FROM window_users)
       GROUP BY lt.user_id
     ),
@@ -280,7 +280,7 @@ async function computeRepeatClaimants(
       SELECT lt.user_id, SUM(ABS(lt.amount::numeric)) AS bonus_in_window
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN (SELECT user_id FROM window_users)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -289,7 +289,7 @@ async function computeRepeatClaimants(
       SELECT lt.user_id, SUM(ABS(lt.amount::numeric)) AS wager_in_window
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+        AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
         AND lt.user_id IN (SELECT user_id FROM window_users)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -401,7 +401,7 @@ async function computeNewVsReturning(
       SELECT lt.user_id, MIN(lt.created_at) AS first_claim_at
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
       GROUP BY lt.user_id
@@ -414,7 +414,7 @@ async function computeNewVsReturning(
           WHEN EXISTS (
             SELECT 1 FROM ledger_transactions prior
             WHERE prior.user_id = fc.user_id
-              AND prior.type = 'deposit_bonus'
+              AND prior.type::text = 'deposit_bonus'
               AND prior.status = 'completed'
               AND prior.created_at < ${windowStart}
           ) THEN 'returning'
@@ -426,7 +426,7 @@ async function computeNewVsReturning(
       SELECT lt.user_id, SUM(ABS(lt.amount::numeric)) AS bonus_in_window
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         ${dateFilter}
         AND lt.user_id IN (SELECT user_id FROM classified)
       GROUP BY lt.user_id
@@ -438,7 +438,7 @@ async function computeNewVsReturning(
           SELECT ABS(d.amount::numeric)
           FROM ledger_transactions d
           WHERE d.user_id = c.user_id
-            AND d.type = 'deposit'
+            AND d.type::text = 'deposit'
             AND d.status = 'completed'
             AND d.created_at <= c.first_claim_at
           ORDER BY d.created_at DESC
@@ -453,7 +453,7 @@ async function computeNewVsReturning(
         SELECT 1 FROM ledger_transactions w
         WHERE w.user_id = c.user_id
           AND w.status = 'completed'
-          AND w.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+          AND w.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
           AND w.created_at > c.first_claim_at + INTERVAL '1 hour'
           AND w.created_at <= c.first_claim_at + INTERVAL '7 days'
       )
@@ -464,7 +464,7 @@ async function computeNewVsReturning(
       WHERE EXISTS (
         SELECT 1 FROM ledger_transactions d2
         WHERE d2.user_id = c.user_id
-          AND d2.type = 'deposit'
+          AND d2.type::text = 'deposit'
           AND d2.status = 'completed'
           AND d2.created_at > c.first_claim_at + INTERVAL '1 hour'
           AND d2.created_at <= c.first_claim_at + INTERVAL '30 days'
@@ -550,7 +550,7 @@ async function computeTimeOfDay(
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS volume
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
       GROUP BY 1
@@ -565,7 +565,7 @@ async function computeTimeOfDay(
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS volume
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
       GROUP BY 1

@@ -100,10 +100,10 @@ export async function getInsightsFunnel(
       SELECT
         c.id AS user_id,
         c.bucket,
-        COUNT(*) FILTER (WHERE lt.type = 'deposit' AND lt.status = 'completed') AS deposit_count,
-        COUNT(*) FILTER (WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+        COUNT(*) FILTER (WHERE lt.type::text = 'deposit' AND lt.status = 'completed') AS deposit_count,
+        COUNT(*) FILTER (WHERE lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
           AND lt.status = 'completed') AS wager_count,
-        COUNT(*) FILTER (WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+        COUNT(*) FILTER (WHERE lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
           AND lt.status = 'completed'
           AND lt.created_at >= NOW() - INTERVAL '${MAW_CUTOFF_DAYS} days') AS wager_count_30d,
         BOOL_OR(b.total_deposited::numeric > 0) AS has_deposit_balance

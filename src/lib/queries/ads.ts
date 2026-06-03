@@ -259,7 +259,7 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
                 COUNT(DISTINCT user_id)::text AS real_depositors,
                 COUNT(*)::text AS event_count
            FROM ledger_transactions
-          WHERE type = 'deposit_bonus'
+          WHERE type::text = 'deposit_bonus'
             AND UPPER(metadata->>'affiliate_code') = ANY($1::text[])
           GROUP BY UPPER(metadata->>'affiliate_code')`,
         upperCodeList,
@@ -436,7 +436,7 @@ export async function getAdCodesAggregate(
                   COUNT(DISTINCT user_id)::text AS depositors,
                   COUNT(*)::text AS events
              FROM ledger_transactions
-            WHERE type = 'deposit_bonus'
+            WHERE type::text = 'deposit_bonus'
               AND UPPER(metadata->>'affiliate_code') = ANY($1::text[])`,
           upperCodeList,
         ),
@@ -576,7 +576,7 @@ export async function getAdCodeDetail(
                 COUNT(DISTINCT user_id)::text AS depositors,
                 COUNT(*)::text AS events
            FROM ledger_transactions
-          WHERE type = 'deposit_bonus'
+          WHERE type::text = 'deposit_bonus'
             AND UPPER(metadata->>'affiliate_code') = $1`,
         upperCode,
       ),

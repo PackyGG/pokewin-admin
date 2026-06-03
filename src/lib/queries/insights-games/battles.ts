@@ -144,7 +144,7 @@ export async function getBattlesProfitability(
            FROM ledger_transactions lt
            JOIN battle_participants bp ON bp.game_session_id = lt.game_session_id
            JOIN non_borrow_battles nb ON nb.id = bp.battle_id
-           WHERE lt.type IN ('battle_bet','battle_sponsorship') AND lt.status = 'completed'
+           WHERE lt.type::text IN ('battle_bet','battle_sponsorship') AND lt.status = 'completed'
              AND lt.user_id IN ${scope}
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw

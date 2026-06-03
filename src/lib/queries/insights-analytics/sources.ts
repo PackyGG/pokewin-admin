@@ -93,17 +93,17 @@ export async function getSourcesBuckets(
       SELECT
         c.id AS user_id,
         c.bucket,
-        COUNT(*) FILTER (WHERE lt.type = 'deposit' AND lt.status = 'completed') AS deposit_count,
-        COUNT(*) FILTER (WHERE lt.type IN ${WAGER_TYPES_SQL}
+        COUNT(*) FILTER (WHERE lt.type::text = 'deposit' AND lt.status = 'completed') AS deposit_count,
+        COUNT(*) FILTER (WHERE lt.type::text IN ${WAGER_TYPES_SQL}
           AND lt.status = 'completed') AS wager_count,
-        COUNT(*) FILTER (WHERE lt.type IN ${WAGER_TYPES_SQL}
+        COUNT(*) FILTER (WHERE lt.type::text IN ${WAGER_TYPES_SQL}
           AND lt.status = 'completed'
           AND lt.created_at >= NOW() - INTERVAL '${MAW_CUTOFF_DAYS} days') AS wager_count_30d,
-        COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL} AND lt.status = 'completed' ${ledgerDateFilter}
+        COALESCE(SUM(CASE WHEN lt.type::text IN ${WAGER_TYPES_SQL} AND lt.status = 'completed' ${ledgerDateFilter}
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager_in_period,
-        COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} AND lt.status = 'completed' ${ledgerDateFilter}
+        COALESCE(SUM(CASE WHEN lt.type::text IN ${PAYOUT_TYPES_SQL} AND lt.status = 'completed' ${ledgerDateFilter}
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payouts_in_period,
-        COALESCE(SUM(CASE WHEN lt.type = 'deposit' AND lt.status = 'completed' ${ledgerDateFilter}
+        COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' AND lt.status = 'completed' ${ledgerDateFilter}
           THEN lt.amount::numeric ELSE 0 END), 0) AS deposits_in_period
       FROM cohort c
       LEFT JOIN ledger_transactions lt ON lt.user_id = c.id
@@ -183,10 +183,10 @@ export async function getSourcesCodes(period: InsightsPeriod): Promise<SourceCod
         c.id AS user_id,
         c.affiliate_code AS code,
         c.affiliate_user_id,
-        COUNT(*) FILTER (WHERE lt.type = 'deposit' AND lt.status = 'completed') AS deposit_count,
-        COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL} AND lt.status = 'completed' ${ledgerDateFilter}
+        COUNT(*) FILTER (WHERE lt.type::text = 'deposit' AND lt.status = 'completed') AS deposit_count,
+        COALESCE(SUM(CASE WHEN lt.type::text IN ${WAGER_TYPES_SQL} AND lt.status = 'completed' ${ledgerDateFilter}
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager_in_period,
-        COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} AND lt.status = 'completed' ${ledgerDateFilter}
+        COALESCE(SUM(CASE WHEN lt.type::text IN ${PAYOUT_TYPES_SQL} AND lt.status = 'completed' ${ledgerDateFilter}
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payouts_in_period
       FROM cohort c
       LEFT JOIN ledger_transactions lt ON lt.user_id = c.id

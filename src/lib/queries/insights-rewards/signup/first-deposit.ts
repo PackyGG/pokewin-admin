@@ -102,7 +102,7 @@ async function computeFirstDeposit(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
     ),
     first_deposit AS (
       SELECT DISTINCT ON (c.user_id)
@@ -112,7 +112,7 @@ async function computeFirstDeposit(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'deposit'
+       AND lt.type::text = 'deposit'
       ORDER BY c.user_id, lt.created_at ASC
     )
     SELECT

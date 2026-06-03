@@ -201,10 +201,10 @@ export function notInCreatorSessionSql(
  */
 export const WAGER_NON_BORROW_FILTER = `
   AND (
-    (lt.type = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
-    OR (lt.type = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-    OR lt.type = 'battle_sponsorship'
-    OR (lt.type NOT IN ('pack_opening','battle_bet','battle_sponsorship'))
+    (lt.type::text = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
+    OR (lt.type::text = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+    OR lt.type::text = 'battle_sponsorship'
+    OR (lt.type::text NOT IN ('pack_opening','battle_bet','battle_sponsorship'))
   )
 `;
 
@@ -240,7 +240,7 @@ export const BORROW_FILTER_CTES = `
   non_borrow_pack_sessions AS (
     SELECT game_session_id
     FROM ledger_transactions
-    WHERE type = 'pack_opening' AND status = 'completed'
+    WHERE type::text = 'pack_opening' AND status = 'completed'
       AND game_session_id IS NOT NULL
       AND (description IS NULL OR description NOT ILIKE '%borrow%')
   ),

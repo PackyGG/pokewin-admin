@@ -638,7 +638,7 @@ async function getCountedAdjustmentSumsByCategory(
          ${selects}
        FROM ledger_transactions
        WHERE status = 'completed'
-         AND type = 'admin_balance_adjustment'
+         AND type::text = 'admin_balance_adjustment'
          AND user_id IN ${scope.userScopeSql}
          AND ${scope.notInCreatorSession("user_id", "created_at")}
          ${sinceClause}`,

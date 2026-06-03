@@ -42,7 +42,7 @@
  */
 export const NON_BORROW_PACK_SESSIONS = `(
   SELECT game_session_id FROM ledger_transactions
-  WHERE type = 'pack_opening' AND status = 'completed'
+  WHERE type::text = 'pack_opening' AND status = 'completed'
     AND game_session_id IS NOT NULL
     AND (description IS NULL OR description NOT ILIKE '%borrow%')
 )`;
@@ -93,12 +93,12 @@ export const REWARD_PACK_SESSIONS = `(
  * `NULL NOT IN (...)` drop it.
  */
 export const WAGER_LEG_FILTER = `(
-  type NOT IN ('pack_opening','battle_bet','battle_sponsorship')
-  OR (type = 'pack_opening'
+  type::text NOT IN ('pack_opening','battle_bet','battle_sponsorship')
+  OR (type::text = 'pack_opening'
       AND (description IS NULL OR description NOT ILIKE '%borrow%')
       AND (game_session_id IS NULL OR game_session_id NOT IN ${REWARD_PACK_SESSIONS}))
-  OR (type = 'battle_bet' AND game_session_id IN ${NON_BORROW_BATTLE_SESSIONS})
-  OR type = 'battle_sponsorship'
+  OR (type::text = 'battle_bet' AND game_session_id IN ${NON_BORROW_BATTLE_SESSIONS})
+  OR type::text = 'battle_sponsorship'
 )`;
 
 /**

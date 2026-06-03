@@ -82,7 +82,7 @@ async function computeTopSpenders(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${dateFilter}
       GROUP BY lt.user_id
@@ -96,7 +96,7 @@ async function computeTopSpenders(
         COUNT(*)::int AS lifetime_bonus_count
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN (SELECT user_id FROM window_bonus)
       GROUP BY lt.user_id
     ),
@@ -104,7 +104,7 @@ async function computeTopSpenders(
       SELECT lt.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS deposit_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit'
+        AND lt.type::text = 'deposit'
         AND lt.user_id IN (SELECT user_id FROM window_bonus)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -113,7 +113,7 @@ async function computeTopSpenders(
       SELECT lt.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ${WAGER_TYPES_SQL}
+        AND lt.type::text IN ${WAGER_TYPES_SQL}
         AND lt.user_id IN (SELECT user_id FROM window_bonus)
         ${dateFilter}
       GROUP BY lt.user_id
@@ -122,7 +122,7 @@ async function computeTopSpenders(
       SELECT lt.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS payout_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ${PAYOUT_TYPES_SQL}
+        AND lt.type::text IN ${PAYOUT_TYPES_SQL}
         AND lt.user_id IN (SELECT user_id FROM window_bonus)
         ${dateFilter}
       GROUP BY lt.user_id

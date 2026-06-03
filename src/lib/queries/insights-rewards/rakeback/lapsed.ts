@@ -128,20 +128,20 @@ async function computeLapsed(
       SELECT
         l.user_id,
         COALESCE(SUM(CASE
-          WHEN lt.type = 'deposit'
+          WHEN lt.type::text = 'deposit'
            AND lt.created_at >= NOW() - INTERVAL '${days} days'
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS current_deposit,
         COALESCE(SUM(CASE
-          WHEN lt.type = 'deposit'
+          WHEN lt.type::text = 'deposit'
            AND lt.created_at >= NOW() - INTERVAL '${days * 2} days'
            AND lt.created_at <  NOW() - INTERVAL '${days} days'
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS prior_deposit,
         COALESCE(SUM(CASE
-          WHEN lt.type IN ${WAGER_TYPES_SQL}
+          WHEN lt.type::text IN ${WAGER_TYPES_SQL}
            AND lt.created_at >= NOW() - INTERVAL '${days} days'
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS current_wager,
         COALESCE(SUM(CASE
-          WHEN lt.type IN ${WAGER_TYPES_SQL}
+          WHEN lt.type::text IN ${WAGER_TYPES_SQL}
            AND lt.created_at >= NOW() - INTERVAL '${days * 2} days'
            AND lt.created_at <  NOW() - INTERVAL '${days} days'
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS prior_wager

@@ -93,7 +93,7 @@ async function computeCohortMatrix(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
     ),
     retention_flags AS (
       SELECT
@@ -105,7 +105,7 @@ async function computeCohortMatrix(
           SELECT 1 FROM ledger_transactions lt
           WHERE lt.user_id = c.user_id
             AND lt.status = 'completed'
-            AND (lt.type = 'deposit' OR lt.type IN ${WAGER_TYPES_SQL})
+            AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
             AND lt.created_at <= c.signed_up_at + INTERVAL '30 days'
         ) THEN 1 ELSE 0 END AS retained_30d
       FROM cohort c

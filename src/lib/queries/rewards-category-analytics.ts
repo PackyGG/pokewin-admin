@@ -123,7 +123,7 @@ async function computeCategoryAnalytics(
         COUNT(DISTINCT lt.user_id)::text AS unique_recipients
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ${typesSql}
+        AND lt.type::text IN ${typesSql}
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
         ${dateFilter}
     `),
@@ -136,7 +136,7 @@ async function computeCategoryAnalytics(
         COUNT(*)::text AS cnt
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ${typesSql}
+        AND lt.type::text IN ${typesSql}
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
         ${dateFilter}
       GROUP BY DATE(lt.created_at)
@@ -158,7 +158,7 @@ async function computeCategoryAnalytics(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type IN ${typesSql}
+        AND lt.type::text IN ${typesSql}
         AND u.role NOT IN ('admin', 'support') ${blacklistJoinAlias}
         ${dateFilter}
       GROUP BY u.id, u.username
@@ -174,7 +174,7 @@ async function computeCategoryAnalytics(
         COUNT(*)::text AS cnt
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ${typesSql}
+        AND lt.type::text IN ${typesSql}
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
         ${dateFilter}
       GROUP BY DATE(lt.created_at)

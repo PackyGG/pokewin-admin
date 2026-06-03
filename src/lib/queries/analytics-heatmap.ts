@@ -70,9 +70,9 @@ export async function getActivityHeatmap(
     SELECT
       EXTRACT(DOW FROM lt.created_at)::int AS dow,
       EXTRACT(HOUR FROM lt.created_at)::int AS hour,
-      COALESCE(SUM(CASE WHEN lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+      COALESCE(SUM(CASE WHEN lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
         THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wager,
-      COUNT(CASE WHEN lt.type = 'deposit' THEN 1 END)::text AS deposits
+      COUNT(CASE WHEN lt.type::text = 'deposit' THEN 1 END)::text AS deposits
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
       AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})

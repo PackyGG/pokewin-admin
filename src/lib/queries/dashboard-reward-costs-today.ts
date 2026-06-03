@@ -169,13 +169,13 @@ const cachedLedgerAndPacks = unstable_cache(
       const ledgerRows = await db.$queryRawUnsafe<LedgerRow[]>(
         `WITH ${scope.sessionWindowsCte}
          SELECT
-           COALESCE(SUM(CASE WHEN type = 'deposit_bonus' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS deposit_bonus,
-           COALESCE(SUM(CASE WHEN type = 'rakeback_claim' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rakeback,
-           COALESCE(SUM(CASE WHEN type IN ('gift_card_redeemed','promo_code_redeemed') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS promo_gift,
-           COALESCE(SUM(CASE WHEN type = 'race_prize' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS race,
-           COALESCE(SUM(CASE WHEN type IN ('balance_reward_claim','waitlist_prize') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS signup_balance,
-           COALESCE(SUM(CASE WHEN type = 'affiliate_leaderboard_prize' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS leaderboards,
-           COALESCE(SUM(CASE WHEN type = 'voucher_redeemed' AND metadata->>'origin' = 'manual' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS manual_voucher,
+           COALESCE(SUM(CASE WHEN type::text = 'deposit_bonus' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS deposit_bonus,
+           COALESCE(SUM(CASE WHEN type::text = 'rakeback_claim' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rakeback,
+           COALESCE(SUM(CASE WHEN type::text IN ('gift_card_redeemed','promo_code_redeemed') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS promo_gift,
+           COALESCE(SUM(CASE WHEN type::text = 'race_prize' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS race,
+           COALESCE(SUM(CASE WHEN type::text IN ('balance_reward_claim','waitlist_prize') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS signup_balance,
+           COALESCE(SUM(CASE WHEN type::text = 'affiliate_leaderboard_prize' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS leaderboards,
+           COALESCE(SUM(CASE WHEN type::text = 'voucher_redeemed' AND metadata->>'origin' = 'manual' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS manual_voucher,
            COALESCE(SUM(CASE WHEN (${countedAdj}) THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS counted_adjustments
          FROM ledger_transactions
          WHERE status = 'completed'

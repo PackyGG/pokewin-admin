@@ -81,7 +81,7 @@ async function computeFunnel(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
     ),
     deposit_users AS (
       SELECT
@@ -91,7 +91,7 @@ async function computeFunnel(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'deposit'
+       AND lt.type::text = 'deposit'
       GROUP BY c.user_id
     ),
     wager_users AS (
@@ -100,7 +100,7 @@ async function computeFunnel(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type IN ${WAGER_TYPES_SQL}
+       AND lt.type::text IN ${WAGER_TYPES_SQL}
     )
     SELECT
       (SELECT COUNT(*) FROM cohort)::text AS signups,

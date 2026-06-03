@@ -106,7 +106,7 @@ async function computeCapAnalysis(
       COUNT(*)::text AS cnt
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.type = 'deposit_bonus'
+      AND lt.type::text = 'deposit_bonus'
       AND lt.user_id IN ${userScope}
       ${dateFilter}
   `);
@@ -141,7 +141,7 @@ async function computeCapAnalysis(
           COUNT(DISTINCT lt.user_id)::text AS hitters
         FROM ledger_transactions lt
         WHERE lt.status = 'completed'
-          AND lt.type = 'deposit_bonus'
+          AND lt.type::text = 'deposit_bonus'
           AND lt.user_id IN ${userScope}
           AND ABS(lt.amount::numeric) = ${capLiteral}
           ${dateFilter}
@@ -155,7 +155,7 @@ async function computeCapAnalysis(
           COUNT(*) FILTER (WHERE ABS(lt.amount::numeric) = ${capLiteral})::text AS cap_hits
         FROM ledger_transactions lt
         WHERE lt.status = 'completed'
-          AND lt.type = 'deposit_bonus'
+          AND lt.type::text = 'deposit_bonus'
           AND lt.user_id IN ${userScope}
           ${dateFilter}
         GROUP BY DATE(lt.created_at)
@@ -169,7 +169,7 @@ async function computeCapAnalysis(
             ABS(lt.amount::numeric) AS amt
           FROM ledger_transactions lt
           WHERE lt.status = 'completed'
-            AND lt.type = 'deposit_bonus'
+            AND lt.type::text = 'deposit_bonus'
             AND lt.user_id IN ${userScope}
             ${dateFilter}
         )
@@ -201,7 +201,7 @@ async function computeCapAnalysis(
         FROM ledger_transactions lt
         JOIN "user" u ON u.id = lt.user_id
         WHERE lt.status = 'completed'
-          AND lt.type = 'deposit_bonus'
+          AND lt.type::text = 'deposit_bonus'
           AND u.role NOT IN ('admin', 'support')
           AND ABS(lt.amount::numeric) = ${capLiteral}
           ${dateFilter}
@@ -280,7 +280,7 @@ async function computeCapAnalysis(
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
-        AND d.type = 'deposit'
+        AND d.type::text = 'deposit'
         AND d.user_id IN ${userScope}
         ${windowDateFilterCapped(period, "d")}
     )
@@ -296,7 +296,7 @@ async function computeCapAnalysis(
       SELECT ABS(lt.amount::numeric) AS bonus_usd
       FROM ledger_transactions lt
       WHERE lt.user_id = wd.user_id
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.status = 'completed'
         AND lt.balance_before::numeric = wd.bal_after
         AND lt.created_at >= wd.created_at
@@ -368,7 +368,7 @@ async function computeCapHitRate(
       COUNT(*)::text AS cnt
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.type = 'deposit_bonus'
+      AND lt.type::text = 'deposit_bonus'
       AND lt.user_id IN ${userScope}
       ${dateFilter}
   `);
@@ -385,7 +385,7 @@ async function computeCapHitRate(
     SELECT COUNT(*)::text AS hits
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.type = 'deposit_bonus'
+      AND lt.type::text = 'deposit_bonus'
       AND lt.user_id IN ${userScope}
       AND ABS(lt.amount::numeric) = ${capLiteral}
       ${dateFilter}

@@ -145,7 +145,7 @@ async function computeCrossCategorySummary(
     typesSql: string,
   ) => `
     WHERE lt.status = 'completed'
-      AND lt.type IN ${typesSql}
+      AND lt.type::text IN ${typesSql}
       AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
       ${dateClause}
   `;
@@ -180,13 +180,13 @@ async function computeCrossCategorySummary(
     }[]
   >(`
     SELECT
-      COALESCE(SUM(CASE WHEN lt.type IN ${REWARD_EXCL_RAIN_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
-      COALESCE(SUM(CASE WHEN lt.type = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
-      COALESCE(SUM(CASE WHEN lt.type = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip,
-      COUNT(*) FILTER (WHERE lt.type IN ${REWARD_TYPES_SQL})::text AS reward_count,
-      COUNT(DISTINCT lt.user_id) FILTER (WHERE lt.type IN ${REWARD_TYPES_SQL})::text AS reward_claimants,
-      COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wager_total,
-      COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payout_total
+      COALESCE(SUM(CASE WHEN lt.type::text IN ${REWARD_EXCL_RAIN_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
+      COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
+      COALESCE(SUM(CASE WHEN lt.type::text = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip,
+      COUNT(*) FILTER (WHERE lt.type::text IN ${REWARD_TYPES_SQL})::text AS reward_count,
+      COUNT(DISTINCT lt.user_id) FILTER (WHERE lt.type::text IN ${REWARD_TYPES_SQL})::text AS reward_claimants,
+      COALESCE(SUM(CASE WHEN lt.type::text IN ${WAGER_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wager_total,
+      COALESCE(SUM(CASE WHEN lt.type::text IN ${PAYOUT_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payout_total
     FROM ledger_transactions lt
     ${buildScopeClause(
       currentDateClause,
@@ -246,11 +246,11 @@ async function computeCrossCategorySummary(
       }[]
     >(`
       SELECT
-        COALESCE(SUM(CASE WHEN lt.type IN ${REWARD_EXCL_RAIN_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
-        COALESCE(SUM(CASE WHEN lt.type = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
-        COALESCE(SUM(CASE WHEN lt.type = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip,
-        COUNT(*) FILTER (WHERE lt.type IN ${REWARD_TYPES_SQL})::text AS reward_count,
-        COUNT(DISTINCT lt.user_id) FILTER (WHERE lt.type IN ${REWARD_TYPES_SQL})::text AS reward_claimants
+        COALESCE(SUM(CASE WHEN lt.type::text IN ${REWARD_EXCL_RAIN_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip,
+        COUNT(*) FILTER (WHERE lt.type::text IN ${REWARD_TYPES_SQL})::text AS reward_count,
+        COUNT(DISTINCT lt.user_id) FILTER (WHERE lt.type::text IN ${REWARD_TYPES_SQL})::text AS reward_claimants
       FROM ledger_transactions lt
       ${buildScopeClause(
         priorDateClause,

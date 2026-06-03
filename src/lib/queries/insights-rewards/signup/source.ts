@@ -120,7 +120,7 @@ async function computeSourceBreakdown(
       JOIN ledger_transactions lt
         ON lt.user_id = cwp.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
     ),
     claim_cost AS (
       SELECT cwp.provider, SUM(ABS(lt.amount::numeric)) AS total_cost
@@ -128,7 +128,7 @@ async function computeSourceBreakdown(
       JOIN ledger_transactions lt
         ON lt.user_id = cwp.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
       GROUP BY cwp.provider
     ),
     retained_7d AS (
@@ -138,7 +138,7 @@ async function computeSourceBreakdown(
         SELECT 1 FROM ledger_transactions lt
         WHERE lt.user_id = cwp.user_id
           AND lt.status = 'completed'
-          AND (lt.type = 'deposit' OR lt.type IN ${WAGER_TYPES_SQL})
+          AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
           AND lt.created_at <= cwp.signed_up_at + INTERVAL '7 days'
       )
       GROUP BY cwp.provider
@@ -209,7 +209,7 @@ async function computeSourceBreakdown(
       JOIN ledger_transactions lt
         ON lt.user_id = cwc.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
     ),
     claim_cost AS (
       SELECT cwc.code, SUM(ABS(lt.amount::numeric)) AS total_cost
@@ -217,7 +217,7 @@ async function computeSourceBreakdown(
       JOIN ledger_transactions lt
         ON lt.user_id = cwc.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
       GROUP BY cwc.code
     ),
     retained_7d AS (
@@ -227,7 +227,7 @@ async function computeSourceBreakdown(
         SELECT 1 FROM ledger_transactions lt
         WHERE lt.user_id = cwc.user_id
           AND lt.status = 'completed'
-          AND (lt.type = 'deposit' OR lt.type IN ${WAGER_TYPES_SQL})
+          AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
           AND lt.created_at <= cwc.signed_up_at + INTERVAL '7 days'
       )
       GROUP BY cwc.code

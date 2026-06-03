@@ -80,7 +80,7 @@ async function computeDropOff(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
     ),
     has_deposit AS (
       SELECT DISTINCT c.user_id
@@ -88,7 +88,7 @@ async function computeDropOff(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'deposit'
+       AND lt.type::text = 'deposit'
     ),
     has_wager AS (
       SELECT DISTINCT c.user_id
@@ -96,7 +96,7 @@ async function computeDropOff(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type IN ${WAGER_TYPES_SQL}
+       AND lt.type::text IN ${WAGER_TYPES_SQL}
     ),
     has_any_ledger AS (
       SELECT DISTINCT c.user_id

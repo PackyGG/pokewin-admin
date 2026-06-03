@@ -202,7 +202,7 @@ export async function getPackDrilldown(
                   COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager
            FROM ledger_transactions lt
            JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
-           WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
+           WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed'
              AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
              AND gs.game_id = '${packId}'::uuid
              AND lt.user_id IN ${scope}
@@ -222,7 +222,7 @@ export async function getPackDrilldown(
            FROM ledger_transactions lt
            JOIN battle_participants bp ON bp.game_session_id = lt.game_session_id
            JOIN battles b ON b.id = bp.battle_id
-           WHERE lt.type IN ('battle_bet','battle_sponsorship') AND lt.status = 'completed'
+           WHERE lt.type::text IN ('battle_bet','battle_sponsorship') AND lt.status = 'completed'
              AND COALESCE(b.borrow_percentage, 0) = 0
              AND '${packId}'::uuid = ANY(b.pack_ids::uuid[])
              AND lt.user_id IN ${scope}
@@ -246,7 +246,7 @@ export async function getPackDrilldown(
              AND ui.user_id IN ${scope}
              AND ui.source_id IN (
                SELECT lt.game_session_id FROM ledger_transactions lt
-               WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
+               WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed'
                  AND lt.game_session_id IS NOT NULL
                  AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
              )
@@ -305,7 +305,7 @@ export async function getPackDrilldown(
                   COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager
            FROM ledger_transactions lt
            JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
-           WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
+           WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed'
              AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
              AND gs.game_id = '${packId}'::uuid
              AND lt.user_id IN ${scope}
@@ -325,7 +325,7 @@ export async function getPackDrilldown(
            FROM ledger_transactions lt
            JOIN battle_participants bp ON bp.game_session_id = lt.game_session_id
            JOIN battles b ON b.id = bp.battle_id
-           WHERE lt.type IN ('battle_bet','battle_sponsorship') AND lt.status = 'completed'
+           WHERE lt.type::text IN ('battle_bet','battle_sponsorship') AND lt.status = 'completed'
              AND COALESCE(b.borrow_percentage, 0) = 0
              AND '${packId}'::uuid = ANY(b.pack_ids::uuid[])
              AND lt.user_id IN ${scope}
@@ -348,7 +348,7 @@ export async function getPackDrilldown(
              AND ui.user_id IN ${scope}
              AND ui.source_id IN (
                SELECT lt.game_session_id FROM ledger_transactions lt
-               WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
+               WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed'
                  AND lt.game_session_id IS NOT NULL
                  AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
              )
@@ -416,7 +416,7 @@ export async function getPackDrilldown(
              AND ui.user_id IN ${scope}
              AND ui.source_id IN (
                SELECT lt.game_session_id FROM ledger_transactions lt
-               WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
+               WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed'
                  AND lt.game_session_id IS NOT NULL
                  AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
              )
@@ -482,7 +482,7 @@ export async function getPackDrilldown(
              CASE WHEN (lt.description IS NOT NULL AND lt.description ILIKE '%borrow%') THEN 1 ELSE 0 END AS is_borrow
            FROM ledger_transactions lt
            JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
-           WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
+           WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed'
              AND gs.game_id = '${packId}'::uuid
              AND lt.user_id IN ${scope}
              AND NOT EXISTS (
@@ -528,7 +528,7 @@ export async function getPackDrilldown(
                   COUNT(*) AS opens
            FROM ledger_transactions lt
            JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
-           WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
+           WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed'
              AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
              AND gs.game_id = '${packId}'::uuid
              AND lt.user_id IN ${scope}
@@ -549,7 +549,7 @@ export async function getPackDrilldown(
              AND ui.user_id IN ${scope}
              AND ui.source_id IN (
                SELECT lt.game_session_id FROM ledger_transactions lt
-               WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
+               WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed'
                  AND lt.game_session_id IS NOT NULL
                  AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
              )

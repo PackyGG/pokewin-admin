@@ -82,7 +82,7 @@ async function computeTopRecipients(
         MAX(lt.created_at) AS last_claim_at
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'balance_reward_claim'
+        AND lt.type::text = 'balance_reward_claim'
         ${dateFilter}
       GROUP BY lt.user_id
     ),
@@ -90,7 +90,7 @@ async function computeTopRecipients(
       SELECT lt.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS deposit_total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit'
+        AND lt.type::text = 'deposit'
       GROUP BY lt.user_id
     )
     SELECT

@@ -236,9 +236,9 @@ export async function getRevenueBreakdown(
       >(`
         SELECT
           DATE(created_at) AS date,
-          COALESCE(SUM(CASE WHEN type = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
-          COALESCE(SUM(CASE WHEN type = 'battle_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
-          COALESCE(SUM(CASE WHEN type = 'battle_sponsorship' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_sponsorship,
+          COALESCE(SUM(CASE WHEN type::text = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
+          COALESCE(SUM(CASE WHEN type::text = 'battle_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
+          COALESCE(SUM(CASE WHEN type::text = 'battle_sponsorship' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_sponsorship,
           ${dailyCol(FEE_TYPES, "shipping_fees")},
           ${dailyCol(GAMING_PAYOUT_TYPES, "battle_refund")},
           ${dailyCol(NEUTRAL_TYPES, "card_sale")},

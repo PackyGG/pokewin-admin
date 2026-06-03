@@ -253,14 +253,14 @@ export async function getCodeAnalytics(code: string) {
                   SELECT SUM((lt.metadata->>'deposit_usd')::numeric)
                   FROM ledger_transactions lt
                   WHERE lt.user_id = acu.referred_user_id
-                    AND lt.type = 'deposit_bonus'
+                    AND lt.type::text = 'deposit_bonus'
                     AND UPPER(lt.metadata->>'affiliate_code') = $1
                 ), 0)::text AS code_deposit_total,
                 COALESCE((
                   SELECT COUNT(*)
                   FROM ledger_transactions lt
                   WHERE lt.user_id = acu.referred_user_id
-                    AND lt.type = 'deposit_bonus'
+                    AND lt.type::text = 'deposit_bonus'
                     AND UPPER(lt.metadata->>'affiliate_code') = $1
                 ), 0)::text AS code_deposit_count
            FROM affiliate_code_usages acu
@@ -346,7 +346,7 @@ export async function getCodeAnalytics(code: string) {
                 COUNT(*)::text AS deposit_event_count,
                 COUNT(DISTINCT user_id)::text AS unique_depositors
            FROM ledger_transactions
-          WHERE type = 'deposit_bonus'
+          WHERE type::text = 'deposit_bonus'
             AND UPPER(metadata->>'affiliate_code') = $1`,
         uppercaseCode,
       ),
@@ -811,7 +811,7 @@ export async function getRecentWagersOnCode(
        FROM ledger_transactions lt
        JOIN code_users cu ON cu.referred_user_id = lt.user_id
        LEFT JOIN "user" u ON u.id = lt.user_id
-       WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+       WHERE lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
          AND lt.status = 'completed'
        ORDER BY lt.created_at DESC
        LIMIT ${safeLimit}`,

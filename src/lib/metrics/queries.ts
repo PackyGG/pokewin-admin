@@ -195,9 +195,9 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
       db.$queryRawUnsafe<LedgerRow[]>(
         `WITH ${scope.sessionWindowsCte}
          SELECT
-           COALESCE(SUM(CASE WHEN type IN ${WAGER_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager,
-           COALESCE(SUM(CASE WHEN type IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_refund,
-           COALESCE(SUM(CASE WHEN type IN ${WAGER_TYPES_SQL} THEN 1 ELSE 0 END), 0)::text AS bets
+           COALESCE(SUM(CASE WHEN type::text IN ${WAGER_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager,
+           COALESCE(SUM(CASE WHEN type::text IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_refund,
+           COALESCE(SUM(CASE WHEN type::text IN ${WAGER_TYPES_SQL} THEN 1 ELSE 0 END), 0)::text AS bets
          FROM ledger_transactions
          WHERE status = 'completed'
            AND user_id IN ${scope.userScopeSql}
@@ -329,12 +329,12 @@ export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
       `WITH ${scope.sessionWindowsCte}
        SELECT
          COALESCE(SUM(CASE
-           WHEN (type IN ${REWARD_PAYOUT_TYPES_SQL} AND type <> 'rain_win')
-             OR (type = 'voucher_redeemed' AND metadata->>'origin' = 'manual')
+           WHEN (type::text IN ${REWARD_PAYOUT_TYPES_SQL} AND type::text <> 'rain_win')
+             OR (type::text = 'voucher_redeemed' AND metadata->>'origin' = 'manual')
              OR (${countedAdj})
            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
-         COALESCE(SUM(CASE WHEN type = 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_win,
-         COALESCE(SUM(CASE WHEN type = 'rain_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_tip
+         COALESCE(SUM(CASE WHEN type::text = 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_win,
+         COALESCE(SUM(CASE WHEN type::text = 'rain_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_tip
        FROM ledger_transactions
        WHERE status = 'completed'
          AND user_id IN ${scope.userScopeSql}
@@ -626,32 +626,32 @@ export async function getDailyGamingMetrics(
            --    rows have game_session_id=NULL so the IN-gate would drop
            --    them (the GGR-omits-sponsorship bug); all sponsored battles
            --    are borrow_percentage=0, so no gate is needed — Fix 1.
-           COALESCE(SUM(CASE WHEN type IN ${WAGER_TYPES_SQL}
+           COALESCE(SUM(CASE WHEN type::text IN ${WAGER_TYPES_SQL}
              AND (
-               (type = 'pack_opening'
+               (type::text = 'pack_opening'
                 AND (description IS NULL OR description NOT ILIKE '%borrow%')
                 AND (game_session_id IS NULL OR game_session_id NOT IN ${REWARD_PACK_SESSIONS}))
-               OR (type = 'battle_bet' AND game_session_id IN ${NON_BORROW_BATTLE_SESSIONS})
-               OR type = 'battle_sponsorship'
+               OR (type::text = 'battle_bet' AND game_session_id IN ${NON_BORROW_BATTLE_SESSIONS})
+               OR type::text = 'battle_sponsorship'
              )
              THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager,
            -- GAMING_PAYOUT_TYPES = battle_refund + battle_excess_to_voucher
            -- (both battle-win settlement legs; field name kept for the
            -- daily merge). voucher_redeemed redemption is NEUTRAL, so the
            -- battle_excess_to_voucher win is counted once, at settlement.
-           COALESCE(SUM(CASE WHEN type IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_refund,
+           COALESCE(SUM(CASE WHEN type::text IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_refund,
            -- Reward cost (excl rain) + the manual-voucher carve-out (admin
            -- house-granted vouchers, metadata->>'origin'='manual') + the
            -- counted-adjustment carve-out (admin_balance_adjustment credits
            -- carrying a counted category). Mirrors getRewardCost exactly so
            -- Σ daily reconciles with the headline.
            COALESCE(SUM(CASE
-             WHEN (type IN ${REWARD_PAYOUT_TYPES_SQL} AND type <> 'rain_win')
-               OR (type = 'voucher_redeemed' AND metadata->>'origin' = 'manual')
+             WHEN (type::text IN ${REWARD_PAYOUT_TYPES_SQL} AND type::text <> 'rain_win')
+               OR (type::text = 'voucher_redeemed' AND metadata->>'origin' = 'manual')
                OR (${countedAdj})
              THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
-           COALESCE(SUM(CASE WHEN type = 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_win,
-           COALESCE(SUM(CASE WHEN type = 'rain_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_tip
+           COALESCE(SUM(CASE WHEN type::text = 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_win,
+           COALESCE(SUM(CASE WHEN type::text = 'rain_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_tip
          FROM ledger_transactions
          WHERE status = 'completed'
            AND user_id IN ${scope.userScopeSql}
@@ -804,7 +804,7 @@ export async function sumLedgerTypes(opts: {
        SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
        FROM ledger_transactions
        WHERE status = 'completed'
-         AND type IN ${list}
+         AND type::text IN ${list}
          AND user_id IN ${scope.userScopeSql}
          AND ${scope.notInCreatorSession("user_id", "created_at")}
          ${sinceClause("created_at", opts.window.since)}`,

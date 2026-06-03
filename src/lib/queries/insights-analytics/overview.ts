@@ -330,27 +330,27 @@ async function runWindowQuery(args: {
     )
     SELECT
       'current'::text AS window,
-      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${currentCutoff} THEN amount ELSE 0 END), 0)::text AS deposits,
-      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${currentCutoff} THEN 1 END)::text AS deposit_count,
+      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= ${currentCutoff} THEN amount ELSE 0 END), 0)::text AS deposits,
+      COUNT(CASE WHEN type::text = 'deposit' AND created_at >= ${currentCutoff} THEN 1 END)::text AS deposit_count,
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${currentCutoff} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawals,
-      COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
+      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
       -- Organic wager — customers NOT under a creator code (NOT
       -- under_creator), excluding creator on-stream play (NOT in_session).
-      COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND NOT under_creator AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
+      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND NOT under_creator AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
       -- Creator-coded wager — customers who joined under a creator code.
-      COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND under_creator AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
+      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND under_creator AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
       (SELECT COUNT(*)::text FROM real_users WHERE signup_at >= ${currentCutoff}) AS signups,
       COUNT(DISTINCT CASE WHEN created_at >= ${currentCutoff} THEN user_id END)::text AS active
     FROM base
     UNION ALL
     SELECT
       'previous'::text AS window,
-      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN amount ELSE 0 END), 0)::text AS deposits,
-      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN 1 END)::text AS deposit_count,
+      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN amount ELSE 0 END), 0)::text AS deposits,
+      COUNT(CASE WHEN type::text = 'deposit' AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN 1 END)::text AS deposit_count,
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${prevStart} AND effective_at < ${prevEnd} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawals,
-      COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
-      COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND NOT under_creator AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
-      COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND under_creator AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
+      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
+      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND NOT under_creator AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
+      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND under_creator AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
       (SELECT COUNT(*)::text FROM real_users WHERE signup_at >= ${prevStart} AND signup_at < ${prevEnd}) AS signups,
       COUNT(DISTINCT CASE WHEN created_at >= ${prevStart} AND created_at < ${prevEnd} THEN user_id END)::text AS active
     FROM base
@@ -476,10 +476,10 @@ const cachedDailyOverview = unstable_cache(
       daily_base AS (
         SELECT
           d,
-          COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount ELSE 0 END), 0)::text AS deposits,
-          COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
-          COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND NOT under_creator THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
-          COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND under_creator THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
+          COALESCE(SUM(CASE WHEN type::text = 'deposit' THEN amount ELSE 0 END), 0)::text AS deposits,
+          COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
+          COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND NOT under_creator THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
+          COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND under_creator THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
           COUNT(DISTINCT user_id)::text AS active
         FROM base
         GROUP BY d

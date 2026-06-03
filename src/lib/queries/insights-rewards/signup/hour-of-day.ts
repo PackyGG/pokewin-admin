@@ -91,7 +91,7 @@ async function computeHourOfDay(
     FROM ledger_transactions lt
     JOIN cohort c ON c.user_id = lt.user_id
     WHERE lt.status = 'completed'
-      AND lt.type = 'balance_reward_claim'
+      AND lt.type::text = 'balance_reward_claim'
     GROUP BY 1, 2
     ORDER BY 1, 2
   `);

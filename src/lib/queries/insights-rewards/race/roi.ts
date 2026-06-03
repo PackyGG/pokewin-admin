@@ -100,7 +100,7 @@ async function computeRoi(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type = 'race_prize'
+        AND lt.type::text = 'race_prize'
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${costDateClause}
       GROUP BY lt.user_id
@@ -111,7 +111,7 @@ async function computeRoi(
       JOIN ledger_transactions lt
         ON lt.user_id = cc.user_id
        AND lt.status = 'completed'
-       AND lt.type IN ${WAGER_TYPES_SQL}
+       AND lt.type::text IN ${WAGER_TYPES_SQL}
       WHERE 1=1 ${forwardWindowClause}
       GROUP BY cc.user_id
     ),
@@ -121,7 +121,7 @@ async function computeRoi(
       JOIN ledger_transactions lt
         ON lt.user_id = cc.user_id
        AND lt.status = 'completed'
-       AND lt.type IN ${PAYOUT_TYPES_SQL}
+       AND lt.type::text IN ${PAYOUT_TYPES_SQL}
       WHERE 1=1 ${forwardWindowClause}
       GROUP BY cc.user_id
     )

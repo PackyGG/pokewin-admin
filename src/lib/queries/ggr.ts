@@ -363,17 +363,17 @@ async function getNeutralAndRewardRows(
     const rows = await db.$queryRawUnsafe<Row[]>(
       `WITH ${scope.sessionWindowsCte}
        SELECT type::text AS type,
-              (type = 'voucher_redeemed'
+              (type::text = 'voucher_redeemed'
                  AND COALESCE(metadata->>'origin', '') = 'manual') AS is_manual_voucher,
               COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
        FROM ledger_transactions
        WHERE status = 'completed'
-         AND type IN ${typeList}
+         AND type::text IN ${typeList}
          AND user_id IN ${scope.userScopeSql}
          AND ${scope.notInCreatorSession("user_id", "created_at")}
          ${sinceFrag}
        GROUP BY type,
-                (type = 'voucher_redeemed'
+                (type::text = 'voucher_redeemed'
                    AND COALESCE(metadata->>'origin', '') = 'manual')`,
     );
 
@@ -463,19 +463,19 @@ async function getCategoryLedgerWager(
     const rows = await db.$queryRawUnsafe<Row[]>(
       `WITH ${scope.sessionWindowsCte}
        SELECT
-         COALESCE(SUM(CASE WHEN type = 'pack_opening'
+         COALESCE(SUM(CASE WHEN type::text = 'pack_opening'
                            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS packs_wager,
-         COALESCE(SUM(CASE WHEN type = 'pack_opening'
+         COALESCE(SUM(CASE WHEN type::text = 'pack_opening'
                            THEN 1 ELSE 0 END), 0)::text AS packs_count,
-         COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship')
+         COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship')
                            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battles_wager,
-         COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship')
+         COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship')
                            THEN 1 ELSE 0 END), 0)::text AS battles_count
        FROM ledger_transactions
        WHERE status = 'completed'
          AND user_id IN ${scope.userScopeSql}
          AND ${scope.notInCreatorSession("user_id", "created_at")}
-         AND type IN ${WAGER_TYPES_SQL}
+         AND type::text IN ${WAGER_TYPES_SQL}
          ${sinceFrag}
          AND ${WAGER_LEG_FILTER}`,
     );
@@ -841,9 +841,9 @@ export async function getGgrTopContributors(
        ledger_leg AS (
          SELECT
            lt.user_id,
-           COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL}
+           COALESCE(SUM(CASE WHEN lt.type::text IN ${WAGER_TYPES_SQL}
                              THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager_total,
-           COALESCE(SUM(CASE WHEN lt.type IN ${GAMING_PAYOUT_TYPES_SQL}
+           COALESCE(SUM(CASE WHEN lt.type::text IN ${GAMING_PAYOUT_TYPES_SQL}
                              THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS battle_refund_total
          FROM ledger_transactions lt
          JOIN real_users ru ON ru.id = lt.user_id

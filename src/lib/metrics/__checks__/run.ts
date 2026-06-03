@@ -206,9 +206,15 @@ check("REWARD_PACK_SESSIONS joins packs.pack_type='reward' via game_type='pack'"
 // `OR type = 'battle_sponsorship'` arm), and does NOT gate it behind the
 // non-borrow battle-session IN-list (which would drop its NULL
 // game_session_id rows). battle_bet KEEPS the borrow gate.
-check("Fix 1: WAGER_LEG_FILTER counts battle_sponsorship directly (bare OR arm)", /OR\s+type\s*=\s*'battle_sponsorship'/.test(WAGER_LEG_FILTER));
+// The `type` column is text-cast (`type::text`) in the raw SQL — a
+// migration-lag hardening so a not-yet-migrated enum member compares
+// instead of throwing 22P02 (semantics-preserving; see ledger-sets.ts
+// note). The shape assertions below tolerate the optional `::text` so they
+// keep pinning the SAME structural arms (sponsorship counted directly,
+// battle_bet borrow-gated) regardless of the cast.
+check("Fix 1: WAGER_LEG_FILTER counts battle_sponsorship directly (bare OR arm)", /OR\s+type(?:::text)?\s*=\s*'battle_sponsorship'/.test(WAGER_LEG_FILTER));
 check("Fix 1: WAGER_LEG_FILTER does NOT borrow-gate battle_sponsorship (no IN-list on it)", !WAGER_LEG_FILTER.includes("'battle_sponsorship') AND") && !/battle_sponsorship'\)\s*AND\s+game_session_id\s+IN/.test(WAGER_LEG_FILTER));
-check("Fix 1: WAGER_LEG_FILTER keeps the borrow gate on battle_bet", /type\s*=\s*'battle_bet'\s+AND\s+game_session_id\s+IN/.test(WAGER_LEG_FILTER) && WAGER_LEG_FILTER.includes(NON_BORROW_BATTLE_SESSIONS));
+check("Fix 1: WAGER_LEG_FILTER keeps the borrow gate on battle_bet", /type(?:::text)?\s*=\s*'battle_bet'\s+AND\s+game_session_id\s+IN/.test(WAGER_LEG_FILTER) && WAGER_LEG_FILTER.includes(NON_BORROW_BATTLE_SESSIONS));
 
 // Fix 2 — both the WAGER leg (pack_opening arm) and the PAYOUT leg
 // (inventory) exclude reward-pack sessions via the SAME REWARD_PACK_SESSIONS

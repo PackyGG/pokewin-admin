@@ -85,14 +85,14 @@ async function compute(
       SELECT DISTINCT lt.user_id
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'affiliate_claim'
+        AND lt.type::text = 'affiliate_claim'
         ${ltDate}
     ),
     lifetime_claim AS (
       SELECT lt.user_id, MAX(lt.created_at) AS last_at
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'affiliate_claim'
+        AND lt.type::text = 'affiliate_claim'
       GROUP BY lt.user_id
     ),
     lifetime_usage AS (

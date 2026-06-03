@@ -88,14 +88,14 @@ export async function getFunnelData(period: FunnelPeriod): Promise<FunnelData> {
         SELECT
           c.id AS user_id,
           COUNT(*) FILTER (
-            WHERE lt.type = 'deposit' AND lt.status = 'completed'
+            WHERE lt.type::text = 'deposit' AND lt.status = 'completed'
           ) AS deposit_count,
           COUNT(*) FILTER (
-            WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+            WHERE lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
               AND lt.status = 'completed'
           ) AS wager_count,
           COUNT(*) FILTER (
-            WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+            WHERE lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
               AND lt.status = 'completed'
               AND lt.created_at >= NOW() - INTERVAL '${maWCutoff} days'
           ) AS wager_count_30d,

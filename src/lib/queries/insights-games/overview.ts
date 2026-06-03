@@ -182,7 +182,7 @@ export async function getGamesOverview(
                 ${BORROW_FILTER_CTES}
            SELECT
              COALESCE(SUM(CASE
-               WHEN lt.type = 'pack_opening'
+               WHEN lt.type::text = 'pack_opening'
                     AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
                     AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS})
                     AND NOT EXISTS (
@@ -194,9 +194,9 @@ export async function getGamesOverview(
                THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
              COALESCE(SUM(CASE
                WHEN (
-                      (lt.type = 'battle_bet'
+                      (lt.type::text = 'battle_bet'
                        AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-                      OR lt.type = 'battle_sponsorship'
+                      OR lt.type::text = 'battle_sponsorship'
                     )
                     AND NOT EXISTS (
                       SELECT 1 FROM session_windows sw
@@ -206,13 +206,13 @@ export async function getGamesOverview(
                     )
                THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
              COALESCE(SUM(CASE
-               WHEN lt.type = 'pack_opening'
+               WHEN lt.type::text = 'pack_opening'
                     AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS})
                THEN 1 ELSE 0 END), 0)::text AS pack_plays,
-             COALESCE(SUM(CASE WHEN lt.type IN ('battle_bet','battle_sponsorship') THEN 1 ELSE 0 END), 0)::text AS battle_plays
+             COALESCE(SUM(CASE WHEN lt.type::text IN ('battle_bet','battle_sponsorship') THEN 1 ELSE 0 END), 0)::text AS battle_plays
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+             AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
              AND lt.user_id IN ${scope}
              ${ltCutoff}`,
         ),
@@ -308,11 +308,11 @@ export async function getGamesOverview(
              SELECT DISTINCT lt.user_id AS uid
              FROM ledger_transactions lt
              WHERE lt.status = 'completed'
-               AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+               AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
                -- Reward/daily-pack opens are not gaming (Fix 2) — a user
                -- whose only activity is a reward pack is not a gaming
                -- customer, so drop those pack_opening rows here too.
-               AND (lt.type <> 'pack_opening'
+               AND (lt.type::text <> 'pack_opening'
                     OR lt.game_session_id IS NULL
                     OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS})
                AND lt.user_id IN ${scope}
@@ -346,14 +346,14 @@ export async function getGamesOverview(
                     0::numeric AS payout
              FROM ledger_transactions lt
              WHERE lt.status = 'completed'
-               AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+               AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
                AND lt.user_id IN ${scope}
                AND (
-                 (lt.type = 'pack_opening'
+                 (lt.type::text = 'pack_opening'
                   AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
                   AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS}))
-                 OR (lt.type = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-                 OR lt.type = 'battle_sponsorship'
+                 OR (lt.type::text = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+                 OR lt.type::text = 'battle_sponsorship'
                )
                AND NOT EXISTS (
                  SELECT 1 FROM session_windows sw

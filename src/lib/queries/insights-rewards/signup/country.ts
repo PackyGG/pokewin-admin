@@ -91,7 +91,7 @@ async function computeCountry(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
     ),
     claim_volume AS (
       SELECT c.code, SUM(ABS(lt.amount::numeric)) AS volume
@@ -99,7 +99,7 @@ async function computeCountry(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
       GROUP BY c.code
     ),
     retained_7d AS (
@@ -109,7 +109,7 @@ async function computeCountry(
         SELECT 1 FROM ledger_transactions lt
         WHERE lt.user_id = c.user_id
           AND lt.status = 'completed'
-          AND (lt.type = 'deposit' OR lt.type IN ${WAGER_TYPES_SQL})
+          AND (lt.type::text = 'deposit' OR lt.type::text IN ${WAGER_TYPES_SQL})
           AND lt.created_at <= c.signed_up_at + INTERVAL '7 days'
       )
       GROUP BY c.code
@@ -200,7 +200,7 @@ async function computeCountry(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
     )
     SELECT
       c.code,

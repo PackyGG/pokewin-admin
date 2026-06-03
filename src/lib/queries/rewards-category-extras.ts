@@ -428,7 +428,7 @@ async function computeAffiliateExtras(
       COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.type = 'affiliate_claim'
+      AND lt.type::text = 'affiliate_claim'
       AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
       ${dateFilter}
   `);
@@ -495,7 +495,7 @@ async function computeAffiliateExtras(
       SELECT DISTINCT lt.user_id
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'affiliate_claim'
+        AND lt.type::text = 'affiliate_claim'
         ${dateFilter}
     )
     SELECT COUNT(*)::text AS cnt
@@ -654,7 +654,7 @@ async function computeSignupExtras(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
       GROUP BY c.user_id, c.signed_up_at
     )
     SELECT
@@ -728,7 +728,7 @@ async function computeSignupExtras(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'balance_reward_claim'
+       AND lt.type::text = 'balance_reward_claim'
     ),
     user_deposits AS (
       SELECT
@@ -740,7 +740,7 @@ async function computeSignupExtras(
       JOIN ledger_transactions lt
         ON lt.user_id = c.user_id
        AND lt.status = 'completed'
-       AND lt.type = 'deposit'
+       AND lt.type::text = 'deposit'
       GROUP BY c.user_id, c.signed_up_at
     )
     SELECT
@@ -859,7 +859,7 @@ async function computeSignupExtras(
       SELECT DISTINCT lt.user_id
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'balance_reward_claim'
+        AND lt.type::text = 'balance_reward_claim'
     )
     SELECT c.code, COUNT(*)::text AS cnt
     FROM cohort c
@@ -916,7 +916,7 @@ async function computeSignupExtras(
     FROM ledger_transactions lt
     JOIN cohort c ON c.user_id = lt.user_id
     WHERE lt.status = 'completed'
-      AND lt.type = 'balance_reward_claim'
+      AND lt.type::text = 'balance_reward_claim'
     GROUP BY 1
     ORDER BY 1
   `);

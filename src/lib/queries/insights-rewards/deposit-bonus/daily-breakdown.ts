@@ -82,7 +82,7 @@ async function computeDailyBreakdown(
         COALESCE(SUM(ABS(d.amount::numeric)), 0)::numeric AS deposit_volume
       FROM ledger_transactions d
       WHERE d.status = 'completed'
-        AND d.type = 'deposit'
+        AND d.type::text = 'deposit'
         AND d.user_id IN ${userScope}
         ${dateFilterD}
       GROUP BY DATE(d.created_at)
@@ -95,7 +95,7 @@ async function computeDailyBreakdown(
         COUNT(DISTINCT lt.user_id)::int AS claimants
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
       GROUP BY DATE(lt.created_at)
@@ -106,13 +106,13 @@ async function computeDailyBreakdown(
         COUNT(*)::int AS with_bonus_count
       FROM ledger_transactions d
       WHERE d.status = 'completed'
-        AND d.type = 'deposit'
+        AND d.type::text = 'deposit'
         AND d.user_id IN ${userScope}
         ${dateFilterD}
         AND EXISTS (
           SELECT 1 FROM ledger_transactions lt
           WHERE lt.user_id = d.user_id
-            AND lt.type = 'deposit_bonus'
+            AND lt.type::text = 'deposit_bonus'
             AND lt.status = 'completed'
             AND lt.balance_before::numeric = d.balance_after::numeric
             AND lt.created_at >= d.created_at

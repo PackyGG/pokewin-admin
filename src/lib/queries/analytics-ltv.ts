@@ -111,8 +111,8 @@ export async function getCreatorLtv(period: LtvPeriod): Promise<CreatorLtvData> 
     referred_ledger AS (
       SELECT
         r.creator_id,
-        COALESCE(SUM(CASE WHEN lt.type = 'deposit' THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS deposits,
-        COALESCE(SUM(CASE WHEN lt.type = 'card_withdrawal' THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS withdrawals,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS deposits,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'card_withdrawal' THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS withdrawals,
         COALESCE(SUM(CASE WHEN lt.type IN (
           'card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
           'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed',
@@ -120,7 +120,7 @@ export async function getCreatorLtv(period: LtvPeriod): Promise<CreatorLtvData> 
           'waitlist_prize','creator_tip','voucher_redeemed','voucher_exchange',
           'exchange_excess_to_voucher','battle_excess_to_voucher','battle_refund','upgrader_payout'
         ) THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payouts,
-        COALESCE(SUM(CASE WHEN lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet','withdrawal_shipping_fee')
+        COALESCE(SUM(CASE WHEN lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet','withdrawal_shipping_fee')
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wagers
       FROM refs_distinct r
       LEFT JOIN ledger_transactions lt
@@ -132,7 +132,7 @@ export async function getCreatorLtv(period: LtvPeriod): Promise<CreatorLtvData> 
     creator_cost AS (
       SELECT
         lt.user_id AS creator_id,
-        COALESCE(SUM(CASE WHEN lt.type IN ('affiliate_claim','creator_tip','admin_balance_adjustment')
+        COALESCE(SUM(CASE WHEN lt.type::text IN ('affiliate_claim','creator_tip','admin_balance_adjustment')
           THEN GREATEST((lt.balance_after - lt.balance_before)::numeric, 0) ELSE 0 END), 0) AS cost
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'

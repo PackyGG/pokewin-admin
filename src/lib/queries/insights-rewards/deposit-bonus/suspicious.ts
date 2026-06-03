@@ -115,7 +115,7 @@ async function computeSuspicious(
         MAX(lt.created_at) AS last_bonus_at
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
       GROUP BY lt.user_id
@@ -134,7 +134,7 @@ async function computeSuspicious(
         SELECT lt.amount, lt.created_at
         FROM ledger_transactions lt
         WHERE lt.user_id = bc.user_id
-          AND lt.type = 'card_withdrawal'
+          AND lt.type::text = 'card_withdrawal'
           AND lt.status = 'completed'
           AND lt.created_at > bc.last_bonus_at
           AND lt.created_at < bc.last_bonus_at + INTERVAL '24 hours'
@@ -145,7 +145,7 @@ async function computeSuspicious(
         SELECT 1 FROM ledger_transactions w2
         WHERE w2.user_id = bc.user_id
           AND w2.status = 'completed'
-          AND w2.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+          AND w2.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
           AND w2.created_at >= bc.last_bonus_at
           AND w2.created_at <= w.created_at
       )
@@ -194,7 +194,7 @@ async function computeSuspicious(
         MAX(lt.created_at) AS last_bonus_at
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
       GROUP BY lt.user_id
@@ -209,14 +209,14 @@ async function computeSuspicious(
           SELECT 1 FROM ledger_transactions w
           WHERE w.user_id = bc.user_id
             AND w.status = 'completed'
-            AND w.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+            AND w.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
         ) AS has_ever_wagered
       FROM bonus_claimants bc
       WHERE NOT EXISTS (
         SELECT 1 FROM ledger_transactions w
         WHERE w.user_id = bc.user_id
           AND w.status = 'completed'
-          AND w.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+          AND w.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
           ${wagerWindowClause}
       )
     )
@@ -257,7 +257,7 @@ async function computeSuspicious(
       SELECT lt.user_id, SUM(ABS(lt.amount::numeric)) AS bonus_in_window
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
       GROUP BY lt.user_id

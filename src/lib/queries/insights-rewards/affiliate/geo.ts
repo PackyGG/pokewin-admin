@@ -73,7 +73,7 @@ async function compute(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type = 'affiliate_claim'
+        AND lt.type::text = 'affiliate_claim'
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${ltDate}
       GROUP BY COALESCE(u.country_code, '??')

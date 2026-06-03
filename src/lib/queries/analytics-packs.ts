@@ -230,7 +230,7 @@ export async function getPackProfitability(
   // check `b.borrow_percentage = 0` inline.
   const nonBorrowPackSessions = `(
     SELECT game_session_id FROM ledger_transactions
-    WHERE type = 'pack_opening' AND status = 'completed'
+    WHERE type::text = 'pack_opening' AND status = 'completed'
       AND game_session_id IS NOT NULL
       AND (description IS NULL OR description NOT ILIKE '%borrow%')
   )`;
@@ -256,7 +256,7 @@ export async function getPackProfitability(
           COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS revenue
         FROM ledger_transactions lt
         JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
-        WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
+        WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed'
           AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
           AND lt.user_id IN ${realCustomers}
           ${ltWhere}
@@ -321,7 +321,7 @@ export async function getPackProfitability(
         JOIN battle_participants bp ON bp.game_session_id = lt.game_session_id
         JOIN battles b ON b.id = bp.battle_id
         CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
-        WHERE lt.type IN ${WAGER_TYPES_SQL} AND lt.status = 'completed'
+        WHERE lt.type::text IN ${WAGER_TYPES_SQL} AND lt.status = 'completed'
           AND COALESCE(b.borrow_percentage, 0) = 0
           AND lt.user_id IN ${realCustomers}
           ${ltWhere}

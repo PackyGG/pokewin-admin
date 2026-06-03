@@ -205,8 +205,8 @@ const cachedBridge = unstable_cache(
     const [depWd, cardWd, inv, vch] = await Promise.all([
       db.$queryRawUnsafe<DepWdRow[]>(
         `SELECT
-           COALESCE(SUM(CASE WHEN lt.type = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
-           COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment'
+           COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
+           COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
                              AND lt.balance_after < lt.balance_before
                              AND lt.description ILIKE 'Manual withdrawal:%'
                                                                             THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd
@@ -287,8 +287,8 @@ const cachedDailyPnl = unstable_cache(
        daily_ledger AS (
          SELECT
            d,
-           COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount ELSE 0 END), 0) AS deposits,
-           COALESCE(SUM(CASE WHEN type = 'admin_balance_adjustment'
+           COALESCE(SUM(CASE WHEN type::text = 'deposit' THEN amount ELSE 0 END), 0) AS deposits,
+           COALESCE(SUM(CASE WHEN type::text = 'admin_balance_adjustment'
                              AND balance_after < balance_before
                              AND description ILIKE 'Manual withdrawal:%'
                                                                            THEN amount ELSE 0 END), 0) AS manual_wd,

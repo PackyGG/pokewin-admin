@@ -93,7 +93,7 @@ async function computeOverview(
         MAX(ABS(lt.amount::numeric))::text AS max_amount
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
     `),
@@ -107,7 +107,7 @@ async function computeOverview(
         COUNT(DISTINCT lt.user_id)::text AS claimants
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
       GROUP BY DATE(lt.created_at)
@@ -143,7 +143,7 @@ async function computeOverview(
         COUNT(DISTINCT lt.user_id)::text AS claimants
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type = 'deposit_bonus'
+        AND lt.type::text = 'deposit_bonus'
         AND lt.user_id IN ${userScope}
         AND lt.created_at >= NOW() - INTERVAL '${days * 2} days'
         AND lt.created_at < NOW() - INTERVAL '${days} days'

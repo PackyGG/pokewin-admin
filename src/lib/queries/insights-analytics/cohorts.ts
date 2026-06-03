@@ -96,7 +96,7 @@ export async function getInsightsCohorts(
       JOIN ledger_transactions lt ON lt.user_id = c.user_id
       WHERE lt.status = 'completed'
         AND lt.created_at >= c.created_at
-        AND lt.type IN ${WAGER_TYPES_SQL}
+        AND lt.type::text IN ${WAGER_TYPES_SQL}
     ),
     payouts AS (
       SELECT c.cohort,
@@ -109,7 +109,7 @@ export async function getInsightsCohorts(
       JOIN ledger_transactions lt ON lt.user_id = c.user_id
       WHERE lt.status = 'completed'
         AND lt.created_at >= c.created_at
-        AND lt.type IN ${PAYOUT_TYPES_SQL}
+        AND lt.type::text IN ${PAYOUT_TYPES_SQL}
     ),
     deposits AS (
       SELECT c.cohort,
@@ -122,7 +122,7 @@ export async function getInsightsCohorts(
       JOIN ledger_transactions lt ON lt.user_id = c.user_id
       WHERE lt.status = 'completed'
         AND lt.created_at >= c.created_at
-        AND lt.type = 'deposit'
+        AND lt.type::text = 'deposit'
     ),
     retained AS (
       SELECT cohort, period_index,

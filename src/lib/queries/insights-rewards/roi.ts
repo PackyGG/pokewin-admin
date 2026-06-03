@@ -193,7 +193,7 @@ async function computeRoi(
           FROM ledger_transactions lt
           JOIN "user" u ON u.id = lt.user_id
           WHERE lt.status = 'completed'
-            AND lt.type IN ${typesSql}
+            AND lt.type::text IN ${typesSql}
             AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
             ${costDateClause}
           GROUP BY lt.user_id
@@ -204,7 +204,7 @@ async function computeRoi(
           JOIN ledger_transactions lt
             ON lt.user_id = cc.user_id
            AND lt.status = 'completed'
-           AND lt.type IN ${WAGER_TYPES_SQL}
+           AND lt.type::text IN ${WAGER_TYPES_SQL}
           WHERE 1=1 ${forwardWindowClause}
           GROUP BY cc.user_id
         ),
@@ -214,7 +214,7 @@ async function computeRoi(
           JOIN ledger_transactions lt
             ON lt.user_id = cc.user_id
            AND lt.status = 'completed'
-           AND lt.type IN ${PAYOUT_TYPES_SQL}
+           AND lt.type::text IN ${PAYOUT_TYPES_SQL}
           WHERE 1=1 ${forwardWindowClause}
           GROUP BY cc.user_id
         )
@@ -245,13 +245,13 @@ async function computeRoi(
           { race_prize: string; rain_win: string; rain_tip: string }[]
         >(`
           SELECT
-            COALESCE(SUM(CASE WHEN lt.type = 'race_prize' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS race_prize,
-            COALESCE(SUM(CASE WHEN lt.type = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
-            COALESCE(SUM(CASE WHEN lt.type = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip
+            COALESCE(SUM(CASE WHEN lt.type::text = 'race_prize' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS race_prize,
+            COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
+            COALESCE(SUM(CASE WHEN lt.type::text = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip
           FROM ledger_transactions lt
           JOIN "user" u ON u.id = lt.user_id
           WHERE lt.status = 'completed'
-            AND lt.type IN ('race_prize','rain_win','rain_tip')
+            AND lt.type::text IN ('race_prize','rain_win','rain_tip')
             AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
             ${costDateClause}
         `);

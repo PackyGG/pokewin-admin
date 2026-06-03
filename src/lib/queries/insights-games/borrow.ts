@@ -183,7 +183,7 @@ export async function getBorrowAnalytics(
              lt.user_id,
              ABS(lt.amount::numeric) AS cash_paid,
              CASE
-               WHEN lt.type = 'pack_opening'
+               WHEN lt.type::text = 'pack_opening'
                  THEN COALESCE(
                    (
                      SELECT NULLIF(pf.result_metadata->>'borrow_percentage', '')::numeric
@@ -193,7 +193,7 @@ export async function getBorrowAnalytics(
                    ),
                    0
                  )
-               WHEN lt.type IN ('battle_bet','battle_sponsorship')
+               WHEN lt.type::text IN ('battle_bet','battle_sponsorship')
                  THEN COALESCE(
                    (
                      SELECT COALESCE(b.borrow_percentage, 0)::numeric
@@ -208,7 +208,7 @@ export async function getBorrowAnalytics(
              END AS borrow_pct
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+             AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
              AND lt.user_id IN ${scope}
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw
@@ -246,7 +246,7 @@ export async function getBorrowAnalytics(
              lt.user_id,
              ABS(lt.amount::numeric) AS cash_paid,
              CASE
-               WHEN lt.type = 'pack_opening'
+               WHEN lt.type::text = 'pack_opening'
                  THEN COALESCE(
                    (
                      SELECT NULLIF(pf.result_metadata->>'borrow_percentage', '')::numeric
@@ -256,7 +256,7 @@ export async function getBorrowAnalytics(
                    ),
                    0
                  )
-               WHEN lt.type IN ('battle_bet','battle_sponsorship')
+               WHEN lt.type::text IN ('battle_bet','battle_sponsorship')
                  THEN COALESCE(
                    (
                      SELECT COALESCE(b.borrow_percentage, 0)::numeric
@@ -271,7 +271,7 @@ export async function getBorrowAnalytics(
              END AS borrow_pct
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+             AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
              AND lt.user_id IN ${scope}
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw
@@ -326,7 +326,7 @@ export async function getBorrowAnalytics(
              ABS(lt.amount::numeric) AS cash_paid,
              lt.created_at,
              CASE
-               WHEN lt.type = 'pack_opening'
+               WHEN lt.type::text = 'pack_opening'
                  THEN COALESCE(
                    (
                      SELECT NULLIF(pf.result_metadata->>'borrow_percentage', '')::numeric
@@ -336,7 +336,7 @@ export async function getBorrowAnalytics(
                    ),
                    0
                  )
-               WHEN lt.type IN ('battle_bet','battle_sponsorship')
+               WHEN lt.type::text IN ('battle_bet','battle_sponsorship')
                  THEN COALESCE(
                    (
                      SELECT COALESCE(b.borrow_percentage, 0)::numeric
@@ -351,7 +351,7 @@ export async function getBorrowAnalytics(
              END AS borrow_pct
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+             AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
              AND lt.user_id IN ${scope}
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw
@@ -386,7 +386,7 @@ export async function getBorrowAnalytics(
         `WITH ${sessionWindowsCte},
               non_borrow_pack_sessions AS (
            SELECT game_session_id FROM ledger_transactions
-           WHERE type = 'pack_opening' AND status = 'completed'
+           WHERE type::text = 'pack_opening' AND status = 'completed'
              AND game_session_id IS NOT NULL
              AND (description IS NULL OR description NOT ILIKE '%borrow%')
          ),
@@ -408,8 +408,8 @@ export async function getBorrowAnalytics(
              )
              ${ltCutoff}
              AND (
-               (lt.type = 'pack_opening' AND lt.description ILIKE '%borrow%')
-               OR (lt.type IN ('battle_bet','battle_sponsorship')
+               (lt.type::text = 'pack_opening' AND lt.description ILIKE '%borrow%')
+               OR (lt.type::text IN ('battle_bet','battle_sponsorship')
                    AND lt.game_session_id IN (
                      SELECT bp.game_session_id FROM battle_participants bp
                      JOIN battles b ON b.id = bp.battle_id
@@ -432,14 +432,14 @@ export async function getBorrowAnalytics(
                   COUNT(*) AS plays
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+             AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
              AND lt.user_id IN ${scope}
              AND (
-               (lt.type = 'pack_opening'
+               (lt.type::text = 'pack_opening'
                 AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
                 AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS}))
-               OR (lt.type = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-               OR lt.type = 'battle_sponsorship'
+               OR (lt.type::text = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+               OR lt.type::text = 'battle_sponsorship'
              )
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw

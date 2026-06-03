@@ -129,11 +129,11 @@ export async function getCohortRetention(
       FROM cohorts c
       JOIN ledger_transactions lt ON lt.user_id = c.user_id
       WHERE lt.status = 'completed'
-        AND lt.type IN ${WAGER_TYPES_SQL}
+        AND lt.type::text IN ${WAGER_TYPES_SQL}
         AND lt.created_at >= c.created_at
         AND (
-          (lt.type = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
-          OR (lt.type IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+          (lt.type::text = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
+          OR (lt.type::text IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
         )
     ),
     -- Ledger gaming-payout leg: battle_refund cash winner only (the only
@@ -147,7 +147,7 @@ export async function getCohortRetention(
       FROM cohorts c
       JOIN ledger_transactions lt ON lt.user_id = c.user_id
       WHERE lt.status = 'completed'
-        AND lt.type IN ${GAMING_PAYOUT_TYPES_SQL}
+        AND lt.type::text IN ${GAMING_PAYOUT_TYPES_SQL}
         AND lt.created_at >= c.created_at
     ),
     -- Dominant pack/battle payout: the inventory delta (value of cards the
@@ -165,7 +165,7 @@ export async function getCohortRetention(
         AND (
           (ui.source_type = 'pack' AND (ui.source_id IN (
             SELECT game_session_id FROM ledger_transactions
-            WHERE type = 'pack_opening' AND status = 'completed'
+            WHERE type::text = 'pack_opening' AND status = 'completed'
               AND game_session_id IS NOT NULL
               AND (description IS NULL OR description NOT ILIKE '%borrow%')
           )))

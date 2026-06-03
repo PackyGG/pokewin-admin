@@ -341,7 +341,7 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
               lt.amount::numeric AS amount
          FROM ledger_transactions lt
          JOIN "user" u ON u.id = lt.user_id
-        WHERE lt.type = 'deposit'
+        WHERE lt.type::text = 'deposit'
           AND lt.status = 'completed'
           AND lt.created_at >= NOW() - INTERVAL '30 days'
           AND u.role NOT IN ('admin', 'support', 'creator')
@@ -372,7 +372,7 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
      wd_depositors AS (
        SELECT DISTINCT lt.user_id
          FROM ledger_transactions lt
-        WHERE lt.type = 'deposit' AND lt.status = 'completed'
+        WHERE lt.type::text = 'deposit' AND lt.status = 'completed'
           AND $1 = ${COVERING_CREATOR_SQL}
      ),
      attr_wd30 AS (
@@ -431,7 +431,7 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
      wd_depositors AS (
        SELECT DISTINCT lt.user_id
          FROM ledger_transactions lt
-        WHERE lt.type = 'deposit' AND lt.status = 'completed'
+        WHERE lt.type::text = 'deposit' AND lt.status = 'completed'
           AND $1 = ${COVERING_CREATOR_SQL}
      )
      SELECT p.period,
@@ -463,7 +463,7 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
        SELECT lt.amount::numeric AS amount
          FROM ledger_transactions lt
          JOIN "user" u ON u.id = lt.user_id
-        WHERE lt.type = 'deposit'
+        WHERE lt.type::text = 'deposit'
           AND lt.status = 'completed'
           AND lt.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
           AND u.role NOT IN ('admin', 'support', 'creator')
@@ -473,7 +473,7 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
      cov_depositors_raw AS (
        SELECT DISTINCT lt.user_id
          FROM ledger_transactions lt
-        WHERE lt.type = 'deposit' AND lt.status = 'completed'
+        WHERE lt.type::text = 'deposit' AND lt.status = 'completed'
           AND lt.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}
           AND $1 = ${COVERING_CREATOR_SQL}
      ),

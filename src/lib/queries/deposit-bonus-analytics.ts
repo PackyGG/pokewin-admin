@@ -76,7 +76,7 @@ async function computeCapHits(
     SELECT COUNT(*)::text AS cnt
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.type = 'deposit_bonus'
+      AND lt.type::text = 'deposit_bonus'
       AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
       AND ABS(lt.amount::numeric) = ${capValue.toFixed(2)}
       ${dateFilter}
@@ -247,7 +247,7 @@ async function computeDepositBonusCohortExtras(
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
-        AND d.type = 'deposit'
+        AND d.type::text = 'deposit'
         AND d.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
         ${dateFilter}
     ),
@@ -262,7 +262,7 @@ async function computeDepositBonusCohortExtras(
         SELECT ABS(lt.amount::numeric) AS bonus_usd
         FROM ledger_transactions lt
         WHERE lt.user_id = wd.user_id
-          AND lt.type = 'deposit_bonus'
+          AND lt.type::text = 'deposit_bonus'
           AND lt.status = 'completed'
           AND lt.balance_before::numeric = wd.bal_after
           AND lt.created_at >= wd.created_at
@@ -280,7 +280,7 @@ async function computeDepositBonusCohortExtras(
         EXISTS (
           SELECT 1 FROM ledger_transactions prior
           WHERE prior.user_id = dc.user_id
-            AND prior.type = 'deposit_bonus'
+            AND prior.type::text = 'deposit_bonus'
             AND prior.status = 'completed'
             AND prior.created_at < ${windowStartExpr}
         ) AS had_prior
@@ -326,7 +326,7 @@ async function computeDepositBonusCohortExtras(
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
-        AND d.type = 'deposit'
+        AND d.type::text = 'deposit'
         AND d.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
         ${dateFilter}
     ),
@@ -339,7 +339,7 @@ async function computeDepositBonusCohortExtras(
         SELECT ABS(lt.amount::numeric) AS bonus_usd
         FROM ledger_transactions lt
         WHERE lt.user_id = wd.user_id
-          AND lt.type = 'deposit_bonus'
+          AND lt.type::text = 'deposit_bonus'
           AND lt.status = 'completed'
           AND lt.balance_before::numeric = wd.bal_after
           AND lt.created_at >= wd.created_at
@@ -392,7 +392,7 @@ async function computeDepositBonusCohortExtras(
         SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
         FROM ledger_transactions d
         WHERE d.status = 'completed'
-          AND d.type = 'deposit'
+          AND d.type::text = 'deposit'
           AND d.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
           ${dateFilter}
       )
@@ -408,7 +408,7 @@ async function computeDepositBonusCohortExtras(
         SELECT ABS(lt.amount::numeric) AS bonus_usd
         FROM ledger_transactions lt
         WHERE lt.user_id = wd.user_id
-          AND lt.type = 'deposit_bonus'
+          AND lt.type::text = 'deposit_bonus'
           AND lt.status = 'completed'
           AND lt.balance_before::numeric = wd.bal_after
           AND lt.created_at >= wd.created_at

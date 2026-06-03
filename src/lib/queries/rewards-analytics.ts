@@ -178,23 +178,23 @@ export async function getRewardsAnalytics(
     >(`
       SELECT
         DATE(lt.created_at) AS date,
-        COALESCE(SUM(CASE WHEN lt.type IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bonuses,
-        COALESCE(SUM(CASE WHEN lt.type = 'rakeback_claim' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rakeback,
-        COALESCE(SUM(CASE WHEN lt.type = 'affiliate_claim' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS affiliate,
-        COALESCE(SUM(CASE WHEN lt.type IN ('rain_win','race_prize') THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_race,
-        COALESCE(SUM(CASE WHEN lt.type = 'balance_reward_claim' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS signup_pack,
-        COALESCE(SUM(CASE WHEN lt.type = 'creator_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS creator_tip,
-        COALESCE(SUM(CASE WHEN lt.type = 'waitlist_prize' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS waitlist,
-        COUNT(*) FILTER (WHERE lt.type IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed'))::text AS bonuses_n,
-        COUNT(*) FILTER (WHERE lt.type = 'rakeback_claim')::text AS rakeback_n,
-        COUNT(*) FILTER (WHERE lt.type = 'affiliate_claim')::text AS affiliate_n,
-        COUNT(*) FILTER (WHERE lt.type IN ('rain_win','race_prize'))::text AS rain_race_n,
-        COUNT(*) FILTER (WHERE lt.type = 'balance_reward_claim')::text AS signup_pack_n,
-        COUNT(*) FILTER (WHERE lt.type = 'creator_tip')::text AS creator_tip_n,
-        COUNT(*) FILTER (WHERE lt.type = 'waitlist_prize')::text AS waitlist_n
+        COALESCE(SUM(CASE WHEN lt.type::text IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bonuses,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'rakeback_claim' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rakeback,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'affiliate_claim' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS affiliate,
+        COALESCE(SUM(CASE WHEN lt.type::text IN ('rain_win','race_prize') THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_race,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'balance_reward_claim' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS signup_pack,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'creator_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS creator_tip,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'waitlist_prize' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS waitlist,
+        COUNT(*) FILTER (WHERE lt.type::text IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed'))::text AS bonuses_n,
+        COUNT(*) FILTER (WHERE lt.type::text = 'rakeback_claim')::text AS rakeback_n,
+        COUNT(*) FILTER (WHERE lt.type::text = 'affiliate_claim')::text AS affiliate_n,
+        COUNT(*) FILTER (WHERE lt.type::text IN ('rain_win','race_prize'))::text AS rain_race_n,
+        COUNT(*) FILTER (WHERE lt.type::text = 'balance_reward_claim')::text AS signup_pack_n,
+        COUNT(*) FILTER (WHERE lt.type::text = 'creator_tip')::text AS creator_tip_n,
+        COUNT(*) FILTER (WHERE lt.type::text = 'waitlist_prize')::text AS waitlist_n
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type IN ${REWARD_TYPES_SQL}
+        AND lt.type::text IN ${REWARD_TYPES_SQL}
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
         ${dateFilter}
       GROUP BY DATE(lt.created_at)
@@ -218,7 +218,7 @@ export async function getRewardsAnalytics(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type IN ${REWARD_TYPES_SQL}
+        AND lt.type::text IN ${REWARD_TYPES_SQL}
         AND u.role NOT IN ('admin', 'support') ${blacklistJoinAlias}
         ${dateFilter}
       GROUP BY u.id, u.username, u.image
@@ -423,7 +423,7 @@ export async function getRewardCategoryBreakdown(
       COUNT(*)::text AS cnt
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.type IN ${typesSql}
+      AND lt.type::text IN ${typesSql}
       AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
       ${dateFilter}
     GROUP BY lt.type
@@ -510,7 +510,7 @@ export async function getRewardCategoryTopRecipients(
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
     WHERE lt.status = 'completed'
-      AND lt.type IN ${typesSql}
+      AND lt.type::text IN ${typesSql}
       AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
       ${dateFilter}
     GROUP BY u.id, u.username
@@ -584,7 +584,7 @@ export async function getRewardsTopPromoCodes(
     JOIN ledger_transactions lt ON lt.id = pcr.ledger_tx_id
     JOIN promo_codes pc ON pc.id = pcr.promo_code_id
     WHERE lt.status = 'completed'
-      AND lt.type = 'promo_code_redeemed'
+      AND lt.type::text = 'promo_code_redeemed'
       AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
       ${dateFilter}
     GROUP BY pc.id, pc.metadata->>'code'

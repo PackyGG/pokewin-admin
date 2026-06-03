@@ -59,7 +59,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     db.$queryRaw<{ type: string; net: string }[]>`
       SELECT type,
              COALESCE(SUM(
-               CASE WHEN type IN ('exchange_excess_to_voucher','battle_excess_to_voucher','voucher_redeemed','voucher_exchange')
+               CASE WHEN type::text IN ('exchange_excess_to_voucher','battle_excess_to_voucher','voucher_redeemed','voucher_exchange')
                     THEN amount
                     ELSE balance_after - balance_before
                END

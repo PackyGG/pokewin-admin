@@ -97,25 +97,25 @@ async function computeTopRecipients(
         lt.user_id,
         SUM(ABS(lt.amount::numeric)) AS total,
         COUNT(DISTINCT CASE
-          WHEN lt.type IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN 'bonuses'
-          WHEN lt.type = 'rakeback_claim' THEN 'rakeback'
-          WHEN lt.type = 'affiliate_claim' THEN 'affiliate'
-          WHEN lt.type IN ('rain_win','race_prize') THEN 'rainRace'
-          WHEN lt.type = 'balance_reward_claim' THEN 'signupPack'
-          WHEN lt.type = 'creator_tip' THEN 'creatorTip'
-          WHEN lt.type = 'waitlist_prize' THEN 'waitlist'
+          WHEN lt.type::text IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN 'bonuses'
+          WHEN lt.type::text = 'rakeback_claim' THEN 'rakeback'
+          WHEN lt.type::text = 'affiliate_claim' THEN 'affiliate'
+          WHEN lt.type::text IN ('rain_win','race_prize') THEN 'rainRace'
+          WHEN lt.type::text = 'balance_reward_claim' THEN 'signupPack'
+          WHEN lt.type::text = 'creator_tip' THEN 'creatorTip'
+          WHEN lt.type::text = 'waitlist_prize' THEN 'waitlist'
         END) AS categories,
-        SUM(CASE WHEN lt.type IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN ABS(lt.amount::numeric) ELSE 0 END) AS bonuses,
-        SUM(CASE WHEN lt.type = 'rakeback_claim' THEN ABS(lt.amount::numeric) ELSE 0 END) AS rakeback,
-        SUM(CASE WHEN lt.type = 'affiliate_claim' THEN ABS(lt.amount::numeric) ELSE 0 END) AS affiliate,
-        SUM(CASE WHEN lt.type IN ('rain_win','race_prize') THEN ABS(lt.amount::numeric) ELSE 0 END) AS rain_race,
-        SUM(CASE WHEN lt.type = 'balance_reward_claim' THEN ABS(lt.amount::numeric) ELSE 0 END) AS signup_pack,
-        SUM(CASE WHEN lt.type = 'creator_tip' THEN ABS(lt.amount::numeric) ELSE 0 END) AS creator_tip,
-        SUM(CASE WHEN lt.type = 'waitlist_prize' THEN ABS(lt.amount::numeric) ELSE 0 END) AS waitlist
+        SUM(CASE WHEN lt.type::text IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN ABS(lt.amount::numeric) ELSE 0 END) AS bonuses,
+        SUM(CASE WHEN lt.type::text = 'rakeback_claim' THEN ABS(lt.amount::numeric) ELSE 0 END) AS rakeback,
+        SUM(CASE WHEN lt.type::text = 'affiliate_claim' THEN ABS(lt.amount::numeric) ELSE 0 END) AS affiliate,
+        SUM(CASE WHEN lt.type::text IN ('rain_win','race_prize') THEN ABS(lt.amount::numeric) ELSE 0 END) AS rain_race,
+        SUM(CASE WHEN lt.type::text = 'balance_reward_claim' THEN ABS(lt.amount::numeric) ELSE 0 END) AS signup_pack,
+        SUM(CASE WHEN lt.type::text = 'creator_tip' THEN ABS(lt.amount::numeric) ELSE 0 END) AS creator_tip,
+        SUM(CASE WHEN lt.type::text = 'waitlist_prize' THEN ABS(lt.amount::numeric) ELSE 0 END) AS waitlist
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type IN ${ALL_REWARD_TYPES_SQL}
+        AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${dateFilter}
       GROUP BY lt.user_id
@@ -125,7 +125,7 @@ async function computeTopRecipients(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type IN ${WAGER_TYPES_SQL}
+        AND lt.type::text IN ${WAGER_TYPES_SQL}
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${dateFilter}
       GROUP BY lt.user_id
@@ -135,7 +135,7 @@ async function computeTopRecipients(
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.type IN ${PAYOUT_TYPES_SQL}
+        AND lt.type::text IN ${PAYOUT_TYPES_SQL}
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${dateFilter}
       GROUP BY lt.user_id
