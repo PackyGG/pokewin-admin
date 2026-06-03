@@ -669,13 +669,16 @@ export async function wipeWager(data: {
   }, 0);
   const inventoryValue = inventoryRows.reduce((acc, r) => acc + toNumber(r.value_at_obtained), 0);
 
-  // Read balance + version for the optimistic-locked reduction.
+  // Read balance for the snapshot record (informational only — the destructive
+  // tx below uses Pattern A: FOR UPDATE row lock + Pattern B: atomic clamped
+  // UPDATE, so there is NO optimistic version check that can lose a race
+  // against real-time gameplay writes ("Balance changed concurrently — please
+  // retry" used to surface here on a heavy/active account).
   const balanceRow = await db.balances
     .findUnique({ where: { user_id: parsed.userId } })
     .catch(() => null);
   if (!balanceRow) return { success: false, error: "User balances not found" };
   const balanceBefore = toNumber(balanceRow.available_balance);
-  const lockVersion = balanceRow.version;
   const reduced = balanceBefore - payoutMagnitude;
   const balanceAfter = reduced < 0 ? 0 : reduced;
   const balanceReduction = balanceBefore - balanceAfter; // == clamped payout clawback, ≥ 0
@@ -765,7 +768,20 @@ export async function wipeWager(data: {
   let upgraderGamesDeleted = 0;
   try {
     await db.$transaction(async (tx) => {
-      // (0) Raise the per-statement timeout for THIS transaction only. The
+      // (0a) PATTERN A — lock the user's balance row FOR UPDATE at the very
+      // start of the destructive tx. Concurrent real-time gameplay writes
+      // (a pack open / battle settle racing this wipe) BLOCK here until the
+      // tx commits, instead of going through and bumping `version` mid-flight.
+      // This kills the prior "Balance changed concurrently — please retry"
+      // failure mode on a heavy/active account: when the wipe ran the
+      // optimistic-version check at the end, a single live tx between the read
+      // and the write was enough to fail it. With the row lock taken first,
+      // there is no race window — every other ledger write on this user
+      // serializes behind this tx for the duration. The lock is released on
+      // commit/rollback. Bound the user id to a parameter ($1), never inlined.
+      await tx.$executeRaw`SELECT id FROM "balances" WHERE user_id = ${parsed.userId} FOR UPDATE`;
+
+      // (0b) Raise the per-statement timeout for THIS transaction only. The
       // pooled connection's global 30s `statement_timeout` (src/lib/db.ts) is
       // too low for a heavy account's full gameplay delete — it was killing
       // the tx at 30s and yielding the misleading "nothing deleted" after a
@@ -858,27 +874,35 @@ export async function wipeWager(data: {
         upgraderGamesDeleted = typeof deleted === "number" ? deleted : upgraderGameRows.length;
       }
 
-      // (7) One optimistic-locked balances write covering all three reductions
-      // (same version lock, single bump):
-      //   • available_balance −= the clamped PAYOUT clawback (balanceAfter).
-      //     Wager (debit) legs leave the balance unchanged (BALANCE RULE).
-      //   • total_wagered −= the clamped Σ wager-leg magnitudes.
-      //   • total_won     −= the clamped Σ payout-leg + won-inventory value.
+      // (7) PATTERN B — atomic clamped balance UPDATE. ONE raw SQL UPDATE
+      // covering all three reductions using GREATEST(0, current − reduction)
+      // so the column values are computed FROM THE LIVE ROW inside the same
+      // transaction, NOT from the values we read earlier (which could be
+      // stale by even a few ms on a hot account). The FOR UPDATE row lock
+      // above already serializes concurrent writers behind this tx, so the
+      // live row's values reflect any tx that committed BEFORE we took the
+      // lock — and nothing else can move them until we commit.
+      //
+      // No optimistic version check. No "Balance changed concurrently"
+      // failure path. The version is bumped so cached reads invalidate.
+      //
       // Fired whenever ANY of the three has something to subtract — a pure-
       // wager wipe (no payout legs) moves no balance but MUST still drop
-      // total_wagered, so this is NOT gated on balanceReduction alone.
+      // total_wagered, so this is NOT gated on balanceReduction alone. All
+      // numeric reductions are bound as parameters (never string-interpolated)
+      // and decimals (their string-toFixed form, parsed by Postgres as
+      // NUMERIC).
       if (balanceReduction > 0 || totalWageredReduction > 0 || totalWonReduction > 0) {
-        const updated = await tx.balances.updateMany({
-          where: { user_id: parsed.userId, version: lockVersion },
-          data: {
-            available_balance: balanceAfter,
-            total_wagered: totalWageredBefore - totalWageredReduction,
-            total_won: totalWonBefore - totalWonReduction,
-            version: { increment: 1 },
-          },
-        });
-        if (updated.count !== 1) {
-          throw new Error("Balance changed concurrently — please retry");
+        const updated = await tx.$executeRaw`
+          UPDATE "balances"
+          SET available_balance = GREATEST(0::numeric, available_balance - ${balanceReduction}::numeric),
+              total_wagered = GREATEST(0::numeric, total_wagered - ${totalWageredReduction}::numeric),
+              total_won = GREATEST(0::numeric, total_won - ${totalWonReduction}::numeric),
+              version = version + 1
+          WHERE user_id = ${parsed.userId}
+        `;
+        if (updated !== 1) {
+          throw new Error("WAGER_GUARD: user balances row not found — wipe aborted");
         }
       }
     }, WIPE_TX_OPTIONS);

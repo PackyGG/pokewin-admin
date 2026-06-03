@@ -81,6 +81,9 @@ export type WipeCategory =
   // ── New recoverable categories (ENABLED) ──
   | "deposits"
   | "wager"
+  // ── Windowed wipes (ENABLED — critical-incident sweep, 2026-06-03) ──
+  | "pnl"
+  | "game"
   // ── Expanded categories (shipped DISABLED — see reasons above) ──
   | "withdrawals"
   | "finances"
@@ -256,6 +259,30 @@ export const WIPE_CATEGORIES: readonly WipeCategoryMeta[] = [
   },
 
   // ── Gaming ──
+  {
+    key: "pnl",
+    icon: "receipt",
+    label: "PnL wipe",
+    blurb:
+      "Removes ALL PnL-affecting events in the selected window (12h / 24h / 48h) — deposits, withdrawals, gameplay legs + won inventory, bonuses, vouchers, admin balance adjustments. Snapshotted + recoverable. LARGEST scope of the three windowed wipes.",
+    group: "gaming",
+    creatorProtected: false,
+    liveFinancial: true,
+    enabled: true,
+    disabledReason: "",
+  },
+  {
+    key: "game",
+    icon: "gamepad",
+    label: "Game wipe",
+    blurb:
+      "Removes pure gameplay events in the selected window (12h / 24h / 48h) — pack openings, battles, upgrader, won pack/battle inventory. Decrements `total_won` only (leaves `total_wagered` as bookkeeping). Snapshotted + recoverable.",
+    group: "gaming",
+    creatorProtected: false,
+    liveFinancial: true,
+    enabled: true,
+    disabledReason: "",
+  },
   {
     key: "wager",
     icon: "gamepad",

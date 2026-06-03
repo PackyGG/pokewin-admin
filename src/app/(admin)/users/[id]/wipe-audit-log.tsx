@@ -13,6 +13,7 @@ import {
   SlidersHorizontal,
   ArrowDownToLine,
   Gamepad2,
+  Receipt,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -54,7 +55,9 @@ type WipeKind =
   | "vault"
   | "inventory"
   | "deposits"
-  | "wager";
+  | "wager"
+  | "game"
+  | "pnl";
 
 type UnifiedWipe = {
   id: string;
@@ -77,6 +80,8 @@ const KIND_META: Record<WipeKind, { icon: LucideIcon; label: string }> = {
   inventory: { icon: Package, label: "Inventory" },
   deposits: { icon: ArrowDownToLine, label: "Deposits" },
   wager: { icon: Gamepad2, label: "Wager / gameplay" },
+  game: { icon: Gamepad2, label: "Game wipe" },
+  pnl: { icon: Receipt, label: "PnL wipe" },
 };
 
 // ───────────────────────────────────────────────────────────────────────────

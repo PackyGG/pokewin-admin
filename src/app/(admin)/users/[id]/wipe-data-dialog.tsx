@@ -36,6 +36,8 @@ import {
   Skull,
   AlertTriangle,
 } from "lucide-react";
+// Receipt is already imported above for the PnL wipe icon (matches the
+// categories.ts "receipt" mapping).
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,6 +82,16 @@ import {
   wipeWager,
   type WagerWipePreview,
 } from "./wipe-wager-actions";
+import {
+  previewGameWipe,
+  wipeGame,
+  type GameWipePreview,
+} from "./wipe-game-actions";
+import {
+  previewPnlWipe,
+  wipePnl,
+  type PnlWipePreview,
+} from "./wipe-pnl-actions";
 // The window const + type come from the CLIENT-SAFE module, NOT the "use server"
 // action file: a runtime const imported from a server-action module is a server
 // reference (not the array) on the client and crashed the dialog on `.map`.
@@ -87,6 +99,10 @@ import {
   WAGER_WIPE_WINDOW_OPTIONS,
   type WagerWipeWindowHours,
 } from "@/lib/account-wipes/wager-window";
+import {
+  WIPE_WINDOW_OPTIONS,
+  type WipeWindowHours,
+} from "@/lib/account-wipes/window";
 import {
   listWipeableAdjustments,
   wipeBalanceAdjustments,
@@ -146,6 +162,8 @@ type DepositsPreview = {
 };
 // The wager preview is exactly the server action's payload.
 type WagerPreview = WagerWipePreview;
+type GamePreview = GameWipePreview;
+type PnlPreview = PnlWipePreview;
 
 type LoadState<T> =
   | { status: "loading" }
@@ -163,7 +181,11 @@ type SelectableCategory =
   | "vault"
   | "inventory"
   | "deposits"
-  | "wager";
+  | "wager"
+  // New windowed wipes (critical-incident sweep, 2026-06-03). Each has its OWN
+  // independent 12h / 24h / 48h selector (never null/all — always bounded).
+  | "game"
+  | "pnl";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Entry button — the SINGLE "Wipe data" button that replaces the four separate
@@ -253,6 +275,8 @@ function WipeDataDialog({
     inventory: false,
     deposits: false,
     wager: false,
+    game: false,
+    pnl: false,
   });
 
   // True only while a WIPE ALL run is executing — drives the running-phase
@@ -277,6 +301,14 @@ function WipeDataDialog({
   // wager preview so the counts + warning reflect the chosen window.
   const [wagerWindow, setWagerWindow] = useState<WagerWipeWindowHours>(24);
 
+  // Game / PnL windowed wipe state (critical-incident sweep, 2026-06-03). Each
+  // has its OWN independent 12 / 24 / 48 window selector; default 24h. Always
+  // bounded — no "All" sentinel.
+  const [game, setGame] = useState<LoadState<GamePreview> | null>(null);
+  const [gameWindow, setGameWindow] = useState<WipeWindowHours>(24);
+  const [pnl, setPnl] = useState<LoadState<PnlPreview> | null>(null);
+  const [pnlWindow, setPnlWindow] = useState<WipeWindowHours>(24);
+
   // Adjustments are row-selectable (not all-or-nothing): load the wipeable
   // credit rows, let the admin pick a subset.
   const [adjState, setAdjState] =
@@ -299,6 +331,8 @@ function WipeDataDialog({
       inventory: false,
       deposits: false,
       wager: false,
+      game: false,
+      pnl: false,
     });
     setBalance(null);
     setVault(null);
@@ -306,6 +340,10 @@ function WipeDataDialog({
     setDeposits(null);
     setWager(null);
     setWagerWindow(24);
+    setGame(null);
+    setGameWindow(24);
+    setPnl(null);
+    setPnlWindow(24);
     setAdjState(null);
     setAdjSelected(new Set());
     setAdjSearch("");
@@ -468,6 +506,62 @@ function WipeDataDialog({
     [checked.wager, loadWager],
   );
 
+  // Game wipe loader + window change. Same shape as the wager loader.
+  const loadGame = useCallback(
+    (hours: WipeWindowHours = gameWindow) => {
+      setGame({ status: "loading" });
+      previewGameWipe(userId, hours)
+        .then((res) =>
+          setGame(
+            res.success
+              ? { status: "ready", data: res.preview }
+              : { status: "error", error: res.error },
+          ),
+        )
+        .catch((e) => {
+          const msg = e instanceof Error ? e.message : "Failed to load";
+          setGame({ status: "error", error: msg });
+          toast.error(`Could not load the game preview: ${msg}`);
+        });
+    },
+    [userId, gameWindow],
+  );
+  const changeGameWindow = useCallback(
+    (hours: WipeWindowHours) => {
+      setGameWindow(hours);
+      if (checked.game) loadGame(hours);
+    },
+    [checked.game, loadGame],
+  );
+
+  // PnL wipe loader + window change.
+  const loadPnl = useCallback(
+    (hours: WipeWindowHours = pnlWindow) => {
+      setPnl({ status: "loading" });
+      previewPnlWipe(userId, hours)
+        .then((res) =>
+          setPnl(
+            res.success
+              ? { status: "ready", data: res.preview }
+              : { status: "error", error: res.error },
+          ),
+        )
+        .catch((e) => {
+          const msg = e instanceof Error ? e.message : "Failed to load";
+          setPnl({ status: "error", error: msg });
+          toast.error(`Could not load the PnL preview: ${msg}`);
+        });
+    },
+    [userId, pnlWindow],
+  );
+  const changePnlWindow = useCallback(
+    (hours: WipeWindowHours) => {
+      setPnlWindow(hours);
+      if (checked.pnl) loadPnl(hours);
+    },
+    [checked.pnl, loadPnl],
+  );
+
   const loadAdjustments = useCallback(() => {
     setAdjState({ status: "loading" });
     listWipeableAdjustments(userId)
@@ -496,6 +590,8 @@ function WipeDataDialog({
     if (cat === "inventory" && inventory === null) loadInventory();
     if (cat === "deposits" && deposits === null) loadDeposits();
     if (cat === "wager" && wager === null) loadWager();
+    if (cat === "game" && game === null) loadGame();
+    if (cat === "pnl" && pnl === null) loadPnl();
     if (cat === "adjustments" && adjState === null) loadAdjustments();
   }
 
@@ -615,15 +711,42 @@ function WipeDataDialog({
               wager.data.inventoryCount > 0 ||
               wager.data.upgraderGameCount > 0)
           );
+        case "game":
+          return (
+            game?.status === "ready" &&
+            (game.data.ledgerLegCount > 0 ||
+              game.data.inventoryCount > 0 ||
+              game.data.upgraderGameCount > 0)
+          );
+        case "pnl":
+          return (
+            pnl?.status === "ready" &&
+            (pnl.data.ledgerLegCount > 0 ||
+              pnl.data.inventoryCount > 0 ||
+              pnl.data.voucherCount > 0 ||
+              pnl.data.upgraderGameCount > 0)
+          );
         case "adjustments":
           return adjSelected.size > 0;
       }
     },
-    [balance, vault, inventory, deposits, wager, adjSelected],
+    [balance, vault, inventory, deposits, wager, game, pnl, adjSelected],
   );
 
+  // Order: PnL first (LARGEST scope), Game next, then Wager last so a WIPE-ALL
+  // run lets the smaller, more-specific cleanups complete before the biggest
+  // delete starts. Pre-existing categories keep their original positions.
   const SELECTABLE_ORDER: readonly SelectableCategory[] = useMemo(
-    () => ["adjustments", "balance", "vault", "inventory", "deposits", "wager"],
+    () => [
+      "adjustments",
+      "balance",
+      "vault",
+      "inventory",
+      "deposits",
+      "pnl",
+      "game",
+      "wager",
+    ],
     [],
   );
 
@@ -646,6 +769,8 @@ function WipeDataDialog({
     if (c === "inventory") return !inventory || inventory.status === "loading";
     if (c === "deposits") return !deposits || deposits.status === "loading";
     if (c === "wager") return !wager || wager.status === "loading";
+    if (c === "game") return !game || game.status === "loading";
+    if (c === "pnl") return !pnl || pnl.status === "loading";
     if (c === "adjustments") return !adjState || adjState.status === "loading";
     return false;
   });
@@ -658,6 +783,8 @@ function WipeDataDialog({
     if (c === "inventory") return inventory?.status === "error";
     if (c === "deposits") return deposits?.status === "error";
     if (c === "wager") return wager?.status === "error";
+    if (c === "game") return game?.status === "error";
+    if (c === "pnl") return pnl?.status === "error";
     if (c === "adjustments") return adjState?.status === "error";
     return false;
   });
@@ -790,6 +917,8 @@ function WipeDataDialog({
               code,
               adjIds,
               wagerWindow,
+              gameWindow,
+              pnlWindow,
             );
             if (outcome.success) {
               finalResults[i] = {
@@ -848,7 +977,7 @@ function WipeDataDialog({
         router.refresh();
       });
     },
-    [totpCode, userId, router, wagerWindow],
+    [totpCode, userId, router, wagerWindow, gameWindow, pnlWindow],
   );
 
   // Normal "Wipe selected" path: run the ticked, non-empty categories. Empty
@@ -969,6 +1098,14 @@ function WipeDataDialog({
             wagerWindow={wagerWindow}
             onWagerWindowChange={changeWagerWindow}
             onWagerReload={loadWager}
+            game={game}
+            gameWindow={gameWindow}
+            onGameWindowChange={changeGameWindow}
+            onGameReload={loadGame}
+            pnl={pnl}
+            pnlWindow={pnlWindow}
+            onPnlWindowChange={changePnlWindow}
+            onPnlReload={loadPnl}
             adjState={adjState}
             adjFiltered={adjFiltered}
             adjSelected={adjSelected}
@@ -999,6 +1136,10 @@ function WipeDataDialog({
             adjSelectedRows={adjSelectedRows}
             adjDebitCount={adjDebitCount}
             wagerData={wagerData}
+            gameData={
+              checked.game && game?.status === "ready" ? game.data : null
+            }
+            pnlData={checked.pnl && pnl?.status === "ready" ? pnl.data : null}
             moneyTotal={moneyTotal}
             invCount={invCount}
             invValue={invValue}
@@ -1006,6 +1147,8 @@ function WipeDataDialog({
             setTotpCode={setTotpCode}
             allEnabledCategories={allEnabledCategories}
             wagerWindow={wagerWindow}
+            gameWindow={gameWindow}
+            pnlWindow={pnlWindow}
             onWipeAll={handleWipeAll}
             isPending={isPending}
           />
@@ -1095,6 +1238,8 @@ async function runCategory(
   totpCode: string,
   adjIds: string[],
   wagerWindow: WagerWipeWindowHours,
+  gameWindow: WipeWindowHours,
+  pnlWindow: WipeWindowHours,
 ): Promise<{ success: true; message: string } | { success: false; error: string }> {
   if (category === "adjustments") {
     const res = await wipeBalanceAdjustments({
@@ -1157,6 +1302,46 @@ async function runCategory(
       message: `Deleted ${parts.join(" · ") || "nothing"} (${windowLabel}) · ${formatCurrency(res.balanceReduced)} clawed back from balance${skipped}`,
     };
   }
+  if (category === "game") {
+    const res = await wipeGame({ userId, totpCode, windowHours: gameWindow });
+    if (!res.success) return { success: false, error: res.error };
+    const parts: string[] = [];
+    if (res.ledgerLegsDeleted > 0)
+      parts.push(`${res.ledgerLegsDeleted} ledger leg${res.ledgerLegsDeleted === 1 ? "" : "s"}`);
+    if (res.inventoryDeleted > 0)
+      parts.push(`${res.inventoryDeleted} won item${res.inventoryDeleted === 1 ? "" : "s"}`);
+    if (res.upgraderGamesDeleted > 0)
+      parts.push(`${res.upgraderGamesDeleted} upgrader game${res.upgraderGamesDeleted === 1 ? "" : "s"}`);
+    const skipped =
+      res.withdrawalLockedSkipped > 0
+        ? ` · ${res.withdrawalLockedSkipped} withdrawal-locked card${res.withdrawalLockedSkipped === 1 ? "" : "s"} skipped`
+        : "";
+    return {
+      success: true,
+      message: `Deleted ${parts.join(" · ") || "nothing"} (last ${res.windowHours}h) · ${formatCurrency(res.balanceReduced)} clawed back from balance${skipped}`,
+    };
+  }
+  if (category === "pnl") {
+    const res = await wipePnl({ userId, totpCode, windowHours: pnlWindow });
+    if (!res.success) return { success: false, error: res.error };
+    const parts: string[] = [];
+    if (res.ledgerLegsDeleted > 0)
+      parts.push(`${res.ledgerLegsDeleted} ledger leg${res.ledgerLegsDeleted === 1 ? "" : "s"}`);
+    if (res.inventoryDeleted > 0)
+      parts.push(`${res.inventoryDeleted} won item${res.inventoryDeleted === 1 ? "" : "s"}`);
+    if (res.vouchersDeleted > 0)
+      parts.push(`${res.vouchersDeleted} voucher${res.vouchersDeleted === 1 ? "" : "s"}`);
+    if (res.upgraderGamesDeleted > 0)
+      parts.push(`${res.upgraderGamesDeleted} upgrader game${res.upgraderGamesDeleted === 1 ? "" : "s"}`);
+    const skipped =
+      res.withdrawalLockedSkipped > 0
+        ? ` · ${res.withdrawalLockedSkipped} withdrawal-locked card${res.withdrawalLockedSkipped === 1 ? "" : "s"} skipped`
+        : "";
+    return {
+      success: true,
+      message: `Deleted ${parts.join(" · ") || "nothing"} (last ${res.windowHours}h) · ${formatCurrency(res.balanceReduced)} clawed back from balance${skipped}`,
+    };
+  }
   // inventory
   const res = await wipeInventory({ userId, totpCode });
   if (!res.success) return { success: false, error: res.error };
@@ -1189,6 +1374,14 @@ function SelectPhase({
   wagerWindow,
   onWagerWindowChange,
   onWagerReload,
+  game,
+  gameWindow,
+  onGameWindowChange,
+  onGameReload,
+  pnl,
+  pnlWindow,
+  onPnlWindowChange,
+  onPnlReload,
   adjState,
   adjFiltered,
   adjSelected,
@@ -1226,6 +1419,15 @@ function SelectPhase({
   onWagerWindowChange: (hours: WagerWipeWindowHours) => void;
   /** Re-fetch the wager preview for the current window (retry after an error). */
   onWagerReload: () => void;
+  /** Game / PnL windowed-wipe state — independent 12 / 24 / 48 selectors per row. */
+  game: LoadState<GamePreview> | null;
+  gameWindow: WipeWindowHours;
+  onGameWindowChange: (hours: WipeWindowHours) => void;
+  onGameReload: () => void;
+  pnl: LoadState<PnlPreview> | null;
+  pnlWindow: WipeWindowHours;
+  onPnlWindowChange: (hours: WipeWindowHours) => void;
+  onPnlReload: () => void;
   adjState: LoadState<WipeableAdjustment[]> | null;
   adjFiltered: WipeableAdjustment[];
   adjSelected: Set<string>;
@@ -1311,7 +1513,9 @@ function SelectPhase({
                   key === "vault" ||
                   key === "inventory" ||
                   key === "deposits" ||
-                  key === "wager";
+                  key === "wager" ||
+                  key === "game" ||
+                  key === "pnl";
                 return (
                   <CategoryRow
                     key={key}
@@ -1345,6 +1549,22 @@ function SelectPhase({
                         window={wagerWindow}
                         onWindowChange={onWagerWindowChange}
                         onReload={onWagerReload}
+                      />
+                    )}
+                    {key === "game" && checked.game && (
+                      <GameInline
+                        state={game}
+                        window={gameWindow}
+                        onWindowChange={onGameWindowChange}
+                        onReload={onGameReload}
+                      />
+                    )}
+                    {key === "pnl" && checked.pnl && (
+                      <PnlInline
+                        state={pnl}
+                        window={pnlWindow}
+                        onWindowChange={onPnlWindowChange}
+                        onReload={onPnlReload}
                       />
                     )}
                     {key === "adjustments" && checked.adjustments && (
@@ -1869,6 +2089,295 @@ function WagerWindowSelector({
   );
 }
 
+/**
+ * Inline preview for the Game (12 / 24 / 48h) wipe. Smaller than the Wager
+ * preview — Game wipe is windowed-only (no "All" sentinel) and only
+ * decrements total_won (not total_wagered). Shape mirrors WagerInline.
+ */
+function GameInline({
+  state,
+  window,
+  onWindowChange,
+  onReload,
+}: {
+  state: LoadState<GamePreview> | null;
+  window: WipeWindowHours;
+  onWindowChange: (hours: WipeWindowHours) => void;
+  onReload: () => void;
+}) {
+  return (
+    <div className="space-y-2.5">
+      <WipeWindowSelector value={window} onChange={onWindowChange} />
+      {(!state || state.status === "loading") && (
+        <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" />
+          Loading…
+        </div>
+      )}
+      {state?.status === "error" && (
+        <div className="flex items-start justify-between gap-2 rounded border border-rose-500/30 bg-rose-500/5 px-2.5 py-2">
+          <p className="text-xs text-rose-500">
+            Could not load the game preview{state.error ? `: ${state.error}` : ""}.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-6 shrink-0 px-2 text-xs"
+            onClick={onReload}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+      {state?.status === "ready" && (
+        <div className="space-y-2 text-sm">
+          <p className="flex items-start gap-1.5 rounded border border-amber-500/30 bg-amber-500/[0.06] px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400">
+            <Info className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              Pure gameplay events in the last {window}h. Only{" "}
+              <span className="font-medium">total_won</span> is decremented —{" "}
+              <span className="font-medium">total_wagered</span> is left as
+              bookkeeping (Wager wipe&apos;s territory).
+            </span>
+          </p>
+          {state.data.ledgerLegCount === 0 &&
+          state.data.inventoryCount === 0 &&
+          state.data.upgraderGameCount === 0 ? (
+            <EmptyNote what={`gameplay events in the last ${window}h`} />
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">
+                  {state.data.ledgerLegCount.toLocaleString()} wager + payout
+                  ledger leg{state.data.ledgerLegCount === 1 ? "" : "s"}
+                </span>
+                <span className={cn("font-semibold tabular-nums", ROSE)}>
+                  {formatCurrency(state.data.payoutTotal)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">
+                  {state.data.inventoryCount.toLocaleString()} won pack/battle
+                  item{state.data.inventoryCount === 1 ? "" : "s"}
+                </span>
+                <span className={cn("font-semibold tabular-nums", ROSE)}>
+                  {formatCurrency(state.data.inventoryValue)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">
+                  {state.data.upgraderTablePresent
+                    ? `${state.data.upgraderGameCount.toLocaleString()} upgrader game${state.data.upgraderGameCount === 1 ? "" : "s"}`
+                    : "Upgrader games (table not on this DB)"}
+                </span>
+              </div>
+              {state.data.withdrawalLockedSkipped > 0 && (
+                <p className="flex items-start gap-1.5 rounded border border-amber-500/30 bg-amber-500/[0.06] px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400">
+                  <Info className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    {state.data.withdrawalLockedSkipped} won card
+                    {state.data.withdrawalLockedSkipped === 1 ? "" : "s"} will be
+                    SKIPPED — they back an in-flight withdrawal.
+                  </span>
+                </p>
+              )}
+              <DangerWarning kind="game" />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Inline preview for the PnL (12 / 24 / 48h) wipe — the LARGEST of the three
+ * windowed wipes. Same shape as GameInline plus deposits/withdrawals/rewards/
+ * vouchers/adjustments summary.
+ */
+function PnlInline({
+  state,
+  window,
+  onWindowChange,
+  onReload,
+}: {
+  state: LoadState<PnlPreview> | null;
+  window: WipeWindowHours;
+  onWindowChange: (hours: WipeWindowHours) => void;
+  onReload: () => void;
+}) {
+  return (
+    <div className="space-y-2.5">
+      <WipeWindowSelector value={window} onChange={onWindowChange} />
+      {(!state || state.status === "loading") && (
+        <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" />
+          Loading…
+        </div>
+      )}
+      {state?.status === "error" && (
+        <div className="flex items-start justify-between gap-2 rounded border border-rose-500/30 bg-rose-500/5 px-2.5 py-2">
+          <p className="text-xs text-rose-500">
+            Could not load the PnL preview{state.error ? `: ${state.error}` : ""}.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-6 shrink-0 px-2 text-xs"
+            onClick={onReload}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+      {state?.status === "ready" && (
+        <div className="space-y-2 text-sm">
+          <p className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/[0.07] px-2.5 py-1.5 text-xs text-rose-500">
+            <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              LARGEST scope of the three windowed wipes. Removes every
+              PnL-affecting event in the last {window}h — deposits, withdrawals
+              ledger legs, gameplay, rewards, vouchers, admin adjustments.
+              Counters: total_wagered / total_won / total_deposited /
+              total_withdrawn all decremented. Snapshotted + restorable.
+            </span>
+          </p>
+          {state.data.ledgerLegCount === 0 &&
+          state.data.inventoryCount === 0 &&
+          state.data.voucherCount === 0 &&
+          state.data.upgraderGameCount === 0 ? (
+            <EmptyNote what={`PnL-affecting events in the last ${window}h`} />
+          ) : (
+            <>
+              <div className="divide-y rounded border bg-background/50">
+                <div className="flex items-center justify-between px-2.5 py-1.5 text-xs">
+                  <span className="text-muted-foreground">
+                    Deposits (cash in)
+                  </span>
+                  <span className={cn("tabular-nums font-medium", EMERALD)}>
+                    {formatCurrency(state.data.depositSum)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between px-2.5 py-1.5 text-xs">
+                  <span className="text-muted-foreground">
+                    Withdrawals ledger (cash out)
+                  </span>
+                  <span className={cn("tabular-nums font-medium", ROSE)}>
+                    {formatCurrency(state.data.withdrawalSum)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between px-2.5 py-1.5 text-xs">
+                  <span className="text-muted-foreground">
+                    Wager / payout legs (Σ wager {formatCurrency(state.data.wagerSum)})
+                  </span>
+                  <span className={cn("tabular-nums font-medium", ROSE)}>
+                    {formatCurrency(state.data.payoutSum)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between px-2.5 py-1.5 text-xs">
+                  <span className="text-muted-foreground">Reward payouts</span>
+                  <span className={cn("tabular-nums font-medium", ROSE)}>
+                    {formatCurrency(state.data.rewardSum)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between px-2.5 py-1.5 text-xs">
+                  <span className="text-muted-foreground">
+                    Won pack/battle items
+                  </span>
+                  <span className={cn("tabular-nums font-medium", ROSE)}>
+                    {state.data.inventoryCount.toLocaleString()} ·{" "}
+                    {formatCurrency(state.data.inventoryValue)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between px-2.5 py-1.5 text-xs">
+                  <span className="text-muted-foreground">Vouchers created</span>
+                  <span className={cn("tabular-nums font-medium", ROSE)}>
+                    {state.data.voucherCount.toLocaleString()} ·{" "}
+                    {formatCurrency(state.data.voucherValue)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between px-2.5 py-1.5 text-xs">
+                  <span className="text-muted-foreground">
+                    Upgrader games
+                  </span>
+                  <span className="text-foreground/80 tabular-nums">
+                    {state.data.upgraderTablePresent
+                      ? state.data.upgraderGameCount.toLocaleString()
+                      : "table not on this DB"}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-1.5 text-xs">
+                <span className="text-muted-foreground">
+                  Will be clawed back from balance
+                </span>
+                <span className={cn("font-semibold tabular-nums", ROSE)}>
+                  {formatCurrency(state.data.balanceClawback)}
+                </span>
+              </div>
+              {state.data.withdrawalLockedSkipped > 0 && (
+                <p className="flex items-start gap-1.5 rounded border border-amber-500/30 bg-amber-500/[0.06] px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400">
+                  <Info className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    {state.data.withdrawalLockedSkipped} won card
+                    {state.data.withdrawalLockedSkipped === 1 ? "" : "s"} will be
+                    SKIPPED — they back an in-flight withdrawal.
+                  </span>
+                </p>
+              )}
+              <DangerWarning kind="pnl" />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Unified 12 / 24 / 48 hour selector used by the Game + PnL windowed wipes.
+ * No "All" sentinel — these wipes are always bounded.
+ */
+function WipeWindowSelector({
+  value,
+  onChange,
+}: {
+  value: WipeWindowHours;
+  onChange: (hours: WipeWindowHours) => void;
+}) {
+  const options = Array.isArray(WIPE_WINDOW_OPTIONS) ? WIPE_WINDOW_OPTIONS : [];
+  return (
+    <div className="space-y-1">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        Time window
+      </p>
+      <div className="inline-flex rounded-md border bg-background/50 p-0.5">
+        {options.map((h) => {
+          const active = value === h;
+          return (
+            <button
+              key={h}
+              type="button"
+              onClick={() => onChange(h as WipeWindowHours)}
+              aria-pressed={active}
+              className={cn(
+                "rounded px-2.5 py-1 text-xs font-medium tabular-nums transition-colors",
+                active
+                  ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+              )}
+            >
+              {h}h
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** Human label for a user_inventory.source_type value. */
 function sourceLabel(source: string): string {
   switch (source) {
@@ -2175,6 +2684,8 @@ function ConfirmPhase({
   adjSelectedRows,
   adjDebitCount,
   wagerData,
+  gameData,
+  pnlData,
   moneyTotal,
   invCount,
   invValue,
@@ -2182,6 +2693,8 @@ function ConfirmPhase({
   setTotpCode,
   allEnabledCategories,
   wagerWindow,
+  gameWindow,
+  pnlWindow,
   onWipeAll,
   isPending,
 }: {
@@ -2199,6 +2712,10 @@ function ConfirmPhase({
   adjDebitCount: number;
   /** The wager preview when the category is ticked + ready, else null. */
   wagerData: WagerPreview | null;
+  /** Game wipe preview when ticked + ready. */
+  gameData: GamePreview | null;
+  /** PnL wipe preview when ticked + ready. */
+  pnlData: PnlPreview | null;
   moneyTotal: number;
   invCount: number;
   invValue: number;
@@ -2208,6 +2725,10 @@ function ConfirmPhase({
   allEnabledCategories: readonly SelectableCategory[];
   /** The wager window WIPE ALL / the wager step will use (12/24/48/null="All"). */
   wagerWindow: WagerWipeWindowHours;
+  /** The Game wipe window (12 / 24 / 48). */
+  gameWindow: WipeWindowHours;
+  /** The PnL wipe window (12 / 24 / 48). */
+  pnlWindow: WipeWindowHours;
   /** Fire the nuke-everything WIPE ALL run (every enabled category). */
   onWipeAll: () => void;
   isPending: boolean;
@@ -2218,6 +2739,8 @@ function ConfirmPhase({
   const wantsInventory = runnableCategories.includes("inventory");
   const wantsDeposits = runnableCategories.includes("deposits");
   const wantsWager = runnableCategories.includes("wager") && wagerData !== null;
+  const wantsGame = runnableCategories.includes("game") && gameData !== null;
+  const wantsPnl = runnableCategories.includes("pnl") && pnlData !== null;
 
   return (
     <div className="space-y-3">
@@ -2314,6 +2837,67 @@ function ConfirmPhase({
             <p className="text-xs text-muted-foreground">
               {invCount.toLocaleString()} item{invCount === 1 ? "" : "s"} ·{" "}
               {formatCurrency(invValue)} estimated value
+            </p>
+          </SummaryBlock>
+        )}
+
+        {wantsPnl && pnlData && (
+          <SummaryBlock
+            icon={Receipt}
+            label={`PnL wipe · last ${pnlData.windowHours}h (${pnlData.ledgerLegCount.toLocaleString()} leg${pnlData.ledgerLegCount === 1 ? "" : "s"})`}
+            amount={pnlData.balanceClawback}
+            danger="LARGEST scope — deletes every PnL-affecting event in window (deposits, withdrawals ledger, gameplay, rewards, vouchers, admin adjustments). Counters: wagered/won/deposited/withdrawn all decremented. Recoverable via snapshot."
+          >
+            <p className="text-xs text-muted-foreground">
+              Last {pnlData.windowHours}h ·{" "}
+              {pnlData.ledgerLegCount.toLocaleString()} ledger leg
+              {pnlData.ledgerLegCount === 1 ? "" : "s"} (deposits{" "}
+              {formatCurrency(pnlData.depositSum)} · withdrawals{" "}
+              {formatCurrency(pnlData.withdrawalSum)} · gameplay payouts{" "}
+              {formatCurrency(pnlData.payoutSum)} · rewards{" "}
+              {formatCurrency(pnlData.rewardSum)}) ·{" "}
+              {pnlData.inventoryCount.toLocaleString()} won item
+              {pnlData.inventoryCount === 1 ? "" : "s"} (
+              {formatCurrency(pnlData.inventoryValue)}) ·{" "}
+              {pnlData.voucherCount.toLocaleString()} voucher
+              {pnlData.voucherCount === 1 ? "" : "s"} (
+              {formatCurrency(pnlData.voucherValue)})
+              {pnlData.upgraderTablePresent
+                ? ` · ${pnlData.upgraderGameCount.toLocaleString()} upgrader game${pnlData.upgraderGameCount === 1 ? "" : "s"}`
+                : ""}
+              {" · "}
+              {formatCurrency(pnlData.balanceClawback)} clawed back from balance
+              {pnlData.withdrawalLockedSkipped > 0
+                ? ` · ${pnlData.withdrawalLockedSkipped} withdrawal-locked card${pnlData.withdrawalLockedSkipped === 1 ? "" : "s"} skipped`
+                : ""}
+              .
+            </p>
+          </SummaryBlock>
+        )}
+
+        {wantsGame && gameData && (
+          <SummaryBlock
+            icon={Gamepad2}
+            label={`Game wipe · last ${gameData.windowHours}h (${gameData.ledgerLegCount.toLocaleString()} leg${gameData.ledgerLegCount === 1 ? "" : "s"})`}
+            amount={gameData.payoutTotal}
+            danger="Pure gameplay events in window — decrements total_won only (not total_wagered). Recoverable via snapshot."
+          >
+            <p className="text-xs text-muted-foreground">
+              Last {gameData.windowHours}h ·{" "}
+              {gameData.ledgerLegCount.toLocaleString()} wager + payout leg
+              {gameData.ledgerLegCount === 1 ? "" : "s"} ·{" "}
+              {gameData.inventoryCount.toLocaleString()} won item
+              {gameData.inventoryCount === 1 ? "" : "s"} (
+              {formatCurrency(gameData.inventoryValue)})
+              {gameData.upgraderTablePresent
+                ? ` · ${gameData.upgraderGameCount.toLocaleString()} upgrader game${gameData.upgraderGameCount === 1 ? "" : "s"}`
+                : ""}
+              {" · "}
+              {formatCurrency(gameData.payoutTotal)} clawed back from balance
+              {gameData.withdrawalLockedSkipped > 0
+                ? ` · ${gameData.withdrawalLockedSkipped} withdrawal-locked card${gameData.withdrawalLockedSkipped === 1 ? "" : "s"} skipped`
+                : ""}
+              .
             </p>
           </SummaryBlock>
         )}
@@ -2431,6 +3015,8 @@ function ConfirmPhase({
         everCreator={everCreator}
         allEnabledCategories={allEnabledCategories}
         wagerWindow={wagerWindow}
+        gameWindow={gameWindow}
+        pnlWindow={pnlWindow}
         totpReady={Boolean(totpCode.trim())}
         isPending={isPending}
         onWipeAll={onWipeAll}
@@ -2452,6 +3038,8 @@ function WipeAllPanel({
   everCreator,
   allEnabledCategories,
   wagerWindow,
+  gameWindow,
+  pnlWindow,
   totpReady,
   isPending,
   onWipeAll,
@@ -2460,6 +3048,8 @@ function WipeAllPanel({
   allEnabledCategories: readonly SelectableCategory[];
   /** The wager window the wager step inside WIPE ALL will use. */
   wagerWindow: WagerWipeWindowHours;
+  gameWindow: WipeWindowHours;
+  pnlWindow: WipeWindowHours;
   totpReady: boolean;
   isPending: boolean;
   onWipeAll: () => void;
@@ -2470,6 +3060,8 @@ function WipeAllPanel({
   // it so a bounded window (e.g. 24h) doesn't silently leave older gameplay
   // behind without the owner realizing.
   const wagerInAll = allEnabledCategories.includes("wager");
+  const gameInAll = allEnabledCategories.includes("game");
+  const pnlInAll = allEnabledCategories.includes("pnl");
 
   return (
     <div className="rounded-md border-2 border-rose-600/70 bg-rose-600/[0.09] p-3.5 shadow-[0_0_0_1px_rgba(225,29,72,0.15)]">
@@ -2513,6 +3105,18 @@ function WipeAllPanel({
                   {wagerWindow === null
                     ? "Wager / gameplay runs for ALL gameplay (may be slow on a very heavy account — adjust the time window above)."
                     : `Wager / gameplay runs for the last ${wagerWindow}h only — older gameplay stays until wiped (change the time window above).`}
+                </p>
+              )}
+              {gameInAll && (
+                <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                  <Info className="mt-px size-3 shrink-0" />
+                  Game wipe runs for the last {gameWindow}h.
+                </p>
+              )}
+              {pnlInAll && (
+                <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                  <Info className="mt-px size-3 shrink-0" />
+                  PnL wipe runs for the last {pnlWindow}h (largest scope).
                 </p>
               )}
             </div>
@@ -2725,13 +3329,21 @@ function RunStatusBadge({ status }: { status: RunStatus }) {
 // ───────────────────────────────────────────────────────────────────────────
 
 /** Per-category live-financial danger warning shown inline in the preview. */
-function DangerWarning({ kind }: { kind: "deposits" | "wager" }) {
-  const copy =
-    kind === "deposits"
-      ? "Deletes real deposit history and reduces the lifetime deposited counter. Recoverable via snapshot, but this is real financial data — not house-granted content value."
-      : kind === "wager"
-        ? "Deletes the user's wager + payout ledger legs, won pack/battle inventory and upgrader games — real gaming history that drives GGR / the gaming margin / P&L. Recoverable (best-effort) via snapshot. The balance is reduced only by the payout legs (never inflated); game_sessions/battles shells are left intact."
-        : "Deletes real financial/transaction history — recoverable via snapshot.";
+function DangerWarning({ kind }: { kind: "deposits" | "wager" | "game" | "pnl" }) {
+  let copy: string;
+  if (kind === "deposits") {
+    copy =
+      "Deletes real deposit history and reduces the lifetime deposited counter. Recoverable via snapshot, but this is real financial data — not house-granted content value.";
+  } else if (kind === "wager") {
+    copy =
+      "Deletes the user's wager + payout ledger legs, won pack/battle inventory and upgrader games — real gaming history that drives GGR / the gaming margin / P&L. Recoverable (best-effort) via snapshot. The balance is reduced only by the payout legs (never inflated); game_sessions/battles shells are left intact.";
+  } else if (kind === "game") {
+    copy =
+      "Deletes pure gameplay events in the selected window — pack openings, battles, upgrader, won pack/battle inventory + provably-fair children. Decrements total_won (not total_wagered — Wager wipe's territory). Recoverable via snapshot.";
+  } else {
+    copy =
+      "LARGEST scope. Deletes every PnL-affecting event in the selected window — deposits, withdrawals ledger legs, gameplay legs + won inventory, rewards, vouchers, admin balance adjustments. Decrements total_wagered / total_won / total_deposited / total_withdrawn by the deleted sums. Recoverable via snapshot.";
+  }
   return (
     <p className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/[0.07] px-2.5 py-1.5 text-xs text-rose-500">
       <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />

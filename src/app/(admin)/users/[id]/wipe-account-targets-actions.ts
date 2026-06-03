@@ -1329,6 +1329,186 @@ export async function restoreAccountWipe(
           if (updated.count !== 1) throw new Error("Balance changed concurrently — please retry");
         }
       });
+    } else if (snapshot.type === "game") {
+      // Game wipe restore. Structurally identical to wager-restore minus
+      // total_wagered (Game wipe never decremented it — disjoint counter
+      // behaviour). Re-insert legs / inventory / PF / upgrader games verbatim
+      // and re-add EXACTLY the recorded `balanceReduction` (payout clawback)
+      // + `totalWonReduction`, additively to the LIVE row. No optimistic
+      // version check on the row — re-adds are computed from the current row
+      // values (additive), so we use the live `version` only to bump it.
+      const stripUndef = (r: Record<string, unknown>): Record<string, unknown> => {
+        const copy: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(r)) {
+          if (v === undefined) continue;
+          copy[k] = v;
+        }
+        return copy;
+      };
+      if (
+        !Array.isArray(snapshot.ledgerRows) ||
+        !Array.isArray(snapshot.inventoryRows) ||
+        !Array.isArray(snapshot.provablyFairRows) ||
+        !Array.isArray(snapshot.upgraderGameRows)
+      ) {
+        return { success: false, error: "Snapshot is malformed — cannot restore" };
+      }
+      const ledgerForInsert = snapshot.ledgerRows.map(stripUndef);
+      const inventoryForInsert = snapshot.inventoryRows.map(stripUndef);
+      const pfForInsert = snapshot.provablyFairRows.map(stripUndef);
+      const upgraderForInsert = snapshot.upgraderGameRows.map(stripUndef);
+      const addBackBalance = toNumber(snapshot.balanceReduction);
+      const addBackTotalWon = toNumber(snapshot.totalWonReduction);
+
+      await db.$transaction(async (tx) => {
+        if (ledgerForInsert.length > 0) {
+          await tx.ledger_transactions.createMany({
+            data: ledgerForInsert as unknown as Prisma.ledger_transactionsCreateManyInput[],
+            skipDuplicates: true,
+          });
+        }
+        if (inventoryForInsert.length > 0) {
+          await tx.user_inventory.createMany({
+            data: inventoryForInsert as unknown as Prisma.user_inventoryCreateManyInput[],
+            skipDuplicates: true,
+          });
+        }
+        if (pfForInsert.length > 0) {
+          await tx.provably_fair_results.createMany({
+            data: pfForInsert as unknown as Prisma.provably_fair_resultsCreateManyInput[],
+            skipDuplicates: true,
+          });
+        }
+        if (upgraderForInsert.length > 0) {
+          const probe = await tx.$queryRawUnsafe<Array<{ exists: string | null }>>(
+            `SELECT to_regclass('public.upgrader_games')::text AS exists`,
+          );
+          if (probe?.[0]?.exists) {
+            for (const row of upgraderForInsert) {
+              const keys = Object.keys(row);
+              if (keys.length === 0) continue;
+              const cols = keys.map((k) => `"${k.replace(/"/g, '""')}"`).join(", ");
+              const placeholders = keys.map((_, i) => `$${i + 1}`).join(", ");
+              const values = keys.map((k) => row[k]);
+              await tx.$executeRawUnsafe(
+                `INSERT INTO upgrader_games (${cols}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
+                ...values,
+              );
+            }
+          }
+        }
+        // Re-add balance + total_won additively to the live row, NO optimistic
+        // version check (same Pattern A/B rationale as the destructive wipe;
+        // restore is additive so we can't lose data even if a writer landed
+        // between read and write — but we still bump version so cached reads
+        // invalidate).
+        if (addBackBalance > 0 || addBackTotalWon > 0) {
+          const updated = await tx.$executeRaw`
+            UPDATE "balances"
+            SET available_balance = available_balance + ${addBackBalance}::numeric,
+                total_won = total_won + ${addBackTotalWon}::numeric,
+                version = version + 1
+            WHERE user_id = ${snapshot.userId}
+          `;
+          if (updated !== 1) throw new Error("User balances not found");
+        }
+      });
+    } else if (snapshot.type === "pnl") {
+      // PnL wipe restore. Re-insert the full PnL-affecting row set: ledger
+      // legs, inventory, PF (after inventory), upgrader games, vouchers.
+      // Re-add the recorded balance + four lifetime-counter reductions
+      // additively to the live row.
+      const stripUndef = (r: Record<string, unknown>): Record<string, unknown> => {
+        const copy: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(r)) {
+          if (v === undefined) continue;
+          copy[k] = v;
+        }
+        return copy;
+      };
+      if (
+        !Array.isArray(snapshot.ledgerRows) ||
+        !Array.isArray(snapshot.inventoryRows) ||
+        !Array.isArray(snapshot.provablyFairRows) ||
+        !Array.isArray(snapshot.upgraderGameRows) ||
+        !Array.isArray(snapshot.voucherRows)
+      ) {
+        return { success: false, error: "Snapshot is malformed — cannot restore" };
+      }
+      const ledgerForInsert = snapshot.ledgerRows.map(stripUndef);
+      const inventoryForInsert = snapshot.inventoryRows.map(stripUndef);
+      const pfForInsert = snapshot.provablyFairRows.map(stripUndef);
+      const upgraderForInsert = snapshot.upgraderGameRows.map(stripUndef);
+      const voucherForInsert = snapshot.voucherRows.map(stripUndef);
+      const addBackBalance = toNumber(snapshot.availableBalanceReduction);
+      const addBackWagered = toNumber(snapshot.totalWageredReduction);
+      const addBackWon = toNumber(snapshot.totalWonReduction);
+      const addBackDeposited = toNumber(snapshot.totalDepositedReduction);
+      const addBackWithdrawn = toNumber(snapshot.totalWithdrawnReduction);
+
+      await db.$transaction(async (tx) => {
+        if (ledgerForInsert.length > 0) {
+          await tx.ledger_transactions.createMany({
+            data: ledgerForInsert as unknown as Prisma.ledger_transactionsCreateManyInput[],
+            skipDuplicates: true,
+          });
+        }
+        if (inventoryForInsert.length > 0) {
+          await tx.user_inventory.createMany({
+            data: inventoryForInsert as unknown as Prisma.user_inventoryCreateManyInput[],
+            skipDuplicates: true,
+          });
+        }
+        if (pfForInsert.length > 0) {
+          await tx.provably_fair_results.createMany({
+            data: pfForInsert as unknown as Prisma.provably_fair_resultsCreateManyInput[],
+            skipDuplicates: true,
+          });
+        }
+        if (upgraderForInsert.length > 0) {
+          const probe = await tx.$queryRawUnsafe<Array<{ exists: string | null }>>(
+            `SELECT to_regclass('public.upgrader_games')::text AS exists`,
+          );
+          if (probe?.[0]?.exists) {
+            for (const row of upgraderForInsert) {
+              const keys = Object.keys(row);
+              if (keys.length === 0) continue;
+              const cols = keys.map((k) => `"${k.replace(/"/g, '""')}"`).join(", ");
+              const placeholders = keys.map((_, i) => `$${i + 1}`).join(", ");
+              const values = keys.map((k) => row[k]);
+              await tx.$executeRawUnsafe(
+                `INSERT INTO upgrader_games (${cols}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
+                ...values,
+              );
+            }
+          }
+        }
+        if (voucherForInsert.length > 0) {
+          await tx.vouchers.createMany({
+            data: voucherForInsert as unknown as Prisma.vouchersCreateManyInput[],
+            skipDuplicates: true,
+          });
+        }
+        if (
+          addBackBalance > 0 ||
+          addBackWagered > 0 ||
+          addBackWon > 0 ||
+          addBackDeposited > 0 ||
+          addBackWithdrawn > 0
+        ) {
+          const updated = await tx.$executeRaw`
+            UPDATE "balances"
+            SET available_balance = available_balance + ${addBackBalance}::numeric,
+                total_wagered = total_wagered + ${addBackWagered}::numeric,
+                total_won = total_won + ${addBackWon}::numeric,
+                total_deposited = total_deposited + ${addBackDeposited}::numeric,
+                total_withdrawn = total_withdrawn + ${addBackWithdrawn}::numeric,
+                version = version + 1
+            WHERE user_id = ${snapshot.userId}
+          `;
+          if (updated !== 1) throw new Error("User balances not found");
+        }
+      });
     } else {
       return { success: false, error: "Unknown wipe type — cannot restore" };
     }

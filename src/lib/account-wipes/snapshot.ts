@@ -45,7 +45,13 @@ export type AccountWipeType =
   | "vault"
   | "inventory"
   | "deposits"
-  | "wager";
+  | "wager"
+  // ── Windowed wipes added 2026-06-03 (critical-incident sweep) ──
+  // Same admin_account_wipes store, distinguished by the `wipe_type` column +
+  // the typed snapshot payload below. Each is independently snapshot-restorable
+  // exactly like the existing five wipe types.
+  | "game"
+  | "pnl";
 
 export const ACCOUNT_WIPE_TYPES: readonly AccountWipeType[] = [
   "balance",
@@ -53,6 +59,8 @@ export const ACCOUNT_WIPE_TYPES: readonly AccountWipeType[] = [
   "inventory",
   "deposits",
   "wager",
+  "game",
+  "pnl",
 ] as const;
 
 export function isAccountWipeType(v: unknown): v is AccountWipeType {
@@ -206,12 +214,102 @@ export type WagerWipeSnapshot = {
   windowCutoff?: string | null;
 };
 
+/**
+ * Snapshot payload for a "game" (gameplay-only events) wipe.
+ *
+ * STRUCTURALLY identical to a wager snapshot: the same row collections + the
+ * same balance-clawback decimal. The DIFFERENCE between the two wipes is at
+ * the COUNTER layer — a Game wipe only decrements `balances.total_won`
+ * (gameplay payouts the user "won"), and DOES NOT touch
+ * `balances.total_wagered` (the lifetime stake counter, kept as bookkeeping).
+ * This makes the two wipes structurally disjoint at the counter layer: a
+ * subsequent Wager wipe over the same gameplay would still decrement
+ * total_wagered without re-deleting the rows (the legs would be gone, but the
+ * counter is independent).
+ *
+ * `totalWonReduction` is the EXACT clamped amount subtracted from
+ * `balances.total_won` (= Σ deleted payout-leg magnitudes + Σ deleted
+ * won-inventory `value_at_obtained`, clamped ≥ 0). Restore re-adds EXACTLY
+ * this — symmetric.
+ */
+export type GameWipeSnapshot = {
+  userId: string;
+  ledgerRows: Array<Record<string, unknown>>;
+  inventoryRows: Array<Record<string, unknown>>;
+  provablyFairRows: Array<Record<string, unknown>>;
+  upgraderGameRows: Array<Record<string, unknown>>;
+  /** Exact amount removed from available_balance (decimal string; ≥ 0). */
+  balanceReduction: string;
+  /** Exact amount subtracted from balances.total_won (clamped ≥0; decimal string). */
+  totalWonReduction: string;
+  /** Window the wipe ran for (12 / 24 / 48 hours — Game wipe is always bounded). */
+  windowHours: number;
+  /** ISO cutoff the window resolved to (rows with ts ≥ this). Informational. */
+  windowCutoff: string;
+};
+
+/**
+ * Snapshot payload for a "pnl" (broadest PnL-affecting events) wipe.
+ *
+ * The largest scope of the three windowed wipes: deletes every PnL-affecting
+ * ledger leg in the chosen window — deposits, the `card_withdrawal` ledger
+ * legs, the wager + gaming-payout legs, the reward-payout legs, admin balance
+ * adjustments (NOT manual-withdrawal debits — those touch `total_withdrawn`
+ * differently), upgrader_games — PLUS the won pack/battle inventory rows in
+ * window AND the vouchers created in window. Snapshot-first + restorable.
+ *
+ * COUNTER REDUCTIONS (clamped ≥0; each is the EXACT amount Restore re-adds):
+ *   • `availableBalanceReduction` — payout (credit) legs' summed magnitude
+ *     that moved the live balance up; deleting them claws that back. Wager
+ *     (debit) legs DELETE without changing the balance (BALANCE RULE — never
+ *     inflate).
+ *   • `totalWageredReduction`     — Σ wager-leg magnitudes (the stake removed).
+ *   • `totalWonReduction`         — Σ payout-leg magnitudes + Σ won-inventory
+ *                                    `value_at_obtained`.
+ *   • `totalDepositedReduction`   — Σ deleted `deposit` leg magnitudes.
+ *   • `totalWithdrawnReduction`   — Σ deleted `card_withdrawal` ledger
+ *                                    magnitudes (matches the
+ *                                    `total_withdrawn` counter conceptually,
+ *                                    even though the production site does not
+ *                                    move that counter for card withdrawals —
+ *                                    see pnl.ts; the reduction is what the
+ *                                    wipe subtracts, restore re-adds exactly).
+ *
+ * Withdrawal-locked inventory (cards bundled into an in-flight withdrawal) is
+ * SKIPPED (corrupting an active withdrawal is unsafe); the count is surfaced.
+ */
+export type PnlWipeSnapshot = {
+  userId: string;
+  /** The union of every PnL-affecting ledger leg deleted in the window. */
+  ledgerRows: Array<Record<string, unknown>>;
+  /** The won pack/battle inventory rows deleted in the window. */
+  inventoryRows: Array<Record<string, unknown>>;
+  /** Their `provably_fair_results` children (FK cascade — restored after inventory). */
+  provablyFairRows: Array<Record<string, unknown>>;
+  /** upgrader_games rows deleted in the window (raw SQL — empty when the table is absent). */
+  upgraderGameRows: Array<Record<string, unknown>>;
+  /** `vouchers` rows created in the window that were deleted. */
+  voucherRows: Array<Record<string, unknown>>;
+  /** Exact reductions — see field-by-field doc above. All ≥ 0. */
+  availableBalanceReduction: string;
+  totalWageredReduction: string;
+  totalWonReduction: string;
+  totalDepositedReduction: string;
+  totalWithdrawnReduction: string;
+  /** Window the wipe ran for (12 / 24 / 48 hours). */
+  windowHours: number;
+  /** ISO cutoff the window resolved to (rows with ts ≥ this). */
+  windowCutoff: string;
+};
+
 export type AccountWipeSnapshot =
   | ({ type: "balance" } & BalanceWipeSnapshot)
   | ({ type: "vault" } & VaultWipeSnapshot)
   | ({ type: "inventory" } & InventoryWipeSnapshot)
   | ({ type: "deposits" } & DepositsWipeSnapshot)
-  | ({ type: "wager" } & WagerWipeSnapshot);
+  | ({ type: "wager" } & WagerWipeSnapshot)
+  | ({ type: "game" } & GameWipeSnapshot)
+  | ({ type: "pnl" } & PnlWipeSnapshot);
 
 /**
  * JSON.stringify replacer that keeps Decimal.js / BigInt values addressable

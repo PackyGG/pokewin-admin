@@ -30,6 +30,10 @@
  * means "All / everything" (no lower time bound — the full-wipe behaviour).
  * A bounded value caps the delete to gameplay whose timestamp is ≥ the cutoff
  * so a heavy account completes inside the statement timeout.
+ *
+ * BACK-COMPAT: `null` is preserved for the Wager wipe alone (existing snapshots
+ * + audit metadata reference this shape). The new Game / PnL windowed wipes
+ * use `WipeWindowHours` from `./window.ts` (12/24/48 only — always bounded).
  */
 export type WagerWipeWindowHours = 12 | 24 | 48 | null;
 
