@@ -2,7 +2,9 @@ import "server-only";
 
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { MS_PER_DAY } from "@/lib/utils/time";
 import { withTiming } from "@/lib/observability/query-timings";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { blacklistNotInClause } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
@@ -35,6 +37,9 @@ import {
   upgraderMetrics,
   sumLedgerTypes,
   type MetricWindow,
+  type WindowMetrics,
+  type GamingLegs,
+  type RewardCost,
 } from "@/lib/metrics/queries";
 // The CANONICAL "real customer" scope — staff + blacklist dropped,
 // creators KEPT, creator-on-session rows excluded per-row via session
@@ -66,11 +71,15 @@ import { WAGER_LEG_FILTER, PAYOUT_LEG_FILTER } from "@/lib/metrics/gaming-sql";
  * The breakdown is organised into the THREE canonical groups the metric
  * partition defines (`ledger-sets.ts`):
  *
- *   1. Gaming payouts — the payout side of GGR. The dominant pack/battle
- *      win (`user_inventory.value_at_obtained` delta) + the `battle_refund`
- *      cash leg (`GAMING_PAYOUT_TYPES`) + upgrader payout. These REDUCE
- *      GGR (house cost on the games). Shown alongside the wager side so
- *      the GGR = wager − gamingPayout identity is visible.
+ *   1. Gaming payouts — the payout side of GGR. The pack/battle win shown
+ *      as ONE merged leg: the dominant `user_inventory.value_at_obtained`
+ *      delta together with the ledger gaming-payout cash + voucher legs
+ *      (`GAMING_PAYOUT_TYPES` = `battle_refund` + `battle_excess_to_voucher`),
+ *      which are part of the SAME normal battle win (a voucher is the same
+ *      as a card), not a separate event — so they are NOT broken out on
+ *      their own line. Plus the upgrader payout. These REDUCE GGR (house
+ *      cost on the games). Shown alongside the wager side so the GGR =
+ *      wager − gamingPayout identity is visible.
  *   2. Neutral conversions — `NEUTRAL_TYPES` (card_sale / voucher_redeemed
  *      / exchanges). Inventory↔balance / voucher↔balance disposals of
  *      value the user ALREADY owns. NOT house cost, NOT losses — they are
@@ -92,19 +101,53 @@ import { WAGER_LEG_FILTER, PAYOUT_LEG_FILTER } from "@/lib/metrics/gaming-sql";
 // ─── Window helper ───────────────────────────────────────────────────
 
 /**
+ * Capped lifetime lookback (days) for the `/ggr` "all" (Lifetime) window.
+ *
+ * `/ggr` exposes a Lifetime chip, but a TRUE unbounded window (`since:
+ * null`) makes EVERY aggregate the breakdown runs — the gaming wager /
+ * payout legs, the reward leg, the neutral + reward per-type sweep, the
+ * per-category split, and the per-user contributor join — scan the entire
+ * ~400k-row `ledger_transactions` history (plus the full `user_inventory`
+ * and `upgrader_games`) with no lower bound, which blows the 30s statement
+ * timeout and collapses the whole report to its error boundary
+ * ("Couldn't load GGR"). So Lifetime is bounded to the same capped lookback
+ * the rest of the codebase uses for lifetime scans —
+ * `LIFETIME_PAIRING_LOOKBACK_DAYS = 365` (deposit-bonus `_shared.ts`, also
+ * mirrored inline by rakeback ROI / signup daily / `suspicious.ts`). The
+ * value is duplicated here as a local constant (rather than imported across
+ * the unrelated deposit-bonus surface) to keep this module decoupled, the
+ * SAME way `suspicious.ts` / `signup/daily.ts` inline `365` with a
+ * reference comment. Keep this in sync with that canonical 365-day guard.
+ */
+export const GGR_LIFETIME_LOOKBACK_DAYS = 365;
+
+/**
  * Convert a `/ggr` window chip to the canonical `MetricWindow` the
- * `@/lib/metrics` builders take. `/ggr` only exposes the rolling
- * 24h / 3d / 7d windows, none of which is lifetime, so this always
- * produces a real `since` cutoff. Kept as a single helper so the page,
- * the export, and the contributor query agree on the window.
+ * `@/lib/metrics` builders take. The rolling 24h / 3d / 7d windows map to
+ * their `periodToCutoff` cutoff. The `all` (Lifetime) window does NOT map
+ * to an unbounded `{ since: null }` — that triggers a full-history scan
+ * across every aggregate the breakdown runs and times out (see
+ * {@link GGR_LIFETIME_LOOKBACK_DAYS}); instead it maps to a BOUNDED cutoff
+ * `now − 365 days`. Because every reader in this module derives its window
+ * filter from this single `since` (via the metric layer's `sinceClause` and
+ * the local `sinceFrag` builders), capping here bounds the ENTIRE report —
+ * headline, legs, per-type sweep, per-category split, and contributors — in
+ * one place. Kept as a single helper so the page, the export, and the
+ * contributor query agree on the window.
  */
 export function ggrWindowToMetricWindow(
   window: DashboardPeriod,
   now: Date = new Date(),
 ): MetricWindow {
-  return window === "all"
-    ? { since: null }
-    : { since: periodToCutoff(window, now) };
+  if (window !== "all") {
+    return { since: periodToCutoff(window, now) };
+  }
+  // Lifetime → bounded 365-day lookback (NOT unbounded) so no aggregate
+  // runs a full-history scan. Mirrors the canonical capped-lifetime guard.
+  const since = new Date(
+    now.getTime() - GGR_LIFETIME_LOOKBACK_DAYS * MS_PER_DAY,
+  );
+  return { since };
 }
 
 // ─── Breakdown shapes ────────────────────────────────────────────────
@@ -129,7 +172,7 @@ export type GgrLedgerTypeRow = {
 
 /** A single synthetic leg inside the gaming-payouts group. */
 export type GgrGamingLeg = {
-  /** Display label (e.g. "Pack & battle wins (inventory)"). */
+  /** Display label (e.g. "Pack & battle wins"). */
   label: string;
   /** Σ for the window. Always non-negative. */
   total: number;
@@ -164,7 +207,13 @@ export type GgrPageData = {
   gaming: {
     /** Combined pack + battle + upgrader wager. */
     wager: number;
-    /** Payout legs (inventory wins, battle_refund, upgrader payout). */
+    /**
+     * Payout legs that reduce GGR. The pack/battle win — the inventory win
+     * delta merged with the ledger gaming-payout cash + voucher legs
+     * (`battle_refund` + `battle_excess_to_voucher`), which are part of the
+     * SAME normal win, not a separate event — plus the upgrader payout (own
+     * row) when present.
+     */
     legs: GgrGamingLeg[];
     /** Σ of the payout legs = `headline.gamingPayout`. */
     payoutTotal: number;
@@ -444,6 +493,50 @@ async function getCategoryLedgerWager(
 
 // ─── Page data ───────────────────────────────────────────────────────
 
+// ─── Degraded-leg fallbacks ──────────────────────────────────────────
+//
+// Each reader inside `getGgrPageData` is wrapped in `safeQuery` (below) so
+// a single failed OR slow leg degrades to a clear empty/0 state and the
+// REST of the report still renders — instead of one thrown/timed-out leg
+// propagating through the `Promise.all` and collapsing the whole `/ggr`
+// view to its error boundary. The fallbacks below are the neutral
+// empty-state value for each reader's return shape: all-zero figures, no
+// rows, ratios unknown (null). They keep the assembled `GgrPageData`
+// internally coherent (e.g. a degraded reward leg simply shows $0 giveback
+// and an empty reward group, not a malformed object).
+
+/** Neutral all-zero fallback for the canonical window metrics. */
+const EMPTY_WINDOW_METRICS: WindowMetrics = {
+  wager: 0,
+  gamingPayout: 0,
+  ggr: 0,
+  ngr: 0,
+  rtp: null,
+  houseEdge: null,
+  bets: 0,
+  rainWinTotal: 0,
+  rainTipTotal: 0,
+  rainHouseCost: 0,
+};
+
+/** Neutral all-zero fallback for the gaming legs. */
+const EMPTY_GAMING_LEGS: GamingLegs = {
+  wager: 0,
+  inventoryPayout: 0,
+  battleRefund: 0,
+  bets: 0,
+  upgraderWager: 0,
+  upgraderPayout: 0,
+  upgraderBets: 0,
+};
+
+/** Neutral all-zero fallback for the reward cost. */
+const EMPTY_REWARD_COST: RewardCost = {
+  rewardCostExclRain: 0,
+  rainWinTotal: 0,
+  rainTipTotal: 0,
+};
+
 /**
  * Assemble the full `/ggr` page payload for a window. Composes the
  * canonical headline (`getWindowMetrics`), the upgrader leg
@@ -455,20 +548,78 @@ async function getCategoryLedgerWager(
  * bets so the page reports the same game-economics margin as
  * `/insights/games`. NGR rises by the upgrader GGR contribution (upgrader
  * has no reward leg of its own).
+ *
+ * RESILIENCE: every reader is wrapped in `safeQuery` with a
+ * {@link REWARD_QUERY_TIMEOUT_MS} (15s) bound and a neutral empty/0
+ * fallback, so this function NEVER throws — a leg that fails (e.g. a stale
+ * Prisma column) or times out (a single slow aggregate) degrades to its
+ * fallback and the rest of the report still renders. This protects BOTH
+ * consumers that share this helper: the `/ggr` page body and the
+ * `_export.ts` gatherer. (The page's separate `getGgrTopContributors` read
+ * is wrapped at its own call sites — the page body and the export gatherer
+ * — since it is a heavier per-user join with its own degradation.)
  */
 export async function getGgrPageData(
   window: MetricWindow,
 ): Promise<GgrPageData> {
-  const [metrics, upg, legs, reward, neutralTotal, detail, categoryLedger] =
-    await Promise.all([
-      getWindowMetrics({ window }),
-      upgraderMetrics(window),
-      getGamingLegs(window),
-      getRewardCost(window),
-      sumLedgerTypes({ types: NEUTRAL_TYPES, window }),
-      getNeutralAndRewardRows(window),
-      getCategoryLedgerWager(window),
-    ]);
+  // Wrap each leg so one failure/timeout degrades only that leg. The
+  // `error` fields are intentionally ignored here (the breakdown shows the
+  // degraded 0/empty state inline rather than a per-leg error chip); they
+  // are still logged inside `safeQuery` with the per-leg context tag for
+  // diagnosis. Timeout = the canonical heavy-read bound so a pathological
+  // leg degrades well before the 30s statement timeout kills the request.
+  const [
+    { data: metrics },
+    { data: upg },
+    { data: legs },
+    { data: reward },
+    { data: neutralTotal },
+    { data: detail },
+    { data: categoryLedger },
+  ] = await Promise.all([
+    safeQuery(
+      () => getWindowMetrics({ window }),
+      EMPTY_WINDOW_METRICS,
+      "ggr.windowMetrics",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => upgraderMetrics(window),
+      null,
+      "ggr.upgraderMetrics",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getGamingLegs(window),
+      EMPTY_GAMING_LEGS,
+      "ggr.gamingLegs",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getRewardCost(window),
+      EMPTY_REWARD_COST,
+      "ggr.rewardCost",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => sumLedgerTypes({ types: NEUTRAL_TYPES, window }),
+      0,
+      "ggr.neutralTotal",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getNeutralAndRewardRows(window),
+      { neutral: [], reward: [], manualVoucherTotal: 0 },
+      "ggr.neutralRewardRows",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getCategoryLedgerWager(window),
+      { packs: { wager: 0, count: 0 }, battles: { wager: 0, count: 0 } },
+      "ggr.categoryWager",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ]);
 
   // Headline figures come STRAIGHT from `getWindowMetrics`, which already
   // folds upgrader in (via `getGamingLegs` reading `upgrader_games`). The
@@ -490,16 +641,27 @@ export async function getGgrPageData(
   const upgraderPayout = legs.upgraderPayout;
   const upgraderBets = legs.upgraderBets;
 
-  // Gaming payout legs — the inventory win delta (dominant), the
-  // ledger gaming-payout cash leg, and (when present) the upgrader payout.
-  // `legs.battleRefund` carries the ledger gaming-payout legs PLUS upgrader
-  // payout, so the standalone upgrader payout is subtracted out into its
-  // own row to keep the three legs summing to `gamingPayout` exactly
-  // (inventory + battle-refund-only + upgrader = headline gamingPayout).
+  // Gaming payout legs — the pack/battle win (dominant inventory delta +
+  // the ledger gaming-payout cash leg) and, when present, the upgrader
+  // payout. The ledger gaming-payout leg (GAMING_PAYOUT_TYPES =
+  // `battle_refund` + `battle_excess_to_voucher`) is the cash + voucher
+  // remainder of a NORMAL battle win — a voucher is the same as a card, so
+  // these complete the same win the inventory card under-counts. Per the
+  // canonical model they are NOT a separate event and get NO separate
+  // breakdown line: they are MERGED into the normal "Pack & battle wins"
+  // row (inventory delta + ledger gaming-payout legs). This is display-only
+  // — the merged total equals what the two rows summed to, so the payout
+  // total and GGR are UNCHANGED. `legs.battleRefund` carries the ledger
+  // legs PLUS upgrader payout, so the standalone upgrader payout is
+  // subtracted out into its own row, keeping the merged win + upgrader
+  // summing to `gamingPayout` exactly (inventory + ledger-legs + upgrader =
+  // headline gamingPayout).
   const ledgerGamingPayout = legs.battleRefund - upgraderPayout;
   const gamingLegs: GgrGamingLeg[] = [
-    { label: "Pack & battle wins (inventory)", total: legs.inventoryPayout },
-    { label: "Battle refund (cash winner leg)", total: ledgerGamingPayout },
+    {
+      label: "Pack & battle wins",
+      total: legs.inventoryPayout + ledgerGamingPayout,
+    },
   ];
   if (upgraderPayout > 0) {
     gamingLegs.push({ label: "Upgrader payout", total: upgraderPayout });
