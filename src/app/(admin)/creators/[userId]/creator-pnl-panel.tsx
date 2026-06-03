@@ -1,6 +1,7 @@
 import { Coins, Info, LineChart, TrendingDown, TrendingUp } from "lucide-react";
 
 import { getCreatorPnl } from "@/lib/queries/creators";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { SectionHeading, StatPanel, PanelRow } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -48,7 +49,39 @@ const DISPLAYED_PERIODS: Array<{
  *   pnl < 0 (rose)    — physical cards out exceeded cash deposited
  */
 export async function CreatorPnlPanel({ userId }: { userId: string }) {
-  const data = await getCreatorPnl(userId);
+  // Degrade gracefully instead of throwing the whole creators segment into
+  // its error boundary when the ledger scan fails or times out. Every other
+  // heavy section on this page already fails soft (the deal-cost panel
+  // `.catch`es its own getCreatorPnl, the KPI/acquisition bands run through
+  // safeQueryOrNull); this is the one fetch that previously awaited raw, so
+  // a Main-DB hiccup here used to take the entire page down. Now it renders a
+  // compact "unavailable" state for THIS band and the rest of the page is
+  // unaffected — matching the "load till it's possible" rule.
+  const { data } = await safeQueryOrNull(
+    () => getCreatorPnl(userId),
+    "creators.detail.pnl",
+    20_000,
+  );
+
+  if (!data) {
+    return (
+      <div className="space-y-3">
+        <SectionHeading icon={LineChart} title="Affiliates PnL" />
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+          <Info className="size-4 mt-0.5 text-amber-500 shrink-0" />
+          <div>
+            <div className="font-medium text-amber-500">
+              Affiliate P&amp;L is taking too long to load
+            </div>
+            <div className="mt-0.5 text-muted-foreground">
+              The per-window deposit / card-withdrawal scan timed out or
+              failed. Refresh to retry — the rest of the page is unaffected.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const byPeriod = new Map(data.byPeriod.map((p) => [p.period, p]));
 

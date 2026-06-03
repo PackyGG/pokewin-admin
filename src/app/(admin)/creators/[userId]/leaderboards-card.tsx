@@ -62,33 +62,46 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
         });
     } catch (err) {
         // The backend admin endpoint may not be reachable in some envs; fail
-        // soft so the rest of the creator page still renders.
-        if (err instanceof BackendApiError) {
-            return (
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2">
-                            <Trophy className="size-4 text-primary" />
-                            Affiliate Leaderboards
-                        </CardTitle>
-                        <CreateDialog
-                            fixedCreatorUserId={userId}
-                            trigger={
-                                <Button size="sm" variant="outline">
-                                    <Plus className="size-3.5 mr-1" /> Create
-                                </Button>
-                            }
-                        />
-                    </CardHeader>
-                    <CardContent>
-                        <p className="text-sm text-muted-foreground">
-                            Could not load leaderboards: {err.message}
-                        </p>
-                    </CardContent>
-                </Card>
+        // soft so the rest of the creator page still renders. This covers
+        // BOTH a structured BackendApiError (HTTP non-2xx — its message is a
+        // safe, intended summary) AND a raw transport failure (DNS / "fetch
+        // failed" / timeout that never became a BackendApiError) — the latter
+        // previously re-threw and took the whole creators segment into its
+        // error boundary. We log the raw error server-side and show a generic
+        // line for the non-BackendApiError case so no raw transport detail
+        // leaks into the DOM.
+        const isBackendErr = err instanceof BackendApiError;
+        if (!isBackendErr) {
+            console.error(
+                "[creators.detail.leaderboards] backend fetch failed (card degraded):",
+                err,
             );
         }
-        throw err;
+        return (
+            <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                        <Trophy className="size-4 text-primary" />
+                        Affiliate Leaderboards
+                    </CardTitle>
+                    <CreateDialog
+                        fixedCreatorUserId={userId}
+                        trigger={
+                            <Button size="sm" variant="outline">
+                                <Plus className="size-3.5 mr-1" /> Create
+                            </Button>
+                        }
+                    />
+                </CardHeader>
+                <CardContent>
+                    <p className="text-sm text-muted-foreground">
+                        {isBackendErr
+                            ? `Could not load leaderboards: ${err.message}`
+                            : "Could not load leaderboards — the backend was unreachable. Refresh to retry."}
+                    </p>
+                </CardContent>
+            </Card>
+        );
     }
 
     const rows = response?.data.leaderboards ?? [];
