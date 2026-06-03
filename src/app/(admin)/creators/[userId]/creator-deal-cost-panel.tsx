@@ -5,65 +5,132 @@ import {
   StatPanel,
   PanelRow,
 } from "@/components/modern-panels";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 import { getCreatorLeaderboardCost } from "./_queries/leaderboard-cost-by-creator";
 import { getCreatorMultiplierCost } from "./_queries/multiplier-cost-by-creator";
+import { getCreatorFillConversionCost } from "./_queries/fill-conversion-cost-by-creator";
+import { getCreatorTipsSponsorCost } from "./_queries/tips-sponsor-cost-by-creator";
 
 /**
  * Per-creator "Deal Costs" panel for /creators/[userId].
  *
  * Surfaces the house-funded outflows tied to THIS creator's promo
  * programs — the money we spend ON the creator (and their leaderboards),
- * distinct from the affiliate-cohort P&L the CreatorPnlPanel shows. All
- * three buckets are House-POV costs, so every figure is rose:
+ * distinct from the affiliate-cohort P&L the CreatorPnlPanel shows. Every
+ * figure is a House-POV cost, so all are rose. The panel covers BOTH deal
+ * shapes — a creator only ever has fill OR multiplier numbers, never both,
+ * so each cost line renders only when it actually applies:
  *
  *   • Leaderboard Prizes — `affiliate_leaderboard_prize` net of the
  *     creation/refund escrow lifecycle, weighted by the admin sponsored
- *     %. THIS is the metric that was previously invisible on the creator
- *     view ("on multipliers creators there is no leaderboard costs").
- *   • Multiplier Payouts  — `creator_multiplier_payout` withdrawable
- *     vouchers issued at end-of-stream settlement.
- *   • Multiplier Fill     — net `creator_fill_*` the house funded
- *     (activation credit minus the unspent refund).
+ *     %. Shown whenever the creator owns any approved leaderboard.
+ *   • Fill-deal payouts  — the `creator_fill_conversion` "stream payout"
+ *     vouchers this creator cashed out of the WEEKLY FILL program (the
+ *     withdrawal cap they realized). The common fill-deal creator's main
+ *     payout — previously invisible on this panel.
+ *   • Tips & sponsor     — the house-funded tips / battle sponsors the
+ *     creator handed out of their fill pool
+ *     (`creator_fill_spend_tip` / `creator_fill_spend_battle`).
+ *   • Multiplier Payouts — `creator_multiplier_payout` withdrawable
+ *     vouchers issued at end-of-stream settlement. MULTIPLIER deals only.
+ *   • Multiplier Fill (net) — net `creator_fill_*` the house funded
+ *     (activation credit minus the unspent refund). MULTIPLIER deals only.
  *
- * Both sub-queries are best-effort: a failure in one renders that line
- * as "—" rather than blanking the whole panel. The panel itself is
- * streamed via Suspense from the page so neither backend round-trip
- * extends the rest of the page's TTFB.
+ * Show-only-if-relevant: a fill-deal creator sees Leaderboard + Fill
+ * payout + Tips/sponsor; a multiplier-deal creator sees Leaderboard +
+ * Multiplier payout + Multiplier fill. A zero line is hidden rather than
+ * rendered as a useless "—" (the leaderboard line is the one exception —
+ * it stays visible whenever the creator owns any approved board, so its
+ * gross/refund context can show).
+ *
+ * Every sub-query is best-effort: a failure in one degrades that line to
+ * 0 rather than blanking the whole panel. The tips/sponsor sum runs
+ * through `safeQuery → 0` (and queries `type::text` against string
+ * literals) so an environment whose ledger enum lacks the
+ * `creator_fill_spend_*` members can't throw the panel down. The panel
+ * itself is streamed via Suspense from the page so none of these backend
+ * round-trips extends the rest of the page's TTFB.
  */
 export async function CreatorDealCostPanel({ userId }: { userId: string }) {
   // Independent best-effort fetches — one blowing up shouldn't sink the
-  // other (or the panel). Each degrades to null → the line renders "—".
-  const [leaderboard, multiplier] = await Promise.all([
-    getCreatorLeaderboardCost(userId).catch((e) => {
-      console.error(
-        "[creator-deal-cost] leaderboard cost fetch failed (line renders '—'):",
-        e,
-      );
-      return null;
-    }),
-    getCreatorMultiplierCost(userId).catch((e) => {
-      console.error(
-        "[creator-deal-cost] multiplier cost fetch failed (line renders '—'):",
-        e,
-      );
-      return null;
-    }),
-  ]);
+  // others (or the panel). The leaderboard / multiplier / fill-conversion
+  // fetches degrade to null → their lines hide; the tips/sponsor sum runs
+  // through safeQuery → 0 (enum-safe `::text`) so a missing-enum
+  // environment returns 0 instead of throwing.
+  const [leaderboard, multiplier, fillConversion, tipsSponsorResult] =
+    await Promise.all([
+      getCreatorLeaderboardCost(userId).catch((e) => {
+        console.error(
+          "[creator-deal-cost] leaderboard cost fetch failed (line hidden):",
+          e,
+        );
+        return null;
+      }),
+      getCreatorMultiplierCost(userId).catch((e) => {
+        console.error(
+          "[creator-deal-cost] multiplier cost fetch failed (lines hidden):",
+          e,
+        );
+        return null;
+      }),
+      getCreatorFillConversionCost(userId).catch((e) => {
+        console.error(
+          "[creator-deal-cost] fill-conversion cost fetch failed (line hidden):",
+          e,
+        );
+        return null;
+      }),
+      safeQuery(
+        () => getCreatorTipsSponsorCost(userId),
+        { costUsd: 0, eventCount: 0 },
+        "creators.detail.tipsSponsorCost",
+      ),
+    ]);
 
   const leaderboardCost = leaderboard?.costUsd ?? 0;
-  const multiplierCost = multiplier?.costUsd ?? 0;
-  const totalCost = leaderboardCost + multiplierCost;
-  // Headline honesty: when one source failed to load, the total is a
-  // LOWER BOUND (the failed bucket contributes 0). We still show the
-  // figure — it's the best available — but flag it as partial so the
-  // admin doesn't read an understated total as complete. Both failing
-  // renders "—".
-  const bothLoaded = leaderboard !== null && multiplier !== null;
-  const anyLoaded = leaderboard !== null || multiplier !== null;
-  const isPartial = anyLoaded && !bothLoaded;
+  const multiplierPayoutCost = multiplier?.payoutUsd ?? 0;
+  const multiplierFillCost = multiplier?.netFillUsd ?? 0;
+  const fillPayoutCost = fillConversion?.payoutUsd ?? 0;
+  const tipsSponsorCost = tipsSponsorResult.data.costUsd;
+
+  // Total = sum of every cost actually tied to this creator. A fill-deal
+  // creator's total is leaderboard + fill payout + tips/sponsor; a
+  // multiplier creator's is leaderboard + multiplier payout + multiplier
+  // fill. The disjoint ledger origins mean summing all five never
+  // double-counts.
+  const totalCost =
+    leaderboardCost +
+    fillPayoutCost +
+    tipsSponsorCost +
+    multiplierPayoutCost +
+    multiplierFillCost;
+
+  // Headline honesty: when one of the best-effort sources failed to load
+  // (degraded to null), its contribution is 0, so the total is a LOWER
+  // BOUND. We still show the figure — it's the best available — but flag
+  // it as partial so an understated total doesn't read as complete. The
+  // tips/sponsor source degrades to 0 in-band via safeQuery, so a failure
+  // there is also reflected here.
+  const anyFetchFailed =
+    leaderboard === null ||
+    multiplier === null ||
+    fillConversion === null ||
+    tipsSponsorResult.error !== null;
+  const isPartial = anyFetchFailed;
   const hasCost = totalCost > 0;
+
+  // Show-only-if-relevant. Leaderboard stays visible whenever the creator
+  // owns any approved board (so its gross/refund context can render even
+  // at $0); every other line renders only when its value is non-zero, so
+  // a fill creator never sees empty multiplier rows and vice-versa.
+  const showLeaderboard =
+    (leaderboard?.leaderboardCount ?? 0) > 0 || leaderboardCost > 0;
+  const showFillPayout = fillPayoutCost > 0;
+  const showTipsSponsor = tipsSponsorCost > 0;
+  const showMultiplierPayout = multiplierPayoutCost > 0;
+  const showMultiplierFill = multiplierFillCost > 0;
 
   return (
     <div className="space-y-3">
@@ -85,22 +152,21 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
             }
             title={
               isPartial
-                ? "Partial — one cost source failed to load, so this is a lower bound"
-                : "Combined house-funded cost tied to this creator — leaderboard prizes + multiplier payouts + multiplier fill"
+                ? "Partial — a cost source failed to load, so this is a lower bound"
+                : "Combined house-funded cost tied to this creator — leaderboard prizes, fill-deal payouts, house-funded tips/sponsor, and (for multiplier deals) multiplier payouts + fill"
             }
           >
-            {!anyLoaded
+            {totalCost === 0
               ? "—"
-              : totalCost === 0
-                ? "—"
-                : `${isPartial ? "≥ " : ""}${formatCurrency(totalCost)}`}
+              : `${isPartial ? "≥ " : ""}${formatCurrency(totalCost)}`}
           </div>
           <p className="text-xs text-muted-foreground">
-            Leaderboard prizes + multiplier payouts + multiplier fill
+            Leaderboard prizes + fill-deal payouts + tips/sponsor (+
+            multiplier payouts + fill)
             <br />
             <span className="text-[10px]">
               {isPartial
-                ? "Partial — one cost source failed to load (lower bound)"
+                ? "Partial — a cost source failed to load (lower bound)"
                 : "House-POV cost (rose) — money we spend on this creator's promos"}
             </span>
           </p>
@@ -111,92 +177,117 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
           <span>
             Separate from the Affiliates P&amp;L above (deposits − card
             withdrawals from the cohort). This is what the house spends ON
-            the creator: approved-leaderboard prizes (net of the
-            creation/refund escrow, weighted by sponsored %), multiplier
-            payout vouchers, and net multiplier fill. Excludes affiliate
-            commission — that&apos;s on the Financials card.
+            the creator across BOTH deal shapes: approved-leaderboard prizes
+            (net of the creation/refund escrow, weighted by sponsored %),
+            fill-deal payout vouchers the creator cashed out, house-funded
+            tips/sponsor, and — for multiplier deals — multiplier payout
+            vouchers + net multiplier fill. Excludes affiliate commission —
+            that&apos;s on the Financials card.
           </span>
         </div>
 
         <div className="mt-4 space-y-0.5">
-          <PanelRow
-            label="Leaderboard Prizes"
-            value={
-              leaderboard === null
-                ? "—"
-                : leaderboardCost === 0
-                  ? "—"
-                  : formatCurrency(leaderboardCost)
-            }
-            valueClassName={
-              leaderboardCost > 0
-                ? "text-rose-600 dark:text-rose-400"
-                : undefined
-            }
-          />
-          {/* Sub-context for the leaderboard line: gross prize committed,
-              refunds returned, board count — so the net cost is
-              verifiable at a glance. Only shown when there's something
-              to break down. */}
-          {leaderboard !== null && leaderboard.leaderboardCount > 0 && (
-            <div className="space-y-0.5 pb-1 pl-3 text-[11px] text-muted-foreground">
-              <div className="flex items-center justify-between gap-3">
-                <span className="flex items-center gap-1.5">
-                  <span aria-hidden className="opacity-60">
-                    •
-                  </span>
-                  Gross prize · {formatNumber(leaderboard.leaderboardCount)}{" "}
-                  approved
-                </span>
-                <span className="tabular-nums">
-                  {formatCurrency(leaderboard.grossPrizeUsd)}
-                </span>
-              </div>
-              {leaderboard.refundedUsd > 0 && (
-                <div className="flex items-center justify-between gap-3">
-                  <span className="flex items-center gap-1.5">
-                    <span aria-hidden className="opacity-60">
-                      •
+          {showLeaderboard && (
+            <>
+              <PanelRow
+                label="Leaderboard Prizes"
+                value={
+                  leaderboardCost === 0 ? "—" : formatCurrency(leaderboardCost)
+                }
+                valueClassName={
+                  leaderboardCost > 0
+                    ? "text-rose-600 dark:text-rose-400"
+                    : undefined
+                }
+              />
+              {/* Sub-context for the leaderboard line: gross prize
+                  committed, refunds returned, board count — so the net
+                  cost is verifiable at a glance. */}
+              {leaderboard !== null && leaderboard.leaderboardCount > 0 && (
+                <div className="space-y-0.5 pb-1 pl-3 text-[11px] text-muted-foreground">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-1.5">
+                      <span aria-hidden className="opacity-60">
+                        •
+                      </span>
+                      Gross prize · {formatNumber(leaderboard.leaderboardCount)}{" "}
+                      approved
                     </span>
-                    Refunded (cancelled)
-                  </span>
-                  <span className="tabular-nums">
-                    −{formatCurrency(leaderboard.refundedUsd)}
-                  </span>
+                    <span className="tabular-nums">
+                      {formatCurrency(leaderboard.grossPrizeUsd)}
+                    </span>
+                  </div>
+                  {leaderboard.refundedUsd > 0 && (
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-1.5">
+                        <span aria-hidden className="opacity-60">
+                          •
+                        </span>
+                        Refunded (cancelled)
+                      </span>
+                      <span className="tabular-nums">
+                        −{formatCurrency(leaderboard.refundedUsd)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
+            </>
           )}
-          <PanelRow
-            label="Multiplier Payouts"
-            value={
-              multiplier === null
-                ? "—"
-                : multiplier.payoutUsd === 0
-                  ? "—"
-                  : formatCurrency(multiplier.payoutUsd)
-            }
-            valueClassName={
-              (multiplier?.payoutUsd ?? 0) > 0
-                ? "text-rose-600 dark:text-rose-400"
-                : undefined
-            }
-          />
-          <PanelRow
-            label="Multiplier Fill (net)"
-            value={
-              multiplier === null
-                ? "—"
-                : multiplier.netFillUsd === 0
-                  ? "—"
-                  : formatCurrency(multiplier.netFillUsd)
-            }
-            valueClassName={
-              (multiplier?.netFillUsd ?? 0) > 0
-                ? "text-rose-600 dark:text-rose-400"
-                : undefined
-            }
-          />
+
+          {/* Fill-deal payout — the `creator_fill_conversion` "stream
+              payout" vouchers this creator cashed out (the withdrawal cap
+              they realized). The common fill-deal creator's main house
+              cost. Shown only when non-zero. */}
+          {showFillPayout && (
+            <PanelRow
+              label="Fill-deal payouts (cashed-out vouchers)"
+              value={formatCurrency(fillPayoutCost)}
+              valueClassName="text-rose-600 dark:text-rose-400"
+            />
+          )}
+
+          {/* Tips & sponsor — house-funded tips / battle sponsors the
+              creator handed out of their fill pool
+              (`creator_fill_spend_tip` / `creator_fill_spend_battle`).
+              Shown only when non-zero. */}
+          {showTipsSponsor && (
+            <PanelRow
+              label="Tips & sponsor (house-funded)"
+              value={formatCurrency(tipsSponsorCost)}
+              valueClassName="text-rose-600 dark:text-rose-400"
+            />
+          )}
+
+          {/* Multiplier rows — only a multiplier-deal creator has these;
+              hidden for a fill-only creator rather than shown as "—". */}
+          {showMultiplierPayout && (
+            <PanelRow
+              label="Multiplier Payouts"
+              value={formatCurrency(multiplierPayoutCost)}
+              valueClassName="text-rose-600 dark:text-rose-400"
+            />
+          )}
+          {showMultiplierFill && (
+            <PanelRow
+              label="Multiplier Fill (net)"
+              value={formatCurrency(multiplierFillCost)}
+              valueClassName="text-rose-600 dark:text-rose-400"
+            />
+          )}
+
+          {/* All five lines hidden (a creator with no leaderboard, no fill
+              payout, no tips, no multiplier) → make the empty state
+              explicit instead of an apparently-truncated panel. */}
+          {!showLeaderboard &&
+            !showFillPayout &&
+            !showTipsSponsor &&
+            !showMultiplierPayout &&
+            !showMultiplierFill && (
+              <p className="py-1 text-xs text-muted-foreground">
+                No house-funded deal costs recorded for this creator yet.
+              </p>
+            )}
         </div>
       </StatPanel>
     </div>
