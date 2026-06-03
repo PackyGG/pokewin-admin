@@ -1,3 +1,5 @@
+"use client";
+
 import * as React from "react";
 import Link from "next/link";
 import {
@@ -11,6 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { ScrollText } from "lucide-react";
 import { formatRelative, formatCurrency } from "@/lib/utils/format";
+import { useFormatDateTime } from "@/components/timezone-provider";
 import type { AuditListItem } from "@/lib/queries/audit";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/empty-state";
@@ -44,6 +47,56 @@ function eventBadgeClass(eventType: string): string {
   return (
     EVENT_COLORS[eventType] ??
     "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
+  );
+}
+
+/**
+ * Audit log time cell. An audit log's defining requirement is an exact,
+ * orderable timestamp — a fuzzy "2 hours ago" alone can't distinguish two
+ * events in the same bucket or place them on a real clock. So we render the
+ * timezone-aware absolute time (via the same `useFormatDateTime` hook the
+ * sibling /admin-users audit table already uses) as the primary value, with
+ * the relative string kept as a hover tooltip for at-a-glance recency.
+ */
+function EventTime({
+  createdAt,
+  className,
+}: {
+  createdAt: string;
+  className?: string;
+}) {
+  const formatDateTime = useFormatDateTime();
+  return (
+    <span className={className} title={formatRelative(createdAt)}>
+      {formatDateTime(createdAt)}
+    </span>
+  );
+}
+
+/**
+ * Renders the acting admin, or a distinct "System" badge when no admin is
+ * attributed (the column is nullable — system/automated events are allowed,
+ * and a deleted admin's id is nulled out so its logs survive). Without this,
+ * a legitimately actor-less event was indistinguishable from a corrupt row.
+ */
+function AdminCell({ item }: { item: AuditListItem }) {
+  if (item.adminUserId) {
+    return (
+      <Link
+        href={`/admin-users/${item.adminUserId}`}
+        className="text-blue-400 hover:underline truncate inline-block max-w-full"
+      >
+        {item.adminUsername ?? item.adminUserId.slice(0, 8)}
+      </Link>
+    );
+  }
+  return (
+    <Badge
+      variant="outline"
+      className="h-5 px-1.5 text-[10px] bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
+    >
+      System
+    </Badge>
   );
 }
 
@@ -340,28 +393,30 @@ function MetadataCell({
     }
   }
 
-  // Catch remaining unhandled keys as key:value pairs
-  if (items.length === 0) {
-    const handled = new Set([
-      "withdrawal_id", "message_id", "pack_id", "method", "action",
-      "new_role", "role", "feature", "locked", "amount", "amount_usd",
-      "reason", "carrier", "tracking_number", "email", "username",
-      "code_hash", "region", "value", "battle_id", "raffle_id",
-      "reward_id", "name", "slug", "type", "field",
-    ]);
-    const remaining = Object.entries(m).filter(([k]) => !handled.has(k));
-    if (remaining.length > 0) {
-      return (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {remaining.map(([k, v]) => (
-            <span key={k} className="font-mono text-xs text-muted-foreground">
-              {k}:{typeof v === "string" && v.length > 16 ? v.slice(0, 16) + "…" : String(v)}
-            </span>
-          ))}
-        </div>
-      );
-    }
+  // Always surface remaining unhandled keys as key:value chips — NOT only
+  // when zero curated items matched. The metadata JSON is the immutable record
+  // of what happened, so dropping extra keys whenever a row had at least one
+  // recognized key would let a reviewer believe they see the full payload when
+  // they don't. The curated renderers above stay for known keys; everything
+  // else is appended generically so no stored field is ever invisible.
+  const handled = new Set([
+    "withdrawal_id", "message_id", "pack_id", "method", "action",
+    "new_role", "role", "feature", "locked", "amount", "amount_usd",
+    "reason", "carrier", "tracking_number", "email", "username",
+    "code_hash", "region", "value", "battle_id", "raffle_id",
+    "reward_id", "name", "slug", "type", "field",
+  ]);
+  const remaining = Object.entries(m).filter(([k]) => !handled.has(k));
+  for (const [k, v] of remaining) {
+    items.push(
+      <span key={`rest-${k}`} className="font-mono text-xs text-muted-foreground">
+        {k}:{typeof v === "string" && v.length > 16 ? v.slice(0, 16) + "…" : String(v)}
+      </span>
+    );
   }
+
+  if (items.length === 0)
+    return <span className="text-muted-foreground">-</span>;
 
   return <div className="flex flex-wrap items-center gap-1.5">{items}</div>;
 }
@@ -376,9 +431,10 @@ function AuditMobileCard({ item }: { item: AuditListItem }) {
         >
           {item.eventType.replace(/_/g, " ")}
         </Badge>
-        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-          {formatRelative(item.createdAt)}
-        </span>
+        <EventTime
+          createdAt={item.createdAt}
+          className="text-[10px] text-muted-foreground whitespace-nowrap"
+        />
       </div>
       <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
         <div className="space-y-0.5">
@@ -386,16 +442,7 @@ function AuditMobileCard({ item }: { item: AuditListItem }) {
             Admin
           </div>
           <div>
-            {item.adminUserId ? (
-              <Link
-                href={`/admin-users/${item.adminUserId}`}
-                className="text-blue-400 hover:underline truncate inline-block max-w-full"
-              >
-                {item.adminUsername ?? item.adminUserId.slice(0, 8)}
-              </Link>
-            ) : (
-              <span className="text-muted-foreground">—</span>
-            )}
+            <AdminCell item={item} />
           </div>
         </div>
         <div className="space-y-0.5">
@@ -482,16 +529,7 @@ export function AuditActivityTable({ data }: { data: AuditListItem[] }) {
                   </Badge>
                 </TableCell>
                 <TableCell className="text-sm font-medium">
-                  {item.adminUserId ? (
-                    <Link
-                      href={`/admin-users/${item.adminUserId}`}
-                      className="text-blue-400 hover:underline"
-                    >
-                      {item.adminUsername ?? item.adminUserId.slice(0, 8)}
-                    </Link>
-                  ) : (
-                    <span className="text-muted-foreground">-</span>
-                  )}
+                  <AdminCell item={item} />
                 </TableCell>
                 <TableCell className="text-sm">
                   {item.targetUserId ? (
@@ -518,7 +556,7 @@ export function AuditActivityTable({ data }: { data: AuditListItem[] }) {
                   />
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                  {formatRelative(item.createdAt)}
+                  <EventTime createdAt={item.createdAt} />
                 </TableCell>
               </TableRow>
             ))}

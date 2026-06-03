@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { ScrollText } from "lucide-react";
-import { getAuditEvents } from "@/lib/queries/audit";
+import { getAuditEvents, getDistinctEventTypeCount } from "@/lib/queries/audit";
 import { requirePageAccess } from "@/lib/dal";
 import { AuditActivityTable } from "./audit-activity-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -17,8 +17,21 @@ import { formatNumber } from "@/lib/utils/format";
 
 export const metadata = { title: "Audit Log" };
 
+// Event-type filter options. Reconciled with the sibling per-admin audit
+// table (src/app/(admin)/admin-users/[id]/audit-events-table.tsx
+// EVENT_TYPE_LABELS) so the two audit surfaces agree on the known taxonomy.
+// NOTE: createAdminAuditEvent accepts an arbitrary event_type string, so this
+// list is a curated whitelist of the common types — not an exhaustive mirror
+// of the DB. The "Event Types" KPI is therefore computed from a real distinct
+// DB count (see below), not from this array's length.
 const EVENT_TYPES = [
   { label: "Admin Login", value: "admin_login" },
+  { label: "Admin User Created", value: "admin_user_created" },
+  { label: "Admin User Activated", value: "admin_user_activated" },
+  { label: "Admin User Deactivated", value: "admin_user_deactivated" },
+  { label: "Admin Role Changed", value: "admin_role_changed" },
+  { label: "Admin 2FA Reset", value: "admin_2fa_reset" },
+  { label: "Admin Sessions Expired", value: "admin_sessions_force_expired" },
   { label: "Account Banned", value: "account_banned" },
   { label: "Account Unbanned", value: "account_unbanned" },
   { label: "Account Locked", value: "account_locked" },
@@ -50,6 +63,8 @@ const EVENT_TYPES = [
   { label: "Race Ended", value: "race_period_ended" },
   { label: "Race Auto-renew Toggled", value: "race_period_auto_renew_toggled" },
   { label: "Country Restriction Updated", value: "country_restriction_updated" },
+  { label: "Admin Note Added", value: "admin_note_created" },
+  { label: "Admin Note Deleted", value: "admin_note_deleted" },
 ];
 
 export default async function AuditPage({
@@ -62,12 +77,15 @@ export default async function AuditPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const result = await getAuditEvents({
-    page,
-    perPage,
-    search: params.search,
-    eventType: params.eventType,
-  });
+  const [result, distinctEventTypes] = await Promise.all([
+    getAuditEvents({
+      page,
+      perPage,
+      search: params.search,
+      eventType: params.eventType,
+    }),
+    getDistinctEventTypeCount(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -94,7 +112,7 @@ export default async function AuditPage({
         />
         <KpiTile
           label="Event Types"
-          value={formatNumber(EVENT_TYPES.length)}
+          value={formatNumber(distinctEventTypes)}
           icon={ScrollText}
           accent="cyan"
         />
@@ -105,7 +123,7 @@ export default async function AuditPage({
         <FadeIn className="space-y-4">
           <Suspense fallback={<Skeleton className="h-10 w-full" />}>
             <DataTableToolbar
-              searchPlaceholder="Search by admin username, user ID, or IP..."
+              searchPlaceholder="Search by admin or user username, user ID, or IP..."
               filters={[
                 {
                   name: "Event Type",

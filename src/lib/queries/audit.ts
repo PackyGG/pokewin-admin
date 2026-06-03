@@ -17,6 +17,20 @@ export type AuditListItem = {
   createdAt: string;
 };
 
+/**
+ * Count of DISTINCT event_type values actually present in the audit table.
+ * The /audit "Event Types" KPI used to display a hardcoded array length,
+ * which presented a constant as if it were data on an audit surface. This
+ * returns the real cardinality so the tile reflects the DB. Cheap: a single
+ * grouped scan over a free String column (covered by the event_type index).
+ */
+export async function getDistinctEventTypeCount(): Promise<number> {
+  const rows = await adminDb.admin_audit_events.groupBy({
+    by: ["event_type"],
+  });
+  return rows.length;
+}
+
 export async function getAuditEvents(params: {
   page?: number;
   perPage?: number;
@@ -30,11 +44,30 @@ export async function getAuditEvents(params: {
   const where: Record<string, unknown> = {};
 
   if (search) {
+    // target_user_id lives in the admin DB but the username it points at
+    // lives in the main DB (no cross-DB join), so resolve search → matching
+    // main-DB user ids first and fold them into the OR. This makes the most
+    // natural query — a target username — actually return rows, matching the
+    // toolbar placeholder. Capped so a broad term can't pull an unbounded set.
+    const matchedUserIds = (
+      await db.user.findMany({
+        where: { username: { contains: search, mode: "insensitive" } },
+        select: { id: true },
+        take: 200,
+      })
+    ).map((u) => u.id);
+
     where.OR = [
+      // Exact id branches keep the paste-a-UUID flow working.
       { admin_user_id: search },
       { target_user_id: search },
-      { ip: search },
+      // IP as a prefix/substring match so partial / subnet lookups work
+      // instead of requiring the exact stored string.
+      { ip: { contains: search } },
       { admin_user: { username: { contains: search, mode: "insensitive" } } },
+      ...(matchedUserIds.length > 0
+        ? [{ target_user_id: { in: matchedUserIds } }]
+        : []),
     ];
   }
 
