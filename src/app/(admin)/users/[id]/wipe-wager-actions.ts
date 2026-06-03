@@ -29,6 +29,16 @@ import {
   UPGRADER_IN_LEDGER,
   type LedgerTransactionType,
 } from "@/lib/metrics/ledger-sets";
+// The wager-window constant + type + pure helpers live in a CLIENT-SAFE module
+// (no "use server"), NOT here: every export of THIS "use server" file becomes a
+// server-action reference on the client, so a "use client" import of a runtime
+// const from here would receive a function proxy (not the array) and crash on
+// `.map` at render time. See wager-window.ts for the full regression note.
+import {
+  normalizeWindowHours,
+  resolveWindowCutoff,
+  type WagerWipeWindowHours,
+} from "@/lib/account-wipes/wager-window";
 
 // ---------------------------------------------------------------------------
 // WIPE WAGER / GAMEPLAY — the SIXTH recoverable, targeted wipe, alongside the
@@ -152,39 +162,14 @@ import {
 //  wipe/restore stays symmetric per-window.
 // ---------------------------------------------------------------------------
 
-/**
- * The selectable recent-window options for the wager wipe, in hours. `null`
- * means "All / everything" (no lower time bound — today's full-wipe behaviour).
- * A bounded value caps the delete to gameplay whose timestamp is ≥ the cutoff
- * so a heavy account completes inside the statement timeout.
- */
-export type WagerWipeWindowHours = 12 | 24 | 48 | null;
-
-/** The bounded window options offered in the UI (excludes the "All" sentinel). */
-export const WAGER_WIPE_WINDOW_OPTIONS = [12, 24, 48] as const;
-
-/**
- * Validate + normalize an incoming window selection to a `WagerWipeWindowHours`.
- * Anything that isn't one of the three bounded options is treated as "All"
- * (null) — the safe, explicit default for an unknown value is the unbounded
- * behaviour the action always had, NOT a silent narrower window.
- */
-function normalizeWindowHours(v: unknown): WagerWipeWindowHours {
-  if (v === 12 || v === 24 || v === 48) return v;
-  return null;
-}
-
-/**
- * Resolve a window selection to an absolute cutoff `Date` (rows with the
- * relevant timestamp ≥ this are in-window), or `null` for "All / everything"
- * (no lower bound). Computed ONCE per call so the ledger / inventory / upgrader
- * reads + deletes all share the exact same instant (no drift between the
- * snapshot read and the destructive delete).
- */
-function resolveWindowCutoff(hours: WagerWipeWindowHours): Date | null {
-  if (hours === null) return null;
-  return new Date(Date.now() - hours * 60 * 60 * 1000);
-}
+// `WagerWipeWindowHours`, `WAGER_WIPE_WINDOW_OPTIONS`, `normalizeWindowHours`
+// and `resolveWindowCutoff` now live in the client-safe `wager-window.ts`
+// (imported above). They are NOT defined or re-exported as runtime VALUES from
+// this "use server" module on purpose: a runtime const exported here is turned
+// into a server-action reference on the client, which crashed the dialog (see
+// wager-window.ts). Re-export ONLY the TYPE (build-erased → safe) so existing
+// importers of the type from this action path keep working.
+export type { WagerWipeWindowHours };
 
 /**
  * The exact ledger types the wager wipe deletes — the canonical wager + payout

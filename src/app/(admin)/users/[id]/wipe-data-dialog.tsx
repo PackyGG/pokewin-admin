@@ -78,10 +78,15 @@ import {
 import {
   previewWagerWipe,
   wipeWager,
-  WAGER_WIPE_WINDOW_OPTIONS,
   type WagerWipePreview,
-  type WagerWipeWindowHours,
 } from "./wipe-wager-actions";
+// The window const + type come from the CLIENT-SAFE module, NOT the "use server"
+// action file: a runtime const imported from a server-action module is a server
+// reference (not the array) on the client and crashed the dialog on `.map`.
+import {
+  WAGER_WIPE_WINDOW_OPTIONS,
+  type WagerWipeWindowHours,
+} from "@/lib/account-wipes/wager-window";
 import {
   listWipeableAdjustments,
   wipeBalanceAdjustments,
@@ -439,12 +444,15 @@ function WipeDataDialog({
               : { status: "error", error: res.error },
           ),
         )
-        .catch((e) =>
-          setWager({
-            status: "error",
-            error: e instanceof Error ? e.message : "Failed to load",
-          }),
-        );
+        // A rejected preview Server Action is caught here and turned into an
+        // inline error state (with a Retry button in WagerInline) + a toast —
+        // it must NEVER surface as an unhandled rejection that bubbles to the
+        // root error boundary and white-screens the app.
+        .catch((e) => {
+          const msg = e instanceof Error ? e.message : "Failed to load";
+          setWager({ status: "error", error: msg });
+          toast.error(`Could not load the wager preview: ${msg}`);
+        });
     },
     [userId, wagerWindow],
   );
@@ -960,6 +968,7 @@ function WipeDataDialog({
             wager={wager}
             wagerWindow={wagerWindow}
             onWagerWindowChange={changeWagerWindow}
+            onWagerReload={loadWager}
             adjState={adjState}
             adjFiltered={adjFiltered}
             adjSelected={adjSelected}
@@ -1179,6 +1188,7 @@ function SelectPhase({
   wager,
   wagerWindow,
   onWagerWindowChange,
+  onWagerReload,
   adjState,
   adjFiltered,
   adjSelected,
@@ -1214,6 +1224,8 @@ function SelectPhase({
   wagerWindow: WagerWipeWindowHours;
   /** Change the wager window (re-loads the preview if the category is ticked). */
   onWagerWindowChange: (hours: WagerWipeWindowHours) => void;
+  /** Re-fetch the wager preview for the current window (retry after an error). */
+  onWagerReload: () => void;
   adjState: LoadState<WipeableAdjustment[]> | null;
   adjFiltered: WipeableAdjustment[];
   adjSelected: Set<string>;
@@ -1332,6 +1344,7 @@ function SelectPhase({
                         state={wager}
                         window={wagerWindow}
                         onWindowChange={onWagerWindowChange}
+                        onReload={onWagerReload}
                       />
                     )}
                     {key === "adjustments" && checked.adjustments && (
@@ -1611,10 +1624,13 @@ function WagerInline({
   state,
   window,
   onWindowChange,
+  onReload,
 }: {
   state: LoadState<WagerPreview> | null;
   window: WagerWipeWindowHours;
   onWindowChange: (hours: WagerWipeWindowHours) => void;
+  /** Re-fetch the preview for the current window (retry after a load error). */
+  onReload: () => void;
 }) {
   return (
     <div className="space-y-2.5">
@@ -1624,7 +1640,35 @@ function WagerInline({
           timing out on a full wipe); "All" keeps the full-wipe behaviour. The
           counts + warning below reflect the chosen window. */}
       <WagerWindowSelector value={window} onChange={onWindowChange} />
-      <InlineWrapper state={state}>
+      {/* CRASH-PROOF preview body: a failed preview Server Action is surfaced
+          INLINE with a Retry button (never thrown, never bubbles to the root
+          error boundary). loadWager already catches the rejection into this
+          error state; here we make it actionable instead of a dead-end. */}
+      {(!state || state.status === "loading") && (
+        <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" />
+          Loading…
+        </div>
+      )}
+      {state?.status === "error" && (
+        <div className="flex items-start justify-between gap-2 rounded border border-rose-500/30 bg-rose-500/5 px-2.5 py-2">
+          <p className="text-xs text-rose-500">
+            Could not load the wager / gameplay preview
+            {state.error ? `: ${state.error}` : ""}. The window selector still
+            works — pick a window or retry.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-6 shrink-0 px-2 text-xs"
+            onClick={onReload}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+      <>
         {state?.status === "ready" && (
           <div className="space-y-2 text-sm">
             {/* Honest caveat: a bounded window removes ONLY that window's
@@ -1762,7 +1806,7 @@ function WagerInline({
             )}
           </div>
         )}
-      </InlineWrapper>
+      </>
     </div>
   );
 }
@@ -1781,8 +1825,18 @@ function WagerWindowSelector({
   onChange: (hours: WagerWipeWindowHours) => void;
 }) {
   // The bounded options + the "All" sentinel, as { hours, label } entries.
+  // DEFENSIVE: derive the bounded list from WAGER_WIPE_WINDOW_OPTIONS only when
+  // it is genuinely an array. This const is now imported from a client-safe
+  // module so it IS the real array; the Array.isArray guard is belt-and-braces
+  // so any future client/server-boundary regression (which would hand the
+  // client a function proxy instead of the array) degrades to just the "All"
+  // option INSTEAD of throwing `.map is not a function` at render and
+  // white-screening the whole app.
+  const boundedOptions = Array.isArray(WAGER_WIPE_WINDOW_OPTIONS)
+    ? WAGER_WIPE_WINDOW_OPTIONS
+    : [];
   const options: ReadonlyArray<{ hours: WagerWipeWindowHours; label: string }> = [
-    ...WAGER_WIPE_WINDOW_OPTIONS.map((h) => ({ hours: h as WagerWipeWindowHours, label: `${h}h` })),
+    ...boundedOptions.map((h) => ({ hours: h as WagerWipeWindowHours, label: `${h}h` })),
     { hours: null, label: "All" },
   ];
   return (
