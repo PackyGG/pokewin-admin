@@ -81,9 +81,10 @@ export default async function CreatorDetailPage({
   // Now the page fetches ONLY the cheap header (2 indexed lookups) on the
   // critical path so the hero + nav paint immediately, then streams every
   // heavy region through its OWN independent Suspense boundary:
-  //   • CreatorFinancialBand — the single getCreatorDetail() analytics
-  //     round-trip feeding the KPI strip, acquisition section, and
-  //     affiliate-payouts card.
+  //   • CreatorKpiStrip + CreatorAcquisitionPayouts — the single
+  //     getCreatorDetail() analytics round-trip, SHARED across two page
+  //     positions (KPI strip at the top, acquisition + affiliate-payouts at
+  //     the bottom) via one in-flight promise so the aggregate fires once.
   //   • CreatorPnlPanel — its own getCreatorPnl() ledger scan, streamed in
   //     its OWN boundary so the heavier per-window P&L + per-user popover
   //     data doesn't extend the rest of the page's TTFB.
@@ -100,6 +101,22 @@ export default async function CreatorDetailPage({
 
   // Non-blocking: socials cache refresh for header display.
   refreshStaleSocials(userId).catch(() => {});
+
+  // The KPI strip (top of page) and the acquisition + affiliate-payouts
+  // section (bottom of page) both render off the SAME getCreatorDetail()
+  // aggregate. To honour the owner's requested layout — KPI strip first,
+  // acquisition/payouts last — without firing the heavy aggregate twice, we
+  // kick it off ONCE here (not awaited on the critical path) and hand the
+  // single in-flight promise to both streamed slots. React awaits the same
+  // promise object in two places → the 12 Main-DB round-trips run exactly
+  // once, but the rendered output is split across the page. Timeout-bounded
+  // via safeQueryOrNull so a slow scan degrades to a fallback per-slot
+  // instead of hanging the segment.
+  const profileResultPromise = safeQueryOrNull(
+    () => getCreatorDetail(userId),
+    "creators.detail.profile",
+    20_000,
+  );
 
   return (
     <div className="space-y-6">
@@ -167,18 +184,21 @@ export default async function CreatorDetailPage({
       </PageHero>
 
       <FadeIn className="space-y-4 sm:space-y-6">
-        {/* ── KPI strip + acquisition + affiliate-payouts band — owns the
-            single getCreatorDetail() analytics round-trip, streamed so its
-            12 Main-DB reads don't extend the hero's TTFB. ──────────────── */}
-        <Suspense fallback={<CreatorFinancialBandSkeleton />}>
-          <CreatorFinancialBand userId={userId} />
+        {/* 1 ── Display boxes (KPI strip) — top of page. Owns the FIRST
+            render slot of the single getCreatorDetail() aggregate (shared
+            with the acquisition + payouts section at the bottom via
+            profileResultPromise, so the heavy read fires only once).
+            Streamed so its Main-DB round-trips don't extend the hero's
+            TTFB. ───────────────────────────────────────────────────────── */}
+        <Suspense fallback={<CreatorKpiStripSkeleton />}>
+          <CreatorKpiStrip profileResultPromise={profileResultPromise} />
         </Suspense>
 
-        {/* Per-code activity entry points. Each is its own dedicated page
-            (full-width tables, breadcrumb back, pill-tab nav). Lives above
-            the deal management band so the admin sees the entry points
-            before drilling into deal terms. Driven by the cheap header code
-            so it paints with the hero, not behind the analytics band. */}
+        {/* 2 ── Users on code + Last wagers — per-code activity entry points,
+            directly below the KPI strip. Each is its own dedicated page
+            (full-width tables, breadcrumb back, pill-tab nav). Driven by the
+            cheap header code so it paints with the hero, not behind the
+            analytics band. ──────────────────────────────────────────────── */}
         {header.code && (
           <div className="grid gap-3 sm:gap-4 sm:grid-cols-2">
             <Link
@@ -214,37 +234,44 @@ export default async function CreatorDetailPage({
           </div>
         )}
 
-        {/* ── Deal management band — the 4 backend round-trips
+        {/* 3 ── Deals / Sessions — the 4 backend round-trips
             (deals/sessions/pending/multiplier), streamed in its OWN
-            boundary so it loads in parallel with the analytics band above
-            rather than serially behind it. ──────────────────────────── */}
+            boundary so it loads in parallel with the analytics band rather
+            than serially behind it. ─────────────────────────────────────── */}
         <Suspense fallback={<CreatorDealBandSkeleton />}>
           <CreatorDealBand userId={userId} sp={sp} />
         </Suspense>
 
-        {/* Affiliate leaderboards owned by this creator — read-only summary
-            with deep-link to the dedicated management surface. Its own
-            Suspense so a slow backend call here doesn't block the rest of
-            the page. */}
+        {/* 4 ── Affiliate leaderboards owned by this creator — read-only
+            summary with deep-link to the dedicated management surface. Its
+            own Suspense so a slow backend call here doesn't block the rest
+            of the page. ─────────────────────────────────────────────────── */}
         <Suspense fallback={<LeaderboardsSkeleton />}>
           <LeaderboardsCard userId={userId} />
         </Suspense>
 
-        {/* ── Affiliates P&L — the all-time hero + 5 windowed boxes
+        {/* 5 ── PnL boxes — the all-time hero + 5 windowed boxes
             (1d / 3d / 7d / 2w / 1m), each with the per-user hover popover.
             Only needs userId (its own getCreatorPnl ledger scan), so it
-            streams in its OWN boundary in parallel with everything above
-            rather than blocking on the profile aggregate. ─────────────── */}
+            streams in its OWN boundary in parallel with everything above. ── */}
         <Suspense fallback={<CreatorPnlSkeleton />}>
           <CreatorPnlPanel userId={userId} />
         </Suspense>
 
-        {/* ── House deal-cost panel — the money the house spends ON this
-            creator's promo programs: approved-leaderboard prizes (net of
-            the creation/refund escrow, sponsored-% weighted), multiplier
-            payout vouchers, and net multiplier fill. Streamed via its own
-            Suspense so the two backend round-trips it makes don't block the
-            rest of the page. ──────────────────────────────────────────── */}
+        {/* 6 ── Everything else (below the PnL boxes):
+            • Affiliate payouts + Acquisition (chart / funnel / wager
+              breakdown / country) — the SECOND render slot of the shared
+              getCreatorDetail() aggregate. Streamed in its own boundary off
+              the same in-flight profileResultPromise as the KPI strip, so no
+              extra round-trip.
+            • House deal-cost panel — the money the house spends ON this
+              creator's promo programs (approved-leaderboard prizes net of
+              escrow, multiplier payout vouchers, net multiplier fill),
+              streamed via its own boundary. */}
+        <Suspense fallback={<CreatorAcquisitionPayoutsSkeleton />}>
+          <CreatorAcquisitionPayouts profileResultPromise={profileResultPromise} />
+        </Suspense>
+
         <Suspense fallback={<CreatorDealCostSkeleton />}>
           <CreatorDealCostPanel userId={userId} />
         </Suspense>
@@ -264,18 +291,30 @@ async function HeaderSocialsStreamed({ userId }: { userId: string }) {
   return <HeaderSocials socials={socials} />;
 }
 
-// ── Streamed KPI + acquisition + affiliate-payouts band ───────────────
+// ── Shared getCreatorDetail() result ──────────────────────────────────
 //
-// Owns the SINGLE heavy getCreatorDetail() aggregate (12 Main-DB
-// round-trips). Rendered behind its own Suspense from the page so those
-// reads never extend the hero's TTFB. Timeout-bounded so a slow scan
-// degrades to a fallback instead of hanging the segment.
-async function CreatorFinancialBand({ userId }: { userId: string }) {
-  const { data: profile } = await safeQueryOrNull(
-    () => getCreatorDetail(userId),
-    "creators.detail.profile",
-    20_000,
-  );
+// Both the KPI strip (top of page) and the acquisition + affiliate-payouts
+// section (bottom of page) render off the SINGLE heavy getCreatorDetail()
+// aggregate (12 Main-DB round-trips). The page kicks the read off ONCE and
+// passes the same in-flight `safeQueryOrNull` result promise to both
+// components below, so the aggregate fires exactly once even though its
+// output is split across two page positions.
+type ProfileResultPromise = Promise<{
+  data: Awaited<ReturnType<typeof getCreatorDetail>> | null;
+  error: string | null;
+}>;
+
+// ── 1 ── Streamed KPI strip (top of page) ─────────────────────────────
+//
+// First render slot of the shared aggregate. Renders the degraded-state /
+// "no affiliate account" banners + the 6 KPI tiles. Streamed behind its
+// own Suspense so the read never extends the hero's TTFB.
+async function CreatorKpiStrip({
+  profileResultPromise,
+}: {
+  profileResultPromise: ProfileResultPromise;
+}) {
+  const { data: profile } = await profileResultPromise;
 
   // getCreatorDetail returns null only for a truly unknown user — but the
   // hero already resolved via getCreatorHeader, so a null here means the
@@ -371,11 +410,32 @@ async function CreatorFinancialBand({ userId }: { userId: string }) {
           accent="rose"
         />
       </div>
+    </div>
+  );
+}
 
+// ── 6 ── Streamed acquisition + affiliate-payouts section (bottom) ─────
+//
+// Second render slot of the SAME shared aggregate — awaits the same
+// in-flight `profileResultPromise` the KPI strip consumes, so no extra
+// round-trip is fired. Renders the acquisition chart/funnel/wager
+// breakdown/country split + the affiliate-payouts card. If the aggregate
+// failed/timed out the KPI strip already surfaced the degraded banner, so
+// this slot renders nothing rather than repeating it.
+async function CreatorAcquisitionPayouts({
+  profileResultPromise,
+}: {
+  profileResultPromise: ProfileResultPromise;
+}) {
+  const { data: profile } = await profileResultPromise;
+  if (!profile) return null;
+
+  return (
+    <div className="space-y-4 sm:space-y-6">
       {/* ── Acquisition — the clicks/signups time-series chart + the
           clicks → signups → FTDs funnel + per-game wager-volume breakdown +
           geographic split. The chart's hourly/daily series come from the
-          SAME getCreatorDetail aggregate this band already resolved. ──── */}
+          SAME getCreatorDetail aggregate this section already resolved. ── */}
       <div className="space-y-3">
         <SectionHeading icon={TrendingUp} title="Acquisition" />
         <AcquisitionChart
@@ -545,20 +605,30 @@ function CreatorDealBandSkeleton() {
   );
 }
 
-// Placeholder matching the financial band — the "no account" banner space,
-// the KPI strip's 6 tiles, then the acquisition + payouts sections.
-function CreatorFinancialBandSkeleton() {
+// Placeholder matching the KPI strip — the "no account" banner space is
+// omitted (it only renders for non-affiliate users), so this is the 6 KPI
+// tiles only, so the page doesn't reflow when the real strip lands.
+function CreatorKpiStripSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <Card key={i} size="sm" className="space-y-2 p-4">
+          <Skeleton className="h-3 w-16" />
+          <Skeleton className="h-6 w-20" />
+          <Skeleton className="h-2.5 w-14" />
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// Placeholder matching the acquisition + affiliate-payouts section — the
+// acquisition heading + chart + 3-card breakdown row, then the payouts
+// heading + its card — so the page doesn't reflow when the real content
+// lands.
+function CreatorAcquisitionPayoutsSkeleton() {
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {[0, 1, 2, 3, 4, 5].map((i) => (
-          <Card key={i} size="sm" className="space-y-2 p-4">
-            <Skeleton className="h-3 w-16" />
-            <Skeleton className="h-6 w-20" />
-            <Skeleton className="h-2.5 w-14" />
-          </Card>
-        ))}
-      </div>
       <div className="space-y-3">
         <Skeleton className="h-6 w-32" />
         <AcquisitionChartSkeleton />
