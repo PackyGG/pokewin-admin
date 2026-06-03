@@ -1221,6 +1221,13 @@ export async function restoreAccountWipe(
       // rows' historical balance_before/after are NOT rewritten. The session
       // bet pointer + balances.last_transaction_id we nulled on wipe are NOT
       // restored — they self-heal.
+      //
+      // WINDOW-AWARE (no special handling needed): a windowed wager wipe only
+      // ever snapshotted + deleted + decremented the rows/sums INSIDE its chosen
+      // window (12h / 24h / 48h), so re-inserting `snapshot.*Rows` verbatim and
+      // re-adding the recorded `*Reduction` decimals restores EXACTLY what that
+      // windowed wipe removed — nothing more, nothing less. `snapshot.windowHours`
+      // is informational; the captured rows + decimals are authoritative.
       const stripUndef = (r: Record<string, unknown>): Record<string, unknown> => {
         const copy: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(r)) {

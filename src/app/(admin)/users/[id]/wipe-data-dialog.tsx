@@ -78,7 +78,9 @@ import {
 import {
   previewWagerWipe,
   wipeWager,
+  WAGER_WIPE_WINDOW_OPTIONS,
   type WagerWipePreview,
+  type WagerWipeWindowHours,
 } from "./wipe-wager-actions";
 import {
   listWipeableAdjustments,
@@ -263,6 +265,12 @@ function WipeDataDialog({
     null,
   );
   const [wager, setWager] = useState<LoadState<WagerPreview> | null>(null);
+  // The recent WINDOW the Wager/gameplay wipe is bounded to (owner's heavy-
+  // account timeout fix). Default to a BOUNDED window (24h) so the common case
+  // (a heavy account that times out on a full wipe) is fast; `null` = "All"
+  // keeps the full-wipe behaviour for a light account. Changing it re-loads the
+  // wager preview so the counts + warning reflect the chosen window.
+  const [wagerWindow, setWagerWindow] = useState<WagerWipeWindowHours>(24);
 
   // Adjustments are row-selectable (not all-or-nothing): load the wipeable
   // credit rows, let the admin pick a subset.
@@ -292,6 +300,7 @@ function WipeDataDialog({
     setInventory(null);
     setDeposits(null);
     setWager(null);
+    setWagerWindow(24);
     setAdjState(null);
     setAdjSelected(new Set());
     setAdjSearch("");
@@ -415,23 +424,41 @@ function WipeDataDialog({
       );
   }, [userId]);
 
-  const loadWager = useCallback(() => {
-    setWager({ status: "loading" });
-    previewWagerWipe(userId)
-      .then((res) =>
-        setWager(
-          res.success
-            ? { status: "ready", data: res.preview }
-            : { status: "error", error: res.error },
-        ),
-      )
-      .catch((e) =>
-        setWager({
-          status: "error",
-          error: e instanceof Error ? e.message : "Failed to load",
-        }),
-      );
-  }, [userId]);
+  // Load the wager preview for a given window. Defaults to the current
+  // `wagerWindow` (so the first tick uses the bounded default); the window
+  // selector passes the freshly-chosen value explicitly to avoid a stale
+  // closure. The returned preview's counts are bounded to that window.
+  const loadWager = useCallback(
+    (hours: WagerWipeWindowHours = wagerWindow) => {
+      setWager({ status: "loading" });
+      previewWagerWipe(userId, hours)
+        .then((res) =>
+          setWager(
+            res.success
+              ? { status: "ready", data: res.preview }
+              : { status: "error", error: res.error },
+          ),
+        )
+        .catch((e) =>
+          setWager({
+            status: "error",
+            error: e instanceof Error ? e.message : "Failed to load",
+          }),
+        );
+    },
+    [userId, wagerWindow],
+  );
+
+  // Change the wager window + re-fetch its preview so the counts + warning
+  // reflect the new window. Only re-loads while the wager category is ticked
+  // (otherwise it just records the choice for when it's next ticked).
+  const changeWagerWindow = useCallback(
+    (hours: WagerWipeWindowHours) => {
+      setWagerWindow(hours);
+      if (checked.wager) loadWager(hours);
+    },
+    [checked.wager, loadWager],
+  );
 
   const loadAdjustments = useCallback(() => {
     setAdjState({ status: "loading" });
@@ -749,7 +776,13 @@ function WipeDataDialog({
           commit();
 
           try {
-            const outcome = await runCategory(category, userId, code, adjIds);
+            const outcome = await runCategory(
+              category,
+              userId,
+              code,
+              adjIds,
+              wagerWindow,
+            );
             if (outcome.success) {
               finalResults[i] = {
                 category,
@@ -807,7 +840,7 @@ function WipeDataDialog({
         router.refresh();
       });
     },
-    [totpCode, userId, router],
+    [totpCode, userId, router, wagerWindow],
   );
 
   // Normal "Wipe selected" path: run the ticked, non-empty categories. Empty
@@ -925,6 +958,8 @@ function WipeDataDialog({
             inventory={inventory}
             deposits={deposits}
             wager={wager}
+            wagerWindow={wagerWindow}
+            onWagerWindowChange={changeWagerWindow}
             adjState={adjState}
             adjFiltered={adjFiltered}
             adjSelected={adjSelected}
@@ -961,6 +996,7 @@ function WipeDataDialog({
             totpCode={totpCode}
             setTotpCode={setTotpCode}
             allEnabledCategories={allEnabledCategories}
+            wagerWindow={wagerWindow}
             onWipeAll={handleWipeAll}
             isPending={isPending}
           />
@@ -1049,6 +1085,7 @@ async function runCategory(
   userId: string,
   totpCode: string,
   adjIds: string[],
+  wagerWindow: WagerWipeWindowHours,
 ): Promise<{ success: true; message: string } | { success: false; error: string }> {
   if (category === "adjustments") {
     const res = await wipeBalanceAdjustments({
@@ -1091,7 +1128,7 @@ async function runCategory(
     };
   }
   if (category === "wager") {
-    const res = await wipeWager({ userId, totpCode });
+    const res = await wipeWager({ userId, totpCode, sinceHours: wagerWindow });
     if (!res.success) return { success: false, error: res.error };
     const parts: string[] = [];
     if (res.ledgerLegsDeleted > 0)
@@ -1104,9 +1141,11 @@ async function runCategory(
       res.withdrawalLockedSkipped > 0
         ? ` · ${res.withdrawalLockedSkipped} withdrawal-locked card${res.withdrawalLockedSkipped === 1 ? "" : "s"} skipped`
         : "";
+    const windowLabel =
+      res.windowHours === null ? "all gameplay" : `last ${res.windowHours}h`;
     return {
       success: true,
-      message: `Deleted ${parts.join(" · ") || "nothing"} · ${formatCurrency(res.balanceReduced)} clawed back from balance${skipped}`,
+      message: `Deleted ${parts.join(" · ") || "nothing"} (${windowLabel}) · ${formatCurrency(res.balanceReduced)} clawed back from balance${skipped}`,
     };
   }
   // inventory
@@ -1138,6 +1177,8 @@ function SelectPhase({
   inventory,
   deposits,
   wager,
+  wagerWindow,
+  onWagerWindowChange,
   adjState,
   adjFiltered,
   adjSelected,
@@ -1169,6 +1210,10 @@ function SelectPhase({
   inventory: LoadState<InventoryPreview> | null;
   deposits: LoadState<DepositsPreview> | null;
   wager: LoadState<WagerPreview> | null;
+  /** The currently-selected wager wipe window (12 / 24 / 48 / null="All"). */
+  wagerWindow: WagerWipeWindowHours;
+  /** Change the wager window (re-loads the preview if the category is ticked). */
+  onWagerWindowChange: (hours: WagerWipeWindowHours) => void;
   adjState: LoadState<WipeableAdjustment[]> | null;
   adjFiltered: WipeableAdjustment[];
   adjSelected: Set<string>;
@@ -1283,7 +1328,11 @@ function SelectPhase({
                       <DepositsInline state={deposits} />
                     )}
                     {key === "wager" && checked.wager && (
-                      <WagerInline state={wager} />
+                      <WagerInline
+                        state={wager}
+                        window={wagerWindow}
+                        onWindowChange={onWagerWindowChange}
+                      />
                     )}
                     {key === "adjustments" && checked.adjustments && (
                       <AdjustmentsInline
@@ -1558,17 +1607,54 @@ function DepositsInline({ state }: { state: LoadState<DepositsPreview> | null })
   );
 }
 
-function WagerInline({ state }: { state: LoadState<WagerPreview> | null }) {
+function WagerInline({
+  state,
+  window,
+  onWindowChange,
+}: {
+  state: LoadState<WagerPreview> | null;
+  window: WagerWipeWindowHours;
+  onWindowChange: (hours: WagerWipeWindowHours) => void;
+}) {
   return (
-    <InlineWrapper state={state}>
-      {state?.status === "ready" && (
-        <div className="space-y-2 text-sm">
-          {state.data.ledgerLegCount === 0 &&
-          state.data.inventoryCount === 0 &&
-          state.data.upgraderGameCount === 0 ? (
-            <EmptyNote what="wager / gameplay data" />
-          ) : (
-            <>
+    <div className="space-y-2.5">
+      {/* WINDOW SELECTOR — always shown (above the loading/ready preview) so the
+          admin can pick the window even while the counts re-load. A BOUNDED
+          window (12/24/48h) keeps a heavy account's delete small + fast (it was
+          timing out on a full wipe); "All" keeps the full-wipe behaviour. The
+          counts + warning below reflect the chosen window. */}
+      <WagerWindowSelector value={window} onChange={onWindowChange} />
+      <InlineWrapper state={state}>
+        {state?.status === "ready" && (
+          <div className="space-y-2 text-sm">
+            {/* Honest caveat: a bounded window removes ONLY that window's
+                gameplay — older gameplay (and its effect on lifetime stats)
+                remains until wiped too. Repeatable per window. */}
+            {window !== null && (
+              <p className="flex items-start gap-1.5 rounded border border-amber-500/30 bg-amber-500/[0.06] px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400">
+                <Info className="mt-0.5 size-3.5 shrink-0" />
+                <span>
+                  Only the last {window}h of gameplay will be removed. Older
+                  gameplay (and its effect on lifetime Total Wagered / Total Won
+                  and GGR) stays until you wipe it too — repeat with this or a
+                  wider window. Pick <span className="font-medium">All</span> to
+                  remove everything at once (may be slow / time out on a very
+                  heavy account).
+                </span>
+              </p>
+            )}
+            {state.data.ledgerLegCount === 0 &&
+            state.data.inventoryCount === 0 &&
+            state.data.upgraderGameCount === 0 ? (
+              <EmptyNote
+                what={
+                  window === null
+                    ? "wager / gameplay data"
+                    : `wager / gameplay data in the last ${window}h`
+                }
+              />
+            ) : (
+              <>
               {/* Ledger legs (wager vs payout). */}
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
@@ -1672,11 +1758,60 @@ function WagerInline({ state }: { state: LoadState<WagerPreview> | null }) {
               )}
 
               <DangerWarning kind="wager" />
-            </>
-          )}
-        </div>
-      )}
-    </InlineWrapper>
+              </>
+            )}
+          </div>
+        )}
+      </InlineWrapper>
+    </div>
+  );
+}
+
+/**
+ * The 12h / 24h / 48h / All window selector for the wager wipe. A bounded
+ * window keeps a heavy account's delete small + fast (a full wipe was timing
+ * out); "All" keeps the full-wipe behaviour for a light account. Segmented
+ * button row, matching the dialog's clean style (no new UI deps).
+ */
+function WagerWindowSelector({
+  value,
+  onChange,
+}: {
+  value: WagerWipeWindowHours;
+  onChange: (hours: WagerWipeWindowHours) => void;
+}) {
+  // The bounded options + the "All" sentinel, as { hours, label } entries.
+  const options: ReadonlyArray<{ hours: WagerWipeWindowHours; label: string }> = [
+    ...WAGER_WIPE_WINDOW_OPTIONS.map((h) => ({ hours: h as WagerWipeWindowHours, label: `${h}h` })),
+    { hours: null, label: "All" },
+  ];
+  return (
+    <div className="space-y-1">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        Time window
+      </p>
+      <div className="inline-flex rounded-md border bg-background/50 p-0.5">
+        {options.map((opt) => {
+          const active = value === opt.hours;
+          return (
+            <button
+              key={opt.label}
+              type="button"
+              onClick={() => onChange(opt.hours)}
+              aria-pressed={active}
+              className={cn(
+                "rounded px-2.5 py-1 text-xs font-medium tabular-nums transition-colors",
+                active
+                  ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+              )}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -1992,6 +2127,7 @@ function ConfirmPhase({
   totpCode,
   setTotpCode,
   allEnabledCategories,
+  wagerWindow,
   onWipeAll,
   isPending,
 }: {
@@ -2016,6 +2152,8 @@ function ConfirmPhase({
   setTotpCode: (v: string) => void;
   /** Every enabled, non-locked category — what WIPE ALL will hit. */
   allEnabledCategories: readonly SelectableCategory[];
+  /** The wager window WIPE ALL / the wager step will use (12/24/48/null="All"). */
+  wagerWindow: WagerWipeWindowHours;
   /** Fire the nuke-everything WIPE ALL run (every enabled category). */
   onWipeAll: () => void;
   isPending: boolean;
@@ -2129,11 +2267,14 @@ function ConfirmPhase({
         {wantsWager && wagerData && (
           <SummaryBlock
             icon={Gamepad2}
-            label={`Wager / gameplay (${wagerData.ledgerLegCount.toLocaleString()} leg${wagerData.ledgerLegCount === 1 ? "" : "s"})`}
+            label={`Wager / gameplay${wagerData.windowHours === null ? "" : ` · last ${wagerData.windowHours}h`} (${wagerData.ledgerLegCount.toLocaleString()} leg${wagerData.ledgerLegCount === 1 ? "" : "s"})`}
             amount={wagerData.payoutTotal}
             danger="Deletes real gaming history (GGR / margin / P&L) — recoverable (best-effort) via snapshot"
           >
             <p className="text-xs text-muted-foreground">
+              {wagerData.windowHours === null
+                ? "All gameplay · "
+                : `Last ${wagerData.windowHours}h · `}
               {wagerData.ledgerLegCount.toLocaleString()} wager + payout leg
               {wagerData.ledgerLegCount === 1 ? "" : "s"} ·{" "}
               {wagerData.inventoryCount.toLocaleString()} won item
@@ -2149,6 +2290,14 @@ function ConfirmPhase({
                 : ""}
               .
             </p>
+            {wagerData.windowHours !== null && (
+              <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                <Info className="mt-px size-3 shrink-0" />
+                Only the last {wagerData.windowHours}h is removed — older
+                gameplay (and its lifetime-stat / GGR effect) remains until wiped
+                too.
+              </p>
+            )}
           </SummaryBlock>
         )}
 
@@ -2227,6 +2376,7 @@ function ConfirmPhase({
       <WipeAllPanel
         everCreator={everCreator}
         allEnabledCategories={allEnabledCategories}
+        wagerWindow={wagerWindow}
         totpReady={Boolean(totpCode.trim())}
         isPending={isPending}
         onWipeAll={onWipeAll}
@@ -2247,18 +2397,25 @@ function ConfirmPhase({
 function WipeAllPanel({
   everCreator,
   allEnabledCategories,
+  wagerWindow,
   totpReady,
   isPending,
   onWipeAll,
 }: {
   everCreator: boolean;
   allEnabledCategories: readonly SelectableCategory[];
+  /** The wager window the wager step inside WIPE ALL will use. */
+  wagerWindow: WagerWipeWindowHours;
   totpReady: boolean;
   isPending: boolean;
   onWipeAll: () => void;
 }) {
   // Human labels for the categories WIPE ALL will hit (in run order).
   const hitLabels = allEnabledCategories.map((c) => wipeCategoryMeta(c).label);
+  // WIPE ALL runs the wager step with the SAME window selected above. Surface
+  // it so a bounded window (e.g. 24h) doesn't silently leave older gameplay
+  // behind without the owner realizing.
+  const wagerInAll = allEnabledCategories.includes("wager");
 
   return (
     <div className="rounded-md border-2 border-rose-600/70 bg-rose-600/[0.09] p-3.5 shadow-[0_0_0_1px_rgba(225,29,72,0.15)]">
@@ -2296,6 +2453,14 @@ function WipeAllPanel({
                 Empty categories are skipped. Disabled “coming soon” categories
                 are not touched.
               </p>
+              {wagerInAll && (
+                <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                  <Info className="mt-px size-3 shrink-0" />
+                  {wagerWindow === null
+                    ? "Wager / gameplay runs for ALL gameplay (may be slow on a very heavy account — adjust the time window above)."
+                    : `Wager / gameplay runs for the last ${wagerWindow}h only — older gameplay stays until wiped (change the time window above).`}
+                </p>
+              )}
             </div>
           ) : (
             <div className="rounded border border-rose-600/30 bg-background/40 px-2.5 py-2 text-xs text-muted-foreground">

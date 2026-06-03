@@ -192,6 +192,18 @@ export type WagerWipeSnapshot = {
   totalWageredReduction: string;
   /** Exact amount subtracted from balances.total_won (clamped ≥0; decimal string). */
   totalWonReduction: string;
+  /**
+   * The recent WINDOW this wipe was bounded to (owner's heavy-account timeout
+   * fix): `null` = "All" (the prior full-wipe behaviour, no lower time bound);
+   * a number = the bounded look-back in hours (12 / 24 / 48). The snapshot ONLY
+   * holds the windowed rows, so restore re-inserts exactly the windowed set.
+   * Informational for the audit/restore record — the rows/decimals above are
+   * the authoritative content. OPTIONAL for back-compat: snapshots written
+   * before this field exists are read as `undefined` (treated as "All").
+   */
+  windowHours?: number | null;
+  /** ISO cutoff the window resolved to (rows with ts ≥ this), or null for "All". Informational. */
+  windowCutoff?: string | null;
 };
 
 export type AccountWipeSnapshot =

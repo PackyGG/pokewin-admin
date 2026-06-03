@@ -126,7 +126,65 @@ import {
 // GATING: requireAdmin + __can_wipe_accounts + 2FA, preview+confirm upstream,
 // hard ownership + type re-check on every row. NOT creator-protected (gameplay
 // is the user's own activity), so it is wipeable for any user.
+//
+// ─── TIME-WINDOW BOUNDING (owner mandate — the heavy-account timeout fix) ───
+//
+//  Even with the 180s statement-timeout raise (below), a pathologically heavy
+//  account's FULL gameplay history is too big to delete in one bounded tx — it
+//  still times out ("Wipe timed out — …unusually large"). So the wipe accepts a
+//  RECENT-WINDOW selector (12h / 24h / 48h, or "All"). A bounded window scopes
+//  EVERY snapshot/delete to gameplay whose timestamp is ≥ the cutoff:
+//    • ledger legs        → `created_at  >= cutoff`
+//    • won inventory      → `obtained_at >= cutoff` (its provably_fair_results
+//                            follow by parent id — already scoped to those rows)
+//    • upgrader_games     → `created_at  >= cutoff` (raw SQL; the SAME column the
+//                            canonical GGR contributor query + the upgrader
+//                            transactions feed filter/order by)
+//  → far fewer rows → the delete completes inside the timeout, and the owner can
+//  repeat it to peel older windows. "All" (cutoff = null) keeps the exact prior
+//  full-wipe behaviour for a light account.
+//
+//  HONEST CAVEAT (surfaced in the UI): a windowed wipe removes ONLY that
+//  window's gameplay — older gameplay (and its contribution to the lifetime
+//  total_wagered / total_won counters + GGR / margin) survives until wiped too.
+//  A 24h wipe is therefore NOT a full removal. The counter decrement, balance
+//  clawback and snapshot are all scoped to exactly the windowed rows, so
+//  wipe/restore stays symmetric per-window.
 // ---------------------------------------------------------------------------
+
+/**
+ * The selectable recent-window options for the wager wipe, in hours. `null`
+ * means "All / everything" (no lower time bound — today's full-wipe behaviour).
+ * A bounded value caps the delete to gameplay whose timestamp is ≥ the cutoff
+ * so a heavy account completes inside the statement timeout.
+ */
+export type WagerWipeWindowHours = 12 | 24 | 48 | null;
+
+/** The bounded window options offered in the UI (excludes the "All" sentinel). */
+export const WAGER_WIPE_WINDOW_OPTIONS = [12, 24, 48] as const;
+
+/**
+ * Validate + normalize an incoming window selection to a `WagerWipeWindowHours`.
+ * Anything that isn't one of the three bounded options is treated as "All"
+ * (null) — the safe, explicit default for an unknown value is the unbounded
+ * behaviour the action always had, NOT a silent narrower window.
+ */
+function normalizeWindowHours(v: unknown): WagerWipeWindowHours {
+  if (v === 12 || v === 24 || v === 48) return v;
+  return null;
+}
+
+/**
+ * Resolve a window selection to an absolute cutoff `Date` (rows with the
+ * relevant timestamp ≥ this are in-window), or `null` for "All / everything"
+ * (no lower bound). Computed ONCE per call so the ledger / inventory / upgrader
+ * reads + deletes all share the exact same instant (no drift between the
+ * snapshot read and the destructive delete).
+ */
+function resolveWindowCutoff(hours: WagerWipeWindowHours): Date | null {
+  if (hours === null) return null;
+  return new Date(Date.now() - hours * 60 * 60 * 1000);
+}
 
 /**
  * The exact ledger types the wager wipe deletes — the canonical wager + payout
@@ -253,6 +311,14 @@ export type WagerWipePreview = {
   upgraderWon: number;
   /** True when the connected DB carries `upgrader_games` (prod). */
   upgraderTablePresent: boolean;
+  /**
+   * The window this preview was computed for (echoed back so the dialog can
+   * label the counts + warning). `null` = "All" (no lower time bound); a number
+   * = the bounded look-back in hours.
+   */
+  windowHours: WagerWipeWindowHours;
+  /** ISO cutoff the window resolves to (rows with ts ≥ this counted), or null for "All". */
+  cutoff: string | null;
 };
 
 /** Shape of a raw `to_regclass` probe row. */
@@ -278,12 +344,16 @@ async function upgraderGamesPresent(db: Awaited<ReturnType<typeof getDb>>): Prom
 }
 
 /**
- * Count + value of everything the wager wipe would delete for this user, plus
- * the withdrawal-locked won-card count it will skip + whether upgrader_games
- * exists. Read-only, scoped to this user.
+ * Count + value of everything the wager wipe would delete for this user IN THE
+ * CHOSEN WINDOW, plus the withdrawal-locked won-card count it will skip +
+ * whether upgrader_games exists. Read-only, scoped to this user. `sinceHours`
+ * bounds the counts to gameplay whose timestamp is ≥ the cutoff (12 / 24 / 48),
+ * or counts everything when null ("All"). The preview's counts therefore equal
+ * exactly what the wipe with the same window will delete.
  */
 export async function previewWagerWipe(
   userId: string,
+  sinceHours: WagerWipeWindowHours = null,
 ): Promise<{ success: true; preview: WagerWipePreview } | { success: false; error: string }> {
   await gateWipe();
   const parsed = userIdSchema.safeParse(userId);
@@ -292,12 +362,19 @@ export async function previewWagerWipe(
   }
   const db = await getDb();
 
-  // Ledger legs split into wager (debit) vs payout (credit) by groupBy type.
+  // Resolve the window to a single cutoff instant. null = "All" (no lower
+  // bound). The ledger / inventory / upgrader reads below all share it.
+  const windowHours = normalizeWindowHours(sinceHours);
+  const cutoff = resolveWindowCutoff(windowHours);
+
+  // Ledger legs split into wager (debit) vs payout (credit) by groupBy type,
+  // bounded to the window by created_at (omitted entirely for "All").
   const ledgerGrouped = await db.ledger_transactions.groupBy({
     by: ["type"],
     where: {
       user_id: parsed.data,
       type: { in: WAGER_WIPE_LEDGER_TYPES as unknown as LedgerTransactionType[] },
+      ...(cutoff ? { created_at: { gte: cutoff } } : {}),
     },
     _count: { _all: true },
     _sum: { amount: true },
@@ -315,13 +392,16 @@ export async function previewWagerWipe(
   }
 
   // Won pack/battle inventory — deletable (NOT withdrawal-locked) vs the
-  // withdrawal-locked subset we skip.
+  // withdrawal-locked subset we skip. Both bounded to the window by obtained_at
+  // so the deletable count + the skipped count both describe ONLY in-window
+  // cards (consistent with what the wipe will actually touch).
   const [invAgg, lockedAgg] = await Promise.all([
     db.user_inventory.aggregate({
       where: {
         user_id: parsed.data,
         source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
         withdrawal_locked_at: null,
+        ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
       },
       _count: { _all: true },
       _sum: { value_at_obtained: true },
@@ -331,6 +411,7 @@ export async function previewWagerWipe(
         user_id: parsed.data,
         source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
         withdrawal_locked_at: { not: null },
+        ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
       },
     }),
   ]);
@@ -344,13 +425,25 @@ export async function previewWagerWipe(
   const upgraderTablePresent = await upgraderGamesPresent(db);
   if (upgraderTablePresent) {
     try {
-      const rows = await db.$queryRawUnsafe<UpgraderAggRow[]>(
-        `SELECT COUNT(*)::text AS cnt,
-                COALESCE(SUM(bet_amount), 0)::text AS bet,
-                COALESCE(SUM(won_amount), 0)::text AS won
-         FROM upgrader_games WHERE user_id = $1`,
-        parsed.data,
-      );
+      // Bound by created_at when a window is set (the SAME column the canonical
+      // GGR contributor query + the upgrader transactions feed filter/order by).
+      // The cutoff is a bound parameter ($2) — never string-interpolated.
+      const rows = cutoff
+        ? await db.$queryRawUnsafe<UpgraderAggRow[]>(
+            `SELECT COUNT(*)::text AS cnt,
+                    COALESCE(SUM(bet_amount), 0)::text AS bet,
+                    COALESCE(SUM(won_amount), 0)::text AS won
+             FROM upgrader_games WHERE user_id = $1 AND created_at >= $2`,
+            parsed.data,
+            cutoff,
+          )
+        : await db.$queryRawUnsafe<UpgraderAggRow[]>(
+            `SELECT COUNT(*)::text AS cnt,
+                    COALESCE(SUM(bet_amount), 0)::text AS bet,
+                    COALESCE(SUM(won_amount), 0)::text AS won
+             FROM upgrader_games WHERE user_id = $1`,
+            parsed.data,
+          );
       const r = rows?.[0];
       upgraderGameCount = r ? Number(r.cnt ?? 0) : 0;
       upgraderBet = r ? toNumber(r.bet) : 0;
@@ -375,6 +468,8 @@ export async function previewWagerWipe(
       upgraderBet,
       upgraderWon,
       upgraderTablePresent,
+      windowHours,
+      cutoff: cutoff ? cutoff.toISOString() : null,
     },
   };
 }
@@ -386,11 +481,16 @@ export async function previewWagerWipe(
 const wipeWagerSchema = z.object({
   userId: z.string().min(1, "User id is required"),
   totpCode: z.string().min(1, "2FA code is required"),
+  // The recent window to bound the wipe to: 12 / 24 / 48 hours, or null/omitted
+  // for "All" (no lower time bound — the prior full-wipe behaviour). Anything
+  // else normalizes to "All" (the safe explicit default).
+  sinceHours: z.union([z.literal(12), z.literal(24), z.literal(48), z.null()]).optional(),
 });
 
 export async function wipeWager(data: {
   userId: string;
   totpCode: string;
+  sinceHours?: WagerWipeWindowHours;
 }): Promise<
   | {
       success: true;
@@ -400,6 +500,8 @@ export async function wipeWager(data: {
       upgraderGamesDeleted: number;
       withdrawalLockedSkipped: number;
       balanceReduced: number;
+      /** The window the wipe ran for: null = "All", a number = bounded hours. */
+      windowHours: WagerWipeWindowHours;
     }
   | { success: false; error: string }
 > {
@@ -429,23 +531,35 @@ export async function wipeWager(data: {
 
   const db = await getDb();
 
+  // Resolve the chosen window to a single cutoff instant up front (null =
+  // "All"). EVERY read + delete below shares this exact instant, so the
+  // snapshot, the delete and the counter decrement describe the same row set
+  // (no drift between the read and the destructive tx).
+  const windowHours = normalizeWindowHours(parsed.sinceHours);
+  const cutoff = resolveWindowCutoff(windowHours);
+
   // ── READ everything up front (full rows) so the snapshot is exact. All
-  // scoped strictly to this user. Bounded by MAX_WAGER_ROWS+1 per collection
-  // so an over-cap history is detected without an unbounded scan. ──
+  // scoped strictly to this user AND to the window (ledger by created_at,
+  // inventory by obtained_at). Bounded by MAX_WAGER_ROWS+1 per collection so an
+  // over-cap history is detected without an unbounded scan. A bounded window is
+  // precisely what keeps a heavy account's row count under the timeout. ──
   const ledgerRows = await db.ledger_transactions.findMany({
     where: {
       user_id: parsed.userId,
       type: { in: WAGER_WIPE_LEDGER_TYPES as unknown as LedgerTransactionType[] },
+      ...(cutoff ? { created_at: { gte: cutoff } } : {}),
     },
     take: MAX_WAGER_ROWS + 1,
   });
   // Won pack/battle inventory, EXCLUDING withdrawal-locked (those back an
-  // in-flight withdrawal — skipped + flagged).
+  // in-flight withdrawal — skipped + flagged). Bounded to the window by
+  // obtained_at.
   const inventoryRows = await db.user_inventory.findMany({
     where: {
       user_id: parsed.userId,
       source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
       withdrawal_locked_at: null,
+      ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
     },
     take: MAX_WAGER_ROWS + 1,
   });
@@ -454,6 +568,7 @@ export async function wipeWager(data: {
       user_id: parsed.userId,
       source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
       withdrawal_locked_at: { not: null },
+      ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
     },
   });
 
@@ -516,10 +631,19 @@ export async function wipeWager(data: {
   let upgraderGameRows: Array<Record<string, unknown>> = [];
   if (upgraderTablePresent) {
     try {
-      upgraderGameRows = await db.$queryRawUnsafe<Array<Record<string, unknown>>>(
-        `SELECT * FROM upgrader_games WHERE user_id = $1 LIMIT ${MAX_WAGER_ROWS + 1}`,
-        parsed.userId,
-      );
+      // Bound to the window by created_at (the canonical upgrader time column).
+      // The cutoff is a bound parameter ($2); the LIMIT is a compile-time
+      // constant, never user input.
+      upgraderGameRows = cutoff
+        ? await db.$queryRawUnsafe<Array<Record<string, unknown>>>(
+            `SELECT * FROM upgrader_games WHERE user_id = $1 AND created_at >= $2 LIMIT ${MAX_WAGER_ROWS + 1}`,
+            parsed.userId,
+            cutoff,
+          )
+        : await db.$queryRawUnsafe<Array<Record<string, unknown>>>(
+            `SELECT * FROM upgrader_games WHERE user_id = $1 LIMIT ${MAX_WAGER_ROWS + 1}`,
+            parsed.userId,
+          );
     } catch (err) {
       console.error("[wipeWager] upgrader_games read failed — aborting (nothing deleted):", err);
       return {
@@ -611,6 +735,10 @@ export async function wipeWager(data: {
     balanceReduction: balanceReduction.toFixed(2),
     totalWageredReduction: totalWageredReduction.toFixed(2),
     totalWonReduction: totalWonReduction.toFixed(2),
+    // Record the window the wipe ran for (informational — the snapshot already
+    // holds ONLY the windowed rows, so restore re-adds exactly the windowed set).
+    windowHours,
+    windowCutoff: cutoff ? cutoff.toISOString() : null,
   } satisfies { type: "wager" } & WagerWipeSnapshot;
 
   let wipeId: string;
@@ -688,8 +816,9 @@ export async function wipeWager(data: {
         provablyFairDeleted = pfDel.count;
       }
 
-      // (4) Delete the wager + payout ledger legs (re-scoped by user + type so
-      // a race can't widen the blast radius; count verified). Their outbound
+      // (4) Delete the wager + payout ledger legs (re-scoped by user + type +
+      // the window cutoff so a race can't widen the blast radius beyond the
+      // windowed set we snapshotted; count verified). Their outbound
       // game_session_id FK is fine — the session they point at remains.
       if (ledgerIds.length > 0) {
         const legDel = await tx.ledger_transactions.deleteMany({
@@ -697,6 +826,7 @@ export async function wipeWager(data: {
             id: { in: ledgerIds },
             user_id: parsed.userId,
             type: { in: WAGER_WIPE_LEDGER_TYPES as unknown as LedgerTransactionType[] },
+            ...(cutoff ? { created_at: { gte: cutoff } } : {}),
           },
         });
         if (legDel.count !== ledgerIds.length) {
@@ -705,7 +835,8 @@ export async function wipeWager(data: {
       }
 
       // (5) Delete the won pack/battle inventory rows (re-scoped + held-from-
-      // withdrawal; PF children already gone). Count verified.
+      // withdrawal + the window cutoff; PF children already gone). Count
+      // verified.
       if (inventoryIds.length > 0) {
         const invDel = await tx.user_inventory.deleteMany({
           where: {
@@ -713,6 +844,7 @@ export async function wipeWager(data: {
             user_id: parsed.userId,
             source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
             withdrawal_locked_at: null,
+            ...(cutoff ? { obtained_at: { gte: cutoff } } : {}),
           },
         });
         if (invDel.count !== inventoryIds.length) {
@@ -721,12 +853,21 @@ export async function wipeWager(data: {
       }
 
       // (6) Delete the upgrader_games rows (raw SQL; table not in the Prisma
-      // client). Scoped to the user; the id is a bound parameter.
+      // client). Scoped to the user AND the window cutoff (created_at) so a
+      // windowed wipe deletes ONLY in-window upgrader games — NOT the user's
+      // entire upgrader history. Both the user id and the cutoff are bound
+      // parameters ($1 / $2), never string-interpolated.
       if (upgraderGameRows.length > 0) {
-        const deleted = await tx.$executeRawUnsafe(
-          `DELETE FROM upgrader_games WHERE user_id = $1`,
-          parsed.userId,
-        );
+        const deleted = cutoff
+          ? await tx.$executeRawUnsafe(
+              `DELETE FROM upgrader_games WHERE user_id = $1 AND created_at >= $2`,
+              parsed.userId,
+              cutoff,
+            )
+          : await tx.$executeRawUnsafe(
+              `DELETE FROM upgrader_games WHERE user_id = $1`,
+              parsed.userId,
+            );
         upgraderGamesDeleted = typeof deleted === "number" ? deleted : upgraderGameRows.length;
       }
 
@@ -803,6 +944,8 @@ export async function wipeWager(data: {
       ip: await resolveRequestIp(),
       metadata: {
         wipeId,
+        windowHours,
+        windowCutoff: cutoff ? cutoff.toISOString() : null,
         ledgerLegsDeleted: ledgerRows.length,
         wagerMagnitude,
         payoutMagnitude,
@@ -823,7 +966,7 @@ export async function wipeWager(data: {
         totalWonReduced: totalWonReduction,
         totalWonClamped,
         recoverable: true,
-        note: "Deleted the user's wager+payout ledger legs (pack/battle/upgrader) + won pack/battle inventory (+ their provably_fair_results) + upgrader_games. Balance reduced ONLY by the payout (credit) legs' clawback (clamped ≥0); wager (debit) legs left the balance unchanged (never inflate). Lifetime balances.total_wagered reduced by Σ wager-leg magnitudes; balances.total_won reduced by Σ payout-leg magnitudes + won-inventory value_at_obtained (the production composition isn't derivable here, so this decrements by what was DELETED — both clamped ≥0); restore re-adds EXACTLY these. A full wager wipe lands both at ~0 so the user drops off the 'who drove the gaming margin' contributors. game_sessions/battles shells LEFT intact (battle delete would cascade other participants); session bet pointer + balances.last_transaction_id nulled to break the FK cycle (self-heal). Withdrawal-locked won cards SKIPPED (back an in-flight withdrawal). Remaining ledger rows' balance_before/after not rewritten.",
+        note: `Deleted the user's wager+payout ledger legs (pack/battle/upgrader) + won pack/battle inventory (+ their provably_fair_results) + upgrader_games, bounded to ${windowHours === null ? "ALL gameplay (no time window)" : `the last ${windowHours}h (created_at/obtained_at ≥ cutoff)`}. A WINDOWED wipe removes ONLY that window's gameplay — older gameplay (and its effect on lifetime stats / GGR) remains until wiped too. Balance reduced ONLY by the windowed payout (credit) legs' clawback (clamped ≥0); wager (debit) legs left the balance unchanged (never inflate). Lifetime balances.total_wagered reduced by Σ windowed wager-leg magnitudes; balances.total_won reduced by Σ windowed payout-leg magnitudes + windowed won-inventory value_at_obtained (the production composition isn't derivable here, so this decrements by what was DELETED — both clamped ≥0); restore re-adds EXACTLY these. game_sessions/battles shells LEFT intact (battle delete would cascade other participants); session bet pointer + balances.last_transaction_id nulled to break the FK cycle (self-heal). Withdrawal-locked won cards SKIPPED (back an in-flight withdrawal). Remaining ledger rows' balance_before/after not rewritten.`,
       },
     },
   });
@@ -848,5 +991,6 @@ export async function wipeWager(data: {
     upgraderGamesDeleted,
     withdrawalLockedSkipped,
     balanceReduced: balanceReduction,
+    windowHours,
   };
 }
