@@ -646,6 +646,30 @@ function WipeDataDialog({
     [SELECTABLE_ORDER, isCategoryLocked],
   );
 
+  // Whether every enabled (non-locked) category is already ticked — drives the
+  // select-phase "Select all wipeable" toggle's label + checked styling.
+  const allWipeableTicked =
+    allEnabledCategories.length > 0 &&
+    allEnabledCategories.every((c) => checked[c]);
+
+  // Select-phase "WIPE ALL" affordance: tick (or untick) EVERY enabled, non-
+  // locked, non-creator-protected category in one click. This only PRE-SELECTS
+  // — it adds no new run path: the owner still proceeds through the existing
+  // Review → confirm → single-2FA → "Wipe selected" flow, which runs exactly
+  // the ticked + non-empty categories. Locked / disabled ("coming soon") /
+  // creator-protected categories are never touched (they aren't in
+  // `allEnabledCategories`). Ticking each one also kicks off its lazy preview
+  // load via `toggleCategory`, same as a manual tick.
+  function selectAllWipeable() {
+    const next = !allWipeableTicked;
+    for (const c of allEnabledCategories) {
+      // Only flip categories that need flipping (avoids re-firing a load for an
+      // already-ticked category) — toggleCategory guards the lazy load on the
+      // "=== null" first-load check anyway, but this keeps it minimal.
+      if (checked[c] !== next) toggleCategory(c, next);
+    }
+  }
+
   // ── Sequential multi-execute. One 2FA code, applied to each category's
   // EXISTING wipe action in turn. Each wipe action is independently
   // snapshot-first + recoverable, so a partial run is safe + individually
@@ -893,6 +917,9 @@ function WipeDataDialog({
             everCreator={everCreator}
             wasCreator={wasCreator}
             isCategoryLocked={isCategoryLocked}
+            allEnabledCount={allEnabledCategories.length}
+            allWipeableTicked={allWipeableTicked}
+            onSelectAllWipeable={selectAllWipeable}
             balance={balance}
             vault={vault}
             inventory={inventory}
@@ -1103,6 +1130,9 @@ function SelectPhase({
   everCreator,
   wasCreator,
   isCategoryLocked,
+  allEnabledCount,
+  allWipeableTicked,
+  onSelectAllWipeable,
   balance,
   vault,
   inventory,
@@ -1128,6 +1158,12 @@ function SelectPhase({
   everCreator: boolean;
   wasCreator: boolean;
   isCategoryLocked: (key: WipeCategory) => boolean;
+  /** How many categories are enabled + non-locked (what "select all" hits). */
+  allEnabledCount: number;
+  /** Whether every enabled category is already ticked. */
+  allWipeableTicked: boolean;
+  /** Tick (or untick) every enabled, non-locked category in one click. */
+  onSelectAllWipeable: () => void;
   balance: LoadState<BalancePreview> | null;
   vault: LoadState<VaultPreview> | null;
   inventory: LoadState<InventoryPreview> | null;
@@ -1161,6 +1197,38 @@ function SelectPhase({
 
   return (
     <div className="space-y-3">
+      {/* Select-phase WIPE ALL affordance: one click ticks every enabled,
+          non-locked, non-creator-protected category, then the owner proceeds
+          through the normal Review → confirm → 2FA flow (no separate run path,
+          no disabled/creator-protected category selected). Compact + matches
+          the dialog's other controls. Solid rose with EXPLICIT white text once
+          everything is ticked (never red-on-red); soft destructive outline
+          otherwise. */}
+      {allEnabledCount > 1 && (
+        <div className="flex items-center justify-between gap-2 rounded-md border border-rose-500/30 bg-rose-500/[0.04] px-3 py-2">
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Wipe everything?</span>{" "}
+            Tick every wipeable category at once, then review + confirm with 2FA.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant={allWipeableTicked ? "default" : "destructive"}
+            className={cn(
+              "shrink-0",
+              allWipeableTicked
+                ? "bg-rose-600 text-white hover:bg-rose-700 hover:text-white focus-visible:ring-rose-600/40 dark:bg-rose-600 dark:text-white dark:hover:bg-rose-700"
+                : undefined,
+            )}
+            onClick={onSelectAllWipeable}
+            aria-pressed={allWipeableTicked}
+          >
+            <Skull className="mr-1.5 size-3.5" />
+            {allWipeableTicked ? "All selected" : "Select all"}
+          </Button>
+        </div>
+      )}
+
       {WIPE_CATEGORY_GROUPS.map((group) => {
         const keys = byGroup.get(group.key) ?? [];
         if (keys.length === 0) return null;
@@ -2221,10 +2289,16 @@ function WipeAllPanel({
             </span>
           </p>
 
+          {/* Solid-red danger button. The `destructive` variant supplies the
+              focus-ring + disabled states, but its faint bg + red `text-
+              destructive` are overridden here: a SOLID rose bg with EXPLICIT
+              white text (never red-on-red). `cn`/tailwind-merge keeps these
+              last-wins classes over the variant's bg/text. Legible in light
+              AND dark (rose-600 stays dark enough for white text in both). */}
           <Button
             size="sm"
             variant="destructive"
-            className="w-full bg-rose-600 hover:bg-rose-700 sm:w-auto"
+            className="w-full bg-rose-600 text-white hover:bg-rose-700 hover:text-white focus-visible:ring-rose-600/40 dark:bg-rose-600 dark:text-white dark:hover:bg-rose-700 sm:w-auto"
             onClick={onWipeAll}
             disabled={isPending || !totpReady}
             title={
