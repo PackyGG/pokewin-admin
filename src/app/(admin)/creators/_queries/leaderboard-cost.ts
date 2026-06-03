@@ -45,12 +45,39 @@ async function fetchAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
   return all;
 }
 
+export type LeaderboardCostTotals = {
+  /**
+   * Full committed prize pool of every APPROVED creator leaderboard,
+   * net of refunds, with NO sponsored-% weighting:
+   *
+   *   totalPrizeUsd = Σ (total_prize_usd − refund_amount_usd)
+   *
+   * This is the 100% pool — the whole prize that goes out to players.
+   * The creator funds the non-sponsored slice off-site; the house only
+   * covers `houseCoveredUsd` of it.
+   */
+  totalPrizeUsd: number;
+  /**
+   * The house's share of that pool — the same net prize sum, but each
+   * board weighted by its admin-set "sponsored %":
+   *
+   *   houseCoveredUsd = Σ (total_prize_usd − refund) × (sponsored% / 100)
+   *
+   * This is the actual house cost (rose). With every board at the 100%
+   * default, houseCoveredUsd === totalPrizeUsd.
+   */
+  houseCoveredUsd: number;
+};
+
 /**
- * Total committed cost of creator (affiliate) leaderboards, weighted
- * by each leaderboard's admin-side "sponsored %".
+ * Committed cost of creator (affiliate) leaderboards over APPROVED rows,
+ * returned at two scopes from a single fetch walk:
  *
- *   cost = Σ (total_prize_usd − refund_amount_usd) × (sponsored% / 100)
- *          over APPROVED rows
+ *   • totalPrizeUsd   — the full 100% prize pool, net of refunds, with
+ *                       no sponsored-% weighting (neutral context).
+ *   • houseCoveredUsd — that same pool weighted by each board's admin-set
+ *                       "sponsored %" — the share the house actually pays
+ *                       (a house cost → rose).
  *
  * `total_prize_usd` = creator prize + site bonus — the same figure the
  * /creators/leaderboards table surfaces as the (rose-colored) cost.
@@ -58,18 +85,19 @@ async function fetchAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
  * Approved-only: a rejected leaderboard never runs ($0) and a pending
  * one isn't a committed spend yet. Refunds (cancelled leaderboards)
  * are subtracted so a cancelled-and-refunded board doesn't inflate the
- * figure.
+ * figures.
  *
  * The sponsored % is an admin annotation (admin_leaderboard_sponsorship
  * — purely a cost-accounting input, set inline on /creators/leaderboards).
- * Leaderboards with no annotation default to 100% (full cost).
+ * Leaderboards with no annotation default to 100% (full cost): when every
+ * board is at the default, houseCoveredUsd === totalPrizeUsd.
  */
-export async function getLeaderboardCostTotal(): Promise<number> {
+export async function getLeaderboardCostTotal(): Promise<LeaderboardCostTotals> {
   const all = await fetchAllApprovedLeaderboards();
 
   // Sponsored % per leaderboard. Resilient: if the admin-DB lookup
-  // blips, treat every leaderboard as 100% (un-weighted total) rather
-  // than blanking the whole KPI tile.
+  // blips, treat every leaderboard as 100% (house-covered collapses to
+  // the un-weighted total) rather than blanking the whole KPI tile.
   let sponsorship: Map<string, number>;
   try {
     sponsorship = await getLeaderboardSponsorshipMap(all.map((lb) => lb.id));
@@ -81,15 +109,18 @@ export async function getLeaderboardCostTotal(): Promise<number> {
     sponsorship = new Map();
   }
 
-  let total = 0;
+  let totalPrizeUsd = 0;
+  let houseCoveredUsd = 0;
   for (const lb of all) {
     const prize = Number(lb.total_prize_usd) || 0;
     const refund = Number(lb.refund_amount_usd) || 0;
+    const net = prize - refund;
     // No annotation → 100%. Clamp defensively to the 0–100 range.
     const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
-    total += (prize - refund) * (pct / 100);
+    totalPrizeUsd += net;
+    houseCoveredUsd += net * (pct / 100);
   }
-  return total;
+  return { totalPrizeUsd, houseCoveredUsd };
 }
 
 const WINDOW_MS = 14 * 24 * 60 * 60 * 1000;

@@ -8,7 +8,6 @@ import {
   Megaphone,
   Radio,
   Sparkles,
-  Trophy,
   Users,
   UserX,
   Wallet,
@@ -68,6 +67,7 @@ import {
   type Lb2wkInfo,
 } from "./_queries/leaderboard-cost";
 import { type CreatorWithSocials } from "./_components/creator-card-grid";
+import { LeaderboardSpendTile } from "./_components/leaderboard-spend-tile";
 import { AddCreatorDialog } from "./_components/add-creator-dialog";
 import { CreatorsSearchProvider } from "./_components/creators-search-context";
 import { CreatorsSearchInput } from "./_components/creators-search-input";
@@ -228,7 +228,7 @@ export default async function CreatorsPage({
 //
 // Tab-aware: ONE swap tile (Fill Creators / Multiplier Creators) — its
 // value, label, and icon flip from the cached per-tab count. Other
-// tiles (Global PnL, Converted, Leaderboard Cost, Active Deals, Live
+// tiles (Global PnL, Converted, Leaderboard Spend, Active Deals, Live
 // Now) stay tab-independent. Total = 6 tiles.
 //
 // Active Deals + Live Now double as filter toggles — clicking one
@@ -249,7 +249,7 @@ async function CreatorsKpiStrip({
   period: CreatorsSearchParams["period"];
 }) {
   // Past Creators tab — every other tile in the strip (Net GGR, Global
-  // PnL, Converted, Leaderboard Cost, Active Deals, Live Now) is an
+  // PnL, Converted, Leaderboard Spend, Active Deals, Live Now) is an
   // ACTIVE-roster figure that would be misleading next to a list of
   // canceled creators, and the GGR/PnL aggregates are creator-gated
   // (ex-creators don't appear in them). So the Past tab renders a single
@@ -304,7 +304,7 @@ async function CreatorsKpiStrip({
     }),
     getLeaderboardCostTotal().catch((e) => {
       console.error(
-        "[creators] leaderboard cost fetch failed (tile renders '—'):",
+        "[creators] leaderboard cost fetch failed (box renders '—'):",
         e,
       );
       return null;
@@ -404,23 +404,16 @@ async function CreatorsKpiStrip({
           <InfoHint text="Lifetime stream earnings minted into end-of-session payout vouchers (creator_fill_conversion) across ALL creators — not just live-deal creators. The sub-line shows how much of that has actually been withdrawn off-platform vs still in flight." />
         }
       />
-      {/* Leaderboard Cost — combined prize pool of every approved
-          creator leaderboard, net of refunds, each weighted by its
-          admin-set house share % (set inline on /creators/leaderboards;
-          defaults to 100%). Rose: prize money paid out to users is a
-          house cost (matches the rose total-prize coloring on the
-          leaderboards table). */}
-      <KpiTile
-        label="Leaderboard Cost"
-        value={
-          leaderboardCost != null ? formatCurrency(leaderboardCost) : "—"
-        }
-        sub="Approved leaderboard prizes × house share %"
-        icon={Trophy}
-        accent="rose"
-        action={
-          <InfoHint text="The house's share of every approved creator-leaderboard prize pool — net of refunds and weighted by each board's house-funded %. Money paid to players = house cost (rose)." />
-        }
+      {/* Leaderboard Spend — both scopes of approved-creator-leaderboard
+          spend in one box: the full 100% prize pool (neutral context)
+          AND the house-covered sponsored share (rose house cost). Net of
+          refunds, each board weighted by its admin-set house share %
+          (set inline on /creators/leaderboards; defaults to 100%). Rose
+          hero matches the rose total-prize coloring on the leaderboards
+          table. */}
+      <LeaderboardSpendTile
+        totalPrizeUsd={leaderboardCost?.totalPrizeUsd ?? null}
+        houseCoveredUsd={leaderboardCost?.houseCoveredUsd ?? null}
       />
       {/* Active Deals — click to filter the list to creators
           whose current deal is `active`. */}
