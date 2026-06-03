@@ -466,6 +466,41 @@ async function runWindowQuery(args: {
   const prevStart = previousStart ?? new Date(0);
   const prevEnd = previousEnd ?? new Date(0);
 
+  // ── base lower bound (the $0-on-every-window fix) ──────────────────
+  //
+  // The `base` CTE below is the ONLY heavy scan in this query: it joins
+  // `ledger_transactions` to `real_users` and, for every creator row,
+  // evaluates a correlated `EXISTS (… session_windows …)`. Previously its
+  // WHERE was just `status = 'completed'` with NO `created_at` lower bound,
+  // so EVERY render — even a 24h window — scanned the ENTIRE
+  // `ledger_transactions` history (correlated session-window probe per
+  // creator row across all-time) before the outer aggregate finally
+  // restricted by window. On prod-sized data with a populated
+  // `session_windows` CTE that all-time scan blows the per-leg `safeQuery`
+  // 15s timeout, so the WHOLE statement degrades to `EMPTY_WINDOWS` and
+  // ALL eight columns (deposits / withdrawals / wager / organic / coded /
+  // signups / active, current AND previous) render as $0 — on every window,
+  // because the cost is independent of the window width. The canonical
+  // `getWindowMetrics` / `getDailyGamingMetrics` reads (which still return
+  // real GGR/NGR) and the daily series (`cachedDailyOverview`) all bound
+  // their `ledger_transactions` scan with `AND created_at >= since`; this
+  // window query was the one that didn't.
+  //
+  // FIX: bound `base` to the earliest timestamp ANY output column needs —
+  // `min(currentCutoff, prevStart)`. The current-window legs all filter
+  // `created_at >= currentCutoff`; the previous-window legs all filter
+  // `created_at >= prevStart AND < prevEnd` (and `prevStart <= currentCutoff`
+  // always, since the prior window sits immediately before the current one).
+  // So every row dropped by the bound has `created_at < min(cutoff,
+  // prevStart)` and therefore contributes to NO column — the result is
+  // byte-identical (verified head-to-head on a data-rich window) while the
+  // scan shrinks to the window instead of all-time. This is the SAME
+  // `created_at >= since` bound `cachedDailyOverview` and the canonical
+  // metric scans already apply. For lifetime (`previousStart` null →
+  // `prevStart` = epoch, and `currentCutoff` = epoch), the bound is epoch =
+  // a no-op, preserving the all-time lifetime semantics exactly as before.
+  const baseSince = prevStart < currentCutoff ? prevStart : currentCutoff;
+
   // Canonical WAGER_TYPES set (packs + battles; no phantom upgrader_bet,
   // no withdrawal_shipping_fee) — the SAME set the headline GGR wager leg
   // uses, so this displayed wager reconciles with the GGR card.
@@ -517,7 +552,12 @@ async function runWindowQuery(args: {
                   ELSE false END AS in_session
       FROM ledger_transactions lt
       JOIN real_users ru ON ru.id = lt.user_id
-      WHERE lt.status = 'completed'
+      -- Lower bound = the earliest timestamp any output column needs
+      -- (min(currentCutoff, prevStart)). Truth-preserving: every dropped
+      -- row predates BOTH windows so it contributes to no column — see the
+      -- baseSince comment above. Without it this CTE scanned all-time and
+      -- the leg timed out to $0 on every window.
+      WHERE lt.status = 'completed' AND lt.created_at >= ${baseSince}
     ),
     withdrawals AS (
       SELECT
