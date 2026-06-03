@@ -14,6 +14,7 @@ import {
   Loader2,
   ShieldAlert,
   ShieldCheck,
+  ShieldX,
   ArrowRight,
   Wallet,
   Archive,
@@ -24,6 +25,14 @@ import {
   CheckCircle2,
   XCircle,
   Trash2,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Receipt,
+  Gift,
+  Gamepad2,
+  Users,
+  UserCog,
+  Lock,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -40,7 +49,15 @@ import {
 } from "@/components/ui/dialog";
 import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import { WIPE_PRESERVED_SUMMARY } from "@/lib/account-wipes/protected";
+import { wipePreservedSummary } from "@/lib/account-wipes/protected";
+import {
+  WIPE_CATEGORIES,
+  WIPE_CATEGORY_GROUPS,
+  wipeCategoryMeta,
+  type WipeCategory,
+  type WipeCategoryIcon,
+  type WipeCategoryGroup,
+} from "@/lib/account-wipes/categories";
 import {
   previewBalanceWipe,
   previewVaultWipe,
@@ -52,6 +69,10 @@ import {
   type InventoryTopItem,
   type InventoryValueTier,
 } from "./wipe-account-targets-actions";
+import {
+  previewDepositsWipe,
+  wipeDeposits,
+} from "./wipe-deposits-actions";
 import {
   listWipeableAdjustments,
   wipeBalanceAdjustments,
@@ -65,47 +86,25 @@ import {
 // is rendered in rose, matching the per-mode dialogs this consolidates.
 const ROSE = "text-rose-500 dark:text-rose-400";
 
-// The four recoverable, targeted wipe categories the admin can mix-and-match.
-// Order is intentional: the row-selectable adjustments first, then the money
-// pools, then inventory. Each maps 1:1 onto an EXISTING snapshot-first +
-// recoverable server action — this panel only orchestrates the UI + execution
-// order, it never re-implements the destructive logic.
-type WipeCategory = "adjustments" | "balance" | "vault" | "inventory";
-
-const CATEGORY_ORDER: readonly WipeCategory[] = [
-  "adjustments",
-  "balance",
-  "vault",
-  "inventory",
-] as const;
-
-const CATEGORY_META: Record<
-  WipeCategory,
-  { icon: LucideIcon; label: string; blurb: string }
-> = {
-  adjustments: {
-    icon: SlidersHorizontal,
-    label: "Content balance adjustments",
-    blurb:
-      "Admin-granted balance credits you select below. Snapshotted + recoverable.",
-  },
-  balance: {
-    icon: Wallet,
-    label: "Balance",
-    blurb: "Sets spendable balance to $0. Snapshotted + recoverable.",
-  },
-  vault: {
-    icon: Archive,
-    label: "Vault",
-    blurb: "Sets the vault (locked balance) to $0 and clears its unlock window.",
-  },
-  inventory: {
-    icon: Package,
-    label: "Inventory",
-    blurb:
-      "Hard-deletes every currently-held inventory item (sold/exchanged/withdrawn items are left as historical record). Snapshotted + recoverable.",
-  },
+// Map the icon NAME from the categories module to a lucide component (keeps
+// that module icon-lib-free + client-safe).
+const ICONS: Record<WipeCategoryIcon, LucideIcon> = {
+  sliders: SlidersHorizontal,
+  wallet: Wallet,
+  archive: Archive,
+  package: Package,
+  "arrow-down-to-line": ArrowDownToLine,
+  "arrow-up-from-line": ArrowUpFromLine,
+  receipt: Receipt,
+  gift: Gift,
+  gamepad: Gamepad2,
+  users: Users,
+  "user-cog": UserCog,
 };
+
+function categoryIcon(key: WipeCategory): LucideIcon {
+  return ICONS[wipeCategoryMeta(key).icon];
+}
 
 // ── Per-category loaded preview payloads (normalized to what this dialog
 // renders), mirroring the per-mode dialogs' shapes. ─────────────────────────
@@ -122,11 +121,28 @@ type InventoryPreview = {
   topItems: InventoryTopItem[];
   valueTiers: InventoryValueTier[];
 };
+type DepositsPreview = {
+  count: number;
+  totalAmount: number;
+  totalDeposited: number;
+  recent: Array<{ id: string; amount: number; createdAt: string; description: string }>;
+};
 
 type LoadState<T> =
   | { status: "loading" }
   | { status: "error"; error: string }
   | { status: "ready"; data: T };
+
+// The selectable, ENABLED categories whose previews this dialog loads + runs.
+// Disabled (coming-soon) categories are rendered greyed-out and are never
+// loaded or executed. Adjustments is row-selectable; the rest are all-or-
+// nothing. Deposits is creator-protected (disabled for an ever-creator).
+type SelectableCategory =
+  | "adjustments"
+  | "balance"
+  | "vault"
+  | "inventory"
+  | "deposits";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Entry button — the SINGLE "Wipe data" button that replaces the four separate
@@ -135,9 +151,23 @@ type LoadState<T> =
 // is the recoverable, targeted, customizable one. Admin-gated upstream; every
 // underlying server action re-checks (requireAdmin + __can_wipe_accounts + 2FA)
 // regardless.
+//
+// `everCreator` / `wasCreator` are surfaced from the user-detail page so the
+// panel can DISABLE the creator-protected categories ("Protected — creator").
+// The flags are UI hints only — every server action re-derives the ever-creator
+// status server-side (dual-DB) and hard-rejects a protected category
+// regardless of what the client sends.
 // ───────────────────────────────────────────────────────────────────────────
 
-export function WipeDataButton({ userId }: { userId: string }) {
+export function WipeDataButton({
+  userId,
+  everCreator = false,
+  wasCreator = false,
+}: {
+  userId: string;
+  everCreator?: boolean;
+  wasCreator?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -150,7 +180,13 @@ export function WipeDataButton({ userId }: { userId: string }) {
         <Eraser className="size-3.5" />
         Wipe data
       </Button>
-      <WipeDataDialog userId={userId} open={open} onOpenChange={setOpen} />
+      <WipeDataDialog
+        userId={userId}
+        everCreator={everCreator}
+        wasCreator={wasCreator}
+        open={open}
+        onOpenChange={setOpen}
+      />
     </>
   );
 }
@@ -162,17 +198,21 @@ type Phase = "select" | "confirm" | "running";
 // skipped because an earlier one aborted the sequence).
 type RunStatus = "pending" | "running" | "success" | "failed" | "skipped";
 type RunResult = {
-  category: WipeCategory;
+  category: SelectableCategory;
   status: RunStatus;
   message: string;
 };
 
 function WipeDataDialog({
   userId,
+  everCreator,
+  wasCreator,
   open,
   onOpenChange,
 }: {
   userId: string;
+  everCreator: boolean;
+  wasCreator: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -181,12 +221,13 @@ function WipeDataDialog({
   const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
 
-  // Which categories are ticked.
-  const [checked, setChecked] = useState<Record<WipeCategory, boolean>>({
+  // Which categories are ticked (selectable ones only).
+  const [checked, setChecked] = useState<Record<SelectableCategory, boolean>>({
     adjustments: false,
     balance: false,
     vault: false,
     inventory: false,
+    deposits: false,
   });
 
   // Lazily-loaded previews — one per category, only fetched when that category
@@ -196,6 +237,9 @@ function WipeDataDialog({
   const [vault, setVault] = useState<LoadState<VaultPreview> | null>(null);
   const [inventory, setInventory] =
     useState<LoadState<InventoryPreview> | null>(null);
+  const [deposits, setDeposits] = useState<LoadState<DepositsPreview> | null>(
+    null,
+  );
 
   // Adjustments are row-selectable (not all-or-nothing): load the wipeable
   // credit rows, let the admin pick a subset.
@@ -217,15 +261,30 @@ function WipeDataDialog({
       balance: false,
       vault: false,
       inventory: false,
+      deposits: false,
     });
     setBalance(null);
     setVault(null);
     setInventory(null);
+    setDeposits(null);
     setAdjState(null);
     setAdjSelected(new Set());
     setAdjSearch("");
     setResults([]);
   }, [open]);
+
+  // Whether a selectable category is interactable: enabled AND not creator-
+  // protected for THIS user. Disabled / creator-protected categories render
+  // greyed-out and can never be ticked.
+  const isCategoryLocked = useCallback(
+    (key: WipeCategory): boolean => {
+      const meta = wipeCategoryMeta(key);
+      if (!meta.enabled) return true;
+      if (meta.creatorProtected && everCreator) return true;
+      return false;
+    },
+    [everCreator],
+  );
 
   // ── Lazy loaders, fired the first time a category is ticked. ──────────────
   const loadBalance = useCallback(() => {
@@ -304,6 +363,32 @@ function WipeDataDialog({
       );
   }, [userId]);
 
+  const loadDeposits = useCallback(() => {
+    setDeposits({ status: "loading" });
+    previewDepositsWipe(userId)
+      .then((res) =>
+        setDeposits(
+          res.success
+            ? {
+                status: "ready",
+                data: {
+                  count: res.preview.count,
+                  totalAmount: res.preview.totalAmount,
+                  totalDeposited: res.preview.totalDeposited,
+                  recent: res.preview.recent,
+                },
+              }
+            : { status: "error", error: res.error },
+        ),
+      )
+      .catch((e) =>
+        setDeposits({
+          status: "error",
+          error: e instanceof Error ? e.message : "Failed to load",
+        }),
+      );
+  }, [userId]);
+
   const loadAdjustments = useCallback(() => {
     setAdjState({ status: "loading" });
     listWipeableAdjustments(userId)
@@ -322,13 +407,15 @@ function WipeDataDialog({
       );
   }, [userId]);
 
-  function toggleCategory(cat: WipeCategory, v: boolean) {
+  function toggleCategory(cat: SelectableCategory, v: boolean) {
+    if (v && isCategoryLocked(cat)) return; // can't tick a locked category
     setChecked((prev) => ({ ...prev, [cat]: v }));
     if (!v) return;
     // Kick off the lazy load the first time the category is ticked.
     if (cat === "balance" && balance === null) loadBalance();
     if (cat === "vault" && vault === null) loadVault();
     if (cat === "inventory" && inventory === null) loadInventory();
+    if (cat === "deposits" && deposits === null) loadDeposits();
     if (cat === "adjustments" && adjState === null) loadAdjustments();
   }
 
@@ -385,10 +472,15 @@ function WipeDataDialog({
   const vaultAmt =
     checked.vault && vault?.status === "ready" ? vault.data.amount : 0;
   const adjAmt = checked.adjustments ? adjTotal : 0;
+  const depositsAmt =
+    checked.deposits && deposits?.status === "ready"
+      ? deposits.data.totalAmount
+      : 0;
   // The money grand-total across the selected MONEY categories (balance, vault,
-  // selected adjustments). Inventory value is a card-value estimate (different
-  // unit) and is surfaced alongside, not folded into this cash figure.
-  const moneyTotal = balanceAmt + vaultAmt + adjAmt;
+  // selected adjustments, deposits). Inventory value is a card-value estimate
+  // (different unit) and is surfaced alongside, not folded into this cash
+  // figure.
+  const moneyTotal = balanceAmt + vaultAmt + adjAmt + depositsAmt;
   const invValue =
     checked.inventory && inventory?.status === "ready"
       ? inventory.data.value
@@ -397,12 +489,14 @@ function WipeDataDialog({
     checked.inventory && inventory?.status === "ready"
       ? inventory.data.count
       : 0;
+  const depositsCount =
+    checked.deposits && deposits?.status === "ready" ? deposits.data.count : 0;
 
   // Whether a ticked category actually contributes something to delete. A
   // ticked-but-empty category (e.g. $0 balance) is treated as a no-op rather
   // than producing a guaranteed-failing wipe call.
   const categoryHasContent = useCallback(
-    (cat: WipeCategory): boolean => {
+    (cat: SelectableCategory): boolean => {
       switch (cat) {
         case "balance":
           return balance?.status === "ready" && balance.data.amount > 0;
@@ -410,43 +504,61 @@ function WipeDataDialog({
           return vault?.status === "ready" && vault.data.amount > 0;
         case "inventory":
           return inventory?.status === "ready" && inventory.data.count > 0;
+        case "deposits":
+          return deposits?.status === "ready" && deposits.data.count > 0;
         case "adjustments":
           return adjSelected.size > 0;
       }
     },
-    [balance, vault, inventory, adjSelected],
+    [balance, vault, inventory, deposits, adjSelected],
   );
 
-  // The categories that will actually run: ticked AND non-empty. Drives the
-  // Review button's enabled state + the execution loop.
+  const SELECTABLE_ORDER: readonly SelectableCategory[] = useMemo(
+    () => ["adjustments", "balance", "vault", "inventory", "deposits"],
+    [],
+  );
+
+  // The categories that will actually run: ticked AND non-empty AND not locked.
+  // Drives the Review button's enabled state + the execution loop.
   const runnableCategories = useMemo(
-    () => CATEGORY_ORDER.filter((c) => checked[c] && categoryHasContent(c)),
-    [checked, categoryHasContent],
+    () =>
+      SELECTABLE_ORDER.filter(
+        (c) => checked[c] && !isCategoryLocked(c) && categoryHasContent(c),
+      ),
+    [SELECTABLE_ORDER, checked, isCategoryLocked, categoryHasContent],
   );
 
   // A ticked category whose preview is still loading blocks Review (we don't
   // know yet whether it has content / what the total is).
-  const anyTickedStillLoading = CATEGORY_ORDER.some((c) => {
+  const anyTickedStillLoading = SELECTABLE_ORDER.some((c) => {
     if (!checked[c]) return false;
     if (c === "balance") return !balance || balance.status === "loading";
     if (c === "vault") return !vault || vault.status === "loading";
     if (c === "inventory") return !inventory || inventory.status === "loading";
+    if (c === "deposits") return !deposits || deposits.status === "loading";
     if (c === "adjustments") return !adjState || adjState.status === "loading";
     return false;
   });
 
   // A ticked category whose preview errored — block Review and surface it.
-  const tickedLoadError = CATEGORY_ORDER.find((c) => {
+  const tickedLoadError = SELECTABLE_ORDER.find((c) => {
     if (!checked[c]) return false;
     if (c === "balance") return balance?.status === "error";
     if (c === "vault") return vault?.status === "error";
     if (c === "inventory") return inventory?.status === "error";
+    if (c === "deposits") return deposits?.status === "error";
     if (c === "adjustments") return adjState?.status === "error";
     return false;
   });
 
   const canReview =
     runnableCategories.length > 0 && !anyTickedStillLoading && !tickedLoadError;
+
+  // Whether any runnable category is a live-financial one (drives the combined
+  // danger banner in the confirm step).
+  const anyLiveFinancialSelected = runnableCategories.some(
+    (c) => wipeCategoryMeta(c).liveFinancial,
+  );
 
   // ── Sequential multi-execute. One 2FA code, applied to each selected
   // category's EXISTING action in turn. Each action is independently
@@ -556,8 +668,10 @@ function WipeDataDialog({
                 Select exactly what to remove. Each category is snapshotted first
                 and is independently{" "}
                 <span className="font-medium text-foreground">recoverable</span>{" "}
-                from the wipe history below. Real finance, affiliate and creator
-                data can never be wiped (see the protected list).
+                from the wipe history below.
+                {everCreator
+                  ? " This user is or was a creator, so their finance, deposits and affiliate data are protected."
+                  : ""}
               </>
             ) : phase === "confirm" ? (
               <>
@@ -577,9 +691,13 @@ function WipeDataDialog({
           <SelectPhase
             checked={checked}
             onToggle={toggleCategory}
+            everCreator={everCreator}
+            wasCreator={wasCreator}
+            isCategoryLocked={isCategoryLocked}
             balance={balance}
             vault={vault}
             inventory={inventory}
+            deposits={deposits}
             adjState={adjState}
             adjFiltered={adjFiltered}
             adjSelected={adjSelected}
@@ -598,9 +716,13 @@ function WipeDataDialog({
         {phase === "confirm" && (
           <ConfirmPhase
             runnableCategories={runnableCategories}
+            everCreator={everCreator}
+            anyLiveFinancialSelected={anyLiveFinancialSelected}
             balanceAmt={balanceAmt}
             vaultAmt={vaultAmt}
             adjAmt={adjAmt}
+            depositsAmt={depositsAmt}
+            depositsCount={depositsCount}
             adjSelectedRows={adjSelectedRows}
             moneyTotal={moneyTotal}
             invCount={invCount}
@@ -687,7 +809,7 @@ function WipeDataDialog({
 // those actions unchanged; this only routes + normalizes the result message.
 // ───────────────────────────────────────────────────────────────────────────
 async function runCategory(
-  category: WipeCategory,
+  category: SelectableCategory,
   userId: string,
   totpCode: string,
   adjIds: string[],
@@ -720,6 +842,14 @@ async function runCategory(
       message: `Removed ${formatCurrency(res.amountRemoved)} from vault`,
     };
   }
+  if (category === "deposits") {
+    const res = await wipeDeposits({ userId, totpCode });
+    if (!res.success) return { success: false, error: res.error };
+    return {
+      success: true,
+      message: `Deleted ${res.deletedCount} deposit${res.deletedCount === 1 ? "" : "s"} (${formatCurrency(res.totalAmount)}) · counter −${formatCurrency(res.counterReduced)}`,
+    };
+  }
   // inventory
   const res = await wipeInventory({ userId, totpCode });
   if (!res.success) return { success: false, error: res.error };
@@ -730,17 +860,21 @@ async function runCategory(
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// SELECT PHASE — the checklist. Each category is a row with a checkbox; ticking
-// expands its inline preview (balance/vault current→$0, inventory enriched
-// breakdown, adjustments row-selection sub-list). Below the checklist sits the
-// non-selectable "WILL NOT TOUCH" section (structurally un-wipeable data).
+// SELECT PHASE — the grouped checklist. Each category is a row with a checkbox;
+// ticking expands its inline preview. Disabled (coming-soon) + creator-protected
+// categories render greyed-out and non-tickable. Below sits the role-aware
+// "WILL NOT TOUCH" section.
 // ───────────────────────────────────────────────────────────────────────────
 function SelectPhase({
   checked,
   onToggle,
+  everCreator,
+  wasCreator,
+  isCategoryLocked,
   balance,
   vault,
   inventory,
+  deposits,
   adjState,
   adjFiltered,
   adjSelected,
@@ -754,11 +888,15 @@ function SelectPhase({
   adjTotal,
   tickedLoadError,
 }: {
-  checked: Record<WipeCategory, boolean>;
-  onToggle: (cat: WipeCategory, v: boolean) => void;
+  checked: Record<SelectableCategory, boolean>;
+  onToggle: (cat: SelectableCategory, v: boolean) => void;
+  everCreator: boolean;
+  wasCreator: boolean;
+  isCategoryLocked: (key: WipeCategory) => boolean;
   balance: LoadState<BalancePreview> | null;
   vault: LoadState<VaultPreview> | null;
   inventory: LoadState<InventoryPreview> | null;
+  deposits: LoadState<DepositsPreview> | null;
   adjState: LoadState<WipeableAdjustment[]> | null;
   adjFiltered: WipeableAdjustment[];
   adjSelected: Set<string>;
@@ -770,54 +908,106 @@ function SelectPhase({
   toggleAdjAllFiltered: (v: boolean) => void;
   adjSelectedCount: number;
   adjTotal: number;
-  tickedLoadError: WipeCategory | undefined;
+  tickedLoadError: SelectableCategory | undefined;
 }) {
+  // Group the canonical category list by group, preserving order.
+  const byGroup = useMemo(() => {
+    const map = new Map<WipeCategoryGroup, WipeCategory[]>();
+    for (const c of WIPE_CATEGORIES) {
+      const arr = map.get(c.group) ?? [];
+      arr.push(c.key);
+      map.set(c.group, arr);
+    }
+    return map;
+  }, []);
+
   return (
     <div className="space-y-3">
-      <div className="space-y-2">
-        {CATEGORY_ORDER.map((cat) => (
-          <CategoryRow
-            key={cat}
-            category={cat}
-            checked={checked[cat]}
-            onToggle={(v) => onToggle(cat, v)}
-          >
-            {cat === "balance" && checked.balance && (
-              <BalanceInline state={balance} />
-            )}
-            {cat === "vault" && checked.vault && <VaultInline state={vault} />}
-            {cat === "inventory" && checked.inventory && (
-              <InventoryInline state={inventory} />
-            )}
-            {cat === "adjustments" && checked.adjustments && (
-              <AdjustmentsInline
-                state={adjState}
-                filtered={adjFiltered}
-                selected={adjSelected}
-                search={adjSearch}
-                setSearch={setAdjSearch}
-                allSelected={adjFilteredAllSelected}
-                someSelected={adjFilteredSomeSelected}
-                toggleOne={toggleAdjOne}
-                toggleAllFiltered={toggleAdjAllFiltered}
-                selectedCount={adjSelectedCount}
-                total={adjTotal}
-              />
-            )}
-          </CategoryRow>
-        ))}
-      </div>
+      {WIPE_CATEGORY_GROUPS.map((group) => {
+        const keys = byGroup.get(group.key) ?? [];
+        if (keys.length === 0) return null;
+        return (
+          <div key={group.key} className="space-y-2">
+            <p className="px-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {group.label}
+            </p>
+            <div className="space-y-2">
+              {keys.map((key) => {
+                const meta = wipeCategoryMeta(key);
+                const locked = isCategoryLocked(key);
+                const lockReason = !meta.enabled
+                  ? "Coming soon"
+                  : meta.creatorProtected && everCreator
+                    ? wasCreator
+                      ? "Protected — ex-creator"
+                      : "Protected — creator"
+                    : null;
+                const isSelectable =
+                  key === "adjustments" ||
+                  key === "balance" ||
+                  key === "vault" ||
+                  key === "inventory" ||
+                  key === "deposits";
+                return (
+                  <CategoryRow
+                    key={key}
+                    category={key}
+                    checked={isSelectable ? checked[key as SelectableCategory] : false}
+                    locked={locked}
+                    lockReason={lockReason}
+                    disabledReason={!meta.enabled ? meta.disabledReason : ""}
+                    liveFinancial={meta.liveFinancial}
+                    onToggle={
+                      isSelectable && !locked
+                        ? (v) => onToggle(key as SelectableCategory, v)
+                        : undefined
+                    }
+                  >
+                    {key === "balance" && checked.balance && (
+                      <BalanceInline state={balance} />
+                    )}
+                    {key === "vault" && checked.vault && (
+                      <VaultInline state={vault} />
+                    )}
+                    {key === "inventory" && checked.inventory && (
+                      <InventoryInline state={inventory} />
+                    )}
+                    {key === "deposits" && checked.deposits && (
+                      <DepositsInline state={deposits} />
+                    )}
+                    {key === "adjustments" && checked.adjustments && (
+                      <AdjustmentsInline
+                        state={adjState}
+                        filtered={adjFiltered}
+                        selected={adjSelected}
+                        search={adjSearch}
+                        setSearch={setAdjSearch}
+                        allSelected={adjFilteredAllSelected}
+                        someSelected={adjFilteredSomeSelected}
+                        toggleOne={toggleAdjOne}
+                        toggleAllFiltered={toggleAdjAllFiltered}
+                        selectedCount={adjSelectedCount}
+                        total={adjTotal}
+                      />
+                    )}
+                  </CategoryRow>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
 
       {tickedLoadError && (
         <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-2.5 text-xs text-rose-500">
           Could not load the{" "}
-          {CATEGORY_META[tickedLoadError].label.toLowerCase()} preview — untick
-          it or retry.
+          {wipeCategoryMeta(tickedLoadError).label.toLowerCase()} preview —
+          untick it or retry.
         </div>
       )}
 
-      {/* WILL NOT TOUCH — non-selectable, structurally un-wipeable data. */}
-      <PreservedPanel />
+      {/* WILL NOT TOUCH — role-aware, non-selectable preserved data. */}
+      <PreservedPanel everCreator={everCreator} />
     </div>
   );
 }
@@ -825,43 +1015,93 @@ function SelectPhase({
 function CategoryRow({
   category,
   checked,
+  locked,
+  lockReason,
+  disabledReason,
+  liveFinancial,
   onToggle,
   children,
 }: {
   category: WipeCategory;
   checked: boolean;
-  onToggle: (v: boolean) => void;
+  locked: boolean;
+  lockReason: string | null;
+  disabledReason: string;
+  liveFinancial: boolean;
+  onToggle?: (v: boolean) => void;
   children?: React.ReactNode;
 }) {
-  const meta = CATEGORY_META[category];
-  const Icon = meta.icon;
+  const meta = wipeCategoryMeta(category);
+  const Icon = categoryIcon(category);
+  const isCreatorLock = lockReason?.startsWith("Protected");
+
   return (
     <div
       className={cn(
         "rounded-md border transition-colors",
-        checked ? "border-rose-500/40 bg-rose-500/[0.04]" : "border-border",
+        locked
+          ? "border-border/60 bg-muted/20 opacity-75"
+          : checked
+            ? "border-rose-500/40 bg-rose-500/[0.04]"
+            : "border-border",
       )}
     >
-      <label className="flex cursor-pointer items-start gap-3 p-3">
+      <label
+        className={cn(
+          "flex items-start gap-3 p-3",
+          locked ? "cursor-not-allowed" : "cursor-pointer",
+        )}
+      >
         <Checkbox
           checked={checked}
-          onCheckedChange={(v) => onToggle(Boolean(v))}
+          disabled={locked}
+          onCheckedChange={(v) => onToggle?.(Boolean(v))}
           aria-label={`Select ${meta.label}`}
           className="mt-0.5"
         />
         <span className="flex min-w-0 flex-1 items-start gap-2">
           <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0">
-            <span className="block text-sm font-medium text-foreground">
-              {meta.label}
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2">
+              <span className="text-sm font-medium text-foreground">
+                {meta.label}
+              </span>
+              {lockReason && (
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-medium",
+                    isCreatorLock
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                      : "border-border bg-muted/40 text-muted-foreground",
+                  )}
+                >
+                  {isCreatorLock ? (
+                    <ShieldX className="size-3" />
+                  ) : (
+                    <Lock className="size-3" />
+                  )}
+                  {lockReason}
+                </span>
+              )}
+              {!locked && liveFinancial && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/40 bg-rose-500/10 px-1.5 py-px text-[10px] font-medium text-rose-500">
+                  <ShieldAlert className="size-3" />
+                  Live financial
+                </span>
+              )}
             </span>
-            <span className="block text-xs text-muted-foreground">
+            <span className="mt-0.5 block text-xs text-muted-foreground">
               {meta.blurb}
             </span>
+            {locked && disabledReason && (
+              <span className="mt-1 block text-[11px] text-muted-foreground/80">
+                {disabledReason}
+              </span>
+            )}
           </span>
         </span>
       </label>
-      {checked && children && (
+      {checked && !locked && children && (
         <div className="border-t border-rose-500/20 px-3 pb-3 pt-2.5">
           {children}
         </div>
@@ -934,6 +1174,71 @@ function VaultInline({ state }: { state: LoadState<VaultPreview> | null }) {
           {state.data.amount <= 0 && <EmptyNote what="vault" />}
           {state.data.dealBalanceDisclosure && (
             <FungibleDisclosure pool="vault" />
+          )}
+        </div>
+      )}
+    </InlineWrapper>
+  );
+}
+
+function DepositsInline({ state }: { state: LoadState<DepositsPreview> | null }) {
+  return (
+    <InlineWrapper state={state}>
+      {state?.status === "ready" && (
+        <div className="space-y-2 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">
+              {state.data.count.toLocaleString()} deposit
+              {state.data.count === 1 ? "" : "s"} · total
+            </span>
+            <span className={cn("font-semibold tabular-nums", ROSE)}>
+              {formatCurrency(state.data.totalAmount)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">
+              Lifetime deposited counter
+            </span>
+            <span className="text-foreground/80 tabular-nums">
+              {formatCurrency(state.data.totalDeposited)} → reduced by{" "}
+              {formatCurrency(
+                Math.min(state.data.totalAmount, state.data.totalDeposited),
+              )}
+            </span>
+          </div>
+          {state.data.count <= 0 ? (
+            <EmptyNote what="deposit history" />
+          ) : (
+            <>
+              <DangerWarning kind="deposits" />
+              {state.data.recent.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Most recent
+                  </p>
+                  <div className="max-h-40 divide-y overflow-y-auto rounded border bg-background/50">
+                    {state.data.recent.map((d) => (
+                      <div
+                        key={d.id}
+                        className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                          {formatDateTime(d.createdAt)}
+                        </span>
+                        <span
+                          className={cn(
+                            "shrink-0 font-medium tabular-nums",
+                            ROSE,
+                          )}
+                        >
+                          {formatCurrency(d.amount)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -1104,8 +1409,7 @@ function AdjustmentsInline({
             <>
               <p className="text-xs text-muted-foreground">
                 Pick the admin-granted credits to remove. Debits/clawbacks,
-                deposits, withdrawals, gaming, affiliate and creator-deal rows
-                are never listed.
+                deposits, withdrawals and gaming rows are never listed.
               </p>
               {/* Search / filter by reason */}
               <div className="relative">
@@ -1199,14 +1503,18 @@ function AdjustmentsInline({
 
 // ───────────────────────────────────────────────────────────────────────────
 // CONFIRM PHASE — the combined "WILL DELETE" summary across every selected
-// category with a grand total, the non-selectable preserved section, and the
-// SINGLE 2FA field.
+// category with a grand total, the role-aware preserved section, the combined
+// live-financial danger banner, and the SINGLE 2FA field.
 // ───────────────────────────────────────────────────────────────────────────
 function ConfirmPhase({
   runnableCategories,
+  everCreator,
+  anyLiveFinancialSelected,
   balanceAmt,
   vaultAmt,
   adjAmt,
+  depositsAmt,
+  depositsCount,
   adjSelectedRows,
   moneyTotal,
   invCount,
@@ -1214,10 +1522,14 @@ function ConfirmPhase({
   totpCode,
   setTotpCode,
 }: {
-  runnableCategories: readonly WipeCategory[];
+  runnableCategories: readonly SelectableCategory[];
+  everCreator: boolean;
+  anyLiveFinancialSelected: boolean;
   balanceAmt: number;
   vaultAmt: number;
   adjAmt: number;
+  depositsAmt: number;
+  depositsCount: number;
   adjSelectedRows: WipeableAdjustment[];
   moneyTotal: number;
   invCount: number;
@@ -1229,6 +1541,7 @@ function ConfirmPhase({
   const wantsBalance = runnableCategories.includes("balance");
   const wantsVault = runnableCategories.includes("vault");
   const wantsInventory = runnableCategories.includes("inventory");
+  const wantsDeposits = runnableCategories.includes("deposits");
 
   return (
     <div className="space-y-3">
@@ -1293,6 +1606,21 @@ function ConfirmPhase({
           </SummaryBlock>
         )}
 
+        {wantsDeposits && (
+          <SummaryBlock
+            icon={ArrowDownToLine}
+            label={`Deposits (${depositsCount.toLocaleString()})`}
+            amount={depositsAmt}
+            danger="Deletes real deposit history — recoverable via snapshot"
+          >
+            <p className="text-xs text-muted-foreground">
+              {depositsCount.toLocaleString()} deposit
+              {depositsCount === 1 ? "" : "s"} · {formatCurrency(depositsAmt)} ·
+              lifetime deposited counter reduced
+            </p>
+          </SummaryBlock>
+        )}
+
         {wantsInventory && (
           <SummaryBlock
             icon={Package}
@@ -1306,9 +1634,10 @@ function ConfirmPhase({
           </SummaryBlock>
         )}
 
-        {/* Grand total. Money pools (balance + vault + adjustments) sum to one
-            cash figure; inventory value is a card-value estimate shown
-            alongside (different unit, not folded into the cash headline). */}
+        {/* Grand total. Money pools (balance + vault + adjustments + deposits)
+            sum to one cash figure; inventory value is a card-value estimate
+            shown alongside (different unit, not folded into the cash
+            headline). */}
         <div className="border-t border-rose-500/20 pt-2.5">
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold text-foreground">
@@ -1318,17 +1647,32 @@ function ConfirmPhase({
               {formatCurrency(moneyTotal + invValue)}
             </span>
           </div>
-          {wantsInventory && (balanceAmt > 0 || vaultAmt > 0 || adjAmt > 0) && (
+          {wantsInventory && moneyTotal > 0 && (
             <p className="mt-1 text-right text-[11px] text-muted-foreground">
-              {formatCurrency(moneyTotal)} balance pools +{" "}
+              {formatCurrency(moneyTotal)} balance / finance +{" "}
               {formatCurrency(invValue)} inventory value
             </p>
           )}
         </div>
       </div>
 
-      {/* WILL NOT TOUCH — same non-selectable preserved promise. */}
-      <PreservedPanel />
+      {/* Combined live-financial danger banner. */}
+      {anyLiveFinancialSelected && (
+        <div className="rounded-md border border-rose-500/40 bg-rose-500/[0.08] p-3 text-sm">
+          <p className="flex items-start gap-2 font-medium text-rose-500 dark:text-rose-400">
+            <ShieldAlert className="mt-0.5 size-4 shrink-0" />
+            <span>
+              One or more selected categories delete REAL financial /
+              transaction history (not house-granted content value). This is
+              recoverable via the per-category snapshot, but it changes the
+              user&apos;s real records — double-check before confirming.
+            </span>
+          </p>
+        </div>
+      )}
+
+      {/* WILL NOT TOUCH — role-aware preserved promise. */}
+      <PreservedPanel everCreator={everCreator} />
 
       <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 text-sm">
         <p className="flex items-center gap-2 font-medium text-rose-400">
@@ -1362,11 +1706,13 @@ function SummaryBlock({
   icon: Icon,
   label,
   amount,
+  danger,
   children,
 }: {
   icon: LucideIcon;
   label: string;
   amount: number;
+  danger?: string;
   children?: React.ReactNode;
 }) {
   return (
@@ -1380,6 +1726,12 @@ function SummaryBlock({
           {formatCurrency(amount)}
         </span>
       </div>
+      {danger && (
+        <p className="flex items-start gap-1.5 text-[11px] text-rose-500">
+          <ShieldAlert className="mt-px size-3 shrink-0" />
+          {danger}
+        </p>
+      )}
       {children}
     </div>
   );
@@ -1393,8 +1745,8 @@ function RunningPhase({ results }: { results: RunResult[] }) {
     <div className="space-y-2">
       <div className="divide-y rounded-md border">
         {results.map((r) => {
-          const meta = CATEGORY_META[r.category];
-          const Icon = meta.icon;
+          const meta = wipeCategoryMeta(r.category);
+          const Icon = categoryIcon(r.category);
           return (
             <div
               key={r.category}
@@ -1470,6 +1822,20 @@ function RunStatusBadge({ status }: { status: RunStatus }) {
 // Shared small components.
 // ───────────────────────────────────────────────────────────────────────────
 
+/** Per-category live-financial danger warning shown inline in the preview. */
+function DangerWarning({ kind }: { kind: "deposits" }) {
+  const copy =
+    kind === "deposits"
+      ? "Deletes real deposit history and reduces the lifetime deposited counter. Recoverable via snapshot, but this is real financial data — not house-granted content value."
+      : "Deletes real financial/transaction history — recoverable via snapshot.";
+  return (
+    <p className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/[0.07] px-2.5 py-1.5 text-xs text-rose-500">
+      <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
+      <span>{copy}</span>
+    </p>
+  );
+}
+
 /** Disclosure for the fungible balance/vault pools (protected.ts note). */
 function FungibleDisclosure({ pool }: { pool: string }) {
   return (
@@ -1495,11 +1861,12 @@ function EmptyNote({ what }: { what: string }) {
 }
 
 /**
- * The non-selectable "WILL NOT TOUCH" section. These are NOT checkboxes — the
- * underlying data is structurally un-wipeable (the wipe actions never read or
- * write those tables). Same promise the server-side guards enforce.
+ * The non-selectable "WILL NOT TOUCH" section, ROLE-AWARE. For a creator/ex-
+ * creator it spells out the protected finance/deposits/affiliate/deal set; for
+ * a never-creator it states the structurally un-wipeable surfaces (affiliate
+ * tables, deal ledger flows). Same promise the server-side guards enforce.
  */
-function PreservedPanel() {
+function PreservedPanel({ everCreator }: { everCreator: boolean }) {
   return (
     <div className="rounded-md border border-emerald-500/30 bg-emerald-500/[0.05] p-3 text-sm">
       <p className="flex items-start gap-2 text-emerald-600 dark:text-emerald-400">
@@ -1508,7 +1875,7 @@ function PreservedPanel() {
           <span className="font-semibold">
             Will NOT touch — not selectable.
           </span>{" "}
-          {WIPE_PRESERVED_SUMMARY}
+          {wipePreservedSummary(everCreator)}
         </span>
       </p>
     </div>

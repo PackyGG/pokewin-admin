@@ -65,6 +65,8 @@ export function UserAdminActions({
   unlockAt,
   isAdmin,
   capabilities,
+  everCreator = false,
+  wasCreator = false,
 }: {
   user: UserDetail["user"];
   // Used by the "To vault" button so the confirm dialog can echo the
@@ -80,6 +82,13 @@ export function UserAdminActions({
   // toolbar refuses to render any of the moderation buttons.
   isAdmin: boolean;
   capabilities: UserDetail["capabilities"];
+  // Creator-protection flags for the "Wipe data" panel — disable the
+  // creator-protected categories (deposits / withdrawals / affiliate) when the
+  // user IS or WAS a creator. UI hint only: every wipe action re-derives the
+  // ever-creator status server-side and hard-rejects a protected category
+  // regardless of these props.
+  everCreator?: boolean;
+  wasCreator?: boolean;
 }) {
   const canBan = isAdmin || capabilities.canBanUsers;
   const canLock = isAdmin || capabilities.canLockUsers;
@@ -116,7 +125,13 @@ export function UserAdminActions({
           as the full account wipe (admin / __can_wipe_accounts). Each ticked
           category maps onto its existing snapshot-first RECOVERABLE action and
           is individually restorable from the Moderation-tab wipe audit log. */}
-      {canWipe && <WipeDataButton userId={user.id} />}
+      {canWipe && (
+        <WipeDataButton
+          userId={user.id}
+          everCreator={everCreator}
+          wasCreator={wasCreator}
+        />
+      )}
       {canDelete && <DeleteUserDialog user={user} isPending={false} />}
       {/* The OLD full-account wipe stays SEPARATE — it's the nuclear,
           NON-recoverable wipe (deletes everything, can't be undone), a

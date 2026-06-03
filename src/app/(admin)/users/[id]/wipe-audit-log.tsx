@@ -11,6 +11,7 @@ import {
   Archive,
   Package,
   SlidersHorizontal,
+  ArrowDownToLine,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -44,9 +45,9 @@ import {
 const ROSE = "text-rose-500 dark:text-rose-400";
 
 // One unified entry across BOTH snapshot stores (legacy adjustments wipes +
-// the generalized balance/vault/inventory wipes). `source` tells the Restore
-// button which server action to call.
-type WipeKind = "adjustments" | "balance" | "vault" | "inventory";
+// the generalized balance/vault/inventory/deposits wipes). `source` tells the
+// Restore button which server action to call.
+type WipeKind = "adjustments" | "balance" | "vault" | "inventory" | "deposits";
 
 type UnifiedWipe = {
   id: string;
@@ -67,6 +68,7 @@ const KIND_META: Record<WipeKind, { icon: LucideIcon; label: string }> = {
   balance: { icon: Wallet, label: "Spendable balance" },
   vault: { icon: Archive, label: "Vault (locked)" },
   inventory: { icon: Package, label: "Inventory" },
+  deposits: { icon: ArrowDownToLine, label: "Deposits" },
 };
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -161,7 +163,7 @@ function WipeRow({ wipe, onRestored }: { wipe: UnifiedWipe; onRestored: () => vo
           <span className="font-medium">{meta.label}</span>
           <span className="text-muted-foreground">·</span>
           <span className={cn("font-semibold tabular-nums", ROSE)}>{removed}</span>
-          {wipe.kind === "adjustments" && (
+          {(wipe.kind === "adjustments" || wipe.kind === "deposits") && (
             <span className="text-muted-foreground">
               ({wipe.itemCount} row{wipe.itemCount === 1 ? "" : "s"})
             </span>
@@ -207,7 +209,9 @@ function RestoreButton({ wipe, onRestored }: { wipe: UnifiedWipe; onRestored: ()
         ? `adds ${formatCurrency(wipe.amount)} back to the user's spendable balance`
         : wipe.kind === "vault"
           ? `adds ${formatCurrency(wipe.amount)} back to the user's vault and restores its unlock window`
-          : `re-inserts the ${wipe.itemCount} deleted inventory item${wipe.itemCount === 1 ? "" : "s"}`;
+          : wipe.kind === "deposits"
+            ? `re-inserts ${wipe.itemCount} deleted deposit ledger row${wipe.itemCount === 1 ? "" : "s"} (${formatCurrency(wipe.amount)}) and re-adds the lifetime deposited counter`
+            : `re-inserts the ${wipe.itemCount} deleted inventory item${wipe.itemCount === 1 ? "" : "s"}`;
 
   function handleRestore() {
     if (!totpCode.trim()) {
