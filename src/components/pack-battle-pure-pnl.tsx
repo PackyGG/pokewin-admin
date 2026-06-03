@@ -14,7 +14,9 @@ import type {
  * affiliate / creator-tip payouts. Just:
  *
  *   wager_in (pack_opening + battle_bet + battle_sponsorship)
- *   − cards_out (user_inventory rows source_type IN ('pack','battle'))
+ *   − payout_out (user_inventory rows source_type IN ('pack','battle')
+ *                 + |battle_excess_to_voucher| + |battle_refund| — the
+ *                 ledger gaming-payout legs of a battle win)
  *   = pure P&L
  *
  * Per-window columns (24h / 3d / 7d) so admins can read how the raw
@@ -43,7 +45,8 @@ export function PackBattlePurePnl({ data }: { data: PackBattlePnlWindows }) {
         <p className="mt-0.5 text-xs text-muted-foreground">
           Real-money plays only — the stats we actually make money
           from. Wager = customer cash on pack opens / battle bets.
-          Payout = net card value the customer kept. Excludes:
+          Payout = full battle/pack win the customer kept (net card
+          value + battle cash refund + excess-voucher legs). Excludes:
           creator wagers (house-funded promo), every borrow-mode
           play (both wager and won inventory), and every reward
           surface (bonuses / rakeback / upgrader / rain / race /
@@ -192,7 +195,7 @@ function PnlRow({
       {/* Payouts row */}
       <tr className="group border-b hover:bg-muted/30">
         <td className="px-3 py-2 text-right text-xs text-muted-foreground">
-          Cards out
+          Payout out
         </td>
         {WINDOWS.map((w) => (
           <td
