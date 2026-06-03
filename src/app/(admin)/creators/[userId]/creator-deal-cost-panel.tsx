@@ -1,9 +1,10 @@
-import { Coins, Info, Scale } from "lucide-react";
+import { Info, Scale } from "lucide-react";
 
 import {
   SectionHeading,
   StatPanel,
   PanelRow,
+  type AccentColor,
 } from "@/components/modern-panels";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -16,14 +17,27 @@ import { getCreatorFillConversionCost } from "./_queries/fill-conversion-cost-by
 import { getCreatorTipsSponsorCost } from "./_queries/tips-sponsor-cost-by-creator";
 
 /**
- * Per-creator "Deal Costs" panel for /creators/[userId].
+ * Per-creator "Creator Net" P&L panel for /creators/[userId].
  *
- * Surfaces the house-funded outflows tied to THIS creator's promo
- * programs — the money we spend ON the creator (and their leaderboards),
- * distinct from the affiliate-cohort P&L the CreatorPnlPanel shows. Every
- * figure is a House-POV cost, so all are rose. The panel covers BOTH deal
- * shapes — a creator only ever has fill OR multiplier numbers, never both,
- * so each cost line renders only when it actually applies:
+ * The panel leads with the NET this creator represents for the house —
+ * what his affiliates earned us minus what the house spent on his promo
+ * programs:
+ *
+ *   net = affiliatesMadeUs − houseCost
+ *
+ * The NET is the hero figure (House-POV: net > 0 → the creator is
+ * profitable for the house → emerald; net < 0 → he cost more than he
+ * earned → rose). Beneath it, two supporting rows reconcile to the net —
+ * "Affiliates made us +$X" (cohort revenue, emerald) and "House cost −$Y"
+ * (rose) — and the house cost expands into its per-bucket breakdown.
+ *
+ * The house cost itself is the sum of the house-funded outflows tied to
+ * THIS creator's promo programs — the money we spend ON the creator (and
+ * their leaderboards), distinct from the affiliate-cohort P&L the
+ * CreatorPnlPanel shows. Every cost figure is a House-POV cost, so all are
+ * rose. The cost breakdown covers BOTH deal shapes — a creator only ever
+ * has fill OR multiplier numbers, never both, so each cost line renders
+ * only when it actually applies:
  *
  *   • Leaderboard Prizes — `affiliate_leaderboard_prize` net of the
  *     creation/refund escrow lifecycle, weighted by the admin sponsored
@@ -50,19 +64,19 @@ import { getCreatorTipsSponsorCost } from "./_queries/tips-sponsor-cost-by-creat
  * it stays visible whenever the creator owns any approved board, so its
  * gross/refund context can show).
  *
- * Below the cost lines, a "Creator Net" P&L block reconciles the spend
- * against what the creator's affiliates EARNED the house:
+ * `affiliatesMadeUs` (the revenue side of the net) is the SAME figure the
+ * CreatorPnlPanel above renders — `getCreatorPnl(userId).lifetime.pnl`
+ * (cohort deposits − card withdrawals, capped 365d) — so the two panels
+ * agree. House-POV colors: cohort revenue → emerald, house cost → rose,
+ * and the net → emerald when the creator was profitable for the house
+ * (> 0), rose when he cost more than he earned (< 0).
  *
- *   net = affiliatesMadeUs − houseCost
- *
- * where `affiliatesMadeUs` is the SAME figure the CreatorPnlPanel above
- * renders — `getCreatorPnl(userId).lifetime.pnl` (cohort deposits − card
- * withdrawals, capped 365d) — so the two panels agree. House-POV colors:
- * cohort revenue → emerald, house cost → rose, and the net → emerald when
- * the creator was profitable for the house (> 0), rose when he cost more
- * than he earned (< 0). The Net block is best-effort: if the affiliate
- * P&L fetch fails it degrades to null and the block is hidden, rather than
- * showing a misleading net.
+ * NET ALWAYS LEADS, even on a degraded P&L. The affiliate-P&L fetch is
+ * best-effort: if it fails it degrades to null, but the panel does NOT
+ * fall back to surfacing the bare cost as the headline. Instead the NET
+ * hero structure stays — the net + the revenue row render as
+ * "unavailable / —" while the cost breakdown still shows — so the panel
+ * never reverts to "cost is the main thing."
  *
  * Every sub-query is best-effort: a failure in one degrades that line to
  * 0 rather than blanking the whole panel. The tips/sponsor sum runs
@@ -144,7 +158,7 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
     multiplierPayoutCost +
     multiplierFillCost;
 
-  // ── Creator Net (P&L) ────────────────────────────────────────────────
+  // ── Creator Net (P&L) — the panel's HERO figure ──────────────────────
   // What this creator's affiliates EARNED the house, minus what the house
   // SPENT on him. "Affiliates made us" reuses the exact Affiliates P&L the
   // CreatorPnlPanel above renders — getCreatorPnl(userId).lifetime.pnl
@@ -156,13 +170,20 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
   // House-POV colors: the cohort revenue is house income → emerald; the
   // house cost → rose; the net is emerald when the creator was profitable
   // for the house (net > 0) and rose when he cost more than he earned
-  // (net < 0). The Net block only renders when the affiliate P&L loaded
-  // (pnl !== null) so a degraded P&L doesn't show a misleading net.
+  // (net < 0).
+  //
+  // NET ALWAYS LEADS. `pnlLoaded` gates whether the revenue + net render
+  // as real figures or as "unavailable / —": when the affiliate P&L
+  // degrades to null we still lead with the net concept (hero shows "—",
+  // revenue row shows "unavailable") rather than falling back to the bare
+  // cost as the headline. The cost breakdown is shown either way.
+  const pnlLoaded = pnl !== null;
   const affiliatesMadeUs = pnl?.lifetime.pnl ?? 0;
+  // Net only has meaning once the revenue side loaded; otherwise it's
+  // unavailable (the cost alone is NOT the net).
   const net = affiliatesMadeUs - totalCost;
-  const showNet = pnl !== null;
-  const isNetPositive = net > 0;
-  const isNetNegative = net < 0;
+  const isNetPositive = pnlLoaded && net > 0;
+  const isNetNegative = pnlLoaded && net < 0;
 
   // Headline honesty: when one of the best-effort sources failed to load
   // (degraded to null), its contribution is 0, so the total is a LOWER
@@ -176,7 +197,6 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
     fillConversion === null ||
     tipsSponsorResult.error !== null;
   const isPartial = anyFetchFailed;
-  const hasCost = totalCost > 0;
 
   // Show-only-if-relevant. Leaderboard stays visible whenever the creator
   // owns any approved board (so its gross/refund context can render even
@@ -188,62 +208,128 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
   const showTipsSponsor = tipsSponsorCost > 0;
   const showMultiplierPayout = multiplierPayoutCost > 0;
   const showMultiplierFill = multiplierFillCost > 0;
+  const noCostLines =
+    !showLeaderboard &&
+    !showFillPayout &&
+    !showTipsSponsor &&
+    !showMultiplierPayout &&
+    !showMultiplierFill;
+
+  // Hero accent (House-POV): the NET drives the panel tint — emerald when
+  // the creator is profitable for the house (net > 0), rose when he costs
+  // more than he earned (net < 0). When the affiliate P&L is unavailable
+  // (or the net is exactly zero) fall back to a muted blue so a degraded /
+  // idle creator doesn't read as alarming. Mirrored by `netHeroTextClass`
+  // for the hero number itself.
+  const heroAccent: AccentColor = isNetPositive
+    ? "emerald"
+    : isNetNegative
+      ? "rose"
+      : "blue";
+  const netHeroTextClass = isNetPositive
+    ? "text-emerald-600 dark:text-emerald-400"
+    : isNetNegative
+      ? "text-rose-600 dark:text-rose-400"
+      : "text-muted-foreground";
+  // The hero number: "+$X" / "−$X" once the P&L loaded; an em-dash while
+  // unavailable. The "≥"/"≤" lower/upper-bound flag carries through from a
+  // partial cost source (a higher cost → a lower net, so the displayed net
+  // is an UPPER bound when partial).
+  const netHeroValue = !pnlLoaded
+    ? "—"
+    : net === 0
+      ? "—"
+      : `${isPartial ? "≤ " : ""}${net > 0 ? "+" : ""}${formatCurrency(net)}`;
 
   return (
     <div className="space-y-3">
-      <SectionHeading icon={Coins} title="Deal Costs (House)" />
+      <SectionHeading icon={Scale} title="Creator Net (P&L)" />
 
       <StatPanel
-        title="House cost to this creator"
-        icon={Coins}
-        // House cost → rose when there's a real spend; muted blue when
-        // everything's zero so an idle creator doesn't read as alarming.
-        accent={hasCost ? "rose" : "blue"}
+        title="Net P&L (this creator)"
+        icon={Scale}
+        accent={heroAccent}
       >
+        {/* ── NET hero ─────────────────────────────────────────────────
+            The panel's primary figure. Affiliates-made-us − House cost.
+            House-POV: net > 0 (creator profitable for the house) → emerald,
+            net < 0 → rose, unavailable/zero → muted. Leads even when the
+            affiliate P&L degrades (shows "—"); never falls back to the bare
+            cost as the headline. */}
         <div className="space-y-1">
-          <div
-            className={
-              hasCost
-                ? "text-3xl font-bold tabular-nums leading-none text-rose-600 dark:text-rose-400 sm:text-4xl"
-                : "text-3xl font-bold tabular-nums leading-none text-muted-foreground sm:text-4xl"
-            }
-            title={
-              isPartial
-                ? "Partial — a cost source failed to load, so this is a lower bound"
-                : "Combined house-funded cost tied to this creator — leaderboard prizes, fill-deal payouts, house-funded tips/sponsor, and (for multiplier deals) multiplier payouts + fill"
-            }
-          >
-            {totalCost === 0
-              ? "—"
-              : `${isPartial ? "≥ " : ""}${formatCurrency(totalCost)}`}
+          <div className="flex items-baseline gap-2">
+            <div
+              className={cn(
+                "text-3xl font-bold tabular-nums leading-none sm:text-4xl",
+                netHeroTextClass,
+              )}
+              title={
+                !pnlLoaded
+                  ? "Net unavailable — the affiliate P&L couldn't be loaded. Affiliates made us − House cost; the cost breakdown below is still shown."
+                  : isPartial
+                    ? "Partial — a cost source failed to load, so the cost is a lower bound and this net is an upper bound"
+                    : "Affiliates made us − House cost. Positive (emerald) = this creator was profitable for the house; negative (rose) = he cost more than his affiliates earned."
+              }
+            >
+              {netHeroValue}
+            </div>
+            <span
+              title="What this creator's affiliates earned the house, minus what the house spent on him."
+              className="cursor-help text-muted-foreground/70"
+            >
+              <Info className="size-4" />
+            </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Leaderboard prizes + fill-deal payouts + tips/sponsor (+
-            multiplier payouts + fill)
+            Net P&amp;L for this creator — affiliates made us − house cost
             <br />
             <span className="text-[10px]">
-              {isPartial
-                ? "Partial — a cost source failed to load (lower bound)"
-                : "House-POV cost (rose) — money we spend on this creator's promos"}
+              {!pnlLoaded
+                ? "Net unavailable — affiliate P&L couldn't be loaded (cost breakdown still shown)"
+                : isPartial
+                  ? "Partial — a cost source failed to load (net is an upper bound)"
+                  : "House-POV — emerald = profitable for the house, rose = he cost more than he earned"}
             </span>
           </p>
         </div>
 
-        <div className="mt-3 flex items-start gap-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
-          <Info className="size-3.5 shrink-0 mt-0.5" />
-          <span>
-            Separate from the Affiliates P&amp;L above (deposits − card
-            withdrawals from the cohort). This is what the house spends ON
-            the creator across BOTH deal shapes: approved-leaderboard prizes
-            (net of the creation/refund escrow, weighted by sponsored %),
-            fill-deal payout vouchers the creator cashed out, house-funded
-            tips/sponsor, and — for multiplier deals — multiplier payout
-            vouchers + net multiplier fill. Excludes affiliate commission —
-            that&apos;s on the Financials card.
-          </span>
+        {/* ── Reconciliation rows: revenue + cost = net ────────────────
+            The two supporting figures that net out to the hero above —
+            "Affiliates made us +$X" (cohort revenue, emerald) and "House
+            cost −$Y" (rose), the latter expanding into its per-bucket
+            breakdown. */}
+        <div className="mt-4 space-y-0.5">
+          <PanelRow
+            label="Affiliates made us"
+            value={
+              !pnlLoaded
+                ? "unavailable"
+                : affiliatesMadeUs === 0
+                  ? "—"
+                  : `${affiliatesMadeUs > 0 ? "+" : ""}${formatCurrency(affiliatesMadeUs)}`
+            }
+            valueClassName={
+              !pnlLoaded
+                ? "text-muted-foreground"
+                : affiliatesMadeUs > 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : affiliatesMadeUs < 0
+                    ? "text-rose-600 dark:text-rose-400"
+                    : undefined
+            }
+          />
+          <PanelRow
+            label={isPartial ? "House cost (≥, partial)" : "House cost"}
+            value={totalCost === 0 ? "—" : `−${formatCurrency(totalCost)}`}
+            valueClassName={
+              totalCost > 0 ? "text-rose-600 dark:text-rose-400" : undefined
+            }
+          />
         </div>
 
-        <div className="mt-4 space-y-0.5">
+        {/* House-cost sub-breakdown — the per-bucket cost lines that make
+            up the "House cost" reconciliation row above. */}
+        <div className="mt-2 space-y-0.5 border-l border-border/60 pl-3">
           {showLeaderboard && (
             <>
               <PanelRow
@@ -334,89 +420,49 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
             />
           )}
 
-          {/* All five lines hidden (a creator with no leaderboard, no fill
-              payout, no tips, no multiplier) → make the empty state
-              explicit instead of an apparently-truncated panel. */}
-          {!showLeaderboard &&
-            !showFillPayout &&
-            !showTipsSponsor &&
-            !showMultiplierPayout &&
-            !showMultiplierFill && (
-              <p className="py-1 text-xs text-muted-foreground">
-                No house-funded deal costs recorded for this creator yet.
-              </p>
-            )}
+          {/* No cost lines (a creator with no leaderboard, no fill payout,
+              no tips, no multiplier) → make the empty cost breakdown
+              explicit instead of an apparently-truncated row. The "House
+              cost" reconciliation row above already reads "—". */}
+          {noCostLines && (
+            <p className="py-1 text-xs text-muted-foreground">
+              No house-funded deal costs recorded for this creator yet.
+            </p>
+          )}
         </div>
 
-        {/* ── Creator Net (P&L) ──────────────────────────────────────────
-            Affiliates-made-us (cohort revenue, emerald) − House cost
-            (rose) = Net. Reuses the Affiliates P&L figure shown above so
-            the two reconcile. Rendered only when the affiliate P&L loaded.
-            House-POV: net > 0 (creator profitable for the house) → emerald,
-            net < 0 → rose. */}
-        {showNet && (
-          <div className="mt-4 border-t border-border/60 pt-3">
-            <div className="mb-1.5 flex items-center gap-1.5">
-              <Scale className="size-3.5 text-muted-foreground" />
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Creator Net
-              </span>
-              <span
-                title="What this creator's affiliates earned the house, minus what the house spent on him."
-                className="cursor-help text-muted-foreground/70"
-              >
-                <Info className="size-3" />
-              </span>
-            </div>
-            <div className="space-y-0.5">
-              <PanelRow
-                label="Affiliates made us"
-                value={
-                  affiliatesMadeUs === 0
-                    ? "—"
-                    : `${affiliatesMadeUs > 0 ? "+" : ""}${formatCurrency(affiliatesMadeUs)}`
-                }
-                valueClassName={
-                  affiliatesMadeUs > 0
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : affiliatesMadeUs < 0
-                      ? "text-rose-600 dark:text-rose-400"
-                      : undefined
-                }
-              />
-              <PanelRow
-                label="House cost"
-                value={totalCost === 0 ? "—" : `−${formatCurrency(totalCost)}`}
-                valueClassName={
-                  totalCost > 0 ? "text-rose-600 dark:text-rose-400" : undefined
-                }
-              />
-            </div>
-            <div className="mt-2 flex items-center justify-between gap-3 border-t border-border/60 pt-2">
-              <span className="text-sm font-semibold">Net</span>
-              <span
-                className={cn(
-                  "text-base font-bold tabular-nums sm:text-lg",
-                  isNetPositive
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : isNetNegative
-                      ? "text-rose-600 dark:text-rose-400"
-                      : "text-muted-foreground",
-                )}
-                title="Affiliates made us − House cost. Positive (emerald) = this creator was profitable for the house; negative (rose) = he cost more than his affiliates earned."
-              >
-                {net === 0
-                  ? "—"
-                  : `${isNetPositive ? "+" : ""}${formatCurrency(net)}`}
-              </span>
-            </div>
-            <p className="mt-1.5 text-[10px] text-muted-foreground">
-              Affiliates P&amp;L (cohort deposits − card withdrawals, capped
-              365d) minus house cost above. Reconciles with the Affiliates
-              P&amp;L panel earlier on this page.
-            </p>
-          </div>
-        )}
+        {/* Reconciliation footnote — how the net is built, House-POV color
+            legend, and the partial-data / unavailable caveats. */}
+        <div className="mt-4 flex items-start gap-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
+          <Info className="size-3.5 shrink-0 mt-0.5" />
+          <span>
+            Net = what this creator&apos;s affiliates earned the house
+            (deposits − card withdrawals from the cohort, capped 365d —
+            reconciles with the Affiliates P&amp;L panel above) minus the
+            house cost we spend ON the creator across BOTH deal shapes:
+            approved-leaderboard prizes (net of the creation/refund escrow,
+            weighted by sponsored %), fill-deal payout vouchers the creator
+            cashed out, house-funded tips/sponsor, and — for multiplier
+            deals — multiplier payout vouchers + net multiplier fill.
+            Excludes affiliate commission — that&apos;s on the Financials
+            card.
+            {!pnlLoaded && (
+              <>
+                {" "}
+                The affiliate-P&amp;L figure couldn&apos;t be loaded right
+                now, so the net is unavailable; the house-cost breakdown is
+                still shown.
+              </>
+            )}
+            {pnlLoaded && isPartial && (
+              <>
+                {" "}
+                A cost source failed to load, so the house cost is a lower
+                bound and the net shown is an upper bound.
+              </>
+            )}
+          </span>
+        </div>
       </StatPanel>
     </div>
   );
