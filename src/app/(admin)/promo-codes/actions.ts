@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
@@ -10,7 +10,9 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
   getPromoCodeClaims,
+  getDeletablePromoCodeIds,
   type PromoCodeClaimsDetail,
+  type DeletablePromoCodeIds,
 } from "@/lib/queries/promo-codes";
 
 const createPromoCodeSchema = z.object({
@@ -162,6 +164,36 @@ export async function getRedemptions(promoCodeId: string) {
   }));
 }
 
+/**
+ * Ids of every used-up and every expired promo code across the WHOLE
+ * table (all pages). Powers the toolbar "Select used-up" / "Select
+ * expired" buttons, which on /promo-codes is SERVER-side paginated — the
+ * client only holds one page, so the full candidate sets have to come
+ * from the server.
+ *
+ * Gated by the same `/promo-codes` page access as the rest of the page.
+ * No extra delete capability is required just to LIST the ids — the
+ * actual destructive step still goes through `deletePromoCodesBulk`,
+ * which enforces `__can_delete_promo_code`. Wrapped in `safeQuery` with a
+ * statement timeout so a slow scan degrades to empty sets (buttons fall
+ * back to their per-page candidates) instead of hanging the click.
+ */
+export async function getAllDeletablePromoCodeIds(): Promise<{
+  data: DeletablePromoCodeIds;
+  error: boolean;
+}> {
+  await requirePageAccess("/promo-codes");
+
+  const result = await safeQuery(
+    () => getDeletablePromoCodeIds(),
+    { exhaustedIds: [], expiredIds: [] } as DeletablePromoCodeIds,
+    "promo-codes.deletableIds",
+    10_000,
+  );
+
+  return { data: result.data, error: result.error !== null };
+}
+
 export async function deletePromoCode(promoCodeId: string) {
   const db = await getDb();
   const session = await requirePageAccess("/promo-codes");
@@ -186,39 +218,80 @@ export async function deletePromoCode(promoCodeId: string) {
   }
 
   revalidatePath("/promo-codes");
+  // Bust the cached list-stats + the full-dataset deletable-id set (both
+  // share this tag) so the KPI strip counts and the Quick-select totals
+  // recompute without the deleted code instead of serving the 60s-stale
+  // cache.
+  revalidateTag("promo-codes-list-stats");
   return { deleted: result.count };
 }
+
+// Per-statement chunk size for the bulk delete. Keeps each
+// `id IN (...)` prepared statement reasonable while letting a selection
+// that spans the WHOLE table (the Quick-select buttons can now select
+// every used-up / expired code across all pages, not just the visible
+// one) delete in full instead of being truncated to a single page.
+const BULK_DELETE_CHUNK = 1000;
+// Overall safety bound on a single bulk-delete request — far above any
+// realistic interactive selection, but stops a malformed/huge payload
+// from issuing an unbounded number of statements.
+const BULK_DELETE_MAX = 20_000;
 
 /**
  * Delete a batch of promo codes by id. Used by the row-selection
  * bulk-delete on /promo-codes. Idempotent — already-deleted ids are
  * just no-ops, the same way the single-delete handles double-clicks.
  *
- * Caps the input list at 1000 to keep the prepared statement
- * reasonable; nobody should be selecting more than that interactively.
+ * The selection can now span the entire table (Quick-select "used-up" /
+ * "expired" select across ALL pages, not just the visible one), so the
+ * id list is deleted in chunked `deleteMany` statements rather than a
+ * single capped one. Total request still bounded by BULK_DELETE_MAX.
  */
 export async function deletePromoCodesBulk(promoCodeIds: string[]) {
   const db = await getDb();
   const session = await requirePageAccess("/promo-codes");
   await requireCapability(session, "__can_delete_promo_code", "delete promo codes");
 
-  const ids = Array.from(new Set(promoCodeIds.filter(Boolean))).slice(0, 1000);
+  const ids = Array.from(new Set(promoCodeIds.filter(Boolean))).slice(
+    0,
+    BULK_DELETE_MAX,
+  );
   if (ids.length === 0) {
     return { deleted: 0 };
   }
 
-  const result = await db.promo_codes.deleteMany({
-    where: { id: { in: ids } },
-  });
+  // Chunked delete so a cross-page selection larger than one page still
+  // deletes completely. Each chunk is its own `id IN (...)` statement;
+  // `deleteMany` is idempotent so already-gone ids in a chunk are no-ops.
+  let deleted = 0;
+  for (let i = 0; i < ids.length; i += BULK_DELETE_CHUNK) {
+    const chunk = ids.slice(i, i + BULK_DELETE_CHUNK);
+    const result = await db.promo_codes.deleteMany({
+      where: { id: { in: chunk } },
+    });
+    deleted += result.count;
+  }
 
-  if (result.count > 0) {
+  if (deleted > 0) {
     await createAdminAuditEvent({
       adminUserId: session.userId,
       eventType: "promo_codes_bulk_deleted",
-      metadata: { count: result.count, requested: ids.length, ids },
+      // Cap the id list stored on the audit row so a huge bulk delete
+      // doesn't bloat the audit metadata; `count` / `requested` carry
+      // the real totals regardless.
+      metadata: {
+        count: deleted,
+        requested: ids.length,
+        ids: ids.slice(0, BULK_DELETE_CHUNK),
+      },
     });
   }
 
   revalidatePath("/promo-codes");
-  return { deleted: result.count };
+  // Bust the cached list-stats + the full-dataset deletable-id set (both
+  // share this tag) so the KPI strip counts and the Quick-select totals
+  // recompute without the deleted codes instead of serving the 60s-stale
+  // cache.
+  revalidateTag("promo-codes-list-stats");
+  return { deleted };
 }

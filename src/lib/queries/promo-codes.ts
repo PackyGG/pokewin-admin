@@ -357,3 +357,83 @@ const cachedPromoCodesListStats = unstable_cache(
 export async function getPromoCodesListStats(): Promise<PromoCodesListStats> {
   return cachedPromoCodesListStats();
 }
+
+// ─── Full-dataset "deletable" id sets for the Quick-select buttons ────
+//
+// /promo-codes is SERVER-side paginated (getPromoCodes does skip/take), so
+// the client table only ever holds ONE page. The "Select used-up" /
+// "Select expired" toolbar buttons must act on EVERY matching code across
+// ALL pages, not just the visible one — so the candidate id sets are
+// computed here, server-side, over the whole table, using the SAME
+// predicates the client uses per-row in data-table.tsx:
+//
+//   used-up  : max_uses > 0 AND redemptionCount >= max_uses
+//              (redemptionCount = COUNT of promo_code_redemptions rows for
+//               the code, exactly how getPromoCodes derives it; max_uses=0
+//               means "no cap" → never used-up)
+//   expired  : expires_at IS NOT NULL AND expires_at < NOW()
+//              (strict `<`, matching the client isExpired())
+//
+// One round-trip: a single LEFT JOIN onto the per-code redemption counts,
+// filtered to rows that are used-up OR expired (the only rows the buttons
+// care about), returning two boolean flags so we can split the ids in JS.
+// Bounded by MAX_DELETABLE_IDS so a pathological table can't return an
+// unbounded id payload to the client; the count is the real total.
+
+export type DeletablePromoCodeIds = {
+  /** Ids of every used-up code across all pages. */
+  exhaustedIds: string[];
+  /** Ids of every expired code across all pages. */
+  expiredIds: string[];
+};
+
+// Safety bound on the id payload returned to the client. Far above any
+// realistic interactive selection, but stops an unbounded scan from
+// shipping a giant array. If a real table ever exceeds this, the buttons
+// still select (and delete, chunked) up to this many — never silently
+// nothing.
+const MAX_DELETABLE_IDS = 20_000;
+
+const cachedDeletablePromoCodeIds = unstable_cache(
+  async (): Promise<DeletablePromoCodeIds> => {
+    const db = await getDb();
+    const rows = await db.$queryRaw<
+      { id: string; used_up: boolean; expired: boolean }[]
+    >`
+      SELECT
+        pc.id::text                                                    AS id,
+        (pc.max_uses > 0 AND COALESCE(r.cnt, 0) >= pc.max_uses)        AS used_up,
+        (pc.expires_at IS NOT NULL AND pc.expires_at < NOW())          AS expired
+      FROM promo_codes pc
+      LEFT JOIN (
+        SELECT promo_code_id, COUNT(*)::int AS cnt
+        FROM promo_code_redemptions
+        GROUP BY promo_code_id
+      ) r ON r.promo_code_id = pc.id
+      WHERE (pc.max_uses > 0 AND COALESCE(r.cnt, 0) >= pc.max_uses)
+         OR (pc.expires_at IS NOT NULL AND pc.expires_at < NOW())
+      ORDER BY pc.created_at DESC
+      LIMIT ${MAX_DELETABLE_IDS}
+    `;
+
+    const exhaustedIds: string[] = [];
+    const expiredIds: string[] = [];
+    for (const row of rows) {
+      if (row.used_up) exhaustedIds.push(row.id);
+      if (row.expired) expiredIds.push(row.id);
+    }
+    return { exhaustedIds, expiredIds };
+  },
+  ["promo-codes-deletable-ids-v1"],
+  { revalidate: 60, tags: ["promo-codes-list-stats"] },
+);
+
+/**
+ * Ids of every used-up and every expired promo code across the WHOLE
+ * table (all pages), for the /promo-codes Quick-select buttons. Cached
+ * 60s under the same tag as the list stats so a bulk-delete /
+ * revalidatePath refresh re-derives both together.
+ */
+export async function getDeletablePromoCodeIds(): Promise<DeletablePromoCodeIds> {
+  return cachedDeletablePromoCodeIds();
+}

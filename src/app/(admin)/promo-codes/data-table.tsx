@@ -176,16 +176,19 @@ export function PromoCodesDataTable({ data }: { data: PromoCodeListItem[] }) {
   // `rowSelection` keys ARE the promo_code.id (we set getRowId above),
   // so derive the id list directly from the state object — no need to
   // go through table.getFilteredSelectedRowModel(), which requires
-  // `getFilteredRowModel` to be wired up and throws otherwise. Also
-  // intersect with the current `data` so stale ids from a previous
-  // page (left over after `router.refresh()`) don't leak into the
-  // count or the bulk-delete payload.
-  const selectedIds = useMemo(() => {
-    const visibleIds = new Set(data.map((d) => d.id));
-    return Object.keys(rowSelection).filter(
-      (id) => rowSelection[id] && visibleIds.has(id),
-    );
-  }, [rowSelection, data]);
+  // `getFilteredRowModel` to be wired up and throws otherwise.
+  //
+  // NOT intersected with the current page's `data`: the Quick-select
+  // buttons populate the selection with EVERY used-up / expired code
+  // across ALL pages (the page is server-paginated, so most of those
+  // ids are off-screen). The bulk-delete must act on that full set, so
+  // the count + payload include off-page ids. `deleteMany` is
+  // idempotent, so an id that was already removed elsewhere is a
+  // harmless no-op rather than an error.
+  const selectedIds = useMemo(
+    () => Object.keys(rowSelection).filter((id) => rowSelection[id]),
+    [rowSelection],
+  );
 
   // Ids of the codes on THIS page that are exhausted / expired. Derived
   // purely from the data the page already loaded (each row carries
@@ -318,6 +321,11 @@ function BulkActionsBar({
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  // Bump the shared data-version after a successful delete so the
+  // toolbar Quick-select buttons re-fetch their full-dataset counts
+  // (they stay mounted across router.refresh() and won't re-query on
+  // their own).
+  const { bumpDataVersion } = usePromoCodesSelection();
 
   function handleBulkDelete() {
     startTransition(async () => {
@@ -330,6 +338,7 @@ function BulkActionsBar({
         );
         setOpen(false);
         onDone();
+        bumpDataVersion();
         router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to delete");

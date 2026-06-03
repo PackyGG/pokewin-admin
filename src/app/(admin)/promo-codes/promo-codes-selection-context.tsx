@@ -44,6 +44,16 @@ type Ctx = {
   setCandidates: (candidates: Candidates) => void;
   /** Replace the selection with EXACTLY the given ids (not a merge). */
   selectExactly: (ids: string[]) => void;
+  /**
+   * Monotonic counter bumped after a successful bulk-delete. The
+   * Quick-select buttons fetch the full-dataset used-up / expired id sets
+   * once on mount; bumping this re-runs that fetch so the badge counts
+   * reflect the codes that were just deleted (the component stays mounted
+   * across `router.refresh()`, so it otherwise wouldn't re-query).
+   */
+  dataVersion: number;
+  /** Signal that the underlying promo-code set changed (post-delete). */
+  bumpDataVersion: () => void;
 };
 
 const PromoCodesSelectionContext = React.createContext<Ctx>({
@@ -52,6 +62,8 @@ const PromoCodesSelectionContext = React.createContext<Ctx>({
   candidates: EMPTY_CANDIDATES,
   setCandidates: () => {},
   selectExactly: () => {},
+  dataVersion: 0,
+  bumpDataVersion: () => {},
 });
 
 export function PromoCodesSelectionProvider({
@@ -62,12 +74,17 @@ export function PromoCodesSelectionProvider({
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const [candidates, setCandidates] =
     React.useState<Candidates>(EMPTY_CANDIDATES);
+  const [dataVersion, setDataVersion] = React.useState(0);
 
   // Replace the selection with exactly the given ids so the count in the
   // bulk-action bar matches what the button promises (replace, not merge).
   const selectExactly = React.useCallback((ids: string[]) => {
     if (ids.length === 0) return;
     setRowSelection(Object.fromEntries(ids.map((id) => [id, true])));
+  }, []);
+
+  const bumpDataVersion = React.useCallback(() => {
+    setDataVersion((v) => v + 1);
   }, []);
 
   const ctx = React.useMemo(
@@ -77,8 +94,10 @@ export function PromoCodesSelectionProvider({
       candidates,
       setCandidates,
       selectExactly,
+      dataVersion,
+      bumpDataVersion,
     }),
-    [rowSelection, candidates, selectExactly],
+    [rowSelection, candidates, selectExactly, dataVersion, bumpDataVersion],
   );
 
   return (

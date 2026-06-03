@@ -23,6 +23,7 @@ import {
 import type { PromoCodeListItem } from "@/lib/queries/promo-codes";
 import { deletePromoCode } from "./actions";
 import { PromoCodeDetailDialog } from "./promo-code-detail-dialog";
+import { usePromoCodesSelection } from "./promo-codes-selection-context";
 
 function codeStatus(
   row: PromoCodeListItem,
@@ -162,6 +163,10 @@ function RowDeleteButton({ promoCodeId }: { promoCodeId: string }) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+  // Keep the toolbar Quick-select counts in sync after a single-row
+  // delete too — same data-version bump the bulk-delete uses, so the
+  // used-up / expired badges drop a deleted code without a full reload.
+  const { bumpDataVersion } = usePromoCodesSelection();
 
   function handleDelete() {
     startTransition(async () => {
@@ -169,6 +174,7 @@ function RowDeleteButton({ promoCodeId }: { promoCodeId: string }) {
         await deletePromoCode(promoCodeId);
         toast.success("Promo code deleted");
         setOpen(false);
+        bumpDataVersion();
         router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to delete");
