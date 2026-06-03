@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { TILE_COLORS } from "@/components/modern-panels";
 import { InfoHint } from "./info-hint";
+import { BackendUnavailableHint } from "./backend-unavailable-hint";
 
 /**
  * Leaderboard-spend tile for the /creators list KPI strip.
@@ -37,6 +38,7 @@ export function LeaderboardSpendPanel({
   activeCount,
   pastHouseCostUsd,
   pastCount,
+  backendUnavailable = false,
 }: {
   /** House-covered cost of boards running right now — the rose hero. */
   activeHouseCostUsd: number | null;
@@ -48,6 +50,13 @@ export function LeaderboardSpendPanel({
   pastHouseCostUsd: number | null;
   /** Count of finished boards. */
   pastCount: number | null;
+  /**
+   * True when the backend leaderboards read failed/timed out — the figures
+   * are all null and this surfaces the inline "backend unavailable" hint so
+   * the "—" reads as "can't load" rather than "$0 spent". This box is 100%
+   * backend-sourced (affiliateLeaderboardsApi), so it's all-or-nothing.
+   */
+  backendUnavailable?: boolean;
 }) {
   const rose = TILE_COLORS.rose;
 
@@ -93,8 +102,9 @@ export function LeaderboardSpendPanel({
             Leaderboard Spend
           </span>
         </div>
-        <div className="shrink-0">
+        <div className="flex shrink-0 items-center gap-1.5">
           <InfoHint text={INFO_TEXT} />
+          {backendUnavailable && <BackendUnavailableHint />}
         </div>
       </div>
 

@@ -12,7 +12,12 @@ import {
 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
-import { safeQueryOrNull } from "@/lib/errors/safe-query";
+import {
+  safeQuery,
+  safeQueryOrNull,
+  withTimeout,
+  isQueryTimeoutError,
+} from "@/lib/errors/safe-query";
 import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -80,6 +85,7 @@ import {
 import { GlobalPnlByCreatorPopover } from "./_components/global-pnl-by-creator-popover";
 import { NetGgrBreakdownPopover } from "./_components/net-ggr-breakdown-popover";
 import { InfoHint } from "./_components/info-hint";
+import { BackendUnavailableHint } from "./_components/backend-unavailable-hint";
 import { getAllCreatorsLifetimePnl } from "./_queries/all-creators-lifetime-pnl";
 import { getAllCreatorsNetGgr } from "./_queries/all-creators-net-pnl";
 import { DASHBOARD_PERIOD_LABELS } from "@/lib/queries/dashboard-period";
@@ -95,6 +101,18 @@ export const metadata = { title: "Creators" };
 // so TS can't dead-code-eliminate the branch and drop the `result` non-null
 // narrowing the JSX below relies on.
 const SHOW_PAGINATION: boolean = false;
+
+// Wall-clock bound for every BACKEND-API-dependent read on this page. The
+// backend fetch client already caps each round-trip at 8s
+// (DEFAULT_TIMEOUT_MS in backend-api/client.ts), but a read that fans out
+// across many creators (the roster walk, the per-deal cap fan-out) can
+// stack those, and a `.catch()` only rescues a THROW — not a hang. Wrapping
+// each backend read in safeQuery with this timeout means one slow/dead leg
+// degrades to its fallback (→ the tile shows "—" + a "backend unavailable"
+// hint) instead of pinning the Server Component until the platform kills
+// the whole request. Set a hair above the client's 8s so a healthy-but-slow
+// single call still lands, while a truly unreachable backend degrades fast.
+const BACKEND_READ_TIMEOUT_MS = 10_000;
 
 export default async function CreatorsPage({
   searchParams,
@@ -247,13 +265,14 @@ async function CreatorsKpiStrip({
   // count — instead of the full strip, and skips the active-roster
   // fan-outs entirely (active-timeframe rule).
   if (tab === "past") {
-    const pastCount = await getExCreatorCount().catch((e) => {
-      console.error(
-        "[creators] ex-creator count fetch failed (tile renders '—'):",
-        e,
-      );
-      return null;
-    });
+    // DB-sourced (ex-creator set from Main + Admin DB), not a backend read —
+    // wrapped with a timeout purely so a slow scan degrades to "—" instead
+    // of hanging the strip.
+    const { data: pastCount } = await safeQueryOrNull(
+      () => getExCreatorCount(),
+      "creators.ex-creator-count",
+      BACKEND_READ_TIMEOUT_MS,
+    );
     return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-6">
         <KpiTile
@@ -278,38 +297,70 @@ async function CreatorsKpiStrip({
       ? getMultiplierCreatorCount()
       : getFillCreatorCount();
 
-  const [tabCount, stats, leaderboardCost, tipsSponsorSpendResult] =
-    await Promise.all([
-      tabCountPromise.catch((e) => {
-        console.error(
-          `[creators] ${tab} count fetch failed (tile renders '—'):`,
-          e,
-        );
-        return null;
-      }),
-      getCreatorsGlobalStats().catch((e) => {
-        console.error(
-          "[creators] global stats fetch failed (rendering tiles empty):",
-          e,
-        );
-        return null;
-      }),
-      getLeaderboardCostTotal().catch((e) => {
-        console.error(
-          "[creators] leaderboard cost fetch failed (box renders '—'):",
-          e,
-        );
-        return null;
-      }),
-      // Tips & sponsor spend — lifetime house cost of the creator-funded
-      // tips/sponsor pool (creator_fill_spend_tip + creator_fill_spend_battle).
-      // The query already filters via `type::text` so a not-yet-populated
-      // enum value can't error (the box reads $0 until the fill system is
-      // live); the safeQueryOrNull wrapper degrades any OTHER failure to
-      // null → the panel renders "—" instead of crashing the strip.
-      safeQueryOrNull(() => getTipsSponsorSpend(), "creators.tips-sponsor-spend"),
-    ]);
+  // Every entry is a BACKEND-API read EXCEPT tips/sponsor (Main DB). Each is
+  // wrapped in safeQuery/safeQueryOrNull with a wall-clock timeout so an
+  // unreachable backend degrades that ONE tile to its fallback (+ a "backend
+  // unavailable" hint) instead of throwing out of this Server Component and
+  // taking the whole page down. `.error` (non-null on failure/timeout) drives
+  // the per-tile affordance below; we never echo the raw message into the DOM.
+  const [
+    tabCountResult,
+    statsResult,
+    leaderboardCostResult,
+    tipsSponsorSpendResult,
+  ] = await Promise.all([
+    // Fill / Multiplier creator count — backend creator-pool walk
+    // (creatorsApi / multiplierDealsApi). null fallback → tile renders "—".
+    safeQueryOrNull(
+      () => tabCountPromise,
+      `creators.${tab}-count`,
+      BACKEND_READ_TIMEOUT_MS,
+    ),
+    // Global creator stats (Converted/withdrawn + counts) — backend
+    // creatorsApi.list walk. null fallback → the Converted tile renders "—".
+    safeQueryOrNull(
+      () => getCreatorsGlobalStats(),
+      "creators.global-stats",
+      BACKEND_READ_TIMEOUT_MS,
+    ),
+    // Leaderboard spend — backend affiliateLeaderboardsApi walk. null
+    // fallback → the compact Leaderboard Spend tile renders "—".
+    safeQueryOrNull(
+      () => getLeaderboardCostTotal(),
+      "creators.leaderboard-cost",
+      BACKEND_READ_TIMEOUT_MS,
+    ),
+    // Tips & sponsor spend — lifetime house cost of the creator-funded
+    // tips/sponsor pool (creator_fill_spend_tip + creator_fill_spend_battle).
+    // Main-DB (NOT a backend read). The query already filters via `type::text`
+    // so a not-yet-populated enum value can't error (the box reads $0 until
+    // the fill system is live); the safeQueryOrNull wrapper degrades any
+    // OTHER failure to null → the panel renders "—" instead of crashing.
+    safeQueryOrNull(
+      () => getTipsSponsorSpend(),
+      "creators.tips-sponsor-spend",
+      BACKEND_READ_TIMEOUT_MS,
+    ),
+  ]);
+  const tabCount = tabCountResult.data;
+  const stats = statsResult.data;
+  const leaderboardCost = leaderboardCostResult.data;
   const tipsSponsorSpend = tipsSponsorSpendResult.data;
+  // Per-tile "backend is down" flags — true when the backend read
+  // failed/timed out (drives the inline amber affordance). A genuine $0 from
+  // a reachable backend leaves these false, so a real zero never shows the
+  // "unavailable" hint.
+  //
+  // The swap-tile count helpers (getFillCreatorCount / getMultiplierCreator-
+  // Count) already swallow a backend failure INTERNALLY and resolve to `null`
+  // (rather than throwing), so safeQuery's `.error` stays null on a backend
+  // outage. A real count is always a number, so `tabCount == null` is itself
+  // the "couldn't load" signal — OR the safeQuery error (a timeout we raced).
+  // getCreatorsGlobalStats / getLeaderboardCostTotal DO throw their backend-
+  // walk failures, so their `.error` flag is authoritative.
+  const tabCountBackendDown = tabCountResult.error !== null || tabCount == null;
+  const statsBackendDown = statsResult.error !== null;
+  const leaderboardBackendDown = leaderboardCostResult.error !== null;
 
   // Tab-aware tile contents — flips label, icon, and accent based on
   // which tab program the user is viewing. Matches the icon set used
@@ -345,7 +396,12 @@ async function CreatorsKpiStrip({
         sub={tabTile.sub}
         icon={tabTile.icon}
         accent={tabTile.accent}
-        action={<InfoHint text={tabTile.info} />}
+        action={
+          <div className="flex items-center gap-1.5">
+            <InfoHint text={tabTile.info} />
+            {tabCountBackendDown && <BackendUnavailableHint />}
+          </div>
+        }
       />
       {/* Net Code-User GGR — roster-wide windowed code-user GGR summed
           across every attributed creator (`getAllCreatorsNetGgr.totalGgr`)
@@ -401,7 +457,10 @@ async function CreatorsKpiStrip({
         icon={Wallet}
         accent="blue"
         action={
-          <InfoHint text="Lifetime stream earnings minted into end-of-session payout vouchers (creator_fill_conversion) across ALL creators — not just live-deal creators. The sub-line shows how much of that has actually been withdrawn off-platform vs still in flight." />
+          <div className="flex items-center gap-1.5">
+            <InfoHint text="Lifetime stream earnings minted into end-of-session payout vouchers (creator_fill_conversion) across ALL creators — not just live-deal creators. The sub-line shows how much of that has actually been withdrawn off-platform vs still in flight." />
+            {statsBackendDown && <BackendUnavailableHint />}
+          </div>
         }
       />
       {/* Leaderboard Spend — a COMPACT single-cell tile (1 col at xl, the
@@ -420,6 +479,7 @@ async function CreatorsKpiStrip({
         activeCount={leaderboardCost?.activeCount ?? null}
         pastHouseCostUsd={leaderboardCost?.pastHouseCostUsd ?? null}
         pastCount={leaderboardCost?.pastCount ?? null}
+        backendUnavailable={leaderboardBackendDown}
       />
       {/* Tips & Sponsor Spend — the second wide member of the strip (spans
           2 cols at xl, alongside Leaderboard Spend; full width below). The
@@ -482,14 +542,19 @@ async function CreatorsGridSection({
     // ordering of the list. `getAllCreatorsNetGgr` is `cache()`d, so the
     // strip's GGR tile and this consult resolve to a single ledger pass
     // per window. On the Past tab the GGR pass is skipped (see above).
-    const [socials, ggr] = await Promise.all([
-      getApprovedSocialsByUser().catch((e) => {
-        console.error(
-          "[creators] socials fetch failed (rendering without):",
-          e,
-        );
-        return new Map<string, CreatorSocialSummary[]>();
-      }),
+    const [socialsResult, ggr] = await Promise.all([
+      // Socials — BACKEND read (creatorsApi.listSocials). safeQuery +
+      // timeout so an unreachable backend degrades to an empty map (cards
+      // render without social handles) instead of throwing into the
+      // catch below and blanking the whole grid.
+      safeQuery(
+        () => getApprovedSocialsByUser(),
+        new Map<string, CreatorSocialSummary[]>(),
+        "creators.socials",
+        BACKEND_READ_TIMEOUT_MS,
+      ),
+      // Windowed code-user GGR — Main-DB ledger scan (NOT a backend read).
+      // Best-effort: a failure leaves the map empty and rows render "—".
       isPast
         ? Promise.resolve(null)
         : getAllCreatorsNetGgr(params.period).catch((e) => {
@@ -500,7 +565,7 @@ async function CreatorsGridSection({
             return null;
           }),
     ]);
-    socialsByUser = socials;
+    socialsByUser = socialsResult.data;
     if (ggr) {
       ggrByUser = new Map(
         ggr.byCreator.map((r) => [r.creatorUserId, r.ggr]),
@@ -518,21 +583,31 @@ async function CreatorsGridSection({
     //   3. No filter → tab-aware fetch (`getCreatorsListForTab`). The
     //      GGR map is passed through so the `ggr_*` sorts order the
     //      WHOLE tab pool before pagination.
-    result = isPast
-      ? await getExCreatorsList(params)
-      : params.filter
-        ? await listCreatorsFiltered(params.filter, params.search)
-        : // Render the ENTIRE tab pool on one page (page 1, capped at the
-          // 100-creator schema max — the same FETCH_CAP-bounded full walk
-          // this query already does) so the instant client-side search
-          // (CreatorsSearchInput → CreatorsViewRender) filters across every
-          // creator, not just the current page's slice. Pagination is hidden
-          // on this path (see the guard on <DataTablePagination/> below).
-          await getCreatorsListForTab(
-            { ...params, page: 1, perPage: 100 },
-            params.tab,
-            ggrByUser,
-          );
+    // The active-tab paths (filter / default) walk the BACKEND creator
+    // roster; the Past tab is DB-sourced. Bound the whole fetch with a
+    // wall-clock timeout (withTimeout) so a hung backend roster walk rejects
+    // into the catch below — which renders the "can't reach backend" card +
+    // an empty grid (requirement: keep the page shell + DB tiles up even when
+    // the roster is unavailable) — instead of pinning the Server Component.
+    result = await withTimeout(
+      () =>
+        isPast
+          ? getExCreatorsList(params)
+          : params.filter
+            ? listCreatorsFiltered(params.filter, params.search)
+            : // Render the ENTIRE tab pool on one page (page 1, capped at the
+              // 100-creator schema max — the same FETCH_CAP-bounded full walk
+              // this query already does) so the instant client-side search
+              // (CreatorsSearchInput → CreatorsViewRender) filters across every
+              // creator, not just the current page's slice. Pagination is
+              // hidden on this path (see the <DataTablePagination/> guard).
+              getCreatorsListForTab(
+                { ...params, page: 1, perPage: 100 },
+                params.tab,
+                ggrByUser,
+              ),
+      BACKEND_READ_TIMEOUT_MS,
+    );
 
     codeAndWagerByUser = await getCodeAndWagerByUser(
       result.data.map((c) => c.id),
@@ -545,7 +620,13 @@ async function CreatorsGridSection({
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (err instanceof BackendNetworkError) {
+    if (isQueryTimeoutError(err)) {
+      loadError = {
+        title: "Backend timed out",
+        detail:
+          "The packy.gg backend didn't respond in time, so the creator roster couldn't load. The database-sourced figures above are still accurate. Reload once the backend is responsive.",
+      };
+    } else if (err instanceof BackendNetworkError) {
       loadError = {
         title: networkErrorTitle(err.causeCode),
         detail: networkErrorDetail(err),
@@ -594,14 +675,19 @@ async function CreatorsGridSection({
             c.current_deal.status === "scheduled"),
       )
       .map((c) => ({ userId: c.id, dealId: c.current_deal!.id }));
-    const [capInfo, withdrawn, lb2wk] = await Promise.all([
-      getDealCapInfoByUser(pageActiveDeals).catch((e) => {
-        console.error(
-          "[creators] deal-cap fetch failed (cards render '—'):",
-          e,
-        );
-        return new Map<string, DealCapInfo>();
-      }),
+    const [capInfoResult, withdrawn, lb2wkResult] = await Promise.all([
+      // Deal cap — BACKEND read (creatorsApi.getDeal per active deal, already
+      // allSettled internally). safeQuery + timeout so a dead/slow backend
+      // degrades to an empty map (cards render the cap chips as "—") instead
+      // of hanging this segment.
+      safeQuery(
+        () => getDealCapInfoByUser(pageActiveDeals),
+        new Map<string, DealCapInfo>(),
+        "creators.deal-cap",
+        BACKEND_READ_TIMEOUT_MS,
+      ),
+      // Withdrawn-from-converted — Main-DB query (NOT a backend read).
+      // Best-effort: a failure hides the sub-line.
       getWithdrawnFromConvertedByDeal(pageActiveDeals).catch((e) => {
         console.error(
           "[creators] withdrawn-from-converted fetch failed (sub-line hidden):",
@@ -609,17 +695,19 @@ async function CreatorsGridSection({
         );
         return new Map<string, WithdrawnFromConverted>();
       }),
-      getLeaderboard2wkCostByUser().catch((e) => {
-        console.error(
-          "[creators] leaderboard 2-week cost fetch failed (cards render '—'):",
-          e,
-        );
-        return new Map<string, Lb2wkInfo>();
-      }),
+      // Leaderboard 2-week cost — BACKEND read (affiliateLeaderboardsApi).
+      // safeQuery + timeout so a dead/slow backend degrades to an empty map
+      // (cards render the leaderboard cost as "—") instead of hanging.
+      safeQuery(
+        () => getLeaderboard2wkCostByUser(),
+        new Map<string, Lb2wkInfo>(),
+        "creators.leaderboard-2wk",
+        BACKEND_READ_TIMEOUT_MS,
+      ),
     ]);
-    dealCapByUser = capInfo;
+    dealCapByUser = capInfoResult.data;
     withdrawnFromConvertedByUser = withdrawn;
-    leaderboard2wkByUser = lb2wk;
+    leaderboard2wkByUser = lb2wkResult.data;
   }
 
   // Enriched + ordered creator rows — identical data for both render
