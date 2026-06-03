@@ -28,6 +28,7 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { houseAccent, formatPercentValue } from "@/lib/house-pov";
 import {
@@ -45,6 +46,7 @@ import {
   parseListParams,
   boundaryKey,
 } from "@/lib/entity-surface/loader";
+import { safeQuery } from "@/lib/errors/safe-query";
 import type { PaginatedResult } from "@/lib/types";
 
 export const metadata = { title: "Packs" };
@@ -187,8 +189,15 @@ export default async function PacksPage({
 
   // Tab-scoped KPI stats — cached aggregates that stay stable across page
   // navigation + search refinements. Scoped to the active Pokemon / OnePiece
-  // pool so the strip matches the list below.
-  const stats = await getPacksListStats(activeSet);
+  // pool so the strip matches the list below. Wrapped in `safeQuery` (mirrors
+  // /cards) so a failing/slow aggregate degrades the strip to an inline error
+  // tile instead of crashing the whole page to the route error boundary — the
+  // hero + filter bar + list below stay usable.
+  const { data: stats } = await safeQuery(
+    () => getPacksListStats(activeSet),
+    null,
+    "packs.kpi",
+  );
 
   const activeFilter = readActiveFilter(params);
 
@@ -215,62 +224,72 @@ export default async function PacksPage({
       </PageHero>
 
       {/* KPI strip — pool-scoped totals that stay stable while admins
-          paginate or filter the list below. House-POV colors throughout. */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-        <KpiTile
-          label={activeSet === "onepiece" ? "OnePiece Packs" : "Pokemon Packs"}
-          value={formatNumber(stats.totalPacks)}
-          sub={
-            stats.totalPacks > 0
-              ? `${stats.activePacks} active · ${
-                  stats.totalPacks - stats.activePacks
-                } off`
-              : undefined
-          }
-          icon={Package}
-          accent="blue"
+          paginate or filter the list below. House-POV colors throughout.
+          When the aggregate query failed (safeQuery returned null) the strip
+          collapses to a single TileErrorFallback row instead of crashing the
+          page; the filter bar + list below are unaffected. (Mirrors /cards.) */}
+      {stats ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+          <KpiTile
+            label={activeSet === "onepiece" ? "OnePiece Packs" : "Pokemon Packs"}
+            value={formatNumber(stats.totalPacks)}
+            sub={
+              stats.totalPacks > 0
+                ? `${stats.activePacks} active · ${
+                    stats.totalPacks - stats.activePacks
+                  } off`
+                : undefined
+            }
+            icon={Package}
+            accent="blue"
+          />
+          <KpiTile
+            label="Active"
+            value={formatNumber(stats.activePacks)}
+            sub={
+              stats.totalPacks > 0
+                ? `${Math.round(
+                    (stats.activePacks / stats.totalPacks) * 100,
+                  )}% of catalog`
+                : undefined
+            }
+            icon={Power}
+            accent="cyan"
+          />
+          <KpiTile
+            label="Lifetime Opens"
+            value={formatNumber(stats.totalOpenings)}
+            icon={Sparkles}
+            accent="purple"
+          />
+          <KpiTile
+            label="Lifetime Revenue"
+            value={formatCurrency(stats.totalRevenue)}
+            sub={`payout ${formatCurrency(stats.totalPayout)}`}
+            icon={DollarSign}
+            accent="emerald"
+          />
+          <KpiTile
+            label="House Edge"
+            value={formatPercentValue(stats.houseEdgePct, 1)}
+            sub={
+              stats.totalRevenue > 0
+                ? `${formatCurrency(
+                    stats.totalRevenue - stats.totalPayout,
+                  )} kept`
+                : "no opens yet"
+            }
+            icon={Gauge}
+            // House-POV: positive pool edge → emerald, negative → rose.
+            accent={houseAccent(stats.houseEdgePct)}
+          />
+        </div>
+      ) : (
+        <TileErrorFallback
+          label="Catalog stats"
+          hint="The aggregate stats query failed. The pack list below is unaffected — refresh to retry."
         />
-        <KpiTile
-          label="Active"
-          value={formatNumber(stats.activePacks)}
-          sub={
-            stats.totalPacks > 0
-              ? `${Math.round(
-                  (stats.activePacks / stats.totalPacks) * 100,
-                )}% of catalog`
-              : undefined
-          }
-          icon={Power}
-          accent="cyan"
-        />
-        <KpiTile
-          label="Lifetime Opens"
-          value={formatNumber(stats.totalOpenings)}
-          icon={Sparkles}
-          accent="purple"
-        />
-        <KpiTile
-          label="Lifetime Revenue"
-          value={formatCurrency(stats.totalRevenue)}
-          sub={`payout ${formatCurrency(stats.totalPayout)}`}
-          icon={DollarSign}
-          accent="emerald"
-        />
-        <KpiTile
-          label="House Edge"
-          value={formatPercentValue(stats.houseEdgePct, 1)}
-          sub={
-            stats.totalRevenue > 0
-              ? `${formatCurrency(
-                  stats.totalRevenue - stats.totalPayout,
-                )} kept`
-              : "no opens yet"
-          }
-          icon={Gauge}
-          // House-POV: positive pool edge → emerald, negative → rose.
-          accent={houseAccent(stats.houseEdgePct)}
-        />
-      </div>
+      )}
 
       <div className="space-y-3">
         <SectionHeading
