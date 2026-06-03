@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowDownToLine, Pencil, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowDownToLine, Pencil, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,16 +15,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import {
   Dialog,
   DialogContent,
@@ -47,7 +37,6 @@ import {
   changeRole,
   forceResetCreatorToUser,
   recordManualWithdrawal,
-  wipeUserAccount,
   updateUserIdentity,
 } from "./actions";
 import { deleteUser } from "../actions";
@@ -1001,140 +990,15 @@ export function XpAdjustDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Wipe Account Button + Confirmation Dialog (Admin Only)
+// NOTE: the old standalone `WipeAccountButton` (the nuclear full-account,
+// NON-recoverable `wipeUserAccount` wipe) was REMOVED here. The unified
+// `WipeDataButton` popup (wipe-data-dialog.tsx) — with its new bottom-left
+// "WIPE ALL" control that runs every enabled recoverable category AND removes
+// the user from all stats — is now the SINGLE wipe entry point on /users/[id].
+// The underlying `wipeUserAccount` server action is intentionally left in
+// actions.ts (still gated, still referenced as the canonical full-wipe
+// precedent), but it no longer has a UI trigger here.
 // ---------------------------------------------------------------------------
-// Two-gate destructive action: admin must (1) type-to-confirm the username
-// AND (2) enter their current TOTP code. The server re-verifies both before
-// running the wipe transaction.
-export function WipeAccountButton({
-  userId,
-  displayName,
-}: {
-  userId: string;
-  displayName: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [confirmValue, setConfirmValue] = useState("");
-  const [totpCode, setTotpCode] = useState("");
-  const [isPending, startTransition] = useTransition();
-  const router = useRouter();
-
-  const isConfirmed = confirmValue === displayName;
-  const hasTotp = totpCode.trim().length > 0;
-  const canSubmit = isConfirmed && hasTotp && !isPending;
-
-  function handleWipe() {
-    if (!canSubmit) return;
-    startTransition(async () => {
-      try {
-        // Pass the typed display name through so the server can re-verify
-        // it server-side. The server expects an exact match (after trim)
-        // against the same fallback chain we used here to render
-        // `displayName`, so passing the trimmed input keeps the gate
-        // intact regardless of any whitespace the admin typed.
-        const result = await wipeUserAccount(
-          userId,
-          totpCode.trim(),
-          confirmValue.trim(),
-        );
-        if (!result.success) {
-          toast.error(result.error);
-          return;
-        }
-        toast.success("Account data wiped successfully");
-        setOpen(false);
-        setConfirmValue("");
-        setTotpCode("");
-        router.refresh();
-      } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : "Failed to wipe account data",
-        );
-      }
-    });
-  }
-
-  return (
-    <AlertDialog
-      open={open}
-      onOpenChange={(v) => {
-        setOpen(v);
-        if (!v) {
-          setConfirmValue("");
-          setTotpCode("");
-        }
-      }}
-    >
-      <AlertDialogTrigger
-        render={<Button variant="destructive" size="sm" />}
-      >
-        Wipe
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle className="flex items-center gap-2">
-            <ShieldAlert className="size-4 text-rose-500" />
-            Wipe All Account Data?
-          </AlertDialogTitle>
-          <AlertDialogDescription className="space-y-2">
-            <span className="block">
-              This will <strong>permanently delete</strong> all data for this
-              account: balances, transactions, inventory, battles, rewards,
-              affiliate data, chat messages, and all ledger history.
-            </span>
-            <span className="block">
-              The user record and login credentials will be preserved, but
-              everything else will be gone.{" "}
-              <strong>This cannot be undone.</strong>
-            </span>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Type{" "}
-              <span className="font-mono font-semibold text-foreground">
-                {displayName}
-              </span>{" "}
-              to confirm
-            </Label>
-            <Input
-              value={confirmValue}
-              onChange={(e) => setConfirmValue(e.target.value)}
-              placeholder={displayName}
-              className="font-mono"
-              autoComplete="off"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">2FA Code</Label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-            />
-          </div>
-        </div>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <Button
-            variant="destructive"
-            onClick={handleWipe}
-            disabled={!canSubmit}
-            className="w-full sm:w-auto"
-          >
-            <Trash2 className="mr-1.5 size-3.5" />
-            {isPending ? "Wiping..." : "Wipe Account Data"}
-          </Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Change Role Dialog (Admin Only) — Select new role + confirm with 2FA

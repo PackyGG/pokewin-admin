@@ -40,7 +40,7 @@ import { EmptyState } from "@/components/empty-state";
 import type { UserDetail } from "./user-tabs-types";
 import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
 import { moveBalanceToVault } from "./actions";
-import { DeleteUserDialog, WipeAccountButton, EditIdentityButton } from "./user-tabs-dialogs";
+import { DeleteUserDialog, EditIdentityButton } from "./user-tabs-dialogs";
 import { WipeDataButton } from "./wipe-data-dialog";
 
 /**
@@ -119,12 +119,18 @@ export function UserAdminActions({
           unlockAt={unlockAt ?? null}
         />
       )}
-      {/* ONE unified, customizable "Wipe data" panel — a checklist where the
-          admin ticks any combination of Content balance adjustments / Balance /
-          Vault / Inventory and runs them with a single 2FA confirm. Same gate
-          as the full account wipe (admin / __can_wipe_accounts). Each ticked
-          category maps onto its existing snapshot-first RECOVERABLE action and
-          is individually restorable from the Moderation-tab wipe audit log. */}
+      {/* ONE unified, customizable "Wipe data" panel — the SINGLE wipe entry
+          point on this page. A checklist where the admin ticks any combination
+          of Content balance adjustments / Balance / Vault / Inventory /
+          Deposits and runs them with a single 2FA confirm, PLUS a bottom-left
+          "WIPE ALL" control that nukes every enabled category + removes the
+          user from all stats in one go. Same gate as before
+          (admin / __can_wipe_accounts). Each ticked category maps onto its
+          existing snapshot-first RECOVERABLE action and is individually
+          restorable from the Moderation-tab wipe audit log. The old separate
+          nuclear "Wipe" (full-account, non-recoverable) button was removed —
+          WIPE ALL + the stat-exclusion supersedes it (recoverable + audited),
+          so this popup is the only wipe trigger. */}
       {canWipe && (
         <WipeDataButton
           userId={user.id}
@@ -133,17 +139,6 @@ export function UserAdminActions({
         />
       )}
       {canDelete && <DeleteUserDialog user={user} isPending={false} />}
-      {/* The OLD full-account wipe stays SEPARATE — it's the nuclear,
-          NON-recoverable wipe (deletes everything, can't be undone), a
-          different beast from the targeted recoverable panel above. */}
-      {canWipe && (
-        <WipeAccountButton
-          userId={user.id}
-          displayName={
-            user.displayUsername ?? user.username ?? user.email ?? user.id
-          }
-        />
-      )}
     </div>
   );
 }
