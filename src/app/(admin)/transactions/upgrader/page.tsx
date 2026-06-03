@@ -104,13 +104,26 @@ export default async function UpgraderTransactionsPage({
             })}
           </div>
         </div>
-        <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-          <DataTableToolbar searchPlaceholder="Search by user ID, username, or game ID...">
-            <SortByMultiplierButton />
-            <SortByWonAmountButton />
-            <ClearSortButton />
-          </DataTableToolbar>
-        </Suspense>
+        {/* Sort buttons live in their OWN Suspense as a sibling of the
+            toolbar — NOT as toolbar children — so the toolbar's loading
+            skeleton (h-10) never blanks them and they stay mounted across
+            a tab / search re-stream. Each button reads useSearchParams()
+            so it still needs a boundary; an invisible fallback keeps the
+            row from jumping while they hydrate. */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+          <div className="min-w-0 flex-1">
+            <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+              <DataTableToolbar searchPlaceholder="Search by user ID, username, or game ID..." />
+            </Suspense>
+          </div>
+          <Suspense fallback={null}>
+            <div className="flex flex-wrap items-center gap-2">
+              <SortByMultiplierButton />
+              <SortByWonAmountButton />
+              <ClearSortButton />
+            </div>
+          </Suspense>
+        </div>
       </div>
 
       <div className="space-y-3">
