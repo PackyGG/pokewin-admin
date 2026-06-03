@@ -46,6 +46,7 @@ import { ROLE_COLORS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { formatRelative } from "@/lib/utils/format";
 import { EmptyState } from "@/components/empty-state";
+import { Spinner, transition } from "@/components/ux";
 import { setAdminLimit, deleteAdminLimit } from "../limits-actions";
 import type { limit_period_type } from "@/generated/admin-prisma/client";
 
@@ -222,7 +223,7 @@ function LimitRow({ row }: { row: Row }) {
   }
 
   return (
-    <tr className="border-b last:border-b-0 hover:bg-muted/30 transition-colors">
+    <tr className={cn("border-b last:border-b-0 hover:bg-muted/30", transition("colors", "fast"))}>
       <td className="px-4 py-3 text-sm">
         <Link
           href={`/admin-users/${row.adminUserId}`}
@@ -285,6 +286,7 @@ function LimitRow({ row }: { row: Row }) {
                 disabled={pending}
                 onClick={handleSave}
               >
+                {pending && <Spinner size={12} className="text-current" />}
                 Save
               </Button>
               <Button
@@ -419,6 +421,7 @@ function LimitMobileCard({ row }: { row: Row }) {
                 disabled={pending}
                 onClick={handleSave}
               >
+                {pending && <Spinner size={14} className="text-current" />}
                 Save
               </Button>
               <Button
@@ -523,6 +526,7 @@ function DeleteLimitButton({
             disabled={pending}
             className="bg-rose-500 hover:bg-rose-600 focus:ring-rose-500"
           >
+            {pending && <Spinner size={14} className="text-current" />}
             {pending ? "Removing…" : "Remove cap"}
           </AlertDialogAction>
         </AlertDialogFooter>
@@ -673,6 +677,7 @@ function AddLimitDialog({ allAdmins }: { allAdmins: AdminOption[] }) {
             disabled={pending}
             className="w-full sm:w-auto"
           >
+            {pending && <Spinner size={14} className="text-current" />}
             {pending ? "Saving…" : "Add cap"}
           </Button>
         </DialogFooter>

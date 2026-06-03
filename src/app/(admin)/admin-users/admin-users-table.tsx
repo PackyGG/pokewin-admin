@@ -14,6 +14,7 @@ import { EmptyState } from "@/components/empty-state";
 import { ROLE_COLORS } from "@/lib/constants";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { transition } from "@/components/ux";
 import type { AdminRole } from "@/lib/dal";
 import { AdminUserActions } from "./admin-user-actions";
 
@@ -201,7 +202,10 @@ export function AdminUsersTable({
             {rows.map((row) => (
               <tr
                 key={row.id}
-                className="group cursor-pointer border-b transition-colors last:border-b-0 hover:bg-accent/40"
+                className={cn(
+                  "group cursor-pointer border-b last:border-b-0 hover:bg-accent/40",
+                  transition("colors", "fast"),
+                )}
                 onClick={() => router.push(`/admin-users/${row.id}`)}
                 role="link"
                 tabIndex={0}
@@ -293,7 +297,10 @@ export function AdminUsersTable({
         {rows.map((row) => (
           <div
             key={row.id}
-            className="cursor-pointer rounded-xl border bg-card p-3 transition-colors active:bg-accent/30"
+            className={cn(
+              "cursor-pointer rounded-xl border bg-card p-3 active:bg-accent/30",
+              transition("colors", "fast"),
+            )}
             onClick={() => router.push(`/admin-users/${row.id}`)}
             role="link"
             tabIndex={0}
