@@ -9,17 +9,25 @@ import {
 /**
  * Matches /packs/[id]: detail hero with pack art + toggle/edit/delete
  * actions, 8-tile KPI strip (Price, Openings, Revenue, Payout, RTP,
- * Edge, Stock, etc.), revenue chart section, then a cards grid for
- * pack contents.
+ * Edge, Stock, etc.), the deferred stats block (period-tiles card + two
+ * charts), then the "Pack Contents" section with a cards grid.
  */
 export default function PackDetailLoading() {
   return (
     <div className="space-y-6">
       <DetailHeroSkeleton action />
       <KpiStripSkeleton count={8} />
-      <div className="space-y-3">
-        <SectionHeadingSkeleton titleWidth={120} />
-        <Skeleton className="h-64 rounded-2xl" />
+      {/* Stats block — mirrors the page's own deferred-stats Suspense fallback
+          (no section heading above it on the real page): a period-tiles card
+          plus two chart boxes sized to the real h-[250px] charts. Matching the
+          shape + heights here keeps the route-loading → streamed-page handoff
+          from jumping. */}
+      <div className="space-y-4">
+        <Skeleton className="h-32 rounded-xl" />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Skeleton className="h-[250px] rounded-xl" />
+          <Skeleton className="h-[250px] rounded-xl" />
+        </div>
       </div>
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={140} />

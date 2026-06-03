@@ -5,7 +5,7 @@ import { Package } from "lucide-react";
 import { CardImage } from "@/components/card-image";
 import { EmptyState, ActiveBadge } from "@/components/entity-surface";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { houseAmountTextClass, toPercent } from "@/lib/house-pov";
+import { houseAmountTextClass, houseTextClass, toPercent } from "@/lib/house-pov";
 import { cn } from "@/lib/utils";
 import type { PackListItem } from "@/lib/queries/packs";
 import { PackRowActions } from "./pack-row-actions";
@@ -162,7 +162,10 @@ function PackTile({
         <Metric
           label="Revenue"
           value={formatCurrency(pack.totalRevenue)}
-          valueClass="text-emerald-600 dark:text-emerald-400"
+          // House-POV constant: revenue is money INTO the house → emerald.
+          // Fixed-semantics label (not a signed amount), so the polarity is
+          // pinned rather than derived from the value.
+          valueClass={houseTextClass("positive")}
         />
         <Metric
           label="Edge"
@@ -173,7 +176,9 @@ function PackTile({
         <Metric
           label="Payout"
           value={formatCurrency(pack.totalPayout)}
-          valueClass="text-rose-600 dark:text-rose-400"
+          // House-POV constant: payout is money OUT of the house → rose.
+          // Fixed-semantics label, so the polarity is pinned.
+          valueClass={houseTextClass("negative")}
         />
       </div>
 

@@ -254,10 +254,14 @@ export default async function PackDetailPage({
           key={`stats-${id}`}
           fallback={
             <div className="space-y-4">
+              {/* Period-tiles card on top, then the two charts. The chart boxes
+                  mirror the real Revenue/Openings ChartContainers (h-[250px])
+                  so reserving space here prevents a layout jump when the
+                  deferred stats scan resolves and the charts paint. */}
               <Skeleton className="h-32 rounded-xl" />
               <div className="grid gap-4 lg:grid-cols-2">
-                <Skeleton className="h-[320px] rounded-xl" />
-                <Skeleton className="h-[320px] rounded-xl" />
+                <Skeleton className="h-[250px] rounded-xl" />
+                <Skeleton className="h-[250px] rounded-xl" />
               </div>
             </div>
           }

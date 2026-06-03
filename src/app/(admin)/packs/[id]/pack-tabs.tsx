@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -22,7 +23,6 @@ import {
   Gamepad2,
   Layers,
   LayoutGrid,
-  Loader2,
   Rows3,
   Search,
   X,
@@ -167,6 +167,10 @@ export function PackContentTabsNav({ cardCount }: { cardCount: number }) {
           )}
         </Link>
       ))}
+      {/* Trailing spacer so the last tab can scroll clear of the right-edge
+          fade-mask on mobile instead of sitting half-faded under it. shrink-0
+          keeps it from collapsing; hidden on lg where the mask is removed. */}
+      <span aria-hidden className="shrink-0 pr-4 lg:hidden" />
     </div>
   );
 }
@@ -620,6 +624,30 @@ export function GamesTable({ packId, initialGames }: { packId: string; initialGa
     load({ dateFrom: "", dateTo: "", search: "", type: "all", sort: "date-desc", page: 1 });
   };
 
+  // Debounced search: typing updates `searchInput` instantly (responsive
+  // field) and commits to the actual `search` filter 300ms after the last
+  // keystroke, so the operator no longer has to press Enter and we don't
+  // refetch on every character. The committing logic lives behind a ref so the
+  // debounce effect stays scoped to `searchInput` alone (no refetch storm on
+  // unrelated re-renders) without going stale. Enter still commits instantly
+  // via onKeyDown; the ref-guard skips a redundant refetch when the debounced
+  // value already matches what's committed.
+  const commitSearchRef = useRef<(value: string) => void>(() => {});
+  commitSearchRef.current = (value: string) => {
+    if (value === search) return;
+    updateFilter("search", value);
+  };
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      commitSearchRef.current(searchInput);
+    }, 300);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [searchInput]);
+
   return (
     <Card>
       <CardHeader>
@@ -650,7 +678,14 @@ export function GamesTable({ packId, initialGames }: { packId: string; initialGa
               placeholder="Search user..."
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") updateFilter("search", searchInput); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  // Commit immediately and cancel the pending debounce so the
+                  // 300ms timer doesn't fire a redundant no-op afterwards.
+                  if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+                  updateFilter("search", searchInput);
+                }
+              }}
               className="h-8 pl-7 text-xs"
             />
           </div>
@@ -692,13 +727,14 @@ export function GamesTable({ packId, initialGames }: { packId: string; initialGa
           )}
         </div>
       </CardHeader>
-      <CardContent className="relative">
-        {loading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 rounded-b-lg">
-            <Loader2 className="size-6 animate-spin text-muted-foreground" />
-          </div>
-        )}
-        {data.length === 0 ? (
+      <CardContent>
+        {loading ? (
+          // Standalone skeleton during a pagination/filter refetch — replaces
+          // the old dim-overlay-with-spinner so the swap reads as a clean
+          // placeholder block (dark-safe, no motion) instead of a greyed-out
+          // stale table. Height roughly reserves the populated table.
+          <Skeleton className="h-96 w-full rounded-lg" />
+        ) : data.length === 0 ? (
           <EmptyState
             icon={Search}
             title={hasFilters ? "No games match your filters" : "No games played yet"}
