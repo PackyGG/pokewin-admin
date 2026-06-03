@@ -46,9 +46,22 @@ export function CreatorsViewRender({
     [creators, query],
   );
 
-  return view === "list" ? (
-    <CreatorListView creators={filtered} />
-  ) : (
-    <CreatorCardGrid creators={filtered} />
+  // Wrap the swapped outlet in a stable container with a short opacity
+  // transition so flipping grid <-> list reads as a soft cross-fade rather
+  // than a hard snap (CLS). `key={view}` re-mounts the inner tree on toggle
+  // so the `motion-safe` fade-in actually re-fires; reduced-motion users get
+  // the final state instantly (duration-0). Pure presentation over the same
+  // already-fetched `filtered` roster — no refetch, no Suspense.
+  return (
+    <div
+      key={view}
+      className="motion-safe:animate-in motion-safe:fade-in transition-opacity duration-150 motion-reduce:duration-0"
+    >
+      {view === "list" ? (
+        <CreatorListView creators={filtered} />
+      ) : (
+        <CreatorCardGrid creators={filtered} />
+      )}
+    </div>
   );
 }

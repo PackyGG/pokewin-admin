@@ -114,7 +114,11 @@ export default async function CreatorDetailPage({
   const profileResultPromise = safeQueryOrNull(
     () => getCreatorDetail(userId),
     "creators.detail.profile",
-    20_000,
+    // 15s (was 20s) so the KPI strip degrades to its "analytics taking too
+    // long" banner faster when the heavy aggregate stalls, rather than
+    // holding the skeleton for a full 20s. The deal/multiplier bands below
+    // keep their own 20s budget — they're independent Suspense boundaries.
+    15_000,
   );
 
   return (
@@ -139,10 +143,10 @@ export default async function CreatorDetailPage({
             <Star className="size-5 text-pink-500" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex min-w-0 items-center gap-2 flex-wrap">
               <Link
                 href={`/users/${header.userId}`}
-                className="text-xl sm:text-2xl font-bold leading-tight hover:underline truncate"
+                className="min-w-0 text-xl sm:text-2xl font-bold leading-tight hover:underline line-clamp-1"
               >
                 {header.username ?? header.email}
               </Link>

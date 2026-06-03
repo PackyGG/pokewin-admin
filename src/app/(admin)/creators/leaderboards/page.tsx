@@ -376,7 +376,7 @@ export default async function AffiliateLeaderboardsPage({
                                 name="creator_user_id"
                                 defaultValue={creatorUserId ?? ""}
                                 placeholder="Filter by creator user id..."
-                                className="w-64"
+                                className="w-full sm:flex-1 sm:min-w-[200px] sm:max-w-xs"
                             />
                         </form>
                     </div>
