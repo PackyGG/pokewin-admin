@@ -1,4 +1,4 @@
-import { Coins, Info } from "lucide-react";
+import { Coins, Info, Scale } from "lucide-react";
 
 import {
   SectionHeading,
@@ -6,7 +6,9 @@ import {
   PanelRow,
 } from "@/components/modern-panels";
 import { safeQuery } from "@/lib/errors/safe-query";
+import { getCreatorPnl } from "@/lib/queries/creators";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 
 import { getCreatorLeaderboardCost } from "./_queries/leaderboard-cost-by-creator";
 import { getCreatorMultiplierCost } from "./_queries/multiplier-cost-by-creator";
@@ -48,6 +50,20 @@ import { getCreatorTipsSponsorCost } from "./_queries/tips-sponsor-cost-by-creat
  * it stays visible whenever the creator owns any approved board, so its
  * gross/refund context can show).
  *
+ * Below the cost lines, a "Creator Net" P&L block reconciles the spend
+ * against what the creator's affiliates EARNED the house:
+ *
+ *   net = affiliatesMadeUs − houseCost
+ *
+ * where `affiliatesMadeUs` is the SAME figure the CreatorPnlPanel above
+ * renders — `getCreatorPnl(userId).lifetime.pnl` (cohort deposits − card
+ * withdrawals, capped 365d) — so the two panels agree. House-POV colors:
+ * cohort revenue → emerald, house cost → rose, and the net → emerald when
+ * the creator was profitable for the house (> 0), rose when he cost more
+ * than he earned (< 0). The Net block is best-effort: if the affiliate
+ * P&L fetch fails it degrades to null and the block is hidden, rather than
+ * showing a misleading net.
+ *
  * Every sub-query is best-effort: a failure in one degrades that line to
  * 0 rather than blanking the whole panel. The tips/sponsor sum runs
  * through `safeQuery → 0` (and is derived from the backend's per-session
@@ -64,7 +80,7 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
   // (derived from the backend per-session spend counters) runs through
   // safeQuery → 0 so a backend outage or a non-creator 404 returns 0
   // instead of throwing.
-  const [leaderboard, multiplier, fillConversion, tipsSponsorResult] =
+  const [leaderboard, multiplier, fillConversion, tipsSponsorResult, pnl] =
     await Promise.all([
       getCreatorLeaderboardCost(userId).catch((e) => {
         console.error(
@@ -92,6 +108,19 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
         { costUsd: 0, eventCount: 0 },
         "creators.detail.tipsSponsorCost",
       ),
+      // Affiliate-cohort P&L for the "Creator Net" block — the SAME
+      // getCreatorPnl(userId) source the CreatorPnlPanel above renders
+      // (lifetime capped 365d: cohort deposits − card withdrawals), so the
+      // "Affiliates made us" figure here reconciles with the Affiliates P&L
+      // shown earlier on the page. Best-effort: a failure degrades to null →
+      // the Net block is hidden rather than blanking the panel.
+      getCreatorPnl(userId).catch((e) => {
+        console.error(
+          "[creator-deal-cost] affiliate P&L fetch failed (Net block hidden):",
+          e,
+        );
+        return null;
+      }),
     ]);
 
   const leaderboardCost = leaderboard?.costUsd ?? 0;
@@ -111,6 +140,26 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
     tipsSponsorCost +
     multiplierPayoutCost +
     multiplierFillCost;
+
+  // ── Creator Net (P&L) ────────────────────────────────────────────────
+  // What this creator's affiliates EARNED the house, minus what the house
+  // SPENT on him. "Affiliates made us" reuses the exact Affiliates P&L the
+  // CreatorPnlPanel above renders — getCreatorPnl(userId).lifetime.pnl
+  // (cohort deposits − card withdrawals, capped 365d) — so the two figures
+  // reconcile. House cost is this panel's totalCost.
+  //
+  //   net = affiliatesMadeUs − houseCost
+  //
+  // House-POV colors: the cohort revenue is house income → emerald; the
+  // house cost → rose; the net is emerald when the creator was profitable
+  // for the house (net > 0) and rose when he cost more than he earned
+  // (net < 0). The Net block only renders when the affiliate P&L loaded
+  // (pnl !== null) so a degraded P&L doesn't show a misleading net.
+  const affiliatesMadeUs = pnl?.lifetime.pnl ?? 0;
+  const net = affiliatesMadeUs - totalCost;
+  const showNet = pnl !== null;
+  const isNetPositive = net > 0;
+  const isNetNegative = net < 0;
 
   // Headline honesty: when one of the best-effort sources failed to load
   // (degraded to null), its contribution is 0, so the total is a LOWER
@@ -295,6 +344,76 @@ export async function CreatorDealCostPanel({ userId }: { userId: string }) {
               </p>
             )}
         </div>
+
+        {/* ── Creator Net (P&L) ──────────────────────────────────────────
+            Affiliates-made-us (cohort revenue, emerald) − House cost
+            (rose) = Net. Reuses the Affiliates P&L figure shown above so
+            the two reconcile. Rendered only when the affiliate P&L loaded.
+            House-POV: net > 0 (creator profitable for the house) → emerald,
+            net < 0 → rose. */}
+        {showNet && (
+          <div className="mt-4 border-t border-border/60 pt-3">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <Scale className="size-3.5 text-muted-foreground" />
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Creator Net
+              </span>
+              <span
+                title="What this creator's affiliates earned the house, minus what the house spent on him."
+                className="cursor-help text-muted-foreground/70"
+              >
+                <Info className="size-3" />
+              </span>
+            </div>
+            <div className="space-y-0.5">
+              <PanelRow
+                label="Affiliates made us"
+                value={
+                  affiliatesMadeUs === 0
+                    ? "—"
+                    : `${affiliatesMadeUs > 0 ? "+" : ""}${formatCurrency(affiliatesMadeUs)}`
+                }
+                valueClassName={
+                  affiliatesMadeUs > 0
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : affiliatesMadeUs < 0
+                      ? "text-rose-600 dark:text-rose-400"
+                      : undefined
+                }
+              />
+              <PanelRow
+                label="House cost"
+                value={totalCost === 0 ? "—" : `−${formatCurrency(totalCost)}`}
+                valueClassName={
+                  totalCost > 0 ? "text-rose-600 dark:text-rose-400" : undefined
+                }
+              />
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-3 border-t border-border/60 pt-2">
+              <span className="text-sm font-semibold">Net</span>
+              <span
+                className={cn(
+                  "text-base font-bold tabular-nums sm:text-lg",
+                  isNetPositive
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : isNetNegative
+                      ? "text-rose-600 dark:text-rose-400"
+                      : "text-muted-foreground",
+                )}
+                title="Affiliates made us − House cost. Positive (emerald) = this creator was profitable for the house; negative (rose) = he cost more than his affiliates earned."
+              >
+                {net === 0
+                  ? "—"
+                  : `${isNetPositive ? "+" : ""}${formatCurrency(net)}`}
+              </span>
+            </div>
+            <p className="mt-1.5 text-[10px] text-muted-foreground">
+              Affiliates P&amp;L (cohort deposits − card withdrawals, capped
+              365d) minus house cost above. Reconciles with the Affiliates
+              P&amp;L panel earlier on this page.
+            </p>
+          </div>
+        )}
       </StatPanel>
     </div>
   );

@@ -12,6 +12,11 @@ countries.registerLocale(enLocale);
 
 type CountryRow = { country: string; clicks: number; signups: number };
 
+// Cap the country list so the box stays compact and balanced against the
+// Acquisition funnel / Wager-volume cards in the same grid row. Overflow
+// is summarised as a "+N more" footer.
+const TOP_N = 5;
+
 // Convert a full country name from the geolocation service into a flag
 // emoji via ISO alpha-2 lookup. Falls back to a globe if the name can't
 // be resolved (e.g. "unknown" rows, or niche names the lib doesn't index).
@@ -32,7 +37,7 @@ export function CountryBreakdown({ rows }: { rows: CountryRow[] }) {
           <CardTitle className="text-card-title flex items-center gap-1.5">
             Top countries
             <InfoHint
-              text="Where this creator's clicks and signups come from, by country (top 10). The bar splits each country's clicks vs signups."
+              text="Where this creator's clicks and signups come from, by country (top 5). The bar splits each country's clicks vs signups."
               iconClassName="size-3"
             />
           </CardTitle>
@@ -69,8 +74,11 @@ export function CountryBreakdown({ rows }: { rows: CountryRow[] }) {
         </p>
       </CardHeader>
       <CardContent className="pt-0">
+        {/* Top 5 only + tighter rows — keeps this box roughly the same
+            height as the Acquisition funnel / Wager-volume cards beside it
+            instead of stretching the row with 10 tall entries. */}
         <ul className="divide-y divide-border/60">
-          {rows.slice(0, 10).map((r) => {
+          {rows.slice(0, TOP_N).map((r) => {
             const total = r.clicks + r.signups;
             const clickPct = total > 0 ? (r.clicks / total) * 100 : 0;
             const signupPct = total > 0 ? (r.signups / total) * 100 : 0;
@@ -78,9 +86,9 @@ export function CountryBreakdown({ rows }: { rows: CountryRow[] }) {
             return (
               <li
                 key={r.country}
-                className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0"
+                className="flex items-center gap-2.5 py-1.5 first:pt-0 last:pb-0"
               >
-                <span className="text-lg leading-none" aria-hidden>
+                <span className="text-base leading-none" aria-hidden>
                   {flagFor(r.country)}
                 </span>
                 <div className="flex-1 min-w-0">
@@ -96,7 +104,7 @@ export function CountryBreakdown({ rows }: { rows: CountryRow[] }) {
                     </span>
                   </div>
                   <div
-                    className="relative mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted/60"
+                    className="relative mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted/60"
                     style={{ maxWidth: `${Math.max(width, 4)}%` }}
                   >
                     {/* Stacked: clicks (chart-1) | signups (chart-4) */}
@@ -114,9 +122,9 @@ export function CountryBreakdown({ rows }: { rows: CountryRow[] }) {
             );
           })}
         </ul>
-        {rows.length > 10 ? (
-          <p className="mt-3 text-[11px] text-muted-foreground">
-            + {rows.length - 10} more
+        {rows.length > TOP_N ? (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            + {rows.length - TOP_N} more
           </p>
         ) : null}
       </CardContent>
