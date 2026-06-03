@@ -33,6 +33,9 @@ import {
   Users,
   UserCog,
   Lock,
+  BarChart3,
+  Skull,
+  AlertTriangle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -58,6 +61,7 @@ import {
   type WipeCategoryIcon,
   type WipeCategoryGroup,
 } from "@/lib/account-wipes/categories";
+import { excludeUserFromAllStats } from "./wipe-exclude-actions";
 import {
   previewBalanceWipe,
   previewVaultWipe,
@@ -193,15 +197,18 @@ export function WipeDataButton({
 
 type Phase = "select" | "confirm" | "running";
 
-// Per-category execution outcome surfaced in the running/results phase so a
+// Per-step execution outcome surfaced in the running/results phase so a
 // partial run is fully legible (which succeeded, which failed, which were
 // skipped because an earlier one aborted the sequence).
+//
+// A run step is EITHER a wipe category OR the special "exclude from all stats"
+// step (a non-destructive blacklist add that runs as the FINAL step). The
+// `kind` discriminator lets the RunningPhase render the right label/icon for
+// the stat-exclusion row, which has no WipeCategory.
 type RunStatus = "pending" | "running" | "success" | "failed" | "skipped";
-type RunResult = {
-  category: SelectableCategory;
-  status: RunStatus;
-  message: string;
-};
+type RunResult =
+  | { kind: "category"; category: SelectableCategory; status: RunStatus; message: string }
+  | { kind: "exclude"; status: RunStatus; message: string };
 
 function WipeDataDialog({
   userId,
@@ -229,6 +236,18 @@ function WipeDataDialog({
     inventory: false,
     deposits: false,
   });
+
+  // "Also remove from all stats" — when ON, the user is added to the
+  // excluded-users blacklist after the wipes so they vanish from every metric
+  // surface (dashboard / GGR / analytics / insights / P&L). Default ON per the
+  // owner's ask. Non-destructive (deletes nothing — just filters them out of
+  // aggregates), so it is safe even for creators. WIPE ALL forces this ON
+  // regardless of this toggle.
+  const [excludeFromStats, setExcludeFromStats] = useState(true);
+
+  // True only while a WIPE ALL run is executing — drives the running-phase
+  // banner copy + forces the stat-exclusion step on.
+  const [isWipeAllRun, setIsWipeAllRun] = useState(false);
 
   // Lazily-loaded previews — one per category, only fetched when that category
   // is first ticked (hidden-component rule: never preload on page render, and
@@ -271,6 +290,8 @@ function WipeDataDialog({
     setAdjSelected(new Set());
     setAdjSearch("");
     setResults([]);
+    setExcludeFromStats(true);
+    setIsWipeAllRun(false);
   }, [open]);
 
   // Whether a selectable category is interactable: enabled AND not creator-
@@ -560,95 +581,275 @@ function WipeDataDialog({
     (c) => wipeCategoryMeta(c).liveFinancial,
   );
 
-  // ── Sequential multi-execute. One 2FA code, applied to each selected
-  // category's EXISTING action in turn. Each action is independently
-  // snapshot-first + recoverable, so a partial run is safe + individually
-  // restorable from the wipe audit log. If one fails we ABORT the rest and
-  // mark them skipped, then report exactly which succeeded/failed/skipped. ──
+  // Every ENABLED, non-creator-locked selectable category — the set WIPE ALL
+  // runs. Disabled ("coming soon") + creator-protected categories are excluded
+  // here exactly as in the per-category flow (WIPE ALL never enables a disabled
+  // category and never bypasses creator-protection). Empty categories are still
+  // included in the run plan and are soft-skipped at execution time.
+  const allEnabledCategories = useMemo(
+    () => SELECTABLE_ORDER.filter((c) => !isCategoryLocked(c)),
+    [SELECTABLE_ORDER, isCategoryLocked],
+  );
+
+  // ── Sequential multi-execute. One 2FA code, applied to each step's EXISTING
+  // action in turn. Each wipe action is independently snapshot-first +
+  // recoverable, so a partial run is safe + individually restorable from the
+  // wipe audit log. The OPTIONAL final step is the non-destructive
+  // "exclude from all stats" blacklist add.
+  //
+  //   • `seq`            — the ordered categories to wipe.
+  //   • `adjIds`         — the adjustment ledger ids to wipe (for the
+  //                        adjustments category). Empty for WIPE ALL when no
+  //                        adjustments exist.
+  //   • `alsoExclude`    — append the stat-exclusion step at the end.
+  //   • `softSkipEmpty`  — WIPE ALL mode: treat a category's "nothing to wipe"
+  //                        / "already $0" empty-result as a SKIP rather than an
+  //                        aborting failure (so an empty vault doesn't stop the
+  //                        balance/inventory wipes). A REAL failure still
+  //                        aborts the remaining wipes. The stat-exclusion step
+  //                        always runs (it doesn't depend on the wipes).
+  //   • `wipeAll`        — drives the running-phase banner copy.
+  //
+  // SINGLE 2FA GATE PRESERVED: one code drives every wipe action AND the
+  // exclusion action; each server action independently re-verifies it
+  // (require2FA is stateless, no replay lock), exactly as the existing
+  // multi-category run already does.
+  const runSequence = useCallback(
+    (opts: {
+      seq: readonly SelectableCategory[];
+      adjIds: string[];
+      alsoExclude: boolean;
+      softSkipEmpty: boolean;
+      wipeAll: boolean;
+    }) => {
+      const { seq, adjIds, alsoExclude, softSkipEmpty, wipeAll } = opts;
+      if (!totpCode.trim()) {
+        toast.error("Enter your 2FA code");
+        return;
+      }
+      if (seq.length === 0 && !alsoExclude) {
+        toast.error("Nothing selected to wipe");
+        return;
+      }
+      const code = totpCode.trim();
+
+      setIsWipeAllRun(wipeAll);
+      setPhase("running");
+
+      // Build the run plan: a step per category, plus the optional final
+      // stat-exclusion step. Seeded all-pending so the UI shows the full plan.
+      const plan: RunResult[] = seq.map((category) => ({
+        kind: "category" as const,
+        category,
+        status: "pending" as RunStatus,
+        message: "",
+      }));
+      if (alsoExclude) {
+        plan.push({ kind: "exclude", status: "pending", message: "" });
+      }
+      setResults(plan.map((r) => ({ ...r })));
+
+      startTransition(async () => {
+        const finalResults: RunResult[] = plan.map((r) => ({ ...r }));
+        const commit = () => setResults(finalResults.map((r) => ({ ...r })));
+
+        // Treat a category server-action error string that means "the category
+        // was empty" as a soft-skip in WIPE ALL mode (an empty category is a
+        // no-op, not a failure that should abort the rest).
+        const isEmptyErr = (msg: string): boolean =>
+          /nothing to wipe|already \$0|no inventory|no deposits|at least one adjustment/i.test(
+            msg,
+          );
+
+        let aborted = false;
+        for (let i = 0; i < finalResults.length; i++) {
+          const step = finalResults[i];
+
+          if (step.kind === "exclude") {
+            // The stat-exclusion step ALWAYS runs (it doesn't depend on the
+            // wipes succeeding) — it's non-destructive and is the whole point
+            // of "gone everywhere", so an earlier wipe failure must not skip
+            // it. It runs LAST so the metric-cache bust reflects the wipes too.
+            finalResults[i] = { kind: "exclude", status: "running", message: "" };
+            commit();
+            try {
+              const res = await excludeUserFromAllStats({
+                userId,
+                totpCode: code,
+                reason: wipeAll
+                  ? "Auto-excluded on WIPE ALL"
+                  : "Auto-excluded on account wipe",
+              });
+              finalResults[i] = res.success
+                ? {
+                    kind: "exclude",
+                    status: "success",
+                    message: res.inserted
+                      ? "Removed from all stats (dashboard / GGR / analytics / insights)"
+                      : "Already excluded from all stats — no change",
+                  }
+                : { kind: "exclude", status: "failed", message: res.error };
+            } catch (e) {
+              finalResults[i] = {
+                kind: "exclude",
+                status: "failed",
+                message: e instanceof Error ? e.message : "Unexpected error",
+              };
+            }
+            commit();
+            continue;
+          }
+
+          const category = step.category;
+          if (aborted) {
+            finalResults[i] = {
+              kind: "category",
+              category,
+              status: "skipped",
+              message: "Skipped — an earlier wipe failed",
+            };
+            commit();
+            continue;
+          }
+          finalResults[i] = { kind: "category", category, status: "running", message: "" };
+          commit();
+
+          try {
+            const outcome = await runCategory(category, userId, code, adjIds);
+            if (outcome.success) {
+              finalResults[i] = {
+                kind: "category",
+                category,
+                status: "success",
+                message: outcome.message,
+              };
+            } else if (softSkipEmpty && isEmptyErr(outcome.error)) {
+              // Empty category under WIPE ALL → skip, don't abort the rest.
+              finalResults[i] = {
+                kind: "category",
+                category,
+                status: "skipped",
+                message: "Nothing to wipe — empty, skipped",
+              };
+            } else {
+              finalResults[i] = {
+                kind: "category",
+                category,
+                status: "failed",
+                message: outcome.error,
+              };
+              aborted = true;
+            }
+          } catch (e) {
+            finalResults[i] = {
+              kind: "category",
+              category,
+              status: "failed",
+              message: e instanceof Error ? e.message : "Unexpected error",
+            };
+            aborted = true;
+          }
+          commit();
+        }
+
+        const succeeded = finalResults.filter((r) => r.status === "success").length;
+        const failed = finalResults.filter((r) => r.status === "failed").length;
+
+        if (failed === 0) {
+          toast.success(
+            wipeAll
+              ? "Wipe all complete"
+              : succeeded === 1
+                ? "Wipe complete"
+                : `Wiped ${succeeded} step${succeeded === 1 ? "" : "s"}`,
+          );
+        } else if (succeeded > 0) {
+          toast.error(
+            `${succeeded} done, ${failed} failed — see the breakdown. Succeeded wipes are individually restorable.`,
+          );
+        } else {
+          toast.error("Wipe failed — nothing was changed");
+        }
+
+        // Always refresh so any committed wipe + the exclusion are reflected.
+        // Each successful action already revalidated the page + busted metric
+        // caches server-side.
+        router.refresh();
+      });
+    },
+    [totpCode, userId, router],
+  );
+
+  // Normal "Wipe selected" path: run the ticked, non-empty categories, with the
+  // stat-exclusion appended only when the "Also remove from all stats" toggle
+  // is ON. Empty categories can't reach here (runnableCategories excludes them),
+  // so softSkipEmpty is off.
   function handleRun() {
+    runSequence({
+      seq: runnableCategories,
+      adjIds: Array.from(adjSelected),
+      alsoExclude: excludeFromStats,
+      softSkipEmpty: false,
+      wipeAll: false,
+    });
+  }
+
+  // WIPE ALL: run EVERY enabled, non-locked category (empties soft-skipped) and
+  // ALWAYS add the stat-exclusion. Loads the full adjustment list first (its
+  // ids are needed by the adjustments action) — the only preview WIPE ALL
+  // depends on; balance/vault/inventory/deposits re-read server-side. The
+  // single 2FA gate is unchanged (the code already entered in the confirm step
+  // drives every action).
+  const handleWipeAll = useCallback(() => {
     if (!totpCode.trim()) {
       toast.error("Enter your 2FA code");
       return;
     }
-    if (runnableCategories.length === 0) {
-      toast.error("Nothing selected to wipe");
+    if (allEnabledCategories.length === 0) {
+      // No destructive category is available (e.g. fully creator-protected),
+      // but the non-destructive stat-exclusion still applies → run it alone.
+      runSequence({
+        seq: [],
+        adjIds: [],
+        alsoExclude: true,
+        softSkipEmpty: true,
+        wipeAll: true,
+      });
       return;
     }
-    const code = totpCode.trim();
-    const seq = runnableCategories;
-    const adjIds = Array.from(adjSelected);
 
-    setPhase("running");
-    // Seed the results list as all-pending so the UI shows the full plan.
-    setResults(
-      seq.map((category) => ({
-        category,
-        status: "pending" as RunStatus,
-        message: "",
-      })),
-    );
+    const start = (adjIds: string[]) =>
+      runSequence({
+        seq: allEnabledCategories,
+        adjIds,
+        alsoExclude: true,
+        softSkipEmpty: true,
+        wipeAll: true,
+      });
 
+    // If adjustments is one of the enabled categories, make sure we have its
+    // ledger ids before running (the action requires explicit ids). Use the
+    // already-loaded list if present; otherwise fetch it now.
+    if (!allEnabledCategories.includes("adjustments")) {
+      start([]);
+      return;
+    }
+    if (adjState?.status === "ready") {
+      start(adjState.data.map((r) => r.id));
+      return;
+    }
+    // Fetch the adjustment ids inline, then run.
     startTransition(async () => {
-      const finalResults: RunResult[] = seq.map((category) => ({
-        category,
-        status: "pending",
-        message: "",
-      }));
-
-      const commit = () => setResults([...finalResults]);
-
-      let aborted = false;
-      for (let i = 0; i < seq.length; i++) {
-        const category = seq[i];
-        if (aborted) {
-          finalResults[i] = {
-            category,
-            status: "skipped",
-            message: "Skipped — an earlier wipe failed",
-          };
-          commit();
-          continue;
-        }
-        finalResults[i] = { category, status: "running", message: "" };
-        commit();
-
-        try {
-          const outcome = await runCategory(category, userId, code, adjIds);
-          finalResults[i] = outcome.success
-            ? { category, status: "success", message: outcome.message }
-            : { category, status: "failed", message: outcome.error };
-          if (!outcome.success) aborted = true;
-        } catch (e) {
-          finalResults[i] = {
-            category,
-            status: "failed",
-            message: e instanceof Error ? e.message : "Unexpected error",
-          };
-          aborted = true;
-        }
-        commit();
+      try {
+        const res = await listWipeableAdjustments(userId);
+        start(res.success ? res.rows.map((r) => r.id) : []);
+      } catch {
+        // If listing fails, still run the rest (adjustments will soft-skip on
+        // its "select at least one" empty error).
+        start([]);
       }
-
-      const succeeded = finalResults.filter((r) => r.status === "success").length;
-      const failed = finalResults.filter((r) => r.status === "failed").length;
-
-      if (failed === 0) {
-        toast.success(
-          succeeded === 1 ? "Wipe complete" : `Wiped ${succeeded} categories`,
-        );
-      } else if (succeeded > 0) {
-        toast.error(
-          `${succeeded} wiped, ${failed} failed — see the breakdown. Succeeded wipes are individually restorable.`,
-        );
-      } else {
-        toast.error("Wipe failed — nothing was changed");
-      }
-
-      // Always refresh so any committed wipe is reflected. Each successful
-      // action already revalidated the page + busted metric caches server-side.
-      router.refresh();
     });
-  }
+  }, [totpCode, allEnabledCategories, adjState, userId, runSequence]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -729,10 +930,17 @@ function WipeDataDialog({
             invValue={invValue}
             totpCode={totpCode}
             setTotpCode={setTotpCode}
+            excludeFromStats={excludeFromStats}
+            setExcludeFromStats={setExcludeFromStats}
+            allEnabledCategories={allEnabledCategories}
+            onWipeAll={handleWipeAll}
+            isPending={isPending}
           />
         )}
 
-        {phase === "running" && <RunningPhase results={results} />}
+        {phase === "running" && (
+          <RunningPhase results={results} isWipeAll={isWipeAllRun} />
+        )}
 
         <DialogFooter className="gap-2 sm:gap-2">
           {phase === "select" && (
@@ -1521,6 +1729,11 @@ function ConfirmPhase({
   invValue,
   totpCode,
   setTotpCode,
+  excludeFromStats,
+  setExcludeFromStats,
+  allEnabledCategories,
+  onWipeAll,
+  isPending,
 }: {
   runnableCategories: readonly SelectableCategory[];
   everCreator: boolean;
@@ -1536,6 +1749,14 @@ function ConfirmPhase({
   invValue: number;
   totpCode: string;
   setTotpCode: (v: string) => void;
+  /** "Also remove from all stats" toggle (default ON; controls the partial-wipe exclusion). */
+  excludeFromStats: boolean;
+  setExcludeFromStats: (v: boolean) => void;
+  /** Every enabled, non-locked category — what WIPE ALL will hit. */
+  allEnabledCategories: readonly SelectableCategory[];
+  /** Fire the nuke-everything WIPE ALL run (all enabled categories + exclusion). */
+  onWipeAll: () => void;
+  isPending: boolean;
 }) {
   const wantsAdjustments = runnableCategories.includes("adjustments");
   const wantsBalance = runnableCategories.includes("balance");
@@ -1682,6 +1903,32 @@ function ConfirmPhase({
         </p>
       </div>
 
+      {/* Also remove from all stats — non-destructive blacklist add (default
+          ON). Adds the user to the excluded-users list so they vanish from
+          every metric surface (dashboard / GGR / analytics / insights / P&L).
+          Deletes nothing, so it is safe even for creators. WIPE ALL always
+          does this regardless of this toggle. */}
+      <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border bg-muted/20 p-3 text-sm">
+        <Checkbox
+          checked={excludeFromStats}
+          onCheckedChange={(v) => setExcludeFromStats(Boolean(v))}
+          className="mt-0.5"
+          aria-label="Also remove from all stats"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5 font-medium text-foreground">
+            <BarChart3 className="size-3.5 text-muted-foreground" />
+            Also remove from all stats
+          </span>
+          <span className="mt-0.5 block text-xs text-muted-foreground">
+            Adds this user to the excluded-users list so they disappear from
+            every metric surface — dashboard, GGR, analytics, insights and P&L.
+            Non-destructive (deletes nothing, just filters them out) and
+            reversible from the excluded-users page.
+          </span>
+        </span>
+      </label>
+
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">2FA Code</Label>
         <Input
@@ -1695,8 +1942,132 @@ function ConfirmPhase({
           autoFocus
         />
         <p className="text-[11px] text-muted-foreground">
-          One code runs all selected wipes in sequence.
+          One code runs all selected wipes{excludeFromStats ? " + the stat removal" : ""} in
+          sequence.
         </p>
+      </div>
+
+      {/* ───────────────────────────────────────────────────────────────────
+          WIPE ALL — bottom-left nuke-everything control. Selects every
+          currently-ENABLED category, runs them through the SAME single 2FA
+          gate (the code above), and ALWAYS removes the user from all stats.
+          Disabled ("coming soon") + creator-protected categories are NOT
+          touched. Deliberately loud + unmistakably destructive. */}
+      <WipeAllPanel
+        everCreator={everCreator}
+        allEnabledCategories={allEnabledCategories}
+        totpReady={Boolean(totpCode.trim())}
+        isPending={isPending}
+        onWipeAll={onWipeAll}
+      />
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// WIPE ALL panel — the bottom-left destructive "nuke everything wipeable for
+// this user" control inside the confirm step. Big red warning, explicit list
+// of what it hits + the role-aware WILL-NOT-TOUCH note, and a button that runs
+// every enabled category + the stat-exclusion through the existing single 2FA
+// gate. It NEVER enables a disabled category and NEVER bypasses creator-
+// protection (the locked categories are excluded from `allEnabledCategories`).
+// ───────────────────────────────────────────────────────────────────────────
+function WipeAllPanel({
+  everCreator,
+  allEnabledCategories,
+  totpReady,
+  isPending,
+  onWipeAll,
+}: {
+  everCreator: boolean;
+  allEnabledCategories: readonly SelectableCategory[];
+  totpReady: boolean;
+  isPending: boolean;
+  onWipeAll: () => void;
+}) {
+  // Human labels for the categories WIPE ALL will hit (in run order).
+  const hitLabels = allEnabledCategories.map((c) => wipeCategoryMeta(c).label);
+
+  return (
+    <div className="rounded-md border-2 border-rose-600/70 bg-rose-600/[0.09] p-3.5 shadow-[0_0_0_1px_rgba(225,29,72,0.15)]">
+      <div className="flex items-start gap-2.5">
+        <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-rose-600/20 text-rose-600 dark:text-rose-400">
+          <Skull className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1 space-y-2">
+          <div>
+            <p className="flex items-center gap-1.5 text-sm font-bold uppercase tracking-wide text-rose-600 dark:text-rose-400">
+              <AlertTriangle className="size-4" />
+              Danger zone — WIPE ALL
+            </p>
+            <p className="mt-1 text-xs text-rose-600/90 dark:text-rose-300/90">
+              Nukes <span className="font-semibold">everything wipeable</span>{" "}
+              for this user in one go and removes them from all stats. Each part
+              is snapshotted + individually restorable, but{" "}
+              <span className="font-semibold">
+                this cannot be easily undone
+              </span>{" "}
+              — restore is per-category, by hand, from the wipe history.
+            </p>
+          </div>
+
+          {/* What it will hit. */}
+          {hitLabels.length > 0 ? (
+            <div className="rounded border border-rose-600/30 bg-background/40 px-2.5 py-2 text-xs">
+              <p className="font-medium text-foreground">
+                Will run ({hitLabels.length}):
+              </p>
+              <p className="mt-0.5 text-muted-foreground">
+                {hitLabels.join(" · ")}
+                {" · "}
+                <span className="font-medium text-rose-600 dark:text-rose-400">
+                  remove from all stats
+                </span>
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground/80">
+                Empty categories are skipped. Disabled “coming soon” categories
+                are not touched.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded border border-rose-600/30 bg-background/40 px-2.5 py-2 text-xs text-muted-foreground">
+              No wipeable category is available for this user
+              {everCreator ? " (creator-protected)" : ""} — WIPE ALL will only
+              remove them from all stats.
+            </div>
+          )}
+
+          {/* Role-aware WILL NOT TOUCH note. */}
+          <p className="flex items-start gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+            <ShieldCheck className="mt-px size-3 shrink-0" />
+            <span>
+              Will NOT touch: {wipePreservedSummary(everCreator)}
+            </span>
+          </p>
+
+          <Button
+            size="sm"
+            variant="destructive"
+            className="w-full bg-rose-600 hover:bg-rose-700 sm:w-auto"
+            onClick={onWipeAll}
+            disabled={isPending || !totpReady}
+            title={
+              !totpReady ? "Enter your 2FA code above first" : undefined
+            }
+          >
+            {isPending ? (
+              <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+            ) : (
+              <Skull className="mr-1.5 size-3.5" />
+            )}
+            {isPending ? "Wiping…" : "WIPE ALL + remove from stats"}
+          </Button>
+          {!totpReady && (
+            <p className="text-[11px] text-rose-600/80 dark:text-rose-400/80">
+              Enter your 2FA code above to enable WIPE ALL.
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1738,23 +2109,44 @@ function SummaryBlock({
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// RUNNING PHASE — per-category execution status so a partial run is legible.
+// RUNNING PHASE — per-step execution status so a partial run is legible. Each
+// step is a wipe category OR the final non-destructive "remove from all stats"
+// step (rendered with its own label/icon).
 // ───────────────────────────────────────────────────────────────────────────
-function RunningPhase({ results }: { results: RunResult[] }) {
+function RunningPhase({
+  results,
+  isWipeAll,
+}: {
+  results: RunResult[];
+  isWipeAll: boolean;
+}) {
   return (
     <div className="space-y-2">
+      {isWipeAll && (
+        <div className="rounded-md border border-rose-600/40 bg-rose-600/[0.07] px-3 py-2 text-xs font-medium text-rose-600 dark:text-rose-400">
+          <span className="flex items-center gap-1.5">
+            <Skull className="size-3.5" />
+            WIPE ALL in progress — running every enabled category + removing from
+            all stats.
+          </span>
+        </div>
+      )}
       <div className="divide-y rounded-md border">
-        {results.map((r) => {
-          const meta = wipeCategoryMeta(r.category);
-          const Icon = categoryIcon(r.category);
+        {results.map((r, i) => {
+          const label =
+            r.kind === "exclude"
+              ? "Remove from all stats"
+              : wipeCategoryMeta(r.category).label;
+          const Icon = r.kind === "exclude" ? BarChart3 : categoryIcon(r.category);
+          const key = r.kind === "exclude" ? `exclude-${i}` : r.category;
           return (
             <div
-              key={r.category}
+              key={key}
               className="flex items-center gap-3 px-3 py-2.5 text-sm"
             >
               <Icon className="size-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
-                <div className="font-medium text-foreground">{meta.label}</div>
+                <div className="font-medium text-foreground">{label}</div>
                 {r.message && (
                   <div
                     className={cn(
@@ -1775,7 +2167,8 @@ function RunningPhase({ results }: { results: RunResult[] }) {
       </div>
       <p className="text-[11px] text-muted-foreground">
         Every successful wipe above is its own recoverable snapshot — restore any
-        of them from the wipe history.
+        of them from the wipe history. Removing from all stats is reversible from
+        the excluded-users page.
       </p>
     </div>
   );
