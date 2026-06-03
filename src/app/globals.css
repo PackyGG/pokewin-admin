@@ -346,6 +346,37 @@
   [data-slot="collapsible-content"] {
     transition: none !important;
   }
+
+  /* ── Global overlays: honor reduced-motion centrally ──────────────
+     The base-ui overlay primitives (dialog / sheet / popover / dropdown
+     menu / tooltip / command) animate open + close via `tw-animate-css`
+     `animate-in` / `animate-out` (zoom + slide + fade) and, for the
+     sheet, via a `transition` on opacity + translate driven by
+     `data-starting-style` / `data-ending-style`. `tw-animate-css` ships
+     NO reduced-motion handling of its own, so without this block those
+     overlays still zoom + slide for users who asked the OS for reduced
+     motion.
+
+     We neutralize the enter/exit keyframe animation AND the sheet's
+     transition for every overlay surface (content + backdrop). This is
+     safe for the open/close *logic*: base-ui waits on
+     `element.getAnimations()` before unmounting — with no animation /
+     transition present that promise resolves immediately, so panels
+     still mount + unmount correctly, just without the motion. The
+     overlay simply appears / disappears instantly instead of sliding. */
+  [data-slot="dialog-content"],
+  [data-slot="dialog-overlay"],
+  [data-slot="sheet-content"],
+  [data-slot="sheet-overlay"],
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="tooltip-content"],
+  [data-slot="command"],
+  [data-slot="tabs-content"] {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 @keyframes skeleton-shimmer {

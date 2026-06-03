@@ -42,6 +42,8 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ux";
 import { ROLE_COLORS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import {
@@ -255,12 +257,23 @@ export function CommandPalette({
         className="max-w-2xl"
       >
         <Command shouldFilter={shouldCmdkFilter} loop>
-          <CommandInput
-            value={query}
-            onValueChange={setQuery}
-            placeholder="Type a command, search users with @, or jump to a page…"
-            autoFocus
-          />
+          {/* Relative wrapper so the search spinner can park on the input's
+              right edge while a user lookup is in flight — visible even when
+              stale results are still on screen (the skeleton rows only show
+              when there are no results yet). */}
+          <div className="relative">
+            <CommandInput
+              value={query}
+              onValueChange={setQuery}
+              placeholder="Type a command, search users with @, or jump to a page…"
+              autoFocus
+            />
+            {searching && (
+              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                <Spinner size={14} label="Searching users" />
+              </span>
+            )}
+          </div>
           <CommandList className="max-h-[420px]">
             {/* Empty state: shown when cmdk has no matches AND we have no
                 server user results. The exact copy changes based on whether
@@ -275,8 +288,31 @@ export function CommandPalette({
 
             {/* Users — rendered first when the query is a user lookup so
                 the typical flow (type @, hit Enter) jumps straight to the
-                matching profile. */}
-            {showUserResults && (hasUserResults || searching) && (
+                matching profile. While the debounced search is in flight
+                with no results yet, render dimension-matched skeleton rows
+                instead of leaving the group empty — keeps the list height
+                stable and reads as "searching" rather than "nothing here". */}
+            {showUserResults && searching && !hasUserResults && (
+              <CommandGroup heading={PALETTE_SECTION_LABELS.users}>
+                <div aria-hidden className="px-1 py-0.5">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-3 rounded-lg px-2 py-1.5"
+                    >
+                      <Skeleton className="size-8 shrink-0 rounded-full" />
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <Skeleton className="h-3.5 w-32 rounded" />
+                        <Skeleton className="h-3 w-44 rounded" />
+                      </div>
+                      <Skeleton className="h-5 w-12 shrink-0 rounded-md" />
+                    </div>
+                  ))}
+                </div>
+              </CommandGroup>
+            )}
+
+            {showUserResults && hasUserResults && (
               <CommandGroup heading={PALETTE_SECTION_LABELS.users}>
                 {userResults.map((u) => (
                   <CommandItem

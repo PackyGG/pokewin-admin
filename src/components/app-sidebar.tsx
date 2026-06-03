@@ -77,6 +77,7 @@ import { cn } from "@/lib/utils";
 import { getDefaultRoute } from "@/lib/admin-roles";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { getSidebarGroups } from "@/lib/nav-config";
+import { LinkPending } from "@/components/ux";
 
 const ICONS: Record<string, LucideIcon> = {
   LayoutDashboard,
@@ -353,6 +354,21 @@ export function AppSidebar({
                     >
                       <Icon className={cn("size-4", isActive ? "text-primary" : "text-muted-foreground")} />
                       <span>{item.label}</span>
+                      {/* Per-link pending cue — reads this <Link>'s
+                          `useLinkStatus()` and shows a small spinner only
+                          while THIS item's navigation is in flight, so a slow
+                          server render reads as "loading" instead of a dead
+                          click. Renders null otherwise (zero footprint) and
+                          hides in icon-collapsed mode to keep the 32px button
+                          square. `ml-auto` parks it on the right edge unless
+                          the NEW badge already claimed that slot. */}
+                      <LinkPending
+                        size={13}
+                        className={cn(
+                          "shrink-0 group-data-[collapsible=icon]:hidden",
+                          !item.isNew && "ml-auto",
+                        )}
+                      />
                       {item.isNew && (
                         <span className="ml-auto rounded-sm bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-emerald-600 group-data-[collapsible=icon]:hidden dark:text-emerald-400">
                           New

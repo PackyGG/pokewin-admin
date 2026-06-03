@@ -87,9 +87,18 @@ export function ChatPanelMutes({ role }: { role: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-2">
-        <p className="text-xs text-muted-foreground">
-          {loading ? "Loading..." : `${total} mute${total !== 1 ? "s" : ""}`}
-        </p>
+        {/* Count label — while the first load is in flight show a small
+            dimension-matched skeleton chip instead of literal "Loading..."
+            text, so the header reads as loading visually (matching the
+            MutesSkeleton body below) and the width doesn't jump when the
+            real "N mutes" count swaps in. */}
+        {loading ? (
+          <Skeleton className="h-3.5 w-16 rounded" />
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {`${total} mute${total !== 1 ? "s" : ""}`}
+          </p>
+        )}
         {canMute && <MuteByIdDialog onDone={refresh} />}
       </div>
 
