@@ -20,6 +20,8 @@ import {
   type VaultWipeSnapshot,
   type InventoryWipeSnapshot,
 } from "@/lib/account-wipes/snapshot";
+// NOTE: the `deposits` snapshot type's restore branch is handled below; the
+// type is part of the AccountWipeSnapshot union so no extra import is needed.
 
 // ───────────────────────────────────────────────────────────────────────────
 // PROTECTED-DATA NOTE (creator deals + real finance) — see
@@ -989,11 +991,13 @@ const restoreSchema = z.object({
  *   - balance   → re-add availableBalanceBefore to available_balance.
  *   - vault     → re-add lockedBalanceBefore to locked_balance + restore unlock_at.
  *   - inventory → re-insert the snapshotted user_inventory rows.
+ *   - deposits  → re-insert the snapshotted `deposit` ledger rows + re-add the
+ *                 recorded total_deposited reduction to the counter.
  *
  * Idempotent-guarded: a record already marked restored_at cannot be restored
- * again (double-credit / double-insert). Balance/vault re-credits are
- * optimistic-locked against the LIVE row (not the stale wipe-time version) so
- * the restore is additive to whatever the balance is now.
+ * again (double-credit / double-insert). Balance/vault/deposit counter
+ * re-credits are optimistic-locked against the LIVE row (not the stale
+ * wipe-time version) so the restore is additive to whatever the value is now.
  */
 export async function restoreAccountWipe(
   wipeId: string,
@@ -1080,6 +1084,44 @@ export async function restoreAccountWipe(
           data: rowsForInsert as unknown as Prisma.user_inventoryCreateManyInput[],
           skipDuplicates: true,
         });
+      });
+    } else if (snapshot.type === "deposits") {
+      // Re-insert the deleted `deposit` ledger rows verbatim AND re-add the
+      // EXACT clamped total_deposited reduction recorded in the snapshot (never
+      // more than was removed). The re-inserted rows' historical
+      // balance_before/after are NOT rewritten (same fidelity tradeoff the
+      // adjustments wipe documents). balances.last_transaction_id is NOT
+      // restored — it self-heals on the next real transaction.
+      if (!Array.isArray(snapshot.rows)) {
+        return { success: false, error: "Snapshot is malformed — cannot restore" };
+      }
+      const rowsForInsert = snapshot.rows.map((r) => {
+        const copy: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(r)) {
+          if (v === undefined) continue;
+          copy[k] = v;
+        }
+        return copy;
+      });
+      const addBackCounter = toNumber(snapshot.totalDepositedReduction);
+      await db.$transaction(async (tx) => {
+        // skipDuplicates makes a retried restore safe.
+        await tx.ledger_transactions.createMany({
+          data: rowsForInsert as unknown as Prisma.ledger_transactionsCreateManyInput[],
+          skipDuplicates: true,
+        });
+        if (addBackCounter > 0) {
+          const b = await tx.balances.findUnique({ where: { user_id: snapshot.userId } });
+          if (!b) throw new Error("User balances not found");
+          const updated = await tx.balances.updateMany({
+            where: { user_id: snapshot.userId, version: b.version },
+            data: {
+              total_deposited: toNumber(b.total_deposited) + addBackCounter,
+              version: { increment: 1 },
+            },
+          });
+          if (updated.count !== 1) throw new Error("Balance changed concurrently — please retry");
+        }
       });
     } else {
       return { success: false, error: "Unknown wipe type — cannot restore" };

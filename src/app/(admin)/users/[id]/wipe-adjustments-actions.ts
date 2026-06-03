@@ -20,6 +20,7 @@ import {
   isCreatorRelatedAdjustment,
   isAffiliateRelatedAdjustment,
 } from "@/lib/account-wipes/protected";
+import { getCreatorProtectionStatus } from "@/lib/account-wipes/creator-protection";
 import { invalidateMetricCaches } from "@/lib/account-wipes/invalidate-metric-caches";
 
 // ---------------------------------------------------------------------------
@@ -42,15 +43,17 @@ import { invalidateMetricCaches } from "@/lib/account-wipes/invalidate-metric-ca
 //
 // So the wipeable set is: type === ADJ_TYPE AND description starts with
 // ADJ_DESC_PREFIX AND amount > 0 (CREDIT only — see SIGN RULE). Manual
-// withdrawals, deposits, withdrawals, affiliate claims, all gaming, and
-// every creator/affiliate row are excluded — both by the listing query AND
-// by a hard server-side guard below that re-reads every row before deletion
-// and refuses anything that isn't a genuine "Admin adjustment:" CREDIT owned
-// by this user. On top of the type filter, two keyword carve-outs
-// (isCreatorRelatedAdjustment + isAffiliateRelatedAdjustment) drop any credit
-// whose reason / metadata ties it to a creator deal OR to ANY affiliate info
-// (commission / referral / affiliate payout), so neither creator-deal money
-// nor affiliate info entered by hand via Adjust-Balance can ever be wiped.
+// withdrawals are ALWAYS excluded (by the "Manual withdrawal:" prefix).
+//
+// CREATOR-CONDITIONAL CARVE-OUT (owner mandate, 2026-06-03): the two keyword
+// carve-outs (isCreatorRelatedAdjustment + isAffiliateRelatedAdjustment),
+// which drop any credit whose reason / metadata ties it to a creator deal OR
+// to ANY affiliate info (commission / referral / affiliate payout), are now
+// applied ONLY when the target user IS or WAS a creator (the server-re-derived
+// `everCreator` flag — getCreatorProtectionStatus). For a user who was NEVER a
+// creator, a hand-typed "Admin adjustment: weekly deal" / "affiliate
+// commission" credit IS a wipeable content credit. The protected-LEDGER-TYPE
+// assertion + the "Manual withdrawal:" exclusion stay UNCONDITIONAL.
 //
 // ORDERING (CRITICAL, snapshot-first): the recovery snapshot is written to
 // the admin DB and confirmed BEFORE the main-DB delete + balance reduction.
@@ -160,6 +163,13 @@ export async function listWipeableAdjustments(
   }
 
   const db = await getDb();
+
+  // CREATOR-CONDITIONAL: re-derive (server-side, dual-DB) whether this user
+  // IS or WAS a creator. The deal/affiliate keyword carve-out below is applied
+  // ONLY for an ever-creator; for a never-creator every genuine admin credit
+  // is wipeable, including deal-tagged ones.
+  const { everCreator } = await getCreatorProtectionStatus(parsed.data);
+
   // Filter to genuine admin adjustment CREDITS only. `startsWith` on the
   // description excludes "Manual withdrawal:" rows (same type) and any
   // other future prefix; `amount > 0` excludes debit adjustments (SIGN
@@ -183,16 +193,19 @@ export async function listWipeableAdjustments(
   return {
     success: true,
     rows: rows
-      // CREATOR-DEAL + AFFILIATE CARVE-OUT: never list a credit tied to a
-      // creator deal / payout OR to any affiliate info (commission / referral
-      // / affiliate payout). The user-facing wipe protects ALL creator-deal
-      // AND ALL affiliate data, so such a credit entered via Adjust-Balance is
-      // filtered out here AND hard-rejected by the in-tx guard below if its id
-      // is injected.
+      // CREATOR-DEAL + AFFILIATE CARVE-OUT (creator-conditional): for an
+      // ever-creator, never list a credit tied to a creator deal / payout OR
+      // to any affiliate info (commission / referral / affiliate payout) — the
+      // wipe protects ALL creator-deal AND ALL affiliate data for creators, so
+      // such a credit entered via Adjust-Balance is filtered out here AND
+      // hard-rejected by the in-tx guard below if its id is injected. For a
+      // never-creator the carve-out does not apply (the row is a wipeable
+      // content credit).
       .filter(
         (r) =>
-          !isCreatorRelatedAdjustment(r.description, r.metadata) &&
-          !isAffiliateRelatedAdjustment(r.description, r.metadata),
+          !everCreator ||
+          (!isCreatorRelatedAdjustment(r.description, r.metadata) &&
+            !isAffiliateRelatedAdjustment(r.description, r.metadata)),
       )
       .map((r) => ({
         id: r.id,
@@ -345,6 +358,12 @@ export async function wipeBalanceAdjustments(data: {
 
   const db = await getDb();
 
+  // CREATOR-CONDITIONAL (server-re-derived, dual-DB): the deal/affiliate
+  // keyword carve-out in the guards below is applied ONLY when this user IS or
+  // WAS a creator. Never trusted from the client — recomputed here from the
+  // DBs. Fail-closed (a derivation error returns everCreator: true → protect).
+  const { everCreator } = await getCreatorProtectionStatus(parsed.userId);
+
   // STEP 3 — READ + GUARD. Read the exact selected rows and verify EVERY one
   // is this user's genuine admin-adjustment CREDIT. This read is in its own
   // short tx; the authoritative re-guard also runs again inside the
@@ -394,24 +413,27 @@ export async function wipeBalanceAdjustments(data: {
           "WIPE_GUARD: a selected row is a debit (clawback/withdrawal) — only credit adjustments can be wiped",
         );
       }
-      // CREATOR-DEAL CARVE-OUT (fail-closed): an admin adjustment whose
-      // reason / metadata ties it to a creator deal / payout (e.g. "Admin
-      // adjustment: weekly deal") is protected even though it is an
-      // admin_balance_adjustment credit. A single such id aborts the batch.
-      if (isCreatorRelatedAdjustment(row.description, row.metadata)) {
+      // CREATOR-DEAL CARVE-OUT (creator-conditional, fail-closed): for an
+      // ever-creator, an admin adjustment whose reason / metadata ties it to a
+      // creator deal / payout (e.g. "Admin adjustment: weekly deal") is
+      // protected even though it is an admin_balance_adjustment credit. A
+      // single such id aborts the batch. For a never-creator this does not
+      // apply (the credit is wipeable content money).
+      if (everCreator && isCreatorRelatedAdjustment(row.description, row.metadata)) {
         throw new Error(
-          "WIPE_GUARD: a selected adjustment is tied to a creator deal / payout and is protected — it cannot be wiped",
+          "WIPE_GUARD: a selected adjustment is tied to a creator deal / payout and is protected for creators — it cannot be wiped",
         );
       }
-      // AFFILIATE CARVE-OUT (fail-closed): an admin adjustment whose reason /
-      // metadata ties it to ANY affiliate info (commission / referral /
-      // affiliate payout — e.g. "Admin adjustment: affiliate commission") is
-      // protected even though it is an admin_balance_adjustment credit. No
-      // affiliate info of any kind is ever wiped. A single such id aborts the
-      // batch.
-      if (isAffiliateRelatedAdjustment(row.description, row.metadata)) {
+      // AFFILIATE CARVE-OUT (creator-conditional, fail-closed): for an
+      // ever-creator, an admin adjustment whose reason / metadata ties it to
+      // ANY affiliate info (commission / referral / affiliate payout — e.g.
+      // "Admin adjustment: affiliate commission") is protected even though it
+      // is an admin_balance_adjustment credit. No affiliate info of any kind
+      // is wiped for a creator. A single such id aborts the batch. For a
+      // never-creator this does not apply.
+      if (everCreator && isAffiliateRelatedAdjustment(row.description, row.metadata)) {
         throw new Error(
-          "WIPE_GUARD: a selected adjustment is affiliate info (commission / referral / payout) and is protected — it cannot be wiped",
+          "WIPE_GUARD: a selected adjustment is affiliate info (commission / referral / payout) and is protected for creators — it cannot be wiped",
         );
       }
     }
@@ -528,8 +550,10 @@ export async function wipeBalanceAdjustments(data: {
           !row.description.startsWith(ADJ_DESC_PREFIX) ||
           row.description.startsWith(MANUAL_WD_DESC_PREFIX) ||
           toNumber(row.amount) <= 0 ||
-          isCreatorRelatedAdjustment(row.description, row.metadata) ||
-          isAffiliateRelatedAdjustment(row.description, row.metadata)
+          // CREATOR-CONDITIONAL carve-outs: only protect deal/affiliate-tagged
+          // credits when the user is/was a creator (same flag as STEP 3).
+          (everCreator && isCreatorRelatedAdjustment(row.description, row.metadata)) ||
+          (everCreator && isAffiliateRelatedAdjustment(row.description, row.metadata))
         ) {
           throw new Error("WIPE_GUARD: a selected row is protected and cannot be wiped — refresh and retry");
         }
