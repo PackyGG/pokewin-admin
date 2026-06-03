@@ -370,6 +370,32 @@ export function BalanceAdjustDialog({
       ? (lossbackPercentPreview / 100) * user7dLoss
       : null;
 
+  // Sets the lossback % AND auto-fills the adjustment Amount with the
+  // computed credit = round(% × max(0, 7d loss), 2) — the same value the
+  // suggested-credit line shows — so a quick-pick (or a typed custom %)
+  // lands the ready-to-submit dollar figure in the Amount field (the admin
+  // can still edit it). A valid 0–35% rate over a real loss fills the
+  // rounded credit; no loss (user up/flat) fills 0 (the "no loss to rebate"
+  // note still explains why submit is gated on a zero amount). An over-cap
+  // value only updates the % so the cap warning shows — the stale Amount is
+  // left untouched rather than written with a capped figure that fights the
+  // admin's typing.
+  function applyLossbackPercent(pct: string) {
+    setLossbackPercent(pct);
+    const pctNum = Number(pct.trim());
+    if (
+      pct.trim().length === 0 ||
+      !Number.isFinite(pctNum) ||
+      pctNum < 0 ||
+      pctNum > LOSSBACK_MAX_PERCENT
+    ) {
+      return;
+    }
+    // user7dLoss is already max(0, pnl7d) from the derivations above.
+    const credit = Math.round((pctNum / 100) * user7dLoss * 100) / 100;
+    setAmount(credit.toFixed(2));
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -578,7 +604,7 @@ export function BalanceAdjustDialog({
                           variant={active ? "default" : "outline"}
                           size="sm"
                           className="h-7 px-2.5 text-xs tabular-nums"
-                          onClick={() => setLossbackPercent(String(p))}
+                          onClick={() => applyLossbackPercent(String(p))}
                         >
                           {p}%
                         </Button>
@@ -589,7 +615,7 @@ export function BalanceAdjustDialog({
                       inputMode="decimal"
                       placeholder="Custom"
                       value={lossbackPercent}
-                      onChange={(e) => setLossbackPercent(e.target.value)}
+                      onChange={(e) => applyLossbackPercent(e.target.value)}
                       autoComplete="off"
                       aria-label="Custom lossback percent"
                       className="h-7 w-20 text-xs"
