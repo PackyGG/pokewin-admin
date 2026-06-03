@@ -1,6 +1,7 @@
 /**
  * verify-affiliate-wipe-protection.ts — ROLLED-BACK proof that the account
- * wipe can never touch affiliate info of any kind.
+ * wipe never touches affiliate info, AND that the affiliate/deal adjustment
+ * carve-out is creator-CONDITIONAL (2026-06-03).
  *
  * What it proves (against the MAIN DB — a stale snapshot per the task brief,
  * and EVERYTHING destructive runs inside a transaction that is force
@@ -10,23 +11,26 @@
  *      distribution, so we can confirm the keyword carve-out matches actual
  *      rows and that no affiliate credit is sitting there unprotected.
  *
- *   2. GUARD (rolled-back tx): a synthetic user with
+ *   2. GUARD (rolled-back tx): a synthetic CREATOR (role='creator') with
  *        - an affiliate-tagged "Admin adjustment:" CREDIT,
  *        - a plain content "Admin adjustment:" CREDIT,
  *        - an `affiliate_accounts` row + an `affiliate_code_usages` row,
- *      is run through the EXACT guard predicate the wipe enforces. We assert:
- *        - the affiliate credit is REJECTED (both by the listing filter and
- *          the per-row/in-tx guard predicate),
+ *      is run through the EXACT creator-conditional guard predicate the wipe
+ *      enforces (everCreator=true). We assert:
+ *        - the affiliate credit is REJECTED (listing filter + guard predicate),
  *        - the plain content credit is ACCEPTED,
- *        - the wipe's delete predicate targets ONLY admin_balance_adjustment
- *          rows — the affiliate_accounts / affiliate_code_usages rows are
- *          never in scope and remain present.
+ *        - for a NON-creator the affiliate credit would instead be ACCEPTED
+ *          (the carve-out is creator-conditional),
+ *        - the affiliate_accounts / affiliate_code_usages rows are NEVER in
+ *          the wipe's blast radius and remain present REGARDLESS of role.
  *      Then it throws a sentinel so the whole tx rolls back (nothing persists).
  *
  * Run: npx tsx scripts/verify-affiliate-wipe-protection.ts
  *
  * Uses the SAME guard functions the production wipe imports
- * (src/lib/account-wipes/protected.ts) — not a re-implementation.
+ * (src/lib/account-wipes/protected.ts) — not a re-implementation. The
+ * creator-conditional flip + the deposits round-trip are proven separately in
+ * scripts/verify-creator-conditional-wipe.ts.
  */
 import { config as loadEnv } from "dotenv";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -51,7 +55,8 @@ const MANUAL_WD_DESC_PREFIX = "Manual withdrawal:";
  * The EXACT wipeable predicate the production guard enforces (mirrors the
  * STEP 3 per-row loop + the in-tx re-guard boolean chain in
  * wipe-adjustments-actions.ts). Returns true only if the row is a genuine,
- * wipeable content CREDIT.
+ * wipeable content CREDIT. The creator/affiliate carve-outs are
+ * CREATOR-CONDITIONAL — they only fire when `everCreator` is true.
  */
 function isWipeable(row: {
   user_id: string;
@@ -60,7 +65,7 @@ function isWipeable(row: {
   description: string;
   amount: number;
   metadata: unknown;
-}, ownerUserId: string): boolean {
+}, ownerUserId: string, everCreator: boolean): boolean {
   if (row.user_id !== ownerUserId) return false;
   if (isProtectedLedgerType(row.type)) return false;
   if (row.type !== ADJ_TYPE) return false;
@@ -68,8 +73,8 @@ function isWipeable(row: {
   if (!row.description.startsWith(ADJ_DESC_PREFIX)) return false;
   if (row.description.startsWith(MANUAL_WD_DESC_PREFIX)) return false;
   if (row.amount <= 0) return false;
-  if (isCreatorRelatedAdjustment(row.description, row.metadata)) return false;
-  if (isAffiliateRelatedAdjustment(row.description, row.metadata)) return false;
+  if (everCreator && isCreatorRelatedAdjustment(row.description, row.metadata)) return false;
+  if (everCreator && isAffiliateRelatedAdjustment(row.description, row.metadata)) return false;
   return true;
 }
 
@@ -182,13 +187,16 @@ async function main() {
 
     try {
       await db.$transaction(async (tx) => {
-        // Synthetic owner + balance.
+        // Synthetic owner + balance. role='creator' so the creator-conditional
+        // affiliate/deal carve-out APPLIES (that is exactly when affiliate info
+        // is protected). The affiliate-tables-untouched proof below is
+        // unconditional (no wipe ever targets those tables, any role).
         await tx.user.create({
           data: {
             id: userId,
             email: `${userId}@example.invalid`,
             username: userId,
-            role: "user",
+            role: "creator",
           },
         });
         await tx.balances.create({
@@ -259,18 +267,24 @@ async function main() {
         const aRow = byId.get(affiliateAdj.id)!;
         const cRow = byId.get(contentAdj.id)!;
 
-        console.log("  [guard predicate]");
+        console.log("  [guard predicate — creator (everCreator=true)]");
         check(
-          "affiliate adjustment is REJECTED by the wipe guard",
-          isWipeable({ ...aRow, amount: Number(aRow.amount) }, userId) === false,
+          "affiliate adjustment is REJECTED by the wipe guard for a creator",
+          isWipeable({ ...aRow, amount: Number(aRow.amount) }, userId, true) === false,
         );
         check(
-          "plain content adjustment is ACCEPTED by the wipe guard",
-          isWipeable({ ...cRow, amount: Number(cRow.amount) }, userId) === true,
+          "plain content adjustment is ACCEPTED by the wipe guard for a creator",
+          isWipeable({ ...cRow, amount: Number(cRow.amount) }, userId, true) === true,
+        );
+        console.log("  [guard predicate — non-creator (everCreator=false) contrast]");
+        check(
+          "affiliate adjustment WOULD be wipeable for a non-creator (carve-out is creator-conditional)",
+          isWipeable({ ...aRow, amount: Number(aRow.amount) }, userId, false) === true,
         );
 
-        // Listing filter (mirrors listWipeableAdjustments): start from the
-        // credit subset, drop creator + affiliate.
+        // Listing filter (mirrors listWipeableAdjustments) for a CREATOR:
+        // start from the credit subset, drop creator + affiliate (the
+        // carve-out applies because everCreator=true here).
         const listed = live
           .filter((r) => Number(r.amount) > 0)
           .filter(
@@ -279,7 +293,7 @@ async function main() {
               !isAffiliateRelatedAdjustment(r.description, r.metadata),
           )
           .map((r) => r.id);
-        console.log("  [listing filter]");
+        console.log("  [listing filter — creator]");
         check("affiliate adjustment is NOT listed", !listed.includes(affiliateAdj.id));
         check("content adjustment IS listed", listed.includes(contentAdj.id));
 
