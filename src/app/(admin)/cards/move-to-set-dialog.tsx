@@ -35,6 +35,8 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/utils/format";
+import { FadeIn } from "@/components/fade-in";
+import { Spinner } from "@/components/ux";
 import type { SetForMoveDialog } from "@/lib/queries/cards";
 import { bulkMoveCardsToSet, createSetForCards } from "./set-actions";
 import { loadMoveDialogData } from "./load-actions";
@@ -217,8 +219,14 @@ export function MoveToSetDialog({
                 <Library className="size-4 text-primary" />
               </div>
               <div>
-                <DialogTitle className="text-base font-semibold leading-tight">
+                <DialogTitle className="flex items-center gap-2 text-base font-semibold leading-tight">
                   Move to set
+                  {loading && !loaded && (
+                    <span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
+                      <Spinner size={12} label="Loading sets" />
+                      Loading sets…
+                    </span>
+                  )}
                 </DialogTitle>
                 <p className="text-xs text-muted-foreground">
                   Moving{" "}
@@ -348,7 +356,7 @@ export function MoveToSetDialog({
               />
             </button>
             {createOpen && (
-              <div className="space-y-3 border-t px-3 py-3">
+              <FadeIn speed="fast" className="space-y-3 border-t px-3 py-3">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="move-new-set-name">Name</Label>
@@ -424,7 +432,7 @@ export function MoveToSetDialog({
                   No image is attached — you can add one later from{" "}
                   <span className="font-medium">/sets</span>.
                 </p>
-              </div>
+              </FadeIn>
             )}
           </div>
         </div>

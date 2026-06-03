@@ -64,7 +64,7 @@ export function PriceFilter() {
           setMin(e.target.value);
           update("minPrice", e.target.value);
         }}
-        className="w-[100px]"
+        className="w-20 sm:w-[100px]"
         min="0"
         step="0.01"
       />
@@ -77,7 +77,7 @@ export function PriceFilter() {
           setMax(e.target.value);
           update("maxPrice", e.target.value);
         }}
-        className="w-[100px]"
+        className="w-20 sm:w-[100px]"
         min="0"
         step="0.01"
       />
