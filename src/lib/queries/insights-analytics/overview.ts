@@ -21,11 +21,11 @@ import { WAGER_TYPES_SQL as METRICS_WAGER_TYPES_SQL } from "@/lib/metrics";
 import {
   getWindowMetrics,
   getDailyGamingMetrics,
-  type MetricWindow,
   type WindowMetrics,
   type DailyGamingMetricPoint,
 } from "@/lib/metrics/queries";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import { MS_PER_DAY, MS_PER_MINUTE } from "@/lib/utils/time";
 import {
   periodToCutoff,
   previousPeriodCutoff,
@@ -142,6 +142,46 @@ const EMPTY_WINDOW_METRICS: WindowMetrics = {
 };
 
 /**
+ * Capped lifetime lookback (days) for the Overview "Lifetime" window.
+ *
+ * The canonical gaming-margin reads (`getWindowMetrics` /
+ * `getDailyGamingMetrics`) take a `MetricWindow.since`; a TRUE unbounded
+ * window (`since: null`) makes BOTH scan the entire ~400k-row
+ * `ledger_transactions` history plus the full `user_inventory` (and
+ * `upgrader_games`) with correlated borrow/reward-pack sub-selects and no
+ * lower bound, which blows the per-leg `safeQuery` timeout on prod-sized
+ * data — so the leg degrades to $0 and the headline GGR/NGR (or the
+ * deposits/wager/signups window) renders empty on Lifetime. So Lifetime is
+ * bounded to the SAME capped lookback the rest of the codebase uses for
+ * lifetime scans — `/ggr`'s `GGR_LIFETIME_LOOKBACK_DAYS` and the
+ * insights-rewards / deposit-bonus `*_LOOKBACK_DAYS`, all 365. The value is
+ * duplicated here as a local constant (rather than imported across the
+ * unrelated `/ggr` / deposit-bonus surfaces) to keep this module decoupled,
+ * the SAME way those modules inline `365` with a reference comment. Keep in
+ * sync with that canonical 365-day guard.
+ *
+ * This is a PERFORMANCE bound, not a metric-truth change: every Overview
+ * surface other than the canonical legs already capped its own lifetime
+ * horizon (the sparkline at 180d via `sparkSinceForPeriod`; the window
+ * query has no lifetime previous-window). Bounding the canonical legs to
+ * 365d brings them in line and is the same treatment `/ggr` Lifetime
+ * already applies to the IDENTICAL `getWindowMetrics` call.
+ */
+const OVERVIEW_LIFETIME_LOOKBACK_DAYS = 365;
+
+/**
+ * The canonical-metric `since` for the selected period. Finite windows map
+ * to their cutoff; Lifetime maps to a BOUNDED `now − 365d` (NOT unbounded
+ * `null`) so neither `getWindowMetrics` nor `getDailyGamingMetrics` runs a
+ * full-history scan. Mirrors `/ggr`'s `ggrWindowToMetricWindow` for the
+ * SAME canonical reads.
+ */
+function metricSinceForPeriod(period: InsightsPeriod, now: Date): Date {
+  if (period !== "lifetime") return periodToCutoff(period, now);
+  return new Date(now.getTime() - OVERVIEW_LIFETIME_LOOKBACK_DAYS * MS_PER_DAY);
+}
+
+/**
  * Period scopes the cutoff for the current window (and an identical-width
  * prior window for comparisons). Lifetime skips the prior-window
  * comparison and the sparkline horizon is capped at 180d so the query
@@ -153,25 +193,55 @@ const EMPTY_WINDOW_METRICS: WindowMetrics = {
  * Overview still renders, instead of one leg propagating through the
  * `Promise.all` and collapsing the whole tab to its error tile. Mirrors
  * the `getGgrPageData` resilience pattern.
+ *
+ * PERFORMANCE: the two CANONICAL gaming-margin reads (`getWindowMetrics` /
+ * `getDailyGamingMetrics`) and the deposits/withdrawals/wager window query
+ * are each wrapped in a period-keyed `unstable_cache` (see
+ * `cachedWindowMetrics` / `cachedDailyMetrics` / `cachedWindowQuery`
+ * below). The first cold load of a window fills the cache; every reload
+ * inside the TTL is instant, so a slow cold 30d load no longer
+ * re-degrades-to-$0 on each subsequent render. Lifetime is bounded to 365d
+ * (`metricSinceForPeriod`) so the canonical reads never do an unbounded
+ * scan. NEITHER the cache nor the bound changes any metric formula, scope,
+ * or query shape — the cached value is byte-identical to the un-cached
+ * read, and the 365d bound is the same one `/ggr` already applies to the
+ * identical `getWindowMetrics` call.
  */
 export async function getInsightsOverview(
   period: InsightsPeriod,
 ): Promise<OverviewKpis> {
-  const now = new Date();
+  // Bucket "now" down to the whole MINUTE before deriving any window
+  // cutoff. EVERY window here is "N days/hours back from now", so the
+  // derived cutoffs (and the ISO strings handed to the period-keyed
+  // `unstable_cache` wrappers below) are otherwise millisecond-precise and
+  // change on every render — which would make each cache key UNIQUE and the
+  // cache never hit, defeating the whole point of the wrappers. Rounding to
+  // the minute makes the cutoff (and thus the key) STABLE for 60s, so
+  // reloads inside the TTL share a slot. The value is computed for the SAME
+  // bucketed `now`, so key == value exactly (no key/value drift) — and a
+  // sub-minute shift of a 24h/30d/lifetime window boundary is immaterial to
+  // the aggregate (the same negligible boundary the dashboard's `NOW()`-in-
+  // SQL helpers already tolerate between a cache fill and a read).
+  const now = new Date(
+    Math.floor(Date.now() / MS_PER_MINUTE) * MS_PER_MINUTE,
+  );
   const cutoff = periodToCutoff(period, now);
   const previous = previousPeriodCutoff(period, now);
   const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   const sessionWindowsCte = await getCreatorSessionWindowsCte();
 
-  // Canonical metric window for the CURRENT period — the EXACT same cutoff
-  // the wager tile uses. Lifetime → no lower bound. The headline GGR/NGR
+  // Canonical metric `since` for the CURRENT period — the EXACT same cutoff
+  // the wager tile uses. Lifetime → BOUNDED 365-day lookback (NOT unbounded
+  // `null`) so `getWindowMetrics` never runs a full-history scan that blows
+  // the per-leg timeout; this is the SAME bound `/ggr` applies to the
+  // identical canonical read (`metricSinceForPeriod`). The headline GGR/NGR
   // is the canonical `getWindowMetrics` figure (not a daily re-sum), so the
   // headline reconciles with /ggr, /dashboard and /insights/cost-breakdown
-  // to the cent.
-  const currentWindow: MetricWindow = {
-    since: period === "lifetime" ? null : cutoff,
-  };
+  // to the cent (both now cap Lifetime at 365d, so they agree there too).
+  // Reconstructed into a `MetricWindow` inside `cachedWindowMetrics` (the
+  // ISO is the serializable cache-key form).
+  const metricSince = metricSinceForPeriod(period, now);
 
   // Canonical daily GGR/NGR series — drives the sparkline merge AND the
   // PREVIOUS-window GGR/NGR delta chip (summed over the prior date range;
@@ -180,6 +250,9 @@ export async function getInsightsOverview(
   // the sparkline horizon; windowed periods widen it back to `previous.start`
   // so the entire prior window is in range. The current-window headline does
   // NOT come from this sum — it comes from `getWindowMetrics` above, exact.
+  // The sparkline horizon (`sparkSinceForPeriod`) is already capped at 180d
+  // for Lifetime, so this `since` is inherently bounded — no unbounded daily
+  // scan even on Lifetime.
   const metricsSince = (() => {
     const sparkSince = sparkSinceForPeriod(period, now);
     // Ensure the daily series reaches back far enough to cover the entire
@@ -203,13 +276,19 @@ export async function getInsightsOverview(
   ] = await Promise.all([
     safeQuery(
       () =>
-        runWindowQuery({
-          currentCutoff: cutoff,
-          previousStart: previous?.start ?? null,
-          previousEnd: previous?.end ?? null,
+        // Period-keyed cache wrapper around the deposits/withdrawals/wager
+        // window query. The cutoffs (ISO) AND the scope inputs (blacklist +
+        // session-windows CTE) are all in the cache key, so a changed scope
+        // can never serve a stale value. Cold first load runs the query;
+        // reloads inside the TTL are instant.
+        cachedWindowQuery(
+          period,
+          cutoff.toISOString(),
+          previous?.start?.toISOString() ?? null,
+          previous?.end?.toISOString() ?? null,
           blacklistIdNotIn,
           sessionWindowsCte,
-        }),
+        ),
       EMPTY_WINDOWS,
       "insights-analytics.overview.window",
       REWARD_QUERY_TIMEOUT_MS,
@@ -229,13 +308,37 @@ export async function getInsightsOverview(
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
-      () => getWindowMetrics({ window: currentWindow }),
+      // Period-keyed cache wrapper around the CANONICAL `getWindowMetrics`
+      // (GGR/NGR). The window `since` (ISO) AND the scope inputs are in the
+      // cache key — the cached value is byte-identical to the un-cached
+      // canonical read, and the scope inputs guarantee a changed
+      // blacklist/session-window set busts it. This does NOT cache or touch
+      // the shared `getWindowMetrics` itself (so /ggr + dashboard are
+      // unaffected) — it caches THIS page's call of it.
+      () =>
+        cachedWindowMetrics(
+          period,
+          metricSince.toISOString(),
+          blacklistIdNotIn,
+          sessionWindowsCte,
+        ),
       EMPTY_WINDOW_METRICS,
       "insights-analytics.overview.windowMetrics",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
-      () => getDailyGamingMetrics({ since: metricsSince }),
+      // Period-keyed cache wrapper around the CANONICAL
+      // `getDailyGamingMetrics` (daily GGR/NGR series). Same contract as
+      // `cachedWindowMetrics`: `metricsSince` (ISO) + scope inputs in the
+      // key, byte-identical cached value, does NOT touch the shared
+      // `getDailyGamingMetrics` itself.
+      () =>
+        cachedDailyMetrics(
+          period,
+          metricsSince.toISOString(),
+          blacklistIdNotIn,
+          sessionWindowsCte,
+        ),
       [] as DailyGamingMetricPoint[],
       "insights-analytics.overview.dailyMetrics",
       REWARD_QUERY_TIMEOUT_MS,
@@ -480,6 +583,129 @@ async function runWindowQuery(args: {
     },
   };
 }
+
+/**
+ * Period-keyed `unstable_cache` wrapper around `runWindowQuery` (the
+ * deposits/withdrawals/wager/organic/signups/active window query). Without
+ * this, every cold render re-runs the full `ledger_transactions` +
+ * `card_withdrawal_requests` window scan, which on a 30d window on
+ * prod-sized data can exceed the per-leg `safeQuery` timeout and degrade
+ * the whole window to $0 — and because the un-cached read ran cold on every
+ * reload, the degrade NEVER healed. Caching it means the first cold load
+ * fills the cache and every reload inside the TTL is instant.
+ *
+ * CACHE-KEY CORRECTNESS: all inputs that vary the result are arguments and
+ * therefore part of the key — the period, the cutoff ISO, the previous
+ * window bounds (ISO or null), AND the scope inputs (`blacklistIdNotIn`,
+ * `sessionWindowsCte`). So a changed blacklist or a changed creator
+ * session-window set can never serve a stale cached value (the
+ * `insights-analytics` / `dashboard-lifetime` tags ALSO bust it on a wipe /
+ * restore, matching `cachedDailyOverview`). The ISO strings are parsed back
+ * to Dates inside, so the query shape and binds are byte-identical to the
+ * un-cached call — pure performance, no truth change.
+ */
+const cachedWindowQuery = unstable_cache(
+  async (
+    period: InsightsPeriod,
+    currentCutoffIso: string,
+    previousStartIso: string | null,
+    previousEndIso: string | null,
+    blacklistIdNotIn: string,
+    sessionWindowsCte: string,
+  ): Promise<{ current: RawWindowRow; previous: RawWindowRow }> => {
+    return runWindowQuery({
+      currentCutoff: new Date(currentCutoffIso),
+      previousStart: previousStartIso ? new Date(previousStartIso) : null,
+      previousEnd: previousEndIso ? new Date(previousEndIso) : null,
+      blacklistIdNotIn,
+      sessionWindowsCte,
+    });
+  },
+  ["insights-analytics-overview-window-v1"],
+  // Per-render TTL can't be passed to `unstable_cache` (the options object
+  // is static), so the longer 300s revalidate is used and the 60s windows
+  // simply re-warm more often via the page's own auto-refresh; the result
+  // is correct either way (a slightly staler windowed figure is acceptable
+  // and matches the existing `cachedDailyOverview` 300s TTL). Tagged so a
+  // wipe/restore and exclusion change invalidate it (canonical tags).
+  { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
+);
+
+/**
+ * Period-keyed `unstable_cache` wrapper around the CANONICAL
+ * `getWindowMetrics` (headline GGR/NGR/RTP/edge/bets) — THIS page's call of
+ * it, NOT a cache on the shared function itself, so `/ggr` and the
+ * dashboard (which call `getWindowMetrics` directly) are completely
+ * unaffected. On a 30d window the canonical read is a full
+ * `ledger_transactions` + `user_inventory` scan with correlated
+ * borrow/reward-pack sub-selects; un-cached it re-ran cold on every reload
+ * and degraded to all-zero GGR/NGR past the timeout. Caching heals that.
+ *
+ * CACHE-KEY CORRECTNESS: the cached value is byte-identical to
+ * `getWindowMetrics({ window: { since } })`. Everything that varies it is
+ * in the key — the period, the window `since` ISO (Lifetime already bounded
+ * to 365d by the caller), AND the scope inputs (`blacklistIdNotIn`,
+ * `sessionWindowsCte`). `getWindowMetrics` resolves the SAME scope
+ * internally from `getMetricsScope()` (whose inputs are exactly the
+ * blacklist + session windows passed here), so threading those two strings
+ * through the key guarantees a changed scope busts the entry — it can never
+ * serve a value computed under a different population. The canonical tags
+ * bust it on a wipe/restore too.
+ *
+ * The `since` is reconstructed into the `MetricWindow` inside; no formula,
+ * type set, or scope predicate is altered — `getWindowMetrics` is called
+ * exactly as before, only memoised.
+ */
+const cachedWindowMetrics = unstable_cache(
+  async (
+    period: InsightsPeriod,
+    sinceIso: string,
+    blacklistIdNotIn: string,
+    sessionWindowsCte: string,
+  ): Promise<WindowMetrics> => {
+    // `period` / `blacklistIdNotIn` / `sessionWindowsCte` are CACHE-KEY-ONLY
+    // discriminators: `getWindowMetrics` resolves the scope itself from
+    // `getMetricsScope()` (the SAME blacklist + session windows), so they
+    // don't appear in the body — but they MUST be in the key so a changed
+    // population (or period) never serves a stale value. `void` marks them
+    // intentionally-unused-in-body (they ARE used by `unstable_cache` to
+    // build the key from the arg list).
+    void period;
+    void blacklistIdNotIn;
+    void sessionWindowsCte;
+    return getWindowMetrics({ window: { since: new Date(sinceIso) } });
+  },
+  ["insights-analytics-overview-window-metrics-v1"],
+  { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
+);
+
+/**
+ * Period-keyed `unstable_cache` wrapper around the CANONICAL
+ * `getDailyGamingMetrics` (daily GGR/NGR series). Same contract,
+ * key-correctness, and tags as `cachedWindowMetrics`: it caches THIS page's
+ * call (the shared function is untouched, so `/ggr` + dashboard are
+ * unaffected), the cached value is byte-identical to
+ * `getDailyGamingMetrics({ since })`, and every input that varies it (the
+ * period, the `since` ISO — already bounded by the 180d sparkline horizon —
+ * and the scope inputs) is in the key.
+ */
+const cachedDailyMetrics = unstable_cache(
+  async (
+    period: InsightsPeriod,
+    sinceIso: string,
+    blacklistIdNotIn: string,
+    sessionWindowsCte: string,
+  ): Promise<DailyGamingMetricPoint[]> => {
+    // Same cache-key-only discriminators as `cachedWindowMetrics` — see the
+    // `void` note there.
+    void period;
+    void blacklistIdNotIn;
+    void sessionWindowsCte;
+    return getDailyGamingMetrics({ since: new Date(sinceIso) });
+  },
+  ["insights-analytics-overview-daily-metrics-v1"],
+  { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
+);
 
 function parseWindow(
   r: RawWindowRow,
