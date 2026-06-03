@@ -166,6 +166,24 @@ export async function AffiliateOverviewTab({
               <Row label="Avg per affiliate" value={formatCurrency(data.avgCommissionPerAffiliate)} />
               <Row label="Distinct referred users" value={formatNumber(data.distinctReferredUsers)} />
               <Row label="Claim count" value={formatNumber(data.claimCount)} />
+              {/* affiliate_leaderboard_prize — a separate canonical
+                  affiliate reward leg (wager-leaderboard prizes), not part
+                  of the commission figure above. Surfaced so this page no
+                  longer silently omits it. House cost → rose. */}
+              {data.leaderboardPrizePaid > 0 && (
+                <>
+                  <Row
+                    label="Leaderboard prizes paid"
+                    value={formatCurrency(data.leaderboardPrizePaid)}
+                    valueClass="text-rose-600 dark:text-rose-400"
+                  />
+                  <Row
+                    label="Total affiliate reward cost"
+                    value={formatCurrency(data.totalAffiliateRewardCost)}
+                    valueClass="text-rose-600 dark:text-rose-400"
+                  />
+                </>
+              )}
             </div>
           </StatPanel>
 

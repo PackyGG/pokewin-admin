@@ -34,6 +34,18 @@ export type AffiliateOverview = {
   activeAffiliates: number;
   /** Sum of ABS(amount) of affiliate_claim ledger rows in window. */
   totalCommissionPaid: number;
+  /**
+   * Sum of ABS(amount) of affiliate_leaderboard_prize ledger rows in
+   * window — wager-leaderboard prize payouts, a SEPARATE canonical
+   * affiliate reward leg (REWARD_PAYOUT_TYPES) that the commission figure
+   * does NOT include. Surfaced so the affiliate page no longer silently
+   * omits this reward cost. House cost → rose.
+   */
+  leaderboardPrizePaid: number;
+  /** affiliate_leaderboard_prize row count in window. */
+  leaderboardPrizeCount: number;
+  /** totalCommissionPaid + leaderboardPrizePaid — full affiliate reward spend. */
+  totalAffiliateRewardCost: number;
   /** Sum of `wager_amount_usd` from affiliate_code_usages in window. */
   downstreamWager: number;
   /** Distinct referred users contributing usage rows in window. */
@@ -75,17 +87,30 @@ async function compute(
   const chartDays = ctx.days === null ? MAX_CHART_DAYS : Math.min(ctx.days, MAX_CHART_DAYS);
 
   const [claimRollup, usageRollup, dailyClaim, dailyWager] = await Promise.all([
-    // Affiliate claim ledger rollup.
+    // Affiliate reward ledger rollup — affiliate_claim (commission) AND
+    // affiliate_leaderboard_prize (wager-leaderboard prizes) split out via
+    // CASE so each leg is reported separately. Both are canonical
+    // REWARD_PAYOUT_TYPES; the leaderboard prize was previously surfaced
+    // NOWHERE in insights-rewards. activeAffiliates counts distinct
+    // commission recipients (the affiliate-account metric) as before.
     db.$queryRawUnsafe<
-      { affiliates: string; total: string; cnt: string }[]
+      {
+        affiliates: string;
+        total: string;
+        cnt: string;
+        lb_total: string;
+        lb_cnt: string;
+      }[]
     >(`
       SELECT
-        COUNT(DISTINCT lt.user_id)::text AS affiliates,
-        COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total,
-        COUNT(*)::text AS cnt
+        COUNT(DISTINCT CASE WHEN lt.type::text = 'affiliate_claim' THEN lt.user_id END)::text AS affiliates,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'affiliate_claim' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS total,
+        COUNT(*) FILTER (WHERE lt.type::text = 'affiliate_claim')::text AS cnt,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'affiliate_leaderboard_prize' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS lb_total,
+        COUNT(*) FILTER (WHERE lt.type::text = 'affiliate_leaderboard_prize')::text AS lb_cnt
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
-        AND lt.type::text = 'affiliate_claim'
+        AND lt.type::text IN ('affiliate_claim', 'affiliate_leaderboard_prize')
         AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSub})
         ${ltDate}
     `),
@@ -138,6 +163,9 @@ async function compute(
   const activeAffiliates = Number(claimRow?.affiliates ?? 0);
   const totalCommissionPaid = toNumber(claimRow?.total);
   const claimCount = Number(claimRow?.cnt ?? 0);
+  const leaderboardPrizePaid = toNumber(claimRow?.lb_total);
+  const leaderboardPrizeCount = Number(claimRow?.lb_cnt ?? 0);
+  const totalAffiliateRewardCost = totalCommissionPaid + leaderboardPrizePaid;
   const downstreamWager = toNumber(usageRow?.wager);
   const distinctReferredUsers = Number(usageRow?.referred ?? 0);
 
@@ -182,6 +210,9 @@ async function compute(
   return {
     activeAffiliates,
     totalCommissionPaid,
+    leaderboardPrizePaid,
+    leaderboardPrizeCount,
+    totalAffiliateRewardCost,
     downstreamWager,
     distinctReferredUsers,
     claimCount,
