@@ -270,7 +270,13 @@ export function CommandPalette({
             />
             {searching && (
               <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                <Spinner size={14} label="Searching users" />
+                {/* Match the shared Spinner default (16px) so the in-flight
+                    indicator reads at the same weight as the input's own
+                    built-in search glyph (`size-4`) on the opposite edge —
+                    the previous 14px was a touch undersized against it. The
+                    Spinner already carries `motion-safe:animate-spin` +
+                    `text-muted-foreground`, the house loading treatment. */}
+                <Spinner size={16} label="Searching users" />
               </span>
             )}
           </div>

@@ -337,15 +337,23 @@ export function AdminHeader({
           ))}
         </div>
       </nav>
+      {/* Reload sits right beside the SidebarTrigger and is the header's
+          other primary action button, so it shares the trigger's exact
+          footprint (44px tap target on mobile, the shared 32px `size-8`
+          icon token on desktop) and the same 16px (`size-4`) glyph —
+          previously it was a touch smaller (`size-9 sm:size-7` + a
+          `sm:size-3.5` icon), which read as inconsistent next to the
+          trigger. Purely a sizing alignment; the reload behaviour is
+          unchanged. */}
       <Button
         variant="ghost"
         size="icon"
-        className="size-9 sm:size-7 shrink-0"
+        className="size-11 sm:size-8 shrink-0"
         onClick={() => router.refresh()}
         aria-label="Reload page"
         title="Reload page"
       >
-        <RotateCw className="size-4 sm:size-3.5" />
+        <RotateCw className="size-4" />
       </Button>
       <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-3">
         {/* Admin-only house-stats pills (all-time wager / deposit /

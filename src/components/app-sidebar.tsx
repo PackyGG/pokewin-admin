@@ -304,7 +304,14 @@ export function AppSidebar({
         <Link
           href={getDefaultRoute(role, allowedPages)}
           onClick={handleNavTap}
-          className="flex justify-center"
+          // Subtle press feedback matching the house interaction feel:
+          // a soft hover dim + a brief settle-on-press scale. Motion is
+          // fully `motion-safe:` gated (reduced-motion users land on the
+          // final state with no transform/tween) and purely cosmetic — the
+          // href / navigation behaviour is unchanged. `rounded-md` just
+          // clips the focus-visible ring to the logo box; `flex
+          // justify-center` is preserved so centering is untouched.
+          className="flex justify-center rounded-md outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring motion-safe:transition-[transform,opacity] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-95"
         >
           {/* Expanded wordmark. Light mode uses logo-light.png — the exact
               same artwork as logo.png (identical 390×91 geometry, so sizing
@@ -404,7 +411,14 @@ export function AppSidebar({
                     h-9 on md+ where the cursor handles it. */}
                 <CollapsibleTrigger
                   className={cn(
-                    "flex h-11 w-full shrink-0 cursor-pointer select-none items-center justify-between rounded-md px-2 text-xs font-semibold uppercase tracking-wider transition-colors hover:text-sidebar-foreground md:h-9",
+                    // Added: a hover background tint + a brief settle-on-
+                    // press scale so the group header reads as a physical
+                    // tap, matching the house interaction feel. The scale is
+                    // `motion-safe:active:` only (reduced-motion users never
+                    // get the transform class) and the transition now covers
+                    // colors + transform so both ease. Collapse toggle
+                    // behaviour itself is unchanged.
+                    "flex h-11 w-full shrink-0 cursor-pointer select-none items-center justify-between rounded-md px-2 text-xs font-semibold uppercase tracking-wider transition-[color,background-color,transform] hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:h-9 motion-safe:active:scale-95",
                     group.label === activeGroupLabel
                       ? "bg-sidebar-accent text-sidebar-foreground"
                       : "text-sidebar-foreground/50",

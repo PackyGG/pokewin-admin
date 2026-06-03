@@ -203,7 +203,25 @@ export default async function AdminLayout({
             // sees the bar unchanged.
             houseStatsSlot={
               session.role === "admin" ? (
-                <Suspense fallback={<TopbarHouseStatsSkeleton />}>
+                <Suspense
+                  // The skeleton pills otherwise pop in from blank the
+                  // instant this boundary mounts. Wrapping the fallback in a
+                  // soft fade-in (tw-animate-css, the same `animate-in
+                  // fade-in` the house motion system uses) eases them in
+                  // rather than hard-cutting. `motion-safe:` only — reduced-
+                  // motion users land on the final state with no tween. The
+                  // wrapper mirrors the skeleton's own `hidden md:flex`
+                  // breakpoint (`hidden md:block`) so it stays display:none
+                  // below md — no phantom flex-gap next to the avatar on
+                  // phones — and is only a real (animatable) box at md+ where
+                  // the pills actually show. The real stats replace it,
+                  // unwrapped, once they stream in.
+                  fallback={
+                    <div className="hidden md:block motion-safe:animate-in motion-safe:fade-in">
+                      <TopbarHouseStatsSkeleton />
+                    </div>
+                  }
+                >
                   <TopbarHouseStats />
                 </Suspense>
               ) : undefined
