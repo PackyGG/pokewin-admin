@@ -1,12 +1,9 @@
-import Link from "next/link";
 import { Suspense } from "react";
 import {
   AlertTriangle,
-  CalendarCheck,
   Coins,
   LineChart,
   Megaphone,
-  Radio,
   Sparkles,
   Users,
   UserX,
@@ -19,9 +16,7 @@ import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { KpiStripSkeleton } from "@/components/loading-skeletons";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { cn } from "@/lib/utils";
 import { BackendApiError, BackendNetworkError } from "@/lib/backend-api";
 import {
   PageHero,
@@ -67,7 +62,7 @@ import {
   type Lb2wkInfo,
 } from "./_queries/leaderboard-cost";
 import { type CreatorWithSocials } from "./_components/creator-card-grid";
-import { LeaderboardSpendTile } from "./_components/leaderboard-spend-tile";
+import { LeaderboardSpendPanel } from "./_components/leaderboard-spend-tile";
 import { AddCreatorDialog } from "./_components/add-creator-dialog";
 import { CreatorsSearchProvider } from "./_components/creators-search-context";
 import { CreatorsSearchInput } from "./_components/creators-search-input";
@@ -124,19 +119,14 @@ export default async function CreatorsPage({
           freezing the page on stale numbers. The single tab-aware
           tile inside (Fill Creators / Multiplier Creators) flips
           label, value, and icon from the active tab's cached count.
-          Active Deals + Live Now tiles are clickable filter toggles
-          — clicking one sets `?filter=<target>` and the page
-          re-renders the matching subset via `listCreatorsFiltered`. */}
+          Layout: 4 compact KPI tiles + a wider Leaderboard Spend panel
+          that spans 2 columns (its per-board mini-breakdown earns the
+          extra room). */}
       <Suspense
         key={`kpi-${params.tab}-${params.filter ?? ""}`}
-        fallback={<KpiStripSkeleton count={7} />}
+        fallback={<CreatorsKpiStripSkeleton />}
       >
-        <CreatorsKpiStrip
-          tab={params.tab}
-          filter={params.filter}
-          search={params.search}
-          period={params.period}
-        />
+        <CreatorsKpiStrip tab={params.tab} period={params.period} />
       </Suspense>
 
       <div className="space-y-3">
@@ -228,34 +218,29 @@ export default async function CreatorsPage({
 // ─── KPI strip ────────────────────────────────────────────────────
 //
 // Tab-aware: ONE swap tile (Fill Creators / Multiplier Creators) — its
-// value, label, and icon flip from the cached per-tab count. Other
-// tiles (Global PnL, Converted, Leaderboard Spend, Active Deals, Live
-// Now) stay tab-independent. Total = 6 tiles.
+// value, label, and icon flip from the cached per-tab count. The other
+// figures (Net Code-User GGR, Global PnL, Converted) stay tab-
+// independent. The Leaderboard Spend panel is the wide member of the
+// row — it spans 2 columns and carries a per-board mini-breakdown.
 //
-// Active Deals + Live Now double as filter toggles — clicking one
-// sets `?filter=live` / `?filter=active-deals` and the grid below
-// re-renders the matching subset. Clicking the active tile clears
-// the filter. The active tile gets a colored ring matching its accent
-// so the filter state reads at a glance.
+// Layout: 4 compact KpiTiles (swap / Net GGR / Global PnL / Converted)
+// + the 2-column Leaderboard Spend panel = 6 column-units on a 6-col
+// grid at xl, collapsing cleanly to a 4-col then 2-col grid below.
 
 async function CreatorsKpiStrip({
   tab,
-  filter,
-  search,
   period,
 }: {
   tab: CreatorsTab;
-  filter: CreatorsSearchParams["filter"];
-  search: string | undefined;
   period: CreatorsSearchParams["period"];
 }) {
-  // Past Creators tab — every other tile in the strip (Net GGR, Global
-  // PnL, Converted, Leaderboard Spend, Active Deals, Live Now) is an
-  // ACTIVE-roster figure that would be misleading next to a list of
-  // canceled creators, and the GGR/PnL aggregates are creator-gated
-  // (ex-creators don't appear in them). So the Past tab renders a single
-  // honest tile — the ex-creator count — instead of the full strip, and
-  // skips the active-roster fan-outs entirely (active-timeframe rule).
+  // Past Creators tab — every other figure in the strip (Net GGR, Global
+  // PnL, Converted, Leaderboard Spend) is an ACTIVE-roster figure that
+  // would be misleading next to a list of canceled creators, and the
+  // GGR/PnL aggregates are creator-gated (ex-creators don't appear in
+  // them). So the Past tab renders a single honest tile — the ex-creator
+  // count — instead of the full strip, and skips the active-roster
+  // fan-outs entirely (active-timeframe rule).
   if (tab === "past") {
     const pastCount = await getExCreatorCount().catch((e) => {
       console.error(
@@ -265,7 +250,7 @@ async function CreatorsKpiStrip({
       return null;
     });
     return (
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-7">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-6">
         <KpiTile
           label="Past Creators"
           value={pastCount != null ? formatNumber(pastCount) : "—"}
@@ -335,7 +320,7 @@ async function CreatorsKpiStrip({
         };
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-7">
+    <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-4 xl:grid-cols-6">
       {/* Swap tile — flips between Fill and Multiplier counts based on
           the active tab. Replaces the previous Fill + Multiplier pair
           of tiles (one of which always rendered "—" on the inactive
@@ -405,77 +390,24 @@ async function CreatorsKpiStrip({
           <InfoHint text="Lifetime stream earnings minted into end-of-session payout vouchers (creator_fill_conversion) across ALL creators — not just live-deal creators. The sub-line shows how much of that has actually been withdrawn off-platform vs still in flight." />
         }
       />
-      {/* Leaderboard Spend — both scopes of approved-creator-leaderboard
-          spend in one box: the full 100% prize pool (neutral context)
-          AND the house-covered sponsored share (rose house cost). Net of
-          refunds, each board weighted by its admin-set house share %
-          (set inline on /creators/leaderboards; defaults to 100%). Rose
-          hero matches the rose total-prize coloring on the leaderboards
-          table. */}
-      <LeaderboardSpendTile
-        totalPrizeUsd={leaderboardCost?.totalPrizeUsd ?? null}
-        houseCoveredUsd={leaderboardCost?.houseCoveredUsd ?? null}
-      />
-      {/* Active Deals — click to filter the list to creators
-          whose current deal is `active`. */}
-      <Link
-        href={buildFilterHref("active-deals", filter, search)}
-        aria-label={
-          filter === "active-deals"
-            ? "Clear filter — show all creators"
-            : "Filter to creators with an active deal"
-        }
-        className={cn(
-          "block rounded-xl outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-emerald-500",
-          filter === "active-deals" && "ring-2 ring-emerald-500/60",
-        )}
-      >
-        <KpiTile
-          label="Active Deals"
-          value={stats ? formatNumber(stats.activeDealCount) : "—"}
-          sub={
-            filter === "active-deals"
-              ? "Filter active — click to clear"
-              : "Active or scheduled this week"
-          }
-          icon={CalendarCheck}
-          accent="emerald"
-          action={
-            <InfoHint text="Creators whose deal is active or scheduled this week. Click the tile to filter the list to just these creators." />
-          }
+      {/* Leaderboard Spend — the wide member of the strip (spans 2 cols
+          at xl, full width below). Carries every scope of approved-
+          creator-leaderboard spend: the house-covered sponsored share
+          (rose hero, the actual house cost), the full 100% prize pool
+          (neutral), the effective coverage %, the approved-board count,
+          and a per-board mini-breakdown (top boards by house cost). Net
+          of refunds, each board weighted by its admin-set house share %
+          (set inline on /creators/leaderboards; defaults to 100%). The
+          per-board rows come from the SAME walk as the totals — no extra
+          query. */}
+      <div className="col-span-2 sm:col-span-4 xl:col-span-2">
+        <LeaderboardSpendPanel
+          totalPrizeUsd={leaderboardCost?.totalPrizeUsd ?? null}
+          houseCoveredUsd={leaderboardCost?.houseCoveredUsd ?? null}
+          boardCount={leaderboardCost?.boardCount ?? null}
+          boards={leaderboardCost?.boards ?? []}
         />
-      </Link>
-      {/* Live Now — click to filter the list to creators with a
-          non-null `active_session_id` (currently streaming). */}
-      <Link
-        href={buildFilterHref("live", filter, search)}
-        aria-label={
-          filter === "live"
-            ? "Clear filter — show all creators"
-            : "Filter to live creators"
-        }
-        className={cn(
-          "block rounded-xl outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-rose-500",
-          filter === "live" && "ring-2 ring-rose-500/60",
-        )}
-      >
-        <KpiTile
-          label="Live Now"
-          value={stats ? formatNumber(stats.liveCount) : "—"}
-          sub={
-            filter === "live"
-              ? "Filter active — click to clear"
-              : "Currently streaming with an active session"
-          }
-          icon={Radio}
-          // Rose to read "active broadcasting in progress" — matches the
-          // Live badge color elsewhere on the page.
-          accent="rose"
-          action={
-            <InfoHint text="Creators currently streaming (an open stream session). Click the tile to filter the list to just the live creators." />
-          }
-        />
-      </Link>
+      </div>
     </div>
   );
 }
@@ -794,6 +726,36 @@ async function CreatorsGridSection({
 // ─── Skeletons ────────────────────────────────────────────────────
 
 /**
+ * KPI-strip skeleton — mirrors the active-tab strip layout exactly: 4
+ * compact KpiTile-shaped boxes + the wider Leaderboard Spend panel that
+ * spans 2 columns (and stands taller for its per-board breakdown). Shape
+ * matches the real strip so there's no layout jank when the data lands.
+ */
+function CreatorsKpiStripSkeleton() {
+  return (
+    <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-4 xl:grid-cols-6">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div
+          key={i}
+          className="rounded-xl border bg-card px-3 py-2.5 sm:px-4 sm:py-3"
+        >
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <Skeleton className="size-3.5 rounded sm:size-4" />
+            <Skeleton className="h-3 w-12 sm:w-16" />
+          </div>
+          <Skeleton className="mt-1.5 h-5 w-16 sm:mt-2 sm:h-6 sm:w-20" />
+        </div>
+      ))}
+      {/* Wider Leaderboard Spend panel — taller to reserve room for the
+          hero figure + the headline rows + the per-board mini-list. */}
+      <div className="col-span-2 sm:col-span-4 xl:col-span-2">
+        <Skeleton className="h-56 w-full rounded-xl sm:rounded-2xl" />
+      </div>
+    </div>
+  );
+}
+
+/**
  * Grid skeleton + pagination — shown only while the server re-fetches a
  * new data set (tab / search / sort / page change), not on a view
  * toggle (that's a client re-render of the same data). Always renders
@@ -824,35 +786,6 @@ function CreatorsGridSkeleton() {
 }
 
 // ─── Helpers — keep error-state copy near the page that uses it ───
-
-type CreatorFilter = "live" | "active-deals";
-
-/**
- * Build the `href` for a KPI-tile filter toggle. Behaviour:
- *   - tile NOT currently selected → set `?filter=<target>` (and keep
- *     the current search query so the filter narrows whatever the
- *     admin had already typed)
- *   - tile IS currently selected → clear `filter` (still keeping
- *     search). This makes every tile a one-click toggle.
- *
- * `page` / `perPage` are intentionally dropped on every toggle: the
- * filtered view collapses pagination, and unfiltered → filtered →
- * unfiltered should always return to page 1 instead of a stale page.
- * `tab` / `sortBy` are also dropped on enter (the filter overrides
- * those views) but preserved on exit so the admin lands back in their
- * tab + sort.
- */
-function buildFilterHref(
-  target: CreatorFilter,
-  current: CreatorFilter | undefined,
-  search: string | undefined,
-): string {
-  const params = new URLSearchParams();
-  if (search) params.set("search", search);
-  if (current !== target) params.set("filter", target);
-  const qs = params.toString();
-  return qs ? `/creators?${qs}` : "/creators";
-}
 
 /**
  * Map a fetch-failure cause code to a human-readable headline. Covers

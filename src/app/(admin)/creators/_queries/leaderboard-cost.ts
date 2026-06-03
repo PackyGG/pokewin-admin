@@ -45,6 +45,30 @@ async function fetchAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
   return all;
 }
 
+/**
+ * Per-board cost row — one APPROVED leaderboard's contribution to the
+ * totals, exposed so the /creators Leaderboard Spend panel can render a
+ * mini-breakdown WITHOUT a second fetch. Derived from the SAME
+ * `fetchAllApprovedLeaderboards()` walk + the SAME sponsorship map the
+ * totals use, so the rows reconcile to the headline by construction.
+ */
+export type LeaderboardCostBoard = {
+  /** Backend leaderboard id. */
+  id: string;
+  /** Board title (its display name on /creators/leaderboards). */
+  name: string;
+  /** Primary owner's user id — the creator who funds the board. */
+  creatorUserId: string;
+  /** Full prize pool, net of refunds (100%, no weighting). */
+  prizeUsd: number;
+  /** Refund already netted out of `prizeUsd` (cancelled boards). */
+  refundUsd: number;
+  /** Admin-set sponsored % (0–100); 100 when un-annotated. */
+  sponsoredPct: number;
+  /** House's share of this board: prizeUsd × sponsoredPct / 100 (rose). */
+  houseCostUsd: number;
+};
+
 export type LeaderboardCostTotals = {
   /**
    * Full committed prize pool of every APPROVED creator leaderboard,
@@ -67,6 +91,18 @@ export type LeaderboardCostTotals = {
    * default, houseCoveredUsd === totalPrizeUsd.
    */
   houseCoveredUsd: number;
+  /**
+   * Count of APPROVED creator leaderboards folded into the totals — the
+   * number of boards the headline figures sum across.
+   */
+  boardCount: number;
+  /**
+   * Per-board contributions to the totals, sorted by `houseCostUsd`
+   * DESCENDING (priciest house cost first) so callers can slice the top
+   * N for a mini-breakdown. Same walk + same sponsorship map as the
+   * totals above — no extra round-trip.
+   */
+  boards: LeaderboardCostBoard[];
 };
 
 /**
@@ -111,16 +147,35 @@ export async function getLeaderboardCostTotal(): Promise<LeaderboardCostTotals> 
 
   let totalPrizeUsd = 0;
   let houseCoveredUsd = 0;
+  const boards: LeaderboardCostBoard[] = [];
   for (const lb of all) {
     const prize = Number(lb.total_prize_usd) || 0;
     const refund = Number(lb.refund_amount_usd) || 0;
     const net = prize - refund;
     // No annotation → 100%. Clamp defensively to the 0–100 range.
     const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
+    const houseCost = net * (pct / 100);
     totalPrizeUsd += net;
-    houseCoveredUsd += net * (pct / 100);
+    houseCoveredUsd += houseCost;
+    boards.push({
+      id: lb.id,
+      name: lb.title,
+      creatorUserId: lb.creator_user_id,
+      prizeUsd: net,
+      refundUsd: refund,
+      sponsoredPct: pct,
+      houseCostUsd: houseCost,
+    });
   }
-  return { totalPrizeUsd, houseCoveredUsd };
+  // Priciest house cost first so the panel's mini-breakdown surfaces the
+  // boards that move the headline most.
+  boards.sort((a, b) => b.houseCostUsd - a.houseCostUsd);
+  return {
+    totalPrizeUsd,
+    houseCoveredUsd,
+    boardCount: boards.length,
+    boards,
+  };
 }
 
 const WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
