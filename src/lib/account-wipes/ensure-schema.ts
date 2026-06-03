@@ -12,11 +12,11 @@ let ensured = false;
  * (src/lib/balance-adjustment-wipes/ensure-schema.ts), /salaries, /shifts,
  * the employee board, and the changelog.
  *
- * This is the GENERALIZED recovery store for the three new wipe targets —
- * "balance", "vault", "inventory" — added alongside the original
- * adjustments wipe. One table keyed by `wipe_type` (rather than three
- * per-type tables) keeps the audit-log + restore code uniform; the
- * type-specific recovery payload lives in the `snapshot` JSONB.
+ * This is the GENERALIZED recovery store for the new wipe targets —
+ * "balance", "vault", "inventory", "deposits" — added alongside the original
+ * adjustments wipe. One table keyed by `wipe_type` (rather than per-type
+ * tables) keeps the audit-log + restore code uniform; the type-specific
+ * recovery payload lives in the `snapshot` JSONB.
  *
  * There is deliberately NO Prisma migration file for this table: the admin
  * DB has a drifted migration history (the user has lived through a
@@ -32,7 +32,7 @@ let ensured = false;
  * Schema mirror — keep in sync with prisma/admin/schema.prisma
  * (model admin_account_wipes):
  *   - id               UUID PK (wipe id)
- *   - wipe_type        VARCHAR(32) NOT NULL  ('balance' | 'vault' | 'inventory')
+ *   - wipe_type        VARCHAR(32) NOT NULL  ('balance' | 'vault' | 'inventory' | 'deposits')
  *   - user_id          VARCHAR(36) NOT NULL  (main-DB user id)
  *   - username         VARCHAR(255) NULL
  *   - email            VARCHAR(255) NULL

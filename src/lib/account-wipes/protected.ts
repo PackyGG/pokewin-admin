@@ -1,18 +1,17 @@
 /**
- * protected.ts — the SINGLE source of truth for what every account-wipe
- * mode (adjustments / balance / vault / inventory) must NEVER delete or
- * affect, plus the human-readable "what is preserved" copy the confirm
- * dialogs show before the 2FA field.
+ * protected.ts — the SINGLE source of truth for the ledger-type / adjustment
+ * carve-outs the account-wipe modes apply, plus the human-readable "what is
+ * preserved" copy the confirm dialogs show before the 2FA field.
  *
  * WHY THIS EXISTS (owner mandate): the wipes claw back house-granted
  * CONTENT value (admin balance credits, spendable/vault balance, won-card
- * inventory). They must provably never touch the user's REAL financial or
- * creator-economy records:
+ * inventory). For a user who IS or WAS a creator they must provably never
+ * touch the user's REAL financial or creator-economy records:
  *   • deposits / withdrawals                — real cash in / out
  *   • affiliate_claim                        — paid creator/affiliate earnings
  *   • ALL affiliate info of any kind         — commissions, payouts, codes,
  *                                              attribution (no affiliate data
- *                                              is EVER wiped — see
+ *                                              is wiped for a creator — see
  *                                              isAffiliateRelatedAdjustment()
  *                                              + WIPE_NEVER_TOUCHES_AFFILIATE_
  *                                              TABLES below)
@@ -22,11 +21,23 @@
  *                                              escrow + prize legs
  *   • the "Manual withdrawal:" admin_balance_adjustment subset
  *
+ * ─── CONDITIONAL ON CREATOR STATUS (owner mandate, 2026-06-03) ───────────
+ *
+ * The deal/affiliate carve-outs in THIS module are now applied ONLY when the
+ * target user IS or WAS a creator (the server-re-derived `everCreator` flag —
+ * see src/lib/account-wipes/creator-protection.ts). For a user who was NEVER
+ * a creator, a hand-typed "Admin adjustment: weekly deal" / "Admin
+ * adjustment: affiliate commission" credit IS wipeable (every category is
+ * wipeable for a non-creator). The "Manual withdrawal:" prefix exclusion and
+ * the protected-LEDGER-TYPE assertion stay UNCONDITIONAL — those are about
+ * the adjustments wipe only ever deleting genuine "Admin adjustment:" CREDIT
+ * rows, not about creator protection.
+ *
  * The guard is enforced SERVER-SIDE in each wipe action (per-row check +
  * the delete/zero predicate), not just surfaced in the UI. This module is
  * the shared definition both `wipe-adjustments-actions.ts` and
- * `wipe-account-targets-actions.ts` import, so the protected set can never
- * drift between the four modes.
+ * `wipe-account-targets-actions.ts` import, so the carve-out logic can never
+ * drift between the modes.
  *
  * ─── VERIFIED against the live codebase ─────────────────────────────────
  *
@@ -316,12 +327,36 @@ export function isAffiliateRelatedAdjustment(
 export const WIPE_NEVER_TOUCHES_AFFILIATE_TABLES = true as const;
 
 /**
- * The canonical "what is preserved" reassurance line shown in every wipe
- * mode's confirm step (before the 2FA field). Single source of truth so all
- * four dialogs make the exact same promise the server-side guards enforce.
+ * The "what is preserved" reassurance line shown in the wipe panel's WILL-NOT-
+ * TOUCH section — now ROLE-AWARE (owner mandate, 2026-06-03).
  *
- * Spells out the affiliate + creator coverage explicitly (owner mandate: no
- * affiliate info of any kind, and no creator-deal data, is ever wiped).
+ *   • For a user who IS or WAS a creator → the full protected set is
+ *     preserved AND its categories are disabled/server-rejected (deposits,
+ *     withdrawals, all affiliate data, and all creator deal / fill / payout
+ *     data, plus gaming history which is not yet a wipeable category).
+ *   • For a user who was NEVER a creator → the protected set does NOT apply;
+ *     only the structurally un-wipeable surfaces (affiliate TABLES — which no
+ *     wipe action touches — and the categories that are not yet built) are
+ *     preserved. Deposits, deal-tagged adjustments, etc. ARE wipeable.
+ *
+ * Single source of truth so the dialog copy matches exactly what the
+ * server-side guards enforce for each role.
  */
-export const WIPE_PRESERVED_SUMMARY =
-  "Deposits, withdrawals, all affiliate data (claims, commissions, codes, attribution), gaming history, and all creator deal / fill / payout data are preserved.";
+export const WIPE_PRESERVED_SUMMARY_CREATOR =
+  "This user is (or was) a creator: deposits, withdrawals, all affiliate data (claims, commissions, codes, attribution), and all creator deal / fill / payout data are protected — they cannot be selected or wiped.";
+
+export const WIPE_PRESERVED_SUMMARY_NON_CREATOR =
+  "Affiliate account tables, code usages and attribution are never touched by any wipe (no action reads or writes them). Creator deal / fill / payout ledger flows are likewise never deleted.";
+
+/**
+ * Back-compat default (the creator-protected wording) for any caller that
+ * hasn't yet threaded the role flag. Prefer the role-specific constant.
+ */
+export const WIPE_PRESERVED_SUMMARY = WIPE_PRESERVED_SUMMARY_CREATOR;
+
+/** Pick the preserved-summary line for the target user's creator status. */
+export function wipePreservedSummary(everCreator: boolean): string {
+  return everCreator
+    ? WIPE_PRESERVED_SUMMARY_CREATOR
+    : WIPE_PRESERVED_SUMMARY_NON_CREATOR;
+}

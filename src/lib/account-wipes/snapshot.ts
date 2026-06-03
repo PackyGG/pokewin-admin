@@ -2,22 +2,26 @@ import "server-only";
 
 /**
  * Generalized "account wipe" snapshot store — the recovery copy for the
- * three NEW wipe targets added alongside the existing "content balance
+ * NEW wipe targets added alongside the existing "content balance
  * adjustments" wipe (src/lib/balance-adjustment-wipes):
  *
  *   - "balance"   → snapshot the user's available_balance (+ version), zero it.
  *   - "vault"     → snapshot the user's locked_balance (the vault) + unlock_at
  *                   (+ version), zero it.
  *   - "inventory" → snapshot the user's user_inventory rows, delete them.
+ *   - "deposits"  → snapshot the user's `deposit` ledger rows + the
+ *                   total_deposited counter delta, delete the rows + reduce
+ *                   the counter. Restore re-inserts the rows + re-adds the
+ *                   counter.
  *
  * Mirrors the snapshot-FIRST recovery model of commit f4bfca0 exactly: the
  * recovery copy is written to the admin DB and confirmed BEFORE the
  * destructive main-DB write. If the snapshot can't be written → abort
  * before touching the main DB (nothing changes). Once the destructive
  * main-DB tx commits the wipe is PERMANENT — Restore re-applies the
- * snapshot (re-credit balance / re-credit vault / re-insert inventory) but
- * there is no rollback path that re-creates money/items if the snapshot
- * itself was never written.
+ * snapshot (re-credit balance / re-credit vault / re-insert inventory /
+ * re-insert deposit rows) but there is no rollback path that re-creates
+ * money/items if the snapshot itself was never written.
  *
  * Serialization mirrors src/lib/balance-adjustment-wipes/snapshot.ts and
  * src/lib/deleted-users/snapshot.ts (the canonical encoders):
@@ -28,13 +32,14 @@ import "server-only";
  *   - BigInt → string (defensive; not used on the snapshotted models).
  */
 
-/** The three new wipe targets this store backs. Keyed in the DB column. */
-export type AccountWipeType = "balance" | "vault" | "inventory";
+/** The new wipe targets this store backs. Keyed in the DB column. */
+export type AccountWipeType = "balance" | "vault" | "inventory" | "deposits";
 
 export const ACCOUNT_WIPE_TYPES: readonly AccountWipeType[] = [
   "balance",
   "vault",
   "inventory",
+  "deposits",
 ] as const;
 
 export function isAccountWipeType(v: unknown): v is AccountWipeType {
@@ -87,10 +92,30 @@ export type InventoryWipeSnapshot = {
   rows: Array<Record<string, unknown>>;
 };
 
+/**
+ * Snapshot payload for a "deposits" wipe. Holds the FULL deleted `deposit`
+ * ledger rows (JSON-safe) so Restore can re-insert each verbatim, plus the
+ * exact amount the lifetime `total_deposited` counter was reduced by (so
+ * Restore re-adds EXACTLY that — never more than was removed, even if other
+ * deposits happened in between). `totalDepositedReduction` is the CLAMPED
+ * amount actually subtracted (≤ the summed deposit amount), so re-adding it
+ * is symmetric with the wipe.
+ */
+export type DepositsWipeSnapshot = {
+  userId: string;
+  /** Full deleted `deposit` ledger rows, Decimal/Date → canonical string. */
+  rows: Array<Record<string, unknown>>;
+  /** Summed amount of the deleted deposit rows (decimal string). */
+  totalAmount: string;
+  /** Amount actually subtracted from balances.total_deposited (clamped ≥0; decimal string). */
+  totalDepositedReduction: string;
+};
+
 export type AccountWipeSnapshot =
   | ({ type: "balance" } & BalanceWipeSnapshot)
   | ({ type: "vault" } & VaultWipeSnapshot)
-  | ({ type: "inventory" } & InventoryWipeSnapshot);
+  | ({ type: "inventory" } & InventoryWipeSnapshot)
+  | ({ type: "deposits" } & DepositsWipeSnapshot);
 
 /**
  * JSON.stringify replacer that keeps Decimal.js / BigInt values addressable
