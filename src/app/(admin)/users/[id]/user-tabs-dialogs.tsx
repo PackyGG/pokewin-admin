@@ -37,6 +37,11 @@ import { ROLES } from "@/lib/constants";
 import { formatCurrency } from "@/lib/utils/format";
 import { parseUsdAmount } from "@/lib/utils/money";
 import {
+  BALANCE_ADJUSTMENT_CATEGORY_KEYS,
+  BALANCE_ADJUSTMENT_CATEGORY_META,
+  type BalanceAdjustmentCategory,
+} from "@/lib/balance-adjustment-categories";
+import {
   adjustBalance,
   adjustXp,
   changeRole,
@@ -153,19 +158,15 @@ export function DeleteUserDialog({
   );
 }
 
-// Balance-adjust reason presets. Each option has a value stored in the
-// ledger description and a label shown in the dropdown. "other" is the
-// only option that surfaces a free-text field below the select.
-const BALANCE_ADJUST_REASONS = [
-  { value: "deposit_problem", label: "Deposit problem" },
-  { value: "giveaway", label: "Giveaway" },
-  { value: "bonus", label: "Bonus" },
-  { value: "challenge", label: "Challenge" },
-  { value: "reload", label: "Reload" },
-  { value: "lossback", label: "Lossback" },
-  { value: "streamer", label: "Streamer" },
-  { value: "other", label: "Other" },
-] as const;
+// Balance-adjust categories — the strict, canonical set. Each option's
+// `value` is written to the ledger row's `metadata.adjustment_category`
+// (single source of truth in `@/lib/balance-adjustment-categories`) and
+// drives the conditional inputs below. Every category EXCEPT `other` is
+// counted in GGR/NGR/cost; `other` shows a destructive "won't be tracked"
+// warning. (`Challenge` and `Streamer` were removed.)
+const BALANCE_ADJUST_CATEGORIES = BALANCE_ADJUSTMENT_CATEGORY_KEYS.map(
+  (key) => ({ value: key, label: BALANCE_ADJUSTMENT_CATEGORY_META[key].label }),
+);
 
 export function BalanceAdjustDialog({
   userId,
@@ -182,25 +183,45 @@ export function BalanceAdjustDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const [amount, setAmount] = useState("");
-  const [reasonCategory, setReasonCategory] = useState<string>("");
-  const [customReason, setCustomReason] = useState("");
-  // Giveaway-specific extra field — only shown when reasonCategory ===
-  // "giveaway". Server requires it (tweet / Discord URL) in that case.
-  const [giveawaySourceUrl, setGiveawaySourceUrl] = useState("");
+  // The strict category drives the conditional inputs + counting.
+  const [category, setCategory] = useState<BalanceAdjustmentCategory | "">("");
+  // deposit_problem
+  const [coinType, setCoinType] = useState("");
+  const [txHash, setTxHash] = useState("");
+  // giveaway
+  const [socialLink, setSocialLink] = useState("");
+  // bonus (exact reason ≥20 chars) / other (reason ≥20 chars) / lossback note
+  const [reasonText, setReasonText] = useState("");
+  // lossback
+  const [lossbackPercent, setLossbackPercent] = useState("");
+  const [pnl7d, setPnl7d] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
-  // Resolve the final reason string sent to the server:
-  //   - "Other" → user-typed custom text
-  //   - any other preset → the preset's label (e.g. "Giveaway")
-  function resolveReason(): string {
-    if (!reasonCategory) return "";
-    if (reasonCategory === "other") return customReason.trim();
-    const preset = BALANCE_ADJUST_REASONS.find(
-      (r) => r.value === reasonCategory,
-    );
-    return preset?.label ?? reasonCategory;
+  function resetFields() {
+    setAmount("");
+    setCategory("");
+    setCoinType("");
+    setTxHash("");
+    setSocialLink("");
+    setReasonText("");
+    setLossbackPercent("");
+    setPnl7d("");
+    setTotpCode("");
+  }
+
+  // The human-readable description text sent as `reason` (kept so the
+  // existing description-prefix classification on the insights surface +
+  // the adjustments-wipe flow keep working). The category-specific note is
+  // appended when it adds signal beyond the category label.
+  function resolveReason(cat: BalanceAdjustmentCategory): string {
+    const label = BALANCE_ADJUSTMENT_CATEGORY_META[cat].label;
+    if (cat === "bonus" || cat === "other") {
+      const t = reasonText.trim();
+      return t.length > 0 ? `${label}: ${t}` : label;
+    }
+    return label;
   }
 
   function handleAdjust() {
@@ -208,7 +229,6 @@ export function BalanceAdjustDialog({
     // amount (e.g. "17.878.54") the way parseFloat did. Rejected input
     // surfaces the parser's message instead of writing a wrong ledger row.
     const parsedAmount = parseUsdAmount(amount);
-    const resolvedReason = resolveReason();
     if (!parsedAmount.ok) {
       toast.error(parsedAmount.error);
       return;
@@ -218,47 +238,67 @@ export function BalanceAdjustDialog({
       toast.error("Amount can't be zero");
       return;
     }
-    if (!resolvedReason) {
-      toast.error(
-        reasonCategory === "other"
-          ? "Please enter a custom reason"
-          : "Please pick a reason",
-      );
+    if (!category) {
+      toast.error("Please pick a category");
       return;
+    }
+    // Client-side mirror of the server's per-category required-input rules
+    // (the server re-validates — this is just a friendlier inline toast).
+    if (category === "deposit_problem") {
+      if (!coinType.trim()) return void toast.error("Deposit problem needs a coin type");
+      if (!txHash.trim()) return void toast.error("Deposit problem needs a transaction hash");
+    } else if (category === "giveaway") {
+      if (!socialLink.trim()) return void toast.error("Giveaway needs a Twitter or Discord link");
+    } else if (category === "bonus") {
+      if (reasonText.trim().length < 20) return void toast.error("Bonus needs an exact reason (min 20 chars)");
+    } else if (category === "lossback") {
+      if (!pnl7d.trim()) return void toast.error("Lossback needs a 7-day PnL value");
+      if (!lossbackPercent.trim()) return void toast.error("Lossback needs a lossback %");
+    } else if (category === "other") {
+      if (reasonText.trim().length < 20) return void toast.error("Other needs a reason (min 20 chars)");
     }
     if (!totpCode.trim()) {
       toast.error("Please enter your 2FA code");
       return;
     }
-    // Giveaway-specific gate. Server enforces this too — checking
-    // client-side just gives the admin a friendlier inline toast
-    // instead of a round-trip error.
-    if (reasonCategory === "giveaway" && !giveawaySourceUrl.trim()) {
-      toast.error("Giveaway needs a source URL (tweet or Discord message)");
-      return;
+
+    // Parse the numeric lossback inputs from the free-text fields. Both are
+    // validated above for presence; here we coerce + reject non-numbers.
+    let lossbackPercentNum: number | undefined;
+    let pnl7dNum: number | undefined;
+    if (category === "lossback") {
+      lossbackPercentNum = Number(lossbackPercent.trim());
+      pnl7dNum = Number(pnl7d.trim());
+      if (!Number.isFinite(lossbackPercentNum)) return void toast.error("Lossback % must be a number");
+      if (!Number.isFinite(pnl7dNum)) return void toast.error("7-day PnL must be a number");
     }
+
     startTransition(async () => {
       try {
         const result = await adjustBalance({
           userId,
           amount: numAmount,
-          reason: resolvedReason,
+          category,
+          reason: resolveReason(category),
           totpCode: totpCode.trim(),
-          giveawaySourceUrl:
-            reasonCategory === "giveaway"
-              ? giveawaySourceUrl.trim()
-              : undefined,
+          details: {
+            coinType: category === "deposit_problem" ? coinType.trim() : undefined,
+            txHash: category === "deposit_problem" ? txHash.trim() : undefined,
+            socialLink: category === "giveaway" ? socialLink.trim() : undefined,
+            reasonText:
+              category === "bonus" || category === "other" || category === "lossback"
+                ? reasonText.trim() || undefined
+                : undefined,
+            lossbackPercent: lossbackPercentNum,
+            pnl7dUsd: pnl7dNum,
+          },
         });
         if (!result.success) {
           toast.error(result.error);
           return;
         }
         toast.success("Balance adjusted");
-        setAmount("");
-        setReasonCategory("");
-        setCustomReason("");
-        setGiveawaySourceUrl("");
-        setTotpCode("");
+        resetFields();
         onOpenChange(false);
         router.refresh();
       } catch (e) {
@@ -342,51 +382,141 @@ export function BalanceAdjustDialog({
               ))}
           </div>
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Reason</Label>
+            <Label className="text-xs text-muted-foreground">Category</Label>
             <Select
-              value={reasonCategory}
+              value={category}
               onValueChange={(v) => {
                 if (!v) return;
-                setReasonCategory(v);
+                setCategory(v as BalanceAdjustmentCategory);
               }}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Pick a reason..." />
+                <SelectValue placeholder="Pick a category..." />
               </SelectTrigger>
               <SelectContent>
-                {BALANCE_ADJUST_REASONS.map((r) => (
+                {BALANCE_ADJUST_CATEGORIES.map((r) => (
                   <SelectItem key={r.value} value={r.value}>
                     {r.label}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {reasonCategory === "other" && (
-              <Textarea
-                placeholder="Enter custom reason..."
-                value={customReason}
-                onChange={(e) => setCustomReason(e.target.value)}
-                rows={2}
-                className="mt-2"
-              />
+
+            {/* Deposit problem: coin type + on-chain tx hash. Recorded in
+                the admin metadata table for the audit trail. */}
+            {category === "deposit_problem" && (
+              <div className="mt-2 space-y-2">
+                <Input
+                  placeholder="Coin (e.g. BTC, ETH, USDT)"
+                  value={coinType}
+                  onChange={(e) => setCoinType(e.target.value)}
+                  autoComplete="off"
+                />
+                <Input
+                  placeholder="Transaction hash"
+                  value={txHash}
+                  onChange={(e) => setTxHash(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
             )}
-            {/* Giveaway: source URL is required so the /marketing/giveaway
-                feed can show "where did this giveaway come from".
-                Server-side classifier accepts Twitter / X / Discord
-                hosts — anything else lands as `source_type=other`. */}
-            {reasonCategory === "giveaway" && (
+
+            {/* Giveaway: a Twitter / X or Discord link. Server-side
+                classifier accepts those hosts; the /marketing/giveaway
+                feed shows where the giveaway came from. */}
+            {category === "giveaway" && (
               <div className="mt-2 space-y-1">
                 <Input
                   type="url"
                   inputMode="url"
                   placeholder="https://x.com/.../status/... or https://discord.com/channels/..."
-                  value={giveawaySourceUrl}
-                  onChange={(e) => setGiveawaySourceUrl(e.target.value)}
+                  value={socialLink}
+                  onChange={(e) => setSocialLink(e.target.value)}
                   autoFocus
                 />
                 <p className="text-[10px] text-muted-foreground">
                   Link to the tweet or Discord message that advertised the
-                  giveaway. Shown on the /marketing/giveaway feed.
+                  giveaway.
+                </p>
+              </div>
+            )}
+
+            {/* Bonus: exact reason, min 20 chars. */}
+            {category === "bonus" && (
+              <div className="mt-2 space-y-1">
+                <Textarea
+                  placeholder="Exact reason for this bonus (min 20 characters)..."
+                  value={reasonText}
+                  onChange={(e) => setReasonText(e.target.value)}
+                  rows={2}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  {reasonText.trim().length}/20 characters minimum.
+                </p>
+              </div>
+            )}
+
+            {/* Lossback: 7d PnL value + % lossback + OPTIONAL note. */}
+            {category === "lossback" && (
+              <div className="mt-2 space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">
+                      7-day PnL (USD)
+                    </Label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="e.g. -500"
+                      value={pnl7d}
+                      onChange={(e) => setPnl7d(e.target.value)}
+                      autoComplete="off"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">
+                      Lossback %
+                    </Label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="e.g. 10"
+                      value={lossbackPercent}
+                      onChange={(e) => setLossbackPercent(e.target.value)}
+                      autoComplete="off"
+                    />
+                  </div>
+                </div>
+                <Textarea
+                  placeholder="Optional explanation..."
+                  value={reasonText}
+                  onChange={(e) => setReasonText(e.target.value)}
+                  rows={2}
+                />
+              </div>
+            )}
+
+            {/* Other: free-text reason, min 20 chars — AND a destructive
+                warning that this amount is NOT tracked in GGR/PnL/cost. */}
+            {category === "other" && (
+              <div className="mt-2 space-y-2">
+                <div className="flex items-start gap-2 rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-2 text-[11px] text-rose-600 dark:text-rose-400">
+                  <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    This amount will <span className="font-semibold">NOT</span>{" "}
+                    be counted in GGR, P&amp;L or cost. Use it mainly for
+                    content-creator bookkeeping — every other category is
+                    tracked.
+                  </span>
+                </div>
+                <Textarea
+                  placeholder="Reason (min 20 characters)..."
+                  value={reasonText}
+                  onChange={(e) => setReasonText(e.target.value)}
+                  rows={2}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  {reasonText.trim().length}/20 characters minimum.
                 </p>
               </div>
             )}
