@@ -15,7 +15,11 @@ import {
   type PackSetFilter,
   type PackCategoryFilter,
 } from "@/lib/queries/packs";
-import { getUserPermissions, requirePageAccess } from "@/lib/dal";
+import {
+  getUserPermissions,
+  requirePageAccess,
+  sessionHasRole,
+} from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabilities";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
@@ -93,6 +97,8 @@ async function PacksContent({
   canToggle,
   canDelete,
   canEdit,
+  canEditLive,
+  isPackCreator,
 }: {
   page: number;
   perPage: number;
@@ -106,6 +112,8 @@ async function PacksContent({
   canToggle: boolean;
   canDelete: boolean;
   canEdit: boolean;
+  canEditLive: boolean;
+  isPackCreator: boolean;
 }) {
   const { data: result, error } = await loadPrimary(
     () =>
@@ -132,6 +140,8 @@ async function PacksContent({
           canToggle={canToggle}
           canDelete={canDelete}
           canEdit={canEdit}
+          canEditLive={canEditLive}
+          isPackCreator={isPackCreator}
         />
       </FadeIn>
       <DataTablePagination
@@ -183,6 +193,12 @@ export default async function PacksPage({
   let canToggle = isAdmin;
   let canDelete = isAdmin;
   let canEdit = isAdmin;
+  // __can_edit_live_packs is the pack_creator-specific opt-in that lifts the
+  // demo-only (inactive) edit restriction. Real admins ignore it entirely. The
+  // full card-pool/odds editor in the detail modal uses it (with the pack's
+  // active state) to mirror updatePack's server gate, so it never dangles an
+  // Edit button that 500s for a pack_creator touching a live pack.
+  let canEditLive = isAdmin;
   if (!isAdmin) {
     // safeQuery defaulting to [] so an Admin-DB blip can't crash a
     // pack_creator's catalog view — it degrades to "no capabilities" (create /
@@ -196,7 +212,12 @@ export default async function PacksPage({
     canToggle = hasCapability(perms, "__can_toggle_pack_active");
     canDelete = hasCapability(perms, "__can_delete_pack");
     canEdit = hasCapability(perms, "__can_update_pack");
+    canEditLive = hasCapability(perms, "__can_edit_live_packs");
   }
+  // Whether the viewer holds the pack_creator role (primary OR secondary).
+  // pack_creators are demo-only editors unless they also hold
+  // __can_edit_live_packs; admins are never gated this way.
+  const isPackCreator = sessionHasRole(session, "pack_creator");
 
   // Tab-scoped KPI stats — cached aggregates that stay stable across page
   // navigation + search refinements. Scoped to the active Pokemon / OnePiece
@@ -354,6 +375,8 @@ export default async function PacksPage({
             canToggle={canToggle}
             canDelete={canDelete}
             canEdit={canEdit}
+            canEditLive={canEditLive}
+            isPackCreator={isPackCreator}
           />
         </Suspense>
       </div>

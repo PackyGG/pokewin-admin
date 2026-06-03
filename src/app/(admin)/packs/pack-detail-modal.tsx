@@ -30,6 +30,9 @@ import { cn } from "@/lib/utils";
 import type { PackListItem } from "@/lib/queries/packs";
 import { PackStatsSection } from "./[id]/revenue-chart";
 import { PackCardsView, GamesTable } from "./[id]/pack-tabs";
+import { EditPackButton } from "./[id]/edit-pack-button";
+import { TogglePackButton } from "./[id]/toggle-pack-button";
+import { DeletePackButton } from "./[id]/delete-pack-button";
 import {
   fetchPackFullDetail,
   fetchPackGames,
@@ -73,11 +76,26 @@ export function PackDetailModal({
   pack,
   open,
   onOpenChange,
+  canToggle,
+  canDelete,
+  canEdit,
+  canEditLive,
+  isPackCreator,
 }: {
   /** The clicked row's list item — seeds the header instantly; null when none. */
   pack: PackListItem | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Viewer can toggle the pack active/inactive (kebab + modal header). */
+  canToggle: boolean;
+  /** Viewer can delete the pack. */
+  canDelete: boolean;
+  /** Viewer can open the full card-pool/odds editor. */
+  canEdit: boolean;
+  /** Viewer holds __can_edit_live_packs (lifts pack_creator demo-only edit). */
+  canEditLive: boolean;
+  /** Viewer holds the pack_creator role (demo-only editor unless canEditLive). */
+  isPackCreator: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -90,7 +108,15 @@ export function PackDetailModal({
         showCloseButton
       >
         {pack ? (
-          <ModalInner pack={pack} open={open} />
+          <ModalInner
+            pack={pack}
+            open={open}
+            canToggle={canToggle}
+            canDelete={canDelete}
+            canEdit={canEdit}
+            canEditLive={canEditLive}
+            isPackCreator={isPackCreator}
+          />
         ) : (
           // Defensive: never render an empty dialog with no a11y title.
           <div className="p-6">
@@ -103,7 +129,23 @@ export function PackDetailModal({
   );
 }
 
-function ModalInner({ pack, open }: { pack: PackListItem; open: boolean }) {
+function ModalInner({
+  pack,
+  open,
+  canToggle,
+  canDelete,
+  canEdit,
+  canEditLive,
+  isPackCreator,
+}: {
+  pack: PackListItem;
+  open: boolean;
+  canToggle: boolean;
+  canDelete: boolean;
+  canEdit: boolean;
+  canEditLive: boolean;
+  isPackCreator: boolean;
+}) {
   // Per-pack cache so re-opening the SAME pack doesn't refetch. Keyed by pack
   // id; survives close/reopen for the lifetime of the list mount.
   const cacheRef = React.useRef<Map<string, PackFullDetail>>(new Map());
@@ -162,6 +204,24 @@ function ModalInner({ pack, open }: { pack: PackListItem; open: boolean }) {
   const active = detail?.active ?? pack.active;
   const packType = detail?.packType ?? null;
 
+  // Pack creators may only edit packs while they're still in the demo
+  // (inactive) state — UNLESS they hold __can_edit_live_packs, which lifts the
+  // restriction. Mirrors updatePack's server gate so we never dangle an Edit
+  // button that 500s on click. Real admins (isPackCreator === false) always
+  // pass when canEdit is true. Computed off the loaded `detail.active` so it's
+  // only ever shown once the full pack is in hand (the editor needs it anyway).
+  const showEditButton =
+    canEdit &&
+    detail != null &&
+    (!isPackCreator || !detail.active || canEditLive);
+
+  // The header surfaces the full management controls so the popup is a complete
+  // control surface (no full page anymore): the odds/card-pool Editor, the
+  // active toggle, and Delete — all reusing the very components + server actions
+  // the old detail page used. They only appear once `detail` is loaded.
+  const showActions =
+    detail != null && (showEditButton || canToggle || canDelete);
+
   return (
     <>
       {/* ── Header: art + name + badges. Sticky so it stays in
@@ -204,6 +264,23 @@ function ModalInner({ pack, open }: { pack: PackListItem; open: boolean }) {
             </div>
           </div>
         </div>
+
+        {/* ── Management controls — the popup is now the only detail surface, so
+            the full odds/card-pool Editor + active toggle + Delete live here
+            (re-homed from the removed /packs/[id] page). They render once the
+            full `detail` is loaded; each reuses the page's existing component +
+            server action (no reimplementation). ── */}
+        {showActions && detail && (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5 sm:gap-2">
+            {showEditButton && <EditPackButton pack={detail} />}
+            {canToggle && (
+              <TogglePackButton packId={detail.id} active={detail.active} />
+            )}
+            {canDelete && (
+              <DeletePackButton packId={detail.id} packName={detail.name} />
+            )}
+          </div>
+        )}
       </DialogHeader>
 
       {/* ── Body: the full detail content, scrolling inside the modal. ── */}

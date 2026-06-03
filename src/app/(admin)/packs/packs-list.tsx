@@ -12,6 +12,7 @@ import {
   type EntityView,
 } from "@/components/entity-surface";
 import { useUrlParam } from "@/lib/entity-surface/use-url-state";
+import { useMounted } from "@/hooks/use-mounted";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { toPercent } from "@/lib/house-pov";
 import type { PackListItem } from "@/lib/queries/packs";
@@ -43,6 +44,8 @@ export function PacksList({
   canToggle,
   canDelete,
   canEdit,
+  canEditLive,
+  isPackCreator,
 }: {
   data: PackListItem[];
   view: EntityView;
@@ -50,7 +53,26 @@ export function PacksList({
   canDelete: boolean;
   /** Viewer can open the quick-edit drawer (edit price). */
   canEdit: boolean;
+  /** Viewer holds __can_edit_live_packs (lifts pack_creator demo-only edit). */
+  canEditLive: boolean;
+  /** Viewer holds the pack_creator role (demo-only editor unless canEditLive). */
+  isPackCreator: boolean;
 }) {
+  // `false` on the server render AND the first client paint, then `true` after
+  // mount. The detail modal below is a base-ui <Dialog> that is rendered
+  // unconditionally (so a row click / `?inspect=` deep-link can open it), which
+  // means its portal + `useId`-derived internals are part of the /packs SSR
+  // markup. base-ui allocates DIFFERENT `useId` values on the server pass vs the
+  // first client render, so those id/aria attributes disagree on hydration —
+  // React surfaces that as a recoverable mismatch (minified #418, args[]=HTML)
+  // and re-mounts the subtree. This is the SAME class of bug commit abaf448
+  // fixed for the docked chat's base-ui <Tabs>; the fix is identical: keep the
+  // modal OUT of the SSR/first-paint markup and mount it only AFTER hydration,
+  // so the Dialog mounts fresh client-side and never hydrates against server
+  // HTML. The `?inspect=` deep-link still works: `inspectId` is read from the
+  // URL on mount, and once `mounted` flips true one tick later the modal renders
+  // with `open` already derived from it → it auto-opens with no extra click.
+  const mounted = useMounted();
   // Open-modal target lives in the URL (`?inspect=<id>`) so the detail modal
   // deep-links + survives reload. (Param name kept for back-compat with any
   // existing bookmarked links from the previous inspector.)
@@ -229,12 +251,28 @@ export function PacksList({
 
       {/* Big centered detail modal — opens on row/tile click with the full pack
           detail lazy-loaded + cached per pack; no redirect. The previous side
-          inspector + its "Open full page" redirect-on-click are gone. */}
-      <PackDetailModal
-        pack={inspectedPack}
-        open={Boolean(inspectId) && inspectedPack != null}
-        onOpenChange={onModalOpenChange}
-      />
+          inspector + its "Open full page" redirect-on-click are gone. It also
+          hosts the full management surface (odds/card-pool editor + toggle +
+          delete) so the popup is the only detail surface.
+
+          Mounted only AFTER hydration (see `mounted` above): on the server +
+          first client paint we render NOTHING here, so the base-ui Dialog's
+          portal/`useId` internals are never part of the SSR markup and can't
+          hydrate-mismatch into React #418. The Dialog then mounts fresh
+          client-side; if `?inspect=<id>` was in the URL it auto-opens one tick
+          later because `open` is already derived from `inspectId`. */}
+      {mounted && (
+        <PackDetailModal
+          pack={inspectedPack}
+          open={Boolean(inspectId) && inspectedPack != null}
+          onOpenChange={onModalOpenChange}
+          canToggle={canToggle}
+          canDelete={canDelete}
+          canEdit={canEdit}
+          canEditLive={canEditLive}
+          isPackCreator={isPackCreator}
+        />
+      )}
 
       <PackQuickEdit
         pack={quickEditPack}
