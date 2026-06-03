@@ -14,7 +14,7 @@ import {
   getSets,
   CARD_SORT_FIELDS,
 } from "@/lib/queries/cards";
-import { requirePageAccess } from "@/lib/dal";
+import { requirePageAccess, sessionIsAdmin } from "@/lib/dal";
 import { CardsExplorer, type CardsFilter } from "./cards-explorer";
 import { CardsFilterBar } from "./cards-filter-bar";
 import {
@@ -120,6 +120,7 @@ async function CardsContent({
   perPage,
   sortBy,
   sortOrder,
+  isAdmin,
 }: {
   view: string;
   filter: CardsFilter;
@@ -127,6 +128,7 @@ async function CardsContent({
   perPage: number;
   sortBy?: string;
   sortOrder: "asc" | "desc";
+  isAdmin: boolean;
 }) {
   const { data: result, error } = await loadPrimary(
     () =>
@@ -177,6 +179,7 @@ async function CardsContent({
           total={result.total}
           view={view}
           filter={filter}
+          isAdmin={isAdmin}
         />
       </FadeIn>
       <DataTablePagination
@@ -194,7 +197,11 @@ export default async function CardsPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requirePageAccess("/cards");
+  const session = await requirePageAccess("/cards");
+  // Whether to expose the admin-only bulk Delete in the selection toolbar.
+  // `sessionIsAdmin` reads the effective role set (multi-role aware), matching
+  // the `requireAdmin()` gate the `deleteCards` action enforces server-side.
+  const isAdmin = sessionIsAdmin(session);
   const params = await searchParams;
 
   // Normalize page / perPage(clamped to the allowed set) / sort(whitelisted).
@@ -398,6 +405,7 @@ export default async function CardsPage({
             perPage={perPage}
             sortBy={sortBy}
             sortOrder={sortOrder}
+            isAdmin={isAdmin}
           />
         </Suspense>
       </div>

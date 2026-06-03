@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { getDb } from "@/lib/db";
-import { verifySession } from "@/lib/dal";
+import { verifySession, requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
@@ -355,4 +355,171 @@ export async function deleteCard(cardId: string): Promise<void> {
   });
 
   revalidatePath("/cards");
+}
+
+// ────────────────────────────────────────────────────────────────────
+//  deleteCards  (admin-only bulk delete from the /cards selection toolbar)
+// ────────────────────────────────────────────────────────────────────
+
+// Hard cap on a single bulk-delete. Mirrors `bulkMoveCardsToSet`'s 500-id
+// ceiling so the selection toolbar's "select all matching" (also capped at
+// 500) can be deleted in one call, and a tampered RPC can't request an
+// unbounded destructive scan.
+const BULK_DELETE_MAX = 500;
+
+const deleteCardsSchema = z.object({
+  ids: z
+    .array(z.string().uuid("Invalid card id"))
+    .min(1, "Select at least one card")
+    .max(BULK_DELETE_MAX, `Up to ${BULK_DELETE_MAX} cards at a time`),
+});
+
+/** Per-card reason a card was skipped instead of deleted. */
+type BlockedCard = {
+  id: string;
+  name: string;
+  reason: "in_packs" | "in_inventory";
+  packCount: number;
+  inventoryCount: number;
+};
+
+/**
+ * Bulk-delete cards selected on /cards. ADMIN-ONLY — `requireAdmin()` is the
+ * hard server-side gate (the client toolbar also hides the button for
+ * non-admins, but the server never trusts that).
+ *
+ * FK-/data-integrity safety (this is a MAIN-DB production write):
+ *
+ *   `cards` is referenced two ways —
+ *     1. `pack_cards.card_id`  → a real FK (onDelete: Cascade). The existing
+ *        single-delete (`deleteCard`) already BLOCKS when a card is in any
+ *        pack so a delete never silently rips a card out of a live pack pool;
+ *        we apply the SAME rule here.
+ *     2. `user_inventory.card_id` → a SOFT reference: in the Prisma schema
+ *        `user_inventory` has only an INDEX on `card_id` and NO `@relation`/FK
+ *        back to `cards`. So a raw `cards.delete()` would SUCCEED at the DB
+ *        level even while real users hold that card, orphaning every matching
+ *        `user_inventory` row (its name/image/price can no longer resolve).
+ *        We therefore also BLOCK any card that is held in inventory rather
+ *        than orphan a user's items.
+ *
+ * Cards that are referenced either way are skipped and reported back (per-card
+ * reason) so the operator sees exactly why; only fully-unreferenced cards are
+ * deleted. Nothing is cascaded into packs or inventory.
+ */
+export async function deleteCards(input: {
+  ids: string[];
+}): Promise<
+  ServerActionResult<{
+    deletedCount: number;
+    deletedIds: string[];
+    blocked: BlockedCard[];
+  }>
+> {
+  // Admin-only: hard server-side enforcement, independent of the client UI.
+  const session = await requireAdmin();
+
+  const parsed = deleteCardsSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(parsed.error.issues[0]?.message ?? "Invalid input", "VALIDATION");
+  }
+  // De-dup just in case the client passed duplicate ids.
+  const ids = Array.from(new Set(parsed.data.ids));
+
+  const db = await getDb();
+
+  try {
+    // Load each candidate with its pack-reference list (same shape the
+    // single-delete reads). Missing ids simply don't come back.
+    const cards = await db.cards.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        name: true,
+        pack_cards: { select: { id: true } },
+      },
+    });
+
+    if (cards.length === 0) {
+      return fail("None of the selected cards still exist.", "NOT_FOUND");
+    }
+
+    // Inventory is a soft reference (no FK) — count holdings per card so we
+    // can block instead of orphaning. One grouped query over the candidate
+    // set, not an N+1.
+    const inventoryGroups = await db.user_inventory.groupBy({
+      by: ["card_id"],
+      where: { card_id: { in: cards.map((c) => c.id) } },
+      _count: { _all: true },
+    });
+    const inventoryCountByCard = new Map<string, number>(
+      inventoryGroups.map((g) => [g.card_id, g._count._all]),
+    );
+
+    const blocked: BlockedCard[] = [];
+    const deletableIds: string[] = [];
+    for (const card of cards) {
+      const packCount = card.pack_cards.length;
+      const inventoryCount = inventoryCountByCard.get(card.id) ?? 0;
+      if (packCount > 0) {
+        blocked.push({
+          id: card.id,
+          name: card.name,
+          reason: "in_packs",
+          packCount,
+          inventoryCount,
+        });
+      } else if (inventoryCount > 0) {
+        blocked.push({
+          id: card.id,
+          name: card.name,
+          reason: "in_inventory",
+          packCount,
+          inventoryCount,
+        });
+      } else {
+        deletableIds.push(card.id);
+      }
+    }
+
+    if (deletableIds.length === 0) {
+      // Nothing safe to delete — surface a clear, specific reason rather than
+      // a silent no-op so the operator understands why.
+      const inPacks = blocked.filter((b) => b.reason === "in_packs").length;
+      const inInv = blocked.filter((b) => b.reason === "in_inventory").length;
+      const parts: string[] = [];
+      if (inPacks > 0)
+        parts.push(`${inPacks} still used in pack${inPacks === 1 ? "" : "s"}`);
+      if (inInv > 0) parts.push(`${inInv} held in user inventory`);
+      return fail(
+        `No cards deleted — ${parts.join(" and ")}. Remove them from packs first; cards held in any user's inventory can't be deleted.`,
+        "BLOCKED",
+      );
+    }
+
+    const result = await db.cards.deleteMany({
+      where: { id: { in: deletableIds } },
+    });
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "cards_bulk_deleted",
+      metadata: {
+        deleted_count: result.count,
+        deleted_card_ids: deletableIds,
+        blocked_count: blocked.length,
+        blocked_card_ids: blocked.map((b) => b.id),
+      },
+    });
+
+    revalidatePath("/cards");
+    return ok({
+      deletedCount: result.count,
+      deletedIds: deletableIds,
+      blocked,
+    });
+  } catch (err) {
+    logError("cards.deleteCards", "bulk delete failed", err);
+    return fail("Something went wrong deleting cards — please try again.");
+  }
 }

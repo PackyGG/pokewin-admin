@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Library, ArrowRight, SearchX } from "lucide-react";
+import { Library, ArrowRight, SearchX, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { CardTile, TileDataRow } from "@/components/card-tile";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -22,6 +22,7 @@ import {
 import { resolveEntityView, type EntityView } from "@/components/entity-surface";
 import type { CardListItem } from "@/lib/queries/cards";
 import { MoveToSetDialog } from "./move-to-set-dialog";
+import { DeleteCardsDialog } from "./delete-cards-dialog";
 import { CardInspectorSheet } from "./card-inspector-sheet";
 import { fetchCardIdsForFilter } from "./load-actions";
 
@@ -72,6 +73,7 @@ export function CardsExplorer({
   total,
   view: viewParam,
   filter,
+  isAdmin,
 }: {
   data: CardListItem[];
   /** Total rows matching the current filter (across all pages). */
@@ -80,6 +82,12 @@ export function CardsExplorer({
   view: string;
   /** Resolved filter predicate (active-set already folded in). */
   filter: CardsFilter;
+  /**
+   * Whether the current admin holds the `admin` role. Gates the bulk Delete
+   * affordance in the selection toolbar — non-admins never see it (and the
+   * `deleteCards` server action rejects them regardless via `requireAdmin`).
+   */
+  isAdmin: boolean;
 }) {
   const view: EntityView = resolveEntityView(viewParam);
 
@@ -87,6 +95,7 @@ export function CardsExplorer({
   const sel = useEntitySelection(visibleKeys);
 
   const [moveOpen, setMoveOpen] = React.useState(false);
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [selectAllPending, startSelectAll] = React.useTransition();
 
   // Inspector target — the card whose detail sheet is open. Null = closed.
@@ -122,12 +131,25 @@ export function CardsExplorer({
     });
   }, [filter, sel, total]);
 
-  const moveAction = sel.count > 0 && (
-    <Button size="sm" onClick={() => setMoveOpen(true)} className="h-8">
-      <Library className="size-3.5" />
-      Move to set
-      <ArrowRight className="size-3.5" />
-    </Button>
+  const toolbarActions = sel.count > 0 && (
+    <>
+      {isAdmin && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setDeleteOpen(true)}
+          className="h-8 text-muted-foreground hover:bg-rose-500/10 hover:text-rose-500"
+        >
+          <Trash2 className="size-3.5" />
+          Delete
+        </Button>
+      )}
+      <Button size="sm" onClick={() => setMoveOpen(true)} className="h-8">
+        <Library className="size-3.5" />
+        Move to set
+        <ArrowRight className="size-3.5" />
+      </Button>
+    </>
   );
 
   return (
@@ -139,7 +161,7 @@ export function CardsExplorer({
         someVisibleSelected={sel.someVisibleSelected}
         onToggleAllVisible={sel.toggleAllVisible}
         onClear={sel.clear}
-        actions={moveAction}
+        actions={toolbarActions}
         matchingTotal={total}
         onSelectAllMatching={handleSelectAllMatching}
         selectAllPending={selectAllPending}
@@ -176,6 +198,15 @@ export function CardsExplorer({
         selectedCardIds={Array.from(sel.selected)}
         onMoved={handleMoved}
       />
+
+      {isAdmin && (
+        <DeleteCardsDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          selectedCardIds={Array.from(sel.selected)}
+          onDeleted={handleMoved}
+        />
+      )}
 
       <CardInspectorSheet
         cardId={inspectId}
