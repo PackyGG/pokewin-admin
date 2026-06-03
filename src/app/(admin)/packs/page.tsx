@@ -34,7 +34,7 @@ import { houseAccent, formatPercentValue } from "@/lib/house-pov";
 import {
   resolveEntityView,
   type EntityView,
-} from "@/components/entity-surface/view-toggle";
+} from "@/components/entity-surface/view";
 import {
   EntityTableSkeleton,
   EntityGridSkeleton,

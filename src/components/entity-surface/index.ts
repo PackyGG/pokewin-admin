@@ -65,12 +65,13 @@ export {
   type EntityTableProps,
 } from "./entity-table";
 
-export {
-  EntityViewToggle,
-  resolveEntityView,
-  ENTITY_VIEW_OPTIONS,
-  type EntityView,
-} from "./view-toggle";
+export { EntityViewToggle, ENTITY_VIEW_OPTIONS } from "./view-toggle";
+
+// `resolveEntityView` + `EntityView` come from the directive-free `./view`
+// module (NOT `./view-toggle`, which is "use client") so server components
+// importing them from this barrel call a server-safe function rather than a
+// client reference. See `./view`'s header for the full rationale.
+export { resolveEntityView, type EntityView } from "./view";
 
 export {
   FilterBar,

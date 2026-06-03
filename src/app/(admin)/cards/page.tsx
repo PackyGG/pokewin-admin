@@ -38,7 +38,7 @@ import {
   FilterBarSkeleton,
   EntityPaginationSkeleton,
 } from "@/components/entity-surface";
-import { resolveEntityView } from "@/components/entity-surface";
+import { resolveEntityView } from "@/components/entity-surface/view";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { loadPrimary, parseListParams } from "@/lib/entity-surface/loader";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";

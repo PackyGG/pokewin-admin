@@ -145,7 +145,7 @@ export function MetricInfoPopover({
   children?: React.ReactNode;
   align?: "start" | "center" | "end";
 }) {
-  const t = SEMANTIC_TONES[tone];
+  const t = SEMANTIC_TONES[tone] ?? SEMANTIC_TONES.muted;
   return (
     <Popover>
       <PopoverTrigger
@@ -208,7 +208,7 @@ export function InfoRow({
   sign?: "+" | "−" | "";
   tone?: SemanticTone;
 }) {
-  const t = SEMANTIC_TONES[tone];
+  const t = SEMANTIC_TONES[tone] ?? SEMANTIC_TONES.muted;
   return (
     <li className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/40">
       <span className="flex min-w-0 items-center gap-1.5">
@@ -255,7 +255,7 @@ export function InfoTotal({
   tone?: SemanticTone;
   note?: React.ReactNode;
 }) {
-  const t = SEMANTIC_TONES[tone];
+  const t = SEMANTIC_TONES[tone] ?? SEMANTIC_TONES.muted;
   return (
     <div className="border-t border-border/60 pt-2">
       <div className="flex items-center justify-between gap-2 text-xs">
@@ -292,7 +292,7 @@ export function ValueChip({
   children: React.ReactNode;
   className?: string;
 }) {
-  const t = SEMANTIC_TONES[tone];
+  const t = SEMANTIC_TONES[tone] ?? SEMANTIC_TONES.muted;
   return (
     <span
       className={cn(

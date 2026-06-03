@@ -57,7 +57,7 @@ export function WaterfallRow({
   /** Optional info-popover node rendered inline after the label. */
   info?: React.ReactNode;
 }) {
-  const t = SEMANTIC_TONES[tone];
+  const t = SEMANTIC_TONES[tone] ?? SEMANTIC_TONES.muted;
   const widthPct = Math.min(
     100,
     Math.max(2, (Math.abs(signedAmount) / maxMag) * 100),

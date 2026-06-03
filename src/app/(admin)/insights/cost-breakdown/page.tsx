@@ -318,7 +318,7 @@ function SummaryTile({
   size?: "base" | "lead" | "hero";
   info?: React.ReactNode;
 }) {
-  const t = SEMANTIC_TONES[tone];
+  const t = SEMANTIC_TONES[tone] ?? SEMANTIC_TONES.muted;
   return (
     <div
       className={cn(
@@ -764,6 +764,16 @@ function lineVisual(line: CostLine): {
         sign: "=",
         icon: line.signedAmount >= 0 ? TrendingUp : TrendingDown,
       };
+    default:
+      // The switch above is exhaustive over CostLineKind, so this is
+      // unreachable by the type system. It exists as a RUNTIME safety net:
+      // should a CostLine ever carry an unexpected `kind` (e.g. a future
+      // ledger type or a serialization edge), `lineVisual` must still return
+      // a valid, mapped tone rather than `undefined` — otherwise the
+      // downstream `SEMANTIC_TONES[v.tone]` lookup would be `undefined` and
+      // dereferencing `.face`/`.icon` would crash render. Fall back to the
+      // muted (always-present) tone, the same key the guarded lookups use.
+      return { tone: "muted", sign: "−", icon: AlertCircle };
   }
 }
 
@@ -819,7 +829,7 @@ function WaterfallPanel({ data }: { data: CostBreakdown }) {
       <CardContent className="space-y-0.5 p-3 sm:p-4">
         {data.lines.map((line) => {
           const v = lineVisual(line);
-          const colors = SEMANTIC_TONES[v.tone];
+          const colors = SEMANTIC_TONES[v.tone] ?? SEMANTIC_TONES.muted;
           const Icon = v.icon;
           const emphasis: "normal" | "subtotal" | "result" =
             line.kind === "result"
@@ -898,7 +908,7 @@ function RankedCosts({ data }: { data: CostBreakdown }) {
       <CardContent className="space-y-2.5 p-4 sm:p-5">
         {visible.map((line, i) => {
           const v = lineVisual(line);
-          const t = SEMANTIC_TONES[v.tone];
+          const t = SEMANTIC_TONES[v.tone] ?? SEMANTIC_TONES.muted;
           const widthPct = Math.min(
             100,
             Math.max(2, (line.amount / maxMag) * 100),
@@ -1028,7 +1038,7 @@ function MarginHealth({ data }: { data: CostBreakdown }) {
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
       {tiles.map((tile) => {
-        const t = SEMANTIC_TONES[tile.tone];
+        const t = SEMANTIC_TONES[tile.tone] ?? SEMANTIC_TONES.muted;
         return (
           <div
             key={tile.label}

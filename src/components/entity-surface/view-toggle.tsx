@@ -4,6 +4,13 @@ import * as React from "react";
 import { LayoutGrid, Table2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUrlParam } from "@/lib/entity-surface/use-url-state";
+import { type EntityView, resolveEntityView } from "./view";
+
+// Re-export the server-safe view vocabulary so existing importers of this
+// module keep working. The pure pieces are DEFINED in `./view` (a
+// directive-free module) so server components can call `resolveEntityView`
+// without invoking a client function — see that file's header.
+export { type EntityView, resolveEntityView };
 
 /**
  * ──────────────────────────────────────────────────────────────────────────
@@ -24,8 +31,6 @@ import { useUrlParam } from "@/lib/entity-surface/use-url-state";
  * cards-tab-switch): a bordered `bg-muted/30` track with a raised active pill.
  */
 
-export type EntityView = "table" | "grid";
-
 export const ENTITY_VIEW_OPTIONS: ReadonlyArray<{
   value: EntityView;
   label: string;
@@ -34,15 +39,6 @@ export const ENTITY_VIEW_OPTIONS: ReadonlyArray<{
   { value: "table", label: "Table", icon: Table2 },
   { value: "grid", label: "Gallery", icon: LayoutGrid },
 ];
-
-/**
- * Resolve the active view from a raw `?view=` value, defaulting to `table`
- * (the triage-first default). Exported so the server `page.tsx` can read the
- * same value the toggle writes and render the matching primitive.
- */
-export function resolveEntityView(raw: string | undefined | null): EntityView {
-  return raw === "grid" ? "grid" : "table";
-}
 
 export function EntityViewToggle({
   paramKey = "view",
