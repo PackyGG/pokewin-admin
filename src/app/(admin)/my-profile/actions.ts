@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/admin-db";
 import { verifySession, sessionHasRole } from "@/lib/dal";
+import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { fetchPublicStats } from "@/lib/socials-public";
 
 /**
@@ -67,6 +68,17 @@ export async function createCreatorWebhook(data: { url: string }) {
     select: { id: true },
   });
 
+  // Audit: the admin-side createWebhook in creators/actions.ts logs the same
+  // creator_webhooks insert; mirror it here so the self-service path leaves an
+  // equal trail. Actor = the creator's own session; target = their user id.
+  const session = await verifySession();
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_webhook_created",
+    targetUserId: userId,
+    metadata: { webhookId: webhook.id, url: data.url },
+  });
+
   revalidatePath("/my-profile");
   return { id: webhook.id, secret };
 }
@@ -96,6 +108,24 @@ export async function updateCreatorWebhook(
       updated_at: new Date(),
     },
     select: { id: true },
+  });
+
+  // Audit: editing the URL re-points where signed balance-fill payloads go,
+  // so trace it like the admin-side updateWebhook does. Capture before/after
+  // for the sensitive fields that actually changed.
+  const session = await verifySession();
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_webhook_updated",
+    targetUserId: userId,
+    metadata: {
+      webhookId,
+      ...(data.url !== undefined && { url_before: webhook.url, url_after: data.url }),
+      ...(data.enabled !== undefined && {
+        enabled_before: webhook.enabled,
+        enabled_after: data.enabled,
+      }),
+    },
   });
 
   revalidatePath("/my-profile");
