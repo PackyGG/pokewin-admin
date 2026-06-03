@@ -15,7 +15,9 @@ import {
   RewardsAnalyticsTabSkeleton,
   OverviewTabSkeleton,
   DailyPacksTabSkeleton,
+  DailyPacksGlanceSkeleton,
 } from "./_components/tab-skeleton";
+import { DailyPacksGlance } from "./_components/daily-packs-glance";
 import { OverviewTab } from "./_components/overview-tab";
 import { DepositBonusTab } from "./_components/deposit-bonus-tab";
 import { RakebackTab } from "./_components/rakeback-tab";
@@ -107,6 +109,19 @@ export default async function RewardsAnalyticsPage({
           <RewardsPeriodFilter />
         </div>
       </PageHero>
+
+      {/* Page-level daily-packs giveaway glance box — pinned above the
+          tab switch so the free-pack giveaway cost is always visible at
+          a glance regardless of the active tab (like the dashboard's
+          today-cost boxes). Reads the same canonical query + period
+          mapping the Daily Packs tab uses, so the headline reconciles
+          1:1 with that tab. Streamed behind its own Suspense (keyed on
+          period so it re-fetches on a period swap) with a small skeleton
+          and a safeQuery/TileErrorFallback inside, so a slow or throwing
+          query degrades just this box, never the tabs below. */}
+      <Suspense key={`glance-${period}`} fallback={<DailyPacksGlanceSkeleton />}>
+        <DailyPacksGlance period={period} periodLabel={label} />
+      </Suspense>
 
       {/* Category tabs — URL-driven, preserve period across swaps. */}
       <RewardsAnalyticsTabSwitch />

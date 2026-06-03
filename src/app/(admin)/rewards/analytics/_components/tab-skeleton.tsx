@@ -96,6 +96,32 @@ export function DailyPacksTabSkeleton() {
 }
 
 /**
+ * Fallback for the page-level daily-packs glance box (pinned above the
+ * tab switch). Matches the box's actual shape — a tight 4-tile strip,
+ * 2 cols on phones / 4 on sm+ — so the layout doesn't pop when the real
+ * figures stream in. Kept here next to the page's other skeletons.
+ */
+export function DailyPacksGlanceSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div
+          key={i}
+          className="rounded-xl border bg-card px-3 py-2.5 sm:px-4 sm:py-3"
+        >
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <Skeleton className="size-3.5 rounded sm:size-4" />
+            <Skeleton className="h-3 w-16 sm:w-20" />
+          </div>
+          <Skeleton className="mt-1.5 h-5 w-16 sm:mt-2 sm:h-6 sm:w-20" />
+          <Skeleton className="mt-1.5 h-2.5 w-20" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
  * Bigger fallback for the Overview tab, which has more sections than
  * a per-category deep-stats tab. Matches the full shape: KPI strip,
  * chart, breakdown + summary side-by-side, platform leaderboards,
