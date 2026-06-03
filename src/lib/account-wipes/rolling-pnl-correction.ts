@@ -392,6 +392,138 @@ export async function getRollingPnlWipeCorrections(
 }
 
 /**
+ * GUARANTEED-FIX wipe-in-window DETECTOR (2026-06-03 — the FloridaManJeff
+ * phantom-loss fix, take 3).
+ *
+ * ─── WHY DETECT INSTEAD OF CORRECT ────────────────────────────────────────
+ *
+ * A windowed P&L (deposits − withdrawals − Δbalance − Δinventory − Δvoucher
+ * over a fixed window) is mathematically UNDEFINED once an admin wipe lands
+ * inside the window. The wipe atomically (a) DELETES ledger / inventory /
+ * voucher rows AND (b) drops `available_balance` with NO matching ledger row.
+ * After the wipe the surviving-row Δbalance no longer reconciles with the
+ * pre-window balance, so the formula reports a PHANTOM house loss (Florida-
+ * ManJeff: −$18k…−$20k rolling tiles while every real counter was reset to
+ * $0). The add-back correction (commits c836684 / 70be8d3) tried to re-
+ * materialise the deleted rows + the atomic drop from the wipe snapshots, but
+ * it kept returning a ~0 net correction for him (see the REPORT note below),
+ * so the phantom survived two deploys.
+ *
+ * The robust fix is NOT to correct the undefined value — it's to DETECT that
+ * the window crosses a wipe and render that window as a RESET ("—"), deferring
+ * the user to the lifetime Platform-P&L (which reads live balance counters +
+ * card_withdrawal_requests and is unaffected by the wipe).
+ *
+ * ─── WHAT THIS RETURNS ────────────────────────────────────────────────────
+ *
+ * A record keyed by the same window `key` strings the caller passed in, each
+ * mapping to a boolean `wipedInWindow`:
+ *   • true  → at least one completed, un-restored wipe has `wiped_at` ≥ that
+ *             window's `since`. The window crosses a wipe → render "—".
+ *   • false → no qualifying wipe in that window → the formula's value is
+ *             well-defined → render the computed number normally.
+ *
+ * ─── FAILURE SEMANTICS (deliberately NOT a silent swallow) ────────────────
+ *
+ * If the admin-DB lookup throws we CANNOT prove the windows are wipe-free, so
+ * — per the owner's "default to the reset state, never the phantom" mandate —
+ * we default EVERY window to `wipedInWindow = true`. The blast radius of a
+ * transient admin-DB hiccup is then "rolling-P&L tiles show '—' instead of a
+ * number" (recoverable, honest) rather than "a phantom −$18k is shown as a
+ * real loss" (the exact bug we're killing). The failure is logged DISTINCTLY
+ * so it's visible upstream — unlike the correction helper, which logged-and-
+ * zeroed and so let the phantom through unnoticed.
+ *
+ * BOTH wipe stores are checked (this is critical — see the REPORT note on why
+ * the prior add-back correction returned ~0):
+ *   • `admin_account_wipes`            — the balance / vault / inventory /
+ *                                        deposits / wager / game / pnl wipes.
+ *   • `admin_balance_adjustment_wipes` — the "wipe balance adjustments" action,
+ *                                        a SEPARATE table. It ALSO atomically
+ *                                        reduces `available_balance` with no
+ *                                        compensating ledger row, so it equally
+ *                                        breaks the windowed-P&L formula — yet
+ *                                        the add-back correction never reads it,
+ *                                        which is a primary reason that fix
+ *                                        under-corrected. FloridaManJeff's
+ *                                        ~3h-ago wipes live in THIS table.
+ *
+ * Both use the SAME relevant columns (`user_id` = the main-DB user id the wipe
+ * acted on, `wiped_at`, `status`, `restored_at` — see prisma/admin/schema.prisma;
+ * there is NO `target_user_id` column on either table) and the SAME filter as
+ * the correction (`status = 'completed'`, `restored_at IS NULL`,
+ * `wiped_at >= deepestWindowStart`). General behaviour for ANY wiped user — not
+ * hardcoded to one account.
+ *
+ * If EITHER lookup throws we default EVERY window to the reset (true) — we
+ * can't prove the windows are wipe-free, so we never risk surfacing the
+ * phantom. The failure is logged distinctly (NOT swallowed).
+ */
+export async function getWipedWindows(
+  userId: string,
+  windows: { key: string; since: Date }[],
+): Promise<Record<string, boolean>> {
+  const result: Record<string, boolean> = {};
+  for (const w of windows) result[w.key] = false;
+  if (windows.length === 0) return result;
+
+  const deepestWindowStart = windows.reduce(
+    (acc, w) => (w.since < acc ? w.since : acc),
+    windows[0].since,
+  );
+
+  let wipedAts: Date[];
+  try {
+    // Both stores in parallel; each row carries only `wiped_at`. A wipe in
+    // EITHER store at/after a window's start makes that window "wiped".
+    const [accountWipes, adjustmentWipes] = await Promise.all([
+      adminDb.admin_account_wipes.findMany({
+        where: {
+          user_id: userId,
+          status: "completed",
+          restored_at: null,
+          wiped_at: { gte: deepestWindowStart },
+        },
+        select: { wiped_at: true },
+      }),
+      adminDb.admin_balance_adjustment_wipes.findMany({
+        where: {
+          user_id: userId,
+          status: "completed",
+          restored_at: null,
+          wiped_at: { gte: deepestWindowStart },
+        },
+        select: { wiped_at: true },
+      }),
+    ]);
+    wipedAts = [
+      ...accountWipes.map((r) => r.wiped_at),
+      ...adjustmentWipes.map((r) => r.wiped_at),
+    ];
+  } catch (err) {
+    // Can't determine wipe state → default to the RESET for every window so
+    // the phantom can never surface. Logged distinctly (NOT swallowed).
+    console.error(
+      "[rolling-pnl-correction] getWipedWindows lookup FAILED — defaulting all windows to reset ('—') for safety:",
+      err instanceof Error ? err.message : err,
+    );
+    for (const w of windows) result[w.key] = true;
+    return result;
+  }
+
+  if (wipedAts.length === 0) return result;
+
+  // A window is "wiped" iff any completed, un-restored wipe's `wiped_at` falls
+  // at/after that window's start. Deeper windows (earlier `since`) therefore
+  // catch a superset of the wipes the shallower windows catch.
+  for (const w of windows) {
+    const start = w.since.getTime();
+    result[w.key] = wipedAts.some((t) => t.getTime() >= start);
+  }
+  return result;
+}
+
+/**
  * Whether a user has any wipe with `wiped_at` inside the given window — for
  * the small "wiped Xh ago" badge surfaced alongside the corrected rolling
  * tiles. The correction makes the number meaningful again, but the badge is

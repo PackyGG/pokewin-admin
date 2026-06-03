@@ -48,6 +48,7 @@ import {
   Sparkles,
   Dices,
   Percent,
+  RotateCcw,
   Award,
   Waypoints,
   Loader2,
@@ -81,6 +82,7 @@ import {
   InventoryGrid,
   GAMING_TX_TYPES,
   FINANCIAL_TX_TYPES,
+  ROLLING_PNL_WIPE_HINT,
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
 import { WipeAuditLog } from "./wipe-audit-log";
@@ -1331,16 +1333,31 @@ function WindowedPnlStrip({
 }: {
   pnlBreakdown: PnlBreakdown;
 }) {
-  const windows: { label: string; pnl: number }[] = [
-    { label: "Past 12h", pnl: pnlBreakdown.pnl12h },
-    { label: "Past 24h", pnl: pnlBreakdown.pnl24h },
-    { label: "Past 3d", pnl: pnlBreakdown.pnl3d },
-    { label: "Past 7d", pnl: pnlBreakdown.pnl7d },
-    { label: "Past 14d", pnl: pnlBreakdown.pnl14d },
+  const windows: { label: string; pnl: number; wiped: boolean }[] = [
+    { label: "Past 12h", pnl: pnlBreakdown.pnl12h, wiped: pnlBreakdown.wiped12h },
+    { label: "Past 24h", pnl: pnlBreakdown.pnl24h, wiped: pnlBreakdown.wiped24h },
+    { label: "Past 3d", pnl: pnlBreakdown.pnl3d, wiped: pnlBreakdown.wiped3d },
+    { label: "Past 7d", pnl: pnlBreakdown.pnl7d, wiped: pnlBreakdown.wiped7d },
+    { label: "Past 14d", pnl: pnlBreakdown.pnl14d, wiped: pnlBreakdown.wiped14d },
   ];
   return (
     <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
       {windows.map((w) => {
+        // Wipe-in-window → the windowed-P&L formula is undefined across the
+        // wipe, so render a neutral "—" reset with an explanatory hint
+        // instead of the phantom number. Platform-P&L stays authoritative.
+        if (w.wiped) {
+          return (
+            <ModernMetricTile
+              key={w.label}
+              label={w.label}
+              value="—"
+              accent="blue"
+              icon={RotateCcw}
+              hint={ROLLING_PNL_WIPE_HINT}
+            />
+          );
+        }
         // Treat exact zero as neutral so a quiet user reads grey
         // instead of arbitrary emerald — same convention as the
         // dashboard's P&L tiles.

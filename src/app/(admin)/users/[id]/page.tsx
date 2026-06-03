@@ -309,6 +309,11 @@ async function UserDetailBody({
     pnl3d: 0,
     pnl7d: 0,
     pnl14d: 0,
+    wiped12h: false,
+    wiped24h: false,
+    wiped3d: false,
+    wiped7d: false,
+    wiped14d: false,
   };
 
   const [

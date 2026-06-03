@@ -55,19 +55,24 @@ const cachedUserDetail = unstable_cache(
   { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
 );
 
-// Keypart bumped v1 → v2 (2026-06-03) to FORCE-DISCARD the pre-fix cached
-// rolling-P&L values across the deploy. The wipe-aware rolling-P&L correction
-// (commit c836684) changed the numbers `getUserPnlBreakdown` returns for any
-// user with recent admin wipes, but the Vercel data cache persists `unstable_cache`
+// Keypart bumped across 2026-06-03 deploys to FORCE-DISCARD stale cached
+// rolling-P&L values, because the Vercel data cache persists `unstable_cache`
 // entries ACROSS deployments (the key is the static keyParts + a closure hash,
-// not the deployment id). So the old code's value (e.g. FloridaManJeff's phantom
-// −$20,794 24h tile) kept being served stale-while-revalidate under the v1 key
-// after the corrected code shipped. A new keypart is a fresh cache namespace
-// with no pre-fix entry, so the corrected value computes on the first post-deploy
-// load — same force-invalidate-on-code-change pattern used in cards.ts (v2→v3).
+// not the deployment id), so a code change to `getUserPnlBreakdown` would
+// otherwise keep serving the old value stale-while-revalidate under the prior
+// key. Same force-invalidate-on-code-change pattern as cards.ts.
+//   • v1 → v2: the wipe-aware add-back rolling-P&L correction (commit c836684)
+//     changed the numbers for any user with recent admin wipes.
+//   • v2 → v3: the GUARANTEED phantom-loss fix — `getUserPnlBreakdown` now also
+//     returns per-window `wiped*` flags and the rolling tiles render "—"
+//     (reset) for any window crossing an admin wipe. The shape changed (new
+//     fields) AND the surfaced value changed (FloridaManJeff's phantom
+//     −$18k tiles become "—"), so a fresh namespace guarantees the new code
+//     path's output isn't shadowed by a pre-fix v2 entry. The `users-detail`
+//     cache-bust tag (70be8d3) is retained so a wipe still revalidates live.
 const cachedUserPnlBreakdown = unstable_cache(
   (userId: string): Promise<PnlBreakdown> => getUserPnlBreakdown(userId),
-  ["users-detail-pnl-v2"],
+  ["users-detail-pnl-v3"],
   { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
 );
 

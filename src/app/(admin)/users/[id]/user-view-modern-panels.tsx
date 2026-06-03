@@ -28,6 +28,7 @@ import type {
   UserDetail,
   PnlBreakdown,
 } from "./user-tabs-types";
+import { ROLLING_PNL_WIPE_HINT } from "./user-tabs-types";
 
 // ───────────────────────────────────────────────────────────────────
 //  SHARED COLOR TOKENS
@@ -151,6 +152,54 @@ export function PanelRow({
       <span className="text-muted-foreground">{label}</span>
       <span className={cn("font-medium tabular-nums", valueClassName)}>{value}</span>
     </div>
+  );
+}
+
+/**
+ * One rung of the Overview "Rolling P&L" block. When `wiped` is true the
+ * window crosses an admin wipe → the windowed-P&L formula is undefined, so we
+ * render a neutral "—" (with the shared hint as a native tooltip) instead of
+ * the phantom number. Otherwise it renders the house-POV colored value
+ * (positive = house gain = emerald, negative = house loss = rose). Mirrors the
+ * Account-tab windowed-P&L strip exactly so both surfaces agree.
+ */
+function RollingPnlRow({
+  label,
+  pnl,
+  wiped,
+}: {
+  label: string;
+  pnl: number;
+  wiped: boolean;
+}) {
+  if (wiped) {
+    return (
+      <PanelRow
+        label={label}
+        value={
+          <span className="text-muted-foreground" title={ROLLING_PNL_WIPE_HINT}>
+            —
+          </span>
+        }
+      />
+    );
+  }
+  return (
+    <PanelRow
+      label={label}
+      value={
+        <span
+          className={cn(
+            pnl >= 0
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-rose-600 dark:text-rose-400",
+          )}
+        >
+          {pnl >= 0 ? "+" : ""}
+          {formatCurrency(pnl)}
+        </span>
+      }
+    />
   );
 }
 
@@ -359,80 +408,30 @@ export function ModernPnlPanel({
         <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Rolling P&amp;L
         </p>
-        <PanelRow
+        <RollingPnlRow
           label="Past 12h"
-          value={
-            <span
-              className={cn(
-                pnlBreakdown.pnl12h >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400",
-              )}
-            >
-              {pnlBreakdown.pnl12h >= 0 ? "+" : ""}
-              {formatCurrency(pnlBreakdown.pnl12h)}
-            </span>
-          }
+          pnl={pnlBreakdown.pnl12h}
+          wiped={pnlBreakdown.wiped12h}
         />
-        <PanelRow
+        <RollingPnlRow
           label="Past 24h"
-          value={
-            <span
-              className={cn(
-                pnlBreakdown.pnl24h >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400",
-              )}
-            >
-              {pnlBreakdown.pnl24h >= 0 ? "+" : ""}
-              {formatCurrency(pnlBreakdown.pnl24h)}
-            </span>
-          }
+          pnl={pnlBreakdown.pnl24h}
+          wiped={pnlBreakdown.wiped24h}
         />
-        <PanelRow
+        <RollingPnlRow
           label="Past 3d"
-          value={
-            <span
-              className={cn(
-                pnlBreakdown.pnl3d >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400",
-              )}
-            >
-              {pnlBreakdown.pnl3d >= 0 ? "+" : ""}
-              {formatCurrency(pnlBreakdown.pnl3d)}
-            </span>
-          }
+          pnl={pnlBreakdown.pnl3d}
+          wiped={pnlBreakdown.wiped3d}
         />
-        <PanelRow
+        <RollingPnlRow
           label="Past 7d"
-          value={
-            <span
-              className={cn(
-                pnlBreakdown.pnl7d >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400",
-              )}
-            >
-              {pnlBreakdown.pnl7d >= 0 ? "+" : ""}
-              {formatCurrency(pnlBreakdown.pnl7d)}
-            </span>
-          }
+          pnl={pnlBreakdown.pnl7d}
+          wiped={pnlBreakdown.wiped7d}
         />
-        <PanelRow
+        <RollingPnlRow
           label="Past 14d"
-          value={
-            <span
-              className={cn(
-                pnlBreakdown.pnl14d >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400",
-              )}
-            >
-              {pnlBreakdown.pnl14d >= 0 ? "+" : ""}
-              {formatCurrency(pnlBreakdown.pnl14d)}
-            </span>
-          }
+          pnl={pnlBreakdown.pnl14d}
+          wiped={pnlBreakdown.wiped14d}
         />
       </div>
     </StatPanel>
@@ -528,15 +527,26 @@ export function ModernMetricTile({
   value,
   accent,
   icon: Icon,
+  hint,
 }: {
   label: string;
   value: string;
   accent: keyof typeof TILE_COLORS;
   icon: React.ElementType;
+  /**
+   * Optional small muted sub-label shown under the value (and surfaced as the
+   * tile's native `title` tooltip). Used by the rolling-P&L strip to explain a
+   * "—" reset tile ("windowed P&L can't be computed across an admin wipe").
+   * Omitted on every other tile → unchanged layout there.
+   */
+  hint?: string;
 }) {
   const colors = TILE_COLORS[accent] ?? TILE_COLORS.blue;
   return (
-    <div className={cn("rounded-xl border p-3 sm:p-4 min-w-0", colors.bg)}>
+    <div
+      className={cn("rounded-xl border p-3 sm:p-4 min-w-0", colors.bg)}
+      title={hint ?? undefined}
+    >
       <div className="flex items-center gap-2">
         <Icon className={cn("size-4 shrink-0", colors.icon)} />
         <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-muted-foreground truncate">
@@ -546,6 +556,11 @@ export function ModernMetricTile({
       <p className={cn("mt-1 text-xl sm:text-2xl font-bold tabular-nums truncate", colors.text)}>
         {value}
       </p>
+      {hint ? (
+        <p className="mt-1 text-[10px] leading-snug text-muted-foreground line-clamp-2">
+          {hint}
+        </p>
+      ) : null}
     </div>
   );
 }
