@@ -1,6 +1,16 @@
 import { Suspense } from "react";
-import { Ticket, CheckCircle2, Clock, Users } from "lucide-react";
+import {
+  Ticket,
+  CheckCircle2,
+  Clock,
+  Users,
+  HandCoins,
+  Wallet,
+} from "lucide-react";
 import { getPromoCodes, getPromoCodesListStats } from "@/lib/queries/promo-codes";
+import { getPromoCodesMoneyStats } from "@/lib/queries/promo-codes-stats";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { formatCurrency } from "@/lib/utils/format";
 import { requirePageAccess } from "@/lib/dal";
 import { PromoCodesDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -34,7 +44,19 @@ export default async function PromoCodesPage({
   // screen. Awaited up-front; the table streams in behind a keyed
   // <Suspense> so a filter / page change shows a table skeleton instead
   // of blocking the page on the previous render.
-  const stats = await getPromoCodesListStats();
+  //
+  // Money stats are lifetime aggregates (no timeframe). Wrapped in
+  // safeQuery so a slow / failing aggregate degrades the two money tiles
+  // to "—" instead of crashing the page; the count tiles + table still
+  // render.
+  const [stats, { data: money }] = await Promise.all([
+    getPromoCodesListStats(),
+    safeQuery(
+      () => getPromoCodesMoneyStats(),
+      null as Awaited<ReturnType<typeof getPromoCodesMoneyStats>> | null,
+      "promoCodes.moneyStats",
+    ),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -71,6 +93,30 @@ export default async function PromoCodesPage({
           value={String(stats.totalRedemptions)}
           icon={Users}
           accent="purple"
+        />
+      </div>
+
+      {/* Lifetime promo-code money strip. House-POV: promo value handed to
+          users is a house COST → rose headline. "Given out / claimed" is
+          sourced from the immutable ledger (promo_code_redeemed) so it
+          includes deleted / old codes; "Allocated / offered" is Σ(value ×
+          max_uses) over CURRENT codes only (deleted codes' allocation is
+          unrecoverable) — labelled as such. Both degrade to "—" via
+          safeQuery. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <KpiTile
+          label="Given out / claimed"
+          value={money ? formatCurrency(money.claimedGivenOut) : "—"}
+          sub="Realized house cost · all codes incl. deleted"
+          icon={HandCoins}
+          accent="rose"
+        />
+        <KpiTile
+          label="Allocated / offered"
+          value={money ? formatCurrency(money.allocatedOffered) : "—"}
+          sub="Budget put up · current codes only"
+          icon={Wallet}
+          accent="blue"
         />
       </div>
 
