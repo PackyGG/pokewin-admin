@@ -519,7 +519,7 @@ Das Projekt nutzt **zwei vollständig getrennte PostgreSQL-Datenbanken** mit jew
 
 #### 1. Main DB — die Produktions-DB der eigentlichen Website (packy.gg)
 
-- **Client:** `db` aus `src/lib/db.ts`
+- **Client:** `getDb()` (bzw. `db`) aus `src/lib/db.ts` — unterstützt einen prod/dev-Toggle (`admin_db_env`-Cookie + `DEV_DATABASE_URL`); Entry-Points `getDb()` / `getProdDb()` / `getDevDb()`, nicht mehr nur ein statischer Import. MAIN setzt zusätzlich `statement_timeout: 30s`.
 - **Schema:** `prisma/schema.prisma`
 - **Env-Var:** `DATABASE_URL`
 - **Inhalt:** alles was die eigentliche Game-Plattform betrifft — User-Accounts, Balances, Ledger-Transaktionen, Packs, Cards, Battles, Inventory, Rewards, Affiliate-System, Deposits/Withdrawals, Promo-Codes, Gift-Cards, Vouchers, Rain/Raffles/Races, etc.
@@ -554,7 +554,7 @@ Für alle geschützten Server Components, Server Actions und API Routes: **aussc
 
 Diese Funktionen rufen `redirect()` bei Failure — **nicht umschreiben, direkt verwenden**.
 
-Rollen in `src/lib/admin-roles.ts`: `admin`, `support`, `marketing`, `creator`.
+Rollen in `src/lib/admin-roles.ts`: `admin`, `support`, `marketing`, `creator`, `pack_creator` (5 Rollen). `ROLE_PRIORITY` (admin gewinnt), `getEffectiveRoles()` normalisiert `role` + `roles`.
 
 **Niemals Auth-Logik von Hand neu schreiben oder umgehen.** Middleware (`src/middleware.ts`) erzwingt den Flow zusätzlich — nicht daran vorbei arbeiten.
 
@@ -655,8 +655,8 @@ Pattern: `"bg-{color}-500/15 text-{color}-600 dark:text-{color}-400 border-{colo
 
 ### Staff-Exclusion in Analytics
 
-- Analytics-Metriken schließen Staff-User aus (`role NOT IN ('admin','creator')`).
-- Dafür existiert ein Fragment `EXCL_STAFF_FRAG` für Raw-SQL-Queries.
+- Customer-Analytics schließen Staff **und Creator** aus. **Kanonisch:** `getMetricsScope()` in `src/lib/metrics/scope.ts` mit `CUSTOMER_EXCLUDED_ROLES = ['admin','support','creator']` (Creator werden seit 2026-06-03 **wholesale** gedroppt) + `excluded_users`-Blacklist (`src/lib/queries/_blacklist.ts`).
+- **Legacy:** `EXCL_STAFF_FRAG` (`src/lib/queries/_exclude-staff.ts`) droppt nur `['admin','support']` (Creator bleiben drin) — das ist **nicht** die kanonische Customer-Scope. Für GGR/NGR/PnL/Wager immer `scope.ts` verwenden.
 - Bei neuen Analytics-Features diese Exclusion nicht vergessen — sonst werden Metriken verzerrt.
 
 ### File Organization (Feature-Based)
