@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Info, Trophy, HandCoins, Gift, ArrowUpFromLine } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -10,6 +11,7 @@ import {
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { LeaderboardGrossClaimants } from "./creator-cost-leaderboard-claimants";
 
 /**
  * "Creators Costs (today)" dashboard tile — what CREATORS cost the house for
@@ -20,16 +22,18 @@ import { cn } from "@/lib/utils";
  * → rose per CLAUDE.md's House-POV rule. Lines:
  *   • Creator withdrawals — deal-payout vouchers the creator cashed out today.
  *   • Tips                — house-funded creator tips handed to users today.
- *   • Leaderboard spend   — shown BOTH ways: the full 100% prize pool paid
- *                           today, AND our cut (the house-funded share after
- *                           the creator's off-site sponsor %). The TOTAL uses
- *                           the our-cut figure (the real house outflow); the
- *                           100% pool is context.
+ *   • Leaderboard prizes  — the FULL gross of today's leaderboard prizes.
+ *                           Every affiliate leaderboard is a creator-run event
+ *                           (owner, 2026-06-04), so its whole gross is a
+ *                           creator cost counted here — no sponsored-% split.
+ *                           The sibling Reward Costs box counts $0 of it.
  *
- * The card face shows the rose total (using our-cut for leaderboard) + the
- * two largest lines as chips; the Info popover (styled exactly like the
- * Reward Costs / GGR breakdown popover) spells out every line, with the
- * leaderboard row annotated with BOTH the 100% pool and the our-cut share.
+ * The card face shows the rose total + the two largest lines as chips; the
+ * Info popover (styled exactly like the Reward Costs / GGR breakdown popover)
+ * spells out every line. The leaderboard line carries a click-to-reveal
+ * per-claimant drilldown (`LeaderboardGrossClaimants`) showing the full gross
+ * per board + per winner, reconciling to the line by construction. It loads
+ * lazily on click (a server action), never on the dashboard's initial render.
  *
  * All props are serializable primitives — no function props cross the RSC
  * boundary (`AnimatedNumber` takes the `format` string-enum, not a formatter
@@ -38,17 +42,11 @@ import { cn } from "@/lib/utils";
 export function CreatorCostsTodayCard({
   total,
   lines,
-  leaderboardFull,
-  leaderboardOurCut,
   dayLabel,
 }: {
   total: number;
-  /** Itemized lines, largest magnitude first (leaderboard = our-cut). */
+  /** Itemized lines, largest magnitude first (leaderboard = full gross). */
   lines: Array<{ key: string; label: string; amount: number }>;
-  /** Full leaderboard prize pool paid today (100%, context only). */
-  leaderboardFull: number;
-  /** House-funded share of today's leaderboard prizes (after sponsor %). */
-  leaderboardOurCut: number;
   /** YYYY-MM-DD (UTC) — the calendar day this cost covers. */
   dayLabel: string;
 }) {
@@ -64,8 +62,6 @@ export function CreatorCostsTodayCard({
             <CreatorCostsInfoPopover
               total={total}
               lines={lines}
-              leaderboardFull={leaderboardFull}
-              leaderboardOurCut={leaderboardOurCut}
               dayLabel={dayLabel}
             />
           </CardTitle>
@@ -90,23 +86,7 @@ export function CreatorCostsTodayCard({
         {topLines.length > 0 ? (
           <div className="grid grid-cols-2 gap-1.5 -mx-0.5">
             {topLines.map((l) => (
-              <CreatorCostChip
-                key={l.key}
-                label={l.label}
-                value={l.amount}
-                // Leaderboard chip carries BOTH figures on its face: the full
-                // 100% pool (context, muted) and our-cut (the house cost that
-                // sums into the total, rose/primary). Non-leaderboard chips
-                // stay single-value. Only surface the full pool when it's
-                // actually larger than our-cut (a sponsor % is in play) — at
-                // 100% sponsorship the two are equal and the "full /" prefix
-                // would just be noise.
-                fullPool={
-                  l.key === "leaderboard" && leaderboardFull > l.amount
-                    ? leaderboardFull
-                    : null
-                }
-              />
+              <CreatorCostChip key={l.key} label={l.label} value={l.amount} />
             ))}
           </div>
         ) : (
@@ -121,55 +101,18 @@ export function CreatorCostsTodayCard({
 
 /**
  * Small chip showing one creator-cost line on the card face. Always rose —
- * the chip's primary figure is a house cost (money paid out on creator
- * activity) per House-POV. Mirrors the RewardCostChip on the Reward Costs
- * tile.
- *
- * When `fullPool` is supplied (the leaderboard line), the chip renders
- * "full / our-cut" inline: the full 100% pool first (muted, context — money
- * that went to players but whose off-site sponsor share never cost the house)
- * then our cut (rose/primary — the actual house outflow that sums into the
- * box total). A tiny "100% / ours" sub-label disambiguates which is which.
+ * the chip's figure is a house cost (money paid out on creator activity) per
+ * House-POV. Mirrors the RewardCostChip on the Reward Costs tile.
  */
-function CreatorCostChip({
-  label,
-  value,
-  fullPool = null,
-}: {
-  label: string;
-  value: number;
-  /** Full 100% leaderboard pool to show alongside our-cut (context). */
-  fullPool?: number | null;
-}) {
-  const showFull = fullPool != null && fullPool > 0;
+function CreatorCostChip({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-md border border-rose-500/15 bg-background/40 px-2 py-1.5 min-w-0">
       <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
         {label}
-        {showFull && (
-          <span className="ml-1 normal-case tracking-normal text-muted-foreground/70">
-            · 100% / ours
-          </span>
-        )}
       </p>
-      {showFull ? (
-        <p
-          className="text-xs font-semibold tabular-nums truncate"
-          title={`${formatCurrency(fullPool)} full pool at 100% / ${formatCurrency(value)} our cut`}
-        >
-          <span className="text-muted-foreground">
-            {formatCurrency(fullPool)}
-          </span>
-          <span className="mx-0.5 text-muted-foreground/60">/</span>
-          <span className="text-rose-600 dark:text-rose-400">
-            <AnimatedNumber value={value} format="currency" />
-          </span>
-        </p>
-      ) : (
-        <p className="text-xs font-semibold tabular-nums truncate text-rose-600 dark:text-rose-400">
-          <AnimatedNumber value={value} format="currency" />
-        </p>
-      )}
+      <p className="text-xs font-semibold tabular-nums truncate text-rose-600 dark:text-rose-400">
+        <AnimatedNumber value={value} format="currency" />
+      </p>
     </div>
   );
 }
@@ -192,21 +135,17 @@ function lineIcon(key: string) {
  * Info popover styled exactly like the Reward Costs / GGR breakdown button
  * (Popover + render-prop trigger + Info icon + small PopoverContent). Lists
  * every creator-cost line with its magnitude (rose — all are house costs).
- * The leaderboard row is annotated with BOTH the full 100% pool and the
- * our-cut house share, so it's clear the total uses the our-cut figure. The
- * total at the bottom equals creator withdrawals + tips + leaderboard our-cut.
+ * The leaderboard row carries a click-to-reveal per-claimant drilldown (full
+ * gross per board + per winner) that reconciles to its amount. The total at
+ * the bottom equals creator withdrawals + tips + the full leaderboard gross.
  */
 function CreatorCostsInfoPopover({
   total,
   lines,
-  leaderboardFull,
-  leaderboardOurCut,
   dayLabel,
 }: {
   total: number;
   lines: Array<{ key: string; label: string; amount: number }>;
-  leaderboardFull: number;
-  leaderboardOurCut: number;
   dayLabel: string;
 }) {
   return (

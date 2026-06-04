@@ -4,11 +4,7 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
-import {
-  getLeaderboardSponsorshipMap,
-  splitLeaderboardPrizesBySponsorship,
-  type LeaderboardPrizeBucket,
-} from "@/app/(admin)/creators/_queries/leaderboard-sponsorship";
+import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 
 /**
  * "Creators Costs (today)" dashboard box — what CREATORS cost the house for
@@ -44,27 +40,21 @@ import {
  *     — exactly the ENUM-SAFETY pattern documented in `tips-sponsor-spend.ts`.
  *     The box safely reads $0 until the fill system is live.
  *
- *   • Leaderboard spend today — the `affiliate_leaderboard_prize` ledger
- *     payouts for today (the SAME canonical leaderboard-prize type the
- *     Reward Costs box counts as its "leaderboards" line, and the
- *     `@/lib/metrics` reward set classifies as a REWARD_PAYOUT). Surfaced
- *     BOTH ways:
- *       – 100%      = Σ |amount| of today's prize rows — the full pool that
- *                     went out to players today.
- *       – our cut   = the house-funded share after each board's off-site
- *                     sponsor %, using the SAME sponsored-% house-share logic
- *                     as `creators/_queries/leaderboard-cost.ts`: each prize
- *                     row carries `metadata.leaderboard_id`, weighted by the
- *                     admin-set sponsored % from
- *                     `getLeaderboardSponsorshipMap` (admin DB), defaulting to
- *                     100% (full cost) when un-annotated / no leaderboard id —
- *                     identical convention to leaderboard-cost.ts.
+ *   • Leaderboard spend today — the FULL gross of today's
+ *     `affiliate_leaderboard_prize` ledger payouts (`Σ |amount|`). Owner
+ *     decision (2026-06-04): every affiliate leaderboard is a CREATOR-run
+ *     event (see `creators-leaderboards.ts`: "affiliate leaderboards are
+ *     creator-run events"), so its WHOLE gross is a creator cost counted
+ *     here — there is no sponsored-% on-site split on the dashboard anymore.
+ *     The sibling Reward Costs box counts $0 of it, so the two boxes never
+ *     double-count: this box gets the full gross, Reward Costs gets nothing.
+ *     (The separate `/creators` cost KPIs still apply the sponsored-% split
+ *     from their own data source — that is a DIFFERENT surface, untouched.)
  *
  * House-POV per CLAUDE.md: every line is money the house PAID OUT (creators
  * cashing out deal payouts, house-funded tips, house-funded leaderboard
- * prizes) → a house cost → rose in the UI. The TOTAL uses the leaderboard
- * OUR-CUT figure (the actual house outflow), not the 100% pool — the 100%
- * figure is shown alongside for context only.
+ * prizes) → a house cost → rose in the UI. The TOTAL is creator withdrawals
+ * + tips + the FULL leaderboard gross.
  *
  * ─── PERFORMANCE ────────────────────────────────────────────────────────
  *
@@ -72,13 +62,13 @@ import {
  * day string (revalidate 60s, same cadence as the reward-costs tile),
  * wrapped in `safeQuery` at the call site, streamed in its own `<Suspense>`
  * so it never blocks the dashboard shell. Two today-bounded reads (one
- * withdrawal-voucher aggregate, one ledger tips+leaderboard aggregate that
- * also returns the per-board prize split for the sponsorship weighting),
- * then one small admin-DB sponsorship lookup keyed on just today's distinct
- * leaderboard ids. No staff/blacklist scope: these are creator-fill / deal /
- * leaderboard spend legs (the receiving user is whoever the creator
- * paid/sponsored), so the gross house spend is the honest figure — matching
- * how the canonical per-creator + tile definitions sum them.
+ * withdrawal-voucher aggregate, one ledger tips+leaderboard aggregate). No
+ * staff/blacklist scope: these are creator-fill / deal / leaderboard spend
+ * legs (the receiving user is whoever the creator paid/sponsored), so the
+ * gross house spend is the honest figure — matching how the canonical
+ * per-creator + tile definitions sum them. The per-leaderboard / per-claimant
+ * drilldown behind the leaderboard line is a SEPARATE lazy read
+ * (`getLeaderboardGrossClaimants`), fetched only when an admin expands it.
  */
 
 /** One creator-cost line on the box. */
@@ -93,8 +83,8 @@ export type CreatorCostLine = {
 
 export type CreatorCostsToday = {
   /**
-   * Total creator cost today — creator withdrawals + tips + leaderboard
-   * OUR-CUT (the actual house outflow; the 100% pool is context only).
+   * Total creator cost today — creator withdrawals + tips + the FULL
+   * leaderboard gross (every leaderboard prize is a creator-run-event cost).
    */
   total: number;
   /** Itemized lines, largest magnitude first. */
@@ -103,10 +93,8 @@ export type CreatorCostsToday = {
   creatorWithdrawals: number;
   /** House-funded creator tips today (rose). */
   tips: number;
-  /** Full leaderboard prize pool paid out today (100%, context only). */
-  leaderboardFull: number;
-  /** House-funded share of today's leaderboard prizes (after sponsor %). */
-  leaderboardOurCut: number;
+  /** Full leaderboard prize gross paid out today (Σ |amount|, counted 100%). */
+  leaderboardGross: number;
   /** ISO timestamp of the window start (today 00:00 UTC). */
   dayStartIso: string;
 };
@@ -125,14 +113,13 @@ function utcStartOfDay(now: Date): Date {
  * Cached inner computation. Keyed on the UTC day string so it re-fills when
  * the day rolls over. `revalidate: 60` matches the reward-costs tile cadence.
  *
- * Runs three reads:
+ * Runs two reads:
  *   1. Creator deal-payout withdrawals cashed out today (voucher aggregate).
- *   2. Today's creator tips + the per-leaderboard prize split (ledger).
- *   3. Sponsored % for just today's distinct leaderboard ids (admin DB).
+ *   2. Today's creator tips + the full leaderboard prize gross (ledger).
  *
- * The leaderboard OUR-CUT is then derived in JS exactly as
- * leaderboard-cost.ts derives houseCoveredUsd: Σ rowPrize × (pct / 100),
- * pct defaulting to 100 when un-annotated / missing leaderboard id.
+ * The leaderboard figure is the FULL gross (`Σ |amount|`) — every leaderboard
+ * prize is a creator-run-event cost (owner, 2026-06-04), so there is no
+ * sponsored-% weighting on the dashboard anymore.
  */
 const cachedCreatorCostsToday = unstable_cache(
   async (
@@ -141,8 +128,7 @@ const cachedCreatorCostsToday = unstable_cache(
   ): Promise<{
     creatorWithdrawals: number;
     tips: number;
-    leaderboardFull: number;
-    leaderboardOurCut: number;
+    leaderboardGross: number;
   }> => {
     void dayKey; // part of the cache key only
     return withTiming("dashboard.creatorCostsToday", async () => {
@@ -189,65 +175,26 @@ const cachedCreatorCostsToday = unstable_cache(
       );
       const tips = toNumber(tipsRows[0]?.tips);
 
-      // ── Leaderboard prize payouts today, split per leaderboard ───────
-      // affiliate_leaderboard_prize ledger payouts for today (the SAME
-      // canonical leaderboard-prize type the Reward Costs box counts). Each
-      // row carries metadata.leaderboard_id (backend writes it on the prize
-      // event — see users-detail.ts enrichLeaderboardWins). Grouped per
-      // leaderboard id so the sponsored-% house-share weighting can be
-      // applied per board in JS. NULL/missing leaderboard_id rows fold into
-      // a single '(none)' bucket and default to 100% cost (no annotation).
-      type BoardRow = { leaderboard_id: string | null; prize: string };
-      const boardRows = await db.$queryRawUnsafe<BoardRow[]>(
-        `SELECT
-           metadata->>'leaderboard_id' AS leaderboard_id,
-           COALESCE(SUM(ABS(amount::numeric)), 0)::text AS prize
+      // ── Leaderboard prize payouts today (full gross) ─────────────────
+      // affiliate_leaderboard_prize ledger payouts for today, counted at
+      // their FULL gross (Σ |amount|). Owner decision (2026-06-04): every
+      // affiliate leaderboard is a creator-run event, so its whole gross is
+      // a creator cost here — no sponsored-% split on the dashboard. The
+      // sibling Reward Costs box counts $0 of it, so no double-count.
+      type LeaderboardRow = { gross: string };
+      const leaderboardRows = await db.$queryRawUnsafe<LeaderboardRow[]>(
+        `SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS gross
          FROM ledger_transactions
          WHERE status = 'completed'
            AND type::text = 'affiliate_leaderboard_prize'
-           AND created_at >= ${since}
-         GROUP BY metadata->>'leaderboard_id'`,
+           AND created_at >= ${since}`,
       );
+      const leaderboardGross = toNumber(leaderboardRows[0]?.gross);
 
-      // Prize buckets (one per leaderboard id, '(none)' folded to null) for
-      // the shared sponsored-% split helper.
-      const buckets: LeaderboardPrizeBucket[] = boardRows.map((r: BoardRow) => ({
-        leaderboardId:
-          typeof r.leaderboard_id === "string" && r.leaderboard_id.length > 0
-            ? r.leaderboard_id
-            : null,
-        prize: toNumber(r.prize),
-      }));
-
-      // Sponsored % for just today's distinct leaderboard ids (admin DB).
-      // Resilient: if the admin-DB lookup blips, treat every board as 100%
-      // (our-cut collapses to the full pool) rather than blanking the line —
-      // same fallback posture as leaderboard-cost.ts.
-      const ids = buckets
-        .map((b) => b.leaderboardId)
-        .filter((id): id is string => id != null);
-      let sponsorship: Map<string, number>;
-      try {
-        sponsorship = await getLeaderboardSponsorshipMap(ids);
-      } catch (e) {
-        console.error(
-          "[creator-costs-today] sponsorship lookup failed (treating all as 100%):",
-          e,
-        );
-        sponsorship = new Map();
-      }
-
-      // OUR-CUT = Σ rowPrize × (pct / 100), pct defaulting to 100 when the
-      // board is un-annotated or the row has no leaderboard id — the SAME
-      // shared sponsored-% split the Reward Costs box uses for its on-site
-      // remainder, so the two boxes reconcile (ourCut + onSite === full).
-      const { full: leaderboardFull, ourCut: leaderboardOurCut } =
-        splitLeaderboardPrizesBySponsorship(buckets, sponsorship);
-
-      return { creatorWithdrawals, tips, leaderboardFull, leaderboardOurCut };
+      return { creatorWithdrawals, tips, leaderboardGross };
     });
   },
-  ["dashboard-creator-costs-today-v1"],
+  ["dashboard-creator-costs-today-v2"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -255,11 +202,9 @@ const cachedCreatorCostsToday = unstable_cache(
  * Creator costs for the current calendar day (since 00:00 UTC). Resolves the
  * cached today-windowed aggregate and assembles the line roster + total.
  *
- * The TOTAL is creator withdrawals + tips + leaderboard OUR-CUT — the actual
- * house outflow. The leaderboard 100% pool is returned as `leaderboardFull`
- * for the box to show alongside the our-cut figure (context, not summed into
- * the total — summing the full pool would double-count the sponsor's off-site
- * share that never costs the house).
+ * The TOTAL is creator withdrawals + tips + the FULL leaderboard gross —
+ * every leaderboard prize is a creator-run-event cost counted in full here
+ * (owner, 2026-06-04). No sponsored-% weighting on the dashboard.
  */
 export async function getCreatorCostsToday(): Promise<CreatorCostsToday> {
   return withTiming("dashboard.creatorCostsToday.entry", async () => {
@@ -269,12 +214,11 @@ export async function getCreatorCostsToday(): Promise<CreatorCostsToday> {
     // YYYY-MM-DD in UTC — stable cache key for "today" that rolls at 00:00.
     const dayKey = sinceIso.slice(0, 10);
 
-    const { creatorWithdrawals, tips, leaderboardFull, leaderboardOurCut } =
+    const { creatorWithdrawals, tips, leaderboardGross } =
       await cachedCreatorCostsToday(dayKey, sinceIso);
 
-    // Lines for the breakdown popover. The leaderboard line carries the
-    // OUR-CUT magnitude (the figure that sums into the total); the box's
-    // popover annotates it with the 100% pool. Keep every line — even $0
+    // Lines for the breakdown popover. The leaderboard line carries the FULL
+    // gross (the figure that sums into the total). Keep every line — even $0
     // ones — so the breakdown always shows the full roster; the box filters
     // to non-zero for the compact face.
     const lines: CreatorCostLine[] = [
@@ -286,21 +230,184 @@ export async function getCreatorCostsToday(): Promise<CreatorCostsToday> {
       { key: "tips", label: "Tips", amount: tips },
       {
         key: "leaderboard",
-        label: "Leaderboard spend (our cut)",
-        amount: leaderboardOurCut,
+        label: "Leaderboard prizes",
+        amount: leaderboardGross,
       },
     ].sort((a, b) => b.amount - a.amount);
 
-    const total = creatorWithdrawals + tips + leaderboardOurCut;
+    const total = creatorWithdrawals + tips + leaderboardGross;
 
     return {
       total,
       lines,
       creatorWithdrawals,
       tips,
-      leaderboardFull,
-      leaderboardOurCut,
+      leaderboardGross,
       dayStartIso: sinceIso,
     };
   });
+}
+
+// ─── Leaderboard gross claimant drilldown (lazy, click-to-load) ────────────
+
+/** One per-leaderboard group inside the gross claimant drilldown. */
+export type LeaderboardGrossBoard = {
+  /** Backend leaderboard id, or null for prize rows with no `leaderboard_id`. */
+  leaderboardId: string | null;
+  /** Resolved board title (backend), or null when un-titled / un-resolvable. */
+  title: string | null;
+  /** Σ |amount| of this board's prize rows today (full gross pool). */
+  gross: number;
+  /** Per-claimant rows, gross DESC (the biggest winner first). */
+  claimants: LeaderboardGrossClaimant[];
+};
+
+/** One claimant's prize within a leaderboard group. */
+export type LeaderboardGrossClaimant = {
+  userId: string;
+  username: string | null;
+  /** This claimant's gross prize on this board today (Σ |amount|). */
+  gross: number;
+};
+
+export type LeaderboardGrossBreakdown = {
+  /** Per-board groups, largest gross first. */
+  boards: LeaderboardGrossBoard[];
+  /** Σ of every board's gross — reconciles to the card's leaderboard line. */
+  totalGross: number;
+  /** ISO window start (today 00:00 UTC) — the same boundary the card covers. */
+  dayStartIso: string;
+};
+
+/**
+ * Per-claimant breakdown behind the Creators Costs card's "Leaderboard
+ * prizes" line — the click-to-load drilldown that shows WHO each leaderboard
+ * prize was paid to, grouped by leaderboard, at FULL gross.
+ *
+ * ─── WHY IT RECONCILES ──────────────────────────────────────────────────
+ *
+ * Every leaderboard prize is counted in full on this box (owner, 2026-06-04),
+ * so there is no sponsored-% carve-out: each claimant's gross is shown as-is,
+ * `Σ_claimant gross = board.gross`, and `Σ_board gross` = the card's
+ * leaderboard line exactly. No derived remainder, no over/under-statement.
+ *
+ * ─── SCOPE / WINDOW (identical to the card's leaderboard line) ──────────
+ *
+ * SAME un-scoped gross + SAME window [today 00:00 UTC, now) as the card's
+ * leaderboard line (`affiliate_leaderboard_prize`, status='completed', no
+ * staff/blacklist filter — matching how the line total sums it), recomputed
+ * from a live `now` here (the window is not passed in from the client — only
+ * trusted server time defines it, so a tampered value can't widen the scan).
+ *
+ * ─── PERFORMANCE (lazy) ─────────────────────────────────────────────────
+ *
+ * NOT cached and NOT called on the dashboard's initial render — it runs ONLY
+ * when an admin clicks the line to expand it (a server action fires this),
+ * per CLAUDE.md's active-timeframe / lazy rule. Today-only window, one
+ * grouped ledger read + a bulk best-effort title resolve (each distinct
+ * board fetched at most once). Read-only against the Main DB.
+ */
+export async function getLeaderboardGrossClaimants(): Promise<LeaderboardGrossBreakdown> {
+  return withTiming(
+    "dashboard.creatorCostsToday.leaderboardClaimants",
+    async () => {
+      const now = new Date();
+      const since = utcStartOfDay(now);
+      const sinceIso = since.toISOString();
+
+      const db = await getDb();
+      const sinceSql = `'${sinceIso}'::timestamptz`;
+
+      // Per (leaderboard, claimant) gross prize today, over the SAME un-scoped
+      // window as the card's leaderboard line. NULL/missing leaderboard_id
+      // folds into a single null-board bucket.
+      type ClaimantRow = {
+        leaderboard_id: string | null;
+        user_id: string;
+        username: string | null;
+        gross: string;
+      };
+      const rows = await db.$queryRawUnsafe<ClaimantRow[]>(
+        `SELECT
+           lt.metadata->>'leaderboard_id' AS leaderboard_id,
+           lt.user_id AS user_id,
+           u.username AS username,
+           COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS gross
+         FROM ledger_transactions lt
+         JOIN "user" u ON u.id = lt.user_id
+         WHERE lt.status = 'completed'
+           AND lt.type::text = 'affiliate_leaderboard_prize'
+           AND lt.created_at >= ${sinceSql}
+         GROUP BY lt.metadata->>'leaderboard_id', lt.user_id, u.username`,
+      );
+
+      // Distinct board ids for the title resolve.
+      const boardIds = Array.from(
+        new Set(
+          rows
+            .map((r) => r.leaderboard_id)
+            .filter(
+              (id): id is string => typeof id === "string" && id.length > 0,
+            ),
+        ),
+      );
+
+      // Resolve board titles in parallel (best-effort, mirrors
+      // users-detail.ts enrichLeaderboardWins): a 404 / failure only blanks
+      // that board's title — it never throws or blocks the drilldown.
+      const titleById = new Map<string, string>();
+      if (boardIds.length > 0) {
+        const settled = await Promise.allSettled(
+          boardIds.map((id) =>
+            affiliateLeaderboardsApi
+              .get(id)
+              .then((r) => ({ id, title: r.title })),
+          ),
+        );
+        for (const s of settled) {
+          if (s.status === "fulfilled") titleById.set(s.value.id, s.value.title);
+        }
+      }
+
+      // Group rows by board.
+      const byBoard = new Map<string, LeaderboardGrossBoard>();
+      const boardKey = (id: string | null) => id ?? " none";
+      for (const r of rows) {
+        const id =
+          typeof r.leaderboard_id === "string" && r.leaderboard_id.length > 0
+            ? r.leaderboard_id
+            : null;
+        const gross = toNumber(r.gross);
+
+        const key = boardKey(id);
+        let board = byBoard.get(key);
+        if (!board) {
+          board = {
+            leaderboardId: id,
+            title: id != null ? titleById.get(id) ?? null : null,
+            gross: 0,
+            claimants: [],
+          };
+          byBoard.set(key, board);
+        }
+        board.gross += gross;
+        board.claimants.push({
+          userId: r.user_id,
+          username: r.username,
+          gross,
+        });
+      }
+
+      const boards = Array.from(byBoard.values());
+      for (const b of boards) {
+        b.claimants.sort((a, c) => c.gross - a.gross);
+      }
+      // Biggest gross board first (matches the card's largest-first ordering).
+      boards.sort((a, b) => b.gross - a.gross);
+
+      const totalGross = boards.reduce((sum, b) => sum + b.gross, 0);
+
+      return { boards, totalGross, dayStartIso: sinceIso };
+    },
+  );
 }

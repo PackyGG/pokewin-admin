@@ -5,38 +5,39 @@ import Link from "next/link";
 import { ChevronDown, Loader2, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
-import { fetchLeaderboardOnSiteClaimants } from "./reward-cost-leaderboard-actions";
+import { fetchLeaderboardGrossClaimants } from "./creator-cost-leaderboard-actions";
 import type {
-  LeaderboardOnSiteBoard,
-  LeaderboardOnSiteBreakdown,
-} from "@/lib/queries/dashboard-reward-costs-today";
+  LeaderboardGrossBoard,
+  LeaderboardGrossBreakdown,
+} from "@/lib/queries/dashboard-creator-costs-today";
 
 /**
- * Inline expandable drilldown under the Reward Costs popover's "Leaderboard
- * prizes (on-site)" line. Clicking it loads — lazily, on first open — the
- * per-claimant breakdown of the on-site slice, grouped by leaderboard, and
- * toggles open. Mirrors the proven GGR "Show top contributors" expander
+ * Inline expandable drilldown under the Creators Costs popover's "Leaderboard
+ * prizes" line. Clicking it loads — lazily, on first open — the per-claimant
+ * breakdown of today's leaderboard prizes, grouped by leaderboard, and toggles
+ * open. Mirrors the proven GGR "Show top contributors" expander
  * (`revenue-stat-card.tsx`): a `useTransition` + `useState` fetch that fires
- * the server action the FIRST time it opens, caches the result in local
- * state, and reuses it on re-toggle (no re-fetch). The dashboard's initial
- * render never calls the action — the data loads strictly on the click that
- * expands this (CLAUDE.md active-timeframe / lazy rule).
+ * the server action the FIRST time it opens, caches the result in local state,
+ * and reuses it on re-toggle (no re-fetch). The dashboard's initial render
+ * never calls the action — the data loads strictly on the click that expands
+ * this (CLAUDE.md active-timeframe / lazy rule).
  *
- * Every on-site amount is money the house paid out to a user → a house cost
- * → rose per CLAUDE.md's House-POV rule. The per-claimant on-site figures
- * reconcile to the line above (`onSiteTotal`) by construction: each row is
- * carved by its board's sponsored % exactly as the line total is, so the
- * board totals and the grand total sum back to the figure on the card.
+ * Every leaderboard prize is a creator-run-event cost counted in FULL on this
+ * box (owner, 2026-06-04), so each amount shown is the user's full gross win =
+ * money the house paid out → a house cost → rose per CLAUDE.md's House-POV
+ * rule. The per-claimant gross figures reconcile to the line above
+ * (`grossTotal`) by construction: there is no carve-out, so the board totals
+ * and the grand total sum straight back to the figure on the card.
  */
-export function LeaderboardOnSiteClaimants({
-  onSiteTotal,
+export function LeaderboardGrossClaimants({
+  grossTotal,
 }: {
-  /** The card's "Leaderboard prizes (on-site)" amount — what this reconciles to. */
-  onSiteTotal: number;
+  /** The card's "Leaderboard prizes" amount — what this reconciles to. */
+  grossTotal: number;
 }) {
   const [state, setState] = useState<{
     open: boolean;
-    data: LeaderboardOnSiteBreakdown | null;
+    data: LeaderboardGrossBreakdown | null;
     error: string | null;
   }>({ open: false, data: null, error: null });
   const [isPending, startTransition] = useTransition();
@@ -54,7 +55,7 @@ export function LeaderboardOnSiteClaimants({
     }
     startTransition(async () => {
       try {
-        const data = await fetchLeaderboardOnSiteClaimants();
+        const data = await fetchLeaderboardGrossClaimants();
         setState({ open: true, data, error: null });
       } catch (err) {
         setState({
@@ -74,10 +75,10 @@ export function LeaderboardOnSiteClaimants({
         onClick={handleToggle}
         disabled={isPending}
         aria-expanded={state.open}
-        title={`On-site leaderboard slice today: ${formatCurrency(onSiteTotal)}`}
+        title={`Leaderboard prizes today: ${formatCurrency(grossTotal)}`}
         className="flex w-full items-center justify-between rounded px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-60"
       >
-        <span>{state.open ? "Hide" : "Show"} who won (on-site slice)</span>
+        <span>{state.open ? "Hide" : "Show"} who won</span>
         {isPending ? (
           <Loader2 className="size-3 motion-safe:animate-spin" />
         ) : (
@@ -112,14 +113,14 @@ export function LeaderboardOnSiteClaimants({
                   board={board}
                 />
               ))}
-              {/* Reconciliation footer: the per-claimant on-site amounts sum
-                  to the line on the card above. */}
+              {/* Reconciliation footer: the per-claimant gross amounts sum to
+                  the line on the card above. */}
               <div className="flex items-center justify-between border-t border-border/60 px-1.5 pt-1.5 text-[10px]">
                 <span className="font-semibold uppercase tracking-wider text-muted-foreground">
-                  Total on-site
+                  Total leaderboard
                 </span>
                 <span className="font-bold tabular-nums text-rose-600 dark:text-rose-400">
-                  −{formatCurrency(state.data.totalOnSite)}
+                  −{formatCurrency(state.data.totalGross)}
                 </span>
               </div>
             </div>
@@ -131,13 +132,12 @@ export function LeaderboardOnSiteClaimants({
 }
 
 /**
- * One leaderboard's group: a header (title + sponsored % + the board's
- * on-site slice) and the per-claimant rows beneath it. The header shows the
- * sponsored % so the on-site/creator split is legible — a 100%-sponsored
- * board contributes $0 here (its whole prize is the creator's our-cut share
- * in the Creators Costs box) and reads as such.
+ * One leaderboard's group: a header (title + the board's gross pool) and the
+ * per-claimant rows beneath it. Every prize on this box is counted in full,
+ * so the board gross is simply the sum of its claimants' wins — no sponsored-%
+ * or our-cut split (that lives on the separate /creators surface).
  */
-function BoardGroup({ board }: { board: LeaderboardOnSiteBoard }) {
+function BoardGroup({ board }: { board: LeaderboardGrossBoard }) {
   const title = board.title ?? "Leaderboard win";
   const href = board.leaderboardId
     ? `/creators/leaderboards/${board.leaderboardId}`
@@ -163,25 +163,24 @@ function BoardGroup({ board }: { board: LeaderboardOnSiteBoard }) {
               </span>
             )}
             <span className="block truncate text-[9px] text-muted-foreground">
-              {board.sponsoredPct}% sponsored · gross{" "}
-              {formatCurrency(board.gross)} · our cut{" "}
-              {formatCurrency(board.ourCut)}
+              {board.claimants.length}{" "}
+              {board.claimants.length === 1 ? "winner" : "winners"}
             </span>
           </span>
         </span>
         <span className="shrink-0 text-right">
           <span className="block text-[9px] uppercase tracking-wider text-muted-foreground">
-            on-site
+            gross
           </span>
           <span
             className={cn(
               "block text-[11px] font-semibold tabular-nums",
-              board.onSite > 0
+              board.gross > 0
                 ? "text-rose-600 dark:text-rose-400"
                 : "text-muted-foreground",
             )}
           >
-            −{formatCurrency(board.onSite)}
+            −{formatCurrency(board.gross)}
           </span>
         </span>
       </div>
@@ -197,23 +196,17 @@ function BoardGroup({ board }: { board: LeaderboardOnSiteBoard }) {
                 <span className="min-w-0 truncate font-medium text-foreground/90">
                   {username}
                 </span>
-                <span className="flex shrink-0 items-center gap-2 tabular-nums">
-                  {/* Gross prize this claimant won on this board (context). */}
-                  <span className="text-muted-foreground/70">
-                    won {formatCurrency(c.gross)}
-                  </span>
-                  {/* The on-site slice attributed to this claimant — rose
-                      (house cost). Sums to the board + grand totals. */}
-                  <span
-                    className={cn(
-                      "min-w-[56px] text-right font-semibold",
-                      c.onSite > 0
-                        ? "text-rose-600 dark:text-rose-400"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    −{formatCurrency(c.onSite)}
-                  </span>
+                {/* The gross prize this claimant won — rose (house cost).
+                    Sums to the board + grand totals. */}
+                <span
+                  className={cn(
+                    "min-w-[56px] shrink-0 text-right font-semibold tabular-nums",
+                    c.gross > 0
+                      ? "text-rose-600 dark:text-rose-400"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  −{formatCurrency(c.gross)}
                 </span>
               </Link>
             </li>

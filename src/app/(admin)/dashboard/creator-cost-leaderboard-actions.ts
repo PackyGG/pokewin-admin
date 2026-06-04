@@ -2,13 +2,13 @@
 
 import { requirePageAccess } from "@/lib/dal";
 import {
-  getLeaderboardOnSiteClaimants,
-  type LeaderboardOnSiteBreakdown,
-} from "@/lib/queries/dashboard-reward-costs-today";
+  getLeaderboardGrossClaimants,
+  type LeaderboardGrossBreakdown,
+} from "@/lib/queries/dashboard-creator-costs-today";
 
 /**
- * Server action backing the click-to-reveal drilldown on the Reward Costs
- * Today card's "Leaderboard prizes (on-site)" line.
+ * Server action backing the click-to-reveal drilldown on the Creators Costs
+ * Today card's "Leaderboard prizes" line.
  *
  * The card face + breakdown popover render up-front from the cached
  * today-windowed aggregate, but the per-claimant leaderboard breakdown is
@@ -23,10 +23,11 @@ import {
  * only admins permitted on the dashboard can drill the line. No client input
  * is taken — the window (today 00:00 UTC → now) is derived from trusted
  * server time inside the query, so nothing tampered can widen the scan. The
- * returned per-claimant on-site amounts reconcile to the card's line by
- * construction (the same per-board sponsored-% carve-out is applied per row).
+ * returned per-claimant gross amounts reconcile to the card's leaderboard
+ * line by construction (the line counts every prize at full gross, so each
+ * claimant's gross sums straight back to it).
  */
-export async function fetchLeaderboardOnSiteClaimants(): Promise<LeaderboardOnSiteBreakdown> {
+export async function fetchLeaderboardGrossClaimants(): Promise<LeaderboardGrossBreakdown> {
   await requirePageAccess("/dashboard");
-  return getLeaderboardOnSiteClaimants();
+  return getLeaderboardGrossClaimants();
 }

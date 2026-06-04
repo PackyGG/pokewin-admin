@@ -1,7 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { Info, Gift, CloudRain, Trophy } from "lucide-react";
+import { Info, Gift, CloudRain } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Popover,
@@ -11,7 +10,6 @@ import {
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import { LeaderboardOnSiteClaimants } from "./reward-cost-leaderboard-claimants";
 
 /**
  * "Reward Costs (today)" dashboard tile — what the house SPENT on rewards
@@ -24,16 +22,17 @@ import { LeaderboardOnSiteClaimants } from "./reward-cost-leaderboard-claimants"
  * chips; the Info popover (styled exactly like the P&L Today / GGR
  * breakdown popover) spells out every line so the owner sees where it went
  * — deposit bonuses, daily/free packs, signup/balance rewards, rakeback,
- * promo/gift cards, race prizes, on-site leaderboard prizes, manual
- * vouchers, promo balance credits, and the flat rain line ($2/hr).
+ * promo/gift cards, race prizes, manual vouchers, promo balance credits,
+ * and the flat rain line ($2/hr).
  *
  * Rain is the OWNER-CONFIRMED flat model: $2 × hours elapsed since UTC
  * midnight ("we don't pay anything else for it") — NOT the summed rain
  * payouts. Affiliate commissions are EXCLUDED entirely. Leaderboard prizes
- * appear here at their ON-SITE (un-sponsored) slice only — the creator
- * (sponsored-% "our cut") share of every leaderboard prize is counted in
- * the sibling Creators Costs box, so the two boxes never double-count the
- * same prize.
+ * are ALSO excluded entirely (owner decision, 2026-06-04): every
+ * `affiliate_leaderboard_prize` is a creator-run-event cost counted in FULL
+ * by the sibling Creators Costs box, so $0 of it lands here — there is no
+ * leaderboard line on this card, and its per-claimant drilldown now lives
+ * on the Creators Costs card.
  *
  * All props are serializable primitives — no function props cross the RSC
  * boundary (`AnimatedNumber` takes the `format` string-enum, not a
@@ -128,16 +127,10 @@ function RewardCostChip({ label, value }: { label: string; value: number }) {
  * with the rain line annotated as the flat $2/hr model and the total at the
  * bottom (the lines sum to the total).
  *
- * The Leaderboard-prizes row carries the ON-SITE (un-sponsored) slice of
- * today's leaderboard prizes only — the creator (sponsored-% "our cut")
- * share is counted in the sibling Creators Costs box. The line is a derived
- * sponsored-% remainder (not a raw sum of per-user prizes), so its
- * click-to-reveal drilldown (`LeaderboardOnSiteClaimants`) does NOT show a
- * gross "who won" list — that would over-state the slice by the creator
- * share. Instead it applies the SAME per-board sponsored-% carve-out the
- * line total uses to EACH claimant row, so every row, board total and grand
- * total reconcile to this slice by construction. It loads lazily on click
- * (a server action), never on the dashboard's initial render.
+ * Leaderboard prizes are NOT a line here (owner decision, 2026-06-04) — the
+ * full gross of every `affiliate_leaderboard_prize` is a creator-run-event
+ * cost counted in the sibling Creators Costs box, which now hosts the
+ * per-claimant leaderboard drilldown.
  */
 function RewardCostsInfoPopover({
   total,
@@ -183,30 +176,16 @@ function RewardCostsInfoPopover({
           </p>
         </div>
 
-        {/* Line rows — each shows its magnitude, all rose (house cost). The
-            Leaderboard-prizes row is the on-site (un-sponsored) slice only
-            (the creator our-cut share is in the Creators Costs box) and
-            carries a click-to-reveal per-claimant drilldown that reconciles
-            to its amount. */}
+        {/* Line rows — each shows its magnitude, all rose (house cost). */}
         <ul className="space-y-0.5">
-          {lines.map((l) => {
-            const isLeaderboard = l.key === "leaderboards";
-            return (
-              <RewardCostRow
-                key={l.key}
-                label={l.label}
-                amount={l.amount}
-                isRain={l.key === "rain"}
-                isLeaderboard={isLeaderboard}
-              >
-                {/* Drilldown lives only on the leaderboard line, and only
-                    when there's an on-site slice to break down. */}
-                {isLeaderboard && l.amount > 0 && (
-                  <LeaderboardOnSiteClaimants onSiteTotal={l.amount} />
-                )}
-              </RewardCostRow>
-            );
-          })}
+          {lines.map((l) => (
+            <RewardCostRow
+              key={l.key}
+              label={l.label}
+              amount={l.amount}
+              isRain={l.key === "rain"}
+            />
+          ))}
         </ul>
 
         {/* Bottom math: the lines sum to the total. Rose — a house cost. */}
@@ -229,62 +208,45 @@ function RewardCostsInfoPopover({
  * One line row inside the reward-cost popover. The icon chip is a neutral
  * muted tint (informational); the amount carries the rose House-POV cost
  * color. The rain line gets a distinct icon + the $2/hr annotation so it's
- * clear it's the flat model, not summed rain payouts. The leaderboard line
- * gets the Trophy icon + a sub-note that it's the on-site slice only (the
- * creator share is in the Creators Costs box).
- *
- * `children`, when present, render directly under the row — used by the
- * leaderboard line to host its click-to-reveal per-claimant drilldown.
+ * clear it's the flat model, not summed rain payouts.
  */
 function RewardCostRow({
   label,
   amount,
   isRain,
-  isLeaderboard,
-  children,
 }: {
   label: string;
   amount: number;
   isRain: boolean;
-  isLeaderboard: boolean;
-  children?: ReactNode;
 }) {
-  const Icon = isRain ? CloudRain : isLeaderboard ? Trophy : Gift;
+  const Icon = isRain ? CloudRain : Gift;
   return (
-    <li className="rounded text-[11px]">
-      <div className="flex items-center justify-between gap-2 rounded px-1 py-0.5 hover:bg-muted/40">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
-            <Icon className="size-3" />
+    <li className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/40">
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
+          <Icon className="size-3" />
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate font-medium text-foreground/90">
+            {label}
           </span>
-          <span className="min-w-0">
-            <span className="block truncate font-medium text-foreground/90">
-              {label}
+          {isRain && (
+            <span className="block truncate text-[10px] text-muted-foreground">
+              Flat $2 per hour
             </span>
-            {isRain && (
-              <span className="block truncate text-[10px] text-muted-foreground">
-                Flat $2 per hour
-              </span>
-            )}
-            {isLeaderboard && (
-              <span className="block truncate text-[10px] text-muted-foreground">
-                On-site slice · creator share in Creators Costs
-              </span>
-            )}
-          </span>
-        </span>
-        <span
-          className={cn(
-            "shrink-0 font-semibold tabular-nums",
-            amount > 0
-              ? "text-rose-600 dark:text-rose-400"
-              : "text-muted-foreground",
           )}
-        >
-          −{formatCurrency(amount)}
         </span>
-      </div>
-      {children}
+      </span>
+      <span
+        className={cn(
+          "shrink-0 font-semibold tabular-nums",
+          amount > 0
+            ? "text-rose-600 dark:text-rose-400"
+            : "text-muted-foreground",
+        )}
+      >
+        −{formatCurrency(amount)}
+      </span>
     </li>
   );
 }
