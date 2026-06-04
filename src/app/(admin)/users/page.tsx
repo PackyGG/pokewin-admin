@@ -23,6 +23,8 @@ import {
 import { FadeIn } from "@/components/fade-in";
 import { formatNumber } from "@/lib/utils/format";
 import { ExportUsersButton } from "./export-dialog";
+import { ExportAllUsersButton } from "./export-all-users-button";
+import { canExportAllUsers } from "@/lib/users-export/motha-gate";
 import { SortByNetHoldingsButton } from "./sort-net-holdings-button";
 import {
   SortByPnlLosersButton,
@@ -82,6 +84,14 @@ export default async function UsersPage({
       pages.includes("/users/deleted") &&
       hasCapability(pages, "__can_delete_user");
   }
+
+  // The "Export all" button (raw 3-column dump of EVERY user) is
+  // restricted to the single `motha` admin — derived server-side here
+  // so the island only renders for motha. This is defense-in-depth
+  // only: the exportAllUsersCsv action re-verifies motha independently
+  // and is the real gate. Distinct from the capability-gated filtered
+  // ExportUsersButton dialog, which any admin can use.
+  const canExportAll = await canExportAllUsers(session.userId);
 
   // `getDistinctUserCountries()` used to be eager-fetched here for the
   // Export dialog's country filter. It scanned every user row to
@@ -228,6 +238,7 @@ export default async function UsersPage({
               <SortByPnlWinnersButton />
               <SortByNetHoldingsButton />
               <ExportUsersButton />
+              {canExportAll && <ExportAllUsersButton />}
             </DataTableToolbar>
           </Suspense>
           {/* Recoverable empty state — the list query degraded (timeout

@@ -9,6 +9,11 @@ import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { getDistinctUserCountries } from "@/lib/queries/users-export";
+import { requireUsersExportAdmin } from "@/lib/users-export/motha-gate";
+import {
+  getAllUsersForExport,
+  allUsersToCsv,
+} from "@/lib/users-export/all-users-csv";
 import {
   buildUserSnapshot,
   snapshotToJsonValue,
@@ -307,6 +312,42 @@ export async function deleteUser(userId: string, totpCode: string) {
 
   revalidatePath("/users");
   revalidatePath("/users/deleted");
+}
+
+/**
+ * motha-ONLY "export all users" CSV. Distinct from the capability-gated
+ * `/api/users/export` dialog (rich filters, any admin): this is a
+ * one-click raw dump of EVERY user as exactly three columns — email,
+ * username, deposit amount — restricted to the single `motha` admin.
+ *
+ * `requireUsersExportAdmin()` is the real gate: it re-reads the live
+ * username from the DB and THROWS for anyone who isn't motha, so a
+ * non-motha admin/support/marketing/creator gets the error, never the
+ * data. Hiding the button client-side is defense-in-depth only.
+ *
+ * Returns the CSV string + a filename for the client to Blob + download
+ * (the house "action returns string → client triggers download"
+ * pattern). Audited via `users_all_export` with the ROW COUNT ONLY —
+ * never the emails/amounts themselves (no row PII in the audit log,
+ * per CLAUDE.md).
+ */
+export async function exportAllUsersCsv(): Promise<{
+  csv: string;
+  filename: string;
+}> {
+  const session = await requireUsersExportAdmin();
+
+  const rows = await getAllUsersForExport();
+  const csv = allUsersToCsv(rows);
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "users_all_export",
+    metadata: { rows: rows.length },
+  });
+
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  return { csv, filename: `all-users-${ts}.csv` };
 }
 
 export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
