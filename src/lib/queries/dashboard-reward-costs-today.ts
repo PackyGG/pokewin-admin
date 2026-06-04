@@ -14,6 +14,7 @@ import {
   splitLeaderboardPrizesBySponsorship,
   type LeaderboardPrizeBucket,
 } from "@/app/(admin)/creators/_queries/leaderboard-sponsorship";
+import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 
 /**
  * "Reward Costs (today)" dashboard box — what the house spent on REWARDS
@@ -414,5 +415,220 @@ export async function getRewardCostsToday(): Promise<RewardCostsToday> {
       hoursElapsed,
       rainCost,
     };
+  });
+}
+
+// ─── Leaderboard on-site claimant drilldown (lazy, click-to-load) ──────────
+
+/** One per-leaderboard group inside the on-site claimant drilldown. */
+export type LeaderboardOnSiteBoard = {
+  /** Backend leaderboard id, or null for prize rows with no `leaderboard_id`. */
+  leaderboardId: string | null;
+  /** Resolved board title (backend), or null when un-titled / un-resolvable. */
+  title: string | null;
+  /** Admin-set sponsored % for this board (0–100); 100 when un-annotated. */
+  sponsoredPct: number;
+  /** Σ |amount| of this board's prize rows today (full pool that paid out). */
+  gross: number;
+  /** Creator (our-cut) share counted in the Creators Costs box = gross × pct%. */
+  ourCut: number;
+  /** On-site (un-sponsored) slice counted in THIS box = gross − ourCut. */
+  onSite: number;
+  /** Per-claimant rows, on-site amount DESC (the loudest on-site row first). */
+  claimants: LeaderboardOnSiteClaimant[];
+};
+
+/** One claimant's prize within a leaderboard group, carved to its on-site slice. */
+export type LeaderboardOnSiteClaimant = {
+  userId: string;
+  username: string | null;
+  /** This claimant's gross prize on this board today (Σ |amount|). */
+  gross: number;
+  /**
+   * This claimant's ON-SITE slice = `gross × (1 − sponsoredPct/100)`. The
+   * sum of every claimant's `onSite` across every board equals the card's
+   * "Leaderboard prizes (on-site)" line exactly — the carve-out is applied
+   * per row with the SAME per-board sponsored % the line total uses.
+   */
+  onSite: number;
+};
+
+export type LeaderboardOnSiteBreakdown = {
+  /** Per-board groups, largest on-site slice first. */
+  boards: LeaderboardOnSiteBoard[];
+  /** Σ of every board's on-site slice — reconciles to the card's line. */
+  totalOnSite: number;
+  /** ISO window start (today 00:00 UTC) — the same boundary the card covers. */
+  dayStartIso: string;
+};
+
+/**
+ * Per-claimant breakdown behind the card's "Leaderboard prizes (on-site)"
+ * line — the click-to-load drilldown that shows WHO the on-site slice was
+ * paid to, grouped by leaderboard.
+ *
+ * ─── WHY IT RECONCILES (the old "can't drill" objection, resolved) ──────
+ *
+ * The on-site line is a derived sponsored-% remainder, not a raw sum of
+ * per-user prizes — a naive "who won" list (gross prizes) would over-state
+ * it by the creator (our-cut) share. This query avoids that by applying the
+ * SAME per-board carve-out the line total uses to EACH claimant row:
+ *
+ *   claimant.onSite = claimant.gross × (1 − sponsoredPct(board) / 100)
+ *
+ * Since `Σ_claimant gross = board.gross` and the factor is constant within a
+ * board, `Σ_claimant onSite = board.gross × (1 − pct/100) = board.onSite`,
+ * and `Σ_board onSite` = the card's on-site line. So every row, every board
+ * total, and the grand total reconcile to the figure on the card face by
+ * construction — the same identity `splitLeaderboardPrizesBySponsorship`
+ * guarantees (`onSite + ourCut === gross`), just resolved per claimant.
+ *
+ * ─── SCOPE / WINDOW (identical to the card) ─────────────────────────────
+ *
+ * SAME canonical metric scope (`getMetricsScope`: staff + blacklist dropped,
+ * creators dropped wholesale, creator-on-session rows excluded) and SAME
+ * window [today 00:00 UTC, now) as the card's leaderboard line, recomputed
+ * from a live `now` here (the window is not passed in from the client — only
+ * trusted server time defines it, so a tampered value can't widen the scan).
+ *
+ * ─── PERFORMANCE (lazy) ─────────────────────────────────────────────────
+ *
+ * NOT cached and NOT called on the dashboard's initial render — it runs ONLY
+ * when an admin clicks the line to expand it (a server action fires this),
+ * per CLAUDE.md's active-timeframe / lazy rule. Today-only window, one
+ * grouped ledger read + one small admin-DB sponsorship lookup + a bulk
+ * best-effort title resolve (each distinct board fetched at most once).
+ * Read-only against the Main DB.
+ */
+export async function getLeaderboardOnSiteClaimants(): Promise<LeaderboardOnSiteBreakdown> {
+  return withTiming("dashboard.rewardCostsToday.leaderboardClaimants", async () => {
+    const now = new Date();
+    const since = utcStartOfDay(now);
+    const sinceIso = since.toISOString();
+
+    const db = await getDb();
+    const sinceSql = `'${sinceIso}'::timestamptz`;
+    const scope = await getMetricsScope();
+
+    // Per (leaderboard, claimant) gross prize today, over the SAME scope +
+    // window as the card's leaderboard line. NULL/missing leaderboard_id
+    // folds into a single null-board bucket (defaults to 100% sponsored →
+    // $0 on-site, exactly like the line total).
+    type ClaimantRow = {
+      leaderboard_id: string | null;
+      user_id: string;
+      username: string | null;
+      gross: string;
+    };
+    const rows = await db.$queryRawUnsafe<ClaimantRow[]>(
+      `WITH ${scope.sessionWindowsCte}
+       SELECT
+         lt.metadata->>'leaderboard_id' AS leaderboard_id,
+         lt.user_id AS user_id,
+         u.username AS username,
+         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS gross
+       FROM ledger_transactions lt
+       JOIN "user" u ON u.id = lt.user_id
+       WHERE lt.status = 'completed'
+         AND lt.type::text = 'affiliate_leaderboard_prize'
+         AND lt.user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("lt.user_id", "lt.created_at")}
+         AND lt.created_at >= ${sinceSql}
+       GROUP BY lt.metadata->>'leaderboard_id', lt.user_id, u.username`,
+    );
+
+    // Distinct board ids → sponsored %. Same resilient fallback as the card
+    // (a blip treats every board as 100% → on-site collapses to $0), so the
+    // drilldown can never claim more on-site than the line shows.
+    const boardIds = Array.from(
+      new Set(
+        rows
+          .map((r) => r.leaderboard_id)
+          .filter(
+            (id): id is string => typeof id === "string" && id.length > 0,
+          ),
+      ),
+    );
+    let sponsorship: Map<string, number>;
+    try {
+      sponsorship = await getLeaderboardSponsorshipMap(boardIds);
+    } catch (e) {
+      console.error(
+        "[reward-costs-today] leaderboard claimant sponsorship lookup failed (treating all as 100% → $0 on-site):",
+        e,
+      );
+      sponsorship = new Map();
+    }
+
+    // Resolve board titles in parallel (best-effort, mirrors
+    // users-detail.ts enrichLeaderboardWins): a 404 / failure only blanks
+    // that board's title — it never throws or blocks the drilldown.
+    const titleById = new Map<string, string>();
+    if (boardIds.length > 0) {
+      const settled = await Promise.allSettled(
+        boardIds.map((id) =>
+          affiliateLeaderboardsApi.get(id).then((r) => ({ id, title: r.title })),
+        ),
+      );
+      for (const s of settled) {
+        if (s.status === "fulfilled") titleById.set(s.value.id, s.value.title);
+      }
+    }
+
+    // Group rows by board, applying the per-board on-site factor to each
+    // claimant so every row + board total + grand total reconcile.
+    const byBoard = new Map<string, LeaderboardOnSiteBoard>();
+    const boardKey = (id: string | null) => id ?? " none";
+    for (const r of rows) {
+      const id =
+        typeof r.leaderboard_id === "string" && r.leaderboard_id.length > 0
+          ? r.leaderboard_id
+          : null;
+      // No annotation / no board id → 100% sponsored (our-cut == full →
+      // on-site slice $0), clamped to 0–100. Identical convention to
+      // splitLeaderboardPrizesBySponsorship.
+      const pct =
+        id != null
+          ? Math.min(100, Math.max(0, sponsorship.get(id) ?? 100))
+          : 100;
+      const onSiteFactor = 1 - pct / 100;
+      const gross = toNumber(r.gross);
+      const onSite = gross * onSiteFactor;
+
+      const key = boardKey(id);
+      let board = byBoard.get(key);
+      if (!board) {
+        board = {
+          leaderboardId: id,
+          title: id != null ? titleById.get(id) ?? null : null,
+          sponsoredPct: pct,
+          gross: 0,
+          ourCut: 0,
+          onSite: 0,
+          claimants: [],
+        };
+        byBoard.set(key, board);
+      }
+      board.gross += gross;
+      board.ourCut += gross * (pct / 100);
+      board.onSite += onSite;
+      board.claimants.push({
+        userId: r.user_id,
+        username: r.username,
+        gross,
+        onSite,
+      });
+    }
+
+    const boards = Array.from(byBoard.values());
+    for (const b of boards) {
+      b.claimants.sort((a, c) => c.onSite - a.onSite);
+    }
+    // Loudest on-site board first (matches the card's largest-first ordering).
+    boards.sort((a, b) => b.onSite - a.onSite);
+
+    const totalOnSite = boards.reduce((sum, b) => sum + b.onSite, 0);
+
+    return { boards, totalOnSite, dayStartIso: sinceIso };
   });
 }

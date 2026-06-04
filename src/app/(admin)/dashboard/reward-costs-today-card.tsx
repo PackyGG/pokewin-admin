@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Info, Gift, CloudRain, Trophy } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -10,6 +11,7 @@ import {
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { LeaderboardOnSiteClaimants } from "./reward-cost-leaderboard-claimants";
 
 /**
  * "Reward Costs (today)" dashboard tile — what the house SPENT on rewards
@@ -128,10 +130,14 @@ function RewardCostChip({ label, value }: { label: string; value: number }) {
  *
  * The Leaderboard-prizes row carries the ON-SITE (un-sponsored) slice of
  * today's leaderboard prizes only — the creator (sponsored-% "our cut")
- * share is counted in the sibling Creators Costs box. Because the line is a
- * derived sponsored-% remainder (not a sum of per-user prizes), it has no
- * per-user claimant drilldown: a gross "who won" list would not reconcile
- * to this slice. The full per-claimant view lives on the creator surfaces.
+ * share is counted in the sibling Creators Costs box. The line is a derived
+ * sponsored-% remainder (not a raw sum of per-user prizes), so its
+ * click-to-reveal drilldown (`LeaderboardOnSiteClaimants`) does NOT show a
+ * gross "who won" list — that would over-state the slice by the creator
+ * share. Instead it applies the SAME per-board sponsored-% carve-out the
+ * line total uses to EACH claimant row, so every row, board total and grand
+ * total reconcile to this slice by construction. It loads lazily on click
+ * (a server action), never on the dashboard's initial render.
  */
 function RewardCostsInfoPopover({
   total,
@@ -178,18 +184,29 @@ function RewardCostsInfoPopover({
         </div>
 
         {/* Line rows — each shows its magnitude, all rose (house cost). The
-            Leaderboard-prizes row is the on-site (un-sponsored) slice only;
-            the creator (our-cut) share is in the Creators Costs box. */}
+            Leaderboard-prizes row is the on-site (un-sponsored) slice only
+            (the creator our-cut share is in the Creators Costs box) and
+            carries a click-to-reveal per-claimant drilldown that reconciles
+            to its amount. */}
         <ul className="space-y-0.5">
-          {lines.map((l) => (
-            <RewardCostRow
-              key={l.key}
-              label={l.label}
-              amount={l.amount}
-              isRain={l.key === "rain"}
-              isLeaderboard={l.key === "leaderboards"}
-            />
-          ))}
+          {lines.map((l) => {
+            const isLeaderboard = l.key === "leaderboards";
+            return (
+              <RewardCostRow
+                key={l.key}
+                label={l.label}
+                amount={l.amount}
+                isRain={l.key === "rain"}
+                isLeaderboard={isLeaderboard}
+              >
+                {/* Drilldown lives only on the leaderboard line, and only
+                    when there's an on-site slice to break down. */}
+                {isLeaderboard && l.amount > 0 && (
+                  <LeaderboardOnSiteClaimants onSiteTotal={l.amount} />
+                )}
+              </RewardCostRow>
+            );
+          })}
         </ul>
 
         {/* Bottom math: the lines sum to the total. Rose — a house cost. */}
@@ -215,17 +232,22 @@ function RewardCostsInfoPopover({
  * clear it's the flat model, not summed rain payouts. The leaderboard line
  * gets the Trophy icon + a sub-note that it's the on-site slice only (the
  * creator share is in the Creators Costs box).
+ *
+ * `children`, when present, render directly under the row — used by the
+ * leaderboard line to host its click-to-reveal per-claimant drilldown.
  */
 function RewardCostRow({
   label,
   amount,
   isRain,
   isLeaderboard,
+  children,
 }: {
   label: string;
   amount: number;
   isRain: boolean;
   isLeaderboard: boolean;
+  children?: ReactNode;
 }) {
   const Icon = isRain ? CloudRain : isLeaderboard ? Trophy : Gift;
   return (
@@ -262,6 +284,7 @@ function RewardCostRow({
           −{formatCurrency(amount)}
         </span>
       </div>
+      {children}
     </li>
   );
 }
