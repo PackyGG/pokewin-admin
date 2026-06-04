@@ -30,6 +30,7 @@ import {
   SELECTABLE_ADJUSTMENT_CATEGORY_KEYS,
   BALANCE_ADJUSTMENT_CATEGORY_META,
   isRemovalOnlyAdjustmentCategory,
+  isCreatorLinkedAdjustmentCategory,
   type BalanceAdjustmentCategory,
 } from "@/lib/balance-adjustment-categories";
 import { CreatorLinkPicker } from "./creator-link-picker";
@@ -293,6 +294,13 @@ export function BalanceAdjustDialog({
       if (!creatorLink) {
         return void toast.error("Pick the creator to link this leaderboard adjustment to");
       }
+    } else if (category === "official_stream") {
+      // Creator-linked, but NOT removal-only: both add + remove are
+      // allowed. Only the linked creator is required. The server
+      // re-checks this; the inline toast is just friendlier.
+      if (!creatorLink) {
+        return void toast.error("Pick the creator to link this official-stream adjustment to");
+      }
     } else if (category === "other") {
       if (reasonText.trim().length < 20) return void toast.error("Other needs a reason (min 20 chars)");
     }
@@ -334,8 +342,9 @@ export function BalanceAdjustDialog({
                 : undefined,
             lossbackPercent: lossbackPercentNum,
             pnl7dUsd: pnl7dNum,
-            creatorId:
-              category === "leaderboard" ? creatorLink?.id : undefined,
+            creatorId: isCreatorLinkedAdjustmentCategory(category)
+              ? creatorLink?.id
+              : undefined,
           },
         });
         if (!result.success) {
@@ -709,11 +718,15 @@ export function BalanceAdjustDialog({
               </div>
             )}
 
-            {/* Leaderboard (removal-only): link the creator this balance
-                removal belongs to. Searchable creator dropdown with a
-                search input pinned at the top. Only reachable when the
-                amount is negative (the option is hidden otherwise). */}
-            {category === "leaderboard" && (
+            {/* Creator-linked categories: link the creator this adjustment
+                belongs to. Same searchable creator dropdown (search input
+                pinned at the top) for every creator-linked category. The
+                guard (not a hardcoded `leaderboard` check) drives this so a
+                new creator-linked category renders the picker automatically.
+                  • leaderboard → removal-only (only reachable when the
+                    amount is negative; the option is hidden otherwise).
+                  • official_stream → both add + remove allowed. */}
+            {isCreatorLinkedAdjustmentCategory(category) && (
               <div className="mt-2 space-y-1">
                 <CreatorLinkPicker
                   value={creatorLink}
@@ -721,8 +734,9 @@ export function BalanceAdjustDialog({
                   disabled={isPending}
                 />
                 <p className="text-[10px] text-muted-foreground">
-                  Removes balance from this user and links it to the selected
-                  creator. Search by username or email.
+                  {category === "leaderboard"
+                    ? "Removes balance from this user and links it to the selected creator. Search by username or email."
+                    : "Links this balance adjustment to the selected creator's official stream. Search by username or email."}
                 </p>
               </div>
             )}

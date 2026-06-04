@@ -63,6 +63,7 @@ export const BALANCE_ADJUSTMENT_CATEGORY_KEYS = [
   "reload",
   "lossback",
   "leaderboard",
+  "official_stream",
   "other",
 ] as const;
 
@@ -93,18 +94,57 @@ export function isRemovalOnlyAdjustmentCategory(
 }
 
 /**
- * The COUNTED categories — every CREDIT category except `other`, and
- * EXCLUDING the removal-only debit categories. These are lifted into the
- * reward-cost / NGR side (they reduce NGR/P&L and get their own
- * cost-breakdown line). `other` is intentionally absent (RESIDUAL/EXCLUDED)
- * and so is `leaderboard` (a debit — see
- * {@link REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS}).
+ * The CREATOR-LINKED categories — an adjustment that must be tied to a
+ * specific creator (the dialog renders the searchable creator @ picker
+ * and the action stamps `metadata.creator_id` on the ledger row). This is
+ * DECOUPLED from {@link REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS} on purpose:
+ *   • `leaderboard` is BOTH removal-only AND creator-linked.
+ *   • `official_stream` is creator-linked but allows BOTH directions
+ *     (credit OR debit) — it is deliberately NOT in the removal-only set.
+ * The dialog drives the creator @ picker off THIS set (not the removal-only
+ * one) so adding a creator-linked category never accidentally forces the
+ * remove-balance direction.
+ */
+export const CREATOR_LINKED_ADJUSTMENT_CATEGORY_KEYS = [
+  "leaderboard",
+  "official_stream",
+] as const;
+
+export type CreatorLinkedAdjustmentCategory =
+  (typeof CREATOR_LINKED_ADJUSTMENT_CATEGORY_KEYS)[number];
+
+/**
+ * Type-guard: does this category require a linked creator (so the dialog
+ * must render the creator @ picker and the action must stamp
+ * `metadata.creator_id`)?
+ */
+export function isCreatorLinkedAdjustmentCategory(
+  category: BalanceAdjustmentCategory,
+): category is CreatorLinkedAdjustmentCategory {
+  return (
+    CREATOR_LINKED_ADJUSTMENT_CATEGORY_KEYS as readonly string[]
+  ).includes(category);
+}
+
+/**
+ * The COUNTED categories — every CREDIT category except `other`, the
+ * removal-only debit categories, and `official_stream`. These are lifted
+ * into the reward-cost / NGR side (they reduce NGR/P&L and get their own
+ * cost-breakdown line). Intentionally absent (RESIDUAL/EXCLUDED):
+ *   • `other` (uncounted escape hatch),
+ *   • `leaderboard` (a debit — see {@link REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS}),
+ *   • `official_stream` (a creator-linked credit/debit deliberately kept
+ *     `counted: false` — it only persists the creator link; cost
+ *     accounting is a separate follow-up, exactly like `leaderboard`).
  */
 export const COUNTED_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS.filter(
-  (k) => k !== "other" && !isRemovalOnlyAdjustmentCategory(k),
+  (k) =>
+    k !== "other" &&
+    k !== "official_stream" &&
+    !isRemovalOnlyAdjustmentCategory(k),
 ) as readonly Exclude<
   BalanceAdjustmentCategory,
-  "other" | RemovalOnlyAdjustmentCategory
+  "other" | "official_stream" | RemovalOnlyAdjustmentCategory
 >[];
 
 /**
@@ -139,13 +179,18 @@ export function isBalanceAdjustmentCategory(
 
 /**
  * Is this category COUNTED in GGR/NGR/cost? Counted = a credit category
- * other than `other`. `other` (residual) and removal-only debit categories
- * (e.g. `leaderboard`) are NOT counted.
+ * other than `other` / `official_stream`. `other` (residual),
+ * `official_stream` (creator-linked, deliberately uncounted) and
+ * removal-only debit categories (e.g. `leaderboard`) are NOT counted.
  */
 export function isCountedAdjustmentCategory(
   category: BalanceAdjustmentCategory,
 ): boolean {
-  return category !== "other" && !isRemovalOnlyAdjustmentCategory(category);
+  return (
+    category !== "other" &&
+    category !== "official_stream" &&
+    !isRemovalOnlyAdjustmentCategory(category)
+  );
 }
 
 /**
@@ -210,6 +255,13 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     label: "Leaderboard",
     costLabel: "Leaderboard debits",
     why: "Balance REMOVED from a user and linked to a creator's leaderboard. A removal (debit) — NOT counted in the reward-cost / NGR side here (the counted-credit predicates only sum money given to users). Creator-leaderboard cost accounting is a separate follow-up.",
+    counted: false,
+  },
+  official_stream: {
+    key: "official_stream",
+    label: "Official stream",
+    costLabel: "Official-stream adjustments (uncounted)",
+    why: "Balance adjustment linked to a creator's official stream (can ADD or REMOVE balance). NOT counted in GGR/NGR/cost here — it only persists the creator link (`metadata.creator_id`). Cost accounting is a deliberate follow-up, exactly like `leaderboard`.",
     counted: false,
   },
   other: {

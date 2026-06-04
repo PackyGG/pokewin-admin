@@ -22,6 +22,7 @@ import {
 import { usdAmountSchema } from "@/lib/utils/money";
 import {
   BALANCE_ADJUSTMENT_CATEGORY_KEYS,
+  isCreatorLinkedAdjustmentCategory,
   type BalanceAdjustmentCategory,
 } from "@/lib/balance-adjustment-categories";
 import { ensureBalanceAdjustmentMetaSchema } from "@/lib/balance-adjustment-meta/ensure-schema";
@@ -255,6 +256,19 @@ function validateAdjustmentCategory(
       }
       return { ok: true, meta: { ...base, creatorId } };
     }
+    case "official_stream": {
+      // Creator-linked, but NOT removal-only — both add (credit) and
+      // remove (debit) are allowed, so there is NO sign check here. Only
+      // a linked creator is required, mirroring `leaderboard`'s creator
+      // requirement. NOT counted in GGR/NGR/cost (counted: false) — it
+      // only persists the creator link cleanly; cost accounting is a
+      // deliberate follow-up.
+      const creatorId = (d.creatorId ?? "").trim();
+      if (!creatorId) {
+        return { ok: false, error: "Official stream requires a linked creator" };
+      }
+      return { ok: true, meta: { ...base, creatorId } };
+    }
     case "other": {
       const reasonText = (d.reasonText ?? "").trim();
       if (reasonText.length < 20) {
@@ -303,13 +317,16 @@ export async function adjustBalance(data: {
   }
   const meta = categoryResult.meta;
 
-  // Leaderboard adjustments link to a creator — verify the linked id is a
-  // real creator on the main DB before writing. `user.role === 'creator'`
-  // is the established creator marker (same field `searchNonCreatorUsers`
-  // / `changeRole` use); no cross-DB join, no guessed schema.
-  if (parsed.category === "leaderboard") {
+  // Creator-linked adjustments (leaderboard, official_stream) link to a
+  // creator — verify the linked id is a real creator on the main DB before
+  // writing. `user.role === 'creator'` is the established creator marker
+  // (same field `searchNonCreatorUsers` / `changeRole` use); no cross-DB
+  // join, no guessed schema. Driven by the guard (not a hardcoded
+  // `leaderboard` check) so a new creator-linked category is covered
+  // automatically.
+  if (isCreatorLinkedAdjustmentCategory(parsed.category)) {
     if (!meta.creatorId) {
-      return { success: false, error: "Leaderboard requires a linked creator" };
+      return { success: false, error: "This adjustment requires a linked creator" };
     }
     const creator = await db.user.findFirst({
       where: { id: meta.creatorId, role: "creator" },
@@ -398,14 +415,15 @@ export async function adjustBalance(data: {
           // (`metadata->>'adjustment_category'`), mirroring the existing
           // manual-voucher carve-out (`metadata->>'origin'`).
           //
-          // For a `leaderboard` removal we also stamp the linked creator
-          // id (`metadata->>'creator_id'`) so the debit is cleanly
-          // attributable to a creator with no schema migration. NOTE:
-          // wiring this into the dashboard "Creators Costs" /
-          // leaderboard-spend accounting is a deliberate follow-up — this
-          // only persists the link.
+          // For a creator-linked category (`leaderboard`,
+          // `official_stream`) we also stamp the linked creator id
+          // (`metadata->>'creator_id'`) so the row is cleanly attributable
+          // to a creator with no schema migration. NOTE: wiring this into
+          // the dashboard "Creators Costs" / leaderboard-spend accounting
+          // is a deliberate follow-up — this only persists the link. Driven
+          // by the guard so a new creator-linked category is covered.
           metadata:
-            parsed.category === "leaderboard" && meta.creatorId
+            isCreatorLinkedAdjustmentCategory(parsed.category) && meta.creatorId
               ? {
                   adjustment_category: parsed.category,
                   creator_id: meta.creatorId,
@@ -438,8 +456,9 @@ export async function adjustBalance(data: {
       amount: parsed.amount,
       reason: parsed.reason,
       category: parsed.category,
-      // Linked creator for a leaderboard removal (omitted otherwise).
-      ...(parsed.category === "leaderboard" && meta.creatorId
+      // Linked creator for a creator-linked category (leaderboard,
+      // official_stream); omitted for every other category.
+      ...(isCreatorLinkedAdjustmentCategory(parsed.category) && meta.creatorId
         ? { creatorId: meta.creatorId }
         : {}),
     },
