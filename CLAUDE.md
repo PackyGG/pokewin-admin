@@ -4,6 +4,16 @@ Dieses File definiert verbindliche Arbeitsregeln für jede Claude Code Session i
 
 ---
 
+## 🚫 ABSOLUTE SICHERHEITSREGEL — NIEMALS die Production-DB anfassen (höchste Priorität, 2026-06-05)
+
+**Production-Datenbanken werden NUR gelesen — niemals geschrieben, geändert oder migriert.** Keine Writes, kein `prisma migrate`, kein `prisma db push`, kein DDL/DML, keine "auto changes" gegen IRGENDEINE Prod-DB (MAIN **und** ADMIN — beide sind Production). Nicht "nur additiv", nicht "mit Approval", nicht "schnell".
+
+- Prod-DBs **lesen** (SELECT-Queries, Schema-Inspektion) ist erlaubt — sonst NICHTS.
+- Braucht ein Feature eine DB-Schema-Änderung: Code + Migrations-File schreiben, dann **wendet der User es selbst an**. Du fasst die Prod-DB nie an.
+- Diese Regel überschreibt ALLE früheren DB-Regeln (auch "MAIN nur mit Approval" und den Admin-Migrations-Workflow). Im Zweifel: nicht anfassen.
+
+---
+
 ## 🔥 ABSOLUTE PRIORITÄTSREGEL — Parallel-Modus ist Pflicht
 
 **Jede neue User-Aufgabe → sofort `Agent` Tool mit `run_in_background: true` starten und nur eine 1–2-zeilige Bestätigung antworten.** Keine inline-Bearbeitung. Keine Bündelung mehrerer User-Messages in eine lange Inline-Session. Keine Ausnahmen für "kurze" Fixes.
