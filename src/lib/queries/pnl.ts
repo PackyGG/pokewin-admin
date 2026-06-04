@@ -233,24 +233,49 @@ export type WindowedPnl = {
  * Scope: pass `userId` for a single user; omit it for a global figure
  * across real users (admin/support + the excluded-users blacklist
  * dropped, same as the dashboard aggregates).
+ *
+ * POPULATION RESTRICTION: pass `populationScopeSql` (a self-contained SQL
+ * boolean fragment referencing the `"user" u` alias of the global scope
+ * subquery, e.g. `u.referred_by IS NOT NULL`) to further narrow the global
+ * cohort to a sub-population — used by the affiliate-referred-players P&L
+ * box. The fragment is ANDed INTO the existing
+ * `id IN (SELECT id FROM "user" u WHERE ...)` subquery, so the canonical
+ * 5-term money math + the official_stream netting below stay identical;
+ * only WHICH users are summed changes. It is ignored when `userId` is set
+ * (a single user is already a fully-resolved scope). MUST be a trusted,
+ * hardcoded fragment (never user input) — it is inlined into the SQL.
  */
 export async function calculateWindowedPnl(opts: {
   since: Date;
   userId?: string;
   excludeUserIds?: string[];
+  /**
+   * Optional trusted SQL boolean fragment (referencing the `"user" u`
+   * alias) that further restricts the GLOBAL real-user cohort to a
+   * sub-population. Ignored when `userId` is set. Hardcoded only — inlined
+   * into the scope subquery.
+   */
+  populationScopeSql?: string;
 }): Promise<WindowedPnl> {
-  const { since, userId, excludeUserIds = [] } = opts;
+  const { since, userId, excludeUserIds = [], populationScopeSql } = opts;
   return withTiming("pnl.windowed", async () => {
     const db = await getDb();
 
     // Per-table user scope. Single-user binds the id as positional $2;
     // global filters to non-staff users minus the blacklist (ids come
-    // from a trusted admin source, escaped defensively).
+    // from a trusted admin source, escaped defensively). An optional
+    // `populationScopeSql` (trusted, hardcoded) ANDs into the global
+    // subquery to narrow the cohort to a sub-population (e.g. affiliate-
+    // referred players) without changing the money math.
     const blacklist = blacklistNotInClause("u.id", excludeUserIds);
+    const populationAnd =
+      populationScopeSql && populationScopeSql.trim().length > 0
+        ? ` AND (${populationScopeSql})`
+        : "";
     const scope = (col: string) =>
       userId
         ? `${col} = $2`
-        : `${col} IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
+        : `${col} IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist}${populationAnd})`;
     const params: unknown[] = userId ? [since, userId] : [since];
 
     type LedgerRow = { deposits: string; manual_wd: string; balance_change: string };

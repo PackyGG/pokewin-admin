@@ -22,6 +22,7 @@ import { getDailyPnl } from "@/lib/queries/pnl";
 import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
 import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today";
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
+import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
@@ -629,12 +630,20 @@ async function DashboardRewardCostsToday() {
  * by the same sponsored-% house-share logic as creators/leaderboard-cost.
  */
 async function DashboardCreatorCostsToday() {
-  const { data, error } = await safeQuery(
-    () => getCreatorCostsToday(),
-    null,
-    "dashboard.creatorCostsToday",
-  );
-  if (error || !data) {
+  // The creator-cost figures drive the card; the affiliate-referred-players
+  // P&L is an INDEPENDENT corner indicator. Both are today-windowed + cached
+  // 60s and run in parallel, each behind its own safeQuery so they fail
+  // independently: a failing/slow P&L scan only drops the small corner badge
+  // (passed as null), it never takes the cost card down.
+  const [costsResult, pnlResult] = await Promise.all([
+    safeQuery(() => getCreatorCostsToday(), null, "dashboard.creatorCostsToday"),
+    safeQuery(
+      () => getAffiliateReferredPnlToday(),
+      null,
+      "dashboard.affiliateReferredPnlToday",
+    ),
+  ]);
+  if (costsResult.error || !costsResult.data) {
     return (
       <TileErrorFallback
         label="Creators Costs"
@@ -643,6 +652,7 @@ async function DashboardCreatorCostsToday() {
       />
     );
   }
+  const data = costsResult.data;
   // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
   // UTC calendar day this cost covers (matches the window boundary exactly).
   const dayLabel = data.dayStartIso.slice(0, 10);
@@ -651,6 +661,9 @@ async function DashboardCreatorCostsToday() {
       total={data.total}
       lines={data.lines}
       dayLabel={dayLabel}
+      // Aggregate house P&L on affiliate-referred players for the same "today"
+      // window — null when the scan failed/degraded (badge then omitted).
+      affiliateReferredPnl={pnlResult.data?.pnl ?? null}
     />
   );
 }

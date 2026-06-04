@@ -35,6 +35,13 @@ import { LeaderboardGrossClaimants } from "./creator-cost-leaderboard-claimants"
  * per board + per winner, reconciling to the line by construction. It loads
  * lazily on click (a server action), never on the dashboard's initial render.
  *
+ * The header's top-right corner also carries a SMALL aggregate-P&L badge
+ * (`affiliateReferredPnl`) — house P&L on affiliate-referred players for the
+ * same "today" window — tucked beside the Trophy icon. House-POV color
+ * (emerald = house up, rose = house down). It is purely additive: it sits in
+ * the existing header flex row and never grows the card or shifts the title /
+ * total / chips. `null` ⇒ the badge is omitted entirely (graceful degrade).
+ *
  * All props are serializable primitives — no function props cross the RSC
  * boundary (`AnimatedNumber` takes the `format` string-enum, not a formatter
  * fn) per CLAUDE.md / Next 15.
@@ -43,12 +50,20 @@ export function CreatorCostsTodayCard({
   total,
   lines,
   dayLabel,
+  affiliateReferredPnl,
 }: {
   total: number;
   /** Itemized lines, largest magnitude first (leaderboard = full gross). */
   lines: Array<{ key: string; label: string; amount: number }>;
   /** YYYY-MM-DD (UTC) — the calendar day this cost covers. */
   dayLabel: string;
+  /**
+   * Aggregate house P&L on affiliate-referred players for today's window
+   * (House-POV: positive = house up). `null` when the figure is unavailable
+   * (query failed / degraded) — the badge is then omitted so the card layout
+   * is unchanged.
+   */
+  affiliateReferredPnl?: number | null;
 }) {
   // The two loudest non-zero lines headline the card face as chips.
   const topLines = lines.filter((l) => l.amount > 0).slice(0, 2);
@@ -71,7 +86,16 @@ export function CreatorCostsTodayCard({
             {dayLabel}
           </span>
         </div>
-        <Trophy className="size-4 shrink-0 text-rose-400" />
+        {/* Top-right cluster: the small affiliate-referred P&L badge (when
+            available) + the Trophy icon. `shrink-0` + the compact badge keep
+            this within the existing header height — it never grows the card
+            or pushes the title row. */}
+        <div className="flex shrink-0 items-center gap-1.5">
+          {affiliateReferredPnl != null && (
+            <AffiliateReferredPnlBadge pnl={affiliateReferredPnl} />
+          )}
+          <Trophy className="size-4 shrink-0 text-rose-400" />
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {/* Total — a house COST, so always rose with a leading minus to read
@@ -114,6 +138,53 @@ function CreatorCostChip({ label, value }: { label: string; value: number }) {
         <AnimatedNumber value={value} format="currency" />
       </p>
     </div>
+  );
+}
+
+/**
+ * Small top-right corner badge showing the aggregate house P&L on
+ * affiliate-referred players for today's window. House-POV per CLAUDE.md:
+ *   • house up   (pnl > 0) → emerald, leading "+"
+ *   • house down (pnl < 0) → rose,    leading "−"
+ *   • flat       (pnl == 0)→ muted
+ * Compact (text-[10px], tight padding, tabular-nums) so it tucks into the
+ * existing header height beside the Trophy icon without growing the card.
+ * The `title` spells out the meaning + window on hover.
+ */
+function AffiliateReferredPnlBadge({ pnl }: { pnl: number }) {
+  const up = pnl > 0;
+  const down = pnl < 0;
+  // Render the magnitude with an explicit House-POV sign. AnimatedNumber's
+  // currency format already prints its own sign for negatives, so feed it the
+  // ABSOLUTE value and prefix the sign ourselves — keeps "+"/"−" consistent
+  // with the rest of the dashboard's House-POV amounts.
+  const sign = up ? "+" : down ? "−" : "";
+  return (
+    <span
+      title={`Affiliate-referred players · house P&L today (since 00:00 UTC). ${
+        up
+          ? "House is up on referred players."
+          : down
+            ? "House is down on referred players."
+            : "Flat on referred players."
+      }`}
+      className={cn(
+        "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums leading-none",
+        up &&
+          "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+        down &&
+          "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
+        !up &&
+          !down &&
+          "border-border/60 bg-background/40 text-muted-foreground",
+      )}
+    >
+      <span className="mr-px text-muted-foreground/80">PnL</span>
+      <span className="ml-1">
+        {sign}
+        <AnimatedNumber value={Math.abs(pnl)} format="currency" />
+      </span>
+    </span>
   );
 }
 
