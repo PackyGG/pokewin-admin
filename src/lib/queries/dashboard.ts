@@ -751,7 +751,23 @@ const cachedBalanceAggregates = unstable_cache(
         COALESCE(SUM(total_withdrawn::numeric), 0)::text AS total_withdrawn,
         COALESCE(SUM(total_wagered::numeric), 0)::text AS total_wagered,
         COALESCE(SUM(total_won::numeric), 0)::text AS total_won,
-        COALESCE(SUM(available_balance::numeric), 0)::text AS available_balance
+        -- FAKE-BALANCE: net the signed official_stream credit out of the
+        -- aggregated available balance so this displayed figure matches the
+        -- realized-P&L treatment (_realized-pnl.ts nets the same sum from
+        -- userBalance). Subtracts the Σ signed amount of completed
+        -- official_stream adjustments over the SAME real-user population.
+        (COALESCE(SUM(available_balance::numeric), 0)
+         - COALESCE((
+             SELECT SUM(lt.amount::numeric)
+             FROM ledger_transactions lt
+             WHERE lt.status = 'completed'
+               AND ${Prisma.raw(officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" }))}
+               AND lt.user_id IN (
+                 SELECT id FROM "user"
+                 WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+               )
+           ), 0)
+        )::text AS available_balance
       FROM balances
       WHERE user_id IN (
         SELECT id FROM "user"

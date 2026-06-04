@@ -10,6 +10,7 @@ import {
 } from "@/generated/prisma/enums";
 import type { UserTagValue } from "@/lib/queries/user-tags";
 import { parseUpgraderMetadata } from "@/lib/utils/upgrader-metadata";
+import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
 
 // Allowlists derived from the generated Prisma enums — used to validate
 // user-supplied filter values before they reach the query (instead of an
@@ -443,7 +444,14 @@ export async function getTransactions(params: {
   } = params;
   const db = await getDb();
 
-  const where: Prisma.ledger_transactionsWhereInput = {};
+  const where: Prisma.ledger_transactionsWhereInput = {
+    // FAKE-BALANCE: hide official_stream adjustments from the transactions
+    // list — owner-designated fake balance is never surfaced in any feed.
+    // Placed in AND so it combines safely with the search `OR` below and
+    // every other filter, and propagates to the pack_multiplier
+    // `filterWhere` (which spreads `...where`).
+    AND: [{ NOT: officialStreamAdjustmentPrismaWhere() }],
+  };
 
   if (search) {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(search);

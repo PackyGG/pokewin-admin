@@ -596,7 +596,18 @@ export async function getUserDetail(id: string) {
     },
     balances: balances
       ? {
-          availableBalance: toNumber(balances.available_balance),
+          // FAKE-BALANCE: net the signed official_stream credit out of the
+          // DISPLAYED available balance so it matches the P&L treatment
+          // (calculateUserPnl already nets it from onSiteBalance). Derived
+          // from the PnL components — no second query — so the displayed
+          // figure and the P&L can never drift: onSiteBalance = available +
+          // locked − officialStreamNet, so available_netted =
+          // onSiteBalance − locked. Clamp ≥ 0 defensively (a debit-heavy
+          // clawback can't push the shown balance negative).
+          availableBalance: Math.max(
+            0,
+            userPnl.onSiteBalance - toNumber(balances.locked_balance),
+          ),
           lockedBalance: toNumber(balances.locked_balance),
           // P&L components come from the shared helper so this view can
           // never drift from users-list / dashboard.

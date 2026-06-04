@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { Prisma } from "@/generated/prisma/client";
+import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
 
 // Only the audit_events.event_type values that the backend actually emits
 // AND are relevant to the "important account activity" view. Verified
@@ -88,6 +89,9 @@ export async function getUserAuditLog(
             user_id: userId,
             type: "admin_balance_adjustment",
             status: "completed",
+            // FAKE-BALANCE: hide official_stream adjustments from this
+            // per-user account-activity feed (owner-designated fake balance).
+            NOT: officialStreamAdjustmentPrismaWhere(),
           },
           orderBy: { created_at: "desc" },
           take: 200,

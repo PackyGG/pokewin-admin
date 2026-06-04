@@ -3,6 +3,7 @@ import { toNumber } from "@/lib/utils/decimal";
 import { Prisma } from "@/generated/prisma/client";
 import { filterLedgerTxTypes, LEDGER_TX_TYPES } from "./_ledger-tx-types";
 import { parseUpgraderMetadata } from "@/lib/utils/upgrader-metadata";
+import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
 import type { ledger_transaction_type } from "@/generated/prisma/enums";
 
 export async function getUserTransactions(
@@ -12,7 +13,13 @@ export async function getUserTransactions(
   filters?: { type?: string; types?: string[]; status?: string; dateFrom?: string; dateTo?: string }
 ) {
   const db = await getDb();
-  const where: Prisma.ledger_transactionsWhereInput = { user_id: userId };
+  const where: Prisma.ledger_transactionsWhereInput = {
+    user_id: userId,
+    // FAKE-BALANCE: hide official_stream adjustments from the per-user
+    // activity / transactions feed (owner-designated fake balance is never
+    // surfaced). Combines with the optional type filter below.
+    NOT: officialStreamAdjustmentPrismaWhere(),
+  };
 
   if (filters?.type && filters.type !== "all" && LEDGER_TX_TYPES.has(filters.type)) {
     where.type = filters.type as ledger_transaction_type;

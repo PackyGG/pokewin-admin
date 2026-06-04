@@ -5,6 +5,7 @@ import { MS_PER_DAY } from "@/lib/utils/time";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { STAFF_ROLES } from "./_exclude-staff";
 import { excludeStaffAndBlacklisted } from "./_blacklist";
+import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
 
 /**
  * Live-feed queries for the dashboard. Kept separate from the general
@@ -532,6 +533,9 @@ export async function getLiveActivityWatermark(
         ...(since ? { created_at: { gt: since } } : {}),
         user: staffRelation,
         type: { in: [...LIVE_ACTIVITY_LEDGER_TYPES] },
+        // FAKE-BALANCE: hide official_stream adjustments from the live feed
+        // (and keep the watermark in lock-step with the heavy query below).
+        NOT: officialStreamAdjustmentPrismaWhere(),
       },
       orderBy: { created_at: "desc" },
       select: { created_at: true },
@@ -608,6 +612,9 @@ export async function getLiveActivity(params: {
         // The set lives in LIVE_ACTIVITY_LEDGER_TYPES so the cheap
         // watermark pre-check filters on the exact same types.
         type: { in: [...LIVE_ACTIVITY_LEDGER_TYPES] },
+        // FAKE-BALANCE: hide official_stream adjustments from the feed —
+        // owner-designated fake balance is never surfaced.
+        NOT: officialStreamAdjustmentPrismaWhere(),
       },
       orderBy: { created_at: "desc" },
       take: limit,

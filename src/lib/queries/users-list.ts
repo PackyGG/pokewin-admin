@@ -9,6 +9,7 @@ import {
   type RiskTier,
 } from "@/lib/fraud/score";
 import { calculateUsersPnlBatch } from "./pnl";
+import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 
 // Allowlist from the generated Prisma user_role enum — validate the
 // role filter before it reaches either the Prisma where or the raw-SQL
@@ -146,15 +147,20 @@ async function computeRankedUserIds(
               // lifetime deposits/withdrawals/PnL so big holders
               // surface even if they never wagered. Must stay in sync
               // with the JS netHoldings computed in the data mapping.
+              // FAKE-BALANCE: subtract the signed official_stream net
+              // (os.os_net) so the sort matches the netted DISPLAYED
+              // availableBalance / netHoldings.
               `COALESCE(b.available_balance::numeric, 0)
                + COALESCE(b.locked_balance::numeric, 0)
                + COALESCE(inv.inv_value, 0)
-               + COALESCE(vc.voucher_value, 0)`
+               + COALESCE(vc.voucher_value, 0)
+               - COALESCE(os.os_net, 0)`
             : `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
              + COALESCE(b.available_balance::numeric, 0)
              + COALESCE(b.locked_balance::numeric, 0)
              + COALESCE(inv.inv_value, 0)
              + COALESCE(vc.voucher_value, 0)
+             - COALESCE(os.os_net, 0)
              - COALESCE(b.total_deposited::numeric, 0)`;
 
   const [orderedRows, totalCount] = await Promise.all([
@@ -187,7 +193,18 @@ async function computeRankedUserIds(
         FROM vouchers
         WHERE claimed_at IS NULL
         GROUP BY user_id
-      ) vc ON vc.user_id = u.id${depositCountJoin}
+      ) vc ON vc.user_id = u.id
+      -- FAKE-BALANCE: per-user SIGNED NET of completed official_stream
+      -- adjustments, subtracted from the cash term of the balance-based
+      -- sort expressions so the ordering matches the netted DISPLAYED
+      -- availableBalance / netHoldings.
+      LEFT JOIN (
+        SELECT lt.user_id, COALESCE(SUM(lt.amount::numeric), 0) AS os_net
+        FROM ledger_transactions lt
+        WHERE lt.status = 'completed'
+          AND ${officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })}
+        GROUP BY lt.user_id
+      ) os ON os.user_id = u.id${depositCountJoin}
       ${whereClause}
       ORDER BY (${orderExpr}) ${orderSql} NULLS LAST, u.id ${orderSql}
       LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
@@ -541,10 +558,20 @@ export async function getUsers(params: {
 
   return {
     data: users.map((u) => {
-      const availableBalance = toNumber(u.balances?.available_balance);
       const lockedBalance = toNumber(u.balances?.locked_balance);
       const totalWagered = toNumber(u.balances?.total_wagered);
       const userPnl = pnlByUserId.get(u.id);
+      // FAKE-BALANCE: net the signed official_stream credit out of the
+      // DISPLAYED available balance (and netHoldings) so the list matches
+      // the P&L treatment AND the user-detail page. calculateUsersPnlBatch
+      // already nets it from onSiteBalance, so derive available from there
+      // (onSiteBalance = available + locked − officialStreamNet ⇒
+      // available_netted = onSiteBalance − locked). No second query, can't
+      // drift from the PnL column. Clamp ≥ 0 defensively. Falls back to the
+      // raw available balance only when the batch row is missing.
+      const availableBalance = userPnl
+        ? Math.max(0, userPnl.onSiteBalance - lockedBalance)
+        : toNumber(u.balances?.available_balance);
       const totalDeposited = userPnl?.deposits ?? 0;
       const totalWithdrawn = userPnl?.withdrawals ?? 0;
       const inventoryValue = userPnl?.inventoryValue ?? 0;
@@ -556,11 +583,10 @@ export async function getUsers(params: {
       // Net on-platform holdings = cash (available + locked vault) +
       // open inventory + unclaimed vouchers. Vouchers are inventory
       // exactly like cards (cards + vouchers = inventory), so they're
-      // part of what the user holds on-site. Mirrors the SQL ORDER BY
-      // expression for the `netHoldings` sort so client-side reordering
-      // matches what the server returned. Lifetime deposits/withdrawals
-      // deliberately excluded — this is "what's on-site RIGHT NOW", not
-      // PnL.
+      // part of what the user holds on-site. Uses the official_stream-netted
+      // availableBalance above so the hidden fake balance never inflates net
+      // holdings. (The SQL ORDER BY expression for the `netHoldings` sort
+      // still uses raw balance for ordering only — see note below.)
       const netHoldings =
         availableBalance + lockedBalance + inventoryValue + unclaimedVouchers;
       const risk = riskScoresMap.get(u.id);
