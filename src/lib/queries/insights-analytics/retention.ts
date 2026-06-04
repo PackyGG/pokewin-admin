@@ -1,8 +1,10 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 
 /**
  * Retention curves with optional breakdown.
@@ -46,76 +48,108 @@ export type RetentionResult = {
   series: RetentionSeries[];
 };
 
+type RetentionRawRow = {
+  bucket: string;
+  day: number;
+  retained: string;
+  eligible: string;
+};
+
+/**
+ * The retention scan, behind a breakdown-keyed `unstable_cache` (300s,
+ * scope input in the key so a changed blacklist can't serve a stale
+ * value, tagged `insights-analytics` / `dashboard-lifetime` so a
+ * wipe/restore busts it). Same caching contract as `ltv.ts`
+ * `cachedPerUserLtv`. The query is already bounded — the cohort is the
+ * last `COHORT_WINDOW_DAYS` (180d) of signups and each activity join is
+ * capped at `e.created_at + CURVE_LENGTH days` (91d) — so there is no
+ * unbounded lifetime scan to cap; the resilience win is the cache + the
+ * per-read timeout in the caller. `breakdownBy` fully determines
+ * `groupExpr`, so keying on it (+ the blacklist) is exact.
+ */
+const cachedRetentionRows = unstable_cache(
+  async (
+    breakdownBy: RetentionBreakdownKey,
+    blacklistIdNotIn: string,
+  ): Promise<RetentionRawRow[]> => {
+    const db = await getDb();
+    // Group expression. The expressions are inlined verbatim (whitelisted
+    // strings; no user input) so the GROUP BY can take a free-form SQL
+    // bucket directly.
+    const groupExpr = (() => {
+      switch (breakdownBy) {
+        case "none":
+          return `'all'::text`;
+        case "source":
+          // 3 buckets — organic, creator-affiliate, regular-affiliate. The
+          // EXISTS subquery checks whether the referrer is a creator role.
+          return `
+            CASE
+              WHEN referred_by IS NULL THEN 'organic'
+              WHEN EXISTS (SELECT 1 FROM "user" ref WHERE ref.id = "user".referred_by AND ref.role = 'creator')
+                THEN 'creator-affiliate'
+              ELSE 'regular-affiliate'
+            END
+          `;
+        case "country":
+          return `COALESCE(country, 'Unknown')`;
+      }
+    })();
+
+    return db.$queryRawUnsafe<RetentionRawRow[]>(`
+      WITH eligible AS (
+        SELECT id AS user_id, created_at, (${groupExpr}) AS bucket
+        FROM "user"
+        WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+          AND created_at >= NOW() - INTERVAL '${COHORT_WINDOW_DAYS} days'
+      ),
+      days AS (
+        SELECT generate_series(0, ${CURVE_LENGTH - 1}) AS day
+      ),
+      activity AS (
+        SELECT DISTINCT
+          e.user_id,
+          e.bucket,
+          FLOOR(EXTRACT(EPOCH FROM (lt.created_at - e.created_at)) / 86400)::int AS day
+        FROM eligible e
+        JOIN ledger_transactions lt ON lt.user_id = e.user_id
+        WHERE lt.status = 'completed'
+          AND lt.type::text IN ${WAGER_TYPES}
+          AND lt.created_at >= e.created_at
+          AND lt.created_at <= e.created_at + INTERVAL '${CURVE_LENGTH} days'
+      )
+      SELECT
+        e.bucket,
+        d.day,
+        COALESCE(COUNT(DISTINCT a.user_id), 0)::text AS retained,
+        COUNT(DISTINCT e.user_id)::text AS eligible
+      FROM days d
+      LEFT JOIN eligible e ON e.created_at <= NOW() - make_interval(days => d.day)
+      LEFT JOIN activity a ON a.user_id = e.user_id AND a.day = d.day AND a.bucket = e.bucket
+      GROUP BY e.bucket, d.day
+      ORDER BY e.bucket, d.day
+    `);
+  },
+  ["insights-analytics-retention-v1"],
+  { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
+);
+
 export async function getInsightsRetention(
   breakdownBy: RetentionBreakdownKey,
 ): Promise<RetentionResult> {
-  const db = await getDb();
   const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
 
-  // Group expression. The expressions are inlined verbatim (whitelisted
-  // strings; no user input) so the GROUP BY can take a free-form SQL
-  // bucket directly.
-  const groupExpr = (() => {
-    switch (breakdownBy) {
-      case "none":
-        return `'all'::text`;
-      case "source":
-        // 3 buckets — organic, creator-affiliate, regular-affiliate. The
-        // EXISTS subquery checks whether the referrer is a creator role.
-        return `
-          CASE
-            WHEN referred_by IS NULL THEN 'organic'
-            WHEN EXISTS (SELECT 1 FROM "user" ref WHERE ref.id = "user".referred_by AND ref.role = 'creator')
-              THEN 'creator-affiliate'
-            ELSE 'regular-affiliate'
-          END
-        `;
-      case "country":
-        return `COALESCE(country, 'Unknown')`;
-    }
-  })();
-
-  const rows = await db.$queryRawUnsafe<
-    {
-      bucket: string;
-      day: number;
-      retained: string;
-      eligible: string;
-    }[]
-  >(`
-    WITH eligible AS (
-      SELECT id AS user_id, created_at, (${groupExpr}) AS bucket
-      FROM "user"
-      WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
-        AND created_at >= NOW() - INTERVAL '${COHORT_WINDOW_DAYS} days'
-    ),
-    days AS (
-      SELECT generate_series(0, ${CURVE_LENGTH - 1}) AS day
-    ),
-    activity AS (
-      SELECT DISTINCT
-        e.user_id,
-        e.bucket,
-        FLOOR(EXTRACT(EPOCH FROM (lt.created_at - e.created_at)) / 86400)::int AS day
-      FROM eligible e
-      JOIN ledger_transactions lt ON lt.user_id = e.user_id
-      WHERE lt.status = 'completed'
-        AND lt.type::text IN ${WAGER_TYPES}
-        AND lt.created_at >= e.created_at
-        AND lt.created_at <= e.created_at + INTERVAL '${CURVE_LENGTH} days'
-    )
-    SELECT
-      e.bucket,
-      d.day,
-      COALESCE(COUNT(DISTINCT a.user_id), 0)::text AS retained,
-      COUNT(DISTINCT e.user_id)::text AS eligible
-    FROM days d
-    LEFT JOIN eligible e ON e.created_at <= NOW() - make_interval(days => d.day)
-    LEFT JOIN activity a ON a.user_id = e.user_id AND a.day = d.day AND a.bucket = e.bucket
-    GROUP BY e.bucket, d.day
-    ORDER BY e.bucket, d.day
-  `);
+  // Run the cached scan inside `safeQuery` (canonical heavy-read timeout,
+  // empty fallback) so a slow/failed read degrades to an empty curve set
+  // instead of pinning a MAIN pool slot and crashing the tab — the same
+  // per-read resilience `getInsightsOverview` applies.
+  const { data: rows } = await safeQuery(
+    () => cachedRetentionRows(breakdownBy, blacklistIdNotIn),
+    [] as RetentionRawRow[],
+    "insights-analytics.retention",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
 
   const byBucket = new Map<
     string,
