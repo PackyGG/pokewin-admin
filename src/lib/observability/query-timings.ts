@@ -87,6 +87,36 @@ export async function withTiming<T>(
   }
 }
 
+/**
+ * Like {@link withTiming}, but RETURNS the wall-clock duration alongside the
+ * result so the caller can surface it in the UI (e.g. a dashboard box's
+ * bottom-right "142 ms" load-time readout) — not just record it to the ring
+ * buffer.
+ *
+ * The duration is still recorded to the same ring buffer (so /system/stats
+ * picks it up), AND measured even when the inner function throws. On a throw
+ * the error is re-thrown untouched; callers that wrap the fetch in `safeQuery`
+ * to degrade gracefully should time the `safeQuery` call itself (so the
+ * measured ms includes the timeout-race / catch path the admin actually
+ * waited on) — see the dashboard page for the canonical pattern.
+ *
+ * `durationMs` is a plain number, so it's safe to pass across the
+ * Server → Client boundary as a prop (no function props per CLAUDE.md / Next 15).
+ */
+export async function withTimingResult<T>(
+  query: string,
+  fn: () => Promise<T>,
+): Promise<{ data: T; durationMs: number }> {
+  const start = performance.now();
+  try {
+    const data = await fn();
+    return { data, durationMs: performance.now() - start };
+  } finally {
+    const durationMs = performance.now() - start;
+    recordQueryTime(query, durationMs);
+  }
+}
+
 /** Snapshot of all entries currently in the ring, oldest-first. */
 function snapshot(): QueryTimingEntry[] {
   const { buffer, head, count } = getState();

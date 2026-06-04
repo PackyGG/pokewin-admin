@@ -3,6 +3,94 @@
 import { useEffect, useState } from "react";
 import { Timer } from "lucide-react";
 import { formatRelative } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
+
+/**
+ * Format a server-measured fetch duration for the per-box readout:
+ *   • < 1000 ms → "142 ms"   (integer milliseconds)
+ *   • ≥ 1000 ms → "1.3 s"    (one-decimal seconds)
+ * Negative / NaN inputs are clamped to 0 so a clock glitch never prints
+ * "-3 ms" or "NaN ms".
+ */
+export function formatBoxLoadMs(ms: number): string {
+  const safe = Number.isFinite(ms) && ms > 0 ? ms : 0;
+  if (safe < 1000) return `${Math.round(safe)} ms`;
+  return `${(safe / 1000).toFixed(1)} s`;
+}
+
+/**
+ * Tiny per-box load-time readout pinned to the BOTTOM-RIGHT corner of a
+ * dashboard data box. Shows how long THAT box's data took to fetch
+ * (measured server-side, passed down as a plain number), formatted by
+ * {@link formatBoxLoadMs} ("142 ms" / "1.3 s").
+ *
+ * Layout contract (must NOT change the box's size):
+ *   • `absolute` + `pointer-events-none` so it overlays the box's corner
+ *     and never participates in layout or steals clicks from controls
+ *     underneath (popover triggers, chart bars).
+ *   • The HOST element is responsible for `relative` positioning — use the
+ *     {@link BoxTimingFrame} wrapper, which adds `relative` without altering
+ *     the wrapped card's own box model.
+ *   • Muted, `tabular-nums`, `text-[10px]` — unobtrusive, matches the
+ *     dashboard's secondary-text treatment. No animation (nothing to
+ *     reduce-motion-guard); inherits the app's static styling.
+ *
+ * `ms` is a serializable number prop — no function props cross the RSC
+ * boundary (CLAUDE.md / Next 15).
+ */
+export function BoxLoadTime({
+  ms,
+  className,
+}: {
+  ms: number;
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden
+      title={`This box's data fetched server-side in ${formatBoxLoadMs(ms)}`}
+      className={cn(
+        "pointer-events-none absolute bottom-1.5 right-2 z-10 inline-flex items-center gap-1 rounded text-[10px] font-medium leading-none tabular-nums text-muted-foreground/55",
+        className,
+      )}
+    >
+      <Timer className="size-2.5 shrink-0" aria-hidden />
+      {formatBoxLoadMs(ms)}
+    </span>
+  );
+}
+
+/**
+ * Wrapper that makes any dashboard box a positioning context for its
+ * corner {@link BoxLoadTime} readout WITHOUT changing the box's own
+ * dimensions. Renders a `relative` div around the box and drops the
+ * timing badge into its bottom-right corner.
+ *
+ * The wrapper div is `display: contents`-like in spirit but uses a plain
+ * relative block so the absolute badge has a containing block; it adds no
+ * padding, border, or background, so the wrapped `<Card>` renders exactly
+ * as before — only now with a muted "N ms" in the corner. Pass the same
+ * grid-cell classes you'd put on the card via `className` if the wrapper
+ * needs to stretch (e.g. `h-full` in the 50/50 row).
+ *
+ * `ms` is a plain number (serializable across the RSC boundary).
+ */
+export function BoxTimingFrame({
+  ms,
+  className,
+  children,
+}: {
+  ms: number;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={cn("relative", className)}>
+      {children}
+      <BoxLoadTime ms={ms} />
+    </div>
+  );
+}
 
 /**
  * Subtle "Loaded in N ms · updated …" chip shown in the dashboard hero's

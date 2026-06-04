@@ -25,7 +25,7 @@ import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-toda
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
-import { LoadTimeIndicator } from "./load-time-indicator";
+import { LoadTimeIndicator, BoxTimingFrame } from "./load-time-indicator";
 import { StatCard } from "./stat-card";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
@@ -244,16 +244,25 @@ export default async function DashboardPage({
         <SectionHeading icon={LineChart} title="Trends" />
         {/* Row 1: Wagers · Deposits · FTDs.
             Row 2: Daily P&L · Signups · Depositors.
-            Single Suspense — the row-1/2 charts share the cached
-            getDashboardStats and the standalone getDailyPnl runs in
-            parallel with it.
+
+            The five cached-stats charts (everything EXCEPT Daily P&L) are
+            backed by the React-cached getDashboardStats — which the KPI
+            strips already triggered — so this outer boundary resolves as
+            soon as that shared aggregate is ready and paints all five
+            charts together. The Daily P&L chart is the single heavy leg
+            (its own lifetime-scan getDailyPnl), so it streams behind its
+            OWN nested <Suspense> INSIDE the grid (row 2, col 1): the five
+            fast charts no longer wait on the slow P&L scan, and the P&L
+            cell shows a chart skeleton until getDailyPnl resolves. Each
+            chart carries its own server-measured fetch-time corner badge
+            (DashboardCharts wraps every card in BoxTimingFrame).
 
             Not period-keyed: the trend charts stay on screen during a
             period refetch (the selector's transition keeps the prior
-            render) rather than flashing two rows of skeletons on each
-            chip change. The skeleton is for the cold load only and now
-            mirrors the chart-card chrome (rounded-xl, faux bars) so it
-            doesn't pop a flat block into a chart. */}
+            render) rather than flashing skeletons on each chip change.
+            The skeleton is for the cold load only and mirrors the
+            chart-card chrome (rounded-xl, faux bars) so it doesn't pop a
+            flat block into a chart. */}
         <Suspense
           fallback={
             <>
@@ -320,10 +329,17 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
   // fails the strips degrade to a single panel fallback. getGgrBreakdown
   // only feeds the GGR card's Info popover, so if only it fails we keep
   // the strips and render the GGR card with an empty breakdown.
+  // Time the shared aggregate batch as one unit. Both KPI strips are fed
+  // by this single getDashboardStats fetch (getGgrBreakdown only feeds the
+  // GGR popover), so per the task the strip carries ONE strip-level
+  // readout for the shared fetch's duration — measured around the batch
+  // the strips actually wait on.
+  const t0 = performance.now();
   const [statsResult, ggrResult] = await Promise.all([
     safeQuery(() => getDashboardStats(period), null, "dashboard.statStrips"),
     safeQuery(() => getGgrBreakdown(period), null, "dashboard.ggrBreakdown"),
   ]);
+  const fetchMs = performance.now() - t0;
   if (statsResult.error || !statsResult.data) {
     return (
       <TileErrorFallback
@@ -354,7 +370,12 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
   const depositsPerHour7d = stats.depositCount7d / (7 * 24);
 
   return (
-    <>
+    // BoxTimingFrame is the strip-level positioning context for the single
+    // shared-fetch readout. `space-y-6` preserves the gap that previously
+    // sat between the two strips when they were direct page-container
+    // children (the page uses space-y-6), so wrapping them doesn't collapse
+    // the primary↔secondary spacing.
+    <BoxTimingFrame ms={fetchMs} className="space-y-6">
       {/* Primary stats — period-aware cards.
           Mobile-first grid: ONE column at <sm so each card is full-
           width and the dollar value never truncates (these cards
@@ -505,7 +526,7 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           color="pink"
         />
       </div>
-    </>
+    </BoxTimingFrame>
   );
 }
 
@@ -522,11 +543,13 @@ async function DashboardUpgraderSection() {
   // in safeQuery anyway so ANY other failure (a slow scan, a connection
   // blip) degrades this panel to a fallback instead of crashing the
   // route. Panel-size fallback fills the 50/50 row slot.
+  const t0 = performance.now();
   const { data: stats, error } = await safeQuery(
     () => getUpgraderStats(),
     null,
     "dashboard.upgrader",
   );
+  const fetchMs = performance.now() - t0;
   if (error || !stats) {
     return (
       <TileErrorFallback
@@ -537,7 +560,13 @@ async function DashboardUpgraderSection() {
       />
     );
   }
-  return <UpgraderStatsSection stats={stats} />;
+  // `h-full` on the frame so it stretches to fill the 50/50 row cell and
+  // passes the height through to the panel (the panel is itself h-full).
+  return (
+    <BoxTimingFrame ms={fetchMs} className="h-full">
+      <UpgraderStatsSection stats={stats} />
+    </BoxTimingFrame>
+  );
 }
 
 /**
@@ -550,11 +579,18 @@ async function DashboardUpgraderSection() {
  * with the period-P&L card + daily-P&L chart.
  */
 async function DashboardTodayPnl() {
+  // Measure the wall-clock time THIS box waited on its fetch — timed
+  // around safeQuery (not inside the query) so the readout includes the
+  // timeout-race / catch path the admin actually perceives. Surfaced in
+  // the box's bottom-right corner via BoxTimingFrame. performance.now() is
+  // a plain number, safe to hand down as a prop (no fn props per CLAUDE.md).
+  const t0 = performance.now();
   const { data, error } = await safeQuery(
     () => getTodayPnl(),
     null,
     "dashboard.todayPnl",
   );
+  const fetchMs = performance.now() - t0;
   if (error || !data) {
     return (
       <TileErrorFallback
@@ -568,15 +604,17 @@ async function DashboardTodayPnl() {
   // UTC calendar day this P&L covers (matches the window boundary exactly).
   const dayLabel = data.dayStartIso.slice(0, 10);
   return (
-    <TodayPnlStatCard
-      pnl={data.pnl}
-      deposits={data.deposits}
-      withdrawals={data.withdrawals}
-      balanceChange={data.balanceChange}
-      inventoryChange={data.inventoryChange}
-      voucherChange={data.voucherChange}
-      dayLabel={dayLabel}
-    />
+    <BoxTimingFrame ms={fetchMs}>
+      <TodayPnlStatCard
+        pnl={data.pnl}
+        deposits={data.deposits}
+        withdrawals={data.withdrawals}
+        balanceChange={data.balanceChange}
+        inventoryChange={data.inventoryChange}
+        voucherChange={data.voucherChange}
+        dayLabel={dayLabel}
+      />
+    </BoxTimingFrame>
   );
 }
 
@@ -591,11 +629,13 @@ async function DashboardTodayPnl() {
  * the owner-confirmed flat $2/hr model and affiliate commissions excluded.
  */
 async function DashboardRewardCostsToday() {
+  const t0 = performance.now();
   const { data, error } = await safeQuery(
     () => getRewardCostsToday(),
     null,
     "dashboard.rewardCostsToday",
   );
+  const fetchMs = performance.now() - t0;
   if (error || !data) {
     return (
       <TileErrorFallback
@@ -609,12 +649,14 @@ async function DashboardRewardCostsToday() {
   // UTC calendar day this cost covers (matches the window boundary exactly).
   const dayLabel = data.dayStartIso.slice(0, 10);
   return (
-    <RewardCostsTodayCard
-      total={data.total}
-      lines={data.lines}
-      dayLabel={dayLabel}
-      hoursElapsed={data.hoursElapsed}
-    />
+    <BoxTimingFrame ms={fetchMs}>
+      <RewardCostsTodayCard
+        total={data.total}
+        lines={data.lines}
+        dayLabel={dayLabel}
+        hoursElapsed={data.hoursElapsed}
+      />
+    </BoxTimingFrame>
   );
 }
 
@@ -635,6 +677,9 @@ async function DashboardCreatorCostsToday() {
   // 60s and run in parallel, each behind its own safeQuery so they fail
   // independently: a failing/slow P&L scan only drops the small corner badge
   // (passed as null), it never takes the cost card down.
+  // Time the parallel batch as one unit — the box waits on the slower of
+  // the two legs, which is exactly what the corner readout should report.
+  const t0 = performance.now();
   const [costsResult, pnlResult] = await Promise.all([
     safeQuery(() => getCreatorCostsToday(), null, "dashboard.creatorCostsToday"),
     safeQuery(
@@ -643,6 +688,7 @@ async function DashboardCreatorCostsToday() {
       "dashboard.affiliateReferredPnlToday",
     ),
   ]);
+  const fetchMs = performance.now() - t0;
   if (costsResult.error || !costsResult.data) {
     return (
       <TileErrorFallback
@@ -657,14 +703,16 @@ async function DashboardCreatorCostsToday() {
   // UTC calendar day this cost covers (matches the window boundary exactly).
   const dayLabel = data.dayStartIso.slice(0, 10);
   return (
-    <CreatorCostsTodayCard
-      total={data.total}
-      lines={data.lines}
-      dayLabel={dayLabel}
-      // Aggregate house P&L on affiliate-referred players for the same "today"
-      // window — null when the scan failed/degraded (badge then omitted).
-      affiliateReferredPnl={pnlResult.data?.pnl ?? null}
-    />
+    <BoxTimingFrame ms={fetchMs}>
+      <CreatorCostsTodayCard
+        total={data.total}
+        lines={data.lines}
+        dayLabel={dayLabel}
+        // Aggregate house P&L on affiliate-referred players for the same "today"
+        // window — null when the scan failed/degraded (badge then omitted).
+        affiliateReferredPnl={pnlResult.data?.pnl ?? null}
+      />
+    </BoxTimingFrame>
   );
 }
 
@@ -690,25 +738,39 @@ async function DashboardActiveRain() {
  * Trend charts in two rows:
  *   Row 1 (3): Wagers · Deposits · FTDs              — cached getDashboardStats
  *   Row 2 (3): Daily P&L · Signups · Depositors      — P&L from getDailyPnl
- * Both data sources are awaited in parallel (getDashboardStats is cached, so
- * it's shared with the KPI strips; getDailyPnl runs alongside it). The
- * Wager Attribution chart used to live as a third full-width row here; it
- * was promoted next to the Upgrader Stats section so it sits beside the
- * other section-level analytic instead of trailing the daily charts.
+ *
+ * The five non-P&L charts read from the React-cached getDashboardStats — the
+ * SAME aggregate the KPI strips already triggered — so this component awaits
+ * ONLY that (the call dedupes; it's effectively free here) and paints all
+ * five charts as soon as it's ready. The Daily P&L chart is the one heavy leg
+ * (its own lifetime-scan getDailyPnl), so it is NO LONGER awaited here: it
+ * streams behind its own nested <Suspense> (DashboardDailyPnlChart) at row 2 /
+ * col 1, so the slow P&L scan can't hold back the five fast charts. The
+ * nested Suspense fallback is a single chart-card skeleton occupying exactly
+ * that one grid cell, so the row layout never shifts.
+ *
+ * The Wager Attribution chart used to live as a third full-width row here; it
+ * was promoted next to the Upgrader Stats section.
+ *
+ * Each chart card is wrapped in BoxTimingFrame so it carries its own
+ * bottom-right server-measured fetch-time readout. The five stats charts all
+ * share the single getDashboardStats fetch, so they show that one measured
+ * duration; the Daily P&L cell measures its own getDailyPnl fetch.
  */
 async function DashboardCharts({ period }: { period: DashboardPeriod }) {
-  // getDashboardStats backs the wager/deposit/ftds/signup/depositor
-  // charts; getDailyPnl is its OWN standalone query (historically the
-  // most expensive part of the trend grid). BOTH are wrapped in safeQuery
-  // so a throw degrades to a fallback instead of escaping to the route
-  // error boundary (which would white-screen the whole dashboard — the
-  // failure mode this page hit in prod). If getDashboardStats fails the
-  // whole trends grid degrades to one panel fallback; if only getDailyPnl
-  // fails just the single Daily P&L chart degrades (handled below).
-  const [statsResult, pnlResult] = await Promise.all([
-    safeQuery(() => getDashboardStats(period), null, "dashboard.charts"),
-    safeQuery(() => getDailyPnl(), [], "dashboard.dailyPnl"),
-  ]);
+  // getDashboardStats backs the wager/deposit/ftds/signup/depositor charts.
+  // Wrapped in safeQuery so a throw degrades to a fallback instead of
+  // escaping to the route error boundary (which would white-screen the
+  // whole dashboard — the failure mode this page hit in prod). getDailyPnl
+  // is intentionally NOT awaited here anymore — the Daily P&L cell owns its
+  // own fetch + Suspense below so it can stream independently.
+  const t0 = performance.now();
+  const statsResult = await safeQuery(
+    () => getDashboardStats(period),
+    null,
+    "dashboard.charts",
+  );
+  const statsMs = performance.now() - t0;
   if (statsResult.error || !statsResult.data) {
     return (
       <TileErrorFallback
@@ -722,24 +784,68 @@ async function DashboardCharts({ period }: { period: DashboardPeriod }) {
   return (
     <FadeIn className="space-y-3 sm:space-y-4">
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <WagerChart data={stats.dailyWagers} />
-        <DepositsChart data={stats.dailyDeposits} />
-        <FtdsChart data={stats.dailyFtds} />
+        <BoxTimingFrame ms={statsMs}>
+          <WagerChart data={stats.dailyWagers} />
+        </BoxTimingFrame>
+        <BoxTimingFrame ms={statsMs}>
+          <DepositsChart data={stats.dailyDeposits} />
+        </BoxTimingFrame>
+        <BoxTimingFrame ms={statsMs}>
+          <FtdsChart data={stats.dailyFtds} />
+        </BoxTimingFrame>
       </div>
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {pnlResult.error ? (
-          <TileErrorFallback
-            label="Daily P&L"
-            hint="The lifetime P&L scan timed out — other charts still rendered. Refresh to retry."
-            size="panel"
-          />
-        ) : (
-          <PnlChart data={pnlResult.data} />
-        )}
-        <SignupsChart data={stats.dailySignups} />
-        <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
+        {/* Daily P&L — its own nested Suspense so the heavy getDailyPnl
+            lifetime scan streams independently of the five cached-stats
+            charts. Fallback is a single chart-card skeleton sized to this
+            one grid cell, so the row holds its shape while P&L loads. Not
+            period-keyed (getDailyPnl is period-independent), so it never
+            re-suspends on a chip change. */}
+        <Suspense
+          fallback={<SkeletonChart height={300} className="rounded-xl" />}
+        >
+          <DashboardDailyPnlChart />
+        </Suspense>
+        <BoxTimingFrame ms={statsMs}>
+          <SignupsChart data={stats.dailySignups} />
+        </BoxTimingFrame>
+        <BoxTimingFrame ms={statsMs}>
+          <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
+        </BoxTimingFrame>
       </div>
     </FadeIn>
+  );
+}
+
+/**
+ * Daily P&L chart cell — streams behind its OWN nested Suspense inside the
+ * Trends grid so its heavy lifetime-scan getDailyPnl never blocks the five
+ * cached-stats charts beside it. Period-independent (lifetime), so it doesn't
+ * re-key on the global period selector. safeQuery degrades a slow/failed scan
+ * to a single-cell TileErrorFallback (the other charts still render). Carries
+ * its own server-measured fetch-time readout via BoxTimingFrame.
+ */
+async function DashboardDailyPnlChart() {
+  const t0 = performance.now();
+  const { data, error } = await safeQuery(
+    () => getDailyPnl(),
+    [],
+    "dashboard.dailyPnl",
+  );
+  const fetchMs = performance.now() - t0;
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Daily P&L"
+        hint="The lifetime P&L scan timed out — other charts still rendered. Refresh to retry."
+        size="panel"
+      />
+    );
+  }
+  return (
+    <BoxTimingFrame ms={fetchMs}>
+      <PnlChart data={data} />
+    </BoxTimingFrame>
   );
 }
 
@@ -759,11 +865,13 @@ async function DashboardWagerAttribution({
   // (the right half of the Upgrader/Attribution row) to a fallback panel
   // instead of escaping to the route error boundary and white-screening
   // the whole dashboard.
+  const t0 = performance.now();
   const { data: stats, error } = await safeQuery(
     () => getDashboardStats(period),
     null,
     "dashboard.wagerAttribution",
   );
+  const fetchMs = performance.now() - t0;
   if (error || !stats) {
     return (
       <TileErrorFallback
@@ -774,7 +882,13 @@ async function DashboardWagerAttribution({
       />
     );
   }
-  return <WagerAttributionChart data={stats.dailyWagerAttribution} />;
+  // `h-full` so the frame fills the 50/50 cell and the chart card (itself
+  // h-full) aligns with the Upgrader panel at the bottom.
+  return (
+    <BoxTimingFrame ms={fetchMs} className="h-full">
+      <WagerAttributionChart data={stats.dailyWagerAttribution} />
+    </BoxTimingFrame>
+  );
 }
 
 // `DashboardActivityFeed` was removed when the Recent Activity card moved
