@@ -3,7 +3,7 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
-import { withTiming } from "@/lib/observability/query-timings";
+import { withTiming, withTimingResult } from "@/lib/observability/query-timings";
 import { MS_PER_DAY, MS_PER_HOUR } from "@/lib/utils/time";
 import {
   excludeStaffAndBlacklisted,
@@ -1219,37 +1219,50 @@ async function dashboardStatsInner(period: DashboardPeriod) {
   //     manual_wd_24h) PLUS a single composite query for the 24h
   //     inventory + voucher deltas. Saves 2 ledger scans and 2
   //     parallel round-trips.
+  // Each batch entry is wrapped with `withTimingResult` (not the older
+  // `withTiming`) so it returns BOTH the data AND the per-sub-query
+  // wall-clock `durationMs`. The durations are unwrapped into a `timings`
+  // map a few lines below and threaded into the return value, so EACH KPI
+  // tile can render the elapsed ms of the sub-query that produced its
+  // number (the per-tile bottom-right load-time badge). The `*T` suffix on
+  // the destructured names marks the `{ data, durationMs }` envelope; the
+  // very next block re-binds the original variable names to `.data` so the
+  // ~80 downstream reads stay untouched. No NEW queries are added — these
+  // are the exact sub-queries that already ran; only the wrapper changed
+  // from "record-only" (`withTiming`) to "record + return duration"
+  // (`withTimingResult`), so pool load is identical.
   const [
-    userCounts,
-    balanceAggregates,
-    dailyChart,
-    dailyUpgrader,
-    dailySignups,
-    dailyWagerAttribution,
-    periodAggregates,
-    windowMetricsResult,
-    upgraderWindow,
-    uniqueDepositorsResult,
-    realizedPnlResult,
-    packsOpened24h,
-    battlesPlayed24h,
-    ftdCombined,
-    windowedPeriodDelta,
-    lifetimeDepositMetrics,
+    userCountsT,
+    balanceAggregatesT,
+    dailyChartT,
+    dailyUpgraderT,
+    dailySignupsT,
+    dailyWagerAttributionT,
+    periodAggregatesT,
+    windowMetricsResultT,
+    upgraderWindowT,
+    uniqueDepositorsResultT,
+    realizedPnlResultT,
+    packsOpened24hT,
+    battlesPlayed24hT,
+    ftdCombinedT,
+    windowedPeriodDeltaT,
+    lifetimeDepositMetricsT,
   ] = await Promise.all([
     // Per-sub-query timings — wraps each Promise.all entry with
-    // `withTiming("dashboard.<name>")` so /system/stats can pinpoint
-    // exactly which sub-query is dragging the dashboard latency. The
-    // top-level `dashboard.getDashboardStats` wraps the whole batch,
-    // so cross-checking individual entries against that total tells
-    // operators whether the slow component is one heavy query (single
-    // entry > 60-70% of the total) or many medium queries adding up.
+    // `withTimingResult("dashboard.<name>")` so /system/stats can pinpoint
+    // exactly which sub-query is dragging the dashboard latency AND the
+    // per-tile badge can surface it. The top-level
+    // `dashboard.getDashboardStats` wraps the whole batch, so cross-checking
+    // individual entries against that total tells operators whether the slow
+    // component is one heavy query (single entry > 60-70% of the total) or
+    // many medium queries adding up.
 
     // All four user counts (total + today/week/month) PLUS the
     // rolling-24h signup count in ONE scan of the user table via
     // COUNT(*) FILTER. 5-min cached — user counts don't move by more
     // than a handful per minute, so the 5-min cap is invisible.
-    withTiming("dashboard.userCounts", () =>
+    withTimingResult("dashboard.userCounts", () =>
       cachedUserCounts(
         blacklistIdNotIn,
         startOfDay.toISOString(),
@@ -1263,24 +1276,24 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // by at most a few users per minute, so 5-min staleness is
     // invisible. Switched from Prisma's aggregate to raw SQL so the
     // blacklist string fragment can serve as a stable cache key.
-    withTiming("dashboard.balanceAggregates", () =>
+    withTimingResult("dashboard.balanceAggregates", () =>
       cachedBalanceAggregates(blacklistIdNotIn),
     ),
     // Daily wager + deposit + active-depositor series for the last 30
     // days in ONE ledger scan. 5-min cached — historic days don't
     // change and today's row moves slowly enough that operators
     // wouldn't notice a 5-min lag.
-    withTiming("dashboard.dailyChart", () => cachedDailyChart(blacklistIdNotIn)),
+    withTimingResult("dashboard.dailyChart", () => cachedDailyChart(blacklistIdNotIn)),
     // Daily upgrader wager (last 30 days) from `upgrader_games` — the
     // upgrader-native companion to the daily ledger scan above. Merged
     // into the dailyWagers series by date. Empty on a pre-upgrader DB
     // (to_regclass guard). 5-min cached.
-    withTiming("dashboard.dailyUpgrader", () => cachedDailyUpgrader(blacklistIdNotIn)),
+    withTimingResult("dashboard.dailyUpgrader", () => cachedDailyUpgrader(blacklistIdNotIn)),
     // Signups last 30 days. 5-min cached for the same reason.
-    withTiming("dashboard.dailySignups", () => cachedDailySignups(blacklistIdNotIn)),
+    withTimingResult("dashboard.dailySignups", () => cachedDailySignups(blacklistIdNotIn)),
     // Daily wager attribution split — organic (no creator-code
     // referral) vs creator-attributed. 5-min cached.
-    withTiming("dashboard.dailyWagerAttribution", () =>
+    withTimingResult("dashboard.dailyWagerAttribution", () =>
       cachedDailyWagerAttribution(blacklistIdNotIn),
     ),
     // Single batched query — computes revenue / withdrawal / wager /
@@ -1293,7 +1306,7 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // NO LONGER produced here — see `windowMetrics` below.
     // NOT cached — recomputes every render because the cutoff depends
     // on the selected period.
-    withTiming("dashboard.periodAggregates", () =>
+    withTimingResult("dashboard.periodAggregates", () =>
       getPeriodAggregates(db, periodCutoff, blacklistIdNotIn, sessionWindowsCte),
     ),
     // Canonical headline GGR (+ NGR / RTP / house-edge / bets) for the
@@ -1322,7 +1335,7 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     //     the all-zero fallback (`EMPTY_WINDOW_METRICS`) instead of
     //     hanging the entire KPI strip until the platform kills the
     //     request. `.data` is unwrapped at the read site below.
-    withTiming("dashboard.windowMetrics", () =>
+    withTimingResult("dashboard.windowMetrics", () =>
       safeQuery(
         () => cachedWindowMetricsForPeriod(period, blacklistIdNotIn),
         EMPTY_WINDOW_METRICS,
@@ -1334,26 +1347,26 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // `upgrader_games` (canonical helper) — drives the Total Wager
     // card's Upgrader chip + breakdown. `null` on a pre-upgrader DB
     // (to_regclass guard). NOT cached — window-dependent.
-    withTiming("dashboard.upgraderWindow", () => upgraderMetrics(metricWindow)),
+    withTimingResult("dashboard.upgraderWindow", () => upgraderMetrics(metricWindow)),
     // Distinct depositors = real users whose LIFETIME completed-deposit
     // total is > 0. 5-min cached — lifetime depositor count moves
     // slower than 5 minutes.
-    withTiming("dashboard.uniqueDepositors", () =>
+    withTimingResult("dashboard.uniqueDepositors", () =>
       cachedUniqueDepositors(blacklistIdNotIn),
     ),
     // Lifetime realized P&L snapshot — single heaviest query in the
     // codebase. Cached cross-request 5 minutes via unstable_cache, so
     // most renders hit the cache and this timing is ~0. A cold cache
     // miss reveals the full scan duration.
-    withTiming("dashboard.realizedPnlSnapshot", () => getRealizedPnlSnapshot()),
+    withTimingResult("dashboard.realizedPnlSnapshot", () => getRealizedPnlSnapshot()),
     // Rolling-24h pack opening count for the "24h Activity" tile.
     // 60s cached — matches the dashboard's auto-refresh cadence so the
     // tile stays close to live without re-counting on every render.
-    withTiming("dashboard.packsOpened24h", () =>
+    withTimingResult("dashboard.packsOpened24h", () =>
       cached24hPackOpens(blacklistIdNotIn),
     ),
     // Rolling-24h battle count — 60s cached for the same reason.
-    withTiming("dashboard.battlesPlayed24h", () =>
+    withTimingResult("dashboard.battlesPlayed24h", () =>
       cached24hBattles(blacklistIdNotIn),
     ),
     // FTDs combined — rolling-24h figure (count + total) + per-day
@@ -1361,7 +1374,7 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // first_deposits CTE. 5-min cached — first deposits don't change
     // that often, and FTD math involves a lifetime DISTINCT ON scan
     // which was one of the heavier queries on the hot path.
-    withTiming("dashboard.ftdCombined", () => cachedFtdCombined(blacklistIdNotIn)),
+    withTimingResult("dashboard.ftdCombined", () => cachedFtdCombined(blacklistIdNotIn)),
     // Windowed inventory + voucher deltas for the SELECTED period.
     // The other three components of the period P&L (deposits, card-
     // withdrawals, ledger balance change, manual withdrawals) already
@@ -1369,7 +1382,7 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // the two pieces it doesn't carry, so we fetch them in one
     // composite query. Each subselect is a narrow indexed range scan;
     // PG materializes the common `real_users` CTE once.
-    withTiming("dashboard.windowedPeriodDelta", () =>
+    withTimingResult("dashboard.windowedPeriodDelta", () =>
       db.$queryRaw<{
         inv_obtained: string;
         inv_disposed: string;
@@ -1399,10 +1412,59 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // scan. 5-min cached. The rolling-24h / 7d cutoffs are recomputed
     // inside the cached fn from Date.now() — within the 5-min TTL
     // there's no meaningful drift.
-    withTiming("dashboard.lifetimeDepositMetrics", () =>
+    withTimingResult("dashboard.lifetimeDepositMetrics", () =>
       cachedLifetimeDepositMetrics(blacklistIdNotIn),
     ),
   ]);
+
+  // Unwrap the `{ data, durationMs }` envelopes back into the original
+  // variable names so every downstream read below is unchanged, and collect
+  // each sub-query's wall-clock `durationMs` into one flat map. These are the
+  // EXACT sub-queries that already ran in the batch above — nothing new is
+  // queried; we only surfaced the elapsed time `withTimingResult` measured.
+  // Note these run in PARALLEL inside one Promise.all, so the per-tile ms is
+  // each sub-query's OWN elapsed time, not a serial slice of the whole batch
+  // (two tiles fed by the same sub-query therefore show the same number).
+  const userCounts = userCountsT.data;
+  const balanceAggregates = balanceAggregatesT.data;
+  const dailyChart = dailyChartT.data;
+  const dailyUpgrader = dailyUpgraderT.data;
+  const dailySignups = dailySignupsT.data;
+  const dailyWagerAttribution = dailyWagerAttributionT.data;
+  const periodAggregates = periodAggregatesT.data;
+  const windowMetricsResult = windowMetricsResultT.data;
+  const upgraderWindow = upgraderWindowT.data;
+  const uniqueDepositorsResult = uniqueDepositorsResultT.data;
+  const realizedPnlResult = realizedPnlResultT.data;
+  const packsOpened24h = packsOpened24hT.data;
+  const battlesPlayed24h = battlesPlayed24hT.data;
+  const ftdCombined = ftdCombinedT.data;
+  const windowedPeriodDelta = windowedPeriodDeltaT.data;
+  const lifetimeDepositMetrics = lifetimeDepositMetricsT.data;
+
+  // Per-sub-query elapsed milliseconds, keyed by the same stable identifier
+  // used for /system/stats. Serializable plain numbers → safe to thread into
+  // the return value and hand each KPI tile its sub-query's load time as a
+  // prop (no fn props cross the RSC boundary, per CLAUDE.md / Next 15). The
+  // page maps each tile to the entry that produced its number.
+  const subTimings = {
+    userCounts: userCountsT.durationMs,
+    balanceAggregates: balanceAggregatesT.durationMs,
+    dailyChart: dailyChartT.durationMs,
+    dailyUpgrader: dailyUpgraderT.durationMs,
+    dailySignups: dailySignupsT.durationMs,
+    dailyWagerAttribution: dailyWagerAttributionT.durationMs,
+    periodAggregates: periodAggregatesT.durationMs,
+    windowMetrics: windowMetricsResultT.durationMs,
+    upgraderWindow: upgraderWindowT.durationMs,
+    uniqueDepositors: uniqueDepositorsResultT.durationMs,
+    realizedPnlSnapshot: realizedPnlResultT.durationMs,
+    packsOpened24h: packsOpened24hT.durationMs,
+    battlesPlayed24h: battlesPlayed24hT.durationMs,
+    ftdCombined: ftdCombinedT.durationMs,
+    windowedPeriodDelta: windowedPeriodDeltaT.durationMs,
+    lifetimeDepositMetrics: lifetimeDepositMetricsT.durationMs,
+  };
 
   // Headline GGR/NGR — `safeQuery` returns `{ data, error }`. The headline
   // tile is a single number on the KPI strip, so a degraded read shows the
@@ -1737,6 +1799,50 @@ async function dashboardStatsInner(period: DashboardPeriod) {
       organic: Number(d.organic),
       creatorCoded: Number(d.creator_attributed),
     })),
+    // Per-TILE server-measured fetch time (ms), one entry per KPI tile in
+    // the primary + secondary strips. Each value is the elapsed time of the
+    // sub-query (in the parallel batch above) that produced that tile's
+    // number — surfaced on the tile's bottom-right `BoxLoadTime` badge.
+    //
+    // NO NEW QUERIES: every number here is a `durationMs` collected from the
+    // EXACT sub-queries that already ran in the batch (`subTimings`). Tiles
+    // fed by the SAME sub-query intentionally show the SAME ms. A few tiles
+    // are computed from TWO sub-queries (the batch ran them in parallel);
+    // for those we report the SUM of the contributing sub-queries' elapsed
+    // times — the total DB work behind that tile's number. The mapping:
+    //   • pnl              → realizedPnlSnapshot (lifetime snapshot; the
+    //                        card's default mode. The period-toggle view is
+    //                        derived from periodAggregates + windowedPeriodDelta,
+    //                        which already back other tiles.)
+    //   • ggr              → windowMetrics
+    //   • wager            → periodAggregates + upgraderWindow (ledger
+    //                        pack/battle wager + upgrader_games wager)
+    //   • wagerOrganic     → periodAggregates
+    //   • deposits         → periodAggregates
+    //   • withdrawals      → periodAggregates
+    //   • totalUsers       → userCounts
+    //   • ftds             → ftdCombined
+    //   • depositors       → uniqueDepositors
+    //   • avgDeposit       → balanceAggregates + lifetimeDepositMetrics
+    //                        (Σ total_deposited ÷ lifetime deposit count)
+    //   • depositsPerHour  → lifetimeDepositMetrics (24h / 7d counts)
+    //   • avgRtp           → balanceAggregates (total_won ÷ total_wagered)
+    // Plain numbers → serializable across the RSC boundary (no fn props).
+    timings: {
+      pnl: subTimings.realizedPnlSnapshot,
+      ggr: subTimings.windowMetrics,
+      wager: subTimings.periodAggregates + subTimings.upgraderWindow,
+      wagerOrganic: subTimings.periodAggregates,
+      deposits: subTimings.periodAggregates,
+      withdrawals: subTimings.periodAggregates,
+      totalUsers: subTimings.userCounts,
+      ftds: subTimings.ftdCombined,
+      depositors: subTimings.uniqueDepositors,
+      avgDeposit:
+        subTimings.balanceAggregates + subTimings.lifetimeDepositMetrics,
+      depositsPerHour: subTimings.lifetimeDepositMetrics,
+      avgRtp: subTimings.balanceAggregates,
+    },
     // Server-side compute metadata. `queryMs` is the wall-clock time spent
     // in this function (exclusion lists + the parallel query batch + the
     // light post-processing above) — measured here at the very end so it

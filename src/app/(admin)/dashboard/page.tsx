@@ -66,6 +66,22 @@ import { ChartRowSkeleton, UpgraderPanelSkeleton } from "./dashboard-skeletons";
 
 export const metadata = { title: "Dashboard" };
 
+/**
+ * Backdrop for the per-tile load-time badge on the COMPACT KPI tiles.
+ *
+ * The KPI tiles are dense — their bottom row is a subtitle or a breakdown
+ * chip row that can reach the bottom-right corner — so the bare `BoxLoadTime`
+ * (which the roomy charts/panels use) would float over that text. This adds a
+ * tiny card-colored, blurred chip behind the badge so the muted "N ms" reads
+ * cleanly ON TOP of whatever sits in the corner. It changes NOTHING about the
+ * tile's box model: the badge stays `absolute` + `pointer-events-none`, so the
+ * tile's size/layout is identical with or without it. Dark-mode safe (uses the
+ * theme `bg-card` token, not a hardcoded color); no animation (reduce-motion
+ * irrelevant).
+ */
+const tileBadge =
+  "bg-card/85 supports-[backdrop-filter]:bg-card/65 backdrop-blur-sm rounded-md pl-1 pr-1.5";
+
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -329,17 +345,16 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
   // fails the strips degrade to a single panel fallback. getGgrBreakdown
   // only feeds the GGR card's Info popover, so if only it fails we keep
   // the strips and render the GGR card with an empty breakdown.
-  // Time the shared aggregate batch as one unit. Both KPI strips are fed
-  // by this single getDashboardStats fetch (getGgrBreakdown only feeds the
-  // GGR popover), so per the task the strip carries ONE strip-level
-  // readout for the shared fetch's duration — measured around the batch
-  // the strips actually wait on.
-  const t0 = performance.now();
+  //
+  // The prior single strip-level load-time readout is GONE: every KPI tile
+  // now carries its OWN bottom-right badge (the elapsed ms of the sub-query
+  // that produced its number, from getDashboardStats `timings`), so a strip-
+  // level number is redundant and would collide with the bottom-right tile's
+  // own badge. No outer batch timing is measured anymore.
   const [statsResult, ggrResult] = await Promise.all([
     safeQuery(() => getDashboardStats(period), null, "dashboard.statStrips"),
     safeQuery(() => getGgrBreakdown(period), null, "dashboard.ggrBreakdown"),
   ]);
-  const fetchMs = performance.now() - t0;
   if (statsResult.error || !statsResult.data) {
     return (
       <TileErrorFallback
@@ -370,12 +385,12 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
   const depositsPerHour7d = stats.depositCount7d / (7 * 24);
 
   return (
-    // BoxTimingFrame is the strip-level positioning context for the single
-    // shared-fetch readout. `space-y-6` preserves the gap that previously
-    // sat between the two strips when they were direct page-container
-    // children (the page uses space-y-6), so wrapping them doesn't collapse
-    // the primary↔secondary spacing.
-    <BoxTimingFrame ms={fetchMs} className="space-y-6">
+    // Plain `space-y-6` container (no strip-level timing frame anymore —
+    // each tile owns its badge). `space-y-6` preserves the gap that
+    // previously sat between the two strips when they were direct page-
+    // container children (the page uses space-y-6), so wrapping them in this
+    // div doesn't collapse the primary/secondary spacing.
+    <div className="space-y-6">
       {/* Primary stats — period-aware cards.
           Mobile-first grid: ONE column at <sm so each card is full-
           width and the dollar value never truncates (these cards
@@ -389,50 +404,76 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           The surviving Wager tile is the customer-only figure
           (creator sessions excluded), which is the default reading
           of "wager" everywhere else on the site. */}
+      {/* Each tile is wrapped in BoxTimingFrame so it carries its OWN
+          bottom-right server-measured load-time badge (the ms of the
+          sub-query that produced that tile's number — see
+          getDashboardStats `timings`). `tileBadge` is the compact-tile
+          backdrop so the badge reads over a subtitle / breakdown-chip
+          corner without reserving layout space. Tiles fed by the same
+          sub-query (Wager / Organic Wager / Deposits / Withdrawals all
+          come from periodAggregates) legitimately show the same ms. */}
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4 xl:grid-cols-6">
-        <PnlStatCard
-          pnl={stats.realizedPnl}
-          pnlPeriod={stats.realizedPnlPeriod}
-          periodLabel={stats.periodLabel}
-        />
-        <GgrStatCard
-          ggr={stats.ggr}
-          periodLabel={stats.periodLabel}
-          breakdown={ggrBreakdown}
-          periodParam={period}
-        />
+        <BoxTimingFrame ms={stats.timings.pnl} badgeClassName={tileBadge}>
+          <PnlStatCard
+            pnl={stats.realizedPnl}
+            pnlPeriod={stats.realizedPnlPeriod}
+            periodLabel={stats.periodLabel}
+          />
+        </BoxTimingFrame>
+        <BoxTimingFrame ms={stats.timings.ggr} badgeClassName={tileBadge}>
+          <GgrStatCard
+            ggr={stats.ggr}
+            periodLabel={stats.periodLabel}
+            breakdown={ggrBreakdown}
+            periodParam={period}
+          />
+        </BoxTimingFrame>
         {/* Wager — customer wager only (drops wagers a creator made
             while live on a deal/stream — house-funded sponsored
             balance, not a real customer bet). This IS the default
             "wager" reading on the rest of the site, so it doesn't
             need a disambiguating caption. */}
-        <WagerStatCard
-          wager={stats.wagers}
-          periodLabel={stats.periodLabel}
-          title="Wager"
-          breakdown={stats.wagersBreakdown}
-        />
+        <BoxTimingFrame ms={stats.timings.wager} badgeClassName={tileBadge}>
+          <WagerStatCard
+            wager={stats.wagers}
+            periodLabel={stats.periodLabel}
+            title="Wager"
+            breakdown={stats.wagersBreakdown}
+          />
+        </BoxTimingFrame>
         {/* Organic Wager — only counts users who did NOT join under an
             official creator code. Drops creator-on-stream play AND
             creator-attributed customer wager, so the gap between
             "Wager" and this card is the wager that's downstream of
             creator marketing. */}
-        <WagerStatCard
-          wager={stats.wagersOrganic}
-          periodLabel={stats.periodLabel}
-          title="Organic Wager"
-          caption="no creator-code users"
-        />
-        <DepositsStatCard
-          deposits={stats.deposits}
-          depositCount={stats.depositCountPeriod}
-          periodLabel={stats.periodLabel}
-        />
-        <WithdrawalsStatCard
-          withdrawals={stats.withdrawals}
-          withdrawalCount={stats.withdrawalCountPeriod}
-          periodLabel={stats.periodLabel}
-        />
+        <BoxTimingFrame
+          ms={stats.timings.wagerOrganic}
+          badgeClassName={tileBadge}
+        >
+          <WagerStatCard
+            wager={stats.wagersOrganic}
+            periodLabel={stats.periodLabel}
+            title="Organic Wager"
+            caption="no creator-code users"
+          />
+        </BoxTimingFrame>
+        <BoxTimingFrame ms={stats.timings.deposits} badgeClassName={tileBadge}>
+          <DepositsStatCard
+            deposits={stats.deposits}
+            depositCount={stats.depositCountPeriod}
+            periodLabel={stats.periodLabel}
+          />
+        </BoxTimingFrame>
+        <BoxTimingFrame
+          ms={stats.timings.withdrawals}
+          badgeClassName={tileBadge}
+        >
+          <WithdrawalsStatCard
+            withdrawals={stats.withdrawals}
+            withdrawalCount={stats.withdrawalCountPeriod}
+            periodLabel={stats.periodLabel}
+          />
+        </BoxTimingFrame>
       </div>
 
       {/* Secondary stats — all-time / snapshot. Users Total Balance
@@ -443,90 +484,113 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           was one of the heaviest on the dashboard. The realized P&L
           snapshot still factors all three into the lifetime PnL tile,
           so the information isn't gone — just folded into PnL. */}
+      {/* Secondary tiles each carry their own bottom-right load-time badge
+          too (same `timings` map). Total Users → userCounts; FTDs →
+          ftdCombined; Depositors → uniqueDepositors; Avg Deposit →
+          balanceAggregates + lifetimeDepositMetrics; Deposits/Hour →
+          lifetimeDepositMetrics; Avg RTP → balanceAggregates. Tiles sharing
+          a sub-query show the same ms (Avg RTP & Avg Deposit both include
+          balanceAggregates; Avg Deposit & Deposits/Hour both include
+          lifetimeDepositMetrics). */}
       <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
-        <StatCard
-          title="Total Users"
-          animatedValue={stats.users.total}
-          formatKind="number"
-          subtitle={`+${stats.users.today} today, +${stats.users.week} this week`}
-          icon={Users}
-          color="blue"
-        />
+        <BoxTimingFrame ms={stats.timings.totalUsers} badgeClassName={tileBadge}>
+          <StatCard
+            title="Total Users"
+            animatedValue={stats.users.total}
+            formatKind="number"
+            subtitle={`+${stats.users.today} today, +${stats.users.week} this week`}
+            icon={Users}
+            color="blue"
+          />
+        </BoxTimingFrame>
         {/* FTDs — first-time depositors in the rolling last 24h: real
             users whose first-ever completed deposit landed today. The
             "new money today" lead-in to the lifetime Depositors tile.
             Subtitle carries the summed + average first-deposit value.
             Amber accent — its own identity color, warm against the
             cool-toned Total Users / Depositors neighbours. */}
-        <StatCard
-          title="FTDs (24h)"
-          animatedValue={stats.financials.ftds24h}
-          formatKind="number"
-          subtitle={`${formatCurrency(stats.financials.ftdTotal24h)} total · ${formatCurrency(stats.financials.ftdAvg24h)} avg`}
-          icon={HandCoins}
-          color="amber"
-        />
+        <BoxTimingFrame ms={stats.timings.ftds} badgeClassName={tileBadge}>
+          <StatCard
+            title="FTDs (24h)"
+            animatedValue={stats.financials.ftds24h}
+            formatKind="number"
+            subtitle={`${formatCurrency(stats.financials.ftdTotal24h)} total · ${formatCurrency(stats.financials.ftdAvg24h)} avg`}
+            icon={HandCoins}
+            color="amber"
+          />
+        </BoxTimingFrame>
         {/* Distinct depositors = how many real users have completed at
             least one deposit. Different from "Total Users" (signups,
             many of whom never deposit) and from "Avg Deposit" (per-
             transaction). Uses purple to read as a separate identity
             from the user-count tile. */}
-        <StatCard
-          title="Depositors"
-          animatedValue={stats.financials.uniqueDepositors}
-          formatKind="number"
-          subtitle={
-            stats.users.total > 0
-              ? `${(
-                  (stats.financials.uniqueDepositors / stats.users.total) *
-                  100
-                ).toFixed(1)}% of users have funded`
-              : "Unique players who funded at least once"
-          }
-          icon={BadgeDollarSign}
-          color="purple"
-        />
+        <BoxTimingFrame ms={stats.timings.depositors} badgeClassName={tileBadge}>
+          <StatCard
+            title="Depositors"
+            animatedValue={stats.financials.uniqueDepositors}
+            formatKind="number"
+            subtitle={
+              stats.users.total > 0
+                ? `${(
+                    (stats.financials.uniqueDepositors / stats.users.total) *
+                    100
+                  ).toFixed(1)}% of users have funded`
+                : "Unique players who funded at least once"
+            }
+            icon={BadgeDollarSign}
+            color="purple"
+          />
+        </BoxTimingFrame>
         {/* Avg Deposit is an inflow stat. Using cyan here so each secondary
             card has its own identity color. */}
-        <StatCard
-          title="Avg Deposit"
-          animatedValue={stats.financials.avgDeposit}
-          formatKind="currency"
-          subtitle="Across all users (lifetime)"
-          icon={Coins}
-          color="cyan"
-        />
+        <BoxTimingFrame ms={stats.timings.avgDeposit} badgeClassName={tileBadge}>
+          <StatCard
+            title="Avg Deposit"
+            animatedValue={stats.financials.avgDeposit}
+            formatKind="currency"
+            subtitle="Across all users (lifetime)"
+            icon={Coins}
+            color="cyan"
+          />
+        </BoxTimingFrame>
         {/* Deposits / Hour — average deposit transactions per hour.
             Hero is the last-24h rate (count ÷ 24); subtitle carries the
             7-day baseline. Emerald = money flowing in (house POV), to
             match the Deposits card. Uses `value` (not animatedValue)
             because AnimatedNumber rounds the "number" format to an
             integer and we want the .1 precision on a fractional rate. */}
-        <StatCard
-          title="Deposits / Hour"
-          value={depositsPerHour24h.toFixed(1)}
-          subtitle={`last 24h avg · 7d ${depositsPerHour7d.toFixed(1)}/hr`}
-          icon={Gauge}
-          color="emerald"
-        />
+        <BoxTimingFrame
+          ms={stats.timings.depositsPerHour}
+          badgeClassName={tileBadge}
+        >
+          <StatCard
+            title="Deposits / Hour"
+            value={depositsPerHour24h.toFixed(1)}
+            subtitle={`last 24h avg · 7d ${depositsPerHour7d.toFixed(1)}/hr`}
+            icon={Gauge}
+            color="emerald"
+          />
+        </BoxTimingFrame>
         {/* The "Creator Deal Payouts (withdrawn)" tile that used to sit here
             (next to Deposits / Hour) was removed — the new "Creators Costs
             (today)" box above (next to Reward Costs) now covers creator
             spend, including creator deal-payout withdrawals. */}
-        <StatCard
-          title="Avg RTP"
-          animatedValue={
-            stats.financials.totalWagered > 0
-              ? (stats.financials.totalWon / stats.financials.totalWagered) *
-                100
-              : 0
-          }
-          formatKind="percent"
-          icon={Percent}
-          color="pink"
-        />
+        <BoxTimingFrame ms={stats.timings.avgRtp} badgeClassName={tileBadge}>
+          <StatCard
+            title="Avg RTP"
+            animatedValue={
+              stats.financials.totalWagered > 0
+                ? (stats.financials.totalWon / stats.financials.totalWagered) *
+                  100
+                : 0
+            }
+            formatKind="percent"
+            icon={Percent}
+            color="pink"
+          />
+        </BoxTimingFrame>
       </div>
-    </BoxTimingFrame>
+    </div>
   );
 }
 

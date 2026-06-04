@@ -73,21 +73,32 @@ export function BoxLoadTime({
  * grid-cell classes you'd put on the card via `className` if the wrapper
  * needs to stretch (e.g. `h-full` in the 50/50 row).
  *
+ * `badgeClassName` is forwarded to the inner {@link BoxLoadTime} for the
+ * COMPACT KPI tiles, whose content (a subtitle / breakdown chip row) can
+ * reach the bottom-right corner. The big boxes (charts, panels) have empty
+ * corners and pass nothing, so they keep the bare badge unchanged; the
+ * compact tiles pass a tiny `bg-card/…` backdrop + rounding so the badge
+ * reads cleanly ON TOP of whatever sits in the corner WITHOUT reserving
+ * layout space (it stays `absolute` + `pointer-events-none`, so the tile's
+ * size/box model is untouched).
+ *
  * `ms` is a plain number (serializable across the RSC boundary).
  */
 export function BoxTimingFrame({
   ms,
   className,
+  badgeClassName,
   children,
 }: {
   ms: number;
   className?: string;
+  badgeClassName?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className={cn("relative", className)}>
       {children}
-      <BoxLoadTime ms={ms} />
+      <BoxLoadTime ms={ms} className={badgeClassName} />
     </div>
   );
 }
