@@ -7,6 +7,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { BALANCE_ADJ_CACHE_TAGS } from "./_shared";
+import { OFFICIAL_STREAM_ADJUSTMENT_CATEGORY } from "@/lib/balance-adjustment-categories";
 
 /**
  * By-Admin accountability lens for /insights/balance-adjustments.
@@ -102,6 +103,10 @@ async function computeByAdmin(
       FROM admin_audit_events ae
       WHERE ae.event_type IN ('balance_adjustment', 'manual_withdrawal_recorded')
         AND ae.admin_user_id IS NOT NULL
+        -- FAKE-BALANCE: drop official_stream events (the writer stamps
+        -- metadata.category on the audit row, actions.ts). IS DISTINCT FROM
+        -- keeps NULL-category rows (manual withdrawals carry no category).
+        AND (ae.metadata->>'category') IS DISTINCT FROM '${OFFICIAL_STREAM_ADJUSTMENT_CATEGORY.replace(/'/g, "''")}'
         ${windowFilter}
     )
     SELECT

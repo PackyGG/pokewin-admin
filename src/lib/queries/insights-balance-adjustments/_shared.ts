@@ -1,5 +1,6 @@
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
@@ -117,6 +118,24 @@ export function blacklistFilter(
   column = "lt.user_id",
 ): string {
   return blacklistNotInClause(column, blacklistIds);
+}
+
+/**
+ * AND-fragment that EXCLUDES the FAKE-BALANCE `official_stream` adjustments
+ * from this surface. official_stream is owner-designated fake balance that
+ * must be hidden absolutely everywhere — including this accountability
+ * surface — so every lens (overview / by-user / direction-reason /
+ * audit-trail) concatenates this fragment. Defaults to the alias `lt`; the
+ * `type`/`metadata` columns are resolved off that alias.
+ *
+ * Returned as a leading-`AND` fragment so it can be concatenated
+ * unconditionally onto an existing WHERE.
+ */
+export function notOfficialStreamFilter(alias = "lt"): string {
+  return `AND NOT (${officialStreamAdjustmentSqlPredicate({
+    typeColumn: `${alias}.type`,
+    metadataColumn: `${alias}.metadata`,
+  })})`;
 }
 
 /** Cache TTL for a given period — re-exported for convenience. */

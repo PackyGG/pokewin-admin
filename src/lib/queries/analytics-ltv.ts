@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 
 /**
  * Creator true LTV analysis. For every creator (user with role='creator'
@@ -133,6 +134,10 @@ export async function getCreatorLtv(period: LtvPeriod): Promise<CreatorLtvData> 
       SELECT
         lt.user_id AS creator_id,
         COALESCE(SUM(CASE WHEN lt.type::text IN ('affiliate_claim','creator_tip','admin_balance_adjustment')
+          -- FAKE-BALANCE: official_stream admin_balance_adjustment credits are
+          -- owner-designated fake balance, not a real creator cost — exclude
+          -- them from this branch (affiliate_claim / creator_tip unchanged).
+          AND NOT (${officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })})
           THEN GREATEST((lt.balance_after - lt.balance_before)::numeric, 0) ELSE 0 END), 0) AS cost
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'

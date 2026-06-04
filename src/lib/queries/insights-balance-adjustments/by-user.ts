@@ -11,6 +11,7 @@ import {
   getResolvedBlacklist,
   blacklistFilter,
   windowDateFilter,
+  notOfficialStreamFilter,
 } from "./_shared";
 
 /**
@@ -58,6 +59,8 @@ async function computeByUser(
   const db = await getDb();
   const dateFilter = windowDateFilter(period);
   const bl = blacklistFilter(blacklistIds);
+  // FAKE-BALANCE: drop official_stream adjustments from every slice.
+  const notOfficialStream = notOfficialStreamFilter();
 
   // One per-user rollup CTE, reused for all three slices. Each row carries
   // credit / debit volume, count, net, and the last event timestamp.
@@ -73,6 +76,7 @@ async function computeByUser(
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type = '${ADJ_TYPE}'
+        ${notOfficialStream}
         ${bl}
         ${dateFilter}
       GROUP BY lt.user_id

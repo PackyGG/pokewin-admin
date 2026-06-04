@@ -12,6 +12,10 @@ import {
   ADJ_DESC_PREFIX,
   MANUAL_WD_DESC_PREFIX,
 } from "./_shared";
+import {
+  officialStreamAdjustmentPrismaWhere,
+  OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
+} from "@/lib/balance-adjustment-categories";
 
 /**
  * Audit-trail (forensic) lens for /insights/balance-adjustments.
@@ -99,12 +103,19 @@ async function computeAuditTrail(
     days !== null ? new Date(Date.now() - days * 86_400_000) : undefined;
 
   // 1. Recent ledger adjustment rows (main DB) + total count.
+  // FAKE-BALANCE: exclude official_stream adjustments from this forensic
+  // feed (and its total) — owner-designated fake balance is hidden
+  // everywhere. `NOT (admin_balance_adjustment AND category=official_stream)`
+  // combined with the outer `type` filter leaves the non-official_stream
+  // adjustments.
+  const notOfficialStream = { NOT: officialStreamAdjustmentPrismaWhere() };
   const [ledgerRows, totalInWindow] = await Promise.all([
     db.ledger_transactions.findMany({
       where: {
         type: "admin_balance_adjustment",
         status: "completed",
         ...(since ? { created_at: { gte: since } } : {}),
+        ...notOfficialStream,
       },
       orderBy: { created_at: "desc" },
       take: limit,
@@ -121,6 +132,7 @@ async function computeAuditTrail(
         type: "admin_balance_adjustment",
         status: "completed",
         ...(since ? { created_at: { gte: since } } : {}),
+        ...notOfficialStream,
       },
     }),
   ]);
@@ -144,6 +156,14 @@ async function computeAuditTrail(
         event_type: { in: ["balance_adjustment", "manual_withdrawal_recorded"] },
         admin_user_id: { not: null },
         created_at: { gte: auditLowerBound },
+        // FAKE-BALANCE: drop official_stream attribution events too (the
+        // matching ledger rows are already filtered out above).
+        NOT: {
+          metadata: {
+            path: ["category"],
+            equals: OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
+          },
+        },
       },
       orderBy: { created_at: "desc" },
       take: Math.max(limit * 3, 300),

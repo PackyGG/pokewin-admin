@@ -11,6 +11,7 @@ import {
   getResolvedBlacklist,
   blacklistFilter,
   windowDateFilter,
+  notOfficialStreamFilter,
 } from "./_shared";
 
 /**
@@ -85,6 +86,8 @@ async function computeDirectionReason(
   const db = await getDb();
   const dateFilter = windowDateFilter(period);
   const bl = blacklistFilter(blacklistIds);
+  // FAKE-BALANCE: drop official_stream adjustments from every block.
+  const notOfficialStream = notOfficialStreamFilter();
 
   // Reason grouping: classify manual-withdrawal rows into one synthetic
   // bucket, otherwise strip the "Admin adjustment: " prefix to recover
@@ -116,6 +119,7 @@ async function computeDirectionReason(
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type = '${ADJ_TYPE}'
+        ${notOfficialStream}
         ${bl}
         ${dateFilter}
     `),
@@ -137,6 +141,7 @@ async function computeDirectionReason(
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type = '${ADJ_TYPE}'
+        ${notOfficialStream}
         ${bl}
         ${dateFilter}
       GROUP BY reason_key
@@ -151,6 +156,7 @@ async function computeDirectionReason(
         FROM ledger_transactions lt
         WHERE lt.status = 'completed'
           AND lt.type = '${ADJ_TYPE}'
+          ${notOfficialStream}
           ${bl}
           ${dateFilter}
       )

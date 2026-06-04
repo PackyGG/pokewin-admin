@@ -13,7 +13,9 @@ import {
   getResolvedBlacklist,
   blacklistFilter,
   windowDateFilter,
+  notOfficialStreamFilter,
 } from "./_shared";
+import { OFFICIAL_STREAM_ADJUSTMENT_CATEGORY } from "@/lib/balance-adjustment-categories";
 
 /**
  * Overview rollup for /insights/balance-adjustments.
@@ -89,6 +91,8 @@ async function computeOverview(
   const days = daysForInsightsPeriod(period);
   const dateFilter = windowDateFilter(period);
   const bl = blacklistFilter(blacklistIds);
+  // FAKE-BALANCE: drop official_stream adjustments from every lens.
+  const notOfficialStream = notOfficialStreamFilter();
 
   const [rollupRows, dailyRows] = await Promise.all([
     db.$queryRawUnsafe<
@@ -115,6 +119,7 @@ async function computeOverview(
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type = '${ADJ_TYPE}'
+        ${notOfficialStream}
         ${bl}
         ${dateFilter}
     `),
@@ -129,6 +134,7 @@ async function computeOverview(
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type = '${ADJ_TYPE}'
+        ${notOfficialStream}
         ${bl}
         ${dateFilter}
       GROUP BY DATE(lt.created_at)
@@ -166,6 +172,15 @@ async function computeOverview(
       ? { created_at: { gte: new Date(Date.now() - days * 86_400_000) } }
       : {}),
     admin_user_id: { not: null },
+    // FAKE-BALANCE: drop official_stream adjustments — the writer stamps
+    // `metadata.category` on the admin-DB audit event (actions.ts), so the
+    // hidden category never inflates the distinct-admin count.
+    NOT: {
+      metadata: {
+        path: ["category"],
+        equals: OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
+      },
+    },
   };
   const adminGroups = await adminDb.admin_audit_events.findMany({
     where: auditWhere,
@@ -188,6 +203,7 @@ async function computeOverview(
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type = '${ADJ_TYPE}'
+        ${notOfficialStream}
         ${bl}
         AND lt.created_at >= NOW() - INTERVAL '${days * 2} days'
         AND lt.created_at < NOW() - INTERVAL '${days} days'
