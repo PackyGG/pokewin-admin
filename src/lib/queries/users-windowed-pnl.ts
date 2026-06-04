@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
+import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import type { WindowedPnl } from "./pnl";
 
 /**
@@ -75,10 +76,18 @@ export async function getUserWindowedPnlMulti(
           `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} AND lt.type::text = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_${i}`,
       )
       .join(", ");
+    // FAKE-BALANCE carve-out: official_stream adjustments credit REAL
+    // balance but are owner-designated fake balance, so they must NOT enter
+    // the balance-delta term of windowed P&L (mirrors calculateWindowedPnl /
+    // getDailyPnl). Zero out their signed delta inside the SUM.
+    const officialStreamExcl = officialStreamAdjustmentSqlPredicate({
+      typeColumn: "lt.type",
+      metadataColumn: "lt.metadata",
+    });
     const ledgerBalanceChangeCase = windows
       .map(
         (_, i) =>
-          `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS balance_change_${i}`,
+          `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} AND NOT (${officialStreamExcl}) THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS balance_change_${i}`,
       )
       .join(", ");
 

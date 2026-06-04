@@ -10,9 +10,11 @@ import {
   getWindowMetrics,
   getDailyGamingMetrics,
   sumLedgerTypes,
+  sumOfficialStreamAdjustments,
   type MetricWindow,
 } from "@/lib/metrics/queries";
 import { calculateWindowedPnl } from "@/lib/metrics/realized-pnl";
+import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import {
   periodToCutoff,
   type InsightsPeriod,
@@ -279,7 +281,10 @@ const cachedDailyPnl = unstable_cache(
        ledger AS (
          SELECT DATE(lt.created_at) AS d,
                 lt.type, lt.amount::numeric AS amount,
-                lt.balance_before, lt.balance_after, lt.description
+                lt.balance_before, lt.balance_after, lt.description,
+                -- Carried so the balance_change sum below can exclude
+                -- fake-balance official_stream adjustments by category.
+                lt.metadata
          FROM ledger_transactions lt
          JOIN real_users ru ON ru.id = lt.user_id
          WHERE lt.status = 'completed' AND lt.created_at >= ${since}
@@ -292,7 +297,10 @@ const cachedDailyPnl = unstable_cache(
                              AND balance_after < balance_before
                              AND description ILIKE 'Manual withdrawal:%'
                                                                            THEN amount ELSE 0 END), 0) AS manual_wd,
-           COALESCE(SUM((balance_after - balance_before)::numeric), 0) AS balance_change
+           -- FAKE-BALANCE carve-out: official_stream adjustments are
+           -- owner-designated fake balance, excluded from the balance-delta
+           -- term (mirrors calculateWindowedPnl).
+           COALESCE(SUM(CASE WHEN ${officialStreamAdjustmentSqlPredicate()} THEN 0 ELSE (balance_after - balance_before)::numeric END), 0) AS balance_change
          FROM ledger
          GROUP BY d
        ),
@@ -412,6 +420,7 @@ export async function getMoneyFlowDecomposition(
     dailyPnl,
     rewardSums,
     residualSums,
+    officialStreamSum,
   ] = await Promise.all([
     getWindowMetrics({ window }),
     calculateWindowedPnl({ since: cutoff, excludeUserIds: dropUserIds }),
@@ -435,6 +444,10 @@ export async function getMoneyFlowDecomposition(
         total: await sumLedgerTypes({ types: [type], window }),
       })),
     ),
+    // FAKE-BALANCE: Σ |amount| of official_stream adjustments (same scope) —
+    // subtracted from the admin_balance_adjustment residual term below so
+    // the fake balance never moves the surfaced residual.
+    sumOfficialStreamAdjustments({ window }),
   ]);
 
   const wagers = metrics.wager;
@@ -465,11 +478,19 @@ export async function getMoneyFlowDecomposition(
 
   // ── Honest residual (NGR → P&L identity) ─────────────────────────
   // Sum the RESIDUAL_TYPES flows with their house-POV sign on P&L (mirrors
-  // cost-breakdown's `residualNamedTotal`).
-  const residualNamedTotal = residualSums.reduce(
-    (sum, { type, total }) => sum + residualSign(type) * total,
-    0,
-  );
+  // cost-breakdown's `residualNamedTotal`). The admin_balance_adjustment
+  // residual leg drops its FAKE-BALANCE official_stream slice
+  // (`officialStreamSum`, Σ |amount| in the same scope) so the hidden fake
+  // balance never moves the surfaced residual — consistent with the
+  // balance-delta carve-out above (which already excludes official_stream
+  // from `windowedPnl`). Clamp ≥ 0 defensively.
+  const residualNamedTotal = residualSums.reduce((sum, { type, total }) => {
+    const adjusted =
+      type === "admin_balance_adjustment"
+        ? Math.max(0, total - officialStreamSum)
+        : total;
+    return sum + residualSign(type) * adjusted;
+  }, 0);
   // Everything from NGR down to realized P&L should be accounted for by
   // the three liabilities + the RESIDUAL_TYPES flows. The unexplained
   // residual is whatever is left:

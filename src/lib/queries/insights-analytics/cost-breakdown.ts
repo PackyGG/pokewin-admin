@@ -11,6 +11,7 @@ import {
   getWindowMetrics,
   getDailyGamingMetrics,
   sumLedgerTypes,
+  sumOfficialStreamAdjustments,
   type MetricWindow,
 } from "@/lib/metrics/queries";
 import { calculateWindowedPnl } from "@/lib/metrics/realized-pnl";
@@ -701,6 +702,7 @@ export async function getCostBreakdown(
     dailyMetrics,
     contributors,
     countedAdjustments,
+    officialStreamSum,
   ] = await Promise.all([
     getWindowMetrics({ window }),
     calculateWindowedPnl({ since: cutoff, excludeUserIds: dropUserIds }),
@@ -708,6 +710,10 @@ export async function getCostBreakdown(
     getDailyGamingMetrics(window),
     getCostContributors(contributorLimit),
     getCountedAdjustmentSumsByCategory(window),
+    // FAKE-BALANCE: Σ |amount| of official_stream adjustments (same scope) —
+    // subtracted from the residual admin-adjustment line below so the fake
+    // balance is never surfaced as a residual cost.
+    sumOfficialStreamAdjustments({ window }),
   ]);
 
   const totalWager = metrics.wager;
@@ -825,10 +831,13 @@ export async function getCostBreakdown(
       // their OWN reward lines (lifted into NGR). Subtract them from the
       // residual admin-adjustment line so they are not double-counted —
       // what remains is the uncounted slice (`other` + corrections +
-      // manual-withdrawal debits). Clamp ≥ 0 defensively.
+      // manual-withdrawal debits). ALSO subtract the FAKE-BALANCE
+      // official_stream slice (`officialStreamSum`) so it is never surfaced
+      // as a residual admin-adjustment cost — owner-designated fake balance
+      // is hidden from every computed figure. Clamp ≥ 0 defensively.
       const total =
         type === "admin_balance_adjustment"
-          ? Math.max(0, raw - countedAdjustments.total)
+          ? Math.max(0, raw - countedAdjustments.total - officialStreamSum)
           : raw;
       return { type, total };
     }),

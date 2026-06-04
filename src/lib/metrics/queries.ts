@@ -12,7 +12,10 @@ import {
   ledgerTypesToSqlList,
   type LedgerTransactionType,
 } from "./ledger-sets";
-import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
+import {
+  countedAdjustmentSqlPredicate,
+  officialStreamAdjustmentSqlPredicate,
+} from "@/lib/balance-adjustment-categories";
 import {
   ggr as ggrFormula,
   ngr as ngrFormula,
@@ -805,6 +808,39 @@ export async function sumLedgerTypes(opts: {
        FROM ledger_transactions
        WHERE status = 'completed'
          AND type::text IN ${list}
+         AND user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("user_id", "created_at")}
+         ${sinceClause("created_at", opts.window.since)}`,
+    );
+    return toNumber(rows[0]?.total);
+  });
+}
+
+/**
+ * Σ |amount| of the FAKE-BALANCE `official_stream` `admin_balance_adjustment`
+ * rows over a window, through the SAME canonical scope as the gaming metrics
+ * (`getMetricsScope`). official_stream is owner-designated fake balance that
+ * must be hidden everywhere: the residual `admin_balance_adjustment` line in
+ * the cost-breakdown / money-flow waterfalls sums `admin_balance_adjustment`
+ * via {@link sumLedgerTypes} (Σ |amount|), so this returns the matching
+ * Σ |amount| slice to SUBTRACT from that residual so official_stream is not
+ * surfaced as a residual admin-adjustment cost. (The COUNTED categories are
+ * already carved out separately; this is the additional official_stream
+ * slice.)
+ */
+export async function sumOfficialStreamAdjustments(opts: {
+  window: MetricWindow;
+}): Promise<number> {
+  return withTiming("metrics.sumOfficialStreamAdjustments", async () => {
+    const db = await getDb();
+    const scope = await getMetricsScope();
+    type Row = { total: string };
+    const rows = await db.$queryRawUnsafe<Row[]>(
+      `WITH ${scope.sessionWindowsCte}
+       SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
+       FROM ledger_transactions
+       WHERE status = 'completed'
+         AND ${officialStreamAdjustmentSqlPredicate()}
          AND user_id IN ${scope.userScopeSql}
          AND ${scope.notInCreatorSession("user_id", "created_at")}
          ${sinceClause("created_at", opts.window.since)}`,

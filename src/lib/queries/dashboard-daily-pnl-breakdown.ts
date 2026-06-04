@@ -5,6 +5,7 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { blacklistNotInClause } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 
 /**
  * dashboard-daily-pnl-breakdown.ts — the click-to-load drilldown behind ONE
@@ -173,6 +174,13 @@ export async function getDailyPnlBreakdown(
     // creators KEPT (this is the global P&L scope, NOT the creator-dropping
     // getMetricsScope). The `u` alias is bound inside the subquery only.
     const usersScope = `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
+    // FAKE-BALANCE carve-out predicate — official_stream adjustments are
+    // owner-designated fake balance, excluded from the balance-change term
+    // (summary AND record list) exactly like getDailyPnl. `lt` alias.
+    const officialStreamExcl = officialStreamAdjustmentSqlPredicate({
+      typeColumn: "lt.type",
+      metadataColumn: "lt.metadata",
+    });
 
     // The day literal — `$DATE = '<dayUtc>'::date`. Inlined as a quoted date
     // literal (the value is regex-validated to YYYY-MM-DD above, so it cannot
@@ -257,7 +265,7 @@ export async function getDailyPnlBreakdown(
                               AND lt.balance_after < lt.balance_before
                               AND lt.description ILIKE 'Manual withdrawal:%'
                              THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS manual_wd,
-           COALESCE(SUM((lt.balance_after - lt.balance_before)::numeric), 0)::float8 AS balance_change
+           COALESCE(SUM(CASE WHEN ${officialStreamExcl} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::float8 AS balance_change
          FROM ledger_transactions lt
          WHERE lt.status = 'completed' AND DATE(lt.created_at) = ${dayLit}
            AND lt.user_id IN ${usersScope}`,
@@ -369,6 +377,9 @@ export async function getDailyPnlBreakdown(
          JOIN "user" u ON u.id = lt.user_id
          WHERE lt.status = 'completed' AND DATE(lt.created_at) = ${dayLit}
            AND lt.user_id IN ${usersScope}
+           -- Exclude fake-balance official_stream rows so the record feed
+           -- reconciles with the (also-excluded) balance_change summary.
+           AND NOT (${officialStreamExcl})
          ORDER BY ABS(lt.balance_after - lt.balance_before) DESC
          LIMIT ${cap}`,
       ),
@@ -376,7 +387,8 @@ export async function getDailyPnlBreakdown(
         `SELECT COUNT(*)::int AS n
          FROM ledger_transactions lt
          WHERE lt.status = 'completed' AND DATE(lt.created_at) = ${dayLit}
-           AND lt.user_id IN ${usersScope}`,
+           AND lt.user_id IN ${usersScope}
+           AND NOT (${officialStreamExcl})`,
       ),
 
       // ── Inventory records — obtained (+) UNION disposed (−). ──

@@ -323,3 +323,68 @@ export function adjustmentCategorySqlPredicate(
   const key = `'${category.replace(/'/g, "''")}'`;
   return `${typeCol}::text = 'admin_balance_adjustment' AND ${amountCol}::numeric > 0 AND ${metaCol}->>'adjustment_category' = ${key}`;
 }
+
+/**
+ * The FAKE-BALANCE category key — `official_stream` adjustments credit (or
+ * debit) REAL `balances.available_balance` but are owner-designated as fake
+ * balance that must be HIDDEN ABSOLUTELY EVERYWHERE: excluded from every
+ * computed figure (PnL live-balance term + balance-delta term, cost
+ * breakdowns, balance-adjustment insights, creator LTV), netted out of every
+ * raw balance display, and hidden from every activity / transaction feed.
+ *
+ * It is detected by `admin_balance_adjustment` ledger rows carrying
+ * `metadata->>'adjustment_category' = 'official_stream'`. Because the credit
+ * is signed (both credit + debit are allowed) and a later clawback must
+ * reverse it cleanly, callers ALWAYS use the SIGNED NET `SUM(amount)` (NOT
+ * `ABS`, NOT a positive-only clamp) when subtracting it.
+ */
+export const OFFICIAL_STREAM_ADJUSTMENT_CATEGORY: BalanceAdjustmentCategory =
+  "official_stream";
+
+/**
+ * SQL predicate matching ONLY the fake-balance `official_stream`
+ * `admin_balance_adjustment` rows. Single source of truth for every
+ * "subtract / exclude / hide official_stream" call site.
+ *
+ * Mirrors {@link countedAdjustmentSqlPredicate}'s escaping (the key is a
+ * hardcoded enum string from this module, never user input, so injection is
+ * structurally impossible; the single-quote escape is defence-in-depth).
+ *
+ * Deliberately has NO `amount` sign guard — official_stream is netted with
+ * SIGNED `SUM(amount)` so a debit clawback reverses a prior credit. Pass an
+ * alias (e.g. `lt.type` / `lt.metadata`) for aliased call sites; both default
+ * to the unaliased `type` / `metadata` columns.
+ */
+export function officialStreamAdjustmentSqlPredicate(opts?: {
+  typeColumn?: string;
+  metadataColumn?: string;
+}): string {
+  const typeCol = opts?.typeColumn ?? "type";
+  const metaCol = opts?.metadataColumn ?? "metadata";
+  const key = `'${OFFICIAL_STREAM_ADJUSTMENT_CATEGORY.replace(/'/g, "''")}'`;
+  return `${typeCol}::text = 'admin_balance_adjustment' AND ${metaCol}->>'adjustment_category' = ${key}`;
+}
+
+/**
+ * Prisma JSON-filter fragment that matches a ledger row whose
+ * `metadata.adjustment_category` is `official_stream`. For Prisma
+ * `.aggregate` / `.findMany` / `.count` `where` call-sites that filter the
+ * fake-balance rows IN (e.g. a dedicated official_stream net aggregate) — or,
+ * negated via Prisma's `NOT`, to EXCLUDE them.
+ *
+ * Shape matches Prisma's JSON path filter on the `Json` `metadata` column
+ * (string equals at the `adjustment_category` path). Returned as an object so
+ * callers can spread it into a larger `where` or wrap it in `{ NOT: ... }`.
+ */
+export function officialStreamAdjustmentPrismaWhere(): {
+  type: "admin_balance_adjustment";
+  metadata: { path: string[]; equals: string };
+} {
+  return {
+    type: "admin_balance_adjustment",
+    metadata: {
+      path: ["adjustment_category"],
+      equals: OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
+    },
+  };
+}

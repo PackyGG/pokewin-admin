@@ -10,6 +10,7 @@ import {
   blacklistNotInClause,
 } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 // Canonical metric layer (single source of truth for GGR / wager / payout
@@ -357,6 +358,9 @@ function getPeriodAggregates(
              lt.balance_after AS lt_balance_after,
              lt.balance_before AS lt_balance_before,
              lt.description AS lt_description,
+             -- Carried so the balance_change aggregate can exclude
+             -- fake-balance official_stream adjustments by category.
+             lt.metadata AS lt_metadata,
              ru.under_creator,
              CASE WHEN ru.role = 'creator'
                   THEN EXISTS (
@@ -482,6 +486,10 @@ function getPeriodAggregates(
       -- row, so summing across the window gives Δbalance directly.
       COALESCE(SUM(CASE
         WHEN created_at >= ${cutoff}
+             -- FAKE-BALANCE carve-out: drop official_stream adjustments from
+             -- the balance-delta term (owner-designated fake balance; mirrors
+             -- calculateWindowedPnl / getDailyPnl).
+             AND NOT (${Prisma.raw(officialStreamAdjustmentSqlPredicate({ metadataColumn: "lt_metadata" }))})
         THEN (lt_balance_after - lt_balance_before)::numeric ELSE 0 END), 0)::text AS balance_change,
       COALESCE(SUM(CASE
         WHEN type::text = 'admin_balance_adjustment'

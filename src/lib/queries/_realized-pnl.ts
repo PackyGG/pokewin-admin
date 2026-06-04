@@ -5,6 +5,7 @@ import { withTiming } from "@/lib/observability/query-timings";
 import { computeHousePnl } from "./pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
+import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 
 /**
  * Lifetime realized P&L from the house perspective — a balance-sheet snapshot.
@@ -96,6 +97,7 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
       inventory: string;
       vouchers: string;
       unclaimed_rakeback: string;
+      official_stream_net: string;
     }[]
   >(`
     WITH real_users AS (
@@ -109,7 +111,15 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
       COALESCE((SELECT SUM(locked_balance::numeric)      FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)::text AS locked_balance,
       COALESCE((SELECT SUM(value_at_obtained::numeric)   FROM user_inventory            WHERE sold_at IS NULL AND exchanged_at IS NULL AND withdrawal_locked_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)::text AS inventory,
       COALESCE((SELECT SUM(value::numeric)               FROM vouchers                  WHERE claimed_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)::text AS vouchers,
-      COALESCE((SELECT SUM(rakeback_amount_usd::numeric) FROM rakeback_claims           WHERE claimed_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)::text AS unclaimed_rakeback
+      COALESCE((SELECT SUM(rakeback_amount_usd::numeric) FROM rakeback_claims           WHERE claimed_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)::text AS unclaimed_rakeback,
+      -- FAKE-BALANCE carve-out: official_stream adjustments credit REAL
+      -- available_balance but are owner-designated fake balance. The live
+      -- balance term above (available + locked) includes this credit, so
+      -- subtract the SIGNED NET of every completed official_stream
+      -- adjustment from userBalance before computing house P&L (a later
+      -- clawback debit reverses it). NET (SUM(amount), not ABS) so the
+      -- carve-out is self-reversing.
+      COALESCE((SELECT SUM(amount::numeric) FROM ledger_transactions WHERE status = 'completed' AND ${officialStreamAdjustmentSqlPredicate()} AND user_id IN (SELECT id FROM real_users)), 0)::text AS official_stream_net
   `);
 
   const r = rows[0];
@@ -119,7 +129,10 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
   const totalWithdrawn = balanceWithdrawn + cardWithdrawn;
   const availableBalance = Number(r?.available_balance ?? 0);
   const lockedBalance = Number(r?.locked_balance ?? 0);
-  const userBalance = availableBalance + lockedBalance;
+  const officialStreamNet = Number(r?.official_stream_net ?? 0);
+  // Net out the fake-balance official_stream credit so it never enters the
+  // live-balance P&L term (see SQL note above).
+  const userBalance = availableBalance + lockedBalance - officialStreamNet;
   const inventory = Number(r?.inventory ?? 0);
   const vouchers = Number(r?.vouchers ?? 0);
   const unclaimedRakeback = Number(r?.unclaimed_rakeback ?? 0);

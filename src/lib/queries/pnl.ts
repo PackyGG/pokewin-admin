@@ -3,6 +3,10 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { blacklistNotInClause } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import {
+  officialStreamAdjustmentSqlPredicate,
+  officialStreamAdjustmentPrismaWhere,
+} from "@/lib/balance-adjustment-categories";
 
 /**
  * Canonical P&L formula — single source of truth.
@@ -123,7 +127,7 @@ export function computeHousePnl(c: PnlComponents): number {
 export async function calculateUserPnl(userId: string): Promise<UserPnl> {
   return withTiming("pnl.user", async () => {
     const db = await getDb();
-    const [balances, cardWithdrawals, inventoryAgg, vouchersAgg] =
+    const [balances, cardWithdrawals, inventoryAgg, vouchersAgg, officialStreamAgg] =
       await Promise.all([
         db.balances.findUnique({
           where: { user_id: userId },
@@ -166,6 +170,20 @@ export async function calculateUserPnl(userId: string): Promise<UserPnl> {
           where: { user_id: userId, claimed_at: null },
           _sum: { value: true },
         }),
+        // FAKE-BALANCE carve-out: SIGNED NET of this user's completed
+        // official_stream adjustments. They credit REAL available_balance
+        // but are owner-designated fake balance, so subtract them from the
+        // onSiteBalance term below. NET (`_sum.amount`, not ABS) so a later
+        // clawback debit reverses a prior credit. MUST match
+        // calculateUsersPnlBatch so users-list == user-detail.
+        db.ledger_transactions.aggregate({
+          where: {
+            user_id: userId,
+            status: "completed",
+            ...officialStreamAdjustmentPrismaWhere(),
+          },
+          _sum: { amount: true },
+        }),
       ]);
 
     const components: PnlComponents = {
@@ -175,7 +193,9 @@ export async function calculateUserPnl(userId: string): Promise<UserPnl> {
         toNumber(cardWithdrawals._sum.total_value_usd),
       onSiteBalance:
         toNumber(balances?.available_balance) +
-        toNumber(balances?.locked_balance),
+        toNumber(balances?.locked_balance) -
+        // Net out fake-balance official_stream credit.
+        toNumber(officialStreamAgg._sum.amount),
       inventoryValue: toNumber(inventoryAgg._sum.value_at_obtained),
       unclaimedVouchers: toNumber(vouchersAgg._sum.value),
     };
@@ -246,7 +266,7 @@ export async function calculateWindowedPnl(opts: {
                               AND lt.balance_after < lt.balance_before
                               AND lt.description ILIKE 'Manual withdrawal:%'
                              THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd,
-           COALESCE(SUM((lt.balance_after - lt.balance_before)::numeric), 0)::text AS balance_change
+           COALESCE(SUM(CASE WHEN ${officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::text AS balance_change
          FROM ledger_transactions lt
          WHERE lt.status = 'completed' AND lt.created_at >= $1 AND ${scope("lt.user_id")}`,
         ...params,
@@ -320,8 +340,13 @@ export async function calculateUsersPnlBatch(
 
   return withTiming("pnl.usersBatch", async () => {
     const db = await getDb();
-    const [balanceRows, cardWithdrawalRows, inventoryRows, voucherRows] =
-      await Promise.all([
+    const [
+      balanceRows,
+      cardWithdrawalRows,
+      inventoryRows,
+      voucherRows,
+      officialStreamRows,
+    ] = await Promise.all([
         db.balances.findMany({
           where: { user_id: { in: userIds } },
           select: {
@@ -363,6 +388,19 @@ export async function calculateUsersPnlBatch(
           where: { user_id: { in: userIds }, claimed_at: null },
           _sum: { value: true },
         }),
+        // FAKE-BALANCE carve-out: per-user SIGNED NET of completed
+        // official_stream adjustments (groupBy user_id). MUST mirror the
+        // single-user calculateUserPnl exactly so the users-LIST P&L equals
+        // the user-DETAIL P&L. NET (`_sum.amount`) so a clawback reverses it.
+        db.ledger_transactions.groupBy({
+          by: ["user_id"],
+          where: {
+            user_id: { in: userIds },
+            status: "completed",
+            ...officialStreamAdjustmentPrismaWhere(),
+          },
+          _sum: { amount: true },
+        }),
       ]);
 
     const balanceMap = new Map(balanceRows.map((b) => [b.user_id, b]));
@@ -378,6 +416,9 @@ export async function calculateUsersPnlBatch(
     const voucherMap = new Map(
       voucherRows.map((v) => [v.user_id, toNumber(v._sum.value)]),
     );
+    const officialStreamMap = new Map(
+      officialStreamRows.map((o) => [o.user_id, toNumber(o._sum.amount)]),
+    );
 
     for (const userId of userIds) {
       const b = balanceMap.get(userId);
@@ -386,7 +427,10 @@ export async function calculateUsersPnlBatch(
         withdrawals:
           toNumber(b?.total_withdrawn) + (cardWithdrawalMap.get(userId) ?? 0),
         onSiteBalance:
-          toNumber(b?.available_balance) + toNumber(b?.locked_balance),
+          toNumber(b?.available_balance) +
+          toNumber(b?.locked_balance) -
+          // Net out fake-balance official_stream credit (matches detail).
+          (officialStreamMap.get(userId) ?? 0),
         inventoryValue: inventoryMap.get(userId) ?? 0,
         unclaimedVouchers: voucherMap.get(userId) ?? 0,
       };
@@ -461,7 +505,7 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
                               AND lt.balance_after < lt.balance_before
                               AND lt.description ILIKE 'Manual withdrawal:%'
                              THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS manual_wd,
-           COALESCE(SUM((lt.balance_after - lt.balance_before)::numeric), 0)::float8 AS balance_change
+           COALESCE(SUM(CASE WHEN ${officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::float8 AS balance_change
          FROM ledger_transactions lt
          WHERE lt.status = 'completed' AND lt.created_at >= NOW() - INTERVAL '30 days'
            AND lt.user_id IN ${usersScope}
@@ -744,9 +788,9 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
            COALESCE(SUM(CASE WHEN created_at >= $1 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_h24,
            COALESCE(SUM(CASE WHEN created_at >= $2 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_d3,
            COALESCE(SUM(CASE WHEN created_at >= $3 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_d7,
-           COALESCE(SUM(CASE WHEN created_at >= $1 THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_h24,
-           COALESCE(SUM(CASE WHEN created_at >= $2 THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_d3,
-           COALESCE(SUM(CASE WHEN created_at >= $3 THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_d7,
+           COALESCE(SUM(CASE WHEN created_at >= $1 AND NOT (${officialStreamAdjustmentSqlPredicate()}) THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_h24,
+           COALESCE(SUM(CASE WHEN created_at >= $2 AND NOT (${officialStreamAdjustmentSqlPredicate()}) THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_d3,
+           COALESCE(SUM(CASE WHEN created_at >= $3 AND NOT (${officialStreamAdjustmentSqlPredicate()}) THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_d7,
            COALESCE(SUM(CASE WHEN created_at >= $1 AND type::text = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_h24,
            COALESCE(SUM(CASE WHEN created_at >= $2 AND type::text = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_d3,
            COALESCE(SUM(CASE WHEN created_at >= $3 AND type::text = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_d7
