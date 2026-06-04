@@ -28,7 +28,9 @@ import {
   getGamingLegs,
   upgraderMetrics,
   type MetricWindow,
+  type WindowMetrics,
 } from "@/lib/metrics/queries";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 // Central canonical scope (staff + blacklist drop, creators kept,
 // creator-on-session rows excluded via session windows). getGgrTopContributors
 // is swept onto this so per-user GGR uses the SAME population as the
@@ -55,20 +57,151 @@ export {
 export type { DashboardPeriod } from "./dashboard-period";
 
 /**
+ * Capped lifetime lookback (days) for the dashboard "all" (All time)
+ * chip's headline GGR / NGR read.
+ *
+ * The dashboard exposes an "all" chip, but mapping it to a TRUE unbounded
+ * window (`since: null`) makes the canonical `getWindowMetrics` /
+ * `getGamingLegs` legs scan the ENTIRE ~400k-row `ledger_transactions`
+ * history (plus the full `user_inventory` + `upgrader_games`) with no
+ * lower bound — and on the dashboard that read had NO `safeQuery` timeout
+ * and NO cache, so a slow full-history scan blocked the KPI strip until
+ * Postgres returned or the platform killed the request. So "all" is now
+ * bounded to the SAME capped lookback the `/ggr` page already uses for its
+ * Lifetime chip (`GGR_LIFETIME_LOOKBACK_DAYS = 365` in
+ * `src/lib/queries/ggr.ts`, itself mirroring the canonical 365-day guard
+ * shared by deposit-bonus `_shared.ts` / rakeback ROI / `signup/daily.ts`
+ * / `suspicious.ts`). The value is inlined here as a local constant —
+ * rather than imported from the `server-only` `ggr.ts` — to keep this
+ * module decoupled and free of a `server-only` import (client components
+ * pull this module's TYPES via `import type`), the SAME way `suspicious.ts`
+ * / `signup/daily.ts` inline `365` with a reference comment. Keep this in
+ * sync with the canonical 365-day guard.
+ */
+const DASHBOARD_GGR_LIFETIME_LOOKBACK_DAYS = 365;
+
+/**
  * Convert a dashboard period chip to the canonical `MetricWindow` the
- * `@/lib/metrics` query builders take. The "all" chip maps to
- * `since: null` (true lifetime, no lower bound) rather than the epoch
- * sentinel `periodToCutoff` returns — the canonical layer drops the
- * `created_at >= …` clause entirely for `null`, which is cheaper and
- * semantically exact. Every other chip maps to its rolling cutoff.
+ * `@/lib/metrics` query builders take.
+ *
+ * Every rolling chip maps to its `periodToCutoff` cutoff. The "all" chip
+ * does NOT map to an unbounded `{ since: null }` — that triggers a
+ * full-history scan in the canonical GGR/NGR legs that (on the dashboard)
+ * ran without a timeout or cache and could hang the KPI strip (see
+ * {@link DASHBOARD_GGR_LIFETIME_LOOKBACK_DAYS}). Instead "all" maps to a
+ * BOUNDED cutoff `now − 365 days`, matching how `/ggr`'s Lifetime chip is
+ * capped (`ggrWindowToMetricWindow`). SEMANTIC NOTE: this makes the
+ * dashboard's "All time" headline GGR / NGR a TRAILING-365-DAY figure
+ * (identical to what `/ggr` Lifetime already reports), not a true
+ * since-inception number.
+ *
+ * Used ONLY for the canonical `@/lib/metrics` GGR/NGR (+ upgrader) reads.
+ * The period-bound `getPeriodAggregates` wager / deposit / withdrawal
+ * tiles still use the epoch-sentinel `periodToCutoff` (a no-op cutoff that
+ * does NOT change their existing all-time behaviour) — only the canonical
+ * gaming-margin legs, which are the ones that did the unbounded scan, are
+ * capped here.
  */
 function periodToMetricWindow(
   period: DashboardPeriod,
   now: Date,
 ): MetricWindow {
+  if (period !== "all") {
+    return { since: periodToCutoff(period, now) };
+  }
+  // "all" → bounded 365-day lookback (NOT unbounded `since: null`) so the
+  // canonical GGR/NGR legs never run a full-history scan on the dashboard.
+  const since = new Date(
+    now.getTime() - DASHBOARD_GGR_LIFETIME_LOOKBACK_DAYS * MS_PER_DAY,
+  );
+  return { since };
+}
+
+/**
+ * Neutral all-zero fallback for the canonical headline window metrics —
+ * the shape `getWindowMetrics` returns. Used when the headline GGR read
+ * fails or times out (via {@link safeQuery}) so the dashboard still renders
+ * a $0 gaming-margin tile instead of crashing the KPI strip.
+ */
+const EMPTY_WINDOW_METRICS: WindowMetrics = {
+  wager: 0,
+  gamingPayout: 0,
+  ggr: 0,
+  ngr: 0,
+  rtp: null,
+  houseEdge: null,
+  bets: 0,
+  rainWinTotal: 0,
+  rainTipTotal: 0,
+  rainHouseCost: 0,
+};
+
+/**
+ * Shared inner read for the dashboard's headline GGR/NGR — resolves the
+ * (capped, see `periodToMetricWindow`) window from the PERIOD STRING
+ * itself, then calls the canonical `getWindowMetrics`.
+ *
+ * Crucially `now` is recomputed HERE (inside the cached fn) from the
+ * period, NOT passed in: the `unstable_cache` key is the stable period
+ * string + blacklist clause, never a per-millisecond Date. For the "all"
+ * chip this means the 365-day lower bound is recomputed on each cache
+ * MISS; within the cache TTL the sub-window drift is bounded (the SAME
+ * tradeoff `cachedUserCounts` / `cachedLifetimeDepositMetrics` make with
+ * their recomputed rolling cutoffs). `getWindowMetrics` resolves its own
+ * real-customer scope (staff + blacklist) internally; `blacklistIdNotIn`
+ * is threaded through purely as a cache-key discriminator so an
+ * excluded-user change re-fetches within the TTL — matching every other
+ * cached dashboard aggregate's key shape.
+ */
+async function windowMetricsForPeriodInner(
+  period: DashboardPeriod,
+  // Cache-key discriminator only (see doc above); not used in the read.
+  _blacklistIdNotIn: string,
+): Promise<WindowMetrics> {
+  const window = periodToMetricWindow(period, new Date());
+  return getWindowMetrics({ window });
+}
+
+// Lifetime ("all") headline GGR — 300s TTL. The "all" chip is now capped
+// to a bounded 365-day window (see `periodToMetricWindow`), so this is a
+// heavy-but-bounded scan; a 5-min cache keeps it off the hot path on the
+// dashboard's 60s auto-refresh, consistent with the OTHER lifetime
+// aggregates in this file (`cachedBalanceAggregates`, `cachedUserCounts`,
+// …, all 300s).
+const cachedLifetimeWindowMetrics = unstable_cache(
+  windowMetricsForPeriodInner,
+  ["dashboard-window-metrics-lifetime-v1"],
+  { revalidate: 300, tags: ["dashboard-lifetime"] },
+);
+
+// Rolling-window headline GGR (1h … 30d) — 60s TTL so it stays close to
+// live on the dashboard's 60s auto-refresh without re-running the gaming
+// legs on every render. The period string is part of the cache key
+// (passed as the first arg) so different rolling chips never collide.
+const cachedRollingWindowMetrics = unstable_cache(
+  windowMetricsForPeriodInner,
+  ["dashboard-window-metrics-rolling-v1"],
+  { revalidate: 60, tags: ["dashboard-activity"] },
+);
+
+/**
+ * Headline GGR/NGR for the selected dashboard period, cached + bounded.
+ *
+ * Dispatches to the 300s ("all") or 60s (rolling) cache by period so the
+ * two TTLs are honoured with module-level `unstable_cache` instances
+ * (revalidate is fixed per instance). The window is capped for "all" (no
+ * unbounded scan — see `periodToMetricWindow`). The CALLER additionally
+ * wraps this in `safeQuery(..., REWARD_QUERY_TIMEOUT_MS)` so a cold-miss
+ * scan that runs long degrades the headline tile to a $0 fallback instead
+ * of hanging the whole KPI strip.
+ */
+function cachedWindowMetricsForPeriod(
+  period: DashboardPeriod,
+  blacklistIdNotIn: string,
+): Promise<WindowMetrics> {
   return period === "all"
-    ? { since: null }
-    : { since: periodToCutoff(period, now) };
+    ? cachedLifetimeWindowMetrics(period, blacklistIdNotIn)
+    : cachedRollingWindowMetrics(period, blacklistIdNotIn);
 }
 
 /**
@@ -1070,7 +1203,7 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     dailySignups,
     dailyWagerAttribution,
     periodAggregates,
-    windowMetrics,
+    windowMetricsResult,
     upgraderWindow,
     uniqueDepositorsResult,
     realizedPnlResult,
@@ -1149,9 +1282,29 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // contribution), so the headline, the GGR breakdown popover and the
     // contributor sweep all include upgrader; the dedicated Upgrader
     // Stats panel still shows it standalone. Replaces the old inline
-    // `wager − Σ payout(19)` aggregate. NOT cached — window-dependent.
+    // `wager − Σ payout(19)` aggregate.
+    //
+    // Now CACHED + BOUNDED + TIMEOUT-WRAPPED (it was none of these):
+    //   • The "all" chip is capped to a bounded 365-day window
+    //     (`periodToMetricWindow`) so this never runs an UNBOUNDED
+    //     full-history scan of `ledger_transactions` / `user_inventory` /
+    //     `upgrader_games` — the single biggest MAIN-pool risk this read
+    //     carried (matches how `/ggr`'s Lifetime chip is capped).
+    //   • `cachedWindowMetricsForPeriod` caches it period-keyed (300s for
+    //     "all", 60s for rolling chips) so the dashboard's 60s
+    //     auto-refresh hits cache for the heavy legs.
+    //   • `safeQuery(..., REWARD_QUERY_TIMEOUT_MS)` (15s) bounds the wait
+    //     on a cold-miss scan so a slow read degrades the headline tile to
+    //     the all-zero fallback (`EMPTY_WINDOW_METRICS`) instead of
+    //     hanging the entire KPI strip until the platform kills the
+    //     request. `.data` is unwrapped at the read site below.
     withTiming("dashboard.windowMetrics", () =>
-      getWindowMetrics({ window: metricWindow }),
+      safeQuery(
+        () => cachedWindowMetricsForPeriod(period, blacklistIdNotIn),
+        EMPTY_WINDOW_METRICS,
+        "dashboard.windowMetrics",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
     ),
     // Upgrader gaming metrics for the selected window from
     // `upgrader_games` (canonical helper) — drives the Total Wager
@@ -1226,6 +1379,14 @@ async function dashboardStatsInner(period: DashboardPeriod) {
       cachedLifetimeDepositMetrics(blacklistIdNotIn),
     ),
   ]);
+
+  // Headline GGR/NGR — `safeQuery` returns `{ data, error }`. The headline
+  // tile is a single number on the KPI strip, so a degraded read shows the
+  // all-zero fallback (`EMPTY_WINDOW_METRICS`) inline rather than crashing
+  // the strip; the error is already logged inside `safeQuery` with the
+  // `dashboard.windowMetrics` context. Unwrapped to `.data` here so the
+  // rest of this function reads the metrics object as before.
+  const windowMetrics = windowMetricsResult.data;
 
   // balanceAggregates was switched to raw SQL so it could be wrapped
   // with unstable_cache (Prisma's `where` object isn't a stable cache
@@ -1799,16 +1960,19 @@ export async function getGgrTopContributors(
   const notInSessionInv = Prisma.raw(
     scope.notInCreatorSession("ui.user_id", "ui.obtained_at"),
   );
-  const cutoff = periodToCutoff(period, new Date());
-  // `null` since = lifetime; mirror the canonical `sinceClause` by
-  // dropping the lower bound entirely for the "all" chip.
-  const isAll = period === "all";
-  const sinceLedger = isAll
-    ? Prisma.empty
-    : Prisma.sql`AND lt.created_at >= ${cutoff}`;
-  const sinceInv = isAll
-    ? Prisma.empty
-    : Prisma.sql`AND ui.obtained_at >= ${cutoff}`;
+  // Window cutoff for the per-user join. Derived from `periodToMetricWindow`
+  // (NOT raw `periodToCutoff`) so the "all" chip maps to the SAME bounded
+  // 365-day lookback the headline GGR uses — never an unbounded
+  // `{ since: null }`. This (a) stops the heavy per-user ledger+inventory+
+  // upgrader join running a full-history scan on the "all" chip (it had no
+  // timeout/cache either), and (b) keeps each user's `net` reconciling with
+  // the now-capped headline GGR for "all" (both bounded to the same 365-day
+  // window). `periodToMetricWindow` never returns `since: null`, so there is
+  // always a lower bound and the old `isAll → Prisma.empty` (drop the bound)
+  // branch is gone.
+  const cutoff = periodToMetricWindow(period, new Date()).since as Date;
+  const sinceLedger = Prisma.sql`AND lt.created_at >= ${cutoff}`;
+  const sinceInv = Prisma.sql`AND ui.obtained_at >= ${cutoff}`;
   const wagerIn = Prisma.raw(METRICS_WAGER_TYPES_SQL);
   const gamingPayoutIn = Prisma.raw(METRICS_GAMING_PAYOUT_TYPES_SQL);
   // Probe for the upgrader-native table (pre-upgrader DBs lack it —
@@ -1836,9 +2000,11 @@ export async function getGgrTopContributors(
   // headline GGR for every non-creator user; a creator's upgrader play
   // never appears here (nor in the headline), only their off-session
   // pack/battle play does.
-  const sinceUpg = isAll
-    ? Prisma.empty
-    : Prisma.sql`AND ug.created_at >= ${cutoff}`;
+  // Same bounded `cutoff` as the ledger/inventory legs (capped 365-day for
+  // the "all" chip via `periodToMetricWindow`), so the per-user upgrader
+  // leg never runs an unbounded `upgrader_games` scan and stays aligned
+  // with the headline window.
+  const sinceUpg = Prisma.sql`AND ug.created_at >= ${cutoff}`;
   const upgraderLegCte = hasUpgrader
     ? Prisma.sql`
       upgrader_leg AS (
