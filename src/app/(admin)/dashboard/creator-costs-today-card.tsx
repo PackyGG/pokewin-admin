@@ -75,7 +75,7 @@ export function CreatorCostsTodayCard({
       </CardHeader>
       <CardContent className="space-y-3">
         {/* Total — a house COST, so always rose with a leading minus to read
-            as money out (House-POV). Uses the leaderboard our-cut share. */}
+            as money out (House-POV). Includes the full leaderboard gross. */}
         <div className="text-stat-value truncate">
           <span className="text-rose-400">
             −<AnimatedNumber value={total} format="currency" />
@@ -175,10 +175,10 @@ function CreatorCostsInfoPopover({
             House spend on creator activity since 00:00 today (UTC) —{" "}
             <strong>{dayLabel}</strong> — not a rolling 24h window. Every line
             is money paid out (a house cost): deal-payout withdrawals the
-            creator cashed out, house-funded tips, and house-funded leaderboard
-            prizes. Leaderboard is shown at <strong>100%</strong> (full pool)
-            and at <strong>our cut</strong> (after the creator&apos;s off-site
-            sponsor %); the total uses the our-cut share.
+            creator cashed out, house-funded tips, and leaderboard prizes.
+            Every affiliate leaderboard is a creator-run event, so its{" "}
+            <strong>full prize gross</strong> is counted here as a creator cost
+            (the Reward Costs box counts $0 of it).
           </p>
         </div>
 
@@ -191,8 +191,11 @@ function CreatorCostsInfoPopover({
               lineKey={l.key}
               label={l.label}
               amount={l.amount}
-              leaderboardFull={l.key === "leaderboard" ? leaderboardFull : null}
-            />
+            >
+              {l.key === "leaderboard" && l.amount > 0 && (
+                <LeaderboardGrossClaimants grossTotal={l.amount} />
+              )}
+            </CreatorCostRow>
           ))}
         </ul>
 
@@ -206,19 +209,6 @@ function CreatorCostsInfoPopover({
               −{formatCurrency(total)}
             </span>
           </div>
-          {/* Leaderboard 100% vs our-cut callout so the gap is explicit. */}
-          {leaderboardFull > 0 && (
-            <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
-              Leaderboard at 100%:{" "}
-              <span className="font-semibold tabular-nums text-foreground/80">
-                {formatCurrency(leaderboardFull)}
-              </span>{" "}
-              · our cut:{" "}
-              <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
-                {formatCurrency(leaderboardOurCut)}
-              </span>
-            </p>
-          )}
         </div>
       </PopoverContent>
     </Popover>
@@ -235,41 +225,37 @@ function CreatorCostRow({
   lineKey,
   label,
   amount,
-  leaderboardFull,
+  children,
 }: {
   lineKey: string;
   label: string;
   amount: number;
-  leaderboardFull: number | null;
+  children?: ReactNode;
 }) {
   const Icon = lineIcon(lineKey);
   return (
-    <li className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/40">
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
-          <Icon className="size-3" />
-        </span>
-        <span className="min-w-0">
-          <span className="block truncate font-medium text-foreground/90">
+    <li className="rounded px-1 py-0.5 text-[11px] hover:bg-muted/40">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
+            <Icon className="size-3" />
+          </span>
+          <span className="block min-w-0 truncate font-medium text-foreground/90">
             {label}
           </span>
-          {leaderboardFull != null && leaderboardFull > 0 && (
-            <span className="block truncate text-[10px] text-muted-foreground">
-              {formatCurrency(leaderboardFull)} pool at 100%
-            </span>
-          )}
         </span>
-      </span>
-      <span
-        className={cn(
-          "shrink-0 font-semibold tabular-nums",
-          amount > 0
-            ? "text-rose-600 dark:text-rose-400"
-            : "text-muted-foreground",
-        )}
-      >
-        −{formatCurrency(amount)}
-      </span>
+        <span
+          className={cn(
+            "shrink-0 font-semibold tabular-nums",
+            amount > 0
+              ? "text-rose-600 dark:text-rose-400"
+              : "text-muted-foreground",
+          )}
+        >
+          −{formatCurrency(amount)}
+        </span>
+      </div>
+      {children}
     </li>
   );
 }

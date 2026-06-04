@@ -650,8 +650,6 @@ async function DashboardCreatorCostsToday() {
     <CreatorCostsTodayCard
       total={data.total}
       lines={data.lines}
-      leaderboardFull={data.leaderboardFull}
-      leaderboardOurCut={data.leaderboardOurCut}
       dayLabel={dayLabel}
     />
   );
