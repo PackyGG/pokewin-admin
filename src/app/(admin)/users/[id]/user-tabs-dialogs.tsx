@@ -726,7 +726,7 @@ export function BalanceAdjustDialog({
                   • leaderboard → removal-only (only reachable when the
                     amount is negative; the option is hidden otherwise).
                   • official_stream → both add + remove allowed. */}
-            {isCreatorLinkedAdjustmentCategory(category) && (
+            {category && isCreatorLinkedAdjustmentCategory(category) && (
               <div className="mt-2 space-y-1">
                 <CreatorLinkPicker
                   value={creatorLink}
