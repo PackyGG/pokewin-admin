@@ -151,6 +151,13 @@ const sponsorshipSchema = z.object({
         .max(100, "Sponsored % must be 100 or less"),
 });
 
+// Admin-side "creator paid his part" flag — a purely internal tracking
+// annotation ("so we know if he paid or not"). Does NOT affect any money
+// math (PnL / GGR / Leaderboard Cost).
+const creatorPaidSchema = z.object({
+    paid: z.boolean(),
+});
+
 // Admin-side "paid manually" annotation. Note is optional; backend trims/
 // clears empty strings and also forces-clears the note when toggling off.
 const manualPaymentSchema = z.object({
@@ -401,6 +408,76 @@ export async function setLeaderboardSponsorship(
     // The /creators "Leaderboard Cost" KPI weights by this %, so it
     // must recompute too.
     revalidatePath("/creators");
+    return { success: true };
+}
+
+/**
+ * Toggle the admin-side "creator paid his part" flag on a leaderboard.
+ *
+ * PURELY an internal tracking flag — "just so we know if he paid or
+ * not." It does NOT touch the backend leaderboard (no API call), any
+ * balance/ledger, or ANY money math: PnL, GGR, and the /creators
+ * Leaderboard Cost are all unaffected. Upserts the admin-DB row keyed
+ * by leaderboard id; `paid_at` is stamped when flipped on and cleared
+ * when flipped off. Editable for any leaderboard regardless of status,
+ * since it's our own annotation, not a backend field. Admin-gated
+ * identically to setLeaderboardSponsorship.
+ */
+export async function setLeaderboardCreatorPaid(
+    leaderboardId: string,
+    paid: boolean,
+): Promise<ActionResult> {
+    const session = await requirePageAccess(PAGE_KEY);
+    const parsedId = idSchema.safeParse(leaderboardId);
+    if (!parsedId.success) {
+        return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };
+    }
+    const parsed = creatorPaidSchema.safeParse({ paid });
+    if (!parsed.success) {
+        return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    await requireCapability(
+        session,
+        "__can_update_creator_deal",
+        "edit creator leaderboards",
+    );
+
+    const paidAt = parsed.data.paid ? new Date() : null;
+
+    try {
+        await adminDb.admin_leaderboard_creator_paid.upsert({
+            where: { leaderboard_id: parsedId.data },
+            create: {
+                leaderboard_id: parsedId.data,
+                paid: parsed.data.paid,
+                paid_at: paidAt,
+                set_by_admin_id: session.userId,
+            },
+            update: {
+                paid: parsed.data.paid,
+                paid_at: paidAt,
+                set_by_admin_id: session.userId,
+                updated_at: new Date(),
+            },
+        });
+    } catch (err) {
+        return { success: false, error: toErrorMessage(err) };
+    }
+
+    try {
+        await createAdminAuditEvent({
+            adminUserId: session.userId,
+            eventType: "affiliate_leaderboard_creator_paid_set",
+            metadata: {
+                leaderboard_id: parsedId.data,
+                paid: parsed.data.paid,
+            },
+        });
+    } catch (err) {
+        logAuditFailure("setLeaderboardCreatorPaid", err);
+    }
+
+    revalidate(parsedId.data);
     return { success: true };
 }
 

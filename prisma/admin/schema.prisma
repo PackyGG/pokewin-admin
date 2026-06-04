@@ -950,6 +950,33 @@ model admin_leaderboard_sponsorship {
   updated_at           DateTime @default(now()) @db.Timestamptz(6)
 }
 
+// ─── Leaderboard "creator paid his part" flag ──────────────────────
+// Admin-side internal tracking flag on a creator (affiliate)
+// leaderboard: did the creator actually pay their off-site share?
+// Purely a "so we know if he paid or not" annotation — it does NOT
+// touch the backend leaderboard, any balance/ledger, or ANY money
+// math (PnL / GGR / Leaderboard Cost are unaffected). A dedicated
+// table (not a column on admin_leaderboard_sponsorship) so the toggle
+// works even for leaderboards that have no sponsorship row yet.
+// One row per leaderboard; the setLeaderboardCreatorPaid upsert keys
+// on the unique leaderboard_id.
+model admin_leaderboard_creator_paid {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // packy.gg backend affiliate-leaderboard id (uuid string — separate
+  // system, can't be an FK). One row per leaderboard.
+  leaderboard_id  String    @unique
+  // Whether the creator has paid their part. Default false.
+  paid            Boolean   @default(false)
+  // When `paid` was last flipped to true (cleared back to null when
+  // toggled off). Set server-side in the action.
+  paid_at         DateTime? @db.Timestamptz(6)
+  // admin_users.id of whoever last set it (plain column — no FK, so
+  // adding this table doesn't touch the admin_users model).
+  set_by_admin_id String    @db.Uuid
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @db.Timestamptz(6)
+}
+
 // ─── Changelog entries (admin-panel release notes) ─────────────────
 // Curated release notes surfaced at /changelogs. Each row is one self-
 // contained "what changed in this release" card. Storage is admin-DB

@@ -13,7 +13,9 @@ import { InfoHint } from "../_components/info-hint";
 import { CreateDialog } from "../leaderboards/_components/create-dialog";
 import { CancelLeaderboardButton } from "../leaderboards/_components/cancel-leaderboard-button";
 import { InlineSponsoredPercentage } from "../leaderboards/_components/inline-sponsored-percentage";
+import { InlineCreatorPaid } from "../leaderboards/_components/inline-creator-paid";
 import { getLeaderboardSponsorshipMap } from "../_queries/leaderboard-sponsorship";
+import { getLeaderboardCreatorPaidMap } from "../_queries/leaderboard-creator-paid";
 import { getCreatorLeaderboardWagerMap } from "./_queries/leaderboard-wager-by-board";
 
 type ApprovalStatus = "pending" | "approved" | "rejected";
@@ -123,9 +125,16 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
     // simply omits the "$X wagered" chip (name still renders). The wager
     // map is a single batched scan over the visible boards (PREVIEW_LIMIT
     // ≤ 10) — not N per-row queries — and is cached server-side.
-    const [sponsorshipMap, wagerMap] = await Promise.all([
+    const [sponsorshipMap, creatorPaidMap, wagerMap] = await Promise.all([
         getLeaderboardSponsorshipMap(rows.map((r) => r.id)).catch(
             () => new Map<string, number>(),
+        ),
+        // Admin-side "creator paid his part" flag per board (admin DB) so
+        // each row can toggle it inline. Best-effort: a failure renders
+        // every toggle at the `false` (not-paid) default. Purely an
+        // internal tracking flag — no money-math / cost / PnL impact.
+        getLeaderboardCreatorPaidMap(rows.map((r) => r.id)).catch(
+            () => new Map<string, boolean>(),
         ),
         getCreatorLeaderboardWagerMap(
             rows.map((r) => ({
@@ -241,13 +250,20 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                                         )}
                                     </div>
                                 </Link>
-                                {/* Sponsored % editor + Cancel button —
-                                    both sit outside the Link so their
-                                    clicks don't navigate the row. The
-                                    Sponsored % feeds the /creators
+                                {/* Creator-paid toggle + Sponsored % editor +
+                                    Cancel button — all sit outside the Link
+                                    so their clicks don't navigate the row.
+                                    The Creator-paid tick is a PURELY internal
+                                    tracking flag ("so we know if he paid or
+                                    not") — no money-math / cost / PnL impact.
+                                    The Sponsored % feeds the /creators
                                     Leaderboard Cost KPI; editing it here
                                     saves a trip to the leaderboards page. */}
                                 <div className="flex items-center gap-2 pr-2">
+                                    <InlineCreatorPaid
+                                        leaderboardId={r.id}
+                                        initialPaid={creatorPaidMap.get(r.id) ?? false}
+                                    />
                                     <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
                                         <span className="hidden items-center gap-1 sm:inline-flex">
                                             Sponsored
