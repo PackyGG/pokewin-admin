@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 
 import {
-  getCreatorDetail,
+  getCreatorDetailCached,
   getCreatorHeader,
   refreshStaleSocials,
 } from "@/lib/queries/creators";
@@ -112,7 +112,7 @@ export default async function CreatorDetailPage({
   // via safeQueryOrNull so a slow scan degrades to a fallback per-slot
   // instead of hanging the segment.
   const profileResultPromise = safeQueryOrNull(
-    () => getCreatorDetail(userId),
+    () => getCreatorDetailCached(userId),
     "creators.detail.profile",
     // 15s (was 20s) so the KPI strip degrades to its "analytics taking too
     // long" banner faster when the heavy aggregate stalls, rather than
@@ -303,7 +303,7 @@ async function HeaderSocialsStreamed({ userId }: { userId: string }) {
 // components below, so the aggregate fires exactly once even though its
 // output is split across two page positions.
 type ProfileResultPromise = Promise<{
-  data: Awaited<ReturnType<typeof getCreatorDetail>> | null;
+  data: Awaited<ReturnType<typeof getCreatorDetailCached>> | null;
   error: string | null;
 }>;
 

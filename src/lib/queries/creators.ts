@@ -13,7 +13,12 @@ export type {
 
 export { getCreatorPnl } from "./creators-pnl";
 export { searchNonCreatorUsers, getCreators } from "./creators-list";
-export { getCreatorDetail, getCreatorHeader, getCreatorTips } from "./creators-detail";
+export {
+  getCreatorDetail,
+  getCreatorDetailCached,
+  getCreatorHeader,
+  getCreatorTips,
+} from "./creators-detail";
 export {
   getCodes,
   getCodeAnalytics,
