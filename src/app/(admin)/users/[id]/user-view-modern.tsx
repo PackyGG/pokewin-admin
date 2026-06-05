@@ -35,6 +35,7 @@ import {
   Activity,
   ArrowDownToLine,
   ArrowUpFromLine,
+  ArrowUpCircle,
   Banknote,
   Sparkles,
   Percent,
@@ -443,12 +444,12 @@ export function UserViewModern({
                 stays compact. Wagering metrics (Wager Loss + total
                 Wagered/Won) live on the Account tab instead of cluttering
                 the hero. Phone: 2 cols (3 cols was too tight at 375px),
-                tablet: 4 cols, md: 6 cols (smooths the 4→7 jump on
+                tablet: 4 cols, md: 6 cols (smooths the 4→8 jump on
                 laptops so the last tile wraps cleanly instead of the row
-                snapping width), desktop: 7 cols. The Total Depo tile sits
-                directly next to P&L so the operator can read "$X
-                deposited → $Y P&L" left-to-right. */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-7 gap-2 shrink-0">
+                snapping width), desktop: 8 cols. The Total Depo + Total
+                Withdrawn tiles sit directly next to P&L so the operator can
+                read "$X deposited − $Y withdrawn → $Z P&L" left-to-right. */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 shrink-0">
               <KpiTile
                 label="Total Value"
                 value={formatCurrency(totalValue)}
@@ -472,6 +473,22 @@ export function UserViewModern({
                 value={formatCurrency(deposits)}
                 icon={Banknote}
                 accent="emerald"
+              />
+              {/* Total Withdrawn — lifetime withdrawn dollars. Sits directly
+                  next to Total Depo so the operator can read "$X deposited
+                  − $Y withdrawn" left-to-right and eyeball the realized
+                  cash leg of P&L instantly. Rose because a withdrawal is
+                  the user pulling money out (user gain = house loss → red
+                  per the house-POV finance convention in CLAUDE.md).
+                  Sourced from `withdrawals` (balances.totalWithdrawn,
+                  i.e. userPnl.withdrawals — the canonical P&L helper that
+                  also drives the dashboard's lifetime aggregates), so this
+                  view can never drift from users-list / dashboard. */}
+              <KpiTile
+                label="Total Withdrawn"
+                value={formatCurrency(withdrawals)}
+                icon={ArrowUpCircle}
+                accent="rose"
               />
               <KpiTile
                 label="Deposits"

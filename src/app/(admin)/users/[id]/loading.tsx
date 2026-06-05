@@ -6,11 +6,12 @@ import {
 
 /**
  * Matches /users/[id]: simple back-link header (no full PageHero), large
- * hero KPI strip from UserViewModern (7 tiles: Total Value · P&L · Total
- * Depo · Deposits · Withdrawals · Multiplier · House Edge), segmented tab
- * bar (8 tabs: Overview · Gaming · Finances · Rewards · Inventory · Trust ·
- * Affiliate · Account), and tabbed content (panels + tables). Counts mirror
- * the real UserViewModern strip + tab bar so the swap-in is jank-free.
+ * hero KPI strip from UserViewModern (8 tiles: Total Value · P&L · Total
+ * Depo · Total Withdrawn · Deposits · Withdrawals · Multiplier · House Edge),
+ * segmented tab bar (8 tabs: Overview · Gaming · Finances · Rewards ·
+ * Inventory · Trust · Affiliate · Account), and tabbed content (panels +
+ * tables). Counts mirror the real UserViewModern strip + tab bar so the
+ * swap-in is jank-free.
  */
 export default function UserDetailLoading() {
   return (
@@ -26,7 +27,7 @@ export default function UserDetailLoading() {
       {/* Modern user view: identity hero with avatar + status pills + KPIs. */}
       <Skeleton className="h-32 rounded-2xl" />
 
-      <KpiStripSkeleton count={7} />
+      <KpiStripSkeleton count={8} />
 
       <TabBarSkeleton count={8} />
 
