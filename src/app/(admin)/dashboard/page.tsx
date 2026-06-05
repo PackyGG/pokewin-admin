@@ -1,18 +1,9 @@
 import { Suspense } from "react";
-import {
-  Users,
-  Percent,
-  Coins,
-  LayoutDashboard,
-  LineChart,
-  BadgeDollarSign,
-  HandCoins,
-  Gauge,
-} from "lucide-react";
+import { LayoutDashboard, LineChart } from "lucide-react";
 import {
   getDashboardStats,
+  getDashboardKpiStats,
   getActiveRain,
-  getGgrBreakdown,
   parseDashboardPeriod,
   type DashboardPeriod,
 } from "@/lib/queries/dashboard";
@@ -24,18 +15,15 @@ import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today"
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
 import { requirePageAccess } from "@/lib/dal";
-import { formatCurrency, formatRelative } from "@/lib/utils/format";
+import { formatRelative } from "@/lib/utils/format";
 import { LoadTimeIndicator, BoxTimingFrame } from "./load-time-indicator";
-import { StatCard } from "./stat-card";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
-  PnlStatCard,
-  GgrStatCard,
-  WagerStatCard,
-  DepositsStatCard,
-  WithdrawalsStatCard,
-} from "./revenue-stat-card";
+  DashboardKpiSection,
+  type KpiSnapshotValues,
+} from "./dashboard-kpi-section";
+import { buildKpiWindowPayload } from "./kpi-window-data";
 import { TodayPnlStatCard } from "./today-pnl-stat-card";
 import { RewardCostsTodayCard } from "./reward-costs-today-card";
 import { CreatorCostsTodayCard } from "./creator-costs-today-card";
@@ -66,22 +54,6 @@ import { ChartRowSkeleton, UpgraderPanelSkeleton } from "./dashboard-skeletons";
 
 export const metadata = { title: "Dashboard" };
 
-/**
- * Backdrop for the per-tile load-time badge on the COMPACT KPI tiles.
- *
- * The KPI tiles are dense — their bottom row is a subtitle or a breakdown
- * chip row that can reach the bottom-right corner — so the bare `BoxLoadTime`
- * (which the roomy charts/panels use) would float over that text. This adds a
- * tiny card-colored, blurred chip behind the badge so the muted "N ms" reads
- * cleanly ON TOP of whatever sits in the corner. It changes NOTHING about the
- * tile's box model: the badge stays `absolute` + `pointer-events-none`, so the
- * tile's size/layout is identical with or without it. Dark-mode safe (uses the
- * theme `bg-card` token, not a hardcoded color); no animation (reduce-motion
- * irrelevant).
- */
-const tileBadge =
-  "bg-card/85 supports-[backdrop-filter]:bg-card/65 backdrop-blur-sm rounded-md pl-1 pr-1.5";
-
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -89,13 +61,14 @@ export default async function DashboardPage({
 }) {
   await requirePageAccess("/dashboard");
 
-  // The page's heavy aggregates (revenue / wager / GGR / windowed P&L)
-  // run for the SELECTED period only — sub-hour / day / lifetime windows
-  // are computed on demand when the admin picks a chip in the global
-  // <DashboardPeriodSelector>. Default falls back to 24h when the URL
-  // carries no `?period=` so a cold load still has a sensible window.
-  // getDashboardStats is React-cached and keyed on `period`, so the
-  // four Suspense segments below share a single fetch per render.
+  // `period` drives ONLY the trend charts + Wager Attribution now (sub-hour
+  // / day / lifetime windows, computed on demand when the admin picks a chip
+  // in the global <DashboardPeriodSelector>; default 24h on a cold load).
+  // The headline KPI boxes are independent — they default to "today" (since
+  // 00:00 UTC) via getDashboardKpiStats and carry their own per-box today/24h
+  // toggle, fetching the 24h window lazily on first toggle. getDashboardStats
+  // stays React-cached + keyed on `period`, so the chart segments below that
+  // read it still share a single fetch per render.
   const params = await searchParams;
   const period: DashboardPeriod = parseDashboardPeriod(params.period);
 
@@ -146,46 +119,25 @@ export default async function DashboardPage({
         />
       </PageHero>
 
-      {/* Global period selector. Drives the `?period=` URL param;
-          every period-bound KPI / aggregate on the page reads from
-          that. Client component — server cards don't re-render when a
-          chip is hovered, only when it's clicked (router.replace). */}
+      {/* Global period selector. Drives the `?period=` URL param for the
+          TREND CHARTS + Wager Attribution below (the headline KPI boxes now
+          own their own per-box today/24h window via the toggle next to each
+          title, so they no longer read this). Client component — server
+          cards don't re-render when a chip is hovered, only when it's
+          clicked (router.replace). */}
       <DashboardPeriodSelector />
 
-      {/* Primary + secondary KPI strips stream together — they share the
-          same getDashboardStats fetch, so splitting them into separate
-          boundaries would just show two skeletons resolving at the same
-          instant. Fallback mirrors the 6-up primary + 7-up secondary
-          grids in DashboardStatStrips.
-
-          No period-keyed Suspense here: keying on `period` would tear the
-          resolved strips down and re-show the skeleton on every chip click.
-          Instead the period selector flips the URL inside a useTransition,
-          so React keeps the PREVIOUS strips on screen while the next
-          payload streams (the selector shows the pending state). The
-          skeleton is reserved for the genuine cold load (loading.tsx /
-          first mount), where there's nothing to keep. */}
-      <Suspense
-        fallback={
-          <>
-            <SkeletonKpiStrip count={6} />
-            <SkeletonKpiStrip count={7} />
-          </>
-        }
-      >
-        <DashboardStatStrips period={period} />
-      </Suspense>
-
-      {/* Today-since-00:00 tiles — P&L Today + Reward Costs Today +
-          Creators Costs Today. All three are house figures for the CURRENT
+      {/* FIRST 3 BOXES — P&L Today + Reward Costs + Creators Costs, in that
+          order, at the top. All three are house figures for the CURRENT
           CALENDAR DAY since 00:00 UTC (NOT a rolling past-24h window) and
-          share the same UTC-midnight boundary, so they reconcile. Each
+          share the same UTC-midnight boundary, so they reconcile with each
+          other AND with the "today" default on the KPI boxes below. Each
           streams behind its OWN Suspense + safeQuery so its today-window
-          scan never blocks the period KPI strips above and degrades to a
-          tile fallback if it's slow. Period-independent (always "today"), so
-          none re-keys on the global period selector. Full-width-on-mobile,
-          2-up at sm, 3-up at lg+ — exactly matches the 3 children below so
-          there's no dead column on the right at lg+. */}
+          scan never blocks the KPI section and degrades to a tile fallback
+          if it's slow. These are inherently today-only (P&L Today is named
+          for it), so they carry no today/24h toggle — the toggle lives on
+          the period-bound KPI boxes below. Full-width-on-mobile, 2-up at sm,
+          3-up at lg+. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
         <Suspense
           fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
@@ -203,6 +155,29 @@ export default async function DashboardPage({
           <DashboardCreatorCostsToday />
         </Suspense>
       </div>
+
+      {/* KPI boxes — period-bound (GGR, Wager, Organic Wager, Deposits,
+          Withdrawals) with a per-box today/24h toggle, plus the
+          window-independent snapshot boxes (Total Users, FTDs, Depositors,
+          Avg Deposit, Deposits/Hour, Avg RTP). DEFAULTS to "today" (loaded
+          eagerly here); the rolling 24h window is fetched lazily on the
+          first toggle inside the client section (active-timeframe-only).
+
+          NOT keyed on the global `?period=` selector — these boxes own their
+          own today/24h window now. The global selector drives the Trends
+          charts + Wager Attribution below. Streams behind its own Suspense
+          so the today-window aggregate never blocks the 3 cost cards above;
+          the skeleton mirrors the 5-up period strip + 6-up snapshot strip. */}
+      <Suspense
+        fallback={
+          <>
+            <SkeletonKpiStrip count={5} />
+            <SkeletonKpiStrip count={6} />
+          </>
+        }
+      >
+        <DashboardKpiBoxes />
+      </Suspense>
 
       {/* Upgrader Stats + Wager Attribution — paired 50/50 row that
           sits between the KPI strips and the trend graphs. Each
@@ -330,272 +305,77 @@ async function DashboardLoadTime({ period }: { period: DashboardPeriod }) {
 }
 
 /**
- * Primary (period-aware) + secondary (snapshot) KPI strips. Async so it
- * streams behind the page-level Suspense; reads the React-cached
- * getDashboardStats. Also pulls the per-type GGR breakdown (cached
- * separately with the same period+blacklist key) so the GgrStatCard's
- * Info popover can render auditable wager/payout components without
- * a second roundtrip on first paint.
+ * Eager-renders the dashboard's KPI boxes for the DEFAULT "today" window
+ * (since 00:00 UTC) and hands the client section both the today payload and
+ * the window-independent snapshot values. The client section adds the
+ * per-box today/24h toggle and fetches the rolling-24h payload lazily on the
+ * first toggle (active-timeframe-only — the 24h aggregate never runs here).
+ *
+ * Wrapped in safeQuery so a failing today-window aggregate degrades to a
+ * single panel fallback instead of escaping to the route error boundary
+ * (which would white-screen the whole dashboard — the failure mode this
+ * page hit in prod). The snapshot values come from the SAME eager "today"
+ * stats (they're lifetime / fixed-window figures, so the window doesn't
+ * change them) — no extra query.
  */
-async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
-  // Each leg is wrapped in safeQuery so a throw degrades to a fallback
-  // tile instead of escaping to the route error boundary (which would
-  // white-screen the WHOLE dashboard — the failure mode this page hit in
-  // prod). getDashboardStats backs every tile in both strips, so if IT
-  // fails the strips degrade to a single panel fallback. getGgrBreakdown
-  // only feeds the GGR card's Info popover, so if only it fails we keep
-  // the strips and render the GGR card with an empty breakdown.
-  //
-  // The prior single strip-level load-time readout is GONE: every KPI tile
-  // now carries its OWN bottom-right badge (the elapsed ms of the sub-query
-  // that produced its number, from getDashboardStats `timings`), so a strip-
-  // level number is redundant and would collide with the bottom-right tile's
-  // own badge. No outer batch timing is measured anymore.
-  const [statsResult, ggrResult] = await Promise.all([
-    safeQuery(() => getDashboardStats(period), null, "dashboard.statStrips"),
-    safeQuery(() => getGgrBreakdown(period), null, "dashboard.ggrBreakdown"),
+async function DashboardKpiBoxes() {
+  const [payloadResult, statsResult] = await Promise.all([
+    // Period-bound box values + GGR legs for the eager "today" window.
+    safeQuery(() => buildKpiWindowPayload("today"), null, "dashboard.kpiToday"),
+    // Snapshot (lifetime / fixed-window) figures — read off the same cached
+    // today aggregate so no second roundtrip is added.
+    safeQuery(() => getDashboardKpiStats("today"), null, "dashboard.kpiSnapshot"),
   ]);
-  if (statsResult.error || !statsResult.data) {
+  if (
+    payloadResult.error ||
+    !payloadResult.data ||
+    statsResult.error ||
+    !statsResult.data
+  ) {
     return (
       <TileErrorFallback
         label="Platform KPIs"
-        hint="A metrics query failed while loading the KPI strips — other sections still rendered. Refresh to retry."
+        hint="A metrics query failed while loading the KPI boxes — other sections still rendered. Refresh to retry."
         size="panel"
       />
     );
   }
+  const today = payloadResult.data;
   const stats = statsResult.data;
-  // Empty-but-valid breakdown when only the popover query failed, so the
-  // GgrStatCard still renders its headline number (the popover just shows
-  // zeroed legs). Shape matches GgrBreakdown.
-  const ggrBreakdown = ggrResult.data ?? {
-    wagers: [],
-    payouts: [],
-    wagersTotal: 0,
-    payoutsTotal: 0,
-    ggr: 0,
+
+  // Snapshot (lifetime / fixed-window) figures — the window toggle doesn't
+  // change them, so they read the same for today and 24h. Deposits/Hour is a
+  // FIXED 24h / 7d rate (count ÷ hours).
+  const snapshot: KpiSnapshotValues = {
+    usersTotal: stats.users.total,
+    usersToday: stats.users.today,
+    usersWeek: stats.users.week,
+    ftds24h: stats.financials.ftds24h,
+    ftdTotal24h: stats.financials.ftdTotal24h,
+    ftdAvg24h: stats.financials.ftdAvg24h,
+    uniqueDepositors: stats.financials.uniqueDepositors,
+    depositorsPctOfUsers:
+      stats.users.total > 0
+        ? (stats.financials.uniqueDepositors / stats.users.total) * 100
+        : null,
+    avgDeposit: stats.financials.avgDeposit,
+    depositsPerHour24h: stats.depositCount24h / 24,
+    depositsPerHour7d: stats.depositCount7d / (7 * 24),
+    avgRtp:
+      stats.financials.totalWagered > 0
+        ? (stats.financials.totalWon / stats.financials.totalWagered) * 100
+        : 0,
+    timings: {
+      totalUsers: stats.timings.totalUsers,
+      ftds: stats.timings.ftds,
+      depositors: stats.timings.depositors,
+      avgDeposit: stats.timings.avgDeposit,
+      depositsPerHour: stats.timings.depositsPerHour,
+      avgRtp: stats.timings.avgRtp,
+    },
   };
 
-  // Average deposit transactions per hour. depositCount24h / depositCount7d
-  // are FIXED windows (not period-bound) so the tile's "last 24h avg ·
-  // 7d baseline" semantic stays stable when the global selector
-  // changes — flipping the chip shouldn't reshape a tile that's
-  // explicitly labelled 24h / 7d.
-  const depositsPerHour24h = stats.depositCount24h / 24;
-  const depositsPerHour7d = stats.depositCount7d / (7 * 24);
-
-  return (
-    // Plain `space-y-6` container (no strip-level timing frame anymore —
-    // each tile owns its badge). `space-y-6` preserves the gap that
-    // previously sat between the two strips when they were direct page-
-    // container children (the page uses space-y-6), so wrapping them in this
-    // div doesn't collapse the primary/secondary spacing.
-    <div className="space-y-6">
-      {/* Primary stats — period-aware cards.
-          Mobile-first grid: ONE column at <sm so each card is full-
-          width and the dollar value never truncates (these cards
-          contain a 5-chip period selector + a hero currency value;
-          squeezing 2-up at 380px crushed both). 2-up at sm, 4 at lg,
-          6 across at xl (PnL, GGR, Wager, Organic Wager, Deposits,
-          Withdrawals). The previous "Raw Wager"
-          tile (creator-on-stream sponsored wager INCLUDED) was
-          dropped — it only made sense alongside the customer-only
-          "Total Wager" to show the gap, and admins didn't act on it.
-          The surviving Wager tile is the customer-only figure
-          (creator sessions excluded), which is the default reading
-          of "wager" everywhere else on the site. */}
-      {/* Each tile is wrapped in BoxTimingFrame so it carries its OWN
-          bottom-right server-measured load-time badge (the ms of the
-          sub-query that produced that tile's number — see
-          getDashboardStats `timings`). `tileBadge` is the compact-tile
-          backdrop so the badge reads over a subtitle / breakdown-chip
-          corner without reserving layout space. Tiles fed by the same
-          sub-query (Wager / Organic Wager / Deposits / Withdrawals all
-          come from periodAggregates) legitimately show the same ms. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4 xl:grid-cols-6">
-        <BoxTimingFrame ms={stats.timings.pnl} badgeClassName={tileBadge}>
-          {/* Lifetime `pnl` is intentionally NOT passed — the tile defaults
-              to the period view and loads the lifetime snapshot lazily on
-              click via getLifetimePnlAction (the lifetime scan is the
-              heaviest query in the codebase, so it must not run on a cold
-              dashboard load). */}
-          <PnlStatCard
-            pnlPeriod={stats.realizedPnlPeriod}
-            periodLabel={stats.periodLabel}
-          />
-        </BoxTimingFrame>
-        <BoxTimingFrame ms={stats.timings.ggr} badgeClassName={tileBadge}>
-          <GgrStatCard
-            ggr={stats.ggr}
-            periodLabel={stats.periodLabel}
-            breakdown={ggrBreakdown}
-            periodParam={period}
-          />
-        </BoxTimingFrame>
-        {/* Wager — customer wager only (drops wagers a creator made
-            while live on a deal/stream — house-funded sponsored
-            balance, not a real customer bet). This IS the default
-            "wager" reading on the rest of the site, so it doesn't
-            need a disambiguating caption. */}
-        <BoxTimingFrame ms={stats.timings.wager} badgeClassName={tileBadge}>
-          <WagerStatCard
-            wager={stats.wagers}
-            periodLabel={stats.periodLabel}
-            title="Wager"
-            breakdown={stats.wagersBreakdown}
-          />
-        </BoxTimingFrame>
-        {/* Organic Wager — only counts users who did NOT join under an
-            official creator code. Drops creator-on-stream play AND
-            creator-attributed customer wager, so the gap between
-            "Wager" and this card is the wager that's downstream of
-            creator marketing. */}
-        <BoxTimingFrame
-          ms={stats.timings.wagerOrganic}
-          badgeClassName={tileBadge}
-        >
-          <WagerStatCard
-            wager={stats.wagersOrganic}
-            periodLabel={stats.periodLabel}
-            title="Organic Wager"
-            caption="no creator-code users"
-          />
-        </BoxTimingFrame>
-        <BoxTimingFrame ms={stats.timings.deposits} badgeClassName={tileBadge}>
-          <DepositsStatCard
-            deposits={stats.deposits}
-            depositCount={stats.depositCountPeriod}
-            periodLabel={stats.periodLabel}
-          />
-        </BoxTimingFrame>
-        <BoxTimingFrame
-          ms={stats.timings.withdrawals}
-          badgeClassName={tileBadge}
-        >
-          <WithdrawalsStatCard
-            withdrawals={stats.withdrawals}
-            withdrawalCount={stats.withdrawalCountPeriod}
-            periodLabel={stats.periodLabel}
-          />
-        </BoxTimingFrame>
-      </div>
-
-      {/* Secondary stats — all-time / snapshot. Users Total Balance
-          (user-held cash + unsold inventory + unclaimed vouchers) was
-          dropped from this row — the figure is a HOUSE LIABILITY that
-          tells you what you owe out, but operators rarely act on it
-          and the underlying query (full-table user_inventory scan)
-          was one of the heaviest on the dashboard. The realized P&L
-          snapshot still factors all three into the lifetime PnL tile,
-          so the information isn't gone — just folded into PnL. */}
-      {/* Secondary tiles each carry their own bottom-right load-time badge
-          too (same `timings` map). Total Users → userCounts; FTDs →
-          ftdCombined; Depositors → uniqueDepositors; Avg Deposit →
-          balanceAggregates + lifetimeDepositMetrics; Deposits/Hour →
-          lifetimeDepositMetrics; Avg RTP → balanceAggregates. Tiles sharing
-          a sub-query show the same ms (Avg RTP & Avg Deposit both include
-          balanceAggregates; Avg Deposit & Deposits/Hour both include
-          lifetimeDepositMetrics). */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
-        <BoxTimingFrame ms={stats.timings.totalUsers} badgeClassName={tileBadge}>
-          <StatCard
-            title="Total Users"
-            animatedValue={stats.users.total}
-            formatKind="number"
-            subtitle={`+${stats.users.today} today, +${stats.users.week} this week`}
-            icon={Users}
-            color="blue"
-          />
-        </BoxTimingFrame>
-        {/* FTDs — first-time depositors in the rolling last 24h: real
-            users whose first-ever completed deposit landed today. The
-            "new money today" lead-in to the lifetime Depositors tile.
-            Subtitle carries the summed + average first-deposit value.
-            Amber accent — its own identity color, warm against the
-            cool-toned Total Users / Depositors neighbours. */}
-        <BoxTimingFrame ms={stats.timings.ftds} badgeClassName={tileBadge}>
-          <StatCard
-            title="FTDs (24h)"
-            animatedValue={stats.financials.ftds24h}
-            formatKind="number"
-            subtitle={`${formatCurrency(stats.financials.ftdTotal24h)} total · ${formatCurrency(stats.financials.ftdAvg24h)} avg`}
-            icon={HandCoins}
-            color="amber"
-          />
-        </BoxTimingFrame>
-        {/* Distinct depositors = how many real users have completed at
-            least one deposit. Different from "Total Users" (signups,
-            many of whom never deposit) and from "Avg Deposit" (per-
-            transaction). Uses purple to read as a separate identity
-            from the user-count tile. */}
-        <BoxTimingFrame ms={stats.timings.depositors} badgeClassName={tileBadge}>
-          <StatCard
-            title="Depositors"
-            animatedValue={stats.financials.uniqueDepositors}
-            formatKind="number"
-            subtitle={
-              stats.users.total > 0
-                ? `${(
-                    (stats.financials.uniqueDepositors / stats.users.total) *
-                    100
-                  ).toFixed(1)}% of users have funded`
-                : "Unique players who funded at least once"
-            }
-            icon={BadgeDollarSign}
-            color="purple"
-          />
-        </BoxTimingFrame>
-        {/* Avg Deposit is an inflow stat. Using cyan here so each secondary
-            card has its own identity color. */}
-        <BoxTimingFrame ms={stats.timings.avgDeposit} badgeClassName={tileBadge}>
-          <StatCard
-            title="Avg Deposit"
-            animatedValue={stats.financials.avgDeposit}
-            formatKind="currency"
-            subtitle="Across all users (lifetime)"
-            icon={Coins}
-            color="cyan"
-          />
-        </BoxTimingFrame>
-        {/* Deposits / Hour — average deposit transactions per hour.
-            Hero is the last-24h rate (count ÷ 24); subtitle carries the
-            7-day baseline. Emerald = money flowing in (house POV), to
-            match the Deposits card. Uses `value` (not animatedValue)
-            because AnimatedNumber rounds the "number" format to an
-            integer and we want the .1 precision on a fractional rate. */}
-        <BoxTimingFrame
-          ms={stats.timings.depositsPerHour}
-          badgeClassName={tileBadge}
-        >
-          <StatCard
-            title="Deposits / Hour"
-            value={depositsPerHour24h.toFixed(1)}
-            subtitle={`last 24h avg · 7d ${depositsPerHour7d.toFixed(1)}/hr`}
-            icon={Gauge}
-            color="emerald"
-          />
-        </BoxTimingFrame>
-        {/* The "Creator Deal Payouts (withdrawn)" tile that used to sit here
-            (next to Deposits / Hour) was removed — the new "Creators Costs
-            (today)" box above (next to Reward Costs) now covers creator
-            spend, including creator deal-payout withdrawals. */}
-        <BoxTimingFrame ms={stats.timings.avgRtp} badgeClassName={tileBadge}>
-          <StatCard
-            title="Avg RTP"
-            animatedValue={
-              stats.financials.totalWagered > 0
-                ? (stats.financials.totalWon / stats.financials.totalWagered) *
-                  100
-                : 0
-            }
-            formatKind="percent"
-            icon={Percent}
-            color="pink"
-          />
-        </BoxTimingFrame>
-      </div>
-    </div>
-  );
+  return <DashboardKpiSection today={today} snapshot={snapshot} />;
 }
 
 /**

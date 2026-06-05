@@ -1,0 +1,105 @@
+import "server-only";
+
+import {
+  getDashboardKpiStats,
+  getGgrBreakdownForKpiWindow,
+  type DashboardKpiWindow,
+  type GgrBreakdown,
+} from "@/lib/queries/dashboard";
+
+/**
+ * Serializable snapshot of every dashboard KPI box for ONE window
+ * ("today" or "24h"). Built from the shared `getDashboardKpiStats`
+ * aggregate (+ the GGR breakdown legs) and handed to the client KPI
+ * section so the per-box today/24h toggle can switch between two
+ * server-computed windows WITHOUT any function props crossing the RSC
+ * boundary (CLAUDE.md / Next 15) — it's all plain numbers / strings.
+ *
+ * The PERIOD-BOUND boxes (GGR, Wager, Organic Wager, Deposits,
+ * Withdrawals) change with the window and carry their per-window value +
+ * timing here. The SNAPSHOT boxes (Total Users, FTDs 24h, Depositors, Avg
+ * Deposit, Deposits/Hour, Avg RTP) are lifetime / fixed-window figures
+ * that do NOT vary by the today/24h selection, so they are NOT part of
+ * this per-window payload — the server renders them once from the eager
+ * "today" stats and they don't re-fetch on toggle (an honest UI: no toggle
+ * on a box whose number can't change).
+ */
+export type KpiWindowPayload = {
+  /** Which window this payload was computed for. */
+  window: DashboardKpiWindow;
+  /** Friendly label for the window (e.g. "Today" / "Last 24h"). */
+  windowLabel: string;
+
+  // ---- Period-bound box values ----
+  /** Gaming margin (house POV; positive = house up) for the window. */
+  ggr: number;
+  /** Customer wager (creator-on-stream sessions excluded) for the window. */
+  wager: number;
+  /** Packs / Battles / Upgrader split of `wager` (sums to it). */
+  wagerBreakdown: { packs: number; battles: number; upgrader: number };
+  /** Organic wager — users who did NOT join under a creator code. */
+  wagerOrganic: number;
+  /** Total deposit dollars + transaction count for the window. */
+  deposits: number;
+  depositCount: number;
+  /** Total withdrawal dollars + completed/shipped request count. */
+  withdrawals: number;
+  withdrawalCount: number;
+
+  // ---- GGR breakdown legs (for the GGR box's Info popover) ----
+  ggrBreakdown: GgrBreakdown;
+
+  // ---- Per-box server-measured fetch time (ms) for the timing badge ----
+  timings: {
+    ggr: number;
+    wager: number;
+    wagerOrganic: number;
+    deposits: number;
+    withdrawals: number;
+  };
+};
+
+/**
+ * Build the per-window KPI payload for the client section. Runs the shared
+ * `getDashboardKpiStats` aggregate (React-cached per request + day/60s
+ * cached for the heavy legs) and the GGR breakdown legs in parallel.
+ *
+ * Empty-but-valid GGR breakdown when its legs fail/degrade so the GGR box
+ * still renders its headline number (matches the page's existing
+ * fallback shape for the chip-enum path).
+ */
+export async function buildKpiWindowPayload(
+  window: DashboardKpiWindow,
+): Promise<KpiWindowPayload> {
+  const [stats, ggrBreakdown] = await Promise.all([
+    getDashboardKpiStats(window),
+    getGgrBreakdownForKpiWindow(window).catch(() => ({
+      wagers: [],
+      payouts: [],
+      wagersTotal: 0,
+      payoutsTotal: 0,
+      ggr: 0,
+    })),
+  ]);
+
+  return {
+    window,
+    windowLabel: stats.periodLabel,
+    ggr: stats.ggr,
+    wager: stats.wagers,
+    wagerBreakdown: stats.wagersBreakdown,
+    wagerOrganic: stats.wagersOrganic,
+    deposits: stats.deposits,
+    depositCount: stats.depositCountPeriod,
+    withdrawals: stats.withdrawals,
+    withdrawalCount: stats.withdrawalCountPeriod,
+    ggrBreakdown,
+    timings: {
+      ggr: stats.timings.ggr,
+      wager: stats.timings.wager,
+      wagerOrganic: stats.timings.wagerOrganic,
+      deposits: stats.timings.deposits,
+      withdrawals: stats.timings.withdrawals,
+    },
+  };
+}
