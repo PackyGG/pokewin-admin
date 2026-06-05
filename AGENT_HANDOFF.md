@@ -48,6 +48,38 @@
 
 ---
 
+## 🛠️ FAILED / BLOCKED / NEEDS-FIXING WORKSTREAMS (pick these up)
+
+### 🔴 Blocked — needs the OWNER's decision
+- **Bulk select/delete on `/gift-cards` + `/vouchers`** (audit item "H"). BLOCKED: both tables live in the **MAIN/prod DB**, so bulk-delete is a forbidden MAIN write. Nothing shipped. Owner must choose: **H1** allow the MAIN write as a one-off (promo-codes already does it), **H2** gift-cards-only admin-DB bulk-*cancel* (no MAIN write; vouchers has no admin-DB equivalent), or **H3** drop it. → Ask, then act. Reference pattern: `/promo-codes` (`actions.ts` `deletePromoCodesBulk` + data-table `BulkActionsBar` + selection-context + quick-select).
+
+### 🟠 Tool failure
+- **`ShareOnboardingGuide` returns `undefined`** (link + short_code both undefined; *"undefined is not an object (evaluating 'H.length')"*). The hosted "open in Claude Code" onboarding link could NOT be created. Workaround in place: `ONBOARDING.md` is committed to `main`. → Retry the hosted link when the tool is fixed.
+
+### 🟡 Agent / workflow failures (self-recovered — note the patterns)
+- **Workflow `script` parse errors (×2):** a backtick around `DATABASE_URL` and a `\\'` quote-escape inside workflow prompt STRINGS broke parsing. Both relaunched clean. **Lesson: NO inner backticks and NO `\'`/`\\'` inside a workflow `script` string — use plain text + `' + REPO + '` concatenation.**
+- **Reward-data discovery (`w2p6fvax2`):** one parallel discovery agent (deposit/race/raffle) **completed without calling StructuredOutput** → that slice of the spec was missing. Recovered: the build agent re-derived it. → Expect occasional StructuredOutput no-shows in fan-outs; `.filter(Boolean)` + let the downstream step re-derive.
+
+### 🟡 Verify-agent unreliability (do NOT trust a bare "not found")
+- **False negative:** the Total-Withdrawn verify said the tile "doesn't exist" when it was present — it read a **stale tree**. Caught via `git show`. → Verify agents MUST `git fetch && checkout the exact SHA` first; cross-check any negative against `git show <sha>`.
+- **Commit-message overclaim:** the smoothness-foundation commit claimed a "Spinner 12→14" tweak that was never made (`dashboard-period-selector.tsx` unchanged). Code is fine; the message overstated. → If you touch that file, the spinner-size bump is still a TODO if wanted.
+
+### ⚪ Standing VERIFICATION GAP (affects ~everything shipped this session)
+- **No live authenticated browser** (Chrome extension offline) + **stale local game DB** (missing tables → live admin pages throw locally). So nearly everything is **build-verified + render-checked via fixtures / minted session**, NOT clicked-through in a real logged-in browser. → A human (or a connected Chrome) should do a real logged-in pass of the high-traffic surfaces; or connect Chrome so the harness drives the real routes directly.
+
+### 🔵 Deferred (not broken — revisit on the right conditions)
+- **Route View-Transitions cross-fade:** stable React 19.1 does not expose it; enabling needs the experimental React channel (forbidden dep swap). `PeriodChips`/`TabContainer` are built; only the global cross-fade is deferred. Revisit if React is upgraded.
+- **Backend-only reward settings:** daily-pack 30-day XP-unlock %, deposit match%/min-gate/wager-req, race entry threshold, raffle ticket-earn rate, rain wager-req — live in the GAME backend, not the admin schema, so the planner models them as cost-effect controls (display-only where truly unreadable). → Wire to real values only if they become readable / the owner provides them.
+
+### 🟣 Unresolved data issues
+- **Admin-DB schema drift:** `creator_deals.monthly_cashout_limit` + `weekly_cashout_limit` (1 value each) + `creator_deal_estimates` (17 rows) exist in prod admin DB but were dropped from `prisma/admin/schema.prisma` (`db push` refuses on data-loss). → Decide: restore in schema (then `db push` is clean) or archive-then-drop. Do NOT `--accept-data-loss` without that call.
+- **Dangling locked worktree dirs:** a few `.claude/worktrees/*` dirs failed to delete (a build held `next-swc.win32-x64-msvc.node`). Un-git-tracked (pruned) but may still be on disk. → Sweep once locks release (junction-safe: check `LinkType` before recurse).
+
+### 🟢 In-flight — FINISH IT
+- **Responsive sweep** (`wgt5atu6q`, 4 fan-out agents + verify). → On completion: clean the 4 worktrees, confirm the verify reports **zero gating offenders** across 320→1536, and dispatch a targeted follow-up for any remaining. Harness: `e2e/responsive/*` + `playwright.responsive.config.ts` (`RESPONSIVE_EXPECT_CLEAN=1` after fixes).
+
+---
+
 ## ⚠️ GOTCHAS (condensed — full list in ONBOARDING.md §7)
 - **Stale local game DB** → live admin pages throw locally → render via fixtures.
 - **React #130**: every nav `icon` string must be in the `ICONS` map in `src/components/app-sidebar.tsx`.
