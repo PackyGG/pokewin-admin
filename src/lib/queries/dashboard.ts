@@ -337,7 +337,7 @@ function getPeriodAggregates(
                WHERE ref.id = u.referred_by AND ref.role = 'creator'
              ) AS under_creator
       FROM "user" u
-      WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+      WHERE u.role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
     ),
     ${Prisma.raw(sessionWindowsCte)},
     base AS (
