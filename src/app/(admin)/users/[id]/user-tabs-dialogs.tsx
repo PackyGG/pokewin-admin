@@ -31,6 +31,7 @@ import {
   BALANCE_ADJUSTMENT_CATEGORY_META,
   isRemovalOnlyAdjustmentCategory,
   isCreatorLinkedAdjustmentCategory,
+  isCountedAdjustmentCategory,
   type BalanceAdjustmentCategory,
 } from "@/lib/balance-adjustment-categories";
 import { CreatorLinkPicker } from "./creator-link-picker";
@@ -635,19 +636,26 @@ export function BalanceAdjustDialog({
               </div>
             )}
 
-            {/* Other: free-text reason, min 20 chars — AND a destructive
-                warning that this amount is NOT tracked in GGR/PnL/cost. */}
+            {/* Destructive warning for any UNCOUNTED category (e.g. `other`,
+                `official_stream`): this amount is NOT tracked in GGR/PnL/cost.
+                Gated on `!isCountedAdjustmentCategory` so any future uncounted
+                category is auto-covered — mirrors the creator-link /
+                removal-only guards above. */}
+            {category && !isCountedAdjustmentCategory(category) && (
+              <div className="mt-2 flex items-start gap-2 rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-2 text-[11px] text-rose-600 dark:text-rose-400">
+                <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  This amount will <span className="font-semibold">NOT</span>{" "}
+                  be counted in GGR, P&amp;L or cost. Use it mainly for
+                  content-creator bookkeeping — every other category is
+                  tracked.
+                </span>
+              </div>
+            )}
+
+            {/* Other: free-text reason, min 20 chars (only `other` requires + stamps it). */}
             {category === "other" && (
               <div className="mt-2 space-y-2">
-                <div className="flex items-start gap-2 rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-2 text-[11px] text-rose-600 dark:text-rose-400">
-                  <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>
-                    This amount will <span className="font-semibold">NOT</span>{" "}
-                    be counted in GGR, P&amp;L or cost. Use it mainly for
-                    content-creator bookkeeping — every other category is
-                    tracked.
-                  </span>
-                </div>
                 <Textarea
                   placeholder="Reason (min 20 characters)..."
                   value={reasonText}
