@@ -11,19 +11,20 @@ import {
   PageHero,
   PageHeroIdentity,
   SectionHeading,
-  KpiTile,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { SkeletonTable } from "@/components/ux";
-import { formatNumber } from "@/lib/utils/format";
-import {
-  parseDashboardPeriod,
-  type DashboardPeriod,
-} from "@/lib/queries/dashboard-period";
+import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
 import {
   getCreatorsChangelogEvents,
   type CreatorChangelogEvent,
 } from "@/lib/queries/creators-changelog";
+import { clampCreatorsPeriod } from "../_lib/search-params";
+import {
+  CreatorsKpiPanel,
+  CreatorsPlainHero,
+  CreatorsPanelSub,
+} from "../_components/creators-kpi-panel";
 import { ChangelogPeriodFilter } from "./period-filter";
 import { ChangelogFeed } from "./changelog-feed";
 
@@ -35,10 +36,17 @@ export const metadata = { title: "Creator Changelog" };
  * existing admin audit log. Modern page pattern (PageHero + KPI strip +
  * SectionHeading + feed), /audit table style, dark-mode + motion-safe.
  *
+ * Visual language matches the reskinned main /creators page: the KPI strip
+ * uses the same `CreatorsKpiPanel` boxes (tinted Card + header icon + hero
+ * value + sub) the /creators strip uses, and the period chips are floored to
+ * the same 48h minimum (`CREATORS_MIN_PERIOD`) via the shared
+ * `clampCreatorsPeriod` helper.
+ *
  * Active-timeframe-only: only the selected `?period=` window is queried,
  * inside a `<Suspense key={period}>` boundary so switching the chip
- * re-fetches just that one window (default 3h). No eager pre-load of any
- * other window.
+ * re-fetches just that one window (default/floor 48h). The param is clamped
+ * to 48h+ here so the server only ever loads a 48h-or-wider window — no
+ * eager pre-load of any other window.
  */
 export default async function CreatorChangelogPage({
   searchParams,
@@ -47,7 +55,10 @@ export default async function CreatorChangelogPage({
 }) {
   await requirePageAccess("/creators/changelog");
   const params = await searchParams;
-  const period = parseDashboardPeriod(params.period);
+  // Floor to the /creators 48h minimum (sub-48h windows are clamped up, an
+  // absent param → 48h). Shared with `<ChangelogPeriodFilter>` so the loaded
+  // window and the highlighted chip always agree.
+  const period = clampCreatorsPeriod(params.period);
 
   return (
     <div className="space-y-6">
@@ -84,39 +95,48 @@ async function ChangelogContent({ period }: { period: DashboardPeriod }) {
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <KpiTile
-          label="Events"
-          value={formatNumber(events.length)}
-          icon={History}
-          accent="blue"
-        />
-        <KpiTile
-          label="Creators signed"
-          value={formatNumber(counts.user_made_creator)}
-          icon={UserPlus}
-          accent="blue"
-        />
-        <KpiTile
-          label="Deals created"
-          value={formatNumber(counts.creator_deal_created)}
-          icon={Handshake}
-          accent="emerald"
-        />
-        <KpiTile
-          label="Resets to user"
-          value={formatNumber(counts.creator_force_reset_to_user)}
-          icon={RotateCcw}
-          accent="amber"
-        />
-        <KpiTile
-          label="Exclusions"
-          value={formatNumber(
-            counts.excluded_user_added + counts.excluded_user_removed,
-          )}
-          icon={Ban}
-          accent="rose"
-        />
+      {/* KPI strip — the same dashboard-style panel boxes the reskinned
+          main /creators page uses (`CreatorsKpiPanel` + `CreatorsPlainHero`
+          + `CreatorsPanelSub`) so the two surfaces read as one family.
+          All five count metrics + their icons are preserved; the heroes
+          are plain counts (these are throughput tallies, not signed money,
+          so no house-POV +/− sign). Accents stay within the panel tint set
+          and consistent with /creators: blue for the neutral counts, emerald
+          for deals (matches the feed's "Deal created" badge), purple for the
+          corrective reset (the same family as /creators' purple Past-Creators
+          tile), and rose for the guarded exclusion action (matches the feed's
+          exclusion badge + the per-fill house-cost amounts already rendered
+          in rose). Same responsive grid as the main strip. */}
+      <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
+        <CreatorsKpiPanel title="Events" icon={History} tint="blue">
+          <CreatorsPlainHero value={events.length} format="number" />
+          <CreatorsPanelSub>Creator-marketing actions</CreatorsPanelSub>
+        </CreatorsKpiPanel>
+        <CreatorsKpiPanel title="Creators signed" icon={UserPlus} tint="blue">
+          <CreatorsPlainHero value={counts.user_made_creator} format="number" />
+          <CreatorsPanelSub>Users promoted to creator</CreatorsPanelSub>
+        </CreatorsKpiPanel>
+        <CreatorsKpiPanel title="Deals created" icon={Handshake} tint="emerald">
+          <CreatorsPlainHero
+            value={counts.creator_deal_created}
+            format="number"
+          />
+          <CreatorsPanelSub>New creator deals</CreatorsPanelSub>
+        </CreatorsKpiPanel>
+        <CreatorsKpiPanel title="Resets to user" icon={RotateCcw} tint="purple">
+          <CreatorsPlainHero
+            value={counts.creator_force_reset_to_user}
+            format="number"
+          />
+          <CreatorsPanelSub>Creators reset to plain user</CreatorsPanelSub>
+        </CreatorsKpiPanel>
+        <CreatorsKpiPanel title="Exclusions" icon={Ban} tint="rose">
+          <CreatorsPlainHero
+            value={counts.excluded_user_added + counts.excluded_user_removed}
+            format="number"
+          />
+          <CreatorsPanelSub>Analytics-exclusion changes</CreatorsPanelSub>
+        </CreatorsKpiPanel>
       </div>
 
       <div className="space-y-3">

@@ -5,10 +5,12 @@ import { useTransition } from "react";
 import { Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Spinner, transition } from "@/components/ux";
+import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
 import {
-  DASHBOARD_PERIODS,
-  type DashboardPeriod,
-} from "@/lib/queries/dashboard-period";
+  CREATORS_MIN_PERIOD,
+  CREATORS_PERIODS,
+  clampCreatorsPeriod,
+} from "../_lib/search-params";
 
 /**
  * Period selector for /creators/changelog.
@@ -21,31 +23,39 @@ import {
  * spinner inside the active chip. `router.replace` (not push) so the back
  * button doesn't fill up with chip changes.
  *
- * The ONE difference from the dashboard selector is the default window:
- * the changelog defaults to `3h` (a tight recent-activity feed) rather
- * than the dashboard's 24h. The default chip is the no-param state, so
- * selecting it deletes `period` from the URL — keeping the canonical URL
- * for the landing view clean and matching `getCreatorsChangelogEvents`'s
- * own `period = "3h"` fallback so the chips and the data agree on mount.
+ * Floored to 48h like the main /creators page: this renders only the
+ * `CREATORS_PERIODS` chips (48h · 3d · 7d · 30d · all) — the sub-48h
+ * windows (1h/3h/6h/12h/24h) are too noisy for a creator-marketing feed,
+ * so they're dropped from the rendered set AND any `?period=` below 48h
+ * (or an absent param → the global 24h default) is clamped UP to 48h via
+ * `clampCreatorsPeriod`. The page parse + this control share that helper
+ * (mirroring the main /creators `CreatorsPeriodControl`) so the loaded
+ * window and the highlighted chip never disagree. 48h is also the
+ * clean-URL sentinel — selecting it drops the param (the page clamps a
+ * missing param up to 48h), matching `getCreatorsChangelogEvents`'s own
+ * `period = "48h"` fallback so the chips and the data agree on mount.
  */
-const CHANGELOG_DEFAULT_PERIOD: DashboardPeriod = "3h";
-
 export function ChangelogPeriodFilter() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
 
-  const currentParam = searchParams.get("period");
-  const current: DashboardPeriod =
-    currentParam &&
-    (DASHBOARD_PERIODS as readonly string[]).includes(currentParam)
-      ? (currentParam as DashboardPeriod)
-      : CHANGELOG_DEFAULT_PERIOD;
+  // /creators (and this changelog) enforce 48h as the SHORTEST window —
+  // clamp any incoming `?period=` below 48h (or absent → the global 24h
+  // default) UP to 48h so the active chip is always one that's rendered.
+  // Reuses the shared parse/clamp helper so the control and the server
+  // page agree on the effective window.
+  const current: DashboardPeriod = clampCreatorsPeriod(
+    searchParams.get("period"),
+  );
 
   function pick(next: DashboardPeriod) {
     if (next === current) return;
     const params = new URLSearchParams(searchParams.toString());
-    if (next === CHANGELOG_DEFAULT_PERIOD) {
+    // 48h is the /creators minimum AND its clean-URL sentinel — selecting
+    // it drops the param (the page clamps a missing param up to 48h), so
+    // the canonical changelog URL carries no `?period=`.
+    if (next === CREATORS_MIN_PERIOD) {
       params.delete("period");
     } else {
       params.set("period", next);
@@ -63,7 +73,7 @@ export function ChangelogPeriodFilter() {
         <span>Period</span>
       </div>
       <div className="flex flex-wrap items-center gap-0.5">
-        {DASHBOARD_PERIODS.map((p) => {
+        {CREATORS_PERIODS.map((p) => {
           const active = p === current;
           return (
             <button
@@ -84,7 +94,7 @@ export function ChangelogPeriodFilter() {
               {active && isPending && (
                 <Spinner size={12} label={`Loading ${p} changelog`} />
               )}
-              {p}
+              {p === "all" ? "All" : p}
             </button>
           );
         })}

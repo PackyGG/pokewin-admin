@@ -106,13 +106,18 @@ const EVENT_DISPLAY: Record<
 /**
  * Load the creator-marketing changelog for a period.
  *
- * @param period a `DashboardPeriod` chip (default `3h`) → SQL cutoff via
+ * @param period a `DashboardPeriod` chip (default `48h`) → SQL cutoff via
  *   `periodToCutoff`. Only rows with `created_at >= cutoff` are returned,
  *   newest first. The `all` sentinel maps to the unix epoch so the filter
  *   degrades to "everything" without a special branch.
+ *
+ *   The default matches the /creators 48h floor (`CREATORS_MIN_PERIOD`): the
+ *   changelog only ever exposes 48h+ windows (the sub-48h chips are hidden +
+ *   clamped away on the page), so the query's own fallback agrees with the
+ *   rendered chip set on mount.
  */
 export async function getCreatorsChangelogEvents({
-  period = "3h",
+  period = "48h",
 }: {
   period?: DashboardPeriod;
 } = {}): Promise<CreatorChangelogEvent[]> {
