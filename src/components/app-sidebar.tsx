@@ -54,6 +54,7 @@ import {
   Flag,
   UserPlus,
   Scale,
+  History,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -129,6 +130,7 @@ const ICONS: Record<string, LucideIcon> = {
   Flag,
   UserPlus,
   Scale,
+  History,
 };
 
 type NavItem = {
@@ -337,7 +339,10 @@ export function AppSidebar({
           const menuItems = (
             <SidebarMenu>
               {visibleItems.map((item) => {
-                const Icon = ICONS[item.icon];
+                // Fallback to ScrollText if an icon key is unmapped — never
+                // render <undefined/> (that throws React #130 and crashes the
+                // whole admin shell, since this renders inside the root layout).
+                const Icon = ICONS[item.icon] ?? ScrollText;
                 const isActive =
                   pathname === item.href ||
                   (item.href !== "/dashboard" &&
