@@ -1719,17 +1719,28 @@ const adjustXpSchema = z.object({
   userId: z.string(),
   amount: z.number(),
   reason: z.string().min(1),
+  // 2FA is required to mutate user XP — matches the BalanceAdjustDialog
+  // pattern. The TOTP secret is verified server-side against the calling
+  // admin's `admin_users` row via `require2FA` before any write.
+  totpCode: z.string().min(1, "2FA code is required"),
 });
 
 export async function adjustXp(data: {
   userId: string;
   amount: number;
   reason: string;
+  totpCode: string;
 }) {
   const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_adjust_xp", "adjust user XP");
   const parsed = adjustXpSchema.parse(data);
+
+  // 2FA gate — must run BEFORE the user_statistics write so a missing /
+  // invalid TOTP code can't slip an XP mutation through. `require2FA`
+  // throws on missing / invalid codes; the client surfaces the message
+  // via the existing try/catch + toast pattern.
+  await require2FA(session.userId, parsed.totpCode);
 
   const stats = await db.user_statistics.findUnique({
     where: { user_id: parsed.userId },

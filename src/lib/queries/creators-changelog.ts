@@ -44,6 +44,15 @@ const CHANGELOG_MAIN_DB_TIMEOUT_MS = 8_000;
  *   - user_made_creator          → src/app/(admin)/creators/actions.ts
  *                                   + creators/backend-actions.ts
  *   - creator_deal_created       → same two files
+ *   - creator_deal_updated       → src/app/(admin)/creators/actions.ts
+ *                                   + creators/backend-actions.ts (split %
+ *                                   / status / sponsor-pool edits via the
+ *                                   /creators/[userId]/deal surface)
+ *   - creator_webhook_created    → src/app/(admin)/creators/actions.ts
+ *                                   + my-profile/actions.ts (creator's own
+ *                                   webhook self-edit)
+ *   - creator_webhook_updated    → same two files
+ *   - creator_webhook_deleted    → src/app/(admin)/creators/actions.ts
  *   - creator_force_reset_to_user→ src/app/(admin)/users/[id]/actions.ts
  *                                   (the "Reset to User Role" escape hatch)
  *   - role_changed               → src/app/(admin)/users/[id]/actions.ts
@@ -68,6 +77,10 @@ const CHANGELOG_MAIN_DB_TIMEOUT_MS = 8_000;
 const CHANGELOG_SOURCE_EVENT_TYPES = [
   "user_made_creator",
   "creator_deal_created",
+  "creator_deal_updated",
+  "creator_webhook_created",
+  "creator_webhook_updated",
+  "creator_webhook_deleted",
   "creator_force_reset_to_user",
   "role_changed",
   "excluded_user_added",
@@ -84,6 +97,10 @@ const CHANGELOG_SOURCE_EVENT_TYPES = [
 export const CREATOR_CHANGELOG_EVENT_TYPES = [
   "user_made_creator",
   "creator_deal_created",
+  "creator_deal_updated",
+  "creator_webhook_created",
+  "creator_webhook_updated",
+  "creator_webhook_deleted",
   "creator_force_reset_to_user",
   "creator_removed",
   "excluded_user_added",
@@ -120,6 +137,11 @@ export type CreatorChangelogEvent = {
  *   - A user becoming a creator / getting a creator deal is a normal,
  *     positive marketing event → emerald (deal) / blue (signed up as
  *     creator, a status event).
+ *   - Updating an existing creator deal (split %, status, sponsor-pool
+ *     %) is a routine config change → blue.
+ *   - Creator webhook lifecycle (create / update / delete) is a routine
+ *     integration plumbing event — blue for create/update, amber for
+ *     delete (a wired integration was removed).
  *   - Resetting a creator back to a plain user via the escape hatch is a
  *     corrective action → amber.
  *   - Removing a creator (firing them back to a normal user via the role
@@ -134,6 +156,10 @@ const EVENT_DISPLAY: Record<
 > = {
   user_made_creator: { label: "Creator signed", tone: "blue" },
   creator_deal_created: { label: "Deal created", tone: "emerald" },
+  creator_deal_updated: { label: "Deal updated", tone: "blue" },
+  creator_webhook_created: { label: "Webhook created", tone: "blue" },
+  creator_webhook_updated: { label: "Webhook updated", tone: "blue" },
+  creator_webhook_deleted: { label: "Webhook deleted", tone: "amber" },
   creator_force_reset_to_user: { label: "Creator reset to user", tone: "amber" },
   creator_removed: { label: "Creator removed", tone: "rose" },
   excluded_user_added: { label: "User excluded", tone: "amber" },

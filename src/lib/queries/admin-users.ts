@@ -195,7 +195,7 @@ export async function getAdminUserAuditStats(adminUserId: string) {
 
 export type AdminAuditStats = Awaited<ReturnType<typeof getAdminUserAuditStats>>;
 
-type AdminAuditEventItem = {
+export type AdminAuditEventItem = {
   id: string;
   eventType: string;
   targetUserId: string | null;

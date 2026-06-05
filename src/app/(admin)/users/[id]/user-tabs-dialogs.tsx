@@ -938,6 +938,11 @@ export function XpAdjustDialog({
 }) {
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
+  // 2FA gate — security parity with BalanceAdjustDialog. The server
+  // action `adjustXp` calls `require2FA(session.userId, totpCode)`
+  // before mutating user_statistics.xp, so we collect + send the
+  // 6-digit TOTP code here. Reset on dialog close.
+  const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -947,12 +952,17 @@ export function XpAdjustDialog({
       toast.error("Please enter a valid amount and reason");
       return;
     }
+    if (!totpCode.trim()) {
+      toast.error("Please enter your 2FA code");
+      return;
+    }
     startTransition(async () => {
       try {
-        await adjustXp({ userId, amount: numAmount, reason });
+        await adjustXp({ userId, amount: numAmount, reason, totpCode: totpCode.trim() });
         toast.success("XP adjusted");
         setAmount("");
         setReason("");
+        setTotpCode("");
         onOpenChange(false);
         router.refresh();
       } catch (e) {
@@ -986,12 +996,24 @@ export function XpAdjustDialog({
               rows={2}
             />
           </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">2FA Code</Label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              placeholder="Enter your 6-digit code"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              maxLength={6}
+              autoComplete="one-time-code"
+            />
+          </div>
         </div>
         <DialogFooter>
           <Button
             size="sm"
             onClick={handleAdjust}
-            disabled={isPending}
+            disabled={isPending || !totpCode.trim()}
             className="w-full sm:w-auto"
           >
             {isPending ? "Adjusting..." : "Apply Adjustment"}

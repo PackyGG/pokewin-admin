@@ -29,9 +29,15 @@ const EVENT_TYPES = [
   { label: "Admin User Created", value: "admin_user_created" },
   { label: "Admin User Activated", value: "admin_user_activated" },
   { label: "Admin User Deactivated", value: "admin_user_deactivated" },
+  { label: "Admin User Deleted", value: "admin_user_deleted" },
   { label: "Admin Role Changed", value: "admin_role_changed" },
   { label: "Admin 2FA Reset", value: "admin_2fa_reset" },
   { label: "Admin Sessions Expired", value: "admin_sessions_force_expired" },
+  { label: "Admin Role Created", value: "admin_role_created" },
+  { label: "Admin Role Updated", value: "admin_role_updated" },
+  { label: "Admin Role Deleted", value: "admin_role_deleted" },
+  { label: "Role Permissions Updated", value: "role_permissions_updated" },
+  { label: "User Permissions Updated", value: "user_permissions_updated" },
   { label: "Account Banned", value: "account_banned" },
   { label: "Account Unbanned", value: "account_unbanned" },
   { label: "Account Locked", value: "account_locked" },
@@ -65,6 +71,10 @@ const EVENT_TYPES = [
   { label: "Country Restriction Updated", value: "country_restriction_updated" },
   { label: "Admin Note Added", value: "admin_note_created" },
   { label: "Admin Note Deleted", value: "admin_note_deleted" },
+  { label: "Creator Deal Updated", value: "creator_deal_updated" },
+  { label: "Creator Webhook Created", value: "creator_webhook_created" },
+  { label: "Creator Webhook Updated", value: "creator_webhook_updated" },
+  { label: "Creator Webhook Deleted", value: "creator_webhook_deleted" },
 ];
 
 export default async function AuditPage({

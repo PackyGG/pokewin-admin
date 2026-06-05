@@ -79,15 +79,20 @@ export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, 
           <PermissionsSection detail={detail} />
         </>
       )}
-      <AuditEventsTable
-        auditEvents={auditEvents}
-        activeEventType={searchParams.get("auditEventType") ?? "all"}
-        activeSearch={searchParams.get("auditSearch") ?? ""}
-        onPageChange={(p) => navigateParam("auditPage", p)}
-        onPerPageChange={(pp) => navigateParam("auditPerPage", pp)}
-        onEventTypeChange={(v) => v === "all" ? clearParam("auditEventType") : navigateParam("auditEventType", v)}
-        onSearchChange={(v) => v ? navigateParam("auditSearch", v) : clearParam("auditSearch")}
-      />
+      {/* Audit events feed is admin-only — the same gate the page.tsx
+          server fetch applies. Non-admin viewers with /admin-users access
+          (e.g. via a custom role) never see the audit list. */}
+      {isCurrentUserAdmin && (
+        <AuditEventsTable
+          auditEvents={auditEvents}
+          activeEventType={searchParams.get("auditEventType") ?? "all"}
+          activeSearch={searchParams.get("auditSearch") ?? ""}
+          onPageChange={(p) => navigateParam("auditPage", p)}
+          onPerPageChange={(pp) => navigateParam("auditPerPage", pp)}
+          onEventTypeChange={(v) => v === "all" ? clearParam("auditEventType") : navigateParam("auditEventType", v)}
+          onSearchChange={(v) => v ? navigateParam("auditSearch", v) : clearParam("auditSearch")}
+        />
+      )}
     </div>
   );
 }

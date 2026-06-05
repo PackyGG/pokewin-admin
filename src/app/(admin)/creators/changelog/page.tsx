@@ -161,6 +161,10 @@ function countByType(events: CreatorChangelogEvent[]) {
   const counts = {
     user_made_creator: 0,
     creator_deal_created: 0,
+    creator_deal_updated: 0,
+    creator_webhook_created: 0,
+    creator_webhook_updated: 0,
+    creator_webhook_deleted: 0,
     creator_force_reset_to_user: 0,
     creator_removed: 0,
     excluded_user_added: 0,

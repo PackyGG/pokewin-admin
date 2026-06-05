@@ -12,7 +12,9 @@ import {
   getAdminUserDetail,
   getAdminUserAuditStats,
   getAdminUserAuditEvents,
+  type AdminAuditEventItem,
 } from "@/lib/queries/admin-users";
+import type { PaginatedResult } from "@/lib/types";
 import { getLimitsForAdmin } from "@/lib/balance-limits";
 import { adminRolesColumnExists } from "@/lib/admin-user-roles";
 import { Badge } from "@/components/ui/badge";
@@ -41,20 +43,34 @@ export default async function AdminUserDetailPage({
     ? Number(sp.auditPerPage)
     : 20;
 
-  // Balance limits are admin-only — only fetch (and only ship to the
-  // client) if the current viewer is a real admin. Non-admins with
-  // /admin-users access (e.g. via custom role) never see the data on
-  // the wire, so it can't leak through React DevTools or DOM inspection.
+  // Balance limits + admin audit events are admin-only — only fetch (and
+  // only ship to the client) if the current viewer is a real admin.
+  // Non-admins with /admin-users access (e.g. via custom role) never see
+  // the data on the wire, so it can't leak through React DevTools or DOM
+  // inspection. The admin-audit feed is especially sensitive: it surfaces
+  // every action this admin took (balance adjustments, withdrawals,
+  // permissions changes, etc.) — non-admin viewers must not be able to
+  // browse it.
   const isCurrentUserAdmin = session.role === "admin";
+
+  const emptyAuditEvents: PaginatedResult<AdminAuditEventItem> = {
+    data: [],
+    total: 0,
+    page: auditPage,
+    perPage: auditPerPage,
+    totalPages: 0,
+  };
 
   const [detail, auditStats, auditEvents, balanceLimits, rolesColumnExists] =
     await Promise.all([
       getAdminUserDetail(id),
       getAdminUserAuditStats(id),
-      getAdminUserAuditEvents(id, auditPage, auditPerPage, {
-        eventType: typeof sp.auditEventType === "string" ? sp.auditEventType : undefined,
-        search: typeof sp.auditSearch === "string" ? sp.auditSearch : undefined,
-      }),
+      isCurrentUserAdmin
+        ? getAdminUserAuditEvents(id, auditPage, auditPerPage, {
+            eventType: typeof sp.auditEventType === "string" ? sp.auditEventType : undefined,
+            search: typeof sp.auditSearch === "string" ? sp.auditSearch : undefined,
+          })
+        : Promise.resolve(emptyAuditEvents),
       isCurrentUserAdmin ? getLimitsForAdmin(id) : Promise.resolve([]),
       // Whether the additive `roles` column is migrated — drives the honest
       // "multi-role needs a migration" notice in the Roles card. Only needed
