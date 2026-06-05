@@ -1,5 +1,8 @@
+import { Coins } from "lucide-react";
+
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
+  daysForInsightsPeriodCapped,
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
@@ -7,7 +10,7 @@ import { getDepositBonusOverview } from "@/lib/queries/insights-rewards/deposit-
 import { getDepositBonusCapHitRate } from "@/lib/queries/insights-rewards/deposit-bonus/cap-analysis";
 import { getDepositBonusROI } from "@/lib/queries/insights-rewards/deposit-bonus/roi";
 
-import { DEMO_BASELINE, type ForecastBaseline } from "../_forecast";
+import { type ForecastBaseline } from "../_forecast";
 import { ForecastSimulator } from "./forecast-simulator";
 
 /**
@@ -23,11 +26,13 @@ import { ForecastSimulator } from "./forecast-simulator";
  * tab — it lives inside the page's `<Suspense key={tab:period}>` boundary, so
  * switching to Forecast does not eagerly fire the other tabs' queries.
  *
- * Anchor is REAL where a canonical source exists (cost / claimants / avg /
- * empirical cap → overview; cap-hit rate → capHitRate; downstream GGR/ROI →
- * roi). Behavioural assumptions stay tunable DEMO seeds in the island. If the
- * baseline fetch fails or the period has no bonus rows, we degrade to the DEMO
- * baseline + a DEMO badge instead of crashing the tab.
+ * The data ANCHORS are always REAL: total cost / claimants / avg bonus /
+ * empirical cap / claim probability come from `getDepositBonusOverview`,
+ * cap-hit rate from `getDepositBonusCapHitRate`, downstream GGR / ROI from
+ * `getDepositBonusROI`. There is NO demo fallback — if the period has no
+ * deposit-bonus rows (or the baseline fetch fails), we render a clean empty
+ * state instead of synthetic numbers. Only the BEHAVIOURAL assumptions (abuse
+ * share, retention uplift, breakage, …) remain tunable what-if levers.
  *
  * House-POV: bonuses are house cost → rose; savings against the house →
  * emerald; abuse → amber. (All applied in the island.)
@@ -60,14 +65,21 @@ export async function ForecastTab({
   const roi = roiRes.data;
 
   // A real baseline is usable only when the overview query succeeded AND there
-  // were actual bonus rows in the window (count > 0). Otherwise the cost/avg
-  // anchors are zero and the model has nothing real to stand on → DEMO.
+  // were actual bonus rows in the window (count > 0). Otherwise the cost / avg
+  // anchors are zero and the model has nothing real to stand on → empty state.
   const hasReal = ov != null && ov.count > 0;
+
+  // Day-span the baseline was measured over (lifetime is bounded to the standard
+  // lookback). Drives the horizon-scaling of the real claimant count in the
+  // engine. Always ≥1.
+  const periodDays = Math.max(1, daysForInsightsPeriodCapped(period));
 
   const realBaseline: ForecastBaseline | null = hasReal
     ? {
         totalCost: ov.totalCost,
         uniqueClaimants: ov.uniqueClaimants,
+        periodDays,
+        claimProbability: ov.claimProbability,
         avgBonusUsd: ov.avg,
         empiricalCapUsd: ov.max,
         capHitRate: cap?.capHitRate ?? null,
@@ -76,11 +88,27 @@ export async function ForecastTab({
       }
     : null;
 
+  // No real deposit-bonus data for this period → clean empty state. We do NOT
+  // fall back to synthetic numbers (the page is "always real data").
+  if (realBaseline == null) {
+    return (
+      <div className="rounded-2xl border border-dashed bg-muted/20 p-10 text-center">
+        <div className="mx-auto flex size-12 items-center justify-center rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400">
+          <Coins className="size-6" />
+        </div>
+        <p className="mt-4 text-sm font-semibold">No deposit-bonus data for this period</p>
+        <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-muted-foreground">
+          The forecast anchors on real deposit-bonus activity ({insightsRewardsPeriodLabel(period)}).
+          There were no completed deposit-bonus rows in this window, so there is nothing to model.
+          Pick a wider period above.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <ForecastSimulator
       realBaseline={realBaseline}
-      demoBaseline={DEMO_BASELINE}
-      isDemo={!hasReal}
       period={insightsRewardsPeriodLabel(period)}
     />
   );

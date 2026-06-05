@@ -3,7 +3,6 @@
 import * as React from "react";
 import {
   SlidersHorizontal,
-  Users,
   Percent,
   Coins,
   ShieldAlert,
@@ -35,7 +34,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatCurrency } from "@/lib/utils/format";
 import { formatPct } from "../../../edge-calc/math";
 
 import type { Assumptions, ScenarioConfig, SegmentId } from "../_forecast";
@@ -62,16 +61,11 @@ export type ForecastControlsProps = {
   onScenarioChange: (id: string) => void;
   assumptions: Assumptions;
   onAssumptionsChange: (next: Assumptions) => void;
-  /** Whether the real production baseline is in use (vs DEMO). */
-  useRealBaseline: boolean;
-  onUseRealBaselineChange: (next: boolean) => void;
   /** Whether the comparison table shows the split-cap set vs the full library. */
   showSplitCapSet: boolean;
   onShowSplitCapSetChange: (next: boolean) => void;
-  /** Reset all levers to their DEMO defaults. */
+  /** Reset all levers to their defaults (real anchors + behavioural seeds). */
   onReset: () => void;
-  /** True when a real baseline exists to toggle to (server fetch succeeded). */
-  realBaselineAvailable: boolean;
 };
 
 export function ForecastControls({
@@ -80,12 +74,9 @@ export function ForecastControls({
   onScenarioChange,
   assumptions,
   onAssumptionsChange,
-  useRealBaseline,
-  onUseRealBaselineChange,
   showSplitCapSet,
   onShowSplitCapSetChange,
   onReset,
-  realBaselineAvailable,
 }: ForecastControlsProps) {
   const set = React.useCallback(
     <K extends keyof Assumptions>(key: K, value: Assumptions[K]) => {
@@ -163,19 +154,8 @@ export function ForecastControls({
             </div>
 
             <ToggleRow
-              label="Use real baseline"
-              hint={
-                realBaselineAvailable
-                  ? "Swap the DEMO cost / claimant / cap / ROI anchor for the real production numbers (fetched server-side). Behavioural assumptions below stay tunable."
-                  : "No real baseline available for this period — the production query returned nothing, so the DEMO anchor is used."
-              }
-              checked={useRealBaseline}
-              disabled={!realBaselineAvailable}
-              onCheckedChange={onUseRealBaselineChange}
-            />
-            <ToggleRow
               label="Compare split-cap set"
-              hint="Table shows the focused split-cap what-if rows (100/24h, 10/hr, 5/hr, 20/6h, 15/6h, 50/12h, 75/24h). Off = the full A–E library."
+              hint="Focus on the split-cap set, or show the full A–E library."
               checked={showSplitCapSet}
               onCheckedChange={onShowSplitCapSetChange}
             />
@@ -210,19 +190,8 @@ export function ForecastControls({
 
           {/* ── Volume levers ──────────────────────────────────────── */}
           <SliderRow
-            label="Eligible users"
-            hint="Population modeled in one cap window. Scales total claimants and cost linearly."
-            icon={Users}
-            value={assumptions.eligibleUsers}
-            min={0}
-            max={50000}
-            step={500}
-            onChange={(v) => set("eligibleUsers", v)}
-            format={(v) => formatNumber(Math.round(v))}
-          />
-          <SliderRow
             label="Deposits / user / window"
-            hint="Baseline deposit frequency per eligible user within one cap window."
+            hint="Baseline deposit frequency per claiming user within one cap window. Drives the effective per-day ceiling each cap policy imposes."
             icon={Repeat}
             value={assumptions.depositsPerUserPerWindow}
             min={0}
@@ -233,7 +202,7 @@ export function ForecastControls({
           />
           <SliderRow
             label="Claim probability"
-            hint="P(claims a bonus | deposited). DEMO assumption."
+            hint="P(claims a bonus | deposited). Defaults to the REAL measured ratio (claimants ÷ depositors) for the selected period; tunable for what-if. Scales the real claimant volume relative to that default."
             icon={Percent}
             value={assumptions.claimProbability}
             min={0}

@@ -448,12 +448,10 @@ export function simulate(
   const cap = scenario.cap;
 
   const mix = normalizeSegmentMix(assumptions.segmentMix);
-  const eligible = Math.max(0, finite(assumptions.eligibleUsers));
   // `depositsPerUserPerWindow` is anchored to the BASELINE (24h) window, i.e. a
   // PER-DAY deposit frequency — a property of the user, not the cap geometry.
   // Volume must NOT scale with how many cap windows fit the horizon.
   const depositsPerDay = Math.max(0, finite(assumptions.depositsPerUserPerWindow));
-  const claimProb = clamp01(assumptions.claimProbability);
   const avgBonus = Math.max(0, finite(assumptions.avgBonusUsd));
   const breakage = clamp01(assumptions.breakageRate);
   const abuseShare = clamp01(assumptions.abuseShare);
@@ -464,11 +462,25 @@ export function simulate(
   const cannRate = cannibalizationAtCap(cap, assumptions.cannibalizationRate);
   const retentionUplift = Math.max(0, finite(assumptions.retentionUplift));
 
-  // ── Volume — bounded by DEPOSIT BEHAVIOUR, identical across every policy ──
-  // Claims over the horizon = population × deposits/day × days × P(claim).
+  // ── Volume — anchored to the REAL measured claimant count, identical across
+  // every policy ──
+  // Claims over the horizon = real claimants (measured over `baselinePeriodDays`)
+  // linearly scaled to the forecast horizon, then modulated by the claim-
+  // probability lever RELATIVE to its real measured default. At the default
+  // lever the modulation is 1.0, so the volume is exactly the real count scaled
+  // to the horizon; moving the slider explores a higher / lower claim rate.
   // This is the SAME for every cap rule: shrinking the cap window does not
   // create more claims (a user deposits at their own cadence, not the cap's).
-  const horizonClaimants = eligible * depositsPerDay * Math.max(1, days) * claimProb;
+  const baselineClaimants = Math.max(0, finite(assumptions.baselineClaimants));
+  const baselinePeriodDays = Math.max(1, finite(assumptions.baselinePeriodDays));
+  const claimProb = clamp01(assumptions.claimProbability);
+  const baseClaimProb = clamp01(assumptions.baselineClaimProbability);
+  // Normalize the lever against its real default (default ⇒ 1.0). When the real
+  // ratio is ~0 (no measured baseline), fall back to using the lever directly so
+  // the slider still has an effect instead of collapsing volume to 0.
+  const claimProbFactor = baseClaimProb > EPSILON ? claimProb / baseClaimProb : claimProb;
+  const horizonClaimants =
+    baselineClaimants * (Math.max(1, days) / baselinePeriodDays) * claimProbFactor;
 
   // ── Effective-ceiling truncation — where policies actually diverge on cost ──
   // The baseline daily-equivalent ceiling (the reference for payout retention).

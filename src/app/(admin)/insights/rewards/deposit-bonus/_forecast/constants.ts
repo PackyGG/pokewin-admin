@@ -62,7 +62,13 @@ export const BASELINE_WINDOW_HOURS = 24;
 
 // ─── Default assumptions (UI slider seeds — DEMO) ───────────────────────────
 
-/** DEMO seed — P(claim | deposit). */
+/**
+ * Fallback P(claim | deposit) seed. The live page DEFAULTS the slider to the
+ * REAL measured ratio (`ForecastBaseline.claimProbability` =
+ * uniqueClaimants / distinct depositors); this constant is only the last-resort
+ * fallback when no real ratio is available (e.g. the engine self-check harness,
+ * or a malformed shared link). Tunable for what-if either way.
+ */
 export const DEFAULT_CLAIM_PROBABILITY = 0.62;
 /** DEMO seed — awarded-but-never-wagered share. */
 export const DEFAULT_BREAKAGE_RATE = 0.18;
@@ -76,11 +82,9 @@ export const DEFAULT_RETENTION_UPLIFT = 0.12;
 export const DEFAULT_CANNIBALIZATION_RATE = 0.3;
 /** Coefficient — legit conversion lost per unit of cap tightening (0-1). */
 export const DEFAULT_LEGIT_CONVERSION_SENSITIVITY = 0.2;
-/** DEMO seed — baseline deposits per eligible user per cap window. */
+/** DEMO seed — baseline deposits per claiming user per cap window. */
 export const DEFAULT_DEPOSITS_PER_USER_PER_WINDOW = 1.4;
-/** DEMO seed — eligible population modeled in the window. */
-export const DEFAULT_ELIGIBLE_USERS = 4000;
-/** DEMO seed — average bonus (USD) before the cap clamp. */
+/** Fallback avg bonus (USD) before the cap clamp — live page defaults to the real `avgBonusUsd`. */
 export const DEFAULT_AVG_BONUS_USD = 42;
 /** Default forecast horizon (days). */
 export const DEFAULT_WINDOW_DAYS = 30;
@@ -115,10 +119,10 @@ export const SPLIT_CAP_BURST_DAMPING = 0.65;
 /**
  * EFFECTIVE-CEILING COST MODEL — the directional truth the cost channel encodes.
  *
- * Total claims/payout over the horizon is bounded by DEPOSIT BEHAVIOUR
- * (`eligibleUsers × depositsPerDay × days × P(claim)`), NOT by the number of
- * cap windows in the horizon. Shrinking the cap window does NOT multiply the
- * modeled claim count — it is an anti-abuse / velocity control.
+ * Total claims/payout over the horizon is anchored to the REAL measured
+ * claimant count scaled to the horizon (see `Assumptions` / `ForecastBaseline`),
+ * NOT by the number of cap windows in the horizon. Shrinking the cap window does
+ * NOT multiply the modeled claim count — it is an anti-abuse / velocity control.
  *
  * Cost differences between policies therefore come from the per-claim PAID
  * bonus, which a tighter cap reduces by truncating the upper tail of the bonus

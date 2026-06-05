@@ -106,18 +106,37 @@ export type ScenarioConfig = {
  * Every behavioural / volume assumption the engine multiplies by. In the UI
  * each of these is exposed as a slider seeded from a `DEFAULT_*` constant.
  *
- * Rates / probabilities / multipliers — never raw money except `avgBonusUsd`
- * and `eligibleUsers`. The engine normalizes / clamps everything defensively,
- * but callers should keep fractions in [0,1].
+ * Rates / probabilities / multipliers — never raw money except `avgBonusUsd`.
+ * The engine normalizes / clamps everything defensively, but callers should
+ * keep fractions in [0,1].
+ *
+ * VOLUME is anchored to the REAL measured claimant count (no synthetic
+ * population): `baselineClaimants` over `baselinePeriodDays` is scaled to the
+ * forecast horizon and modulated by the claim-probability lever relative to its
+ * REAL measured default (`baselineClaimProbability`). See {@link ForecastBaseline}.
  */
 export type Assumptions = {
-  /** Population modeled in the window. */
-  eligibleUsers: number;
+  /** REAL distinct claimants measured over `baselinePeriodDays`. The volume anchor. */
+  baselineClaimants: number;
+  /** Day-span the real `baselineClaimants` was measured over (≥1). */
+  baselinePeriodDays: number;
+  /**
+   * REAL measured claim probability the slider defaults to — the reference the
+   * tunable `claimProbability` is normalized against (so the default lever
+   * leaves the real claimant volume unchanged). 0-1.
+   */
+  baselineClaimProbability: number;
   /** Fractional split across segments — engine normalizes to sum 1. */
   segmentMix: Record<SegmentId, number>;
   /** Baseline deposit frequency per user within one cap window. */
   depositsPerUserPerWindow: number;
-  /** P(claims a bonus | deposited), 0-1. */
+  /**
+   * P(claims a bonus | deposited), 0-1. Defaults to the REAL measured ratio
+   * (`baselineClaimProbability`); tunable for what-if. The engine scales the
+   * real claimant volume by `claimProbability / baselineClaimProbability`, so
+   * the default leaves volume at the real count and moving the slider explores
+   * a higher / lower claim rate.
+   */
   claimProbability: number;
   /** Baseline average bonus (USD) BEFORE the cap clamp is applied. */
   avgBonusUsd: number;
@@ -252,6 +271,18 @@ export type ForecastBaseline = {
   totalCost: number;
   /** Real distinct claimants. `overview.uniqueClaimants`. */
   uniqueClaimants: number;
+  /**
+   * Day-span the baseline was measured over (the selected period; lifetime is
+   * bounded to the standard lookback). The volume anchor scales `uniqueClaimants`
+   * from this span to the forecast horizon. Always ≥1.
+   */
+  periodDays: number;
+  /**
+   * Real measured claim probability = `uniqueClaimants / distinct depositors` in
+   * the SAME window + scope. The claim-probability slider defaults to this.
+   * `null` when there were no depositors (divide-by-zero guard → empty state).
+   */
+  claimProbability: number | null;
   /** Real average bonus (USD). `overview.avg`. */
   avgBonusUsd: number;
   /** Real largest single bonus = empirical cap (USD). `overview.max`. */

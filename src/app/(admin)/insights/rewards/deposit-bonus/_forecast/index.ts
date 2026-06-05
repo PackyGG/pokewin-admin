@@ -35,7 +35,6 @@ export {
   DEFAULT_CANNIBALIZATION_RATE,
   DEFAULT_CLAIM_PROBABILITY,
   DEFAULT_DEPOSITS_PER_USER_PER_WINDOW,
-  DEFAULT_ELIGIBLE_USERS,
   DEFAULT_LEGIT_CONVERSION_SENSITIVITY,
   DEFAULT_RETENTION_UPLIFT,
   DEFAULT_SEGMENT_MIX,
@@ -95,14 +94,3 @@ export {
   SCENARIO_LIBRARY,
   SPLIT_CAP_WHATIF_SET,
 } from "./scenarios";
-
-// Demo data (clearly DEMO — see file header)
-export {
-  buildDemoBaseline,
-  DEMO_BASELINE,
-  DEMO_DAYS,
-  DEMO_ELIGIBLE_POPULATION,
-  DEMO_SEED,
-  seeded,
-} from "./demo-data";
-export type { DemoBaseline, DemoDailyPoint, DemoSegmentCohort } from "./demo-data";

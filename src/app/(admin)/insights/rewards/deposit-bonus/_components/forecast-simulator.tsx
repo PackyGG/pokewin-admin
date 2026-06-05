@@ -52,7 +52,6 @@ import {
   DEFAULT_CANNIBALIZATION_RATE,
   DEFAULT_LEGIT_CONVERSION_SENSITIVITY,
   DEFAULT_DEPOSITS_PER_USER_PER_WINDOW,
-  DEFAULT_AVG_BONUS_USD,
   DEFAULT_WINDOW_DAYS,
   DEFAULT_SEGMENT_MIX,
   BASELINE_CAP_USD,
@@ -97,13 +96,28 @@ import { encodeForecastState, decodeForecastState } from "./forecast-state";
  * rose / amber. Flip-test passed per CLAUDE.md.
  */
 
-function defaultAssumptions(baseline: ForecastBaseline | null): Assumptions {
+/**
+ * Seed the levers from the REAL baseline. The DATA ANCHORS — claimant volume
+ * (`baselineClaimants` over `baselinePeriodDays`), claim probability and avg
+ * bonus — default to the measured production figures. The BEHAVIOURAL levers
+ * (abuse share, retention uplift, breakage, …) seed from their named coefficient
+ * defaults and stay tunable for what-if.
+ *
+ * Claim probability defaults to the real measured ratio when available, falling
+ * back to the named seed only when the real ratio is null (no depositors). The
+ * same real ratio is stored as `baselineClaimProbability` so the engine treats
+ * the default lever as neutral (volume == the real claimant count).
+ */
+function defaultAssumptions(baseline: ForecastBaseline): Assumptions {
+  const realClaimProb = baseline.claimProbability ?? DEFAULT_CLAIM_PROBABILITY;
   return {
-    eligibleUsers: 4000,
+    baselineClaimants: baseline.uniqueClaimants,
+    baselinePeriodDays: Math.max(1, baseline.periodDays),
+    baselineClaimProbability: realClaimProb,
     segmentMix: { ...DEFAULT_SEGMENT_MIX },
     depositsPerUserPerWindow: DEFAULT_DEPOSITS_PER_USER_PER_WINDOW,
-    claimProbability: DEFAULT_CLAIM_PROBABILITY,
-    avgBonusUsd: baseline?.avgBonusUsd ?? DEFAULT_AVG_BONUS_USD,
+    claimProbability: realClaimProb,
+    avgBonusUsd: baseline.avgBonusUsd,
     breakageRate: DEFAULT_BREAKAGE_RATE,
     abuseShare: DEFAULT_ABUSE_SHARE,
     abuseCaptureElasticity: DEFAULT_ABUSE_CAPTURE_ELASTICITY,
@@ -116,20 +130,12 @@ function defaultAssumptions(baseline: ForecastBaseline | null): Assumptions {
 
 export function ForecastSimulator({
   realBaseline,
-  demoBaseline,
-  isDemo,
   period,
 }: {
-  /** Real production anchor (null if the server fetch failed / empty period). */
-  realBaseline: ForecastBaseline | null;
-  /** Always-present DEMO anchor. */
-  demoBaseline: ForecastBaseline;
-  /** True when the server could not get a real baseline (forces DEMO badge). */
-  isDemo: boolean;
+  /** Real production anchor. Always present — the server renders an empty state otherwise. */
+  realBaseline: ForecastBaseline;
   period: string;
 }) {
-  const realAvailable = realBaseline != null;
-
   // Initial state — hydrate from the URL if a shared scenario is present.
   const initial = React.useMemo(() => {
     if (typeof window === "undefined") return null;
@@ -143,17 +149,12 @@ export function ForecastSimulator({
   const [showSplitCapSet, setShowSplitCapSet] = React.useState<boolean>(
     initial?.showSplitCapSet ?? false,
   );
-  const [useRealBaseline, setUseRealBaseline] = React.useState<boolean>(
-    initial?.useRealBaseline ?? realAvailable,
-  );
   const [assumptions, setAssumptions] = React.useState<Assumptions>(
-    initial?.assumptions ?? defaultAssumptions(realAvailable ? realBaseline : null),
+    initial?.assumptions ?? defaultAssumptions(realBaseline),
   );
 
-  // The active baseline anchor: real (if toggled on & available) else DEMO.
-  const baseline: ForecastBaseline =
-    useRealBaseline && realAvailable ? (realBaseline as ForecastBaseline) : demoBaseline;
-  const onDemoData = !(useRealBaseline && realAvailable);
+  // The data anchor is always the REAL production baseline.
+  const baseline = realBaseline;
 
   // Scenario set the comparison table + charts iterate over.
   const scenarioSet = showSplitCapSet ? SPLIT_CAP_WHATIF_SET : SCENARIO_LIBRARY;
@@ -166,10 +167,10 @@ export function ForecastSimulator({
   }, [scenarioSet, scenarioId]);
 
   // ── THE ENGINE CALL — recompute the whole set on any lever change ──
-  // ANCHOR the set on the active baseline's REAL total cost so the baseline
-  // scenario reads the production number ($439,998.53 in real mode) in every
-  // view, with the other scenarios as coherent fractions of it. In DEMO mode
-  // the anchor is the deterministic demo total (same path, self-consistent).
+  // ANCHOR the set on the REAL total bonus cost so the baseline scenario reads
+  // the production number in every view, with the other scenarios as coherent
+  // fractions of it. (The slider-derived claimant volume is itself anchored to
+  // the real measured claimant count, so the two anchors reinforce.)
   const anchorCostUsd = baseline.totalCost;
   const results = React.useMemo<SimulationResult[]>(
     () =>
@@ -243,19 +244,18 @@ export function ForecastSimulator({
     const encoded = encodeForecastState({
       scenarioId,
       showSplitCapSet,
-      useRealBaseline,
       assumptions,
     });
     const params = new URLSearchParams(window.location.search);
     params.set("fc", encoded);
     const next = `${window.location.pathname}?${params.toString()}`;
     window.history.replaceState(null, "", next);
-  }, [scenarioId, showSplitCapSet, useRealBaseline, assumptions]);
+  }, [scenarioId, showSplitCapSet, assumptions]);
 
   const onReset = React.useCallback(() => {
-    setAssumptions(defaultAssumptions(realAvailable ? realBaseline : null));
+    setAssumptions(defaultAssumptions(realBaseline));
     setScenarioId(BASELINE_SCENARIO_ID);
-  }, [realAvailable, realBaseline]);
+  }, [realBaseline]);
 
   if (!activeResult || !baselineResult) {
     return (
@@ -280,33 +280,15 @@ export function ForecastSimulator({
 
   return (
     <div className="space-y-6">
-      {/* ── DEMO banner ──────────────────────────────────────────── */}
+      {/* ── Real-baseline note ───────────────────────────────────── */}
       <FadeIn>
-        <div
-          className={cn(
-            "flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-dashed px-3 py-2 text-xs",
-            onDemoData
-              ? "border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300"
-              : "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300",
-          )}
-        >
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-dashed border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
           <FlaskConical className="size-3.5 shrink-0" />
-          {onDemoData ? (
-            <span>
-              <strong>Forecasting model.</strong> Behavioural inputs are tunable{" "}
-              <strong>assumptions</strong>, not measured values
-              {isDemo
-                ? " — and the baseline anchor is DEMO data (no real deposit-bonus rows for this period)."
-                : ". Toggle “Use real baseline” to anchor cost / claimants / cap / ROI on production numbers."}{" "}
-              Conclusions are <strong>directional</strong>.
-            </span>
-          ) : (
-            <span>
-              <strong>Real baseline active</strong> (cost / claimants / cap / ROI from production,{" "}
-              {period}). Behavioural levers below remain tunable assumptions — outputs stay
-              directional.
-            </span>
-          )}
+          <span>
+            <strong>Real baseline.</strong> Cost, claimants, avg bonus, claim probability, cap and
+            ROI are the measured production figures ({period}). The behavioural levers below remain
+            tunable assumptions — outputs stay <strong>directional</strong>.
+          </span>
         </div>
       </FadeIn>
 
@@ -370,12 +352,9 @@ export function ForecastSimulator({
               onScenarioChange={setScenarioId}
               assumptions={assumptions}
               onAssumptionsChange={setAssumptions}
-              useRealBaseline={useRealBaseline}
-              onUseRealBaselineChange={setUseRealBaseline}
               showSplitCapSet={showSplitCapSet}
               onShowSplitCapSetChange={setShowSplitCapSet}
               onReset={onReset}
-              realBaselineAvailable={realAvailable}
             />
           </FadeIn>
         </div>
@@ -545,7 +524,7 @@ export function ForecastSimulator({
 
       {/* ── 7. ASSUMPTIONS + LIMITATIONS ─────────────────────────── */}
       <FadeIn>
-        <AssumptionsPanel assumptions={assumptions} onDemoData={onDemoData} baseline={baseline} />
+        <AssumptionsPanel assumptions={assumptions} baseline={baseline} />
       </FadeIn>
     </div>
   );
@@ -639,46 +618,36 @@ function ChartCard({
 
 function AssumptionsPanel({
   assumptions,
-  onDemoData,
   baseline,
 }: {
   assumptions: Assumptions;
-  onDemoData: boolean;
   baseline: ForecastBaseline;
 }) {
   const [open, setOpen] = React.useState(false);
 
-  const realRows: Array<{ label: string; value: string; status: "real" | "demo" }> = [
+  // Anchors — ALWAYS real production figures (the page has no demo path).
+  const realRows: Array<{ label: string; value: string }> = [
+    { label: "Baseline total cost", value: formatCurrency(baseline.totalCost) },
+    { label: "Unique claimants", value: formatNumber(baseline.uniqueClaimants) },
     {
-      label: "Baseline total cost",
-      value: formatCurrency(baseline.totalCost),
-      status: onDemoData ? "demo" : "real",
+      label: "Claim probability (claimants ÷ depositors)",
+      value: baseline.claimProbability != null ? formatPct(baseline.claimProbability) : "—",
     },
-    {
-      label: "Unique claimants",
-      value: formatNumber(baseline.uniqueClaimants),
-      status: onDemoData ? "demo" : "real",
-    },
-    {
-      label: "Empirical cap (max bonus)",
-      value: formatCurrency(baseline.empiricalCapUsd),
-      status: onDemoData ? "demo" : "real",
-    },
+    { label: "Avg bonus", value: formatCurrency(baseline.avgBonusUsd) },
+    { label: "Empirical cap (max bonus)", value: formatCurrency(baseline.empiricalCapUsd) },
     {
       label: "Cap-hit rate",
       value: baseline.capHitRate != null ? formatPct(baseline.capHitRate) : "—",
-      status: onDemoData ? "demo" : "real",
     },
     {
       label: "Blended ROI (14d forward)",
       value: baseline.blendedRoi != null ? `${baseline.blendedRoi.toFixed(2)}×` : "—",
-      status: onDemoData ? "demo" : "real",
     },
   ];
 
   const assumptionRows: Array<{ label: string; value: string }> = [
-    { label: "Claim probability", value: formatPct(assumptions.claimProbability) },
-    { label: "Avg bonus (pre-cap)", value: formatCurrency(assumptions.avgBonusUsd) },
+    { label: "Claim probability (tunable)", value: formatPct(assumptions.claimProbability) },
+    { label: "Avg bonus, pre-cap (tunable)", value: formatCurrency(assumptions.avgBonusUsd) },
     { label: "Breakage rate", value: formatPct(assumptions.breakageRate) },
     { label: "Abuse share (at baseline cap)", value: formatPct(assumptions.abuseShare) },
     {
@@ -733,17 +702,19 @@ function AssumptionsPanel({
               <p className="font-semibold">What is real vs assumed vs directional</p>
               <ul className="mt-1.5 list-disc space-y-1 pl-4">
                 <li>
-                  <strong>Real</strong> (when “Use real baseline” is on): total cost, claimants,
-                  empirical cap, cap-hit rate, blended ROI — fetched from{" "}
-                  <code className="font-mono">getDepositBonusOverview</code> /{" "}
+                  <strong>Real anchors</strong> (always): total cost, claimants, claim probability
+                  (claimants ÷ depositors), avg bonus, empirical cap, cap-hit rate and blended ROI —
+                  fetched from <code className="font-mono">getDepositBonusOverview</code> /{" "}
                   <code className="font-mono">…CapHitRate</code> /{" "}
-                  <code className="font-mono">…ROI</code>.
+                  <code className="font-mono">…ROI</code>. The claimant volume is scaled from the
+                  selected period to the forecast horizon.
                 </li>
                 <li>
-                  <strong>Assumptions</strong> (sliders): every behavioural lever — claim
-                  probability, abuse share, capture elasticity, retention uplift, breakage,
-                  cannibalization, conversion sensitivity, segment mix. These are tunable inputs,
-                  not measurements.
+                  <strong>Assumptions</strong> (sliders): the behavioural levers — abuse share,
+                  capture elasticity, retention uplift, breakage, cannibalization, conversion
+                  sensitivity, segment mix and deposit frequency. Claim probability and avg bonus
+                  default to their real measured values but stay tunable for what-if. These are
+                  inputs, not predictions.
                 </li>
                 <li>
                   <strong>Directional only.</strong> Outputs show the <em>shape</em> of each
@@ -759,11 +730,11 @@ function AssumptionsPanel({
 
             <div className="grid gap-5 md:grid-cols-3">
               <ConstColumn
-                title={onDemoData ? "Baseline anchor (DEMO)" : "Baseline anchor (REAL)"}
+                title="Baseline anchor (REAL)"
                 rows={realRows.map((r) => ({
                   label: r.label,
                   value: r.value,
-                  tag: r.status === "real" ? "real" : "demo",
+                  tag: "real",
                 }))}
               />
               <ConstColumn

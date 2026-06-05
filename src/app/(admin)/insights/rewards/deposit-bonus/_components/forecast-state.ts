@@ -16,7 +16,6 @@ import type { Assumptions } from "../_forecast";
 export type ForecastUrlState = {
   scenarioId: string;
   showSplitCapSet: boolean;
-  useRealBaseline: boolean;
   assumptions: Assumptions;
 };
 
@@ -97,12 +96,13 @@ function isForecastUrlState(x: unknown): x is ForecastUrlState {
   const o = x as Record<string, unknown>;
   if (typeof o.scenarioId !== "string") return false;
   if (typeof o.showSplitCapSet !== "boolean") return false;
-  if (typeof o.useRealBaseline !== "boolean") return false;
   const a = o.assumptions;
   if (typeof a !== "object" || a === null) return false;
   const ao = a as Record<string, unknown>;
   const numericKeys: Array<keyof Assumptions> = [
-    "eligibleUsers",
+    "baselineClaimants",
+    "baselinePeriodDays",
+    "baselineClaimProbability",
     "depositsPerUserPerWindow",
     "claimProbability",
     "avgBonusUsd",

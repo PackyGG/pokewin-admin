@@ -49,7 +49,6 @@ import {
   DEFAULT_CANNIBALIZATION_RATE,
   DEFAULT_CLAIM_PROBABILITY,
   DEFAULT_DEPOSITS_PER_USER_PER_WINDOW,
-  DEFAULT_ELIGIBLE_USERS,
   DEFAULT_LEGIT_CONVERSION_SENSITIVITY,
   DEFAULT_RETENTION_UPLIFT,
   DEFAULT_SEGMENT_MIX,
@@ -90,9 +89,15 @@ function check(name: string, cond: boolean): void {
   }
 }
 
-// The default assumptions used across the checks (the slider seeds).
+// The default assumptions used across the checks. Volume is now anchored to a
+// real measured claimant count over a measured period (here a representative
+// 104,160 claimants over 30 days — the figure the old population×freq×prob
+// product yielded at the legacy seeds — with the claim-probability lever at its
+// neutral default so `claimProbFactor` == 1).
 const A: Assumptions = {
-  eligibleUsers: DEFAULT_ELIGIBLE_USERS,
+  baselineClaimants: 104160,
+  baselinePeriodDays: 30,
+  baselineClaimProbability: DEFAULT_CLAIM_PROBABILITY,
   segmentMix: DEFAULT_SEGMENT_MIX,
   depositsPerUserPerWindow: DEFAULT_DEPOSITS_PER_USER_PER_WINDOW,
   claimProbability: DEFAULT_CLAIM_PROBABILITY,
@@ -154,7 +159,7 @@ console.log("\n[forecast checks] (f) every output is finite");
   // Degenerate inputs must not produce NaN/Infinity.
   const degenerate: Assumptions = {
     ...A,
-    eligibleUsers: 0,
+    baselineClaimants: 0,
     avgBonusUsd: 0,
     depositsPerUserPerWindow: 0,
     segmentMix: {
