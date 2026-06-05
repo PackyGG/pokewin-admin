@@ -2,8 +2,53 @@ import { z } from "zod";
 
 import {
   DASHBOARD_PERIODS,
-  DEFAULT_DASHBOARD_PERIOD,
+  type DashboardPeriod,
 } from "@/lib/queries/dashboard-period";
+
+/**
+ * /creators-specific period floor.
+ *
+ * The shared dashboard chip set starts at "1h", but on /creators the owner
+ * wants 48h to be the SHORTEST selectable window — the sub-48h windows
+ * (1h/3h/6h/12h/24h) are too noisy for creator-cohort GGR. So /creators:
+ *   • renders only the chips from 48h up (`CREATORS_PERIODS`),
+ *   • clamps any incoming `?period=` below 48h (or absent → the global 24h
+ *     default) UP to 48h (`clampCreatorsPeriod`), used by BOTH the server
+ *     page's param parse and the client period control so they agree.
+ *
+ * Other pages that consume `DASHBOARD_PERIODS` are untouched — this floor
+ * lives entirely in the /creators surface.
+ */
+export const CREATORS_MIN_PERIOD: DashboardPeriod = "48h";
+
+// Index of the floor in the canonical chip order. The windows at or after
+// this index are the ones /creators exposes; everything before it (the
+// sub-48h windows) is hidden + clamped away.
+const CREATORS_MIN_PERIOD_INDEX = DASHBOARD_PERIODS.indexOf(CREATORS_MIN_PERIOD);
+
+/**
+ * The /creators chip set — `DASHBOARD_PERIODS` from 48h onward
+ * (48h · 3d · 7d · 30d · all). Derived from the canonical order so a future
+ * chip added after 48h shows up here automatically.
+ */
+export const CREATORS_PERIODS: readonly DashboardPeriod[] =
+  DASHBOARD_PERIODS.slice(CREATORS_MIN_PERIOD_INDEX);
+
+/**
+ * Resolve a raw `?period=` value to the effective /creators window:
+ *   • an unknown / missing value → the 48h floor,
+ *   • a recognised window SHORTER than 48h (1h…24h) → clamped up to 48h,
+ *   • a recognised window AT or ABOVE 48h → itself.
+ * Shared by the Zod schema (server) and `<CreatorsPeriodControl>` (client)
+ * so the loaded window and the highlighted chip never disagree.
+ */
+export function clampCreatorsPeriod(
+  value: string | undefined | null,
+): DashboardPeriod {
+  const idx = (DASHBOARD_PERIODS as readonly string[]).indexOf(value ?? "");
+  if (idx < 0 || idx < CREATORS_MIN_PERIOD_INDEX) return CREATORS_MIN_PERIOD;
+  return DASHBOARD_PERIODS[idx];
+}
 
 /**
  * Sort modes for /creators.
@@ -72,10 +117,18 @@ const CreatorsSearchParamsSchema = z.object({
   // `period` scopes the per-creator windowed code-user GGR shown on the
   // list (and the roster-wide Net Code-User GGR tile). Reuses the
   // dashboard period set so the chip values line up with the rest of
-  // the app. Active-timeframe-only: only this one window is fetched per
-  // render — switching it is a fresh `?period=` navigation, never an
-  // eager preload of every window.
-  period: z.enum(DASHBOARD_PERIODS).default(DEFAULT_DASHBOARD_PERIOD),
+  // the app, but FLOORED to 48h on /creators: any sub-48h value (or a
+  // missing param → the global 24h default) is clamped up to 48h via
+  // `clampCreatorsPeriod`, so the only windows the server ever loads here
+  // are 48h/3d/7d/30d/all — matching the rendered chip set. Coerced from
+  // a free string (not `z.enum`) precisely so an out-of-range/legacy value
+  // clamps instead of resetting to a hidden default.
+  // Active-timeframe-only: only this one window is fetched per render —
+  // switching it is a fresh `?period=` navigation, never an eager preload.
+  period: z
+    .string()
+    .optional()
+    .transform((v) => clampCreatorsPeriod(v)),
 });
 
 export type CreatorsSearchParams = z.infer<typeof CreatorsSearchParamsSchema>;

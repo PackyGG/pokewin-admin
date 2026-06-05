@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
+import { cn } from "@/lib/utils";
 import {
   safeQuery,
   safeQueryOrNull,
@@ -20,16 +21,22 @@ import {
 } from "@/lib/errors/safe-query";
 import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { BackendApiError, BackendNetworkError } from "@/lib/backend-api";
 import {
   PageHero,
   PageHeroIdentity,
-  KpiTile,
   SectionHeading,
 } from "@/components/modern-panels";
+import {
+  CreatorsKpiPanel,
+  CreatorsSignedHero,
+  CreatorsPlainHero,
+  CreatorsPanelChip,
+  CreatorsPanelSub,
+} from "./_components/creators-kpi-panel";
 
 import {
   parseCreatorsSearchParams,
@@ -157,9 +164,9 @@ export default async function CreatorsPage({
           freezing the page on stale numbers. The single tab-aware
           tile inside (Fill Creators / Multiplier Creators) flips
           label, value, and icon from the active tab's cached count.
-          Layout: 6 uniform compact KPI tiles (4 figures + the compact
-          Leaderboard Spend + Tips & Sponsor Spend tiles), 4 per row
-          (wrapping to a second row of 2 at lg). */}
+          Layout: 6 uniform dashboard-style panels (4 figure panels +
+          the Leaderboard Spend + Tips & Sponsor Spend panels) on a
+          responsive grid (1-up on phones, 2 at sm, 4 at lg, 6 at xl). */}
       <Suspense
         key={`kpi-${params.tab}-${params.filter ?? ""}`}
         fallback={<CreatorsKpiStripSkeleton />}
@@ -255,17 +262,20 @@ export default async function CreatorsPage({
 
 // ─── KPI strip ────────────────────────────────────────────────────
 //
-// Tab-aware: ONE swap tile (Fill Creators / Multiplier Creators) — its
+// Reskinned onto the dashboard's KPI-panel design (tinted `Card` + header
+// with icon + Info/drill-in slot + hero value + chip-grid/sub) so the
+// strip reads as one family with /dashboard's "P&L Today"-style cards.
+//
+// Tab-aware: ONE swap panel (Fill Creators / Multiplier Creators) — its
 // value, label, and icon flip from the cached per-tab count. The other
 // figures (Net Code-User GGR, Global PnL, Converted) stay tab-
-// independent. The Leaderboard Spend and Tips & Sponsor Spend tiles are
-// both compact single cells (past-vs-active house cost; tips + sponsor
-// legs) matching the figure tiles.
+// independent. The Leaderboard Spend and Tips & Sponsor Spend panels
+// surface house cost (past-vs-active; tips + sponsor legs) on the same
+// shell.
 //
-// Layout: 6 uniform compact tiles (swap / Net GGR / Global PnL /
-// Converted / Leaderboard Spend / Tips & Sponsor Spend), 4 per row on a
-// 4-col grid at lg (wrapping to a second row of 2), collapsing to a
-// 2-col grid below.
+// Layout: 6 uniform panels (swap / Net GGR / Global PnL / Converted /
+// Leaderboard Spend / Tips & Sponsor Spend) on a responsive grid: 1-up on
+// phones, 2 at sm, 4 at lg, 6 across at xl.
 
 async function CreatorsKpiStrip({
   tab,
@@ -291,17 +301,21 @@ async function CreatorsKpiStrip({
       BACKEND_READ_TIMEOUT_MS,
     );
     return (
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-6">
-        <KpiTile
-          label="Past Creators"
-          value={pastCount != null ? formatNumber(pastCount) : "—"}
-          sub="Canceled / role-removed ex-creators"
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4 xl:grid-cols-6">
+        <CreatorsKpiPanel
+          title="Past Creators"
           icon={UserX}
-          accent="purple"
-          action={
+          tint="purple"
+          titleAdornment={
             <InfoHint text="Users who once held the creator role but no longer do — deal cancelled or role removed. Their full historical economics live on each creator's detail page." />
           }
-        />
+        >
+          <CreatorsPlainHero
+            value={pastCount ?? null}
+            format="number"
+          />
+          <CreatorsPanelSub>Canceled / role-removed ex-creators</CreatorsPanelSub>
+        </CreatorsKpiPanel>
       </div>
     );
   }
@@ -389,37 +403,34 @@ async function CreatorsKpiStrip({
       ? {
           label: "Multiplier Creators",
           icon: Zap,
-          accent: "purple" as const,
+          tint: "purple" as const,
           sub: "Creators with a multiplier deal",
           info: "Count of creators on a MULTIPLIER deal (their wagering is boosted by a payout multiplier). Switch the tab to see fill-deal creators instead.",
         }
       : {
           label: "Fill Creators",
           icon: Coins,
-          accent: "pink" as const,
+          tint: "pink" as const,
           sub: "Creators with a fill deal",
           info: "Count of creators on a FILL deal (we give them system/fake balance to gamble with on stream). Switch the tab to see multiplier-deal creators instead.",
         };
 
   return (
-    <div className="grid grid-cols-2 items-stretch gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4 xl:grid-cols-6">
       {/* Swap tile — flips between Fill and Multiplier counts based on
           the active tab. Replaces the previous Fill + Multiplier pair
           of tiles (one of which always rendered "—" on the inactive
           tab and was confusing). */}
-      <KpiTile
-        label={tabTile.label}
-        value={tabCount != null ? formatNumber(tabCount) : "—"}
-        sub={tabTile.sub}
+      <CreatorsKpiPanel
+        title={tabTile.label}
         icon={tabTile.icon}
-        accent={tabTile.accent}
-        action={
-          <div className="flex items-center gap-1.5">
-            <InfoHint text={tabTile.info} />
-            {tabCountBackendDown && <BackendUnavailableHint />}
-          </div>
-        }
-      />
+        tint={tabTile.tint}
+        titleAdornment={<InfoHint text={tabTile.info} />}
+        headerRight={tabCountBackendDown ? <BackendUnavailableHint /> : undefined}
+      >
+        <CreatorsPlainHero value={tabCount ?? null} format="number" />
+        <CreatorsPanelSub>{tabTile.sub}</CreatorsPanelSub>
+      </CreatorsKpiPanel>
       {/* Net Code-User GGR — roster-wide windowed code-user GGR summed
           across every attributed creator (`getAllCreatorsNetGgr.totalGgr`)
           over the active `?period=` window. House-POV: positive = the
@@ -460,36 +471,59 @@ async function CreatorsKpiStrip({
           set + same lifetime/all-creators scope, so withdrawn ≤ converted.
           Falls back to the static "Converted to payout vouchers" label
           when stats failed to load. */}
-      <KpiTile
-        label="Converted"
-        value={stats ? formatCurrency(stats.convertedTotal) : "—"}
-        sub={
-          stats
-            ? `${formatCurrency(stats.withdrawnFromConvertedTotal)} withdrawn` +
-              (stats.withdrawPendingFromConvertedTotal > 0
-                ? ` · +${formatCurrency(stats.withdrawPendingFromConvertedTotal)} in flight`
-                : "")
-            : "Converted to payout vouchers"
-        }
+      <CreatorsKpiPanel
+        title="Converted"
         icon={Wallet}
-        accent="blue"
-        action={
-          <div className="flex items-center gap-1.5">
-            <InfoHint text="Lifetime stream earnings minted into end-of-session payout vouchers (creator_fill_conversion) across ALL creators — not just live-deal creators. The sub-line shows how much of that has actually been withdrawn off-platform vs still in flight." />
-            {statsBackendDown && <BackendUnavailableHint />}
-          </div>
+        tint="blue"
+        titleAdornment={
+          <InfoHint text="Lifetime stream earnings minted into end-of-session payout vouchers (creator_fill_conversion) across ALL creators — not just live-deal creators. The breakdown shows how much of that has actually been withdrawn off-platform vs still in flight." />
         }
-      />
-      {/* Leaderboard Spend — a COMPACT single-cell tile (same footprint as
-          the other KpiTiles). Splits creator-leaderboard
-          house cost by time: the rose HERO is what we're committed to on
-          the boards running RIGHT NOW (+ "· N active · X% we pay" — the
-          active board count and the blended house share we cover), and a
-          muted "Past: $Y spent" line is what we already spent on finished
-          boards. Net of refunds, each board weighted by its admin-set
-          house share % (set inline on /creators/leaderboards; defaults to
-          100%). The past/active split is derived from the SAME approved-
-          board walk as the totals — no extra query. */}
+        headerRight={statsBackendDown ? <BackendUnavailableHint /> : undefined}
+      >
+        <CreatorsPlainHero
+          value={stats ? stats.convertedTotal : null}
+          format="currency"
+        />
+        <CreatorsPanelSub>Converted to payout vouchers</CreatorsPanelSub>
+        {/* Of that converted total: how much has actually walked out via a
+            completed withdraw request, + in-flight (pending/processing/
+            shipped) when non-zero. Same voucher set + lifetime/all-creators
+            scope, so withdrawn ≤ converted. Withdrawn = money off-platform
+            → house cost → rose. */}
+        {stats && (
+          <div
+            className={cn(
+              "grid gap-1.5 -mx-0.5",
+              stats.withdrawPendingFromConvertedTotal > 0
+                ? "grid-cols-2"
+                : "grid-cols-1",
+            )}
+          >
+            <CreatorsPanelChip
+              label="Withdrawn"
+              value={stats.withdrawnFromConvertedTotal}
+              tone="rose"
+            />
+            {stats.withdrawPendingFromConvertedTotal > 0 && (
+              <CreatorsPanelChip
+                label="In flight"
+                value={stats.withdrawPendingFromConvertedTotal}
+                tone="rose"
+              />
+            )}
+          </div>
+        )}
+      </CreatorsKpiPanel>
+      {/* Leaderboard Spend — a dashboard-style panel (same shell as the
+          other KPI boxes). Splits creator-leaderboard house cost by time:
+          the rose HERO is what we're committed to on the boards running
+          RIGHT NOW (+ "· N active · X% we pay" — the active board count
+          and the blended house share we cover), and a "Past" chip is what
+          we already spent on finished boards. Net of refunds, each board
+          weighted by its admin-set house share % (set inline on
+          /creators/leaderboards; defaults to 100%). The past/active split
+          is derived from the SAME approved-board walk as the totals — no
+          extra query. */}
       <LeaderboardSpendPanel
         activeHouseCostUsd={leaderboardCost?.activeHouseCostUsd ?? null}
         activeCoveragePct={leaderboardCost?.activeCoveragePct ?? null}
@@ -498,10 +532,10 @@ async function CreatorsKpiStrip({
         pastCount={leaderboardCost?.pastCount ?? null}
         backendUnavailable={leaderboardBackendDown}
       />
-      {/* Tips & Sponsor Spend — a COMPACT single-cell tile (same footprint
-          as every other tile in the strip). The lifetime house cost of the
+      {/* Tips & Sponsor Spend — a dashboard-style panel (same shell as
+          every other box in the strip). The lifetime house cost of the
           creator-funded tips/sponsor pool, with its tip + battle-sponsorship
-          legs on the secondary line (§3 of the creator model). House-POV:
+          legs as a chip row (§3 of the creator model). House-POV:
           house-funded → house cost → rose. Reads $0 until the fill system is
           live (the underlying query is enum-safe). */}
       <TipsSponsorSpendPanel
@@ -856,26 +890,26 @@ async function CreatorsGridSection({
 
 /**
  * KPI-strip skeleton — mirrors the active-tab strip layout: 6 uniform
- * KpiTile-shaped boxes (the 4 figure tiles + the compact Leaderboard
- * Spend and Tips & Sponsor Spend tiles), laid out 4-per-row (wrapping to
- * a second row of 2 at lg). Shape matches the real strip so there's no
- * layout jank when the data lands.
+ * panel-shaped boxes (the 4 figure panels + the Leaderboard Spend and
+ * Tips & Sponsor Spend panels) on the same responsive grid (1-up on
+ * phones, 2 at sm, 4 at lg, 6 at xl). Shape matches the real `Card`
+ * panels (tinted bg, header row, hero + sub) so there's no layout jank
+ * when the data lands.
  */
 function CreatorsKpiStripSkeleton() {
   return (
-    <div className="grid grid-cols-2 items-stretch gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4 xl:grid-cols-6">
       {Array.from({ length: 6 }).map((_, i) => (
-        <div
-          key={i}
-          className="rounded-xl border bg-card px-3 py-2.5 sm:px-4 sm:py-3"
-        >
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <Skeleton className="size-3.5 rounded sm:size-4" />
-            <Skeleton className="h-3 w-12 sm:w-16" />
-          </div>
-          <Skeleton className="mt-1.5 h-5 w-16 sm:mt-2 sm:h-6 sm:w-20" />
-          <Skeleton className="mt-1.5 h-3 w-20 sm:w-24" />
-        </div>
+        <Card key={i} className="bg-card">
+          <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+            <Skeleton className="h-3.5 w-20" />
+            <Skeleton className="size-4 rounded" />
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Skeleton className="h-7 w-24" />
+            <Skeleton className="h-3 w-28" />
+          </CardContent>
+        </Card>
       ))}
     </div>
   );
@@ -1028,44 +1062,43 @@ async function GlobalPnlTile({ tab }: { tab: CreatorsTab }) {
 
   const pnl = lifetimePnl?.pnl;
   const byCreator = lifetimePnl?.byCreator ?? [];
-  const accent: "emerald" | "rose" | "blue" =
-    pnl == null ? "blue" : pnl > 0 ? "emerald" : pnl < 0 ? "rose" : "blue";
+  // House-POV signed hero (emerald = up / rose = down) when there's a
+  // figure; a null pnl renders the neutral dashed placeholder. The panel's
+  // icon tint stays blue (identity), matching the dashboard's approach of
+  // tinting the panel by identity and the NUMBER by house-POV.
 
   return (
-    <KpiTile
-      label={pnlTileLabel(tab)}
-      value={
-        pnl == null
-          ? "—"
-          : `${pnl > 0 ? "+" : ""}${formatCurrency(pnl)}`
-      }
-      sub={pnlTileSub(tab)}
+    <CreatorsKpiPanel
+      title={pnlTileLabel(tab)}
       icon={LineChart}
-      accent={accent}
-      action={
-        <div className="flex items-center gap-1.5">
-          <InfoHint text={pnlTileInfo(tab)} side="bottom" />
-          {byCreator.length > 0 && (
-            <GlobalPnlByCreatorPopover creators={byCreator} />
-          )}
-        </div>
+      tint="blue"
+      titleAdornment={<InfoHint text={pnlTileInfo(tab)} side="bottom" />}
+      headerRight={
+        byCreator.length > 0 ? (
+          <GlobalPnlByCreatorPopover creators={byCreator} />
+        ) : undefined
       }
-    />
+    >
+      <CreatorsSignedHero value={pnl ?? null} />
+      <CreatorsPanelSub>{pnlTileSub(tab)}</CreatorsPanelSub>
+    </CreatorsKpiPanel>
   );
 }
 
 function GlobalPnlTileSkeleton({ tab }: { tab: CreatorsTab }) {
   return (
-    <div className="relative overflow-hidden rounded-xl border bg-blue-500/10 border-blue-500/20 px-3 py-2.5 sm:px-4 sm:py-3">
-      <div className="flex items-center gap-1.5 sm:gap-2">
-        <LineChart className="size-3.5 shrink-0 text-blue-500 sm:size-4" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
+    <Card className="bg-blue-500/10">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+        <span className="text-card-title min-w-0 truncate text-muted-foreground">
           {pnlTileLabel(tab)}
         </span>
-      </div>
-      <Skeleton className="mt-1 h-6 w-24 sm:h-7" />
-      <Skeleton className="mt-1 h-3 w-32" />
-    </div>
+        <LineChart className="size-4 shrink-0 text-blue-400" />
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Skeleton className="h-7 w-28" />
+        <Skeleton className="h-3 w-40" />
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1102,8 +1135,6 @@ async function NetGgrTile({
 
   const total = data?.totalGgr;
   const legs = data?.legs;
-  const accent: "emerald" | "rose" | "blue" =
-    total == null || total === 0 ? "blue" : total > 0 ? "emerald" : "rose";
   // Only surface the drill-in list-down when there's attributed activity
   // in the window (a leg with a non-zero total) — otherwise the popover
   // would just say "no activity" everywhere.
@@ -1111,56 +1142,57 @@ async function NetGgrTile({
     legs != null && (legs.wagersTotal > 0 || legs.payoutsTotal > 0);
 
   return (
-    <KpiTile
-      label="Net Code-User GGR"
-      value={
-        total == null
-          ? "—"
-          : `${total > 0 ? "+" : total < 0 ? "−" : ""}${formatCurrency(Math.abs(total))}`
-      }
-      sub={`All creators · ${DASHBOARD_PERIOD_LABELS[period].toLowerCase()}`}
+    <CreatorsKpiPanel
+      title="Net Code-User GGR"
       icon={Sparkles}
-      accent={accent}
-      action={
-        <div className="flex items-center gap-1.5">
-          <InfoHint
-            text="Gross gaming revenue (wager − payout) from every creator's code cohort, summed over the selected window. Counted only while each code was active (its 7-day attribution windows). House POV — emerald = players net-lost to us, rose = we net-paid them out."
-            side="bottom"
-          />
-          {/* Dashboard-style GGR list-down — decomposes the cohort GGR
-              into its wager / payout legs (packs & battles + upgrader),
-              mirroring the GgrStatCard popover on /dashboard. The legs
-              reconcile to the tile's headline by construction. */}
-          {hasLegs && (
-            <NetGgrBreakdownPopover
-              packBattleWager={legs.packBattleWager}
-              upgraderWager={legs.upgraderWager}
-              inventoryPayout={legs.inventoryPayout}
-              battleRefundLedger={legs.battleRefundLedger}
-              upgraderPayout={legs.upgraderPayout}
-              wagersTotal={legs.wagersTotal}
-              payoutsTotal={legs.payoutsTotal}
-              ggr={total ?? 0}
-              periodLabel={DASHBOARD_PERIOD_LABELS[period]}
-            />
-          )}
-        </div>
+      tint="cyan"
+      titleAdornment={
+        <InfoHint
+          text="Gross gaming revenue (wager − payout) from every creator's code cohort, summed over the selected window. Counted only while each code was active (its 7-day attribution windows). House POV — emerald = players net-lost to us, rose = we net-paid them out."
+          side="bottom"
+        />
       }
-    />
+      headerRight={
+        /* Dashboard-style GGR list-down — decomposes the cohort GGR into
+           its wager / payout legs (packs & battles + upgrader), mirroring
+           the GGR breakdown popover on /dashboard. The legs reconcile to
+           the tile's headline by construction. */
+        hasLegs ? (
+          <NetGgrBreakdownPopover
+            packBattleWager={legs.packBattleWager}
+            upgraderWager={legs.upgraderWager}
+            inventoryPayout={legs.inventoryPayout}
+            battleRefundLedger={legs.battleRefundLedger}
+            upgraderPayout={legs.upgraderPayout}
+            wagersTotal={legs.wagersTotal}
+            payoutsTotal={legs.payoutsTotal}
+            ggr={total ?? 0}
+            periodLabel={DASHBOARD_PERIOD_LABELS[period]}
+          />
+        ) : undefined
+      }
+    >
+      <CreatorsSignedHero value={total ?? null} />
+      <CreatorsPanelSub>
+        All creators · {DASHBOARD_PERIOD_LABELS[period].toLowerCase()}
+      </CreatorsPanelSub>
+    </CreatorsKpiPanel>
   );
 }
 
 function NetGgrTileSkeleton() {
   return (
-    <div className="relative overflow-hidden rounded-xl border bg-blue-500/10 border-blue-500/20 px-3 py-2.5 sm:px-4 sm:py-3">
-      <div className="flex items-center gap-1.5 sm:gap-2">
-        <Sparkles className="size-3.5 shrink-0 text-blue-500 sm:size-4" />
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
+    <Card className="bg-cyan-500/10">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+        <span className="text-card-title min-w-0 truncate text-muted-foreground">
           Net Code-User GGR
         </span>
-      </div>
-      <Skeleton className="mt-1 h-6 w-24 sm:h-7" />
-      <Skeleton className="mt-1 h-3 w-32" />
-    </div>
+        <Sparkles className="size-4 shrink-0 text-cyan-400" />
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Skeleton className="h-7 w-28" />
+        <Skeleton className="h-3 w-40" />
+      </CardContent>
+    </Card>
   );
 }

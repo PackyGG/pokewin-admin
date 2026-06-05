@@ -10,7 +10,7 @@ import { MS_PER_DAY, MS_PER_HOUR } from "@/lib/utils/time";
  * sites that already import from the main query module.
  */
 export const DASHBOARD_PERIODS = [
-  "1h", "3h", "6h", "12h", "24h", "3d", "7d", "30d", "all",
+  "1h", "3h", "6h", "12h", "24h", "48h", "3d", "7d", "30d", "all",
 ] as const;
 export type DashboardPeriod = (typeof DASHBOARD_PERIODS)[number];
 export const DEFAULT_DASHBOARD_PERIOD: DashboardPeriod = "24h";
@@ -21,6 +21,7 @@ export const DASHBOARD_PERIOD_LABELS: Record<DashboardPeriod, string> = {
   "6h": "Last 6h",
   "12h": "Last 12h",
   "24h": "Last 24h",
+  "48h": "Last 48h",
   "3d": "Last 3 days",
   "7d": "Last 7 days",
   "30d": "Last 30 days",
@@ -41,6 +42,7 @@ export function periodToCutoff(period: DashboardPeriod, now: Date): Date {
     case "6h":  return new Date(now.getTime() - 6 * MS_PER_HOUR);
     case "12h": return new Date(now.getTime() - 12 * MS_PER_HOUR);
     case "24h": return new Date(now.getTime() - 1 * MS_PER_DAY);
+    case "48h": return new Date(now.getTime() - 2 * MS_PER_DAY);
     case "3d":  return new Date(now.getTime() - 3 * MS_PER_DAY);
     case "7d":  return new Date(now.getTime() - 7 * MS_PER_DAY);
     case "30d": return new Date(now.getTime() - 30 * MS_PER_DAY);

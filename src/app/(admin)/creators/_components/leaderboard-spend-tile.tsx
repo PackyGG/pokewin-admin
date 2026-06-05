@@ -1,25 +1,31 @@
 import { Trophy } from "lucide-react";
 
-import { cn } from "@/lib/utils";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { TILE_COLORS } from "@/components/modern-panels";
+import { formatNumber } from "@/lib/utils/format";
 import { InfoHint } from "./info-hint";
 import { BackendUnavailableHint } from "./backend-unavailable-hint";
+import {
+  CreatorsKpiPanel,
+  CreatorsPlainHero,
+  CreatorsPanelChip,
+  CreatorsPanelSub,
+} from "./creators-kpi-panel";
 
 /**
- * Leaderboard-spend tile for the /creators list KPI strip.
+ * Leaderboard-spend panel for the /creators list KPI strip.
  *
- * A COMPACT, single-cell tile (mirrors the <KpiTile> chrome — same border,
- * accent bar, glassy sheen) that answers the owner's question in one glance:
- * what we're committed to on creator leaderboards RIGHT NOW vs what we've
- * already spent on finished boards.
+ * Reskinned onto the shared dashboard-style panel (`CreatorsKpiPanel`) so it
+ * sits flush with the other KPI boxes: a tinted Card, header (Trophy icon +
+ * ⓘ hint + the "backend unavailable" affordance), a rose HERO, and a 2-chip
+ * breakdown row. Answers the owner's question in one glance — what we're
+ * committed to on creator leaderboards RIGHT NOW vs what we've already spent
+ * on finished boards.
  *
  *   • Active now — rose HERO: the house-covered cost of the boards running
  *     at this moment (what we're committed to pay right now). Sub-line:
  *     "· N active · X% we pay" — the active board count + the blended house
  *     share across them (the % of the active pool we actually cover).
- *   • Past: $Y spent — a muted secondary line: the house-covered cost of
- *     boards whose run has finished (what we already spent on old boards).
+ *   • Past — a chip: the house-covered cost of boards whose run has finished
+ *     (what we already spent on old boards), with its board count.
  *
  * House-POV: every dollar paid to players is a house cost → rose. The active
  * gross pool (the 100% the creator partly funds off-site) is NOT shown as a
@@ -58,81 +64,43 @@ export function LeaderboardSpendPanel({
    */
   backendUnavailable?: boolean;
 }) {
-  const rose = TILE_COLORS.rose;
-
-  // Active sub-line: "· N active · X% we pay". The count always shows when
-  // known; the "% we pay" only joins when there's an active board (a 0%
-  // line on an empty board set reads as noise).
-  const subParts: string[] = [];
+  // Active sub-line: "Active now · N active · X% we pay". The count always
+  // shows when known; the "% we pay" only joins when there's an active board
+  // (a 0% line on an empty board set reads as noise).
+  const subParts: string[] = ["Active now"];
   if (activeCount != null) {
     subParts.push(`${formatNumber(activeCount)} active`);
   }
   if (activeCount != null && activeCount > 0 && activeCoveragePct != null) {
     subParts.push(`${activeCoveragePct.toFixed(0)}% we pay`);
   }
-  const activeSub = subParts.length > 0 ? subParts.join(" · ") : null;
+  const pastLabel =
+    pastCount != null && pastCount > 0
+      ? `Past · ${formatNumber(pastCount)} board${pastCount === 1 ? "" : "s"}`
+      : "Past spent";
 
   return (
-    <div
-      className={cn(
-        "hover-raise group surface-sheen relative overflow-hidden rounded-xl border px-3 py-2.5 sm:px-4 sm:py-3",
-        rose.bg,
-      )}
+    <CreatorsKpiPanel
+      title="Leaderboard Spend"
+      icon={Trophy}
+      tint="rose"
+      titleAdornment={<InfoHint text={INFO_TEXT} />}
+      headerRight={backendUnavailable ? <BackendUnavailableHint /> : undefined}
     >
-      {/* Left accent bar — rose (house cost), matching <KpiTile>. */}
-      <div
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 transition-opacity duration-200 group-hover:opacity-80",
-          rose.icon,
-        )}
+      <CreatorsPlainHero
+        value={activeHouseCostUsd}
+        format="currency"
+        className="text-rose-400"
       />
-      {/* Glassy diagonal sheen — neutral white so it never fights the
-          House-POV rose accent. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent"
-      />
-
-      {/* Header row — icon + label + the ⓘ hint in the top-right. */}
-      <div className="relative flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
-          <Trophy className={cn("size-3.5 shrink-0 sm:size-4", rose.icon)} />
-          <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
-            Leaderboard Spend
-          </span>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <InfoHint text={INFO_TEXT} />
-          {backendUnavailable && <BackendUnavailableHint />}
-        </div>
+      <CreatorsPanelSub>{subParts.join(" · ")}</CreatorsPanelSub>
+      {/* Past spend — one chip (the active figure is the hero above). */}
+      <div className="grid grid-cols-1 gap-1.5 -mx-0.5">
+        <CreatorsPanelChip
+          label={pastLabel}
+          value={pastHouseCostUsd}
+          tone="rose"
+        />
       </div>
-
-      {/* Hero — Active now (rose house cost). */}
-      <p
-        className={cn(
-          "relative mt-1 truncate text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl",
-          rose.text,
-        )}
-      >
-        {activeHouseCostUsd != null ? formatCurrency(activeHouseCostUsd) : "—"}
-      </p>
-      <p className="relative mt-0.5 truncate text-[10px] text-muted-foreground sm:text-[11px]">
-        Active now
-        {activeSub ? ` · ${activeSub}` : ""}
-      </p>
-
-      {/* Secondary — what we already spent on finished boards. */}
-      <p className="relative mt-1 truncate text-[10px] text-muted-foreground sm:text-[11px]">
-        Past:{" "}
-        <span className="font-medium tabular-nums text-foreground/70">
-          {pastHouseCostUsd != null ? formatCurrency(pastHouseCostUsd) : "—"}
-        </span>{" "}
-        spent
-        {pastCount != null && pastCount > 0
-          ? ` · ${formatNumber(pastCount)} board${pastCount === 1 ? "" : "s"}`
-          : ""}
-      </p>
-    </div>
+    </CreatorsKpiPanel>
   );
 }

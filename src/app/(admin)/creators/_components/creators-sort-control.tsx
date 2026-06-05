@@ -12,14 +12,15 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
-  DASHBOARD_PERIODS,
   DASHBOARD_PERIOD_LABELS,
-  DEFAULT_DASHBOARD_PERIOD,
   type DashboardPeriod,
 } from "@/lib/queries/dashboard-period";
 import {
   CreatorsSortMode,
   type CreatorsSortMode as SortMode,
+  CREATORS_MIN_PERIOD,
+  CREATORS_PERIODS,
+  clampCreatorsPeriod,
 } from "../_lib/search-params";
 
 /**
@@ -117,17 +118,23 @@ export function CreatorsPeriodControl() {
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
 
-  const raw = searchParams.get("period");
-  const current: DashboardPeriod = (
-    DASHBOARD_PERIODS as readonly string[]
-  ).includes(raw ?? "")
-    ? (raw as DashboardPeriod)
-    : DEFAULT_DASHBOARD_PERIOD;
+  // /creators enforces 48h as the SHORTEST selectable window — the
+  // sub-48h chips (1h/3h/6h/12h/24h) are dropped from the rendered set,
+  // and any `?period=` below 48h (or absent → the global 24h default) is
+  // clamped UP to 48h so the active chip is always one that's shown.
+  // Reuses the shared parse/clamp helper so the control and the server
+  // page agree on the effective window.
+  const current: DashboardPeriod = clampCreatorsPeriod(
+    searchParams.get("period"),
+  );
 
   function handleSelect(period: DashboardPeriod) {
     if (period === current) return;
     const params = new URLSearchParams(searchParams.toString());
-    if (period === DEFAULT_DASHBOARD_PERIOD) {
+    // 48h is the /creators minimum AND its clean-URL sentinel — selecting
+    // it drops the param (the page clamps a missing param up to 48h), so
+    // the canonical /creators URL carries no `?period=`.
+    if (period === CREATORS_MIN_PERIOD) {
       params.delete("period");
     } else {
       params.set("period", period);
@@ -149,7 +156,7 @@ export function CreatorsPeriodControl() {
         isPending && "opacity-60",
       )}
     >
-      {DASHBOARD_PERIODS.map((period) => {
+      {CREATORS_PERIODS.map((period) => {
         const active = period === current;
         return (
           <button

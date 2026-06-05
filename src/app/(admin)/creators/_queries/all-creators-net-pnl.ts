@@ -139,6 +139,7 @@ function periodToIntervalLiteral(period: DashboardPeriod): string | null {
     case "6h": return "6 hours";
     case "12h": return "12 hours";
     case "24h": return "24 hours";
+    case "48h": return "48 hours";
     case "3d": return "3 days";
     case "7d": return "7 days";
     case "30d": return "30 days";
