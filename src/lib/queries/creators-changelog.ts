@@ -39,19 +39,53 @@ import {
 const CHANGELOG_MAIN_DB_TIMEOUT_MS = 8_000;
 
 /**
- * The creator-marketing event types this feed surfaces. Each is a real
+ * The audit `event_type`s this feed reads from the admin log. Each is a real
  * `createAdminAuditEvent({ eventType })` written by an existing flow:
  *   - user_made_creator          → src/app/(admin)/creators/actions.ts
  *                                   + creators/backend-actions.ts
  *   - creator_deal_created       → same two files
  *   - creator_force_reset_to_user→ src/app/(admin)/users/[id]/actions.ts
+ *                                   (the "Reset to User Role" escape hatch)
+ *   - role_changed               → src/app/(admin)/users/[id]/actions.ts
+ *                                   (the generic role dropdown, used on both
+ *                                   /creators/[userId] and /users/[id]). We
+ *                                   read these to surface CREATOR REMOVALS:
+ *                                   a creator fired back to a plain user via
+ *                                   the dropdown writes `role_changed`, NOT
+ *                                   `creator_force_reset_to_user`. Only rows
+ *                                   whose metadata shows the creator role was
+ *                                   specifically removed are kept (see
+ *                                   `isCreatorRemoval` + the mapping below);
+ *                                   every other role change is dropped.
  *   - excluded_user_added        → src/app/(admin)/system/excluded-users/actions.ts
  *   - excluded_user_removed      → same file
+ *
+ * NOTE this is the SQL read-set, which differs from the DISPLAY event set
+ * (`CreatorChangelogEventType`): `role_changed` rows are re-projected to the
+ * synthetic `creator_removed` display type (or filtered out), and never
+ * surface under their raw `role_changed` type.
+ */
+const CHANGELOG_SOURCE_EVENT_TYPES = [
+  "user_made_creator",
+  "creator_deal_created",
+  "creator_force_reset_to_user",
+  "role_changed",
+  "excluded_user_added",
+  "excluded_user_removed",
+] as const;
+
+/**
+ * The DISPLAY event types the feed renders. Mirrors the source set above,
+ * except `role_changed` is replaced by the synthetic `creator_removed`
+ * (a creator fired back to a plain user) — the only role change this
+ * creator-marketing feed cares about. Used as the `EVENT_DISPLAY` key set
+ * and the KPI-tally key set.
  */
 export const CREATOR_CHANGELOG_EVENT_TYPES = [
   "user_made_creator",
   "creator_deal_created",
   "creator_force_reset_to_user",
+  "creator_removed",
   "excluded_user_added",
   "excluded_user_removed",
 ] as const;
@@ -86,10 +120,12 @@ export type CreatorChangelogEvent = {
  *   - A user becoming a creator / getting a creator deal is a normal,
  *     positive marketing event → emerald (deal) / blue (signed up as
  *     creator, a status event).
- *   - Demoting a creator back to a plain user is a corrective action →
- *     amber.
+ *   - Resetting a creator back to a plain user via the escape hatch is a
+ *     corrective action → amber.
+ *   - Removing a creator (firing them back to a normal user via the role
+ *     dropdown) is a corrective / negative action → rose.
  *   - Adding a user to the analytics-exclusion blacklist is a corrective /
- *     guarded action → rose. Removing one (re-including them in customer
+ *     guarded action → amber. Removing one (re-including them in customer
  *     analytics) is the inverse → emerald.
  */
 const EVENT_DISPLAY: Record<
@@ -99,9 +135,29 @@ const EVENT_DISPLAY: Record<
   user_made_creator: { label: "Creator signed", tone: "blue" },
   creator_deal_created: { label: "Deal created", tone: "emerald" },
   creator_force_reset_to_user: { label: "Creator reset to user", tone: "amber" },
+  creator_removed: { label: "Creator removed", tone: "rose" },
   excluded_user_added: { label: "User excluded", tone: "amber" },
   excluded_user_removed: { label: "Exclusion removed", tone: "emerald" },
 };
+
+/**
+ * Decide whether a `role_changed` audit row represents a CREATOR REMOVAL —
+ * i.e. someone fired/demoted from `creator` back to a non-creator role via
+ * the role dropdown (which writes the generic `role_changed` event, not
+ * `creator_force_reset_to_user`).
+ *
+ * `changeRole` stamps `{ prev_role, new_role }` onto the row. We keep only
+ * rows where the PREVIOUS role was `creator` and the NEW role is anything
+ * else. Rows missing `prev_role` (written before the metadata was enriched)
+ * can't be classified and are dropped — past dropdown demotions therefore
+ * can't be shown retroactively; only the escape-hatch removals
+ * (`creator_force_reset_to_user`) were historically captured.
+ */
+function isCreatorRemoval(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== "object") return false;
+  const m = metadata as Record<string, unknown>;
+  return m.prev_role === "creator" && m.new_role !== "creator";
+}
 
 /**
  * Load the creator-marketing changelog for a period.
@@ -124,10 +180,13 @@ export async function getCreatorsChangelogEvents({
   const cutoff = periodToCutoff(period, new Date());
 
   // 1) Admin DB: the audit rows + the acting employee's username (its own
-  //    relation — no cross-DB hop). event_type IN (...) is index-covered.
+  //    relation — no cross-DB hop). event_type IN (...) is index-covered by
+  //    admin_audit_events_event_type_created_idx. We read the SOURCE set
+  //    (which includes generic `role_changed` rows) and re-project below —
+  //    `role_changed` rows are kept only when they're a creator removal.
   const rows = await adminDb.admin_audit_events.findMany({
     where: {
-      event_type: { in: [...CREATOR_CHANGELOG_EVENT_TYPES] },
+      event_type: { in: [...CHANGELOG_SOURCE_EVENT_TYPES] },
       created_at: { gte: cutoff },
     },
     orderBy: { created_at: "desc" },
@@ -173,24 +232,42 @@ export async function getCreatorsChangelogEvents({
     }
   }
 
-  return rows.map((r) => {
-    // event_type is already constrained to the union by the WHERE clause,
-    // so this cast is sound (Prisma types the column as a free string).
-    const eventType = r.event_type as CreatorChangelogEventType;
+  // Re-project the raw audit rows into DISPLAY events. Most source types map
+  // 1:1 to their display type; `role_changed` is the exception — it's kept
+  // ONLY when it's a creator removal (re-typed to the synthetic
+  // `creator_removed`) and dropped otherwise. `flatMap` lets a row resolve to
+  // zero events (a non-creator role change) or one. Ordering is preserved
+  // (the query already sorts by created_at DESC and we don't reorder).
+  return rows.flatMap((r): CreatorChangelogEvent[] => {
+    // Normalize the raw audit type into the display type. A generic
+    // `role_changed` becomes `creator_removed` when it fired a creator back
+    // to a normal user; any other role change isn't a creator-marketing
+    // event, so we drop it (return []).
+    let eventType: CreatorChangelogEventType;
+    if (r.event_type === "role_changed") {
+      if (!isCreatorRemoval(r.metadata)) return [];
+      eventType = "creator_removed";
+    } else {
+      // Constrained to the remaining union members by the WHERE clause, so
+      // this cast is sound (Prisma types the column as a free string).
+      eventType = r.event_type as CreatorChangelogEventType;
+    }
     const display = EVENT_DISPLAY[eventType];
-    return {
-      id: r.id,
-      eventType,
-      label: display.label,
-      tone: display.tone,
-      adminUserId: r.admin_user_id,
-      adminUsername: r.admin_user?.username ?? null,
-      targetUserId: r.target_user_id,
-      targetUsername: r.target_user_id
-        ? targetUserMap.get(r.target_user_id) ?? null
-        : null,
-      metadata: r.metadata,
-      createdAt: r.created_at.toISOString(),
-    };
+    return [
+      {
+        id: r.id,
+        eventType,
+        label: display.label,
+        tone: display.tone,
+        adminUserId: r.admin_user_id,
+        adminUsername: r.admin_user?.username ?? null,
+        targetUserId: r.target_user_id,
+        targetUsername: r.target_user_id
+          ? targetUserMap.get(r.target_user_id) ?? null
+          : null,
+        metadata: r.metadata,
+        createdAt: r.created_at.toISOString(),
+      },
+    ];
   });
 }

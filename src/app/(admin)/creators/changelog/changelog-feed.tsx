@@ -100,6 +100,7 @@ function TargetCell({ event }: { event: CreatorChangelogEvent }) {
  *                                     fills_allowed, per_fill_amount_usd,
  *                                     conversion_rate_bps, via }
  *   - creator_force_reset_to_user → { backend_demoted, backend_error, via }
+ *   - creator_removed (from role_changed) → { prev_role, new_role }
  *   - excluded_user_added         → { reason }
  *   - excluded_user_removed       → (none)
  *
@@ -170,6 +171,17 @@ function MetadataCell({ event }: { event: CreatorChangelogEvent }) {
       </span>,
     );
   }
+  if (typeof m.prev_role === "string" && typeof m.new_role === "string") {
+    // Creator-removal (re-typed from a role_changed row): show the
+    // before→after role transition so it's clear what the user became.
+    items.push(
+      <span key="role" className="text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">{m.prev_role}</span>
+        {" → "}
+        <span className="font-medium text-foreground">{m.new_role}</span>
+      </span>,
+    );
+  }
   if (m.backend_demoted != null) {
     // Demote backend sync result: succeeded = neutral/ok, failed = rose.
     const ok = m.backend_demoted === true;
@@ -208,6 +220,8 @@ function MetadataCell({ event }: { event: CreatorChangelogEvent }) {
     "per_fill_amount_usd",
     "conversion_rate_bps",
     "reason",
+    "prev_role",
+    "new_role",
     "backend_demoted",
     "backend_error",
     // Noise keys that add nothing in the feed (origin tagging + already-state

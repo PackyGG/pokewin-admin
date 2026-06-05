@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import {
   History,
   UserPlus,
+  UserMinus,
   Handshake,
   RotateCcw,
   Ban,
@@ -98,16 +99,18 @@ async function ChangelogContent({ period }: { period: DashboardPeriod }) {
       {/* KPI strip — the same dashboard-style panel boxes the reskinned
           main /creators page uses (`CreatorsKpiPanel` + `CreatorsPlainHero`
           + `CreatorsPanelSub`) so the two surfaces read as one family.
-          All five count metrics + their icons are preserved; the heroes
+          The count metrics + their icons are preserved; the heroes
           are plain counts (these are throughput tallies, not signed money,
           so no house-POV +/− sign). Accents stay within the panel tint set
           and consistent with /creators: blue for the neutral counts, emerald
           for deals (matches the feed's "Deal created" badge), purple for the
           corrective reset (the same family as /creators' purple Past-Creators
-          tile), and rose for the guarded exclusion action (matches the feed's
-          exclusion badge + the per-fill house-cost amounts already rendered
-          in rose). Same responsive grid as the main strip. */}
-      <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
+          tile), and rose for both the corrective creator-removal (matches the
+          feed's "Creator removed" badge) and the guarded exclusion action
+          (matches the feed's exclusion badge + the per-fill house-cost
+          amounts already rendered in rose). Same responsive grid as the main
+          strip, widened to 6 columns for the added removal tile. */}
+      <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <CreatorsKpiPanel title="Events" icon={History} tint="blue">
           <CreatorsPlainHero value={events.length} format="number" />
           <CreatorsPanelSub>Creator-marketing actions</CreatorsPanelSub>
@@ -122,6 +125,10 @@ async function ChangelogContent({ period }: { period: DashboardPeriod }) {
             format="number"
           />
           <CreatorsPanelSub>New creator deals</CreatorsPanelSub>
+        </CreatorsKpiPanel>
+        <CreatorsKpiPanel title="Creators removed" icon={UserMinus} tint="rose">
+          <CreatorsPlainHero value={counts.creator_removed} format="number" />
+          <CreatorsPanelSub>Creators fired back to user</CreatorsPanelSub>
         </CreatorsKpiPanel>
         <CreatorsKpiPanel title="Resets to user" icon={RotateCcw} tint="purple">
           <CreatorsPlainHero
@@ -155,6 +162,7 @@ function countByType(events: CreatorChangelogEvent[]) {
     user_made_creator: 0,
     creator_deal_created: 0,
     creator_force_reset_to_user: 0,
+    creator_removed: 0,
     excluded_user_added: 0,
     excluded_user_removed: 0,
   };

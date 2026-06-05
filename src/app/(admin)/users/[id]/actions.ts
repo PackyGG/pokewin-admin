@@ -917,6 +917,17 @@ export async function changeRole(userId: string, newRole: string, totpCode: stri
     throw new Error("Invalid role");
   }
 
+  // Read the prior role BEFORE the update so the audit row records the full
+  // before→after transition (not just the new role). This is what lets the
+  // /creators changelog detect a creator-removal (prev_role === 'creator',
+  // new_role !== 'creator') from a generic role change — otherwise firing a
+  // creator via this dropdown is indistinguishable from any other role edit.
+  const before = await db.user.findUnique({
+    where: { id: userId },
+    select: { role: true },
+  });
+  const prevRole = before?.role ?? null;
+
   await db.user.update({
     where: { id: userId },
     data: { role: newRole as user_role },
@@ -926,7 +937,7 @@ export async function changeRole(userId: string, newRole: string, totpCode: stri
     adminUserId: session.userId,
     eventType: "role_changed",
     targetUserId: userId,
-    metadata: { new_role: newRole },
+    metadata: { prev_role: prevRole, new_role: newRole },
   });
 
   revalidatePath(`/users/${userId}`);
