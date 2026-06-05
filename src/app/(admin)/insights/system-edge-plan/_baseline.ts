@@ -24,7 +24,7 @@ import { empiricalHouseEdge } from "@/lib/metrics/formulas";
 import { getRakebackConfigs } from "@/lib/queries/rewards";
 import { getAffiliateLevelConfigs } from "@/lib/queries/creators-analytics";
 import { getAffiliateOverview } from "@/lib/queries/insights-rewards/affiliate/overview";
-import { getDailyPacksTotalCost } from "@/lib/queries/insights-rewards/daily-packs";
+import { getDailyPacksGiveaway } from "@/lib/queries/insights-rewards/daily-packs";
 import { getSignupOverview } from "@/lib/queries/insights-rewards/signup/overview";
 import { getRaffleForecastBaseline } from "@/lib/queries/insights-rewards/raffle/overview";
 import { getMothaGiveawayOverview } from "@/lib/queries/insights-rewards/motha/overview";
@@ -37,10 +37,12 @@ import {
 
 import type {
   AffiliateTierLever,
+  DailyPackLeverRow,
   GameTypeBaseline,
   RakebackCadenceId,
   RakebackCadenceLever,
   SystemEdgeBaseline,
+  WelcomePackInfo,
 } from "./_model";
 
 /**
@@ -300,6 +302,76 @@ function buildGameTypes(
 }
 
 /**
+ * Read the WELCOME / one-time reward packs + their THEORETICAL EVs (read-only).
+ *
+ * The admin code does not enumerate welcome packs anywhere, so this is a new
+ * read-only query (MAIN prod, SELECT only — permitted): take `rewards` rows of
+ * `type = 'one_time'` whose `pack_ids` reference a `pack_type = 'reward'` pack,
+ * and compute each referenced pack's EV per open the SAME way `getPackDetail`
+ * does — `cards_per_open × Σ (weight / Σweight × cards.price)` over
+ * `pack_cards` joined to `cards`.
+ *
+ * DISPLAY-ONLY context (the signup COST is the cash `balance_reward_claim`
+ * lever, not these EVs). One row per (reward, referenced reward-pack) pair.
+ * Period-agnostic (the reward catalog doesn't change with the window). Returns
+ * `[]` when no `one_time` reward references a reward pack — the UI then reports
+ * the ambiguity rather than fabricating a welcome set.
+ */
+async function getWelcomePacks(): Promise<WelcomePackInfo[]> {
+  const db = await getDb();
+  type Row = {
+    reward_slug: string;
+    reward_name: string;
+    pack_id: string;
+    pack_name: string;
+    pack_slug: string;
+    cards_per_open: number;
+    ev_per_open: string;
+  };
+  // `r.pack_ids` is a uuid[]; unnest it, join to reward packs only, and value
+  // each pack's card pool at the live `cards.price`. EV per open uses the pack's
+  // own card pool (weight-share × price) × cards_per_open — identical math to
+  // `getPackDetail`'s probability/value computation, expressed in one pass.
+  const rows = await db.$queryRawUnsafe<Row[]>(
+    `WITH one_time_packs AS (
+       SELECT r.slug AS reward_slug, r.name AS reward_name, pid AS pack_id
+       FROM rewards r
+       CROSS JOIN LATERAL unnest(r.pack_ids) AS pid
+       WHERE r.type::text = 'one_time'
+     )
+     SELECT
+       otp.reward_slug,
+       otp.reward_name,
+       p.id::text AS pack_id,
+       p.name AS pack_name,
+       p.slug AS pack_slug,
+       p.cards_per_open AS cards_per_open,
+       COALESCE(
+         (
+           SELECT (SUM(pc.weight::numeric * c.price::numeric) / NULLIF(SUM(pc.weight::numeric), 0))
+                  * p.cards_per_open
+           FROM pack_cards pc
+           JOIN cards c ON c.id = pc.card_id
+           WHERE pc.pack_id = p.id
+         ),
+         0
+       )::text AS ev_per_open
+     FROM one_time_packs otp
+     JOIN packs p ON p.id = otp.pack_id AND p.pack_type = 'reward'
+     ORDER BY otp.reward_slug, p.slug`,
+  );
+  return rows.map((r) => ({
+    rewardSlug: r.reward_slug,
+    rewardName: r.reward_name,
+    packId: r.pack_id,
+    packName: r.pack_name,
+    packSlug: r.pack_slug,
+    cardsPerOpen: Number(r.cards_per_open),
+    theoreticalEvUsd: toNumber(r.ev_per_open),
+  }));
+}
+
+/**
  * Fetch + assemble the real baseline for a window. Cached per-period.
  *
  * The config reads (rakeback / affiliate ladders) are period-agnostic (the same
@@ -323,6 +395,7 @@ async function buildBaseline(
     raffleRes,
     dailyPacksRes,
     signupRes,
+    welcomePacksRes,
     mothaRes,
     rakebackCfgRes,
     affiliateCfgRes,
@@ -377,7 +450,11 @@ async function buildBaseline(
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
-      () => getDailyPacksTotalCost(period),
+      // Per-pack daily-pack breakdown (one row per real reward pack with its
+      // measured EV/open + opens) — the editable-EV lever source. The total
+      // giveaway cost is still derived from the SAME result (gross, not net —
+      // see daily-packs.ts), so nothing double-counts the wager.
+      () => getDailyPacksGiveaway(period),
       null,
       "system-edge-plan.daily-packs",
       REWARD_QUERY_TIMEOUT_MS,
@@ -386,6 +463,14 @@ async function buildBaseline(
       () => getSignupOverview(period),
       null,
       "system-edge-plan.signup",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      // Welcome / one-time reward packs + theoretical EVs (display-only
+      // context). Read-only catalog read; period-agnostic.
+      () => getWelcomePacks(),
+      [],
+      "system-edge-plan.welcome-packs",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
@@ -482,14 +567,53 @@ async function buildBaseline(
   // Real reconstructed raffle prize cost (NON-ledger item giveaway). Distinct
   // from races; added on top of the canonical reward cost like daily packs.
   const raffleCost = raffleRes.data?.totalPrizeCost ?? 0;
-  const dailyPacksCost = dailyPacksRes.data?.cost ?? 0;
+  // Daily-pack giveaway cost = GROSS giveawayPayout (cards out), NOT net of the
+  // ≈$0 wager (the wager already flows through pack_opening into GGR; netting it
+  // would double-count — see daily-packs.ts). The per-pack rows carry each
+  // pack's measured EV/open for the editable-EV lever.
+  const dailyPacksGiveaway = dailyPacksRes.data;
+  const dailyPacksCost = dailyPacksGiveaway?.giveawayPayout ?? 0;
+  const dailyPackRows: DailyPackLeverRow[] = (dailyPacksGiveaway?.packs ?? [])
+    // Only packs actually opened in the window get an editable row (a pack with
+    // 0 opens contributes $0 and has no measured EV to scale).
+    .filter((p) => p.opens > 0 && p.giveawayPayout > 0)
+    .map((p) => ({
+      packId: p.packId,
+      name: p.name,
+      slug: p.slug,
+      opens: p.opens,
+      claimers: p.claimers,
+      giveawayPayout: p.giveawayPayout,
+      measuredEvUsd: p.opens > 0 ? p.giveawayPayout / p.opens : 0,
+    }))
+    // Biggest giveaway first so the dominant pack leads the lever list.
+    .sort((a, b) => b.giveawayPayout - a.giveawayPayout);
+
   const signupPacksCost = signupRes.data?.totalCost ?? 0;
   const signupClaimants = signupRes.data?.claimants ?? 0;
+  const signupSignups = signupRes.data?.signups ?? 0;
   const signupAvgGrant =
     signupRes.data != null && signupRes.data.claimants > 0
       ? signupRes.data.avgPerClaim
       : null;
+  // The misleading "$5.71" = cost amortized over EVERY signup (incl.
+  // non-claimers). Surfaced as a secondary efficiency metric, NEVER as the
+  // grant. avgPerSignup = avgPerClaim × conversionPct (the bridge the UI shows).
+  const signupAvgPerSignup =
+    signupRes.data != null && signupRes.data.signups > 0
+      ? signupRes.data.avgPerSignup
+      : null;
+  const signupConversionPct =
+    signupRes.data != null && signupRes.data.signups > 0
+      ? signupRes.data.claimants / signupRes.data.signups
+      : 0;
+
+  // Welcome / one-time reward packs + theoretical EVs (display-only context).
+  const welcomePacks: WelcomePackInfo[] = welcomePacksRes.data ?? [];
+
   const rainCost = metrics?.rainHouseCost ?? 0;
+  const rainWinTotal = metrics?.rainWinTotal ?? 0;
+  const rainTipTotal = metrics?.rainTipTotal ?? 0;
   // Real motha (founder giveaway account) outflow over the window. NOT in the
   // canonical reward cost: every motha row is canonically RESIDUAL / WAGER /
   // rain-funding (none of which lands in `getRewardCost`), so adding it here
@@ -585,11 +709,20 @@ async function buildBaseline(
     affiliateTiers,
     affiliateBlendedRate,
 
+    dailyPackRows,
+
     signupAvgGrant,
     signupClaimants,
+    signupSignups,
+    signupAvgPerSignup,
+    signupConversionPct,
+    welcomePacks,
 
     depositBonusCapUsd: DEPOSIT_BONUS_BASELINE_CAP_USD,
     depositBonusWindowHours: DEPOSIT_BONUS_BASELINE_WINDOW_HOURS,
+
+    rainWinTotal,
+    rainTipTotal,
   };
 }
 
@@ -644,10 +777,17 @@ function emptyBaseline(period: InsightsRewardsPeriod): SystemEdgeBaseline {
     rakebackCadences: [],
     affiliateTiers: [],
     affiliateBlendedRate: null,
+    dailyPackRows: [],
     signupAvgGrant: null,
     signupClaimants: 0,
+    signupSignups: 0,
+    signupAvgPerSignup: null,
+    signupConversionPct: 0,
+    welcomePacks: [],
     depositBonusCapUsd: DEPOSIT_BONUS_BASELINE_CAP_USD,
     depositBonusWindowHours: DEPOSIT_BONUS_BASELINE_WINDOW_HOURS,
+    rainWinTotal: 0,
+    rainTipTotal: 0,
   };
 }
 
@@ -669,8 +809,9 @@ export async function getSystemEdgeBaseline(
 ): Promise<SystemEdgeBaseline> {
   const cached = unstable_cache(
     () => buildBaseline(period),
-    // v4: added mothaCost as a named line in the lever breakdown.
-    ["system-edge-plan-baseline-v4", period],
+    // v5: per-pack daily-pack rows (editable EV), signup bridge + welcome-pack
+    // EVs, and concrete rain win/tip anchors added to the baseline shape.
+    ["system-edge-plan-baseline-v5", period],
     { revalidate: cacheTtlForInsightsPeriod(period) },
   );
   const { data } = await safeQuery(

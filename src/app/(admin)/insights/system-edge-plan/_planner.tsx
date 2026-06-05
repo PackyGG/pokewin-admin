@@ -239,8 +239,11 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
     setLevers((s) => ({ ...s, raffleFrequencyMult: clamp(pct / 100, 0, 5) }));
   const setRaffleTicket = (pct: number) =>
     setLevers((s) => ({ ...s, raffleTicketCostMult: clamp(pct / 100, 0, 5) }));
-  const setDailyValue = (pct: number) =>
-    setLevers((s) => ({ ...s, dailyPacksValueMult: clamp(pct / 100, 0, 5) }));
+  const setDailyPackEv = (packId: string, usd: number) =>
+    setLevers((s) => ({
+      ...s,
+      dailyPackEvUsd: { ...s.dailyPackEvUsd, [packId]: Math.max(0, usd) },
+    }));
   const setDailyFreq = (pct: number) =>
     setLevers((s) => ({ ...s, dailyPacksFrequencyMult: clamp(pct / 100, 0, 5) }));
   const setSignupGrant = (usd: number) =>
@@ -559,133 +562,24 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
             </div>
           </StatPanel>
 
-          {/* ── DEPOSIT BONUS ── */}
-          <StatPanel title="Deposit bonus" icon={Coins} accent="amber">
-            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-              The cap / window / wager requirement live in the game backend (per
-              the discovery — baseline cap{" "}
-              <span className="font-medium text-foreground">
-                {formatCurrency(baseline.depositBonusCapUsd)}
-              </span>{" "}
-              per {baseline.depositBonusWindowHours}h). These levers model the
-              proportional cost effect of changing each setting against the real
-              realized spend:{" "}
-              <span className="font-medium text-rose-600 dark:text-rose-400">
-                {formatCurrency(baseline.depositBonusCost)}
-              </span>
-              .
-            </p>
-            {baseline.depositBonusCost <= 0 ? (
-              <EmptyLever note="No deposit-bonus spend in this window." />
-            ) : (
-              <div className="space-y-3">
-                <LeverSlider
-                  label="Match %"
-                  valueLabel={multLabel(levers.depositBonusMatchMult)}
-                  value={levers.depositBonusMatchMult * 100}
-                  onValueChange={setDepMatch}
-                  min={0}
-                  max={300}
-                  step={0.1}
-                  baselineMarker={100}
-                  baselineLabel="current 100%"
-                  preciseInput={{ unit: "multiplier" }}
-                />
-                <LeverSlider
-                  label={`Cap (real ${formatCurrency(baseline.depositBonusCapUsd)})`}
-                  valueLabel={multLabel(levers.depositBonusCapMult)}
-                  value={levers.depositBonusCapMult * 100}
-                  onValueChange={setDepCap}
-                  min={0}
-                  max={300}
-                  step={0.1}
-                  baselineMarker={100}
-                  baselineLabel="current cap (1.0×)"
-                  preciseInput={{ unit: "multiplier" }}
-                />
-                <LeverSlider
-                  label="Min deposit gate"
-                  valueLabel={multLabel(levers.depositBonusMinDepositMult)}
-                  value={levers.depositBonusMinDepositMult * 100}
-                  onValueChange={setDepMinDeposit}
-                  min={0}
-                  max={300}
-                  step={0.1}
-                  baselineMarker={100}
-                  baselineLabel="higher gate = fewer claims = less cost"
-                  preciseInput={{ unit: "multiplier" }}
-                />
-                <LeverSlider
-                  label="Wager requirement"
-                  valueLabel={multLabel(levers.depositBonusWagerReqMult)}
-                  value={levers.depositBonusWagerReqMult * 100}
-                  onValueChange={setDepWagerReq}
-                  min={0}
-                  max={300}
-                  step={0.1}
-                  baselineMarker={100}
-                  baselineLabel="higher req = more breakage = less cost"
-                  preciseInput={{ unit: "multiplier" }}
-                />
-              </div>
-            )}
-          </StatPanel>
+          {/* ── DEPOSIT BONUS — concrete, explained controls ── */}
+          <DepositBonusPanel
+            baseline={baseline}
+            levers={levers}
+            onMatch={setDepMatch}
+            onCap={setDepCap}
+            onMinDeposit={setDepMinDeposit}
+            onWagerReq={setDepWagerReq}
+          />
 
-          {/* ── RACES (on-site competitive races · real race_prize cost) ── */}
-          <StatPanel title="Races" icon={Trophy} accent="orange">
-            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-              On-site competitive races — the{" "}
-              <span className="font-medium text-foreground">race_prize</span>{" "}
-              ledger payout. The prize structure / schedule live in the game
-              backend; these scale the real realized race prize cost (
-              <span className="font-medium text-rose-600 dark:text-rose-400">
-                {formatCurrency(baseline.raceCost)}
-              </span>
-              ) proportionally.
-            </p>
-            {baseline.raceCost <= 0 ? (
-              <EmptyLever note="No race prize cost in this window." />
-            ) : (
-              <div className="space-y-3">
-                <LeverSlider
-                  label="Prize pool"
-                  valueLabel={multLabel(levers.racePrizePoolMult)}
-                  value={levers.racePrizePoolMult * 100}
-                  onValueChange={setRacePool}
-                  min={0}
-                  max={300}
-                  step={0.1}
-                  baselineMarker={100}
-                  baselineLabel="current pool (1.0×)"
-                  preciseInput={{ unit: "multiplier" }}
-                />
-                <LeverSlider
-                  label="Race frequency"
-                  valueLabel={multLabel(levers.raceFrequencyMult)}
-                  value={levers.raceFrequencyMult * 100}
-                  onValueChange={setRaceFreq}
-                  min={0}
-                  max={300}
-                  step={0.1}
-                  baselineMarker={100}
-                  baselineLabel="current frequency (1.0×)"
-                  preciseInput={{ unit: "multiplier" }}
-                />
-                <LeverSlider
-                  label="Entry threshold"
-                  valueLabel={multLabel(levers.raceEntryCostMult)}
-                  value={levers.raceEntryCostMult * 100}
-                  onValueChange={setRaceEntry}
-                  min={0}
-                  max={300}
-                  step={0.1}
-                  baselineMarker={100}
-                  baselineLabel="higher bar = less farming = less cost"
-                  preciseInput={{ unit: "multiplier" }}
-                />
-              </div>
-            )}
-          </StatPanel>
+          {/* ── RACES — concrete, explained controls ── */}
+          <RacesPanel
+            baseline={baseline}
+            levers={levers}
+            onPool={setRacePool}
+            onFreq={setRaceFreq}
+            onEntry={setRaceEntry}
+          />
 
           {/* ── RAFFLES (on-site ticket raffles · real reconstructed cost) ── */}
           <StatPanel title="Raffles" icon={Ticket} accent="orange">
@@ -694,27 +588,30 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
               pay out pack/card items via a prize list — there is no raffle
               ledger type, so the real cost is{" "}
               <span className="font-medium text-foreground">reconstructed</span>{" "}
-              from completed raffles&apos; prizes valued at the live item price (
+              from completed raffles&apos; prizes valued at the live item price.
+              Real reconstructed prize cost this window:{" "}
               <span className="font-medium text-rose-600 dark:text-rose-400">
                 {formatCurrency(baseline.raffleCost)}
               </span>
-              ). The ticket rate / prize structure live in the game backend;
-              these levers scale that real cost proportionally.
+              . The configured ticket-earn rate / draw schedule live in the game
+              backend (not readable here) — these controls model the cost effect.
             </p>
             {baseline.raffleCost <= 0 ? (
               <EmptyLever note="No completed-raffle prize cost in this window." />
             ) : (
               <div className="space-y-3">
                 <LeverSlider
-                  label="Prize pool"
-                  valueLabel={multLabel(levers.rafflePrizePoolMult)}
+                  label={`Prize pool (real ${formatCompactUsd(baseline.raffleCost)})`}
+                  valueLabel={formatCompactUsd(
+                    baseline.raffleCost * levers.rafflePrizePoolMult,
+                  )}
                   value={levers.rafflePrizePoolMult * 100}
                   onValueChange={setRafflePool}
                   min={0}
                   max={300}
                   step={0.1}
                   baselineMarker={100}
-                  baselineLabel="current pool (1.0×)"
+                  baselineLabel="Total prize value across the period. Cost scales ~linearly with the pool."
                   preciseInput={{ unit: "multiplier" }}
                 />
                 <LeverSlider
@@ -726,7 +623,7 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   max={300}
                   step={0.1}
                   baselineMarker={100}
-                  baselineLabel="current frequency (1.0×)"
+                  baselineLabel="How often a raffle is drawn. More draws ⇒ more prize cost."
                   preciseInput={{ unit: "multiplier" }}
                 />
                 <LeverSlider
@@ -738,128 +635,34 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   max={300}
                   step={0.1}
                   baselineMarker={100}
-                  baselineLabel="higher cost = less farming = less cost"
+                  baselineLabel="Points (wager) needed per ticket. A higher cost trims farming leakage → slightly less cost; it moves the genuine-vs-farmed split more than the headline."
                   preciseInput={{ unit: "multiplier" }}
                 />
               </div>
             )}
           </StatPanel>
 
-          {/* ── PACKS (daily + signup) ── */}
-          <StatPanel title="Packs — daily & signup" icon={Gift} accent="pink">
-            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-              Daily / free packs are pure card giveaways (no ledger row) — real
-              cost{" "}
-              <span className="font-medium text-rose-600 dark:text-rose-400">
-                {formatCurrency(baseline.dailyPacksCost)}
-              </span>
-              . Signup bonus is a balance credit — real cost{" "}
-              <span className="font-medium text-rose-600 dark:text-rose-400">
-                {formatCurrency(baseline.signupPacksCost)}
-              </span>
-              {baseline.signupClaimants > 0 && (
-                <>
-                  {" "}
-                  across {baseline.signupClaimants.toLocaleString()} claimant
-                  {baseline.signupClaimants === 1 ? "" : "s"}
-                </>
-              )}
-              .
-            </p>
-            <div className="space-y-3">
-              <SectionHeading icon={Boxes} title="Daily / free packs" />
-              {baseline.dailyPacksCost <= 0 ? (
-                <EmptyLever note="No daily-pack giveaway in this window." />
-              ) : (
-                <>
-                  <LeverSlider
-                    label="Card value"
-                    valueLabel={multLabel(levers.dailyPacksValueMult)}
-                    value={levers.dailyPacksValueMult * 100}
-                    onValueChange={setDailyValue}
-                    min={0}
-                    max={300}
-                    step={0.1}
-                    baselineMarker={100}
-                    baselineLabel="current value (1.0×)"
-                    preciseInput={{ unit: "multiplier" }}
-                  />
-                  <LeverSlider
-                    label="Grant frequency"
-                    valueLabel={multLabel(levers.dailyPacksFrequencyMult)}
-                    value={levers.dailyPacksFrequencyMult * 100}
-                    onValueChange={setDailyFreq}
-                    min={0}
-                    max={300}
-                    step={0.1}
-                    baselineMarker={100}
-                    baselineLabel="current frequency (1.0×)"
-                    preciseInput={{ unit: "multiplier" }}
-                  />
-                </>
-              )}
+          {/* ── DAILY / FREE PACKS — one editable EV row per real reward pack ── */}
+          <DailyPacksPanel
+            baseline={baseline}
+            levers={levers}
+            onChangeEv={setDailyPackEv}
+            onChangeFreq={setDailyFreq}
+          />
 
-              <div className="border-t pt-3">
-                <SectionHeading icon={UserPlus} title="Signup bonus" />
-              </div>
-              {baseline.signupClaimants <= 0 ? (
-                <EmptyLever note="No signup-bonus claims in this window." />
-              ) : (
-                <LeverSlider
-                  label={`Grant per claimant${
-                    baseline.signupAvgGrant != null
-                      ? ` (real avg ${formatCurrency(baseline.signupAvgGrant)})`
-                      : ""
-                  }`}
-                  valueLabel={formatCurrency(levers.signupGrantUsd)}
-                  value={levers.signupGrantUsd}
-                  onValueChange={setSignupGrant}
-                  min={0}
-                  max={Math.max(25, (baseline.signupAvgGrant ?? 5) * 4)}
-                  step={0.01}
-                  baselineMarker={baseline.signupAvgGrant ?? undefined}
-                  baselineLabel={
-                    baseline.signupAvgGrant != null
-                      ? `current avg ${formatCurrency(baseline.signupAvgGrant)}`
-                      : undefined
-                  }
-                  preciseInput={{ unit: "usd" }}
-                />
-              )}
-            </div>
-          </StatPanel>
+          {/* ── SIGNUP — cash balance reward (the real $5.71 relabel) + welcome packs ── */}
+          <SignupPanel
+            baseline={baseline}
+            grantUsd={levers.signupGrantUsd}
+            onChangeGrant={setSignupGrant}
+          />
 
-          {/* ── RAIN ── */}
-          <StatPanel title="Rain" icon={CloudRain} accent="cyan">
-            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-              Rain is system-automatic + mixed-funded; only the net house slice
-              counts (
-              <span className="font-medium text-foreground">
-                max(0, rain wins − user/founder tips)
-              </span>
-              ). Real net cost this window:{" "}
-              <span className="font-medium text-rose-600 dark:text-rose-400">
-                {formatCurrency(baseline.rainCost)}
-              </span>
-              . The lever scales that proportionally.
-            </p>
-            {baseline.rainCost <= 0 ? (
-              <EmptyLever note="No net rain cost in this window." />
-            ) : (
-              <LeverSlider
-                label="Rain giveaway cost"
-                valueLabel={multLabel(levers.rainCostMult)}
-                value={levers.rainCostMult * 100}
-                onValueChange={setRainMult}
-                min={0}
-                max={300}
-                step={0.1}
-                baselineMarker={100}
-                baselineLabel="current 100%"
-                preciseInput={{ unit: "multiplier" }}
-              />
-            )}
-          </StatPanel>
+          {/* ── RAIN — concrete net-slice breakdown ── */}
+          <RainPanel
+            baseline={baseline}
+            costMult={levers.rainCostMult}
+            onChange={setRainMult}
+          />
 
           {/* ── AFFILIATE ── */}
           <StatPanel title="Affiliate commission" icon={Share2} accent="rose">
@@ -1129,6 +932,565 @@ function UpgraderEdgeControl({
         preciseInput={{ unit: "percent", decimals: 3 }}
       />
     </div>
+  );
+}
+
+/**
+ * DAILY / FREE PACKS — one editable-EV row PER real reward pack
+ * (`packs.pack_type = 'reward'`). Each row defaults to the pack's MEASURED avg
+ * house cost per open (`giveawayPayout / opens`) and lets the owner scale THAT
+ * pack's EV; the projection aggregates `Σ (plannedEv × opens) × frequency`. Cost
+ * basis = GROSS giveaway (cards out) — House-POV: a card giveaway is a house
+ * cost → rose. The 30-day XP-unlock is DISPLAY-ONLY (backend-enforced).
+ */
+function DailyPacksPanel({
+  baseline,
+  levers,
+  onChangeEv,
+  onChangeFreq,
+}: {
+  baseline: SystemEdgeBaseline;
+  levers: PlannedLevers;
+  onChangeEv: (packId: string, usd: number) => void;
+  onChangeFreq: (pct: number) => void;
+}) {
+  const rows = baseline.dailyPackRows;
+  // Planned per-pack giveaway (EV × opens), then frequency-scaled, for the
+  // live total readout.
+  const freq = Math.max(0, levers.dailyPacksFrequencyMult);
+  const plannedTotal =
+    rows.reduce((s, p) => {
+      const ev = Math.max(0, levers.dailyPackEvUsd[p.packId] ?? p.measuredEvUsd);
+      return s + ev * p.opens;
+    }, 0) * freq;
+
+  return (
+    <StatPanel title="Daily / free packs" icon={Boxes} accent="pink">
+      <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+        Daily / free packs are the reward packs (
+        <span className="font-medium text-foreground">pack_type = reward</span>)
+        the site hands out for free. They are effectively a{" "}
+        <span className="font-medium text-foreground">wager-loss</span> — the open
+        collects ≈ $0 but the user keeps the card, so the full card value is a pure
+        house cost (
+        <span className="font-medium text-rose-600 dark:text-rose-400">
+          {formatCurrency(baseline.dailyPacksCost)}
+        </span>{" "}
+        this window, gross cards out). Each row below is a real pack defaulting to
+        its <span className="font-medium text-foreground">measured EV per open</span>{" "}
+        — scale a pack&apos;s EV (richer/cheaper cards) and the cost follows{" "}
+        <span className="font-medium text-foreground">EV × opens</span>.
+      </p>
+
+      {rows.length === 0 ? (
+        <EmptyLever note="No reward-pack opens in this window." />
+      ) : (
+        <div className="space-y-4">
+          {rows.map((p) => {
+            const plannedEv = Math.max(
+              0,
+              levers.dailyPackEvUsd[p.packId] ?? p.measuredEvUsd,
+            );
+            const plannedPackCost = plannedEv * p.opens * freq;
+            return (
+              <div key={p.packId} className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <Boxes className="size-3.5 shrink-0 text-pink-500" />
+                  <span className="truncate text-xs font-semibold">{p.name}</span>
+                  <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                    {p.opens.toLocaleString()} opens ·{" "}
+                    <span className="text-rose-600 dark:text-rose-400">
+                      {formatCompactUsd(plannedPackCost)}
+                    </span>
+                  </span>
+                </div>
+                <LeverSlider
+                  label="EV per open"
+                  valueLabel={evLabel(plannedEv)}
+                  value={plannedEv}
+                  onValueChange={(usd) => onChangeEv(p.packId, usd)}
+                  min={0}
+                  max={Math.max(0.5, p.measuredEvUsd * 4)}
+                  step={0.0001}
+                  baselineMarker={p.measuredEvUsd}
+                  baselineLabel={`measured EV ${evLabel(p.measuredEvUsd)} / open · ${p.claimers.toLocaleString()} claimers`}
+                  preciseInput={{ unit: "usd", decimals: 4 }}
+                />
+              </div>
+            );
+          })}
+
+          <div className="border-t pt-3">
+            <LeverSlider
+              label="Grant frequency"
+              valueLabel={multLabel(levers.dailyPacksFrequencyMult)}
+              value={levers.dailyPacksFrequencyMult * 100}
+              onValueChange={onChangeFreq}
+              min={0}
+              max={300}
+              step={0.1}
+              baselineMarker={100}
+              baselineLabel="How often packs are granted. Scales every pack's cost together. More frequent ⇒ more cost."
+              preciseInput={{ unit: "multiplier" }}
+            />
+          </div>
+
+          <PanelRow
+            label="Planned daily-pack cost"
+            value={
+              <span className="text-rose-600 dark:text-rose-400">
+                {formatCompactUsd(plannedTotal)}
+              </span>
+            }
+          />
+        </div>
+      )}
+
+      {/* 30-day XP-unlock — DISPLAY-ONLY (backend-enforced, not tunable here). */}
+      <div className="mt-3 flex items-start gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
+        <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-cyan-500" />
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          A <span className="font-medium text-foreground">30-day XP unlock</span>{" "}
+          gates these daily rewards (the schema carries{" "}
+          <span className="font-medium text-foreground">daily_period_start</span> +{" "}
+          <span className="font-medium text-foreground">
+            daily_unlock_xp_baseline
+          </span>{" "}
+          on <span className="font-medium text-foreground">user_rewards</span>). The
+          exact XP-% threshold and its enforcement live in the game backend — they
+          are not readable or tunable here, so this is shown for reference only.
+        </p>
+      </div>
+    </StatPanel>
+  );
+}
+
+/**
+ * SIGNUP — the cash balance reward (the honest relabel of the misleading
+ * "$5.71") + the real welcome PACK references for context.
+ *
+ * The signup lever is a CASH `balance_reward_claim` credit (NOT a welcome pack).
+ * The headline grant is the TRUE per-CLAIMANT average (`signupAvgGrant`); the
+ * amortized-per-signup figure is demoted to a secondary stat with the bridge
+ * `avgPerSignup = avgPerClaim × conversionPct`. The welcome card-pack EVs are
+ * surfaced separately, display-only. House-POV: a house grant → rose.
+ */
+function SignupPanel({
+  baseline,
+  grantUsd,
+  onChangeGrant,
+}: {
+  baseline: SystemEdgeBaseline;
+  grantUsd: number;
+  onChangeGrant: (usd: number) => void;
+}) {
+  const avgClaim = baseline.signupAvgGrant;
+  const avgSignup = baseline.signupAvgPerSignup;
+  const conv = baseline.signupConversionPct;
+
+  return (
+    <StatPanel title="Signup balance reward" icon={UserPlus} accent="pink">
+      <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+        The signup bonus is a <span className="font-medium text-foreground">cash
+        balance credit</span> (ledger{" "}
+        <span className="font-medium text-foreground">balance_reward_claim</span>),
+        NOT a welcome pack. Real cost this window:{" "}
+        <span className="font-medium text-rose-600 dark:text-rose-400">
+          {formatCurrency(baseline.signupPacksCost)}
+        </span>
+        {baseline.signupClaimants > 0 && (
+          <>
+            {" "}across {baseline.signupClaimants.toLocaleString()} claimant
+            {baseline.signupClaimants === 1 ? "" : "s"}
+          </>
+        )}
+        .
+      </p>
+
+      {baseline.signupClaimants <= 0 ? (
+        <EmptyLever note="No signup-bonus claims in this window." />
+      ) : (
+        <>
+          <LeverSlider
+            label="Avg grant per claimant (cash)"
+            valueLabel={formatCurrency(grantUsd)}
+            value={grantUsd}
+            onValueChange={onChangeGrant}
+            min={0}
+            max={Math.max(25, (avgClaim ?? 5) * 4)}
+            step={0.01}
+            baselineMarker={avgClaim ?? undefined}
+            baselineLabel={
+              avgClaim != null
+                ? `Real avg per CLAIMANT ${formatCurrency(avgClaim)}. Cost = claimants × grant.`
+                : undefined
+            }
+            preciseInput={{ unit: "usd" }}
+          />
+
+          {/* The $5.71 bridge — demote avgPerSignup to a labeled efficiency stat. */}
+          {avgSignup != null && avgClaim != null && (
+            <div className="mt-3 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
+              <div className="flex items-center justify-between gap-2">
+                <span>Avg per CLAIMANT (the real grant)</span>
+                <span className="font-semibold tabular-nums text-foreground">
+                  {formatCurrency(avgClaim)}
+                </span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span>Amortized per SIGNUP (incl. non-claimers)</span>
+                <span className="font-semibold tabular-nums text-foreground">
+                  {formatCurrency(avgSignup)}
+                </span>
+              </div>
+              <p className="mt-1.5">
+                The amortized figure is{" "}
+                <span className="font-medium text-foreground">not</span> the grant
+                size — it is the bonus cost spread across every signup. Bridge:{" "}
+                <span className="font-medium text-foreground">
+                  {formatCurrency(avgClaim)} × {formatPct(conv)} claim-conversion ={" "}
+                  {formatCurrency(avgSignup)}
+                </span>
+                .
+              </p>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Real welcome / one-time reward PACKS — display-only context. */}
+      <div className="mt-3 border-t pt-3">
+        <SectionHeading icon={Gift} title="Welcome packs (context)" />
+        <WelcomePacksReadout baseline={baseline} />
+      </div>
+    </StatPanel>
+  );
+}
+
+/**
+ * The real welcome / one-time reward PACK references + their theoretical EVs.
+ * DISPLAY-ONLY (the signup cost is the cash credit above). Honest about what the
+ * data shows — if it isn't a clean set of three packs, it says so rather than
+ * fabricating one.
+ */
+function WelcomePacksReadout({ baseline }: { baseline: SystemEdgeBaseline }) {
+  const packs = baseline.welcomePacks;
+
+  if (packs.length === 0) {
+    return (
+      <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+        No <span className="font-medium text-foreground">one_time</span> reward
+        currently references a reward pack, so there is no welcome card-pack EV to
+        show. The signup grant above (a cash credit) is the real signup cost.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-1.5 space-y-1.5">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        Welcome / one-time rewards that hand out a card pack, with each pack&apos;s{" "}
+        <span className="font-medium text-foreground">theoretical EV per open</span>{" "}
+        (Σ weight-share × card price × cards/open). House-POV: a card giveaway is a
+        house cost → rose. These EVs are tiny and separate from the cash signup
+        credit above.
+      </p>
+      {packs.map((w) => (
+        <div
+          key={`${w.rewardSlug}-${w.packId}`}
+          className="flex items-center justify-between gap-2 py-0.5 text-sm"
+          title={`Reward "${w.rewardName}" (${w.rewardSlug}) → pack "${w.packName}" (${w.packSlug}), ${w.cardsPerOpen} card/open`}
+        >
+          <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+            <Gift className="size-3.5 shrink-0 text-pink-500" />
+            <span className="truncate">
+              {w.packName}{" "}
+              <span className="text-[10px] text-muted-foreground/70">
+                · {w.rewardSlug}
+              </span>
+            </span>
+          </span>
+          <span className="shrink-0 font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+            {evLabel(w.theoreticalEvUsd)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * DEPOSIT BONUS — concrete, explained controls. The cap / window / wager
+ * requirement / min-deposit / match-% live in the game backend (not readable
+ * here), so each control models the COST EFFECT of changing that setting against
+ * the real realized spend. Each slider shows the absolute value it implies (e.g.
+ * "100%", "$100") and a plain-English note on which way cost moves. House-POV:
+ * deposit bonus is a house grant → rose.
+ */
+function DepositBonusPanel({
+  baseline,
+  levers,
+  onMatch,
+  onCap,
+  onMinDeposit,
+  onWagerReq,
+}: {
+  baseline: SystemEdgeBaseline;
+  levers: PlannedLevers;
+  onMatch: (pct: number) => void;
+  onCap: (pct: number) => void;
+  onMinDeposit: (pct: number) => void;
+  onWagerReq: (pct: number) => void;
+}) {
+  // Absolute readouts derived from the mult × the real backend anchor.
+  const matchPct = 100 * levers.depositBonusMatchMult; // baseline match 100%
+  const capUsd = baseline.depositBonusCapUsd * levers.depositBonusCapMult;
+
+  return (
+    <StatPanel title="Deposit bonus" icon={Coins} accent="amber">
+      <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+        The house matches a deposit up to a cap per window. The real config (
+        <span className="font-medium text-foreground">
+          {formatPercentInt(100)}
+        </span>{" "}
+        match, cap{" "}
+        <span className="font-medium text-foreground">
+          {formatCurrency(baseline.depositBonusCapUsd)}
+        </span>{" "}
+        per {baseline.depositBonusWindowHours}h) lives in the game backend, so each
+        control models the cost effect against the real realized spend (
+        <span className="font-medium text-rose-600 dark:text-rose-400">
+          {formatCurrency(baseline.depositBonusCost)}
+        </span>
+        ).
+      </p>
+      {baseline.depositBonusCost <= 0 ? (
+        <EmptyLever note="No deposit-bonus spend in this window." />
+      ) : (
+        <div className="space-y-3">
+          <LeverSlider
+            label="Match %"
+            valueLabel={formatPercentInt(matchPct)}
+            value={levers.depositBonusMatchMult * 100}
+            onValueChange={onMatch}
+            min={0}
+            max={300}
+            step={0.1}
+            baselineMarker={100}
+            baselineLabel={`House matches ${formatPercentInt(matchPct)} of the deposit (real 100%). Higher match → directly higher cost.`}
+            preciseInput={{ unit: "multiplier" }}
+          />
+          <LeverSlider
+            label="Cap $"
+            valueLabel={formatCurrency(capUsd)}
+            value={levers.depositBonusCapMult * 100}
+            onValueChange={onCap}
+            min={0}
+            max={300}
+            step={0.1}
+            baselineMarker={100}
+            baselineLabel={`Max bonus per ${baseline.depositBonusWindowHours}h = ${formatCurrency(capUsd)} (real ${formatCurrency(baseline.depositBonusCapUsd)}). A higher cap only lets the clipped upper tail through → cost rises sub-linearly.`}
+            preciseInput={{ unit: "multiplier" }}
+          />
+          <LeverSlider
+            label="Min deposit gate"
+            valueLabel={multLabel(levers.depositBonusMinDepositMult)}
+            value={levers.depositBonusMinDepositMult * 100}
+            onValueChange={onMinDeposit}
+            min={0}
+            max={300}
+            step={0.1}
+            baselineMarker={100}
+            baselineLabel="Minimum deposit to qualify (real value backend-only). A higher gate filters out small claimers → fewer claims → less cost."
+            preciseInput={{ unit: "multiplier" }}
+          />
+          <LeverSlider
+            label="Wager requirement"
+            valueLabel={multLabel(levers.depositBonusWagerReqMult)}
+            value={levers.depositBonusWagerReqMult * 100}
+            onValueChange={onWagerReq}
+            min={0}
+            max={300}
+            step={0.1}
+            baselineMarker={100}
+            baselineLabel="How many times the bonus must be wagered before withdrawal (real value backend-only). A higher requirement raises breakage (more bonus expires unwagered) → less realized cost."
+            preciseInput={{ unit: "multiplier" }}
+          />
+        </div>
+      )}
+    </StatPanel>
+  );
+}
+
+/**
+ * RACES (on-site competitive races · real `race_prize` ledger cost). Concrete,
+ * explained controls: prize pool (absolute $ derived from the real cost), race
+ * frequency, and entry threshold — each with a plain-English cost note.
+ * House-POV: a race prize is a house payout → rose.
+ */
+function RacesPanel({
+  baseline,
+  levers,
+  onPool,
+  onFreq,
+  onEntry,
+}: {
+  baseline: SystemEdgeBaseline;
+  levers: PlannedLevers;
+  onPool: (pct: number) => void;
+  onFreq: (pct: number) => void;
+  onEntry: (pct: number) => void;
+}) {
+  const poolUsd = baseline.raceCost * levers.racePrizePoolMult;
+  return (
+    <StatPanel title="Races" icon={Trophy} accent="orange">
+      <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+        On-site competitive races — the{" "}
+        <span className="font-medium text-foreground">race_prize</span> ledger
+        payout (real{" "}
+        <span className="font-medium text-rose-600 dark:text-rose-400">
+          {formatCurrency(baseline.raceCost)}
+        </span>{" "}
+        this window). The prize tiers / schedule live in the game backend; these
+        controls model the cost effect.
+      </p>
+      {baseline.raceCost <= 0 ? (
+        <EmptyLever note="No race prize cost in this window." />
+      ) : (
+        <div className="space-y-3">
+          <LeverSlider
+            label={`Prize pool (real ${formatCompactUsd(baseline.raceCost)})`}
+            valueLabel={formatCompactUsd(poolUsd)}
+            value={levers.racePrizePoolMult * 100}
+            onValueChange={onPool}
+            min={0}
+            max={300}
+            step={0.1}
+            baselineMarker={100}
+            baselineLabel="Total prize value paid across the period. Cost scales ~linearly with the pool."
+            preciseInput={{ unit: "multiplier" }}
+          />
+          <LeverSlider
+            label="Race frequency"
+            valueLabel={multLabel(levers.raceFrequencyMult)}
+            value={levers.raceFrequencyMult * 100}
+            onValueChange={onFreq}
+            min={0}
+            max={300}
+            step={0.1}
+            baselineMarker={100}
+            baselineLabel="How often a race runs. More races ⇒ more prize cost."
+            preciseInput={{ unit: "multiplier" }}
+          />
+          <LeverSlider
+            label="Entry threshold"
+            valueLabel={multLabel(levers.raceEntryCostMult)}
+            value={levers.raceEntryCostMult * 100}
+            onValueChange={onEntry}
+            min={0}
+            max={300}
+            step={0.1}
+            baselineMarker={100}
+            baselineLabel="Qualifying spend to place (real value backend-only). A higher bar trims farming leakage → slightly less cost."
+            preciseInput={{ unit: "multiplier" }}
+          />
+        </div>
+      )}
+    </StatPanel>
+  );
+}
+
+/**
+ * RAIN — concrete net-slice breakdown. Rain is system-automatic + mixed-funded:
+ * the house only funds the slice of the winnings beyond user/founder tips, so the
+ * cost is `max(0, rain wins − tips)`. Surfaces the real gross win, the tips that
+ * cover part of it, and the net house slice, then a single proportional lever on
+ * that net slice. House-POV: the net rain slice is a house payout → rose.
+ *
+ * Whether rain winnings carry a wager requirement before withdrawal is NOT
+ * readable from this admin (backend-only) — flagged in openQuestions, so we do
+ * not model breakage here (would be a fabricated coefficient).
+ */
+function RainPanel({
+  baseline,
+  costMult,
+  onChange,
+}: {
+  baseline: SystemEdgeBaseline;
+  costMult: number;
+  onChange: (pct: number) => void;
+}) {
+  const hasGross = baseline.rainWinTotal > 0;
+  return (
+    <StatPanel title="Rain" icon={CloudRain} accent="cyan">
+      <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+        Rain is system-automatic and mixed-funded. Only the{" "}
+        <span className="font-medium text-foreground">net house slice</span> counts
+        — the winnings beyond what users and the founder tipped in:{" "}
+        <span className="font-medium text-foreground">
+          max(0, rain wins − tips)
+        </span>
+        .
+      </p>
+
+      {hasGross && (
+        <div className="mb-3 space-y-0.5">
+          <PanelRow
+            label="Rain wins paid (gross)"
+            value={
+              <span className="text-rose-600 dark:text-rose-400">
+                {formatCompactUsd(baseline.rainWinTotal)}
+              </span>
+            }
+          />
+          <PanelRow
+            label="− User / founder tips (funded the pool)"
+            value={
+              <span className="text-emerald-600 dark:text-emerald-400">
+                {formatCompactUsd(baseline.rainTipTotal)}
+              </span>
+            }
+          />
+          <PanelRow
+            label="= Net house slice"
+            value={
+              <span className="font-semibold text-rose-600 dark:text-rose-400">
+                {formatCompactUsd(baseline.rainCost)}
+              </span>
+            }
+          />
+        </div>
+      )}
+
+      {baseline.rainCost <= 0 ? (
+        <EmptyLever
+          note={
+            hasGross
+              ? "Tips fully covered rain wins this window — no net house cost."
+              : "No net rain cost in this window."
+          }
+        />
+      ) : (
+        <LeverSlider
+          label={`Net rain cost (real ${formatCompactUsd(baseline.rainCost)})`}
+          valueLabel={formatCompactUsd(baseline.rainCost * Math.max(0, costMult))}
+          value={costMult * 100}
+          onValueChange={onChange}
+          min={0}
+          max={300}
+          step={0.1}
+          baselineMarker={100}
+          baselineLabel="Scales the net house slice (dollars per rain × frequency). Higher ⇒ more cost."
+          preciseInput={{ unit: "multiplier" }}
+        />
+      )}
+
+      <p className="mt-3 text-[10px] leading-relaxed text-muted-foreground">
+        Note: whether rain winnings carry a wager requirement before withdrawal is
+        enforced in the game backend and is not readable here, so no breakage is
+        modeled (it would be a guessed number).
+      </p>
+    </StatPanel>
   );
 }
 
@@ -1579,6 +1941,33 @@ function multLabel(mult: number): string {
   return `${rounded}×`;
 }
 
+/**
+ * Format a small per-open EV ($0.0064-style). `formatCurrency` rounds to cents,
+ * which would collapse these tiny card EVs to $0.00/$0.01, so we show up to 4
+ * decimals (trailing zeros trimmed, min 2) — the real measured EV stays legible.
+ */
+function evLabel(usd: number): string {
+  if (!Number.isFinite(usd)) return "$0.00";
+  if (usd === 0) return "$0.00";
+  // ≥ $1 reads fine in plain currency; below that show fine precision.
+  if (Math.abs(usd) >= 1) return formatCurrency(usd);
+  const fixed = usd.toFixed(4);
+  const trimmed = fixed.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  // Keep at least 2 decimals so "$0.01" doesn't render as "$0.0".
+  const parts = trimmed.split(".");
+  if (parts.length === 2 && parts[1].length < 2) {
+    return `$${parts[0]}.${parts[1].padEnd(2, "0")}`;
+  }
+  return `$${trimmed}`;
+}
+
+/** Format a whole-ish percent for a readout (e.g. 100 → "100%", 137.5 → "137.5%"). */
+function formatPercentInt(pct: number): string {
+  if (!Number.isFinite(pct)) return "—";
+  const rounded = Math.round(pct * 10) / 10;
+  return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded}%`;
+}
+
 /** Sub-label for a KPI tile: a signed delta vs current. */
 function deltaSub(delta: number): string {
   if (Math.abs(delta) < 0.005) return "no change";
@@ -1602,7 +1991,6 @@ function leversEqual(a: PlannedLevers, b: PlannedLevers): boolean {
     a.rafflePrizePoolMult !== b.rafflePrizePoolMult ||
     a.raffleFrequencyMult !== b.raffleFrequencyMult ||
     a.raffleTicketCostMult !== b.raffleTicketCostMult ||
-    a.dailyPacksValueMult !== b.dailyPacksValueMult ||
     a.dailyPacksFrequencyMult !== b.dailyPacksFrequencyMult ||
     a.signupGrantUsd !== b.signupGrantUsd ||
     a.rainCostMult !== b.rainCostMult
@@ -1615,6 +2003,14 @@ function leversEqual(a: PlannedLevers, b: PlannedLevers): boolean {
   ]) as Set<GameTypeId>;
   for (const k of edgeKeys) {
     if ((a.edges[k] ?? 0) !== (b.edges[k] ?? 0)) return false;
+  }
+  // Per-pack daily EV map.
+  const dailyKeys = new Set([
+    ...Object.keys(a.dailyPackEvUsd),
+    ...Object.keys(b.dailyPackEvUsd),
+  ]);
+  for (const k of dailyKeys) {
+    if ((a.dailyPackEvUsd[k] ?? 0) !== (b.dailyPackEvUsd[k] ?? 0)) return false;
   }
   const cadKeys = Object.keys({
     ...a.rakebackRates,

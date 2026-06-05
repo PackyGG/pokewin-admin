@@ -115,6 +115,70 @@ export type GameTypeBaseline = {
   dataAvailable: boolean;
 };
 
+// ─── Daily / free packs (per-pack measured EV — the editable lever) ─────────
+
+/**
+ * One real reward pack (`packs.pack_type = 'reward'`) the owner tunes
+ * individually. Each row carries the MEASURED average house cost per open
+ * (`avgCostPerPack = giveawayPayout / opens` from `getDailyPacksGiveaway`),
+ * which IS the empirically-observed EV per open. The owner scales THIS pack's
+ * EV; the projection aggregates `Σ (plannedEv × opens) × frequency` back to a
+ * cost delta. Cost basis stays GROSS `giveawayPayout` (the wager those opens
+ * collect is ≈ $0 and already flows through `pack_opening` into GGR — netting
+ * it would double-count; see `daily-packs.ts`).
+ */
+export type DailyPackLeverRow = {
+  /** `packs.id`. */
+  packId: string;
+  /** `packs.name` (e.g. "Daily Tier 1"). */
+  name: string;
+  /** `packs.slug`. */
+  slug: string;
+  /** Distinct reward-pack opens in the window. */
+  opens: number;
+  /** Distinct users who opened this pack in the window. */
+  claimers: number;
+  /** Σ value_at_obtained of cards delivered (gross giveaway cost for this pack). */
+  giveawayPayout: number;
+  /**
+   * Measured EV per open = giveawayPayout / opens (the house cost of one open).
+   * The per-pack lever seeds from this. 0 when the pack had no opens.
+   */
+  measuredEvUsd: number;
+};
+
+// ─── Signup / welcome packs (read-only context) ─────────────────────────────
+
+/**
+ * One welcome / one-time reward `pack` reference the owner finally gets to see.
+ *
+ * Built from `rewards` rows of `type = 'one_time'` whose `pack_ids` point at a
+ * `pack_type = 'reward'` pack, with the theoretical EV computed the SAME way as
+ * `packs.ts getPackDetail`: `cards_per_open × Σ (weight / Σweight × cards.price)`.
+ * DISPLAY-ONLY context (the signup COST itself is the cash `balance_reward_claim`
+ * lever) — surfaced so the owner can see the tiny card-pack EVs that sit behind
+ * the welcome grant. House-POV: a card giveaway is a house cost → rose.
+ */
+export type WelcomePackInfo = {
+  /** The `rewards.slug` the pack is referenced from (e.g. "onboarding"). */
+  rewardSlug: string;
+  /** The `rewards.name` (e.g. "Welcome Reward"). */
+  rewardName: string;
+  /** `packs.id`. */
+  packId: string;
+  /** `packs.name`. */
+  packName: string;
+  /** `packs.slug`. */
+  packSlug: string;
+  /** Cards handed out per open (`packs.cards_per_open`). */
+  cardsPerOpen: number;
+  /**
+   * Theoretical EV per open = cards_per_open × Σ(weight/Σweight × cards.price).
+   * 0 when the referenced pack has no priced cards in its pool.
+   */
+  theoreticalEvUsd: number;
+};
+
 // ─── Affiliate tiers (the real ladder) ──────────────────────────────────────
 
 /** One affiliate commission tier as the planner tunes it. */
@@ -236,15 +300,44 @@ export type SystemEdgeBaseline = {
    */
   affiliateBlendedRate: number | null;
 
-  // ── Real signup-bonus anchors (for the signup-pack lever readout) ──
+  // ── Real daily / free-pack per-pack breakdown (the editable-EV lever) ──
   /**
-   * Real measured average signup balance-reward grant (USD per claimant) over
+   * One row per real reward pack (`pack_type = 'reward'`) with its MEASURED
+   * EV per open, opens + giveaway cost. The daily-packs lever renders one
+   * editable-EV row per pack and aggregates `Σ (plannedEv × opens) × frequency`.
+   * Empty when no reward pack was opened in the window.
+   */
+  dailyPackRows: DailyPackLeverRow[];
+
+  // ── Real signup-bonus anchors (for the signup lever readout + the bridge) ──
+  /**
+   * Real measured average signup balance-reward grant (USD per CLAIMANT) over
    * the window, or null when there were no claims. The signup lever's "grant"
-   * control seeds from this. NOT the $5 nominal constant — the live average.
+   * control seeds from this — the TRUE per-claimant grant (`avgPerClaim`), NOT
+   * the misleading amortized-per-signup figure. NOT the $5 nominal constant.
    */
   signupAvgGrant: number | null;
   /** Real signup claimants in the window (drives the grant-lever cost scaling). */
   signupClaimants: number;
+  /** Real signups (the whole cohort) in the window — the bridge denominator. */
+  signupSignups: number;
+  /**
+   * Real signup-bonus cost AMORTIZED across EVERY signup (= totalCost / signups,
+   * incl. the majority who never claimed) — the misleading "$5.71". Surfaced as
+   * a secondary efficiency metric ONLY, never as the welcome-pack value / grant.
+   * `avgPerSignup = avgPerClaim × conversionPct` is the bridge the UI shows.
+   */
+  signupAvgPerSignup: number | null;
+  /** Real claim-conversion fraction (0..1) = claimants / signups. The bridge factor. */
+  signupConversionPct: number;
+  /**
+   * Real welcome / one-time reward PACK references + their theoretical EVs —
+   * DISPLAY-ONLY context so the owner can see the tiny card-pack EVs behind the
+   * welcome grant. Empty when no `one_time` reward points at a `pack_type =
+   * 'reward'` pack. (The signup COST is the cash `balance_reward_claim` lever,
+   * NOT these card EVs — surfaced separately, clearly labeled.)
+   */
+  welcomePacks: WelcomePackInfo[];
 
   // ── Real deposit-bonus anchors (for the deposit-bonus lever readouts) ──
   /**
@@ -256,6 +349,20 @@ export type SystemEdgeBaseline = {
   depositBonusCapUsd: number;
   /** Backend-enforced baseline deposit-bonus reset window (hours) — reference. */
   depositBonusWindowHours: number;
+
+  // ── Real rain anchors (concrete net-slice breakdown) ──
+  /**
+   * Real Σ |rain_win| over the window — the GROSS rain winnings handed to users.
+   * The net house slice is `max(0, rainWinTotal − rainTipTotal)` (= `rainCost`).
+   * Surfaced so the rain lever can explain the net-slice math concretely.
+   */
+  rainWinTotal: number;
+  /**
+   * Real Σ |rain_tip| over the window — the user + founder contribution into
+   * rain pools that the house did NOT fund. Netted off the gross win to get the
+   * house slice. Surfaced for the rain lever's net-slice explanation.
+   */
+  rainTipTotal: number;
 };
 
 // ─── The planned (tunable) lever values ─────────────────────────────────────
@@ -355,9 +462,14 @@ export type PlannedLevers = {
    */
   raffleTicketCostMult: number;
 
-  // ── DAILY PACKS — full lever (value + frequency) ──
-  /** Card-value multiplier (1.0 = current). Richer daily packs ⇒ more cost. */
-  dailyPacksValueMult: number;
+  // ── DAILY PACKS — per-pack editable EV + a shared frequency control ──
+  /**
+   * Planned EV per open (USD) keyed by `packs.id`, one entry per real reward
+   * pack. Seeds from each pack's MEASURED `avgCostPerPack`. The owner scales a
+   * single pack's EV directly (e.g. richer Daily Tier 10 cards). Projection:
+   * `Σ (plannedEv[packId] × opens[packId]) × dailyPacksFrequencyMult`.
+   */
+  dailyPackEvUsd: Record<string, number>;
   /** Frequency multiplier (1.0 = current). More frequent grants ⇒ more cost. */
   dailyPacksFrequencyMult: number;
 
@@ -437,6 +549,12 @@ export function defaultLevers(baseline: SystemEdgeBaseline): PlannedLevers {
     affiliateRates[t.level] = t.currentRate;
   }
 
+  // Per-pack daily EV seeds from each pack's MEASURED avg cost per open.
+  const dailyPackEvUsd: Record<string, number> = {};
+  for (const p of baseline.dailyPackRows) {
+    dailyPackEvUsd[p.packId] = Math.max(0, p.measuredEvUsd);
+  }
+
   return {
     edges,
 
@@ -464,7 +582,7 @@ export function defaultLevers(baseline: SystemEdgeBaseline): PlannedLevers {
     raffleFrequencyMult: 1,
     raffleTicketCostMult: 1,
 
-    dailyPacksValueMult: 1,
+    dailyPackEvUsd,
     dailyPacksFrequencyMult: 1,
 
     signupGrantUsd: baseline.signupAvgGrant ?? 0,
@@ -503,7 +621,7 @@ function neutralLevers(): PlannedLevers {
     rafflePrizePoolMult: 1,
     raffleFrequencyMult: 1,
     raffleTicketCostMult: 1,
-    dailyPacksValueMult: 1,
+    dailyPackEvUsd: {},
     dailyPacksFrequencyMult: 1,
     signupGrantUsd: 0,
     rainCostMult: 1,
@@ -587,9 +705,20 @@ export function sanitizeLevers(input: unknown): PlannedLevers {
   base.rafflePrizePoolMult = clamp(num(src.rafflePrizePoolMult, 1), 0, 5);
   base.raffleFrequencyMult = clamp(num(src.raffleFrequencyMult, 1), 0, 5);
   base.raffleTicketCostMult = clamp(num(src.raffleTicketCostMult, 1), 0, 5);
-  base.dailyPacksValueMult = clamp(num(src.dailyPacksValueMult, 1), 0, 5);
   base.dailyPacksFrequencyMult = clamp(num(src.dailyPacksFrequencyMult, 1), 0, 5);
   base.rainCostMult = clamp(num(src.rainCostMult, 1), 0, 5);
+
+  // Per-pack daily EV (keyed by pack id; non-negative USD). A stale preload
+  // entry for a pack not in the current window simply never reaches the
+  // projection (which iterates the live baseline rows), so an extra key here
+  // is harmless — but we still drop non-finite values.
+  if (src.dailyPackEvUsd != null && typeof src.dailyPackEvUsd === "object") {
+    const d = src.dailyPackEvUsd as Record<string, unknown>;
+    for (const [packId, v] of Object.entries(d)) {
+      if (typeof packId !== "string" || packId.length === 0) continue;
+      base.dailyPackEvUsd[packId] = Math.max(0, num(v, 0));
+    }
+  }
 
   base.signupGrantUsd = Math.max(0, num(src.signupGrantUsd, 0));
 
@@ -767,11 +896,36 @@ export function projectEdgePlan(
     ticketCostFactor(planned.raffleTicketCostMult);
   const rafflePlanned = baseline.raffleCost * raffleFactor;
 
-  // ── Daily packs (value × frequency) ──
-  const dailyPacksFactor =
-    Math.max(0, planned.dailyPacksValueMult) *
-    Math.max(0, planned.dailyPacksFrequencyMult);
-  const dailyPacksPlanned = baseline.dailyPacksCost * dailyPacksFactor;
+  // ── Daily packs (per-pack EV × measured opens, then × frequency) ──
+  // Cost basis = GROSS giveaway (cards out). Default planned EV per pack ==
+  // its measured avg cost per open, so at defaults the aggregate reproduces
+  // Σ giveawayPayout = baseline.dailyPacksCost exactly. Scaling one pack's EV
+  // moves only that pack's slice; the frequency mult scales every pack.
+  //
+  // `dailyPacksCurrent` is the per-pack baseline sum (Σ measuredEv × opens),
+  // which equals Σ giveawayPayout = baseline.dailyPacksCost when the per-pack
+  // rows are present. When the per-pack rollup degraded to empty but the scalar
+  // total survived, fall back to the scalar (so the lever still shows the real
+  // cost and the frequency mult still works) — there are then just no editable
+  // per-pack rows to render.
+  const dailyFreq = Math.max(0, planned.dailyPacksFrequencyMult);
+  const dailyPacksBaseFromRows = baseline.dailyPackRows.reduce(
+    (s, p) => s + Math.max(0, p.measuredEvUsd) * p.opens,
+    0,
+  );
+  const hasDailyRows = baseline.dailyPackRows.length > 0;
+  const dailyPacksCurrent = hasDailyRows
+    ? dailyPacksBaseFromRows
+    : baseline.dailyPacksCost;
+  const dailyPacksPlanned = hasDailyRows
+    ? baseline.dailyPackRows.reduce((s, p) => {
+        const ev = Math.max(
+          0,
+          planned.dailyPackEvUsd[p.packId] ?? p.measuredEvUsd,
+        );
+        return s + ev * p.opens;
+      }, 0) * dailyFreq
+    : baseline.dailyPacksCost * dailyFreq;
 
   // ── Signup packs (claimants × planned grant) ──
   const signupPlanned =
@@ -828,14 +982,16 @@ export function projectEdgePlan(
     {
       key: "daily-packs",
       label: "Daily / free packs",
-      currentCost: baseline.dailyPacksCost,
+      currentCost: dailyPacksCurrent,
       plannedCost: dailyPacksPlanned,
-      deltaCost: dailyPacksPlanned - baseline.dailyPacksCost,
-      dataAvailable: baseline.dailyPacksCost > 0,
+      deltaCost: dailyPacksPlanned - dailyPacksCurrent,
+      dataAvailable: dailyPacksCurrent > 0,
     },
     {
+      // The signup cost is a CASH balance_reward_claim credit, NOT a card pack
+      // (verified). Labeled accordingly so it never reads as a "welcome pack".
       key: "signup-packs",
-      label: "Signup bonus",
+      label: "Signup balance reward",
       currentCost: baseline.signupPacksCost,
       plannedCost: signupPlanned,
       deltaCost: signupPlanned - baseline.signupPacksCost,
