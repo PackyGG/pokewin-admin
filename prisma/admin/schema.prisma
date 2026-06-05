@@ -61,6 +61,7 @@ model admin_users {
   salary_employees      salary_employees[]
   salary_payouts        salary_payouts[]
   excluded_users         excluded_users[]
+  excluded_user_balances_v2 admin_excluded_user_balance_v2[]
   giveaway_actions       admin_giveaway_actions[]
   user_tags              admin_user_tags[]
 }
@@ -172,6 +173,56 @@ model excluded_users {
   admin_user  admin_users @relation(fields: [excluded_by], references: [id], onDelete: Restrict)
 
   @@index([created_at(sort: Desc)], map: "excluded_users_created_at_idx")
+}
+
+// Per-user editable "Balance 2.0" annotation surfaced on
+// /system/excluded-users. Admin-managed only, never exposed to the
+// user side — it's a hand-typed dollar number an operator wants to
+// track next to each blacklisted user, independent of the user's real
+// on-site balance. Mirrors the visual shape of the "Total Deposited"
+// column on that page but is fully editable (the page already requires
+// the motha-only gate, so write access is gated identically).
+//
+// Storage notes:
+//   • target_user_id is the packy.gg better-auth nanoid (text — the
+//     main DB lives in a separate Postgres cluster, so cross-DB FKs
+//     aren't possible). We do NOT relation-link this to excluded_users
+//     either, because Balance 2.0 is logically per-user and the
+//     excluded_users row could be removed and re-added without losing
+//     this annotation.
+//   • Primary key IS target_user_id — each user has at most one
+//     Balance 2.0 value. setExcludedUserBalanceV2 upserts on this key.
+//   • set_by_admin_id references admin_users.id so the table can show
+//     "last edited by X on date Y". Loose UUID column (not a Prisma
+//     relation on admin_users) so adding this table doesn't perturb
+//     existing call sites. ON DELETE RESTRICT in the migration so a
+//     value can't be orphaned by deleting the admin who set it.
+//   • notes is optional free-text the operator can attach to explain
+//     why a particular value was chosen.
+//
+// Runtime caveat: this table is provisioned via a Prisma migration file
+// (prisma/admin/migrations/20260605000000_add_excluded_user_balance_v2/
+// migration.sql) which the OWNER applies manually — the admin DB has a
+// drifted migration history so we never `migrate deploy` against prod.
+// Until the owner runs the migration the runtime read MUST gracefully
+// fall back to "no values" instead of crashing (see
+// src/lib/excluded-users/fetch.ts and the action in actions.ts — both
+// catch P2021/42P01 and degrade to an empty map / a clean error).
+model admin_excluded_user_balance_v2 {
+  // packy.gg user_id (better-auth nanoid, text). Primary key — one
+  // Balance 2.0 row per user.
+  target_user_id  String      @id
+  // Hand-entered USD amount the operator wants to track. Decimal(20,2)
+  // matches every other money column in the admin DB.
+  balance_v2      Decimal     @db.Decimal(20, 2)
+  // admin_users.id of whoever last set the value. FK so it can't point
+  // at a deleted admin row.
+  set_by_admin_id String      @db.Uuid
+  set_at          DateTime    @default(now()) @db.Timestamptz(6)
+  notes           String?
+  admin_user      admin_users @relation(fields: [set_by_admin_id], references: [id], onDelete: Restrict)
+
+  @@index([set_at(sort: Desc)], map: "admin_excluded_user_balance_v2_set_at_idx")
 }
 
 // Custom role definitions for the granular-permissions system. Four

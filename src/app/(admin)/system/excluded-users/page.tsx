@@ -24,7 +24,7 @@ export const metadata = { title: "Excluded Users" };
  */
 export default async function ExcludedUsersPage() {
   await requireExcludedUsersAccess();
-  const rows = await getExcludedUsersForPage();
+  const { rows, balanceV2TableReady } = await getExcludedUsersForPage();
 
   return (
     <div className="space-y-6">
@@ -60,7 +60,10 @@ export default async function ExcludedUsersPage() {
       </div>
 
       <FadeIn>
-        <ExcludedUsersClient initial={rows} />
+        <ExcludedUsersClient
+          initial={rows}
+          balanceV2TableReady={balanceV2TableReady}
+        />
       </FadeIn>
     </div>
   );

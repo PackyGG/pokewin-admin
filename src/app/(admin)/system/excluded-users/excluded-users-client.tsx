@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Trash2, UserX } from "lucide-react";
+import { AlertTriangle, Check, Pencil, Plus, Trash2, UserX, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +34,11 @@ import { Spinner } from "@/components/ux";
 
 import type { ExcludedUserRow } from "@/lib/excluded-users/fetch";
 
-import { addExcludedUser, removeExcludedUser } from "./actions";
+import {
+  addExcludedUser,
+  removeExcludedUser,
+  setExcludedUserBalanceV2,
+} from "./actions";
 
 /**
  * Client wrapper for the excluded-users management page. Initial rows
@@ -47,8 +51,14 @@ import { addExcludedUser, removeExcludedUser } from "./actions";
  */
 export function ExcludedUsersClient({
   initial,
+  balanceV2TableReady,
 }: {
   initial: ExcludedUserRow[];
+  // False if the underlying admin_excluded_user_balance_v2 table hasn't
+  // been provisioned yet (pre-migration). The UI surfaces an amber hint
+  // banner above the table; the cells fall back to "—" and Save returns
+  // a clean error instead of crashing.
+  balanceV2TableReady: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -146,6 +156,30 @@ export function ExcludedUsersClient({
         </div>
       </div>
 
+      {/* Migration-missing hint — only when the Balance 2.0 admin DB
+          table doesn't exist yet. The page still renders normally; the
+          Balance 2.0 cells just show "—" and save attempts get a clean
+          error pointing at the migration to apply. */}
+      {!balanceV2TableReady && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">
+                Balance 2.0 storage not provisioned.
+              </span>{" "}
+              Apply{" "}
+              <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+                prisma/admin/migrations/20260605000000_add_excluded_user_balance_v2/migration.sql
+              </code>{" "}
+              against the admin DB to enable editing. Reads will fall back
+              to <span className="font-mono">—</span> until the table
+              exists.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Existing blacklist */}
       {initial.length === 0 ? (
         <div className="rounded-xl border bg-card">
@@ -165,6 +199,7 @@ export function ExcludedUsersClient({
                 <TableRow>
                   <TableHead>User ID</TableHead>
                   <TableHead className="text-right">Total Deposited</TableHead>
+                  <TableHead className="text-right">Balance 2.0</TableHead>
                   <TableHead>Reason</TableHead>
                   <TableHead>Excluded by</TableHead>
                   <TableHead>Added</TableHead>
@@ -185,6 +220,13 @@ export function ExcludedUsersClient({
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <BalanceV2Cell
+                        userId={row.userId}
+                        value={row.balanceV2}
+                        tableReady={balanceV2TableReady}
+                      />
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {row.reason ?? "—"}
@@ -227,6 +269,14 @@ export function ExcludedUsersClient({
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+                  <span className="text-muted-foreground">Balance 2.0</span>
+                  <BalanceV2Cell
+                    userId={row.userId}
+                    value={row.balanceV2}
+                    tableReady={balanceV2TableReady}
+                  />
                 </div>
                 {row.reason && (
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -313,5 +363,160 @@ function RemoveButton({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+/**
+ * Editable Balance 2.0 cell. Click-to-edit pattern: shows the current
+ * value formatted via `formatCurrency` (so it matches the Total
+ * Deposited column visually), and clicking the pencil swaps in a tiny
+ * inline `<input type="number">` with Save / Cancel buttons.
+ *
+ * Visual rules:
+ *   • Unset value (`null`) → rendered as "—" so the column is
+ *     consistent with the Total Deposited / Reason "no data" markers.
+ *   • Set value → emerald like the existing money column on this page
+ *     (this is an admin-managed annotation, not a P&L number — the
+ *     house-POV color rule doesn't apply to a free-form number that
+ *     doesn't change the user's actual balance).
+ *
+ * Pre-migration (`tableReady === false`): rendered as "—" with the
+ * edit button hidden, and the migration-missing banner above the
+ * table tells the operator why. We don't grey the cell beyond that —
+ * the banner is the loud signal.
+ */
+function BalanceV2Cell({
+  userId,
+  value,
+  tableReady,
+}: {
+  userId: string;
+  value: number | null;
+  tableReady: boolean;
+}) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  // String state mirrors the input element exactly — coercing to number
+  // on every keystroke would discard "0." while the user is typing.
+  const [draft, setDraft] = useState<string>(
+    value !== null ? value.toFixed(2) : "",
+  );
+  const [isPending, startTransition] = useTransition();
+
+  function startEdit() {
+    setDraft(value !== null ? value.toFixed(2) : "");
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+    setDraft(value !== null ? value.toFixed(2) : "");
+  }
+
+  function handleSave() {
+    const trimmed = draft.trim();
+    if (trimmed === "") {
+      toast.error("Enter a number (use 0 to reset to zero)");
+      return;
+    }
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      toast.error("Balance 2.0 must be zero or positive");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const result = await setExcludedUserBalanceV2({
+          userId,
+          balanceV2: trimmed,
+        });
+        if (!result.ok) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success("Balance 2.0 updated");
+        setEditing(false);
+        router.refresh();
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Failed to update Balance 2.0",
+        );
+      }
+    });
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-center justify-end gap-1">
+        <Input
+          type="number"
+          inputMode="decimal"
+          step="0.01"
+          min="0"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleSave();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              cancelEdit();
+            }
+          }}
+          disabled={isPending}
+          autoFocus
+          className="h-7 w-24 text-right font-mono text-xs tabular-nums"
+          aria-label="Balance 2.0 value"
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
+          onClick={handleSave}
+          disabled={isPending}
+          aria-label="Save Balance 2.0"
+        >
+          {isPending ? (
+            <Spinner size={12} className="text-current" />
+          ) : (
+            <Check className="size-3.5" />
+          )}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 text-muted-foreground hover:text-foreground"
+          onClick={cancelEdit}
+          disabled={isPending}
+          aria-label="Cancel"
+        >
+          <X className="size-3.5" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="inline-flex items-center justify-end gap-1.5">
+      {value !== null ? (
+        <span className="font-mono text-xs tabular-nums text-emerald-600 dark:text-emerald-400">
+          {formatCurrency(value)}
+        </span>
+      ) : (
+        <span className="font-mono text-xs text-muted-foreground">—</span>
+      )}
+      {tableReady && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-6 text-muted-foreground hover:text-foreground"
+          onClick={startEdit}
+          aria-label="Edit Balance 2.0"
+        >
+          <Pencil className="size-3" />
+        </Button>
+      )}
+    </div>
   );
 }
