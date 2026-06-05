@@ -73,6 +73,10 @@ import { PlannerPresets, usePlannerPresets } from "./_presets";
 
 const ROSE = "#f43f5e";
 const EMERALD = "#10b981";
+// Neutral slate for "no change" planned bars — matches the muted
+// "current" baseline tone (#64748b) used in the chart config so an
+// equal planned-vs-current bar reads as neutral, not as a win/loss.
+const NEUTRAL = "#64748b";
 
 /**
  * Per-game-type icon + accent. `iconClass` is a STATIC Tailwind class (not an
@@ -1100,8 +1104,18 @@ function RewardCostComparisonChart({
               {data.map((d, i) => (
                 <Cell
                   key={i}
-                  // Planned cost BELOW current = house saving → emerald; ABOVE = rose.
-                  fill={d.planned <= d.current ? EMERALD : ROSE}
+                  // Per-bar tint reflects the direction of the planned change
+                  // from the house POV: cost DROP = house WIN (emerald), cost
+                  // RISE = house LOSS (rose), exactly equal = neutral. Using
+                  // strict `<`/`>` so a no-op lever does not falsely paint as
+                  // a win.
+                  fill={
+                    d.planned < d.current
+                      ? EMERALD
+                      : d.planned > d.current
+                        ? ROSE
+                        : NEUTRAL
+                  }
                 />
               ))}
               <LabelList

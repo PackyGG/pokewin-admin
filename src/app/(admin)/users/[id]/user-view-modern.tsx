@@ -501,7 +501,7 @@ export function UserViewModern({
                 label="Withdrawals"
                 value={String(counts.withdrawals)}
                 icon={ArrowUpFromLine}
-                accent="cyan"
+                accent="rose"
               />
               <KpiTile
                 label="Multiplier"

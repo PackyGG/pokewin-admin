@@ -84,6 +84,13 @@ function WindowToggle({
   loading: boolean;
   onPick: (next: DashboardKpiWindow) => void;
 }) {
+  // Long-form description for assistive tech — the visible chip
+  // ("today" / "24h") is too terse to stand alone, especially in
+  // a strip where multiple toggles share the page.
+  const longLabel: Record<DashboardKpiWindow, string> = {
+    today: "Today",
+    "24h": "Last 24h",
+  };
   return (
     <div className="flex shrink-0 gap-0.5">
       {DASHBOARD_KPI_WINDOWS.map((w) => {
@@ -94,6 +101,11 @@ function WindowToggle({
             type="button"
             onClick={() => onPick(w)}
             aria-pressed={isActive}
+            aria-label={
+              isActive
+                ? `Showing ${longLabel[w]}`
+                : `Switch to ${longLabel[w]}`
+            }
             className={cn(
               "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-tiny font-medium transition-colors",
               isActive

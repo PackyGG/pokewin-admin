@@ -107,18 +107,23 @@ export function PageHero({
     >
       {/* Corner glows — slightly richer than before (0.06 → 0.10) and a
           third subtle cyan wash at top-center for depth. Still soft and
-          low-opacity so the hero reads premium, not gaudy. */}
+          low-opacity so the hero reads premium, not gaudy. Purely
+          decorative, so each glow hides under `prefers-reduced-motion`
+          via `motion-reduce:opacity-0` / `motion-safe:opacity-100`. The
+          base opacity stays at 100% for reduced-motion-unaware browsers
+          and is explicitly held to 100% under `motion-safe` so the
+          intent is symmetric and obvious in the markup. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-24 -top-24 size-56 rounded-full bg-blue-500/[0.10] blur-3xl sm:size-80"
+        className="pointer-events-none absolute -right-24 -top-24 size-56 rounded-full bg-blue-500/[0.10] blur-3xl motion-reduce:opacity-0 motion-safe:opacity-100 sm:size-80"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -left-24 -bottom-24 size-56 rounded-full bg-purple-500/[0.09] blur-3xl sm:size-80"
+        className="pointer-events-none absolute -left-24 -bottom-24 size-56 rounded-full bg-purple-500/[0.09] blur-3xl motion-reduce:opacity-0 motion-safe:opacity-100 sm:size-80"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute left-1/2 -top-32 size-64 -translate-x-1/2 rounded-full bg-cyan-500/[0.04] blur-3xl"
+        className="pointer-events-none absolute left-1/2 -top-32 size-64 -translate-x-1/2 rounded-full bg-cyan-500/[0.04] blur-3xl motion-reduce:opacity-0 motion-safe:opacity-100"
       />
       {/* Hairline top highlight — a crisp light catch along the very top
           edge that makes the panel feel lifted on the dark theme. */}
@@ -187,9 +192,10 @@ export function PageHeroIdentity({
     backHref ? (
       <Link
         href={backHref}
+        aria-label="Back to previous list"
         className="inline-flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
       >
-        <ArrowLeft className="size-4" />
+        <ArrowLeft className="size-4" aria-hidden />
       </Link>
     ) : null
   );
@@ -334,33 +340,41 @@ export function KpiTile({
   action?: React.ReactNode;
 }) {
   const colors = TILE_COLORS[accent];
+  // Spoken label = "<label>: <value>" (with the optional sub appended)
+  // so a screen reader announces the tile contents in one breath
+  // instead of just the uppercase chip text. Visual layout unchanged.
+  const ariaLabel = sub ? `${label}: ${value}, ${sub}` : `${label}: ${value}`;
   return (
     <div
+      role="group"
+      aria-label={ariaLabel}
       className={cn(
         "hover-raise group surface-sheen relative overflow-hidden rounded-xl border px-3 py-2.5 sm:px-4 sm:py-3",
         colors.bg,
       )}
     >
       {/* Left accent bar — inherits the accent hue via text-color +
-          bg-current. Brightens on hover. House-POV safe: the accent is
-          chosen by the caller, same as the value tint. */}
+          bg-current. Brightens on hover (decorative — only animates
+          under `motion-safe`, snaps under reduced motion). House-POV
+          safe: the accent is chosen by the caller, same as the value tint. */}
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 transition-opacity duration-200 group-hover:opacity-80",
+          "pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 motion-safe:transition-opacity motion-safe:duration-200 motion-safe:group-hover:opacity-80",
           colors.icon,
         )}
       />
       {/* Faint diagonal sheen for a glassy finish — neutral white so it
-          never fights the House-POV accent. */}
+          never fights the House-POV accent. Decorative-only, so the
+          gradient suppresses itself under `prefers-reduced-motion`. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent motion-reduce:opacity-0 motion-safe:opacity-100"
       />
       <div className="relative flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
           <Icon className={cn("size-3.5 shrink-0 sm:size-4", colors.icon)} />
-          <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
+          <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             {label}
           </span>
         </div>
@@ -375,7 +389,7 @@ export function KpiTile({
         {value}
       </p>
       {sub && (
-        <p className="relative mt-0.5 truncate text-[10px] text-muted-foreground sm:text-[11px]">
+        <p className="relative mt-0.5 truncate text-[11px] text-muted-foreground">
           {sub}
         </p>
       )}
@@ -409,21 +423,22 @@ export function MetricTile({
     >
       {/* Left accent bar + glassy sheen — matches KpiTile so a grid of
           mixed tiles reads as one family. House-POV safe (neutral sheen,
-          caller-chosen accent). */}
+          caller-chosen accent). Hover lift + sheen are decorative so they
+          only animate under `motion-safe`. */}
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 transition-opacity duration-200 group-hover:opacity-80",
+          "pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 motion-safe:transition-opacity motion-safe:duration-200 motion-safe:group-hover:opacity-80",
           colors.icon,
         )}
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent motion-reduce:opacity-0 motion-safe:opacity-100"
       />
       <div className="relative flex items-center gap-1.5 sm:gap-2">
         <Icon className={cn("size-3.5 shrink-0 sm:size-4", colors.icon)} />
-        <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
+        <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
           {label}
         </span>
       </div>
@@ -436,7 +451,7 @@ export function MetricTile({
         {value}
       </p>
       {sub && (
-        <p className="relative mt-0.5 truncate text-[10px] text-muted-foreground sm:text-[11px]">
+        <p className="relative mt-0.5 truncate text-[11px] text-muted-foreground">
           {sub}
         </p>
       )}
@@ -471,11 +486,13 @@ export function StatPanel({
   return (
     <div className="surface-sheen surface-raise group relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/70 sm:rounded-2xl">
       {/* Accent corner glow — a touch stronger (40% → 50%) and a hair
-          larger so the panel feels alive. Still soft/low-opacity. */}
+          larger so the panel feels alive. Still soft/low-opacity. The
+          hover-driven opacity bump is decorative so it only animates
+          under `motion-safe` (reduced-motion holds the base 50%). */}
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute -right-12 -top-12 size-28 rounded-full opacity-50 blur-2xl transition-opacity duration-200 group-hover:opacity-70 sm:size-36",
+          "pointer-events-none absolute -right-12 -top-12 size-28 rounded-full opacity-50 blur-2xl motion-safe:transition-opacity motion-safe:duration-200 motion-safe:group-hover:opacity-70 sm:size-36",
           colors.bg,
         )}
       />

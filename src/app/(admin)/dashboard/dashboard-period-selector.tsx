@@ -70,6 +70,12 @@ export function DashboardPeriodSelector() {
               type="button"
               onClick={() => pick(p)}
               disabled={active || isPending}
+              aria-pressed={active}
+              aria-label={
+                active
+                  ? `Dashboard period ${p}, currently selected`
+                  : `Switch dashboard period to ${p}`
+              }
               className={cn(
                 "inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium",
                 // Centralized motion: reduced-motion-safe colour transition so
