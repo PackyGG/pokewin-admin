@@ -15,21 +15,33 @@ import { SystemEdgePlanSkeleton } from "./_skeleton";
 export const metadata = { title: "System Edge Plan" };
 
 /**
- * /insights/system-edge-plan — the unified reward-system PLANNING page.
+ * /insights/system-edge-plan — the full, customizable edge + reward-system
+ * PLANNER. Plan future updates and see the projected PROFIT impact WITHOUT
+ * touching any live data.
  *
- * A read-only tool to plan reward-system changes and see the projected PROFIT
- * impact WITHOUT touching any live data. The owner tunes every system lever
- * (pack edge · upgrader→rakeback weight · affiliate commission % per tier + a
- * remove-1×-wager toggle · deposit bonus · raffle ticket rate · rakeback
- * per-cadence rates) and sees the projected reward COST / house EDGE / GGR /
- * NGR / PROFIT, plus the DELTA (savings / extra cost) vs the CURRENT real config.
+ * The owner tunes EVERY system lever, grouped into sections:
+ *   • House edge — SEPARATE per game type (packs · battles · upgrader).
+ *   • Rakeback — per-cadence rates · pack/battle vs upgrader wager weighting ·
+ *     an instant-claim payout-%/adoption control.
+ *   • Deposit bonus — match % · cap · min deposit · wager requirement.
+ *   • Raffle — prize pool · draw frequency · ticket cost.
+ *   • Packs — daily/free pack value + frequency · signup grant.
+ *   • Rain — net giveaway cost.
+ *   • Affiliate — per-tier commission % + the 1× wager-requirement toggle.
+ * …and sees the projected per-type GGR / reward COST / NGR / PROFIT, plus the
+ * DELTA (savings / extra cost) vs the CURRENT live config, with monthly + annual
+ * extrapolation.
  *
  * REAL config, never invented (CLAUDE.md + the discovery): the current config +
- * anchors all come from live production reads at request time — `rakeback_config`
- * (real daily/weekly/monthly rates), `affiliate_level_configs` (real tier ladder),
- * and the canonical metric layer (`getWindowMetrics` + `sumLedgerTypes`) for real
- * wager / GGR / empirical edge / per-lever reward cost. The levers are seeded from
- * those real values; the projection scales the real baseline.
+ * anchors all come from live production reads at request time — a per-type split
+ * of the canonical gaming legs (packs/battles/upgrader, reconciling with the
+ * headline GGR), `rakeback_config` (real daily/weekly/monthly rates),
+ * `affiliate_level_configs` (real tier ladder), and the canonical metric layer
+ * (`getWindowMetrics` + `sumLedgerTypes` + daily-packs + signup + net rain) for
+ * real per-lever reward cost. Levers are seeded from those real values; the
+ * projection scales the real baseline at the observed wager volume. Anything not
+ * separable from real data in this snapshot is SURFACED but clearly labeled
+ * (estimated / not yet wired) — never a fabricated number.
  *
  * Active-timeframe-only: the baseline for the selected `?period=` is fetched lazily
  * inside a keyed `<Suspense>` — switching the window swaps the boundary and fetches

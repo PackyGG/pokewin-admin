@@ -2,11 +2,30 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
+import { getDb } from "@/lib/db";
+import { toNumber } from "@/lib/utils/decimal";
 import { safeQuery } from "@/lib/errors/safe-query";
-import { getWindowMetrics, sumLedgerTypes } from "@/lib/metrics/queries";
+import {
+  getWindowMetrics,
+  sumLedgerTypes,
+  upgraderMetrics,
+  type MetricWindow,
+} from "@/lib/metrics/queries";
+import { getMetricsScope } from "@/lib/metrics/scope";
+import {
+  WAGER_TYPES_SQL,
+  GAMING_PAYOUT_TYPES_SQL,
+} from "@/lib/metrics/ledger-sets";
+import {
+  WAGER_LEG_FILTER,
+  PAYOUT_LEG_FILTER,
+} from "@/lib/metrics/gaming-sql";
+import { empiricalHouseEdge } from "@/lib/metrics/formulas";
 import { getRakebackConfigs } from "@/lib/queries/rewards";
 import { getAffiliateLevelConfigs } from "@/lib/queries/creators-analytics";
 import { getAffiliateOverview } from "@/lib/queries/insights-rewards/affiliate/overview";
+import { getDailyPacksTotalCost } from "@/lib/queries/insights-rewards/daily-packs";
+import { getSignupOverview } from "@/lib/queries/insights-rewards/signup/overview";
 import {
   daysForInsightsPeriodCapped,
   insightsRewardsPeriodLabel,
@@ -16,6 +35,7 @@ import {
 
 import type {
   AffiliateTierLever,
+  GameTypeBaseline,
   RakebackCadenceId,
   RakebackCadenceLever,
   SystemEdgeBaseline,
@@ -30,15 +50,26 @@ import type {
  * `rakeback_config` / `affiliate_level_configs` tables and the canonical metric
  * layer):
  *
- *   • wager / gaming payout / GGR / empirical house edge / bets
- *       ← `getWindowMetrics` (canonical real-customer, borrow-corrected scope).
+ *   • per-type wager / gaming payout / empirical edge / bets
+ *       ← a per-type split of the canonical gaming legs (packs vs battles vs
+ *         upgrader), built here with the EXACT canonical scope + borrow/reward
+ *         filters (`getMetricsScope`, `WAGER_LEG_FILTER`, `PAYOUT_LEG_FILTER`)
+ *         that `getGamingLegs` uses, so the three types sum to the canonical
+ *         headline GGR by construction. Upgrader is sourced from
+ *         `upgraderMetrics` (to_regclass-guarded → 0 / not-wired on a
+ *         pre-upgrader DB).
+ *   • headline wager / GGR / edge ← `getWindowMetrics` (canonical scope) — used
+ *       to cross-check the per-type split + seed the blended edge.
  *   • per-lever realized reward cost (rakeback / affiliate / deposit bonus /
  *     race) ← `sumLedgerTypes` over the real ledger type(s) for each lever,
  *       under the SAME canonical scope, so the lever costs reconcile with NGR.
- *   • rakeback per-cadence rates ← `getRakebackConfigs()` → `rakeback_config`
- *       (real: daily 0.25% / weekly 0.1% / monthly 0.05% — whatever the DB says).
+ *   • daily-pack giveaway cost ← `getDailyPacksTotalCost` (Σ card value out).
+ *   • signup balance-reward cost + avg grant ← `getSignupOverview`.
+ *   • net rain cost ← `getWindowMetrics().rainHouseCost` (owner-confirmed
+ *       `max(0, rain_win − rain_tip)`).
+ *   • rakeback per-cadence rates ← `getRakebackConfigs()` → `rakeback_config`.
  *   • affiliate per-tier rates + thresholds ← `getAffiliateLevelConfigs()` →
- *       `affiliate_level_configs` (real ladder, e.g. 8 tiers 3%→10%).
+ *       `affiliate_level_configs`.
  *   • blended affiliate rate + referred-wager anchor ← `getAffiliateOverview`.
  *
  * Active-timeframe-only (CLAUDE.md): the page mounts ONE baseline per `?period=`
@@ -57,14 +88,20 @@ const AFFILIATE_TYPES = [
 const DEPOSIT_BONUS_TYPES = ["deposit_bonus"] as const;
 const RACE_TYPES = ["race_prize"] as const;
 
+/**
+ * Backend-enforced deposit-bonus baseline reference (per the discovery — these
+ * live in the GAME backend, not this admin). Surfaced as the lever's reference
+ * point; the lever models the proportional cost effect of changing the cap /
+ * window, it does NOT write them.
+ */
+const DEPOSIT_BONUS_BASELINE_CAP_USD = 100;
+const DEPOSIT_BONUS_BASELINE_WINDOW_HOURS = 24;
+
 /** Map an InsightsRewardsPeriod onto a canonical `MetricWindow` (lifetime bounded). */
-function windowFor(period: InsightsRewardsPeriod): { since: Date | null } {
-  if (period === "all") {
-    // Bound lifetime so the canonical scans don't go full-history (CLAUDE.md
-    // "Active-Timeframe-Only" — lifetime windows must be capped).
-    const days = daysForInsightsPeriodCapped(period);
-    return { since: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
-  }
+function windowFor(period: InsightsRewardsPeriod): MetricWindow {
+  // Bound lifetime so the canonical scans don't go full-history (CLAUDE.md
+  // "Active-Timeframe-Only" — lifetime windows must be capped). Finite windows
+  // resolve to their day count directly.
   const days = daysForInsightsPeriodCapped(period);
   return { since: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
 }
@@ -72,6 +109,166 @@ function windowFor(period: InsightsRewardsPeriod): { since: Date | null } {
 function normalizeCadence(type: string): RakebackCadenceId | null {
   if (type === "daily" || type === "weekly" || type === "monthly") return type;
   return null;
+}
+
+/** Inline `AND created_at >= <since>` clause (since is always set by windowFor). */
+function sinceClause(column: string, since: Date | null): string {
+  if (since === null) return "";
+  return `AND ${column} >= '${since.toISOString()}'::timestamptz`;
+}
+
+/**
+ * Per-type pack/battle gaming legs — the per-type split of the canonical
+ * `getGamingLegs` ledger + inventory reads.
+ *
+ * This mirrors `getGamingLegs` EXACTLY (same canonical session-window scope,
+ * same `WAGER_LEG_FILTER` / `PAYOUT_LEG_FILTER` borrow + reward-pack
+ * exclusions) but partitions the sums by game type:
+ *   • WAGER:  pack_opening → packs · battle_bet + battle_sponsorship → battles
+ *   • PAYOUT: user_inventory.source_type='pack' → packs · 'battle' → battles
+ *
+ * So packs.wager + battles.wager = the canonical ledger wager (excl. upgrader),
+ * and packs.payout + battles.payout = the canonical inventory + battle-refund
+ * payout — i.e. the two types reconcile with the headline by construction.
+ * Upgrader is added separately by the caller from `upgraderMetrics`.
+ */
+type PackBattleLegs = {
+  packsWager: number;
+  battlesWager: number;
+  packsBets: number;
+  battlesBets: number;
+  packsInvPayout: number;
+  battlesInvPayout: number;
+  /** Ledger cash gaming payout (battle_refund + battle_excess_to_voucher) — all battles. */
+  battlesLedgerPayout: number;
+};
+
+async function getPackBattleLegs(window: MetricWindow): Promise<PackBattleLegs> {
+  const db = await getDb();
+  const scope = await getMetricsScope();
+  const since = window.since;
+
+  type WagerRow = {
+    packs_wager: string;
+    battles_wager: string;
+    packs_bets: string;
+    battles_bets: string;
+  };
+  type InvRow = { packs_inv: string; battles_inv: string };
+  type LedgerPayoutRow = { battle_refund: string };
+
+  const [wagerRows, invRows, ledgerPayoutRows] = await Promise.all([
+    db.$queryRawUnsafe<WagerRow[]>(
+      `WITH ${scope.sessionWindowsCte}
+       SELECT
+         COALESCE(SUM(CASE WHEN type::text = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS packs_wager,
+         COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battles_wager,
+         COALESCE(SUM(CASE WHEN type::text = 'pack_opening' THEN 1 ELSE 0 END), 0)::text AS packs_bets,
+         COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') THEN 1 ELSE 0 END), 0)::text AS battles_bets
+       FROM ledger_transactions
+       WHERE status = 'completed'
+         AND type::text IN ${WAGER_TYPES_SQL}
+         AND user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("user_id", "created_at")}
+         ${sinceClause("created_at", since)}
+         AND ${WAGER_LEG_FILTER}`,
+    ),
+    db.$queryRawUnsafe<InvRow[]>(
+      `WITH ${scope.sessionWindowsCte}
+       SELECT
+         COALESCE(SUM(CASE WHEN source_type = 'pack' THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS packs_inv,
+         COALESCE(SUM(CASE WHEN source_type = 'battle' THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS battles_inv
+       FROM user_inventory
+       WHERE source_type IN ('pack','battle')
+         AND user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("user_id", "obtained_at")}
+         ${sinceClause("obtained_at", since)}
+         AND ${PAYOUT_LEG_FILTER}`,
+    ),
+    db.$queryRawUnsafe<LedgerPayoutRow[]>(
+      `WITH ${scope.sessionWindowsCte}
+       SELECT
+         COALESCE(SUM(ABS(amount::numeric)), 0)::text AS battle_refund
+       FROM ledger_transactions
+       WHERE status = 'completed'
+         AND type::text IN ${GAMING_PAYOUT_TYPES_SQL}
+         AND user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("user_id", "created_at")}
+         ${sinceClause("created_at", since)}`,
+    ),
+  ]);
+
+  return {
+    packsWager: toNumber(wagerRows[0]?.packs_wager),
+    battlesWager: toNumber(wagerRows[0]?.battles_wager),
+    packsBets: toNumber(wagerRows[0]?.packs_bets),
+    battlesBets: toNumber(wagerRows[0]?.battles_bets),
+    packsInvPayout: toNumber(invRows[0]?.packs_inv),
+    battlesInvPayout: toNumber(invRows[0]?.battles_inv),
+    battlesLedgerPayout: toNumber(ledgerPayoutRows[0]?.battle_refund),
+  };
+}
+
+/**
+ * Build the per-type gaming baseline (packs / battles / upgrader). The
+ * battle_refund + battle_excess_to_voucher ledger payout legs are attributed to
+ * BATTLES (they are battle-win settlement legs), so packs.payout is purely the
+ * pack inventory delta. The three types' wager + payout sum to the canonical
+ * `getGamingLegs` totals.
+ */
+function buildGameTypes(
+  legs: PackBattleLegs,
+  upg: { wager: number; payout: number; bets: number } | null,
+): GameTypeBaseline[] {
+  const packsPayout = legs.packsInvPayout;
+  const battlesPayout = legs.battlesInvPayout + legs.battlesLedgerPayout;
+
+  const packs: GameTypeBaseline = {
+    type: "packs",
+    wager: legs.packsWager,
+    payout: packsPayout,
+    ggr: legs.packsWager - packsPayout,
+    edge: empiricalHouseEdge({
+      wager: legs.packsWager,
+      ggr: legs.packsWager - packsPayout,
+      bets: legs.packsBets,
+    }),
+    bets: legs.packsBets,
+    dataAvailable: legs.packsWager > 0,
+  };
+  const battles: GameTypeBaseline = {
+    type: "battles",
+    wager: legs.battlesWager,
+    payout: battlesPayout,
+    ggr: legs.battlesWager - battlesPayout,
+    edge: empiricalHouseEdge({
+      wager: legs.battlesWager,
+      ggr: legs.battlesWager - battlesPayout,
+      bets: legs.battlesBets,
+    }),
+    bets: legs.battlesBets,
+    dataAvailable: legs.battlesWager > 0,
+  };
+  const upgrader: GameTypeBaseline = {
+    type: "upgrader",
+    wager: upg?.wager ?? 0,
+    payout: upg?.payout ?? 0,
+    ggr: (upg?.wager ?? 0) - (upg?.payout ?? 0),
+    edge:
+      upg != null
+        ? empiricalHouseEdge({
+            wager: upg.wager,
+            ggr: upg.wager - upg.payout,
+            bets: upg.bets,
+          })
+        : null,
+    bets: upg?.bets ?? 0,
+    // Upgrader figures only come from `upgrader_games`; null = no table on this
+    // DB (pre-upgrader snapshot) → surface the lever but label it not-wired.
+    dataAvailable: upg != null,
+  };
+
+  return [packs, battles, upgrader];
 }
 
 /**
@@ -89,10 +286,14 @@ async function buildBaseline(
 
   const [
     metricsRes,
+    legsRes,
+    upgRes,
     rakebackCostRes,
     affiliateCostRes,
     depositBonusCostRes,
     raceCostRes,
+    dailyPacksRes,
+    signupRes,
     rakebackCfgRes,
     affiliateCfgRes,
     affiliateOvRes,
@@ -101,6 +302,16 @@ async function buildBaseline(
       () => getWindowMetrics({ window }),
       null,
       "system-edge-plan.metrics",
+    ),
+    safeQuery(
+      () => getPackBattleLegs(window),
+      null,
+      "system-edge-plan.pack-battle-legs",
+    ),
+    safeQuery(
+      () => upgraderMetrics(window),
+      null,
+      "system-edge-plan.upgrader",
     ),
     safeQuery(
       () => sumLedgerTypes({ types: RAKEBACK_TYPES, window }),
@@ -123,6 +334,16 @@ async function buildBaseline(
       "system-edge-plan.race-cost",
     ),
     safeQuery(
+      () => getDailyPacksTotalCost(period),
+      null,
+      "system-edge-plan.daily-packs",
+    ),
+    safeQuery(
+      () => getSignupOverview(period),
+      null,
+      "system-edge-plan.signup",
+    ),
+    safeQuery(
       () => getRakebackConfigs(),
       [],
       "system-edge-plan.rakeback-config",
@@ -140,28 +361,94 @@ async function buildBaseline(
   ]);
 
   const metrics = metricsRes.data;
-  const wager = metrics?.wager ?? 0;
-  const gamingPayout = metrics?.gamingPayout ?? 0;
-  const ggr = metrics?.ggr ?? 0;
-  const houseEdge = metrics?.houseEdge ?? null;
-  const bets = metrics?.bets ?? 0;
+
+  // Per-type gaming legs (real). When the legs read failed, fall back to a
+  // single blended "packs" row carrying the canonical headline so the page
+  // still renders a real projection rather than zeros.
+  const legs = legsRes.data;
+  const upg = upgRes.data ?? null;
+  let gameTypes: GameTypeBaseline[];
+  if (legs != null) {
+    gameTypes = buildGameTypes(legs, upg);
+  } else {
+    // Degraded: no per-type split available — represent the headline as a
+    // single combined row so the model still has real anchors.
+    const wager = metrics?.wager ?? 0;
+    const payout = metrics?.gamingPayout ?? 0;
+    gameTypes = [
+      {
+        type: "packs",
+        wager,
+        payout,
+        ggr: wager - payout,
+        edge: metrics?.houseEdge ?? null,
+        bets: metrics?.bets ?? 0,
+        dataAvailable: wager > 0,
+      },
+      {
+        type: "battles",
+        wager: 0,
+        payout: 0,
+        ggr: 0,
+        edge: null,
+        bets: 0,
+        dataAvailable: false,
+      },
+      {
+        type: "upgrader",
+        wager: 0,
+        payout: 0,
+        ggr: 0,
+        edge: null,
+        bets: 0,
+        dataAvailable: upg != null,
+      },
+    ];
+  }
+
+  const wager = gameTypes.reduce((s, g) => s + g.wager, 0);
+  const gamingPayout = gameTypes.reduce((s, g) => s + g.payout, 0);
+  const ggr = wager - gamingPayout;
+  const bets = gameTypes.reduce((s, g) => s + g.bets, 0);
+  const houseEdge =
+    metrics?.houseEdge ?? (wager > 0 ? ggr / wager : null);
 
   const rakebackCost = rakebackCostRes.data ?? 0;
   const affiliateCost = affiliateCostRes.data ?? 0;
   const depositBonusCost = depositBonusCostRes.data ?? 0;
   const raceCost = raceCostRes.data ?? 0;
+  const dailyPacksCost = dailyPacksRes.data?.cost ?? 0;
+  const signupPacksCost = signupRes.data?.totalCost ?? 0;
+  const signupClaimants = signupRes.data?.claimants ?? 0;
+  const signupAvgGrant =
+    signupRes.data != null && signupRes.data.claimants > 0
+      ? signupRes.data.avgPerClaim
+      : null;
+  const rainCost = metrics?.rainHouseCost ?? 0;
 
-  // Other reward cost = the canonical total reward cost (GGR − NGR) minus the
-  // four levers we itemize, so the planner's reward sum reconciles with NGR. The
-  // remainder is gift cards / promo / waitlist / balance reward / manual
-  // vouchers + counted adjustments + net rain — held fixed (no lever), surfaced
-  // as an informational line.
-  const canonicalRewardCost =
-    metrics != null ? metrics.ggr - metrics.ngr : 0;
-  const otherRewardCost = Math.max(
-    0,
-    canonicalRewardCost - rakebackCost - affiliateCost - depositBonusCost - raceCost,
-  );
+  // Other reward cost = the canonical total reward cost (GGR − NGR) minus every
+  // lever we itemize, so the planner's reward sum reconciles with NGR. The
+  // remainder is gift cards / promo / waitlist / manual vouchers + counted
+  // adjustments — held fixed (no lever), surfaced as an informational line.
+  //
+  // NOTE: the canonical NGR's reward cost includes the daily-pack giveaway via
+  // the inventory leg? No — daily packs are EXCLUDED from gaming (Fix 2) and
+  // their cost is NOT in the ledger (no ledger row), so the canonical NGR does
+  // NOT carry the daily-pack cost. Likewise signup balance_reward_claim IS a
+  // ledger reward type, so it IS in the canonical reward cost. To avoid
+  // double-counting, `otherRewardCost` subtracts only the LEDGER-resident
+  // levers (rakeback / affiliate / deposit bonus / race / signup / rain) from
+  // the canonical reward cost; daily packs are added on top as a separate,
+  // non-ledger cost the canonical NGR never included.
+  const canonicalRewardCost = metrics != null ? metrics.ggr - metrics.ngr : 0;
+  const ledgerLeverCost =
+    rakebackCost +
+    affiliateCost +
+    depositBonusCost +
+    raceCost +
+    signupPacksCost +
+    rainCost;
+  const otherRewardCost = Math.max(0, canonicalRewardCost - ledgerLeverCost);
 
   // Real rakeback cadences (daily / weekly / monthly) from rakeback_config.
   const rakebackCadences: RakebackCadenceLever[] = (rakebackCfgRes.data ?? [])
@@ -200,38 +487,32 @@ async function buildBaseline(
   return {
     periodLabel: insightsRewardsPeriodLabel(period),
     periodDays,
+
+    gameTypes,
     wager,
     gamingPayout,
     ggr,
     houseEdge,
     bets,
+
     rakebackCost,
     affiliateCost,
     depositBonusCost,
     raceCost,
+    dailyPacksCost,
+    signupPacksCost,
+    rainCost,
     otherRewardCost,
+
     rakebackCadences,
     affiliateTiers,
     affiliateBlendedRate,
-    // Upgrader→rakeback weighting is 100% (unweighted) in production — the real
-    // current value. The lever lets the owner model down-weighting it.
-    upgraderRakebackWeight: 1,
-    // Real upgrader wager slice (0 on a pre-upgrader DB). Sizes how much of the
-    // rakeback cost the upgrader-weight lever can move. Sourced from the
-    // canonical legs would require a separate read; the upgrader wager is folded
-    // into `metrics.wager` but not separable from the WindowMetrics rollup, so
-    // we leave it at 0 here (the lever then has no slice to act on and stays
-    // neutral) rather than fabricate a split. Reserved for a future wire-up to
-    // `upgraderMetrics` if a per-game rakeback split is needed.
-    upgraderWager: 0,
-    // Raffle ticket rate lives in the MAIN game backend (not this admin repo),
-    // per the discovery — null here. The raffle lever is therefore a
-    // proportional cost multiplier, not an absolute rate.
-    raffleTicketRate: null,
-    // Raffle prize cost is reconstructed elsewhere and has no dedicated ledger
-    // type; we do NOT fabricate it here. 0 = no raffle lever movement until a
-    // real raffle-cost anchor is threaded.
-    raffleCost: 0,
+
+    signupAvgGrant,
+    signupClaimants,
+
+    depositBonusCapUsd: DEPOSIT_BONUS_BASELINE_CAP_USD,
+    depositBonusWindowHours: DEPOSIT_BONUS_BASELINE_WINDOW_HOURS,
   };
 }
 
@@ -254,7 +535,7 @@ export async function getSystemEdgeBaseline(
 ): Promise<SystemEdgeBaseline> {
   const cached = unstable_cache(
     () => buildBaseline(period),
-    ["system-edge-plan-baseline", period],
+    ["system-edge-plan-baseline-v2", period],
     { revalidate: cacheTtlForInsightsPeriod(period) },
   );
   return cached();

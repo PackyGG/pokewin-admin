@@ -10,43 +10,90 @@
  *
  * ─── What this models ───────────────────────────────────────────────────────
  *
- * A read-only PLANNING tool. The owner tunes the reward-system levers and sees
- * the PROJECTED house profit at the planned config, plus the DELTA (savings /
- * extra cost) vs the CURRENT real config. It NEVER writes live data — the levers
- * are client-side what-ifs feeding this pure projection.
+ * A read-only PLANNING tool: a "full edge / reward system" the owner can play
+ * future updates with. They tune EVERY system lever and see the PROJECTED house
+ * profit at the planned config, plus the DELTA (savings / extra cost) vs the
+ * CURRENT real config — over the window, and extrapolated to a month / a year.
+ * It NEVER writes live data; the levers are client-side what-ifs feeding this
+ * pure projection.
  *
  * ─── The canonical identity (house POV, per CLAUDE.md + the metrics layer) ──
  *
- *   GGR  = houseEdge × wager                 (gaming-only gross margin)
- *   NGR  = GGR − Σ(reward-lever costs)        (profit after house-funded giveaways)
+ *   GGR_type = edge_type × wager_type            (per game type)
+ *   GGR      = Σ GGR_type                         (packs + battles + upgrader)
+ *   NGR      = GGR − Σ(reward-lever costs)        (profit after house giveaways)
  *
  * This is the SAME GGR/NGR shape the canonical `@/lib/metrics/formulas.ts`
  * encodes (`ggr = wager − gamingPayout`; `houseEdge = GGR / wager`, so
- * `GGR = houseEdge × wager`; `ngr = GGR − rewardCost`). The reward-cost side is
- * itemized per lever so each lever's contribution — and the effect of tuning it
- * — is explicit.
+ * `GGR = houseEdge × wager`; `ngr = GGR − rewardCost`), split per game type on
+ * the GGR side and itemized per lever on the reward-cost side so each lever's
+ * contribution — and the effect of tuning it — is explicit.
  *
  * ─── Grounded on REAL production numbers (NEVER invented) ───────────────────
  *
  * The CURRENT config + the anchors all come from real data, read at request
  * time (see `_baseline.ts`):
- *   • wager / GGR / empirical house edge ← `getWindowMetrics` (canonical scope).
+ *   • per-type wager / payout / empirical edge ← a per-type split of the
+ *     canonical `getGamingLegs` reads (packs vs battles vs upgrader) under the
+ *     SAME canonical real-customer, borrow-corrected scope — so the three types
+ *     sum to the canonical headline GGR by construction.
  *   • per-lever reward cost ← `sumLedgerTypes` over the real ledger type per
  *     lever (rakeback_claim, affiliate_claim + affiliate_leaderboard_prize,
- *     deposit_bonus, race_prize), under the same canonical customer scope.
+ *     deposit_bonus, race_prize), the canonical net rain, the daily-pack
+ *     giveaway, and the signup balance-reward cost — all under the same scope.
  *   • rakeback per-cadence rates ← real `rakeback_config` (getRakebackConfigs).
  *   • affiliate per-tier rates ← real `affiliate_level_configs`
  *     (getAffiliateLevelConfigs).
  *
  * Every lever's "current" value is its REAL value; the projection scales the
- * real baseline by the ratio (planned ÷ current) so the model is anchored to
- * actual production volume rather than a synthetic forecast. When a lever has no
- * direct rate knob in the admin (deposit bonus, raffle, upgrader weighting), the
- * lever is a proportional MULTIPLIER on the real cost — clearly labeled as such
- * in the UI — never a fabricated absolute rate.
+ * real baseline so the model is anchored to actual production volume rather than
+ * a synthetic forecast. Wager is HELD at the observed volume so the deltas are
+ * pure config effects (the honest, defensible planning number). Where a lever
+ * has no direct rate knob in the admin (deposit-bonus cap, raffle ticket rate,
+ * daily-pack frequency), the lever scales the real realized cost proportionally
+ * — clearly LABELED as such in the UI — never a fabricated absolute rate.
  */
 
-// ─── Affiliate tiers (the real ladder, collapsed onto a planner shape) ──────
+// ─── Game types (per-type edge — the owner's #1 ask) ────────────────────────
+
+export type GameTypeId = "packs" | "battles" | "upgrader";
+
+export const GAME_TYPE_IDS: readonly GameTypeId[] = [
+  "packs",
+  "battles",
+  "upgrader",
+] as const;
+
+export function gameTypeLabel(t: GameTypeId): string {
+  return t === "packs" ? "Packs" : t === "battles" ? "Battles" : "Upgrader";
+}
+
+/** One game type's REAL gaming anchors over the window (house POV). */
+export type GameTypeBaseline = {
+  type: GameTypeId;
+  /** Real Σ wager for this type over the window (borrow-corrected, real customers). */
+  wager: number;
+  /** Real Σ gaming payout returned to users for this type. */
+  payout: number;
+  /** Real GGR = wager − payout for this type. */
+  ggr: number;
+  /**
+   * Real empirical house edge as a 0..1 fraction (GGR / wager), or null when
+   * below MIN_SAMPLE / no wager. The lever seeds from this when present, else
+   * from GGR/wager directly (flagged low-confidence in the UI).
+   */
+  edge: number | null;
+  /** Settled bets for this type (the empirical-edge sample size). */
+  bets: number;
+  /**
+   * False when this type's figures are not separable from real data in this
+   * snapshot (e.g. upgrader on a pre-upgrader DB). The lever is still SURFACED
+   * but clearly labeled "not yet wired" and contributes 0.
+   */
+  dataAvailable: boolean;
+};
+
+// ─── Affiliate tiers (the real ladder) ──────────────────────────────────────
 
 /** One affiliate commission tier as the planner tunes it. */
 export type AffiliateTierLever = {
@@ -88,20 +135,18 @@ export type SystemEdgeBaseline = {
   /** Day-span the window covers (lifetime is bounded). Drives monthly/annual scaling. */
   periodDays: number;
 
-  // ── Gaming anchors (real, canonical scope) ──
-  /** Real Σ wager over the window (pack + battle + upgrader), house-POV. */
+  // ── Gaming anchors, per type (real, canonical scope; sum to headline GGR) ──
+  /** Per-type wager / payout / edge / bets. packs + battles + upgrader. */
+  gameTypes: GameTypeBaseline[];
+  /** Real Σ wager over the window across all types (= Σ gameTypes.wager). */
   wager: number;
-  /** Real gaming payout returned to users over the window. */
+  /** Real Σ gaming payout over the window across all types. */
   gamingPayout: number;
   /** Real GGR = wager − gamingPayout. */
   ggr: number;
-  /**
-   * Real empirical house edge as a 0..1 fraction (GGR / wager), or null below
-   * MIN_SAMPLE. When null the planner falls back to deriving edge from
-   * GGR / wager directly (and flags low confidence).
-   */
+  /** Real blended empirical house edge as a 0..1 fraction, or null below sample. */
   houseEdge: number | null;
-  /** Settled bets in the window (the empirical-edge sample size). */
+  /** Settled bets across all types (sample size for the blended edge). */
   bets: number;
 
   // ── Per-lever REAL reward costs over the window ──
@@ -113,12 +158,21 @@ export type SystemEdgeBaseline = {
   depositBonusCost: number;
   /** Real Σ |race_prize| over the window. */
   raceCost: number;
+  /** Real daily / free-pack giveaway cost (Σ value_at_obtained of cards out). */
+  dailyPacksCost: number;
+  /** Real signup balance-reward cost (Σ |balance_reward_claim| for the cohort). */
+  signupPacksCost: number;
   /**
-   * Real Σ of every OTHER house-funded reward leg over the window
-   * (gift_card_redeemed, promo_code_redeemed, waitlist_prize,
-   * balance_reward_claim, manual vouchers + counted adjustments, net rain).
-   * Held fixed by the planner (no lever) so the profit math reconciles with the
-   * canonical NGR — surfaced as an informational "other reward cost" line.
+   * Real house slice of rain over the window = max(0, Σ|rain_win| − Σ|rain_tip|)
+   * — the owner-confirmed net rain model from the canonical metric layer.
+   */
+  rainCost: number;
+  /**
+   * Real Σ of every OTHER house-funded reward leg over the window that this
+   * planner does NOT expose as its own lever (gift_card_redeemed,
+   * promo_code_redeemed, waitlist_prize, manual vouchers + counted
+   * adjustments). Held fixed by the planner so the profit math reconciles with
+   * the canonical NGR — surfaced as an informational "other reward cost" line.
    */
   otherRewardCost: number;
 
@@ -129,32 +183,31 @@ export type SystemEdgeBaseline = {
   affiliateTiers: AffiliateTierLever[];
   /**
    * Blended affiliate commission rate over the window = total commission ÷
-   * referred wager, when both are known; else null. Used only as an
-   * informational note (the per-tier rates drive the projection).
+   * referred wager, when both are known; else null. Informational note only
+   * (the per-tier rates drive the projection).
    */
   affiliateBlendedRate: number | null;
+
+  // ── Real signup-bonus anchors (for the signup-pack lever readout) ──
   /**
-   * CURRENT upgrader→rakeback weighting (real = 1.0 = 100%, per the discovery:
-   * upgrader wager contributes to rakeback at full weight, unweighted). The
-   * lever lets the owner model down-weighting it; at 1.0 it is neutral.
+   * Real measured average signup balance-reward grant (USD per claimant) over
+   * the window, or null when there were no claims. The signup lever's "grant"
+   * control seeds from this. NOT the $5 nominal constant — the live average.
    */
-  upgraderRakebackWeight: number;
+  signupAvgGrant: number | null;
+  /** Real signup claimants in the window (drives the grant-lever cost scaling). */
+  signupClaimants: number;
+
+  // ── Real deposit-bonus anchors (for the deposit-bonus lever readouts) ──
   /**
-   * Real Σ upgrader wager over the window (the slice the upgrader→rakeback
-   * weight lever applies to). 0 on a pre-upgrader DB. Used to size how much of
-   * the rakeback cost the weighting lever can move.
+   * Backend-enforced baseline deposit-bonus cap (USD per window) — the
+   * empirically-anchored reference ($100, per the discovery). The cap is NOT
+   * configurable in this admin; the lever models the proportional cost effect
+   * of changing it. Informational + sizes the cap lever's reference point.
    */
-  upgraderWager: number;
-  /**
-   * Real raffle ticket rate (tickets earned per $X wagered) when the admin
-   * exposes it; otherwise null. Per the discovery this rate lives in the MAIN
-   * game backend (not this admin repo), so when null the raffle lever is a
-   * proportional cost multiplier rather than an absolute rate. Reserved for a
-   * future wire-up if the rate becomes readable.
-   */
-  raffleTicketRate: number | null;
-  /** Real Σ raffle prize cost over the window (reconstructed), or 0 when unknown. */
-  raffleCost: number;
+  depositBonusCapUsd: number;
+  /** Backend-enforced baseline deposit-bonus reset window (hours) — reference. */
+  depositBonusWindowHours: number;
 };
 
 // ─── The planned (tunable) lever values ─────────────────────────────────────
@@ -165,36 +218,99 @@ export type SystemEdgeBaseline = {
  * baseline's REAL values via `defaultLevers(baseline)`.
  */
 export type PlannedLevers = {
-  /**
-   * Planned house edge as a 0..1 fraction. Seeded from the real empirical edge.
-   * Drives projected GGR = edge × wager.
-   */
-  houseEdge: number;
-  /** Planned upgrader→rakeback weight (0..1). Seeded from real (1.0). */
-  upgraderRakebackWeight: number;
+  // ── EDGE — separate per game type (packs / battles / upgrader) ──
+  /** Planned house edge per game type as a 0..1 fraction. Seeds from real edge. */
+  edges: Record<GameTypeId, number>;
+
+  // ── RAKEBACK ──
   /** Planned rakeback rate per cadence (decimal fraction), keyed by cadence. */
   rakebackRates: Record<RakebackCadenceId, number>;
+  /**
+   * How much PACK + BATTLE wager counts toward rakeback (0..1). Real = 1.0
+   * (full weight). Down-weighting shrinks the rakeback accrual from that slice.
+   */
+  rakebackPackBattleWeight: number;
+  /**
+   * How much UPGRADER wager counts toward rakeback (0..1). Real = 1.0 (full
+   * weight, per the discovery). Down-weighting shrinks the upgrader slice's
+   * rakeback contribution.
+   */
+  rakebackUpgraderWeight: number;
+  /**
+   * Instant rakeback-claim payout % (0..1). The fraction of accrued rakeback an
+   * instant claim pays out immediately (the rest of the cadence accrual the
+   * owner keeps). At 1.0 the instant option pays the full accrual (no effect);
+   * BELOW 1.0 it pays a discounted lump that REDUCES the realized rakeback cost
+   * across the adopting share. See `rakebackInstantAdoption`.
+   */
+  rakebackInstantPayoutPct: number;
+  /**
+   * Share of rakeback claimants who take the instant option (0..1). 0 = nobody
+   * (instant lever has no effect); higher = the discount applies to more of the
+   * realized cost. A behavioral planning assumption (clearly labeled).
+   */
+  rakebackInstantAdoption: number;
+
+  // ── AFFILIATE ──
   /** Planned affiliate commission rate per tier level (decimal fraction). */
   affiliateRates: Record<number, number>;
   /**
    * Remove the 1× wager requirement on affiliate commission. Per the discovery
    * the requirement is IMPLICIT (commission vests on referred wager); removing
-   * it widens the commission base, modeled as a cost uplift (more referrals
-   * qualify). Default false (keep the requirement = current behavior).
+   * it widens the commission base, modeled as a cost uplift. Default false
+   * (keep the requirement = current behavior). Clearly labeled what-if.
    */
   removeAffiliateWagerReq: boolean;
+
+  // ── DEPOSIT BONUS — many settings (proportional cost effects) ──
+  /** Match % multiplier (1.0 = current). Doubling the match ≈ doubles the cost. */
+  depositBonusMatchMult: number;
   /**
-   * Deposit-bonus spend multiplier (1.0 = current real spend). No single % knob
-   * exists in the admin (the cap is backend-enforced), so the planner scales the
-   * real deposit-bonus cost proportionally.
+   * Cap multiplier (1.0 = current cap). Raising the cap lets more bonus through
+   * on the abusive / whale tail; a sub-linear scaler models the diminishing
+   * extra cost (most claims are below cap).
    */
-  depositBonusMult: number;
+  depositBonusCapMult: number;
   /**
-   * Raffle ticket-rate multiplier (1.0 = current). A HIGHER ticket rate (more
-   * tickets per $) means more prizes claimed → higher cost; the multiplier
-   * scales the real raffle cost proportionally.
+   * Min-deposit gate multiplier (1.0 = current). RAISING the min deposit filters
+   * out small claimers → LOWER cost; a value < 1 means a lower gate (more
+   * claimers → higher cost). Modeled as an inverse-ish eligibility scaler.
    */
-  raffleTicketRateMult: number;
+  depositBonusMinDepositMult: number;
+  /**
+   * Wager-requirement multiplier (1.0 = current). A higher wager requirement
+   * raises breakage (more bonus expires unwagered) → LOWER realized cost.
+   */
+  depositBonusWagerReqMult: number;
+
+  // ── RAFFLE — many settings (proportional cost effects) ──
+  /** Prize-pool multiplier (1.0 = current). Cost scales ~linearly with the pool. */
+  rafflePrizePoolMult: number;
+  /** Draw-frequency multiplier (1.0 = current). More draws ⇒ more prize cost. */
+  raffleFrequencyMult: number;
+  /**
+   * Ticket-rate / entry-cost multiplier (1.0 = current). A HIGHER ticket cost
+   * (harder to enter) trims farming leakage → slightly LOWER cost; a lower cost
+   * loosens entry → higher cost. Modeled as a mild proportional scaler.
+   */
+  raffleTicketCostMult: number;
+
+  // ── DAILY PACKS — full lever (value + frequency) ──
+  /** Card-value multiplier (1.0 = current). Richer daily packs ⇒ more cost. */
+  dailyPacksValueMult: number;
+  /** Frequency multiplier (1.0 = current). More frequent grants ⇒ more cost. */
+  dailyPacksFrequencyMult: number;
+
+  // ── SIGNUP PACKS — grant lever ──
+  /**
+   * Signup grant per claimant (USD). Seeds from the real measured average. Cost
+   * scales linearly: claimants × grant.
+   */
+  signupGrantUsd: number;
+
+  // ── RAIN ──
+  /** Rain giveaway cost multiplier (1.0 = current net rain cost). */
+  rainCostMult: number;
 };
 
 /**
@@ -206,8 +322,34 @@ export type PlannedLevers = {
  */
 export const REMOVE_WAGER_REQ_COST_UPLIFT = 0.15 as const;
 
+/**
+ * How strongly raising the deposit-bonus CAP adds cost. Most claims sit below
+ * the cap, so doubling the cap does NOT double the cost — only the slice that
+ * was clipped at the old cap grows. A sub-linear exponent models that: extra
+ * cost ∝ capMult^CAP_COST_EXPONENT. 0.45 ⇒ a 2× cap ≈ +37% cost (only the tail
+ * that was clipped). Conservative, clearly-labeled planning assumption.
+ */
+export const DEPOSIT_BONUS_CAP_COST_EXPONENT = 0.45 as const;
+
+/**
+ * Daily-pack default card-value multiplier seed. The real value is the measured
+ * giveaway cost; the lever scales it. (No separate constant needed — kept here
+ * only to document that 1.0 is the real anchor.)
+ */
+
+// ─── Lever seeding ───────────────────────────────────────────────────────────
+
 /** Seed the planner's lever state from the REAL baseline (current = planned at open). */
 export function defaultLevers(baseline: SystemEdgeBaseline): PlannedLevers {
+  const edges: Record<GameTypeId, number> = {
+    packs: 0,
+    battles: 0,
+    upgrader: 0,
+  };
+  for (const g of baseline.gameTypes) {
+    edges[g.type] = effectiveTypeEdge(g);
+  }
+
   const rakebackRates: Record<RakebackCadenceId, number> = {
     daily: 0,
     weekly: 0,
@@ -216,25 +358,58 @@ export function defaultLevers(baseline: SystemEdgeBaseline): PlannedLevers {
   for (const c of baseline.rakebackCadences) {
     rakebackRates[c.cadence] = c.currentRate;
   }
+
   const affiliateRates: Record<number, number> = {};
   for (const t of baseline.affiliateTiers) {
     affiliateRates[t.level] = t.currentRate;
   }
+
   return {
-    houseEdge: effectiveBaselineEdge(baseline),
-    upgraderRakebackWeight: baseline.upgraderRakebackWeight,
+    edges,
+
     rakebackRates,
+    rakebackPackBattleWeight: 1,
+    rakebackUpgraderWeight: 1,
+    // Instant claim defaults to a no-op: pays the full accrual to nobody, so it
+    // doesn't move the baseline until the owner dials it in.
+    rakebackInstantPayoutPct: 1,
+    rakebackInstantAdoption: 0,
+
     affiliateRates,
     removeAffiliateWagerReq: false,
-    depositBonusMult: 1,
-    raffleTicketRateMult: 1,
+
+    depositBonusMatchMult: 1,
+    depositBonusCapMult: 1,
+    depositBonusMinDepositMult: 1,
+    depositBonusWagerReqMult: 1,
+
+    rafflePrizePoolMult: 1,
+    raffleFrequencyMult: 1,
+    raffleTicketCostMult: 1,
+
+    dailyPacksValueMult: 1,
+    dailyPacksFrequencyMult: 1,
+
+    signupGrantUsd: baseline.signupAvgGrant ?? 0,
+
+    rainCostMult: 1,
   };
 }
 
 /**
- * The house edge to seed the planner with: the real empirical edge when the
- * sample is large enough, else derived from GGR / wager (the same quantity,
+ * The house edge to seed a game-type lever with: the real empirical edge when
+ * the sample is large enough, else derived from GGR / wager (the same quantity,
  * just below the sample-confidence gate). Clamped to a sane 0..1 band.
+ */
+export function effectiveTypeEdge(g: GameTypeBaseline): number {
+  const raw =
+    g.edge != null ? g.edge : g.wager > 0 ? g.ggr / g.wager : 0;
+  return clamp(raw, 0, 1);
+}
+
+/**
+ * The blended baseline edge across all types (real GGR / real wager). Used for
+ * the headline "current edge" readout. Clamped 0..1.
  */
 export function effectiveBaselineEdge(baseline: SystemEdgeBaseline): number {
   const raw =
@@ -248,6 +423,20 @@ export function effectiveBaselineEdge(baseline: SystemEdgeBaseline): number {
 
 // ─── The projection ──────────────────────────────────────────────────────────
 
+/** A single game type's current-vs-planned GGR contribution. */
+export type GameTypeProjection = {
+  type: GameTypeId;
+  label: string;
+  wager: number;
+  currentEdge: number;
+  plannedEdge: number;
+  currentGgr: number;
+  plannedGgr: number;
+  /** plannedGgr − currentGgr (positive = MORE house GGR = better). */
+  ggrDelta: number;
+  dataAvailable: boolean;
+};
+
 /** A single lever's current-vs-planned cost contribution. */
 export type LeverProjection = {
   /** Stable key. */
@@ -260,6 +449,8 @@ export type LeverProjection = {
   plannedCost: number;
   /** plannedCost − currentCost (positive = MORE house cost = worse). */
   deltaCost: number;
+  /** When false, the lever is surfaced but has no real anchor (estimated). */
+  dataAvailable: boolean;
 };
 
 export type EdgePlanProjection = {
@@ -294,6 +485,9 @@ export type EdgePlanProjection = {
   /** profitDelta scaled to a 365-day year. */
   annualProfitDelta: number;
 
+  // ── Per-type GGR breakdown ──
+  gameTypes: GameTypeProjection[];
+
   // ── Per-lever cost breakdown (for the comparison table / chart) ──
   levers: LeverProjection[];
 };
@@ -303,87 +497,141 @@ export type EdgePlanProjection = {
  * the planned levers, returns every figure the UI renders. No DB, no clock.
  *
  * Model:
- *   plannedGGR  = plannedEdge × wager                  (wager held at real volume)
- *   leverCost_i = realCost_i × (plannedRate_i / currentRate_i)   (proportional)
- *   plannedNGR  = plannedGGR − Σ leverCost_i − otherRewardCost
- *   profitDelta = plannedNGR − currentNGR
+ *   plannedGGR_type = plannedEdge_type × wager_type     (wager held at real volume)
+ *   plannedGGR      = Σ plannedGGR_type
+ *   leverCost_i     = realCost_i × f_i(planned)         (per-lever scaler)
+ *   plannedNGR      = plannedGGR − Σ leverCost_i − otherRewardCost
+ *   profitDelta     = plannedNGR − currentNGR
  *
  * Wager is held at the REAL observed volume (no elasticity guess) so the model
  * stays grounded and the deltas are pure config effects — the honest, defensible
- * planning number. (Elasticity is a separate behavioral assumption the existing
- * per-reward forecast engine models; this unified planner deliberately reports
- * the direct config impact at constant volume.)
+ * planning number. (If a lever logically changes volume, that is a separate
+ * behavioral assumption the per-reward forecast engines model; this unified
+ * planner deliberately reports the direct config impact at constant volume.)
  */
 export function projectEdgePlan(
   baseline: SystemEdgeBaseline,
   planned: PlannedLevers,
 ): EdgePlanProjection {
+  // ── Per-type GGR ──
+  const gameTypes: GameTypeProjection[] = baseline.gameTypes.map((g) => {
+    const currentEdge = effectiveTypeEdge(g);
+    const plannedEdge = clamp(planned.edges[g.type] ?? currentEdge, 0, 1);
+    const currentGgr = currentEdge * g.wager;
+    const plannedGgr = plannedEdge * g.wager;
+    return {
+      type: g.type,
+      label: gameTypeLabel(g.type),
+      wager: g.wager,
+      currentEdge,
+      plannedEdge,
+      currentGgr,
+      plannedGgr,
+      ggrDelta: plannedGgr - currentGgr,
+      dataAvailable: g.dataAvailable,
+    };
+  });
+
   const wager = baseline.wager;
-  const currentEdge = effectiveBaselineEdge(baseline);
-  const plannedEdge = clamp(planned.houseEdge, 0, 1);
+  const currentGgr = gameTypes.reduce((s, g) => s + g.currentGgr, 0);
+  const plannedGgr = gameTypes.reduce((s, g) => s + g.plannedGgr, 0);
+  const currentEdge = wager > 0 ? currentGgr / wager : 0;
+  const plannedEdge = wager > 0 ? plannedGgr / wager : 0;
 
-  const currentGgr = currentEdge * wager;
-  const plannedGgr = plannedEdge * wager;
+  // ── Rakeback (per-cadence blend × per-type weighting × instant discount) ──
+  const rakeback = projectRakeback(baseline, planned);
 
-  // ── Rakeback ──
-  // Real rakeback cost is the realized Σ over all cadences. We scale it by the
-  // ratio of the planned blended rate to the current blended rate, where the
-  // blend is weighted by each cadence's share of the current cost (cadences
-  // with more realized cost dominate). The upgrader→rakeback weight further
-  // scales the upgrader slice of wager's contribution.
-  const rakebackProjection = projectRakeback(baseline, planned);
+  // ── Affiliate (per-tier blend × 1× wager-req uplift) ──
+  const affiliate = projectAffiliate(baseline, planned);
 
-  // ── Affiliate ──
-  const affiliateProjection = projectAffiliate(baseline, planned);
+  // ── Deposit bonus (compose the four setting multipliers) ──
+  const depositBonusFactor =
+    Math.max(0, planned.depositBonusMatchMult) *
+    Math.pow(Math.max(0, planned.depositBonusCapMult), DEPOSIT_BONUS_CAP_COST_EXPONENT) *
+    eligibilityFactor(planned.depositBonusMinDepositMult) *
+    breakageFactor(planned.depositBonusWagerReqMult);
+  const depositBonusPlanned = baseline.depositBonusCost * depositBonusFactor;
 
-  // ── Deposit bonus (proportional multiplier on real cost) ──
-  const depositBonusCurrent = baseline.depositBonusCost;
-  const depositBonusPlanned =
-    depositBonusCurrent * Math.max(0, planned.depositBonusMult);
+  // ── Raffle (pool × frequency × ticket-cost) ──
+  const raffleFactor =
+    Math.max(0, planned.rafflePrizePoolMult) *
+    Math.max(0, planned.raffleFrequencyMult) *
+    ticketCostFactor(planned.raffleTicketCostMult);
+  const rafflePlanned = baseline.raceCost * raffleFactor;
 
-  // ── Race (held fixed — not a tunable lever in this planner, but surfaced) ──
-  const raceCurrent = baseline.raceCost;
-  const racePlanned = raceCurrent;
+  // ── Daily packs (value × frequency) ──
+  const dailyPacksFactor =
+    Math.max(0, planned.dailyPacksValueMult) *
+    Math.max(0, planned.dailyPacksFrequencyMult);
+  const dailyPacksPlanned = baseline.dailyPacksCost * dailyPacksFactor;
 
-  // ── Raffle (proportional multiplier on real cost) ──
-  const raffleCurrent = baseline.raffleCost;
-  const rafflePlanned = raffleCurrent * Math.max(0, planned.raffleTicketRateMult);
+  // ── Signup packs (claimants × planned grant) ──
+  const signupPlanned =
+    baseline.signupClaimants * Math.max(0, planned.signupGrantUsd);
+
+  // ── Rain (proportional multiplier on the real net rain cost) ──
+  const rainPlanned = baseline.rainCost * Math.max(0, planned.rainCostMult);
+
+  const hasUpgrader = baseline.gameTypes.some(
+    (g) => g.type === "upgrader" && g.dataAvailable,
+  );
 
   const levers: LeverProjection[] = [
     {
       key: "rakeback",
       label: "Rakeback",
-      currentCost: rakebackProjection.current,
-      plannedCost: rakebackProjection.planned,
-      deltaCost: rakebackProjection.planned - rakebackProjection.current,
+      currentCost: rakeback.current,
+      plannedCost: rakeback.planned,
+      deltaCost: rakeback.planned - rakeback.current,
+      dataAvailable: baseline.rakebackCost > 0,
     },
     {
       key: "affiliate",
       label: "Affiliate commission",
-      currentCost: affiliateProjection.current,
-      plannedCost: affiliateProjection.planned,
-      deltaCost: affiliateProjection.planned - affiliateProjection.current,
+      currentCost: affiliate.current,
+      plannedCost: affiliate.planned,
+      deltaCost: affiliate.planned - affiliate.current,
+      dataAvailable: baseline.affiliateCost > 0,
     },
     {
       key: "deposit-bonus",
       label: "Deposit bonus",
-      currentCost: depositBonusCurrent,
+      currentCost: baseline.depositBonusCost,
       plannedCost: depositBonusPlanned,
-      deltaCost: depositBonusPlanned - depositBonusCurrent,
+      deltaCost: depositBonusPlanned - baseline.depositBonusCost,
+      dataAvailable: baseline.depositBonusCost > 0,
     },
     {
       key: "raffle",
-      label: "Raffle prizes",
-      currentCost: raffleCurrent,
+      label: "Raffle / race prizes",
+      currentCost: baseline.raceCost,
       plannedCost: rafflePlanned,
-      deltaCost: rafflePlanned - raffleCurrent,
+      deltaCost: rafflePlanned - baseline.raceCost,
+      dataAvailable: baseline.raceCost > 0,
     },
     {
-      key: "race",
-      label: "Race prizes",
-      currentCost: raceCurrent,
-      plannedCost: racePlanned,
-      deltaCost: racePlanned - raceCurrent,
+      key: "daily-packs",
+      label: "Daily / free packs",
+      currentCost: baseline.dailyPacksCost,
+      plannedCost: dailyPacksPlanned,
+      deltaCost: dailyPacksPlanned - baseline.dailyPacksCost,
+      dataAvailable: baseline.dailyPacksCost > 0,
+    },
+    {
+      key: "signup-packs",
+      label: "Signup bonus",
+      currentCost: baseline.signupPacksCost,
+      plannedCost: signupPlanned,
+      deltaCost: signupPlanned - baseline.signupPacksCost,
+      dataAvailable: baseline.signupClaimants > 0,
+    },
+    {
+      key: "rain",
+      label: "Rain",
+      currentCost: baseline.rainCost,
+      plannedCost: rainPlanned,
+      deltaCost: rainPlanned - baseline.rainCost,
+      dataAvailable: baseline.rainCost > 0,
     },
     {
       key: "other",
@@ -391,8 +639,10 @@ export function projectEdgePlan(
       currentCost: baseline.otherRewardCost,
       plannedCost: baseline.otherRewardCost,
       deltaCost: 0,
+      dataAvailable: baseline.otherRewardCost > 0,
     },
   ];
+  void hasUpgrader;
 
   const currentRewardCost = levers.reduce((s, l) => s + l.currentCost, 0);
   const plannedRewardCost = levers.reduce((s, l) => s + l.plannedCost, 0);
@@ -424,6 +674,7 @@ export function projectEdgePlan(
     monthlyProfitDelta: perDay * 30,
     annualProfitDelta: perDay * 365,
 
+    gameTypes,
     levers,
   };
 }
@@ -431,20 +682,22 @@ export function projectEdgePlan(
 // ─── Per-lever projection helpers ────────────────────────────────────────────
 
 /**
- * Rakeback projection. The realized rakeback cost scales with the blended rate
- * (cost-weighted across cadences) AND with the upgrader→rakeback weight (which
- * scales how much of the upgrader-wager slice still accrues rakeback).
+ * Rakeback projection. The realized rakeback cost scales with THREE planned
+ * effects, multiplicatively:
  *
- * Blended-rate scaling:
- *   plannedBlend / currentBlend, where each blend is Σ(rate_c · w_c) and w_c is
- *   cadence c's share of the current realized rakeback cost (so disabled / zero-
- *   cost cadences carry no weight). When the current blend is 0 the ratio is 1.
- *
- * Upgrader-weight scaling:
- *   The upgrader slice of wager = upgraderWager / wager. Down-weighting it from
- *   1.0 to w removes (1 − w) of that slice's rakeback contribution:
- *     weightFactor = 1 − upgraderShare · (1 − plannedWeight)
- *   (At plannedWeight = currentWeight = 1.0 this is 1.0 → neutral.)
+ *   1. Per-cadence rate blend: plannedBlend / currentBlend, where each blend is
+ *      Σ(rate_c · w_c) and w_c is cadence c's share of the realized cost (an even
+ *      split across enabled cadences — per-cadence realized cost is not
+ *      separable from the rollup). At unchanged rates this is 1.0.
+ *   2. Per-type wager weighting: the rakeback accrues on pack/battle wager and
+ *      upgrader wager. Down-weighting either removes that slice's contribution:
+ *        weightFactor = packBattleShare · pbWeight + upgraderShare · upgWeight
+ *      (At both weights = 1.0 the shares sum to 1 → 1.0, neutral.)
+ *   3. Instant-claim discount: a share `adoption` of claimants take an instant
+ *      payout at `payoutPct` of their accrual; the rest accrue normally. So the
+ *      realized cost across the adopting share is scaled by payoutPct:
+ *        instantFactor = (1 − adoption) + adoption · payoutPct
+ *      (At adoption = 0 OR payoutPct = 1 this is 1.0, neutral.)
  */
 function projectRakeback(
   baseline: SystemEdgeBaseline,
@@ -453,8 +706,7 @@ function projectRakeback(
   const current = baseline.rakebackCost;
   if (current <= 0) return { current: 0, planned: 0 };
 
-  // Cost-weight per cadence (share of realized cost). When per-cadence realized
-  // cost isn't separable we fall back to an even split across enabled cadences.
+  // (1) Per-cadence rate blend.
   const cadences = baseline.rakebackCadences;
   const currentBlend = cadences.reduce(
     (s, c) => s + c.currentRate * cadenceWeight(c, cadences),
@@ -469,17 +721,26 @@ function projectRakeback(
   );
   const rateRatio = currentBlend > 0 ? plannedBlend / currentBlend : 1;
 
-  // Upgrader-weight factor.
-  const upgraderShare =
-    baseline.wager > 0
-      ? clamp(baseline.upgraderWager / baseline.wager, 0, 1)
-      : 0;
-  const plannedWeight = clamp(planned.upgraderRakebackWeight, 0, 1);
-  const weightFactor = 1 - upgraderShare * (1 - plannedWeight);
+  // (2) Per-type wager weighting. Split the wager into pack/battle vs upgrader.
+  const upgraderWager = baseline.gameTypes
+    .filter((g) => g.type === "upgrader")
+    .reduce((s, g) => s + g.wager, 0);
+  const packBattleWager = Math.max(0, baseline.wager - upgraderWager);
+  const totalWager = packBattleWager + upgraderWager;
+  const pbShare = totalWager > 0 ? packBattleWager / totalWager : 1;
+  const upgShare = totalWager > 0 ? upgraderWager / totalWager : 0;
+  const pbWeight = clamp(planned.rakebackPackBattleWeight, 0, 1);
+  const upgWeight = clamp(planned.rakebackUpgraderWeight, 0, 1);
+  const weightFactor = pbShare * pbWeight + upgShare * upgWeight;
+
+  // (3) Instant-claim discount.
+  const adoption = clamp(planned.rakebackInstantAdoption, 0, 1);
+  const payoutPct = clamp(planned.rakebackInstantPayoutPct, 0, 1);
+  const instantFactor = (1 - adoption) + adoption * payoutPct;
 
   return {
     current,
-    planned: Math.max(0, current * rateRatio * weightFactor),
+    planned: Math.max(0, current * rateRatio * weightFactor * instantFactor),
   };
 }
 
@@ -507,8 +768,6 @@ function projectAffiliate(
 ): { current: number; planned: number } {
   const current = baseline.affiliateCost;
   if (current <= 0) {
-    // No realized commission to scale — the wager-req toggle still has nothing
-    // to act on, so the projection stays 0.
     return { current: 0, planned: 0 };
   }
 
@@ -527,6 +786,39 @@ function projectAffiliate(
     current,
     planned: Math.max(0, current * rateRatio * reqUplift),
   };
+}
+
+/**
+ * Deposit-bonus min-deposit eligibility scaler. RAISING the min deposit
+ * (mult > 1) filters out small claimers → fewer claims → lower cost. Modeled as
+ * an inverse scaler floored so it never goes negative: a 2× min-deposit gate ≈
+ * 0.5× cost; a 0.5× gate (easier) ≈ ~2× cost (clamped). Conservative,
+ * clearly-labeled planning assumption.
+ */
+function eligibilityFactor(minDepositMult: number): number {
+  const m = Math.max(0.01, minDepositMult);
+  return clamp(1 / m, 0, 4);
+}
+
+/**
+ * Deposit-bonus wager-requirement breakage scaler. A HIGHER wager requirement
+ * (mult > 1) raises breakage (more bonus expires unwagered) → lower realized
+ * cost. Modeled as a mild inverse: each +1.0 of requirement trims ~25% off the
+ * realized cost (floored at 0.25× so it never zeroes out).
+ */
+function breakageFactor(wagerReqMult: number): number {
+  const m = Math.max(0, wagerReqMult);
+  return clamp(1 - (m - 1) * 0.25, 0.25, 2);
+}
+
+/**
+ * Raffle ticket-cost (entry-cost) scaler. A HIGHER entry cost (mult > 1) trims
+ * farming leakage → slightly lower prize cost; a lower cost loosens entry →
+ * higher cost. Mild inverse, bounded.
+ */
+function ticketCostFactor(ticketCostMult: number): number {
+  const m = Math.max(0.01, ticketCostMult);
+  return clamp(1 - (m - 1) * 0.15, 0.5, 1.5);
 }
 
 // ─── Small pure helpers ──────────────────────────────────────────────────────

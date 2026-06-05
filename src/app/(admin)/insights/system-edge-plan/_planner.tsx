@@ -12,15 +12,23 @@ import {
 } from "recharts";
 import {
   Banknote,
+  Boxes,
+  Coins,
   Gauge,
+  Gift,
   Percent,
   RotateCcw,
   Share2,
   ShieldCheck,
+  Swords,
   Ticket,
   TrendingDown,
   TrendingUp,
+  UserPlus,
   Wallet,
+  Zap,
+  CloudRain,
+  Layers,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -36,6 +44,7 @@ import { AnimatedNumber } from "@/components/animated-number";
 import { FadeIn } from "@/components/fade-in";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   type ChartConfig,
   ChartContainer,
@@ -47,8 +56,11 @@ import {
   clamp,
   defaultLevers,
   effectiveBaselineEdge,
+  effectiveTypeEdge,
+  gameTypeLabel,
   projectEdgePlan,
   REMOVE_WAGER_REQ_COST_UPLIFT,
+  type GameTypeId,
   type PlannedLevers,
   type RakebackCadenceId,
   type SystemEdgeBaseline,
@@ -59,14 +71,37 @@ const ROSE = "#f43f5e";
 const EMERALD = "#10b981";
 
 /**
+ * Per-game-type icon + accent. `iconClass` is a STATIC Tailwind class (not an
+ * interpolated `text-${accent}-500`, which Tailwind's static analysis would not
+ * emit) so the colour is always present in the build.
+ */
+const GAME_TYPE_META: Record<
+  GameTypeId,
+  { icon: React.ElementType; iconClass: string }
+> = {
+  packs: { icon: Boxes, iconClass: "text-blue-500" },
+  battles: { icon: Swords, iconClass: "text-purple-500" },
+  upgrader: { icon: Zap, iconClass: "text-cyan-500" },
+};
+
+/**
  * System Edge Plan — the client PLANNER island.
  *
- * Read-only what-if planning: the levers are seeded from the REAL current config
- * (threaded down as a serializable `baseline`) and held in client state. Every
- * change re-runs the PURE projection in a `useMemo` (no server round-trip, NO
- * data writes). The headline is the PROFIT DELTA vs the current real config, with
- * monthly / annual savings — exactly the owner's affiliate-tier example shape
- * ("old vs new + estimated monthly/annual savings").
+ * A full, customizable edge + reward-system planner. The levers are seeded from
+ * the REAL current config (threaded down as a serializable `baseline`) and held
+ * in client state. Every change re-runs the PURE projection in a `useMemo` (no
+ * server round-trip, NO data writes). The headline is the PROFIT DELTA vs the
+ * current real config, with monthly / annual extrapolation.
+ *
+ * Levers (every one the owner asked for), grouped into sections:
+ *   • House edge — SEPARATE per game type (packs · battles · upgrader).
+ *   • Rakeback — per-cadence rates + pack/battle vs upgrader wager weighting +
+ *     an instant-claim payout-%/adoption control.
+ *   • Deposit bonus — match % · cap · min deposit · wager requirement.
+ *   • Raffle — prize pool · draw frequency · ticket cost.
+ *   • Packs — daily/free pack value + frequency, and signup grant.
+ *   • Rain — net giveaway cost.
+ *   • Affiliate — per-tier commission % + the 1× wager-requirement toggle.
  *
  * House-POV throughout (CLAUDE.md, strict):
  *   • A reward COST going DOWN is a house GAIN → emerald; going UP → rose.
@@ -84,26 +119,33 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
   );
 
   const baselineEdge = effectiveBaselineEdge(baseline);
+  const defaults = React.useMemo(() => defaultLevers(baseline), [baseline]);
   const dirty = React.useMemo(
-    () => !leversEqual(levers, defaultLevers(baseline)),
-    [levers, baseline],
+    () => !leversEqual(levers, defaults),
+    [levers, defaults],
   );
 
-  const reset = React.useCallback(
-    () => setLevers(defaultLevers(baseline)),
-    [baseline],
-  );
+  const reset = React.useCallback(() => setLevers(defaults), [defaults]);
 
-  // ── Lever setters ──
-  const setHouseEdge = (pct: number) =>
-    setLevers((s) => ({ ...s, houseEdge: clamp(pct / 100, 0, 1) }));
-  const setUpgWeight = (pct: number) =>
-    setLevers((s) => ({ ...s, upgraderRakebackWeight: clamp(pct / 100, 0, 1) }));
+  // ── Lever setters (sliders carry their own units; convert here) ──
+  const setEdge = (type: GameTypeId, pct: number) =>
+    setLevers((s) => ({
+      ...s,
+      edges: { ...s.edges, [type]: clamp(pct / 100, 0, 1) },
+    }));
   const setRakebackRate = (cadence: RakebackCadenceId, pct: number) =>
     setLevers((s) => ({
       ...s,
       rakebackRates: { ...s.rakebackRates, [cadence]: clamp(pct / 100, 0, 1) },
     }));
+  const setRakebackPbWeight = (pct: number) =>
+    setLevers((s) => ({ ...s, rakebackPackBattleWeight: clamp(pct / 100, 0, 1) }));
+  const setRakebackUpgWeight = (pct: number) =>
+    setLevers((s) => ({ ...s, rakebackUpgraderWeight: clamp(pct / 100, 0, 1) }));
+  const setInstantPayout = (pct: number) =>
+    setLevers((s) => ({ ...s, rakebackInstantPayoutPct: clamp(pct / 100, 0, 1) }));
+  const setInstantAdoption = (pct: number) =>
+    setLevers((s) => ({ ...s, rakebackInstantAdoption: clamp(pct / 100, 0, 1) }));
   const setAffiliateRate = (level: number, pct: number) =>
     setLevers((s) => ({
       ...s,
@@ -111,10 +153,28 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
     }));
   const setRemoveReq = (v: boolean) =>
     setLevers((s) => ({ ...s, removeAffiliateWagerReq: v }));
-  const setDepositMult = (pct: number) =>
-    setLevers((s) => ({ ...s, depositBonusMult: clamp(pct / 100, 0, 5) }));
-  const setRaffleMult = (pct: number) =>
-    setLevers((s) => ({ ...s, raffleTicketRateMult: clamp(pct / 100, 0, 5) }));
+  const setDepMatch = (pct: number) =>
+    setLevers((s) => ({ ...s, depositBonusMatchMult: clamp(pct / 100, 0, 5) }));
+  const setDepCap = (pct: number) =>
+    setLevers((s) => ({ ...s, depositBonusCapMult: clamp(pct / 100, 0, 5) }));
+  const setDepMinDeposit = (pct: number) =>
+    setLevers((s) => ({ ...s, depositBonusMinDepositMult: clamp(pct / 100, 0, 5) }));
+  const setDepWagerReq = (pct: number) =>
+    setLevers((s) => ({ ...s, depositBonusWagerReqMult: clamp(pct / 100, 0, 5) }));
+  const setRafflePool = (pct: number) =>
+    setLevers((s) => ({ ...s, rafflePrizePoolMult: clamp(pct / 100, 0, 5) }));
+  const setRaffleFreq = (pct: number) =>
+    setLevers((s) => ({ ...s, raffleFrequencyMult: clamp(pct / 100, 0, 5) }));
+  const setRaffleTicket = (pct: number) =>
+    setLevers((s) => ({ ...s, raffleTicketCostMult: clamp(pct / 100, 0, 5) }));
+  const setDailyValue = (pct: number) =>
+    setLevers((s) => ({ ...s, dailyPacksValueMult: clamp(pct / 100, 0, 5) }));
+  const setDailyFreq = (pct: number) =>
+    setLevers((s) => ({ ...s, dailyPacksFrequencyMult: clamp(pct / 100, 0, 5) }));
+  const setSignupGrant = (usd: number) =>
+    setLevers((s) => ({ ...s, signupGrantUsd: Math.max(0, usd) }));
+  const setRainMult = (pct: number) =>
+    setLevers((s) => ({ ...s, rainCostMult: clamp(pct / 100, 0, 5) }));
 
   const profitTone = projection.profitDelta >= 0 ? EMERALD : ROSE;
   const profitUp = projection.profitDelta >= 0;
@@ -153,7 +213,13 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                 <AnimatedNumber value={projection.profitDelta} format="currency" />
               </p>
               <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                {profitUp ? (
+                {Math.abs(projection.profitDelta) < 0.005 ? (
+                  <>
+                    Move a lever below to model a future update — the headline
+                    updates live with the projected profit vs the current live
+                    config.
+                  </>
+                ) : profitUp ? (
                   <>
                     The planned config makes the house{" "}
                     <span className="font-semibold text-emerald-600 dark:text-emerald-400">
@@ -227,28 +293,28 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
         <KpiTile
           label="Planned GGR"
           value={formatCompactUsd(projection.plannedGgr)}
-          sub={`${formatPct(projection.plannedEdge)} edge`}
+          sub={`${formatPct(projection.plannedEdge)} blended edge`}
           icon={Gauge}
           accent="emerald"
         />
         <KpiTile
           label="Reward cost"
           value={formatCompactUsd(projection.plannedRewardCost)}
-          sub={deltaSub(projection.rewardCostDelta, true)}
+          sub={deltaSub(projection.rewardCostDelta)}
           icon={Wallet}
           accent="rose"
         />
         <KpiTile
           label="Planned NGR"
           value={formatCompactUsd(projection.plannedNgr)}
-          sub={deltaSub(projection.profitDelta, false)}
+          sub={deltaSub(projection.profitDelta)}
           icon={projection.plannedNgr >= 0 ? TrendingUp : TrendingDown}
           accent={projection.plannedNgr >= 0 ? "emerald" : "rose"}
         />
         <KpiTile
           label="GGR delta"
           value={formatSignedUsd(projection.ggrDelta)}
-          sub="From edge change"
+          sub="From edge changes"
           icon={Gauge}
           accent={projection.ggrDelta >= 0 ? "emerald" : "rose"}
         />
@@ -258,33 +324,70 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
       <div className="grid gap-6 lg:grid-cols-[1.05fr_1fr]">
         {/* Levers column */}
         <div className="space-y-5">
-          {/* House edge */}
-          <StatPanel title="House edge" icon={Gauge} accent="emerald">
+          {/* ── HOUSE EDGE — per game type ── */}
+          <StatPanel title="House edge — per game type" icon={Gauge} accent="emerald">
             <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-              The blended house edge on gameplay (real empirical edge ={" "}
+              Separate edge controls for each game type. Blended real edge ={" "}
               <span className="font-medium text-foreground">
                 {formatPct(baselineEdge)}
               </span>
               {baseline.houseEdge == null && baseline.bets > 0 && (
                 <> · derived from GGR/wager (below the {30}-bet confidence gate)</>
               )}
-              ). Pack edge is set by pool composition, not a runtime knob — this
-              models the catalog-level effect of a target-edge shift on GGR.
+              . Edge is set by RNG odds / pool composition in the backend, not a
+              runtime knob — this models the catalog-level GGR effect of a target
+              shift, per type, at the observed wager.
             </p>
-            <LeverSlider
-              label="Blended house edge"
-              valueLabel={formatPct(levers.houseEdge)}
-              value={levers.houseEdge * 100}
-              onValueChange={setHouseEdge}
-              min={0}
-              max={30}
-              step={0.05}
-              baselineMarker={baselineEdge * 100}
-              baselineLabel={`current ${formatPct(baselineEdge)}`}
-            />
+            <div className="space-y-4">
+              {baseline.gameTypes.map((g) => {
+                const meta = GAME_TYPE_META[g.type];
+                const cur = effectiveTypeEdge(g);
+                const planned = levers.edges[g.type] ?? cur;
+                const typeGgr = projection.gameTypes.find((x) => x.type === g.type);
+                return (
+                  <div key={g.type} className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <meta.icon className={cn("size-3.5", meta.iconClass)} />
+                      <span className="text-xs font-semibold">
+                        {gameTypeLabel(g.type)}
+                      </span>
+                      {!g.dataAvailable ? (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-600 dark:text-amber-400"
+                        >
+                          not yet wired
+                        </Badge>
+                      ) : (
+                        <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
+                          wager {formatCompactUsd(g.wager)} · GGR{" "}
+                          {formatCompactUsd(typeGgr?.plannedGgr ?? g.ggr)}
+                        </span>
+                      )}
+                    </div>
+                    <LeverSlider
+                      label={`${gameTypeLabel(g.type)} edge`}
+                      valueLabel={formatPct(planned)}
+                      value={planned * 100}
+                      onValueChange={(pct) => setEdge(g.type, pct)}
+                      min={0}
+                      max={30}
+                      step={0.05}
+                      baselineMarker={cur * 100}
+                      baselineLabel={
+                        g.dataAvailable
+                          ? `current ${formatPct(cur)}`
+                          : "estimated — no data in this window"
+                      }
+                      disabled={!g.dataAvailable}
+                    />
+                  </div>
+                );
+              })}
+            </div>
           </StatPanel>
 
-          {/* Rakeback */}
+          {/* ── RAKEBACK ── */}
           <StatPanel title="Rakeback" icon={Wallet} accent="rose">
             <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
               Per-cadence rebate rates from the live{" "}
@@ -315,32 +418,315 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                 ))}
               </div>
             )}
+
+            {/* Wager weighting (pack/battle vs upgrader) */}
+            <div className="mt-4 space-y-3 border-t pt-3">
+              <SectionHeading icon={Percent} title="Wager weighting" />
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                How much each wager type counts toward rakeback accrual. Real ={" "}
+                <span className="font-medium text-foreground">100%</span> (full,
+                unweighted). Down-weighting shrinks the rakeback bill from that
+                slice.
+              </p>
+              <LeverSlider
+                label="Packs + battles wager → rakeback"
+                valueLabel={formatPct(levers.rakebackPackBattleWeight)}
+                value={levers.rakebackPackBattleWeight * 100}
+                onValueChange={setRakebackPbWeight}
+                min={0}
+                max={100}
+                step={1}
+                baselineMarker={100}
+                baselineLabel="current 100%"
+                disabled={baseline.rakebackCost <= 0}
+              />
+              <LeverSlider
+                label="Upgrader wager → rakeback"
+                valueLabel={formatPct(levers.rakebackUpgraderWeight)}
+                value={levers.rakebackUpgraderWeight * 100}
+                onValueChange={setRakebackUpgWeight}
+                min={0}
+                max={100}
+                step={1}
+                baselineMarker={100}
+                baselineLabel="current 100%"
+                disabled={
+                  baseline.rakebackCost <= 0 ||
+                  !baseline.gameTypes.some(
+                    (g) => g.type === "upgrader" && g.dataAvailable,
+                  )
+                }
+              />
+            </div>
+
+            {/* Instant claim */}
+            <div className="mt-4 space-y-3 border-t pt-3">
+              <SectionHeading icon={Zap} title="Instant claim" />
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                Let users claim rakeback instantly at a discount instead of
+                waiting for the cadence. You set the instant payout % and how many
+                claimants take it — the discount trims the realized cost across
+                the adopting share. Planning what-if (not a live feature).
+              </p>
+              <LeverSlider
+                label="Instant payout %"
+                valueLabel={formatPct(levers.rakebackInstantPayoutPct)}
+                value={levers.rakebackInstantPayoutPct * 100}
+                onValueChange={setInstantPayout}
+                min={0}
+                max={100}
+                step={1}
+                baselineMarker={100}
+                baselineLabel="100% = full accrual (no discount)"
+                disabled={baseline.rakebackCost <= 0}
+              />
+              <LeverSlider
+                label="Instant adoption (share of claimants)"
+                valueLabel={formatPct(levers.rakebackInstantAdoption)}
+                value={levers.rakebackInstantAdoption * 100}
+                onValueChange={setInstantAdoption}
+                min={0}
+                max={100}
+                step={1}
+                baselineMarker={0}
+                baselineLabel="0% = nobody takes it (current)"
+                disabled={baseline.rakebackCost <= 0}
+              />
+            </div>
           </StatPanel>
 
-          {/* Upgrader → rakeback weighting */}
-          <StatPanel title="Upgrader → rakeback weight" icon={Percent} accent="cyan">
+          {/* ── DEPOSIT BONUS ── */}
+          <StatPanel title="Deposit bonus" icon={Coins} accent="amber">
             <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-              Currently upgrader wager accrues rakeback at{" "}
-              <span className="font-medium text-foreground">100%</span> (unweighted).
-              Down-weighting it shrinks the rakeback bill — but the real upgrader
-              wager slice is not separable from the window rollup here, so this
-              lever is informational until that split is wired.
+              The cap / window / wager requirement live in the game backend (per
+              the discovery — baseline cap{" "}
+              <span className="font-medium text-foreground">
+                {formatCurrency(baseline.depositBonusCapUsd)}
+              </span>{" "}
+              per {baseline.depositBonusWindowHours}h). These levers model the
+              proportional cost effect of changing each setting against the real
+              realized spend:{" "}
+              <span className="font-medium text-rose-600 dark:text-rose-400">
+                {formatCurrency(baseline.depositBonusCost)}
+              </span>
+              .
             </p>
-            <LeverSlider
-              label="Upgrader weight"
-              valueLabel={formatPct(levers.upgraderRakebackWeight)}
-              value={levers.upgraderRakebackWeight * 100}
-              onValueChange={setUpgWeight}
-              min={0}
-              max={100}
-              step={1}
-              baselineMarker={baseline.upgraderRakebackWeight * 100}
-              baselineLabel="current 100%"
-              disabled={baseline.upgraderWager <= 0}
-            />
+            {baseline.depositBonusCost <= 0 ? (
+              <EmptyLever note="No deposit-bonus spend in this window." />
+            ) : (
+              <div className="space-y-3">
+                <LeverSlider
+                  label="Match %"
+                  valueLabel={multLabel(levers.depositBonusMatchMult)}
+                  value={levers.depositBonusMatchMult * 100}
+                  onValueChange={setDepMatch}
+                  min={0}
+                  max={300}
+                  step={5}
+                  baselineMarker={100}
+                  baselineLabel="current 100%"
+                />
+                <LeverSlider
+                  label={`Cap (real ${formatCurrency(baseline.depositBonusCapUsd)})`}
+                  valueLabel={multLabel(levers.depositBonusCapMult)}
+                  value={levers.depositBonusCapMult * 100}
+                  onValueChange={setDepCap}
+                  min={0}
+                  max={300}
+                  step={5}
+                  baselineMarker={100}
+                  baselineLabel="current cap (1.0×)"
+                />
+                <LeverSlider
+                  label="Min deposit gate"
+                  valueLabel={multLabel(levers.depositBonusMinDepositMult)}
+                  value={levers.depositBonusMinDepositMult * 100}
+                  onValueChange={setDepMinDeposit}
+                  min={0}
+                  max={300}
+                  step={5}
+                  baselineMarker={100}
+                  baselineLabel="higher gate = fewer claims = less cost"
+                />
+                <LeverSlider
+                  label="Wager requirement"
+                  valueLabel={multLabel(levers.depositBonusWagerReqMult)}
+                  value={levers.depositBonusWagerReqMult * 100}
+                  onValueChange={setDepWagerReq}
+                  min={0}
+                  max={300}
+                  step={5}
+                  baselineMarker={100}
+                  baselineLabel="higher req = more breakage = less cost"
+                />
+              </div>
+            )}
           </StatPanel>
 
-          {/* Affiliate */}
+          {/* ── RAFFLE ── */}
+          <StatPanel title="Raffle / race prizes" icon={Ticket} accent="orange">
+            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+              The raffle ticket rate / prize structure live in the game backend.
+              These scale the real realized prize cost (
+              <span className="font-medium text-rose-600 dark:text-rose-400">
+                {formatCurrency(baseline.raceCost)}
+              </span>
+              ) proportionally.
+            </p>
+            {baseline.raceCost <= 0 ? (
+              <EmptyLever note="No raffle / race prize cost in this window." />
+            ) : (
+              <div className="space-y-3">
+                <LeverSlider
+                  label="Prize pool"
+                  valueLabel={multLabel(levers.rafflePrizePoolMult)}
+                  value={levers.rafflePrizePoolMult * 100}
+                  onValueChange={setRafflePool}
+                  min={0}
+                  max={300}
+                  step={5}
+                  baselineMarker={100}
+                  baselineLabel="current pool (1.0×)"
+                />
+                <LeverSlider
+                  label="Draw frequency"
+                  valueLabel={multLabel(levers.raffleFrequencyMult)}
+                  value={levers.raffleFrequencyMult * 100}
+                  onValueChange={setRaffleFreq}
+                  min={0}
+                  max={300}
+                  step={5}
+                  baselineMarker={100}
+                  baselineLabel="current frequency (1.0×)"
+                />
+                <LeverSlider
+                  label="Ticket / entry cost"
+                  valueLabel={multLabel(levers.raffleTicketCostMult)}
+                  value={levers.raffleTicketCostMult * 100}
+                  onValueChange={setRaffleTicket}
+                  min={0}
+                  max={300}
+                  step={5}
+                  baselineMarker={100}
+                  baselineLabel="higher cost = less farming = less cost"
+                />
+              </div>
+            )}
+          </StatPanel>
+
+          {/* ── PACKS (daily + signup) ── */}
+          <StatPanel title="Packs — daily & signup" icon={Gift} accent="pink">
+            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+              Daily / free packs are pure card giveaways (no ledger row) — real
+              cost{" "}
+              <span className="font-medium text-rose-600 dark:text-rose-400">
+                {formatCurrency(baseline.dailyPacksCost)}
+              </span>
+              . Signup bonus is a balance credit — real cost{" "}
+              <span className="font-medium text-rose-600 dark:text-rose-400">
+                {formatCurrency(baseline.signupPacksCost)}
+              </span>
+              {baseline.signupClaimants > 0 && (
+                <>
+                  {" "}
+                  across {baseline.signupClaimants.toLocaleString()} claimant
+                  {baseline.signupClaimants === 1 ? "" : "s"}
+                </>
+              )}
+              .
+            </p>
+            <div className="space-y-3">
+              <SectionHeading icon={Boxes} title="Daily / free packs" />
+              {baseline.dailyPacksCost <= 0 ? (
+                <EmptyLever note="No daily-pack giveaway in this window." />
+              ) : (
+                <>
+                  <LeverSlider
+                    label="Card value"
+                    valueLabel={multLabel(levers.dailyPacksValueMult)}
+                    value={levers.dailyPacksValueMult * 100}
+                    onValueChange={setDailyValue}
+                    min={0}
+                    max={300}
+                    step={5}
+                    baselineMarker={100}
+                    baselineLabel="current value (1.0×)"
+                  />
+                  <LeverSlider
+                    label="Grant frequency"
+                    valueLabel={multLabel(levers.dailyPacksFrequencyMult)}
+                    value={levers.dailyPacksFrequencyMult * 100}
+                    onValueChange={setDailyFreq}
+                    min={0}
+                    max={300}
+                    step={5}
+                    baselineMarker={100}
+                    baselineLabel="current frequency (1.0×)"
+                  />
+                </>
+              )}
+
+              <div className="border-t pt-3">
+                <SectionHeading icon={UserPlus} title="Signup bonus" />
+              </div>
+              {baseline.signupClaimants <= 0 ? (
+                <EmptyLever note="No signup-bonus claims in this window." />
+              ) : (
+                <LeverSlider
+                  label={`Grant per claimant${
+                    baseline.signupAvgGrant != null
+                      ? ` (real avg ${formatCurrency(baseline.signupAvgGrant)})`
+                      : ""
+                  }`}
+                  valueLabel={formatCurrency(levers.signupGrantUsd)}
+                  value={levers.signupGrantUsd}
+                  onValueChange={setSignupGrant}
+                  min={0}
+                  max={Math.max(25, (baseline.signupAvgGrant ?? 5) * 4)}
+                  step={0.5}
+                  baselineMarker={baseline.signupAvgGrant ?? undefined}
+                  baselineLabel={
+                    baseline.signupAvgGrant != null
+                      ? `current avg ${formatCurrency(baseline.signupAvgGrant)}`
+                      : undefined
+                  }
+                />
+              )}
+            </div>
+          </StatPanel>
+
+          {/* ── RAIN ── */}
+          <StatPanel title="Rain" icon={CloudRain} accent="cyan">
+            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+              Rain is system-automatic + mixed-funded; only the net house slice
+              counts (
+              <span className="font-medium text-foreground">
+                max(0, rain wins − user/founder tips)
+              </span>
+              ). Real net cost this window:{" "}
+              <span className="font-medium text-rose-600 dark:text-rose-400">
+                {formatCurrency(baseline.rainCost)}
+              </span>
+              . The lever scales that proportionally.
+            </p>
+            {baseline.rainCost <= 0 ? (
+              <EmptyLever note="No net rain cost in this window." />
+            ) : (
+              <LeverSlider
+                label="Rain giveaway cost"
+                valueLabel={multLabel(levers.rainCostMult)}
+                value={levers.rainCostMult * 100}
+                onValueChange={setRainMult}
+                min={0}
+                max={300}
+                step={5}
+                baselineMarker={100}
+                baselineLabel="current 100%"
+              />
+            )}
+          </StatPanel>
+
+          {/* ── AFFILIATE ── */}
           <StatPanel title="Affiliate commission" icon={Share2} accent="rose">
             <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
               Per-tier commission rates from the live{" "}
@@ -371,7 +757,8 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                 </div>
                 <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
                   Commission currently vests on referred wager (the 1× requirement
-                  is implicit). Removing it widens the base — modeled as a{" "}
+                  is implicit — not a stored toggle). Removing it widens the base —
+                  modeled as a{" "}
                   <span className="font-medium text-amber-600 dark:text-amber-400">
                     +{formatPct(REMOVE_WAGER_REQ_COST_UPLIFT)}
                   </span>{" "}
@@ -406,45 +793,11 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
               </div>
             )}
           </StatPanel>
-
-          {/* Deposit bonus + raffle (proportional cost multipliers) */}
-          <StatPanel title="Deposit bonus & raffle" icon={Ticket} accent="amber">
-            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-              Neither exposes a single rate knob in the admin (the deposit-bonus
-              cap is backend-enforced; the raffle ticket rate lives in the game
-              backend). These scale the real realized cost proportionally.
-            </p>
-            <div className="space-y-3">
-              <LeverSlider
-                label={`Deposit bonus spend (real ${formatCurrency(baseline.depositBonusCost)})`}
-                valueLabel={`${Math.round(levers.depositBonusMult * 100)}%`}
-                value={levers.depositBonusMult * 100}
-                onValueChange={setDepositMult}
-                min={0}
-                max={200}
-                step={5}
-                baselineMarker={100}
-                baselineLabel="current 100%"
-                disabled={baseline.depositBonusCost <= 0}
-              />
-              <LeverSlider
-                label={`Raffle ticket rate (real ${formatCurrency(baseline.raffleCost)})`}
-                valueLabel={`${Math.round(levers.raffleTicketRateMult * 100)}%`}
-                value={levers.raffleTicketRateMult * 100}
-                onValueChange={setRaffleMult}
-                min={0}
-                max={200}
-                step={5}
-                baselineMarker={100}
-                baselineLabel="current 100%"
-                disabled={baseline.raffleCost <= 0}
-              />
-            </div>
-          </StatPanel>
         </div>
 
         {/* Breakdown column */}
         <div className="space-y-5">
+          <GgrByTypePanel projection={projection} />
           <RewardCostComparisonChart projection={projection} />
           <LeverBreakdownPanel projection={projection} />
         </div>
@@ -457,6 +810,7 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
 
 function ExtrapolationChip({ label, value }: { label: string; value: number }) {
   const up = value >= 0;
+  const flat = Math.abs(value) < 0.005;
   return (
     <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-1.5">
       <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -465,9 +819,11 @@ function ExtrapolationChip({ label, value }: { label: string; value: number }) {
       <p
         className={cn(
           "text-sm font-bold tabular-nums",
-          up
-            ? "text-emerald-600 dark:text-emerald-400"
-            : "text-rose-600 dark:text-rose-400",
+          flat
+            ? "text-muted-foreground"
+            : up
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-rose-600 dark:text-rose-400",
         )}
       >
         {formatSignedUsd(value)}
@@ -504,6 +860,61 @@ function CompareBlock({
   );
 }
 
+/** GGR contribution per game type — current vs planned, house-POV emerald/rose. */
+function GgrByTypePanel({
+  projection,
+}: {
+  projection: ReturnType<typeof projectEdgePlan>;
+}) {
+  return (
+    <StatPanel title="GGR by game type" icon={Layers} accent="emerald">
+      <div className="space-y-0.5">
+        {projection.gameTypes.map((g) => {
+          const up = g.ggrDelta >= 0;
+          const tone =
+            Math.abs(g.ggrDelta) < 0.005
+              ? "text-muted-foreground"
+              : up
+                ? "text-emerald-600 dark:text-emerald-400"
+                : "text-rose-600 dark:text-rose-400";
+          return (
+            <PanelRow
+              key={g.type}
+              label={`${g.label}${g.dataAvailable ? "" : " (no data)"}`}
+              value={
+                <span className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {formatPct(g.currentEdge)} → {formatPct(g.plannedEdge)} edge
+                  </span>
+                  <span className={cn("w-20 text-right", tone)}>
+                    {Math.abs(g.ggrDelta) < 0.005 ? "—" : formatSignedUsd(g.ggrDelta)}
+                  </span>
+                </span>
+              }
+            />
+          );
+        })}
+      </div>
+      <div className="mt-3 border-t pt-3">
+        <PanelRow
+          label="Total GGR change"
+          value={
+            <span
+              className={cn(
+                projection.ggrDelta >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400",
+              )}
+            >
+              {formatSignedUsd(projection.ggrDelta)}
+            </span>
+          }
+        />
+      </div>
+    </StatPanel>
+  );
+}
+
 const chartConfig = {
   current: { label: "Current", color: "#64748b" },
   planned: { label: "Planned", color: ROSE },
@@ -528,11 +939,11 @@ function RewardCostComparisonChart({
       {data.length === 0 ? (
         <EmptyLever note="No realized reward cost in this window to compare." />
       ) : (
-        <ChartContainer config={chartConfig} className="aspect-auto h-[260px] w-full">
+        <ChartContainer config={chartConfig} className="aspect-auto h-[300px] w-full">
           <BarChart
             data={data}
             layout="vertical"
-            margin={{ left: 4, right: 40, top: 4, bottom: 4 }}
+            margin={{ left: 4, right: 48, top: 4, bottom: 4 }}
             accessibilityLayer
           >
             <CartesianGrid horizontal={false} />
@@ -548,7 +959,7 @@ function RewardCostComparisonChart({
               dataKey="lever"
               tickLine={false}
               axisLine={false}
-              width={108}
+              width={120}
               tick={{ fontSize: 11 }}
             />
             <ChartTooltip
@@ -686,34 +1097,58 @@ function EmptyLever({ note }: { note: string }) {
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
-/** Sub-label for a KPI tile: a signed delta. `costFraming` flips the tone. */
-function deltaSub(delta: number, costFraming: boolean): string {
+/** "1.5×" style multiplier label (rounded to a sensible precision). */
+function multLabel(mult: number): string {
+  const rounded = Math.round(mult * 100) / 100;
+  return `${rounded}×`;
+}
+
+/** Sub-label for a KPI tile: a signed delta vs current. */
+function deltaSub(delta: number): string {
   if (Math.abs(delta) < 0.005) return "no change";
-  // For a cost, a NEGATIVE delta (less cost) is good; the sub just states the
-  // signed change. The tile accent already carries the tone.
-  void costFraming;
   return `${formatSignedUsd(delta)} vs current`;
 }
 
 function leversEqual(a: PlannedLevers, b: PlannedLevers): boolean {
   if (
-    a.houseEdge !== b.houseEdge ||
-    a.upgraderRakebackWeight !== b.upgraderRakebackWeight ||
+    a.rakebackPackBattleWeight !== b.rakebackPackBattleWeight ||
+    a.rakebackUpgraderWeight !== b.rakebackUpgraderWeight ||
+    a.rakebackInstantPayoutPct !== b.rakebackInstantPayoutPct ||
+    a.rakebackInstantAdoption !== b.rakebackInstantAdoption ||
     a.removeAffiliateWagerReq !== b.removeAffiliateWagerReq ||
-    a.depositBonusMult !== b.depositBonusMult ||
-    a.raffleTicketRateMult !== b.raffleTicketRateMult
+    a.depositBonusMatchMult !== b.depositBonusMatchMult ||
+    a.depositBonusCapMult !== b.depositBonusCapMult ||
+    a.depositBonusMinDepositMult !== b.depositBonusMinDepositMult ||
+    a.depositBonusWagerReqMult !== b.depositBonusWagerReqMult ||
+    a.rafflePrizePoolMult !== b.rafflePrizePoolMult ||
+    a.raffleFrequencyMult !== b.raffleFrequencyMult ||
+    a.raffleTicketCostMult !== b.raffleTicketCostMult ||
+    a.dailyPacksValueMult !== b.dailyPacksValueMult ||
+    a.dailyPacksFrequencyMult !== b.dailyPacksFrequencyMult ||
+    a.signupGrantUsd !== b.signupGrantUsd ||
+    a.rainCostMult !== b.rainCostMult
   ) {
     return false;
   }
-  const ar = Object.keys({ ...a.rakebackRates, ...b.rakebackRates }) as RakebackCadenceId[];
-  for (const k of ar) {
+  const edgeKeys = new Set([
+    ...Object.keys(a.edges),
+    ...Object.keys(b.edges),
+  ]) as Set<GameTypeId>;
+  for (const k of edgeKeys) {
+    if ((a.edges[k] ?? 0) !== (b.edges[k] ?? 0)) return false;
+  }
+  const cadKeys = Object.keys({
+    ...a.rakebackRates,
+    ...b.rakebackRates,
+  }) as RakebackCadenceId[];
+  for (const k of cadKeys) {
     if ((a.rakebackRates[k] ?? 0) !== (b.rakebackRates[k] ?? 0)) return false;
   }
-  const af = new Set([
+  const affKeys = new Set([
     ...Object.keys(a.affiliateRates),
     ...Object.keys(b.affiliateRates),
   ]);
-  for (const k of af) {
+  for (const k of affKeys) {
     const lvl = Number(k);
     if ((a.affiliateRates[lvl] ?? 0) !== (b.affiliateRates[lvl] ?? 0)) return false;
   }

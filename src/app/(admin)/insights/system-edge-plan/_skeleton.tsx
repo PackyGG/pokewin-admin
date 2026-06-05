@@ -18,13 +18,17 @@ export function SystemEdgePlanSkeleton() {
 
       {/* Levers + breakdown */}
       <div className="grid gap-6 lg:grid-cols-[1.05fr_1fr]">
+        {/* Levers column — many sectioned panels (edge / rakeback / deposit
+            bonus / raffle / packs / rain / affiliate). */}
         <div className="space-y-5">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-44 animate-pulse rounded-xl border bg-muted/30" />
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div key={i} className="h-48 animate-pulse rounded-xl border bg-muted/30" />
           ))}
         </div>
+        {/* Breakdown column — GGR-by-type, cost chart, cost-delta table. */}
         <div className="space-y-5">
-          <div className="h-72 animate-pulse rounded-xl border bg-muted/30" />
+          <div className="h-56 animate-pulse rounded-xl border bg-muted/30" />
+          <div className="h-80 animate-pulse rounded-xl border bg-muted/30" />
           <div className="h-72 animate-pulse rounded-xl border bg-muted/30" />
         </div>
       </div>
