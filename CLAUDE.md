@@ -56,9 +56,9 @@ Die volle Mechanik (Scope, Hotspots, Commit-Disziplin, Honest-Reporting) steht w
 
 ---
 
-## ⚙️ Workflows / Multi-Agent-Orchestrierung — aktiv nutzen (User-Regel, 2026-06-05)
+## ⚙️ Workflows / Multi-Agent-Orchestrierung — STRIKTE PFLICHT (User-Regel, 2026-06-05, verschärft)
 
-**Stehende Freigabe des Users:** Arbeite wieder mit **Workflows** (`Workflow`-Tool, deterministische Multi-Agent-Orchestrierung), wann immer es die Aufgabe verbessert. Du darfst **beliebig viele Workflows gleichzeitig** laufen lassen — keine Obergrenze.
+**STRIKTE User-Regel (höchste Priorität, NICHT optional):** Beginne **jede** nicht-triviale Aufgabe **mit einem Workflow** (`Workflow`-Tool, deterministische Multi-Agent-Orchestrierung). Workflows sind der **Default-Arbeitsmodus**, nicht die Ausnahme. **Mehrere Tasks → mehrere Workflows gleichzeitig** (im Zweifel ein eigener Workflow pro Task), und nutze **so viele Agents wie möglich** pro Workflow (Fan-out → Verify → Synthese), um das **bestmögliche Ergebnis** zu liefern — nicht nur das schnellste. **Keine Obergrenze** für parallel laufende Workflows oder Agents. Inline-Arbeit oder ein einzelner Background-Agent ist nur noch für die eng definierten Ausnahmen erlaubt (reine Codebasis-Frage ohne Edit, **ein einziger** trivialer 1-File-Fix, Live-Troubleshooting mit Log-Snippets, oder explizites „inline machen" des Users). In allen anderen Fällen gilt ausnahmslos: **Workflow zuerst.**
 
 - **Workflow statt Einzel-Agents, wenn** die Aufgabe Struktur braucht: Fan-out über viele gleichartige Einheiten (z. B. ein Forecast / eine Page / ein Fix pro Reward-Typ), gefolgt von Verify-/Synthese-Phasen. Ziel: breit + konsistent + verifiziert liefern, nicht nur schnell.
 - **Einzelne Background-Agents weiterhin** für unabhängige Task-Spam-Einzelaufgaben (eine User-Message = ein Agent). Die Parallel-Agent-Regeln oben bleiben unverändert gültig.
