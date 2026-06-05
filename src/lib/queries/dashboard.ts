@@ -1928,10 +1928,13 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
       organic: Number(d.organic),
       creatorCoded: Number(d.creator_attributed),
     })),
-    // Per-TILE server-measured fetch time (ms), one entry per KPI tile in
-    // the primary + secondary strips. Each value is the elapsed time of the
-    // sub-query (in the parallel batch above) that produced that tile's
-    // number — surfaced on the tile's bottom-right `BoxLoadTime` badge.
+    // Per-sub-query server-measured fetch time (ms), keyed by the KPI tile in
+    // the primary + secondary strips that each sub-query feeds. Each value is
+    // the elapsed time of the sub-query (in the parallel batch above) that
+    // produced that tile's number. The per-tile bottom-right load-time badge
+    // that consumed this was removed; the map is retained for the
+    // /system/stats observability surface (the dashboard UI no longer reads
+    // it).
     //
     // NO NEW QUERIES: every number here is a `durationMs` collected from the
     // EXACT sub-queries that already ran in the batch (`subTimings`). Tiles

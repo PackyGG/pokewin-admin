@@ -16,8 +16,8 @@ import {
  * boundary (CLAUDE.md / Next 15) — it's all plain numbers / strings.
  *
  * The PERIOD-BOUND boxes (GGR, Wager, Organic Wager, Deposits,
- * Withdrawals) change with the window and carry their per-window value +
- * timing here. The SNAPSHOT boxes (Total Users, FTDs 24h, Depositors, Avg
+ * Withdrawals) change with the window and carry their per-window value
+ * here. The SNAPSHOT boxes (Total Users, FTDs 24h, Depositors, Avg
  * Deposit, Deposits/Hour, Avg RTP) are lifetime / fixed-window figures
  * that do NOT vary by the today/24h selection, so they are NOT part of
  * this per-window payload — the server renders them once from the eager
@@ -48,15 +48,6 @@ export type KpiWindowPayload = {
 
   // ---- GGR breakdown legs (for the GGR box's Info popover) ----
   ggrBreakdown: GgrBreakdown;
-
-  // ---- Per-box server-measured fetch time (ms) for the timing badge ----
-  timings: {
-    ggr: number;
-    wager: number;
-    wagerOrganic: number;
-    deposits: number;
-    withdrawals: number;
-  };
 };
 
 /**
@@ -94,12 +85,5 @@ export async function buildKpiWindowPayload(
     withdrawals: stats.withdrawals,
     withdrawalCount: stats.withdrawalCountPeriod,
     ggrBreakdown,
-    timings: {
-      ggr: stats.timings.ggr,
-      wager: stats.timings.wager,
-      wagerOrganic: stats.timings.wagerOrganic,
-      deposits: stats.timings.deposits,
-      withdrawals: stats.timings.withdrawals,
-    },
   };
 }

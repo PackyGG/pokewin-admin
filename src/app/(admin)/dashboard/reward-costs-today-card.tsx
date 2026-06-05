@@ -10,7 +10,6 @@ import {
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import { BOX_TIMING_RESERVE } from "./load-time-indicator";
 
 /**
  * "Reward Costs (today)" dashboard tile — what the house SPENT on rewards
@@ -77,9 +76,7 @@ export function RewardCostsTodayCard({
         </div>
         <Gift className="size-4 shrink-0 text-rose-400" />
       </CardHeader>
-      {/* Bottom reserve so the corner timing badge (from the wrapping
-          BoxTimingFrame) clears the chip row instead of overlapping it. */}
-      <CardContent className={cn("space-y-3", BOX_TIMING_RESERVE)}>
+      <CardContent className="space-y-3">
         {/* Total — a house COST, so always rose with a leading minus to
             read as money out (House-POV). */}
         <div className="text-stat-value truncate">

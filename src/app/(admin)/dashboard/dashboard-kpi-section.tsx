@@ -17,7 +17,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber, type AnimatedNumberFormat } from "@/components/animated-number";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { BoxLoadTime, BOX_TIMING_RESERVE } from "./load-time-indicator";
 import { GgrBreakdownPopover } from "./revenue-stat-card";
 import {
   DASHBOARD_KPI_WINDOWS,
@@ -47,14 +46,6 @@ export type KpiSnapshotValues = {
   depositsPerHour24h: number;
   depositsPerHour7d: number;
   avgRtp: number;
-  timings: {
-    totalUsers: number;
-    ftds: number;
-    depositors: number;
-    avgDeposit: number;
-    depositsPerHour: number;
-    avgRtp: number;
-  };
 };
 
 const PANEL_TINT = {
@@ -126,14 +117,7 @@ function WindowToggle({
  * Generic panel shell shared by every KPI box so the whole strip looks
  * like the P&L Today / Reward-Costs cards: a tinted `Card` with a header
  * (title + optional Info popover slot + a window control/label on the
- * right), a hero value, an optional chip-grid / subtitle body, and the
- * bottom-right server-measured load-time badge.
- *
- * The badge is an absolute, pointer-events-none corner overlay. The
- * content reserves {@link BOX_TIMING_RESERVE} of bottom padding so the
- * badge sits in clear space BELOW the last row (hero number / breakdown
- * chips) instead of occluding it — uniform across every KPI box, no
- * per-box hack and no horizontal shrink of content.
+ * right), a hero value, and an optional chip-grid / subtitle body.
  */
 function KpiPanel({
   title,
@@ -141,7 +125,6 @@ function KpiPanel({
   headerRight,
   icon: Icon,
   tint,
-  loadMs,
   children,
 }: {
   title: string;
@@ -151,28 +134,22 @@ function KpiPanel({
   headerRight?: React.ReactNode;
   icon?: LucideIcon;
   tint: PanelTint;
-  loadMs: number;
   children: React.ReactNode;
 }) {
   return (
-    <div className="relative">
-      <Card className={PANEL_TINT[tint]}>
-        <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-          <CardTitle className="text-card-title text-muted-foreground inline-flex min-w-0 items-center gap-1">
-            <span className="truncate">{title}</span>
-            {titleAdornment}
-          </CardTitle>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {headerRight}
-            {Icon && <Icon className={cn("size-4 shrink-0", ICON_TINT[tint])} />}
-          </div>
-        </CardHeader>
-        <CardContent className={cn("space-y-3", BOX_TIMING_RESERVE)}>
-          {children}
-        </CardContent>
-      </Card>
-      <BoxLoadTime ms={loadMs} />
-    </div>
+    <Card className={PANEL_TINT[tint]}>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+        <CardTitle className="text-card-title text-muted-foreground inline-flex min-w-0 items-center gap-1">
+          <span className="truncate">{title}</span>
+          {titleAdornment}
+        </CardTitle>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {headerRight}
+          {Icon && <Icon className={cn("size-4 shrink-0", ICON_TINT[tint])} />}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">{children}</CardContent>
+    </Card>
   );
 }
 
@@ -372,7 +349,6 @@ export function DashboardKpiSection({
             <KpiPanel
               title="GGR"
               tint="cyan"
-              loadMs={p.timings.ggr}
               titleAdornment={
                 <GgrBreakdownPopover
                   breakdown={p.ggrBreakdown}
@@ -406,7 +382,6 @@ export function DashboardKpiSection({
             <KpiPanel
               title="Wager"
               tint="purple"
-              loadMs={p.timings.wager}
               headerRight={
                 <WindowToggle
                   active={mode}
@@ -445,7 +420,6 @@ export function DashboardKpiSection({
             <KpiPanel
               title="Deposits"
               tint="emerald"
-              loadMs={p.timings.deposits}
               headerRight={
                 <WindowToggle
                   active={mode}
@@ -477,7 +451,6 @@ export function DashboardKpiSection({
             <KpiPanel
               title="Withdrawals"
               tint="pink"
-              loadMs={p.timings.withdrawals}
               headerRight={
                 <WindowToggle
                   active={mode}
@@ -509,7 +482,6 @@ export function DashboardKpiSection({
           title="Total Users"
           tint="blue"
           icon={Users}
-          loadMs={snapshot.timings.totalUsers}
           headerRight={<StaticWindowLabel label="lifetime" />}
         >
           <PlainHero value={snapshot.usersTotal} format="number" />
@@ -523,7 +495,6 @@ export function DashboardKpiSection({
           title="FTDs"
           tint="amber"
           icon={HandCoins}
-          loadMs={snapshot.timings.ftds}
           headerRight={<StaticWindowLabel label="24h" />}
         >
           <PlainHero value={snapshot.ftds24h} format="number" />
@@ -537,7 +508,6 @@ export function DashboardKpiSection({
           title="Depositors"
           tint="purple"
           icon={BadgeDollarSign}
-          loadMs={snapshot.timings.depositors}
           headerRight={<StaticWindowLabel label="lifetime" />}
         >
           <PlainHero value={snapshot.uniqueDepositors} format="number" />
@@ -552,7 +522,6 @@ export function DashboardKpiSection({
           title="Avg Deposit"
           tint="cyan"
           icon={Coins}
-          loadMs={snapshot.timings.avgDeposit}
           headerRight={<StaticWindowLabel label="lifetime" />}
         >
           <PlainHero value={snapshot.avgDeposit} format="currency" />
@@ -563,7 +532,6 @@ export function DashboardKpiSection({
           title="Deposits / Hour"
           tint="emerald"
           icon={Gauge}
-          loadMs={snapshot.timings.depositsPerHour}
           headerRight={<StaticWindowLabel label="24h" />}
         >
           {/* Fractional rate — render directly (not AnimatedNumber, whose
@@ -580,7 +548,6 @@ export function DashboardKpiSection({
           title="Avg RTP"
           tint="pink"
           icon={Percent}
-          loadMs={snapshot.timings.avgRtp}
           headerRight={<StaticWindowLabel label="lifetime" />}
         >
           <PlainHero value={snapshot.avgRtp} format="percent" />
