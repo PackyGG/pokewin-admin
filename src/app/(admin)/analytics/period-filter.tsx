@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
-import { cn } from "@/lib/utils";
+import { useSearchParams } from "next/navigation";
+import { PeriodChips } from "@/components/ux";
 
 const PERIODS = [
   { label: "Today", value: "today" },
@@ -12,32 +11,30 @@ const PERIODS = [
   { label: "All", value: "all" },
 ] as const;
 
-export function PeriodFilter() {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const current = searchParams.get("period") ?? "30d";
+const DEFAULT_PERIOD = "30d";
 
-  // 5 chips × ~50px ≈ 250px — fits a 360px viewport, but if a longer
-  // label is added later the row should wrap rather than overflow.
-  // `flex-wrap gap-1` is the safe default.
+/**
+ * Analytics period selector. Thin wrapper over the shared `PeriodChips`
+ * primitive (src/components/ux/period-chips.tsx) — the same URL-driven,
+ * useTransition-backed chip pattern used across the admin. Swapped from a
+ * bespoke `<Link>` row to the primitive so the pending state (dim others +
+ * in-chip spinner), the reduced-motion-safe colour transition, and the
+ * scroll-preserving `{ scroll: false }` navigation are all consistent.
+ *
+ * Behaviour is unchanged: same 5 chips, same values, `30d` stays the default
+ * (selecting it produces a clean `?`-less URL).
+ */
+export function PeriodFilter() {
+  const searchParams = useSearchParams();
+  const current = searchParams.get("period") ?? DEFAULT_PERIOD;
+
   return (
-    <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/50 p-1">
-      {PERIODS.map(({ label, value }) => (
-        <Link
-          key={value}
-          href={`${pathname}?period=${value}`}
-          replace
-          prefetch={false}
-          className={cn(
-            "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-            current === value
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          {label}
-        </Link>
-      ))}
-    </div>
+    <PeriodChips
+      items={PERIODS}
+      current={current}
+      paramKey="period"
+      defaultValue={DEFAULT_PERIOD}
+      ariaNoun="period"
+    />
   );
 }

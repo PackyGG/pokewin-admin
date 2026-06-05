@@ -24,6 +24,7 @@ import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
 import { readTzCookie } from "@/lib/timezone/server";
 import { DevDbBanner } from "@/components/dev-db-banner";
 import { isNextControlFlowError } from "@/lib/utils/action-error";
+import { ScrollToTopOnNav } from "./scroll-to-top-on-nav";
 
 /**
  * Read the optional profile fields. This runs on every admin page load,
@@ -244,8 +245,13 @@ export default async function AdminLayout({
               the offending element. `pb-[env(safe-area-inset-bottom)]` gives
               iOS notched devices breathing room above the home bar. */}
           <div
+            data-admin-scroll
             className="flex-1 overflow-auto min-w-0 p-3 sm:p-4 md:p-6 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-[max(1.5rem,env(safe-area-inset-bottom))]"
           >
+            {/* Resets this container to scrollTop:0 on real route (pathname)
+                changes. Keyed on pathname only, so ?period=/?tab= param-only
+                updates (which pass scroll:false) are left in place. */}
+            <ScrollToTopOnNav />
             {children}
           </div>
         </SidebarInset>

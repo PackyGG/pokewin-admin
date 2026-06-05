@@ -94,7 +94,7 @@ export function DashboardPeriodSelector() {
               title={`Switch dashboard to ${p}`}
             >
               {active && isPending && (
-                <Spinner size={12} label={`Loading ${p} dashboard`} />
+                <Spinner size={14} label={`Loading ${p} dashboard`} />
               )}
               {p}
             </button>

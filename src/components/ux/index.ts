@@ -78,3 +78,9 @@ export {
   LinkPending,
   LinkPendingShell,
 } from "./route-transition";
+
+// URL-driven chip selectors (client)
+export { PeriodChips, TabChips, type ChipItem } from "./period-chips";
+
+// Tabbed-surface body: keep-mounted panels + crossfade + height tween (client)
+export { TabContainer, type TabPanel } from "./tab-container";
