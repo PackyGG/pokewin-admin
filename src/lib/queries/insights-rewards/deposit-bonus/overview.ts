@@ -38,6 +38,16 @@ export type DepositBonusOverview = {
   count: number;
   /** Distinct claimants in the window. */
   uniqueClaimants: number;
+  /**
+   * Distinct users with a completed `deposit` in the SAME window + scope — the
+   * denominator for the empirical claim probability.
+   */
+  depositors: number;
+  /**
+   * Empirical P(claim | deposit) = uniqueClaimants / depositors, clamped to
+   * [0,1]. `null` when there were no depositors (divide-by-zero guard).
+   */
+  claimProbability: number | null;
   /** Avg bonus = totalCost / count. */
   avg: number;
   /** Median bonus via PERCENTILE_CONT(0.5). */
@@ -73,9 +83,9 @@ async function computeOverview(
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
-  // Headline rollup + daily series in parallel — same filter shape so
-  // totals reconcile by construction.
-  const [rollupRows, dailyRows] = await Promise.all([
+  // Headline rollup + distinct depositors + daily series in parallel — same
+  // status / scope / window filter shape so totals reconcile by construction.
+  const [rollupRows, depositorRows, dailyRows] = await Promise.all([
     db.$queryRawUnsafe<
       {
         total: string;
@@ -94,6 +104,17 @@ async function computeOverview(
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type::text = 'deposit_bonus'
+        AND lt.user_id IN ${userScope}
+        ${dateFilter}
+    `),
+    // Distinct users who made a COMPLETED deposit in the same window + scope —
+    // the denominator for the empirical claim probability. Same filter shape as
+    // the bonus rollup (just type='deposit' instead of 'deposit_bonus').
+    db.$queryRawUnsafe<{ depositors: string }[]>(`
+      SELECT COUNT(DISTINCT lt.user_id)::text AS depositors
+      FROM ledger_transactions lt
+      WHERE lt.status = 'completed'
+        AND lt.type::text = 'deposit'
         AND lt.user_id IN ${userScope}
         ${dateFilter}
     `),
@@ -122,6 +143,14 @@ async function computeOverview(
   const median = rollup?.median != null ? toNumber(rollup.median) : 0;
   const max = rollup?.max_amount != null ? toNumber(rollup.max_amount) : 0;
   const avg = count > 0 ? totalCost / count : 0;
+
+  // Empirical claim probability = distinct claimants / distinct depositors in
+  // the same window + scope. Guard divide-by-zero (no depositors → null). Clamp
+  // to [0,1] — a claimant should always be a subset of depositors, but defend
+  // against scope/clock edge cases yielding a ratio slightly above 1.
+  const depositors = Number(depositorRows[0]?.depositors ?? 0);
+  const claimProbability =
+    depositors > 0 ? Math.min(1, Math.max(0, uniqueClaimants / depositors)) : null;
 
   const dailyVolume = dailyRows.map((r) => ({
     date: new Date(r.date).toISOString().split("T")[0],
@@ -168,6 +197,8 @@ async function computeOverview(
     totalCost,
     count,
     uniqueClaimants,
+    depositors,
+    claimProbability,
     avg,
     median,
     max,
@@ -179,14 +210,14 @@ async function computeOverview(
 const cachedOverview = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeOverview(period, blacklistIds),
-  ["insights-rewards-deposit-bonus-overview-v1"],
+  ["insights-rewards-deposit-bonus-overview-v2"],
   { revalidate: 60, tags: [...DEPOSIT_BONUS_CACHE_TAGS] },
 );
 
 const cachedOverviewLifetime = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeOverview(period, blacklistIds),
-  ["insights-rewards-deposit-bonus-overview-lifetime-v1"],
+  ["insights-rewards-deposit-bonus-overview-lifetime-v2"],
   { revalidate: 300, tags: [...DEPOSIT_BONUS_CACHE_TAGS] },
 );
 
