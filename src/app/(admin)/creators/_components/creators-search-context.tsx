@@ -123,13 +123,20 @@ export function useCreatorsSearch() {
  * a creator the grid shows.
  */
 export function matchesCreatorSearch(
-  creator: { username: string | null; email: string | null },
+  creator: {
+    id?: string;
+    username: string | null;
+    email: string | null;
+    code?: string | null;
+  },
   query: string,
 ): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   return (
+    (creator.id ?? "").toLowerCase().includes(q) ||
     (creator.username ?? "").toLowerCase().includes(q) ||
-    (creator.email ?? "").toLowerCase().includes(q)
+    (creator.email ?? "").toLowerCase().includes(q) ||
+    (creator.code ?? "").toLowerCase().includes(q)
   );
 }

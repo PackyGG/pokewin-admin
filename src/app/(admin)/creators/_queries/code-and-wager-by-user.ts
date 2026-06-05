@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getDb } from "@/lib/db";
+import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
@@ -63,6 +64,20 @@ type WagerRow = {
   total_wagered: string;
 };
 
+type AuditCodeRow = {
+  target_user_id: string | null;
+  metadata: unknown;
+  created_at: Date;
+};
+
+function metadataCode(metadata: unknown): string | null {
+  if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return null;
+  }
+  const value = (metadata as Record<string, unknown>).code;
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
 /**
  * Fetch (code, wagerVolumeUsd, signups, ftds, deposits3d, wagers3d)
  * for a list of creator user_ids in batch. Keyed on user_id; missing
@@ -87,7 +102,7 @@ export async function getCodeAndWagerByUser(
   const db = await getDb();
   const blacklistAnd = await buildBlacklistAnd();
 
-  const [codeRows, signupRows, ftdRows, depositRows, wagerRows] =
+  const [codeRows, signupRows, ftdRows, depositRows, wagerRows, auditCodeRows] =
     await Promise.all([
       // Oldest affiliate_codes row per user_id — same convention as
       // `/creators/[id]`'s primaryCode.
@@ -153,9 +168,27 @@ export async function getCodeAndWagerByUser(
           GROUP BY acu.affiliate_user_id`,
         userIds,
       ),
+
+      adminDb.admin_audit_events.findMany({
+        where: {
+          target_user_id: { in: userIds },
+          event_type: "user_made_creator",
+        },
+        select: {
+          target_user_id: true,
+          metadata: true,
+          created_at: true,
+        },
+        orderBy: { created_at: "asc" },
+      }) as Promise<AuditCodeRow[]>,
     ]);
 
   const codeById = new Map(codeRows.map((r) => [r.user_id, r.code]));
+  for (const row of auditCodeRows) {
+    if (!row.target_user_id || codeById.has(row.target_user_id)) continue;
+    const code = metadataCode(row.metadata);
+    if (code) codeById.set(row.target_user_id, code);
+  }
   const signupsById = new Map(
     signupRows.map((r) => [r.user_id, Number(r.signups)]),
   );

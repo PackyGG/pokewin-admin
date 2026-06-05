@@ -7,6 +7,96 @@ import type { CreatorListItem } from "@/lib/backend-api";
 import type { CreatorsSearchParams } from "../_lib/search-params";
 import type { CreatorsListPage } from "./list-creators";
 
+type ResolvedExCreatorUser = {
+  id: string;
+  username: string | null;
+  email: string | null;
+  image: string | null;
+  created_at: Date;
+  totalDealsCount: number;
+  historicalDeal: CreatorListItem["current_deal"];
+  historicalCode: string | null;
+};
+
+type CreatorAuditEvent = {
+  event_type: string;
+  target_user_id: string | null;
+  metadata: unknown;
+  created_at: Date;
+};
+
+type AdminCreatorDealRow = {
+  id: string;
+  target_user_id: string;
+  status: string;
+  amount: unknown;
+  start_date: Date;
+  end_date: Date | null;
+  created_at: Date;
+};
+
+type HistoricalCreatorArtifacts = {
+  totalDealsCount: number;
+  latestActivityAt: Date | null;
+  historicalDeal: CreatorListItem["current_deal"];
+  historicalCode: string | null;
+  fallbackUsername: string | null;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function numberValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
+    return Number(value);
+  }
+  if (value && typeof value === "object" && "toString" in value) {
+    const raw = value.toString();
+    if (raw !== "[object Object]" && Number.isFinite(Number(raw))) {
+      return Number(raw);
+    }
+  }
+  return null;
+}
+
+function decimalString(value: unknown): string {
+  const n = numberValue(value);
+  return n == null ? "0.00" : n.toFixed(2);
+}
+
+function isoString(value: unknown): string | null {
+  const raw = stringValue(value);
+  if (!raw) return null;
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function mapAdminDealStatus(
+  status: string,
+): NonNullable<CreatorListItem["current_deal"]>["status"] {
+  switch (status) {
+    case "pending":
+      return "scheduled";
+    case "active":
+      return "active";
+    case "completed":
+      return "completed";
+    case "cancelled":
+    default:
+      return "terminated";
+  }
+}
+
+function fallbackCreatedAt(artifacts: HistoricalCreatorArtifacts): Date {
+  return artifacts.latestActivityAt ?? new Date(0);
+}
+
 /**
  * list-ex-creators.ts — the "Canceled / Past creators" tab for /creators.
  *
@@ -133,6 +223,8 @@ async function getEverCreatorCandidateIds(): Promise<Set<string>> {
           in: [
             "user_made_creator",
             "creator_deal_created",
+            "creator_deal_deleted",
+            "creator_social_approved",
             "creator_force_reset_to_user",
             "role_changed",
           ],
@@ -181,6 +273,194 @@ async function getEverCreatorCandidateIds(): Promise<Set<string>> {
   return candidateIds;
 }
 
+function ensureArtifacts(
+  map: Map<string, HistoricalCreatorArtifacts>,
+  userId: string,
+): HistoricalCreatorArtifacts {
+  let entry = map.get(userId);
+  if (!entry) {
+    entry = {
+      totalDealsCount: 0,
+      latestActivityAt: null,
+      historicalDeal: null,
+      historicalCode: null,
+      fallbackUsername: null,
+    };
+    map.set(userId, entry);
+  }
+  return entry;
+}
+
+function bumpLatest(entry: HistoricalCreatorArtifacts, at: Date | null) {
+  if (!at) return;
+  if (!entry.latestActivityAt || at > entry.latestActivityAt) {
+    entry.latestActivityAt = at;
+  }
+}
+
+function replaceHistoricalDeal(
+  entry: HistoricalCreatorArtifacts,
+  deal: NonNullable<CreatorListItem["current_deal"]>,
+) {
+  if (
+    !entry.historicalDeal ||
+    new Date(deal.week_start_utc) > new Date(entry.historicalDeal.week_start_utc)
+  ) {
+    entry.historicalDeal = deal;
+  }
+}
+
+function dealStatusFromAudit(
+  weekStartIso: string,
+  weekEndIso: string,
+  deletedDealIds: Set<string>,
+  dealId: string,
+): NonNullable<CreatorListItem["current_deal"]>["status"] {
+  if (deletedDealIds.has(dealId)) return "terminated";
+  const now = Date.now();
+  const start = new Date(weekStartIso).getTime();
+  const end = new Date(weekEndIso).getTime();
+  if (Number.isFinite(end) && end < now) return "completed";
+  if (Number.isFinite(start) && start > now) return "scheduled";
+  return "terminated";
+}
+
+function dealEndFromStart(start: Date): string {
+  return new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+}
+
+async function getHistoricalArtifactsByUser(
+  userIds: string[],
+): Promise<Map<string, HistoricalCreatorArtifacts>> {
+  const result = new Map<string, HistoricalCreatorArtifacts>();
+  if (userIds.length === 0) return result;
+
+  const [adminDeals, audits] = await Promise.all([
+    adminDb.creator_deals.findMany({
+      where: { target_user_id: { in: userIds } },
+      select: {
+        id: true,
+        target_user_id: true,
+        status: true,
+        amount: true,
+        start_date: true,
+        end_date: true,
+        created_at: true,
+      },
+      orderBy: { created_at: "desc" },
+    }) as Promise<AdminCreatorDealRow[]>,
+    adminDb.admin_audit_events.findMany({
+      where: {
+        target_user_id: { in: userIds },
+        event_type: {
+          in: [
+            "user_made_creator",
+            "creator_deal_created",
+            "creator_deal_deleted",
+            "creator_deal_updated",
+            "creator_social_approved",
+            "creator_force_reset_to_user",
+            "role_changed",
+          ],
+        },
+      },
+      select: {
+        event_type: true,
+        target_user_id: true,
+        metadata: true,
+        created_at: true,
+      },
+      orderBy: { created_at: "desc" },
+    }) as Promise<CreatorAuditEvent[]>,
+  ]);
+
+  const dealIdsByUser = new Map<string, Set<string>>();
+  const deletedDealIds = new Set<string>();
+
+  for (const audit of audits) {
+    if (!audit.target_user_id) continue;
+    const entry = ensureArtifacts(result, audit.target_user_id);
+    bumpLatest(entry, audit.created_at);
+
+    const meta = isRecord(audit.metadata) ? audit.metadata : {};
+    const dealId = stringValue(meta.deal_id);
+    if (dealId) {
+      let ids = dealIdsByUser.get(audit.target_user_id);
+      if (!ids) {
+        ids = new Set<string>();
+        dealIdsByUser.set(audit.target_user_id, ids);
+      }
+      ids.add(dealId);
+      if (audit.event_type === "creator_deal_deleted") {
+        deletedDealIds.add(dealId);
+      }
+    }
+
+    const code = stringValue(meta.code) ?? stringValue(meta.affiliate_code);
+    if (code && !entry.historicalCode) entry.historicalCode = code;
+
+    const username = stringValue(meta.username);
+    if (username && !entry.fallbackUsername) entry.fallbackUsername = username;
+  }
+
+  for (const deal of adminDeals) {
+    const entry = ensureArtifacts(result, deal.target_user_id);
+    bumpLatest(entry, deal.created_at);
+
+    let ids = dealIdsByUser.get(deal.target_user_id);
+    if (!ids) {
+      ids = new Set<string>();
+      dealIdsByUser.set(deal.target_user_id, ids);
+    }
+    ids.add(deal.id);
+
+    const weekStart = deal.start_date.toISOString();
+    const weekEnd = deal.end_date?.toISOString() ?? dealEndFromStart(deal.start_date);
+    replaceHistoricalDeal(entry, {
+      id: deal.id,
+      status: mapAdminDealStatus(deal.status),
+      week_start_utc: weekStart,
+      week_end_utc: weekEnd,
+      fills_allowed: 1,
+      fills_used: deal.status === "pending" || deal.status === "active" ? 0 : 1,
+      per_fill_amount_usd: decimalString(deal.amount),
+    });
+  }
+
+  for (const audit of audits) {
+    if (!audit.target_user_id || audit.event_type !== "creator_deal_created") {
+      continue;
+    }
+    const meta = isRecord(audit.metadata) ? audit.metadata : {};
+    const dealId = stringValue(meta.deal_id);
+    if (!dealId) continue;
+
+    const startIso = isoString(meta.week_start_utc) ?? audit.created_at.toISOString();
+    const endIso = isoString(meta.week_end_utc) ?? dealEndFromStart(new Date(startIso));
+    const fillsAllowed = Math.max(1, numberValue(meta.fills_allowed) ?? 1);
+    const entry = ensureArtifacts(result, audit.target_user_id);
+    replaceHistoricalDeal(entry, {
+      id: dealId,
+      status: dealStatusFromAudit(startIso, endIso, deletedDealIds, dealId),
+      week_start_utc: startIso,
+      week_end_utc: endIso,
+      fills_allowed: fillsAllowed,
+      fills_used:
+        deletedDealIds.has(dealId) || new Date(endIso).getTime() < Date.now()
+          ? fillsAllowed
+          : 0,
+      per_fill_amount_usd: decimalString(meta.per_fill_amount_usd),
+    });
+  }
+
+  for (const [userId, dealIds] of dealIdsByUser) {
+    const entry = ensureArtifacts(result, userId);
+    entry.totalDealsCount = dealIds.size;
+  }
+
+  return result;
+}
+
 /**
  * The set of user IDs that were creators but no longer hold the creator
  * role. Resolves the candidate set, intersects against Main-DB users
@@ -192,15 +472,9 @@ async function getEverCreatorCandidateIds(): Promise<Set<string>> {
  * Past tab search filters the whole ex-creator set, not just the first
  * page slice.
  */
-async function getExCreatorUsers(search?: string): Promise<
-  {
-    id: string;
-    username: string | null;
-    email: string | null;
-    image: string | null;
-    created_at: Date;
-  }[]
-> {
+async function getExCreatorUsers(
+  search?: string,
+): Promise<ResolvedExCreatorUser[]> {
   const [candidateIds, excludedIds] = await Promise.all([
     getEverCreatorCandidateIds(),
     getExcludedUserIds(),
@@ -208,42 +482,69 @@ async function getExCreatorUsers(search?: string): Promise<
   if (candidateIds.size === 0) return [];
 
   const db = await getDb();
+  const excluded = new Set(excludedIds);
+  const ids = [...candidateIds].filter((id) => !excluded.has(id));
+  if (ids.length === 0) return [];
 
-  // Resolve user records for every candidate, enforcing:
-  //   • `role != 'creator'` — current creators belong on the active
-  //     roster, not here.
-  //   • `id NOT IN excluded_users` — the analytics blacklist hides
-  //     users from creator-analytics surfaces; honour it here too so the
-  //     past-creator KPI tile and list match the rest of /creators.
-  //   • optional username/email contains-search (case-insensitive),
-  //     applied at the DB so the search is exhaustive (not page-bounded).
-  // Ordered newest-first so the most recently touched ex-creators surface
-  // at the top.
-  const users = await db.user.findMany({
-    where: {
-      id: { in: [...candidateIds] },
-      role: { not: "creator" },
-      ...(excludedIds.length > 0 ? { NOT: { id: { in: excludedIds } } } : {}),
-      ...(search && search.trim()
-        ? {
-            OR: [
-              { username: { contains: search.trim(), mode: "insensitive" } },
-              { email: { contains: search.trim(), mode: "insensitive" } },
-            ],
-          }
-        : {}),
-    },
-    select: {
-      id: true,
-      username: true,
-      email: true,
-      image: true,
-      created_at: true,
-    },
-    orderBy: { created_at: "desc" },
+  const [users, artifactsByUser] = await Promise.all([
+    db.user.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        image: true,
+        role: true,
+        created_at: true,
+      },
+    }),
+    getHistoricalArtifactsByUser(ids),
+  ]);
+  const usersById = new Map(users.map((u) => [u.id, u]));
+
+  const rows: ResolvedExCreatorUser[] = ids.flatMap((id) => {
+    const user = usersById.get(id);
+    if (user?.role === "creator") return [];
+    const artifacts = artifactsByUser.get(id) ?? {
+      totalDealsCount: 0,
+      latestActivityAt: null,
+      historicalDeal: null,
+      historicalCode: null,
+      fallbackUsername: null,
+    };
+    return [
+      {
+        id,
+        username: user?.username ?? artifacts.fallbackUsername,
+        email: user?.email ?? null,
+        image: user?.image ?? null,
+        created_at: user?.created_at ?? fallbackCreatedAt(artifacts),
+        totalDealsCount: artifacts.totalDealsCount,
+        historicalDeal: artifacts.historicalDeal,
+        historicalCode: artifacts.historicalCode,
+      },
+    ];
   });
 
-  return users;
+  const q = search?.trim().toLowerCase();
+  const filtered = q
+    ? rows.filter(
+        (row) =>
+          row.id.toLowerCase().includes(q) ||
+          (row.username ?? "").toLowerCase().includes(q) ||
+          (row.email ?? "").toLowerCase().includes(q) ||
+          (row.historicalCode ?? "").toLowerCase().includes(q),
+      )
+    : rows;
+
+  return filtered.sort((a, b) => {
+    const aArtifact =
+      artifactsByUser.get(a.id)?.latestActivityAt?.getTime() ?? 0;
+    const bArtifact =
+      artifactsByUser.get(b.id)?.latestActivityAt?.getTime() ?? 0;
+    if (aArtifact !== bArtifact) return bArtifact - aArtifact;
+    return b.created_at.getTime() - a.created_at.getTime();
+  });
 }
 
 /**
@@ -280,19 +581,18 @@ export async function getExCreatorsList(
     // backend demoted them to; it's irrelevant to this surface.
     role: "user",
     created_at: u.created_at.toISOString(),
-    current_deal: null,
+    current_deal: u.historicalDeal,
     active_session_id: null,
-    total_deals_count: 0,
+    total_deals_count: u.totalDealsCount,
   }));
 
   const total = data.length;
-  const start = (params.page - 1) * params.perPage;
   return {
-    data: data.slice(start, start + params.perPage),
+    data,
     total,
-    page: params.page,
-    perPage: params.perPage,
-    totalPages: Math.max(1, Math.ceil(total / params.perPage)),
+    page: 1,
+    perPage: Math.max(1, total),
+    totalPages: 1,
   };
 }
 
