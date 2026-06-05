@@ -11,7 +11,6 @@ import {
 } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
-import { getRealizedPnlSnapshot } from "./_realized-pnl";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 // Canonical metric layer (single source of truth for GGR / wager / payout
 // / scope). The dashboard's headline GGR + the GGR breakdown popover are
@@ -372,7 +371,16 @@ function getPeriodAggregates(
                   ELSE false END AS in_session
       FROM ledger_transactions lt
       JOIN real_users ru ON ru.id = lt.user_id
-      WHERE lt.status = 'completed'
+      -- Scope the base scan to the selected window. EVERY aggregate that
+      -- reads from base below already gates on created_at >= the cutoff
+      -- (revenue / wager / wager_excl_session / pack+battle wager /
+      -- wager_organic / deposit_count / balance_change / manual_wd), so
+      -- pre-cutoff rows contribute 0 to every output column today. Pushing
+      -- the cutoff into the scan is therefore RESULT-IDENTICAL -- it just
+      -- scans the window instead of all-history (the real perf win on the
+      -- 24h view). The separate withdrawals / creator_deal_payouts CTEs
+      -- filter on effective_at and are unaffected by this predicate.
+      WHERE lt.status = 'completed' AND lt.created_at >= ${cutoff}
     ),
     withdrawals AS (
       SELECT
@@ -1242,7 +1250,6 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     windowMetricsResultT,
     upgraderWindowT,
     uniqueDepositorsResultT,
-    realizedPnlResultT,
     packsOpened24hT,
     battlesPlayed24hT,
     ftdCombinedT,
@@ -1354,11 +1361,14 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     withTimingResult("dashboard.uniqueDepositors", () =>
       cachedUniqueDepositors(blacklistIdNotIn),
     ),
-    // Lifetime realized P&L snapshot — single heaviest query in the
-    // codebase. Cached cross-request 5 minutes via unstable_cache, so
-    // most renders hit the cache and this timing is ~0. A cold cache
-    // miss reveals the full scan duration.
-    withTimingResult("dashboard.realizedPnlSnapshot", () => getRealizedPnlSnapshot()),
+    // NOTE: the lifetime realized P&L snapshot (getRealizedPnlSnapshot) —
+    // the single heaviest query in the codebase — is NO LONGER computed
+    // eagerly here. The PnL tile now defaults to the period (windowed)
+    // value and loads the lifetime snapshot LAZILY via the
+    // getLifetimePnlAction server action only when the admin clicks the
+    // "lifetime" toggle. A cold 24h dashboard load therefore never pays
+    // for the lifetime scan. The snapshot keeps its own 5-min
+    // unstable_cache, so the lazy fetch is cheap on warm cache.
     // Rolling-24h pack opening count for the "24h Activity" tile.
     // 60s cached — matches the dashboard's auto-refresh cadence so the
     // tile stays close to live without re-counting on every render.
@@ -1435,7 +1445,6 @@ async function dashboardStatsInner(period: DashboardPeriod) {
   const windowMetricsResult = windowMetricsResultT.data;
   const upgraderWindow = upgraderWindowT.data;
   const uniqueDepositorsResult = uniqueDepositorsResultT.data;
-  const realizedPnlResult = realizedPnlResultT.data;
   const packsOpened24h = packsOpened24hT.data;
   const battlesPlayed24h = battlesPlayed24hT.data;
   const ftdCombined = ftdCombinedT.data;
@@ -1458,7 +1467,6 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     windowMetrics: windowMetricsResultT.durationMs,
     upgraderWindow: upgraderWindowT.durationMs,
     uniqueDepositors: uniqueDepositorsResultT.durationMs,
-    realizedPnlSnapshot: realizedPnlResultT.durationMs,
     packsOpened24h: packsOpened24hT.durationMs,
     battlesPlayed24h: battlesPlayed24hT.durationMs,
     ftdCombined: ftdCombinedT.durationMs,
@@ -1628,9 +1636,14 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // inline aggregate that subtracted the NEUTRAL card/voucher
     // conversions on the payout side is removed.
     ggr: windowMetrics.ggr,
-    // Lifetime realized P&L from the house perspective — see getRealizedPnlSnapshot.
-    // This is a single snapshot value, not a period series.
-    realizedPnl: realizedPnlResult.pnl,
+    // NOTE: the lifetime realized P&L (realizedPnl) is no longer on this
+    // payload. It was the single heaviest query in the codebase and was
+    // computed eagerly on EVERY dashboard render even though the PnL tile
+    // defaults to the period view. The tile now loads the lifetime
+    // snapshot lazily via getLifetimePnlAction (dashboard/actions.ts)
+    // only when the admin clicks the "lifetime" toggle. `realizedPnlPeriod`
+    // (cheap, derived from periodAggregates + windowedPeriodDelta) stays
+    // here as the default value the tile shows.
     // Rolling past-period house P&L (windowed delta — same formula as
     // calculateWindowedPnl but computed inline here from pieces that
     // periodAggregates + the windowedPeriodDelta query already produce).
@@ -1810,10 +1823,14 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // are computed from TWO sub-queries (the batch ran them in parallel);
     // for those we report the SUM of the contributing sub-queries' elapsed
     // times — the total DB work behind that tile's number. The mapping:
-    //   • pnl              → realizedPnlSnapshot (lifetime snapshot; the
-    //                        card's default mode. The period-toggle view is
-    //                        derived from periodAggregates + windowedPeriodDelta,
-    //                        which already back other tiles.)
+    //   • pnl              → 0. The tile now DEFAULTS to the period
+    //                        (windowed) value, which is derived from
+    //                        periodAggregates + windowedPeriodDelta (already
+    //                        counted on other tiles' badges), so the PnL
+    //                        tile carries no eager DB cost of its own. The
+    //                        lifetime snapshot loads lazily on click
+    //                        (getLifetimePnlAction) and intentionally has no
+    //                        badge.
     //   • ggr              → windowMetrics
     //   • wager            → periodAggregates + upgraderWindow (ledger
     //                        pack/battle wager + upgrader_games wager)
@@ -1829,7 +1846,7 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     //   • avgRtp           → balanceAggregates (total_won ÷ total_wagered)
     // Plain numbers → serializable across the RSC boundary (no fn props).
     timings: {
-      pnl: subTimings.realizedPnlSnapshot,
+      pnl: 0,
       ggr: subTimings.windowMetrics,
       wager: subTimings.periodAggregates + subTimings.upgraderWindow,
       wagerOrganic: subTimings.periodAggregates,
