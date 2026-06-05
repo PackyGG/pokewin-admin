@@ -35,6 +35,19 @@
  *   (S6) A tiered policy gives whales a LOWER effective rate than small players.
  *   (S7) `effectiveBreakage` is monotone in cadence (daily < weekly < monthly)
  *        and the expiry component shortens-→-larger.
+ *
+ * And the MULTI-CADENCE + PRE-CLAIM enhancements:
+ *   (M1) `multiCadenceHeadlineRate` == Σ of the three per-cadence rates; the
+ *        multi_cadence policy's effective rate is that sum, flat across segments.
+ *   (M2) Combined-cadence trims cost ≤ baseline, deeper = cheaper, all finite +
+ *        segment-summed.
+ *   (P1) `preClaimCostFactor` == α·discount + (1−α)·(1−breakage); the saving ==
+ *        α·[(1−breakage) − discount]; adoption 0 is inert; a discount above the
+ *        normal payout is a cost (negative saving).
+ *   (P2) The "Pre-claim @ 65%" scenario nets savings vs baseline at the default
+ *        discount, same friction as baseline (same policy), finite + summed.
+ *   (P3) The pre-claim levers ONLY bite on opt-in scenarios — the baseline cost
+ *        is invariant to the sliders; the pre-claim scenario responds to them.
  */
 
 import {
@@ -45,6 +58,8 @@ import {
   DEFAULT_DEPOSITS_PER_USER_PER_WINDOW,
   DEFAULT_FARM_CAPTURE_ELASTICITY,
   DEFAULT_FARMED_WAGER_SHARE,
+  DEFAULT_PRE_CLAIM_ADOPTION,
+  DEFAULT_PRE_CLAIM_DISCOUNT,
   DEFAULT_RATE_CONVERSION_SENSITIVITY,
   DEFAULT_RETENTION_UPLIFT,
   DEFAULT_SEGMENT_MIX,
@@ -59,7 +74,10 @@ import {
   effectiveRateForSegment,
   expiryBreakageComponent,
   farmedShareAtRate,
+  multiCadenceHeadlineRate,
   normalizeSegmentMix,
+  preClaimCostFactor,
+  preClaimSavingPerAccrual,
   rateTightnessVsBaseline,
   simulateSet,
 } from "../engine";
@@ -73,6 +91,11 @@ import {
   SCENARIO_C_TIERED,
   SCENARIO_E_MONTHLY,
   SCENARIO_E_WEEKLY,
+  SCENARIO_F_ALL_MINUS_20,
+  SCENARIO_F_ALL_MINUS_50,
+  SCENARIO_F_DAILY_WEIGHTED,
+  SCENARIO_F_MONTHLY_WEIGHTED,
+  SCENARIO_G_PRECLAIM,
   SCENARIO_LIBRARY,
 } from "../scenarios";
 import {
@@ -118,6 +141,8 @@ const A: Assumptions = {
   rateConversionSensitivity: DEFAULT_RATE_CONVERSION_SENSITIVITY,
   wagerElasticity: DEFAULT_WAGER_ELASTICITY,
   windowDays: DEFAULT_WINDOW_DAYS,
+  preClaimDiscount: DEFAULT_PRE_CLAIM_DISCOUNT,
+  preClaimAdoption: DEFAULT_PRE_CLAIM_ADOPTION,
 };
 const WINDOW = { days: DEFAULT_WINDOW_DAYS };
 
@@ -453,6 +478,202 @@ console.log("[rakeback forecast checks] (S7) breakage monotone in cadence / expi
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// MULTI-CADENCE SCENARIOS (change daily + weekly + monthly together)
+// ════════════════════════════════════════════════════════════════════════════
+
+// ─── (M1) multiCadenceHeadlineRate == Σ of the three per-cadence rates ───────
+console.log("[rakeback forecast checks] (M1) multi-cadence headline = Σ per-cadence rates");
+{
+  const headline = multiCadenceHeadlineRate({
+    perCadenceRate: { daily: 0.02, weekly: 0.012, monthly: 0.008 },
+  });
+  check(
+    `(M1) headline == 0.04 (0.02 + 0.012 + 0.008) (${headline.toFixed(4)})`,
+    Math.abs(headline - 0.04) < 1e-12,
+  );
+  check(
+    "(M1) a zero cadence contributes nothing",
+    Math.abs(
+      multiCadenceHeadlineRate({ perCadenceRate: { daily: 0.03, weekly: 0, monthly: 0 } }) - 0.03,
+    ) < 1e-12,
+  );
+  // The static F-* policies expose their effective rate as the headline sum.
+  const f20Rate = effectiveRateForSegment(SCENARIO_F_ALL_MINUS_20.policy, "whales");
+  // F-all-minus-20 = MC_BASELINE × 0.8 = (0.025+0.015+0.01)×0.8 = 0.04.
+  check(
+    `(M1) F-all-minus-20 effective rate == 0.04 (5% headline × 0.8) (${f20Rate.toFixed(4)})`,
+    Math.abs(f20Rate - 0.04) < 1e-9,
+  );
+  // The effective rate is FLAT across segments for a multi_cadence policy.
+  check(
+    "(M1) multi-cadence rate is flat across all segments",
+    SEGMENT_IDS.every(
+      (id) => Math.abs(effectiveRateForSegment(SCENARIO_F_ALL_MINUS_20.policy, id) - f20Rate) < 1e-12,
+    ),
+  );
+}
+
+// ─── (M2) the combined-cadence trims cost ≤ baseline & monotone in depth ─────
+console.log("[rakeback forecast checks] (M2) combined-cadence trims: cost ≤ baseline, deeper = cheaper");
+{
+  const set = simulateSet(SCENARIO_LIBRARY, A, WINDOW, BASELINE_SCENARIO_ID, REAL_TOTAL);
+  const byId = new Map(set.map((r) => [r.scenarioId, r]));
+  const baseline = byId.get(BASELINE_SCENARIO_ID)!;
+  const f20 = byId.get(SCENARIO_F_ALL_MINUS_20.id)!;
+  const f50 = byId.get(SCENARIO_F_ALL_MINUS_50.id)!;
+  check(
+    `(M2) all −20% costs ≤ baseline ($${f20.bonusCost.toFixed(0)} ≤ $${baseline.bonusCost.toFixed(0)})`,
+    f20.bonusCost <= baseline.bonusCost + 1e-3,
+  );
+  check(
+    `(M2) all −50% costs < all −20% (deeper cut is cheaper: $${f50.bonusCost.toFixed(0)} < $${f20.bonusCost.toFixed(0)})`,
+    f50.bonusCost < f20.bonusCost,
+  );
+  check(
+    `(M2) all −20% gross savings ≥ 0 ($${f20.savingsVsBaseline.toFixed(0)})`,
+    f20.savingsVsBaseline >= -1e-3,
+  );
+  // Every F-* scenario is finite + segment-summed.
+  const fAll = set.filter((r) => /^F-/.test(r.scenarioId));
+  check("(M2) there ARE ≥5 multi-cadence scenarios", fAll.length >= 5);
+  check("(M2) every multi-cadence result is finite", fAll.every(allFinite));
+  for (const r of fAll) {
+    const segSum = r.perSegment.reduce((a, s) => a + s.bonusCost, 0);
+    check(
+      `(M2) "${r.scenarioId}" segment costs sum to total`,
+      Math.abs(segSum - r.bonusCost) < 1e-2,
+    );
+    check(`(M2) "${r.scenarioId}" cost ≥ 0`, r.bonusCost >= 0);
+  }
+  // Daily-weighted (raise daily, cut weekly+monthly) vs monthly-weighted (cut
+  // daily, raise monthly): with daily breakage LOWER than monthly, a daily-
+  // weighted mix at a similar headline realizes a HIGHER cost than monthly-
+  // weighted (monthly forfeits more to breakage). Both must be finite + sane.
+  const dw = byId.get(SCENARIO_F_DAILY_WEIGHTED.id)!;
+  const mw = byId.get(SCENARIO_F_MONTHLY_WEIGHTED.id)!;
+  check("(M2) daily-weighted result finite", allFinite(dw));
+  check("(M2) monthly-weighted result finite", allFinite(mw));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PRE-CLAIM @ 65% (instant cash-out lever)
+// ════════════════════════════════════════════════════════════════════════════
+
+// ─── (P1) preClaimCostFactor + savings math (the wired formula) ──────────────
+console.log("[rakeback forecast checks] (P1) pre-claim cost factor & savings formula");
+{
+  const breakage = 0.1;
+  const discount = 0.65;
+  const alpha = 0.4;
+  // factor = α·discount + (1−α)·(1−breakage) = 0.4·0.65 + 0.6·0.9 = 0.26 + 0.54 = 0.80.
+  const factor = preClaimCostFactor(breakage, discount, alpha);
+  check(`(P1) factor == 0.80 (0.4·0.65 + 0.6·0.9) (${factor.toFixed(4)})`, Math.abs(factor - 0.8) < 1e-9);
+  // saving = α·[(1−breakage) − discount] = 0.4·(0.9 − 0.65) = 0.4·0.25 = 0.10.
+  const saving = preClaimSavingPerAccrual(breakage, discount, alpha);
+  check(`(P1) saving == 0.10 (0.4·(0.9−0.65)) (${saving.toFixed(4)})`, Math.abs(saving - 0.1) < 1e-9);
+  // Identity: factor == (1−breakage) − saving (cost is reduced by the saving).
+  check(
+    "(P1) factor == (1 − breakage) − saving (cost reduced by the saving)",
+    Math.abs(factor - ((1 - breakage) - saving)) < 1e-9,
+  );
+  // adoption 0 ⇒ lever inert ⇒ factor == (1 − breakage), saving == 0.
+  check(
+    "(P1) adoption 0 ⇒ factor == (1 − breakage) (lever inert)",
+    Math.abs(preClaimCostFactor(breakage, discount, 0) - (1 - breakage)) < 1e-9,
+  );
+  check("(P1) adoption 0 ⇒ saving == 0", Math.abs(preClaimSavingPerAccrual(breakage, discount, 0)) < 1e-12);
+  // A GENEROUS discount above the normal payout ⇒ a COST (negative saving).
+  check(
+    "(P1) discount 0.95 > (1−breakage)=0.9 ⇒ negative saving (a cost, not a saving)",
+    preClaimSavingPerAccrual(breakage, 0.95, alpha) < 0,
+  );
+  // Factor stays in [0,1] for degenerate inputs.
+  check("(P1) factor finite & in [0,1] for degenerate inputs", (() => {
+    const f = preClaimCostFactor(NaN, NaN, NaN);
+    return Number.isFinite(f) && f >= 0 && f <= 1;
+  })());
+}
+
+// ─── (P2) the pre-claim SCENARIO saves vs baseline (default discount) ────────
+console.log("[rakeback forecast checks] (P2) Pre-claim @ 65% scenario nets savings vs baseline");
+{
+  const set = simulateSet(SCENARIO_LIBRARY, A, WINDOW, BASELINE_SCENARIO_ID, REAL_TOTAL);
+  const byId = new Map(set.map((r) => [r.scenarioId, r]));
+  const baseline = byId.get(BASELINE_SCENARIO_ID)!;
+  const preClaim = byId.get(SCENARIO_G_PRECLAIM.id)!;
+  check("(P2) pre-claim scenario present", !!preClaim);
+  // Same policy as baseline, pre-claim ON. Default discount 0.65 < (1−breakage)
+  // (breakage = 0.12 × 0.8 daily = 0.096 ⇒ 1−breakage ≈ 0.904), so the adopting
+  // 40% cost LESS than a normal claim ⇒ the scenario is CHEAPER than baseline.
+  check(
+    `(P2) pre-claim costs < baseline ($${preClaim.bonusCost.toFixed(0)} < $${baseline.bonusCost.toFixed(0)})`,
+    preClaim.bonusCost < baseline.bonusCost,
+  );
+  // Same policy ⇒ same retained revenue ⇒ net savings == gross savings ≥ 0.
+  check(`(P2) pre-claim gross savings > 0 ($${preClaim.savingsVsBaseline.toFixed(0)})`, preClaim.savingsVsBaseline > 0);
+  // The discounted payout retains slightly LESS downstream than a full claim
+  // (retention is modeled proportional to the rakeback paid to genuine players),
+  // so net savings is ≤ gross — the honest "we save on cost but the smaller
+  // payout retains a touch less downstream" effect. Net must still be positive.
+  check(
+    `(P2) pre-claim net savings ≤ gross savings (smaller payout retains less downstream: net $${preClaim.netSavingsVsBaseline.toFixed(0)} ≤ gross $${preClaim.savingsVsBaseline.toFixed(0)})`,
+    preClaim.netSavingsVsBaseline <= preClaim.savingsVsBaseline + 1e-6,
+  );
+  check(
+    `(P2) pre-claim net savings > 0 ($${preClaim.netSavingsVsBaseline.toFixed(0)})`,
+    preClaim.netSavingsVsBaseline > 0,
+  );
+  // Same policy ⇒ same friction as the baseline (pre-claim doesn't add friction).
+  check(
+    "(P2) pre-claim friction == baseline friction (same headline policy)",
+    Math.abs(preClaim.frictionScore - baseline.frictionScore) < 1e-9,
+  );
+  check("(P2) pre-claim result finite + segment-summed", allFinite(preClaim) &&
+    Math.abs(preClaim.perSegment.reduce((a, s) => a + s.bonusCost, 0) - preClaim.bonusCost) < 1e-2);
+
+  // The GROSS savings must equal the task's exact formula: at the anchored scale,
+  // savings = baselineCost × α × [(1−breakage) − discount] / (1−breakage). The
+  // baseline pays `accrued × (1−breakage)`; pre-claim pays `accrued × factor`; so
+  // gross savings = accrued × [(1−breakage) − factor] = accrued × α·[(1−breakage)
+  // − discount]. Re-expressed against the anchored baseline cost (= accrued ×
+  // (1−breakage) after scaling), the ratio savings/baselineCost == α·[(1−breakage)
+  // − discount] / (1−breakage).
+  {
+    const brk = effectiveBreakage(SCENARIO_G_PRECLAIM.policy, A.breakageRate); // 0.12 × 0.8 = 0.096
+    const normal = 1 - brk;
+    const expectedRatio =
+      (DEFAULT_PRE_CLAIM_ADOPTION * (normal - DEFAULT_PRE_CLAIM_DISCOUNT)) / normal;
+    const actualRatio = preClaim.savingsVsBaseline / baseline.bonusCost;
+    check(
+      `(P2) gross savings ratio matches the task formula (α·[(1−brk)−disc]/(1−brk)) (${actualRatio.toFixed(5)} ≈ ${expectedRatio.toFixed(5)})`,
+      Math.abs(actualRatio - expectedRatio) < 1e-6,
+    );
+  }
+}
+
+// ─── (P3) a NON-pre-claim scenario ignores the pre-claim levers ──────────────
+console.log("[rakeback forecast checks] (P3) pre-claim levers only bite on opt-in scenarios");
+{
+  // Baseline (no preClaim flag) must be IDENTICAL whether the pre-claim sliders
+  // are at their defaults or cranked — the levers must not leak into it.
+  const baseSet = simulateSet([SCENARIO_A_BASELINE], A, WINDOW, BASELINE_SCENARIO_ID);
+  const crankedAssumptions: Assumptions = { ...A, preClaimDiscount: 0.1, preClaimAdoption: 1 };
+  const crankedSet = simulateSet([SCENARIO_A_BASELINE], crankedAssumptions, WINDOW, BASELINE_SCENARIO_ID);
+  check(
+    "(P3) baseline cost is invariant to the pre-claim sliders (flag off)",
+    Math.abs(baseSet[0].bonusCost - crankedSet[0].bonusCost) < 1e-9,
+  );
+  // The pre-claim SCENARIO, by contrast, MUST respond: a deeper discount (0.1)
+  // at full adoption (1) is far cheaper than the default.
+  const gDefault = simulateSet([SCENARIO_G_PRECLAIM], A, WINDOW, SCENARIO_G_PRECLAIM.id)[0];
+  const gCranked = simulateSet([SCENARIO_G_PRECLAIM], crankedAssumptions, WINDOW, SCENARIO_G_PRECLAIM.id)[0];
+  check(
+    `(P3) pre-claim scenario responds to the discount slider (cranked ${gCranked.bonusCost.toFixed(0)} < default ${gDefault.bonusCost.toFixed(0)})`,
+    gCranked.bonusCost < gDefault.bonusCost,
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // LIVE-POLICY BUILDER (the real-config fix — what the owner caught)
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -579,6 +800,58 @@ console.log("[rakeback forecast checks] (L) live builder reflects the REAL per-c
         dailyOnly.bonusCost < baseRes.bonusCost,
       );
     }
+
+    // ── Live multi-cadence (F) scenarios exist + anchor-faithfully cost ≤ baseline.
+    const liveF = set.filter((r) => /^F-/.test(r.scenarioId));
+    check("(L) live builder emits multi-cadence (F) scenarios (multi-cadence policy)", liveF.length >= 4);
+    const fAll20 = set.find((r) => r.scenarioId === "F-all-minus-20");
+    const fAll50 = set.find((r) => r.scenarioId === "F-all-minus-50");
+    check("(L) live F-all-minus-20 present", !!fAll20);
+    if (fAll20 && fAll50) {
+      check(
+        `(L) live all −20% costs ≤ baseline ($${fAll20.bonusCost.toFixed(0)} ≤ $${baseRes.bonusCost.toFixed(0)})`,
+        fAll20.bonusCost <= baseRes.bonusCost + 1e-3,
+      );
+      check(
+        `(L) live all −50% costs < all −20% ($${fAll50.bonusCost.toFixed(0)} < $${fAll20.bonusCost.toFixed(0)})`,
+        fAll50.bonusCost < fAll20.bonusCost,
+      );
+    }
+    // The live multi-cadence policies must be the `multi_cadence` kind AND their
+    // per-cadence rates must SUM to the modeled blended rate (anchor-faithful),
+    // so the cadence breakdown renders in the policy column without breaking the
+    // anchor. Spot-check the −20% variant against its modeled headline.
+    const f20Scenario = scenarios.find((s) => s.id === "F-all-minus-20");
+    check("(L) F-all-minus-20 is a multi_cadence policy", f20Scenario?.policy.kind === "multi_cadence");
+    if (f20Scenario && f20Scenario.policy.kind === "multi_cadence") {
+      const sum = multiCadenceHeadlineRate(f20Scenario.policy);
+      // Real headline after ×0.8 = 0.40% × 0.8 = 0.32%; modeled = blended × (0.32/0.40).
+      const modeledExpected = MEASURED_BLENDED * ((REAL_HEADLINE * 0.8) / REAL_HEADLINE);
+      check(
+        `(L) F-all-minus-20 per-cadence rates sum to the modeled blended (${(sum * 100).toFixed(4)}% ≈ ${(modeledExpected * 100).toFixed(4)}%)`,
+        Math.abs(sum - modeledExpected) < 1e-9,
+      );
+      // The policy label surfaces the per-cadence breakdown (D / W / M).
+      const label = f20Scenario.description;
+      check(
+        "(L) F-all-minus-20 description shows the per-cadence breakdown (Daily/Weekly/Monthly)",
+        /Daily/.test(label) && /Weekly/.test(label) && /Monthly/.test(label),
+      );
+    }
+
+    // ── Live pre-claim (G) scenario exists + saves vs baseline at the defaults.
+    const livePreClaim = set.find((r) => r.scenarioId === "G-preclaim-65");
+    check("(L) live builder emits the pre-claim (G) scenario", !!livePreClaim);
+    if (livePreClaim) {
+      check(
+        `(L) live pre-claim costs < baseline ($${livePreClaim.bonusCost.toFixed(0)} < $${baseRes.bonusCost.toFixed(0)})`,
+        livePreClaim.bonusCost < baseRes.bonusCost,
+      );
+      check(`(L) live pre-claim gross savings > 0`, livePreClaim.savingsVsBaseline > 0);
+    }
+    const gScenario = scenarios.find((s) => s.id === "G-preclaim-65");
+    check("(L) live pre-claim scenario carries the preClaim flag", gScenario?.preClaim === true);
+
     // Every live result must be finite + segment-summed.
     check("(L) every live result is finite", set.every(allFinite));
     for (const r of set) {

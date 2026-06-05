@@ -26,6 +26,8 @@ import {
   DEFAULT_DEPOSITS_PER_USER_PER_WINDOW,
   DEFAULT_FARM_CAPTURE_ELASTICITY,
   DEFAULT_FARMED_WAGER_SHARE,
+  DEFAULT_PRE_CLAIM_ADOPTION,
+  DEFAULT_PRE_CLAIM_DISCOUNT,
   DEFAULT_RATE_CONVERSION_SENSITIVITY,
   DEFAULT_RETENTION_UPLIFT,
   DEFAULT_SEGMENT_MIX,
@@ -138,6 +140,35 @@ const RAKEBACK_LEVERS: LeverConfig[] = [
     step: 0.01,
     format: "percent",
   },
+  // ── Instant pre-claim levers (the 65% cash-out model) ──
+  // These only bite on scenarios that opt into pre-claim (the "Pre-claim @ 65%"
+  // scenario); they set the MAGNITUDE of that model. Honesty: pre-claim is
+  // modeled to ELIMINATE breakage on the pre-claimed portion (the user takes it
+  // all now) in exchange for the discount — a saving only while the discount
+  // sits below the normal breakage-adjusted payout.
+  {
+    key: "preClaimDiscount",
+    label: "Pre-claim discount",
+    hint: "Fraction of accrued rakeback paid on an INSTANT pre-claim (cash out everything now). 65% ⇒ $1 accrued pays $0.65 immediately. Assumes the pre-claimed portion eliminates breakage (the user takes it all) — a saving only when this sits below the normal (1 − breakage) payout. Only applies to the Pre-claim scenario.",
+    icon: "hand-coins",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    format: "percent",
+    accent: "emerald",
+    groupBreak: true,
+  },
+  {
+    key: "preClaimAdoption",
+    label: "Pre-claim adoption",
+    hint: "Share of claimants who TAKE the instant pre-claim option. The rest claim normally (subject to breakage). 0 = nobody pre-claims (lever inert); higher = more accrual cashed out early at the discount. Only applies to the Pre-claim scenario.",
+    icon: "percent",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    format: "percent",
+    accent: "emerald",
+  },
 ];
 
 /**
@@ -190,6 +221,8 @@ const rakebackDefaults: ForecastConfig<Assumptions, ScenarioConfig>["defaults"] 
     rateConversionSensitivity: DEFAULT_RATE_CONVERSION_SENSITIVITY,
     wagerElasticity: DEFAULT_WAGER_ELASTICITY,
     windowDays: DEFAULT_WINDOW_DAYS,
+    preClaimDiscount: DEFAULT_PRE_CLAIM_DISCOUNT,
+    preClaimAdoption: DEFAULT_PRE_CLAIM_ADOPTION,
   };
 };
 

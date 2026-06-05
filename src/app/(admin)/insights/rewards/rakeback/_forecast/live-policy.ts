@@ -121,6 +121,70 @@ export function rakebackBaselineNote(baseline: ForecastBaseline): string {
   return `~${pct(rate)} blended`;
 }
 
+// ─── Multi-cadence helpers (combined daily+weekly+monthly what-ifs) ───────────
+
+/**
+ * Build a `multi_cadence` policy from the REAL per-cadence rates × a per-cadence
+ * MULTIPLIER, RE-SCALED so the three modeled per-cadence rates sum to the
+ * scenario's modeled blended rate.
+ *
+ * WHY the rescale: the engine reads a `multi_cadence` policy's effective rate as
+ * the literal SUM of its three rates, while the live builder anchors every
+ * scenario through `toModeled(headline)` (the measured blended rate scaled by
+ * how the REAL headline moves). To keep that anchor — so the baseline reproduces
+ * the real total and this scenario stays a coherent fraction of it — we map the
+ * variant's real headline (Σ realRate×mult) into modeled units, then split THAT
+ * across the three cadences in the same proportion as (realRate×mult). The sum
+ * therefore equals the modeled blended rate (anchor-faithful), while the
+ * per-cadence breakdown still renders in the policy column.
+ *
+ * @param enabled    the enabled real cadence rows (each `.cadence` + `.rate`)
+ * @param mult       per-cadence multiplier (e.g. { daily: 0.8, weekly: 0.8, monthly: 0.8 })
+ * @param toModeled  the live builder's real-headline → modeled-blended mapper
+ */
+function buildMultiCadencePolicy(
+  enabled: RakebackCadenceConfig[],
+  mult: Record<ClaimCadence, number>,
+  toModeled: (variantHeadline: number) => number,
+): { policy: Extract<ScenarioConfig["policy"], { kind: "multi_cadence" }>; realHeadline: number } {
+  // Real per-cadence rate after the multiplier (0 for any cadence not enabled).
+  const realRate: Record<ClaimCadence, number> = { daily: 0, weekly: 0, monthly: 0 };
+  for (const r of enabled) {
+    realRate[r.cadence] = Math.max(0, r.rate) * Math.max(0, mult[r.cadence] ?? 1);
+  }
+  const variantHeadline = realRate.daily + realRate.weekly + realRate.monthly;
+  const modeledBlended = Math.max(0, toModeled(variantHeadline));
+  // Split the modeled blended rate across cadences in proportion to realRate, so
+  // Σ perCadenceRate == modeledBlended (anchor-faithful). Degenerate → all zero.
+  const scale = variantHeadline > 0 ? modeledBlended / variantHeadline : 0;
+  const perCadenceRate: Record<ClaimCadence, number> = {
+    daily: realRate.daily * scale,
+    weekly: realRate.weekly * scale,
+    monthly: realRate.monthly * scale,
+  };
+  // Dominant settlement cadence: the fastest enabled cadence (daily > weekly >
+  // monthly) — the breakage / pacing channel reads it.
+  const dominantCadence: ClaimCadence = realRate.daily > 0 ? "daily" : realRate.weekly > 0 ? "weekly" : "monthly";
+  return {
+    policy: { kind: "multi_cadence", perCadenceRate, cadence: dominantCadence },
+    realHeadline: variantHeadline,
+  };
+}
+
+/**
+ * A short per-cadence breakdown of the REAL (multiplier-applied) rates for a
+ * multi-cadence scenario description, e.g. "Daily 0.2% · Weekly 0.08% · Monthly
+ * 0.04%". Drops cadences that aren't enabled.
+ */
+function multiCadenceRealNote(enabled: RakebackCadenceConfig[], mult: Record<ClaimCadence, number>): string {
+  return CADENCE_ORDER.filter((c) => enabled.some((r) => r.cadence === c))
+    .map((c) => {
+      const real = enabled.find((r) => r.cadence === c)!;
+      return `${cadenceLabel(c)} ${pct(Math.max(0, real.rate) * Math.max(0, mult[c] ?? 1))}`;
+    })
+    .join(" · ");
+}
+
 // ─── Scenario builder ─────────────────────────────────────────────────────────
 
 const SCHEMA = 1 as const;
@@ -141,6 +205,11 @@ const SCHEMA = 1 as const;
  *   • Daily-only     — keep only the daily cadence (drop weekly + monthly).
  *   • Cadence shift  — same headline rate but swept weekly / monthly (breakage).
  *   • Expiry change  — tighter / looser expiry on the daily accrual.
+ *   • Multi-cadence  — change daily + weekly + monthly TOGETHER (all −20/−35/−50%,
+ *                      daily/monthly-weighted, balanced trims) as ONE scenario,
+ *                      with the per-cadence breakdown in the policy column.
+ *   • Pre-claim      — the SAME baseline policy with the instant pre-claim model
+ *                      on (cash out everything now at a discount).
  */
 export function buildRakebackScenarios(
   baseline: ForecastBaseline,
@@ -279,6 +348,111 @@ export function buildRakebackScenarios(
     policy: { kind: "expiry_capped", rate: baselineBlended, cadence: dominant.cadence, expiryDays: looserExpiry },
     schemaVersion: SCHEMA,
   });
+
+  // ── F · Multi-cadence — change daily + weekly + monthly TOGETHER ──
+  // Each scenario applies a per-cadence MULTIPLIER to the REAL configured rates
+  // and re-scales the result into the engine's modeled-blended units (so the
+  // anchor holds). The per-cadence breakdown renders in the policy column (the
+  // `multi_cadence` kind) + the description, so a combined-cadence policy move is
+  // a single, clearly-labeled row. Only meaningful when ≥2 cadences are live —
+  // with a single cadence "change all three together" degenerates to a flat trim
+  // (already covered by family B), so we gate on enabled.length > 1.
+  if (enabled.length > 1) {
+    const MULTI_CADENCE_VARIANTS: Array<{
+      id: string;
+      label: string;
+      blurb: string;
+      mult: Record<ClaimCadence, number>;
+      inWhatif?: boolean;
+    }> = [
+      {
+        id: "F-all-minus-20",
+        label: "F · All cadences −20%",
+        blurb:
+          "Trim every cadence 20% together — a uniform, proportional pull-down of the whole program that preserves the daily/weekly/monthly balance. The simplest combined-cadence cost cut.",
+        mult: { daily: 0.8, weekly: 0.8, monthly: 0.8 },
+        inWhatif: true,
+      },
+      {
+        id: "F-all-minus-35",
+        label: "F · All cadences −35%",
+        blurb:
+          "Trim every cadence 35% together — a firmer uniform cut across all three programs. Bigger direct savings, more genuine-conversion sacrifice.",
+        mult: { daily: 0.65, weekly: 0.65, monthly: 0.65 },
+      },
+      {
+        id: "F-all-minus-50",
+        label: "F · All cadences −50%",
+        blurb:
+          "Halve every cadence together — the deepest uniform combined-cadence cut. The largest direct cost reduction, the steepest retention/wager headwind.",
+        mult: { daily: 0.5, weekly: 0.5, monthly: 0.5 },
+        inWhatif: true,
+      },
+      {
+        id: "F-daily-weighted",
+        label: "F · Daily-weighted",
+        blurb:
+          "Shift the mix toward DAILY: raise daily +20% while cutting weekly −40% and monthly −60%. Rewards frequent, reliable claiming (lowest breakage) and starves the slow, hoardable cadences.",
+        mult: { daily: 1.2, weekly: 0.6, monthly: 0.4 },
+        inWhatif: true,
+      },
+      {
+        id: "F-monthly-weighted",
+        label: "F · Monthly-weighted",
+        blurb:
+          "Shift the mix toward MONTHLY: cut daily −40% while raising monthly +50% and holding weekly. Leans on the slow cadence — higher breakage lowers realized cost, at more claim friction.",
+        mult: { daily: 0.6, weekly: 1.0, monthly: 1.5 },
+        inWhatif: true,
+      },
+      {
+        id: "F-balanced-trim",
+        label: "F · Balanced trim",
+        blurb:
+          "A gentle balanced trim: daily −10%, weekly −15%, monthly −25% — leans the cut harder on the slower, more hoardable cadences while keeping daily nearly intact.",
+        mult: { daily: 0.9, weekly: 0.85, monthly: 0.75 },
+      },
+      {
+        id: "F-deep-balanced-trim",
+        label: "F · Balanced trim (deep)",
+        blurb:
+          "A deeper balanced trim: daily −20%, weekly −30%, monthly −45% — same taper-toward-the-slow-cadences shape, cut harder while still shielding daily claimers most.",
+        mult: { daily: 0.8, weekly: 0.7, monthly: 0.55 },
+      },
+    ];
+
+    for (const v of MULTI_CADENCE_VARIANTS) {
+      const { policy, realHeadline: variantHeadline } = buildMultiCadencePolicy(enabled, v.mult, toModeled);
+      const note = multiCadenceRealNote(enabled, v.mult);
+      const sc: ScenarioConfig = {
+        id: v.id,
+        label: v.label,
+        description: `${v.blurb} Per-cadence: ${note} (headline ${pct(headline)} → ${pct(variantHeadline)}).`,
+        policy,
+        schemaVersion: SCHEMA,
+      };
+      scenarios.push(sc);
+      if (v.inWhatif) whatifSet.push(sc);
+    }
+  }
+
+  // ── G · Instant pre-claim @ discount (the 65% cash-out lever) ──
+  // SAME headline policy as the baseline, but with the instant pre-claim model
+  // ON: the adopting fraction (the `preClaimAdoption` lever) cashes out ALL their
+  // accrued rakeback (daily + weekly + monthly combined) immediately for the
+  // `preClaimDiscount` (default 65%) — no breakage on that portion. The realized
+  // cost uses the pre-claim-blended factor, so this row's net savings vs the
+  // baseline read directly. Tune the magnitude with the discount + adoption
+  // sliders. A planning model — it never changes live data.
+  const preClaimScenario: ScenarioConfig = {
+    id: "G-preclaim-65",
+    label: "G · Pre-claim @ 65%",
+    description: `Offer an INSTANT pre-claim: a user cashes out ALL their accrued rakeback (${enabledList}) immediately for a discounted fraction of its worth (the pre-claim discount lever, default 65%). Same headline policy as the baseline — the adopting share (pre-claim adoption lever) takes the discount now (no breakage), everyone else claims normally. A saving whenever the discount sits below the normal breakage-adjusted payout. Tune the discount + adoption sliders. Planning model — does not change live data.`,
+    policy: { kind: "flat_rate", rate: baselineBlended, cadence: dominant.cadence },
+    preClaim: true,
+    schemaVersion: SCHEMA,
+  };
+  scenarios.push(preClaimScenario);
+  whatifSet.push(preClaimScenario);
 
   return { scenarios, whatifSet, baselineScenarioId: baselineScenario.id };
 }

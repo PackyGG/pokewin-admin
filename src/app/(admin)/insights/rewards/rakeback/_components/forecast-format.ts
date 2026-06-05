@@ -24,6 +24,21 @@ export function rateLogicLabel(policy: RatePolicy): string {
       return `Per-tier / ${policy.cadence}`;
     case "progressive_taper":
       return `${pct(policy.baseRate)} → ${pct(policy.floorRate)} taper`;
+    case "multi_cadence": {
+      const r = policy.perCadenceRate;
+      // Show the per-cadence breakdown (daily / weekly / monthly), dropping any
+      // cadence at 0 — the cadence makeup is the whole point of this policy.
+      const parts = (
+        [
+          ["D", r.daily],
+          ["W", r.weekly],
+          ["M", r.monthly],
+        ] as const
+      )
+        .filter(([, v]) => v > 0)
+        .map(([k, v]) => `${k} ${pct(v)}`);
+      return parts.length > 0 ? parts.join(" / ") : "0% (no cadence)";
+    }
   }
 }
 
@@ -41,6 +56,8 @@ export function operationalComplexity(policy: RatePolicy): 1 | 2 | 3 {
       return 2;
     case "tiered_by_wager":
     case "progressive_taper":
+    case "multi_cadence":
+      // Three independent per-cadence programs = the most moving parts to tune.
       return 3;
   }
 }

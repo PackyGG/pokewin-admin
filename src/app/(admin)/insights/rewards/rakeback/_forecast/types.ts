@@ -74,7 +74,8 @@ export type RatePolicyKind =
   | "tiered_by_wager"
   | "cadence_gated"
   | "expiry_capped"
-  | "progressive_taper";
+  | "progressive_taper"
+  | "multi_cadence";
 
 /**
  * The claim-cadence a rakeback policy enforces — how often a user can sweep
@@ -108,6 +109,16 @@ export type ClaimCadence = "daily" | "weekly" | "monthly";
  *                       tier above the floor, floored at `floorRate` — keeps the
  *                       rate generous for small players and throttles the
  *                       whale-heavy dollar concentration.
+ *  • multi_cadence    — the REAL rakeback shape: three independent per-cadence
+ *                       programs (daily / weekly / monthly), each its own % of
+ *                       wager. The headline a user earns is the SUM of the
+ *                       enabled cadences' rates, so this is the only policy that
+ *                       models changing all three cadences TOGETHER (e.g. trim
+ *                       every cadence −20%, or raise daily while cutting weekly /
+ *                       monthly). A cadence with rate 0 is effectively dropped.
+ *                       The engine's effective rate is the Σ of the three; the
+ *                       breakage / pacing route through the `cadence` field (set
+ *                       to the dominant settlement cadence, normally daily).
  */
 export type RatePolicy =
   | { kind: "flat_rate"; rate: number; cadence: ClaimCadence }
@@ -133,6 +144,21 @@ export type RatePolicy =
       taperPerTier: number;
       /** Lower bound the tapered rate never falls below. */
       floorRate: number;
+    }
+  | {
+      kind: "multi_cadence";
+      /**
+       * Per-cadence rate (fraction of wager) for each of the three programs. The
+       * blended effective rate is their SUM (the real headline a user can earn
+       * across every enabled cadence). A cadence at 0 is effectively dropped.
+       */
+      perCadenceRate: Record<ClaimCadence, number>;
+      /**
+       * The dominant SETTLEMENT cadence the breakage / pacing channel reads
+       * (normally `daily` — the fastest enabled cadence). Does NOT change the
+       * blended rate; it only routes breakage + daily pacing.
+       */
+      cadence: ClaimCadence;
     };
 
 // ─── Scenario config ────────────────────────────────────────────────────────
@@ -145,6 +171,17 @@ export type RatePolicy =
  */
 export type ScenarioConfig = BaseScenarioConfig & {
   policy: RatePolicy;
+  /**
+   * Opt this scenario into the INSTANT pre-claim model. When `true`, the adopting
+   * fraction (`preClaimAdoption`) cashes out ALL their accrued rakeback NOW at
+   * `preClaimDiscount` (no breakage) and the rest claim normally — so the
+   * realized cost uses the pre-claim-blended factor instead of `(1 − breakage)`.
+   * The MAGNITUDES (discount + adoption) are the global tunable levers; THIS flag
+   * only decides whether a scenario MODELS pre-claim being live. Absent/false
+   * keeps the normal cost (the baseline + every non-pre-claim what-if), so the
+   * real-total anchor stays exact. A planning model — it never changes live data.
+   */
+  preClaim?: boolean;
 };
 
 // ─── Assumptions (the tunable levers) ───────────────────────────────────────
@@ -198,4 +235,20 @@ export type Assumptions = BaseAssumptions & {
   rateConversionSensitivity: number;
   /** Wager elasticity: how much a higher rate lifts (or a cut lowers) total wager, 0-1. */
   wagerElasticity: number;
+  /**
+   * INSTANT pre-claim discount, 0-1: the fraction of accrued rakeback the house
+   * pays when a user pre-claims ALL their accrual at once (daily + weekly +
+   * monthly combined) for an immediate, discounted cash-out. 0.65 ⇒ $1 accrued
+   * pays out $0.65 instantly. The pre-claimed portion realizes its FULL accrual
+   * at this discount (no breakage — the user takes it all now), so the house
+   * pays `accrued × preClaimDiscount` on the adopting share instead of
+   * `accrued × (1 − breakage)`. A planning lever — it does not change live data.
+   */
+  preClaimDiscount: number;
+  /**
+   * Fraction of claimants who TAKE the instant pre-claim option, 0-1. The rest
+   * `(1 − adoption)` claim normally (subject to breakage). At 0 the pre-claim
+   * lever is inert (everyone claims normally); at 1 every claimant pre-claims.
+   */
+  preClaimAdoption: number;
 };

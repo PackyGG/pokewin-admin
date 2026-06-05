@@ -13,16 +13,21 @@
  *   C — Tiered by wager             (whales-low / small-high; balanced + strict)
  *   D — Progressive taper           (generous floor, tapers up the wager tiers)
  *   E — Cadence & expiry variants   (weekly / monthly cadence, 7d / 14d expiry)
+ *   F — Multi-cadence               (change daily + weekly + monthly TOGETHER:
+ *                                    all −20/−35/−50%, daily/monthly-weighted,
+ *                                    balanced trims)
+ *   G — Instant pre-claim           (the 65% cash-out lever — baseline policy
+ *                                    with the pre-claim model on)
  *
  * `RATE_WHATIF_SET` is the focused comparison row set: baseline plus a flat-rate
- * gradient (3% → 7%) and the cadence anchors — the cleanest "what does moving
- * the headline rate / cadence do" table.
+ * gradient (3% → 7%), the cadence anchors, the headline multi-cadence moves, and
+ * the pre-claim scenario — the cleanest "what does moving the policy do" table.
  *
  * Rates are FRACTIONS of wager (0.05 = 5%).
  */
 
 import { BASELINE_CADENCE, BASELINE_RATE_FALLBACK } from "./constants";
-import type { ScenarioConfig } from "./types";
+import type { ClaimCadence, ScenarioConfig } from "./types";
 
 // ─── A — Current baseline ───────────────────────────────────────────────────
 
@@ -226,9 +231,126 @@ export const SCENARIO_E_TIERED_WEEKLY: ScenarioConfig = {
   schemaVersion: 1,
 };
 
+// ─── F — Multi-cadence (adjust daily + weekly + monthly TOGETHER) ─────────────
+
+/**
+ * Illustrative per-cadence baseline split (fallback only) whose SUM equals the
+ * fallback headline (`BASELINE_RATE_FALLBACK` = 5%): daily 2.5% / weekly 1.5% /
+ * monthly 1%. Each F-scenario below multiplies these three baselines by its own
+ * per-cadence multiplier, so a combined-cadence policy change is modeled as ONE
+ * scenario. The live page derives its REAL per-cadence split from `rakeback_config`
+ * (see `live-policy.ts`) — this split only seeds the static fallback + the engine
+ * self-checks. Rates are FRACTIONS of wager.
+ */
+const MC_BASELINE: Record<ClaimCadence, number> = {
+  daily: 0.025,
+  weekly: 0.015,
+  monthly: 0.01,
+};
+
+/** Build a `multi_cadence` policy by scaling the baseline split per cadence. */
+function multiCadence(
+  mult: Record<ClaimCadence, number>,
+): Extract<ScenarioConfig["policy"], { kind: "multi_cadence" }> {
+  return {
+    kind: "multi_cadence",
+    perCadenceRate: {
+      daily: MC_BASELINE.daily * mult.daily,
+      weekly: MC_BASELINE.weekly * mult.weekly,
+      monthly: MC_BASELINE.monthly * mult.monthly,
+    },
+    // Daily is the dominant settlement cadence (breakage + pacing route through it).
+    cadence: "daily",
+  };
+}
+
+export const SCENARIO_F_ALL_MINUS_20: ScenarioConfig = {
+  id: "F-all-minus-20",
+  label: "F · All cadences −20%",
+  description:
+    "Trim every cadence 20% together (daily 2.5%→2%, weekly 1.5%→1.2%, monthly 1%→0.8%). A uniform, proportional pull-down of the whole rakeback program — the simplest combined-cadence cost cut, preserving the daily/weekly/monthly balance.",
+  policy: multiCadence({ daily: 0.8, weekly: 0.8, monthly: 0.8 }),
+  schemaVersion: 1,
+};
+
+export const SCENARIO_F_ALL_MINUS_35: ScenarioConfig = {
+  id: "F-all-minus-35",
+  label: "F · All cadences −35%",
+  description:
+    "Trim every cadence 35% together (daily 2.5%→1.63%, weekly 1.5%→0.98%, monthly 1%→0.65%). A firmer uniform cut across all three programs — bigger direct savings, more genuine-conversion sacrifice.",
+  policy: multiCadence({ daily: 0.65, weekly: 0.65, monthly: 0.65 }),
+  schemaVersion: 1,
+};
+
+export const SCENARIO_F_ALL_MINUS_50: ScenarioConfig = {
+  id: "F-all-minus-50",
+  label: "F · All cadences −50%",
+  description:
+    "Halve every cadence together (daily 2.5%→1.25%, weekly 1.5%→0.75%, monthly 1%→0.5%). The deepest uniform combined-cadence cut — the largest direct cost reduction, but the steepest retention/wager headwind.",
+  policy: multiCadence({ daily: 0.5, weekly: 0.5, monthly: 0.5 }),
+  schemaVersion: 1,
+};
+
+export const SCENARIO_F_DAILY_WEIGHTED: ScenarioConfig = {
+  id: "F-daily-weighted",
+  label: "F · Daily-weighted",
+  description:
+    "Shift the mix toward DAILY: raise daily +20% (2.5%→3%) while cutting weekly −40% (1.5%→0.9%) and monthly −60% (1%→0.4%). Rewards frequent, reliable claiming (lowest breakage) and starves the slow, hoardable cadences — concentrates spend where engagement is highest.",
+  policy: multiCadence({ daily: 1.2, weekly: 0.6, monthly: 0.4 }),
+  schemaVersion: 1,
+};
+
+export const SCENARIO_F_MONTHLY_WEIGHTED: ScenarioConfig = {
+  id: "F-monthly-weighted",
+  label: "F · Monthly-weighted",
+  description:
+    "Shift the mix toward MONTHLY: cut daily −40% (2.5%→1.5%) while raising monthly +50% (1%→1.5%) and holding weekly. Leans on the slow cadence — higher breakage (more lapses unclaimed) lowers realized cost, at the price of more claim friction.",
+  policy: multiCadence({ daily: 0.6, weekly: 1.0, monthly: 1.5 }),
+  schemaVersion: 1,
+};
+
+export const SCENARIO_F_BALANCED_TRIM: ScenarioConfig = {
+  id: "F-balanced-trim",
+  label: "F · Balanced trim",
+  description:
+    "A gentle balanced trim: daily −10%, weekly −15%, monthly −25% — leans the cut slightly harder on the slower, more hoardable cadences while keeping daily nearly intact. A measured combined-cadence saving that protects the frequent-claimer experience.",
+  policy: multiCadence({ daily: 0.9, weekly: 0.85, monthly: 0.75 }),
+  schemaVersion: 1,
+};
+
+export const SCENARIO_F_DEEP_BALANCED_TRIM: ScenarioConfig = {
+  id: "F-deep-balanced-trim",
+  label: "F · Balanced trim (deep)",
+  description:
+    "A deeper balanced trim: daily −20%, weekly −30%, monthly −45%. Same shape as the gentle balanced trim but cut harder across the board, taper-weighted toward the slow cadences — a larger combined saving while still shielding daily claimers most.",
+  policy: multiCadence({ daily: 0.8, weekly: 0.7, monthly: 0.55 }),
+  schemaVersion: 1,
+};
+
+// ─── G — Instant pre-claim (the 65% cash-out lever) ───────────────────────────
+
+/**
+ * Pre-claim @ discount: the SAME baseline policy, but with the instant pre-claim
+ * model turned ON (`preClaim: true`). The adopting fraction (the
+ * `preClaimAdoption` lever, default 40%) cashes out ALL their accrued rakeback
+ * immediately for the `preClaimDiscount` (default 65%) — eliminating breakage on
+ * that portion in exchange for the haircut. The realized cost uses the blended
+ * factor `α·discount + (1−α)·(1−breakage)`, so this scenario's net savings (vs
+ * the baseline) read directly in the comparison table. Planning model only.
+ */
+export const SCENARIO_G_PRECLAIM: ScenarioConfig = {
+  id: "G-preclaim-65",
+  label: "G · Pre-claim @ 65%",
+  description:
+    "Offer an INSTANT pre-claim: a user cashes out ALL their accrued rakeback (daily + weekly + monthly combined) immediately for a discounted fraction of its worth (the pre-claim discount lever, default 65%). Same headline policy as the baseline — the adopting share (pre-claim adoption lever) takes the discount now (no breakage) while everyone else claims normally. A saving whenever the discount sits below the normal breakage-adjusted payout. Tune the discount + adoption sliders. Planning model — does not change live data.",
+  policy: { kind: "flat_rate", rate: BASELINE_RATE_FALLBACK, cadence: BASELINE_CADENCE },
+  preClaim: true,
+  schemaVersion: 1,
+};
+
 // ─── Library aggregate ────────────────────────────────────────────────────────
 
-/** The full shippable scenario library (A–E), baseline first. */
+/** The full shippable scenario library (A–G), baseline first. */
 export const SCENARIO_LIBRARY: ScenarioConfig[] = [
   // A — baseline (always row 0)
   SCENARIO_A_BASELINE,
@@ -250,6 +372,16 @@ export const SCENARIO_LIBRARY: ScenarioConfig[] = [
   SCENARIO_E_EXPIRY_14,
   SCENARIO_E_EXPIRY_7,
   SCENARIO_E_TIERED_WEEKLY,
+  // F — multi-cadence (adjust daily + weekly + monthly together)
+  SCENARIO_F_ALL_MINUS_20,
+  SCENARIO_F_ALL_MINUS_35,
+  SCENARIO_F_ALL_MINUS_50,
+  SCENARIO_F_DAILY_WEIGHTED,
+  SCENARIO_F_MONTHLY_WEIGHTED,
+  SCENARIO_F_BALANCED_TRIM,
+  SCENARIO_F_DEEP_BALANCED_TRIM,
+  // G — instant pre-claim (the 65% cash-out lever)
+  SCENARIO_G_PRECLAIM,
 ];
 
 // ─── Rate what-if set (the comparison-table rows) ─────────────────────────────
@@ -307,7 +439,10 @@ const MONTHLY_5: ScenarioConfig = {
  * table's savings columns are populated relative to the current policy. The
  * flat rows form a clean rate gradient (3% → 7%) so the table shows how cost /
  * leakage / retention move as the headline rate shifts at a fixed cadence; the
- * weekly / monthly rows isolate the cadence→breakage→cost channel.
+ * weekly / monthly rows isolate the cadence→breakage→cost channel; the
+ * multi-cadence rows show combined daily+weekly+monthly policy moves (with the
+ * cadence breakdown in the policy column); and the pre-claim row surfaces the
+ * instant-cashout lever's net savings directly.
  */
 export const RATE_WHATIF_SET: ScenarioConfig[] = [
   SCENARIO_A_BASELINE,
@@ -319,6 +454,13 @@ export const RATE_WHATIF_SET: ScenarioConfig[] = [
   // Cadence anchors (rate held at baseline)
   WEEKLY_5,
   MONTHLY_5,
+  // Multi-cadence — change daily + weekly + monthly together
+  SCENARIO_F_ALL_MINUS_20,
+  SCENARIO_F_ALL_MINUS_50,
+  SCENARIO_F_DAILY_WEIGHTED,
+  SCENARIO_F_MONTHLY_WEIGHTED,
+  // Instant pre-claim @ 65%
+  SCENARIO_G_PRECLAIM,
 ];
 
 /** The id of the reference (baseline) scenario shared by both sets. */

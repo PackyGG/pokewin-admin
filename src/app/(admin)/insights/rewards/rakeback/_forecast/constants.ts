@@ -117,6 +117,22 @@ export const DEFAULT_DEPOSITS_PER_USER_PER_WINDOW = 1.0;
 export const DEFAULT_WINDOW_DAYS = 30;
 
 /**
+ * INSTANT pre-claim DISCOUNT seed (fraction of accrued rakeback paid on an
+ * instant pre-claim, 0-1). 0.65 ⇒ $1 accrued → $0.65 paid now. The owner's
+ * lever: let a user cash out ALL their accrual immediately for a haircut. The
+ * pre-claimed portion realizes its full accrual at this discount (no breakage),
+ * so it is a SAVING for the house whenever the discount sits below the normal
+ * breakage-adjusted payout `(1 − breakage)`. Tunable; a planning input only.
+ */
+export const DEFAULT_PRE_CLAIM_DISCOUNT = 0.65;
+/**
+ * Fraction of claimants who TAKE the instant pre-claim option (0-1). DEMO seed —
+ * a behavioural what-if, not a measured rate. 0.4 ⇒ 40% of claimants pre-claim
+ * at the discount, the other 60% claim normally (subject to breakage).
+ */
+export const DEFAULT_PRE_CLAIM_ADOPTION = 0.4;
+
+/**
  * DEMO WAGER mix — fractions of TOTAL WAGER that sum to 1. Rakeback dollars are
  * wager-proportional, so this is a wager split, not a headcount split: whales
  * are few in number but carry most of the wager (and therefore most of the

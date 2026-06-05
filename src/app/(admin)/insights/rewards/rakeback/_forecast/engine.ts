@@ -89,6 +89,10 @@ export { clamp, clamp01, finite, safeDiv, scaleResultMoney };
  *   • tiered_by_wager   — the per-segment rate.
  *   • progressive_taper — baseRate × (1 − taperPerTier · tierRank), floored at
  *                         floorRate. Higher wager tier → more taper.
+ *   • multi_cadence     — the SUM of the three per-cadence rates (the real
+ *                         headline a user earns across daily + weekly + monthly),
+ *                         flat across every segment. Changing all three cadences
+ *                         together moves this sum, which drives cost in lock-step.
  * Always ≥0 and finite.
  */
 export function effectiveRateForSegment(policy: RatePolicy, segmentId: SegmentId): number {
@@ -105,7 +109,23 @@ export function effectiveRateForSegment(policy: RatePolicy, segmentId: SegmentId
       const tapered = finite(policy.baseRate) * (1 - taper * rank);
       return Math.max(Math.max(0, finite(policy.floorRate)), Math.max(0, tapered));
     }
+    case "multi_cadence":
+      return multiCadenceHeadlineRate(policy);
   }
+}
+
+/**
+ * The blended headline rate of a `multi_cadence` policy = the SUM of its three
+ * per-cadence rates (the total fraction of wager a user earns across daily +
+ * weekly + monthly). A cadence at 0 contributes nothing (effectively dropped).
+ * Always ≥0 and finite — the single number a combined-cadence what-if moves.
+ */
+export function multiCadenceHeadlineRate(policy: {
+  perCadenceRate: Record<ClaimCadence, number>;
+}): number {
+  const r = policy.perCadenceRate;
+  const sum = Math.max(0, finite(r.daily)) + Math.max(0, finite(r.weekly)) + Math.max(0, finite(r.monthly));
+  return Math.max(0, finite(sum));
 }
 
 /**
@@ -187,6 +207,61 @@ export function effectiveBreakage(policy: RatePolicy, baseBreakage: number): num
   const cadenceMult = CADENCE_BREAKAGE_MULT[policy.cadence] ?? 1;
   const fromCadence = clamp01(base * cadenceMult);
   return clamp01(fromCadence + expiryBreakageComponent(policy));
+}
+
+// ─── Instant pre-claim (the 65% cash-out lever) ───────────────────────────────
+
+/**
+ * The PRE-CLAIM cost factor — the fraction of GROSS accrual the house pays once
+ * an instant pre-claim option is offered, blending the adopters and the normal
+ * claimers:
+ *
+ *   factor = α · preClaimDiscount + (1 − α) · (1 − breakage)
+ *
+ * where α = `preClaimAdoption` and `breakage` is the policy's effective breakage.
+ *
+ * The math, honestly: the adopting fraction α cash-out ALL their accrual NOW at
+ * the discount (no breakage — they take it in full at `preClaimDiscount`); the
+ * remaining `(1 − α)` claim normally and forfeit `breakage` unclaimed. So the
+ * realized cost is `accrued × factor`. With α = 0 this collapses to the plain
+ * `(1 − breakage)` (the lever is inert); with discount < (1 − breakage) the
+ * adopters cost the house LESS than a normal claim → a net SAVING.
+ *
+ * House-POV: the returned factor is a 0-1 share of accrual; lower = cheaper.
+ */
+export function preClaimCostFactor(
+  breakage: number,
+  preClaimDiscount: number,
+  preClaimAdoption: number,
+): number {
+  const brk = clamp01(breakage);
+  const discount = clamp01(preClaimDiscount);
+  const alpha = clamp01(preClaimAdoption);
+  const normalFactor = 1 - brk;
+  const factor = alpha * discount + (1 - alpha) * normalFactor;
+  return clamp01(factor);
+}
+
+/**
+ * The pre-claim SAVING per $1 of gross accrual vs the no-pre-claim baseline:
+ *
+ *   saving = α · [ (1 − breakage) − preClaimDiscount ]
+ *
+ * Positive (a real saving) whenever the discount sits BELOW the normal
+ * breakage-adjusted payout — the adopters take a haircut steeper than the share
+ * the house would otherwise pay. Can be negative (a COST) if the discount is
+ * GENEROUS relative to breakage (e.g. a 90% pre-claim discount on high-breakage
+ * accrual the house would mostly have kept). Signed, House-POV.
+ */
+export function preClaimSavingPerAccrual(
+  breakage: number,
+  preClaimDiscount: number,
+  preClaimAdoption: number,
+): number {
+  const brk = clamp01(breakage);
+  const discount = clamp01(preClaimDiscount);
+  const alpha = clamp01(preClaimAdoption);
+  return finite(alpha * ((1 - brk) - discount));
 }
 
 // ─── Leakage (farmed wager) ───────────────────────────────────────────────────
@@ -366,6 +441,17 @@ export function simulate(
   // each tier's own rate) so a policy that over-rewards a low-value tier
   // correctly over-farms there even when the blended rate is lower.
   const breakage = effectiveBreakage(policy, assumptions.breakageRate);
+  // Instant pre-claim lever (planning model): ONLY scenarios that opt in
+  // (`scenario.preClaim`) model pre-claim being live. For those, the adopting
+  // fraction cashes out ALL accrual NOW at `preClaimDiscount` (no breakage) and
+  // the rest claim normally (subject to breakage) → the realized-cost share of
+  // gross accrual is the blended factor `α·discount + (1−α)·(1−breakage)`. Every
+  // other scenario (incl. the baseline) keeps the plain `(1 − breakage)`, so the
+  // real-total anchor stays exact and the dedicated pre-claim scenario's savings
+  // read directly against it.
+  const preClaimFactor = scenario.preClaim
+    ? preClaimCostFactor(breakage, assumptions.preClaimDiscount, assumptions.preClaimAdoption)
+    : 1 - breakage;
   const convLoss = conversionLossFromRateCut(
     policy,
     mix,
@@ -404,9 +490,13 @@ export function simulate(
     const segRate = effectiveRateForSegment(policy, seg.id);
 
     // Gross accrual for this tier = its wager × its effective rate. Realized
-    // cost reduces it by breakage (accrued-but-unclaimed). House-POV outflow.
+    // cost reduces it by the PRE-CLAIM-blended factor: the share of accrual the
+    // house actually pays = α·discount (adopters cash out in full at the
+    // discount) + (1−α)·(1−breakage) (the rest claim normally, forfeiting
+    // breakage). With pre-claim adoption 0 this collapses to (1 − breakage).
+    // House-POV outflow.
     const segGrossAccrual = segWager * segRate;
-    const segRealizedCost = segGrossAccrual * (1 - breakage);
+    const segRealizedCost = segGrossAccrual * preClaimFactor;
 
     // Farmed-wager leakage: the farmed share of THIS tier's realized rakeback,
     // net of capture — both driven by THIS tier's own rate. Farming concentrates
