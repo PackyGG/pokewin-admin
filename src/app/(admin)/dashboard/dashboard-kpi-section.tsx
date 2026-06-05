@@ -17,7 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber, type AnimatedNumberFormat } from "@/components/animated-number";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { BoxLoadTime } from "./load-time-indicator";
+import { BoxLoadTime, BOX_TIMING_RESERVE } from "./load-time-indicator";
 import { GgrBreakdownPopover } from "./revenue-stat-card";
 import {
   DASHBOARD_KPI_WINDOWS,
@@ -77,13 +77,6 @@ const ICON_TINT: Record<PanelTint, string> = {
   amber: "text-amber-400",
 };
 
-// Compact-tile backdrop for the bottom-right timing badge so the muted "N
-// ms" reads cleanly over a subtitle / chip-row corner WITHOUT reserving
-// layout space (same chip the page used for the old compact tiles). Uses
-// the theme `bg-card` token, dark-mode safe.
-const TILE_BADGE =
-  "bg-card/85 supports-[backdrop-filter]:bg-card/65 backdrop-blur-sm rounded-md pl-1 pr-1.5";
-
 /**
  * Per-box "today / 24h" toggle. Same look as the PnL tile's old
  * period/lifetime toggle (small pill buttons inside the card header). The
@@ -135,6 +128,12 @@ function WindowToggle({
  * (title + optional Info popover slot + a window control/label on the
  * right), a hero value, an optional chip-grid / subtitle body, and the
  * bottom-right server-measured load-time badge.
+ *
+ * The badge is an absolute, pointer-events-none corner overlay. The
+ * content reserves {@link BOX_TIMING_RESERVE} of bottom padding so the
+ * badge sits in clear space BELOW the last row (hero number / breakdown
+ * chips) instead of occluding it — uniform across every KPI box, no
+ * per-box hack and no horizontal shrink of content.
  */
 function KpiPanel({
   title,
@@ -168,9 +167,11 @@ function KpiPanel({
             {Icon && <Icon className={cn("size-4 shrink-0", ICON_TINT[tint])} />}
           </div>
         </CardHeader>
-        <CardContent className="space-y-3">{children}</CardContent>
+        <CardContent className={cn("space-y-3", BOX_TIMING_RESERVE)}>
+          {children}
+        </CardContent>
       </Card>
-      <BoxLoadTime ms={loadMs} className={TILE_BADGE} />
+      <BoxLoadTime ms={loadMs} />
     </div>
   );
 }
@@ -199,6 +200,40 @@ function PlainHero({
   return (
     <div className="text-stat-value truncate tabular-nums">
       <AnimatedNumber value={value} format={format} />
+    </div>
+  );
+}
+
+/**
+ * One of two side-by-side headline figures inside the merged Wager box
+ * (Total + Organic). A small uppercase label sits above a currency value
+ * sized to fit two-up in one KPI box (a notch smaller than the single
+ * {@link PlainHero}). Wagers are flow-in, not a house P&L event, so the
+ * value is neutral `text-foreground` (no emerald/rose) — consistent with
+ * how the single Wager hero rendered before the merge.
+ */
+function DualHero({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: number;
+  hint?: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
+        {label}
+      </p>
+      <div className="truncate text-lg font-bold tabular-nums text-foreground sm:text-xl">
+        <AnimatedNumber value={value} format="currency" />
+      </div>
+      {hint && (
+        <p className="text-[10px] leading-tight text-muted-foreground truncate">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }
@@ -253,10 +288,10 @@ function StaticWindowLabel({ label }: { label: string }) {
 /**
  * Client KPI section for /dashboard.
  *
- * Renders the period-bound KPI boxes (GGR, Wager, Organic Wager, Deposits,
- * Withdrawals) with a per-box today/24h toggle, plus the window-independent
- * snapshot boxes (Total Users, FTDs 24h, Depositors, Avg Deposit,
- * Deposits/Hour, Avg RTP) reskinned onto the same panel design.
+ * Renders the period-bound KPI boxes (GGR, Wager [Total + Organic in one
+ * merged box], Deposits, Withdrawals) with a per-box today/24h toggle, plus
+ * the window-independent snapshot boxes (Total Users, FTDs 24h, Depositors,
+ * Avg Deposit, Deposits/Hour, Avg RTP) reskinned onto the same panel design.
  *
  * The "today" payload is rendered eagerly (the active default window). The
  * rolling 24h payload is fetched LAZILY (one server action) the first time
@@ -320,11 +355,12 @@ export function DashboardKpiSection({
 
   return (
     <div className="space-y-6">
-      {/* Period-bound boxes — each with a today/24h toggle. Mobile-first:
-          one column at <sm so the hero value + toggle never crush, 2-up at
-          sm, 4 at lg, 5 across at xl (GGR, Wager, Organic Wager, Deposits,
-          Withdrawals). */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5">
+      {/* Period-bound boxes — each with a today/24h toggle. Four boxes now
+          (Wager + Organic Wager merged into one): GGR, Wager, Deposits,
+          Withdrawals. Mobile-first: one column at <sm so the hero value +
+          toggle never crush, 2-up at sm, 4 across at lg+ (fills the row
+          cleanly — no orphan slot). */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
         {/* GGR — gaming margin. Cyan identity; Info popover with the
             wager/payout legs + lazy top-contributors, scoped to the box's
             active window. */}
@@ -358,8 +394,11 @@ export function DashboardKpiSection({
           );
         })()}
 
-        {/* Wager — customer wager (creator-on-stream sessions excluded).
-            Purple identity; Packs/Battles/Upgrader chip row sums to hero. */}
+        {/* Wager — MERGED box. Shows total customer wager (creator-on-stream
+            sessions excluded) AND organic wager (no creator-code users) as two
+            headline figures, with the Packs/Battles/Upgrader split (of the
+            total) below. Purple identity; one today/24h toggle drives both
+            figures + the breakdown. */}
         {(() => {
           const p = payloadFor("wager");
           const mode = modeFor("wager");
@@ -376,35 +415,22 @@ export function DashboardKpiSection({
                 />
               }
             >
-              <PlainHero value={p.wager} format="currency" />
+              {/* Two headline figures side by side: total wager + organic
+                  wager. Each labelled so neither number is ambiguous. */}
+              <div className="grid grid-cols-2 gap-3">
+                <DualHero label="Total" value={p.wager} />
+                <DualHero
+                  label="Organic"
+                  value={p.wagerOrganic}
+                  hint="no creator-code users"
+                />
+              </div>
+              {/* Packs / Battles / Upgrader split of the TOTAL wager. */}
               <div className="grid grid-cols-3 gap-1.5 -mx-0.5">
                 <PanelChip label="Packs" value={p.wagerBreakdown.packs} />
                 <PanelChip label="Battles" value={p.wagerBreakdown.battles} />
                 <PanelChip label="Upgrader" value={p.wagerBreakdown.upgrader} />
               </div>
-            </KpiPanel>
-          );
-        })()}
-
-        {/* Organic Wager — users who did NOT join under a creator code. */}
-        {(() => {
-          const p = payloadFor("wagerOrganic");
-          const mode = modeFor("wagerOrganic");
-          return (
-            <KpiPanel
-              title="Organic Wager"
-              tint="purple"
-              loadMs={p.timings.wagerOrganic}
-              headerRight={
-                <WindowToggle
-                  active={mode}
-                  loading={loading}
-                  onPick={(w) => pick("wagerOrganic", w)}
-                />
-              }
-            >
-              <PlainHero value={p.wagerOrganic} format="currency" />
-              <p className="text-stat-label">no creator-code users</p>
             </KpiPanel>
           );
         })()}

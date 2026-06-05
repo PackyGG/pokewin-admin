@@ -156,22 +156,23 @@ export default async function DashboardPage({
         </Suspense>
       </div>
 
-      {/* KPI boxes — period-bound (GGR, Wager, Organic Wager, Deposits,
-          Withdrawals) with a per-box today/24h toggle, plus the
-          window-independent snapshot boxes (Total Users, FTDs, Depositors,
-          Avg Deposit, Deposits/Hour, Avg RTP). DEFAULTS to "today" (loaded
-          eagerly here); the rolling 24h window is fetched lazily on the
-          first toggle inside the client section (active-timeframe-only).
+      {/* KPI boxes — period-bound (GGR, Wager [Total + Organic merged into
+          one box], Deposits, Withdrawals) with a per-box today/24h toggle,
+          plus the window-independent snapshot boxes (Total Users, FTDs,
+          Depositors, Avg Deposit, Deposits/Hour, Avg RTP). DEFAULTS to
+          "today" (loaded eagerly here); the rolling 24h window is fetched
+          lazily on the first toggle inside the client section
+          (active-timeframe-only).
 
           NOT keyed on the global `?period=` selector — these boxes own their
           own today/24h window now. The global selector drives the Trends
           charts + Wager Attribution below. Streams behind its own Suspense
           so the today-window aggregate never blocks the 3 cost cards above;
-          the skeleton mirrors the 5-up period strip + 6-up snapshot strip. */}
+          the skeleton mirrors the 4-up period strip + 6-up snapshot strip. */}
       <Suspense
         fallback={
           <>
-            <SkeletonKpiStrip count={5} />
+            <SkeletonKpiStrip count={4} />
             <SkeletonKpiStrip count={6} />
           </>
         }

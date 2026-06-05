@@ -46,10 +46,11 @@ export default function DashboardLoading() {
         </div>
       </div>
 
-      {/* KPI strips — 6-up primary (PnL · GGR · Wager · Organic Wager ·
-          Deposits · Withdrawals) + 6-up secondary (Total Users · FTDs ·
-          Depositors · Avg Deposit · Deposits/Hour · Avg RTP). */}
-      <SkeletonKpiStrip count={6} />
+      {/* KPI strips — 4-up primary period boxes (GGR · Wager [Total +
+          Organic merged] · Deposits · Withdrawals) + 6-up secondary
+          snapshot boxes (Total Users · FTDs · Depositors · Avg Deposit ·
+          Deposits/Hour · Avg RTP). */}
+      <SkeletonKpiStrip count={4} />
       <SkeletonKpiStrip count={6} />
 
       {/* Today-since-00:00 tiles — P&L Today + Reward Costs + Creators Costs.

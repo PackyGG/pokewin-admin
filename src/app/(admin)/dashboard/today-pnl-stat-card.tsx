@@ -20,6 +20,7 @@ import {
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { BOX_TIMING_RESERVE } from "./load-time-indicator";
 
 /**
  * "P&L Today" dashboard tile — house P&L for the CURRENT CALENDAR DAY
@@ -92,7 +93,10 @@ export function TodayPnlStatCard({
           <TrendingDown className="size-4 shrink-0 text-rose-400" />
         )}
       </CardHeader>
-      <CardContent className="space-y-3">
+      {/* Bottom reserve so the corner timing badge (added by the
+          BoxTimingFrame this card is wrapped in) sits BELOW the chip row,
+          not on top of it. */}
+      <CardContent className={cn("space-y-3", BOX_TIMING_RESERVE)}>
         <div className="text-stat-value truncate">
           <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
             {isProfit ? "+" : "−"}
