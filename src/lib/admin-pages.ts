@@ -49,17 +49,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Insights", label: "Rakeback", key: "/insights/rewards/rakeback" },
   { group: "Insights", label: "Race", key: "/insights/rewards/race" },
   { group: "Insights", label: "Affiliate", key: "/insights/rewards/affiliate" },
-  { group: "Insights", label: "Sign Up", key: "/insights/rewards/signup" },
-  { group: "Insights", label: "Streamers", key: "/insights/streamers" },
   // Balance Adjustments — accountability surface for admin manual
   // credits/debits to user balances. Sits in Insights alongside the
   // other analytical reward/finance surfaces.
   { group: "Insights", label: "Balance Adjustments", key: "/insights/balance-adjustments" },
-  // Edge Calc — theoretical EV / RTP / house-edge math + scenario
-  // simulator. Pure-math companion to the empirical /insights/games
-  // page so admins can model packs / upgrader / bonus stacks before
-  // they ship a change.
-  { group: "Insights", label: "Edge Calc", key: "/insights/edge-calc" },
   // Forecast — unified reward-forecast hub. Hosts a full-depth
   // scenario simulation per reward type (modeled on the deposit-bonus
   // forecast), anchored on real production baselines. Own permission
@@ -117,6 +110,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // see the socials review page too.
   { group: "Creator Marketing", label: "Creators", key: "/creators" },
   { group: "Creator Marketing", label: "Leaderboards", key: "/creators/leaderboards" },
+  // Creator Changelog — read-only feed of creator-marketing admin
+  // actions sourced from the admin audit log. Its own grantable key so
+  // it can be granted independently of the creator directory.
+  { group: "Creator Marketing", label: "Changelog", key: "/creators/changelog" },
   // Employees — internal staff workflow (board + shift planning)
   { group: "Employees", label: "Employee Board", key: "/employees" },
   { group: "Employees", label: "Shifts", key: "/shifts" },

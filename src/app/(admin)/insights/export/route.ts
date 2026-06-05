@@ -25,7 +25,6 @@ import { parseInsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_peri
 import { parseGamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { parseTopUsersFilters } from "@/lib/queries/insights-games/top-users";
 import { parseInsightsPeriod } from "../analytics/types";
-import { parsePeriod as parseStreamerPeriod } from "../streamers/types";
 import { parseRakebackRoiLookback } from "../rewards/rakeback/_constants";
 import { parseRakebackTopClaimerScope } from "@/lib/queries/insights-rewards/rakeback/top-claimers";
 
@@ -37,13 +36,11 @@ import { gatherDepositBonusExportSections } from "../rewards/deposit-bonus/_expo
 import { gatherGamesExportSections } from "../games/_export";
 import { gatherRewardsOverviewExportSections } from "../rewards/_export";
 import { gatherAnalyticsExportSections } from "../analytics/_export";
-import { gatherStreamersExportSections } from "../streamers/_export";
 import { gatherRaceExportSections } from "../rewards/race/_export";
 import { gatherAffiliateExportSections } from "../rewards/affiliate/_export";
 import { gatherRakebackExportSections } from "../rewards/rakeback/_export";
 import { gatherSignupExportSections } from "../rewards/signup/_export";
 import { gatherBalanceAdjustmentsExportSections } from "../balance-adjustments/_export";
-import { gatherEdgeCalcExportSections } from "../edge-calc/_export";
 import { gatherCostBreakdownExportSections } from "../cost-breakdown/_export";
 import {
   gatherGgrExportSections,
@@ -118,13 +115,6 @@ const EXPORTS: Record<string, ExportDescriptor> = {
         },
       ),
   },
-  streamers: {
-    permissionKey: "/insights/streamers",
-    gather: (p) =>
-      gatherStreamersExportSections(
-        parseStreamerPeriod(p.get("period") ?? undefined),
-      ),
-  },
   race: {
     permissionKey: "/insights/rewards/race",
     gather: (p) =>
@@ -161,10 +151,6 @@ const EXPORTS: Record<string, ExportDescriptor> = {
       gatherBalanceAdjustmentsExportSections(
         parseInsightsRewardsPeriod(p.get("period") ?? undefined),
       ),
-  },
-  "edge-calc": {
-    permissionKey: "/insights/edge-calc",
-    gather: () => gatherEdgeCalcExportSections(),
   },
   "cost-breakdown": {
     permissionKey: "/insights/cost-breakdown",
