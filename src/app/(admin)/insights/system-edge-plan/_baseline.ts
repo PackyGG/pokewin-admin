@@ -4,7 +4,7 @@ import { unstable_cache } from "next/cache";
 
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
   getWindowMetrics,
   sumLedgerTypes,
@@ -84,9 +84,20 @@ import type {
  *
  * Active-timeframe-only (CLAUDE.md): the page mounts ONE baseline per `?period=`
  * inside a keyed `<Suspense>`, so only the selected window is fetched. Heavy
- * reads are wrapped in `unstable_cache` keyed on the period (60s / 300s) and run
- * through `safeQuery` so a slow query degrades to a fallback instead of blocking.
- * Lifetime is bounded via `daysForInsightsPeriodCapped` (no unbounded scans).
+ * reads are wrapped in `unstable_cache` keyed on the period (60s / 300s).
+ *
+ * RESILIENCE (CRITICAL — the page must NEVER collapse to the insights error
+ * boundary because ONE aggregate fails): EVERY query below is wrapped
+ * INDIVIDUALLY in `safeQuery` with (a) a sensible LABELED fallback and (b) an
+ * explicit `REWARD_QUERY_TIMEOUT_MS` budget. `safeQuery` catches a THROW (stale
+ * column, JSON parse, NaN, missing table) AND — via the timeout — a merely SLOW
+ * query (an unbounded scan on a larger prod dataset), so either failure mode
+ * degrades ONLY that lever to its fallback (the lever renders as
+ * data-unavailable / estimated) while every other lever and the whole page
+ * still render. There is no un-guarded DB await on this path: the only awaits
+ * are inside `getPackBattleLegs` (itself wrapped) and the two `Promise.all`s
+ * whose every element is a `safeQuery`. Lifetime is bounded via
+ * `daysForInsightsPeriodCapped` (no unbounded scans).
  */
 
 /** The non-tunable reward legs NOT exposed as their own lever in the planner. */
@@ -313,66 +324,79 @@ async function buildBaseline(
       () => getWindowMetrics({ window }),
       null,
       "system-edge-plan.metrics",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getPackBattleLegs(window),
       null,
       "system-edge-plan.pack-battle-legs",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => upgraderMetrics(window),
       null,
       "system-edge-plan.upgrader",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => sumLedgerTypes({ types: RAKEBACK_TYPES, window }),
       0,
       "system-edge-plan.rakeback-cost",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => sumLedgerTypes({ types: AFFILIATE_TYPES, window }),
       0,
       "system-edge-plan.affiliate-cost",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => sumLedgerTypes({ types: DEPOSIT_BONUS_TYPES, window }),
       0,
       "system-edge-plan.deposit-bonus-cost",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => sumLedgerTypes({ types: RACE_TYPES, window }),
       0,
       "system-edge-plan.race-cost",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getRaffleForecastBaseline(period),
       null,
       "system-edge-plan.raffle",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getDailyPacksTotalCost(period),
       null,
       "system-edge-plan.daily-packs",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getSignupOverview(period),
       null,
       "system-edge-plan.signup",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getRakebackConfigs(),
       [],
       "system-edge-plan.rakeback-config",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getAffiliateLevelConfigs(),
       [],
       "system-edge-plan.affiliate-config",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getAffiliateOverview(period),
       null,
       "system-edge-plan.affiliate-overview",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
 
@@ -548,9 +572,65 @@ function cadenceLabel(c: RakebackCadenceId): string {
 }
 
 /**
+ * A fully-zeroed, serializable baseline. The last-resort fallback if the whole
+ * `buildBaseline` (or the cache machinery) ever throws for a reason NOT caught
+ * by the per-query `safeQuery` wrappers (e.g. an unexpected post-processing
+ * error or an `unstable_cache` infra error). Returning this — rather than
+ * letting the throw bubble — keeps the page from collapsing into the insights
+ * error boundary: `wager <= 0` makes the content layer render its clean
+ * "no gameplay to anchor on" empty state instead. Belt-and-braces on top of the
+ * per-query guards.
+ */
+function emptyBaseline(period: InsightsRewardsPeriod): SystemEdgeBaseline {
+  const zeroType = (type: GameTypeBaseline["type"]): GameTypeBaseline => ({
+    type,
+    wager: 0,
+    payout: 0,
+    ggr: 0,
+    edge: null,
+    bets: 0,
+    dataAvailable: false,
+  });
+  return {
+    periodLabel: insightsRewardsPeriodLabel(period),
+    periodDays: Math.max(1, daysForInsightsPeriodCapped(period)),
+    gameTypes: [zeroType("packs"), zeroType("battles"), zeroType("upgrader")],
+    wager: 0,
+    gamingPayout: 0,
+    ggr: 0,
+    houseEdge: null,
+    bets: 0,
+    rakebackCost: 0,
+    affiliateCost: 0,
+    depositBonusCost: 0,
+    raceCost: 0,
+    raffleCost: 0,
+    dailyPacksCost: 0,
+    signupPacksCost: 0,
+    rainCost: 0,
+    otherRewardCost: 0,
+    rakebackCadences: [],
+    affiliateTiers: [],
+    affiliateBlendedRate: null,
+    signupAvgGrant: null,
+    signupClaimants: 0,
+    depositBonusCapUsd: DEPOSIT_BONUS_BASELINE_CAP_USD,
+    depositBonusWindowHours: DEPOSIT_BONUS_BASELINE_WINDOW_HOURS,
+  };
+}
+
+/**
  * Public entry — the cached baseline for a period. `unstable_cache` keyed on the
  * period with a period-aware TTL (60s short windows / 300s lifetime), mirroring
  * the insights-rewards cache discipline.
+ *
+ * Wrapped in `safeQuery` as the OUTERMOST guard: every individual aggregate
+ * inside `buildBaseline` is already `safeQuery`-wrapped (so one failing query
+ * only degrades its own lever), and this final wrapper catches any residual
+ * throw from the assembly or the cache layer itself — so the page can NEVER
+ * collapse to the insights error boundary from this read. On total failure it
+ * degrades to a zeroed `emptyBaseline`, which the content layer renders as the
+ * clean "no gameplay to anchor on" empty state.
  */
 export async function getSystemEdgeBaseline(
   period: InsightsRewardsPeriod,
@@ -560,5 +640,11 @@ export async function getSystemEdgeBaseline(
     ["system-edge-plan-baseline-v3", period],
     { revalidate: cacheTtlForInsightsPeriod(period) },
   );
-  return cached();
+  const { data } = await safeQuery(
+    () => cached(),
+    emptyBaseline(period),
+    "system-edge-plan.baseline",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  return data;
 }

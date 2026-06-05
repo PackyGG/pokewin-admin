@@ -411,7 +411,7 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                       onValueChange={(pct) => setEdge(g.type, pct)}
                       min={0}
                       max={30}
-                      step={0.05}
+                      step={0.001}
                       baselineMarker={cur * 100}
                       baselineLabel={
                         g.dataAvailable
@@ -419,6 +419,7 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                           : "estimated — no data in this window"
                       }
                       disabled={!g.dataAvailable}
+                      preciseInput={{ unit: "percent" }}
                     />
                   </div>
                 );
@@ -450,9 +451,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                     onValueChange={(pct) => setRakebackRate(c.cadence, pct)}
                     min={0}
                     max={Math.max(2, c.currentRate * 100 * 3)}
-                    step={0.01}
+                    step={0.001}
                     baselineMarker={c.currentRate * 100}
                     baselineLabel={`current ${formatPct(c.currentRate)}`}
+                    preciseInput={{ unit: "percent", decimals: 3 }}
                   />
                 ))}
               </div>
@@ -474,10 +476,11 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                 onValueChange={setRakebackPbWeight}
                 min={0}
                 max={100}
-                step={1}
+                step={0.1}
                 baselineMarker={100}
                 baselineLabel="current 100%"
                 disabled={baseline.rakebackCost <= 0}
+                preciseInput={{ unit: "percent" }}
               />
               <LeverSlider
                 label="Upgrader wager → rakeback"
@@ -486,9 +489,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                 onValueChange={setRakebackUpgWeight}
                 min={0}
                 max={100}
-                step={1}
+                step={0.1}
                 baselineMarker={100}
                 baselineLabel="current 100%"
+                preciseInput={{ unit: "percent" }}
                 disabled={
                   baseline.rakebackCost <= 0 ||
                   !baseline.gameTypes.some(
@@ -514,10 +518,11 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                 onValueChange={setInstantPayout}
                 min={0}
                 max={100}
-                step={1}
+                step={0.1}
                 baselineMarker={100}
                 baselineLabel="100% = full accrual (no discount)"
                 disabled={baseline.rakebackCost <= 0}
+                preciseInput={{ unit: "percent" }}
               />
               <LeverSlider
                 label="Instant adoption (share of claimants)"
@@ -526,10 +531,11 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                 onValueChange={setInstantAdoption}
                 min={0}
                 max={100}
-                step={1}
+                step={0.1}
                 baselineMarker={0}
                 baselineLabel="0% = nobody takes it (current)"
                 disabled={baseline.rakebackCost <= 0}
+                preciseInput={{ unit: "percent" }}
               />
             </div>
           </StatPanel>
@@ -561,9 +567,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   onValueChange={setDepMatch}
                   min={0}
                   max={300}
-                  step={5}
+                  step={0.1}
                   baselineMarker={100}
                   baselineLabel="current 100%"
+                  preciseInput={{ unit: "multiplier" }}
                 />
                 <LeverSlider
                   label={`Cap (real ${formatCurrency(baseline.depositBonusCapUsd)})`}
@@ -572,9 +579,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   onValueChange={setDepCap}
                   min={0}
                   max={300}
-                  step={5}
+                  step={0.1}
                   baselineMarker={100}
                   baselineLabel="current cap (1.0×)"
+                  preciseInput={{ unit: "multiplier" }}
                 />
                 <LeverSlider
                   label="Min deposit gate"
@@ -583,9 +591,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   onValueChange={setDepMinDeposit}
                   min={0}
                   max={300}
-                  step={5}
+                  step={0.1}
                   baselineMarker={100}
                   baselineLabel="higher gate = fewer claims = less cost"
+                  preciseInput={{ unit: "multiplier" }}
                 />
                 <LeverSlider
                   label="Wager requirement"
@@ -594,9 +603,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   onValueChange={setDepWagerReq}
                   min={0}
                   max={300}
-                  step={5}
+                  step={0.1}
                   baselineMarker={100}
                   baselineLabel="higher req = more breakage = less cost"
+                  preciseInput={{ unit: "multiplier" }}
                 />
               </div>
             )}
@@ -625,9 +635,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   onValueChange={setRacePool}
                   min={0}
                   max={300}
-                  step={5}
+                  step={0.1}
                   baselineMarker={100}
                   baselineLabel="current pool (1.0×)"
+                  preciseInput={{ unit: "multiplier" }}
                 />
                 <LeverSlider
                   label="Race frequency"
@@ -636,9 +647,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   onValueChange={setRaceFreq}
                   min={0}
                   max={300}
-                  step={5}
+                  step={0.1}
                   baselineMarker={100}
                   baselineLabel="current frequency (1.0×)"
+                  preciseInput={{ unit: "multiplier" }}
                 />
                 <LeverSlider
                   label="Entry threshold"
@@ -647,9 +659,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   onValueChange={setRaceEntry}
                   min={0}
                   max={300}
-                  step={5}
+                  step={0.1}
                   baselineMarker={100}
                   baselineLabel="higher bar = less farming = less cost"
+                  preciseInput={{ unit: "multiplier" }}
                 />
               </div>
             )}
@@ -680,9 +693,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   onValueChange={setRafflePool}
                   min={0}
                   max={300}
-                  step={5}
+                  step={0.1}
                   baselineMarker={100}
                   baselineLabel="current pool (1.0×)"
+                  preciseInput={{ unit: "multiplier" }}
                 />
                 <LeverSlider
                   label="Draw frequency"
@@ -691,9 +705,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   onValueChange={setRaffleFreq}
                   min={0}
                   max={300}
-                  step={5}
+                  step={0.1}
                   baselineMarker={100}
                   baselineLabel="current frequency (1.0×)"
+                  preciseInput={{ unit: "multiplier" }}
                 />
                 <LeverSlider
                   label="Ticket / entry cost"
@@ -702,9 +717,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   onValueChange={setRaffleTicket}
                   min={0}
                   max={300}
-                  step={5}
+                  step={0.1}
                   baselineMarker={100}
                   baselineLabel="higher cost = less farming = less cost"
+                  preciseInput={{ unit: "multiplier" }}
                 />
               </div>
             )}
@@ -744,9 +760,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                     onValueChange={setDailyValue}
                     min={0}
                     max={300}
-                    step={5}
+                    step={0.1}
                     baselineMarker={100}
                     baselineLabel="current value (1.0×)"
+                    preciseInput={{ unit: "multiplier" }}
                   />
                   <LeverSlider
                     label="Grant frequency"
@@ -755,9 +772,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                     onValueChange={setDailyFreq}
                     min={0}
                     max={300}
-                    step={5}
+                    step={0.1}
                     baselineMarker={100}
                     baselineLabel="current frequency (1.0×)"
+                    preciseInput={{ unit: "multiplier" }}
                   />
                 </>
               )}
@@ -779,13 +797,14 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   onValueChange={setSignupGrant}
                   min={0}
                   max={Math.max(25, (baseline.signupAvgGrant ?? 5) * 4)}
-                  step={0.5}
+                  step={0.01}
                   baselineMarker={baseline.signupAvgGrant ?? undefined}
                   baselineLabel={
                     baseline.signupAvgGrant != null
                       ? `current avg ${formatCurrency(baseline.signupAvgGrant)}`
                       : undefined
                   }
+                  preciseInput={{ unit: "usd" }}
                 />
               )}
             </div>
@@ -815,9 +834,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                 onValueChange={setRainMult}
                 min={0}
                 max={300}
-                step={5}
+                step={0.1}
                 baselineMarker={100}
                 baselineLabel="current 100%"
+                preciseInput={{ unit: "multiplier" }}
               />
             )}
           </StatPanel>
@@ -881,9 +901,10 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                     onValueChange={(pct) => setAffiliateRate(t.level, pct)}
                     min={0}
                     max={Math.max(15, t.currentRate * 100 * 2)}
-                    step={0.1}
+                    step={0.001}
                     baselineMarker={t.currentRate * 100}
                     baselineLabel={`current ${formatPct(t.currentRate)}`}
+                    preciseInput={{ unit: "percent", decimals: 3 }}
                   />
                 ))}
               </div>
