@@ -42,113 +42,7 @@ import {
   recordManualWithdrawal,
   updateUserIdentity,
 } from "./actions";
-import { deleteUser } from "../actions";
 import type { UserDetail } from "./user-tabs-types";
-
-export function DeleteUserDialog({
-  user,
-  isPending: parentPending,
-}: {
-  user: UserDetail["user"];
-  isPending: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [confirm, setConfirm] = useState("");
-  const [totpCode, setTotpCode] = useState("");
-  const [isPending, startTransition] = useTransition();
-  const router = useRouter();
-
-  const username = user.username ?? user.email ?? user.id.slice(0, 8);
-  const isConfirmed = confirm === username;
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        setOpen(v);
-        if (!v) {
-          setConfirm("");
-          setTotpCode("");
-        }
-      }}
-    >
-      <DialogTrigger
-        render={
-          <Button variant="destructive" size="sm" disabled={parentPending} />
-        }
-      >
-        Delete
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="text-red-400">
-            Delete User Permanently
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            This will{" "}
-            <span className="font-semibold text-red-400">
-              permanently delete
-            </span>{" "}
-            <span className="font-semibold text-foreground">{username}</span>{" "}
-            and all their data (balances, inventory, transactions, sessions).
-            This cannot be undone.
-          </p>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Type{" "}
-              <span className="font-mono font-semibold text-foreground">
-                {username}
-              </span>{" "}
-              to confirm
-            </Label>
-            <Input
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              placeholder={username}
-              autoComplete="off"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">2FA Code</Label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="Enter your 6-digit code"
-              value={totpCode}
-              onChange={(e) => setTotpCode(e.target.value)}
-              maxLength={6}
-              autoComplete="one-time-code"
-            />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button
-            variant="destructive"
-            className="w-full sm:w-auto"
-            disabled={!isConfirmed || !totpCode.trim() || isPending}
-            onClick={() => {
-              startTransition(async () => {
-                try {
-                  await deleteUser(user.id, totpCode.trim());
-                  toast.success("User deleted");
-                  router.push("/users");
-                } catch (e) {
-                  toast.error(
-                    e instanceof Error ? e.message : "Failed to delete user",
-                  );
-                }
-              });
-            }}
-          >
-            {isPending ? "Deleting..." : "Delete User Permanently"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 // Balance-adjust categories OFFERED IN THE PICKER — the strict, canonical
 // SELECTABLE set. Each option's `value` is written to the ledger row's
@@ -1099,17 +993,6 @@ export function XpAdjustDialog({
     </Dialog>
   );
 }
-
-// ---------------------------------------------------------------------------
-// NOTE: the old standalone `WipeAccountButton` (the nuclear full-account,
-// NON-recoverable `wipeUserAccount` wipe) was REMOVED here. The unified
-// `WipeDataButton` popup (wipe-data-dialog.tsx) — with its new bottom-left
-// "WIPE ALL" control that runs every enabled recoverable category AND removes
-// the user from all stats — is now the SINGLE wipe entry point on /users/[id].
-// The underlying `wipeUserAccount` server action is intentionally left in
-// actions.ts (still gated, still referenced as the canonical full-wipe
-// precedent), but it no longer has a UI trigger here.
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Change Role Dialog (Admin Only) — Select new role + confirm with 2FA

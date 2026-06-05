@@ -3,10 +3,9 @@
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Archive, Ban, ShieldAlert, ShieldCheck, ShieldOff, Lock, Unlock, Trash2 } from "lucide-react";
+import { Archive, Ban, ShieldAlert, ShieldCheck, ShieldOff, Lock, Unlock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -40,23 +39,17 @@ import { EmptyState } from "@/components/empty-state";
 import type { UserDetail } from "./user-tabs-types";
 import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
 import { moveBalanceToVault } from "./actions";
-import { DeleteUserDialog, EditIdentityButton } from "./user-tabs-dialogs";
-import { WipeDataButton } from "./wipe-data-dialog";
 
 /**
  * Moderation toolbar — the action buttons that used to live at the top of
  * the Moderation section. Rendered in the hero of the user detail page
  * now so admins don't have to scroll to Account → Moderation to act.
  *
- * NOTE: EditIdentityButton is NOT included here — it lives in the hero
- * directly, to the LEFT of ChangeRole, per user request.
- *
  * Each button is gated on the relevant capability so non-admins without
  * the matching grant don't see ANY trigger for an action they can't
  * perform — UI signaling matches the server-side gate. Defence-in-depth:
  * the actions still re-check on the server, the gate here just keeps
- * support staff from seeing dead buttons. Delete + Wipe stay admin-only
- * because the corresponding actions are hard-gated with requireAdmin().
+ * support staff from seeing dead buttons.
  */
 export function UserAdminActions({
   user,
@@ -65,8 +58,6 @@ export function UserAdminActions({
   unlockAt,
   isAdmin,
   capabilities,
-  everCreator = false,
-  wasCreator = false,
 }: {
   user: UserDetail["user"];
   // Used by the "To vault" button so the confirm dialog can echo the
@@ -82,21 +73,10 @@ export function UserAdminActions({
   // toolbar refuses to render any of the moderation buttons.
   isAdmin: boolean;
   capabilities: UserDetail["capabilities"];
-  // Creator-protection flags for the "Wipe data" panel — disable the
-  // creator-protected categories (deposits / withdrawals / affiliate) when the
-  // user IS or WAS a creator. UI hint only: every wipe action re-derives the
-  // ever-creator status server-side and hard-rejects a protected category
-  // regardless of these props.
-  everCreator?: boolean;
-  wasCreator?: boolean;
 }) {
   const canBan = isAdmin || capabilities.canBanUsers;
   const canLock = isAdmin || capabilities.canLockUsers;
   const canMoveToVault = isAdmin || capabilities.canAdjustBalance;
-  // Delete + Wipe both gate on requireAdmin() server-side; we mirror
-  // that here rather than wiring up a non-existent capability check.
-  const canDelete = isAdmin;
-  const canWipe = isAdmin || capabilities.canWipeAccounts;
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {canBan &&
@@ -119,26 +99,6 @@ export function UserAdminActions({
           unlockAt={unlockAt ?? null}
         />
       )}
-      {/* ONE unified, customizable "Wipe data" panel — the SINGLE wipe entry
-          point on this page. A checklist where the admin ticks any combination
-          of Content balance adjustments / Balance / Vault / Inventory /
-          Deposits and runs them with a single 2FA confirm, PLUS a bottom-left
-          "WIPE ALL" control that nukes every enabled category + removes the
-          user from all stats in one go. Same gate as before
-          (admin / __can_wipe_accounts). Each ticked category maps onto its
-          existing snapshot-first RECOVERABLE action and is individually
-          restorable from the Moderation-tab wipe audit log. The old separate
-          nuclear "Wipe" (full-account, non-recoverable) button was removed —
-          WIPE ALL + the stat-exclusion supersedes it (recoverable + audited),
-          so this popup is the only wipe trigger. */}
-      {canWipe && (
-        <WipeDataButton
-          userId={user.id}
-          everCreator={everCreator}
-          wasCreator={wasCreator}
-        />
-      )}
-      {canDelete && <DeleteUserDialog user={user} isPending={false} />}
     </div>
   );
 }

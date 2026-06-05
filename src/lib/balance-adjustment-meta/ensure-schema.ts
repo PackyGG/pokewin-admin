@@ -8,8 +8,7 @@ let ensured = false;
 
 /**
  * Create the `admin_balance_adjustment_meta` table + indexes if they're
- * missing — the same self-heal pattern used by
- * src/lib/balance-adjustment-wipes/ensure-schema.ts, /salaries, /shifts,
+ * missing — the same self-heal pattern used by /salaries, /shifts,
  * the employee board, and the changelog.
  *
  * WHY an ensure-schema table instead of a migration: the admin DB has a

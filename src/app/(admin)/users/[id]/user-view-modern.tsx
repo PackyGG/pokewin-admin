@@ -321,13 +321,6 @@ export function UserViewModern({
                     unlockAt={balances?.unlockAt ?? null}
                     isAdmin={isAdmin}
                     capabilities={capabilities}
-                    // Creator-protection flags for the Wipe-data panel.
-                    // everCreator = currently a creator OR wasCreator (the
-                    // user-detail page's audit/owned-codes signal). The wipe
-                    // actions re-derive this server-side; this only drives the
-                    // panel's disabled state.
-                    everCreator={user.role === "creator" || data.wasCreator}
-                    wasCreator={data.wasCreator}
                   />
                 </div>
                 {canChangeUserRoles && (
@@ -584,7 +577,6 @@ export function UserViewModern({
             data={data}
             notes={notes}
             pnlBreakdown={pnlBreakdown}
-            isAdmin={isAdmin}
           />
         )}
       </FadeIn>

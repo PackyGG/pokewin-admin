@@ -37,12 +37,9 @@ import {
 
 export const metadata = { title: "User Detail" };
 
-// Server Actions invoked from this route segment (e.g. the wager / gameplay
-// wipe in wipe-wager-actions.ts) inherit this function time budget. A wager
-// wipe on a HEAVY account legitimately raises its DB transaction's
-// statement_timeout to 180s, so the surrounding Vercel function must be
-// allowed to run at least that long — 300s is Vercel's default cap and gives
-// the 180s DB work comfortable headroom (plus the snapshot + finalize writes).
+// The heavy per-user detail fetches in this route segment inherit this
+// function time budget. 300s is Vercel's default cap and gives the detail
+// aggregate + Platform-P&L breakdown comfortable headroom on prod-sized data.
 // Page reads remain bounded by their own per-query safeQuery timeouts.
 export const maxDuration = 300;
 
@@ -526,7 +523,6 @@ async function UserDetailBody({
           canLockUsers: true,
           canToggleFeatureLocks: true,
           canAssignAffiliate: true,
-          canWipeAccounts: true,
           canChangeUserRoles: true,
           canRecordManualWithdrawal: true,
         }
@@ -538,7 +534,6 @@ async function UserDetailBody({
           canLockUsers: hasCapability(permissions ?? [], "__can_lock_users"),
           canToggleFeatureLocks: hasCapability(permissions ?? [], "__can_toggle_feature_locks"),
           canAssignAffiliate: hasCapability(permissions ?? [], "__can_assign_affiliate"),
-          canWipeAccounts: hasCapability(permissions ?? [], "__can_wipe_accounts"),
           canChangeUserRoles: hasCapability(permissions ?? [], "__can_change_user_roles"),
           canRecordManualWithdrawal: hasCapability(permissions ?? [], "__can_record_manual_withdrawal"),
         };

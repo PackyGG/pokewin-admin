@@ -81,7 +81,6 @@ import {
   FINANCIAL_TX_TYPES,
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
-import { WipeAuditLog } from "./wipe-audit-log";
 import type {
   PaginatedInventory,
   TipEntry,
@@ -1194,12 +1193,10 @@ export function AccountTab({
   data,
   notes,
   pnlBreakdown,
-  isAdmin,
 }: {
   data: UserDetail;
   notes: AdminNote[];
   pnlBreakdown: PnlBreakdown;
-  isAdmin: boolean;
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
   return (
@@ -1245,14 +1242,6 @@ export function AccountTab({
       <Card>
         <CardContent className="pt-6 space-y-4">
           <ModerationSection user={user} mutes={mutes} />
-          {/* Unified wipe audit log for this user — every wipe done on this
-              account (adjustments / balance / vault / inventory): what was
-              removed, who/when, restored-or-not, with a 2FA-gated Restore.
-              Self-fetching + only renders when wipe history exists. Same gate
-              as the wipe actions (admin or __can_wipe_accounts). */}
-          {(isAdmin || capabilities.canWipeAccounts) && (
-            <WipeAuditLog userId={user.id} />
-          )}
         </CardContent>
       </Card>
       <SectionHeading icon={FileText} title="Admin Notes" />

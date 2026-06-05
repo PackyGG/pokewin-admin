@@ -198,7 +198,6 @@ export async function AccountTabContent({ data }: { data: UserDetail }) {
       data={data}
       notes={notes}
       pnlBreakdown={pnlBreakdown}
-      isAdmin={data.sessionRole === "admin"}
     />
   );
 }

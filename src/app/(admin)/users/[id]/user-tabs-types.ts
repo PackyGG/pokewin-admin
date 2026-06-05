@@ -204,7 +204,6 @@ export type UserDetail = {
     canLockUsers: boolean;
     canToggleFeatureLocks: boolean;
     canAssignAffiliate: boolean;
-    canWipeAccounts: boolean;
     canChangeUserRoles: boolean;
     canRecordManualWithdrawal: boolean;
   };
