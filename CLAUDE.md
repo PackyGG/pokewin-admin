@@ -56,6 +56,20 @@ Die volle Mechanik (Scope, Hotspots, Commit-Disziplin, Honest-Reporting) steht w
 
 ---
 
+## ⚙️ Workflows / Multi-Agent-Orchestrierung — aktiv nutzen (User-Regel, 2026-06-05)
+
+**Stehende Freigabe des Users:** Arbeite wieder mit **Workflows** (`Workflow`-Tool, deterministische Multi-Agent-Orchestrierung), wann immer es die Aufgabe verbessert. Du darfst **beliebig viele Workflows gleichzeitig** laufen lassen — keine Obergrenze.
+
+- **Workflow statt Einzel-Agents, wenn** die Aufgabe Struktur braucht: Fan-out über viele gleichartige Einheiten (z. B. ein Forecast / eine Page / ein Fix pro Reward-Typ), gefolgt von Verify-/Synthese-Phasen. Ziel: breit + konsistent + verifiziert liefern, nicht nur schnell.
+- **Einzelne Background-Agents weiterhin** für unabhängige Task-Spam-Einzelaufgaben (eine User-Message = ein Agent). Die Parallel-Agent-Regeln oben bleiben unverändert gültig.
+- **Kombinierbar:** Mehrere Workflows UND mehrere Background-Agents dürfen parallel laufen. Der Kanal bleibt immer empfangsbereit für neue User-Inputs.
+- **Bewährte Muster:** understand → design → implement → review (je Phase ggf. ein eigener Workflow); `pipeline()` als Default, `parallel()`-Barrier nur wenn eine Phase wirklich alle Vorergebnisse braucht; fan-out + adversarial verify; loop-until-dry für Discovery.
+- **In JEDEM Workflow/Agent unverändert bindend:** keine Prod-DB-Writes (read-only Hard-Rule), `npm run build`-Gate vor Push, Hotspot-Kollisionen vermeiden, Browser-Verifikation für UI, Honest-Reporting. Workflows heben KEINE dieser Regeln auf.
+
+**Merkregel:** Großer, zerlegbarer Job → Workflow (fan-out + verify). Kleine unabhängige Task → Background-Agent. Bei Breite/Umfang im Zweifel → Workflow.
+
+---
+
 ## 🔁 Persistent Parallel Workflow Mode (always active)
 
 _Added per user instruction. This generalizes and reinforces the ABSOLUTE PRIORITÄTSREGEL above. Where this section and the repo-specific mechanics (Hotspot-Liste, Commit-/Push-Disziplin, Browser-Verifikation, Dual-DB, Active-Timeframe-Only) differ on specifics, the repo-specific rules win on those specifics — this section governs the overall operating posture._
