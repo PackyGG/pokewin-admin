@@ -70,6 +70,19 @@ Die volle Mechanik (Scope, Hotspots, Commit-Disziplin, Honest-Reporting) steht w
 
 ---
 
+## 🚀 Push-Disziplin — häufig & inkrementell pushen (User-Regel, 2026-06-05)
+
+**Der User wartet NICHT 40 Minuten, während du 5 Sachen sammelst und alles zusammen pushst.** Jede fertige, verifizierte (tsc + lint + `npm run build` grün) Aufgabe wird SOFORT einzeln committet + gepusht — niemals zu einem Sammel-Push gebündelt.
+
+- **Ein Task fertig → sofort pushen.** Nicht auf andere laufende Tasks warten, nicht batchen.
+- **Unabhängige Tasks parallel in isolierten git-Worktrees** (`isolation: "worktree"` mit eigenem `npm ci` + eigenem `.next` — NICHT node_modules junctionen, sonst korrumpiert ein paralleles `prisma generate` den Main-Checkout) bauen und jeweils eigenständig nach `main` pushen (bei non-fast-forward: `git fetch origin && git rebase origin/main && git push origin HEAD:main`, retry bis es durchgeht). So blockiert ein langer Job (großer Workflow) nicht den EINEN Build-Slot des Main-Checkouts, und kleine Tasks verhungern nicht in einer Queue.
+- **Niemals einen großen ungepushten Stau anhäufen.** Mehrere offene Tasks → jeden so früh wie möglich einzeln rausschicken.
+- Build-Gate, Hotspot-Vermeidung, no-prod-DB-Writes und Honest-Reporting bleiben bindend — aber INNERHALB dieser Regeln gilt: so früh + so oft pushen wie möglich.
+
+**Merkregel:** Ein Task = ein Push. Niemals 5 Tasks sammeln und am Ende einmal pushen.
+
+---
+
 ## 🔁 Persistent Parallel Workflow Mode (always active)
 
 _Added per user instruction. This generalizes and reinforces the ABSOLUTE PRIORITÄTSREGEL above. Where this section and the repo-specific mechanics (Hotspot-Liste, Commit-/Push-Disziplin, Browser-Verifikation, Dual-DB, Active-Timeframe-Only) differ on specifics, the repo-specific rules win on those specifics — this section governs the overall operating posture._
