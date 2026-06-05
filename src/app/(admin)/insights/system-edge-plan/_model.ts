@@ -184,6 +184,16 @@ export type SystemEdgeBaseline = {
    */
   rainCost: number;
   /**
+   * Real motha (founder giveaway account) outflow over the window — the same
+   * `creator_tip` + `battle_sponsorship` + `rain_tips` channels modeled by
+   * `getMothaGiveawayOverview`. These rows are canonically RESIDUAL / WAGER /
+   * rain-funding (so NOT inside the canonical NGR reward cost — no
+   * double-count with `otherRewardCost`), but the founder funded them as
+   * giveaways, so the planner surfaces them as their own named line. Held
+   * fixed by the planner (no lever — same shape as `otherRewardCost`).
+   */
+  mothaCost: number;
+  /**
    * Real Σ of every OTHER house-funded reward leg over the window that this
    * planner does NOT expose as its own lever (gift_card_redeemed,
    * promo_code_redeemed, waitlist_prize, manual vouchers + counted
@@ -794,6 +804,19 @@ export function projectEdgePlan(
       plannedCost: rainPlanned,
       deltaCost: rainPlanned - baseline.rainCost,
       dataAvailable: baseline.rainCost > 0,
+    },
+    {
+      // Motha (founder giveaway account) — informational line with no
+      // lever (the founder's giveaway budget is a personal decision, not a
+      // system-config knob this planner exposes). Same shape as the "other
+      // reward cost" line: held fixed by the planner, surfaced so the
+      // operator can see what the founder gave away over this window.
+      key: "motha",
+      label: "Motha giveaways",
+      currentCost: baseline.mothaCost,
+      plannedCost: baseline.mothaCost,
+      deltaCost: 0,
+      dataAvailable: baseline.mothaCost > 0,
     },
     {
       key: "other",

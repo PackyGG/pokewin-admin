@@ -10,6 +10,9 @@ import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windo
 import { realCustomersScopeSql } from "@/lib/queries/insights-games/_shared";
 import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 
+/** Lowercased username of the founder giveaway account (mirror motha/overview.ts). */
+const MOTHA_USERNAME = "motha";
+
 /**
  * "Reward Costs (today)" dashboard box — what the house spent on REWARDS
  * for the CURRENT CALENDAR DAY since 00:00 (NOT a rolling past-24h
@@ -44,7 +47,7 @@ import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categori
  *     it (cards out, NOT net of the ≈$0 wager — that wager lives on the
  *     GGR side via `pack_opening`).
  *
- * ─── Three deliberate departures from `getRewardCost` ───────────────────
+ * ─── Deliberate departures from `getRewardCost` ────────────────────────
  *
  *   • RAIN is NOT the summed `rain_win` magnitude. Per the owner, rain
  *     costs the house a FLAT $2 per hour ("we don't pay anything else for
@@ -53,10 +56,6 @@ import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categori
  *     figure is computed from a `now` timestamp passed IN by the server
  *     component (never `Date.now()` inside the cached function, which would
  *     freeze at fill time).
- *   • AFFILIATE COSTS are EXCLUDED entirely. `affiliate_claim` (affiliate
- *     commissions) is in `REWARD_PAYOUT_TYPES` but is deliberately dropped
- *     from this box's total — this box is reward/retention spend, not
- *     affiliate program cost.
  *   • LEADERBOARD prizes are EXCLUDED entirely (owner decision, 2026-06-04).
  *     Every `affiliate_leaderboard_prize` is a CREATOR-run leaderboard
  *     payout (see `creators-leaderboards.ts`: "affiliate leaderboards are
@@ -68,6 +67,35 @@ import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categori
  *     Costs counts $0 leaderboard, Creators Costs counts the full gross. The
  *     per-claimant drilldown that used to live on this box's leaderboard
  *     line now lives on the Creators Costs box (showing full gross).
+ *
+ * ─── Extra lines surfaced beyond the canonical reward cost ──────────────
+ *
+ * The breakdown adds three named lines that the canonical `getRewardCost`
+ * does NOT include — they each model a real retention/giveaway cost the
+ * operator wants to see broken out per program (rather than lumped or
+ * hidden):
+ *
+ *   • AFFILIATE — `affiliate_claim` ledger sum today. Surfaced here so the
+ *     operator sees the affiliate-commission spend alongside the other
+ *     reward lines (`affiliate_claim` IS in `REWARD_PAYOUT_TYPES`, so this
+ *     line is canonical reward cost — previously suppressed for layout
+ *     reasons; now shown to match the system-edge-plan breakdown).
+ *   • RAFFLES — today-window RECONSTRUCTED raffle prize cost. Raffles pay
+ *     pack/card items via a `prizes` JSON (NOT a ledger money leg), so the
+ *     cost is reconstructed by valuing each completed-today raffle's prizes
+ *     at the live pack/card price (same method as
+ *     `getRaffleForecastBaseline`, scoped to today). Distinct from the
+ *     RACES line — `race_prize` (cash race payouts) and raffle prizes
+ *     never overlap.
+ *   • MOTHA — the founder giveaway account's today outflows across the
+ *     three channels modeled by `insights-rewards/motha/overview.ts`:
+ *     `creator_tip` + `battle_sponsorship` debited TO motha (motha funding
+ *     a tip / sponsoring a battle) + `rain_tips` funded by motha. These
+ *     are canonically RESIDUAL / WAGER / rain-funding rows (so they are
+ *     NOT in `getRewardCost`), but they ARE money the founder gave away
+ *     today, so the operator dashboard surfaces them as their own line.
+ *     No double-count: every motha row is from one of those three sources,
+ *     none of which lands in any other line on this card.
  *
  * House-POV per CLAUDE.md: every line is money the house PAID OUT to users
  * → a house cost → rose in the UI. Read-only against the Main DB.
@@ -116,17 +144,29 @@ const RAIN_USD_PER_HOUR = 2;
  *   deposit_bonus            → deposit_bonus
  *   rakeback                 → rakeback_claim
  *   promo_gift               → gift_card_redeemed, promo_code_redeemed
- *   race                     → race_prize
+ *   race                     → race_prize (on-site competitive races —
+ *                              renamed "Race wins" so the raffles line
+ *                              below cannot be confused with it)
  *   signup_balance           → balance_reward_claim, waitlist_prize
  *   manual_voucher           → voucher_redeemed (origin='manual' carve-out)
  *   counted_adjustments      → admin_balance_adjustment (counted credits)
+ *   affiliate                → affiliate_claim (now surfaced as its own
+ *                              line — matches the system-edge-plan breakdown)
  *
- * DELIBERATELY NOT covered (per the task):
- *   affiliate_claim          → affiliate commissions, EXCLUDED from this box
+ * DELIBERATELY NOT covered:
  *   affiliate_leaderboard_prize → creator-run leaderboard payout, counted
  *                              wholly (full gross) in the Creators Costs box,
  *                              EXCLUDED from this box (owner, 2026-06-04)
  *   rain_win / rain_tip      → replaced by the flat $2/hr rain model
+ *
+ * NON-ledger lines added on top (NOT in `REWARD_PAYOUT_TYPES`):
+ *   daily_packs              → packs.pack_type='reward' giveaway inventory
+ *   raffles                  → today-window completed raffles' prize JSON
+ *                              valued at live pack/card price (no ledger leg)
+ *   motha                    → motha account's creator_tip + battle_sponsorship
+ *                              debits + motha-funded rain_tips today (RESIDUAL
+ *                              / WAGER / rain-funding rows, not in any other
+ *                              line — see the module docstring)
  *
  * If a future migration adds a REWARD_PAYOUT_TYPES member, it will not
  * appear here until a line is added for it — a deliberate, visible gap
@@ -161,9 +201,10 @@ const cachedLedgerAndPacks = unstable_cache(
 
       // ── Ledger reward legs (today) ───────────────────────────────────
       // SAME canonical scope + SAME carve-outs as getRewardCost, broken
-      // out per operator-friendly category. affiliate_claim is NOT in any
-      // bucket here (excluded); rain_win/rain_tip are NOT summed (flat
-      // $2/h model handled at the wrapper).
+      // out per operator-friendly category. affiliate_claim is now its own
+      // line (matches the system-edge-plan per-lever breakdown);
+      // rain_win/rain_tip are NOT summed (flat $2/h model handled at the
+      // wrapper).
       const scope = await getMetricsScope();
       const countedAdj = countedAdjustmentSqlPredicate();
 
@@ -175,6 +216,7 @@ const cachedLedgerAndPacks = unstable_cache(
         signup_balance: string;
         manual_voucher: string;
         counted_adjustments: string;
+        affiliate: string;
       };
       const ledgerRows = await db.$queryRawUnsafe<LedgerRow[]>(
         `WITH ${scope.sessionWindowsCte}
@@ -185,7 +227,8 @@ const cachedLedgerAndPacks = unstable_cache(
            COALESCE(SUM(CASE WHEN type::text = 'race_prize' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS race,
            COALESCE(SUM(CASE WHEN type::text IN ('balance_reward_claim','waitlist_prize') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS signup_balance,
            COALESCE(SUM(CASE WHEN type::text = 'voucher_redeemed' AND metadata->>'origin' = 'manual' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS manual_voucher,
-           COALESCE(SUM(CASE WHEN (${countedAdj}) THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS counted_adjustments
+           COALESCE(SUM(CASE WHEN (${countedAdj}) THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS counted_adjustments,
+           COALESCE(SUM(CASE WHEN type::text = 'affiliate_claim' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS affiliate
          FROM ledger_transactions
          WHERE status = 'completed'
            AND user_id IN ${scope.userScopeSql}
@@ -198,6 +241,127 @@ const cachedLedgerAndPacks = unstable_cache(
       // prize is a creator-run-event cost counted in FULL (gross) by the
       // Creators Costs box (owner decision, 2026-06-04). This box charges $0
       // of it to the house — there is no leaderboard line on this box.
+
+      // ── Motha giveaways today (founder account outflows) ─────────────
+      // The three channels modeled by `insights-rewards/motha/overview.ts`:
+      //   • creator_tip funded by motha (founder→user tip)
+      //   • battle_sponsorship funded by motha (founder sponsoring battles)
+      //   • rain_tips funded by motha (founder topping up the rain pool)
+      // None of these land in any other line above (creator_tip is RESIDUAL,
+      // battle_sponsorship is WAGER, rain_tips funds the rain pool which the
+      // flat-$2/hr rain line uses unrelated of any pool tip sum), so no
+      // double-count with the rest of the breakdown. NOT scope-filtered —
+      // motha IS the subject of the line, not a customer being measured.
+      // If the account does not exist, both reads return 0.
+      type MothaIdRow = { id: string };
+      const mothaIdRows = await db.$queryRawUnsafe<MothaIdRow[]>(
+        `SELECT id FROM "user" WHERE LOWER(username) = $1 LIMIT 1`,
+        MOTHA_USERNAME,
+      );
+      const mothaId = mothaIdRows[0]?.id ?? null;
+
+      let mothaCost = 0;
+      if (mothaId != null) {
+        type MothaLedgerRow = { motha_ledger: string };
+        type MothaRainRow = { motha_rain: string };
+        const [mothaLedgerRows, mothaRainRows] = await Promise.all([
+          db.$queryRawUnsafe<MothaLedgerRow[]>(
+            `SELECT
+               COALESCE(SUM(ABS(amount::numeric)), 0)::text AS motha_ledger
+             FROM ledger_transactions
+             WHERE status = 'completed'
+               AND user_id = $1
+               AND type::text IN ('creator_tip','battle_sponsorship')
+               AND created_at >= ${since}`,
+            mothaId,
+          ),
+          db.$queryRawUnsafe<MothaRainRow[]>(
+            `SELECT
+               COALESCE(SUM(ABS(amount_usd::numeric)), 0)::text AS motha_rain
+             FROM rain_tips
+             WHERE user_id = $1
+               AND created_at >= ${since}`,
+            mothaId,
+          ),
+        ]);
+        mothaCost =
+          toNumber(mothaLedgerRows[0]?.motha_ledger) +
+          toNumber(mothaRainRows[0]?.motha_rain);
+      }
+
+      // ── Raffles today (reconstructed prize cost) ─────────────────────
+      // Raffles pay out pack/card ITEMS recorded as a `prizes` JSON array on
+      // the `raffles` row — NO ledger money leg — so the cost is RECONSTRUCTED
+      // by valuing each completed-today raffle's prize lines at the live
+      // pack/card price (the same valuation `getRaffleForecastBaseline` uses,
+      // scoped to today). Customer scope on the winner (`userScopeSql` drops
+      // staff/creator/blacklist exactly like the canonical helper). NOT in
+      // any other ledger line above (raffles never emit a ledger row), so no
+      // double-count with the race_prize line.
+      type RaffleRow = {
+        id: string;
+        prizes: unknown;
+      };
+      const raffleRows = await db.$queryRawUnsafe<RaffleRow[]>(
+        `SELECT r.id, r.prizes
+         FROM raffles r
+         WHERE r.status = 'completed'
+           AND r.completed_at IS NOT NULL
+           AND r.completed_at >= ${since}
+           AND r.winner_user_id IN ${scope.userScopeSql}`,
+      );
+      let raffleCost = 0;
+      if (raffleRows.length > 0) {
+        // Parse prizes once, collect referenced pack/card ids, value each via
+        // a single `IN (…)` price lookup (not per-raffle).
+        type Prize = { type: "pack" | "card"; id: string; qty: number };
+        const parsed: Array<{ raffleId: string; prizes: Prize[] }> = [];
+        const packIds = new Set<string>();
+        const cardIds = new Set<string>();
+        for (const row of raffleRows) {
+          if (!Array.isArray(row.prizes)) continue;
+          const prizes: Prize[] = [];
+          for (const p of row.prizes) {
+            if (p == null || typeof p !== "object") continue;
+            const rec = p as Record<string, unknown>;
+            const t = rec.type;
+            const id = rec.id;
+            if ((t !== "pack" && t !== "card") || typeof id !== "string" || id.length === 0) {
+              continue;
+            }
+            const qtyRaw = Number(rec.quantity);
+            const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? Math.floor(qtyRaw) : 1;
+            prizes.push({ type: t, id, qty });
+            if (t === "pack") packIds.add(id);
+            else cardIds.add(id);
+          }
+          if (prizes.length > 0) parsed.push({ raffleId: row.id, prizes });
+        }
+
+        const [packRows, cardRows] = await Promise.all([
+          packIds.size > 0
+            ? db.packs.findMany({
+                where: { id: { in: [...packIds] } },
+                select: { id: true, price: true },
+              })
+            : Promise.resolve([] as Array<{ id: string; price: unknown }>),
+          cardIds.size > 0
+            ? db.cards.findMany({
+                where: { id: { in: [...cardIds] } },
+                select: { id: true, price: true },
+              })
+            : Promise.resolve([] as Array<{ id: string; price: unknown }>),
+        ]);
+        const packPrice = new Map(packRows.map((p) => [p.id, toNumber(p.price)]));
+        const cardPrice = new Map(cardRows.map((c) => [c.id, toNumber(c.price)]));
+
+        for (const { prizes } of parsed) {
+          for (const p of prizes) {
+            const unit = p.type === "pack" ? packPrice.get(p.id) ?? 0 : cardPrice.get(p.id) ?? 0;
+            raffleCost += unit * p.qty;
+          }
+        }
+      }
 
       // ── Daily / free pack giveaway (today) ───────────────────────────
       // Reward packs (packs.pack_type='reward') book no ledger row — the
@@ -253,14 +417,29 @@ const cachedLedgerAndPacks = unstable_cache(
           amount: toNumber(lr?.rakeback),
         },
         {
+          key: "affiliate",
+          label: "Affiliate commissions",
+          amount: toNumber(lr?.affiliate),
+        },
+        {
           key: "promo_gift",
           label: "Promo / gift cards",
           amount: toNumber(lr?.promo_gift),
         },
         {
           key: "race",
-          label: "Race / raffle prizes",
+          label: "Race wins",
           amount: toNumber(lr?.race),
+        },
+        {
+          key: "raffles",
+          label: "Raffle prizes",
+          amount: raffleCost,
+        },
+        {
+          key: "motha",
+          label: "Motha giveaways",
+          amount: mothaCost,
         },
         {
           key: "manual_voucher",
@@ -277,7 +456,8 @@ const cachedLedgerAndPacks = unstable_cache(
       return { lines };
     });
   },
-  ["dashboard-reward-costs-today-v1"],
+  // v2: split race/raffle, surface affiliate + motha as their own lines.
+  ["dashboard-reward-costs-today-v2"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -336,6 +516,12 @@ export async function getRewardCostsToday(): Promise<RewardCostsToday> {
       { key: "rain", label: "Rain (@ $2/hr)", amount: rainCost },
     ].sort((a, b) => b.amount - a.amount);
 
+    // INVARIANT: the displayed `total` is the sum of every line above.
+    // The breakdown popover renders the same lines and the same total;
+    // they must agree (the operator reconciles the two by eye). If a new
+    // line is added above without being summed here, the box would show a
+    // total that does not match the breakdown — explicit reduce keeps the
+    // two coupled.
     const total = lines.reduce((sum, l) => sum + l.amount, 0);
 
     return {

@@ -27,6 +27,7 @@ import { getAffiliateOverview } from "@/lib/queries/insights-rewards/affiliate/o
 import { getDailyPacksTotalCost } from "@/lib/queries/insights-rewards/daily-packs";
 import { getSignupOverview } from "@/lib/queries/insights-rewards/signup/overview";
 import { getRaffleForecastBaseline } from "@/lib/queries/insights-rewards/raffle/overview";
+import { getMothaGiveawayOverview } from "@/lib/queries/insights-rewards/motha/overview";
 import {
   daysForInsightsPeriodCapped,
   insightsRewardsPeriodLabel,
@@ -77,6 +78,12 @@ import type {
  *   • signup balance-reward cost + avg grant ← `getSignupOverview`.
  *   • net rain cost ← `getWindowMetrics().rainHouseCost` (owner-confirmed
  *       `max(0, rain_win − rain_tip)`).
+ *   • motha (founder giveaway account) outflow ←
+ *       `getMothaGiveawayOverview().totalCost` (creator_tip +
+ *       battle_sponsorship + rain_tips funded by motha). Canonically the
+ *       rows are RESIDUAL / WAGER / rain-funding (not in `getRewardCost`),
+ *       so adding the line on top cannot double-count with the canonical
+ *       reward cost — exactly the same shape as raffles + daily packs.
  *   • rakeback per-cadence rates ← `getRakebackConfigs()` → `rakeback_config`.
  *   • affiliate per-tier rates + thresholds ← `getAffiliateLevelConfigs()` →
  *       `affiliate_level_configs`.
@@ -316,6 +323,7 @@ async function buildBaseline(
     raffleRes,
     dailyPacksRes,
     signupRes,
+    mothaRes,
     rakebackCfgRes,
     affiliateCfgRes,
     affiliateOvRes,
@@ -378,6 +386,20 @@ async function buildBaseline(
       () => getSignupOverview(period),
       null,
       "system-edge-plan.signup",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      // Motha (founder giveaway account) outflow over the window. Same
+      // three channels (creator_tip + battle_sponsorship + rain_tips) as
+      // the dashboard "Motha giveaways" line — surfaced here as a named
+      // line in the per-lever breakdown (no lever; the founder's giveaway
+      // budget is a personal decision, not a system-config knob). NOT
+      // double-counted with the canonical reward cost: every motha row is
+      // RESIDUAL / WAGER / rain-funding canonically, so it lives outside
+      // `getRewardCost`.
+      () => getMothaGiveawayOverview(period),
+      null,
+      "system-edge-plan.motha",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
@@ -468,6 +490,13 @@ async function buildBaseline(
       ? signupRes.data.avgPerClaim
       : null;
   const rainCost = metrics?.rainHouseCost ?? 0;
+  // Real motha (founder giveaway account) outflow over the window. NOT in the
+  // canonical reward cost: every motha row is canonically RESIDUAL / WAGER /
+  // rain-funding (none of which lands in `getRewardCost`), so adding it here
+  // as a separate planner line cannot double-count with `otherRewardCost`
+  // below. Same shape as `dailyPacksCost` / `raffleCost`: real, reconstructed,
+  // added on top.
+  const mothaCost = mothaRes.data?.totalCost ?? 0;
 
   // Other reward cost = the canonical total reward cost (GGR − NGR) minus every
   // lever we itemize, so the planner's reward sum reconciles with NGR. The
@@ -481,10 +510,11 @@ async function buildBaseline(
   // ledger reward type, so it IS in the canonical reward cost. To avoid
   // double-counting, `otherRewardCost` subtracts only the LEDGER-resident
   // levers (rakeback / affiliate / deposit bonus / RACE [race_prize] / signup /
-  // rain) from the canonical reward cost. Daily packs AND raffles are NON-ledger
-  // item giveaways (no ledger row → never in the canonical reward cost), so they
-  // are added on top as separate lines and are NOT subtracted here — no
-  // double-count with the race_prize line.
+  // rain) from the canonical reward cost. Daily packs, raffles, AND motha are
+  // NON-ledger / non-reward-canonical lines (raffle prizes never emit a
+  // ledger row; motha's three channels are canonically RESIDUAL / WAGER /
+  // rain-funding — none in `getRewardCost`), so each is added on top as its
+  // own named line and NOT subtracted here. No double-count.
   const canonicalRewardCost = metrics != null ? metrics.ggr - metrics.ngr : 0;
   const ledgerLeverCost =
     rakebackCost +
@@ -548,6 +578,7 @@ async function buildBaseline(
     dailyPacksCost,
     signupPacksCost,
     rainCost,
+    mothaCost,
     otherRewardCost,
 
     rakebackCadences,
@@ -608,6 +639,7 @@ function emptyBaseline(period: InsightsRewardsPeriod): SystemEdgeBaseline {
     dailyPacksCost: 0,
     signupPacksCost: 0,
     rainCost: 0,
+    mothaCost: 0,
     otherRewardCost: 0,
     rakebackCadences: [],
     affiliateTiers: [],
@@ -637,7 +669,8 @@ export async function getSystemEdgeBaseline(
 ): Promise<SystemEdgeBaseline> {
   const cached = unstable_cache(
     () => buildBaseline(period),
-    ["system-edge-plan-baseline-v3", period],
+    // v4: added mothaCost as a named line in the lever breakdown.
+    ["system-edge-plan-baseline-v4", period],
     { revalidate: cacheTtlForInsightsPeriod(period) },
   );
   const { data } = await safeQuery(

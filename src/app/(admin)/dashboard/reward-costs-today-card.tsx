@@ -22,17 +22,23 @@ import { cn } from "@/lib/utils";
  * chips; the Info popover (styled exactly like the P&L Today / GGR
  * breakdown popover) spells out every line so the owner sees where it went
  * — deposit bonuses, daily/free packs, signup/balance rewards, rakeback,
- * promo/gift cards, race prizes, manual vouchers, promo balance credits,
- * and the flat rain line ($2/hr).
+ * affiliate commissions, promo/gift cards, race wins, raffle prizes,
+ * motha (founder-account) giveaways, manual vouchers, promo balance
+ * credits, and the flat rain line ($2/hr).
  *
  * Rain is the OWNER-CONFIRMED flat model: $2 × hours elapsed since UTC
  * midnight ("we don't pay anything else for it") — NOT the summed rain
- * payouts. Affiliate commissions are EXCLUDED entirely. Leaderboard prizes
- * are ALSO excluded entirely (owner decision, 2026-06-04): every
- * `affiliate_leaderboard_prize` is a creator-run-event cost counted in FULL
- * by the sibling Creators Costs box, so $0 of it lands here — there is no
- * leaderboard line on this card, and its per-claimant drilldown now lives
- * on the Creators Costs card.
+ * payouts. Leaderboard prizes are excluded entirely (owner decision,
+ * 2026-06-04): every `affiliate_leaderboard_prize` is a creator-run-event
+ * cost counted in FULL by the sibling Creators Costs box, so $0 of it
+ * lands here — there is no leaderboard line on this card, and its
+ * per-claimant drilldown now lives on the Creators Costs card.
+ *
+ * Per-program named lines: every line in `lines` comes from one program,
+ * with no overlap with any other line — the displayed TOTAL is the
+ * straight sum of `lines` (the query asserts this invariant). The
+ * breakdown popover renders the lines as a sorted list; the card face
+ * surfaces the two largest as chips.
  *
  * All props are serializable primitives — no function props cross the RSC
  * boundary (`AnimatedNumber` takes the `format` string-enum, not a
@@ -169,10 +175,12 @@ function RewardCostsInfoPopover({
           <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
             House-funded reward spend since 00:00 today (UTC) —{" "}
             <strong>{dayLabel}</strong> — not a rolling 24h window. Every line
-            is money paid out to users (a house cost). Rain is the flat{" "}
-            <span className="font-mono">$2/hr</span> model (
-            {hoursElapsed.toFixed(1)}h elapsed); affiliate commissions are
-            excluded. Real customers only (staff + excluded users dropped).
+            is money paid out to users (a house cost), broken out per
+            program. Rain is the flat <span className="font-mono">$2/hr</span>{" "}
+            model ({hoursElapsed.toFixed(1)}h elapsed); raffle + motha lines
+            are reconstructed (raffle = today&apos;s completed-raffle prize
+            value; motha = the founder account&apos;s outflows). Real
+            customers only (staff + excluded users dropped).
           </p>
         </div>
 
