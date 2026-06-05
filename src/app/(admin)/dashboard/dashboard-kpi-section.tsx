@@ -130,6 +130,14 @@ function WindowToggle({
  * like the P&L Today / Reward-Costs cards: a tinted `Card` with a header
  * (title + optional Info popover slot + a window control/label on the
  * right), a hero value, and an optional chip-grid / subtitle body.
+ *
+ * The shell stretches to fill its equal-height grid cell (`h-full` +
+ * flex-col), and the optional {@link footer} (breakdown chip row /
+ * subtitle) is pushed to the BOTTOM via `mt-auto`. That keeps every box's
+ * chip row bottom-aligned at the same y across the strip regardless of how
+ * much hero content sits above it — so Deposits/Withdrawals (short hero)
+ * line up with the taller Wager box instead of floating up toward the
+ * number. Alignment lives here in the shared shell, not per-box.
  */
 function KpiPanel({
   title,
@@ -138,6 +146,7 @@ function KpiPanel({
   icon: Icon,
   tint,
   children,
+  footer,
 }: {
   title: string;
   /** Rendered inline after the title (e.g. the GGR Info popover trigger). */
@@ -146,10 +155,16 @@ function KpiPanel({
   headerRight?: React.ReactNode;
   icon?: LucideIcon;
   tint: PanelTint;
+  /** Hero value block — sits at the top of the content area. */
   children: React.ReactNode;
+  /**
+   * Optional bottom block (breakdown chip row or subtitle). Pinned to the
+   * bottom of the card via `mt-auto` so it aligns across every box.
+   */
+  footer?: React.ReactNode;
 }) {
   return (
-    <Card className={PANEL_TINT[tint]}>
+    <Card className={cn("h-full", PANEL_TINT[tint])}>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <CardTitle className="text-card-title text-muted-foreground inline-flex min-w-0 items-center gap-1">
           <span className="truncate">{title}</span>
@@ -160,7 +175,13 @@ function KpiPanel({
           {Icon && <Icon className={cn("size-4 shrink-0", ICON_TINT[tint])} />}
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">{children}</CardContent>
+      <CardContent className="flex flex-1 flex-col">
+        {/* Hero block stays at the top; its own space-y keeps the original
+            internal spacing without applying a margin to the pinned footer
+            (which would override mt-auto via the space-y selector). */}
+        <div className="space-y-3">{children}</div>
+        {footer && <div className="mt-auto pt-3">{footer}</div>}
+      </CardContent>
     </Card>
   );
 }
@@ -401,6 +422,17 @@ export function DashboardKpiSection({
                   onPick={(w) => pick("wager", w)}
                 />
               }
+              footer={
+                /* Packs / Battles / Upgrader split of the TOTAL wager.
+                   Negative inline margin only at sm+ where the panel has
+                   the room for it; at <sm (320–375px) keep it at 0 so the
+                   chips don't get clipped at the right edge of the card. */
+                <div className="grid grid-cols-3 gap-1.5 sm:-mx-0.5">
+                  <PanelChip label="Packs" value={p.wagerBreakdown.packs} />
+                  <PanelChip label="Battles" value={p.wagerBreakdown.battles} />
+                  <PanelChip label="Upgrader" value={p.wagerBreakdown.upgrader} />
+                </div>
+              }
             >
               {/* Two headline figures side by side: total wager + organic
                   wager. Each labelled so neither number is ambiguous. */}
@@ -411,15 +443,6 @@ export function DashboardKpiSection({
                   value={p.wagerOrganic}
                   hint="no creator-code users"
                 />
-              </div>
-              {/* Packs / Battles / Upgrader split of the TOTAL wager.
-                  Negative inline margin only at sm+ where the panel has
-                  the room for it; at <sm (320–375px) keep it at 0 so the
-                  chips don't get clipped at the right edge of the card. */}
-              <div className="grid grid-cols-3 gap-1.5 sm:-mx-0.5">
-                <PanelChip label="Packs" value={p.wagerBreakdown.packs} />
-                <PanelChip label="Battles" value={p.wagerBreakdown.battles} />
-                <PanelChip label="Upgrader" value={p.wagerBreakdown.upgrader} />
               </div>
             </KpiPanel>
           );
@@ -442,17 +465,19 @@ export function DashboardKpiSection({
                   onPick={(w) => pick("deposits", w)}
                 />
               }
+              footer={
+                <div className="grid grid-cols-2 gap-1.5 sm:-mx-0.5">
+                  <PanelChip
+                    label="Count"
+                    value={p.depositCount}
+                    format="number"
+                    tone="emerald"
+                  />
+                  <PanelChip label="Avg" value={avg} tone="emerald" />
+                </div>
+              }
             >
               <PlainHero value={p.deposits} format="currency" />
-              <div className="grid grid-cols-2 gap-1.5 sm:-mx-0.5">
-                <PanelChip
-                  label="Count"
-                  value={p.depositCount}
-                  format="number"
-                  tone="emerald"
-                />
-                <PanelChip label="Avg" value={avg} tone="emerald" />
-              </div>
             </KpiPanel>
           );
         })()}
@@ -473,17 +498,19 @@ export function DashboardKpiSection({
                   onPick={(w) => pick("withdrawals", w)}
                 />
               }
+              footer={
+                <div className="grid grid-cols-2 gap-1.5 sm:-mx-0.5">
+                  <PanelChip
+                    label="Count"
+                    value={p.withdrawalCount}
+                    format="number"
+                    tone="rose"
+                  />
+                  <PanelChip label="Total" value={p.withdrawals} tone="rose" />
+                </div>
+              }
             >
               <PlainHero value={p.withdrawals} format="currency" />
-              <div className="grid grid-cols-2 gap-1.5 sm:-mx-0.5">
-                <PanelChip
-                  label="Count"
-                  value={p.withdrawalCount}
-                  format="number"
-                  tone="rose"
-                />
-                <PanelChip label="Total" value={p.withdrawals} tone="rose" />
-              </div>
             </KpiPanel>
           );
         })()}
@@ -498,12 +525,14 @@ export function DashboardKpiSection({
           tint="blue"
           icon={Users}
           headerRight={<StaticWindowLabel label="lifetime" />}
+          footer={
+            <p className="text-stat-label">
+              +{formatNumber(snapshot.usersToday)} today, +
+              {formatNumber(snapshot.usersWeek)} this week
+            </p>
+          }
         >
           <PlainHero value={snapshot.usersTotal} format="number" />
-          <p className="text-stat-label">
-            +{formatNumber(snapshot.usersToday)} today, +
-            {formatNumber(snapshot.usersWeek)} this week
-          </p>
         </KpiPanel>
 
         <KpiPanel
@@ -511,12 +540,14 @@ export function DashboardKpiSection({
           tint="amber"
           icon={HandCoins}
           headerRight={<StaticWindowLabel label="24h" />}
+          footer={
+            <p className="text-stat-label">
+              {formatCurrency(snapshot.ftdTotal24h)} total ·{" "}
+              {formatCurrency(snapshot.ftdAvg24h)} avg
+            </p>
+          }
         >
           <PlainHero value={snapshot.ftds24h} format="number" />
-          <p className="text-stat-label">
-            {formatCurrency(snapshot.ftdTotal24h)} total ·{" "}
-            {formatCurrency(snapshot.ftdAvg24h)} avg
-          </p>
         </KpiPanel>
 
         <KpiPanel
@@ -524,13 +555,15 @@ export function DashboardKpiSection({
           tint="purple"
           icon={BadgeDollarSign}
           headerRight={<StaticWindowLabel label="lifetime" />}
+          footer={
+            <p className="text-stat-label">
+              {snapshot.depositorsPctOfUsers != null
+                ? `${snapshot.depositorsPctOfUsers.toFixed(1)}% of users have funded`
+                : "Unique players who funded at least once"}
+            </p>
+          }
         >
           <PlainHero value={snapshot.uniqueDepositors} format="number" />
-          <p className="text-stat-label">
-            {snapshot.depositorsPctOfUsers != null
-              ? `${snapshot.depositorsPctOfUsers.toFixed(1)}% of users have funded`
-              : "Unique players who funded at least once"}
-          </p>
         </KpiPanel>
 
         <KpiPanel
@@ -538,9 +571,9 @@ export function DashboardKpiSection({
           tint="cyan"
           icon={Coins}
           headerRight={<StaticWindowLabel label="lifetime" />}
+          footer={<p className="text-stat-label">Across all users (lifetime)</p>}
         >
           <PlainHero value={snapshot.avgDeposit} format="currency" />
-          <p className="text-stat-label">Across all users (lifetime)</p>
         </KpiPanel>
 
         <KpiPanel
@@ -548,15 +581,17 @@ export function DashboardKpiSection({
           tint="emerald"
           icon={Gauge}
           headerRight={<StaticWindowLabel label="24h" />}
+          footer={
+            <p className="text-stat-label">
+              last 24h avg · 7d {snapshot.depositsPerHour7d.toFixed(1)}/hr
+            </p>
+          }
         >
           {/* Fractional rate — render directly (not AnimatedNumber, whose
               "number" format rounds to an integer and would drop the .1). */}
           <div className="text-stat-value truncate tabular-nums">
             {snapshot.depositsPerHour24h.toFixed(1)}
           </div>
-          <p className="text-stat-label">
-            last 24h avg · 7d {snapshot.depositsPerHour7d.toFixed(1)}/hr
-          </p>
         </KpiPanel>
 
         <KpiPanel
