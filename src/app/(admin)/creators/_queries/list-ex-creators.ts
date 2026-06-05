@@ -2,6 +2,7 @@ import "server-only";
 
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import type { CreatorListItem } from "@/lib/backend-api";
 import type { CreatorsSearchParams } from "../_lib/search-params";
 import type { CreatorsListPage } from "./list-creators";
@@ -16,41 +17,180 @@ import type { CreatorsListPage } from "./list-creators";
  * data becomes invisible. This query reconstructs that set from the DB so
  * the owner can still see them.
  *
- * ─── Ex-creator identification (authoritative signal) ────────────────
+ * ─── Ex-creator identification (artifact-anchored source of truth) ──────
  *
- * Mirrors the EXACT "was a creator" rule the user-detail page already
- * uses (src/app/(admin)/users/[id]/page.tsx:219-223):
+ * An EX-creator is any user whose CURRENT role is NOT `creator` AND who
+ * has at least one creator-specific artifact in either DB. The artifact
+ * set spans every creator-only relation we've ever written:
  *
- *   everCreator = role === 'creator'
- *               OR everCreatorByAudit            (admin audit role_changed → creator)
- *               OR ownedCodes.length > 0         (affiliate_codes — a creator-only artifact)
- *   wasCreator  = everCreator AND role !== 'creator'
+ *   Main DB (game / affiliate side):
+ *     • `affiliate_codes`              (a creator-only mintable resource)
+ *     • `creator_withdrawal_limits`    (creator-only withdrawal config)
+ *     • `affiliate_payouts`            (creator-only payout flow)
  *
- * So an EX-creator is a user with `role != 'creator'` who EITHER owns at
- * least one `affiliate_codes` row OR has an admin audit `role_changed`
- * event whose `metadata.new_role === 'creator'`. The same two creator-
- * only artifacts `getUserCreatorHistory` + the user-detail `everCreator`
- * derive the past-creator badge from.
+ *   Admin DB (admin-portal side):
+ *     • `creator_deals`                (target_user_id)
+ *     • `creator_webhooks`             (target_user_id)
+ *     • `creator_socials`              (target_user_id)
+ *     • `creator_balance_fills`        (target_user_id)
+ *     • `admin_audit_events` of type
+ *         - `user_made_creator`        (admin-panel promotion)
+ *         - `creator_deal_created`     (had a deal created — audit-level
+ *                                       evidence even if the deal row was
+ *                                       since deleted)
+ *         - `creator_force_reset_to_user` (explicit escape-hatch demotion)
+ *         - `role_changed` with `metadata.new_role = 'creator'`
+ *           (the user-detail dropdown's promotion path)
+ *         - `role_changed` with `metadata.prev_role = 'creator'` AND
+ *           `metadata.new_role <> 'creator'` (post-1001be2 enriched
+ *           dropdown demotion — was a creator, now isn't)
  *
- * Dual-DB: `affiliate_codes` lives in the Main DB; the role-change audit
- * trail lives in the Admin DB. Per the strict no-cross-DB-join rule, each
- * side is queried independently and the user-id sets are unioned in code.
- * Staff (admin/support) are deliberately KEPT here — a creator demoted to
- * support is still a "past creator" the owner wants to see; only the
+ * The two new admin-audit signals (`creator_deal_created`,
+ * `creator_force_reset_to_user`) and the three new admin-DB tables
+ * (`creator_deals`, `creator_webhooks`, `creator_socials`,
+ * `creator_balance_fills`) close the original detection gap: a user
+ * demoted via the role dropdown BEFORE the metadata gained `prev_role`
+ * had no `affiliate_codes` and no `role_changed → creator` row
+ * (the dropdown writes a `role_changed → <new>` event, not a
+ * promotion-to-creator one) but DID have e.g. a creator_deal_created
+ * audit row, a creator_socials approval row, or a creator_deals row in
+ * the admin DB. Now any of those alone surfaces them.
+ *
+ * Dual-DB: artifacts live across BOTH databases. Per the strict
+ * no-cross-DB-join rule, the candidate id set is unioned in code: the
+ * Main DB hands back its creator-only-table user_ids, the Admin DB hands
+ * back its creator-table + audit user_ids, and we union them before
+ * resolving identities back from the Main DB user table.
+ *
+ * Filters applied at resolve time:
+ *   • `user.role <> 'creator'` — drops anyone who's currently a creator
+ *     (they belong on the active roster, not here).
+ *   • `user.id NOT IN excluded_users` — drops the analytics blacklist
+ *     (those users are intentionally hidden from creator analytics
+ *     surfaces; same rule the rest of /creators uses).
+ *
+ * Staff (`admin` / `support`) are deliberately KEPT — a creator demoted
+ * to support is still a "past creator" the owner wants to see; only the
  * CURRENT-creator gate (`role = 'creator'`) excludes the active roster.
  */
 
 /**
- * The set of user IDs that were creators but no longer hold the creator
- * role. Union of:
- *   • Main DB — users with `role != 'creator'` who own ≥1 affiliate_codes
- *     row (creator-only artifact).
- *   • Admin DB — users with an admin audit `role_changed` event whose
- *     `metadata.new_role = 'creator'`, intersected against `role !=
- *     'creator'` (verified against the Main DB role below).
+ * Resolve the set of user IDs that have ever been creators, by querying
+ * every creator-specific artifact source. Each source is queried with a
+ * single DISTINCT statement; their results are unioned in memory.
  *
- * Returns the resolved user records (id/username/email/image/created_at)
+ * Returns the candidate set as a JS Set so callers can intersect it
+ * against the Main-DB user table (which carries the current role).
+ */
+async function getEverCreatorCandidateIds(): Promise<Set<string>> {
+  const db = await getDb();
+
+  // Main DB artifacts: distinct user_ids from each creator-only table.
+  // These run on the same DB so we issue them in parallel.
+  const [codeOwners, withdrawalLimitOwners, payoutOwners] = await Promise.all([
+    db.$queryRawUnsafe<{ user_id: string }[]>(
+      `SELECT DISTINCT user_id FROM affiliate_codes WHERE user_id IS NOT NULL`,
+    ),
+    db.$queryRawUnsafe<{ user_id: string }[]>(
+      `SELECT DISTINCT user_id FROM creator_withdrawal_limits WHERE user_id IS NOT NULL`,
+    ),
+    db.$queryRawUnsafe<{ affiliate_user_id: string }[]>(
+      `SELECT DISTINCT affiliate_user_id FROM affiliate_payouts WHERE affiliate_user_id IS NOT NULL`,
+    ),
+  ]);
+
+  // Admin DB artifacts: distinct target_user_ids from each creator-only
+  // table + audit events. Same parallel-on-one-DB pattern.
+  const [
+    dealTargets,
+    webhookTargets,
+    socialTargets,
+    fillTargets,
+    audits,
+  ] = await Promise.all([
+    adminDb.creator_deals.findMany({
+      select: { target_user_id: true },
+      distinct: ["target_user_id"],
+    }),
+    adminDb.creator_webhooks.findMany({
+      select: { target_user_id: true },
+      distinct: ["target_user_id"],
+    }),
+    adminDb.creator_socials.findMany({
+      select: { target_user_id: true },
+      distinct: ["target_user_id"],
+    }),
+    adminDb.creator_balance_fills.findMany({
+      select: { target_user_id: true },
+      distinct: ["target_user_id"],
+    }),
+    // Audit rows we care about — the four creator-signal event types +
+    // `role_changed` (which we then split client-side on metadata so we
+    // catch BOTH promotion-to-creator and demotion-from-creator rows).
+    adminDb.admin_audit_events.findMany({
+      where: {
+        event_type: {
+          in: [
+            "user_made_creator",
+            "creator_deal_created",
+            "creator_force_reset_to_user",
+            "role_changed",
+          ],
+        },
+        target_user_id: { not: null },
+      },
+      select: { event_type: true, target_user_id: true, metadata: true },
+    }),
+  ]);
+
+  const candidateIds = new Set<string>();
+
+  // Add Main-DB candidates.
+  for (const r of codeOwners) candidateIds.add(r.user_id);
+  for (const r of withdrawalLimitOwners) candidateIds.add(r.user_id);
+  for (const r of payoutOwners) candidateIds.add(r.affiliate_user_id);
+
+  // Add Admin-DB table candidates.
+  for (const r of dealTargets) candidateIds.add(r.target_user_id);
+  for (const r of webhookTargets) candidateIds.add(r.target_user_id);
+  for (const r of socialTargets) candidateIds.add(r.target_user_id);
+  for (const r of fillTargets) candidateIds.add(r.target_user_id);
+
+  // Add Admin-DB audit candidates. The four creator-marketing event types
+  // count outright (any of them means the user was, at some point, in the
+  // creator program). `role_changed` is the dropdown path — keep it only
+  // when the metadata actually identifies a creator role on either side
+  // of the transition. This catches the gap the original detection
+  // missed: dropdown demotions (`prev_role = 'creator'`) without an
+  // affiliate-code artifact were previously invisible.
+  for (const e of audits) {
+    if (!e.target_user_id) continue;
+    if (e.event_type !== "role_changed") {
+      candidateIds.add(e.target_user_id);
+      continue;
+    }
+    const meta =
+      e.metadata && typeof e.metadata === "object" && !Array.isArray(e.metadata)
+        ? (e.metadata as Record<string, unknown>)
+        : {};
+    const wasCreator = meta.prev_role === "creator";
+    const becameCreator = meta.new_role === "creator";
+    if (wasCreator || becameCreator) candidateIds.add(e.target_user_id);
+  }
+
+  return candidateIds;
+}
+
+/**
+ * The set of user IDs that were creators but no longer hold the creator
+ * role. Resolves the candidate set, intersects against Main-DB users
+ * with `role <> 'creator'`, applies the analytics blacklist, and
+ * returns the resolved user records (id/username/email/image/created_at)
  * so the caller can shape them into the list rows directly.
+ *
+ * Search is applied at the DB level (username / email ilike) so the
+ * Past tab search filters the whole ex-creator set, not just the first
+ * page slice.
  */
 async function getExCreatorUsers(search?: string): Promise<
   {
@@ -61,54 +201,29 @@ async function getExCreatorUsers(search?: string): Promise<
     created_at: Date;
   }[]
 > {
-  const db = await getDb();
-
-  // ── Signal A (Main DB): current non-creators who own an affiliate code.
-  // affiliate_codes is populated exclusively for creators (the
-  // affiliate.service.ts#createCode path), so a non-creator owning one is
-  // a former creator. DISTINCT collapses creators who minted several codes.
-  const codeOwnerRows = await db.$queryRawUnsafe<{ user_id: string }[]>(
-    `SELECT DISTINCT ac.user_id
-       FROM affiliate_codes ac
-       JOIN "user" u ON u.id = ac.user_id
-      WHERE u.role <> 'creator'`,
-  );
-
-  // ── Signal B (Admin DB): users with an audit role_changed → creator
-  // event. Same source `getUserCreatorHistory` reads. We can't filter on
-  // the Main-DB role here (no cross-DB join), so collect candidate ids and
-  // narrow against the Main-DB role set below.
-  const auditEvents = await adminDb.admin_audit_events.findMany({
-    where: { event_type: "role_changed" },
-    select: { target_user_id: true, metadata: true },
-  });
-  const auditCandidateIds = new Set<string>();
-  for (const e of auditEvents) {
-    if (!e.target_user_id) continue;
-    const meta =
-      e.metadata && typeof e.metadata === "object" && !Array.isArray(e.metadata)
-        ? (e.metadata as Record<string, unknown>)
-        : {};
-    if (meta.new_role === "creator") auditCandidateIds.add(e.target_user_id);
-  }
-
-  // Union of both candidate id sources (the audit ids still need their
-  // Main-DB role checked — done in the resolve query's WHERE).
-  const candidateIds = new Set<string>([
-    ...codeOwnerRows.map((r) => r.user_id),
-    ...auditCandidateIds,
+  const [candidateIds, excludedIds] = await Promise.all([
+    getEverCreatorCandidateIds(),
+    getExcludedUserIds(),
   ]);
   if (candidateIds.size === 0) return [];
 
-  // Resolve user records for every candidate, enforcing `role != 'creator'`
-  // (so audit candidates who are CURRENTLY creators are excluded — they
-  // belong on the active roster, not here) and applying the optional
-  // username/email search. Ordered newest-first so the most recently
-  // touched ex-creators surface at the top.
+  const db = await getDb();
+
+  // Resolve user records for every candidate, enforcing:
+  //   • `role != 'creator'` — current creators belong on the active
+  //     roster, not here.
+  //   • `id NOT IN excluded_users` — the analytics blacklist hides
+  //     users from creator-analytics surfaces; honour it here too so the
+  //     past-creator KPI tile and list match the rest of /creators.
+  //   • optional username/email contains-search (case-insensitive),
+  //     applied at the DB so the search is exhaustive (not page-bounded).
+  // Ordered newest-first so the most recently touched ex-creators surface
+  // at the top.
   const users = await db.user.findMany({
     where: {
       id: { in: [...candidateIds] },
       role: { not: "creator" },
+      ...(excludedIds.length > 0 ? { NOT: { id: { in: excludedIds } } } : {}),
       ...(search && search.trim()
         ? {
             OR: [
@@ -145,8 +260,9 @@ async function getExCreatorUsers(search?: string): Promise<
  * signups / FTDs / momentum columns populate from each ex-creator's full
  * historical affiliate activity.
  *
- * Search + pagination are applied in memory (the set is small — a handful
- * to low tens of past creators), mirroring `getCreatorsListForTab`.
+ * Pagination is applied in memory (the set is small — a handful to low
+ * tens of past creators), mirroring `getCreatorsListForTab`. Search is
+ * already applied inside `getExCreatorUsers` at the DB level.
  */
 export async function getExCreatorsList(
   params: CreatorsSearchParams,
