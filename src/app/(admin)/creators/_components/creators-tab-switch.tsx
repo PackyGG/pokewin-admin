@@ -25,15 +25,24 @@ const TABS = [
  * outcome-tab pattern on /transactions/upgrader and the deposits/
  * withdrawals split on /transactions/deposits.
  *
- * Switching tabs deliberately drops `search`, `sortBy`, and `page` —
- * the tabs surface different pools and their default-relevant
- * ordering can diverge, so carrying those params across feels broken.
+ * Switching tabs deliberately drops `q`, `sortBy`, `page`, `filter`,
+ * and `period` — the tabs surface different pools and their default-
+ * relevant ordering can diverge, so carrying those params across feels
+ * broken. The Grid / List `view` IS preserved so a list-view admin
+ * stays in list view across tabs (it's pure presentation, not a pool-
+ * specific control).
  */
 export function CreatorsTabSwitch() {
   const searchParams = useSearchParams();
   const raw = searchParams.get("tab");
   const current =
     raw === "multiplier" ? "multiplier" : raw === "past" ? "past" : "fill";
+
+  // Preserve the active render mode across tab switches; drop every
+  // other URL-bound control so the new tab loads with its defaults.
+  const viewParam = searchParams.get("view");
+  const viewSuffix =
+    viewParam === "list" ? `view=list` : "";
 
   return (
     <div
@@ -43,8 +52,12 @@ export function CreatorsTabSwitch() {
     >
       {TABS.map(({ value, label, Icon }) => {
         const active = current === value;
-        const href =
-          value === "fill" ? "/creators" : `/creators?tab=${value}`;
+        const baseHref = value === "fill" ? "/creators" : `/creators?tab=${value}`;
+        const href = viewSuffix
+          ? value === "fill"
+            ? `/creators?${viewSuffix}`
+            : `${baseHref}&${viewSuffix}`
+          : baseHref;
         return (
           <Link
             key={value}

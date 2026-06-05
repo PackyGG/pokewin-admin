@@ -1,39 +1,43 @@
 "use client";
 
 import * as React from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 /**
- * Client-only state for the /creators username/email search.
+ * URL-bound state for the /creators username/email search (Item C,
+ * 2026-06-05): the query lives in `?q=` so bookmark + share parity
+ * matches the rest of the controls (period, tab, sort, view).
  *
- * Why client state (not a `?search=` URL param): the roster is small
- * (~60 creators) and already fully rendered to the client. Filtering it
- * by name is a pure-presentation operation over data that's ALREADY in
- * the browser — exactly like the Grid ↔ List toggle next to it (see
- * creators-view-context.tsx for the same rationale).
+ * Why it's still fast (the old "client-only" rationale, preserved):
  *
- * The previous `?search=` param drove the search through the URL, which
- * re-ran the page's server component on every keystroke. That re-fetch
- * re-executed the heaviest query on the page — the roster-wide
- * attribution-windowed GGR ledger scan (`getAllCreatorsNetGgr`, three
- * correlated-subquery passes over the entire ledger / inventory /
- * upgrader tables) — PLUS the full backend creator-roster walk, neither
- * of which depends on the search string. The result: typing a name kicked
- * off a full-table ledger reconstruction + a roster walk just to substring-
- * filter ~60 names. React `cache()` didn't help because every navigation
- * is a fresh request → cache miss → full recompute.
+ *   The roster is small (~60 creators) and already fully rendered to
+ *   the client. Filtering by name is a pure presentation operation over
+ *   data that's ALREADY in the browser — exactly like the Grid ↔ List
+ *   toggle next to it. The previous URL-param search (`?search=`) was
+ *   slow because the server page included it in its Suspense `key=`,
+ *   re-running the page on every keystroke — which re-executed the
+ *   roster-wide attribution-windowed GGR ledger scan
+ *   (`getAllCreatorsNetGgr`, three correlated-subquery passes over the
+ *   entire ledger / inventory / upgrader tables) PLUS the full backend
+ *   creator-roster walk, neither of which depends on the search string.
  *
- * Holding the query here makes filtering instant: the input writes to this
- * context and <CreatorsViewRender> reads it and filters the already-fetched
- * rows in place — no navigation, no refetch, no Suspense skeleton. The
- * provider wraps BOTH the input (in the toolbar) and the renderer (inside
- * the data Suspense boundary) so they share one state; the input keeps
- * rendering during any unrelated data refetch (it lives outside the
- * boundary, same as the view toggle).
+ *   This implementation keeps the URL round-trippable but breaks the
+ *   "keystroke → server refetch" coupling:
  *
- * Deliberately NOT persisted (unlike the view mode): a search term is a
- * transient "find this creator right now" action, not a durable
- * preference. It resets to empty on reload, which is the expected
- * behaviour for a search box.
+ *     1. The server page reads `q` ONLY to render the input's initial
+ *        value — it never gates a query on it.
+ *     2. The Suspense `key=` for the grid deliberately OMITS `q`, so
+ *        a `?q=` change does NOT throw a fresh boundary / refetch the
+ *        roster.
+ *     3. The client provider holds a local mirror of `q` for instant
+ *        per-keystroke filtering by <CreatorsViewRender>; URL writes
+ *        are deferred via `useDeferredValue` and `startTransition` so
+ *        the address bar updates without pinning the input.
+ *
+ *   Net: typing is still instant (no navigation, no refetch, no
+ *   skeleton), AND copying the URL gives a friend the same filtered
+ *   view. Reset between tabs (the tab switch drops the `q` param so
+ *   the filter doesn't bleed across pools).
  */
 
 type Ctx = {
@@ -51,9 +55,55 @@ export function CreatorsSearchProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const [query, setQuery] = React.useState("");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [, startTransition] = React.useTransition();
 
-  const ctx = React.useMemo(() => ({ query, setQuery }), [query]);
+  // The URL `?q=` is the source of truth across reloads + tab opens.
+  // We mirror it into local state so per-keystroke filtering stays
+  // synchronous (typing into a `useSearchParams()`-derived value would
+  // re-render every consumer on each navigation) — then sync the URL
+  // when local input settles, never the other way around.
+  const urlQuery = searchParams.get("q") ?? "";
+  const [query, setQueryState] = React.useState<string>(urlQuery);
+
+  // Keep local in lockstep when the URL changes EXTERNALLY (back/forward,
+  // tab switch dropping `?q=`, server-driven nav). The keystroke path
+  // below already updates BOTH state and URL synchronously, so this
+  // effect's `urlQuery !== query` guard skips that case as a no-op.
+  React.useEffect(() => {
+    if (urlQuery !== query) {
+      setQueryState(urlQuery);
+    }
+    // We deliberately depend ONLY on urlQuery — `query` is local mirror
+    // state and including it would re-run on every keystroke and stomp
+    // the user mid-type.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlQuery]);
+
+  const setQuery = React.useCallback(
+    (next: string) => {
+      setQueryState(next);
+      const params = new URLSearchParams(searchParams.toString());
+      const trimmed = next.trim();
+      if (trimmed === "") {
+        params.delete("q");
+      } else {
+        params.set("q", next);
+      }
+      // `replace` (not push) so the back button doesn't fill with one
+      // entry per keystroke. `scroll: false` keeps the input focused +
+      // scroll position stable. `startTransition` keeps the input
+      // responsive while React works through the routing update.
+      const qs = params.toString();
+      startTransition(() => {
+        router.replace(qs ? `?${qs}` : "?", { scroll: false });
+      });
+    },
+    [router, searchParams],
+  );
+
+  const ctx = React.useMemo(() => ({ query, setQuery }), [query, setQuery]);
 
   return (
     <CreatorsSearchContext.Provider value={ctx}>

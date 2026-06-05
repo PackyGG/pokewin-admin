@@ -191,21 +191,18 @@ export default async function CreatorsPage({
                   : "Creators"
           }
         />
-        {/* The Grid / List view is pure client state (CreatorsViewProvider)
-            — NOT a URL param — so flipping it re-renders the SAME fetched
-            data in place with no navigation, no refetch, and no skeleton.
-            The provider wraps BOTH the toggle (in the toolbar) and the
-            renderer (inside the Suspense boundary) so they share one
-            state; the toggle keeps rendering during data refetches. */}
-        {/* The username/email search is ALSO pure client state
-            (CreatorsSearchProvider) — it filters the already-fetched
-            rows in place, with no `?search=` URL param and no server
-            refetch (the old URL-param search re-ran the heaviest query
-            on the page per keystroke). The provider wraps BOTH the
-            search input (in the toolbar) and the renderer (inside the
-            Suspense boundary), mirroring CreatorsViewProvider, so they
-            share one state and the input keeps rendering during data
-            refetches. */}
+        {/* Both providers are now URL-bound (Item C, 2026-06-05): the
+            search query lives in `?q=` and the Grid / List view lives in
+            `?view=`, so bookmarking + sharing the URL restores the exact
+            filtered view + render mode. They are still INSTANT — neither
+            param is in the grid Suspense `key=` below, so flipping the
+            view OR typing a query re-renders the SAME already-fetched
+            rows in place with no navigation, no refetch, and no
+            skeleton. See _components/creators-search-context.tsx +
+            creators-view-context.tsx for the URL-sync mechanics. The
+            providers wrap BOTH the toolbar inputs AND the renderer
+            inside the Suspense boundary so they share one state and the
+            controls keep rendering during any unrelated data refetch. */}
         <CreatorsSearchProvider>
           <CreatorsViewProvider>
             <FadeIn className="space-y-4">
@@ -236,16 +233,18 @@ export default async function CreatorsPage({
                 <CreatorsViewToggle />
               </DataTableToolbar>
               {/* Card grid / list + pagination — Suspense boundary keyed on
-                  `tab` + `page` + `sortBy` + `filter` so any navigation that
-                  swaps the underlying data set shows the skeleton instead of
-                  leaving the stale grid blocking. `view` AND `search` are
-                  intentionally NOT in the key (and not read server-side) —
-                  both are pure client state (view toggle / instant search),
-                  so changing either must NOT throw a fresh boundary / refetch.
-                  Dropping `search` from the key also keeps a stale `?search=`
-                  URL param from forcing a server re-render. `key=` forces
-                  React to throw the fresh boundary on every data-changing
-                  navigation. */}
+                  `tab` + `page` + `sortBy` + `filter` + `period` so any
+                  navigation that swaps the underlying data set shows the
+                  skeleton instead of leaving the stale grid blocking.
+                  `view` AND `q` are URL-bound (Item C, 2026-06-05) but
+                  INTENTIONALLY NOT in this key — both are pure presentation
+                  over the SAME already-fetched data (view toggle / instant
+                  client-side search filter), so a `?view=` or `?q=` change
+                  must NOT throw a fresh boundary / refetch the roster.
+                  Keeping them out of the key preserves the instant
+                  no-skeleton UX while still making the URL round-trippable.
+                  `key=` forces React to throw the fresh boundary on every
+                  data-changing navigation. */}
               <Suspense
                 key={`grid-${params.tab}-${params.page}-${params.sortBy}-${params.perPage}-${params.filter ?? ""}-${params.period}`}
                 fallback={<CreatorsGridSkeleton />}

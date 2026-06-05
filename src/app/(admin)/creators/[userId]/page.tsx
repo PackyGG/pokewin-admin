@@ -46,6 +46,7 @@ import { CreatorDealCostPanel } from "./creator-deal-cost-panel";
 import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
 import { getCreatorHeaderSocials } from "./_queries/header-socials";
+import { getCodeAndWagerByUser } from "../_queries/code-and-wager-by-user";
 import { DealTabs } from "./_components/deal-tabs";
 import { DealsTab } from "./_components/deals-tab";
 import { DealsSubTabs } from "./_components/deals-sub-tabs";
@@ -121,6 +122,24 @@ export default async function CreatorDetailPage({
     15_000,
   );
 
+  // Per-creator 3-day momentum (Item F, 2026-06-05) — the SAME query the
+  // list cards' MomentumRow uses (`getCodeAndWagerByUser` from
+  // ../_queries/code-and-wager-by-user.ts), narrowed to this one creator.
+  // Mirrored exactly so the Momentum (3d) tile on the detail KPI strip
+  // surfaces the same `deposits_3d` + `wagers_3d` numbers the admin sees
+  // on the list card, with no fabricated re-computation. Five small
+  // indexed scans (acu by affiliate_user_id, last 3 days), each well
+  // under 1s — well below the strip's 15s budget. Kicked off here
+  // (non-blocking) so it runs in parallel with the heavy
+  // getCreatorDetail() aggregate and the KpiStrip awaits both inside its
+  // Suspense boundary. safeQueryOrNull degrades the tile to "—" if the
+  // query throws or hangs, without crashing the strip.
+  const momentum3dPromise = safeQueryOrNull(
+    () => getCodeAndWagerByUser([userId]),
+    "creators.detail.momentum3d",
+    10_000,
+  );
+
   return (
     <div className="space-y-6">
       <PageHero>
@@ -194,7 +213,10 @@ export default async function CreatorDetailPage({
             Streamed so its Main-DB round-trips don't extend the hero's
             TTFB. ───────────────────────────────────────────────────────── */}
         <Suspense fallback={<CreatorKpiStripSkeleton />}>
-          <CreatorKpiStrip profileResultPromise={profileResultPromise} />
+          <CreatorKpiStrip
+            profileResultPromise={profileResultPromise}
+            momentum3dPromise={momentum3dPromise}
+          />
         </Suspense>
 
         {/* 2 ── Users on code + Last wagers — per-code activity entry points,
@@ -307,6 +329,15 @@ type ProfileResultPromise = Promise<{
   error: string | null;
 }>;
 
+// Per-creator 3-day momentum result — Map keyed on user_id with
+// `deposits3dUsd` + `wagers3dUsd`. Awaited inside the KPI strip alongside
+// the heavy profile aggregate so both render in one frame; the strip
+// degrades the Momentum tile to "—" if this query fails.
+type Momentum3dResultPromise = Promise<{
+  data: Awaited<ReturnType<typeof getCodeAndWagerByUser>> | null;
+  error: string | null;
+}>;
+
 // ── 1 ── Streamed KPI strip (top of page) ─────────────────────────────
 //
 // First render slot of the shared aggregate. Renders the degraded-state /
@@ -314,10 +345,26 @@ type ProfileResultPromise = Promise<{
 // own Suspense so the read never extends the hero's TTFB.
 async function CreatorKpiStrip({
   profileResultPromise,
+  momentum3dPromise,
 }: {
   profileResultPromise: ProfileResultPromise;
+  momentum3dPromise: Momentum3dResultPromise;
 }) {
-  const { data: profile } = await profileResultPromise;
+  const [{ data: profile }, { data: momentumMap }] = await Promise.all([
+    profileResultPromise,
+    momentum3dPromise,
+  ]);
+  // Both 3d momentum legs from getCodeAndWagerByUser. The userId we
+  // fetched is the page's `params.userId`; the strip is rendered inside
+  // the same Server Component so `profile` already carries that same id
+  // implicitly. Default to 0 when the map lookup misses (creator has
+  // no acu activity in the last 3 days → list-card behaviour).
+  const momentum =
+    momentumMap && profile
+      ? momentumMap.get(profile.userId) ?? null
+      : null;
+  const wagers3dUsd = momentum?.wagers3dUsd ?? 0;
+  const deposits3dUsd = momentum?.deposits3dUsd ?? 0;
 
   // getCreatorDetail returns null only for a truly unknown user — but the
   // hero already resolved via getCreatorHeader, so a null here means the
@@ -359,11 +406,15 @@ async function CreatorKpiStrip({
 
       {/* KPI strip — house-POV financial colors:
           - Total Earned: money paid TO creator → rose (house loss)
-          - Wager Volume: money flowing FROM users TO us → emerald
+          - Wager Volume + Momentum (3d): money flowing FROM users TO us
+            → emerald
           - Clicks / Signups / FTDs: funnel events → blue family
           - Active affi: currently-engaged referrals → amber
-          Phone: 2 cols, tablet: 3 cols, desktop: 6 cols (1 row). */}
-      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          Phone: 2 cols, tablet: 3 cols, desktop (lg): 4 cols (2 rows
+          when 7 tiles), wide desktop (xl): 7 cols (1 row). The 7th tile
+          is the Momentum (3d) box (Item F, 2026-06-05) — the SAME 3-day
+          deposits + wagers the list-card MomentumRow shows. */}
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
         <KpiTile
           label="Clicks"
           value={formatNumber(profile.clicks.total)}
@@ -399,9 +450,19 @@ async function CreatorKpiStrip({
           icon={Flame}
           accent="amber"
         />
+        {/* Wager Volume = lifetime-365-capped sum from the
+            getCreatorDetail() aggregate (Main-DB `affiliate_code_usages`
+            wager rows). The "All-time" sub spells out that the figure is
+            NOT scoped to any selected window — the list card surfaces a
+            windowed code-user GGR per the page-level period chip, and
+            without this sub admins kept assuming both numbers shared the
+            same scope. The detail page intentionally keeps Wager Volume
+            on its lifetime lens; the windowed GGR lens lives on the
+            list. */}
         <KpiTile
           label="Wager Volume"
           value={formatCurrency(profile.totalWagerVolumeUsd)}
+          sub="All-time"
           icon={Wallet}
           accent="emerald"
         />
@@ -411,6 +472,34 @@ async function CreatorKpiStrip({
           sub={`Paid out: ${formatCurrency(profile.totalPaidOutUsd)}`}
           icon={HandCoins}
           accent="rose"
+        />
+        {/* Momentum (3d) — rolling 3-day wagers headline + deposits
+            sub-line. Mirrors the list-card MomentumRow EXACTLY (same
+            getCodeAndWagerByUser query, same `wagers3dUsd` /
+            `deposits3dUsd` source) so the two surfaces tell the same
+            story. House-POV emerald: wagers + deposits are money
+            flowing from this creator's referred players TO us. The
+            tile renders even on dormant creators (with $0 / "—") so
+            the strip layout stays stable; the sub-line only mentions
+            deposits when there's something to report, mirroring the
+            list-card's "No activity in last 3 days" quiet state.
+            See `_queries/code-and-wager-by-user.ts` for the source
+            query — it staff-excludes admin/support/creator + the
+            blacklist, same as every other code-cohort figure. */}
+        <KpiTile
+          label="Momentum (3d)"
+          value={
+            wagers3dUsd > 0 ? formatCurrency(wagers3dUsd) : "—"
+          }
+          sub={
+            deposits3dUsd > 0 || wagers3dUsd > 0
+              ? `Deposits ${
+                  deposits3dUsd > 0 ? formatCurrency(deposits3dUsd) : "—"
+                } · Wagers · last 72h`
+              : "No activity in last 3 days"
+          }
+          icon={TrendingUp}
+          accent="emerald"
         />
       </div>
     </div>
@@ -602,12 +691,15 @@ function CreatorDealBandSkeleton() {
 }
 
 // Placeholder matching the KPI strip — the "no account" banner space is
-// omitted (it only renders for non-affiliate users), so this is the 6 KPI
-// tiles only, so the page doesn't reflow when the real strip lands.
+// omitted (it only renders for non-affiliate users), so this is the 7 KPI
+// tiles only (Item F added Momentum (3d) as the 7th), so the page
+// doesn't reflow when the real strip lands. Grid mirrors the live strip
+// (2 / 3 / 4 / 7 cols across breakpoints) so the wide-desktop single-row
+// layout doesn't jump when the real tiles paint.
 function CreatorKpiStripSkeleton() {
   return (
-    <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
-      {[0, 1, 2, 3, 4, 5].map((i) => (
+    <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+      {[0, 1, 2, 3, 4, 5, 6].map((i) => (
         <Card key={i} size="sm" className="space-y-2 p-4">
           <Skeleton className="h-3 w-16" />
           <Skeleton className="h-6 w-20" />

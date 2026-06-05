@@ -1,32 +1,36 @@
 "use client";
 
 import * as React from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+
+import { CreatorsViewMode } from "../_lib/search-params";
 
 /**
- * Client-only state for the /creators Grid ↔ List switch.
+ * URL-bound state for the /creators Grid ↔ List switch (Item C,
+ * 2026-06-05): the view lives in `?view=` so bookmark + share parity
+ * matches the rest of the controls (period, tab, sort, search).
  *
- * Why state (not a `?view=` URL param): the grid/list choice is pure
- * presentation over the SAME already-fetched creator data. Driving it
- * through the URL made the server component re-run on every toggle → a
- * fresh Suspense skeleton + a full re-fetch of the (heavy) creator pool.
- * Holding `view` here lets the toggle (in the toolbar) and the renderer
- * (inside the data Suspense boundary) share one state, so flipping the
- * view is an instant local re-render — no navigation, no refetch, no
- * skeleton. The provider wraps BOTH so they stay in sync; the toggle
- * keeps rendering during data refetches (it lives outside the boundary).
+ * Pre-URL implementations held this in pure client state + localStorage
+ * because flipping the view used to re-run the heavy server fetch. That
+ * is no longer the case here: the server page deliberately OMITS `view`
+ * from its Suspense `key=`, so a `?view=` change does NOT throw a fresh
+ * boundary / refetch the roster. The provider just reads from
+ * `useSearchParams` and writes via `router.replace` inside a transition;
+ * `<CreatorsViewRender>` re-renders the SAME already-fetched rows in
+ * place — no navigation, no refetch, no skeleton. The previous local-
+ * storage rehydration is dropped because the URL is now the source of
+ * truth across reloads (bookmarks beat per-device storage).
  *
- * Persistence without re-introducing the refetch: the choice is mirrored
- * to `localStorage` and rehydrated on mount in an effect. It is
- * deliberately NOT put in the URL — a URL change is exactly the server
- * re-run we're removing. First paint always uses "grid" (the server's
- * default render) so SSR and the first client render agree; a list-
- * preferring admin sees a one-frame grid → list flip on load, the
- * standard accepted trade-off for a hydration-safe persisted preference.
+ * SSR / first-paint parity: a missing `?view=` resolves to "grid", which
+ * is the server's default render — so there is no hydration mismatch
+ * and no one-frame flicker.
  */
 
-export type CreatorsViewMode = "grid" | "list";
-
-const STORAGE_KEY = "creators-view";
+// Re-exported here so existing imports (`./creators-view-context`) keep
+// working without touching the view toggle + render call sites. The
+// canonical definition (and the Zod parser) lives in
+// `_lib/search-params.ts`.
+export type { CreatorsViewMode } from "../_lib/search-params";
 
 type Ctx = {
   view: CreatorsViewMode;
@@ -43,27 +47,34 @@ export function CreatorsViewProvider({
 }: {
   children: React.ReactNode;
 }) {
-  // Default "grid" matches the server's default render so SSR and the
-  // first client render agree (no hydration mismatch). The stored
-  // preference is applied after mount.
-  const [view, setViewState] = React.useState<CreatorsViewMode>("grid");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [, startTransition] = React.useTransition();
 
-  React.useEffect(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === "list" || stored === "grid") {
-      setViewState(stored);
-    }
-  }, []);
+  // Parse via the Zod enum so an out-of-range URL token can't crash the
+  // provider; defaults to "grid" (matches the server's first paint).
+  const rawView = searchParams.get("view");
+  const parsedView = CreatorsViewMode.safeParse(rawView);
+  const view: CreatorsViewMode = parsedView.success ? parsedView.data : "grid";
 
-  const setView = React.useCallback((next: CreatorsViewMode) => {
-    setViewState(next);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      // Private-mode / storage-disabled browsers: the toggle still works
-      // for the session, it just won't persist. Not worth surfacing.
-    }
-  }, []);
+  const setView = React.useCallback(
+    (next: CreatorsViewMode) => {
+      if (next === view) return;
+      const params = new URLSearchParams(searchParams.toString());
+      // "grid" is the default — drop the param so the URL stays clean
+      // when an admin lands back on the default view.
+      if (next === "grid") {
+        params.delete("view");
+      } else {
+        params.set("view", next);
+      }
+      const qs = params.toString();
+      startTransition(() => {
+        router.replace(qs ? `?${qs}` : "?", { scroll: false });
+      });
+    },
+    [router, searchParams, view],
+  );
 
   const ctx = React.useMemo(() => ({ view, setView }), [view, setView]);
 
