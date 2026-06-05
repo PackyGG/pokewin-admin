@@ -11,7 +11,7 @@ import { getDepositBonusCapHitRate } from "@/lib/queries/insights-rewards/deposi
 import { getDepositBonusROI } from "@/lib/queries/insights-rewards/deposit-bonus/roi";
 
 import { type ForecastBaseline } from "../_forecast";
-import { ForecastSimulator } from "./forecast-simulator";
+import { ForecastSimulatorIsland } from "./forecast-simulator";
 
 /**
  * Forecast tab (server) on /insights/rewards/deposit-bonus.
@@ -107,7 +107,7 @@ export async function ForecastTab({
   }
 
   return (
-    <ForecastSimulator
+    <ForecastSimulatorIsland
       realBaseline={realBaseline}
       period={insightsRewardsPeriodLabel(period)}
     />

@@ -56,34 +56,23 @@ import type {
   SegmentId,
   SimulationResult,
 } from "./types";
+// The GENERIC numeric guards + orchestration now live in the shared engine kit.
+// Deposit-bonus re-exports the guards (so its `index.ts` surface is unchanged)
+// and wraps the generic `simulateSet` / `buildDailySeries` / `scaleResultMoney`
+// with its cap-aware signatures (so `__checks__/run.ts` keeps working verbatim).
+import {
+  buildDailySeries as buildDailySeriesGeneric,
+  clamp,
+  clamp01,
+  finite,
+  safeDiv,
+  scaleResultMoney,
+  simulateSet as simulateSetGeneric,
+} from "../../../_forecast-engine";
 
-// ─── Small numeric helpers (defensive, edge-calc style) ─────────────────────
-
-/** Clamp a value into [0,1]. Non-finite → 0. */
-export function clamp01(x: number): number {
-  if (!Number.isFinite(x)) return 0;
-  if (x < 0) return 0;
-  if (x > 1) return 1;
-  return x;
-}
-
-/** Clamp into an arbitrary [lo,hi]. Non-finite → lo. */
-export function clamp(x: number, lo: number, hi: number): number {
-  if (!Number.isFinite(x)) return lo;
-  return Math.min(hi, Math.max(lo, x));
-}
-
-/** Guarded divide — returns 0 when the denominator is ~0 or inputs non-finite. */
-export function safeDiv(num: number, den: number): number {
-  if (!Number.isFinite(num) || !Number.isFinite(den)) return 0;
-  if (Math.abs(den) < EPSILON) return 0;
-  return num / den;
-}
-
-/** Non-finite → 0; otherwise the value. */
-function finite(x: number): number {
-  return Number.isFinite(x) ? x : 0;
-}
+// Re-export the shared numeric guards under the deposit-bonus engine surface so
+// existing imports (`./engine` → recommend.ts, index.ts barrel) stay valid.
+export { clamp, clamp01, safeDiv, scaleResultMoney };
 
 // ─── Cap geometry ────────────────────────────────────────────────────────────
 
@@ -614,87 +603,32 @@ export function simulate(
 }
 
 /**
+ * The daily-pacing FRONT-LOAD factor a cap rule implies: fixed-window caps
+ * cluster claims early (front-loaded), split / weekly-pooled caps pace evenly
+ * (flat). This is the deposit-bonus mapping of a cap → the generic pacing
+ * number the shared `buildDailySeries` consumes.
+ */
+export function capFrontload(cap: CapRule): number {
+  return cap.kind === "split_window" || cap.kind === "weekly_pooled"
+    ? SPLIT_WINDOW_FRONTLOAD
+    : FIXED_WINDOW_FRONTLOAD;
+}
+
+/**
  * Deterministic daily spread of a horizon total across `days`, using a pacing
  * curve (front-loaded for fixed-window, flat for split-window) that integrates
  * EXACTLY to the supplied totals (no drift). Accumulates `cumulativeCost`.
+ *
+ * Thin cap-aware wrapper over the shared `buildDailySeries` (which takes the
+ * front-load as a plain number) — kept with the cap signature so `simulate` and
+ * the engine self-checks (`__checks__/run.ts`) call it unchanged.
  */
 export function buildDailySeries(
   cap: CapRule,
   days: number,
   totals: { bonusCost: number; abuseLeakage: number; savingsVsBaselineTotal: number },
 ): DailyPoint[] {
-  const n = Math.max(1, Math.floor(finite(days)));
-  const frontload =
-    cap.kind === "split_window" || cap.kind === "weekly_pooled"
-      ? SPLIT_WINDOW_FRONTLOAD
-      : FIXED_WINDOW_FRONTLOAD;
-
-  // Weight day i: linearly decaying from `frontload` down to a tail so the
-  // mean weight is 1. For frontload=1 this is flat. Normalize to sum 1.
-  const rawWeights: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const t = n > 1 ? i / (n - 1) : 0; // 0..1
-    // weight starts at `frontload`, ends at (2 − frontload) so the average is 1.
-    const w = frontload + (2 - frontload - frontload) * t; // = frontload − 2(frontload−1)t
-    rawWeights.push(Math.max(0, w));
-  }
-  const weightSum = rawWeights.reduce((a, b) => a + b, 0) || 1;
-  const weights = rawWeights.map((w) => w / weightSum);
-
-  const out: DailyPoint[] = [];
-  let cumulative = 0;
-  for (let i = 0; i < n; i++) {
-    const dayCost = finite(totals.bonusCost) * weights[i];
-    const dayLeak = finite(totals.abuseLeakage) * weights[i];
-    const daySavings = finite(totals.savingsVsBaselineTotal) * weights[i];
-    cumulative += dayCost;
-    out.push({
-      day: i,
-      bonusCost: dayCost,
-      cumulativeCost: cumulative,
-      savingsVsBaseline: daySavings,
-      abuseLeakage: dayLeak,
-    });
-  }
-  return out;
-}
-
-/**
- * Uniformly scale every MONEY field of a result by `scale` (the segment mix,
- * claimant counts, friction, effective caps and the dimensionless NGR/savings
- * ratios are preserved). Used to ANCHOR the whole set on a real baseline total
- * without distorting any relative ratio: scaling the baseline to the real cost
- * scales every other scenario by the same factor, so the savings RANKING and
- * the segment-cost composition are untouched and segment costs still sum to the
- * scenario total. Pure; `scale ≤ 0` or non-finite is a no-op.
- */
-export function scaleResultMoney(res: SimulationResult, scale: number): SimulationResult {
-  const k = finite(scale);
-  if (!(k > 0) || k === 1) return res;
-  return {
-    ...res,
-    bonusCost: finite(res.bonusCost * k),
-    marginImpact: finite(res.marginImpact * k),
-    netLoss: finite(res.netLoss * k),
-    abuseLeakage: finite(res.abuseLeakage * k),
-    retainedRevenue: finite(res.retainedRevenue * k),
-    ngrImpact: finite(res.ngrImpact * k),
-    confidenceBand: {
-      low: finite(res.confidenceBand.low * k),
-      mid: finite(res.confidenceBand.mid * k),
-      high: finite(res.confidenceBand.high * k),
-    },
-    perSegment: res.perSegment.map((s) => ({
-      ...s,
-      // claimants & effectiveCapUsd are NOT money totals — leave them intact.
-      bonusCost: finite(s.bonusCost * k),
-      abuseLeakage: finite(s.abuseLeakage * k),
-      retainedRevenue: finite(s.retainedRevenue * k),
-      ngrImpact: finite(s.ngrImpact * k),
-    })),
-    // dailySeries is rebuilt from the scaled totals by the caller, so leave it.
-    dailySeries: res.dailySeries,
-  };
+  return buildDailySeriesGeneric(capFrontload(cap), days, totals);
 }
 
 /**
@@ -707,7 +641,12 @@ export function scaleResultMoney(res: SimulationResult, scale: number): Simulati
  * bars) then reads the real baseline, and other scenarios stay coherent
  * fractions/multiples of it (their cost ÷ ceiling ratios are unchanged by a
  * uniform scale). Omit the anchor (or pass null) to keep the slider-derived
- * absolute scale (DEMO mode anchors on the demo total via the same path).
+ * absolute scale.
+ *
+ * Thin cap-aware wrapper over the shared, reward-agnostic `simulateSet`: it
+ * supplies deposit-bonus's pure `simulate` + the cap→front-load pacing resolver
+ * and preserves the original 5-arg signature so the live page and the engine
+ * self-checks call it unchanged.
  *
  * @param scenarios    the scenarios to run (the first matching `baselineId`,
  *                     or the first entry, is the reference)
@@ -723,46 +662,9 @@ export function simulateSet(
   baselineId?: string,
   anchorBaselineCostUsd?: number | null,
 ): SimulationResult[] {
-  if (scenarios.length === 0) return [];
-  const refId = baselineId ?? scenarios[0].id;
-
-  const rawResults = scenarios.map((sc) => ({ sc, res: simulate(sc, assumptions, window) }));
-  const rawBaselineCost =
-    (rawResults.find((r) => r.sc.id === refId)?.res ?? rawResults[0].res).bonusCost;
-
-  // Anchor: scale the whole set so the baseline cost == the real total. Only
-  // when a positive anchor AND a positive computed baseline both exist (else a
-  // 0/0 would wipe the set) — otherwise keep the slider-derived scale.
-  const anchor = finite(anchorBaselineCostUsd ?? 0);
-  const scale = anchor > 0 && rawBaselineCost > 0 ? anchor / rawBaselineCost : 1;
-  const raw = rawResults.map(({ sc, res }) => ({ sc, res: scaleResultMoney(res, scale) }));
-
-  const baseline = raw.find((r) => r.sc.id === refId)?.res ?? raw[0].res;
-  const baseCost = baseline.bonusCost;
-
-  const days = Math.max(1, finite(window.days) || finite(assumptions.windowDays) || 30);
-
-  return raw.map(({ sc, res }) => {
-    // GROSS savings = baseline cost − this cost (positive = cheaper).
-    const savingsVsBaseline = baseCost - res.bonusCost;
-
-    // NET savings subtracts the retained-revenue we GIVE UP by tightening
-    // (baseline retention − this scenario's retention, when this is cheaper).
-    // Tightening cuts cost but also cuts retained revenue → net < gross.
-    const retentionGivenUp = Math.max(0, baseline.retainedRevenue - res.retainedRevenue);
-    const netSavingsVsBaseline = savingsVsBaseline - retentionGivenUp;
-
-    const dailySeries = buildDailySeries(sc.cap, days, {
-      bonusCost: res.bonusCost,
-      abuseLeakage: res.abuseLeakage,
-      savingsVsBaselineTotal: savingsVsBaseline,
-    });
-
-    return {
-      ...res,
-      savingsVsBaseline: finite(savingsVsBaseline),
-      netSavingsVsBaseline: finite(netSavingsVsBaseline),
-      dailySeries,
-    };
+  return simulateSetGeneric(scenarios, assumptions, window, simulate, {
+    baselineId,
+    anchorBaselineCostUsd,
+    pacingFrontload: (sc) => capFrontload(sc.cap),
   });
 }

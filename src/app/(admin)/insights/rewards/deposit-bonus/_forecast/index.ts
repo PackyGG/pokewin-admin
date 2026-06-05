@@ -54,6 +54,7 @@ export {
   abuseCaptureUnderStricterCap,
   buildDailySeries,
   cannibalizationAtCap,
+  capFrontload,
   capWindowHours,
   clamp,
   clamp01,
@@ -73,6 +74,12 @@ export {
   tightnessVsBaseline,
   windowsPerDay,
 } from "./engine";
+
+// Per-reward forecast config (the contract the shared UI + hub consume)
+export {
+  DEPOSIT_BONUS_BASELINE_NOTE,
+  DEPOSIT_BONUS_FORECAST_CONFIG,
+} from "./config";
 
 // Recommendations
 export { describeTradeoff, recommend } from "./recommend";

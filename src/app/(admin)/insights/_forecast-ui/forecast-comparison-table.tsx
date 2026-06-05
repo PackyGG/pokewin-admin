@@ -12,51 +12,68 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
-import { formatSignedUsd } from "../../../edge-calc/math";
+import { formatSignedUsd } from "../edge-calc/math";
 
 import type {
+  BaseScenarioConfig,
   Recommendation,
-  ScenarioConfig,
   SimulationResult,
-} from "../_forecast";
-import { capLogicLabel, operationalComplexity } from "./forecast-format";
+} from "../_forecast-engine";
 
 /**
- * Side-by-side scenario comparison.
+ * Side-by-side scenario comparison — REWARD-AGNOSTIC.
  *
  * One row per scenario in the active set. Columns surface every dimension the
- * brief asks for: cap logic, projected cost, savings (gross + net), abuse
- * reduction %, conversion/retention impact, NGR impact, operational
- * complexity, and a recommended badge.
+ * forecast exposes: policy logic, projected cost, savings (gross + net), abuse
+ * reduction %, retention impact, NGR impact, operational complexity, and a
+ * recommended badge.
+ *
+ * The reward supplies `capLabel` (policy-logic string) and `capComplexity`
+ * (1-3 rank) via the simulator island (which imported the reward's config), so
+ * this component holds NO reward-specific copy. Both default sensibly when a
+ * reward omits them.
  *
  * House-POV colors throughout: cost / abuse leakage = rose (house outflow);
  * net savings / NGR positive = emerald (house gain); retained revenue =
- * emerald (downstream value the house keeps). The baseline row is muted (it
- * saves nothing vs itself).
+ * emerald. The baseline row is muted (it saves nothing vs itself).
  *
- * Desktop = a dense `ui/table`; mobile (<md) = a stacked card list (mirrors
- * the DailyBreakdownTable pattern on the Overview tab) so nothing scrolls
- * sideways on a phone.
+ * Desktop = a dense `ui/table`; mobile (<md) = a stacked card list so nothing
+ * scrolls sideways on a phone.
  */
 
-export type ComparisonRow = {
-  scenario: ScenarioConfig;
+export type ComparisonRow<S extends BaseScenarioConfig = BaseScenarioConfig> = {
+  scenario: S;
   result: SimulationResult;
 };
 
-export function ForecastComparisonTable({
+export function ForecastComparisonTable<S extends BaseScenarioConfig>({
   rows,
   baselineId,
   recommendations,
   activeScenarioId,
   onSelectScenario,
+  capLabel,
+  capComplexity,
 }: {
-  rows: ComparisonRow[];
+  rows: ComparisonRow<S>[];
   baselineId: string;
   recommendations: Recommendation[];
   activeScenarioId: string;
   onSelectScenario: (id: string) => void;
+  /** Reward-supplied policy-logic label (defaults to the scenario label). */
+  capLabel?: (scenario: S) => string;
+  /** Reward-supplied operational-complexity rank (defaults to 1). */
+  capComplexity?: (scenario: S) => 1 | 2 | 3;
 }) {
+  const labelOf = React.useCallback(
+    (s: S) => (capLabel ? capLabel(s) : s.label),
+    [capLabel],
+  );
+  const complexityOf = React.useCallback(
+    (s: S): 1 | 2 | 3 => (capComplexity ? capComplexity(s) : 1),
+    [capComplexity],
+  );
+
   // Map scenarioId → badge label for the "recommended" column.
   const badgeByScenario = React.useMemo(() => {
     const m = new Map<string, Recommendation["badge"]>();
@@ -90,7 +107,7 @@ export function ForecastComparisonTable({
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{scenario.label}</p>
                   <p className="truncate text-[11px] text-muted-foreground">
-                    {capLogicLabel(scenario.cap)}
+                    {labelOf(scenario)}
                   </p>
                 </div>
                 {badge && <RecoBadge badge={badge} />}
@@ -120,7 +137,7 @@ export function ForecastComparisonTable({
           <TableHeader>
             <TableRow>
               <TableHead>Scenario</TableHead>
-              <TableHead>Cap logic</TableHead>
+              <TableHead>Policy logic</TableHead>
               <TableHead className="text-right">Proj. cost</TableHead>
               <TableHead className="text-right">Gross savings</TableHead>
               <TableHead className="text-right">Net savings</TableHead>
@@ -143,7 +160,7 @@ export function ForecastComparisonTable({
               const retentionDelta = baselineRow
                 ? result.retainedRevenue - baselineRow.retainedRevenue
                 : 0;
-              const complexity = operationalComplexity(scenario.cap);
+              const complexity = complexityOf(scenario);
               return (
                 <TableRow
                   key={scenario.id}
@@ -156,7 +173,7 @@ export function ForecastComparisonTable({
                 >
                   <TableCell className="font-medium">{scenario.label}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">
-                    {capLogicLabel(scenario.cap)}
+                    {labelOf(scenario)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-rose-600 dark:text-rose-400">
                     {formatCurrency(result.bonusCost)}

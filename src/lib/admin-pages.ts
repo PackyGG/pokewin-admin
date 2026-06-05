@@ -60,6 +60,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   // page so admins can model packs / upgrader / bonus stacks before
   // they ship a change.
   { group: "Insights", label: "Edge Calc", key: "/insights/edge-calc" },
+  // Forecast — unified reward-forecast hub. Hosts a full-depth
+  // scenario simulation per reward type (modeled on the deposit-bonus
+  // forecast), anchored on real production baselines. Own permission
+  // key so it can be granted independently of the per-reward deep-dives.
+  { group: "Insights", label: "Forecast", key: "/insights/forecast" },
   // Transactions
   // Standalone /transactions overview removed — admins land on a
   // specific sub-ledger instead. Each sub-page carries its own

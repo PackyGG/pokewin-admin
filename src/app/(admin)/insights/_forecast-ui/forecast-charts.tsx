@@ -20,18 +20,19 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
-import { SEGMENTS, type SimulationResult } from "../_forecast";
+import type { AccentColor, SegmentMeta, SimulationResult } from "../_forecast-engine";
+import { shortScenarioLabel } from "./forecast-format";
 
 /**
- * Forecast charts (section 4). All recharts via the house `ChartContainer`,
- * `animationDuration={700}` / `animationEasing="ease-out"`, motion handled by
- * recharts' own animation (the page wraps blocks in `FadeIn`, which is
- * reduce-motion aware).
+ * Forecast charts — REWARD-AGNOSTIC. All recharts via the house
+ * `ChartContainer`, `animationDuration={700}` / `animationEasing="ease-out"`;
+ * motion is reduce-motion aware via the `FadeIn` wrappers the simulator uses.
  *
- * House-POV palette:
+ * House-POV palette (CLAUDE.md, strict):
  *   • cost / cumulative cost / abuse leakage = house OUTFLOW → rose / amber.
  *   • savings vs baseline = house GAIN → emerald.
- *   • per-segment contribution uses each segment's stable accent hue.
+ *   • per-segment contribution uses each segment's stable accent hue (from the
+ *     reward's `SegmentMeta`).
  *
  * Every series is pre-shaped by the simulator (which owns the engine calls);
  * these components hold ZERO economics — they only render.
@@ -42,19 +43,26 @@ const EMERALD = "#10b981";
 const AMBER = "#f59e0b";
 const BLUE = "#3b82f6";
 
-// Stable per-segment hex (matches the modern-panels accent family).
-const SEGMENT_HEX: Record<string, string> = {
-  legit_low_risk: EMERALD,
-  high_value: "#a855f7", // purple
-  promo_sensitive: AMBER,
-  high_risk_abuse: ROSE,
-  reactivated_dormant: "#06b6d4", // cyan
+/** Map a TILE_COLORS accent token to a stable chart hex (house palette). */
+const ACCENT_HEX: Record<AccentColor, string> = {
+  blue: BLUE,
+  emerald: EMERALD,
+  rose: ROSE,
+  cyan: "#06b6d4",
+  amber: AMBER,
+  purple: "#a855f7",
+  orange: "#f97316",
+  pink: "#ec4899",
 };
+
+export function segmentHex(seg: SegmentMeta): string {
+  return ACCENT_HEX[seg.accent] ?? BLUE;
+}
 
 // ─── 1. Cost over time (active scenario) ────────────────────────────
 
 const costConfig = {
-  bonusCost: { label: "Daily bonus cost", color: ROSE },
+  bonusCost: { label: "Daily cost", color: ROSE },
 } satisfies ChartConfig;
 
 export function CostOverTimeChart({ result }: { result: SimulationResult }) {
@@ -147,7 +155,7 @@ export function SavingsByScenarioChart({
   const data = rows
     .filter((r) => r.id !== baselineId)
     .map((r) => ({
-      label: shortLabel(r.label),
+      label: shortScenarioLabel(r.label),
       netSavings: r.result.netSavingsVsBaseline,
     }));
   return (
@@ -184,7 +192,7 @@ export function AbuseLeakageChart({
   baselineId: string;
 }) {
   const data = rows.map((r) => ({
-    label: shortLabel(r.label),
+    label: shortScenarioLabel(r.label),
     abuseLeakage: r.result.abuseLeakage,
     isBaseline: r.id === baselineId,
   }));
@@ -199,8 +207,8 @@ export function AbuseLeakageChart({
         />
         <Bar dataKey="abuseLeakage" radius={[4, 4, 0, 0]} animationDuration={700} animationEasing="ease-out">
           {data.map((d) => (
-            // Baseline leakage is the reference (amber); the rest also amber —
-            // the point of the chart is which model leaks LESS than baseline.
+            // The point of the chart is which model leaks LESS than baseline:
+            // the baseline reads rose (the reference outflow), the rest amber.
             <Cell key={d.label} fill={d.isBaseline ? ROSE : AMBER} />
           ))}
         </Bar>
@@ -211,19 +219,23 @@ export function AbuseLeakageChart({
 
 // ─── 5. Segment cost contribution (stacked) ─────────────────────────
 
-const segmentConfig = SEGMENTS.reduce((acc, s) => {
-  acc[s.id] = { label: s.label, color: SEGMENT_HEX[s.id] };
-  return acc;
-}, {} as ChartConfig);
-
 export function SegmentContributionChart({
   rows,
+  segments,
 }: {
   rows: Array<{ id: string; label: string; result: SimulationResult }>;
+  segments: SegmentMeta[];
 }) {
-  // Each bar = a scenario; stacked by per-segment bonus cost.
+  const segmentConfig = React.useMemo(() => {
+    return segments.reduce((acc, s) => {
+      acc[s.id] = { label: s.label, color: segmentHex(s) };
+      return acc;
+    }, {} as ChartConfig);
+  }, [segments]);
+
+  // Each bar = a scenario; stacked by per-segment cost.
   const data = rows.map((r) => {
-    const row: Record<string, number | string> = { label: shortLabel(r.label) };
+    const row: Record<string, number | string> = { label: shortScenarioLabel(r.label) };
     for (const seg of r.result.perSegment) row[seg.segment] = seg.bonusCost;
     return row;
   });
@@ -237,19 +249,19 @@ export function SegmentContributionChart({
           content={
             <ChartTooltipContent
               formatter={(value, name) => {
-                const seg = SEGMENTS.find((s) => s.id === name);
+                const seg = segments.find((s) => s.id === name);
                 return `${seg?.label ?? String(name)}: ${formatCurrency(Number(value))}`;
               }}
             />
           }
         />
-        {SEGMENTS.map((seg, i) => (
+        {segments.map((seg, i) => (
           <Bar
             key={seg.id}
             dataKey={seg.id}
             stackId="cost"
-            fill={SEGMENT_HEX[seg.id]}
-            radius={i === SEGMENTS.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+            fill={segmentHex(seg)}
+            radius={i === segments.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
             animationDuration={700}
             animationEasing="ease-out"
           />
@@ -312,11 +324,4 @@ export function SensitivityChart({
       </LineChart>
     </ChartContainer>
   );
-}
-
-// ─── helpers ────────────────────────────────────────────────────────
-
-/** Trim the "A · " / "E · " prefixes for compact axis labels. */
-function shortLabel(label: string): string {
-  return label.replace(/^[A-E]\s·\s/, "");
 }

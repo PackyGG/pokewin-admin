@@ -355,6 +355,21 @@ export const NAV_ENTRIES: NavEntry[] = [
     inSidebar: true,
     inPalette: false,
   },
+  {
+    // Forecast — unified reward-forecast hub (scenario simulation per
+    // reward type, anchored on real production baselines).
+    id: "nav.insights.forecast",
+    group: "Insights",
+    label: "Forecast",
+    href: "/insights/forecast",
+    pageKey: "/insights/forecast",
+    icon: "Gauge",
+    description: "Model reward programs before shipping a change",
+    keywords: ["forecast", "scenario", "simulate", "deposit bonus", "what-if"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
 
   // ── Creator Marketing ──────────────────────────────────────────────────
   {
