@@ -61,3 +61,79 @@ export function parseDashboardPeriod(
     ? (value as DashboardPeriod)
     : DEFAULT_DASHBOARD_PERIOD;
 }
+
+// ============================================================
+// Dashboard KPI window — "today" vs "24h" (dashboard-local).
+//
+// The dashboard's KPI boxes (P&L, GGR, Wager, Deposits, …) default to
+// the CURRENT CALENDAR DAY since 00:00 UTC ("today"), with a one-click
+// "24h" rolling-window toggle next to each box's title. This is a
+// SEPARATE concept from the `DashboardPeriod` chip enum above (1h … all):
+// it is NOT added to `DASHBOARD_PERIODS` so the `/creators` surfaces that
+// consume that enum (`z.enum(DASHBOARD_PERIODS)`) are untouched. The KPI
+// window only drives the dashboard's headline boxes.
+//
+// • "today" — [today 00:00 UTC, now). The same UTC-midnight boundary the
+//   P&L Today / Reward Costs / Creators Costs cards already use
+//   (utcStartOfDay), so all boxes reconcile to one calendar day. This is
+//   the DEFAULT (loaded eagerly on a cold dashboard render).
+// • "24h"   — rolling [now − 24h, now). The previous default; offered as
+//   the secondary toggle, LAZY-loaded on first click (active-timeframe-
+//   only — we never eager-compute both windows).
+// ============================================================
+export const DASHBOARD_KPI_WINDOWS = ["today", "24h"] as const;
+export type DashboardKpiWindow = (typeof DASHBOARD_KPI_WINDOWS)[number];
+export const DEFAULT_DASHBOARD_KPI_WINDOW: DashboardKpiWindow = "today";
+
+/** Short toggle labels for the per-box today/24h switch. */
+export const DASHBOARD_KPI_WINDOW_LABELS: Record<DashboardKpiWindow, string> = {
+  today: "today",
+  "24h": "24h",
+};
+
+/** Friendly label surfaced on each box's title (e.g. "GGR · Today"). */
+export const DASHBOARD_KPI_WINDOW_TITLE: Record<DashboardKpiWindow, string> = {
+  today: "Today",
+  "24h": "Last 24h",
+};
+
+/**
+ * UTC start-of-day for the instant `now` (today 00:00 UTC). Mirrors the
+ * boundary used by `getTodayPnl` / the Reward-Costs / Creators-Costs cards
+ * so every dashboard "today" figure agrees to the same calendar day no
+ * matter which region the serverless function runs in.
+ */
+export function utcStartOfDay(now: Date): Date {
+  const d = new Date(now);
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
+ * Resolve a dashboard KPI window to its SQL cutoff:
+ *   • "today" → today 00:00 UTC (reuses {@link utcStartOfDay}).
+ *   • "24h"   → rolling now − 24h.
+ * The single value drives every period-bound dashboard aggregate the same
+ * way `periodToCutoff` does for the chip enum.
+ */
+export function kpiWindowToCutoff(
+  window: DashboardKpiWindow,
+  now: Date,
+): Date {
+  return window === "today"
+    ? utcStartOfDay(now)
+    : new Date(now.getTime() - MS_PER_DAY);
+}
+
+/**
+ * Sanitize a free-string (URL param / client value) to a real
+ * DashboardKpiWindow — unknown values fall back to the default ("today").
+ */
+export function parseDashboardKpiWindow(
+  value: string | undefined | null,
+): DashboardKpiWindow {
+  if (!value) return DEFAULT_DASHBOARD_KPI_WINDOW;
+  return (DASHBOARD_KPI_WINDOWS as readonly string[]).includes(value)
+    ? (value as DashboardKpiWindow)
+    : DEFAULT_DASHBOARD_KPI_WINDOW;
+}

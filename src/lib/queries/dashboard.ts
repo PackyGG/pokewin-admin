@@ -39,8 +39,12 @@ import { getMetricsScope } from "@/lib/metrics/scope";
 import {
   DASHBOARD_PERIOD_LABELS,
   DEFAULT_DASHBOARD_PERIOD,
+  DEFAULT_DASHBOARD_KPI_WINDOW,
+  DASHBOARD_KPI_WINDOW_TITLE,
+  kpiWindowToCutoff,
   periodToCutoff,
   type DashboardPeriod,
+  type DashboardKpiWindow,
 } from "./dashboard-period";
 
 // Re-export the client-safe period constants so existing call sites
@@ -53,8 +57,15 @@ export {
   DEFAULT_DASHBOARD_PERIOD,
   parseDashboardPeriod,
   periodToCutoff,
+  DASHBOARD_KPI_WINDOWS,
+  DASHBOARD_KPI_WINDOW_LABELS,
+  DASHBOARD_KPI_WINDOW_TITLE,
+  DEFAULT_DASHBOARD_KPI_WINDOW,
+  kpiWindowToCutoff,
+  parseDashboardKpiWindow,
+  utcStartOfDay,
 } from "./dashboard-period";
-export type { DashboardPeriod } from "./dashboard-period";
+export type { DashboardPeriod, DashboardKpiWindow } from "./dashboard-period";
 
 /**
  * Capped lifetime lookback (days) for the dashboard "all" (All time)
@@ -203,6 +214,40 @@ function cachedWindowMetricsForPeriod(
     ? cachedLifetimeWindowMetrics(period, blacklistIdNotIn)
     : cachedRollingWindowMetrics(period, blacklistIdNotIn);
 }
+
+/**
+ * Headline GGR/NGR for the dashboard's today/24h KPI window, cached.
+ *
+ * Mirrors {@link cachedRollingWindowMetrics} but keys on the explicit
+ * window + its resolved cutoff ISO so the two windows never collide AND
+ * the "today" entry rolls over at 00:00 UTC (the cutoff ISO changes when
+ * the calendar day flips, so a new cache key is minted automatically — no
+ * stale yesterday figure). 60s TTL matches the dashboard's auto-refresh
+ * cadence; the cutoff is recomputed by the CALLER each request and passed
+ * in, so within the TTL the sub-window drift is bounded (the same tradeoff
+ * the rolling-period cache makes). `getWindowMetrics` resolves its own
+ * real-customer scope; `blacklistIdNotIn` rides along only as a cache-key
+ * discriminator so an excluded-user change re-fetches within the TTL.
+ */
+const cachedKpiWindowMetrics = unstable_cache(
+  async (
+    window: DashboardKpiWindow,
+    cutoffIso: string,
+    blacklistIdNotIn: string,
+  ): Promise<WindowMetrics> => {
+    // `window` + `blacklistIdNotIn` are cache-key discriminators only (the
+    // window distinguishes today/24h; the blacklist re-fetches when an
+    // excluded-user change lands) — `getWindowMetrics` resolves its own
+    // real-customer scope, so neither is read in the body. `void` them so
+    // the unused-arg lint stays clean (same as `void dayKey` in
+    // dashboard-today-pnl.ts).
+    void window;
+    void blacklistIdNotIn;
+    return getWindowMetrics({ window: { since: new Date(cutoffIso) } });
+  },
+  ["dashboard-window-metrics-kpi-v1"],
+  { revalidate: 60, tags: ["dashboard-activity"] },
+);
 
 /**
  * Single raw query that returns revenue (deposits), withdrawal, wager,
@@ -1152,10 +1197,69 @@ export async function getLifetimeHouseTotals(): Promise<{
  * already revalidates them via the 60s AutoRefresh.
  */
 export const getDashboardStats = cache(async (period: DashboardPeriod = DEFAULT_DASHBOARD_PERIOD) => {
-  return withTiming("dashboard.getDashboardStats", () => dashboardStatsInner(period));
+  return withTiming("dashboard.getDashboardStats", () =>
+    dashboardStatsInner({
+      cutoff: periodToCutoff(period, new Date()),
+      metricWindow: periodToMetricWindow(period, new Date()),
+      periodLabel: DASHBOARD_PERIOD_LABELS[period],
+      windowMetricsKey: period,
+      loadWindowMetrics: (blacklistIdNotIn) =>
+        cachedWindowMetricsForPeriod(period, blacklistIdNotIn),
+    }),
+  );
 });
 
-async function dashboardStatsInner(period: DashboardPeriod) {
+/**
+ * Dashboard KPI stats for the "today" / "24h" window (the per-box toggle on
+ * the headline KPI boxes). React-cached per request AND keyed so the two
+ * windows never collide within a render. Reuses the EXACT same
+ * `dashboardStatsInner` aggregate as the global-period path — only the
+ * cutoff + the headline-GGR loader differ:
+ *   • "today" → cutoff = today 00:00 UTC, GGR via the day-keyed cache.
+ *   • "24h"   → cutoff = now − 24h,       GGR via the rolling 60s cache.
+ * So every KPI box (P&L period, GGR + its breakdown popover, Wager +
+ * breakdown chips, Deposits, Withdrawals, …) reconciles to the same window.
+ */
+export const getDashboardKpiStats = cache(
+  async (window: DashboardKpiWindow = DEFAULT_DASHBOARD_KPI_WINDOW) => {
+    const now = new Date();
+    const cutoff = kpiWindowToCutoff(window, now);
+    return withTiming("dashboard.getDashboardKpiStats", () =>
+      dashboardStatsInner({
+        cutoff,
+        // Bounded canonical window for the GGR/upgrader legs — both KPI
+        // windows are short (≤ ~24h), so this is just `{ since: cutoff }`
+        // (no full-history scan to cap, unlike the chip enum's "all").
+        metricWindow: { since: cutoff },
+        periodLabel: DASHBOARD_KPI_WINDOW_TITLE[window],
+        windowMetricsKey: `kpi-${window}`,
+        loadWindowMetrics: (blacklistIdNotIn) =>
+          cachedKpiWindowMetrics(window, cutoff.toISOString(), blacklistIdNotIn),
+      }),
+    );
+  },
+);
+
+/**
+ * Resolved per-call config that drives one `dashboardStatsInner` run. Both
+ * the chip-enum path (`getDashboardStats`) and the today/24h path
+ * (`getDashboardKpiStats`) funnel through here, so the heavy aggregate is
+ * written once and only the window inputs vary.
+ */
+type DashboardStatsConfig = {
+  /** SQL cutoff for every period-bound aggregate (`created_at >= cutoff`). */
+  cutoff: Date;
+  /** Canonical `@/lib/metrics` window for the headline GGR / upgrader legs. */
+  metricWindow: MetricWindow;
+  /** Friendly label surfaced on the cards (e.g. "Last 24h" / "Today"). */
+  periodLabel: string;
+  /** Stable discriminator returned on the payload (for debugging / keys). */
+  windowMetricsKey: string;
+  /** Loader for the (cached, timeout-wrapped) headline window metrics. */
+  loadWindowMetrics: (blacklistIdNotIn: string) => Promise<WindowMetrics>;
+};
+
+async function dashboardStatsInner(config: DashboardStatsConfig) {
   // Wall-clock start of the server-side compute. Returned as `queryMs`
   // (Date.now() − t0 just before the return) so the dashboard can show a
   // real "Loaded in N ms" indicator instead of a faked/animated one. This
@@ -1203,18 +1307,18 @@ async function dashboardStatsInner(period: DashboardPeriod) {
   // count) — the FTD / depositMetrics queries are now in cached helpers
   // that compute their own rolling cutoffs inside the cached fn.
   const rolling24h = new Date(now.getTime() - 1 * MS_PER_DAY);
-  // Cutoff for the SELECTED period — drives every period-bound query
+  // Cutoff for the SELECTED window — drives every period-bound query
   // (periodAggregates, windowed inventory/voucher delta, etc.). One
-  // value, one set of indexed scans — the whole point of the global
-  // selector. `new Date(0)` for "all" lets the cutoff filter degrade
-  // to a no-op without a special SQL branch.
-  const periodCutoff = periodToCutoff(period, now);
-  // Canonical metric window for the selected period — `since: null` for
-  // "all" (true lifetime), else the rolling cutoff. Drives the
-  // `@/lib/metrics` GGR + upgrader reads, which bake in the central
-  // real-customer + borrow-corrected scope (so the session-window /
-  // scope fixes landing in `@/lib/metrics` propagate here automatically).
-  const metricWindow = periodToMetricWindow(period, now);
+  // value, one set of indexed scans. Supplied by the caller's config:
+  // the chip-enum path passes `periodToCutoff(period)` (epoch for "all"),
+  // the today/24h path passes `kpiWindowToCutoff(window)`.
+  const periodCutoff = config.cutoff;
+  // Canonical metric window for the headline GGR + upgrader reads, which
+  // bake in the central real-customer + borrow-corrected scope (so the
+  // session-window / scope fixes landing in `@/lib/metrics` propagate here
+  // automatically). Supplied by the caller's config (capped for the chip
+  // enum's "all"; a plain `{ since: cutoff }` for the today/24h windows).
+  const metricWindow = config.metricWindow;
 
   // Perf audit (2026-05-27): cut the dashboard's parallel query batch
   // from 17 to 12 queries, and dropped the 4-query
@@ -1355,7 +1459,7 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     //     request. `.data` is unwrapped at the read site below.
     withTimingResult("dashboard.windowMetrics", () =>
       safeQuery(
-        () => cachedWindowMetricsForPeriod(period, blacklistIdNotIn),
+        () => config.loadWindowMetrics(blacklistIdNotIn),
         EMPTY_WINDOW_METRICS,
         "dashboard.windowMetrics",
         REWARD_QUERY_TIMEOUT_MS,
@@ -1617,11 +1721,12 @@ async function dashboardStatsInner(period: DashboardPeriod) {
   );
 
   return {
-    // Selected period meta — drives the UI labels (so a card title can
-    // read "Wager · Last 24h") without the client component re-deriving
-    // the chip's friendly label.
-    period,
-    periodLabel: DASHBOARD_PERIOD_LABELS[period],
+    // Selected window meta — drives the UI labels (so a card title can
+    // read "Wager · Last 24h" / "Wager · Today") without the client
+    // component re-deriving the friendly label. `period` carries the
+    // window discriminator the caller resolved this run with.
+    period: config.windowMetricsKey,
+    periodLabel: config.periodLabel,
     users: {
       total: Number(userCounts[0]?.total ?? 0),
       today: Number(userCounts[0]?.today ?? 0),
@@ -2015,7 +2120,29 @@ export type GgrBreakdown = {
 export async function getGgrBreakdown(
   period: DashboardPeriod,
 ): Promise<GgrBreakdown> {
-  const legs = await getGamingLegs(periodToMetricWindow(period, new Date()));
+  return ggrBreakdownForWindow(periodToMetricWindow(period, new Date()));
+}
+
+/**
+ * GGR breakdown for the dashboard's today/24h KPI window. Reuses the SAME
+ * canonical-legs core as the chip-enum {@link getGgrBreakdown}, so the
+ * GgrStatCard's Info popover reconciles with the headline `getWindowMetrics`
+ * for the today/24h windows exactly as it does for the chip enum. Both KPI
+ * windows are short, so this is a plain `{ since: cutoff }` window (no
+ * full-history cap needed).
+ */
+export async function getGgrBreakdownForKpiWindow(
+  window: DashboardKpiWindow,
+): Promise<GgrBreakdown> {
+  const cutoff = kpiWindowToCutoff(window, new Date());
+  return ggrBreakdownForWindow({ since: cutoff });
+}
+
+/** Shared canonical-legs core for both GGR-breakdown entry points. */
+async function ggrBreakdownForWindow(
+  metricWindow: MetricWindow,
+): Promise<GgrBreakdown> {
+  const legs = await getGamingLegs(metricWindow);
 
   // `getGamingLegs` now FOLDS upgrader into the headline legs:
   //   • legs.wager        = ledger pack/battle wager + upgrader wager
@@ -2099,6 +2226,38 @@ export async function getGgrTopContributors(
   period: DashboardPeriod,
   limit = 10,
 ): Promise<GgrTopContributorRow[]> {
+  // The "all" chip maps to the SAME bounded 365-day lookback the headline
+  // GGR uses (never an unbounded `{ since: null }`), so resolve via
+  // `periodToMetricWindow` and delegate to the cutoff-based core.
+  const cutoff = periodToMetricWindow(period, new Date()).since as Date;
+  return ggrTopContributorsForCutoff(cutoff, limit);
+}
+
+/**
+ * Per-user GGR contributors for the dashboard's today/24h KPI window —
+ * the lazy "top contributors" expander inside the GgrStatCard popover when
+ * a box is on the today/24h view. Reuses the SAME cutoff-based core as the
+ * chip-enum {@link getGgrTopContributors}, so each user's `net` reconciles
+ * with the today/24h headline GGR exactly as it does for the chip enum.
+ */
+export async function getGgrTopContributorsForKpiWindow(
+  window: DashboardKpiWindow,
+  limit = 10,
+): Promise<GgrTopContributorRow[]> {
+  const cutoff = kpiWindowToCutoff(window, new Date());
+  return ggrTopContributorsForCutoff(cutoff, limit);
+}
+
+/**
+ * Cutoff-based core for the per-user GGR contributor sweep. The single
+ * heavy ledger+inventory+upgrader GROUP BY lives here; both the chip-enum
+ * and the today/24h entry points resolve their own cutoff and delegate, so
+ * the SQL is written once and the windows can't drift.
+ */
+async function ggrTopContributorsForCutoff(
+  cutoff: Date,
+  limit = 10,
+): Promise<GgrTopContributorRow[]> {
   // Defensive clamp — server actions take a number from the client, so
   // an out-of-range value shouldn't blow up the query plan.
   const safeLimit = Math.max(1, Math.min(limit, 50));
@@ -2118,17 +2277,12 @@ export async function getGgrTopContributors(
   const notInSessionInv = Prisma.raw(
     scope.notInCreatorSession("ui.user_id", "ui.obtained_at"),
   );
-  // Window cutoff for the per-user join. Derived from `periodToMetricWindow`
-  // (NOT raw `periodToCutoff`) so the "all" chip maps to the SAME bounded
-  // 365-day lookback the headline GGR uses — never an unbounded
-  // `{ since: null }`. This (a) stops the heavy per-user ledger+inventory+
-  // upgrader join running a full-history scan on the "all" chip (it had no
-  // timeout/cache either), and (b) keeps each user's `net` reconciling with
-  // the now-capped headline GGR for "all" (both bounded to the same 365-day
-  // window). `periodToMetricWindow` never returns `since: null`, so there is
-  // always a lower bound and the old `isAll → Prisma.empty` (drop the bound)
-  // branch is gone.
-  const cutoff = periodToMetricWindow(period, new Date()).since as Date;
+  // Window cutoff for the per-user join is supplied by the caller (the
+  // chip-enum wrapper resolves it via `periodToMetricWindow` — bounded
+  // 365-day lookback for "all", never `{ since: null }`; the today/24h
+  // wrapper via `kpiWindowToCutoff`). There is always a lower bound, so the
+  // heavy ledger+inventory+upgrader join never runs a full-history scan and
+  // each user's `net` reconciles with the (same-window) headline GGR.
   const sinceLedger = Prisma.sql`AND lt.created_at >= ${cutoff}`;
   const sinceInv = Prisma.sql`AND ui.obtained_at >= ${cutoff}`;
   const wagerIn = Prisma.raw(METRICS_WAGER_TYPES_SQL);
