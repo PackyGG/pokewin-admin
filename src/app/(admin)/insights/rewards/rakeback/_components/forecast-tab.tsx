@@ -8,9 +8,13 @@ import {
 } from "@/lib/queries/insights-rewards/_period";
 import { getRakebackOverview } from "@/lib/queries/insights-rewards/rakeback/overview";
 import { getRakebackRoi } from "@/lib/queries/insights-rewards/rakeback/roi";
+import { getRakebackConfigs } from "@/lib/queries/rewards";
 
-import { type ForecastBaseline } from "../_forecast";
+import { type ForecastBaseline, type RakebackCadenceConfig } from "../_forecast";
 import { ForecastSimulatorIsland } from "./forecast-simulator";
+
+/** The cadences the forecast models (matches `rakeback_config.type`). */
+const MODELED_CADENCES = new Set<RakebackCadenceConfig["cadence"]>(["daily", "weekly", "monthly"]);
 
 /**
  * Forecast tab (server) on /insights/rewards/rakeback.
@@ -55,7 +59,12 @@ export async function ForecastTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
-  const [ovRes, roiRes] = await Promise.all([
+  // The real per-cadence rakeback POLICY (`rakeback_config`) is fetched here,
+  // read-only, at request time — it anchors the baseline + what-if scenarios to
+  // the ACTUAL configured rates (e.g. daily 0.25% / weekly 0.1% / monthly
+  // 0.05%), not a fabricated flat headline. Period-agnostic (the policy is the
+  // same regardless of window), so it lives outside the period anchors below.
+  const [ovRes, roiRes, cfgRes] = await Promise.all([
     safeQuery(
       () => getRakebackOverview(period),
       null,
@@ -66,10 +75,28 @@ export async function ForecastTab({
       null,
       "insights-rewards-rakeback.forecast.roi",
     ),
+    safeQuery(
+      () => getRakebackConfigs(),
+      [],
+      "insights-rewards-rakeback.forecast.config",
+    ),
   ]);
 
   const ov = ovRes.data;
   const roi = roiRes.data;
+
+  // Narrow the raw config rows to the cadences the forecast models. Each row's
+  // `percentage` is already a decimal fraction (e.g. 0.0025 = 0.25%).
+  const cadenceConfig: RakebackCadenceConfig[] = (cfgRes.data ?? [])
+    .filter((c): c is typeof c & { type: RakebackCadenceConfig["cadence"] } =>
+      MODELED_CADENCES.has(c.type as RakebackCadenceConfig["cadence"]),
+    )
+    .map((c) => ({
+      cadence: c.type,
+      rate: c.percentage,
+      expiryDays: c.expirationDays,
+      enabled: c.enabled,
+    }));
 
   // A real baseline is usable only when the overview query succeeded AND there
   // were actual rakeback rows in the window (count > 0) AND a blended rate is
@@ -89,10 +116,15 @@ export async function ForecastTab({
   const avgGgrPerClaimant =
     roi != null && roi.claimants > 0 ? roi.subsequentGgr / roi.claimants : 0;
 
-  // The baseline + the two rakeback-specific extension fields the rate engine
-  // needs (the shared `ForecastBaseline` shape has no rate / wager slot).
+  // The baseline + the rakeback-specific extension fields the rate engine + the
+  // live-policy builder need (the shared `ForecastBaseline` shape has no rate /
+  // wager / cadence-config slot; extra plain props survive RSC serialization).
   const realBaseline:
-    | (ForecastBaseline & { blendedRate: number; totalWager: number })
+    | (ForecastBaseline & {
+        blendedRate: number;
+        totalWager: number;
+        cadenceConfig: RakebackCadenceConfig[];
+      })
     | null = hasReal
     ? {
         totalCost: ov.totalRakeback,
@@ -110,6 +142,8 @@ export async function ForecastTab({
         // ── Rakeback-specific extensions (read by the config's defaults) ──
         blendedRate,
         totalWager: ov.totalWager,
+        // The REAL per-cadence policy → drives the baseline + what-if scenarios.
+        cadenceConfig,
       }
     : null;
 

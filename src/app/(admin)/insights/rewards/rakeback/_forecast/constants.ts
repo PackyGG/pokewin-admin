@@ -69,11 +69,16 @@ export const MAX_TIER_RANK = Math.max(...SEGMENTS.map((s) => s.tierRank));
 // ─── Baseline reference (Scenario A) ────────────────────────────────────────
 
 /**
- * Current production blended rakeback rate ($ rakeback / $ wager) used as the
- * FALLBACK reference when the real measured blended rate is unavailable (the
- * self-check harness, or a malformed shared link). The live page ALWAYS
- * defaults the baseline rate to the real measured ratio. 0.05 = 5% of wager —
- * a typical rakeback headline rate; the real figure overrides it.
+ * FALLBACK reference blended rakeback rate ($ rakeback / $ wager), used ONLY
+ * when neither the real measured blended rate NOR the real `rakeback_config`
+ * cadences are available (the self-check harness, or a malformed shared link).
+ *
+ * The live page does NOT model a flat 5%: it defaults the baseline rate to the
+ * real MEASURED blended ratio and derives the baseline + what-if scenarios from
+ * the real per-cadence config (daily / weekly / monthly %s) via
+ * `buildRakebackScenarios`. This 0.05 is an illustrative placeholder for the
+ * degraded fallback path + the engine self-check fixture only — the real figures
+ * always override it on the live page.
  */
 export const BASELINE_RATE_FALLBACK = 0.05;
 

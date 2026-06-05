@@ -80,6 +80,15 @@ export {
 // Per-reward forecast config (the contract the shared UI + hub consume)
 export { RAKEBACK_BASELINE_NOTE, RAKEBACK_FORECAST_CONFIG } from "./config";
 
+// Live-policy derivation from the REAL rakeback_config (baseline + what-ifs).
+export {
+  buildRakebackScenarios,
+  rakebackBaselineNote,
+  realHeadlineRate,
+  type RakebackBaselineExt,
+  type RakebackCadenceConfig,
+} from "./live-policy";
+
 // Recommendations (re-exported from the shared kit for symmetry)
 export { describeTradeoff, recommend } from "../../../_forecast-engine";
 

@@ -395,6 +395,24 @@ export type ForecastConfig<
    * present the UI shows a "compare set" toggle. Omit for a single set.
    */
   whatifSet?: S[];
+  /**
+   * Optional: derive the LIVE scenario set from the REAL baseline at render time,
+   * so the baseline scenario + what-ifs reflect the actual production POLICY (the
+   * configured rates/tiers fetched at request time and threaded onto the
+   * baseline), not a hard-coded placeholder. Returns the full library, the
+   * optional what-if comparison set, and the id of the reference (baseline)
+   * scenario. When present, the UI uses these in place of the static `scenarios`
+   * / `whatifSet` / `baselineScenarioId`. Return `null` to fall back to the
+   * static set (e.g. when the real config could not be threaded). PURE +
+   * serializable output — the island calls it in a memo and on reset.
+   *
+   * Rewards whose baseline is fully captured by the static library (e.g. deposit-
+   * bonus) omit this; rewards whose baseline is a live DB policy (rakeback,
+   * affiliate) implement it from the real config carried on `ForecastBaseline`.
+   */
+  buildScenarios?: (
+    baseline: ForecastBaseline,
+  ) => { scenarios: S[]; whatifSet?: S[]; baselineScenarioId: string } | null;
   /** Serializable segment metadata for the breakdown panels + charts. */
   segments: SegmentMeta[];
   /**

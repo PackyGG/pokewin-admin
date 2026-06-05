@@ -107,9 +107,10 @@ export function ForecastSimulator<A extends BaseAssumptions, S extends BaseScena
   const {
     simulate,
     defaults,
-    scenarios: fullSet,
-    whatifSet,
-    baselineScenarioId,
+    scenarios: staticFullSet,
+    whatifSet: staticWhatifSet,
+    baselineScenarioId: staticBaselineScenarioId,
+    buildScenarios,
     segments,
     levers,
     segmentMixLever,
@@ -118,6 +119,20 @@ export function ForecastSimulator<A extends BaseAssumptions, S extends BaseScena
     capComplexity,
     pacingFrontload,
   } = config;
+
+  // LIVE scenario set: when the reward derives its scenarios from the REAL
+  // baseline policy (rakeback / affiliate fetch the configured rates at request
+  // time and thread them onto `realBaseline`), use that — so the baseline
+  // scenario + what-ifs reflect the actual production policy, not a placeholder.
+  // Falls back to the reward's static library when no builder is provided or it
+  // returns null (e.g. the real config could not be threaded).
+  const built = React.useMemo(
+    () => (buildScenarios ? buildScenarios(realBaseline) : null),
+    [buildScenarios, realBaseline],
+  );
+  const fullSet = built?.scenarios ?? staticFullSet;
+  const whatifSet = built?.whatifSet ?? (built ? undefined : staticWhatifSet);
+  const baselineScenarioId = built?.baselineScenarioId ?? staticBaselineScenarioId;
 
   // Numeric lever keys to validate in the URL codec (reward-specific levers).
   const leverKeys = React.useMemo(() => levers.map((l) => l.key), [levers]);

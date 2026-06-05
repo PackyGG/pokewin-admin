@@ -35,6 +35,7 @@ import {
 } from "./constants";
 import { policyFrontload, simulate } from "./engine";
 import { operationalComplexity, rateLogicLabel } from "../_components/forecast-format";
+import { buildRakebackScenarios } from "./live-policy";
 import { BASELINE_SCENARIO_ID, RATE_WHATIF_SET, SCENARIO_LIBRARY } from "./scenarios";
 import type { Assumptions, ScenarioConfig } from "./types";
 
@@ -199,6 +200,11 @@ export const RAKEBACK_FORECAST_CONFIG: ForecastConfig<Assumptions, ScenarioConfi
   scenarios: SCENARIO_LIBRARY,
   baselineScenarioId: BASELINE_SCENARIO_ID,
   whatifSet: RATE_WHATIF_SET,
+  // LIVE policy: when the server tab threads the real `rakeback_config` cadences
+  // onto the baseline, derive the baseline + what-ifs from the REAL per-cadence
+  // rates (e.g. daily 0.25% / weekly 0.1% / monthly 0.05%), not the static flat
+  // placeholders. Falls back to the static library when no real config rode in.
+  buildScenarios: buildRakebackScenarios,
   segments: SEGMENTS.map((s) => ({ id: s.id, label: s.label, accent: s.accent })),
   defaults: rakebackDefaults,
   levers: RAKEBACK_LEVERS,

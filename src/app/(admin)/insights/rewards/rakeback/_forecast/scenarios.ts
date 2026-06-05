@@ -26,10 +26,20 @@ import type { ScenarioConfig } from "./types";
 
 // ─── A — Current baseline ───────────────────────────────────────────────────
 
+/**
+ * NOTE: this static library is the FALLBACK + the self-check test fixture. The
+ * LIVE page derives its baseline + what-ifs from the REAL `rakeback_config`
+ * cadences via `buildRakebackScenarios` (see `live-policy.ts`); this static set
+ * only renders when the real config could not be threaded (config fetch failed
+ * / no rows). The flat 3–7% gradient here is therefore ILLUSTRATIVE — it is not
+ * a claim about the real policy, and it stays fixed so the engine self-checks
+ * (`__checks__/run.ts`, which pin the directional contract on these numbers)
+ * keep passing.
+ */
 export const SCENARIO_A_BASELINE: ScenarioConfig = {
   id: "A-baseline",
   label: "A · Current baseline",
-  description: `Current policy: a flat ${(BASELINE_RATE_FALLBACK * 100).toFixed(0)}% of wager, claimable ${BASELINE_CADENCE}. The reference every other scenario is measured against (savings vs baseline = 0; cost anchors to the real total).`,
+  description: `Reference policy (illustrative fallback): a flat ${(BASELINE_RATE_FALLBACK * 100).toFixed(0)}% of wager, claimable ${BASELINE_CADENCE}. The reference every other scenario is measured against (savings vs baseline = 0; cost anchors to the real total). The live page shows the real per-cadence policy instead.`,
   policy: { kind: "flat_rate", rate: BASELINE_RATE_FALLBACK, cadence: BASELINE_CADENCE },
   schemaVersion: 1,
 };

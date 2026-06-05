@@ -2,8 +2,8 @@
 
 import { ForecastSimulator } from "../../../_forecast-ui";
 import {
-  RAKEBACK_BASELINE_NOTE,
   RAKEBACK_FORECAST_CONFIG,
+  rakebackBaselineNote,
   type ForecastBaseline,
 } from "../_forecast";
 
@@ -33,7 +33,10 @@ export function ForecastSimulatorIsland({
       config={RAKEBACK_FORECAST_CONFIG}
       realBaseline={realBaseline}
       period={period}
-      baselineNote={RAKEBACK_BASELINE_NOTE}
+      // Real per-cadence policy note (e.g. "Daily 0.25% · Weekly 0.1% · Monthly
+      // 0.05%") derived from the config threaded onto the baseline — falls back
+      // to a blended-% note when no real config rode in.
+      baselineNote={rakebackBaselineNote(realBaseline)}
     />
   );
 }

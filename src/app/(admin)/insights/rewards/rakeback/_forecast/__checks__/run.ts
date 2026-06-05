@@ -75,6 +75,12 @@ import {
   SCENARIO_E_WEEKLY,
   SCENARIO_LIBRARY,
 } from "../scenarios";
+import {
+  buildRakebackScenarios,
+  realHeadlineRate,
+  type RakebackBaselineExt,
+  type RakebackCadenceConfig,
+} from "../live-policy";
 import type { Assumptions, ScenarioConfig, SimulationResult } from "../types";
 
 let passed = 0;
@@ -444,6 +450,162 @@ console.log("[rakeback forecast checks] (S7) breakage monotone in cadence / expi
   check("(S7) non-expiry policy has zero expiry breakage", expiryBreakageComponent({ kind: "flat_rate", rate: 0.05, cadence: "daily" }) === 0);
   // Baseline (daily, no expiry) breakage equals the slider × the daily mult.
   check("(S7) baseline cadence is daily", BASELINE_CADENCE === "daily");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// LIVE-POLICY BUILDER (the real-config fix — what the owner caught)
+// ════════════════════════════════════════════════════════════════════════════
+
+// The REAL production rakeback policy: three per-cadence programs (NOT a flat
+// 5%). These are the actual configured rates the owner cited.
+const REAL_CADENCES: RakebackCadenceConfig[] = [
+  { cadence: "daily", rate: 0.0025, expiryDays: 5, enabled: true },
+  { cadence: "weekly", rate: 0.001, expiryDays: 7, enabled: true },
+  { cadence: "monthly", rate: 0.0005, expiryDays: 14, enabled: true },
+];
+const REAL_HEADLINE = 0.0025 + 0.001 + 0.0005; // 0.40%
+// A measured blended rate distinct from the headline (rakeback ÷ wager) — the
+// anchor the baseline reproduces.
+const MEASURED_BLENDED = 0.0032;
+
+function liveBaseline(over: Partial<RakebackBaselineExt> = {}): RakebackBaselineExt {
+  return {
+    totalCost: 50_000,
+    uniqueClaimants: 8_000,
+    periodDays: 30,
+    claimProbability: null,
+    avgBonusUsd: 6.25,
+    empiricalCapUsd: 900,
+    capHitRate: null,
+    blendedRoi: 2.1,
+    avgGgrPerClaimant: 40,
+    blendedRate: MEASURED_BLENDED,
+    totalWager: 50_000 / MEASURED_BLENDED,
+    cadenceConfig: REAL_CADENCES,
+    ...over,
+  };
+}
+
+/**
+ * The assumptions the live builder's scenarios run against — the engine
+ * reference rate (`baselineBlendedRate`) + wager (`baselineWager`) are the REAL
+ * measured anchors (matching `liveBaseline()`), so the live baseline scenario's
+ * modeled rate == `baselineBlendedRate` (tightness 0) and the anchor reproduces
+ * the real total. The behavioural levers stay at their named defaults.
+ */
+function liveBaselineAssumptions(): Assumptions {
+  return {
+    ...A,
+    baselineClaimants: 8_000,
+    baselinePeriodDays: 30,
+    baselineBlendedRate: MEASURED_BLENDED,
+    baselineWager: 50_000 / MEASURED_BLENDED,
+    avgBonusUsd: 6.25,
+  };
+}
+
+console.log("[rakeback forecast checks] (L) live builder reflects the REAL per-cadence policy");
+{
+  // realHeadlineRate sums only the enabled cadences.
+  check(
+    `(L) realHeadlineRate == Σ enabled cadence rates (${(REAL_HEADLINE * 100).toFixed(2)}%)`,
+    Math.abs(realHeadlineRate(REAL_CADENCES) - REAL_HEADLINE) < 1e-12,
+  );
+  check(
+    "(L) a disabled cadence is excluded from the headline",
+    Math.abs(
+      realHeadlineRate([
+        { cadence: "daily", rate: 0.0025, expiryDays: 5, enabled: true },
+        { cadence: "weekly", rate: 0.001, expiryDays: 7, enabled: false },
+      ]) - 0.0025,
+    ) < 1e-12,
+  );
+
+  const built = buildRakebackScenarios(liveBaseline());
+  check("(L) builder returns a live set when real config is present", built != null);
+
+  if (built) {
+    const { scenarios, whatifSet, baselineScenarioId } = built;
+    check("(L) baseline id is A-baseline", baselineScenarioId === "A-baseline");
+    const base = scenarios.find((s) => s.id === baselineScenarioId)!;
+    check("(L) baseline present", !!base);
+
+    // The baseline must NOT model a fabricated flat 5% — it must model the REAL
+    // measured blended rate (≈0.32%), which is what the owner's fix demands.
+    check(
+      `(L) baseline modeled rate == real measured blended (${(MEASURED_BLENDED * 100).toFixed(2)}%), NOT 5%`,
+      base.policy.kind === "flat_rate" &&
+        Math.abs(base.policy.rate - MEASURED_BLENDED) < 1e-12 &&
+        base.policy.rate < 0.05,
+    );
+    // The baseline label/description must surface the real per-cadence policy.
+    check(
+      "(L) baseline description names the real cadences (Daily/Weekly/Monthly + %)",
+      /Daily 0\.25%/.test(base.description) &&
+        /Weekly 0\.1%/.test(base.description) &&
+        /Monthly 0\.05%/.test(base.description),
+    );
+    check(
+      "(L) NO scenario is labeled a flat 3–7% (the fabricated gradient is gone)",
+      !scenarios.some((s) => /Flat [3-7]%/.test(s.label)),
+    );
+
+    // Anchor + monotonicity through the real engine: baseline reproduces the
+    // real total; every what-if that lowers the headline rate costs ≤ baseline.
+    const set = simulateSet(scenarios, liveBaselineAssumptions(), WINDOW, baselineScenarioId, 50_000);
+    const baseRes = set.find((r) => r.scenarioId === baselineScenarioId)!;
+    check(
+      `(L) baseline cost == real total ($${baseRes.bonusCost.toFixed(0)} ≈ $50000)`,
+      Math.abs(baseRes.bonusCost - 50_000) < 1e-2,
+    );
+    check("(L) baseline savingsVsBaseline == 0", Math.abs(baseRes.savingsVsBaseline) < 1e-6);
+
+    // A "trim the daily cadence −50%" what-if must cost strictly less than baseline.
+    const trim = set.find((r) => /B-trim-daily-50/.test(r.scenarioId));
+    check("(L) a daily −50% trim what-if exists", !!trim);
+    if (trim) {
+      check(
+        `(L) daily −50% trim costs < baseline ($${trim.bonusCost.toFixed(0)} < $${baseRes.bonusCost.toFixed(0)})`,
+        trim.bonusCost < baseRes.bonusCost,
+      );
+      check(`(L) daily −50% trim gross savings ≥ 0`, trim.savingsVsBaseline >= -1e-3);
+    }
+    // A "daily only" what-if (drop weekly+monthly) must be the leanest rate move.
+    const dailyOnly = set.find((r) => r.scenarioId === "C-daily-only");
+    check("(L) daily-only what-if exists (multi-cadence policy)", !!dailyOnly);
+    if (dailyOnly) {
+      check(
+        `(L) daily-only costs < baseline ($${dailyOnly.bonusCost.toFixed(0)} < $${baseRes.bonusCost.toFixed(0)})`,
+        dailyOnly.bonusCost < baseRes.bonusCost,
+      );
+    }
+    // Every live result must be finite + segment-summed.
+    check("(L) every live result is finite", set.every(allFinite));
+    for (const r of set) {
+      const segSum = r.perSegment.reduce((a, s) => a + s.bonusCost, 0);
+      check(
+        `(L) "${r.scenarioId}" segment costs sum to total`,
+        Math.abs(segSum - r.bonusCost) < 1e-2,
+      );
+    }
+    // The what-if comparison set is the baseline + the realistic rate moves.
+    check("(L) whatifSet starts at the baseline", whatifSet[0]?.id === baselineScenarioId);
+    check("(L) whatifSet has at least 3 rows", whatifSet.length >= 3);
+  }
+
+  // No real config threaded → builder returns null (caller falls back to static).
+  check(
+    "(L) builder returns null with no cadence config",
+    buildRakebackScenarios(liveBaseline({ cadenceConfig: undefined })) === null,
+  );
+  check(
+    "(L) builder returns null when all cadences disabled",
+    buildRakebackScenarios(
+      liveBaseline({
+        cadenceConfig: REAL_CADENCES.map((c) => ({ ...c, enabled: false })),
+      }),
+    ) === null,
+  );
 }
 
 // ─── summary ─────────────────────────────────────────────────────────────────
