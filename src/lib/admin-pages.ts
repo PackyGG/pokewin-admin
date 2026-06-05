@@ -58,6 +58,12 @@ export const ADMIN_PAGES: AdminPage[] = [
   // forecast), anchored on real production baselines. Own permission
   // key so it can be granted independently of the per-reward deep-dives.
   { group: "Insights", label: "Forecast", key: "/insights/forecast" },
+  // System Edge Plan — unified reward-system PLANNING page. Tune every
+  // lever (pack edge / upgrader-rakeback weight / affiliate % per tier /
+  // deposit bonus / raffle / rakeback cadences) and see the projected
+  // profit impact + delta vs the current real config. Read-only (no live
+  // data writes). Own permission key so it can be granted independently.
+  { group: "Insights", label: "System Edge Plan", key: "/insights/system-edge-plan" },
   // Transactions
   // Standalone /transactions overview removed — admins land on a
   // specific sub-ledger instead. Each sub-page carries its own

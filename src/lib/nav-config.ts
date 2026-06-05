@@ -337,6 +337,34 @@ export const NAV_ENTRIES: NavEntry[] = [
     inSidebar: true,
     inPalette: true,
   },
+  {
+    // System Edge Plan — unified reward-system planning page. Tune every
+    // lever and see the projected profit impact + delta vs the current real
+    // config (read-only planning). Icon string `SlidersHorizontal` MUST be
+    // registered in the ICONS map in `src/components/app-sidebar.tsx`.
+    id: "nav.insights.system-edge-plan",
+    group: "Insights",
+    label: "System Edge Plan",
+    href: "/insights/system-edge-plan",
+    pageKey: "/insights/system-edge-plan",
+    icon: "SlidersHorizontal",
+    description: "Plan reward-system changes — projected profit impact + delta",
+    keywords: [
+      "edge",
+      "plan",
+      "levers",
+      "rakeback",
+      "affiliate",
+      "profit",
+      "what-if",
+      "tuning",
+    ],
+    isNew: true,
+    inSidebar: true,
+    // Sidebar-only, matching the rest of the Insights group (the per-feature
+    // analytical surfaces are absent from the command palette today).
+    inPalette: false,
+  },
 
   // ── Creator Marketing ──────────────────────────────────────────────────
   {
