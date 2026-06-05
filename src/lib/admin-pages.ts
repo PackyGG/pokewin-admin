@@ -28,6 +28,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   // group sitting directly below Overview. Separate from the per-feature
   // analytics keys (e.g. /rewards/analytics) so role grants can be
   // managed independently.
+  // Insights Hub — the /insights landing page (a headline KPI strip
+  // sourced from the canonical cost-breakdown helper plus quick-link
+  // cards into every sub-area). Sits first so an admin granted only the
+  // hub can navigate into deeper sub-grants from there.
+  { group: "Insights", label: "Insights Hub", key: "/insights" },
   // Cost Breakdown — the full wager → P&L leakage waterfall (every cost
   // category itemized so the gap between gross wager and realized P&L is
   // fully accounted for). First entry in the group; it's the headline

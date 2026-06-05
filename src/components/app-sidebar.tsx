@@ -56,6 +56,7 @@ import {
   Scale,
   History,
   SlidersHorizontal,
+  Compass,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -133,6 +134,7 @@ const ICONS: Record<string, LucideIcon> = {
   Scale,
   History,
   SlidersHorizontal,
+  Compass,
 };
 
 type NavItem = {

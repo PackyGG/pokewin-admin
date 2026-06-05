@@ -213,6 +213,22 @@ export const NAV_ENTRIES: NavEntry[] = [
 
   // ── Insights (sidebar-only; absent from palette today) ─────────────────
   {
+    // Insights Hub — the /insights landing page. KPI strip sourced from
+    // the canonical cost-breakdown helper plus quick-link cards into
+    // every sub-area. Icon string `Compass` MUST be registered in the
+    // ICONS map in `src/components/app-sidebar.tsx`. Sits first in the
+    // group so the parent route is reachable directly from the sidebar.
+    id: "nav.insights.hub",
+    group: "Insights",
+    label: "Overview",
+    href: "/insights",
+    pageKey: "/insights",
+    icon: "Compass",
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
     id: "nav.insights.cost-breakdown",
     group: "Insights",
     label: "Cost Breakdown",
