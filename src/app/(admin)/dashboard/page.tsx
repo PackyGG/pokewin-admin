@@ -414,8 +414,12 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           come from periodAggregates) legitimately show the same ms. */}
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4 xl:grid-cols-6">
         <BoxTimingFrame ms={stats.timings.pnl} badgeClassName={tileBadge}>
+          {/* Lifetime `pnl` is intentionally NOT passed — the tile defaults
+              to the period view and loads the lifetime snapshot lazily on
+              click via getLifetimePnlAction (the lifetime scan is the
+              heaviest query in the codebase, so it must not run on a cold
+              dashboard load). */}
           <PnlStatCard
-            pnl={stats.realizedPnl}
             pnlPeriod={stats.realizedPnlPeriod}
             periodLabel={stats.periodLabel}
           />

@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChevronDown, Info, Loader2, TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,7 @@ import type {
   GgrTopContributorRow,
 } from "@/lib/queries/dashboard";
 import { fetchGgrTopContributors } from "./ggr-actions";
+import { getLifetimePnlAction } from "./actions";
 
 /**
  * Period-aware stat cards used in the dashboard's primary KPI strip.
@@ -40,34 +42,90 @@ import { fetchGgrTopContributors } from "./ggr-actions";
  */
 
 // House P&L with two modes behind a small toggle:
-//   • lifetime — the realized-P&L SNAPSHOT (getRealizedPnlSnapshot):
-//     deposits − withdrawals − user balances − inventory − unclaimed
-//     vouchers − unclaimed rakeback, valued right now. Not a time series.
 //   • period   — the ROLLING windowed delta for the SELECTED period
 //     (was 24h-only before the global selector): the change in house
-//     P&L over the chosen window. Different methodology from the
+//     P&L over the chosen window. This is the DEFAULT view — it comes
+//     for free from periodAggregates + windowedPeriodDelta (already
+//     computed for other tiles), so the dashboard never pays for the
+//     heavy lifetime scan on a cold load.
+//   • lifetime — the realized-P&L SNAPSHOT (getRealizedPnlSnapshot):
+//     deposits − withdrawals − user balances − inventory − unclaimed
+//     vouchers − unclaimed rakeback, valued right now. Not a time series,
+//     and the single heaviest query in the codebase — so it loads LAZILY
+//     via the getLifetimePnlAction server action only when the admin
+//     clicks the "lifetime" toggle. The fetched value is cached in client
+//     state so re-clicks are instant; a small inline spinner shows while
+//     the first fetch is in flight. Different methodology from the
 //     snapshot (no rakeback term), so it sits behind its own toggle
 //     rather than pretending the snapshot is a time series.
 //
 // Colors follow CLAUDE.md's house-POV rule: house profit = emerald,
 // house loss = rose. The card tint + value color flip with the SELECTED
-// value, so switching to the period view recolors the card if the
-// window was a loss.
+// value, so switching to the lifetime view recolors the card if the
+// lifetime P&L is a loss.
 export function PnlStatCard({
   pnl,
   pnlPeriod,
   periodLabel,
 }: {
-  pnl: number;
+  // Lifetime realized P&L. OPTIONAL + lazy: the dashboard no longer
+  // computes this eagerly (it's the heaviest query in the codebase), so
+  // it usually arrives as undefined and is fetched on demand the first
+  // time the admin opens the "lifetime" view (see getLifetimePnlAction).
+  // A caller MAY still pass a precomputed value (then no fetch happens).
+  pnl?: number | null;
   pnlPeriod: number;
   // Friendly label for the period (e.g. "Last 24h", "Last 7 days").
-  // Drives the toggle label so it reads as "lifetime / 24h" or
-  // "lifetime / 7d" depending on the global selector.
+  // Drives the toggle label so it reads as "24h / lifetime" or
+  // "7d / lifetime" depending on the global selector.
   periodLabel: string;
 }) {
-  const [mode, setMode] = useState<"lifetime" | "period">("lifetime");
-  const value = mode === "lifetime" ? pnl : pnlPeriod;
-  const isProfit = value >= 0;
+  // Default to the cheap PERIOD view (Part 2a) so a cold dashboard load
+  // never triggers the lifetime scan.
+  const [mode, setMode] = useState<"lifetime" | "period">("period");
+  // Lazily-loaded lifetime value. Seeded from the optional `pnl` prop if
+  // a caller passed one, else null until the first "lifetime" click
+  // fetches it. Cached here so re-clicks are instant (no re-fetch).
+  const [lifetimePnl, setLifetimePnl] = useState<number | null>(
+    pnl ?? null,
+  );
+  const [lifetimeLoading, setLifetimeLoading] = useState(false);
+  const [, startTransition] = useTransition();
+
+  const handleSelect = (next: "lifetime" | "period") => {
+    setMode(next);
+    // Fetch the lifetime snapshot on the first switch to "lifetime" when
+    // we don't already have it. Subsequent switches reuse client state.
+    if (
+      next === "lifetime" &&
+      lifetimePnl === null &&
+      !lifetimeLoading
+    ) {
+      setLifetimeLoading(true);
+      startTransition(async () => {
+        try {
+          const v = await getLifetimePnlAction();
+          setLifetimePnl(v);
+        } catch (err) {
+          toast.error(
+            err instanceof Error ? err.message : "Failed to load lifetime P&L",
+          );
+        } finally {
+          setLifetimeLoading(false);
+        }
+      });
+    }
+  };
+
+  // The value shown depends on the active mode. In lifetime mode we show
+  // the loaded snapshot (or a spinner while it loads / nothing yet).
+  const showLifetimeSpinner =
+    mode === "lifetime" && lifetimePnl === null && lifetimeLoading;
+  const value = mode === "lifetime" ? lifetimePnl : pnlPeriod;
+  // Card tint follows the value when one is present; while the lifetime
+  // value is still loading, fall back to a neutral emerald tint rather
+  // than flashing rose for an unknown sign.
+  const isProfit = value === null ? true : value >= 0;
 
   return (
     <Card className={cn(isProfit ? "bg-emerald-500/10" : "bg-rose-500/10")}>
@@ -78,12 +136,12 @@ export function PnlStatCard({
           </CardTitle>
           <div className="flex gap-0.5">
             {([
-              { key: "lifetime" as const, label: "lifetime" },
               { key: "period" as const, label: periodLabel },
+              { key: "lifetime" as const, label: "lifetime" },
             ]).map((m) => (
               <button
                 key={m.key}
-                onClick={() => setMode(m.key)}
+                onClick={() => handleSelect(m.key)}
                 className={cn(
                   "rounded px-1.5 py-0.5 text-tiny font-medium transition-colors",
                   mode === m.key
@@ -104,10 +162,22 @@ export function PnlStatCard({
       </CardHeader>
       <CardContent>
         <div className="text-stat-value truncate">
-          <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
-            {isProfit ? "+" : ""}
-            <AnimatedNumber value={value} format="currency" />
-          </span>
+          {showLifetimeSpinner ? (
+            <span className="inline-flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="size-5 animate-spin" />
+              <span className="text-base font-normal">Loading…</span>
+            </span>
+          ) : value === null ? (
+            // mode === "lifetime" but no value yet and not loading (e.g.
+            // a prior fetch errored). Show a muted dash; clicking the
+            // toggle again retries the fetch.
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
+              {isProfit ? "+" : ""}
+              <AnimatedNumber value={value} format="currency" />
+            </span>
+          )}
         </div>
       </CardContent>
     </Card>
