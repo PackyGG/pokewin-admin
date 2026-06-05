@@ -2,6 +2,15 @@
 
 Dieses File definiert verbindliche Arbeitsregeln für jede Claude Code Session in diesem Repository. Es wird automatisch geladen und gilt als Grundlage für alle Aufgaben. Bei Konflikt zwischen diesen Regeln und anderen Anweisungen → diese Regeln haben Vorrang, außer der User weist explizit auf eine Ausnahme hin.
 
+### 📎 Companion-Docs (zu Beginn jeder Session lesen)
+
+Diese Datei (`CLAUDE.md`) ist die **bindende Regel-Quelle**. Zwei weitere Dateien gehören dazu und werden zu Sessionbeginn mitgelesen:
+
+- **`AGENT_HANDOFF.md`** — das **live Operating-Manual + der aktuelle Session-State-Snapshot** (was zuletzt geshipped wurde, was in-flight ist, was blocked/failed ist, frische Gotchas). **Zuerst lesen**, wenn du eine laufende Session übernimmst.
+- **`ONBOARDING.md`** — die **volle Architektur + Domain-Wissen** (Key-Files-Tabelle, Reward-/Ledger-Modell, Query-Layer, etc.).
+
+**Boundary:** Session-State (CURRENT STATE, IN-FLIGHT, OPEN/NEXT, FAILED/BLOCKED) lebt in `AGENT_HANDOFF.md`, **nicht hier**. In `CLAUDE.md` kommen nur **durable Regeln & Konventionen**. Wenn `AGENT_HANDOFF.md` eine durable Regel korrigiert/verschärft, wird sie hierher übernommen (genau das ist 2026-06-05 passiert: Worktree-`npm install` statt `npm ci`, Admin-DB-`db push` statt `migrate`, Build-/Verify-Agent-Contract, UI-Verify-Fallback, Gotchas-Liste).
+
 ---
 
 ## 🚫 ABSOLUTE SICHERHEITSREGEL — Prod-DB-Policy (höchste Priorität, 2026-06-05, präzisiert)
@@ -9,8 +18,12 @@ Dieses File definiert verbindliche Arbeitsregeln für jede Claude Code Session i
 **Die zwei DBs werden unterschiedlich behandelt — diese Regel überschreibt alle früheren DB-Regeln.**
 
 ### 🟢 ADMIN DB — voller Zugriff erlaubt
-- **Schreiben, migrieren, `prisma migrate dev/deploy`, `prisma db push`, DDL/DML, `npm run admin:migrate`** — alles erlaubt, der Agent führt es selbst aus.
-- Schema-Änderungen an `prisma/admin/schema.prisma` + zugehörige Migration werden vom Agent **direkt angewendet** (nicht nur "Migration-File schreiben und User macht es"). Der User will das nicht mehr selbst tun.
+- **Voller Zugriff bestätigt (User, 2026-06-05: „admin dash db u can do whatever u want").** Schreiben, DDL/DML, Schema-Änderungen — alles erlaubt, der Agent führt es **selbst** aus.
+- **ABER die richtige Mechanik nutzen — die Admin-DB ist `db push`-managed, nicht migration-managed (Session-Learning 2026-06-05):**
+  - Schema-Änderungen anwenden über **`prisma db push --schema=prisma/admin/schema.prisma --config=prisma/admin/prisma.config.ts`** (Schema-Sync) oder ad-hoc SQL über **`prisma db execute --file <sql> --config=prisma/admin/prisma.config.ts`**.
+  - **NICHT `prisma migrate dev/deploy`** auf der Admin-DB — und `npm run admin:migrate` führt genau `prisma migrate dev` aus. Auf einer `db push`-managed DB erzwingt `migrate` einen **destruktiven Reset** (Datenverlust). Das ist **keine** Permission-Grenze (du darfst alles), sondern das **falsche Werkzeug**, das Daten wegwirft.
+  - `db push` **verweigert** bei drohendem Datenverlust (z. B. Schema-Drift, siehe `AGENT_HANDOFF.md`). Dann bewusst entscheiden: Schema nachziehen oder archivieren-dann-droppen — **niemals blind `--accept-data-loss`**.
+- Schema-Änderungen an `prisma/admin/schema.prisma` werden vom Agent **direkt angewendet** (nicht nur "Migration-File schreiben und User macht es"). Der User will das nicht mehr selbst tun.
 - Standard-Vorsicht bleibt: keine destruktiven Operationen ohne klaren Grund, Audit-Events für admin-seitige Mutationen, kein Verlust historischer Daten.
 
 ### 🔴 MAIN / PROD GAME DB — strikt read-only + KEINE Features bauen, die sie ändern
@@ -83,7 +96,7 @@ Die volle Mechanik (Scope, Hotspots, Commit-Disziplin, Honest-Reporting) steht w
 **Der User wartet NICHT 40 Minuten, während du 5 Sachen sammelst und alles zusammen pushst.** Jede fertige, verifizierte (tsc + lint + `npm run build` grün) Aufgabe wird SOFORT einzeln committet + gepusht — niemals zu einem Sammel-Push gebündelt.
 
 - **Ein Task fertig → sofort pushen.** Nicht auf andere laufende Tasks warten, nicht batchen.
-- **Unabhängige Tasks parallel in isolierten git-Worktrees** (`isolation: "worktree"` mit eigenem `npm ci` + eigenem `.next` — NICHT node_modules junctionen, sonst korrumpiert ein paralleles `prisma generate` den Main-Checkout) bauen und jeweils eigenständig nach `main` pushen (bei non-fast-forward: `git fetch origin && git rebase origin/main && git push origin HEAD:main`, retry bis es durchgeht). So blockiert ein langer Job (großer Workflow) nicht den EINEN Build-Slot des Main-Checkouts, und kleine Tasks verhungern nicht in einer Queue.
+- **Unabhängige Tasks parallel in isolierten git-Worktrees** (`isolation: "worktree"` mit eigenem `npm install` + eigenem `.next` — **`npm install`, NICHT `npm ci`** (der committete `package-lock.json` weicht ab, `npm ci` schlägt fehl); NICHT node_modules junctionen, sonst korrumpiert ein paralleles `prisma generate` den Main-Checkout) bauen und jeweils eigenständig nach `main` pushen (bei non-fast-forward: `git fetch origin && git rebase origin/main && git push origin HEAD:main`, retry bis es durchgeht). So blockiert ein langer Job (großer Workflow) nicht den EINEN Build-Slot des Main-Checkouts, und kleine Tasks verhungern nicht in einer Queue.
 - **Niemals einen großen ungepushten Stau anhäufen.** Mehrere offene Tasks → jeden so früh wie möglich einzeln rausschicken.
 - Build-Gate, Hotspot-Vermeidung, no-prod-DB-Writes und Honest-Reporting bleiben bindend — aber INNERHALB dieser Regeln gilt: so früh + so oft pushen wie möglich.
 
@@ -198,6 +211,12 @@ Erlaubte Status-Wörter:
 - `BLOCKED` = konnte nicht abgeschlossen werden, Grund nennen
 
 **"DONE" ohne Verifikation ist verboten.**
+
+### 7. UI-Verifikation ohne Live-Browser (Fallback-Mechanik, Session-Learning 2026-06-05)
+Wenn **kein** live eingeloggter Browser verfügbar ist (Chrome-Extension offline), ist der `npm run build`-Gate **nicht genug** — trotzdem rendern:
+- **Admin-Session minten:** ein `admin_session` JWT signieren (mit `SESSION_SECRET`, exakt nach `src/lib/session.ts`; einen aktiven Admin **read-only** aus der ADMIN-DB lesen) und **Playwright** über die Routen fahren. Wiederverwendbarer Harness: `e2e/responsive/*` + `playwright.responsive.config.ts` (Mint-Helper: `e2e/responsive/mint-session.ts`).
+- **Lokale Game-DB ist stale** (fehlende Tables → live Admin-Pages werfen lokal). Pages, die deshalb nicht rendern, über **dev-only Fixtures** rendern: `src/app/responsive-fixture/*`.
+- **Ehrlich bleiben:** build-verified + fixture-/minted-session-gerendert ist **NICHT** dasselbe wie ein echter eingeloggter Click-Through. Wenn nur so verifiziert wurde, ist der Status **`PARTIAL`** (Verifikations-Gap nennen), nicht `DONE` — und einen echten Logged-in-Pass empfehlen.
 
 ---
 
@@ -428,6 +447,25 @@ Der User arbeitet in einem "Task-Spam"-Modus: er wirft Aufgaben nacheinander rei
    - Nicht auf vorherige Agents warten, wenn die Arbeit unabhängig ist.
 
 **Merkregel:** Wenn du dich fragst "soll ich das selber machen oder einen Agent starten?" — Agent starten. Der User will nicht blockieren.
+
+### Fan-out-Geometrie & Build-/Verify-Agent-Contract (Worktrees) — Session-Learning 2026-06-05
+
+**Fan-out nach UNIT, nicht nach File:**
+- Viele unabhängige Units (viele Pages/Files) → **viele parallele Agents**, einer pro Unit (`parallel()` / `pipeline()` im Workflow).
+- **EIN** gekoppeltes File / eine Surface → **1 Builder + 1 adversarialer Verifier**. **Niemals zwei editierende Agents auf dieselbe Datei** — sie clobbern sich. Der „zweite Agent" für gekoppelte Arbeit ist der **Verifier**, kein zweiter Editor.
+- Typische Shapes: **discover → build → verify** oder **fan-out → synthesize/verify**.
+
+**Build-Agent-Contract (jeder Worktree-Agent):**
+- Worktree-Start: `git fetch origin && git reset --hard origin/main`; die `.env` des Main-Checkouts kopieren; **`npm install`** (NICHT `npm ci` — Lockfile-Mismatch).
+- Gate vor Push: `npx tsc --noEmit` + `npm run lint` (0 NEUE Warnings) + **`npm run build` (exit 0)**. `npm run build` ist **autoritativ** — Client→Server-Boundary-Fehler (z. B. Function-Props über die RSC-Grenze) tauchen nur dort auf, nicht in `tsc`.
+- Commit mit **`git commit --only <deine Files>`** (**nie** `git add -A`); immer **uncommitted lassen**: `src/generated/*`, `package-lock.json`, `recent-pushes.json`, `audit-artifacts/`.
+- Push: `git fetch origin && git rebase origin/main && git push origin HEAD:main`; bei non-fast-forward retry. **Den eigenen Worktree NICHT entfernen** — der Orchestrator räumt auf (junction-safe). Stray dev-Server killen (z. B. ein übrig gebliebenes `next dev` auf :3000).
+
+**Verify-Agent-Contract:**
+- **VOR dem Lesen** `git fetch` + den **exakten** Commit (SHA) auschecken — ein stale Tree hat diese Session ein False-Negative erzeugt („Feature nicht gefunden", obwohl vorhanden).
+- Adversarial re-checken; **jedes „not found"-Verdikt** gegen `git show <sha>` gegenprüfen, bevor es als fehlend gemeldet wird.
+
+**Workflow-`script`-Strings (Parser-Fallen):** **keine** inneren Backticks und **kein** `\'`/`\\'`-Quote-Escape in einem Workflow-`script`-String (beides bricht das Parsing) — Plaintext + `' + REPO + '`-Konkatenation nutzen. In Fan-outs gelegentlich mit **StructuredOutput-No-Shows** rechnen → `.filter(Boolean)` + den Downstream-Step neu ableiten lassen.
 
 ---
 
@@ -755,16 +793,27 @@ src/app/(admin)/{feature}/
 | Auth Layout | `src/app/(auth)/layout.tsx` |
 | Query-Module | `src/lib/queries/` |
 | Seed-Script (Admin) | `prisma/admin/seed.ts` |
+| Admin Prisma-Config (`db push`/`db execute`) | `prisma/admin/prisma.config.ts` |
+| Sidebar-Nav + `ICONS`-Map (React #130) | `src/components/app-sidebar.tsx` |
+| Render-/Responsive-Verify-Harness | `e2e/responsive/*` + `playwright.responsive.config.ts` |
+| Dev-only Render-Fixtures | `src/app/responsive-fixture/*` |
+| **Live Operating-Manual + Session-State** | `AGENT_HANDOFF.md` |
+| **Architektur + Domain-Wissen** | `ONBOARDING.md` |
 
 ### Build / Dev Scripts
 
 ```bash
 npm run dev              # Next.js dev (Turbopack)
-npm run build            # Prisma generate (beide DBs) + Next build
+npm run build            # Prisma generate (beide DBs) + Next build — AUTORITATIVER Gate vor Push
 npm run start            # Production Server
 npm run lint             # ESLint
-npm run admin:migrate    # Admin DB Migration
 npm run admin:seed       # Admin DB Seed
+
+# Admin-DB Schema anwenden — die Admin-DB ist db-push-managed:
+npx prisma db push    --schema=prisma/admin/schema.prisma --config=prisma/admin/prisma.config.ts
+npx prisma db execute --file <sql>                        --config=prisma/admin/prisma.config.ts
+
+# ⚠️ NICHT benutzen: npm run admin:migrate  (= `prisma migrate dev` → destruktiver Reset auf db-push-managed DB)
 ```
 
 ### Env-Variablen (Pflicht)
@@ -773,6 +822,17 @@ npm run admin:seed       # Admin DB Seed
 - `ADMIN_DATABASE_URL` — Admin DB Connection
 - `SESSION_SECRET` — JWT Signing Key
 - `ADMIN_SEED_PASSWORD` — Initial Admin Password (Default: "CHANGEME")
+
+### Bekannte Gotchas / Fallen (aus Sessions gelernt — Stand 2026-06-05)
+
+Volle, aktuelle Liste in `AGENT_HANDOFF.md` (§ Gotchas) + `ONBOARDING.md` (§7). Die durablen:
+
+- **Stale lokale Game-DB** → live Admin-Pages werfen lokal (fehlende Tables). Solche Pages über dev-only Fixtures rendern (`src/app/responsive-fixture/*`); „lokal kaputt" nicht mit „prod kaputt" verwechseln.
+- **React #130 (sidebar icons):** jeder Nav-`icon`-String **muss** in der `ICONS`-Map in `src/components/app-sidebar.tsx` existieren — sonst Runtime-Crash. Neuer Nav-Eintrag → Icon dort eintragen.
+- **`gift_cards` + `vouchers` liegen in der MAIN-DB** (nicht Admin) → Bulk-Delete/Mutation auf ihnen = MAIN-Write = **verboten**. Admin-DB-Äquivalent gibt es nur für Gift-Cards (Cancel-Action), nicht für Vouchers.
+- **PowerShell schreibt UTF-8 mit BOM** → bricht `.sql`-Files für Postgres. SQL über Bash/`printf` schreiben.
+- **Stale `.next`** kann `tsc` fehlschlagen lassen (referenziert gelöschte Routen) → vor Re-Gate `.next` löschen.
+- **Keine Function-Props Server→Client** (RSC-Grenze) — Next.js 15 crasht; nur serialisierbare Primitives / String-Enums. Surft nur im `npm run build`-Gate auf, nicht in `tsc`.
 
 ---
 
