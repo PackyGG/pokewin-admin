@@ -26,6 +26,7 @@ import { getAffiliateLevelConfigs } from "@/lib/queries/creators-analytics";
 import { getAffiliateOverview } from "@/lib/queries/insights-rewards/affiliate/overview";
 import { getDailyPacksTotalCost } from "@/lib/queries/insights-rewards/daily-packs";
 import { getSignupOverview } from "@/lib/queries/insights-rewards/signup/overview";
+import { getRaffleForecastBaseline } from "@/lib/queries/insights-rewards/raffle/overview";
 import {
   daysForInsightsPeriodCapped,
   insightsRewardsPeriodLabel,
@@ -63,6 +64,15 @@ import type {
  *   • per-lever realized reward cost (rakeback / affiliate / deposit bonus /
  *     race) ← `sumLedgerTypes` over the real ledger type(s) for each lever,
  *       under the SAME canonical scope, so the lever costs reconcile with NGR.
+ *       `race` here is strictly the `race_prize` ledger type (on-site
+ *       competitive RACES), NOT raffles.
+ *   • raffle prize cost ← `getRaffleForecastBaseline().totalPrizeCost`. Raffles
+ *       are a DISTINCT reward (ticket raffles); they pay out pack/card ITEMS via
+ *       a `prizes` JSON (no ledger money leg), so the cost is RECONSTRUCTED by
+ *       valuing each completed raffle's prizes at the live pack/card price. As a
+ *       NON-ledger cost it is NOT inside the canonical NGR reward cost — it is
+ *       added on top as its own lever (exactly like daily packs), so it never
+ *       double-counts with the `race_prize` line.
  *   • daily-pack giveaway cost ← `getDailyPacksTotalCost` (Σ card value out).
  *   • signup balance-reward cost + avg grant ← `getSignupOverview`.
  *   • net rain cost ← `getWindowMetrics().rainHouseCost` (owner-confirmed
@@ -292,6 +302,7 @@ async function buildBaseline(
     affiliateCostRes,
     depositBonusCostRes,
     raceCostRes,
+    raffleRes,
     dailyPacksRes,
     signupRes,
     rakebackCfgRes,
@@ -332,6 +343,11 @@ async function buildBaseline(
       () => sumLedgerTypes({ types: RACE_TYPES, window }),
       0,
       "system-edge-plan.race-cost",
+    ),
+    safeQuery(
+      () => getRaffleForecastBaseline(period),
+      null,
+      "system-edge-plan.raffle",
     ),
     safeQuery(
       () => getDailyPacksTotalCost(period),
@@ -417,6 +433,9 @@ async function buildBaseline(
   const affiliateCost = affiliateCostRes.data ?? 0;
   const depositBonusCost = depositBonusCostRes.data ?? 0;
   const raceCost = raceCostRes.data ?? 0;
+  // Real reconstructed raffle prize cost (NON-ledger item giveaway). Distinct
+  // from races; added on top of the canonical reward cost like daily packs.
+  const raffleCost = raffleRes.data?.totalPrizeCost ?? 0;
   const dailyPacksCost = dailyPacksRes.data?.cost ?? 0;
   const signupPacksCost = signupRes.data?.totalCost ?? 0;
   const signupClaimants = signupRes.data?.claimants ?? 0;
@@ -437,9 +456,11 @@ async function buildBaseline(
   // NOT carry the daily-pack cost. Likewise signup balance_reward_claim IS a
   // ledger reward type, so it IS in the canonical reward cost. To avoid
   // double-counting, `otherRewardCost` subtracts only the LEDGER-resident
-  // levers (rakeback / affiliate / deposit bonus / race / signup / rain) from
-  // the canonical reward cost; daily packs are added on top as a separate,
-  // non-ledger cost the canonical NGR never included.
+  // levers (rakeback / affiliate / deposit bonus / RACE [race_prize] / signup /
+  // rain) from the canonical reward cost. Daily packs AND raffles are NON-ledger
+  // item giveaways (no ledger row → never in the canonical reward cost), so they
+  // are added on top as separate lines and are NOT subtracted here — no
+  // double-count with the race_prize line.
   const canonicalRewardCost = metrics != null ? metrics.ggr - metrics.ngr : 0;
   const ledgerLeverCost =
     rakebackCost +
@@ -499,6 +520,7 @@ async function buildBaseline(
     affiliateCost,
     depositBonusCost,
     raceCost,
+    raffleCost,
     dailyPacksCost,
     signupPacksCost,
     rainCost,
@@ -535,7 +557,7 @@ export async function getSystemEdgeBaseline(
 ): Promise<SystemEdgeBaseline> {
   const cached = unstable_cache(
     () => buildBaseline(period),
-    ["system-edge-plan-baseline-v2", period],
+    ["system-edge-plan-baseline-v3", period],
     { revalidate: cacheTtlForInsightsPeriod(period) },
   );
   return cached();

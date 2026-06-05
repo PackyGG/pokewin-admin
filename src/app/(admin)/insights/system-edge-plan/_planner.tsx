@@ -20,10 +20,12 @@ import {
   RotateCcw,
   Share2,
   ShieldCheck,
+  SlidersHorizontal,
   Swords,
   Ticket,
   TrendingDown,
   TrendingUp,
+  Trophy,
   UserPlus,
   Wallet,
   Zap,
@@ -59,6 +61,7 @@ import {
   effectiveTypeEdge,
   gameTypeLabel,
   projectEdgePlan,
+  sanitizeLevers,
   REMOVE_WAGER_REQ_COST_UPLIFT,
   type GameTypeId,
   type PlannedLevers,
@@ -66,6 +69,7 @@ import {
   type SystemEdgeBaseline,
 } from "./_model";
 import { LeverSlider } from "./_planner-ui";
+import { PlannerPresets, usePlannerPresets } from "./_presets";
 
 const ROSE = "#f43f5e";
 const EMERALD = "#10b981";
@@ -127,6 +131,21 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
 
   const reset = React.useCallback(() => setLevers(defaults), [defaults]);
 
+  // ── Saved configs (client-side / localStorage; no DB writes) ──
+  const presets = usePlannerPresets();
+  const loadConfig = React.useCallback(
+    (next: PlannedLevers) => setLevers(sanitizeLevers(next)),
+    [],
+  );
+  // "Unsaved changes" is measured against the ACTIVE saved config when one is
+  // loaded, else against the live baseline (the reset target).
+  const dirtyVsActive = React.useMemo(() => {
+    const ref = presets.activeConfig
+      ? sanitizeLevers(presets.activeConfig.levers)
+      : defaults;
+    return !leversEqual(levers, ref);
+  }, [levers, presets.activeConfig, defaults]);
+
   // ── Lever setters (sliders carry their own units; convert here) ──
   const setEdge = (type: GameTypeId, pct: number) =>
     setLevers((s) => ({
@@ -161,6 +180,12 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
     setLevers((s) => ({ ...s, depositBonusMinDepositMult: clamp(pct / 100, 0, 5) }));
   const setDepWagerReq = (pct: number) =>
     setLevers((s) => ({ ...s, depositBonusWagerReqMult: clamp(pct / 100, 0, 5) }));
+  const setRacePool = (pct: number) =>
+    setLevers((s) => ({ ...s, racePrizePoolMult: clamp(pct / 100, 0, 5) }));
+  const setRaceFreq = (pct: number) =>
+    setLevers((s) => ({ ...s, raceFrequencyMult: clamp(pct / 100, 0, 5) }));
+  const setRaceEntry = (pct: number) =>
+    setLevers((s) => ({ ...s, raceEntryCostMult: clamp(pct / 100, 0, 5) }));
   const setRafflePool = (pct: number) =>
     setLevers((s) => ({ ...s, rafflePrizePoolMult: clamp(pct / 100, 0, 5) }));
   const setRaffleFreq = (pct: number) =>
@@ -181,6 +206,20 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
 
   return (
     <div className="space-y-6">
+      {/* ── Planner header: saved-config manager (localStorage only) ──── */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          <SlidersHorizontal className="size-4 text-cyan-500" />
+          Planner configs
+        </div>
+        <PlannerPresets
+          presets={presets}
+          currentLevers={levers}
+          dirtyVsActive={dirtyVsActive}
+          onLoad={(cfg) => loadConfig(cfg.levers)}
+        />
+      </div>
+
       {/* ── Profit-delta hero ────────────────────────────────────────── */}
       <FadeIn>
         <div className="surface-sheen surface-raise relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60 sm:rounded-3xl">
@@ -563,18 +602,75 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
             )}
           </StatPanel>
 
-          {/* ── RAFFLE ── */}
-          <StatPanel title="Raffle / race prizes" icon={Ticket} accent="orange">
+          {/* ── RACES (on-site competitive races · real race_prize cost) ── */}
+          <StatPanel title="Races" icon={Trophy} accent="orange">
             <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-              The raffle ticket rate / prize structure live in the game backend.
-              These scale the real realized prize cost (
+              On-site competitive races — the{" "}
+              <span className="font-medium text-foreground">race_prize</span>{" "}
+              ledger payout. The prize structure / schedule live in the game
+              backend; these scale the real realized race prize cost (
               <span className="font-medium text-rose-600 dark:text-rose-400">
                 {formatCurrency(baseline.raceCost)}
               </span>
               ) proportionally.
             </p>
             {baseline.raceCost <= 0 ? (
-              <EmptyLever note="No raffle / race prize cost in this window." />
+              <EmptyLever note="No race prize cost in this window." />
+            ) : (
+              <div className="space-y-3">
+                <LeverSlider
+                  label="Prize pool"
+                  valueLabel={multLabel(levers.racePrizePoolMult)}
+                  value={levers.racePrizePoolMult * 100}
+                  onValueChange={setRacePool}
+                  min={0}
+                  max={300}
+                  step={5}
+                  baselineMarker={100}
+                  baselineLabel="current pool (1.0×)"
+                />
+                <LeverSlider
+                  label="Race frequency"
+                  valueLabel={multLabel(levers.raceFrequencyMult)}
+                  value={levers.raceFrequencyMult * 100}
+                  onValueChange={setRaceFreq}
+                  min={0}
+                  max={300}
+                  step={5}
+                  baselineMarker={100}
+                  baselineLabel="current frequency (1.0×)"
+                />
+                <LeverSlider
+                  label="Entry threshold"
+                  valueLabel={multLabel(levers.raceEntryCostMult)}
+                  value={levers.raceEntryCostMult * 100}
+                  onValueChange={setRaceEntry}
+                  min={0}
+                  max={300}
+                  step={5}
+                  baselineMarker={100}
+                  baselineLabel="higher bar = less farming = less cost"
+                />
+              </div>
+            )}
+          </StatPanel>
+
+          {/* ── RAFFLES (on-site ticket raffles · real reconstructed cost) ── */}
+          <StatPanel title="Raffles" icon={Ticket} accent="orange">
+            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+              On-site ticket raffles (users earn tickets per $X wagered). Raffles
+              pay out pack/card items via a prize list — there is no raffle
+              ledger type, so the real cost is{" "}
+              <span className="font-medium text-foreground">reconstructed</span>{" "}
+              from completed raffles&apos; prizes valued at the live item price (
+              <span className="font-medium text-rose-600 dark:text-rose-400">
+                {formatCurrency(baseline.raffleCost)}
+              </span>
+              ). The ticket rate / prize structure live in the game backend;
+              these levers scale that real cost proportionally.
+            </p>
+            {baseline.raffleCost <= 0 ? (
+              <EmptyLever note="No completed-raffle prize cost in this window." />
             ) : (
               <div className="space-y-3">
                 <LeverSlider
@@ -1120,6 +1216,9 @@ function leversEqual(a: PlannedLevers, b: PlannedLevers): boolean {
     a.depositBonusCapMult !== b.depositBonusCapMult ||
     a.depositBonusMinDepositMult !== b.depositBonusMinDepositMult ||
     a.depositBonusWagerReqMult !== b.depositBonusWagerReqMult ||
+    a.racePrizePoolMult !== b.racePrizePoolMult ||
+    a.raceFrequencyMult !== b.raceFrequencyMult ||
+    a.raceEntryCostMult !== b.raceEntryCostMult ||
     a.rafflePrizePoolMult !== b.rafflePrizePoolMult ||
     a.raffleFrequencyMult !== b.raffleFrequencyMult ||
     a.raffleTicketCostMult !== b.raffleTicketCostMult ||

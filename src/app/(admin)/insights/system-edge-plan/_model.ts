@@ -156,8 +156,24 @@ export type SystemEdgeBaseline = {
   affiliateCost: number;
   /** Real Σ |deposit_bonus| over the window. */
   depositBonusCost: number;
-  /** Real Σ |race_prize| over the window. */
+  /**
+   * Real Σ |race_prize| over the window — the on-site competitive RACES cost
+   * (the `race_prize` ledger type). This is the cash prize cost of races, NOT
+   * raffles. It is a ledger type and therefore already inside the canonical NGR
+   * reward cost.
+   */
   raceCost: number;
+  /**
+   * Real reconstructed RAFFLE prize cost over the window — the on-site raffles
+   * where users earn tickets per $X wagered. Raffles pay out pack/card ITEMS
+   * (a `prizes` JSON array on each `raffles` row), NOT a ledger money leg, so
+   * the cost is RECONSTRUCTED by valuing each completed raffle's prize lines at
+   * the live pack/card price (the canonical `getRaffleForecastBaseline` read).
+   * Because it is NOT a ledger type it is NOT inside the canonical NGR reward
+   * cost — the planner adds it on top as its own line (exactly like the
+   * daily-pack giveaway), so there is NO double-count with races.
+   */
+  raffleCost: number;
   /** Real daily / free-pack giveaway cost (Σ value_at_obtained of cards out). */
   dailyPacksCost: number;
   /** Real signup balance-reward cost (Σ |balance_reward_claim| for the cohort). */
@@ -283,7 +299,19 @@ export type PlannedLevers = {
    */
   depositBonusWagerReqMult: number;
 
-  // ── RAFFLE — many settings (proportional cost effects) ──
+  // ── RACES — on-site competitive races (real race_prize cost) ──
+  /** Prize-pool multiplier (1.0 = current). Cost scales ~linearly with the pool. */
+  racePrizePoolMult: number;
+  /** Draw / event-frequency multiplier (1.0 = current). More races ⇒ more prize cost. */
+  raceFrequencyMult: number;
+  /**
+   * Entry-threshold multiplier (1.0 = current). A HIGHER entry bar (harder to
+   * place) trims farming leakage → slightly LOWER cost; a lower bar loosens
+   * entry → higher cost. Modeled as a mild proportional scaler.
+   */
+  raceEntryCostMult: number;
+
+  // ── RAFFLES — on-site ticket raffles (real reconstructed prize cost) ──
   /** Prize-pool multiplier (1.0 = current). Cost scales ~linearly with the pool. */
   rafflePrizePoolMult: number;
   /** Draw-frequency multiplier (1.0 = current). More draws ⇒ more prize cost. */
@@ -383,6 +411,10 @@ export function defaultLevers(baseline: SystemEdgeBaseline): PlannedLevers {
     depositBonusMinDepositMult: 1,
     depositBonusWagerReqMult: 1,
 
+    racePrizePoolMult: 1,
+    raceFrequencyMult: 1,
+    raceEntryCostMult: 1,
+
     rafflePrizePoolMult: 1,
     raffleFrequencyMult: 1,
     raffleTicketCostMult: 1,
@@ -394,6 +426,120 @@ export function defaultLevers(baseline: SystemEdgeBaseline): PlannedLevers {
 
     rainCostMult: 1,
   };
+}
+
+/** Neutral lever defaults (every multiplier 1.0, no edge/rate, no toggles). */
+function neutralLevers(): PlannedLevers {
+  return {
+    edges: { packs: 0, battles: 0, upgrader: 0 },
+    rakebackRates: { daily: 0, weekly: 0, monthly: 0 },
+    rakebackPackBattleWeight: 1,
+    rakebackUpgraderWeight: 1,
+    rakebackInstantPayoutPct: 1,
+    rakebackInstantAdoption: 0,
+    affiliateRates: {},
+    removeAffiliateWagerReq: false,
+    depositBonusMatchMult: 1,
+    depositBonusCapMult: 1,
+    depositBonusMinDepositMult: 1,
+    depositBonusWagerReqMult: 1,
+    racePrizePoolMult: 1,
+    raceFrequencyMult: 1,
+    raceEntryCostMult: 1,
+    rafflePrizePoolMult: 1,
+    raffleFrequencyMult: 1,
+    raffleTicketCostMult: 1,
+    dailyPacksValueMult: 1,
+    dailyPacksFrequencyMult: 1,
+    signupGrantUsd: 0,
+    rainCostMult: 1,
+  };
+}
+
+/**
+ * Coerce arbitrary (de-serialized / persisted / hand-edited) input into a
+ * COMPLETE, finite `PlannedLevers`. This is the single trust boundary for the
+ * localStorage preset store: any missing key falls back to its neutral default
+ * and any non-finite number is dropped, so a stale or corrupted payload can
+ * never feed NaN / a missing lever into the pure projection. Pure + dep-free.
+ */
+export function sanitizeLevers(input: unknown): PlannedLevers {
+  const base = neutralLevers();
+  if (input == null || typeof input !== "object") return base;
+  const src = input as Record<string, unknown>;
+
+  const num = (v: unknown, fallback: number): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
+  // Edges (0..1 per game type).
+  if (src.edges != null && typeof src.edges === "object") {
+    const e = src.edges as Record<string, unknown>;
+    for (const t of GAME_TYPE_IDS) {
+      base.edges[t] = clamp(num(e[t], base.edges[t]), 0, 1);
+    }
+  }
+
+  // Rakeback per-cadence rates (0..1).
+  if (src.rakebackRates != null && typeof src.rakebackRates === "object") {
+    const r = src.rakebackRates as Record<string, unknown>;
+    for (const c of ["daily", "weekly", "monthly"] as RakebackCadenceId[]) {
+      base.rakebackRates[c] = clamp(num(r[c], base.rakebackRates[c]), 0, 1);
+    }
+  }
+
+  base.rakebackPackBattleWeight = clamp(
+    num(src.rakebackPackBattleWeight, 1),
+    0,
+    1,
+  );
+  base.rakebackUpgraderWeight = clamp(num(src.rakebackUpgraderWeight, 1), 0, 1);
+  base.rakebackInstantPayoutPct = clamp(
+    num(src.rakebackInstantPayoutPct, 1),
+    0,
+    1,
+  );
+  base.rakebackInstantAdoption = clamp(num(src.rakebackInstantAdoption, 0), 0, 1);
+
+  // Affiliate per-tier rates (keyed by numeric level; 0..1).
+  if (src.affiliateRates != null && typeof src.affiliateRates === "object") {
+    const a = src.affiliateRates as Record<string, unknown>;
+    for (const [k, v] of Object.entries(a)) {
+      const lvl = Number(k);
+      if (!Number.isFinite(lvl)) continue;
+      base.affiliateRates[lvl] = clamp(num(v, 0), 0, 1);
+    }
+  }
+
+  base.removeAffiliateWagerReq = src.removeAffiliateWagerReq === true;
+
+  // Multiplier levers (0..5, matching the slider bounds the planner enforces).
+  base.depositBonusMatchMult = clamp(num(src.depositBonusMatchMult, 1), 0, 5);
+  base.depositBonusCapMult = clamp(num(src.depositBonusCapMult, 1), 0, 5);
+  base.depositBonusMinDepositMult = clamp(
+    num(src.depositBonusMinDepositMult, 1),
+    0,
+    5,
+  );
+  base.depositBonusWagerReqMult = clamp(
+    num(src.depositBonusWagerReqMult, 1),
+    0,
+    5,
+  );
+  base.racePrizePoolMult = clamp(num(src.racePrizePoolMult, 1), 0, 5);
+  base.raceFrequencyMult = clamp(num(src.raceFrequencyMult, 1), 0, 5);
+  base.raceEntryCostMult = clamp(num(src.raceEntryCostMult, 1), 0, 5);
+  base.rafflePrizePoolMult = clamp(num(src.rafflePrizePoolMult, 1), 0, 5);
+  base.raffleFrequencyMult = clamp(num(src.raffleFrequencyMult, 1), 0, 5);
+  base.raffleTicketCostMult = clamp(num(src.raffleTicketCostMult, 1), 0, 5);
+  base.dailyPacksValueMult = clamp(num(src.dailyPacksValueMult, 1), 0, 5);
+  base.dailyPacksFrequencyMult = clamp(num(src.dailyPacksFrequencyMult, 1), 0, 5);
+  base.rainCostMult = clamp(num(src.rainCostMult, 1), 0, 5);
+
+  base.signupGrantUsd = Math.max(0, num(src.signupGrantUsd, 0));
+
+  return base;
 }
 
 /**
@@ -552,12 +698,20 @@ export function projectEdgePlan(
     breakageFactor(planned.depositBonusWagerReqMult);
   const depositBonusPlanned = baseline.depositBonusCost * depositBonusFactor;
 
-  // ── Raffle (pool × frequency × ticket-cost) ──
+  // ── Races (pool × frequency × entry-cost) — the real race_prize cost ──
+  const raceFactor =
+    Math.max(0, planned.racePrizePoolMult) *
+    Math.max(0, planned.raceFrequencyMult) *
+    ticketCostFactor(planned.raceEntryCostMult);
+  const racePlanned = baseline.raceCost * raceFactor;
+
+  // ── Raffles (pool × frequency × ticket-cost) — the real reconstructed
+  //    raffle prize cost (a DISTINCT reward from races; see `raffleCost`). ──
   const raffleFactor =
     Math.max(0, planned.rafflePrizePoolMult) *
     Math.max(0, planned.raffleFrequencyMult) *
     ticketCostFactor(planned.raffleTicketCostMult);
-  const rafflePlanned = baseline.raceCost * raffleFactor;
+  const rafflePlanned = baseline.raffleCost * raffleFactor;
 
   // ── Daily packs (value × frequency) ──
   const dailyPacksFactor =
@@ -602,12 +756,20 @@ export function projectEdgePlan(
       dataAvailable: baseline.depositBonusCost > 0,
     },
     {
-      key: "raffle",
-      label: "Raffle / race prizes",
+      key: "races",
+      label: "Races",
       currentCost: baseline.raceCost,
-      plannedCost: rafflePlanned,
-      deltaCost: rafflePlanned - baseline.raceCost,
+      plannedCost: racePlanned,
+      deltaCost: racePlanned - baseline.raceCost,
       dataAvailable: baseline.raceCost > 0,
+    },
+    {
+      key: "raffles",
+      label: "Raffles",
+      currentCost: baseline.raffleCost,
+      plannedCost: rafflePlanned,
+      deltaCost: rafflePlanned - baseline.raffleCost,
+      dataAvailable: baseline.raffleCost > 0,
     },
     {
       key: "daily-packs",
@@ -812,9 +974,9 @@ function breakageFactor(wagerReqMult: number): number {
 }
 
 /**
- * Raffle ticket-cost (entry-cost) scaler. A HIGHER entry cost (mult > 1) trims
- * farming leakage → slightly lower prize cost; a lower cost loosens entry →
- * higher cost. Mild inverse, bounded.
+ * Entry-cost / ticket-cost scaler (shared by races + raffles). A HIGHER entry
+ * cost (mult > 1) trims farming leakage → slightly lower prize cost; a lower
+ * cost loosens entry → higher cost. Mild inverse, bounded.
  */
 function ticketCostFactor(ticketCostMult: number): number {
   const m = Math.max(0.01, ticketCostMult);
