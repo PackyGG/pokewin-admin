@@ -17,6 +17,17 @@ type FilterOption = {
   value: string;
 };
 
+// Exact-shape detectors for the search input's instant-fire path (skip
+// the debounce when the term already uniquely resolves server-side).
+// A full UUID maps to the primary key; a well-formed email maps to the
+// unique email index — both are single indexed lookups, so there is no
+// benefit to waiting for more keystrokes. Mirrors the UUID / email shape
+// routing in src/lib/queries/users-list.ts so "instant" here lines up
+// with the server fast paths there.
+const EXACT_SEARCH_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EXACT_SEARCH_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export function DataTableToolbar({
   searchPlaceholder = "Search...",
   filters,
@@ -95,6 +106,23 @@ export function DataTableToolbar({
     (value: string) => {
       setSearchValue(value);
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      // Exact-shape inputs resolve to a single indexed row server-side
+      // (UUID = primary key, full email = unique index), so there's no
+      // value in waiting out the debounce — every extra keystroke would
+      // only change the same already-unique lookup. Fire immediately so
+      // pasting an ID / email feels instant. A still-being-typed handle
+      // keeps the 300 ms debounce (one server round-trip per pause, not
+      // per keystroke). Shape-only check — purely changes WHEN the
+      // existing `?search=` update fires, never whether, so it's inert
+      // for non-search toolbars.
+      const trimmed = value.trim();
+      const isExactShape =
+        EXACT_SEARCH_UUID_RE.test(trimmed) ||
+        EXACT_SEARCH_EMAIL_RE.test(trimmed);
+      if (isExactShape) {
+        updateParam("search", value);
+        return;
+      }
       debounceRef.current = setTimeout(() => {
         updateParam("search", value);
       }, 300);

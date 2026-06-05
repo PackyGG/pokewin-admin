@@ -134,6 +134,9 @@ export default async function UsersPage({
           status: params.status,
           sortBy: params.sortBy,
           sortOrder: params.sortOrder,
+          // URL `?match=contains` → slower interior-substring search;
+          // anything else (the default) → fast index-backed prefix match.
+          searchMode: params.match === "contains" ? "substring" : "prefix",
         }),
       EMPTY_LIST,
       "users.list",

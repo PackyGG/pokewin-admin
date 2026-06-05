@@ -295,6 +295,81 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_battle_participants_battle_id
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pf_result_metadata_pack_id_created_at
   ON provably_fair_results ((result_metadata->>'pack_id'), created_at DESC);
 
+-- #15 ----------------------------------------------------------------
+-- /users page SEARCH — prefix (text_pattern_ops) + substring (pg_trgm)
+-- ===================================================================
+-- Added by the 2026-06-05 /users search perf pass.
+--
+-- The /users search (src/lib/queries/users-list.ts) used to OR four
+-- `ILIKE '%term%'` predicates across username / display_username / name
+-- / email on every keystroke. A LEADING `%` is not sargable, so each
+-- keystroke was a FULL sequential scan of the whole `user` table
+-- (~7,800 rows and growing). The query was rewritten to PREFIX matching
+-- by default — `LOWER(col) LIKE lower('term') || '%'` (raw-SQL ranking
+-- path) / Prisma `startsWith` + `mode:"insensitive"` (list path) — which
+-- IS sargable. But a default-collation btree (incl. the existing
+-- user_username_unique / user_email_unique uniques) does NOT serve
+-- `LIKE 'x%'`; Postgres needs an index built with the *_pattern_ops
+-- operator class (or a `C`-collation index). These functional
+-- lower(col) text_pattern_ops indexes are what turn the new default
+-- prefix search into an index RANGE scan instead of a seq scan.
+--
+-- WITHOUT these, prefix search still works and is already much cheaper
+-- than the old `%term%` (Postgres can short-circuit a left-anchored
+-- compare per row), but it remains a seq scan. WITH them it is a true
+-- index range scan — the "feels instant" target.
+--
+-- Match the indexed expression to the query EXACTLY: lower(col) with
+-- text_pattern_ops. (username/email are also UNIQUE, but those uniques
+-- are plain btrees on the raw value and cannot serve a lowered LIKE.)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_lower_username_prefix
+  ON "user" (LOWER(username) text_pattern_ops);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_lower_email_prefix
+  ON "user" (LOWER(email) text_pattern_ops);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_lower_name_prefix
+  ON "user" (LOWER(name) text_pattern_ops);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_lower_display_username_prefix
+  ON "user" (LOWER(display_username) text_pattern_ops);
+
+-- pg_trgm GIN indexes back the OPT-IN substring search (`?match=contains`
+-- → `LOWER(col) LIKE '%term%'`), the one case prefix matching cannot
+-- cover. A trigram GIN index is the only thing that makes a
+-- leading-wildcard `%term%` an index scan. Requires the pg_trgm
+-- extension (one-time, superuser):
+--   CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- Built on lower(col) so the case-insensitive `%term%` is sargable.
+-- gin_trgm_ops handles both LIKE '%x%' and ILIKE.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_lower_username_trgm
+  ON "user" USING gin (LOWER(username) gin_trgm_ops);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_lower_name_trgm
+  ON "user" USING gin (LOWER(name) gin_trgm_ops);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_lower_display_username_trgm
+  ON "user" USING gin (LOWER(display_username) gin_trgm_ops);
+
+-- #16 ----------------------------------------------------------------
+-- user (role, status) — the /users ranking WHERE filter
+-- ===================================================================
+-- Added by the 2026-06-05 /users search perf pass.
+--
+-- The computed-sort ranking (computeRankedUserIds) now applies the
+-- search/role/status WHERE FIRST in a `filtered` CTE before joining the
+-- per-user aggregates (filter → hydrate). The role / status filters
+-- (u.role = X, u.is_banned / u.is_locked) drive that CTE; today they
+-- have no supporting index, so a role-only or status-only filter scans
+-- the whole user table to build the candidate set. `status` in the UI is
+-- derived from the two booleans is_banned / is_locked, so the composite
+-- covers all three toolbar filter combinations (role, role+status,
+-- status). The PK already covers the search-by-id leg and the prefix
+-- indexes (#15) cover search-by-handle, so this completes index coverage
+-- for the filter-first candidate stage.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_role_banned_locked
+  ON "user" (role, is_banned, is_locked);
+
 -- -------------------------------------------------------------------
 -- ADMIN DB (separate database — apply against ADMIN_DATABASE_URL, NOT
 -- the main game DB).
@@ -346,9 +421,25 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
 --      AND created_at >= NOW() - INTERVAL '24 hours'
 --    LIMIT 100;
 --
+--    For the /users PREFIX search (#15), confirm an index range scan
+--    (not Seq Scan) — note the literal must be lower-cased to match the
+--    lower(col) index, exactly as the app sends it:
+--    EXPLAIN ANALYZE
+--    SELECT id FROM "user" WHERE LOWER(username) LIKE 'jo' || '%' LIMIT 20;
+--
+--    For the OPT-IN substring search, confirm the pg_trgm GIN index is
+--    used (Bitmap Index Scan on idx_user_lower_username_trgm):
+--    EXPLAIN ANALYZE
+--    SELECT id FROM "user" WHERE LOWER(username) LIKE '%' || 'oh' || '%' LIMIT 20;
+--
 -- 3. Check row counts before creating any index — if a table is small
---    (< 10k rows) the index overhead may not be worth it:
+--    (< 10k rows) the index overhead may not be worth it. (The `user`
+--    table is ~7,800 rows today, so the search indexes (#15/#16) help
+--    most as it grows; on a table this small a seq scan is fast but the
+--    prefix index still removes per-keystroke CPU. The big wins remain
+--    the multi-million-row ledger / inventory aggregates above.):
 --    SELECT relname, n_live_tup FROM pg_stat_user_tables
 --    WHERE relname IN ('ledger_transactions', 'card_withdrawal_requests',
 --                      'user_inventory', 'affiliate_code_usages',
---                      'battles', 'provably_fair_results', 'game_sessions');
+--                      'battles', 'provably_fair_results', 'game_sessions',
+--                      'user');

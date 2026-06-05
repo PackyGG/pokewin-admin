@@ -95,6 +95,24 @@ export const UsersRoleFilter = z.enum([
 export type UsersRoleFilter = z.infer<typeof UsersRoleFilter>;
 
 /**
+ * Free-form search match mode (URL param `match`).
+ *
+ *   "prefix"   (default) → left-anchored `ILIKE 'term%'`, index-backed by
+ *                          the recommended lower(col) text_pattern_ops
+ *                          indexes. Fast; the common typed-handle case.
+ *   "contains"           → legacy leading-wildcard `%term%` interior
+ *                          match. Slower (full scan until the pg_trgm GIN
+ *                          index lands), so it is opt-in only.
+ *
+ * Maps onto getUsers' `searchMode` ("prefix" | "substring"). Only affects
+ * the free-form handle/name branch — UUID / email / discord-id searches
+ * always take their exact-match fast path regardless. An unknown value
+ * falls back to "prefix".
+ */
+export const UsersMatchMode = z.enum(["prefix", "contains"]);
+export type UsersMatchMode = z.infer<typeof UsersMatchMode>;
+
+/**
  * `perPage` upper bound. The pagination control offers up to 200 rows
  * (see DataTablePagination's [10, 20, 50, 100, 200] options), so the cap
  * must allow 200 — clamping lower would silently break the legit
@@ -133,6 +151,11 @@ const UsersSearchParamsSchema = z.object({
   // shovelled into the ILIKE. The query trims + shape-routes it (UUID /
   // email / discord-id fast paths) on its own.
   search: z.string().trim().max(200).optional(),
+  // Match mode for the free-form search branch. Defaults to the fast,
+  // index-backed prefix match; `?match=contains` opts into the slower
+  // interior-substring match. `.catch("prefix")` keeps a fuzzed value
+  // from forcing the slow path.
+  match: UsersMatchMode.default("prefix").catch("prefix"),
   // `.catch(undefined)` on every filter / sort field so a single bad
   // value (e.g. ?role=bogus) drops ONLY that filter instead of failing
   // the whole parse and resetting every other valid param to its default.

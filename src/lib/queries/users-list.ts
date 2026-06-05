@@ -32,6 +32,29 @@ const RAW_SQL_SORTS = new Set([
 ]);
 
 /**
+ * How a free-form (non-UUID / non-email / non-discord) search term is
+ * matched against the handle columns.
+ *
+ *   "prefix"    → `LOWER(col) LIKE lower(term) || '%'` — a left-anchored
+ *                 match. This is the DEFAULT and the big perf win: a
+ *                 left-anchored pattern is sargable, so with the
+ *                 recommended `text_pattern_ops` index on lower(username) /
+ *                 lower(email) / lower(name) / lower(display_username) (see
+ *                 prisma/recommended-indexes.sql) it becomes an index RANGE
+ *                 scan instead of a full sequential scan of every user on
+ *                 every keystroke. Typing a handle prefix ("jo", "joh", …)
+ *                 is the overwhelmingly common admin case and this is what
+ *                 makes it feel instant.
+ *   "substring" → `LOWER(col) LIKE '%' || lower(term) || '%'` — the legacy
+ *                 leading-wildcard match. A leading `%` can NEVER use a
+ *                 btree, so this is a full seq scan unless the pg_trgm GIN
+ *                 index (recommended-indexes.sql) is present. Offered ONLY
+ *                 as a deliberate fallback (URL flag `?match=contains`) for
+ *                 the rarer "find a handle by an interior fragment" case.
+ */
+export type UserSearchMode = "prefix" | "substring";
+
+/**
  * Inputs the raw-SQL ranking scan needs, all serializable so the result
  * can be memoised with `unstable_cache` (which keys on the stringified
  * args). The search-shape flags (isUuid / isEmailLike / isDiscordId) are
@@ -47,6 +70,8 @@ type RankedUserIdsInput = {
   isUuid: boolean;
   isEmailLike: boolean;
   isDiscordId: boolean;
+  /** Prefix (default, index-backed) vs substring (leading-wildcard) match. */
+  searchMode: UserSearchMode;
   role: string | undefined;
   status: string | undefined;
 };
@@ -73,7 +98,7 @@ type RankedUserIdsInput = {
 async function computeRankedUserIds(
   input: RankedUserIdsInput,
 ): Promise<{ ids: string[]; total: number }> {
-  const { sortBy, order, page, perPage, searchTerm, isUuid, isEmailLike, isDiscordId, role, status } =
+  const { sortBy, order, page, perPage, searchTerm, isUuid, isEmailLike, isDiscordId, searchMode, role, status } =
     input;
   const db = await getDb();
   const orderSql = order === "asc" ? "ASC" : "DESC";
@@ -82,7 +107,7 @@ async function computeRankedUserIds(
   if (searchTerm) {
     // Same fast-path routing as the Prisma path in getUsers — uuid /
     // email-shape / discord-snowflake hit indexes directly; only
-    // free-form text falls back to the multi-column ILIKE OR. The
+    // free-form text falls back to the multi-column LIKE OR. The
     // safe-quoted literal is reused everywhere a substring isn't
     // wrapped in % wildcards so apostrophes can't break out.
     const safe = searchTerm.replace(/'/g, "''");
@@ -95,8 +120,22 @@ async function computeRankedUserIds(
         `EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = '${safe}')`,
       );
     } else {
+      // Free-form handle/name match. PREFIX (left-anchored) by default so
+      // it is sargable against the recommended lower(col) text_pattern_ops
+      // indexes — an index range scan, not a per-keystroke full seq scan.
+      // `LOWER(col) LIKE 'prefix%'` with the term lowercased in JS keeps the
+      // pattern's LHS identical to the indexed expression. SUBSTRING mode
+      // (opt-in) restores the legacy leading-wildcard `%term%` for interior
+      // fragments (needs the pg_trgm GIN index to be fast). id stays an
+      // equality leg for short partial-UUID pastes that didn't match
+      // UUID_RE.
+      const lower = `LOWER('${safe}')`;
+      const pattern =
+        searchMode === "substring"
+          ? `'%' || ${lower} || '%'`
+          : `${lower} || '%'`;
       whereSql.push(
-        `(u.username ILIKE '%${safe}%' OR u.display_username ILIKE '%${safe}%' OR u.name ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}')`,
+        `(LOWER(u.username) LIKE ${pattern} OR LOWER(u.display_username) LIKE ${pattern} OR LOWER(u.name) LIKE ${pattern} OR LOWER(u.email) LIKE ${pattern} OR u.id = '${safe}')`,
       );
     }
   }
@@ -111,10 +150,29 @@ async function computeRankedUserIds(
     whereSql.push("u.is_banned = false AND u.is_locked = false");
   const whereClause = whereSql.length ? `WHERE ${whereSql.join(" AND ")}` : "";
 
-  // depositCount sort is JOINed only when it's actually the active
-  // sort key — the COUNT(*) groupBy on ledger_transactions can be
-  // pricey on a large transactions table, so we skip the subquery for
-  // every other sort path.
+  // ── Two-stage filter → hydrate ───────────────────────────────────────
+  // PERF: the legacy query LEFT-JOINed all 6 per-user aggregates
+  // (inventory / withdrawals / vouchers / official-stream / optional
+  // deposit-count) onto the WHOLE `user` table and only THEN applied the
+  // WHERE — so it computed every aggregate for every user before
+  // discarding the ones the filter rejected. With a search term that
+  // matches a handful of users, that is thousands of wasted aggregate
+  // rows per request.
+  //
+  // Now the WHERE runs FIRST inside a `filtered` CTE (a plain user-table
+  // scan that uses the role/status btree + the prefix index for search),
+  // and the aggregate joins hang off that already-narrowed set. Postgres
+  // materializes the small filtered id set and aggregates ONLY for those
+  // users. The aggregate join SQL is identical to before — only the row
+  // it attaches to (the filtered CTE instead of the full table) changed —
+  // so the ORDER BY expression, NULLS LAST handling, tie-breaker and
+  // pagination are byte-for-byte the same ranking. Result rows are
+  // identical to the old query for any given filter.
+  //
+  // depositCount is the one aggregate JOINed only when it's the active
+  // sort key — the COUNT(*) groupBy on ledger_transactions is pricey, so
+  // it stays out of every other sort path. It too now aggregates against
+  // the filtered set.
   const depositCountJoin =
     sortBy === "depositCount"
       ? `
@@ -123,13 +181,11 @@ async function computeRankedUserIds(
       FROM ledger_transactions
       WHERE type = 'deposit'::ledger_transaction_type
         AND status = 'completed'::ledger_transaction_status
+        AND user_id IN (SELECT id FROM filtered)
       GROUP BY user_id
-    ) dc ON dc.user_id = u.id`
+    ) dc ON dc.user_id = f.id`
       : "";
 
-  // Build a parameterized count of the same filtered set so total +
-  // ordered slice come from one consistent predicate. The page slice
-  // and the count share `whereClause`.
   const orderExpr =
     sortBy === "totalWithdrawn"
       ? `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)`
@@ -163,11 +219,21 @@ async function computeRankedUserIds(
              - COALESCE(os.os_net, 0)
              - COALESCE(b.total_deposited::numeric, 0)`;
 
+  // The aggregate subqueries are scoped to the filtered id set via
+  // `WHERE user_id IN (SELECT id FROM filtered)`. This is the change that
+  // makes the heavy joins cheap: each aggregate now sums only the rows
+  // belonging to a user that survived the WHERE, instead of grouping the
+  // whole inventory / withdrawals / vouchers / ledger tables.
   const [orderedRows, totalCount] = await Promise.all([
     db.$queryRawUnsafe<{ id: string }[]>(`
-      SELECT u.id
-      FROM "user" u
-      LEFT JOIN balances b ON b.user_id = u.id
+      WITH filtered AS (
+        SELECT u.id
+        FROM "user" u
+        ${whereClause}
+      )
+      SELECT f.id
+      FROM filtered f
+      LEFT JOIN balances b ON b.user_id = f.id
       LEFT JOIN (
         SELECT user_id, COALESCE(SUM(value_at_obtained::numeric), 0) AS inv_value
         FROM user_inventory
@@ -176,8 +242,9 @@ async function computeRankedUserIds(
         -- there). Matches calculateUsersPnlBatch so the pnl/inventoryValue/
         -- netHoldings sorts agree with the displayed (lock-excluded) values.
         WHERE sold_at IS NULL AND exchanged_at IS NULL AND withdrawal_locked_at IS NULL
+          AND user_id IN (SELECT id FROM filtered)
         GROUP BY user_id
-      ) inv ON inv.user_id = u.id
+      ) inv ON inv.user_id = f.id
       LEFT JOIN (
         SELECT user_id, COALESCE(SUM(total_value_usd::numeric), 0) AS wd_value
         FROM card_withdrawal_requests
@@ -186,14 +253,16 @@ async function computeRankedUserIds(
         -- across the withdrawal lifecycle and matches the displayed
         -- totalWithdrawn from calculateUsersPnlBatch.
         WHERE status IN ('pending', 'processing', 'shipped', 'completed')
+          AND user_id IN (SELECT id FROM filtered)
         GROUP BY user_id
-      ) cw ON cw.user_id = u.id
+      ) cw ON cw.user_id = f.id
       LEFT JOIN (
         SELECT user_id, COALESCE(SUM(value::numeric), 0) AS voucher_value
         FROM vouchers
         WHERE claimed_at IS NULL
+          AND user_id IN (SELECT id FROM filtered)
         GROUP BY user_id
-      ) vc ON vc.user_id = u.id
+      ) vc ON vc.user_id = f.id
       -- FAKE-BALANCE: per-user SIGNED NET of completed official_stream
       -- adjustments, subtracted from the cash term of the balance-based
       -- sort expressions so the ordering matches the netted DISPLAYED
@@ -203,10 +272,10 @@ async function computeRankedUserIds(
         FROM ledger_transactions lt
         WHERE lt.status = 'completed'
           AND ${officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })}
+          AND lt.user_id IN (SELECT id FROM filtered)
         GROUP BY lt.user_id
-      ) os ON os.user_id = u.id${depositCountJoin}
-      ${whereClause}
-      ORDER BY (${orderExpr}) ${orderSql} NULLS LAST, u.id ${orderSql}
+      ) os ON os.user_id = f.id${depositCountJoin}
+      ORDER BY (${orderExpr}) ${orderSql} NULLS LAST, f.id ${orderSql}
       LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
     `),
     // Count the same filtered set. Only the WHERE clause matters for the
@@ -224,35 +293,76 @@ async function computeRankedUserIds(
 }
 
 /**
- * Cached wrapper around the heavy ranking scan.
+ * Cached wrapper around the heavy ranking scan, split by whether a
+ * search/role/status FILTER is active.
  *
- * Why aggressive caching is correct here: the ranking is a GLOBAL order
- * over the whole user base (especially the "Top winners / Top losers"
- * lifetime-PnL sort), and that ordering moves slowly — a single user's
- * play barely perturbs who the top-N net winners are. Re-running the
- * full-table scan on every page load / every pagination click is what
- * made `/users` time out. A 5-minute TTL means the first request after a
- * cold cache pays the scan once and every request within the window —
- * including paging deeper into the same sort — is served from cache.
+ * The legacy single cache keyed on the FULL input tuple (sort / order /
+ * page / perPage / search / role / status). That made the cache nearly
+ * useless for the case it most needed to help: a typed search. Every
+ * keystroke is a distinct `search` value → a distinct cache key → a
+ * guaranteed miss, so the heavy ranking ran fresh on every keystroke
+ * anyway while the cache only ever helped the unfiltered default view.
  *
- * Keyed on the full input tuple (sort / order / page / perPage / search /
- * role / status), so each distinct view caches independently and a
- * different sort or page never returns another view's IDs. The hydration
- * step in getUsers stays UNCACHED, so the per-row balances / PnL / risk
- * the table renders are always live even when the ID ordering is served
- * from cache.
+ * The split below matches the cache TTL to how the two cases actually
+ * behave:
  *
- * `getDb()` inside the cache callback resolves to the prod client (its
+ *  • UNFILTERED (no search / role / status) → {@link cachedGlobalRankedUserIds},
+ *    5-minute TTL. This is the genuinely heavy, slowly-moving case — a
+ *    GLOBAL ORDER BY over the whole user base (the "Top winners / Top
+ *    losers" lifetime-PnL ranking). A single user's play barely perturbs
+ *    the top-N, so a long TTL is correct: the first request after a cold
+ *    cache pays the scan once and every page click within the window
+ *    (same sort, deeper page) is served from cache. Keyed on
+ *    sort/order/page/perPage only (the filter fields are empty here).
+ *
+ *  • FILTERED (any of search / role / status set) → {@link cachedFilteredRankedUserIds},
+ *    30-second TTL. After the filter-first restructure in
+ *    computeRankedUserIds these queries are cheap (they aggregate only the
+ *    matched users, not the whole base), so they don't need a long cache
+ *    to be fast — a short TTL still collapses the duplicate calls a single
+ *    render fans out (and rapid re-paging of the same search) without
+ *    serving a stale member list as admins ban/lock users. Distinct cache
+ *    namespace so a filtered slice can never return an unfiltered view's
+ *    IDs.
+ *
+ * Both keep the hydration step in getUsers UNCACHED, so per-row balances /
+ * PnL / risk are always live even when the ID ordering is served from
+ * cache.
+ *
+ * `getDb()` inside each cache callback resolves to the prod client (its
  * cookie read falls back to prod outside a request scope — see
- * readDbEnv), which is the right behaviour for a cross-request global
- * ranking cache: it must not be keyed to one admin's dev-DB toggle. This
- * mirrors the existing getUsersListStats cache below.
+ * readDbEnv), which is the right behaviour for a cross-request ranking
+ * cache: it must not be keyed to one admin's dev-DB toggle. This mirrors
+ * the existing getUsersListStats cache below.
  */
-const cachedRankedUserIds = unstable_cache(
+const cachedGlobalRankedUserIds = unstable_cache(
   computeRankedUserIds,
-  ["users-ranked-ids-v1"],
+  ["users-ranked-ids-global-v2"],
   { revalidate: 300, tags: ["users-list"] },
 );
+
+const cachedFilteredRankedUserIds = unstable_cache(
+  computeRankedUserIds,
+  ["users-ranked-ids-filtered-v2"],
+  { revalidate: 30, tags: ["users-list"] },
+);
+
+/**
+ * Route a ranking request to the long-TTL global cache when no filter is
+ * active, or the short-TTL filtered cache otherwise. A search term, role
+ * filter, or status filter all count as "filtered".
+ */
+function cachedRankedUserIds(
+  input: RankedUserIdsInput,
+): Promise<{ ids: string[]; total: number }> {
+  const isFiltered =
+    !!input.searchTerm ||
+    (!!input.role && input.role !== "all") ||
+    !!input.status;
+  return isFiltered
+    ? cachedFilteredRankedUserIds(input)
+    : cachedGlobalRankedUserIds(input);
+}
 
 type UserListItem = {
   id: string;
@@ -295,6 +405,14 @@ export async function getUsers(params: {
   status?: string;
   sortBy?: string;
   sortOrder?: string;
+  /**
+   * How a free-form handle/name search is matched. Defaults to "prefix"
+   * (left-anchored, index-backed). Pass "substring" to opt into the
+   * legacy leading-wildcard `%term%` interior match (slower; backed only
+   * by the pg_trgm GIN index). UUID / email / discord-id searches ignore
+   * this — they always route to their exact-match fast path.
+   */
+  searchMode?: UserSearchMode;
 }): Promise<PaginatedResult<UserListItem>> {
   const db = await getDb();
   const {
@@ -305,6 +423,7 @@ export async function getUsers(params: {
     status,
     sortBy = "created_at",
     sortOrder = "desc",
+    searchMode = "prefix",
   } = params;
 
   const where: Prisma.UserWhereInput = {};
@@ -315,23 +434,25 @@ export async function getUsers(params: {
 
   // ── Search fast paths ──────────────────────────────────────────────
   // The legacy code path ORed 4× ILIKE '%term%' across username /
-  // display_username / name / email. ILIKE with a leading % can't use
-  // the B-tree indexes Postgres has on `user.email` / `user.username`
-  // (user_email_unique / user_username_unique) / `user.id` (PK), so
-  // every keystroke triggered a full sequential scan of the `user`
-  // table. On a multi-million row prod table that's seconds per
-  // request — the slow search admins were hitting.
+  // display_username / name / email. ILIKE with a LEADING % can't use
+  // ANY btree, so every keystroke triggered a full sequential scan of
+  // the `user` table. On a ~7,800-row (and growing) prod table that's
+  // the slow search admins were hitting.
   //
-  // Recognising the input shape lets us route to an equality lookup
-  // (O(log n) on the unique index) for the inputs that don't need
-  // substring matching: UUIDs (= primary key), email-format strings
-  // (= unique email index), and Discord snowflakes (= account join).
-  // Pure-handle queries still fall back to the ILIKE OR so substring
-  // matches keep working — they're slow only when the operator
-  // genuinely types a partial handle / display name / OAuth name.
-  // A pg_trgm GIN index on lower(username) / lower(name) is the
-  // canonical way to speed that fallback up; coordinate before
-  // adding it to prod since this is the main DB.
+  // Two-tier fix:
+  //   1. SHAPE FAST PATHS (unchanged) — route to an equality lookup
+  //      (O(log n) on a unique index) for inputs that don't need pattern
+  //      matching: UUIDs (= primary key), email-format strings (= unique
+  //      email index), and Discord snowflakes (= account join).
+  //   2. PREFIX matching for free-form handle/name text (the common
+  //      "typed a partial handle" case). `startsWith` compiles to a
+  //      left-anchored `ILIKE 'term%'`, which IS sargable — with the
+  //      recommended lower(col) text_pattern_ops indexes (see
+  //      prisma/recommended-indexes.sql) it is an index RANGE scan
+  //      instead of a full table scan. This is the big win and the new
+  //      default. The rarer "match an interior fragment" case is still
+  //      available via searchMode === "substring" (legacy `contains` /
+  //      `%term%`), which needs the pg_trgm GIN index to be fast.
   const UUID_RE =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const isUuid = UUID_RE.test(searchTerm ?? "");
@@ -362,17 +483,30 @@ export async function getUsers(params: {
         some: { providerId: "discord", accountId: searchTerm },
       };
     } else {
-      // Substring fallback — the slow path. Search the handle, the
-      // display name + OAuth name (so a user can be found by what
-      // Discord/Google shows, not just the lowercase handle), and the
-      // email; id is included for short partial UUID pastes that
-      // didn't pass UUID_RE. Only runs when the input shape didn't
-      // match any fast path above.
+      // Free-form handle/name match. Search the handle, the display name
+      // + OAuth name (so a user can be found by what Discord/Google
+      // shows, not just the lowercase handle), and the email; id is
+      // included for short partial UUID pastes that didn't pass UUID_RE.
+      // Only runs when the input shape didn't match any fast path above.
+      //
+      // PREFIX by default: `startsWith` → left-anchored `ILIKE 'term%'`,
+      // sargable against the recommended lower(col) text_pattern_ops
+      // indexes (index range scan, not a full seq scan). SUBSTRING
+      // (`contains` → `%term%`) is the opt-in interior-fragment fallback
+      // and stays a seq scan until the pg_trgm GIN index is applied.
+      // The matcher is chosen ONCE so the four handle/name legs stay
+      // consistent; `mode: "insensitive"` lowercases both sides exactly
+      // as the raw-SQL ranking path's LOWER(col) LIKE LOWER(term) does,
+      // so the Prisma-path and ranking-path result sets agree.
+      const textMatch =
+        searchMode === "substring"
+          ? { contains: searchTerm, mode: "insensitive" as const }
+          : { startsWith: searchTerm, mode: "insensitive" as const };
       where.OR = [
-        { username: { contains: searchTerm, mode: "insensitive" } },
-        { display_username: { contains: searchTerm, mode: "insensitive" } },
-        { name: { contains: searchTerm, mode: "insensitive" } },
-        { email: { contains: searchTerm, mode: "insensitive" } },
+        { username: textMatch },
+        { display_username: textMatch },
+        { name: textMatch },
+        { email: textMatch },
         { id: searchTerm },
       ];
     }
@@ -449,6 +583,7 @@ export async function getUsers(params: {
       isUuid,
       isEmailLike,
       isDiscordId,
+      searchMode,
       role,
       status,
     });
