@@ -73,6 +73,16 @@ export {
   AFFILIATE_FORECAST_CONFIG,
 } from "./config";
 
+// Live-policy derivation from the REAL affiliate_level_configs ladder.
+export {
+  affiliateBaselineBlendedRate,
+  affiliateBaselineNote,
+  affiliateBaselineTierRate,
+  buildAffiliateScenarios,
+  type AffiliateBaselineExt,
+  type AffiliateLevelConfig,
+} from "./live-policy";
+
 // Recommendations (reward-agnostic — re-exported from the shared kit)
 export { describeTradeoff, recommend } from "../../../_forecast-engine";
 

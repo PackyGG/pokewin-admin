@@ -66,6 +66,13 @@ import {
   SCENARIO_LIBRARY,
   AFFILIATE_WHATIF_SET,
 } from "../scenarios";
+import {
+  affiliateBaselineBlendedRate,
+  affiliateBaselineTierRate,
+  buildAffiliateScenarios,
+  type AffiliateBaselineExt,
+  type AffiliateLevelConfig,
+} from "../live-policy";
 import type { Assumptions, RatePolicy, ScenarioConfig, SimulationResult } from "../types";
 
 let passed = 0;
@@ -361,6 +368,178 @@ console.log("[affiliate forecast checks] (g) recommend() emits 3 badges on disti
   check("recommendations land on distinct scenarios (full library)", ids.size === 3);
   check("every recommendation has a non-empty headline & detail", recs.every((r) => r.headline.length > 0 && r.detail.length > 0));
   check("recommend([]) returns []", recommend([]).length === 0);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// LIVE-POLICY BUILDER (the real-config fix — real ladder, not placeholder tiers)
+// ════════════════════════════════════════════════════════════════════════════
+
+// The REAL production commission ladder: 8 levels, 3% → 10%, the actual config.
+const REAL_LADDER: AffiliateLevelConfig[] = [
+  { level: 1, label: "Level 1", commissionRate: 0.03, threshold: 0 },
+  { level: 2, label: "Level 2", commissionRate: 0.04, threshold: 25_000 },
+  { level: 3, label: "Level 3", commissionRate: 0.05, threshold: 50_000 },
+  { level: 4, label: "Level 4", commissionRate: 0.06, threshold: 100_000 },
+  { level: 5, label: "Level 5", commissionRate: 0.07, threshold: 250_000 },
+  { level: 6, label: "Level 6", commissionRate: 0.08, threshold: 500_000 },
+  { level: 7, label: "Level 7", commissionRate: 0.09, threshold: 1_000_000 },
+  { level: 8, label: "Level 8", commissionRate: 0.1, threshold: 1_500_000 },
+];
+
+function liveAffiliateBaseline(over: Partial<AffiliateBaselineExt> = {}): AffiliateBaselineExt {
+  return {
+    totalCost: 87_654.32,
+    uniqueClaimants: 1_200,
+    periodDays: 30,
+    claimProbability: null,
+    avgBonusUsd: 73,
+    empiricalCapUsd: 0,
+    capHitRate: null,
+    blendedRoi: 9.5,
+    avgGgrPerClaimant: 6_000,
+    levelConfigs: REAL_LADDER,
+    ...over,
+  };
+}
+
+/** Assumptions whose baseline tier rates / blended ref are the REAL ladder. */
+function liveAffiliateAssumptions(): Assumptions {
+  const tierRate = affiliateBaselineTierRate(REAL_LADDER)!;
+  return {
+    ...A,
+    baselineClaimants: 1_200,
+    baselinePeriodDays: 30,
+    avgBonusUsd: 73,
+    baselineTierRate: tierRate,
+    baselineBlendedRate: affiliateBaselineBlendedRate(tierRate),
+  };
+}
+
+console.log("[affiliate forecast checks] (L) live builder reflects the REAL commission ladder");
+{
+  // The collapse maps the real ladder onto the 5 tiers, rate-ordered: whales get
+  // the richest configured rate band, micro/dormant the leanest. NONE is the
+  // fabricated 8% whale / 6% established placeholder unless the real data says so.
+  const tierRate = affiliateBaselineTierRate(REAL_LADDER);
+  check("(L) collapse returns a tier-rate map for the real ladder", tierRate != null);
+  if (tierRate) {
+    check(
+      `(L) whale rate ≥ established ≥ emerging ≥ micro (monotone by band)`,
+      tierRate.whale >= tierRate.established &&
+        tierRate.established >= tierRate.emerging &&
+        tierRate.emerging >= tierRate.micro - 1e-12,
+    );
+    check(
+      `(L) whale rate is in the TOP band of the real ladder (≥ 8%, ≤ 10%)`,
+      tierRate.whale >= 0.08 - 1e-9 && tierRate.whale <= 0.1 + 1e-9,
+    );
+    check(
+      `(L) dormant rate == the entry (lowest) configured rate (3%)`,
+      Math.abs(tierRate.dormant - 0.03) < 1e-9,
+    );
+    check(
+      `(L) micro rate is in the entry band (≤ 5%) — not the 3% flat placeholder claim`,
+      tierRate.micro <= 0.05 + 1e-9 && tierRate.micro >= 0.03 - 1e-9,
+    );
+    const blended = affiliateBaselineBlendedRate(tierRate);
+    check(
+      `(L) real blended rate is positive & sane (${(blended * 100).toFixed(2)}%, 3–10%)`,
+      blended >= 0.03 - 1e-9 && blended <= 0.1 + 1e-9,
+    );
+  }
+
+  const built = buildAffiliateScenarios(liveAffiliateBaseline());
+  check("(L) builder returns a live set when the real ladder is present", built != null);
+
+  if (built) {
+    const { scenarios, whatifSet, baselineScenarioId } = built;
+    check("(L) baseline id is A-current", baselineScenarioId === "A-current");
+    const base = scenarios.find((s) => s.id === baselineScenarioId)!;
+    check("(L) baseline present & is the `current` policy", base?.policy.kind === "current");
+    check(
+      "(L) baseline description names the REAL ladder span (8-level, 3%→10%)",
+      /8-level ladder/.test(base.description) && /3%/.test(base.description) && /10%/.test(base.description),
+    );
+    // A 1× wager-requirement WHAT-IF exists and is clearly labeled hypothetical.
+    const wagerReq = scenarios.find((s) => s.id === "D-wager-req-1x");
+    check("(L) a 1× wager-requirement what-if exists", !!wagerReq);
+    if (wagerReq) {
+      check(
+        "(L) 1× wager-req is modeled as a quality screen (hybrid, rates unchanged)",
+        wagerReq.policy.kind === "hybrid" &&
+          wagerReq.policy.qualityScreen > 0 &&
+          wagerReq.policy.thresholdMult === 1,
+      );
+      check(
+        "(L) 1× wager-req description flags it as a what-if (not a current setting)",
+        /What-if/i.test(wagerReq.description) && /1×/.test(wagerReq.description),
+      );
+    }
+
+    // Run through the real engine with the REAL ladder anchored. Baseline must
+    // reproduce the real total; every flat trim must cost ≤ baseline.
+    const asm = liveAffiliateAssumptions();
+    const set = simulateSet(scenarios, asm, WINDOW, baselineScenarioId, 87_654.32);
+    const baseRes = set.find((r) => r.scenarioId === baselineScenarioId)!;
+    check(
+      `(L) baseline cost == real total ($${baseRes.bonusCost.toFixed(2)} ≈ $87654.32)`,
+      Math.abs(baseRes.bonusCost - 87_654.32) < 1e-2,
+    );
+    check("(L) baseline savingsVsBaseline == 0", Math.abs(baseRes.savingsVsBaseline) < 1e-6);
+
+    const trim20 = set.find((r) => r.scenarioId === "B-trim-20");
+    check("(L) a −20% flat trim what-if exists", !!trim20);
+    if (trim20) {
+      check(
+        `(L) −20% flat trim costs < baseline ($${trim20.bonusCost.toFixed(0)} < $${baseRes.bonusCost.toFixed(0)})`,
+        trim20.bonusCost < baseRes.bonusCost && trim20.savingsVsBaseline > 0,
+      );
+    }
+    // The 1× wager-req what-if must reduce leakage vs baseline (the screen bites).
+    const wagerRes = set.find((r) => r.scenarioId === "D-wager-req-1x");
+    if (wagerRes) {
+      check(
+        `(L) 1× wager-req leaks ≤ baseline ($${wagerRes.abuseLeakage.toFixed(0)} ≤ $${baseRes.abuseLeakage.toFixed(0)})`,
+        wagerRes.abuseLeakage <= baseRes.abuseLeakage + 1e-6,
+      );
+    }
+    check("(L) every live result is finite", set.every(allFinite));
+    for (const r of set) {
+      const segSum = r.perSegment.reduce((a, s) => a + s.bonusCost, 0);
+      check(`(L) "${r.scenarioId}" segment costs sum to total`, Math.abs(segSum - r.bonusCost) < 1e-3);
+    }
+    check("(L) whatifSet starts at the baseline", whatifSet[0]?.id === baselineScenarioId);
+    check("(L) whatifSet has at least 4 rows", whatifSet.length >= 4);
+
+    // The engine must USE the real tier rates, NOT the static placeholder: the
+    // blended rate of the `current` policy under the real assumptions must equal
+    // the REAL blended rate (≈5.4% for the real ladder under the default mix),
+    // distinct from the static BASELINE_BLENDED_RATE placeholder (5%).
+    const mix = normalizeTierMix(asm.tierMix);
+    const realLadderBlended = blendedRate(SCENARIO_A_CURRENT.policy, mix, 1, asm.baselineTierRate);
+    const expectedBlended = affiliateBaselineBlendedRate(asm.baselineTierRate!);
+    check(
+      `(L) engine blends the REAL tier rates (${(realLadderBlended * 100).toFixed(2)}% == real ${(expectedBlended * 100).toFixed(2)}%)`,
+      Math.abs(realLadderBlended - expectedBlended) < 1e-9,
+    );
+    // And a flat trim under the real rates is strictly cheaper than the real
+    // current rate (the real rates flow through the cost math).
+    const trimBlended = blendedRate({ kind: "flat_trim", rateMult: 0.8 }, mix, 1, asm.baselineTierRate);
+    check(
+      `(L) −20% flat trim blends below the real current rate (${(trimBlended * 100).toFixed(2)}% < ${(realLadderBlended * 100).toFixed(2)}%)`,
+      trimBlended < realLadderBlended,
+    );
+  }
+
+  // No real ladder threaded → builder returns null (caller falls back to static).
+  check(
+    "(L) builder returns null with no level configs",
+    buildAffiliateScenarios(liveAffiliateBaseline({ levelConfigs: undefined })) === null,
+  );
+  check(
+    "(L) collapse returns null on an empty ladder",
+    affiliateBaselineTierRate([]) === null,
+  );
 }
 
 // ─── summary ─────────────────────────────────────────────────────────────────

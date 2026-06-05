@@ -7,8 +7,9 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { getAffiliateOverview } from "@/lib/queries/insights-rewards/affiliate/overview";
+import { getAffiliateLevelConfigs } from "@/lib/queries/creators-analytics";
 
-import { type ForecastBaseline } from "../_forecast";
+import { type ForecastBaseline, type AffiliateLevelConfig } from "../_forecast";
 import { AffiliateForecastSimulatorIsland } from "./forecast-simulator";
 
 /**
@@ -40,11 +41,34 @@ export async function AffiliateForecastTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
-  const { data: ov } = await safeQuery(
-    () => getAffiliateOverview(period),
-    null,
-    "insights-rewards-affiliate.forecast.overview",
-  );
+  // The real commission LADDER (`affiliate_level_configs`) is fetched here,
+  // read-only, at request time — it anchors the baseline + what-if scenarios to
+  // the ACTUAL configured per-level commission rates (e.g. an 8-level 3%→10%
+  // ladder), not the fabricated 5-tier placeholder. Period-agnostic (the ladder
+  // is the same regardless of window), so it sits outside the period anchors.
+  const [ovRes, cfgRes] = await Promise.all([
+    safeQuery(
+      () => getAffiliateOverview(period),
+      null,
+      "insights-rewards-affiliate.forecast.overview",
+    ),
+    safeQuery(
+      () => getAffiliateLevelConfigs(),
+      [],
+      "insights-rewards-affiliate.forecast.level-configs",
+    ),
+  ]);
+
+  const ov = ovRes.data;
+
+  // Map the raw level-config rows onto the forecast's shape (rename to the
+  // engine's camelCase field). Each `commission_rate` is already a fraction.
+  const levelConfigs: AffiliateLevelConfig[] = (cfgRes.data ?? []).map((c) => ({
+    level: c.level,
+    label: c.label,
+    commissionRate: c.commission_rate,
+    threshold: c.threshold,
+  }));
 
   // A real baseline is usable only when the overview query succeeded AND there
   // was actual commission activity in the window (commission paid AND active
@@ -57,7 +81,7 @@ export async function AffiliateForecastTab({
   // engine. Always ≥1.
   const periodDays = Math.max(1, daysForInsightsPeriodCapped(period));
 
-  const realBaseline: ForecastBaseline | null = hasReal
+  const realBaseline: (ForecastBaseline & { levelConfigs: AffiliateLevelConfig[] }) | null = hasReal
     ? {
         totalCost: ov.totalCommissionPaid,
         uniqueClaimants: ov.activeAffiliates,
@@ -78,6 +102,9 @@ export async function AffiliateForecastTab({
         // Real avg downstream wager flow per active affiliate (a GGR proxy).
         avgGgrPerClaimant:
           ov.activeAffiliates > 0 ? ov.downstreamWager / ov.activeAffiliates : 0,
+        // The REAL commission ladder → seeds the engine's per-tier baseline rates
+        // + the blended reference, and drives the baseline + what-if scenarios.
+        levelConfigs,
       }
     : null;
 

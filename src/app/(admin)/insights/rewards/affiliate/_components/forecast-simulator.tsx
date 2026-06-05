@@ -2,8 +2,8 @@
 
 import { ForecastSimulator } from "../../../_forecast-ui";
 import {
-  AFFILIATE_BASELINE_NOTE,
   AFFILIATE_FORECAST_CONFIG,
+  affiliateBaselineNote,
   type ForecastBaseline,
 } from "../_forecast";
 
@@ -33,7 +33,10 @@ export function AffiliateForecastSimulatorIsland({
       config={AFFILIATE_FORECAST_CONFIG}
       realBaseline={realBaseline}
       period={period}
-      baselineNote={AFFILIATE_BASELINE_NOTE}
+      // Real ladder note (e.g. "8-level ladder · 3%→10% · ~5% blended") derived
+      // from the level configs threaded onto the baseline — falls back to a
+      // generic blended-% note when no real ladder rode in.
+      baselineNote={affiliateBaselineNote(realBaseline)}
     />
   );
 }

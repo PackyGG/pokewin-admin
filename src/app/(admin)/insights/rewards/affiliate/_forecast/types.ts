@@ -154,6 +154,22 @@ export type Assumptions = BaseAssumptions & {
   /** Fractional split across tiers — engine normalizes to sum 1. */
   tierMix: Record<TierId, number>;
   /**
+   * Per-tier BASELINE commission rate ($ per $1 referred wager), collapsed from
+   * the REAL `affiliate_level_configs` ladder onto the 5 modeled tiers. Every
+   * policy's per-tier rate is computed RELATIVE to these. Optional: the engine
+   * falls back to the static `BASELINE_TIER_RATE` placeholder when absent (the
+   * self-check harness / a malformed shared link); the live page always sets the
+   * real values.
+   */
+  baselineTierRate?: Record<TierId, number>;
+  /**
+   * The REAL blended commission rate (the tier-mix-weighted average of
+   * `baselineTierRate`) — the reference `rateCutSeverity` / cannibalization math
+   * compares a policy's blended rate against. Optional; falls back to the static
+   * `BASELINE_BLENDED_RATE` placeholder when absent.
+   */
+  baselineBlendedRate?: number;
+  /**
    * Global commission-rate scaler applied on TOP of any scenario policy, 0-2.
    * 1 = the configured/scenario rates as-is; <1 trims, >1 enriches. The "what
    * if we shaved every rate by X%" master lever, independent of the per-scenario

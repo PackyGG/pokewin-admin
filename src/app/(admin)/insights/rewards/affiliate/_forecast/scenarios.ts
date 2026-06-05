@@ -31,11 +31,20 @@ const NEUTRAL_TIER_MULT: Record<TierId, number> = {
 
 // ─── A — Current policy ───────────────────────────────────────────────────────
 
+/**
+ * NOTE: this static library is the FALLBACK + the self-check test fixture. The
+ * LIVE page derives its baseline + what-ifs from the REAL
+ * `affiliate_level_configs` ladder via `buildAffiliateScenarios` (see
+ * `live-policy.ts`) and anchors the engine's per-tier baseline rates to the real
+ * rates; this static set + the placeholder `BASELINE_TIER_RATE` only render when
+ * the real ladder could not be threaded. The library's shape stays fixed so the
+ * engine self-checks (`__checks__/run.ts`) keep passing.
+ */
 export const SCENARIO_A_CURRENT: ScenarioConfig = {
   id: "A-current",
   label: "A · Current policy",
   description:
-    "The live commission ladder + current qualification thresholds. The reference every other scenario is measured against (savings vs baseline = 0).",
+    "The current commission ladder + qualification thresholds. The reference every other scenario is measured against (savings vs baseline = 0). The live page derives this from the real per-level ladder.",
   policy: { kind: "current" },
   schemaVersion: 1,
 };

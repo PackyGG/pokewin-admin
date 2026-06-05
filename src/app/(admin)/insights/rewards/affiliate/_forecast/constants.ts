@@ -55,20 +55,23 @@ export const TIER_IDS: TierId[] = TIERS.map((t) => t.id);
 // ─── Baseline reference (current policy) ────────────────────────────────────
 
 /**
- * The reference commission rate ($ per $ of referred wager) the model treats as
- * the "blended" current rate. Used only to give the rate-tightness math a
- * dimensionless anchor (a policy's blended rate ÷ this) and to label the
- * baseline note — the ACTUAL cost anchor is always the real measured total
- * commission, never this nominal rate. ~5% is the mid of the live ladder.
+ * FALLBACK reference blended commission rate ($ per $ of referred wager), used
+ * ONLY when the real `affiliate_level_configs` ladder is not threaded (the
+ * self-check harness / a malformed shared link). On the live page the engine's
+ * blended reference is the REAL ladder's mix-weighted rate (seeded via the
+ * config's `defaults`), never this nominal figure. The ACTUAL cost anchor is
+ * always the real measured total commission. ~5% is the mid of a typical ladder.
  */
 export const BASELINE_BLENDED_RATE = 0.05;
 
 /**
- * Per-tier baseline commission rates ($ per $1 referred wager) — a representative
- * collapse of the live `affiliate_level_configs` ladder onto the four active
- * bands + dormant. Whales earn the richest rate, micro the leanest. These set
- * the RELATIVE tier weighting the per-tier policies multiply; the absolute cost
- * is anchored to the real total, so only the RATIOS between these matter.
+ * FALLBACK per-tier baseline commission rates ($ per $1 referred wager), used
+ * ONLY when the real ladder is unavailable (self-check harness / malformed
+ * link). On the live page these are REPLACED by the real `affiliate_level_configs`
+ * rates collapsed onto the five tiers (see `live-policy.affiliateBaselineTierRate`,
+ * threaded into the engine via `Assumptions.baselineTierRate`). Whales earn the
+ * richest rate, micro the leanest. These set the RELATIVE tier weighting the
+ * per-tier policies multiply; the absolute cost is anchored to the real total.
  */
 export const BASELINE_TIER_RATE: Record<TierId, number> = {
   whale: 0.08,

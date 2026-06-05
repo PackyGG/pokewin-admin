@@ -37,6 +37,12 @@ import {
 import { policyFrontload, simulate } from "./engine";
 import { operationalComplexity, policyLogicLabel } from "../_components/forecast-format";
 import {
+  affiliateBaselineBlendedRate,
+  affiliateBaselineTierRate,
+  buildAffiliateScenarios,
+  type AffiliateBaselineExt,
+} from "./live-policy";
+import {
   AFFILIATE_WHATIF_SET,
   BASELINE_SCENARIO_ID,
   SCENARIO_LIBRARY,
@@ -164,11 +170,22 @@ const affiliateDefaults: ForecastConfig<Assumptions, ScenarioConfig>["defaults"]
   baseline,
 ) => {
   const realClaimProb = baseline.claimProbability ?? DEFAULT_CLAIM_PROBABILITY;
+  // The REAL commission ladder (collapsed onto the 5 tiers) rides in on the
+  // baseline via the `levelConfigs` extension the server tab sets. When present,
+  // anchor the engine's per-tier baseline rates + blended reference to the real
+  // rates; otherwise the engine falls back to the static placeholders.
+  const ext = baseline as AffiliateBaselineExt;
+  const realTierRate = ext.levelConfigs ? affiliateBaselineTierRate(ext.levelConfigs) : null;
+  const realBlended = realTierRate ? affiliateBaselineBlendedRate(realTierRate) : undefined;
   return {
     baselineClaimants: baseline.uniqueClaimants,
     baselinePeriodDays: Math.max(1, baseline.periodDays),
     baselineClaimProbability: realClaimProb,
     tierMix: { ...DEFAULT_TIER_MIX },
+    // Real per-tier baseline rates + blended reference (undefined → engine uses
+    // the static placeholders).
+    baselineTierRate: realTierRate ?? undefined,
+    baselineBlendedRate: realBlended,
     depositsPerUserPerWindow: DEFAULT_REFERRALS_PER_AFFILIATE,
     claimProbability: realClaimProb,
     avgBonusUsd: baseline.avgBonusUsd,
@@ -189,6 +206,11 @@ export const AFFILIATE_FORECAST_CONFIG: ForecastConfig<Assumptions, ScenarioConf
   scenarios: SCENARIO_LIBRARY,
   baselineScenarioId: BASELINE_SCENARIO_ID,
   whatifSet: AFFILIATE_WHATIF_SET,
+  // LIVE policy: when the server tab threads the real `affiliate_level_configs`
+  // ladder onto the baseline, derive the baseline + what-ifs from the REAL tier
+  // rates (and seed the engine's per-tier baseline rates via `defaults`), not the
+  // static placeholders. Falls back to the static library when no ladder rode in.
+  buildScenarios: buildAffiliateScenarios,
   segments: TIERS.map((t) => ({ id: t.id, label: t.label, accent: t.accent })),
   defaults: affiliateDefaults,
   levers: AFFILIATE_LEVERS,

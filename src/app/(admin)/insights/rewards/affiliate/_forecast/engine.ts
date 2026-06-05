@@ -86,13 +86,19 @@ export { clamp, clamp01, safeDiv, scaleResultMoney };
  *                      VOLUME / leakage, not the per-claim rate).
  *   • hybrid         — baseline rate × the tier's multiplier.
  * Then the global `commissionRateMult` lever scales the result. Always ≥0.
+ *
+ * `baseTierRate` is the per-tier BASELINE rate map. It defaults to the static
+ * `BASELINE_TIER_RATE` placeholder (used by the self-check harness), but the
+ * live page passes the REAL rates collapsed from `affiliate_level_configs` so
+ * the modeled rates reflect the actual commission ladder.
  */
 export function effectiveRateForTier(
   policy: RatePolicy,
   tierId: TierId,
   globalRateMult: number,
+  baseTierRate: Record<TierId, number> = BASELINE_TIER_RATE,
 ): number {
-  const base = Math.max(0, finite(BASELINE_TIER_RATE[tierId]));
+  const base = Math.max(0, finite(baseTierRate[tierId]));
   const g = Math.max(0, finite(globalRateMult));
   switch (policy.kind) {
     case "current":
@@ -118,12 +124,13 @@ export function blendedRate(
   policy: RatePolicy,
   mix: Record<TierId, number>,
   globalRateMult: number,
+  baseTierRate: Record<TierId, number> = BASELINE_TIER_RATE,
 ): number {
   let sum = 0;
   let weight = 0;
   for (const t of TIERS) {
     const w = Math.max(0, finite(mix[t.id]));
-    sum += effectiveRateForTier(policy, t.id, globalRateMult) * w;
+    sum += effectiveRateForTier(policy, t.id, globalRateMult, baseTierRate) * w;
     weight += w;
   }
   return safeDiv(sum, weight);
@@ -173,9 +180,12 @@ export function rateCutSeverity(
   policy: RatePolicy,
   mix: Record<TierId, number>,
   globalRateMult: number,
+  baseTierRate: Record<TierId, number> = BASELINE_TIER_RATE,
+  baselineBlended: number = BASELINE_BLENDED_RATE,
 ): number {
-  const r = blendedRate(policy, mix, globalRateMult);
-  return clamp01(safeDiv(BASELINE_BLENDED_RATE - r, BASELINE_BLENDED_RATE));
+  const ref = Math.max(0, finite(baselineBlended)) || BASELINE_BLENDED_RATE;
+  const r = blendedRate(policy, mix, globalRateMult, baseTierRate);
+  return clamp01(safeDiv(ref - r, ref));
 }
 
 /**
@@ -211,8 +221,10 @@ export function frictionScore(
   policy: RatePolicy,
   mix: Record<TierId, number>,
   globalRateMult: number,
+  baseTierRate: Record<TierId, number> = BASELINE_TIER_RATE,
+  baselineBlended: number = BASELINE_BLENDED_RATE,
 ): number {
-  const rateCut = rateCutSeverity(policy, mix, globalRateMult);
+  const rateCut = rateCutSeverity(policy, mix, globalRateMult, baseTierRate, baselineBlended);
   const threshold = qualificationTightness(policy);
   const screen = qualityScreen(policy) > 0 ? 1 : 0;
 
@@ -296,10 +308,19 @@ export function simulate(
   const avgCommission = Math.max(0, finite(assumptions.avgBonusUsd));
   const referralQuality = clamp01(assumptions.referralQuality);
 
+  // The REAL per-tier baseline rates + blended reference (collapsed from
+  // `affiliate_level_configs` on the live page). Fall back to the static
+  // placeholders when the real config was not threaded (self-check harness).
+  const baseTierRate = assumptions.baselineTierRate ?? BASELINE_TIER_RATE;
+  const baselineBlended =
+    typeof assumptions.baselineBlendedRate === "number" && assumptions.baselineBlendedRate > 0
+      ? assumptions.baselineBlendedRate
+      : BASELINE_BLENDED_RATE;
+
   // Policy-derived scalars (computed once).
   const capture = leakageCaptureUnderPolicy(policy, assumptions.qualificationElasticity);
   const acqLoss = acquisitionLossFromTightening(policy, assumptions.acquisitionSensitivity);
-  const policyBlendedRate = blendedRate(policy, mix, globalRateMult);
+  const policyBlendedRate = blendedRate(policy, mix, globalRateMult, baseTierRate);
   const cannRate = cannibalizationAtRate(policyBlendedRate, assumptions.cannibalizationRate);
   const retentionUplift = Math.max(0, finite(assumptions.retentionUplift));
   const screen = qualityScreen(policy);
@@ -340,8 +361,13 @@ export function simulate(
     // bill as rates trim). A quality screen shaves a little more off the base
     // (junk wager removed). This is the channel that makes a lower rate cost
     // LESS while anchoring the baseline on the real total.
-    const tierRate = effectiveRateForTier(policy, tier.id, globalRateMult);
-    const baselineTierRate = effectiveRateForTier({ kind: "current" }, tier.id, globalRateMult);
+    const tierRate = effectiveRateForTier(policy, tier.id, globalRateMult, baseTierRate);
+    const baselineTierRate = effectiveRateForTier(
+      { kind: "current" },
+      tier.id,
+      globalRateMult,
+      baseTierRate,
+    );
     const rateFactor = costRetentionFromRate(tierRate, baselineTierRate);
     const screenFactor = 1 - screen * clamp01(TIER_BASE_LEAKAGE[tier.id]);
     const perClaimCommission = avgCommission * rateFactor * screenFactor;
@@ -399,7 +425,7 @@ export function simulate(
   const marginImpact = retainedRevenue - bonusCost - abuseLeakage;
   const netLoss = Math.max(0, -marginImpact);
 
-  const friction = frictionScore(policy, mix, globalRateMult);
+  const friction = frictionScore(policy, mix, globalRateMult, baseTierRate, baselineBlended);
 
   const confidenceBand = {
     low: bonusCost * (1 - CONFIDENCE_BAND_SPREAD),
