@@ -283,9 +283,11 @@ export function SectionHeading({
         <div className="shrink-0 rounded-lg border border-primary/20 bg-primary/10 p-1.5 shadow-sm ring-1 ring-inset ring-white/5">
           <Icon className="size-4 text-primary" />
         </div>
-        <h3 className="truncate text-sm font-semibold tracking-tight sm:text-base">
+        {/* Rendered as <h2> so the page ladder is h1 (PageHero) → h2
+            (SectionHeading) → intra-panel divs. Visual styling unchanged. */}
+        <h2 className="truncate text-sm font-semibold tracking-tight sm:text-base">
           {title}
-        </h3>
+        </h2>
       </div>
       {/* Hairline divider fills the gap between title and action on wide
           rows — gives the heading more structure without extra chrome.
@@ -512,9 +514,14 @@ export function StatPanel({
             >
               <Icon className={cn("size-3.5", colors.icon)} />
             </div>
-            <h3 className="truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {/* Intentionally a <div>, not a heading: a StatPanel lives
+                inside a section already opened by a SectionHeading (h2),
+                so this small uppercase label is intra-panel chrome — not
+                another level in the document outline. Visual styling
+                unchanged. */}
+            <div className="truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               {title}
-            </h3>
+            </div>
           </div>
           {action}
         </div>
