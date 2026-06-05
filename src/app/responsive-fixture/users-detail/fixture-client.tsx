@@ -1,0 +1,249 @@
+"use client";
+
+/**
+ * Client wrapper that constructs a complete, type-correct UserDetail
+ * fixture and renders the REAL <UserViewModern>. See ./page.tsx for why
+ * this dev-only fixture exists.
+ *
+ * The fixture values are chosen to exercise the hero's worst layout case:
+ *   - canChangeUserRoles: true  → renders the "Site role" control cluster
+ *     AND the "Role on the game platform — not admin-panel access." helper
+ *     <p> (the text that collapses to one-word-per-line on the owner's
+ *     screenshot).
+ *   - large 7-figure currency values → the widest KPI tiles, so any
+ *     no-wrap / shrink-0 grid overflow surfaces.
+ *   - role "creator" → also renders the "Creator page" link, maximising the
+ *     action-toolbar width in the identity column.
+ */
+
+import { UserViewModern } from "@/app/(admin)/users/[id]/user-view-modern";
+import type {
+  UserDetail,
+  PnlBreakdown,
+  PaginatedTransactions,
+  PaginatedInventory,
+  AdminNote,
+} from "@/app/(admin)/users/[id]/user-tabs-types";
+import type { UserRewards } from "@/lib/queries/users";
+import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
+import type { RiskScoreBreakdown } from "@/lib/fraud/score-types";
+
+const EMPTY_TX: PaginatedTransactions = {
+  data: [],
+  total: 0,
+  page: 1,
+  perPage: 10,
+  totalPages: 0,
+};
+
+const EMPTY_INVENTORY: PaginatedInventory = {
+  data: [],
+  total: 0,
+  page: 1,
+  perPage: 24,
+  totalPages: 0,
+};
+
+const PNL: PnlBreakdown = {
+  packRevenue: 0,
+  battleRevenue: 0,
+  upgraderRevenue: 0,
+  cardSalesPayouts: 0,
+  gamblingPnlRealized: 0,
+  unrealizedLiability: 0,
+  gamblingPnlTrue: 0,
+  bonusesCost: 0,
+  rakebackCost: 0,
+  affiliateCost: 0,
+  otherCosts: 0,
+  otherCostsDetail: {
+    rainWin: 0,
+    racePrize: 0,
+    balanceRewardClaim: 0,
+    creatorTip: 0,
+    voucherRedeemed: 0,
+    voucherExchange: 0,
+    exchangeExcessCredit: 0,
+    exchangeExcessToVoucher: 0,
+    battleExcessToVoucher: 0,
+    affiliateLeaderboard: 0,
+  },
+  netPnlRealized: 0,
+  netPnlTrue: 0,
+  pnl12h: 0,
+  pnl24h: 0,
+  pnl3d: 0,
+  pnl7d: 0,
+  pnl14d: 0,
+};
+
+const REWARDS: UserRewards = {
+  openOneTimeCount: 0,
+  rakebackClaimableUsd: 0,
+  rakebackClaimedUsd: 0,
+};
+
+const RISK: RiskScoreBreakdown = {
+  score: 27,
+  tier: "low",
+  signals: [],
+  topReasons: [],
+  suggestions: [],
+  timeline: [],
+  sharedIpCount: 0,
+  sharedFingerprintCount: 0,
+  sharedBannedCount: 0,
+  sharedLockedCount: 0,
+  computedAt: Date.now(),
+  computeDurationMs: 0,
+};
+
+const NOTES: AdminNote[] = [];
+
+const NOW_ISO = new Date().toISOString();
+
+const DATA: UserDetail = {
+  user: {
+    id: "fixture00000000000000000000000000",
+    username: "fixture_creator",
+    displayUsername: "Fixture Creator",
+    name: "Fixture Creator",
+    email: "fixture.creator@example.com",
+    emailVerified: true,
+    role: "creator",
+    image: null,
+    twoFactorEnabled: true,
+    isBanned: false,
+    bannedReason: null,
+    bannedAt: null,
+    bannedBy: null,
+    isLocked: false,
+    lockedReason: null,
+    lockedAt: null,
+    lockedBy: null,
+    lockedUntil: null,
+    country: "Germany",
+    countryCode: "DE",
+    city: "Berlin",
+    state: null,
+    continentCode: "EU",
+    signupIp: null,
+    referredBy: null,
+    referredByUsername: null,
+    referredByCode: null,
+    affiliateCode: "FIXTURE10",
+    ownedCodes: [{ code: "FIXTURE10", createdAt: NOW_ISO, isPrimary: true }],
+    affiliateCodeActive: true,
+    affiliateCodeExpiresAt: null,
+    affiliateBonusOptedIn: true,
+    hasApiKey: false,
+    createdAt: NOW_ISO,
+    updatedAt: NOW_ISO,
+    providers: ["discord"],
+    signupProvider: "discord",
+    discord: { id: "123456789012345678", linkedAt: NOW_ISO },
+  },
+  // Large 7-figure values → the widest possible KPI tiles, so the hero's
+  // KPI grid is under maximum horizontal pressure at narrow widths.
+  balances: {
+    availableBalance: 1_234_567.89,
+    lockedBalance: 0,
+    totalDeposited: 2_345_678.9,
+    totalWithdrawn: 1_111_111.11,
+    totalWagered: 9_876_543.21,
+    totalWon: 8_765_432.1,
+    bonusPoints: 0,
+    unlockAt: null,
+    inventoryValue: 456_789.12,
+    vouchersValue: 0,
+    packsWagered: 5_000_000,
+    battlesWagered: 4_876_543.21,
+  },
+  statistics: {
+    openedPacks: 12_345,
+    battlesPlayed: 6_789,
+    xp: 999_999,
+    level: 87,
+    weeklyWagerCount: 321,
+    lastWageredAt: NOW_ISO,
+    currentDayWageredUsd: 12_345,
+    currentWeekWageredUsd: 123_456,
+    currentMonthWageredUsd: 1_234_567,
+    isProfilePrivate: false,
+  },
+  featureLocks: {
+    lockedWithdrawalsCrypto: false,
+    lockedWithdrawalsItems: false,
+    lockedInventorySales: false,
+    lockedExchanges: false,
+    lockedOpenings: false,
+    lockedVault: false,
+  },
+  battleLimits: null,
+  inventoryCount: 42,
+  affiliate: {
+    code: "FIXTURE10",
+    totalReferred: 123,
+    totalWagerVolumeUsd: 5_000_000,
+    totalEarnedUsd: 50_000,
+    availableUsd: 1_234,
+    totalPaidOutUsd: 48_766,
+    totalBonusDistributedUsd: 0,
+    lastPayoutAt: NOW_ISO,
+  },
+  shippingAddress: null,
+  vault: null,
+  mutes: [],
+  cardWithdrawals: [],
+  activeSeed: null,
+  depositAddresses: [],
+  counts: { deposits: 256, withdrawals: 64, avgDeposit: 9_162.03 },
+  tips: {
+    received: { count: 0, totalUsd: 0, recent: [] },
+    sent: { count: 0, totalUsd: 0, recent: [] },
+    rainPrizes: { count: 0, totalUsd: 0, recent: [] },
+    leaderboardWins: { count: 0, totalUsd: 0, recent: [] },
+  },
+  sessionRole: "admin",
+  wasCreator: false,
+  creatorSince: NOW_ISO,
+  // canChangeUserRoles: true is the key flag — it renders the Site-role
+  // control cluster AND the "Role on the game platform…" helper <p>.
+  capabilities: {
+    canAdjustBalance: true,
+    canAdjustXp: true,
+    canEditIdentity: true,
+    canBanUsers: true,
+    canLockUsers: true,
+    canToggleFeatureLocks: true,
+    canAssignAffiliate: true,
+    canChangeUserRoles: true,
+    canRecordManualWithdrawal: true,
+  },
+};
+
+export function UserDetailFixtureClient() {
+  // The tab-gated reads are passed as already-resolved promises — the hero
+  // + Overview tab (what the audit measures) never await them, but the
+  // component signature requires them.
+  const disposed = Promise.resolve(EMPTY_INVENTORY);
+  const sharedIps = Promise.resolve<SharedIdentityUser[]>([]);
+  const sharedFps = Promise.resolve<SharedIdentityUser[]>([]);
+
+  return (
+    <UserViewModern
+      data={DATA}
+      gamingTx={EMPTY_TX}
+      financialTx={EMPTY_TX}
+      rewards={REWARDS}
+      notes={NOTES}
+      pnlBreakdown={PNL}
+      inventory={EMPTY_INVENTORY}
+      disposedInventoryPromise={disposed}
+      riskBreakdown={RISK}
+      sharedIpsPromise={sharedIps}
+      sharedFingerprintsPromise={sharedFps}
+      initialTab="overview"
+    />
+  );
+}

@@ -56,3 +56,6 @@ bun.lock
 /playwright/.cache/
 /src/generated
 /.claude
+
+# Responsive audit harness artifacts (annotated screenshots + JSON reports)
+/audit-artifacts/

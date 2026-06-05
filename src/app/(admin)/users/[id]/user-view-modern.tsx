@@ -240,9 +240,19 @@ export function UserViewModern({
         />
 
         <div className="relative p-3 sm:p-5 md:p-6">
-          <div className="flex flex-col gap-4 sm:gap-6 lg:flex-row lg:items-center lg:justify-between">
+          {/* Identity stacked ABOVE the KPI strip at every width. The hero
+              used to switch to `lg:flex-row` and sit the identity beside an
+              8-tile KPI grid that carried `shrink-0` — at lg+ the grid then
+              refused to shrink, blew out to ~1533px, overflowed the hero,
+              and crushed the identity column (and its "Role on the game
+              platform…" helper text) to ~0 width (one char per line). The
+              app's other heroes already stack a full-width KPI strip under
+              the identity (see modern-panels PageHeroIdentity + KpiTile);
+              matching that here removes the side-by-side fight for width
+              entirely, so nothing can crush anything at any breakpoint. */}
+          <div className="flex flex-col gap-4 sm:gap-6">
             {/* Identity */}
-            <div className="flex items-start gap-3 sm:gap-4 min-w-0">
+            <div className="flex w-full min-w-0 items-start gap-3 sm:gap-4">
               <div className="relative shrink-0">
                 <Avatar className="size-12 sm:size-14 ring-2 ring-background shadow-lg">
                   {user.image && <AvatarImage src={user.image} alt="" />}
@@ -325,7 +335,7 @@ export function UserViewModern({
                   />
                 </div>
                 {canChangeUserRoles && (
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="min-w-0 text-[11px] text-muted-foreground">
                     Role on the game platform — not admin-panel access.
                   </p>
                 )}
@@ -439,17 +449,20 @@ export function UserViewModern({
               </div>
             </div>
 
-            {/* KPI strip — sits to the right of the identity on wide screens,
-                wraps below on narrow. Tighter tiles than before so the hero
-                stays compact. Wagering metrics (Wager Loss + total
-                Wagered/Won) live on the Account tab instead of cluttering
-                the hero. Phone: 2 cols (3 cols was too tight at 375px),
-                tablet: 4 cols, md: 6 cols (smooths the 4→8 jump on
-                laptops so the last tile wraps cleanly instead of the row
-                snapping width), desktop: 8 cols. The Total Depo + Total
-                Withdrawn tiles sit directly next to P&L so the operator can
-                read "$X deposited − $Y withdrawn → $Z P&L" left-to-right. */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 shrink-0">
+            {/* KPI strip — full-width row UNDER the identity at every width.
+                Mobile-first column ladder so the tiles always fit the
+                viewport and never force horizontal scroll: 2 cols on phones
+                (3 was too tight at 375px), 3 at sm, 4 at md, all 8 across
+                one row at lg+ where the full hero width comfortably holds
+                them. NO `shrink-0`: the grid sizes to its container instead
+                of demanding its min-content width and overflowing (the bug
+                that crushed the identity column). `w-full min-w-0` lets it
+                fill the hero and still shrink below its content width. The
+                Total Depo + Total Withdrawn tiles sit directly next to P&L
+                so the operator can read "$X deposited − $Y withdrawn → $Z
+                P&L" left-to-right. Wagering metrics (Wager Loss + total
+                Wagered/Won) live on the Account tab. */}
+            <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8">
               <KpiTile
                 label="Total Value"
                 value={formatCurrency(totalValue)}
