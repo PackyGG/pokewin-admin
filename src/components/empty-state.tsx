@@ -17,6 +17,29 @@ import { TILE_COLORS, type AccentColor } from "@/components/modern-panels";
  * case); pass a TILE_COLORS token when the empty state benefits from a
  * subtle accent (e.g. an emerald "all caught up" state). Money/House-POV
  * semantics are the caller's responsibility — this is purely chrome.
+ *
+ * Canonical usage patterns (use these, don't roll your own "No rows" block):
+ *
+ *   1. Inside a desktop `<Table>` body — render under a single cell that
+ *      spans every column so the empty row spans the full width:
+ *        <TableRow className="hover:bg-transparent">
+ *          <TableCell colSpan={columns.length} className="p-0">
+ *            <EmptyState icon={Receipt} title="No transactions found"
+ *                        description="…" compact />
+ *          </TableCell>
+ *        </TableRow>
+ *
+ *   2. Inside the mobile card list — wrap in a bordered container so the
+ *      empty state visually matches the surrounding cards:
+ *        <div className="rounded-md border">
+ *          <EmptyState icon={Receipt} title="…" compact />
+ *        </div>
+ *
+ *   3. Page / section level (e.g. "no caps set yet") — drop the `compact`
+ *      flag for generous vertical breathing room.
+ *
+ * Pairs with FilterToolbar (`@/components/filter-toolbar`) — together
+ * they make the list-page chrome consistent across the admin.
  */
 export function EmptyState({
   icon: Icon,

@@ -46,6 +46,10 @@ import { ROLE_COLORS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { formatRelative } from "@/lib/utils/format";
 import { EmptyState } from "@/components/empty-state";
+import {
+  FilterToolbarShell,
+  FilterToolbarSearch,
+} from "@/components/filter-toolbar";
 import { Spinner, transition } from "@/components/ux";
 import { setAdminLimit, deleteAdminLimit } from "../limits-actions";
 import type { limit_period_type } from "@/generated/admin-prisma/client";
@@ -98,18 +102,20 @@ export function BalanceLimitsOverview({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter by username, email, or role…"
-            className="pl-9"
-          />
-        </div>
-        <AddLimitDialog allAdmins={allAdmins} />
-      </div>
+      {/* Shared filter-toolbar chrome — `FilterToolbarShell` matches the
+          flex / wrap / gap layout of the URL-driven `FilterToolbar` used
+          across /transactions, /vouchers, /gift-cards, /promo-codes, so
+          this client-side filtered page looks identical to its
+          server-side filtered siblings. `FilterToolbarSearch` is the
+          standard "magnifier + input" combo; the local `query` state
+          owns the term (no URL params — small in-memory list). */}
+      <FilterToolbarShell actions={<AddLimitDialog allAdmins={allAdmins} />}>
+        <FilterToolbarSearch
+          value={query}
+          onChange={setQuery}
+          placeholder="Filter by username, email, or role…"
+        />
+      </FilterToolbarShell>
 
       {filtered.length === 0 ? (
         <div className="rounded-2xl border">
