@@ -13,6 +13,7 @@ import {
   CircleDollarSign,
   RotateCcw,
   Shuffle,
+  FlaskConical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LinkPendingShell } from "@/components/ux";
@@ -37,6 +38,7 @@ const TABS = [
   { value: "lifetime-roi", label: "Lifetime ROI", Icon: CircleDollarSign },
   { value: "cadence", label: "Claim cadence", Icon: RotateCcw },
   { value: "code-switch", label: "Code-switch", Icon: Shuffle },
+  { value: "forecast", label: "Forecast", Icon: FlaskConical },
 ] as const;
 
 export type AffiliateInsightsTab = (typeof TABS)[number]["value"];

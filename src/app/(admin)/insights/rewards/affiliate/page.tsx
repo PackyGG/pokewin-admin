@@ -26,6 +26,7 @@ import { AffiliateLifetimeRoiTab } from "./_components/lifetime-roi-tab";
 import { AffiliateCadenceTab } from "./_components/cadence-tab";
 import { AffiliateCodeSwitchTab } from "./_components/code-switch-tab";
 import { AffiliateTierDistributionTab } from "./_components/tier-distribution-tab";
+import { AffiliateForecastTab } from "./_components/forecast-tab";
 
 export const metadata = { title: "Affiliate Insights" };
 
@@ -39,7 +40,8 @@ type Tab =
   | "geo"
   | "lifetime-roi"
   | "cadence"
-  | "code-switch";
+  | "code-switch"
+  | "forecast";
 
 function parseTab(value: string | undefined): Tab {
   switch (value) {
@@ -52,6 +54,7 @@ function parseTab(value: string | undefined): Tab {
     case "lifetime-roi":
     case "cadence":
     case "code-switch":
+    case "forecast":
       return value;
     default:
       return "overview";
@@ -161,5 +164,7 @@ async function TabContent({
       return <AffiliateCadenceTab period={period} />;
     case "code-switch":
       return <AffiliateCodeSwitchTab period={period} />;
+    case "forecast":
+      return <AffiliateForecastTab period={period} />;
   }
 }
