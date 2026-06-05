@@ -24,8 +24,30 @@ export default function UserDetailLoading() {
         </div>
       </div>
 
-      {/* Modern user view: identity hero with avatar + status pills + KPIs. */}
-      <Skeleton className="h-32 rounded-2xl" />
+      {/* Modern user view: identity hero — gradient container with avatar
+          (+ status dot), name line, and a row of status / role pills.
+          Shaped to match the real UserViewModern header so the swap-in
+          doesn't jump from a flat block to a populated hero. */}
+      <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60 p-4 sm:p-5">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-blue-500/[0.06] blur-2xl"
+        />
+        <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <Skeleton className="size-12 shrink-0 rounded-full sm:size-14" />
+            <div className="min-w-0 space-y-2">
+              <Skeleton className="h-5 w-40 rounded sm:h-6 sm:w-56" />
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Skeleton className="h-5 w-16 rounded-md" />
+                <Skeleton className="h-5 w-20 rounded-md" />
+                <Skeleton className="h-5 w-14 rounded-md" />
+              </div>
+            </div>
+          </div>
+          <Skeleton className="h-9 w-full max-w-[160px] rounded-md sm:w-32" />
+        </div>
+      </div>
 
       <KpiStripSkeleton count={8} />
 
