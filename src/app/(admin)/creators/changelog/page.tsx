@@ -110,7 +110,7 @@ async function ChangelogContent({ period }: { period: DashboardPeriod }) {
           (matches the feed's exclusion badge + the per-fill house-cost
           amounts already rendered in rose). Same responsive grid as the main
           strip, widened to 6 columns for the added removal tile. */}
-      <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 2xl:grid-cols-6">
         <CreatorsKpiPanel title="Events" icon={History} tint="blue">
           <CreatorsPlainHero value={events.length} format="number" />
           <CreatorsPanelSub>Creator-marketing actions</CreatorsPanelSub>

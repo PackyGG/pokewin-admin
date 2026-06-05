@@ -12,6 +12,7 @@ import {
   Trophy,
   Target,
   TrendingUp,
+  FlaskConical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LinkPendingShell } from "@/components/ux";
@@ -45,6 +46,7 @@ const TABS = [
   { value: "top", label: "Top winners", Icon: Trophy },
   { value: "budget", label: "Budget", Icon: Target },
   { value: "roi", label: "ROI", Icon: TrendingUp },
+  { value: "forecast", label: "Forecast", Icon: FlaskConical },
 ] as const;
 
 export type RaceInsightsTab = (typeof TABS)[number]["value"];

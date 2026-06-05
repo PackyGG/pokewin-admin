@@ -25,6 +25,7 @@ import { RaceCohortTab } from "./_components/cohort-tab";
 import { RaceTopWinnersTab } from "./_components/top-winners-tab";
 import { RaceBudgetTab } from "./_components/budget-tab";
 import { RaceRoiTab } from "./_components/roi-tab";
+import { ForecastTab } from "./_components/forecast-tab";
 
 export const metadata = { title: "Race Insights" };
 
@@ -37,7 +38,8 @@ type Tab =
   | "cohort"
   | "top"
   | "budget"
-  | "roi";
+  | "roi"
+  | "forecast";
 
 function parseTab(value: string | undefined): Tab {
   switch (value) {
@@ -49,6 +51,7 @@ function parseTab(value: string | undefined): Tab {
     case "top":
     case "budget":
     case "roi":
+    case "forecast":
       return value;
     default:
       return "overview";
@@ -156,5 +159,7 @@ async function TabContent({
       return <RaceBudgetTab period={period} />;
     case "roi":
       return <RaceRoiTab period={period} />;
+    case "forecast":
+      return <ForecastTab period={period} />;
   }
 }

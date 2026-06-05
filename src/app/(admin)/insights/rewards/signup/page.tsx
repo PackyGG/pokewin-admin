@@ -28,6 +28,7 @@ import { CohortMatrixTab } from "./_components/cohort-tab";
 import { DropOffTab } from "./_components/drop-off-tab";
 import { TopRecipientsTab } from "./_components/top-recipients-tab";
 import { GeoTrendTab } from "./_components/geo-trend-tab";
+import { ForecastTab } from "./_components/forecast-tab";
 
 export const metadata = { title: "Signup Reward Insights" };
 
@@ -43,7 +44,8 @@ type Tab =
   | "cohort"
   | "drop-off"
   | "top"
-  | "geo-trend";
+  | "geo-trend"
+  | "forecast";
 
 function parseTab(value: string | undefined): Tab {
   switch (value) {
@@ -58,6 +60,7 @@ function parseTab(value: string | undefined): Tab {
     case "drop-off":
     case "top":
     case "geo-trend":
+    case "forecast":
       return value;
     default:
       return "overview";
@@ -187,5 +190,7 @@ async function TabContent({
       return <TopRecipientsTab period={period} />;
     case "geo-trend":
       return <GeoTrendTab period={period} />;
+    case "forecast":
+      return <ForecastTab period={period} />;
   }
 }

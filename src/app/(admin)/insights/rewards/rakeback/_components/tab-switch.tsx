@@ -13,6 +13,7 @@ import {
   Trophy,
   CalendarRange,
   Globe2,
+  FlaskConical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LinkPendingShell } from "@/components/ux";
@@ -47,6 +48,7 @@ const TABS = [
   { value: "top", label: "Top claimers", Icon: Trophy },
   { value: "daily", label: "Daily", Icon: CalendarRange },
   { value: "geo", label: "Geo / Source", Icon: Globe2 },
+  { value: "forecast", label: "Forecast", Icon: FlaskConical },
 ] as const;
 
 export type RakebackTab = (typeof TABS)[number]["value"];

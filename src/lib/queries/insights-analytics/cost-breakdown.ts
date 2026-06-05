@@ -681,9 +681,9 @@ export async function getCostBreakdown(
   contributorLimit = 10,
 ): Promise<CostBreakdown> {
   const cutoff = periodToCutoff(period, new Date());
-  // Canonical window: lifetime → no lower bound; otherwise the cutoff.
+  // Canonical window: all-time → no lower bound; otherwise the cutoff.
   const window: MetricWindow = {
-    since: period === "lifetime" ? null : cutoff,
+    since: period === "all" ? null : cutoff,
   };
 
   const [excluded, creatorIds] = await Promise.all([

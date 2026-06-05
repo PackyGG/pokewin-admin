@@ -11,7 +11,10 @@ const LABEL_SHORT: Record<InsightsPeriod, string> = {
   "7d": "7d",
   "30d": "30d",
   "90d": "90d",
-  lifetime: "Lifetime",
+  // Display label kept as "Lifetime" — same human-readable string that
+  // shipped originally; only the underlying URL token (`?period=all`)
+  // was unified with the dashboard's canonical set.
+  all: "Lifetime",
 };
 
 /**

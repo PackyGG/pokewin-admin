@@ -387,11 +387,11 @@ function LimitMobileCard({ row }: { row: Row }) {
 
       <div className="mt-3 flex items-center justify-between gap-2">
         {editing ? (
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-0 flex-1 items-center gap-1">
             <span className="text-sm text-muted-foreground">$</span>
             <Input
               type="number"
-              className="h-9 w-28 text-sm"
+              className="h-9 min-w-0 flex-1 text-sm"
               value={value}
               onChange={(e) => setValue(e.target.value)}
               min={0}
@@ -411,7 +411,7 @@ function LimitMobileCard({ row }: { row: Row }) {
             ${row.maxAmount.toLocaleString()}
           </span>
         )}
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           {editing ? (
             <>
               <Button

@@ -15,6 +15,7 @@ import {
   UserMinus,
   Trophy,
   LineChart,
+  FlaskConical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LinkPendingShell } from "@/components/ux";
@@ -54,6 +55,7 @@ const TABS = [
   { value: "drop-off", label: "Drop-off", Icon: UserMinus },
   { value: "top", label: "Top recipients", Icon: Trophy },
   { value: "geo-trend", label: "Geo trend", Icon: LineChart },
+  { value: "forecast", label: "Forecast", Icon: FlaskConical },
 ] as const;
 
 export type SignupInsightsTab = (typeof TABS)[number]["value"];

@@ -2,8 +2,14 @@
  * Shared types for /insights/analytics — the deep-dive variant of the
  * legacy /analytics page. Period chip set is wider here (adds 24h / 3d
  * up front, drops "today") so admins can zoom right in to a rolling
- * window. "lifetime" is the all-time bucket — kept distinct from
- * /analytics' "all" so the URL is self-documenting.
+ * window. The all-time bucket is the canonical `"all"` token (matches
+ * the dashboard's `DASHBOARD_PERIODS` set in
+ * `src/lib/queries/dashboard-period.ts`). The legacy `"lifetime"` value
+ * that this surface used to write into the URL is still accepted as an
+ * alias on read so existing bookmarks/screenshots keep working — see
+ * {@link parseInsightsPeriod}. The UI label can still surface "Lifetime"
+ * as a display string (it reads better next to "Last N days"); only the
+ * URL token + the internal value are unified on `"all"`.
  */
 
 export const INSIGHTS_PERIODS = [
@@ -12,7 +18,7 @@ export const INSIGHTS_PERIODS = [
   "7d",
   "30d",
   "90d",
-  "lifetime",
+  "all",
 ] as const;
 
 export type InsightsPeriod = (typeof INSIGHTS_PERIODS)[number];
@@ -25,20 +31,38 @@ export const INSIGHTS_PERIOD_LABELS: Record<InsightsPeriod, string> = {
   "7d": "Last 7 days",
   "30d": "Last 30 days",
   "90d": "Last 90 days",
-  lifetime: "Lifetime",
+  // Display string kept as "Lifetime" — admins read this next to "Last
+  // N days" and "All time" would be a worse label here. The TOKEN is
+  // `"all"`; only the human-readable label says "Lifetime".
+  all: "Lifetime",
 };
 
+/**
+ * Parse the URL `?period=` value to an {@link InsightsPeriod}. Accepts
+ * the legacy `"lifetime"` token as an alias for `"all"` so bookmarks /
+ * screenshots written before the canonical-token unification still land
+ * on the same all-time bucket — old links never break. Any unknown value
+ * falls back to {@link DEFAULT_INSIGHTS_PERIOD}.
+ */
 export function parseInsightsPeriod(value: string | undefined): InsightsPeriod {
   if (!value) return DEFAULT_INSIGHTS_PERIOD;
-  return (INSIGHTS_PERIODS as readonly string[]).includes(value)
-    ? (value as InsightsPeriod)
+  // Legacy alias: pre-unification this surface wrote "lifetime" into the
+  // URL. Normalise to the canonical `"all"` before the membership check
+  // so the downstream switches (which only know the canonical set) see
+  // the standard token. Do NOT touch
+  // `src/lib/queries/dashboard-period.ts` parsing — that surface always
+  // used "all" and has no legacy aliases to honour.
+  const normalized = value === "lifetime" ? "all" : value;
+  return (INSIGHTS_PERIODS as readonly string[]).includes(normalized)
+    ? (normalized as InsightsPeriod)
     : DEFAULT_INSIGHTS_PERIOD;
 }
 
 /**
- * Period → days (used by helpers that count back N days). `lifetime`
- * returns null so callers can branch on it; alternatively callers can
- * pass `new Date(0)` as the cutoff via {@link periodToCutoff}.
+ * Period → days (used by helpers that count back N days). The all-time
+ * bucket (`"all"`) returns null so callers can branch on it;
+ * alternatively callers can pass `new Date(0)` as the cutoff via
+ * {@link periodToCutoff}.
  */
 export function periodToDays(period: InsightsPeriod): number | null {
   switch (period) {
@@ -52,7 +76,7 @@ export function periodToDays(period: InsightsPeriod): number | null {
       return 30;
     case "90d":
       return 90;
-    case "lifetime":
+    case "all":
       return null;
   }
 }

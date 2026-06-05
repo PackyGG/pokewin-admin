@@ -28,6 +28,7 @@ import { RoiTab } from "./_components/roi-tab";
 import { TopClaimersTab } from "./_components/top-claimers-tab";
 import { DailyTab } from "./_components/daily-tab";
 import { GeoTab } from "./_components/geo-tab";
+import { ForecastTab } from "./_components/forecast-tab";
 
 export const metadata = { title: "Rakeback Insights" };
 
@@ -41,7 +42,8 @@ type Tab =
   | "roi"
   | "top"
   | "daily"
-  | "geo";
+  | "geo"
+  | "forecast";
 
 function parseTab(value: string | undefined): Tab {
   switch (value) {
@@ -54,6 +56,7 @@ function parseTab(value: string | undefined): Tab {
     case "top":
     case "daily":
     case "geo":
+    case "forecast":
       return value;
     default:
       return "overview";
@@ -173,5 +176,7 @@ async function TabContent({
       return <DailyTab period={period} />;
     case "geo":
       return <GeoTab period={period} />;
+    case "forecast":
+      return <ForecastTab period={period} />;
   }
 }

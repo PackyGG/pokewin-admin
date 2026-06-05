@@ -177,7 +177,7 @@ const OVERVIEW_LIFETIME_LOOKBACK_DAYS = 365;
  * SAME canonical reads.
  */
 function metricSinceForPeriod(period: InsightsPeriod, now: Date): Date {
-  if (period !== "lifetime") return periodToCutoff(period, now);
+  if (period !== "all") return periodToCutoff(period, now);
   return new Date(now.getTime() - OVERVIEW_LIFETIME_LOOKBACK_DAYS * MS_PER_DAY);
 }
 
@@ -410,8 +410,8 @@ export async function getInsightsOverview(
 
 function sparkSinceForPeriod(period: InsightsPeriod, now: Date): Date {
   // Sparkline horizon matches the selected period for the windowed
-  // views, but lifetime caps at 180 days so the query stays bounded.
-  // 90d is the longest non-lifetime window we cap at 180d.
+  // views, but all-time caps at 180 days so the query stays bounded.
+  // 90d is the longest non-all-time window we cap at 180d.
   const dayMs = 24 * 60 * 60 * 1000;
   const days = (() => {
     switch (period) {
@@ -425,7 +425,7 @@ function sparkSinceForPeriod(period: InsightsPeriod, now: Date): Date {
         return 60;
       case "90d":
         return 120;
-      case "lifetime":
+      case "all":
         return 180;
     }
   })();

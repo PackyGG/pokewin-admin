@@ -394,9 +394,9 @@ export async function getMoneyFlowDecomposition(
 ): Promise<MoneyFlowDecomposition> {
   const now = new Date();
   const cutoff = periodToCutoff(period, now);
-  // Canonical window: lifetime → no lower bound; otherwise the cutoff.
+  // Canonical window: all-time → no lower bound; otherwise the cutoff.
   const window: MetricWindow = {
-    since: period === "lifetime" ? null : cutoff,
+    since: period === "all" ? null : cutoff,
   };
 
   const [excluded, creatorIds] = await Promise.all([

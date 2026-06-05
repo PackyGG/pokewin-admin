@@ -15,7 +15,9 @@ const LABEL_SHORT: Record<InsightsPeriod, string> = {
   "7d": "7d",
   "30d": "30d",
   "90d": "90d",
-  lifetime: "Lifetime",
+  // Display label stays "Lifetime" (cousin to /insights/analytics) — the
+  // underlying URL token is the canonical "all".
+  all: "Lifetime",
 };
 
 /**
