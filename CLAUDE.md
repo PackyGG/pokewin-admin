@@ -4,13 +4,21 @@ Dieses File definiert verbindliche Arbeitsregeln für jede Claude Code Session i
 
 ---
 
-## 🚫 ABSOLUTE SICHERHEITSREGEL — NIEMALS die Production-DB anfassen (höchste Priorität, 2026-06-05)
+## 🚫 ABSOLUTE SICHERHEITSREGEL — Prod-DB-Policy (höchste Priorität, 2026-06-05, präzisiert)
 
-**Production-Datenbanken werden NUR gelesen — niemals geschrieben, geändert oder migriert.** Keine Writes, kein `prisma migrate`, kein `prisma db push`, kein DDL/DML, keine "auto changes" gegen IRGENDEINE Prod-DB (MAIN **und** ADMIN — beide sind Production). Nicht "nur additiv", nicht "mit Approval", nicht "schnell".
+**Die zwei DBs werden unterschiedlich behandelt — diese Regel überschreibt alle früheren DB-Regeln.**
 
-- Prod-DBs **lesen** (SELECT-Queries, Schema-Inspektion) ist erlaubt — sonst NICHTS.
-- Braucht ein Feature eine DB-Schema-Änderung: Code + Migrations-File schreiben, dann **wendet der User es selbst an**. Du fasst die Prod-DB nie an.
-- Diese Regel überschreibt ALLE früheren DB-Regeln (auch "MAIN nur mit Approval" und den Admin-Migrations-Workflow). Im Zweifel: nicht anfassen.
+### 🟢 ADMIN DB — voller Zugriff erlaubt
+- **Schreiben, migrieren, `prisma migrate dev/deploy`, `prisma db push`, DDL/DML, `npm run admin:migrate`** — alles erlaubt, der Agent führt es selbst aus.
+- Schema-Änderungen an `prisma/admin/schema.prisma` + zugehörige Migration werden vom Agent **direkt angewendet** (nicht nur "Migration-File schreiben und User macht es"). Der User will das nicht mehr selbst tun.
+- Standard-Vorsicht bleibt: keine destruktiven Operationen ohne klaren Grund, Audit-Events für admin-seitige Mutationen, kein Verlust historischer Daten.
+
+### 🔴 MAIN / PROD GAME DB — strikt read-only + KEINE Features bauen, die sie ändern
+- **Lesen** (SELECT, Schema-Inspektion) ist erlaubt — **sonst NICHTS**.
+- Keine Writes, keine Migrations, kein `prisma migrate`, kein `prisma db push`, kein DDL/DML, kein `db.$executeRaw` mit DDL, keine "auto changes". Nicht "nur additiv", nicht "mit Approval", nicht "schnell".
+- **Zusätzlich: KEINE Features vorschlagen oder bauen, die eine Schema-Änderung an MAIN bräuchten** — der User wendet sie nicht an. Solche Aufgaben gelten als blockiert; alternative Lösung suchen (z. B. in Admin-DB modellieren) oder dem User sagen, dass es nicht baubar ist, ohne die MAIN-DB zu ändern.
+
+**Im Zweifel:** ADMIN DB anfassen ist OK, MAIN DB anfassen oder verändern ist verboten.
 
 ---
 
