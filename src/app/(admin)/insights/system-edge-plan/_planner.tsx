@@ -7,6 +7,7 @@ import {
   CartesianGrid,
   Cell,
   LabelList,
+  ReferenceLine,
   XAxis,
   YAxis,
 } from "recharts";
@@ -19,6 +20,7 @@ import {
   Percent,
   RotateCcw,
   Share2,
+  ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
   Swords,
@@ -56,14 +58,17 @@ import {
 
 import {
   clamp,
+  computeNetEdgeScenarios,
   defaultLevers,
-  effectiveBaselineEdge,
+  defaultPlannedEdge,
   effectiveTypeEdge,
   gameTypeLabel,
   projectEdgePlan,
   sanitizeLevers,
+  PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
   REMOVE_WAGER_REQ_COST_UPLIFT,
   type GameTypeId,
+  type NetEdgeScenario,
   type PlannedLevers,
   type RakebackCadenceId,
   type SystemEdgeBaseline,
@@ -73,10 +78,34 @@ import { PlannerPresets, usePlannerPresets } from "./_presets";
 
 const ROSE = "#f43f5e";
 const EMERALD = "#10b981";
+// Amber for a thin / near-zero net edge (house-POV "danger zone" — still
+// positive but with little cushion against further reward erosion).
+const AMBER = "#f59e0b";
 // Neutral slate for "no change" planned bars — matches the muted
 // "current" baseline tone (#64748b) used in the chart config so an
 // equal planned-vs-current bar reads as neutral, not as a win/loss.
 const NEUTRAL = "#64748b";
+
+/**
+ * Threshold (0..1 fraction) below which a net edge is "thin" — comfortably
+ * positive above it (emerald), thin/at-risk between 0 and it (amber), negative
+ * below 0 (rose). 2 percentage points of net edge is a reasonable cushion line.
+ */
+const THIN_NET_EDGE = 0.02;
+
+/** House-POV tone for a net-edge value (emerald / amber / rose), as a hex. */
+function netEdgeColor(netEdge: number): string {
+  if (netEdge < 0) return ROSE;
+  if (netEdge < THIN_NET_EDGE) return AMBER;
+  return EMERALD;
+}
+
+/** House-POV tone for a net-edge value, as a Tailwind text-class. */
+function netEdgeTextClass(netEdge: number): string {
+  if (netEdge < 0) return "text-rose-600 dark:text-rose-400";
+  if (netEdge < THIN_NET_EDGE) return "text-amber-600 dark:text-amber-400";
+  return "text-emerald-600 dark:text-emerald-400";
+}
 
 /**
  * Per-game-type icon + accent. `iconClass` is a STATIC Tailwind class (not an
@@ -126,7 +155,13 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
     [baseline, levers],
   );
 
-  const baselineEdge = effectiveBaselineEdge(baseline);
+  // Net-edge-by-scenario rows — recomputed live from the current levers (planned
+  // edge, affiliate rates, rakeback rates, deposit-bonus levers). Pure model.
+  const netEdgeScenarios = React.useMemo(
+    () => computeNetEdgeScenarios(baseline, levers),
+    [baseline, levers],
+  );
+
   const defaults = React.useMemo(() => defaultLevers(baseline), [baseline]);
   const dirty = React.useMemo(
     () => !leversEqual(levers, defaults),
@@ -156,6 +191,14 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
       ...s,
       edges: { ...s.edges, [type]: clamp(pct / 100, 0, 1) },
     }));
+  // Packs & battles share ONE house edge — one slider drives BOTH so the
+  // combined lever stays internally consistent (the model sums per-type
+  // edge × wager, so setting both to the same value gives the combined GGR).
+  const setPacksBattlesEdge = (pct: number) =>
+    setLevers((s) => {
+      const v = clamp(pct / 100, 0, 1);
+      return { ...s, edges: { ...s.edges, packs: v, battles: v } };
+    });
   const setRakebackRate = (cadence: RakebackCadenceId, pct: number) =>
     setLevers((s) => ({
       ...s,
@@ -300,7 +343,7 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                     className="ml-auto gap-1.5"
                   >
                     <RotateCcw className="size-3.5" />
-                    Reset to current
+                    Reset to defaults
                   </Button>
                 )}
               </div>
@@ -367,67 +410,39 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
       <div className="grid gap-6 lg:grid-cols-[1.05fr_1fr]">
         {/* Levers column */}
         <div className="space-y-5">
-          {/* ── HOUSE EDGE — per game type ── */}
-          <StatPanel title="House edge — per game type" icon={Gauge} accent="emerald">
+          {/* ── HOUSE EDGE — combined Packs & Battles + separate Upgrader ── */}
+          <StatPanel title="House edge" icon={Gauge} accent="emerald">
             <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-              Separate edge controls for each game type. Blended real edge ={" "}
+              Packs &amp; battles share one house edge (combined lever); upgrader is
+              its own. The sliders open on the owner-chosen planning defaults —{" "}
               <span className="font-medium text-foreground">
-                {formatPct(baselineEdge)}
-              </span>
-              {baseline.houseEdge == null && baseline.bets > 0 && (
-                <> · derived from GGR/wager (below the {30}-bet confidence gate)</>
-              )}
-              . Edge is set by RNG odds / pool composition in the backend, not a
-              runtime knob — this models the catalog-level GGR effect of a target
-              shift, per type, at the observed wager.
+                {formatPct(PLANNED_PACKS_BATTLES_EDGE_DEFAULT)}
+              </span>{" "}
+              packs &amp; battles ·{" "}
+              <span className="font-medium text-foreground">
+                {formatPct(defaultPlannedEdge("upgrader"))}
+              </span>{" "}
+              upgrader — with the live <span className="font-medium">measured</span>{" "}
+              edge shown for reference. Edge is set by RNG odds / pool composition in
+              the backend, not a runtime knob — this models the catalog-level GGR
+              effect of a target edge at the observed wager.
             </p>
             <div className="space-y-4">
-              {baseline.gameTypes.map((g) => {
-                const meta = GAME_TYPE_META[g.type];
-                const cur = effectiveTypeEdge(g);
-                const planned = levers.edges[g.type] ?? cur;
-                const typeGgr = projection.gameTypes.find((x) => x.type === g.type);
-                return (
-                  <div key={g.type} className="space-y-1.5">
-                    <div className="flex items-center gap-2">
-                      <meta.icon className={cn("size-3.5", meta.iconClass)} />
-                      <span className="text-xs font-semibold">
-                        {gameTypeLabel(g.type)}
-                      </span>
-                      {!g.dataAvailable ? (
-                        <Badge
-                          variant="outline"
-                          className="border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-600 dark:text-amber-400"
-                        >
-                          not yet wired
-                        </Badge>
-                      ) : (
-                        <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
-                          wager {formatCompactUsd(g.wager)} · GGR{" "}
-                          {formatCompactUsd(typeGgr?.plannedGgr ?? g.ggr)}
-                        </span>
-                      )}
-                    </div>
-                    <LeverSlider
-                      label={`${gameTypeLabel(g.type)} edge`}
-                      valueLabel={formatPct(planned)}
-                      value={planned * 100}
-                      onValueChange={(pct) => setEdge(g.type, pct)}
-                      min={0}
-                      max={30}
-                      step={0.001}
-                      baselineMarker={cur * 100}
-                      baselineLabel={
-                        g.dataAvailable
-                          ? `current ${formatPct(cur)}`
-                          : "estimated — no data in this window"
-                      }
-                      disabled={!g.dataAvailable}
-                      preciseInput={{ unit: "percent" }}
-                    />
-                  </div>
-                );
-              })}
+              {/* Combined Packs & Battles edge — one slider drives both types. */}
+              <PacksBattlesEdgeControl
+                baseline={baseline}
+                projection={projection}
+                plannedEdge={levers.edges.packs ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT}
+                onChange={setPacksBattlesEdge}
+              />
+
+              {/* Upgrader — its own separate edge lever. */}
+              <UpgraderEdgeControl
+                baseline={baseline}
+                projection={projection}
+                plannedEdge={levers.edges.upgrader ?? defaultPlannedEdge("upgrader")}
+                onChange={(pct) => setEdge("upgrader", pct)}
+              />
             </div>
           </StatPanel>
 
@@ -919,6 +934,7 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
         {/* Breakdown column */}
         <div className="space-y-5">
           <GgrByTypePanel projection={projection} />
+          <NetEdgeByScenarioPanel scenarios={netEdgeScenarios} />
           <RewardCostComparisonChart projection={projection} />
           <LeverBreakdownPanel projection={projection} />
         </div>
@@ -981,6 +997,141 @@ function CompareBlock({
   );
 }
 
+/**
+ * Combined Packs & Battles edge control — ONE slider that drives both types'
+ * planned edge. Surfaces the combined wager + planned GGR, the live MEASURED
+ * blended edge (packs+battles) as a muted reference, and a baseline tick at that
+ * measured edge. Default opens at the planning target (10.99%).
+ */
+function PacksBattlesEdgeControl({
+  baseline,
+  projection,
+  plannedEdge,
+  onChange,
+}: {
+  baseline: SystemEdgeBaseline;
+  projection: ReturnType<typeof projectEdgePlan>;
+  plannedEdge: number;
+  onChange: (pct: number) => void;
+}) {
+  const packs = baseline.gameTypes.find((g) => g.type === "packs");
+  const battles = baseline.gameTypes.find((g) => g.type === "battles");
+  const combinedWager = (packs?.wager ?? 0) + (battles?.wager ?? 0);
+  const combinedGgr = (packs?.ggr ?? 0) + (battles?.ggr ?? 0);
+  // Measured blended edge across packs + battles (GGR / wager), for reference.
+  const measuredEdge = combinedWager > 0 ? combinedGgr / combinedWager : null;
+  const dataAvailable = combinedWager > 0;
+
+  // Planned combined GGR = the per-type planned GGR of packs + battles.
+  const plannedCombinedGgr = projection.gameTypes
+    .filter((g) => g.type === "packs" || g.type === "battles")
+    .reduce((s, g) => s + g.plannedGgr, 0);
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2">
+        <Boxes className="size-3.5 text-blue-500" />
+        <Swords className="size-3.5 text-purple-500" />
+        <span className="text-xs font-semibold">Packs &amp; Battles</span>
+        {dataAvailable ? (
+          <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
+            wager {formatCompactUsd(combinedWager)} · GGR{" "}
+            {formatCompactUsd(plannedCombinedGgr)}
+          </span>
+        ) : (
+          <Badge
+            variant="outline"
+            className="border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-600 dark:text-amber-400"
+          >
+            no data this window
+          </Badge>
+        )}
+      </div>
+      <LeverSlider
+        label="Packs & battles edge"
+        valueLabel={formatPct(plannedEdge)}
+        value={plannedEdge * 100}
+        onValueChange={onChange}
+        min={0}
+        max={30}
+        step={0.001}
+        baselineMarker={measuredEdge != null ? measuredEdge * 100 : undefined}
+        baselineLabel={
+          measuredEdge != null
+            ? `measured: ${formatPct(measuredEdge)} · default ${formatPct(PLANNED_PACKS_BATTLES_EDGE_DEFAULT)}`
+            : `no measured edge this window · default ${formatPct(PLANNED_PACKS_BATTLES_EDGE_DEFAULT)}`
+        }
+        preciseInput={{ unit: "percent", decimals: 3 }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Separate Upgrader edge control. On DBs without `upgrader_games` the lever is
+ * SURFACED but disabled + labeled "not yet wired"; it still defaults to the 10%
+ * planning target. When data exists it behaves like the combined control.
+ */
+function UpgraderEdgeControl({
+  baseline,
+  projection,
+  plannedEdge,
+  onChange,
+}: {
+  baseline: SystemEdgeBaseline;
+  projection: ReturnType<typeof projectEdgePlan>;
+  plannedEdge: number;
+  onChange: (pct: number) => void;
+}) {
+  const upg = baseline.gameTypes.find((g) => g.type === "upgrader");
+  const meta = GAME_TYPE_META.upgrader;
+  const measuredEdge = upg ? effectiveTypeEdge(upg) : null;
+  const dataAvailable = upg?.dataAvailable ?? false;
+  const typeGgr = projection.gameTypes.find((g) => g.type === "upgrader");
+  const planDefault = defaultPlannedEdge("upgrader");
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2">
+        <meta.icon className={cn("size-3.5", meta.iconClass)} />
+        <span className="text-xs font-semibold">{gameTypeLabel("upgrader")}</span>
+        {!dataAvailable ? (
+          <Badge
+            variant="outline"
+            className="border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-600 dark:text-amber-400"
+          >
+            not yet wired
+          </Badge>
+        ) : (
+          <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
+            wager {formatCompactUsd(upg?.wager ?? 0)} · GGR{" "}
+            {formatCompactUsd(typeGgr?.plannedGgr ?? upg?.ggr ?? 0)}
+          </span>
+        )}
+      </div>
+      <LeverSlider
+        label="Upgrader edge"
+        valueLabel={formatPct(plannedEdge)}
+        value={plannedEdge * 100}
+        onValueChange={onChange}
+        min={0}
+        max={30}
+        step={0.001}
+        baselineMarker={
+          dataAvailable && measuredEdge != null ? measuredEdge * 100 : undefined
+        }
+        baselineLabel={
+          dataAvailable && measuredEdge != null
+            ? `measured: ${formatPct(measuredEdge)} · default ${formatPct(planDefault)}`
+            : `not yet wired on this DB · default ${formatPct(planDefault)}`
+        }
+        disabled={!dataAvailable}
+        preciseInput={{ unit: "percent", decimals: 3 }}
+      />
+    </div>
+  );
+}
+
 /** GGR contribution per game type — current vs planned, house-POV emerald/rose. */
 function GgrByTypePanel({
   projection,
@@ -1035,6 +1186,200 @@ function GgrByTypePanel({
     </StatPanel>
   );
 }
+
+/**
+ * Net edge by scenario — where the house edge ENDS UP after reward erosion,
+ * under scenarios derived from the REAL config (base, each affiliate tier, and a
+ * couple of combined worst-cases). Reacts live to the levers (planned edge,
+ * affiliate rates, rakeback rates, deposit-bonus levers) because the rows are
+ * computed in the pure model from the current planned levers.
+ *
+ * BASIS (verified, not fabricated — see `_model.computeNetEdgeScenarios`):
+ * affiliate commission + rakeback are both a % of WAGER, the SAME base the edge
+ * is measured on, so each erodes its rate of edge 1:1 (a 10% tier-8 commission
+ * takes a full 10 points off the edge → net 0.99% on the 10.99% plan). The
+ * deposit-bonus row uses realized cost ÷ wager — labeled as such.
+ *
+ * House-POV color on the net value: comfortably positive = emerald, thin / near
+ * zero = amber, negative (we lose money on that profile) = rose.
+ */
+function NetEdgeByScenarioPanel({
+  scenarios,
+}: {
+  scenarios: NetEdgeScenario[];
+}) {
+  // Chart data: the NET edge per scenario as percentage points so the bars are
+  // directly comparable (a base row + each affiliate tier + the combined cases).
+  const data = scenarios.map((s) => ({
+    key: s.key,
+    label: s.label,
+    netPct: s.netEdge * 100,
+  }));
+
+  const anyNegative = scenarios.some((s) => s.netEdge < 0);
+  const anyThin = scenarios.some((s) => s.netEdge >= 0 && s.netEdge < THIN_NET_EDGE);
+
+  return (
+    <StatPanel title="Net edge by scenario" icon={ShieldAlert} accent="amber">
+      <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+        Where the house edge ends up after reward erosion. Affiliate commission and
+        rakeback are a{" "}
+        <span className="font-medium text-foreground">% of wager</span> — the same
+        base the edge is measured on — so each erodes its rate of edge{" "}
+        <span className="font-medium text-foreground">1:1</span> (a tier paying 10%
+        takes a full 10 points off the edge). The deposit-bonus row uses realized
+        cost ÷ wager.{" "}
+        <span className="text-emerald-600 dark:text-emerald-400">Emerald</span> =
+        comfortable,{" "}
+        <span className="text-amber-600 dark:text-amber-400">amber</span> = thin
+        (&lt;{formatPct(THIN_NET_EDGE)}),{" "}
+        <span className="text-rose-600 dark:text-rose-400">rose</span> = we lose
+        money on that profile.
+      </p>
+
+      {scenarios.length === 0 ? (
+        <EmptyLever note="No scenarios to show — set a planned edge above." />
+      ) : (
+        <>
+          {/* Bar chart — net edge (percentage points) per scenario. */}
+          <ChartContainer
+            config={netEdgeChartConfig}
+            className="aspect-auto h-[260px] w-full"
+          >
+            <BarChart
+              data={data}
+              layout="vertical"
+              margin={{ left: 4, right: 52, top: 4, bottom: 4 }}
+              accessibilityLayer
+            >
+              <CartesianGrid horizontal={false} />
+              <XAxis
+                type="number"
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => `${Number(v).toFixed(1)}%`}
+                tick={{ fontSize: 11 }}
+              />
+              <YAxis
+                type="category"
+                dataKey="label"
+                tickLine={false}
+                axisLine={false}
+                width={150}
+                tick={{ fontSize: 11 }}
+              />
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent
+                    formatter={(v) => `${Number(v).toFixed(2)}% net edge`}
+                  />
+                }
+              />
+              {/* Zero line — anything left of it means the house loses money. */}
+              <ReferenceLine x={0} stroke="var(--border)" strokeWidth={1} />
+              <Bar
+                dataKey="netPct"
+                radius={[0, 3, 3, 0]}
+                animationDuration={700}
+                animationEasing="ease-out"
+              >
+                {data.map((d) => (
+                  <Cell key={d.key} fill={netEdgeColor(d.netPct / 100)} />
+                ))}
+                <LabelList
+                  dataKey="netPct"
+                  position="right"
+                  formatter={(v: number) => `${v.toFixed(2)}%`}
+                  className="fill-foreground"
+                  style={{ fontSize: 10 }}
+                />
+              </Bar>
+            </BarChart>
+          </ChartContainer>
+
+          {/* Table — exact gross → net per scenario, house-POV toned. Custom
+              row markup (not PanelRow) so the label can carry a basis tag +
+              tooltip; the shared PanelRow is a string-only hotspot we leave
+              untouched. */}
+          <div className="mt-3 space-y-0.5 border-t pt-3">
+            {scenarios.map((s) => (
+              <div
+                key={s.key}
+                className="flex items-center justify-between gap-3 py-1 text-sm"
+                title={s.note}
+              >
+                <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+                  <span className={cn("truncate", s.isBase && "font-semibold")}>
+                    {s.label}
+                  </span>
+                  {!s.isBase && basisLabel(s) && (
+                    <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                      {basisLabel(s)}
+                    </span>
+                  )}
+                </span>
+                <span className="flex shrink-0 items-center gap-2 tabular-nums">
+                  {!s.isBase && (
+                    <span className="text-xs text-muted-foreground">
+                      {formatPct(s.grossEdge)} − {formatPct(s.erosion)} →
+                    </span>
+                  )}
+                  <span
+                    className={cn(
+                      "w-16 text-right font-semibold",
+                      netEdgeTextClass(s.netEdge),
+                    )}
+                  >
+                    {formatPct(s.netEdge)}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {(anyNegative || anyThin) && (
+            <p
+              className={cn(
+                "mt-3 rounded-lg border px-3 py-2 text-[11px] leading-relaxed",
+                anyNegative
+                  ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                  : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+              )}
+            >
+              {anyNegative ? (
+                <>
+                  At least one profile drives the net edge{" "}
+                  <span className="font-semibold">below zero</span> — the house loses
+                  money on that player profile at the planned edge. Raise the edge or
+                  trim the commission / rakeback rates above.
+                </>
+              ) : (
+                <>
+                  At least one profile leaves a{" "}
+                  <span className="font-semibold">thin</span> net edge (&lt;
+                  {formatPct(THIN_NET_EDGE)}) — little cushion against further reward
+                  erosion on that profile.
+                </>
+              )}
+            </p>
+          )}
+        </>
+      )}
+    </StatPanel>
+  );
+}
+
+/** Short basis tag for a scenario row (e.g. "wager-based"). */
+function basisLabel(s: NetEdgeScenario): string {
+  if (s.bases.includes("deposit-bonus")) return "wager + cost";
+  if (s.bases.includes("rakeback")) return "wager-based";
+  if (s.bases.includes("affiliate")) return "% of wager";
+  return "";
+}
+
+const netEdgeChartConfig = {
+  netPct: { label: "Net edge", color: EMERALD },
+} satisfies ChartConfig;
 
 const chartConfig = {
   current: { label: "Current", color: "#64748b" },

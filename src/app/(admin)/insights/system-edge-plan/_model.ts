@@ -68,6 +68,28 @@ export function gameTypeLabel(t: GameTypeId): string {
   return t === "packs" ? "Packs" : t === "battles" ? "Battles" : "Upgrader";
 }
 
+/**
+ * The OWNER-CHOSEN DEFAULT planning edges (NOT the measured edge).
+ *
+ * The planner seeds its edge sliders from these values — the edge the owner
+ * wants to PLAN around — rather than from the live empirical edge. The real
+ * measured edge is still surfaced as a small muted "measured: X%" reference next
+ * to each control so the gap to reality stays visible, but the slider starts on
+ * the planning default.
+ *
+ *   • Packs + battles SHARE one house edge (one combined lever) → 10.99%.
+ *   • Upgrader is its own separate edge → 10%.
+ */
+export const PLANNED_PACKS_BATTLES_EDGE_DEFAULT = 0.1099 as const;
+export const PLANNED_UPGRADER_EDGE_DEFAULT = 0.1 as const;
+
+/** The owner-chosen default planned edge for a given game type. */
+export function defaultPlannedEdge(type: GameTypeId): number {
+  return type === "upgrader"
+    ? PLANNED_UPGRADER_EDGE_DEFAULT
+    : PLANNED_PACKS_BATTLES_EDGE_DEFAULT;
+}
+
 /** One game type's REAL gaming anchors over the window (house POV). */
 export type GameTypeBaseline = {
   type: GameTypeId;
@@ -377,15 +399,28 @@ export const DEPOSIT_BONUS_CAP_COST_EXPONENT = 0.45 as const;
 
 // ─── Lever seeding ───────────────────────────────────────────────────────────
 
-/** Seed the planner's lever state from the REAL baseline (current = planned at open). */
+/**
+ * Seed the planner's lever state from the baseline.
+ *
+ * EDGE seeds from the OWNER-CHOSEN PLANNING DEFAULTS (packs & battles 10.99%,
+ * upgrader 10%) — NOT the measured edge. The measured edge stays visible as a
+ * muted reference on each control, but the slider opens on the planning target.
+ * Upgrader keeps its planning default even when it has no data in the window
+ * (the lever is surfaced + labeled "not yet wired", but still defaults to 10%).
+ *
+ * Every other lever still seeds from its REAL current value (rakeback /
+ * affiliate rates, multipliers at 1.0, signup grant from the real average).
+ */
 export function defaultLevers(baseline: SystemEdgeBaseline): PlannedLevers {
   const edges: Record<GameTypeId, number> = {
-    packs: 0,
-    battles: 0,
-    upgrader: 0,
+    packs: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
+    battles: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
+    upgrader: PLANNED_UPGRADER_EDGE_DEFAULT,
   };
+  // Honor every type present in the baseline with its planning default (keeps
+  // the map complete even if the type list ever changes shape).
   for (const g of baseline.gameTypes) {
-    edges[g.type] = effectiveTypeEdge(g);
+    edges[g.type] = defaultPlannedEdge(g.type);
   }
 
   const rakebackRates: Record<RakebackCadenceId, number> = {
@@ -438,10 +473,19 @@ export function defaultLevers(baseline: SystemEdgeBaseline): PlannedLevers {
   };
 }
 
-/** Neutral lever defaults (every multiplier 1.0, no edge/rate, no toggles). */
+/**
+ * Neutral lever defaults (every multiplier 1.0, no rate, no toggles). EDGE falls
+ * back to the owner-chosen planning defaults (packs & battles 10.99%, upgrader
+ * 10%) so a preset payload missing an edge key resolves to the planning target,
+ * not 0.
+ */
 function neutralLevers(): PlannedLevers {
   return {
-    edges: { packs: 0, battles: 0, upgrader: 0 },
+    edges: {
+      packs: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
+      battles: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
+      upgrader: PLANNED_UPGRADER_EDGE_DEFAULT,
+    },
     rakebackRates: { daily: 0, weekly: 0, monthly: 0 },
     rakebackPackBattleWeight: 1,
     rakebackUpgraderWeight: 1,
@@ -862,6 +906,220 @@ export function projectEdgePlan(
     gameTypes,
     levers,
   };
+}
+
+// ─── Net edge by scenario (reward erosion of the planned edge) ───────────────
+
+/**
+ * ── THE AFFILIATE / REWARD BASIS (verified against the live code, NOT guessed) ──
+ *
+ * Affiliate commission is a **% of referred WAGER**, the SAME base the house edge
+ * is measured on (GGR = edge × wager). Verified from three independent sources:
+ *   • `getAffiliateOverview`: `commissionPctOfWager = totalCommissionPaid /
+ *     downstreamWager` — commission expressed as a fraction of referred wager.
+ *   • the affiliate forecast `constants.ts`: `BASELINE_BLENDED_RATE` /
+ *     `BASELINE_TIER_RATE` are documented "($ per $1 of referred wager)".
+ *   • `affiliate_level_configs.commission_rate` is `Decimal(5,4)` — a per-$ rate.
+ *
+ * Because BOTH the edge and the commission are fractions OF THE SAME WAGER, a
+ * tier paying `c` commission erodes a FULL `c` of edge on the wager it touches:
+ *
+ *     net_edge = planned_edge − commission_rate            (per $1 of wager)
+ *
+ * e.g. at the planned 10.99% packs&battles edge, a tier-8 10% commission leaves
+ * net 10.99% − 10% = 0.99% (NOT ~9.89% — that would be the answer if commission
+ * were a % of NGR, which it is NOT here). Rakeback is the same: `rakeback_config.
+ * percentage` is a per-$ rebate of wager (`rakeback_claims.wagered_amount_usd ×
+ * percentage`), so the planned blended rakeback rate erodes edge 1:1 too.
+ *
+ * Deposit bonus is NOT a clean per-wager rate (it is a match on deposits, capped,
+ * with breakage), so we express its erosion as the realized deposit-bonus cost as
+ * a fraction of wager (cost ÷ wager) at the planned config — the honest
+ * wager-normalized drag, clearly labeled as a realized-cost basis, not a rate.
+ *
+ * This is a PLANNING upper-bound per profile: it assumes 100% of the wager on
+ * that profile carries the named reward(s). Clearly labeled in the UI.
+ */
+
+/** What basis a scenario's erosion is expressed on (labeled in the UI). */
+export type EdgeErosionBasis = "affiliate" | "rakeback" | "deposit-bonus" | "none";
+
+/** A single "net edge after this profile's reward erosion" row. */
+export type NetEdgeScenario = {
+  /** Stable key. */
+  key: string;
+  /** Display label (e.g. "Affiliate tier 8"). */
+  label: string;
+  /** Short note describing what the profile assumes. */
+  note: string;
+  /**
+   * Total edge EROSION this scenario applies, as a 0..1 fraction of wager
+   * (summed across its components). Subtracted from the gross planned edge.
+   */
+  erosion: number;
+  /** The gross planned packs&battles edge before erosion (0..1). */
+  grossEdge: number;
+  /** netEdge = grossEdge − erosion (can be negative). */
+  netEdge: number;
+  /** Which basis(es) drive this row (drives the small basis label). */
+  bases: EdgeErosionBasis[];
+  /** True for the no-reward base row (rendered as the reference). */
+  isBase: boolean;
+};
+
+/**
+ * The blended rakeback rate the planner currently implies, as a 0..1 fraction of
+ * wager — the cost-weighted average of the per-cadence planned rates across the
+ * ENABLED cadences (the same even cost-weight `projectRakeback` uses). This is
+ * the per-$ rakeback drag a fully-rakeback-eligible profile faces. Returns 0 when
+ * no cadence is enabled / configured.
+ */
+export function plannedBlendedRakebackRate(
+  baseline: SystemEdgeBaseline,
+  planned: PlannedLevers,
+): number {
+  const cadences = baseline.rakebackCadences;
+  if (cadences.length === 0) return 0;
+  let sum = 0;
+  let weight = 0;
+  for (const c of cadences) {
+    const w = cadenceWeight(c, cadences);
+    const rate = Math.max(0, planned.rakebackRates[c.cadence] ?? c.currentRate);
+    sum += rate * w;
+    weight += w;
+  }
+  return weight > 0 ? sum / weight : 0;
+}
+
+/**
+ * The realized deposit-bonus cost as a fraction of TOTAL wager at the planned
+ * config — the wager-normalized drag the deposit bonus puts on the edge. Uses the
+ * SAME planned deposit-bonus cost the main projection computes (so it reacts to
+ * the deposit-bonus levers), divided by the observed wager. 0 when there is no
+ * wager or no deposit-bonus spend. NOT a per-wager "rate" the backend enforces —
+ * a realized-cost-over-wager basis, labeled as such in the UI.
+ */
+export function plannedDepositBonusEdgeDrag(
+  baseline: SystemEdgeBaseline,
+  planned: PlannedLevers,
+): number {
+  if (baseline.wager <= 0 || baseline.depositBonusCost <= 0) return 0;
+  const factor =
+    Math.max(0, planned.depositBonusMatchMult) *
+    Math.pow(
+      Math.max(0, planned.depositBonusCapMult),
+      DEPOSIT_BONUS_CAP_COST_EXPONENT,
+    ) *
+    eligibilityFactor(planned.depositBonusMinDepositMult) *
+    breakageFactor(planned.depositBonusWagerReqMult);
+  const plannedCost = baseline.depositBonusCost * factor;
+  return Math.max(0, plannedCost / baseline.wager);
+}
+
+/**
+ * Build the "Net edge by scenario" rows — the EFFECTIVE net house edge after
+ * reward erosion under scenarios derived from the REAL config. PURE: given the
+ * baseline + the current planned levers, returns every row the UI renders, all
+ * reacting live to the levers (planned edge, affiliate rates, rakeback rates,
+ * deposit-bonus levers).
+ *
+ * Rows:
+ *   (a) Base / no rewards   — the planned packs&battles edge (gross).
+ *   (b) one per affiliate tier — net = grossEdge − tier.plannedRate (commission
+ *       is % of wager → full per-$ erosion).
+ *   (c) combined worst-cases — top tier + planned rakeback; + deposit bonus.
+ *
+ * `grossEdge` = the planned packs&battles edge (the combined lever's value, taken
+ * from `edges.packs` which the UI keeps == `edges.battles`).
+ */
+export function computeNetEdgeScenarios(
+  baseline: SystemEdgeBaseline,
+  planned: PlannedLevers,
+): NetEdgeScenario[] {
+  // The combined packs&battles planned edge (the UI keeps packs == battles).
+  const grossEdge = clamp(
+    planned.edges.packs ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
+    0,
+    1,
+  );
+
+  const rows: NetEdgeScenario[] = [];
+
+  // (a) Base — no reward erosion.
+  rows.push({
+    key: "base",
+    label: "Base — no rewards",
+    note: "The planned Packs & Battles house edge, before any reward erosion.",
+    erosion: 0,
+    grossEdge,
+    netEdge: grossEdge,
+    bases: ["none"],
+    isBase: true,
+  });
+
+  // (b) One row per affiliate tier — commission is a % of wager, so the tier's
+  //     planned commission rate erodes that many points of edge 1:1.
+  const tiers = [...baseline.affiliateTiers].sort((a, b) => a.level - b.level);
+  for (const t of tiers) {
+    const rate = Math.max(0, planned.affiliateRates[t.level] ?? t.currentRate);
+    rows.push({
+      key: `affiliate-${t.level}`,
+      label: `Affiliate ${t.label.toLowerCase().startsWith("level") ? t.label : `tier ${t.level}`}`,
+      note: `${formatRatePct(rate)} commission on referred wager → erodes ${formatRatePct(rate)} of edge.`,
+      erosion: rate,
+      grossEdge,
+      netEdge: grossEdge - rate,
+      bases: ["affiliate"],
+      isBase: false,
+    });
+  }
+
+  // (c) Combined worst-cases.
+  const topTier =
+    tiers.length > 0 ? tiers[tiers.length - 1] : null;
+  const topRate = topTier
+    ? Math.max(0, planned.affiliateRates[topTier.level] ?? topTier.currentRate)
+    : 0;
+  const rakebackRate = plannedBlendedRakebackRate(baseline, planned);
+  const depDrag = plannedDepositBonusEdgeDrag(baseline, planned);
+
+  if (topTier && (rakebackRate > 0 || topRate > 0)) {
+    const erosion = topRate + rakebackRate;
+    rows.push({
+      key: "combo-top-rakeback",
+      label: `Top tier + rakeback`,
+      note: `Top affiliate tier (${formatRatePct(topRate)}) + planned blended rakeback (${formatRatePct(rakebackRate)}), both % of wager.`,
+      erosion,
+      grossEdge,
+      netEdge: grossEdge - erosion,
+      bases: ["affiliate", "rakeback"],
+      isBase: false,
+    });
+  }
+
+  if (topTier && (rakebackRate > 0 || depDrag > 0 || topRate > 0)) {
+    const erosion = topRate + rakebackRate + depDrag;
+    rows.push({
+      key: "combo-top-rakeback-deposit",
+      label: `Top tier + rakeback + deposit bonus`,
+      note: `Adds the planned deposit-bonus drag (${formatRatePct(depDrag)} of wager — realized cost ÷ wager) on top of the top tier + rakeback.`,
+      erosion,
+      grossEdge,
+      netEdge: grossEdge - erosion,
+      bases: ["affiliate", "rakeback", "deposit-bonus"],
+      isBase: false,
+    });
+  }
+
+  return rows;
+}
+
+/** Format a 0..1 rate as a percent string for scenario notes (e.g. 0.1 → "10%"). */
+function formatRatePct(rate: number): string {
+  if (!Number.isFinite(rate)) return "—";
+  const v = rate * 100;
+  const s = v.toFixed(2).replace(/\.?0+$/, "");
+  return `${s}%`;
 }
 
 // ─── Per-lever projection helpers ────────────────────────────────────────────
