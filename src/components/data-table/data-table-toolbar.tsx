@@ -9,8 +9,13 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select";
-import { Loader2, Search, X } from "lucide-react";
+import { Loader2, MoreHorizontal, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type FilterOption = {
   label: string;
@@ -163,7 +168,7 @@ export function DataTableToolbar({
           />
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-2 sm:contents">
+      <div className="flex flex-wrap items-center gap-2 md:contents">
         {filters?.map((filter) => {
           const currentValue = searchParams.get(filter.paramKey) ?? "all";
           const allLabel = filter.allLabel ?? `All ${filter.name}`;
@@ -191,7 +196,40 @@ export function DataTableToolbar({
             </Select>
           );
         })}
-        {children}
+        {/* Action buttons (children) — inline at md+ where 5+ chips
+            comfortably fit one row, collapsed into a single "More" overflow
+            menu at <md so the toolbar stays one tidy row on phones instead
+            of an unpredictable wrap of 5+ stacked buttons. The children are
+            rendered ONCE per breakpoint (display-toggled wrappers), not
+            duplicated — action buttons in this toolbar are stateless
+            triggers (sort toggles, exports), so a re-mount across resize is
+            safe and matches the audit's recommended pattern. */}
+        {children && (
+          <>
+            <div className="hidden md:contents">{children}</div>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="md:hidden h-9 px-2"
+                    aria-label="More actions"
+                  />
+                }
+              >
+                <MoreHorizontal className="size-4" />
+                <span className="ml-1 text-xs font-medium">More</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="flex w-56 flex-col gap-1 p-2"
+              >
+                {children}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        )}
         {hasActiveFilters && (
           <Button variant="ghost" size="sm" onClick={clearFilters} className="h-9 px-2 lg:px-3">
             Clear

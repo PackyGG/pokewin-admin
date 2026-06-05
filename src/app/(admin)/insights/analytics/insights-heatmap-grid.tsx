@@ -77,6 +77,14 @@ export function InsightsHeatmapGrid({
         <div className="text-xs text-muted-foreground">Times in UTC. Darker = more.</div>
       </div>
 
+      {/* Mobile-only hint that the 7×24 grid scrolls horizontally; the
+          grid itself stays scrollable at every breakpoint (the min-width
+          forces overflow at <md), but at md+ the viewport almost always
+          fits the full 720px so the hint would be noise — hide it. */}
+      <p className="text-[10px] text-muted-foreground md:hidden flex items-center gap-1">
+        <span aria-hidden>↔</span>
+        <span>Scroll horizontally to see the full week.</span>
+      </p>
       <div className="relative">
         <div className="overflow-x-auto overscroll-x-contain">
           <div className="inline-block min-w-[720px]">

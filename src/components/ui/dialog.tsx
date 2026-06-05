@@ -56,7 +56,10 @@ function DialogContent({
           // Base: positioned, scrollable, vertical-flex container
           "fixed z-50 flex flex-col gap-4 bg-background text-sm ring-1 ring-foreground/10 duration-200 outline-none overflow-y-auto overflow-x-hidden overscroll-contain",
           // Mobile (<640px): bottom-anchored sheet, full width, rounded top, capped at 90vh
-          "inset-x-0 bottom-0 top-auto w-full max-w-none max-h-[90vh] rounded-b-none rounded-t-2xl px-4 pt-4 pb-[max(env(safe-area-inset-bottom),1rem)]",
+          // `pt-[max(...)]` ensures the close button (absolute top-2 right-2)
+          // stays clear of iOS notches when the sheet expands toward the top
+          // on small/landscape phones.
+          "inset-x-0 bottom-0 top-auto w-full max-w-none max-h-[90vh] rounded-b-none rounded-t-2xl px-4 pt-[max(env(safe-area-inset-top),1rem)] pb-[max(env(safe-area-inset-bottom),1rem)]",
           // Desktop (sm+): centered floating modal, capped at 85vh
           "sm:inset-auto sm:top-1/2 sm:left-1/2 sm:bottom-auto sm:-translate-x-1/2 sm:-translate-y-1/2 sm:max-h-[85vh] sm:max-w-sm sm:w-[calc(100%-2rem)] sm:rounded-xl sm:p-4",
           // Animations: bottom slide on phone, zoom+fade on desktop

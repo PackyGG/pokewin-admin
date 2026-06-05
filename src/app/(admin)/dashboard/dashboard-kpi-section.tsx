@@ -412,8 +412,11 @@ export function DashboardKpiSection({
                   hint="no creator-code users"
                 />
               </div>
-              {/* Packs / Battles / Upgrader split of the TOTAL wager. */}
-              <div className="grid grid-cols-3 gap-1.5 -mx-0.5">
+              {/* Packs / Battles / Upgrader split of the TOTAL wager.
+                  Negative inline margin only at sm+ where the panel has
+                  the room for it; at <sm (320–375px) keep it at 0 so the
+                  chips don't get clipped at the right edge of the card. */}
+              <div className="grid grid-cols-3 gap-1.5 sm:-mx-0.5">
                 <PanelChip label="Packs" value={p.wagerBreakdown.packs} />
                 <PanelChip label="Battles" value={p.wagerBreakdown.battles} />
                 <PanelChip label="Upgrader" value={p.wagerBreakdown.upgrader} />
@@ -441,7 +444,7 @@ export function DashboardKpiSection({
               }
             >
               <PlainHero value={p.deposits} format="currency" />
-              <div className="grid grid-cols-2 gap-1.5 -mx-0.5">
+              <div className="grid grid-cols-2 gap-1.5 sm:-mx-0.5">
                 <PanelChip
                   label="Count"
                   value={p.depositCount}
@@ -472,7 +475,7 @@ export function DashboardKpiSection({
               }
             >
               <PlainHero value={p.withdrawals} format="currency" />
-              <div className="grid grid-cols-2 gap-1.5 -mx-0.5">
+              <div className="grid grid-cols-2 gap-1.5 sm:-mx-0.5">
                 <PanelChip
                   label="Count"
                   value={p.withdrawalCount}

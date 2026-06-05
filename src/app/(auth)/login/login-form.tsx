@@ -21,7 +21,7 @@ export function LoginForm() {
   }, [state, router]);
 
   return (
-    <div className="w-[520px] max-w-full rounded-2xl border border-white/10 bg-white/5 p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
+    <div className="w-full sm:w-[520px] max-w-full rounded-2xl border border-white/10 bg-white/5 p-6 sm:p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
       {/* Logo */}
       <div className="mb-10 text-center">
         <div className="mb-4 flex justify-center">
