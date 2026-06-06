@@ -176,14 +176,20 @@ function WagerTooltipContent({
   );
 }
 
+function formatChartXTick(value: string, hourlyXAxis: boolean): string {
+  return hourlyXAxis ? value : value.slice(5);
+}
+
 export function WagerChart({
   data,
   title = "Wagers (30 days)",
-  xTickFormatter = (v: string) => v.slice(5),
+  hourlyXAxis = false,
 }: {
   data: { date: string; packs: number; battles: number; upgrader: number }[];
   title?: string;
-  xTickFormatter?: (value: string) => string;
+  /** When true, show x-axis labels verbatim (hourly buckets). Default strips
+   *  the year prefix (`MM-DD`) for daily buckets. */
+  hourlyXAxis?: boolean;
 }) {
   return (
     <Card>
@@ -201,7 +207,7 @@ export function WagerChart({
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={xTickFormatter}
+              tickFormatter={(v) => formatChartXTick(v, hourlyXAxis)}
             />
             <YAxis
               tickLine={false}
@@ -248,11 +254,13 @@ export function WagerChart({
 export function DepositsChart({
   data,
   title = "Deposits (30 days)",
-  xTickFormatter = (v: string) => v.slice(5),
+  hourlyXAxis = false,
 }: {
   data: { date: string; amount: number }[];
   title?: string;
-  xTickFormatter?: (value: string) => string;
+  /** When true, show x-axis labels verbatim (hourly buckets). Default strips
+   *  the year prefix (`MM-DD`) for daily buckets. */
+  hourlyXAxis?: boolean;
 }) {
   return (
     <Card>
@@ -270,7 +278,7 @@ export function DepositsChart({
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={xTickFormatter}
+              tickFormatter={(v) => formatChartXTick(v, hourlyXAxis)}
             />
             <YAxis
               tickLine={false}

@@ -114,9 +114,7 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
     windowLabel.charAt(0).toUpperCase() + windowLabel.slice(1);
 
   const chartSuffix = hubChartTitleSuffix(period);
-  const chartXTick = hubBucketByHour(period)
-    ? (v: string) => v
-    : (v: string) => v.slice(5);
+  const hourlyXAxis = hubBucketByHour(period);
 
   const signupLeaderLines = [...data.topCreators]
     .filter((c) => c.signups > 0)
@@ -396,13 +394,13 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
         <WagerChart
           title={`Code-cohort wagers · ${chartSuffix}`}
           data={data.dailyWagers}
-          xTickFormatter={chartXTick}
+          hourlyXAxis={hourlyXAxis}
         />
 
         <DepositsChart
           title={`Code-cohort deposits · ${chartSuffix}`}
           data={data.dailyDeposits}
-          xTickFormatter={chartXTick}
+          hourlyXAxis={hourlyXAxis}
         />
       </div>
     </FadeIn>
