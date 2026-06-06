@@ -11,7 +11,7 @@ import { require2FA } from "@/lib/require-2fa";
 import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 import { logError } from "@/lib/errors/logger";
 import { computeAllowedPagesForRoles } from "@/lib/role-baselines";
-import { isAdminRole, pickPrimaryRole } from "@/lib/admin-roles";
+import { isPersistableAdminRole, pickPrimaryRole } from "@/lib/admin-roles";
 import { writeAdminUserWithRoles } from "@/lib/admin-user-roles";
 
 /**
@@ -26,7 +26,12 @@ function normalizeRoles(input: {
 }): admin_role[] | null {
   const set = new Set<admin_role>();
   for (const r of [...(input.roles ?? []), ...(input.role ? [input.role] : [])]) {
-    if (isAdminRole(r)) set.add(r);
+    // Only PERSISTABLE built-in roles (those present in the admin-DB
+    // `admin_role` enum) may be stored. `isPersistableAdminRole` narrows to
+    // the exact Prisma-enum subset, so the code-only `creator_manager` is
+    // dropped here — it can't be written to the DB until the enum carries
+    // it (see PERSISTABLE_ADMIN_ROLES in src/lib/admin-roles.ts).
+    if (isPersistableAdminRole(r)) set.add(r);
   }
   return set.size > 0 ? [...set] : null;
 }
@@ -66,7 +71,10 @@ export async function createAdminUser(data: {
     return fail("Pick at least one valid role.", "VALIDATION");
   }
   // The canonical primary role (highest-privilege member, admin first).
-  const primary = pickPrimaryRole(roles);
+  // `roles` is already narrowed to the persistable `admin_role` subset by
+  // `normalizeRoles`, and `pickPrimaryRole` returns a member of its input,
+  // so the result is a real `admin_role` — narrow it back for Prisma.
+  const primary = pickPrimaryRole(roles) as admin_role;
 
   const passwordHash = await bcrypt.hash(data.password, 12);
 
@@ -231,7 +239,9 @@ export async function setAdminRoles(
   if (!roles) {
     throw new Error("Pick at least one valid role");
   }
-  const primary = pickPrimaryRole(roles);
+  // `roles` is the persistable `admin_role` subset (normalizeRoles); the
+  // primary is one of those members, so narrow it back for the Prisma write.
+  const primary = pickPrimaryRole(roles) as admin_role;
 
   const target = await adminDb.admin_users.findUnique({
     where: { id: adminUserId },

@@ -3,7 +3,11 @@
 import { X, Plus, ShieldCheck, AlertTriangle } from "lucide-react";
 import { ROLE_COLORS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { ALL_ADMIN_ROLES, type AdminRole } from "@/lib/admin-roles";
+import {
+  ALL_ADMIN_ROLES,
+  isPersistableAdminRole,
+  type AdminRole,
+} from "@/lib/admin-roles";
 
 const ROLE_LABELS: Record<AdminRole, string> = {
   admin: "Admin",
@@ -11,6 +15,7 @@ const ROLE_LABELS: Record<AdminRole, string> = {
   marketing: "Marketing",
   creator: "Creator",
   pack_creator: "Pack Creator",
+  creator_manager: "Creator Manager",
 };
 
 const ROLE_DESCRIPTIONS: Record<AdminRole, string> = {
@@ -19,6 +24,8 @@ const ROLE_DESCRIPTIONS: Record<AdminRole, string> = {
   marketing: "Marketing surfaces (lands on /analytics).",
   creator: "Creator self-service portal.",
   pack_creator: "Content management — packs, cards, sets, upgrader.",
+  creator_manager:
+    "Creator Hub manager (CM team). Code-level role for v1 — needs an admin-DB enum value before it can be assigned to a user.",
 };
 
 /**
@@ -65,8 +72,17 @@ export function RolesEditor({
   }
 
   // Render chips in canonical priority order regardless of insertion order.
+  // Already-held roles render even if not currently persistable (forward-
+  // compat: a creator_manager assignment made once the admin-DB enum exists
+  // still shows + can be removed).
   const ordered = ALL_ADMIN_ROLES.filter((r) => selected.has(r));
-  const available = ALL_ADMIN_ROLES.filter((r) => !selected.has(r));
+  // The picker only offers roles that can actually be PERSISTED to the
+  // admin-DB `admin_role` enum. `creator_manager` is a code-level role for
+  // v1 (no DB enum value yet), so it's deliberately not selectable here —
+  // offering it would let an admin pick a role the save then silently drops.
+  const available = ALL_ADMIN_ROLES.filter(
+    (r) => !selected.has(r) && isPersistableAdminRole(r),
+  );
   const empty = selected.size === 0;
   // Pre-migration + the operator is trying to assign more than one role:
   // only the primary will actually persist. Say so plainly.

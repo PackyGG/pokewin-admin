@@ -17,6 +17,7 @@ export const ROLE_COLORS: Record<string, string> = {
   marketing: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   creator: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
   pack_creator: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+  creator_manager: "bg-pink-500/15 text-pink-600 dark:text-pink-400 border-pink-500/30",
   user: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
 };
 

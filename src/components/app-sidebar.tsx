@@ -57,6 +57,7 @@ import {
   History,
   SlidersHorizontal,
   Compass,
+  ArrowRight,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -135,6 +136,7 @@ const ICONS: Record<string, LucideIcon> = {
   History,
   SlidersHorizontal,
   Compass,
+  ArrowRight,
 };
 
 type NavItem = {
@@ -251,6 +253,12 @@ export function AppSidebar({
   const effectiveRoles = roles ?? [role];
   const isAdmin = effectiveRoles.includes("admin");
   const isCreator = effectiveRoles.includes("creator");
+  // The Creator-Hub portal button is shown ONLY to users who can actually
+  // enter the Hub — admin or creator_manager. Everyone else never sees it
+  // (and the route itself is DAL-gated server-side regardless). Mirrors the
+  // requireRole(['admin','creator_manager']) gate on /creator-hub.
+  const canEnterCreatorHub =
+    isAdmin || effectiveRoles.includes("creator_manager");
 
   const groupsWithVisibility = useMemo(() =>
     NAV_GROUPS
@@ -333,6 +341,39 @@ export function AppSidebar({
           <img src="/icon.png" alt="Pokewin" className="h-7 w-7 hidden group-data-[collapsible=icon]:block" />
         </Link>
       </SidebarHeader>
+      {/* Creator Hub portal — sits directly below the logo, above the
+          Overview group. A distinct accent "switch to a sub-app" affordance
+          (not a normal nav link): pink gradient, sparkle mark, nudging
+          arrow. Visible ONLY to admin + creator_manager (canEnterCreatorHub);
+          the /creator-hub route is independently DAL-gated. In icon-collapsed
+          mode it shrinks to a centered pink mark with a hover tooltip. */}
+      {canEnterCreatorHub && (
+        <div className="px-2 pt-2 group-data-[collapsible=icon]:px-0">
+          <Link
+            href="/creator-hub"
+            onClick={handleNavTap}
+            title="Switch to Creator Hub"
+            className={cn(
+              "group/portal relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-pink-500/30 bg-gradient-to-r from-pink-500/15 via-pink-500/10 to-transparent px-3 py-2.5 outline-none",
+              "transition-colors hover:border-pink-500/50 hover:from-pink-500/25 hover:via-pink-500/15 focus-visible:ring-2 focus-visible:ring-pink-500/40",
+              "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
+            )}
+          >
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-pink-500/20 text-pink-600 ring-1 ring-inset ring-pink-500/30 dark:text-pink-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
+              <Megaphone className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+              <span className="block truncate text-xs font-semibold text-pink-600 dark:text-pink-300">
+                Switch to Creator Hub
+              </span>
+              <span className="block truncate text-[11px] text-muted-foreground">
+                CM team workspace
+              </span>
+            </span>
+            <ArrowRight className="size-4 shrink-0 text-pink-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/portal:translate-x-0.5" />
+          </Link>
+        </div>
+      )}
       <SidebarContent>
         {groupsWithVisibility.map((group) => {
           if (group.creatorOnly && !isCreator) return null;

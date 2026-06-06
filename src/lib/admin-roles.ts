@@ -3,7 +3,22 @@ export type AdminRole =
   | "support"
   | "marketing"
   | "creator"
-  | "pack_creator";
+  | "pack_creator"
+  // Creator Hub manager — the in-house Creator-Marketing (CM) team role.
+  // Only `admin` + `creator_manager` can enter the Creator Hub sub-app
+  // (gated via the DAL `requireRole(['admin','creator_manager'])`).
+  //
+  // CODE-LEVEL role for v1: it is a first-class member of the effective
+  // role set + landing/priority logic + UI maps here, BUT the ADMIN-DB
+  // `admin_role` Postgres enum (prisma/admin/schema.prisma) does NOT yet
+  // carry this value, so no admin_users row can be PERSISTED with it until
+  // that enum is extended (`ALTER TYPE admin_role ADD VALUE
+  // 'creator_manager'`). `admin` reaches the Hub immediately; assigning the
+  // dedicated role to a user is a follow-up that needs the enum value. See
+  // PERSISTABLE_ADMIN_ROLES below — every place that writes the Prisma
+  // `admin_role` enum must filter through it so this code-only role can
+  // never be handed to Prisma/Postgres (which would throw).
+  | "creator_manager";
 
 /** Every built-in system role, in highest → lowest privilege order. */
 export const ALL_ADMIN_ROLES: readonly AdminRole[] = [
@@ -12,7 +27,46 @@ export const ALL_ADMIN_ROLES: readonly AdminRole[] = [
   "marketing",
   "creator",
   "pack_creator",
+  "creator_manager",
 ];
+
+/**
+ * The subset of built-in roles that exist as values in the ADMIN-DB
+ * `admin_role` Postgres enum and can therefore be PERSISTED on an
+ * `admin_users` row. `creator_manager` is intentionally absent for v1 —
+ * it's a code-level role (see the union above), and writing it into the
+ * Prisma `admin_role` field would throw until the DB enum is extended.
+ *
+ * Any code path that builds a value to store in `admin_users.role` /
+ * `admin_users.roles` (e.g. the create / set-roles admin actions) must
+ * filter candidate roles through {@link isPersistableAdminRole} so a
+ * code-only role never reaches Prisma. Pure in-memory role checks
+ * (sidebar gating, `requireRole`, landing routes) use the full
+ * `ALL_ADMIN_ROLES` / `isAdminRole` set and are unaffected.
+ */
+export const PERSISTABLE_ADMIN_ROLES: readonly AdminRole[] = [
+  "admin",
+  "support",
+  "marketing",
+  "creator",
+  "pack_creator",
+];
+
+const PERSISTABLE_ADMIN_ROLE_SET: ReadonlySet<string> = new Set(
+  PERSISTABLE_ADMIN_ROLES,
+);
+
+/**
+ * Type guard for a built-in role that can be stored in the ADMIN-DB
+ * `admin_role` enum. Narrows to the exact Prisma-enum string set so the
+ * result is assignable to a `admin_role`-typed field. Drops the
+ * code-only `creator_manager` (and any unknown string).
+ */
+export function isPersistableAdminRole(
+  value: string,
+): value is "admin" | "support" | "marketing" | "creator" | "pack_creator" {
+  return PERSISTABLE_ADMIN_ROLE_SET.has(value);
+}
 
 const ADMIN_ROLE_SET: ReadonlySet<string> = new Set(ALL_ADMIN_ROLES);
 
@@ -31,8 +85,14 @@ const ROLE_PRIORITY: Record<AdminRole, number> = {
   admin: 0,
   support: 1,
   marketing: 2,
-  creator: 3,
-  pack_creator: 4,
+  // The Creator-Hub manager sits just above the plain creator/pack_creator
+  // self-service roles in landing priority: a support+creator_manager user
+  // still lands on the support surface, but a creator_manager (without
+  // support/marketing) lands on the Creator Hub rather than a creator
+  // self-service page (see getDefaultRoute below).
+  creator_manager: 3,
+  creator: 4,
+  pack_creator: 5,
 };
 
 /**
@@ -87,6 +147,12 @@ export function pickPrimaryRole(roles: readonly string[]): AdminRole {
  */
 export function getDefaultRoute(role: string, allowedPages?: string[]): string {
   if (role === "admin") return "/dashboard";
+  // A dedicated Creator-Hub manager's whole job lives in the Hub — land
+  // them straight on its dashboard. (admin reaches both the main dashboard
+  // and the Hub via the portal button; this branch only fires for a user
+  // whose PRIMARY role is creator_manager, i.e. without a higher-priority
+  // support/marketing role.)
+  if (role === "creator_manager") return "/creator-hub";
   if (role === "creator") return "/my-profile";
   // pack_creator's whole job is creating packs — land them straight on the
   // packs page so they don't have to navigate.

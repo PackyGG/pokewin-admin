@@ -26,6 +26,7 @@ const ROLE_LABELS: Record<AdminRole, string> = {
   marketing: "Marketing",
   creator: "Creator",
   pack_creator: "Pack Creator",
+  creator_manager: "Creator Manager",
 };
 
 export function CreateAdminDialog() {
