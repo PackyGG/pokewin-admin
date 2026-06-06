@@ -15,6 +15,18 @@
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** better-auth nanoid-style user ids (21–64 alphanumeric chars). */
+const USER_ID_REGEX = /^[A-Za-z0-9_-]{21,64}$/;
+
 export function isUuid(value: string): boolean {
   return UUID_REGEX.test(value);
+}
+
+/**
+ * Shape check for packy.gg end-user primary keys (nanoid-style strings).
+ * Usernames cap at 20 chars, so 21+ avoids routing a handle search
+ * through the id fast path.
+ */
+export function isUserId(value: string): boolean {
+  return USER_ID_REGEX.test(value);
 }

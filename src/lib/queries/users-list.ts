@@ -10,6 +10,7 @@ import {
 } from "@/lib/fraud/score";
 import { calculateUsersPnlBatch } from "./pnl";
 import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
+import { isUserId, isUuid } from "@/lib/utils/ids";
 
 // Allowlist from the generated Prisma user_role enum — validate the
 // role filter before it reaches either the Prisma where or the raw-SQL
@@ -57,13 +58,13 @@ export type UserSearchMode = "prefix" | "substring";
 /**
  * Inputs the raw-SQL ranking scan needs, all serializable so the result
  * can be memoised with `unstable_cache` (which keys on the stringified
- * args). The search-shape flags (isUuid / isEmailLike / isDiscordId) are
+ * args). The search-shape flags (isExactId / isEmailLike / isDiscordId) are
  * computed once in getUsers and threaded through so the cached SQL build
  * matches the Prisma-path routing exactly.
  */
 type UserListFilterInput = {
   searchTerm: string | undefined;
-  isUuid: boolean;
+  isExactId: boolean;
   isEmailLike: boolean;
   isDiscordId: boolean;
   /** Prefix (default, index-backed) vs substring (leading-wildcard) match. */
@@ -88,7 +89,7 @@ type RankedUserIdsInput = UserListFilterInput & {
 function buildUserListWhereClause(input: UserListFilterInput): string {
   const {
     searchTerm,
-    isUuid,
+    isExactId,
     isEmailLike,
     isDiscordId,
     searchMode,
@@ -98,8 +99,8 @@ function buildUserListWhereClause(input: UserListFilterInput): string {
   const whereSql: string[] = [];
   if (searchTerm) {
     const safe = searchTerm.replace(/'/g, "''");
-    if (isUuid) {
-      whereSql.push(`u.id = '${safe}'`);
+    if (isExactId) {
+      whereSql.push(`LOWER(u.id) = LOWER('${safe}')`);
     } else if (isEmailLike) {
       whereSql.push(`LOWER(u.email) = LOWER('${safe}')`);
     } else if (isDiscordId) {
@@ -113,7 +114,7 @@ function buildUserListWhereClause(input: UserListFilterInput): string {
           ? `'%' || ${lower} || '%'`
           : `${lower} || '%'`;
       whereSql.push(
-        `(LOWER(u.username) LIKE ${pattern} OR LOWER(u.display_username) LIKE ${pattern} OR LOWER(u.name) LIKE ${pattern} OR LOWER(u.email) LIKE ${pattern} OR u.id = '${safe}')`,
+        `(LOWER(u.username) LIKE ${pattern} OR LOWER(u.display_username) LIKE ${pattern} OR LOWER(u.name) LIKE ${pattern} OR LOWER(u.email) LIKE ${pattern} OR LOWER(u.id) = LOWER('${safe}'))`,
       );
     }
   }
@@ -552,9 +553,8 @@ export async function getUsers(params: {
   //      default. The rarer "match an interior fragment" case is still
   //      available via searchMode === "substring" (legacy `contains` /
   //      `%term%`), which needs the pg_trgm GIN index to be fast.
-  const UUID_RE =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const isUuid = UUID_RE.test(searchTerm ?? "");
+  const isExactId =
+    !!searchTerm && (isUuid(searchTerm) || isUserId(searchTerm));
   // Cheap email shape check — anything with an @ that isn't trivially
   // malformed. We don't require a full RFC-compliant match; the unique
   // email index settles the result either way.
@@ -566,12 +566,13 @@ export async function getUsers(params: {
   // numeric username would trigger an unnecessary join.
   const isDiscordId = /^\d{17,20}$/.test(searchTerm ?? "");
   const isFreeFormTextSearch =
-    !!searchTerm && !isUuid && !isEmailLike && !isDiscordId;
+    !!searchTerm && !isExactId && !isEmailLike && !isDiscordId;
 
   if (searchTerm) {
-    if (isUuid) {
-      // Primary-key lookup — single index hit.
-      where.id = searchTerm;
+    if (isExactId) {
+      // Primary-key lookup — single index hit. mode insensitive so pasted
+      // ids with different casing still resolve (nanoid ids are mixed-case).
+      where.id = { equals: searchTerm, mode: "insensitive" };
     } else if (isEmailLike) {
       // user.email has a unique index — equality lookup is O(log n).
       // mode insensitive normalises case for the rare user whose
@@ -608,7 +609,7 @@ export async function getUsers(params: {
         { display_username: textMatch },
         { name: textMatch },
         { email: textMatch },
-        { id: searchTerm },
+        { id: { equals: searchTerm, mode: "insensitive" } },
       ];
     }
   }
@@ -681,7 +682,7 @@ export async function getUsers(params: {
       page,
       perPage,
       searchTerm,
-      isUuid,
+      isExactId,
       isEmailLike,
       isDiscordId,
       searchMode,
@@ -747,7 +748,7 @@ export async function getUsers(params: {
     if (isFreeFormTextSearch) {
       const filterInput: UserListFilterInput = {
         searchTerm,
-        isUuid,
+        isExactId,
         isEmailLike,
         isDiscordId,
         searchMode,

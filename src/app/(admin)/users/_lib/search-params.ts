@@ -105,7 +105,7 @@ export type UsersRoleFilter = z.infer<typeof UsersRoleFilter>;
  *                          index lands), so it is opt-in only.
  *
  * Maps onto getUsers' `searchMode` ("prefix" | "substring"). Only affects
- * the free-form handle/name branch — UUID / email / discord-id searches
+ * the free-form handle/name branch — user id / email / discord-id searches
  * always take their exact-match fast path regardless. An unknown value
  * falls back to "prefix".
  */
