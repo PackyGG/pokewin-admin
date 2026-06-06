@@ -7,7 +7,7 @@ import {
   type BackendErrorPayload,
 } from "./errors";
 
-export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export type RequestOptions = {
   method?: HttpMethod;
@@ -210,6 +210,12 @@ export const backendApi = {
     body: unknown = {},
     opts: Omit<RequestOptions, "method" | "body"> = {}
   ) => backendApiRequest<T>(path, { ...opts, method: "POST", body }),
+
+  put: <T = unknown>(
+    path: string,
+    body: unknown = {},
+    opts: Omit<RequestOptions, "method" | "body"> = {}
+  ) => backendApiRequest<T>(path, { ...opts, method: "PUT", body }),
 
   patch: <T = unknown>(
     path: string,
