@@ -102,7 +102,16 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_cwr_user_id_status
 --   • src/lib/queries/users-financial.ts inventory breakdown
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_inv_open_by_user
   ON user_inventory (user_id)
-  WHERE sold_at IS NULL AND exchanged_at IS NULL;
+  WHERE sold_at IS NULL AND exchanged_at IS NULL AND withdrawal_locked_at IS NULL;
+
+-- #4b ----------------------------------------------------------------
+-- vouchers partial index for unclaimed balance aggregates
+-- ===================================================================
+-- users-list ranking (netHoldings), pnl batch, and dashboard liability
+-- tiles all SUM(v.value) WHERE claimed_at IS NULL grouped by user_id.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vouchers_unclaimed_by_user
+  ON vouchers (user_id)
+  WHERE claimed_at IS NULL;
 
 -- #5 -----------------------------------------------------------------
 -- affiliate_code_usages (3 indexes)

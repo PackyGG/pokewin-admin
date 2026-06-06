@@ -80,6 +80,206 @@ type RankedUserIdsInput = UserListFilterInput & {
   perPage: number;
 };
 
+/** Precomputed per-user financials from the ranking scan — avoids a second PnL batch. */
+type RankedUserMetrics = {
+  availableBalance: number;
+  lockedBalance: number;
+  inventoryValue: number;
+  unclaimedVouchers: number;
+  totalDeposited: number;
+  totalWithdrawn: number;
+  pnl: number;
+  netHoldings: number;
+};
+
+type RankedUserIdsResult = {
+  ids: string[];
+  total: number;
+  metricsById: Map<string, RankedUserMetrics>;
+};
+
+/** Which satellite aggregates each computed sort needs (balances always joined). */
+const SORT_AGGREGATE_KEYS = {
+  pnl: ["inv", "cw", "vc", "os"] as const,
+  netHoldings: ["inv", "vc", "os"] as const,
+  totalWithdrawn: ["cw"] as const,
+  inventoryValue: ["inv"] as const,
+  depositCount: ["dc"] as const,
+};
+
+function buildAggregateCtes(
+  needs: readonly ("inv" | "cw" | "vc" | "os" | "dc")[],
+): string {
+  const parts: string[] = [];
+  if (needs.includes("inv")) {
+    parts.push(`
+      inv AS (
+        SELECT ui.user_id,
+               COALESCE(SUM(ui.value_at_obtained::numeric), 0) AS inv_value
+          FROM user_inventory ui
+         INNER JOIN filtered f ON f.id = ui.user_id
+         WHERE ui.sold_at IS NULL
+           AND ui.exchanged_at IS NULL
+           AND ui.withdrawal_locked_at IS NULL
+         GROUP BY ui.user_id
+      )`);
+  }
+  if (needs.includes("cw")) {
+    parts.push(`
+      cw AS (
+        SELECT cwr.user_id,
+               COALESCE(SUM(cwr.total_value_usd::numeric), 0) AS wd_value
+          FROM card_withdrawal_requests cwr
+         INNER JOIN filtered f ON f.id = cwr.user_id
+         WHERE cwr.status IN ('pending', 'processing', 'shipped', 'completed')
+         GROUP BY cwr.user_id
+      )`);
+  }
+  if (needs.includes("vc")) {
+    parts.push(`
+      vc AS (
+        SELECT v.user_id,
+               COALESCE(SUM(v.value::numeric), 0) AS voucher_value
+          FROM vouchers v
+         INNER JOIN filtered f ON f.id = v.user_id
+         WHERE v.claimed_at IS NULL
+         GROUP BY v.user_id
+      )`);
+  }
+  if (needs.includes("os")) {
+    parts.push(`
+      os AS (
+        SELECT lt.user_id,
+               COALESCE(SUM(lt.amount::numeric), 0) AS os_net
+          FROM ledger_transactions lt
+         INNER JOIN filtered f ON f.id = lt.user_id
+         WHERE lt.status = 'completed'
+           AND ${officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })}
+         GROUP BY lt.user_id
+      )`);
+  }
+  if (needs.includes("dc")) {
+    parts.push(`
+      dc AS (
+        SELECT lt.user_id,
+               COUNT(*)::bigint AS deposit_count
+          FROM ledger_transactions lt
+         INNER JOIN filtered f ON f.id = lt.user_id
+         WHERE lt.type = 'deposit'::ledger_transaction_type
+           AND lt.status = 'completed'::ledger_transaction_status
+         GROUP BY lt.user_id
+      )`);
+  }
+  return parts.length ? `,\n${parts.join(",\n")}` : "";
+}
+
+function buildRankingJoins(
+  needs: readonly ("inv" | "cw" | "vc" | "os" | "dc")[],
+): string {
+  const joins: string[] = ["LEFT JOIN balances b ON b.user_id = f.id"];
+  if (needs.includes("inv")) joins.push("LEFT JOIN inv ON inv.user_id = f.id");
+  if (needs.includes("cw")) joins.push("LEFT JOIN cw ON cw.user_id = f.id");
+  if (needs.includes("vc")) joins.push("LEFT JOIN vc ON vc.user_id = f.id");
+  if (needs.includes("os")) joins.push("LEFT JOIN os ON os.user_id = f.id");
+  if (needs.includes("dc")) joins.push("LEFT JOIN dc ON dc.user_id = f.id");
+  return joins.join("\n      ");
+}
+
+function buildRankingOrderExpr(sortBy: string): string {
+  if (sortBy === "totalWithdrawn") {
+    return `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)`;
+  }
+  if (sortBy === "inventoryValue") {
+    return `COALESCE(inv.inv_value, 0)`;
+  }
+  if (sortBy === "depositCount") {
+    return `COALESCE(dc.deposit_count, 0)`;
+  }
+  if (sortBy === "netHoldings") {
+    return `COALESCE(b.available_balance::numeric, 0)
+            + COALESCE(b.locked_balance::numeric, 0)
+            + COALESCE(inv.inv_value, 0)
+            + COALESCE(vc.voucher_value, 0)
+            - COALESCE(os.os_net, 0)`;
+  }
+  // pnl — house-perspective sort key (asc = top losers / house gain)
+  return `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
+          + COALESCE(b.available_balance::numeric, 0)
+          + COALESCE(b.locked_balance::numeric, 0)
+          + COALESCE(inv.inv_value, 0)
+          + COALESCE(vc.voucher_value, 0)
+          - COALESCE(os.os_net, 0)
+          - COALESCE(b.total_deposited::numeric, 0)`;
+}
+
+/** Shared SELECT columns for hydration — computed once in the ranking scan. */
+function metricSelectForSort(
+  sortBy: string,
+  needs: readonly ("inv" | "cw" | "vc" | "os" | "dc")[],
+): string {
+  const cols = [
+    "COALESCE(b.available_balance::numeric, 0) AS av",
+    "COALESCE(b.locked_balance::numeric, 0) AS lk",
+    "COALESCE(b.total_deposited::numeric, 0) AS dep",
+  ];
+  cols.push(
+    needs.includes("cw")
+      ? "COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0) AS wd"
+      : "COALESCE(b.total_withdrawn::numeric, 0) AS wd",
+  );
+  cols.push(
+    needs.includes("inv")
+      ? "COALESCE(inv.inv_value, 0) AS inv_val"
+      : "0::numeric AS inv_val",
+  );
+  cols.push(
+    needs.includes("vc")
+      ? "COALESCE(vc.voucher_value, 0) AS vch_val"
+      : "0::numeric AS vch_val",
+  );
+  cols.push(
+    needs.includes("os") ? "COALESCE(os.os_net, 0) AS os_net" : "0::numeric AS os_net",
+  );
+  return cols.join(",\n    ");
+}
+
+function rowToRankedMetrics(row: {
+  av: string | number | null;
+  lk: string | number | null;
+  dep: string | number | null;
+  wd: string | number | null;
+  inv_val: string | number | null;
+  vch_val: string | number | null;
+  os_net: string | number | null;
+}): RankedUserMetrics {
+  const lockedBalance = toNumber(row.lk);
+  const osNet = toNumber(row.os_net);
+  const onSiteBalance =
+    toNumber(row.av) + lockedBalance - osNet;
+  const availableBalance = Math.max(0, onSiteBalance - lockedBalance);
+  const inventoryValue = toNumber(row.inv_val);
+  const unclaimedVouchers = toNumber(row.vch_val);
+  const totalDeposited = toNumber(row.dep);
+  const totalWithdrawn = toNumber(row.wd);
+  const housePnl =
+    totalDeposited -
+    totalWithdrawn -
+    onSiteBalance -
+    inventoryValue -
+    unclaimedVouchers;
+  return {
+    availableBalance,
+    lockedBalance,
+    inventoryValue,
+    unclaimedVouchers,
+    totalDeposited,
+    totalWithdrawn,
+    pnl: -housePnl,
+    netHoldings:
+      availableBalance + lockedBalance + inventoryValue + unclaimedVouchers,
+  };
+}
+
 /**
  * Shared WHERE builder for every raw-SQL user-list path (ranking scan AND
  * the column-sort search fast path). Free-form text uses `LOWER(col) LIKE`
@@ -262,151 +462,58 @@ const cachedFilteredColumnSortUserIds = unstable_cache(
  */
 async function computeRankedUserIds(
   input: RankedUserIdsInput,
-): Promise<{ ids: string[]; total: number }> {
+): Promise<RankedUserIdsResult> {
   const { sortBy, order, page, perPage, ...filter } = input;
   const db = await getDb();
   const orderSql = order === "asc" ? "ASC" : "DESC";
   const whereClause = buildUserListWhereClause(filter);
+  const aggregateKeys =
+    SORT_AGGREGATE_KEYS[sortBy as keyof typeof SORT_AGGREGATE_KEYS] ?? [];
+  const aggregateCtes = buildAggregateCtes(aggregateKeys);
+  const rankingJoins = buildRankingJoins(aggregateKeys);
+  const orderExpr = buildRankingOrderExpr(sortBy);
+  const metricSelect = metricSelectForSort(sortBy, aggregateKeys);
 
-  // ── Two-stage filter → hydrate ───────────────────────────────────────
-  // PERF: the legacy query LEFT-JOINed all 6 per-user aggregates
-  // (inventory / withdrawals / vouchers / official-stream / optional
-  // deposit-count) onto the WHOLE `user` table and only THEN applied the
-  // WHERE — so it computed every aggregate for every user before
-  // discarding the ones the filter rejected. With a search term that
-  // matches a handful of users, that is thousands of wasted aggregate
-  // rows per request.
-  //
-  // Now the WHERE runs FIRST inside a `filtered` CTE (a plain user-table
-  // scan that uses the role/status btree + the prefix index for search),
-  // and the aggregate joins hang off that already-narrowed set. Postgres
-  // materializes the small filtered id set and aggregates ONLY for those
-  // users. The aggregate join SQL is identical to before — only the row
-  // it attaches to (the filtered CTE instead of the full table) changed —
-  // so the ORDER BY expression, NULLS LAST handling, tie-breaker and
-  // pagination are byte-for-byte the same ranking. Result rows are
-  // identical to the old query for any given filter.
-  //
-  // depositCount is the one aggregate JOINed only when it's the active
-  // sort key — the COUNT(*) groupBy on ledger_transactions is pricey, so
-  // it stays out of every other sort path. It too now aggregates against
-  // the filtered set.
-  const depositCountJoin =
-    sortBy === "depositCount"
-      ? `
-    LEFT JOIN (
-      SELECT user_id, COUNT(*)::bigint AS deposit_count
-      FROM ledger_transactions
-      WHERE type = 'deposit'::ledger_transaction_type
-        AND status = 'completed'::ledger_transaction_status
-        AND user_id IN (SELECT id FROM filtered)
-      GROUP BY user_id
-    ) dc ON dc.user_id = f.id`
-      : "";
+  type RankedRow = {
+    id: string;
+    av: string | null;
+    lk: string | null;
+    dep: string | null;
+    wd: string | null;
+    inv_val: string | null;
+    vch_val: string | null;
+    os_net: string | null;
+  };
 
-  const orderExpr =
-    sortBy === "totalWithdrawn"
-      ? `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)`
-      : sortBy === "inventoryValue"
-        ? `COALESCE(inv.inv_value, 0)`
-        : sortBy === "depositCount"
-          ? `COALESCE(dc.deposit_count, 0)`
-          : sortBy === "netHoldings"
-            ? // Net on-platform position from the house POV: cash
-              // (available + locked) + open inventory + unclaimed
-              // vouchers. Vouchers count as inventory exactly like
-              // cards (cards + vouchers = inventory), so they belong
-              // in the on-site holdings snapshot. This is the "what
-              // the user has on-site RIGHT NOW" snapshot — ignores
-              // lifetime deposits/withdrawals/PnL so big holders
-              // surface even if they never wagered. Must stay in sync
-              // with the JS netHoldings computed in the data mapping.
-              // FAKE-BALANCE: subtract the signed official_stream net
-              // (os.os_net) so the sort matches the netted DISPLAYED
-              // availableBalance / netHoldings.
-              `COALESCE(b.available_balance::numeric, 0)
-               + COALESCE(b.locked_balance::numeric, 0)
-               + COALESCE(inv.inv_value, 0)
-               + COALESCE(vc.voucher_value, 0)
-               - COALESCE(os.os_net, 0)`
-            : `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
-             + COALESCE(b.available_balance::numeric, 0)
-             + COALESCE(b.locked_balance::numeric, 0)
-             + COALESCE(inv.inv_value, 0)
-             + COALESCE(vc.voucher_value, 0)
-             - COALESCE(os.os_net, 0)
-             - COALESCE(b.total_deposited::numeric, 0)`;
-
-  // The aggregate subqueries are scoped to the filtered id set via
-  // `WHERE user_id IN (SELECT id FROM filtered)`. This is the change that
-  // makes the heavy joins cheap: each aggregate now sums only the rows
-  // belonging to a user that survived the WHERE, instead of grouping the
-  // whole inventory / withdrawals / vouchers / ledger tables.
   const [orderedRows, totalCount] = await Promise.all([
-    db.$queryRawUnsafe<{ id: string }[]>(`
+    db.$queryRawUnsafe<RankedRow[]>(`
       WITH filtered AS (
         SELECT u.id
-        FROM "user" u
-        ${whereClause}
-      )
-      SELECT f.id
-      FROM filtered f
-      LEFT JOIN balances b ON b.user_id = f.id
-      LEFT JOIN (
-        SELECT user_id, COALESCE(SUM(value_at_obtained::numeric), 0) AS inv_value
-        FROM user_inventory
-        -- Exclude cards locked for an in-flight withdrawal — their value is
-        -- carried by the withdrawals join below (pending/processing count
-        -- there). Matches calculateUsersPnlBatch so the pnl/inventoryValue/
-        -- netHoldings sorts agree with the displayed (lock-excluded) values.
-        WHERE sold_at IS NULL AND exchanged_at IS NULL AND withdrawal_locked_at IS NULL
-          AND user_id IN (SELECT id FROM filtered)
-        GROUP BY user_id
-      ) inv ON inv.user_id = f.id
-      LEFT JOIN (
-        SELECT user_id, COALESCE(SUM(total_value_usd::numeric), 0) AS wd_value
-        FROM card_withdrawal_requests
-        -- In-flight (pending/processing) + done (shipped/completed) all count
-        -- as a house withdrawal liability so the pnl sort stays continuous
-        -- across the withdrawal lifecycle and matches the displayed
-        -- totalWithdrawn from calculateUsersPnlBatch.
-        WHERE status IN ('pending', 'processing', 'shipped', 'completed')
-          AND user_id IN (SELECT id FROM filtered)
-        GROUP BY user_id
-      ) cw ON cw.user_id = f.id
-      LEFT JOIN (
-        SELECT user_id, COALESCE(SUM(value::numeric), 0) AS voucher_value
-        FROM vouchers
-        WHERE claimed_at IS NULL
-          AND user_id IN (SELECT id FROM filtered)
-        GROUP BY user_id
-      ) vc ON vc.user_id = f.id
-      -- FAKE-BALANCE: per-user SIGNED NET of completed official_stream
-      -- adjustments, subtracted from the cash term of the balance-based
-      -- sort expressions so the ordering matches the netted DISPLAYED
-      -- availableBalance / netHoldings.
-      LEFT JOIN (
-        SELECT lt.user_id, COALESCE(SUM(lt.amount::numeric), 0) AS os_net
-        FROM ledger_transactions lt
-        WHERE lt.status = 'completed'
-          AND ${officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })}
-          AND lt.user_id IN (SELECT id FROM filtered)
-        GROUP BY lt.user_id
-      ) os ON os.user_id = f.id${depositCountJoin}
-      ORDER BY (${orderExpr}) ${orderSql} NULLS LAST, f.id ${orderSql}
-      LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
+          FROM "user" u
+          ${whereClause}
+      )${aggregateCtes}
+      SELECT f.id,
+             ${metricSelect}
+        FROM filtered f
+        ${rankingJoins}
+       ORDER BY (${orderExpr}) ${orderSql} NULLS LAST, f.id ${orderSql}
+       LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
     `),
-    // Count the same filtered set. Only the WHERE clause matters for the
-    // count, so the aggregate joins are dropped — this is a plain
-    // index/seq count over `user` with the active predicate.
     db.$queryRawUnsafe<{ c: string }[]>(`
       SELECT COUNT(*)::text AS c FROM "user" u ${whereClause}
     `),
   ]);
 
+  const metricsById = new Map<string, RankedUserMetrics>();
+  const ids = orderedRows.map((r) => {
+    metricsById.set(r.id, rowToRankedMetrics(r));
+    return r.id;
+  });
+
   return {
-    ids: orderedRows.map((r) => r.id),
+    ids,
     total: Number(totalCount[0]?.c ?? 0),
+    metricsById,
   };
 }
 
@@ -455,13 +562,13 @@ async function computeRankedUserIds(
  */
 const cachedGlobalRankedUserIds = unstable_cache(
   computeRankedUserIds,
-  ["users-ranked-ids-global-v2"],
+  ["users-ranked-ids-global-v3"],
   { revalidate: 300, tags: ["users-list"] },
 );
 
 const cachedFilteredRankedUserIds = unstable_cache(
   computeRankedUserIds,
-  ["users-ranked-ids-filtered-v2"],
+  ["users-ranked-ids-filtered-v3"],
   { revalidate: 30, tags: ["users-list"] },
 );
 
@@ -472,7 +579,7 @@ const cachedFilteredRankedUserIds = unstable_cache(
  */
 function cachedRankedUserIds(
   input: RankedUserIdsInput,
-): Promise<{ ids: string[]; total: number }> {
+): Promise<RankedUserIdsResult> {
   const isFiltered =
     !!input.searchTerm ||
     (!!input.role && input.role !== "all") ||
@@ -544,10 +651,18 @@ async function hydrateUserListPage(
   total: number,
   page: number,
   perPage: number,
-  opts: { skipListRisk?: boolean; skipPnlBatch?: boolean } = {},
+  opts: {
+    skipListRisk?: boolean;
+    skipPnlBatch?: boolean;
+    /** Which computed sort produced `precomputedMetrics`. */
+    rankedSortBy?: string;
+    /** Financials already computed by the ranking scan (pnl / netHoldings sorts). */
+    precomputedMetrics?: Map<string, RankedUserMetrics>;
+  } = {},
 ): Promise<PaginatedResult<UserListItem>> {
   const db = await getDb();
   const userIds = users.map((u) => u.id);
+  const precomputed = opts.precomputedMetrics;
   const empty = {
     deposits: [] as Array<{ user_id: string; _count: { _all: number } }>,
   };
@@ -562,10 +677,16 @@ async function hydrateUserListPage(
     }
   >();
 
+  const needsPnlBatch =
+    !opts.skipPnlBatch &&
+    userIds.some((id) => !precomputed?.has(id));
+
   const [pnlByUserId, depositCountRows, riskScoresMap] = await Promise.all([
-    opts.skipPnlBatch || userIds.length === 0
-      ? Promise.resolve(new Map<string, UserPnl>())
-      : calculateUsersPnlBatch(userIds),
+    needsPnlBatch
+      ? calculateUsersPnlBatch(
+          userIds.filter((id) => !precomputed?.has(id)),
+        )
+      : Promise.resolve(new Map<string, UserPnl>()),
     userIds.length > 0
       ? db.ledger_transactions.groupBy({
           by: ["user_id"],
@@ -588,21 +709,47 @@ async function hydrateUserListPage(
 
   return {
     data: users.map((u) => {
-      const lockedBalance = toNumber(u.balances?.locked_balance);
+      const ranked = precomputed?.get(u.id);
+      const rankedSort = opts.rankedSortBy;
+      const useRankedHoldings =
+        ranked &&
+        (rankedSort === "pnl" || rankedSort === "netHoldings");
+      const useRankedPnl = ranked && rankedSort === "pnl";
+      const lockedBalance =
+        useRankedHoldings
+          ? ranked.lockedBalance
+          : toNumber(u.balances?.locked_balance);
       const totalWagered = toNumber(u.balances?.total_wagered);
-      const userPnl = pnlByUserId.get(u.id);
-      const availableBalance = userPnl
-        ? Math.max(0, userPnl.onSiteBalance - lockedBalance)
-        : toNumber(u.balances?.available_balance);
+      const userPnl = useRankedPnl ? null : pnlByUserId.get(u.id);
+      const availableBalance =
+        useRankedHoldings
+          ? ranked.availableBalance
+          : userPnl
+            ? Math.max(0, userPnl.onSiteBalance - lockedBalance)
+            : toNumber(u.balances?.available_balance);
       const totalDeposited =
-        userPnl?.deposits ?? toNumber(u.balances?.total_deposited);
+        useRankedPnl
+          ? ranked.totalDeposited
+          : userPnl?.deposits ??
+            toNumber(u.balances?.total_deposited);
       const totalWithdrawn =
-        userPnl?.withdrawals ?? toNumber(u.balances?.total_withdrawn);
-      const inventoryValue = userPnl?.inventoryValue ?? 0;
-      const unclaimedVouchers = userPnl?.unclaimedVouchers ?? 0;
-      const pnl = userPnl ? -userPnl.pnl : 0;
+        useRankedPnl
+          ? ranked.totalWithdrawn
+          : userPnl?.withdrawals ??
+            toNumber(u.balances?.total_withdrawn);
+      const inventoryValue =
+        useRankedHoldings
+          ? ranked.inventoryValue
+          : userPnl?.inventoryValue ?? 0;
+      const unclaimedVouchers =
+        useRankedHoldings
+          ? ranked.unclaimedVouchers
+          : userPnl?.unclaimedVouchers ?? 0;
+      const pnl = useRankedPnl ? ranked.pnl : userPnl ? -userPnl.pnl : 0;
       const netHoldings =
-        availableBalance + lockedBalance + inventoryValue + unclaimedVouchers;
+        useRankedHoldings
+          ? ranked.netHoldings
+          : availableBalance + lockedBalance + inventoryValue + unclaimedVouchers;
       const risk = riskScoresMap.get(u.id);
       return {
         id: u.id,
@@ -850,7 +997,7 @@ export async function getUsers(params: {
     // this (sort / filter / page) tuple with a long TTL. Page row
     // HYDRATION stays here and stays UNCACHED so balances / PnL / risk
     // are always live; only the slow ordering is served from cache.
-    const { ids, total: totalCount } = await cachedRankedUserIds({
+    const { ids, total: totalCount, metricsById } = await cachedRankedUserIds({
       sortBy,
       order,
       page,
@@ -875,6 +1022,12 @@ export async function getUsers(params: {
       .map((id) => byId.get(id))
       .filter((u): u is (typeof unordered)[number] => Boolean(u));
     total = totalCount;
+
+    return hydrateUserListPage(users, total, page, perPage, {
+      precomputedMetrics: metricsById,
+      rankedSortBy: sortBy,
+      skipPnlBatch: sortBy === "pnl",
+    });
   } else {
     // Build a compound orderBy so every Prisma-path sort gets a
     // deterministic tie-breaker (id ASC). Without it, many users with
