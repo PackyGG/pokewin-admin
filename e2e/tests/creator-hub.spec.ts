@@ -1,11 +1,9 @@
 import { test, expect } from "@playwright/test";
-import pg from "pg";
 import { loadEnvFiles } from "../helpers/env";
 import {
-  mintAdminSession,
+  mintCreatorHubSession,
+  readSampleCreatorId,
   SESSION_COOKIE_NAME,
-  signSessionCookie,
-  type MintedSession,
 } from "../responsive/mint-session";
 
 loadEnvFiles();
@@ -37,70 +35,6 @@ const HUB_ROUTES = [
   // Legacy bookmark — should redirect to dashboard after gate.
   "/creator-hub/alerts",
 ] as const;
-
-async function mintCreatorHubSession(): Promise<MintedSession> {
-  const url = process.env.ADMIN_DATABASE_URL;
-  if (!url) throw new Error("ADMIN_DATABASE_URL required for Creator Hub e2e");
-
-  const pool = new pg.Pool({ connectionString: url, max: 1 });
-  try {
-    const motha = await pool.query<{
-      id: string;
-      email: string;
-      username: string;
-      role: string;
-      roles: string[] | null;
-    }>(
-      `SELECT id, email, username, role, COALESCE(roles, ARRAY[role]) AS roles
-         FROM admin_users
-        WHERE is_active = TRUE AND lower(username) = 'motha'
-        LIMIT 1`,
-    );
-    if (motha.rowCount && motha.rowCount > 0) {
-      const row = motha.rows[0];
-      const admin = {
-        id: row.id,
-        email: row.email,
-        username: row.username,
-        role: row.role,
-        roles: row.roles ?? [row.role],
-      };
-      return { cookieValue: await signSessionCookie(admin), admin };
-    }
-
-    // Fallback: enable the admin-role Hub toggle and mint a normal admin.
-    await pool.query(
-      `INSERT INTO admin_settings (key, value, updated_by, updated_at)
-       VALUES ('creator_hub_access_admin_enabled', 'true', NULL, NOW())
-       ON CONFLICT (key) DO UPDATE
-         SET value = 'true', updated_at = NOW()`,
-    );
-    return mintAdminSession();
-  } finally {
-    await pool.end();
-  }
-}
-
-async function readSampleCreatorId(): Promise<string | null> {
-  const url = process.env.DATABASE_URL;
-  if (!url) return null;
-  const pool = new pg.Pool({ connectionString: url, max: 1 });
-  try {
-    const res = await pool.query<{ id: string }>(
-      `SELECT u.id
-         FROM "user" u
-         JOIN user_roles ur ON ur.user_id = u.id
-        WHERE ur.role = 'creator'
-        ORDER BY u.created_at DESC
-        LIMIT 1`,
-    );
-    return res.rowCount && res.rowCount > 0 ? res.rows[0].id : null;
-  } catch {
-    return null;
-  } finally {
-    await pool.end();
-  }
-}
 
 test.describe("Creator Hub routes (minted session)", () => {
   test("every hub route renders past the access gate", async ({ browser }) => {

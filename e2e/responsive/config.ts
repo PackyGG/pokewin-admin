@@ -50,12 +50,14 @@ export function viewportLabel(v: Viewport): string {
 export type AuditRoute = {
   /** Stable key used in artifact filenames + test titles. */
   key: string;
-  /** Path template; `:sampleUserId` is substituted at runtime. */
+  /** Path template; `:sampleUserId` / `:sampleCreatorId` substituted at runtime. */
   path: string;
   /** Whether to also run PRIORITY_VIEWPORTS for this route. */
   priority?: boolean;
   /** Needs a real entity id substituted into the path. */
   needsSampleUser?: boolean;
+  /** Needs a creator-role user id (Hub detail routes). */
+  needsSampleCreator?: boolean;
 };
 
 /**
@@ -84,4 +86,31 @@ export const WAVE0_ROUTES: AuditRoute[] = [
     path: "/responsive-fixture/users-detail",
     priority: true,
   },
+];
+
+/** Creator Hub routes for the minted-session responsive sweep. */
+export const CREATOR_HUB_ROUTES: AuditRoute[] = [
+  { key: "hub-dashboard", path: "/creator-hub", priority: true },
+  { key: "hub-creators", path: "/creator-hub/creators", priority: true },
+  {
+    key: "hub-creator-detail",
+    path: "/creator-hub/creators/:sampleCreatorId",
+    priority: true,
+    needsSampleCreator: true,
+  },
+  {
+    key: "hub-creator-forecast",
+    path: "/creator-hub/creators/:sampleCreatorId?tab=forecast",
+    needsSampleCreator: true,
+  },
+  { key: "hub-leaderboards", path: "/creator-hub/leaderboards" },
+  { key: "hub-creator-check", path: "/creator-hub/creator-check" },
+  { key: "hub-acquisition", path: "/creator-hub/acquisition" },
+  { key: "hub-socials-review", path: "/creator-hub/socials-review" },
+  { key: "hub-profitable-algo", path: "/creator-hub/profitable-algo" },
+  { key: "hub-changelog", path: "/creator-hub/changelog" },
+  { key: "hub-deal-tracker", path: "/creator-hub/deal-tracker" },
+  { key: "hub-compare", path: "/creator-hub/compare" },
+  { key: "hub-settings", path: "/creator-hub/settings" },
+  { key: "hub-alerts-redirect", path: "/creator-hub/alerts" },
 ];

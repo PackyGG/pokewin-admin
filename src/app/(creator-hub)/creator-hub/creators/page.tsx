@@ -63,7 +63,7 @@ export default async function CreatorHubRosterPage({
             isPast ? (
               <RosterTabSwitch />
             ) : (
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex w-full min-w-0 flex-col items-stretch gap-2 sm:items-end lg:flex-row lg:flex-wrap lg:items-center">
                 <RosterTabSwitch />
                 <RosterPeriodControl current={params.period} />
               </div>

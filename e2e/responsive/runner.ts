@@ -87,6 +87,44 @@ export async function seedCollapsedRail(context: BrowserContext): Promise<void> 
  * middleware (wrong SESSION_SECRET, payload shape, or expiry) — fail loud
  * so we never silently audit the login page for every route.
  */
+async function gotoResilient(page: Page, path: string): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await page.goto(path, { waitUntil: "domcontentloaded" });
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const aborted =
+        msg.includes("ERR_ABORTED") || msg.includes("NS_BINDING_ABORTED");
+      if (!aborted || attempt === 2) throw err;
+      await page.waitForTimeout(400);
+    }
+  }
+}
+
+export async function assertCreatorHubAuthenticated(page: Page): Promise<void> {
+  try {
+    await page.goto("/creator-hub", {
+      waitUntil: "domcontentloaded",
+      timeout: 120_000,
+    });
+  } catch {
+    await gotoResilient(page, "/creator-hub");
+  }
+  await page.waitForLoadState("domcontentloaded").catch(() => undefined);
+  const url = page.url();
+  if (/\/login(\?|$)/.test(url)) {
+    throw new Error(
+      `[responsive] Creator Hub auth sanity FAILED: /creator-hub redirected to ${url}.`,
+    );
+  }
+  if (!/\/creator-hub/.test(url)) {
+    throw new Error(
+      `[responsive] Creator Hub auth sanity FAILED: expected /creator-hub, got ${url}.`,
+    );
+  }
+}
+
 export async function assertAuthenticated(page: Page): Promise<void> {
   const resp = await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
   // Give any client redirect a beat to settle. The middleware redirect to
@@ -151,7 +189,7 @@ async function settlePage(page: Page): Promise<void> {
  * while chunks stream). After this returns the route is compiled + cached.
  */
 async function warmRoute(page: Page, path: string): Promise<void> {
-  await page.goto(path, { waitUntil: "domcontentloaded" });
+  await gotoResilient(page, path);
   await settlePage(page);
 }
 
@@ -224,7 +262,7 @@ export async function auditRouteOnPage(
     // already compiled (warmRoute above), so this is a hot load. We settle
     // on DOM + skeleton-clear rather than networkidle (live-poll endpoints
     // never let the network idle on this app).
-    await page.goto(resolvedPath, { waitUntil: "domcontentloaded" });
+    await gotoResilient(page, resolvedPath);
     await settlePage(page);
 
     const result = (await page.evaluate(detectOffenders, opts)) as DetectResult;

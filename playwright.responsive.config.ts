@@ -13,6 +13,9 @@ import { defineConfig, devices } from "@playwright/test";
  *   - Screenshots are intrinsic to its output, not failure-only.
  *
  * Run with:  npx playwright test --config=playwright.responsive.config.ts
+ *
+ * Creator Hub sweep:
+ *   RESPONSIVE_EXPECT_CLEAN=1 npx playwright test --config=playwright.responsive.config.ts creator-hub-audit
  */
 
 const isCI = !!process.env.CI;
