@@ -3,7 +3,6 @@ import "server-only";
 import { cache } from "react";
 
 import { adminDb } from "@/lib/admin-db";
-import { getDb } from "@/lib/db";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { logWarn } from "@/lib/errors/logger";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
@@ -11,12 +10,9 @@ import { BackendApiError, creatorsApi } from "@/lib/backend-api";
 import { isLinkedSocialUsername } from "../../../../../(admin)/creators/_queries/socials-by-user";
 import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
 import { getCreatorHeader } from "@/lib/queries/creators-detail";
-import { getUserCreatorHistory } from "@/lib/queries/user-role-history";
-
 import {
   EMPTY_MANUAL_STATE,
   MIN_SOCIALS,
-  NEW_CREATOR_CHECKLIST_DAYS,
   type ChecklistItem,
   type ChecklistManualState,
   type CreatorChecklistData,
@@ -50,9 +46,9 @@ import {
  * its dock host (its own Suspense boundary), so these reads run only when the
  * checklist is mounted.
  *
- * New-creator-only: established creators (promoted before
- * {@link NEW_CREATOR_CHECKLIST_DAYS}) never see the widget/badge unless they
- * have a recent in-progress checklist row.
+ * New-creator-only: the checklist is enrolled when a creator is added via Hub
+ * Add Creator v2 (`enrollCreatorOnboardingChecklist`). Existing roster
+ * creators have no row and never see the widget/badge.
  *
  * Schema self-heal: `creator_onboarding_checklist` is an ADMIN-DB table that
  * may not be present on every environment yet. Every read/write path here
@@ -102,63 +98,34 @@ const getCreatorTotalDealCounts = cache(async (): Promise<Map<string, number>> =
 });
 
 /**
- * Best-effort "creator since" — earliest promotion signal we can find:
- *   1. `user_made_creator` audit (admin-panel promotion)
- *   2. `role_changed → creator` audit
- *   3. Oldest owned affiliate code (creator-only artifact)
+ * Enroll a newly added Hub creator in the onboarding checklist. Called from
+ * Add Creator v2 after promotion — existing roster creators never get a row.
  */
-async function resolveCreatorPromotedAt(
+export async function enrollCreatorOnboardingChecklist(
   targetUserId: string,
-): Promise<Date | null> {
-  const db = await getDb();
-  const [madeCreatorEvent, roleHistory, codeRows] = await Promise.all([
-    adminDb.admin_audit_events
-      .findFirst({
-        where: {
-          target_user_id: targetUserId,
-          event_type: "user_made_creator",
-        },
-        orderBy: { created_at: "asc" },
-        select: { created_at: true },
-      })
-      .catch(() => null),
-    getUserCreatorHistory(targetUserId),
-    db.$queryRawUnsafe<{ created_at: Date }[]>(
-      `SELECT created_at FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1`,
-      targetUserId,
-    ),
-  ]);
-
-  const candidates: Date[] = [];
-  if (madeCreatorEvent?.created_at) candidates.push(madeCreatorEvent.created_at);
-  if (roleHistory.creatorSince) candidates.push(new Date(roleHistory.creatorSince));
-  if (codeRows[0]?.created_at) candidates.push(codeRows[0].created_at);
-
-  if (candidates.length === 0) return null;
-  return new Date(Math.min(...candidates.map((d) => d.getTime())));
+): Promise<void> {
+  try {
+    await adminDb.creator_onboarding_checklist.upsert({
+      where: { target_user_id: targetUserId },
+      create: { target_user_id: targetUserId },
+      update: {},
+      select: { id: true },
+    });
+  } catch (err) {
+    if (isChecklistTableMissing(err)) return;
+    throw err;
+  }
 }
 
 /**
- * New-creator-only gate. Established creators (promoted before the window, with
- * no recent in-progress checklist row) never see the widget/badge.
+ * New-creator-only gate. Only creators with an in-progress checklist row
+ * (enrolled via Hub Add Creator v2) see the dock, panel, or roster badge.
  */
 export async function isCreatorChecklistEligible(
   targetUserId: string,
 ): Promise<boolean> {
-  const cutoffMs = Date.now() - NEW_CREATOR_CHECKLIST_DAYS * 86_400_000;
-
-  const [promotedAt, row] = await Promise.all([
-    resolveCreatorPromotedAt(targetUserId),
-    readChecklistRow(targetUserId),
-  ]);
-
-  if (promotedAt && promotedAt.getTime() >= cutoffMs) return true;
-
-  if (row && row.completed_at == null && row.created_at.getTime() >= cutoffMs) {
-    return true;
-  }
-
-  return false;
+  const row = await readChecklistRow(targetUserId);
+  return row != null && row.completed_at == null;
 }
 
 /** True if an error is a "relation does not exist" (table not migrated yet). */

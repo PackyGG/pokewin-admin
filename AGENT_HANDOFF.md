@@ -37,7 +37,7 @@
 
 ## 🟡 In-flight
 
-- **Hub roster tabs (`cursor/creator-hub-roster-tabs-775d`, `d8ca712f`)** — `/creator-hub/creators` split into Active (fill deal), Multiplier (no fill deal), Past; local Playwright `e2e/tests/creator-hub-roster-tabs.spec.ts` PASS; prod verify after merge/deploy
+- **Hub roster tabs + checklist gate (`cursor/creator-hub-roster-tabs-775d`)** — 3-tab roster (Active/Multiplier/Past); onboarding checklist **enrollment-only** (row created in Add Creator v2 — existing creators hidden); e2e roster tabs PASS locally; prod verify after merge/deploy
 
 ---
 

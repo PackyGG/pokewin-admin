@@ -13,6 +13,7 @@ import {
 import { fetchPublicStats } from "@/lib/socials-public";
 
 import { promoteUserToCreator } from "../../../../(admin)/creators/backend-actions";
+import { enrollCreatorOnboardingChecklist } from "../[id]/_queries/onboarding-checklist-data";
 
 const SetupSchema = z.object({
   userId: z.string().min(1),
@@ -158,6 +159,7 @@ export async function completeCreatorOnboarding(
   }
 
   await promoteUserToCreator(parsed.userId);
+  await enrollCreatorOnboardingChecklist(parsed.userId);
 
   revalidatePath("/creator-hub/creators");
   revalidatePath(`/creator-hub/creators/${parsed.userId}`);
