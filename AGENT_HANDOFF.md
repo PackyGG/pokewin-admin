@@ -8,7 +8,8 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `7b96cac7` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub revamp **DONE** — hub ad detail prod-verified (Desktop Chrome, `pokewin-admin.vercel.app`)
+- **HEAD:** `dc6e05c3` · **Updated:** 2026-06-06 · **Active focus:** Withdrawal wager-requirement admin UI **PARTIAL** (`c96a3075`, `b4096d61`, `dc6e05c3`) — tsc + lint + `npm run build` exit 0; live logged-in render NOT exercised (no local `.env` / DB / `SESSION_SECRET` to mint a session) and real backend success path blocked until the backend branch deploys
+- **Note (2026-06-06):** local checkout was on branch `dev` (even with `origin/main`) with **no `node_modules` / `.env`**; ran `npm install` + `prisma generate` (both clients) to gate.
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
@@ -30,6 +31,13 @@
 - **Codes & Ads hub route (`9f0c02f8`)** — `/creator-hub/codes-ads` lazy tabs (affiliate codes table + ads dashboard); hub-gated mutations; sidebar nav; e2e smoke route added (13 hub routes)
 - **Responsive harness — Creator Hub (`634b12e3`)** — `CREATOR_HUB_ROUTES` + `e2e/responsive/creator-hub-audit.spec.ts` (minted `canAccessCreatorHub` session); roster SectionHeading action stack fix at md; `RESPONSIVE_EXPECT_CLEAN=1` PASS (detail routes skip without creator in MAIN)
 - **Hub ad detail (`73282fc9`)** — `/creator-hub/codes-ads/ads/[code]` (hub gate, modern panels, reuses `getAdCodeDetail` + admin chart/copy-link); hub cards no longer deep-link to `/creators/ads/[code]`; e2e `readSampleAdCode` + prod smoke spec (`ff6ea75a`)
+
+**Withdrawal wager requirement admin UI (2026-06-06):**
+- `src/lib/backend-api/client.ts` — added `PUT` to `HttpMethod` + `backendApi.put()` (mirrors `patch`) · `c96a3075`
+- `src/lib/backend-api/wager-requirements.ts` (NEW) — server-only module wrapping the backend's `/admin/wager-requirement/default` GET/PUT + `/admin/users/:id/wager-requirement` GET/PUT/DELETE; all bps (10000 = 1×); errors surface as BackendApiError/BackendNetworkError · `c96a3075`
+- `/security` defaults card — `wager-requirement-card.tsx` (5 knobs in ×-multipliers + live "= N bps" hint, changed-fields-only, null → muted "awaiting backend deploy") + `wager-requirement-actions.ts` (requireAdmin, audit old→new, backend PUT) + `wager-requirement-keys.ts` (5 site_config keys added to the `movedKeys` filter in `security/page.tsx`); backend read non-critical (try/catch→null) · `b4096d61`
+- Per-user override card — `user-wager-requirement-card.tsx` on the Account tab right after Custom Battle Limits (site default / override / effective in × + bps; set custom, quick-exempt 0×, clear) + `wager-requirement-actions.ts` (requireAdmin, 404→"User not found in backend", network→"Backend not updated yet", audit old→new). Data fetched NON-critically in `page.tsx` `UserDetailBody` (own try/catch→null, NOT in the heavy `getUserDetailCached` aggregate) → threaded `UserViewModern`→`AccountTab`; also threaded through classic `tab-content.tsx` + responsive fixture · `dc6e05c3`
+- **Verify gap:** build-gated only. No live logged-in click-through (no local `.env`/DB) and no real backend success path (branch undeployed) — both surfaces degrade to the "awaiting backend deploy" state, which is the realistic current prod render. Recommend a logged-in pass once the backend branch ships.
 
 **Earlier admin (pre-Hub):** dashboard rework, system-edge-plan, `/users` search, Balance 2.0, insights hub, responsive harness (`e2e/responsive/*`), smoothness primitives (`@/components/ux`)
 
@@ -72,6 +80,8 @@ _None — Creator Hub plan closed. Pick up deferred items below when owner prior
 - **Twitter API shape** — read `core` + `avatar`, not only `legacy` (`src/lib/creator-hub/`)
 - **Hub ads e2e** — `readSampleAdCode()` needs `admin_settings.house_affiliate_user_id` + a row in MAIN `affiliate_codes`; local VM has neither → detail e2e skips; ads tab still renders house-setup empty state
 - **Prod Playwright mint** — cookie signed with VM `SESSION_SECRET` must match Vercel env or prod smoke lands on `/login`
+- **Wager-requirement backend dependency** — the 5 default knobs + per-user override are owned by the backend (`packy-backend` branch `axecutioner/sweepstake`, `src/routes/v1/admin/user-wager-requirements.ts`); the panel writes them via `backendApi` (NOT the MAIN DB). Until that branch deploys, both UI surfaces show the muted "awaiting backend deploy" state. New audit event types: `wager_requirement_defaults_updated`, `user_wager_requirement_updated`, `user_wager_requirement_cleared`.
+- **Fresh checkout may lack `node_modules` + `.env`** — run `npm install` (NOT `npm ci` — lockfile mismatch) then `prisma generate` for BOTH schemas before tsc/build; without `.env` the minted-session Playwright harness can't run (needs `SESSION_SECRET` + `ADMIN_DATABASE_URL` + `DATABASE_URL`).
 
 ---
 
