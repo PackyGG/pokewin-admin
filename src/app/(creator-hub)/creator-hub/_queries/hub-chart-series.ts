@@ -5,9 +5,20 @@ import {
   hubBucketByHour,
   HUB_LIFETIME_LOOKBACK_DAYS,
 } from "./hub-period-sql";
-import { type HubChartPoint } from "./hub-types";
+import {
+  type HubChartPoint,
+  type HubDepositChartRow,
+  type HubWagerChartRow,
+} from "./hub-types";
 
-/** UTC label for one bucket — must match `formatBucketLabel` in cohort SQL. */
+/** UTC label for one bucket — must match cohort SQL `formatBucketLabel`. */
+export function chartDateForBucket(d: Date, period: DashboardPeriod): string {
+  if (hubBucketByHour(period)) {
+    return d.toISOString().slice(11, 16);
+  }
+  return d.toISOString().slice(0, 10);
+}
+
 function bucketLabel(d: Date, hourly: boolean): string {
   if (hourly) return d.toISOString().slice(11, 16);
   return d.toISOString().slice(5, 10);
@@ -67,4 +78,68 @@ export function padHubChartSeries(
     label,
     value: byLabel.get(label) ?? 0,
   }));
+}
+
+export function padHubWagerChartSeries(
+  rows: HubWagerChartRow[],
+  period: DashboardPeriod,
+): HubWagerChartRow[] {
+  const hourly = hubBucketByHour(period);
+  const count = bucketCount(period);
+  const byDate = new Map(rows.map((r) => [r.date, r]));
+
+  const now = new Date();
+  const out: HubWagerChartRow[] = [];
+
+  for (let i = count - 1; i >= 0; i--) {
+    const d = new Date(now);
+    if (hourly) {
+      d.setUTCMinutes(0, 0, 0);
+      d.setUTCHours(d.getUTCHours() - i);
+    } else {
+      d.setUTCHours(0, 0, 0, 0);
+      d.setUTCDate(d.getUTCDate() - i);
+    }
+    const date = chartDateForBucket(d, period);
+    const prev = byDate.get(date);
+    out.push(
+      prev ?? { date, packs: 0, battles: 0, upgrader: 0 },
+    );
+  }
+
+  return out;
+}
+
+export function padHubDepositChartSeries(
+  rows: HubDepositChartRow[],
+  period: DashboardPeriod,
+): HubDepositChartRow[] {
+  const hourly = hubBucketByHour(period);
+  const count = bucketCount(period);
+  const byDate = new Map(rows.map((r) => [r.date, r.amount]));
+
+  const now = new Date();
+  const out: HubDepositChartRow[] = [];
+
+  for (let i = count - 1; i >= 0; i--) {
+    const d = new Date(now);
+    if (hourly) {
+      d.setUTCMinutes(0, 0, 0);
+      d.setUTCHours(d.getUTCHours() - i);
+    } else {
+      d.setUTCHours(0, 0, 0, 0);
+      d.setUTCDate(d.getUTCDate() - i);
+    }
+    const date = chartDateForBucket(d, period);
+    out.push({ date, amount: byDate.get(date) ?? 0 });
+  }
+
+  return out;
+}
+
+/** Human title suffix for hub chart cards (matches period chip). */
+export function hubChartTitleSuffix(period: DashboardPeriod): string {
+  if (hubBucketByHour(period)) return `${period} (hourly)`;
+  if (period === "all") return "365d";
+  return period;
 }

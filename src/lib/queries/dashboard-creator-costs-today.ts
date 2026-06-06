@@ -22,13 +22,13 @@ import {
  * Every line mirrors EXACTLY a definition that already exists elsewhere,
  * just re-scoped to [today 00:00 UTC, now):
  *
- *   • Converted deal payouts today — fill-program stream sessions where the
- *     creator withdrew and ended the session (`status = 'converted'`,
- *     `converted_at` in the window, amount = `converted_to_raw_usd` from the
- *     backend creators API) PLUS multiplier-deal payout vouchers minted in the
- *     window (`creator_multiplier_payout`, MAIN `vouchers.created_at`). Fill
- *     conversions are session events, not voucher mint or card cash-out time.
- *     The two legs are disjoint → no double-count between fill vs multiplier.
+ *   • Converted deal payouts today — fill-program payout vouchers minted in
+ *     the window (`vouchers.origin = 'creator_fill_conversion'`, MAIN DB —
+ *     same source as `/creators` "Converted") PLUS multiplier-deal payout
+ *     vouchers minted in the window (`creator_multiplier_payout`). Fill
+ *     conversions are recognized at voucher mint time, not card cash-out
+ *     time. The two legs are disjoint → no double-count between fill vs
+ *     multiplier.
  *
  *   • Tips today — the `creator_fill_spend_tip` leg of
  *     `creators/_queries/tips-sponsor-spend.ts` (creator-funded tips handed
@@ -136,7 +136,7 @@ const cachedCreatorCostsToday = unstable_cache(
       const since = `'${sinceIso}'::timestamptz`;
 
       // ── Converted deal payouts today ───────────────────────────────────
-      // Fill: backend session convert (`converted_at`, `converted_to_raw_usd`).
+      // Fill: `creator_fill_conversion` vouchers minted in the window.
       // Multiplier: payout vouchers minted in the window (no fill session).
       const sinceDate = new Date(sinceIso);
       const fillSessions = await getConvertedFillSessionsInWindow(sinceDate);
@@ -186,7 +186,7 @@ const cachedCreatorCostsToday = unstable_cache(
       return { creatorWithdrawals, tips, leaderboardGross };
     });
   },
-  ["dashboard-creator-costs-today-v4-session-converted"],
+  ["dashboard-creator-costs-today-v5-fill-vouchers"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -410,8 +410,9 @@ export async function getLeaderboardGrossClaimants(): Promise<LeaderboardGrossBr
 export type CreatorConvertedPayout =
   | {
       kind: "fill_session";
-      sessionId: string;
-      dealId: string;
+      voucherId: string;
+      sessionId: string | null;
+      dealId: string | null;
       amount: number;
       convertedAtIso: string;
     }
@@ -443,13 +444,13 @@ export type CreatorWithdrawalsBreakdown = {
 
 /**
  * Per-creator breakdown behind the Creators Costs card's "Converted payouts"
- * line — WHO withdrew from a fill session (ended + converted) today, plus
- * any multiplier payout vouchers minted today.
+ * line — WHO minted a fill conversion voucher today, plus any multiplier
+ * payout vouchers minted today.
  *
  * ─── WHY IT RECONCILES ──────────────────────────────────────────────────
  *
- * Same sources as the aggregate line: backend `converted_at` fill sessions +
- * `creator_multiplier_payout` vouchers minted in [today 00:00 UTC, now).
+ * Same sources as the aggregate line: `creator_fill_conversion` vouchers
+ * minted in [today 00:00 UTC, now) + `creator_multiplier_payout` vouchers.
  *
  * ─── SCOPE / WINDOW (identical to the card's payouts line) ────────────
  *
@@ -522,6 +523,7 @@ export async function getCreatorWithdrawalsBreakdown(): Promise<CreatorWithdrawa
         creator.amount += s.amountUsd;
         creator.payouts.push({
           kind: "fill_session",
+          voucherId: s.voucherId,
           sessionId: s.sessionId,
           dealId: s.dealId,
           amount: s.amountUsd,

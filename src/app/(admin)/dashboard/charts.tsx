@@ -178,14 +178,18 @@ function WagerTooltipContent({
 
 export function WagerChart({
   data,
+  title = "Wagers (30 days)",
+  xTickFormatter = (v: string) => v.slice(5),
 }: {
   data: { date: string; packs: number; battles: number; upgrader: number }[];
+  title?: string;
+  xTickFormatter?: (value: string) => string;
 }) {
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-sm font-medium">
-          Wagers (30 days)
+          {title}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -197,7 +201,7 @@ export function WagerChart({
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={(v) => v.slice(5)}
+              tickFormatter={xTickFormatter}
             />
             <YAxis
               tickLine={false}
@@ -243,14 +247,18 @@ export function WagerChart({
 
 export function DepositsChart({
   data,
+  title = "Deposits (30 days)",
+  xTickFormatter = (v: string) => v.slice(5),
 }: {
   data: { date: string; amount: number }[];
+  title?: string;
+  xTickFormatter?: (value: string) => string;
 }) {
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-sm font-medium">
-          Deposits (30 days)
+          {title}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -262,7 +270,7 @@ export function DepositsChart({
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={(v) => v.slice(5)}
+              tickFormatter={xTickFormatter}
             />
             <YAxis
               tickLine={false}

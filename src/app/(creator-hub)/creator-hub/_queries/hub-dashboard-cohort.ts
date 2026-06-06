@@ -10,54 +10,90 @@ import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
 import { getMetricsScope } from "@/lib/metrics/scope";
-import { WAGER_TYPES_SQL } from "@/lib/metrics/ledger-sets";
 import { WAGER_LEG_FILTER } from "@/lib/metrics/gaming-sql";
 import {
   hubSinceClause,
   hubBucketTrunc,
   hubCoveringLateral,
 } from "./hub-period-sql";
-import { padHubChartSeries } from "./hub-chart-series";
-import { type HubChartPoint } from "./hub-types";
-
-export type { HubChartPoint };
+import {
+  chartDateForBucket,
+  padHubDepositChartSeries,
+  padHubWagerChartSeries,
+} from "./hub-chart-series";
+import {
+  type HubDepositChartRow,
+  type HubWagerChartRow,
+} from "./hub-types";
 
 export type HubCohortWindowed = {
   period: DashboardPeriod;
   signups: number;
   ftds: number;
   depositsUsd: number;
-  wagerSeries: HubChartPoint[];
-  depositSeries: HubChartPoint[];
+  dailyWagers: HubWagerChartRow[];
+  dailyDeposits: HubDepositChartRow[];
 };
 
 type BucketRow = { bucket: Date; amount: string };
+type WagerBucketRow = { bucket: Date; packs: string; battles: string };
 
-function formatBucketLabel(bucket: Date, period: DashboardPeriod): string {
-  if (period === "24h") {
-    return bucket.toISOString().slice(11, 16);
+function mergeWagerBucketRows(
+  ledgerRows: WagerBucketRow[],
+  upgraderRows: BucketRow[],
+  period: DashboardPeriod,
+): HubWagerChartRow[] {
+  const byBucket = new Map<number, HubWagerChartRow>();
+
+  for (const r of ledgerRows) {
+    const d = new Date(r.bucket);
+    const ts = d.getTime();
+    const date = chartDateForBucket(d, period);
+    const prev = byBucket.get(ts);
+    byBucket.set(ts, {
+      date,
+      packs: (prev?.packs ?? 0) + toNumber(r.packs),
+      battles: (prev?.battles ?? 0) + toNumber(r.battles),
+      upgrader: prev?.upgrader ?? 0,
+    });
   }
-  return bucket.toISOString().slice(5, 10);
+
+  for (const r of upgraderRows) {
+    const d = new Date(r.bucket);
+    const ts = d.getTime();
+    const date = chartDateForBucket(d, period);
+    const prev = byBucket.get(ts);
+    byBucket.set(ts, {
+      date,
+      packs: prev?.packs ?? 0,
+      battles: prev?.battles ?? 0,
+      upgrader: (prev?.upgrader ?? 0) + toNumber(r.amount),
+    });
+  }
+
+  return [...byBucket.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, row]) => row);
 }
 
-function mergeBucketRows(
+function mergeDepositBucketRows(
   rows: BucketRow[],
   period: DashboardPeriod,
-): HubChartPoint[] {
-  const byBucket = new Map<number, { label: string; value: number }>();
+): HubDepositChartRow[] {
+  const byBucket = new Map<number, HubDepositChartRow>();
   for (const r of rows) {
     const d = new Date(r.bucket);
     const ts = d.getTime();
-    const label = formatBucketLabel(d, period);
+    const date = chartDateForBucket(d, period);
     const prev = byBucket.get(ts);
     byBucket.set(ts, {
-      label,
-      value: (prev?.value ?? 0) + toNumber(r.amount),
+      date,
+      amount: (prev?.amount ?? 0) + toNumber(r.amount),
     });
   }
   return [...byBucket.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([, point]) => point);
+    .map(([, row]) => row);
 }
 
 const cachedHubCohortScans = (
@@ -167,10 +203,12 @@ const cachedHubCohortScans = (
             ORDER BY 1`,
         ),
 
-        db.$queryRawUnsafe<BucketRow[]>(
+        db.$queryRawUnsafe<WagerBucketRow[]>(
           `SELECT ${bucketLedger} AS bucket,
-                  COALESCE(SUM(CASE WHEN ledger_transactions.type IN ${WAGER_TYPES_SQL}
-                                    THEN ABS(ledger_transactions.amount::numeric) ELSE 0 END), 0)::text AS amount
+                  COALESCE(SUM(CASE WHEN ledger_transactions.type::text = 'pack_opening'
+                                    THEN ABS(ledger_transactions.amount::numeric) ELSE 0 END), 0)::text AS packs,
+                  COALESCE(SUM(CASE WHEN ledger_transactions.type::text IN ('battle_bet','battle_sponsorship')
+                                    THEN ABS(ledger_transactions.amount::numeric) ELSE 0 END), 0)::text AS battles
              FROM ledger_transactions
              ${covering("user_id", "created_at")}
             WHERE status = 'completed'
@@ -208,9 +246,10 @@ const cachedHubCohortScans = (
           : Promise.resolve([] as BucketRow[]),
       ]);
 
-      const wagerSeries = padHubChartSeries(
-        mergeBucketRows(
-          [...ledgerWagerSeriesRows, ...upgraderWagerSeriesRows],
+      const dailyWagers = padHubWagerChartSeries(
+        mergeWagerBucketRows(
+          ledgerWagerSeriesRows,
+          upgraderWagerSeriesRows,
           period,
         ),
         period,
@@ -221,15 +260,15 @@ const cachedHubCohortScans = (
         signups: toNumber(signupRows[0]?.value),
         ftds: toNumber(ftdRows[0]?.value),
         depositsUsd: toNumber(depositTotalRows[0]?.value),
-        wagerSeries,
-        depositSeries: padHubChartSeries(
-          mergeBucketRows(depositSeriesRows, period),
+        dailyWagers,
+        dailyDeposits: padHubDepositChartSeries(
+          mergeDepositBucketRows(depositSeriesRows, period),
           period,
         ),
       };
     },
     [
-      "hub-cohort-windowed-v3-padded-charts",
+      "hub-cohort-windowed-v4-dashboard-charts",
       period,
       env,
       blacklistAnd,

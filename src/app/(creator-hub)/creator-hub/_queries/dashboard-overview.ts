@@ -18,9 +18,12 @@ import {
 import type { CohortGgrLegs } from "../../../(admin)/creators/_queries/all-creators-net-pnl";
 import { getHubCohortWindowed } from "./hub-dashboard-cohort";
 import { getWindowedSignupsByCreatorIds } from "./hub-top-creator-meta";
-import { type HubChartPoint } from "./hub-types";
+import {
+  type HubDepositChartRow,
+  type HubWagerChartRow,
+} from "./hub-types";
 
-export type { HubChartPoint };
+export type { HubDepositChartRow, HubWagerChartRow };
 
 /**
  * Creator Hub dashboard — overview data for the active window.
@@ -29,7 +32,7 @@ export type { HubChartPoint };
  *   • affiliateWagerUsd / netGgrUsd / topCreators — cohort GGR pass.
  *   • creatorCostUsd — deal payouts + tips + leaderboard (period-scoped).
  *   • signups / ftds / depositsUsd — code-cohort funnel metrics.
- *   • wagerSeries / depositSeries — bucketed chart data (hourly for 24h).
+ *   • dailyWagers / dailyDeposits — bucketed bar-chart data (main dashboard shape).
  *
  * REAL, lifetime/now:
  *   • totalCreators / liveCount — backend roster walk.
@@ -52,8 +55,8 @@ const EMPTY_COHORT = {
   signups: null as number | null,
   ftds: null as number | null,
   depositsUsd: null as number | null,
-  wagerSeries: [] as HubChartPoint[],
-  depositSeries: [] as HubChartPoint[],
+  dailyWagers: [] as HubWagerChartRow[],
+  dailyDeposits: [] as HubDepositChartRow[],
 };
 
 export type HubDashboardOverview = {
@@ -72,8 +75,8 @@ export type HubDashboardOverview = {
   signups: number | null;
   ftds: number | null;
   depositsUsd: number | null;
-  wagerSeries: HubChartPoint[];
-  depositSeries: HubChartPoint[];
+  dailyWagers: HubWagerChartRow[];
+  dailyDeposits: HubDepositChartRow[];
   topCreators: HubTopCreator[];
   rosterUnavailable: boolean;
   /** True when the cohort funnel/chart query failed (KPIs may show "—"). */
@@ -109,8 +112,8 @@ export async function getHubDashboardOverview(
         signups: 0,
         ftds: 0,
         depositsUsd: 0,
-        wagerSeries: [],
-        depositSeries: [],
+        dailyWagers: [],
+        dailyDeposits: [],
       },
       "creator-hub.cohort",
       HUB_OVERVIEW_QUERY_TIMEOUT_MS,
@@ -196,8 +199,8 @@ export async function getHubDashboardOverview(
     signups: cohort ? cohort.signups : EMPTY_COHORT.signups,
     ftds: cohort ? cohort.ftds : EMPTY_COHORT.ftds,
     depositsUsd: cohort ? cohort.depositsUsd : EMPTY_COHORT.depositsUsd,
-    wagerSeries: cohort ? cohort.wagerSeries : EMPTY_COHORT.wagerSeries,
-    depositSeries: cohort ? cohort.depositSeries : EMPTY_COHORT.depositSeries,
+    dailyWagers: cohort ? cohort.dailyWagers : EMPTY_COHORT.dailyWagers,
+    dailyDeposits: cohort ? cohort.dailyDeposits : EMPTY_COHORT.dailyDeposits,
     topCreators,
     rosterUnavailable: statsResult.status === "rejected",
     cohortUnavailable: cohortResult.error != null,

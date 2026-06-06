@@ -16,8 +16,8 @@ import {
  * house-cost legs as `dashboard-creator-costs-today.ts`, re-scoped to the
  * active `DashboardPeriod` chip instead of calendar-today:
  *
- *   • Converted deal payouts (fill sessions converted in the window via
- *     backend `converted_at` + multiplier payout vouchers minted in window).
+ *   • Converted deal payouts (`creator_fill_conversion` vouchers minted in
+ *     the window + multiplier payout vouchers minted in window).
  *   • House-funded creator tips (`creator_fill_spend_tip`).
  *   • Full affiliate leaderboard prize gross (`affiliate_leaderboard_prize`).
  *
@@ -105,7 +105,7 @@ const cachedHubCreatorCost = unstable_cache(
       };
     });
   },
-  ["hub-creator-cost-v4-breakdown"],
+  ["hub-creator-cost-v5-fill-vouchers"],
   { revalidate: 60, tags: ["creator-hub"] },
 );
 

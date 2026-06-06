@@ -25,18 +25,22 @@ import {
   DASHBOARD_PERIOD_LABELS,
   type DashboardPeriod,
 } from "@/lib/queries/dashboard-period";
-import { formatCurrency, formatNumber, formatCompactUsd } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 import { HubQuickTools } from "./_components/hub-quick-tools";
-import { HubCreatorCheckWidget } from "./_components/hub-creator-check-widget";
 import { NetGgrBreakdownPopover } from "../../(admin)/creators/_components/net-ggr-breakdown-popover";
+import {
+  DepositsChart,
+  WagerChart,
+} from "../../(admin)/dashboard/charts";
 
 import { HubKpiBox } from "./_components/hub-kpi-box";
 import { HubKpiInfoPopover } from "./_components/hub-kpi-info-popover";
 import { HubWagerBreakdownPopover } from "./_components/hub-wager-breakdown-popover";
 import { HubTopCreators } from "./_components/hub-top-creators";
-import { HubChartCard } from "./_components/hub-chart-card";
 import { HubPeriodSelector } from "./_components/hub-period-selector";
+import { hubChartTitleSuffix } from "./_queries/hub-chart-series";
+import { hubBucketByHour } from "./_queries/hub-period-sql";
 import { getHubDashboardOverview } from "./_queries/dashboard-overview";
 
 export const metadata = { title: "Creator Hub" };
@@ -84,8 +88,6 @@ export default async function CreatorHubDashboardPage({
       {/* Quick tools */}
       <HubQuickTools />
 
-      <HubCreatorCheckWidget />
-
       {/* Overview — window selector + KPI boxes + 3-up row. The whole
           data-bearing block is keyed on `period` so only the active window
           loads and switching repaints just this boundary (lazy). */}
@@ -110,6 +112,11 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
   const windowLabel = DASHBOARD_PERIOD_LABELS[period].toLowerCase();
   const periodLabel =
     windowLabel.charAt(0).toUpperCase() + windowLabel.slice(1);
+
+  const chartSuffix = hubChartTitleSuffix(period);
+  const chartXTick = hubBucketByHour(period)
+    ? (v: string) => v
+    : (v: string) => v.slice(5);
 
   const signupLeaderLines = [...data.topCreators]
     .filter((c) => c.signups > 0)
@@ -216,7 +223,7 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
             data.creatorCostBreakdown ? (
               <HubKpiInfoPopover
                 title={`Creator cost · ${periodLabel}`}
-                description="House spend on creator activity in the selected window — every line is money paid out (a house cost): session conversions, house-funded tips, and full leaderboard prize gross."
+                description="House spend on creator activity in the selected window — every line is money paid out (a house cost): fill conversion vouchers minted, multiplier payouts, house-funded tips, and full leaderboard prize gross."
                 lines={creatorCostLines}
                 footer={{
                   label: "Total",
@@ -386,34 +393,16 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           />
         </div>
 
-        <HubChartCard
-          title="Wager"
-          headline={
-            data.affiliateWagerUsd != null
-              ? formatCompactUsd(data.affiliateWagerUsd)
-              : null
-          }
-          series={data.wagerSeries}
-          placeholderNote={
-            data.cohortUnavailable
-              ? "Chart unavailable — cohort query failed"
-              : undefined
-          }
+        <WagerChart
+          title={`Code-cohort wagers · ${chartSuffix}`}
+          data={data.dailyWagers}
+          xTickFormatter={chartXTick}
         />
 
-        <HubChartCard
-          title="Deposits"
-          headline={
-            data.depositsUsd != null
-              ? formatCompactUsd(data.depositsUsd)
-              : null
-          }
-          series={data.depositSeries}
-          placeholderNote={
-            data.cohortUnavailable
-              ? "Chart unavailable — cohort query failed"
-              : undefined
-          }
+        <DepositsChart
+          title={`Code-cohort deposits · ${chartSuffix}`}
+          data={data.dailyDeposits}
+          xTickFormatter={chartXTick}
         />
       </div>
     </FadeIn>

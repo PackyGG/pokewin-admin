@@ -170,8 +170,8 @@ function CreatorGroup({ creator }: { creator: CreatorWithdrawalCreator }) {
           <li
             key={
               p.kind === "fill_session"
-                ? `session-${p.sessionId}`
-                : `voucher-${p.voucherId}`
+                ? `fill-${p.voucherId}`
+                : `multiplier-${p.voucherId}`
             }
           >
             <div className="flex items-center justify-between gap-2 px-1.5 py-1 text-[10px]">
@@ -210,7 +210,9 @@ function CreatorGroup({ creator }: { creator: CreatorWithdrawalCreator }) {
 
 function formatPayoutLabel(p: CreatorConvertedPayout): string {
   if (p.kind === "fill_session") {
-    return `Session ended · withdrew`;
+    return p.sessionId
+      ? `Session ended · conversion voucher`
+      : `Fill conversion voucher`;
   }
   return "Multiplier payout";
 }
