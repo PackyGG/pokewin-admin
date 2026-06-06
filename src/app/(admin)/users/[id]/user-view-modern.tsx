@@ -245,19 +245,9 @@ export function UserViewModern({
         />
 
         <div className="relative p-3 sm:p-5 md:p-6">
-          {/* Identity stacked ABOVE the KPI strip at every width. The hero
-              used to switch to `lg:flex-row` and sit the identity beside an
-              8-tile KPI grid that carried `shrink-0` — at lg+ the grid then
-              refused to shrink, blew out to ~1533px, overflowed the hero,
-              and crushed the identity column (and its "Role on the game
-              platform…" helper text) to ~0 width (one char per line). The
-              app's other heroes already stack a full-width KPI strip under
-              the identity (see modern-panels PageHeroIdentity + KpiTile);
-              matching that here removes the side-by-side fight for width
-              entirely, so nothing can crush anything at any breakpoint. */}
-          <div className="flex flex-col gap-4 sm:gap-6">
-            {/* Identity */}
-            <div className="flex w-full min-w-0 items-start gap-3 sm:gap-4">
+          {/* Identity + compact KPI chips on one wrapping row. */}
+          <div className="flex flex-wrap items-start gap-3 sm:gap-4">
+            <div className="flex min-w-0 flex-1 basis-[min(100%,18rem)] items-start gap-3 sm:gap-4">
               <div className="relative shrink-0">
                 <Avatar className="size-12 sm:size-14 ring-2 ring-background shadow-lg">
                   {user.image && <AvatarImage src={user.image} alt="" />}
@@ -454,20 +444,7 @@ export function UserViewModern({
               </div>
             </div>
 
-            {/* KPI strip — full-width row UNDER the identity at every width.
-                Mobile-first column ladder so the tiles always fit the
-                viewport and never force horizontal scroll: 2 cols on phones
-                (3 was too tight at 375px), 3 at sm, 4 at md, all 8 across
-                one row at lg+ where the full hero width comfortably holds
-                them. NO `shrink-0`: the grid sizes to its container instead
-                of demanding its min-content width and overflowing (the bug
-                that crushed the identity column). `w-full min-w-0` lets it
-                fill the hero and still shrink below its content width. The
-                Total Depo + Total Withdrawn tiles sit directly next to P&L
-                so the operator can read "$X deposited − $Y withdrawn → $Z
-                P&L" left-to-right. Wagering metrics (Wager Loss + total
-                Wagered/Won) live on the Account tab. */}
-            <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8">
+            <div className="flex min-w-0 flex-[1.35] flex-wrap items-stretch gap-1.5 content-start sm:gap-2">
               <KpiTile
                 label="Total Value"
                 value={formatCurrency(totalValue)}
@@ -796,26 +773,26 @@ function KpiTile({
   return (
     <div
       className={cn(
-        "group relative overflow-hidden rounded-xl border p-2.5 sm:p-3 md:p-4 transition-all hover:shadow-md min-w-0",
+        "group relative min-w-0 flex-[1_1_6.25rem] max-w-[8.75rem] overflow-hidden rounded-lg border px-2 py-1.5 transition-all hover:shadow-sm sm:flex-[1_1_6.75rem] sm:px-2.5 sm:py-2",
         colors.bg,
       )}
     >
-      <div className="flex items-center gap-1.5 sm:gap-2">
-        <Icon className={cn("size-3.5 sm:size-4 md:size-5 shrink-0", colors.icon)} />
-        <span className="text-[10px] sm:text-[11px] md:text-xs font-semibold uppercase tracking-wider text-muted-foreground truncate">
+      <div className="flex items-center gap-1">
+        <Icon className={cn("size-3 shrink-0", colors.icon)} />
+        <span className="truncate text-[9px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[10px]">
           {label}
         </span>
       </div>
       <p
         className={cn(
-          "mt-1 sm:mt-1.5 text-base sm:text-lg lg:text-xl font-bold tabular-nums leading-tight truncate",
+          "mt-0.5 truncate text-sm font-bold tabular-nums leading-tight sm:text-base",
           colors.text,
         )}
       >
         {value}
       </p>
       {sub && (
-        <p className="mt-0.5 sm:mt-1 text-[10px] sm:text-[11px] text-muted-foreground truncate">
+        <p className="mt-0.5 truncate text-[9px] text-muted-foreground sm:text-[10px]">
           {sub}
         </p>
       )}

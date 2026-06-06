@@ -72,7 +72,7 @@ const cachedUserDetail = unstable_cache(
 //     cache-bust tag (70be8d3) is retained so a wipe still revalidates live.
 const cachedUserPnlBreakdown = unstable_cache(
   (userId: string): Promise<PnlBreakdown> => getUserPnlBreakdown(userId),
-  ["users-detail-pnl-v3"],
+  ["users-detail-pnl-v4"],
   { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
 );
 

@@ -43,6 +43,7 @@ import {
   FileText,
   Activity,
   ArrowDownToLine,
+  Banknote,
   ArrowUpFromLine,
   ArrowUpRight,
   Sparkles,
@@ -1251,6 +1252,8 @@ export function AccountTab({
           → rose. */}
       <SectionHeading icon={TrendingUp} title="Windowed P&L" />
       <WindowedPnlStrip pnlBreakdown={pnlBreakdown} />
+      <SectionHeading icon={Banknote} title="Windowed Deposits" />
+      <WindowedDepositsStrip pnlBreakdown={pnlBreakdown} />
       <SectionHeading icon={ShieldCheck} title="Account Details" />
       <Card>
         <CardContent className="pt-6">
@@ -1418,6 +1421,32 @@ function WindowedPnlStrip({
           />
         );
       })}
+    </div>
+  );
+}
+
+function WindowedDepositsStrip({
+  pnlBreakdown,
+}: {
+  pnlBreakdown: PnlBreakdown;
+}) {
+  const windows: { label: string; amount: number }[] = [
+    { label: "Past 24h", amount: pnlBreakdown.deposits24h },
+    { label: "Past 3d", amount: pnlBreakdown.deposits3d },
+    { label: "Past 7d", amount: pnlBreakdown.deposits7d },
+    { label: "Past 14d", amount: pnlBreakdown.deposits14d },
+  ];
+  return (
+    <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+      {windows.map((w) => (
+        <ModernMetricTile
+          key={w.label}
+          label={w.label}
+          value={formatCurrency(w.amount)}
+          accent="emerald"
+          icon={Banknote}
+        />
+      ))}
     </div>
   );
 }

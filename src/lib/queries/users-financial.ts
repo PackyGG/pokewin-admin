@@ -42,6 +42,10 @@ export type PnlBreakdown = {
   pnl3d: number;
   pnl7d: number;
   pnl14d: number;
+  deposits24h: number;
+  deposits3d: number;
+  deposits7d: number;
+  deposits14d: number;
 };
 
 export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown> {
@@ -162,6 +166,10 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     pnl3d: windowed.d3.pnl,
     pnl7d: windowed.d7.pnl,
     pnl14d: windowed.d14.pnl,
+    deposits24h: windowed.h24.deposits,
+    deposits3d: windowed.d3.deposits,
+    deposits7d: windowed.d7.deposits,
+    deposits14d: windowed.d14.deposits,
   };
 }
 

@@ -317,6 +317,10 @@ async function UserDetailBody({
     pnl3d: 0,
     pnl7d: 0,
     pnl14d: 0,
+    deposits24h: 0,
+    deposits3d: 0,
+    deposits7d: 0,
+    deposits14d: 0,
   };
 
   // ── CRITICAL BODY GROUP ────────────────────────────────────────────
