@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `d629ba09` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub deferred wave — Forecast tip/sponsor deal-terms fix **DONE**
+- **HEAD:** `9f0c02f8` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub deferred wave — `/creator-hub/codes-ads` **DONE** (PARTIAL: ad detail still admin route)
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
@@ -27,6 +27,7 @@
 - **Post-B+C fixes** (`e3cb6683`, `5ad928bd`, `937844c1`) — Vercel build, creator cost converted payouts, dashboard data, linked socials, Kick refetch, 30-day charts
 - **Plan closeout (2026-06-06)** — audit fixes (Hub gates on add-creator + alerts redirect), `creator_manager` assignable (schema + SQL applied), plan file recreated, e2e smoke `e2e/tests/creator-hub.spec.ts` PASS (12 routes; detail/forecast skipped on empty local MAIN DB)
 - **Forecast tab deal allowance (`d629ba09`)** — weekly tip/sponsor spend uses deal per-stream caps × `fills_allowed`; realized lifetime cadence only when no deal; UI labels source + fallback
+- **Codes & Ads hub route (`9f0c02f8`)** — `/creator-hub/codes-ads` lazy tabs (affiliate codes table + ads dashboard); hub-gated mutations; sidebar nav; e2e smoke route added (13 hub routes)
 
 **Earlier admin (pre-Hub):** dashboard rework, system-edge-plan, `/users` search, Balance 2.0, insights hub, responsive harness (`e2e/responsive/*`), smoothness primitives (`@/components/ux`)
 
@@ -45,7 +46,7 @@ _None — Creator Hub plan closed. Pick up deferred items below when owner prior
 3. Bulk delete `/gift-cards` + `/vouchers` — **BLOCKED** (MAIN DB write forbidden)
 4. Fold durable reward findings into `ONBOARDING.md` (affiliate commission basis; signup $5.71 clarification)
 5. Responsive sweep — add `/creator-hub/*` to responsive matrix; run `RESPONSIVE_EXPECT_CLEAN=1`
-6. `codes-ads` dedicated hub route — deferred (functionality exists on admin `/creators/codes`)
+6. Hub ad-code **detail** route (`/creator-hub/codes-ads/ads/[code]`) — cards still deep-link to admin `/creators/ads/[code]`
 
 ---
 
