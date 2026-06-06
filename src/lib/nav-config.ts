@@ -89,6 +89,8 @@ export type NavEntry = {
   isNew?: boolean;
   /** Surfaces in the sidebar. */
   inSidebar: boolean;
+  /** Pinned to the sidebar footer, directly above the theme toggle. */
+  inSidebarFooter?: boolean;
   /** Surfaces in the command palette navigation section. */
   inPalette: boolean;
 };
@@ -824,6 +826,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: "Settings",
     description: "Global admin settings",
     inSidebar: true,
+    inSidebarFooter: true,
     inPalette: true,
   },
   {
@@ -899,8 +902,15 @@ export function getSidebarGroups(): SidebarNavGroup[] {
     label: meta.label,
     creatorOnly: meta.creatorOnly,
     devEnvOnly: meta.devEnvOnly,
-    items: NAV_ENTRIES.filter((e) => e.inSidebar && e.group === meta.label),
+    items: NAV_ENTRIES.filter(
+      (e) => e.inSidebar && !e.inSidebarFooter && e.group === meta.label,
+    ),
   }));
+}
+
+/** Sidebar footer pins (rendered above the theme toggle). */
+export function getSidebarFooterItems(): NavEntry[] {
+  return NAV_ENTRIES.filter((e) => e.inSidebar && e.inSidebarFooter);
 }
 
 // The command palette historically rendered its nav commands in an order

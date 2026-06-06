@@ -80,7 +80,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getDefaultRoute } from "@/lib/admin-roles";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { getSidebarGroups } from "@/lib/nav-config";
+import { getSidebarFooterItems, getSidebarGroups } from "@/lib/nav-config";
 import { LinkPending } from "@/components/ux";
 
 const ICONS: Record<string, LucideIcon> = {
@@ -172,6 +172,14 @@ type NavGroup = {
 // `allowedPages` (every in-sidebar entry has href === pageKey, so this is
 // identical to gating on the permission key). The sidebar uses `sidebarIcon`
 // when set, otherwise the entry's base `icon`.
+const NAV_FOOTER_ITEMS: NavItem[] = getSidebarFooterItems().map((e) => ({
+  label: e.label,
+  href: e.href,
+  icon: e.sidebarIcon ?? e.icon,
+  usernameAllowlist: e.usernameAllowlist,
+  isNew: e.isNew,
+}));
+
 const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
   label: group.label,
   creatorOnly: group.creatorOnly,
@@ -261,6 +269,22 @@ export function AppSidebar({
   const effectiveRoles = roles ?? [role];
   const isAdmin = effectiveRoles.includes("admin");
   const isCreator = effectiveRoles.includes("creator");
+
+  const visibleFooterItems = useMemo(
+    () =>
+      NAV_FOOTER_ITEMS.filter((item) => {
+        if (
+          item.usernameAllowlist &&
+          !item.usernameAllowlist.some(
+            (u) => u.toLowerCase() === (username ?? "").toLowerCase(),
+          )
+        ) {
+          return false;
+        }
+        return isAdmin || allowedPages.includes(item.href);
+      }),
+    [isAdmin, allowedPages, username],
+  );
 
   const groupsWithVisibility = useMemo(() =>
     NAV_GROUPS
@@ -495,6 +519,48 @@ export function AppSidebar({
         })}
       </SidebarContent>
       <SidebarFooter className="border-t border-border">
+        {visibleFooterItems.length > 0 && (
+          <SidebarMenu>
+            {visibleFooterItems.map((item) => {
+              const Icon = ICONS[item.icon] ?? ScrollText;
+              const isActive =
+                pathname === item.href ||
+                (item.href !== "/dashboard" &&
+                  pathname.startsWith(item.href + "/"));
+              return (
+                <SidebarMenuItem key={item.href}>
+                  <SidebarMenuButton
+                    isActive={isActive}
+                    tooltip={item.label}
+                    render={<Link href={item.href} />}
+                    onClick={handleNavTap}
+                    className="h-11 md:h-9 group-data-[collapsible=icon]:h-8!"
+                  >
+                    <Icon
+                      className={cn(
+                        "size-4",
+                        isActive ? "text-primary" : "text-muted-foreground",
+                      )}
+                    />
+                    <span>{item.label}</span>
+                    <LinkPending
+                      size={13}
+                      className={cn(
+                        "shrink-0 group-data-[collapsible=icon]:hidden",
+                        !item.isNew && "ml-auto",
+                      )}
+                    />
+                    {item.isNew && (
+                      <span className="ml-auto rounded-sm bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-emerald-600 group-data-[collapsible=icon]:hidden dark:text-emerald-400">
+                        New
+                      </span>
+                    )}
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              );
+            })}
+          </SidebarMenu>
+        )}
         <div className="flex items-center justify-between px-2 group-data-[collapsible=icon]:justify-center">
           <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">Theme</span>
           <ThemeToggle />
