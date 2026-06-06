@@ -468,6 +468,8 @@ enum admin_role {
   // __can_upload_pack_image capabilities; cannot toggle packs live,
   // edit existing packs, or see other admin pages.
   pack_creator
+  // Creator Hub manager — CM team role; lands on /creator-hub.
+  creator_manager
 }
 
 enum webhook_type {

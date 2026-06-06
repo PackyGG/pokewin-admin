@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
-import { requirePageAccess } from "@/lib/dal";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import {
   persistDiscordChannelUrl,
   persistRewardPageUrl,
@@ -35,7 +35,7 @@ export type CandidateSetupProfile = {
 export async function getCandidateSetupProfile(
   userId: string,
 ): Promise<CandidateSetupProfile | null> {
-  await requirePageAccess("/creators");
+  await requireCreatorHubAccess("Not authorized to add creators in Creator Hub.");
   const db = await getDb();
 
   const [user, codes] = await Promise.all([
@@ -104,7 +104,7 @@ async function saveOptionalSocial(
 export async function completeCreatorOnboarding(
   input: z.infer<typeof SetupSchema>,
 ): Promise<{ userId: string }> {
-  await requirePageAccess("/creators");
+  await requireCreatorHubAccess("Not authorized to add creators in Creator Hub.");
   const parsed = SetupSchema.parse(input);
   const discordId = parsed.discordId.replace(/^@/, "");
 

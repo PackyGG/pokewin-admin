@@ -5,19 +5,8 @@ export type AdminRole =
   | "creator"
   | "pack_creator"
   // Creator Hub manager — the in-house Creator-Marketing (CM) team role.
-  // Only `admin` + `creator_manager` can enter the Creator Hub sub-app
-  // (gated via the DAL `requireRole(['admin','creator_manager'])`).
-  //
-  // CODE-LEVEL role for v1: it is a first-class member of the effective
-  // role set + landing/priority logic + UI maps here, BUT the ADMIN-DB
-  // `admin_role` Postgres enum (prisma/admin/schema.prisma) does NOT yet
-  // carry this value, so no admin_users row can be PERSISTED with it until
-  // that enum is extended (`ALTER TYPE admin_role ADD VALUE
-  // 'creator_manager'`). `admin` reaches the Hub immediately; assigning the
-  // dedicated role to a user is a follow-up that needs the enum value. See
-  // PERSISTABLE_ADMIN_ROLES below — every place that writes the Prisma
-  // `admin_role` enum must filter through it so this code-only role can
-  // never be handed to Prisma/Postgres (which would throw).
+  // Lands on /creator-hub when it is the primary role. Hub entry is gated
+  // via `canAccessCreatorHub` (founder motha OR per-role ADMIN-DB toggle).
   | "creator_manager";
 
 /** Every built-in system role, in highest → lowest privilege order. */
@@ -33,9 +22,9 @@ export const ALL_ADMIN_ROLES: readonly AdminRole[] = [
 /**
  * The subset of built-in roles that exist as values in the ADMIN-DB
  * `admin_role` Postgres enum and can therefore be PERSISTED on an
- * `admin_users` row. `creator_manager` is intentionally absent for v1 —
- * it's a code-level role (see the union above), and writing it into the
- * Prisma `admin_role` field would throw until the DB enum is extended.
+ * `admin_users` row. Must stay in sync with the `admin_role` Postgres enum
+ * in `prisma/admin/schema.prisma` (apply additive SQL via `prisma db execute`
+ * when extending).
  *
  * Any code path that builds a value to store in `admin_users.role` /
  * `admin_users.roles` (e.g. the create / set-roles admin actions) must
@@ -50,6 +39,7 @@ export const PERSISTABLE_ADMIN_ROLES: readonly AdminRole[] = [
   "marketing",
   "creator",
   "pack_creator",
+  "creator_manager",
 ];
 
 const PERSISTABLE_ADMIN_ROLE_SET: ReadonlySet<string> = new Set(
@@ -59,12 +49,17 @@ const PERSISTABLE_ADMIN_ROLE_SET: ReadonlySet<string> = new Set(
 /**
  * Type guard for a built-in role that can be stored in the ADMIN-DB
  * `admin_role` enum. Narrows to the exact Prisma-enum string set so the
- * result is assignable to a `admin_role`-typed field. Drops the
- * code-only `creator_manager` (and any unknown string).
+ * result is assignable to a `admin_role`-typed field. Drops unknown strings.
  */
 export function isPersistableAdminRole(
   value: string,
-): value is "admin" | "support" | "marketing" | "creator" | "pack_creator" {
+): value is
+  | "admin"
+  | "support"
+  | "marketing"
+  | "creator"
+  | "pack_creator"
+  | "creator_manager" {
   return PERSISTABLE_ADMIN_ROLE_SET.has(value);
 }
 

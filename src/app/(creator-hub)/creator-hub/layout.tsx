@@ -48,11 +48,9 @@ import { CreatorChecklistDock } from "./creators/[id]/_components/creator-checkl
  * enters a visually distinct sub-app while every auth / session / theme
  * provider keeps working unchanged.
  *
- * ACCESS: gated to `admin` + `creator_manager` ONLY via the DAL. A user
- * without either role is redirected to their normal landing route — they
- * never see the Hub. (This is the route-level enforcement; the "Switch to
- * Creator Hub" portal button in the main sidebar is gated to the same set
- * cosmetically.)
+ * ACCESS: gated via `canAccessCreatorHub` (founder `motha` OR a per-role
+ * ADMIN-DB toggle). Non-eligible viewers redirect to their landing route.
+ * The "Switch to Creator Hub" portal button uses the same rule server-side.
  *
  * The resilient loaders below mirror the main layout's defensive reads so
  * a transient admin-DB fault degrades to safe fallbacks instead of

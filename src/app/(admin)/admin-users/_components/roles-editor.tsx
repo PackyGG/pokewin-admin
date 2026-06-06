@@ -25,7 +25,7 @@ const ROLE_DESCRIPTIONS: Record<AdminRole, string> = {
   creator: "Creator self-service portal.",
   pack_creator: "Content management — packs, cards, sets, upgrader.",
   creator_manager:
-    "Creator Hub manager (CM team). Code-level role for v1 — needs an admin-DB enum value before it can be assigned to a user.",
+    "Creator Hub manager (CM team). Lands on /creator-hub; Hub entry still requires the founder toggle or motha bypass.",
 };
 
 /**
@@ -76,10 +76,8 @@ export function RolesEditor({
   // compat: a creator_manager assignment made once the admin-DB enum exists
   // still shows + can be removed).
   const ordered = ALL_ADMIN_ROLES.filter((r) => selected.has(r));
-  // The picker only offers roles that can actually be PERSISTED to the
-  // admin-DB `admin_role` enum. `creator_manager` is a code-level role for
-  // v1 (no DB enum value yet), so it's deliberately not selectable here —
-  // offering it would let an admin pick a role the save then silently drops.
+  // The picker only offers roles that can be PERSISTED to the admin-DB
+  // `admin_role` enum (see isPersistableAdminRole).
   const available = ALL_ADMIN_ROLES.filter(
     (r) => !selected.has(r) && isPersistableAdminRole(r),
   );

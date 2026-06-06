@@ -39,7 +39,7 @@ const CREATOR_HUB_ROLE_LABELS: Record<
   creator_manager: {
     label: "Creator Managers",
     description:
-      "Let every user with the Creator Manager role open the Creator Hub. The role isn't assignable yet, so this stays inert until it is — flip it on now and it applies the moment the role can be granted.",
+      "Let every user with the Creator Manager role open the Creator Hub. Assign the role on an admin user's profile once this toggle is on.",
   },
 };
 
@@ -81,7 +81,6 @@ export default async function RolesPage() {
         label: CREATOR_HUB_ROLE_LABELS[role].label,
         description: CREATOR_HUB_ROLE_LABELS[role].description,
         // A role is assignable only if it's a real ADMIN-DB enum value.
-        // `creator_manager` is code-only for now → flagged not-assignable.
         assignable: isPersistableAdminRole(role),
       }))
     : [];
