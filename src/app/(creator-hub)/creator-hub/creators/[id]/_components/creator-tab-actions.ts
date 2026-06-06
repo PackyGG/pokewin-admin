@@ -1,0 +1,159 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+
+import { adminDb } from "@/lib/admin-db";
+import { requireRole } from "@/lib/dal";
+import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { fetchPublicStats } from "@/lib/socials-public";
+
+/**
+ * Manager-side editing of a creator's social links, for the `creators/[id]`
+ * **Creator** tab.
+ *
+ * Writes the SAME admin-DB table the rest of the app uses (`creator_socials`,
+ * keyed `@@unique([target_user_id, platform])`) — the difference from the
+ * creator-self-service `my-profile/actions.ts` path is purely the gate: there
+ * the actor must BE the creator; here a Creator-Hub **manager**
+ * (admin / creator_manager) edits ANY creator. Admin-DB writes are allowed;
+ * MAIN/prod is never touched.
+ *
+ * Every mutation:
+ *   • is gated with `requireRole(['admin','creator_manager'])` (the Hub's
+ *     own access set) — redirects on failure, same as every protected action;
+ *   • validates input server-side (no trust in the client);
+ *   • refreshes the public follower stat via the existing `fetchPublicStats`
+ *     helper (best-effort — a scraper miss never blocks the save);
+ *   • leaves an `admin_audit_event` so the social edit is traceable;
+ *   • revalidates the creator detail route so the tab re-reads.
+ */
+
+// The platforms a manager can edit from the Creator tab. These are the four
+// the owner spec calls out (Twitter / Kick / Discord ID / Reward page) minus
+// "Reward page" — there is NO `social_platform` enum value or column for a
+// reward URL today, so it is intentionally NOT writable here (the tab renders
+// it as a clearly-labelled "not storable yet" field rather than guessing a
+// home for it). All four allowed values below are real `social_platform`
+// members.
+const EDITABLE_PLATFORMS = ["twitter", "kick", "discord"] as const;
+type EditablePlatform = (typeof EDITABLE_PLATFORMS)[number];
+
+function assertEditablePlatform(p: string): asserts p is EditablePlatform {
+  if (!EDITABLE_PLATFORMS.includes(p as EditablePlatform)) {
+    throw new Error("Unsupported social platform");
+  }
+}
+
+function revalidateCreator(userId: string) {
+  // The Hub detail route (this tab) + the legacy admin detail route both read
+  // creator_socials, so refresh both so the change is consistent across
+  // surfaces during the cut-over period.
+  revalidatePath(`/creator-hub/creators/${userId}`);
+  revalidatePath(`/creators/${userId}`);
+}
+
+/**
+ * Create or update a creator's handle for one platform. `username` is the
+ * raw handle (for Discord this is the Discord ID / username — Discord has no
+ * public profile URL, so it's stored as-is for reference). An empty username
+ * is rejected; use {@link removeCreatorSocial} to clear a platform.
+ */
+export async function upsertCreatorSocial(
+  targetUserId: string,
+  platform: string,
+  username: string,
+): Promise<{ followerCount: number | null }> {
+  const session = await requireRole(["admin", "creator_manager"]);
+
+  if (!targetUserId) throw new Error("Missing creator id");
+  assertEditablePlatform(platform);
+
+  const trimmed = username.trim().replace(/^@/, "");
+  if (!trimmed) throw new Error("Handle is required");
+  if (trimmed.length > 100) throw new Error("Handle is too long");
+
+  // Best-effort public-stat refresh. Discord has no public follower API in
+  // `fetchPublicStats` (returns null), and any scraper miss degrades to null
+  // rather than failing the save — the handle is what matters.
+  const stats = await fetchPublicStats(platform, trimmed).catch(() => ({
+    followerCount: null as number | null,
+    platformUserId: null as string | null,
+  }));
+
+  await adminDb.creator_socials.upsert({
+    where: {
+      target_user_id_platform: {
+        target_user_id: targetUserId,
+        platform,
+      },
+    },
+    create: {
+      target_user_id: targetUserId,
+      platform,
+      username: trimmed,
+      platform_user_id: stats.platformUserId ?? null,
+      follower_count: stats.followerCount ?? null,
+      last_fetched_at: new Date(),
+    },
+    update: {
+      username: trimmed,
+      platform_user_id: stats.platformUserId ?? null,
+      follower_count: stats.followerCount ?? null,
+      last_fetched_at: new Date(),
+      updated_at: new Date(),
+    },
+    // Only the id is consumed — explicit select avoids a RETURNING * crash if
+    // the generated client knows a column prod hasn't migrated yet.
+    select: { id: true },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_social_edited",
+    targetUserId,
+    metadata: { platform, username: trimmed, via: "creator_hub_tab" },
+  });
+
+  revalidateCreator(targetUserId);
+  return { followerCount: stats.followerCount ?? null };
+}
+
+/**
+ * Remove a creator's linked handle for one platform (clears the field). No-op
+ * if no row exists for that platform.
+ */
+export async function removeCreatorSocial(
+  targetUserId: string,
+  platform: string,
+): Promise<void> {
+  const session = await requireRole(["admin", "creator_manager"]);
+
+  if (!targetUserId) throw new Error("Missing creator id");
+  assertEditablePlatform(platform);
+
+  const existing = await adminDb.creator_socials.findUnique({
+    where: {
+      target_user_id_platform: { target_user_id: targetUserId, platform },
+    },
+    select: { id: true },
+  });
+  if (!existing) {
+    // Nothing to delete — keep idempotent so a double-click doesn't error.
+    revalidateCreator(targetUserId);
+    return;
+  }
+
+  await adminDb.creator_socials.delete({
+    where: { id: existing.id },
+    select: { id: true },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_social_removed",
+    targetUserId,
+    metadata: { platform, via: "creator_hub_tab" },
+  });
+
+  revalidateCreator(targetUserId);
+}
