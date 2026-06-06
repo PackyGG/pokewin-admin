@@ -135,16 +135,13 @@ export function GgrBreakdownPopover({
             GGR breakdown
           </p>
           <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
-            {periodLabel}. GGR = net wager − (pack/battle wins + battle
+            {periodLabel}. GGR = wager − (pack/battle wins + battle
             refunds + upgrader payout). Wins are valued from inventory
             (the cards kept), not a ledger payout; upgrader comes from
             its own table. Card/voucher conversions are neutral and
-            excluded. The wager here is the GGR basis: it excludes
-            borrow-funded battle stakes and reward / daily-pack opens, so
-            it is smaller than the gross Wager tile&apos;s total. Real
-            customers only (staff + excluded users dropped, all creator
-            play removed, borrow plays removed) — so this matches the
-            headline.
+            excluded. Real customers only (staff + excluded users dropped,
+            all creator play removed, borrow plays removed) — so
+            this matches the headline.
           </p>
         </div>
 
