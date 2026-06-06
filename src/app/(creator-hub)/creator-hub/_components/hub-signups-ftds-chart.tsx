@@ -50,7 +50,7 @@ export function HubSignupsFtdsChart({
       <CardContent>
         <ChartContainer
           config={config}
-          className="h-[220px] w-full md:h-[260px] lg:h-[300px]"
+          className="aspect-auto h-[220px] w-full md:h-[260px] lg:h-[300px]"
         >
           <BarChart data={data} accessibilityLayer>
             <CartesianGrid vertical={false} />

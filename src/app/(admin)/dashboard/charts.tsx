@@ -199,7 +199,7 @@ export function WagerChart({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={wagerConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
+        <ChartContainer config={wagerConfig} className="aspect-auto h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
             <CartesianGrid vertical={false} />
             <XAxis
@@ -270,7 +270,7 @@ export function DepositsChart({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={depositsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
+        <ChartContainer config={depositsConfig} className="aspect-auto h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
             <CartesianGrid vertical={false} />
             <XAxis

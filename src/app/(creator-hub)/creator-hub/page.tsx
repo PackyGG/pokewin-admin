@@ -27,6 +27,7 @@ import {
 } from "@/lib/queries/dashboard-period";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
+import { AddCreatorDialogV2 } from "./creators/_components/add-creator-dialog-v2";
 import { HubQuickTools } from "./_components/hub-quick-tools";
 import { NetGgrBreakdownPopover } from "../../(admin)/creators/_components/net-ggr-breakdown-popover";
 import {
@@ -90,6 +91,7 @@ export default async function CreatorHubDashboardPage({
           accent="pink"
           title="Creator Hub"
           subtitle={`Your CM team's command center · ${windowLabel}`}
+          action={<AddCreatorDialogV2 />}
         />
       </PageHero>
 
