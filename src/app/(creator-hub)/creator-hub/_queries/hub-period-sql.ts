@@ -5,6 +5,9 @@ import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
 /** Hub "all" chip — bounded lookback (matches dashboard GGR cap). */
 export const HUB_LIFETIME_LOOKBACK_DAYS = 365;
 
+/** Overview wager/deposit charts — always daily buckets over 30 days (main /dashboard parity). */
+export const HUB_CHART_PERIOD = "30d" as const satisfies DashboardPeriod;
+
 /**
  * Postgres `INTERVAL` literal for the Hub period chips. The "all" chip maps
  * to a 365-day trailing window (never unbounded).

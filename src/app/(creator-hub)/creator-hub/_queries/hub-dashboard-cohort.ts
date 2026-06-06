@@ -15,6 +15,7 @@ import {
   hubSinceClause,
   hubBucketTrunc,
   hubCoveringLateral,
+  HUB_CHART_PERIOD,
 } from "./hub-period-sql";
 import {
   chartDateForBucket,
@@ -110,11 +111,20 @@ const cachedHubCohortScans = (
       const sinceSignup = hubSinceClause("u.created_at", period);
       const sinceAcu = hubSinceClause("acu.created_at", period);
       const sinceLt = hubSinceClause("lt.created_at", period);
-      const sinceLedger = hubSinceClause("ledger_transactions.created_at", period);
-      const sinceUpg = hubSinceClause("upgrader_games.created_at", period);
-      const bucketDeposit = hubBucketTrunc("cd.created_at", period);
-      const bucketLedger = hubBucketTrunc("ledger_transactions.created_at", period);
-      const bucketUpg = hubBucketTrunc("upgrader_games.created_at", period);
+      // Chart series always roll 30 daily buckets — independent of the KPI chip.
+      const chartPeriod = HUB_CHART_PERIOD;
+      const sinceChartLt = hubSinceClause("lt.created_at", chartPeriod);
+      const sinceChartLedger = hubSinceClause(
+        "ledger_transactions.created_at",
+        chartPeriod,
+      );
+      const sinceChartUpg = hubSinceClause("upgrader_games.created_at", chartPeriod);
+      const bucketDeposit = hubBucketTrunc("cd.created_at", chartPeriod);
+      const bucketLedger = hubBucketTrunc(
+        "ledger_transactions.created_at",
+        chartPeriod,
+      );
+      const bucketUpg = hubBucketTrunc("upgrader_games.created_at", chartPeriod);
       const covering = hubCoveringLateral;
 
       type CountRow = { value: string };
@@ -190,7 +200,7 @@ const cachedHubCohortScans = (
               WHERE lt.type = 'deposit'
                 AND lt.status = 'completed'
                 AND u.role NOT IN ('admin', 'support', 'creator')
-                ${sinceLt}
+                ${sinceChartLt}
                 ${blacklistAnd}
               ORDER BY lt.id, acu.created_at DESC
            )
@@ -212,7 +222,7 @@ const cachedHubCohortScans = (
              FROM ledger_transactions
              ${covering("user_id", "created_at")}
             WHERE status = 'completed'
-              ${sinceLedger}
+              ${sinceChartLedger}
               AND ${WAGER_LEG_FILTER}
               ${exclLedger}
               AND cov.creator_id IS NOT NULL
@@ -234,7 +244,7 @@ const cachedHubCohortScans = (
                     SELECT u_ug.id FROM "user" u_ug
                      WHERE u_ug.role NOT IN ('admin', 'support', 'creator') ${upgBlacklist}
                   )
-                  ${sinceUpg}
+                  ${sinceChartUpg}
                   AND cov.creator_id IS NOT NULL
                   AND EXISTS (
                     SELECT 1 FROM "user" c
@@ -250,9 +260,9 @@ const cachedHubCohortScans = (
         mergeWagerBucketRows(
           ledgerWagerSeriesRows,
           upgraderWagerSeriesRows,
-          period,
+          chartPeriod,
         ),
-        period,
+        chartPeriod,
       );
 
       return {
@@ -262,13 +272,13 @@ const cachedHubCohortScans = (
         depositsUsd: toNumber(depositTotalRows[0]?.value),
         dailyWagers,
         dailyDeposits: padHubDepositChartSeries(
-          mergeDepositBucketRows(depositSeriesRows, period),
-          period,
+          mergeDepositBucketRows(depositSeriesRows, chartPeriod),
+          chartPeriod,
         ),
       };
     },
     [
-      "hub-cohort-windowed-v4-dashboard-charts",
+      "hub-cohort-windowed-v5-chart-30d-daily",
       period,
       env,
       blacklistAnd,

@@ -39,8 +39,6 @@ import { HubKpiInfoPopover } from "./_components/hub-kpi-info-popover";
 import { HubWagerBreakdownPopover } from "./_components/hub-wager-breakdown-popover";
 import { HubTopCreators } from "./_components/hub-top-creators";
 import { HubPeriodSelector } from "./_components/hub-period-selector";
-import { hubChartTitleSuffix } from "./_queries/hub-chart-series";
-import { hubBucketByHour } from "./_queries/hub-period-sql";
 import { getHubDashboardOverview } from "./_queries/dashboard-overview";
 
 export const metadata = { title: "Creator Hub" };
@@ -112,9 +110,6 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
   const windowLabel = DASHBOARD_PERIOD_LABELS[period].toLowerCase();
   const periodLabel =
     windowLabel.charAt(0).toUpperCase() + windowLabel.slice(1);
-
-  const chartSuffix = hubChartTitleSuffix(period);
-  const hourlyXAxis = hubBucketByHour(period);
 
   const signupLeaderLines = [...data.topCreators]
     .filter((c) => c.signups > 0)
@@ -392,15 +387,13 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
         </div>
 
         <WagerChart
-          title={`Code-cohort wagers · ${chartSuffix}`}
+          title="Code-cohort wagers (30 days)"
           data={data.dailyWagers}
-          hourlyXAxis={hourlyXAxis}
         />
 
         <DepositsChart
-          title={`Code-cohort deposits · ${chartSuffix}`}
+          title="Code-cohort deposits (30 days)"
           data={data.dailyDeposits}
-          hourlyXAxis={hourlyXAxis}
         />
       </div>
     </FadeIn>
