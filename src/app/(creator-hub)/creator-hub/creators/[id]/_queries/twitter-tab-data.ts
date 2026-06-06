@@ -7,11 +7,11 @@ import {
   getTwitterProfile,
   isNoKeyConfigured,
   scanBrandMentions,
-  resolveLinkedHandle,
   BRAND_KEYWORDS,
   type Tweet,
   type TwitterProfile,
 } from "@/lib/creator-hub";
+import { getMergedLinkedHandle } from "../../../../../(admin)/creators/_queries/socials-by-user";
 
 /**
  * Data layer for the `creators/[id]` **Twitter** tab.
@@ -160,27 +160,14 @@ async function ensureTwitterTables(): Promise<void> {
   }
 }
 
-/** Read the creator's linked Twitter handle from the ADMIN DB (or null). */
+/** Read the creator's linked Twitter handle (merged admin + backend), or null. */
 async function getLinkedTwitterHandle(userId: string): Promise<string | null> {
-  const row = (await adminDb.creator_socials
-    .findUnique({
-      where: {
-        target_user_id_platform: {
-          target_user_id: userId,
-          platform: "twitter",
-        },
-      },
-      select: { username: true },
-    })
-    .catch((err) => {
-      logWarn(
-        "creator-hub.twitter-tab",
-        "creator_socials read failed",
-        err,
-      );
-      return null;
-    })) as { username: string } | null;
-  return resolveLinkedHandle(row?.username ?? null);
+  try {
+    return await getMergedLinkedHandle(userId, "twitter");
+  } catch (err) {
+    logWarn("creator-hub.twitter-tab", "linked Twitter handle read failed", err);
+    return null;
+  }
 }
 
 /**

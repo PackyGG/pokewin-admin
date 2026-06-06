@@ -1,6 +1,7 @@
 import "server-only";
 
 import { adminDb } from "@/lib/admin-db";
+import { resolveLinkedHandle } from "@/lib/creator-hub";
 import {
   creatorsApi,
   type AdminCreatorSocial,
@@ -187,4 +188,37 @@ export async function getRosterSocialsByUser(
     }),
   ]);
   return mergeCreatorSocialMaps(admin, backend, userIds);
+}
+
+/**
+ * Merged linked socials for one creator — same admin-first + backend-fallback
+ * union roster cards use ({@link getRosterSocialsByUser}).
+ */
+export async function getCreatorLinkedSocials(
+  userId: string,
+): Promise<CreatorSocialSummary[]> {
+  const map = await getRosterSocialsByUser([userId]);
+  return map.get(userId) ?? [];
+}
+
+/**
+ * Resolve one platform's linked handle from merged socials (admin DB wins per
+ * platform; backend approved queue is the fallback). Used by Creator Hub
+ * detail surfaces (Kick/Twitter tabs, refetch) so they agree with roster cards.
+ *
+ * Kick RapidAPI expects a lowercased channel **slug** in the path
+ * (`/api/v1/channels/{slug}`) — not a full URL. Callers pass the stored
+ * username through {@link resolveLinkedHandle}, which strips `@`, extracts the
+ * first path segment from pasted `kick.com/…` URLs, and lowercases.
+ */
+export async function getMergedLinkedHandle(
+  userId: string,
+  platform: "kick" | "twitter",
+): Promise<string | null> {
+  const chipPlatform: CreatorSocialPlatform =
+    platform === "twitter" ? "x" : platform;
+  const socials = await getCreatorLinkedSocials(userId);
+  const entry = socials.find((s) => s.platform === chipPlatform);
+  if (!entry || !isLinkedSocialUsername(entry.username)) return null;
+  return resolveLinkedHandle(entry.username);
 }

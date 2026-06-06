@@ -24,6 +24,10 @@ import {
  * degrades to the cached value. The RapidAPI key is read SERVER-ONLY from
  * `admin_settings`; if absent the functions return {@link NO_KEY_CONFIGURED}.
  *
+ * Handle format: RapidAPI paths take a lowercased channel **slug** only (e.g.
+ * `trainwreckstv`), not a full URL. Stored usernames / pasted `kick.com/…`
+ * links are normalized via {@link normalizeHandle} before any API call.
+ *
  * Endpoints (RECON blueprint, host `kick-com-api.p.rapidapi.com`, key = slug):
  *   • profile        GET /api/v1/channels/{slug}
  *   • followers      GET /api/v1/channels/{slug}/followers-count

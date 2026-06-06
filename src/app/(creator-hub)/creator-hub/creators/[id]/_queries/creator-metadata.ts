@@ -2,7 +2,12 @@ import "server-only";
 
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
+import type { CreatorSocialPlatform } from "@/lib/backend-api";
 import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
+import {
+  getCreatorLinkedSocials,
+  isLinkedSocialUsername,
+} from "../../../../../(admin)/creators/_queries/socials-by-user";
 
 /**
  * Data layer for the `creators/[id]` **Creator (metadata)** tab.
@@ -132,7 +137,8 @@ export async function getCreatorMetadata(
   }
 
   // ── ADMIN: socials + the onboarding audit event, in parallel.
-  const [socials, socialUrls, madeCreatorEvent] = await Promise.all([
+  const [adminSocials, mergedSocials, socialUrls, madeCreatorEvent] =
+    await Promise.all([
     adminDb.creator_socials.findMany({
       where: { target_user_id: userId },
       orderBy: { platform: "asc" },
@@ -145,6 +151,7 @@ export async function getCreatorMetadata(
         last_fetched_at: true,
       },
     }),
+    getCreatorLinkedSocials(userId),
     getCreatorSocialUrls(userId).catch(() => ({
       discordChannelUrl: null,
       rewardPageUrl: null,
@@ -165,6 +172,31 @@ export async function getCreatorMetadata(
       },
     }),
   ]);
+
+  const adminByChip = new Map<
+    CreatorSocialPlatform,
+    (typeof adminSocials)[number]
+  >();
+  for (const row of adminSocials) {
+    const chip: CreatorSocialPlatform =
+      row.platform === "twitter" ? "x" : (row.platform as CreatorSocialPlatform);
+    adminByChip.set(chip, row);
+  }
+
+  const socials = mergedSocials
+    .filter((s) => isLinkedSocialUsername(s.username))
+    .map((s) => {
+      const admin = adminByChip.get(s.platform);
+      return {
+        id: admin?.id ?? s.id,
+        platform: s.platform === "x" ? "twitter" : s.platform,
+        username: s.username,
+        follower_count: admin?.follower_count ?? null,
+        subscriber_count: admin?.subscriber_count ?? null,
+        last_fetched_at: admin?.last_fetched_at ?? null,
+      };
+    })
+    .sort((a, b) => a.platform.localeCompare(b.platform));
 
   let onboardedBy: OnboardedBy | null = null;
   if (madeCreatorEvent) {

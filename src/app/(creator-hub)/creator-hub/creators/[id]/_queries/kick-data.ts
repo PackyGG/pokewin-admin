@@ -6,10 +6,10 @@ import {
   getKickProfile,
   getKickStreams,
   isNoKeyConfigured,
-  resolveLinkedHandle,
   type KickProfile,
   type KickStream,
 } from "@/lib/creator-hub";
+import { getMergedLinkedHandle } from "../../../../../(admin)/creators/_queries/socials-by-user";
 
 /**
  * Data layer for the `creators/[id]` **Kick** tab.
@@ -71,16 +71,10 @@ export type KickTabData = {
   streamsStaleError: string | null;
 };
 
-/** Resolve the creator's linked Kick handle (admin DB), or null. */
+/** Resolve the creator's linked Kick handle (merged admin + backend), or null. */
 async function getLinkedKickHandle(userId: string): Promise<string | null> {
   try {
-    const row = await adminDb.creator_socials.findUnique({
-      where: {
-        target_user_id_platform: { target_user_id: userId, platform: "kick" },
-      },
-      select: { username: true },
-    });
-    return resolveLinkedHandle(row?.username ?? null);
+    return await getMergedLinkedHandle(userId, "kick");
   } catch (err) {
     if (isMissingRelation(err)) {
       logWarn(
@@ -89,7 +83,7 @@ async function getLinkedKickHandle(userId: string): Promise<string | null> {
       );
       return null;
     }
-    logWarn("creator-hub.kick-tab", "creator_socials read failed", err);
+    logWarn("creator-hub.kick-tab", "linked Kick handle read failed", err);
     return null;
   }
 }

@@ -2,16 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 
-import { adminDb } from "@/lib/admin-db";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { logWarn } from "@/lib/errors/logger";
 import {
   isNoKeyConfigured,
-  resolveLinkedHandle,
   refetchKickProfile,
   refetchKickStreams,
 } from "@/lib/creator-hub";
+import { getMergedLinkedHandle } from "../../../../../(admin)/creators/_queries/socials-by-user";
 
 /**
  * Manual Refetch for the `creators/[id]` **Kick** tab.
@@ -40,18 +39,12 @@ export async function refetchCreatorKick(
   const session = await requireCreatorHubAccess();
   if (!userId) throw new Error("Missing creator id");
 
-  // Resolve the linked Kick handle (admin DB). No handle → nothing to refetch.
+  // Resolve the linked Kick handle (merged admin + backend). No handle → nothing to refetch.
   let handle: string | null = null;
   try {
-    const row = await adminDb.creator_socials.findUnique({
-      where: {
-        target_user_id_platform: { target_user_id: userId, platform: "kick" },
-      },
-      select: { username: true },
-    });
-    handle = resolveLinkedHandle(row?.username ?? null);
+    handle = await getMergedLinkedHandle(userId, "kick");
   } catch (err) {
-    logWarn("creator-hub.kick-tab", "refetch: creator_socials read failed", err);
+    logWarn("creator-hub.kick-tab", "refetch: linked Kick handle read failed", err);
   }
 
   if (!handle) {
