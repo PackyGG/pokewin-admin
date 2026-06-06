@@ -14,21 +14,21 @@ import type {
 /**
  * Inline expandable drilldown under the Creators Costs popover's "Creator
  * withdrawals" line. Clicking it loads — lazily, on first open — the
- * per-creator / per-request breakdown of today's deal-payout cash-outs and
+ * per-creator / per-voucher breakdown of today's converted deal payouts and
  * toggles open. Mirrors `LeaderboardGrossClaimants`: a `useTransition` +
  * `useState` fetch that fires the server action the FIRST time it opens,
  * caches the result in local state, and reuses it on re-toggle (no
  * re-fetch). The dashboard's initial render never calls the action.
  *
- * Every amount is deal-payout voucher value the house paid out when a
- * creator cashed out → a house cost → rose per House-POV. Per-creator and
+ * Every amount is a deal-payout voucher minted today (session convert or
+ * multiplier settle) → a house cost → rose per House-POV. Per-creator and
  * grand totals reconcile to the line above (`withdrawalsTotal`) by
- * construction (same `creator_deal_payouts` CTE as the aggregate).
+ * construction (same mint-time voucher scan as the aggregate).
  */
 export function CreatorWithdrawalsDrilldown({
   withdrawalsTotal,
 }: {
-  /** The card's "Creator withdrawals" amount — what this reconciles to. */
+  /** The card's "Converted payouts" amount — what this reconciles to. */
   withdrawalsTotal: number;
 }) {
   const [state, setState] = useState<{
@@ -69,10 +69,10 @@ export function CreatorWithdrawalsDrilldown({
         onClick={handleToggle}
         disabled={isPending}
         aria-expanded={state.open}
-        title={`Creator withdrawals today: ${formatCurrency(withdrawalsTotal)}`}
+        title={`Converted payouts today: ${formatCurrency(withdrawalsTotal)}`}
         className="flex w-full items-center justify-between rounded px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-60"
       >
-        <span>{state.open ? "Hide" : "Show"} who withdrew</span>
+        <span>{state.open ? "Hide" : "Show"} who converted</span>
         {isPending ? (
           <Loader2 className="size-3 motion-safe:animate-spin" />
         ) : (
@@ -97,7 +97,7 @@ export function CreatorWithdrawalsDrilldown({
             </p>
           ) : state.data.creators.length === 0 ? (
             <p className="px-1.5 py-2 text-[10px] text-muted-foreground">
-              No creator deal-payout withdrawals today.
+              No converted deal payouts today.
             </p>
           ) : (
             <div className="space-y-1.5">
@@ -106,7 +106,7 @@ export function CreatorWithdrawalsDrilldown({
               ))}
               <div className="flex items-center justify-between border-t border-border/60 px-1.5 pt-1.5 text-[10px]">
                 <span className="font-semibold uppercase tracking-wider text-muted-foreground">
-                  Total withdrawals
+                  Total converted
                 </span>
                 <span className="font-bold tabular-nums text-rose-600 dark:text-rose-400">
                   −{formatCurrency(state.data.totalAmount)}
@@ -121,15 +121,15 @@ export function CreatorWithdrawalsDrilldown({
 }
 
 /**
- * One creator's group: header (username + today's deal-payout total) and
- * per-request rows beneath it.
+ * One creator's group: header (username + today's converted total) and
+ * per-voucher rows beneath it.
  */
 function CreatorGroup({ creator }: { creator: CreatorWithdrawalCreator }) {
   const displayName =
     creator.username ?? `${creator.creatorUserId.slice(0, 6)}…`;
   const href = `/creator-hub/creators/${creator.creatorUserId}`;
-  const requestLabel =
-    creator.withdrawals.length === 1 ? "request" : "requests";
+  const payoutLabel =
+    creator.withdrawals.length === 1 ? "payout" : "payouts";
 
   return (
     <div className="rounded border border-border/50">
@@ -146,13 +146,13 @@ function CreatorGroup({ creator }: { creator: CreatorWithdrawalCreator }) {
               {displayName}
             </Link>
             <span className="block truncate text-[9px] text-muted-foreground">
-              {creator.withdrawals.length} {requestLabel}
+              {creator.withdrawals.length} {payoutLabel}
             </span>
           </span>
         </span>
         <span className="shrink-0 text-right">
           <span className="block text-[9px] uppercase tracking-wider text-muted-foreground">
-            cashed out
+            converted
           </span>
           <span
             className={cn(
@@ -168,17 +168,17 @@ function CreatorGroup({ creator }: { creator: CreatorWithdrawalCreator }) {
       </div>
       <ul className="divide-y divide-border/40">
         {creator.withdrawals.map((w) => (
-          <li key={w.requestId}>
+          <li key={w.voucherId}>
             <div className="flex items-center justify-between gap-2 px-1.5 py-1 text-[10px]">
               <span className="min-w-0">
                 <Link
                   href={`/users/${creator.creatorUserId}`}
                   className="block truncate font-medium text-foreground/90 hover:underline"
                 >
-                  {formatWithdrawalLabel(w.origins, w.voucherCount)}
+                  {formatPayoutLabel(w.origin)}
                 </Link>
                 <span className="block truncate text-[9px] text-muted-foreground tabular-nums">
-                  {formatEffectiveAt(w.effectiveAtIso)}
+                  {formatMintedAt(w.mintedAtIso)}
                 </span>
               </span>
               <span
@@ -199,25 +199,15 @@ function CreatorGroup({ creator }: { creator: CreatorWithdrawalCreator }) {
   );
 }
 
-function formatWithdrawalLabel(
-  origins: Array<"creator_fill_conversion" | "creator_multiplier_payout">,
-  voucherCount: number,
+function formatPayoutLabel(
+  origin: "creator_fill_conversion" | "creator_multiplier_payout",
 ): string {
-  const voucherLabel = voucherCount === 1 ? "voucher" : "vouchers";
-  if (origins.length === 0) {
-    return `${voucherCount} deal-payout ${voucherLabel}`;
-  }
-  if (origins.length === 1) {
-    const originLabel =
-      origins[0] === "creator_fill_conversion"
-        ? "fill payout"
-        : "multiplier payout";
-    return `${voucherCount} ${originLabel} ${voucherLabel}`;
-  }
-  return `${voucherCount} deal-payout ${voucherLabel}`;
+  return origin === "creator_fill_conversion"
+    ? "Fill session payout"
+    : "Multiplier payout";
 }
 
-function formatEffectiveAt(iso: string): string {
+function formatMintedAt(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleString("en-US", {
     month: "short",

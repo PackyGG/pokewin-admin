@@ -21,7 +21,7 @@ import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldow
  *
  * Every line is money the house paid OUT on creator activity → a house COST
  * → rose per CLAUDE.md's House-POV rule. Lines:
- *   • Creator withdrawals — deal-payout vouchers the creator cashed out today.
+ *   • Converted payouts — deal-payout vouchers minted today (session convert).
  *   • Tips                — house-funded creator tips handed to users today.
  *   • Leaderboard prizes  — the FULL gross of today's leaderboard prizes.
  *                           Every affiliate leaderboard is a creator-run event
@@ -248,8 +248,9 @@ function CreatorCostsInfoPopover({
           <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
             House spend on creator activity since 00:00 today (UTC) —{" "}
             <strong>{dayLabel}</strong> — not a rolling 24h window. Every line
-            is money paid out (a house cost): deal-payout withdrawals the
-            creator cashed out, house-funded tips, and leaderboard prizes.
+            is money paid out (a house cost): deal payouts converted from
+            sessions (voucher minted), house-funded tips, and leaderboard
+            prizes.
             Every affiliate leaderboard is a creator-run event, so its{" "}
             <strong>full prize gross</strong> is counted here as a creator cost
             (the Reward Costs box counts $0 of it).

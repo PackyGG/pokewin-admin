@@ -3,6 +3,7 @@ import "server-only";
 import type { CreatorListItem } from "@/lib/backend-api";
 
 import { getExCreatorsList } from "../../../../(admin)/creators/_queries/list-ex-creators";
+import { parseCreatorsSearchParams } from "../../../../(admin)/creators/_lib/search-params";
 import {
   getCodeAndWagerByUser,
   type CreatorCodeAndWager,
@@ -36,7 +37,7 @@ export async function listRosterExCreators(
 ): Promise<RosterResult> {
   let roster: CreatorListItem[];
   try {
-    const page = await getExCreatorsList({});
+    const page = await getExCreatorsList(parseCreatorsSearchParams({ tab: "past" }));
     roster = page.data;
   } catch (err) {
     console.error("[creator-hub roster] ex-creator list failed:", err);

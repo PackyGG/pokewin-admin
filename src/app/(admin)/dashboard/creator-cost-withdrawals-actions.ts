@@ -8,7 +8,7 @@ import {
 
 /**
  * Server action backing the click-to-reveal drilldown on the Creators Costs
- * Today card's "Creator withdrawals" line.
+ * Today card's "Converted payouts" line.
  *
  * The card face + breakdown popover render up-front from the cached
  * today-windowed aggregate, but the per-creator / per-request withdrawal

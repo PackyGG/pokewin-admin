@@ -18,11 +18,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatNumber } from "@/lib/utils/format";
 
 import { HubKpiBox } from "../_components/hub-kpi-box";
+import { getDealTimeline } from "./_queries/deal-timeline";
 import {
-  getDealTimeline,
-  parseDealTrackerWindow,
   DEAL_TRACKER_WINDOWS,
-} from "./_queries/deal-timeline";
+  parseDealTrackerWindow,
+} from "./_lib/tracker-window";
 import { DealTimeline } from "./_components/deal-timeline";
 import { DealTrackerWindowSelector } from "./_components/deal-tracker-window-selector";
 

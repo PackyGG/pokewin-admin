@@ -46,32 +46,32 @@ const dealFormSchema = z
     week_start_utc: z.string().min(1, "Week start is required"),
     week_end_utc: z.string().min(1, "Week end is required"),
     fills_allowed: z.coerce
-      .number({ invalid_type_error: "Fills allowed must be a number" })
+      .number()
       .int("Fills allowed must be a whole number")
       .positive("Fills allowed must be greater than 0"),
     per_fill_amount_usd: z.coerce
-      .number({ invalid_type_error: "Per-fill amount must be a number" })
+      .number()
       .positive("Per-fill amount must be greater than 0"),
     conversion_rate_pct: z.coerce
-      .number({ invalid_type_error: "Conversion rate must be a number" })
+      .number()
       .min(0, "Conversion rate must be at least 0%")
       .max(100, "Conversion rate must be at most 100%"),
     total_withdraw_cap_usd: z.string(),
     cooldown_minutes: z.coerce
-      .number({ invalid_type_error: "Cooldown must be a number" })
+      .number()
       .int("Cooldown must be a whole number")
       .min(0, "Cooldown must be 0 or more minutes"),
     max_tip_per_stream_usd: z.coerce
-      .number({ invalid_type_error: "Tip limit must be a number" })
+      .number()
       .min(0, "Tip limits must be 0 or greater"),
     max_tip_per_user_usd: z.coerce
-      .number({ invalid_type_error: "Tip limit must be a number" })
+      .number()
       .min(0, "Tip limits must be 0 or greater"),
     max_sponsored_battle_usd: z.coerce
-      .number({ invalid_type_error: "Sponsorship limit must be a number" })
+      .number()
       .min(0, "Sponsorship limits must be 0 or greater"),
     max_sponsorship_per_stream_usd: z.coerce
-      .number({ invalid_type_error: "Sponsorship limit must be a number" })
+      .number()
       .min(0, "Sponsorship limits must be 0 or greater"),
     allow_site_leaderboards: z.boolean(),
     allow_code_leaderboards: z.boolean(),

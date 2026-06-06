@@ -43,7 +43,7 @@ const leaderboardFormSchema = z
   .object({
     title: z.string().trim().min(1, "Title is required").max(100),
     site_bonus_usd: z.coerce
-      .number({ invalid_type_error: "Prize pool must be a number" })
+      .number()
       .positive("Total prize pool must be greater than zero"),
     start_date: z.string().min(1, "Start date is required"),
     end_date: z.string().min(1, "End date is required"),
@@ -57,7 +57,7 @@ const leaderboardFormSchema = z
       )
       .min(5, "At least 5 prize tiers are required"),
     sponsored_pct: z.coerce
-      .number({ invalid_type_error: "House share % must be a number" })
+      .number()
       .min(0, "House share % must be between 0 and 100")
       .max(100, "House share % must be between 0 and 100"),
   })

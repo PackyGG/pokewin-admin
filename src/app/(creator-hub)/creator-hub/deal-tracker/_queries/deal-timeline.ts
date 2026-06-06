@@ -7,71 +7,26 @@ import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboar
 import { getDb } from "@/lib/db";
 import { getLeaderboardSponsorshipMap } from "../../../../(admin)/creators/_queries/leaderboard-sponsorship";
 
-// ─── Types ───────────────────────────────────────────────────────────
+import {
+  type DealTrackerWindow,
+  dealTrackerWindowDays,
+} from "../_lib/tracker-window";
+import type {
+  DealTimelineResult,
+  TimelineEvent,
+  TimelineEventKind,
+} from "../_lib/timeline-types";
 
-export type DealTrackerWindow = "14d" | "30d" | "60d" | "90d";
-
-export const DEAL_TRACKER_WINDOWS: readonly {
-  value: DealTrackerWindow;
-  label: string;
-  days: number;
-}[] = [
-  { value: "14d", label: "14 days", days: 14 },
-  { value: "30d", label: "30 days", days: 30 },
-  { value: "60d", label: "60 days", days: 60 },
-  { value: "90d", label: "90 days", days: 90 },
-];
-
-export type TimelineEventKind =
-  | "deal_start"
-  | "deal_end"
-  | "leaderboard_start"
-  | "leaderboard_end";
-
-export type TimelineEvent = {
-  id: string;
-  kind: TimelineEventKind;
-  atIso: string;
-  /** Days from now (negative = past). */
-  daysFromNow: number;
-  creatorUserId: string;
-  creatorUsername: string | null;
-  title: string;
-  subtitle: string;
-  href: string;
-  /** House-POV cost hint when applicable (rose context). */
-  valueUsd: number | null;
-  status: "past" | "today" | "upcoming";
-};
-
-export type DealTimelineResult = {
-  events: TimelineEvent[];
-  counts: {
-    dealEnds: number;
-    dealStarts: number;
-    lbEnds: number;
-    lbStarts: number;
-    upcoming: number;
-  };
-  backendUnavailable: boolean;
-};
+export type { DealTrackerWindow, TimelineEvent, TimelineEventKind, DealTimelineResult };
+export {
+  DEAL_TRACKER_WINDOWS,
+  parseDealTrackerWindow,
+} from "../_lib/tracker-window";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 100;
 const FETCH_CAP = 500;
-
-export function parseDealTrackerWindow(
-  raw: string | undefined,
-): DealTrackerWindow {
-  return DEAL_TRACKER_WINDOWS.some((w) => w.value === raw)
-    ? (raw as DealTrackerWindow)
-    : "30d";
-}
-
-function windowDays(window: DealTrackerWindow): number {
-  return DEAL_TRACKER_WINDOWS.find((w) => w.value === window)?.days ?? 30;
-}
 
 async function walkAllCreators(): Promise<CreatorListItem[]> {
   const firstPage = await creatorsApi.list({ offset: 0, limit: PAGE_SIZE });
@@ -228,7 +183,7 @@ export async function getDealTimeline(
 ): Promise<DealTimelineResult> {
   const base = await getDealTimelineBase();
   const nowMs = base.snapshotMs;
-  const days = windowDays(window);
+  const days = dealTrackerWindowDays(window);
 
   const creatorIds = [...new Set(base.events.map((e) => e.creatorUserId))];
   const usernames = await hydrateUsernames(creatorIds);

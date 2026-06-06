@@ -12,8 +12,8 @@ import { hubPeriodToInterval } from "./hub-period-sql";
  * house-cost legs as `dashboard-creator-costs-today.ts`, re-scoped to the
  * active `DashboardPeriod` chip instead of calendar-today:
  *
- *   • Creator deal-payout withdrawals (creator_fill_conversion +
- *     creator_multiplier_payout vouchers on completed/shipped cwr).
+ *   • Converted deal payouts (creator_fill_conversion +
+ *     creator_multiplier_payout vouchers minted in the window).
  *   • House-funded creator tips (`creator_fill_spend_tip`).
  *   • Full affiliate leaderboard prize gross (`affiliate_leaderboard_prize`).
  *
@@ -30,19 +30,10 @@ const cachedHubCreatorCost = unstable_cache(
 
       type WithdrawalRow = { creator_withdrawals: string };
       const withdrawalRows = await db.$queryRawUnsafe<WithdrawalRow[]>(
-        `WITH creator_deal_payouts AS (
-           SELECT DISTINCT
-             cwr.id AS request_id,
-             v.id   AS voucher_id,
-             v.value::numeric AS amount,
-             COALESCE(cwr.completed_at, cwr.shipped_at) AS effective_at
-           FROM card_withdrawal_requests cwr
-           JOIN vouchers v ON v.id = ANY(cwr.voucher_ids)
-           WHERE cwr.status IN ('completed', 'shipped')
-             AND v.origin::text IN ('creator_fill_conversion', 'creator_multiplier_payout')
-         )
-         SELECT COALESCE(SUM(CASE WHEN effective_at >= ${since} THEN amount ELSE 0 END), 0)::text AS creator_withdrawals
-         FROM creator_deal_payouts`,
+        `SELECT COALESCE(SUM(v.value::numeric), 0)::text AS creator_withdrawals
+         FROM vouchers v
+         WHERE v.origin::text IN ('creator_fill_conversion', 'creator_multiplier_payout')
+           AND v.created_at >= ${since}`,
       );
       const creatorWithdrawals = toNumber(withdrawalRows[0]?.creator_withdrawals);
 
@@ -69,7 +60,7 @@ const cachedHubCreatorCost = unstable_cache(
       return creatorWithdrawals + tips + leaderboardGross;
     });
   },
-  ["hub-creator-cost-v1"],
+  ["hub-creator-cost-v2-minted-payouts"],
   { revalidate: 60, tags: ["creator-hub"] },
 );
 

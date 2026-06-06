@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import {
   DEAL_TRACKER_WINDOWS,
   type DealTrackerWindow,
-} from "../_queries/deal-timeline";
+} from "../_lib/tracker-window";
 
 export function DealTrackerWindowSelector({
   current,

@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 import { useFormatDateTime } from "@/components/timezone-provider";
 
-import type { TimelineEvent, TimelineEventKind } from "../_queries/deal-timeline";
+import type { TimelineEvent, TimelineEventKind } from "../_lib/timeline-types";
 
 const KIND_META: Record<
   TimelineEventKind,
