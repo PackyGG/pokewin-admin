@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `634b12e3` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub responsive harness **DONE** (`RESPONSIVE_EXPECT_CLEAN=1` PASS on 12 hub routes; detail/forecast skipped when no creator in MAIN)
+- **HEAD:** `ff6ea75a` · **Updated:** 2026-06-06 · **Active focus:** Hub ad-code detail route **DONE** (`73282fc9`); prod browser verify **PARTIAL** (minted cookie rejected on Vercel — `SESSION_SECRET` mismatch vs local `.env.local`)
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
@@ -29,6 +29,7 @@
 - **Forecast tab deal allowance (`d629ba09`)** — weekly tip/sponsor spend uses deal per-stream caps × `fills_allowed`; realized lifetime cadence only when no deal; UI labels source + fallback
 - **Codes & Ads hub route (`9f0c02f8`)** — `/creator-hub/codes-ads` lazy tabs (affiliate codes table + ads dashboard); hub-gated mutations; sidebar nav; e2e smoke route added (13 hub routes)
 - **Responsive harness — Creator Hub (`634b12e3`)** — `CREATOR_HUB_ROUTES` + `e2e/responsive/creator-hub-audit.spec.ts` (minted `canAccessCreatorHub` session); roster SectionHeading action stack fix at md; `RESPONSIVE_EXPECT_CLEAN=1` PASS (detail routes skip without creator in MAIN)
+- **Hub ad detail (`73282fc9`)** — `/creator-hub/codes-ads/ads/[code]` (hub gate, modern panels, reuses `getAdCodeDetail` + admin chart/copy-link); hub cards no longer deep-link to `/creators/ads/[code]`; e2e `readSampleAdCode` + prod smoke spec (`ff6ea75a`)
 
 **Earlier admin (pre-Hub):** dashboard rework, system-edge-plan, `/users` search, Balance 2.0, insights hub, responsive harness (`e2e/responsive/*`), smoothness primitives (`@/components/ux`)
 
@@ -46,8 +47,8 @@ _None — Creator Hub plan closed. Pick up deferred items below when owner prior
 2. Packy.gg avatar write — **BLOCKED** (no confirmed backend endpoint; ADMIN-only pfp preview OK)
 3. Bulk delete `/gift-cards` + `/vouchers` — **BLOCKED** (MAIN DB write forbidden)
 4. Fold durable reward findings into `ONBOARDING.md` (affiliate commission basis; signup $5.71 clarification)
-5. Hub ad-code **detail** route (`/creator-hub/codes-ads/ads/[code]`) — cards still deep-link to admin `/creators/ads/[code]`
-6. Add `/creator-hub/codes-ads` + `/creator-hub/tips-sponsors` to responsive matrix (new routes since harness wave)
+5. Add `/creator-hub/codes-ads` + hub ad detail + `/creator-hub/tips-sponsors` to responsive matrix
+6. Prod minted-session verify on Vercel — needs prod-matching `SESSION_SECRET` in VM secrets (local mint PASS; prod redirects to `/login`)
 
 ---
 
@@ -70,6 +71,8 @@ _None — Creator Hub plan closed. Pick up deferred items below when owner prior
 - **PowerShell UTF-8 BOM** breaks `.sql` — write SQL via Bash/`printf`
 - **Verify agents** — `git fetch && checkout exact SHA` before "not found" verdicts
 - **Twitter API shape** — read `core` + `avatar`, not only `legacy` (`src/lib/creator-hub/`)
+- **Hub ads e2e** — `readSampleAdCode()` needs `admin_settings.house_affiliate_user_id` + a row in MAIN `affiliate_codes`; local VM has neither → detail e2e skips; ads tab still renders house-setup empty state
+- **Prod Playwright mint** — cookie signed with VM `SESSION_SECRET` must match Vercel env or prod smoke lands on `/login`
 
 ---
 
