@@ -61,11 +61,7 @@ export type UserSearchMode = "prefix" | "substring";
  * computed once in getUsers and threaded through so the cached SQL build
  * matches the Prisma-path routing exactly.
  */
-type RankedUserIdsInput = {
-  sortBy: string;
-  order: "asc" | "desc";
-  page: number;
-  perPage: number;
+type UserListFilterInput = {
   searchTerm: string | undefined;
   isUuid: boolean;
   isEmailLike: boolean;
@@ -75,6 +71,156 @@ type RankedUserIdsInput = {
   role: string | undefined;
   status: string | undefined;
 };
+
+type RankedUserIdsInput = UserListFilterInput & {
+  sortBy: string;
+  order: "asc" | "desc";
+  page: number;
+  perPage: number;
+};
+
+/**
+ * Shared WHERE builder for every raw-SQL user-list path (ranking scan AND
+ * the column-sort search fast path). Free-form text uses `LOWER(col) LIKE`
+ * — NOT Prisma ILIKE — so Postgres can use the recommended lower(col)
+ * text_pattern_ops / pg_trgm indexes.
+ */
+function buildUserListWhereClause(input: UserListFilterInput): string {
+  const {
+    searchTerm,
+    isUuid,
+    isEmailLike,
+    isDiscordId,
+    searchMode,
+    role,
+    status,
+  } = input;
+  const whereSql: string[] = [];
+  if (searchTerm) {
+    const safe = searchTerm.replace(/'/g, "''");
+    if (isUuid) {
+      whereSql.push(`u.id = '${safe}'`);
+    } else if (isEmailLike) {
+      whereSql.push(`LOWER(u.email) = LOWER('${safe}')`);
+    } else if (isDiscordId) {
+      whereSql.push(
+        `EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = '${safe}')`,
+      );
+    } else {
+      const lower = `LOWER('${safe}')`;
+      const pattern =
+        searchMode === "substring"
+          ? `'%' || ${lower} || '%'`
+          : `${lower} || '%'`;
+      whereSql.push(
+        `(LOWER(u.username) LIKE ${pattern} OR LOWER(u.display_username) LIKE ${pattern} OR LOWER(u.name) LIKE ${pattern} OR LOWER(u.email) LIKE ${pattern} OR u.id = '${safe}')`,
+      );
+    }
+  }
+  if (role && role !== "all" && USER_ROLES.has(role)) {
+    whereSql.push(`u.role = '${role}'::user_role`);
+  }
+  if (status === "banned") whereSql.push("u.is_banned = true");
+  else if (status === "locked") whereSql.push("u.is_locked = true");
+  else if (status === "active")
+    whereSql.push("u.is_banned = false AND u.is_locked = false");
+  return whereSql.length ? `WHERE ${whereSql.join(" AND ")}` : "";
+}
+
+function buildUserListColumnOrderSql(
+  sortBy: string,
+  order: "asc" | "desc",
+): { orderSql: string; needsBalanceJoin: boolean } {
+  const orderSql = order === "asc" ? "ASC" : "DESC";
+  if (sortBy === "balance") {
+    return {
+      needsBalanceJoin: true,
+      orderSql: `ORDER BY b.available_balance ${orderSql} NULLS LAST, u.id ASC`,
+    };
+  }
+  if (sortBy === "totalDeposited") {
+    return {
+      needsBalanceJoin: true,
+      orderSql: `ORDER BY b.total_deposited ${orderSql} NULLS LAST, u.id ASC`,
+    };
+  }
+  if (sortBy === "totalWagered") {
+    return {
+      needsBalanceJoin: true,
+      orderSql: `ORDER BY b.total_wagered ${orderSql} NULLS LAST, u.id ASC`,
+    };
+  }
+  if (sortBy === "status") {
+    return {
+      needsBalanceJoin: false,
+      orderSql: `ORDER BY u.is_banned ${orderSql}, u.is_locked ${orderSql}, u.id ASC`,
+    };
+  }
+  const userSortFields = new Set([
+    "created_at",
+    "email",
+    "username",
+    "role",
+    "country",
+  ]);
+  const field = userSortFields.has(sortBy) ? sortBy : "created_at";
+  return {
+    needsBalanceJoin: false,
+    orderSql: `ORDER BY u.${field} ${orderSql} NULLS LAST, u.id ASC`,
+  };
+}
+
+type ColumnSortUserIdsInput = UserListFilterInput & {
+  sortBy: string;
+  order: "asc" | "desc";
+  page: number;
+  perPage: number;
+};
+
+/**
+ * Index-friendly ID fetch for column sorts when free-form text search is
+ * active. Prisma `startsWith` + `mode:"insensitive"` compiles to ILIKE,
+ * which cannot use the lower(col) text_pattern_ops indexes.
+ */
+async function fetchColumnSortUserIds(
+  input: ColumnSortUserIdsInput,
+): Promise<{ ids: string[]; total: number }> {
+  const { sortBy, order, page, perPage, ...filter } = input;
+  const db = await getDb();
+  const whereClause = buildUserListWhereClause(filter);
+  const { orderSql, needsBalanceJoin } = buildUserListColumnOrderSql(
+    sortBy,
+    order,
+  );
+  const balanceJoin = needsBalanceJoin
+    ? "LEFT JOIN balances b ON b.user_id = u.id"
+    : "";
+
+  const [orderedRows, totalCount] = await Promise.all([
+    db.$queryRawUnsafe<{ id: string }[]>(`
+      SELECT u.id
+      FROM "user" u
+      ${balanceJoin}
+      ${whereClause}
+      ${orderSql}
+      LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
+    `),
+    db.$queryRawUnsafe<{ c: string }[]>(`
+      SELECT COUNT(*)::text AS c FROM "user" u ${whereClause}
+    `),
+  ]);
+
+  return {
+    ids: orderedRows.map((r) => r.id),
+    total: Number(totalCount[0]?.c ?? 0),
+  };
+}
+
+const cachedFilteredColumnSortUserIds = unstable_cache(
+  fetchColumnSortUserIds,
+  ["users-column-sort-filtered-v1"],
+  { revalidate: 30, tags: ["users-list"] },
+);
 
 /**
  * The expensive half of the computed-sort path: a global ORDER BY over the
@@ -98,57 +244,10 @@ type RankedUserIdsInput = {
 async function computeRankedUserIds(
   input: RankedUserIdsInput,
 ): Promise<{ ids: string[]; total: number }> {
-  const { sortBy, order, page, perPage, searchTerm, isUuid, isEmailLike, isDiscordId, searchMode, role, status } =
-    input;
+  const { sortBy, order, page, perPage, ...filter } = input;
   const db = await getDb();
   const orderSql = order === "asc" ? "ASC" : "DESC";
-
-  const whereSql: string[] = [];
-  if (searchTerm) {
-    // Same fast-path routing as the Prisma path in getUsers — uuid /
-    // email-shape / discord-snowflake hit indexes directly; only
-    // free-form text falls back to the multi-column LIKE OR. The
-    // safe-quoted literal is reused everywhere a substring isn't
-    // wrapped in % wildcards so apostrophes can't break out.
-    const safe = searchTerm.replace(/'/g, "''");
-    if (isUuid) {
-      whereSql.push(`u.id = '${safe}'`);
-    } else if (isEmailLike) {
-      whereSql.push(`LOWER(u.email) = LOWER('${safe}')`);
-    } else if (isDiscordId) {
-      whereSql.push(
-        `EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = '${safe}')`,
-      );
-    } else {
-      // Free-form handle/name match. PREFIX (left-anchored) by default so
-      // it is sargable against the recommended lower(col) text_pattern_ops
-      // indexes — an index range scan, not a per-keystroke full seq scan.
-      // `LOWER(col) LIKE 'prefix%'` with the term lowercased in JS keeps the
-      // pattern's LHS identical to the indexed expression. SUBSTRING mode
-      // (opt-in) restores the legacy leading-wildcard `%term%` for interior
-      // fragments (needs the pg_trgm GIN index to be fast). id stays an
-      // equality leg for short partial-UUID pastes that didn't match
-      // UUID_RE.
-      const lower = `LOWER('${safe}')`;
-      const pattern =
-        searchMode === "substring"
-          ? `'%' || ${lower} || '%'`
-          : `${lower} || '%'`;
-      whereSql.push(
-        `(LOWER(u.username) LIKE ${pattern} OR LOWER(u.display_username) LIKE ${pattern} OR LOWER(u.name) LIKE ${pattern} OR LOWER(u.email) LIKE ${pattern} OR u.id = '${safe}')`,
-      );
-    }
-  }
-  if (role && role !== "all" && USER_ROLES.has(role)) {
-    // role is validated against the user_role enum above, so it's a
-    // known alphanumeric member; inline it safely.
-    whereSql.push(`u.role = '${role}'::user_role`);
-  }
-  if (status === "banned") whereSql.push("u.is_banned = true");
-  else if (status === "locked") whereSql.push("u.is_locked = true");
-  else if (status === "active")
-    whereSql.push("u.is_banned = false AND u.is_locked = false");
-  const whereClause = whereSql.length ? `WHERE ${whereSql.join(" AND ")}` : "";
+  const whereClause = buildUserListWhereClause(filter);
 
   // ── Two-stage filter → hydrate ───────────────────────────────────────
   // PERF: the legacy query LEFT-JOINed all 6 per-user aggregates
@@ -466,6 +565,8 @@ export async function getUsers(params: {
   // = snowflake) only when the search looks like one — otherwise a generic
   // numeric username would trigger an unnecessary join.
   const isDiscordId = /^\d{17,20}$/.test(searchTerm ?? "");
+  const isFreeFormTextSearch =
+    !!searchTerm && !isUuid && !isEmailLike && !isDiscordId;
 
   if (searchTerm) {
     if (isUuid) {
@@ -643,18 +744,51 @@ export async function getUsers(params: {
       ];
     }
 
-    const result = await Promise.all([
-      db.user.findMany({
-        where,
-        orderBy,
-        skip: (page - 1) * perPage,
-        take: perPage,
-        select: userSelect,
-      }),
-      db.user.count({ where }),
-    ]);
-    users = result[0];
-    total = result[1];
+    if (isFreeFormTextSearch) {
+      const filterInput: UserListFilterInput = {
+        searchTerm,
+        isUuid,
+        isEmailLike,
+        isDiscordId,
+        searchMode,
+        role,
+        status,
+      };
+      const { ids, total: totalCount } = await cachedFilteredColumnSortUserIds(
+        {
+          ...filterInput,
+          sortBy,
+          order,
+          page,
+          perPage,
+        },
+      );
+      const unordered =
+        ids.length > 0
+          ? await db.user.findMany({
+              where: { id: { in: ids } },
+              select: userSelect,
+            })
+          : ([] as typeof users);
+      const byId = new Map(unordered.map((u) => [u.id, u]));
+      users = ids
+        .map((id) => byId.get(id))
+        .filter((u): u is (typeof unordered)[number] => Boolean(u));
+      total = totalCount;
+    } else {
+      const result = await Promise.all([
+        db.user.findMany({
+          where,
+          orderBy,
+          skip: (page - 1) * perPage,
+          take: perPage,
+          select: userSelect,
+        }),
+        db.user.count({ where }),
+      ]);
+      users = result[0];
+      total = result[1];
+    }
   }
 
   // Per-page aggregates are independent keyed on user_id and run in
@@ -666,6 +800,18 @@ export async function getUsers(params: {
   const empty = {
     deposits: [] as Array<{ user_id: string; _count: { _all: number } }>,
   };
+  // Skip the heavy list-level risk BATCH_SQL during free-form search —
+  // finding the user fast matters more than per-row risk on the slice.
+  const skipListRisk = isFreeFormTextSearch;
+  const emptyRisk = new Map<
+    string,
+    {
+      score: number;
+      tier: RiskTier;
+      sharedIpCount: number;
+      sharedFingerprintCount: number;
+    }
+  >();
   const [pnlByUserId, depositCountRows, riskScoresMap] = await Promise.all([
     calculateUsersPnlBatch(userIds),
     userIds.length > 0
@@ -679,12 +825,9 @@ export async function getUsers(params: {
           _count: { _all: true },
         })
       : Promise.resolve(empty.deposits),
-    // Risk score — batched internally for the whole page.
-    userIds.length > 0
+    userIds.length > 0 && !skipListRisk
       ? computeRiskScoresForList(userIds)
-      : Promise.resolve(
-          new Map<string, { score: number; tier: RiskTier; sharedIpCount: number; sharedFingerprintCount: number }>(),
-        ),
+      : Promise.resolve(emptyRisk),
   ]);
 
   const depositCountMap = new Map(
