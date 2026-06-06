@@ -17,7 +17,7 @@ Build a self-contained **Creator Hub** sub-app (`/creator-hub/*`) for the in-hou
 | **0** | Foundation — `creator_manager` role, sub-app shell, `canAccessCreatorHub` gate (motha + per-role ADMIN-DB toggles, default OFF), portal button | **DONE** |
 | **1** | Core pages — roster, `creators/[id]` Overview + tabs, profitable-algo, live-leaderboards, changelog, nav wiring | **DONE** |
 | **Substrate** | 9 ADMIN-DB tables (kick/twitter/crm/alerts/session meta) + `src/lib/creator-hub/*` (TTL cache, throttle, server-only) + Settings (RapidAPI keys in `admin_settings`) | **DONE** |
-| **Per-creator tabs** | Creator, Risk, Forecast, Cohorts&LTV, Alt Accounts, Kick, Twitter, Sessions+VOD | **DONE** (Forecast = functional; see gaps) |
+| **Per-creator tabs** | Creator, Risk, Forecast, Cohorts&LTV, Alt Accounts, Kick, Twitter, Sessions+VOD | **DONE** |
 | **Ops tools** | Creator Check, onboarding checklist dock, acquisition, compare, alerts (right-rail dock), deal-tracker, socials-review | **DONE** |
 | **B** | Dashboard 24h real-data + bucketed charts, Add Creator v2, ops routes wired | **DONE** |
 | **C** | Top Creators = most wager; post-B+C fixes (Vercel build, creator cost converted payouts, linked socials, Kick refetch) | **DONE** |
@@ -71,7 +71,7 @@ Build a self-contained **Creator Hub** sub-app (`/creator-hub/*`) for the in-hou
 | Bulk delete `/gift-cards` + `/vouchers` | **BLOCKED** | Tables in MAIN DB — write forbidden |
 | Admin-DB schema drift (`creator_deals` cashout limits + `creator_deal_estimates`) | **OPEN** | `db push` refuses; owner decision: restore schema or archive+drop |
 | `codes-ads` dedicated hub route | **DEFERRED** | Functionality ported; no separate `/creator-hub/codes-ads` page (use admin `/creators/codes` or future wave) |
-| Forecast tab — deal `tip/sponsor allowance` from deal terms | **PARTIAL** | Uses realized lifetime tip/sponsor spread over active weeks (not deal JSON allowance field) — documented in UI |
+| Forecast tab — deal `tip/sponsor allowance` from deal terms | **DONE** (`d629ba09`) | Primary: `(max_tip_per_stream + max_sponsorship_per_stream) × fills_allowed`; fallback: realized lifetime ÷ active weeks when no deal; UI labels source |
 | Responsive harness `RESPONSIVE_EXPECT_CLEAN=1` full sweep | **OPEN** | Hub routes not yet in responsive matrix (smoke e2e covers render) |
 | Fold durable reward findings into `ONBOARDING.md` | **OPEN** | Affiliate commission basis; signup $5.71 clarification |
 
