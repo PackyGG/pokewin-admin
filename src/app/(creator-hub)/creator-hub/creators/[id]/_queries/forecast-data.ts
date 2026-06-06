@@ -111,11 +111,19 @@ export type ForecastData = {
    */
   weeklyLbFundingUsd: number;
   /**
-   * Weekly house-funded tip + sponsor allowance. Derived from the realized
-   * lifetime tips/sponsor spend spread over the creator's active weeks (real
-   * cadence). 0 when none recorded.
+   * Weekly house-funded tip + sponsor allowance. Primary source is the active
+   * deal's stated per-stream caps × fills in the weekly window; falls back to
+   * realized lifetime spend ÷ active weeks only when no deal terms exist.
    */
   weeklyTipSponsorUsd: number;
+  /** Where `weeklyTipSponsorUsd` came from — surfaced in the UI. */
+  tipSponsorSource: "deal_terms" | "realized_cadence" | "none";
+  /** Per-stream tip cap from the selected deal (0 when not from deal terms). */
+  dealTipPerStreamUsd: number;
+  /** Per-stream sponsorship cap from the selected deal. */
+  dealSponsorPerStreamUsd: number;
+  /** Fills allowed in the selected deal's weekly window. */
+  dealFillsAllowed: number;
   /** Total weekly deal spend = cap + LB + tip/sponsor (rose). */
   weeklyDealSpendUsd: number;
   /** Active weeks used to weekly-ize the lifetime LB + tip/sponsor costs. */
@@ -177,6 +185,22 @@ function selectDeal(deals: CreatorDealResponse[]): CreatorDealResponse | null {
  * giant weekly figure. Caps at a sane upper bound is unnecessary (older =
  * smaller weekly figure = safe).
  */
+/**
+ * Weekly tip + sponsor ALLOWANCE from the deal's structured terms — the same
+ * fields the Deal card + roster deal-value chip use (`max_tip_per_stream_usd`,
+ * `max_sponsorship_per_stream_usd`, `fills_allowed`). One fill = one stream in
+ * the weekly window, so the period ceiling is per-stream × fills (mirrors the
+ * admin Deals tab's "/ wk" tip row).
+ */
+function weeklyTipSponsorAllowanceFromDeal(
+  deal: CreatorDealResponse,
+): number {
+  if (deal.fills_allowed <= 0) return 0;
+  const perStreamTip = num(deal.max_tip_per_stream_usd);
+  const perStreamSponsor = num(deal.max_sponsorship_per_stream_usd);
+  return (perStreamTip + perStreamSponsor) * deal.fills_allowed;
+}
+
 function computeActiveWeeks(deals: CreatorDealResponse[]): number {
   if (deals.length === 0) return 1;
   let earliest = Number.POSITIVE_INFINITY;
@@ -295,14 +319,44 @@ export async function getForecastData(
     );
   }
 
-  // Active weeks → weekly-ize the lifetime LB + tip/sponsor costs so they
-  // reflect THIS creator's real cadence rather than a flat guess.
+  // Active weeks → weekly-ize the lifetime LB cost so it reflects THIS
+  // creator's real cadence. Tip/sponsor uses deal terms when available.
   const activeWeeks = computeActiveWeeks(deals);
 
   const lifetimeLbFundingUsd = lbResult.data.costUsd;
   const lifetimeTipSponsorUsd = tipsResult.data.costUsd;
   const weeklyLbFundingUsd = lifetimeLbFundingUsd / activeWeeks;
-  const weeklyTipSponsorUsd = lifetimeTipSponsorUsd / activeWeeks;
+
+  // Tip/sponsor spend side: deal terms first (committed weekly allowance),
+  // realized lifetime cadence only when we have no deal to read terms from.
+  let weeklyTipSponsorUsd = 0;
+  let tipSponsorSource: ForecastData["tipSponsorSource"] = "none";
+  let dealTipPerStreamUsd = 0;
+  let dealSponsorPerStreamUsd = 0;
+  let dealFillsAllowed = 0;
+
+  if (deal) {
+    dealTipPerStreamUsd = num(deal.max_tip_per_stream_usd);
+    dealSponsorPerStreamUsd = num(deal.max_sponsorship_per_stream_usd);
+    dealFillsAllowed = deal.fills_allowed;
+    weeklyTipSponsorUsd = weeklyTipSponsorAllowanceFromDeal(deal);
+    tipSponsorSource = "deal_terms";
+    if (deal.fills_allowed <= 0) {
+      notes.push(
+        "This deal grants no fills in its window — tip/sponsor allowance is treated as $0.",
+      );
+    } else if (weeklyTipSponsorUsd === 0) {
+      notes.push(
+        "This deal has $0 tip/sponsor per-stream caps — allowance is treated as $0 (not inferred from past spend).",
+      );
+    }
+  } else if (lifetimeTipSponsorUsd > 0) {
+    weeklyTipSponsorUsd = lifetimeTipSponsorUsd / activeWeeks;
+    tipSponsorSource = "realized_cadence";
+    notes.push(
+      "No deal terms to read — tip/sponsor uses this creator's realized lifetime spend spread over active weeks (historical cadence, not a committed allowance).",
+    );
+  }
 
   if (lbResult.error) {
     notes.push(
@@ -362,6 +416,10 @@ export async function getForecastData(
     weeklyWithdrawCapUsd,
     weeklyLbFundingUsd,
     weeklyTipSponsorUsd,
+    tipSponsorSource,
+    dealTipPerStreamUsd,
+    dealSponsorPerStreamUsd,
+    dealFillsAllowed,
     weeklyDealSpendUsd,
     activeWeeks,
     lifetimeLbFundingUsd,

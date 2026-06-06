@@ -386,7 +386,13 @@ function DealSpendPanel({
           }
         />
         <PanelRow
-          label="Weekly tip / sponsor"
+          label={
+            data.tipSponsorSource === "deal_terms"
+              ? "Weekly tip / sponsor (deal allowance)"
+              : data.tipSponsorSource === "realized_cadence"
+                ? "Weekly tip / sponsor (realized avg)"
+                : "Weekly tip / sponsor"
+          }
           value={
             data.weeklyTipSponsorUsd === 0
               ? "—"
@@ -398,6 +404,21 @@ function DealSpendPanel({
               : undefined
           }
         />
+        {data.tipSponsorSource === "deal_terms" && data.dealFillsAllowed > 0 && (
+          <PanelRow
+            label="Deal allowance basis"
+            value={`${formatCurrency(data.dealTipPerStreamUsd)} tip + ${formatCurrency(data.dealSponsorPerStreamUsd)} sponsor / stream × ${data.dealFillsAllowed} fills`}
+            valueClassName="text-muted-foreground text-[11px]"
+          />
+        )}
+        {data.tipSponsorSource === "realized_cadence" &&
+          data.lifetimeTipSponsorUsd > 0 && (
+            <PanelRow
+              label="Lifetime realized (context)"
+              value={formatCurrency(data.lifetimeTipSponsorUsd)}
+              valueClassName="text-muted-foreground"
+            />
+          )}
         <PanelRow
           label="Total weekly spend"
           value={
@@ -415,13 +436,15 @@ function DealSpendPanel({
       <div className="mt-3 flex items-start gap-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
         <Info className="size-3.5 shrink-0 mt-0.5" />
         <span>
-          Withdraw cap is the deal&apos;s weekly cap. LB funding + tip/sponsor
-          are this creator&apos;s realized lifetime costs spread over{" "}
+          Withdraw cap is the deal&apos;s weekly cap. Tip/sponsor uses the
+          deal&apos;s per-stream allowance × fills in the weekly window when a
+          deal is loaded; if there is no deal, it falls back to realized
+          lifetime tip/sponsor spend ÷ active weeks. LB funding is still this
+          creator&apos;s realized lifetime leaderboard cost spread over{" "}
           {data.activeWeeks < 1.05
             ? "≈ 1 week"
             : `≈ ${data.activeWeeks.toFixed(1)} active weeks`}{" "}
-          (real cadence), so the weekly figure reflects HIS history — not a flat
-          guess. Each span scales this weekly spend by span ÷ 7.
+          (historical cadence). Each span scales weekly spend by span ÷ 7.
         </span>
       </div>
     </StatPanel>
