@@ -142,6 +142,7 @@ export function UserViewModern({
   data,
   gamingTx,
   financialTx,
+  adjustmentsTx,
   rewards,
   notes,
   pnlBreakdown,
@@ -155,6 +156,10 @@ export function UserViewModern({
   data: UserDetail;
   gamingTx: PaginatedTransactions;
   financialTx: PaginatedTransactions;
+  // Dedicated uncapped admin_balance_adjustment page (see page.tsx ADJ_LIMIT)
+  // so the Overview tab can surface every adjustment without the shared
+  // financial page hiding older ones behind newer activity.
+  adjustmentsTx: PaginatedTransactions;
   rewards: UserRewards;
   notes: AdminNote[];
   pnlBreakdown: PnlBreakdown;
@@ -556,6 +561,7 @@ export function UserViewModern({
             data={data}
             gamingTx={gamingTx}
             financialTx={financialTx}
+            adjustmentsTx={adjustmentsTx}
             pnlBreakdown={pnlBreakdown}
             isAdmin={isAdmin}
           />

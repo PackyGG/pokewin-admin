@@ -79,6 +79,7 @@ import {
   InventoryGrid,
   GAMING_TX_TYPES,
   FINANCIAL_TX_TYPES,
+  ADJUSTMENT_TX_TYPES,
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
 import type {
@@ -103,12 +104,22 @@ export function OverviewTab({
   data,
   gamingTx,
   financialTx,
+  adjustmentsTx,
   pnlBreakdown,
   isAdmin,
 }: {
   data: UserDetail;
   gamingTx: PaginatedTransactions;
   financialTx: PaginatedTransactions;
+  // Dedicated, UNCAPPED admin_balance_adjustment fetch (separate from the
+  // shared 10-row `financialTx` page, which lumps adjustments together with
+  // deposits/withdrawals/claims and can push an older adjustment off page 1
+  // entirely). Surfacing it as its own input guarantees EVERY admin balance
+  // adjustment reaches the Recent Activity timeline + the dedicated block
+  // below, no matter how much newer financial activity sits in front of it.
+  // Same query path, so the official_stream fake-balance NOT-filter still
+  // applies automatically.
+  adjustmentsTx: PaginatedTransactions;
   pnlBreakdown: PnlBreakdown;
   isAdmin: boolean;
 }) {
@@ -155,19 +166,44 @@ export function OverviewTab({
         isAdmin={isAdmin}
       />
 
+      {/* Admin balance adjustments — every manual credit/clawback an admin
+          applied to this user, fed by a DEDICATED uncapped fetch so none can
+          be hidden behind newer financial activity (the bug this block fixes:
+          the shared 10-row financial page could drop an older adjustment).
+          Rendered as its own section so adjustments are ALWAYS visible without
+          paging. Reuses CategoryTransactionsTable → house-POV colors
+          (admin credit to user = user gain = rose; clawback = emerald) come
+          from the shared ledgerDirection mapping. Only shown when at least one
+          adjustment exists so quiet users don't get an empty section. */}
+      {adjustmentsTx.total > 0 && (
+        <>
+          <SectionHeading icon={Coins} title="Admin balance adjustments" />
+          <CategoryTransactionsTable
+            title="Admin balance adjustments"
+            userId={user.id}
+            types={ADJUSTMENT_TX_TYPES}
+            initialTx={adjustmentsTx}
+            isAdmin={isAdmin}
+          />
+        </>
+      )}
+
       {/* Tips & Rain — creator tips this user received/sent + rain
           prizes won. Sits directly below deposits per admin request
           (none of this was visible on any tab before). */}
       <SectionHeading icon={Coins} title="Tips & Rain" />
       <TipsSection tips={data.tips} />
 
-      {/* Recent activity — unified timeline (gaming + financial). Colors
-          are flipped to HOUSE perspective: if the user made money the
-          dot/amount shows RED (we lost), user losses show GREEN. */}
+      {/* Recent activity — unified timeline (gaming + financial +
+          adjustments). Colors are flipped to HOUSE perspective: if the user
+          made money the dot/amount shows RED (we lost), user losses show
+          GREEN. Adjustments are passed in full (deduped against financialTx)
+          so every admin balance adjustment is guaranteed to surface here. */}
       <SectionHeading icon={Activity} title="Recent Activity" />
       <RecentActivityTimeline
         gamingTx={gamingTx.data.slice(0, 5)}
         financialTx={financialTx.data.slice(0, 5)}
+        adjustmentsTx={adjustmentsTx.data}
       />
     </div>
   );
@@ -1392,19 +1428,51 @@ function WindowedPnlStrip({
 
 type TxRow = PaginatedTransactions["data"][number];
 
-// Simple unified timeline merging gaming + financial into one chronological feed.
+// Unified timeline merging gaming + financial + admin balance adjustments
+// into one chronological feed. Adjustments are passed in their entirety from a
+// dedicated uncapped fetch and are GUARANTEED to survive the slice: every
+// adjustment row is kept first, then the remaining slots are filled with the
+// newest gaming/financial rows, and the whole set is re-sorted by time. This
+// way an older admin balance adjustment can never be pushed out of the feed by
+// a burst of newer deposits/withdrawals (the bug this fixes).
 function RecentActivityTimeline({
   gamingTx,
   financialTx,
+  adjustmentsTx,
 }: {
   gamingTx: TxRow[];
   financialTx: TxRow[];
+  adjustmentsTx: TxRow[];
 }) {
   const merged = useMemo(() => {
-    return [...gamingTx, ...financialTx]
-      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-      .slice(0, 8);
-  }, [gamingTx, financialTx]);
+    const MAX_ROWS = 8;
+    // Dedupe by tx id across all three sources — an adjustment may also be
+    // present in `financialTx` (admin_balance_adjustment is one of the shared
+    // FINANCIAL_TYPES), so without this it could render twice.
+    const seen = new Set<string>();
+    const result: TxRow[] = [];
+
+    // 1) Keep EVERY adjustment row first so none can be sliced away.
+    for (const tx of adjustmentsTx) {
+      if (seen.has(tx.id)) continue;
+      seen.add(tx.id);
+      result.push(tx);
+    }
+
+    // 2) Fill the remaining slots with the newest gaming/financial rows.
+    const rest = [...gamingTx, ...financialTx]
+      .filter((tx) => !seen.has(tx.id))
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    for (const tx of rest) {
+      if (result.length >= Math.max(MAX_ROWS, seen.size)) break;
+      if (seen.has(tx.id)) continue;
+      seen.add(tx.id);
+      result.push(tx);
+    }
+
+    // 3) Present the final set newest-first.
+    return result.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  }, [gamingTx, financialTx, adjustmentsTx]);
 
   if (merged.length === 0) {
     return (

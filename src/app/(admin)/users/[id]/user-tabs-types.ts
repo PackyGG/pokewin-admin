@@ -546,6 +546,13 @@ export const FINANCIAL_TX_TYPES = [
   "rain_win",
   "race_prize",
 ] as const;
+// Admin balance adjustments only. Used for the dedicated, UNCAPPED Overview
+// fetch + block so every manual admin credit/clawback is guaranteed to
+// surface, instead of competing for slots in the shared 10-row financial
+// page (where a single newer batch of deposits/withdrawals could hide an
+// older adjustment). Shares the same query path, so the official_stream
+// fake-balance exclusion still applies automatically.
+export const ADJUSTMENT_TX_TYPES = ["admin_balance_adjustment"] as const;
 export const CARD_SALE_TX_TYPES = ["card_sale", "reward_card_sale"] as const;
 export const EXCHANGE_TX_TYPES = [
   "card_exchange",

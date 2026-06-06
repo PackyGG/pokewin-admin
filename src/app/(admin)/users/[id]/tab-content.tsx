@@ -63,6 +63,12 @@ const FINANCIAL_TYPES = [
   "rain_win",
   "race_prize",
 ];
+// Dedicated uncapped admin_balance_adjustment fetch — see page.tsx
+// (ADJUSTMENT_TYPES / ADJ_LIMIT) for the full rationale. Keeps every
+// adjustment available to the Overview feed independent of the shared
+// 10-row financial page.
+const ADJUSTMENT_TYPES = ["admin_balance_adjustment"];
+const ADJ_LIMIT = 200;
 
 // ───────────────────────────────────────────────────────────────────
 //  OVERVIEW
@@ -73,16 +79,21 @@ export async function OverviewTabContent({
 }: {
   data: UserDetail;
 }) {
-  const [gamingTx, financialTx, pnlBreakdown] = await Promise.all([
-    getUserTransactions(data.user.id, 1, 10, { types: GAMING_TYPES }),
-    getUserTransactions(data.user.id, 1, 10, { types: FINANCIAL_TYPES }),
-    getUserPnlBreakdown(data.user.id),
-  ]);
+  const [gamingTx, financialTx, adjustmentsTx, pnlBreakdown] =
+    await Promise.all([
+      getUserTransactions(data.user.id, 1, 10, { types: GAMING_TYPES }),
+      getUserTransactions(data.user.id, 1, 10, { types: FINANCIAL_TYPES }),
+      getUserTransactions(data.user.id, 1, ADJ_LIMIT, {
+        types: ADJUSTMENT_TYPES,
+      }),
+      getUserPnlBreakdown(data.user.id),
+    ]);
   return (
     <OverviewTab
       data={data}
       gamingTx={gamingTx}
       financialTx={financialTx}
+      adjustmentsTx={adjustmentsTx}
       pnlBreakdown={pnlBreakdown}
       isAdmin={data.sessionRole === "admin"}
     />

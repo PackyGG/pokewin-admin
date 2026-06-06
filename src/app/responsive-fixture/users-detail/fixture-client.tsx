@@ -235,6 +235,7 @@ export function UserDetailFixtureClient() {
       data={DATA}
       gamingTx={EMPTY_TX}
       financialTx={EMPTY_TX}
+      adjustmentsTx={EMPTY_TX}
       rewards={REWARDS}
       notes={NOTES}
       pnlBreakdown={PNL}

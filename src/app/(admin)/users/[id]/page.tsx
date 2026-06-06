@@ -83,6 +83,17 @@ const FINANCIAL_TYPES = [
   "rain_win",
   "race_prize",
 ];
+// Admin balance adjustments get a DEDICATED, generously-sized fetch on top of
+// the shared FINANCIAL page. Reason: `admin_balance_adjustment` is just one of
+// the 12 FINANCIAL_TYPES above, so on an active account a burst of newer
+// deposits/withdrawals/claims fills the shared 10-row page and pushes an older
+// adjustment off page 1 entirely — making it vanish from the Overview feed.
+// Pulling adjustments separately (rare admin events; ADJ_LIMIT covers a user's
+// lifetime) guarantees EVERY adjustment reaches the Overview timeline + the
+// dedicated block. Same query path, so the official_stream fake-balance
+// exclusion still applies automatically.
+const ADJUSTMENT_TYPES = ["admin_balance_adjustment"];
+const ADJ_LIMIT = 200;
 
 export default async function UserDetailPage({
   params,
@@ -333,6 +344,7 @@ async function UserDetailBody({
     notesResult,
     gamingTxResult,
     financialTxResult,
+    adjustmentsTxResult,
     rewardsResult,
     creatorHistoryResult,
     riskResult,
@@ -389,6 +401,16 @@ async function UserDetailBody({
       () => getUserTransactions(id, 1, 10, { types: FINANCIAL_TYPES }),
       EMPTY_TX_PAGE,
       "users.detail.financialTx",
+      USER_DETAIL_QUERY_TIMEOUT_MS,
+    ),
+    // Dedicated uncapped admin_balance_adjustment fetch — keeps every
+    // adjustment available to the Overview feed + block regardless of how
+    // much newer financial activity sits in front of it (see ADJ_LIMIT
+    // comment). Degrades to an empty page on failure like the others.
+    safeQuery(
+      () => getUserTransactions(id, 1, ADJ_LIMIT, { types: ADJUSTMENT_TYPES }),
+      EMPTY_TX_PAGE,
+      "users.detail.adjustmentsTx",
       USER_DETAIL_QUERY_TIMEOUT_MS,
     ),
     // Rewards summary (one_time reward count + rakeback claimable/claimed).
@@ -502,6 +524,7 @@ async function UserDetailBody({
   // PaginatedTransactions shape UserViewModern + the tab tables expect.
   const gamingTx = gamingTxResult.data;
   const financialTx = financialTxResult.data;
+  const adjustmentsTx = adjustmentsTxResult.data;
 
   // "Ever a creator?" = currently creator, OR an audit role-change to
   // creator exists, OR they own affiliate codes (created only for
@@ -551,6 +574,7 @@ async function UserDetailBody({
       data={detailWithSession}
       gamingTx={gamingTx}
       financialTx={financialTx}
+      adjustmentsTx={adjustmentsTx}
       rewards={rewards}
       notes={notes}
       pnlBreakdown={pnlBreakdown}
