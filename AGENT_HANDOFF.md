@@ -47,8 +47,7 @@ _None — Creator Hub plan closed. Pick up deferred items below when owner prior
 2. Packy.gg avatar write — **BLOCKED** (no confirmed backend endpoint; ADMIN-only pfp preview OK)
 3. Bulk delete `/gift-cards` + `/vouchers` — **BLOCKED** (MAIN DB write forbidden)
 4. Fold durable reward findings into `ONBOARDING.md` (affiliate commission basis; signup $5.71 clarification)
-5. Add `/creator-hub/codes-ads` + hub ad detail + `/creator-hub/tips-sponsors` to responsive matrix
-6. Prod minted-session verify on Vercel — needs prod-matching `SESSION_SECRET` in VM secrets (local mint PASS; prod redirects to `/login`)
+5. Add `/creator-hub/tips-sponsors` to responsive matrix (codes-ads + hub ad detail verified on prod 2026-06-06)
 
 ---
 
