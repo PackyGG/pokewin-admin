@@ -27,6 +27,7 @@ const HUB_ROUTES = [
   "/creator-hub/leaderboards",
   "/creator-hub/creator-check",
   "/creator-hub/acquisition",
+  "/creator-hub/codes-ads",
   "/creator-hub/socials-review",
   "/creator-hub/profitable-algo",
   "/creator-hub/changelog",
