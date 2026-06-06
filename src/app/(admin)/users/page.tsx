@@ -26,6 +26,7 @@ import { ExportUsersButton } from "./export-dialog";
 import { ExportAllUsersButton } from "./export-all-users-button";
 import { canExportAllUsers } from "@/lib/users-export/motha-gate";
 import { SortByNetHoldingsButton } from "./sort-net-holdings-button";
+import { SortByUserNetWorthButton } from "./sort-user-net-worth-button";
 import {
   SortByPnlLosersButton,
   SortByPnlWinnersButton,
@@ -244,6 +245,7 @@ export default async function UsersPage({
               <SortByPnlLosersButton />
               <SortByPnlWinnersButton />
               <SortByNetHoldingsButton />
+              <SortByUserNetWorthButton />
               <ExportUsersButton />
               {canExportAll && <ExportAllUsersButton />}
             </DataTableToolbar>

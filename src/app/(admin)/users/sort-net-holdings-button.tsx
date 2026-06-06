@@ -26,14 +26,17 @@ export function SortByNetHoldingsButton() {
   // Active = list is already sorted by net holdings, descending. We
   // only offer the descending direction here (highest first) — the
   // whole point of the button is "show me the biggest holders".
+  // Must NOT have role=user pinned — that's the separate user-net-worth shortcut.
   const isActive =
     searchParams.get("sortBy") === "netHoldings" &&
-    (searchParams.get("sortOrder") ?? "desc") === "desc";
+    (searchParams.get("sortOrder") ?? "desc") === "desc" &&
+    searchParams.get("role") !== "user";
 
   function handleClick() {
     const params = new URLSearchParams(searchParams.toString());
     params.set("sortBy", "netHoldings");
     params.set("sortOrder", "desc");
+    params.delete("role");
     params.delete("page");
     startTransition(() => {
       router.replace(`?${params.toString()}`, { scroll: false });
