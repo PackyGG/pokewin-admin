@@ -37,7 +37,8 @@
 
 ## 🟡 In-flight
 
-- **Hub roster tabs + checklist gate (`cursor/creator-hub-roster-tabs-775d`)** — 3-tab roster (Active/Multiplier/Past); onboarding checklist **enrollment-only** (row created in Add Creator v2 — existing creators hidden); e2e roster tabs PASS locally; prod verify after merge/deploy
+- **Kick API fallback (`cursor/kick-api-packygg-775d`)** — RapidAPI Kick often 403/unsubscribed/empty; profile hydration now falls back to AeroKick HTML (`kick-aerokick.ts`) after v1+v2 RapidAPI channel tries. Verified packygg: 918 followers + avatar via aerokick; tsc/lint/build PASS; prod Creator Check browser verify after merge
+- **Hub roster tabs + checklist gate (`cursor/creator-hub-roster-tabs-775d`, PR #49)** — 3-tab roster (Active/Multiplier/Past); onboarding checklist **enrollment-only**; e2e roster tabs PASS locally; prod verify after merge/deploy
 
 ---
 
