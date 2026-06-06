@@ -87,6 +87,11 @@ export type admin_user_tags = Prisma.admin_user_tagsModel
  */
 export type excluded_users = Prisma.excluded_usersModel
 /**
+ * Model admin_excluded_user_balance_v2
+ * 
+ */
+export type admin_excluded_user_balance_v2 = Prisma.admin_excluded_user_balance_v2Model
+/**
  * Model admin_roles
  * 
  */
@@ -232,7 +237,57 @@ export type admin_balance_adjustment_meta = Prisma.admin_balance_adjustment_meta
  */
 export type admin_leaderboard_sponsorship = Prisma.admin_leaderboard_sponsorshipModel
 /**
+ * Model admin_leaderboard_creator_paid
+ * 
+ */
+export type admin_leaderboard_creator_paid = Prisma.admin_leaderboard_creator_paidModel
+/**
  * Model admin_changelog_entries
  * 
  */
 export type admin_changelog_entries = Prisma.admin_changelog_entriesModel
+/**
+ * Model kick_profiles
+ * 
+ */
+export type kick_profiles = Prisma.kick_profilesModel
+/**
+ * Model kick_streams
+ * 
+ */
+export type kick_streams = Prisma.kick_streamsModel
+/**
+ * Model twitter_profiles
+ * 
+ */
+export type twitter_profiles = Prisma.twitter_profilesModel
+/**
+ * Model tweets
+ * 
+ */
+export type tweets = Prisma.tweetsModel
+/**
+ * Model twitter_mentions
+ * 
+ */
+export type twitter_mentions = Prisma.twitter_mentionsModel
+/**
+ * Model creator_onboarding_checklist
+ * 
+ */
+export type creator_onboarding_checklist = Prisma.creator_onboarding_checklistModel
+/**
+ * Model creator_crm
+ * 
+ */
+export type creator_crm = Prisma.creator_crmModel
+/**
+ * Model creator_alerts
+ * 
+ */
+export type creator_alerts = Prisma.creator_alertsModel
+/**
+ * Model creator_session_meta
+ * 
+ */
+export type creator_session_meta = Prisma.creator_session_metaModel

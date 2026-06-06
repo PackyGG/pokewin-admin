@@ -13,31 +13,25 @@ import {
 } from "recharts";
 import { Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 
 /**
- * Overview activity chart — multi-series over time (sign-ups + FTDs + wager +
- * deposits), per the owner spec.
+ * Overview activity chart — bucketed wager / deposits / GGR for the creator's
+ * attributed cohort over the selected window.
  *
- * HONEST DATA STATE (this wave): there is NO existing per-bucket time-series
- * query for a SINGLE creator's affiliate cohort — the creator data layer
- * exposes lifetime totals + a 3-day momentum figure, not a bucketed series.
- * So this chart does NOT fabricate a line: when `series` is empty it renders
- * an empty recharts-style grid + an explicit "time-series not wired yet"
- * note, while the REAL totals we DO have are shown as the four headline
- * chips above the grid. Once a bucketed per-creator query lands, pass
- * `series` and the multi-series area renders for real.
+ * House-POV colors:
+ *   • Wager + Deposits = money INTO the house → emerald / teal.
+ *   • GGR = net gaming margin (house up when positive) → emerald family;
+ *     negative buckets read as house-down in the tooltip (rose hint).
  *
- * House-POV series colors: wager + deposits = money INTO the house →
- * emerald; sign-ups + FTDs = neutral funnel counts → blue / cyan. Client
- * component (recharts needs the browser); props are serializable.
+ * Client component (recharts needs the browser); props are serializable.
  */
 
 export type ActivityPoint = {
   label: string;
-  signups: number;
-  ftds: number;
   wagerUsd: number;
   depositsUsd: number;
+  ggrUsd: number;
 };
 
 type HeadlineChip = {
@@ -50,16 +44,22 @@ type HeadlineChip = {
 export function ActivityChart({
   headlineChips,
   series = [],
-  placeholderNote,
+  periodControl,
+  emptyNote,
 }: {
   headlineChips: HeadlineChip[];
-  /** Bucketed multi-series; empty → placeholder grid (no fabricated line). */
+  /** Bucketed multi-series for the active window. */
   series?: ActivityPoint[];
-  placeholderNote?: string;
+  /** Server-rendered period chips (URL-driven). */
+  periodControl?: React.ReactNode;
+  emptyNote?: string;
 }) {
-  const hasSeries = series.length > 0;
-  const signupsGrad = React.useId();
+  const hasData = series.some(
+    (p) => p.wagerUsd > 0 || p.depositsUsd > 0 || p.ggrUsd !== 0,
+  );
+  const wagerGrad = React.useId();
   const depositsGrad = React.useId();
+  const ggrGrad = React.useId();
 
   return (
     <div className="rounded-2xl border bg-card p-4 sm:p-5">
@@ -68,11 +68,10 @@ export function ActivityChart({
           <Activity className="size-4 text-emerald-500" />
           Activity
         </span>
+        {periodControl}
       </div>
 
-      {/* REAL headline totals (sign-ups / FTDs / wager / deposits) — the
-          figures that DO exist today, house-POV colored. */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {headlineChips.map((chip) => (
           <div
             key={chip.label}
@@ -94,20 +93,24 @@ export function ActivityChart({
       </div>
 
       <div className="mt-4 h-[200px] w-full">
-        {hasSeries ? (
+        {hasData ? (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
               data={series}
               margin={{ top: 6, right: 4, left: 4, bottom: 0 }}
             >
               <defs>
-                <linearGradient id={signupsGrad} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#60a5fa" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#60a5fa" stopOpacity={0} />
+                <linearGradient id={wagerGrad} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#34d399" stopOpacity={0.28} />
+                  <stop offset="100%" stopColor="#34d399" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id={depositsGrad} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#34d399" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#34d399" stopOpacity={0} />
+                  <stop offset="0%" stopColor="#2dd4bf" stopOpacity={0.24} />
+                  <stop offset="100%" stopColor="#2dd4bf" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id={ggrGrad} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#10b981" stopOpacity={0.22} />
+                  <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid
@@ -131,7 +134,8 @@ export function ActivityChart({
                 tick={{ fontSize: 10 }}
                 stroke="currentColor"
                 className="text-muted-foreground"
-                width={40}
+                width={48}
+                tickFormatter={(v: number) => formatCompactUsd(v)}
               />
               <Tooltip
                 contentStyle={{
@@ -140,13 +144,27 @@ export function ActivityChart({
                   background: "var(--card)",
                   fontSize: 12,
                 }}
+                formatter={(value: number, name: string) => [
+                  formatCurrency(value),
+                  String(name),
+                ]}
               />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Area
                 type="monotone"
+                dataKey="wagerUsd"
+                name="Wager"
+                stroke="#34d399"
+                strokeWidth={2}
+                fill={`url(#${wagerGrad})`}
+                animationDuration={700}
+                animationEasing="ease-out"
+              />
+              <Area
+                type="monotone"
                 dataKey="depositsUsd"
                 name="Deposits"
-                stroke="#34d399"
+                stroke="#2dd4bf"
                 strokeWidth={2}
                 fill={`url(#${depositsGrad})`}
                 animationDuration={700}
@@ -154,11 +172,11 @@ export function ActivityChart({
               />
               <Area
                 type="monotone"
-                dataKey="signups"
-                name="Sign-ups"
-                stroke="#60a5fa"
+                dataKey="ggrUsd"
+                name="GGR"
+                stroke="#10b981"
                 strokeWidth={2}
-                fill={`url(#${signupsGrad})`}
+                fill={`url(#${ggrGrad})`}
                 animationDuration={700}
                 animationEasing="ease-out"
               />
@@ -171,8 +189,8 @@ export function ActivityChart({
               className="flex-1 rounded-md border border-dashed border-border/60 bg-[linear-gradient(to_bottom,transparent_calc(50%-0.5px),var(--border)_50%,transparent_calc(50%+0.5px)),linear-gradient(to_bottom,transparent_calc(25%-0.5px),color-mix(in_oklab,var(--border)_50%,transparent)_25%,transparent_calc(25%+0.5px)),linear-gradient(to_bottom,transparent_calc(75%-0.5px),color-mix(in_oklab,var(--border)_50%,transparent)_75%,transparent_calc(75%+0.5px))]"
             />
             <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-[11px] text-muted-foreground">
-              {placeholderNote ??
-                "Per-creator time-series not wired yet — totals above are live."}
+              {emptyNote ??
+                "No attributed wager, deposit, or GGR activity in this window yet."}
             </p>
           </div>
         )}

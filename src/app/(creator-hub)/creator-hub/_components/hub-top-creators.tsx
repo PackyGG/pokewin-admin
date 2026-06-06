@@ -11,7 +11,7 @@ import { type HubTopCreator } from "../_queries/dashboard-overview";
  * by windowed affiliate wager (already wager-desc from the query).
  *
  * House-POV: a creator's cohort WAGER is house gain → emerald. Each row
- * links into the existing creator detail page (`/creators/[id]`) so the
+ * links into the Hub creator detail page (`/creator-hub/creators/[id]`) so the
  * manager can drill in. Server-safe (data passed in, no function props).
  *
  * Empty state: when the window has no attributed activity (or the GGR
@@ -60,7 +60,7 @@ export function HubTopCreators({
       {creators.map((c, i) => (
         <li key={c.creatorUserId}>
           <Link
-            href={`/creators/${c.creatorUserId}`}
+            href={`/creator-hub/creators/${c.creatorUserId}`}
             className="flex items-center gap-3 rounded-lg px-1.5 py-2 outline-none transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span className="w-4 shrink-0 text-center text-xs font-bold text-muted-foreground/70 tabular-nums">

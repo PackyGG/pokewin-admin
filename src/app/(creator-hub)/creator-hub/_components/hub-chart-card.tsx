@@ -13,31 +13,18 @@ import {
 import { LineChart as LineChartIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCompactUsd } from "@/lib/utils/format";
+import { type HubChartPoint } from "../_queries/hub-types";
 
 /**
  * Creator Hub dashboard — time-series chart card (Wager / Deposits) in the
- * 3-up row. Uses recharts in the house style (animated area, emerald for
- * house-gain series).
+ * 3-up row. Recharts area chart in house style (emerald = house gain).
+ * Headline totals come from the windowed overview query; bucketed series
+ * are hourly for 24h and daily for longer chips.
  *
- * HONEST DATA STATE (v1): the real, windowed TOTAL is shown as the
- * headline (wired from `getAllCreatorsNetGgr().legs.wagersTotal` for the
- * Wager card). There is NO existing per-bucket time-series query for the
- * creator cohort, so we do NOT fabricate a line — when `series` is empty
- * the card renders an empty recharts grid + an explicit "hourly breakdown
- * not wired yet" note. Once a bucketed query exists, pass `series` and the
- * area renders for real.
- *
- * Client component (recharts needs the browser). Props are serializable
- * (data array + pre-formatted strings), so it's safe to mount from the
- * Server Component page.
+ * Client component (recharts needs the browser). Props are serializable.
  */
 
-export type HubChartPoint = {
-  /** Bucket label for the x-axis (e.g. "12:00"). */
-  label: string;
-  /** Numeric value for the y-axis. */
-  value: number;
-};
+export type { HubChartPoint };
 
 export function HubChartCard({
   title,

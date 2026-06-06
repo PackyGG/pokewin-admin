@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { adminDb } from "@/lib/admin-db";
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { logWarn } from "@/lib/errors/logger";
 import {
@@ -22,14 +22,13 @@ import {
  * service enforces a hard anti-mash min-interval, so a manager mashing the
  * button can't spam RapidAPI.
  *
- * Gate: admin / creator_manager only (the Hub's access set) — `requireRole`
- * redirects on failure, same as every protected action. Admin-DB writes are
+ * Gate: `requireCreatorHubAccess` (the Hub's access rule). Admin-DB writes are
  * allowed (the service caches into the ADMIN DB); MAIN/prod is never touched.
  */
 export async function refetchCreatorKick(
   userId: string,
 ): Promise<{ ok: true; noKeyConfigured: boolean } | { ok: false; reason: string }> {
-  const session = await requireRole(["admin", "creator_manager"]);
+  const session = await requireCreatorHubAccess();
   if (!userId) throw new Error("Missing creator id");
 
   // Resolve the linked Kick handle (admin DB). No handle → nothing to refetch.

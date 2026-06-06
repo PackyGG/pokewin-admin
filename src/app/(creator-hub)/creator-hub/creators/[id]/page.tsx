@@ -1,12 +1,15 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { getCreatorHeader } from "@/lib/queries/creators";
 
 import { CreatorBanner } from "./_components/creator-banner";
 import { CreatorTabBar } from "./_components/creator-tab-bar";
-import { OverviewTab } from "./_components/overview-tab";
+import {
+  OverviewTab,
+  parseCreatorActivityPeriod,
+} from "./_components/overview-tab";
 import { CreatorMetadataTab } from "./_components/creator-metadata-tab";
 import { SessionsTab } from "./_components/sessions-tab";
 import { KickTab } from "./_components/kick-tab";
@@ -57,9 +60,8 @@ function parseTab(value: string | undefined): NavTab {
  *      / Forecast / Cohorts & LTV / Alt Accounts (all navigable via `?tab=`).
  *   3. The active tab's content.
  *
- * ACCESS: admin + creator_manager only (the (creator-hub) layout enforces it;
- * this page adds the explicit DAL gate too — every protected page gates
- * server-side first per the house convention).
+ * ACCESS: `canAccessCreatorHub` (the layout enforces it; this page adds the
+ * explicit gate too — every protected page gates server-side first).
  *
  * PERFORMANCE (active-tab-only / never-preload): only the cheap header (2
  * indexed lookups) is awaited on the critical path so the banner + tab bar
@@ -79,7 +81,7 @@ export default async function CreatorHubCreatorDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requireRole(["admin", "creator_manager"]);
+  await requireCreatorHubPageAccess();
 
   const { id } = await params;
   const sp = await searchParams;
@@ -101,7 +103,12 @@ export default async function CreatorHubCreatorDetailPage({
           fresh boundary (and the fallback shows) instead of reusing the prior
           tab's tree. No other tab's data is fetched. */}
       <Suspense key={tab} fallback={<RiskTabSkeleton />}>
-        {tab === "overview" && <OverviewTab userId={id} />}
+        {tab === "overview" && (
+          <OverviewTab
+            userId={id}
+            activityPeriod={parseCreatorActivityPeriod(sp.activityPeriod)}
+          />
+        )}
         {tab === "creator" && <CreatorMetadataTab userId={id} />}
         {tab === "sessions" && <SessionsTab userId={id} />}
         {tab === "kick" && <KickTab userId={id} />}

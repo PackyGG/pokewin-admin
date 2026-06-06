@@ -1,0 +1,605 @@
+import "server-only";
+
+import { unstable_cache } from "next/cache";
+
+import { creatorsApi, type CreatorListItem } from "@/lib/backend-api";
+import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
+import { adminDb } from "@/lib/admin-db";
+import { getDb } from "@/lib/db";
+import { getDealCapInfoByUser } from "../../../../(admin)/creators/_queries/deal-cap-by-user";
+import { getAllCreatorsLifetimePnl } from "../../../../(admin)/creators/_queries/all-creators-lifetime-pnl";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
+import { Prisma } from "@/generated/prisma/client";
+import type { Prisma as AdminPrisma } from "@/generated/admin-prisma/client";
+
+// ─── Types ───────────────────────────────────────────────────────────
+
+export const CREATOR_ALERT_TYPES = [
+  "deal_expiring",
+  "withdraw_cap_near",
+  "leaderboard_ending",
+  "risk_flagged",
+  "pnl_red",
+  "big_ftd",
+  "went_live",
+] as const;
+
+export type CreatorAlertType = (typeof CREATOR_ALERT_TYPES)[number];
+
+export type CreatorAlertSeverity = "info" | "warning" | "critical";
+
+export type CreatorAlertMetadata = {
+  title: string;
+  description: string;
+  link?: string;
+  valueUsd?: number;
+  endsAt?: string;
+  [key: string]: unknown;
+};
+
+export type DerivedAlertCandidate = {
+  dedupeKey: string;
+  alertType: CreatorAlertType;
+  severity: CreatorAlertSeverity;
+  targetUserId: string | null;
+  metadata: CreatorAlertMetadata;
+};
+
+export type CreatorAlertItem = {
+  id: string;
+  dedupeKey: string;
+  alertType: CreatorAlertType;
+  severity: CreatorAlertSeverity;
+  targetUserId: string | null;
+  targetUsername: string | null;
+  metadata: CreatorAlertMetadata;
+  readAt: string | null;
+  dismissedAt: string | null;
+  createdAt: string;
+  isUnread: boolean;
+};
+
+export type CreatorAlertsResult = {
+  alerts: CreatorAlertItem[];
+  counts: {
+    total: number;
+    unread: number;
+    critical: number;
+    byType: Record<CreatorAlertType, number>;
+  };
+  syncError: boolean;
+};
+
+// ─── Thresholds ──────────────────────────────────────────────────────
+
+const DEAL_EXPIRING_WARNING_DAYS = 7;
+const DEAL_EXPIRING_CRITICAL_DAYS = 2;
+const LB_ENDING_WARNING_DAYS = 7;
+const LB_ENDING_CRITICAL_DAYS = 2;
+const CAP_NEAR_WARNING_RATIO = 0.8;
+const CAP_NEAR_CRITICAL_RATIO = 0.95;
+const PNL_RED_WARNING_USD = 0;
+const PNL_RED_CRITICAL_USD = -5_000;
+const RISK_FLAGGED_PNL_USD = -2_000;
+const RISK_FLAGGED_MIN_DEPOSITS_USD = 10_000;
+const BIG_FTD_MIN_USD = 1_000;
+const BIG_FTD_LOOKBACK_HOURS = 48;
+
+const SEVERITY_RANK: Record<CreatorAlertSeverity, number> = {
+  critical: 0,
+  warning: 1,
+  info: 2,
+};
+
+const PAGE_SIZE = 100;
+const FETCH_CAP = 500;
+
+// ─── Schema self-heal (idempotent) ───────────────────────────────────
+
+let alertsSchemaEnsured = false;
+
+async function ensureCreatorAlertsSchema(): Promise<void> {
+  if (alertsSchemaEnsured) return;
+  await adminDb.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "creator_alerts" (
+      "id"             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      "target_user_id" TEXT,
+      "alert_type"     TEXT NOT NULL,
+      "dedupe_key"     TEXT NOT NULL,
+      "severity"       TEXT NOT NULL DEFAULT 'info',
+      "metadata"       JSONB,
+      "read_at"        TIMESTAMPTZ(6),
+      "read_by"        UUID,
+      "dismissed_at"   TIMESTAMPTZ(6),
+      "dismissed_by"   UUID,
+      "created_at"     TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
+      "updated_at"     TIMESTAMPTZ(6) NOT NULL DEFAULT now()
+    )
+  `);
+  await adminDb.$executeRawUnsafe(
+    `CREATE UNIQUE INDEX IF NOT EXISTS "creator_alerts_dedupe_key_key" ON "creator_alerts" ("dedupe_key")`,
+  );
+  await adminDb.$executeRawUnsafe(
+    `CREATE INDEX IF NOT EXISTS "creator_alerts_active_idx" ON "creator_alerts" ("dismissed_at", "severity", "created_at" DESC)`,
+  );
+  await adminDb.$executeRawUnsafe(
+    `CREATE INDEX IF NOT EXISTS "creator_alerts_target_user_idx" ON "creator_alerts" ("target_user_id")`,
+  );
+  alertsSchemaEnsured = true;
+}
+
+function isMissingTableError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const code = (err as { code?: unknown }).code;
+  return code === "P2021" || code === "42P01";
+}
+
+// ─── Roster walk (reuse roster pattern) ──────────────────────────────
+
+async function walkAllCreators(): Promise<CreatorListItem[]> {
+  const firstPage = await creatorsApi.list({ offset: 0, limit: PAGE_SIZE });
+  const all = [...firstPage.data];
+  const pagesNeeded = Math.min(
+    Math.ceil(FETCH_CAP / PAGE_SIZE),
+    Math.ceil(firstPage.total / PAGE_SIZE),
+  );
+  const rest: Promise<typeof firstPage>[] = [];
+  for (let p = 1; p < pagesNeeded; p++) {
+    rest.push(creatorsApi.list({ offset: p * PAGE_SIZE, limit: PAGE_SIZE }));
+  }
+  for (const page of await Promise.all(rest)) all.push(...page.data);
+  return all;
+}
+
+function daysUntil(iso: string, nowMs: number): number {
+  return (new Date(iso).getTime() - nowMs) / (24 * 60 * 60 * 1000);
+}
+
+function dealExpiringSeverity(daysLeft: number): CreatorAlertSeverity | null {
+  if (daysLeft < 0) return null;
+  if (daysLeft <= DEAL_EXPIRING_CRITICAL_DAYS) return "critical";
+  if (daysLeft <= DEAL_EXPIRING_WARNING_DAYS) return "warning";
+  return null;
+}
+
+function lbEndingSeverity(daysLeft: number): CreatorAlertSeverity | null {
+  if (daysLeft < 0) return null;
+  if (daysLeft <= LB_ENDING_CRITICAL_DAYS) return "critical";
+  if (daysLeft <= LB_ENDING_WARNING_DAYS) return "warning";
+  return null;
+}
+
+function capNearSeverity(used: number, total: number | null): CreatorAlertSeverity | null {
+  if (total == null || total <= 0) return null;
+  const ratio = used / total;
+  if (ratio >= CAP_NEAR_CRITICAL_RATIO) return "critical";
+  if (ratio >= CAP_NEAR_WARNING_RATIO) return "warning";
+  return null;
+}
+
+// ─── Derivation ──────────────────────────────────────────────────────
+
+async function deriveBigFtdAlerts(): Promise<DerivedAlertCandidate[]> {
+  const alerts: DerivedAlertCandidate[] = [];
+  try {
+    const excluded = await getExcludedUserIds();
+    const blacklistIdNotIn = escapeBlacklistIds(excluded);
+    const db = await getDb();
+    const rows = await db.$queryRaw<
+      {
+        ledger_tx_id: string;
+        user_id: string;
+        amount: string;
+        created_at: Date;
+        creator_user_id: string | null;
+      }[]
+    >`
+      WITH first_deposits AS (
+        SELECT DISTINCT ON (lt.user_id)
+          lt.id AS ledger_tx_id,
+          lt.user_id,
+          lt.amount::numeric AS amount,
+          lt.created_at
+        FROM ledger_transactions lt
+        JOIN "user" u ON u.id = lt.user_id
+        WHERE lt.type::text = 'deposit'
+          AND lt.status = 'completed'
+          AND u.role NOT IN ('admin', 'support', 'creator')
+          ${Prisma.raw(blacklistIdNotIn)}
+        ORDER BY lt.user_id, lt.created_at ASC
+      )
+      SELECT
+        fd.ledger_tx_id,
+        fd.user_id,
+        fd.amount::text,
+        fd.created_at,
+        (
+          SELECT acu_c.affiliate_user_id
+            FROM affiliate_code_usages acu_c
+           WHERE acu_c.referred_user_id = fd.user_id
+             AND acu_c.created_at <= fd.created_at
+             AND acu_c.created_at >= fd.created_at - INTERVAL '7 days'
+           ORDER BY acu_c.created_at DESC
+           LIMIT 1
+        ) AS creator_user_id
+      FROM first_deposits fd
+      WHERE fd.created_at >= NOW() - (${BIG_FTD_LOOKBACK_HOURS} * INTERVAL '1 hour')
+        AND fd.amount >= ${BIG_FTD_MIN_USD}
+    `;
+
+    for (const row of rows) {
+      if (!row.creator_user_id) continue;
+      const amount = Number(row.amount);
+      alerts.push({
+        dedupeKey: `big_ftd:${row.ledger_tx_id}`,
+        alertType: "big_ftd",
+        severity: amount >= 5_000 ? "critical" : "warning",
+        targetUserId: row.creator_user_id,
+        metadata: {
+          title: "Big first-time deposit",
+          description: `New depositor FTD of $${amount.toLocaleString("en-US", { maximumFractionDigits: 0 })} under this creator's code.`,
+          link: `/creator-hub/creators/${row.creator_user_id}`,
+          valueUsd: amount,
+        },
+      });
+    }
+  } catch (err) {
+    console.error("[creator-alerts] big_ftd derivation failed:", err);
+  }
+  return alerts;
+}
+
+const deriveAlertCandidates = unstable_cache(
+  async (): Promise<DerivedAlertCandidate[]> => {
+    const nowMs = Date.now();
+    const candidates: DerivedAlertCandidate[] = [];
+
+    let roster: CreatorListItem[] = [];
+    try {
+      roster = await walkAllCreators();
+    } catch (err) {
+      console.error("[creator-alerts] roster walk failed:", err);
+      return candidates;
+    }
+
+    const usernameById = new Map(
+      roster.map((c) => [c.id, c.username ?? c.id.slice(0, 8)]),
+    );
+
+    // Deal expiring + went live
+    const activeDeals: { userId: string; dealId: string }[] = [];
+    for (const c of roster) {
+      if (c.active_session_id) {
+        candidates.push({
+          dedupeKey: `went_live:${c.id}:${c.active_session_id}`,
+          alertType: "went_live",
+          severity: "info",
+          targetUserId: c.id,
+          metadata: {
+            title: "Creator went live",
+            description: `${usernameById.get(c.id)} is streaming right now.`,
+            link: `/creator-hub/creators/${c.id}`,
+          },
+        });
+      }
+
+      const deal = c.current_deal;
+      if (
+        !deal ||
+        (deal.status !== "active" && deal.status !== "scheduled")
+      ) {
+        continue;
+      }
+
+      activeDeals.push({ userId: c.id, dealId: deal.id });
+
+      const severity = dealExpiringSeverity(daysUntil(deal.week_end_utc, nowMs));
+      if (severity) {
+        const daysLeft = Math.ceil(daysUntil(deal.week_end_utc, nowMs));
+        candidates.push({
+          dedupeKey: `deal_expiring:${deal.id}`,
+          alertType: "deal_expiring",
+          severity,
+          targetUserId: c.id,
+          metadata: {
+            title: "Deal expiring soon",
+            description: `${usernameById.get(c.id)}'s deal ends in ${daysLeft} day${daysLeft === 1 ? "" : "s"}.`,
+            link: `/creator-hub/creators/${c.id}`,
+            endsAt: deal.week_end_utc,
+          },
+        });
+      }
+    }
+
+    // Withdraw cap nearly hit
+    const capByUser = await getDealCapInfoByUser(activeDeals).catch((err: unknown) => {
+      console.error("[creator-alerts] cap lookup failed:", err);
+      return new Map();
+    });
+    for (const { userId, dealId } of activeDeals) {
+      const cap = capByUser.get(userId);
+      if (!cap) continue;
+      const severity = capNearSeverity(cap.usedUsd, cap.totalCapUsd);
+      if (!severity) continue;
+      const pct =
+        cap.totalCapUsd != null && cap.totalCapUsd > 0
+          ? Math.round((cap.usedUsd / cap.totalCapUsd) * 100)
+          : 0;
+      candidates.push({
+        dedupeKey: `withdraw_cap_near:${dealId}`,
+        alertType: "withdraw_cap_near",
+        severity,
+        targetUserId: userId,
+        metadata: {
+          title: "Withdraw cap nearly hit",
+          description: `${usernameById.get(userId)} has used ${pct}% of the deal withdraw cap ($${cap.usedUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })}${cap.totalCapUsd != null ? ` / $${cap.totalCapUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : ""}).`,
+          link: `/creator-hub/creators/${userId}`,
+          valueUsd: cap.usedUsd,
+        },
+      });
+    }
+
+    // Leaderboards ending
+    try {
+      const lbPage = await affiliateLeaderboardsApi.list({
+        status: "approved",
+        offset: 0,
+        limit: FETCH_CAP,
+      });
+      for (const lb of lbPage.leaderboards) {
+        if (lb.cancelled_at || lb.time_status === "ended") continue;
+        const severity = lbEndingSeverity(daysUntil(lb.end_date, nowMs));
+        if (!severity) continue;
+        const daysLeft = Math.ceil(daysUntil(lb.end_date, nowMs));
+        candidates.push({
+          dedupeKey: `leaderboard_ending:${lb.id}`,
+          alertType: "leaderboard_ending",
+          severity,
+          targetUserId: lb.creator_user_id,
+          metadata: {
+            title: "Leaderboard ending soon",
+            description: `"${lb.title}" ends in ${daysLeft} day${daysLeft === 1 ? "" : "s"}.`,
+            link: `/creator-hub/creators/${lb.creator_user_id}`,
+            endsAt: lb.end_date,
+          },
+        });
+      }
+    } catch (err) {
+      console.error("[creator-alerts] leaderboard walk failed:", err);
+    }
+
+    // Lifetime PnL red + risk flagged
+    try {
+      const pnl = await getAllCreatorsLifetimePnl();
+      for (const row of pnl.byCreator) {
+        if (row.pnl < PNL_RED_WARNING_USD) {
+          candidates.push({
+            dedupeKey: `pnl_red:${row.userId}`,
+            alertType: "pnl_red",
+            severity:
+              row.pnl <= PNL_RED_CRITICAL_USD ? "critical" : "warning",
+            targetUserId: row.userId,
+            metadata: {
+              title: "Creator P&L in the red",
+              description: `${row.username ?? row.userId.slice(0, 8)} lifetime house P&L is ${row.pnl < 0 ? "−" : ""}$${Math.abs(row.pnl).toLocaleString("en-US", { maximumFractionDigits: 0 })}.`,
+              link: `/creator-hub/creators/${row.userId}`,
+              valueUsd: row.pnl,
+            },
+          });
+        }
+
+        if (
+          row.pnl <= RISK_FLAGGED_PNL_USD &&
+          row.totalDeposits >= RISK_FLAGGED_MIN_DEPOSITS_USD
+        ) {
+          candidates.push({
+            dedupeKey: `risk_flagged:${row.userId}`,
+            alertType: "risk_flagged",
+            severity: "critical",
+            targetUserId: row.userId,
+            metadata: {
+              title: "Risk flag — material house loss",
+              description: `${row.username ?? row.userId.slice(0, 8)} has $${row.totalDeposits.toLocaleString("en-US", { maximumFractionDigits: 0 })} attributed deposits with a ${row.pnl < 0 ? "−" : ""}$${Math.abs(row.pnl).toLocaleString("en-US", { maximumFractionDigits: 0 })} lifetime P&L — review the Risk tab.`,
+              link: `/creator-hub/creators/${row.userId}?tab=risk`,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      console.error("[creator-alerts] lifetime PnL derivation failed:", err);
+    }
+
+    const bigFtds = await deriveBigFtdAlerts();
+    candidates.push(...bigFtds);
+
+    return candidates;
+  },
+  ["creator-hub:alert-candidates:v1"],
+  { revalidate: 60, tags: ["creator-hub-alerts"] },
+);
+
+// ─── Sync + list ─────────────────────────────────────────────────────
+
+async function syncCandidates(
+  candidates: DerivedAlertCandidate[],
+): Promise<boolean> {
+  try {
+    await ensureCreatorAlertsSchema();
+    const activeKeys = new Set(candidates.map((c) => c.dedupeKey));
+
+    await Promise.all(
+      candidates.map((c) =>
+        adminDb.creator_alerts.upsert({
+          where: { dedupe_key: c.dedupeKey },
+          create: {
+            target_user_id: c.targetUserId,
+            alert_type: c.alertType,
+            dedupe_key: c.dedupeKey,
+            severity: c.severity,
+            metadata: c.metadata as AdminPrisma.InputJsonValue,
+          },
+          update: {
+            target_user_id: c.targetUserId,
+            alert_type: c.alertType,
+            severity: c.severity,
+            metadata: c.metadata as AdminPrisma.InputJsonValue,
+          },
+        }),
+      ),
+    );
+
+    // Auto-dismiss stale alerts whose condition cleared (not user-dismissed).
+    const stale = await adminDb.creator_alerts.findMany({
+      where: {
+        dismissed_at: null,
+        dedupe_key: { notIn: [...activeKeys] },
+      },
+      select: { id: true },
+    });
+    if (stale.length > 0) {
+      await adminDb.creator_alerts.updateMany({
+        where: { id: { in: stale.map((s) => s.id) } },
+        data: { dismissed_at: new Date() },
+      });
+    }
+    return false;
+  } catch (err) {
+    if (isMissingTableError(err)) {
+      alertsSchemaEnsured = false;
+      await ensureCreatorAlertsSchema();
+      return true;
+    }
+    console.error("[creator-alerts] sync failed:", err);
+    return true;
+  }
+}
+
+function parseMetadata(raw: unknown): CreatorAlertMetadata {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const m = raw as Record<string, unknown>;
+    return {
+      title: typeof m.title === "string" ? m.title : "Alert",
+      description:
+        typeof m.description === "string" ? m.description : "",
+      link: typeof m.link === "string" ? m.link : undefined,
+      valueUsd: typeof m.valueUsd === "number" ? m.valueUsd : undefined,
+      endsAt: typeof m.endsAt === "string" ? m.endsAt : undefined,
+    };
+  }
+  return { title: "Alert", description: "" };
+}
+
+function isAlertType(v: string): v is CreatorAlertType {
+  return (CREATOR_ALERT_TYPES as readonly string[]).includes(v);
+}
+
+function isSeverity(v: string): v is CreatorAlertSeverity {
+  return v === "info" || v === "warning" || v === "critical";
+}
+
+async function hydrateUsernames(
+  userIds: string[],
+): Promise<Map<string, string | null>> {
+  const map = new Map<string, string | null>();
+  if (userIds.length === 0) return map;
+  try {
+    const db = await getDb();
+    const users = await db.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, username: true },
+    });
+    for (const u of users) map.set(u.id, u.username ?? null);
+  } catch (err) {
+    console.error("[creator-alerts] username hydration failed:", err);
+  }
+  return map;
+}
+
+/**
+ * Sync derived alerts into the ADMIN DB and return the active (non-dismissed)
+ * list merged with read/dismiss state. Content is derived from live data;
+ * `creator_alerts` persists manager read/dismiss state only.
+ */
+export async function getCreatorAlerts(): Promise<CreatorAlertsResult> {
+  const candidates = await deriveAlertCandidates();
+  const syncError = await syncCandidates(candidates);
+  const activeKeys = new Set(candidates.map((c) => c.dedupeKey));
+
+  let rows: Awaited<ReturnType<typeof adminDb.creator_alerts.findMany>> = [];
+  try {
+    await ensureCreatorAlertsSchema();
+    rows = await adminDb.creator_alerts.findMany({
+      where: {
+        dismissed_at: null,
+        dedupe_key: { in: [...activeKeys] },
+      },
+      orderBy: [{ severity: "asc" }, { created_at: "desc" }],
+    });
+  } catch (err) {
+    if (isMissingTableError(err)) {
+      alertsSchemaEnsured = false;
+    } else {
+      console.error("[creator-alerts] list read failed:", err);
+    }
+  }
+
+  const candidateByKey = new Map(
+    candidates.map((c) => [c.dedupeKey, c]),
+  );
+  const targetIds = [
+    ...new Set(
+      rows
+        .map((r) => r.target_user_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const usernames = await hydrateUsernames(targetIds);
+
+  const alerts: CreatorAlertItem[] = rows
+    .map((row) => {
+      const derived = candidateByKey.get(row.dedupe_key);
+      const alertType = isAlertType(row.alert_type)
+        ? row.alert_type
+        : (derived?.alertType ?? "deal_expiring");
+      const severity = isSeverity(row.severity)
+        ? row.severity
+        : (derived?.severity ?? "info");
+      return {
+        id: row.id,
+        dedupeKey: row.dedupe_key,
+        alertType,
+        severity,
+        targetUserId: row.target_user_id,
+        targetUsername: row.target_user_id
+          ? (usernames.get(row.target_user_id) ?? null)
+          : null,
+        metadata: derived?.metadata ?? parseMetadata(row.metadata),
+        readAt: row.read_at?.toISOString() ?? null,
+        dismissedAt: row.dismissed_at?.toISOString() ?? null,
+        createdAt: row.created_at.toISOString(),
+        isUnread: row.read_at == null,
+      };
+    })
+    .sort(
+      (a, b) =>
+        SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+  const byType = Object.fromEntries(
+    CREATOR_ALERT_TYPES.map((t) => [t, 0]),
+  ) as Record<CreatorAlertType, number>;
+  for (const a of alerts) byType[a.alertType] += 1;
+
+  return {
+    alerts,
+    counts: {
+      total: alerts.length,
+      unread: alerts.filter((a) => a.isUnread).length,
+      critical: alerts.filter((a) => a.severity === "critical").length,
+      byType,
+    },
+    syncError,
+  };
+}

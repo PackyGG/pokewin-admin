@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { adminDb } from "@/lib/admin-db";
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 /**
@@ -15,8 +15,7 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
  * Owner spec: the VOD URL is editable INLINE in the row AND in the detail
  * modal — both call this one action.
  *
- * GATE: manager-only (`requireRole(['admin','creator_manager'])`, the Hub's
- * access set) — redirects on failure, same as every protected action. The VOD
+ * GATE: `requireCreatorHubAccess` (the Hub's access rule).
  * URL is admin-domain data → ADMIN DB write is allowed; MAIN/prod is never
  * touched, no schema migration runs.
  *
@@ -92,7 +91,7 @@ export async function setSessionVodUrl(input: {
   targetUserId: string;
   vodUrl: string;
 }): Promise<{ kickVodUrl: string | null }> {
-  const session = await requireRole(["admin", "creator_manager"]);
+  const session = await requireCreatorHubAccess();
 
   const parsed = SetVodSchema.parse({
     sessionId: input.sessionId.trim(),

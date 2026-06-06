@@ -20,9 +20,9 @@ import { LeaderboardTimeLeft } from "./leaderboard-time-left";
  * pool is neutral context; the house % is the share we pay (rose). Creator /
  * dates / codes are neutral.
  *
- * Each row links into the existing creator detail (`/creators/[id]`) and the
- * existing leaderboard detail (`/creators/leaderboards/[id]`) — reusing the
- * surfaces that already exist rather than duplicating them.
+ * Each row links into the Hub creator detail (`/creator-hub/creators/[id]`) and
+ * the admin leaderboard detail (`/creators/leaderboards/[id]`) — there is no
+ * Hub leaderboard detail route yet.
  */
 
 function rankBadgeTint(i: number): string {
@@ -86,7 +86,7 @@ function LiveLeaderboardCard({
 
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
             <Link
-              href={`/creators/${row.creatorUserId}`}
+              href={`/creator-hub/creators/${row.creatorUserId}`}
               className="inline-flex max-w-[180px] items-center gap-1 truncate font-medium text-foreground/80 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Trophy className="size-3 shrink-0 text-amber-500" />

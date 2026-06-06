@@ -8,7 +8,7 @@ import {
   ListOrdered,
 } from "lucide-react";
 
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import {
   PageHero,
   PageHeroIdentity,
@@ -42,8 +42,8 @@ export const metadata = { title: "Live Leaderboards · Creator Hub" };
  * share %) → rose. The full pool is neutral context; active/upcoming counts are
  * operational.
  *
- * ACCESS: admin + creator_manager only (the Hub layout enforces it; this page
- * adds the explicit DAL gate too, per the house convention).
+ * ACCESS: `canAccessCreatorHub` (the Hub layout enforces it; this page adds
+ * the explicit gate too).
  *
  * ACTIVE-TIMEFRAME-ONLY / LAZY: the ranklist body is wrapped in a Suspense
  * boundary keyed on the rank metric. The underlying backend walk is cached
@@ -62,7 +62,7 @@ export default async function CreatorHubLeaderboardsPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requireRole(["admin", "creator_manager"]);
+  await requireCreatorHubPageAccess();
 
   const rank = parseLiveLeaderboardRank((await searchParams).rank);
 

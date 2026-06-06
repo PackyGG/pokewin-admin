@@ -13,11 +13,9 @@ import { cn } from "@/lib/utils";
  * don't have a URL pattern for renders a non-navigating chip (no broken
  * link) rather than guessing.
  *
- * The DISCORD CHANNEL button is separate from the per-social buttons: the
- * plan stores a per-creator Discord *channel* link in the admin DB (added
- * on creation in a later wave). That column does NOT exist yet, so until it
- * lands the Discord-channel button renders DISABLED with a clear
- * "channel link not set" state — never a fabricated/guessed URL.
+ * The DISCORD CHANNEL button is separate from the per-social buttons: it
+ * opens `creator_socials.discord_channel_url` when set, otherwise renders
+ * disabled with a clear "channel link not set" state.
  *
  * Server-safe (plain links, no client state). Icons are imported directly
  * from lucide-react (not the sidebar ICONS map).

@@ -1,7 +1,7 @@
 import { Suspense } from "react";
-import { Users, TrendingUp } from "lucide-react";
+import { Users, TrendingUp, UserX } from "lucide-react";
 
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import {
   PageHero,
   PageHeroIdentity,
@@ -11,63 +11,47 @@ import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DASHBOARD_PERIOD_LABELS } from "@/lib/queries/dashboard-period";
 
-// Reuse the EXISTING add-creator dialog from the (admin) group 1:1 (plan:
-// "reuse the existing add-creator server action/dialog"). It searches users +
-// promotes to creator via the backend, gated on `/creators` access — which
-// admins (the only viewers of the Hub today) hold.
-import { AddCreatorDialog } from "../../../(admin)/creators/_components/add-creator-dialog";
+import { AddCreatorDialogV2 } from "./_components/add-creator-dialog-v2";
 
 import { parseRosterSearchParams } from "./_lib/roster-params";
 import { listRosterCreators } from "./_queries/list-roster-creators";
+import { listRosterExCreators } from "./_queries/list-roster-ex-creators";
 import { RosterSearchProvider } from "./_components/roster-search-context";
+import { RosterSelectionProvider } from "./_components/roster-selection-context";
 import { RosterViewProvider } from "./_components/roster-view-context";
 import { RosterToolbar } from "./_components/roster-toolbar";
 import { RosterPeriodControl } from "./_components/roster-period-control";
+import { RosterTabSwitch } from "./_components/roster-tab-switch";
 import { RosterGrid } from "./_components/roster-grid";
+import { RosterCard } from "./_components/roster-card";
 import { RosterError } from "./_components/roster-error";
 
 export const metadata = { title: "Creators · Creator Hub" };
 
-/**
- * Creator Hub — Creators roster.
- *
- * A searchable, sortable card+table roster of every creator, reusing the
- * existing /creators data layer (backend roster walk + code/wager + windowed
- * cohort GGR + lifetime PnL + composed deal value). Rows link into the Hub's
- * own creator detail page (`/creator-hub/creators/[id]`).
- *
- * ACCESS: admin + creator_manager only (the Hub layout enforces it; this page
- * adds the explicit DAL gate too — every protected page gates server-side
- * first per the house convention).
- *
- * ACTIVE-TIMEFRAME-ONLY: the roster data block is wrapped in a Suspense
- * boundary keyed on `(sortBy, period)`, so only the active window + sort is
- * fetched on first render and switching lazily loads just the picked
- * combination. The instant search (`?q=`) is a pure client-side filter over
- * the already-fetched rows, so it is DELIBERATELY excluded from the Suspense
- * key — a keystroke never refetches the roster.
- */
 export default async function CreatorHubRosterPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requireRole(["admin", "creator_manager"]);
+  await requireCreatorHubPageAccess();
 
   const params = parseRosterSearchParams(await searchParams);
-  // The canonical label already carries "Last …" (e.g. "Last 7 days"), so it
-  // reads naturally inline without an extra "last" prefix.
+  const isPast = params.tab === "past";
   const windowLabel = DASHBOARD_PERIOD_LABELS[params.period];
 
   return (
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={Users}
+          icon={isPast ? UserX : Users}
           accent="pink"
-          title="Creators"
-          subtitle="Your full creator roster — search, rank, and drill in."
-          action={<AddCreatorDialog />}
+          title={isPast ? "Past Creators" : "Creators"}
+          subtitle={
+            isPast
+              ? "Canceled / role-removed ex-creators — historical roster."
+              : "Your full creator roster — search, rank, and drill in."
+          }
+          action={isPast ? undefined : <AddCreatorDialogV2 />}
         />
       </PageHero>
 
@@ -75,65 +59,93 @@ export default async function CreatorHubRosterPage({
         <SectionHeading
           icon={TrendingUp}
           title="Roster"
-          action={<RosterPeriodControl current={params.period} />}
+          action={
+            isPast ? (
+              <RosterTabSwitch />
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <RosterTabSwitch />
+                <RosterPeriodControl current={params.period} />
+              </div>
+            )
+          }
         />
-        {/* Search + view are pure client presentation over the SAME fetched
-            rows, so both providers wrap the toolbar AND the grid (one shared
-            state) and the Suspense key below omits `q`/`view`. */}
         <RosterSearchProvider>
-          <RosterViewProvider>
-            <div className="space-y-4">
-              <RosterToolbar />
+          <RosterSelectionProvider>
+            <RosterViewProvider>
+              <div className="space-y-4">
+                <RosterToolbar />
               <Suspense
-                key={`${params.sortBy}-${params.period}`}
+                key={
+                  isPast
+                    ? `past-${params.sortBy}`
+                    : `${params.sortBy}-${params.period}`
+                }
                 fallback={<RosterSkeleton />}
               >
                 <RosterSection
+                  tab={params.tab}
                   sortBy={params.sortBy}
                   period={params.period}
                   windowLabel={windowLabel}
                 />
               </Suspense>
-            </div>
-          </RosterViewProvider>
+              </div>
+            </RosterViewProvider>
+          </RosterSelectionProvider>
         </RosterSearchProvider>
       </div>
     </div>
   );
 }
 
-// ─── Roster section (data-bearing, streamed via Suspense) ───────────
-
 async function RosterSection({
+  tab,
   sortBy,
   period,
   windowLabel,
 }: {
+  tab: ReturnType<typeof parseRosterSearchParams>["tab"];
   sortBy: ReturnType<typeof parseRosterSearchParams>["sortBy"];
   period: ReturnType<typeof parseRosterSearchParams>["period"];
   windowLabel: string;
 }) {
-  const { creators, rosterUnavailable } = await listRosterCreators(
-    period,
-    sortBy,
-  );
+  const isPast = tab === "past";
+  const { creators, rosterUnavailable } = isPast
+    ? await listRosterExCreators(sortBy)
+    : await listRosterCreators(period, sortBy);
 
   if (rosterUnavailable) {
     return <RosterError />;
   }
 
+  const wagerLabel = isPast ? "Lifetime wager" : "Wager";
+  const cardsById = Object.fromEntries(
+    creators.map((c) => [
+      c.id,
+      <RosterCard key={c.id} creator={c} wagerLabel={wagerLabel} />,
+    ]),
+  );
+
   return (
     <FadeIn className="space-y-2">
       <p className="text-[11px] text-muted-foreground">
-        Wager + GGR scoped to {windowLabel}. Sign-ups, FTDs, PnL, and deal
-        value are lifetime.
+        {isPast ? (
+          <>
+            Lifetime wager, sign-ups, FTDs, and PnL for ex-creators. Windowed
+            GGR is unavailable once the creator role is removed.
+          </>
+        ) : (
+          <>
+            Wager + GGR scoped to {windowLabel}. Sign-ups, FTDs, PnL, and deal
+            value are lifetime.
+          </>
+        )}
       </p>
-      <RosterGrid creators={creators} />
+      <RosterGrid creators={creators} cardsById={cardsById} isPast={isPast} />
     </FadeIn>
   );
 }
-
-// ─── Skeleton ──────────────────────────────────────────────────────
 
 function RosterSkeleton() {
   return (

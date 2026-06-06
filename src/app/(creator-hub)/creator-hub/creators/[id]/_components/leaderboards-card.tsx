@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Trophy, ExternalLink, Plus } from "lucide-react";
+import { Trophy, ExternalLink } from "lucide-react";
 
 import { backendApi } from "@/lib/backend-api/client";
 import { BackendApiError } from "@/lib/backend-api/errors";
@@ -11,7 +11,7 @@ import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
 import { getCreatorLeaderboardCost } from "../../../../../(admin)/creators/[userId]/_queries/leaderboard-cost-by-creator";
-import { LinkButton } from "./link-button";
+import { CreateLeaderboardDialog } from "./create-leaderboard-dialog";
 
 /**
  * Affiliate Leaderboards card (right half of the Overview "Deal | Affiliate
@@ -20,9 +20,8 @@ import { LinkButton } from "./link-button";
  * Read-only summary of this creator's leaderboards: the realized house cost
  * (sponsored-% weighted, from the existing `getCreatorLeaderboardCost`) + a
  * preview of recent boards from the existing backend list endpoint (the same
- * one the original detail page reads). "Create Leaderboard" links to the
- * EXISTING create flow on the original detail / leaderboards surface for now
- * — the redesigned in-Hub dialog is a later wave.
+ * one the original detail page reads). "Create Leaderboard" opens the
+ * hub-native create dialog (reuses admin server actions).
  *
  * House-POV: leaderboard prize cost is house spend → rose. Best-effort: a
  * backend outage degrades to a note; nothing fabricated. Streamed in its own
@@ -68,19 +67,13 @@ const PREVIEW_LIMIT = 6;
 
 export async function LeaderboardsCard({ userId }: { userId: string }) {
   // Link targets to the EXISTING flows (this wave reuses them as-is).
-  const manageHref = `/creators/leaderboards?creator_user_id=${encodeURIComponent(userId)}`;
-  const createHref = `/creators/${userId}`;
+  const manageHref = `/creator-hub/leaderboards`;
 
   const heading = (
     <SectionHeading
       icon={Trophy}
       title="Affiliate Leaderboards"
-      action={
-        <LinkButton href={createHref}>
-          <Plus className="mr-1 size-3.5" />
-          Create Leaderboard
-        </LinkButton>
-      }
+      action={<CreateLeaderboardDialog userId={userId} />}
     />
   );
 

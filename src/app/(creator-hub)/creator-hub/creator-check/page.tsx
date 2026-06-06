@@ -9,7 +9,7 @@ import {
   Megaphone,
 } from "lucide-react";
 
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import {
   PageHero,
   PageHeroIdentity,
@@ -41,14 +41,14 @@ export const metadata = { title: "Creator Check · Creator Hub" };
  * manual Refetch — there is no auto-poll / no per-render external fetch (the
  * page is a pure DB read; the only API hits are the explicit Check / Refetch).
  *
- * ACCESS: admin + creator_manager only (the Hub layout enforces it; this page
- * adds the explicit DAL gate per the house convention).
+ * ACCESS: `canAccessCreatorHub` (the Hub layout enforces it; this page adds
+ * the explicit gate).
  *
  * LAZY: the data-bearing block is wrapped in a Suspense boundary so the shell
  * (hero + Check button) paints immediately and the history streams in.
  */
 export default async function CreatorCheckPage() {
-  await requireRole(["admin", "creator_manager"]);
+  await requireCreatorHubPageAccess();
 
   return (
     <div className="space-y-6">

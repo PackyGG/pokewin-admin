@@ -54,6 +54,8 @@ export type Creator_socialsMinAggregateOutputType = {
   platform: $Enums.social_platform | null
   platform_user_id: string | null
   username: string | null
+  discord_channel_url: string | null
+  reward_page_url: string | null
   access_token: string | null
   refresh_token: string | null
   token_expires_at: Date | null
@@ -76,6 +78,8 @@ export type Creator_socialsMaxAggregateOutputType = {
   platform: $Enums.social_platform | null
   platform_user_id: string | null
   username: string | null
+  discord_channel_url: string | null
+  reward_page_url: string | null
   access_token: string | null
   refresh_token: string | null
   token_expires_at: Date | null
@@ -98,6 +102,8 @@ export type Creator_socialsCountAggregateOutputType = {
   platform: number
   platform_user_id: number
   username: number
+  discord_channel_url: number
+  reward_page_url: number
   access_token: number
   refresh_token: number
   token_expires_at: number
@@ -145,6 +151,8 @@ export type Creator_socialsMinAggregateInputType = {
   platform?: true
   platform_user_id?: true
   username?: true
+  discord_channel_url?: true
+  reward_page_url?: true
   access_token?: true
   refresh_token?: true
   token_expires_at?: true
@@ -167,6 +175,8 @@ export type Creator_socialsMaxAggregateInputType = {
   platform?: true
   platform_user_id?: true
   username?: true
+  discord_channel_url?: true
+  reward_page_url?: true
   access_token?: true
   refresh_token?: true
   token_expires_at?: true
@@ -189,6 +199,8 @@ export type Creator_socialsCountAggregateInputType = {
   platform?: true
   platform_user_id?: true
   username?: true
+  discord_channel_url?: true
+  reward_page_url?: true
   access_token?: true
   refresh_token?: true
   token_expires_at?: true
@@ -299,6 +311,8 @@ export type Creator_socialsGroupByOutputType = {
   platform: $Enums.social_platform
   platform_user_id: string | null
   username: string
+  discord_channel_url: string | null
+  reward_page_url: string | null
   access_token: string | null
   refresh_token: string | null
   token_expires_at: Date | null
@@ -345,6 +359,8 @@ export type creator_socialsWhereInput = {
   platform?: Prisma.Enumsocial_platformFilter<"creator_socials"> | $Enums.social_platform
   platform_user_id?: Prisma.StringNullableFilter<"creator_socials"> | string | null
   username?: Prisma.StringFilter<"creator_socials"> | string
+  discord_channel_url?: Prisma.StringNullableFilter<"creator_socials"> | string | null
+  reward_page_url?: Prisma.StringNullableFilter<"creator_socials"> | string | null
   access_token?: Prisma.StringNullableFilter<"creator_socials"> | string | null
   refresh_token?: Prisma.StringNullableFilter<"creator_socials"> | string | null
   token_expires_at?: Prisma.DateTimeNullableFilter<"creator_socials"> | Date | string | null
@@ -368,6 +384,8 @@ export type creator_socialsOrderByWithRelationInput = {
   platform?: Prisma.SortOrder
   platform_user_id?: Prisma.SortOrderInput | Prisma.SortOrder
   username?: Prisma.SortOrder
+  discord_channel_url?: Prisma.SortOrderInput | Prisma.SortOrder
+  reward_page_url?: Prisma.SortOrderInput | Prisma.SortOrder
   access_token?: Prisma.SortOrderInput | Prisma.SortOrder
   refresh_token?: Prisma.SortOrderInput | Prisma.SortOrder
   token_expires_at?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -395,6 +413,8 @@ export type creator_socialsWhereUniqueInput = Prisma.AtLeast<{
   platform?: Prisma.Enumsocial_platformFilter<"creator_socials"> | $Enums.social_platform
   platform_user_id?: Prisma.StringNullableFilter<"creator_socials"> | string | null
   username?: Prisma.StringFilter<"creator_socials"> | string
+  discord_channel_url?: Prisma.StringNullableFilter<"creator_socials"> | string | null
+  reward_page_url?: Prisma.StringNullableFilter<"creator_socials"> | string | null
   access_token?: Prisma.StringNullableFilter<"creator_socials"> | string | null
   refresh_token?: Prisma.StringNullableFilter<"creator_socials"> | string | null
   token_expires_at?: Prisma.DateTimeNullableFilter<"creator_socials"> | Date | string | null
@@ -418,6 +438,8 @@ export type creator_socialsOrderByWithAggregationInput = {
   platform?: Prisma.SortOrder
   platform_user_id?: Prisma.SortOrderInput | Prisma.SortOrder
   username?: Prisma.SortOrder
+  discord_channel_url?: Prisma.SortOrderInput | Prisma.SortOrder
+  reward_page_url?: Prisma.SortOrderInput | Prisma.SortOrder
   access_token?: Prisma.SortOrderInput | Prisma.SortOrder
   refresh_token?: Prisma.SortOrderInput | Prisma.SortOrder
   token_expires_at?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -449,6 +471,8 @@ export type creator_socialsScalarWhereWithAggregatesInput = {
   platform?: Prisma.Enumsocial_platformWithAggregatesFilter<"creator_socials"> | $Enums.social_platform
   platform_user_id?: Prisma.StringNullableWithAggregatesFilter<"creator_socials"> | string | null
   username?: Prisma.StringWithAggregatesFilter<"creator_socials"> | string
+  discord_channel_url?: Prisma.StringNullableWithAggregatesFilter<"creator_socials"> | string | null
+  reward_page_url?: Prisma.StringNullableWithAggregatesFilter<"creator_socials"> | string | null
   access_token?: Prisma.StringNullableWithAggregatesFilter<"creator_socials"> | string | null
   refresh_token?: Prisma.StringNullableWithAggregatesFilter<"creator_socials"> | string | null
   token_expires_at?: Prisma.DateTimeNullableWithAggregatesFilter<"creator_socials"> | Date | string | null
@@ -472,6 +496,8 @@ export type creator_socialsCreateInput = {
   platform: $Enums.social_platform
   platform_user_id?: string | null
   username: string
+  discord_channel_url?: string | null
+  reward_page_url?: string | null
   access_token?: string | null
   refresh_token?: string | null
   token_expires_at?: Date | string | null
@@ -495,6 +521,8 @@ export type creator_socialsUncheckedCreateInput = {
   platform: $Enums.social_platform
   platform_user_id?: string | null
   username: string
+  discord_channel_url?: string | null
+  reward_page_url?: string | null
   access_token?: string | null
   refresh_token?: string | null
   token_expires_at?: Date | string | null
@@ -518,6 +546,8 @@ export type creator_socialsUpdateInput = {
   platform?: Prisma.Enumsocial_platformFieldUpdateOperationsInput | $Enums.social_platform
   platform_user_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   username?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_channel_url?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  reward_page_url?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   access_token?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   refresh_token?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   token_expires_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -541,6 +571,8 @@ export type creator_socialsUncheckedUpdateInput = {
   platform?: Prisma.Enumsocial_platformFieldUpdateOperationsInput | $Enums.social_platform
   platform_user_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   username?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_channel_url?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  reward_page_url?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   access_token?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   refresh_token?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   token_expires_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -564,6 +596,8 @@ export type creator_socialsCreateManyInput = {
   platform: $Enums.social_platform
   platform_user_id?: string | null
   username: string
+  discord_channel_url?: string | null
+  reward_page_url?: string | null
   access_token?: string | null
   refresh_token?: string | null
   token_expires_at?: Date | string | null
@@ -587,6 +621,8 @@ export type creator_socialsUpdateManyMutationInput = {
   platform?: Prisma.Enumsocial_platformFieldUpdateOperationsInput | $Enums.social_platform
   platform_user_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   username?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_channel_url?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  reward_page_url?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   access_token?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   refresh_token?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   token_expires_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -610,6 +646,8 @@ export type creator_socialsUncheckedUpdateManyInput = {
   platform?: Prisma.Enumsocial_platformFieldUpdateOperationsInput | $Enums.social_platform
   platform_user_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   username?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_channel_url?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  reward_page_url?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   access_token?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   refresh_token?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   token_expires_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -638,6 +676,8 @@ export type creator_socialsCountOrderByAggregateInput = {
   platform?: Prisma.SortOrder
   platform_user_id?: Prisma.SortOrder
   username?: Prisma.SortOrder
+  discord_channel_url?: Prisma.SortOrder
+  reward_page_url?: Prisma.SortOrder
   access_token?: Prisma.SortOrder
   refresh_token?: Prisma.SortOrder
   token_expires_at?: Prisma.SortOrder
@@ -672,6 +712,8 @@ export type creator_socialsMaxOrderByAggregateInput = {
   platform?: Prisma.SortOrder
   platform_user_id?: Prisma.SortOrder
   username?: Prisma.SortOrder
+  discord_channel_url?: Prisma.SortOrder
+  reward_page_url?: Prisma.SortOrder
   access_token?: Prisma.SortOrder
   refresh_token?: Prisma.SortOrder
   token_expires_at?: Prisma.SortOrder
@@ -694,6 +736,8 @@ export type creator_socialsMinOrderByAggregateInput = {
   platform?: Prisma.SortOrder
   platform_user_id?: Prisma.SortOrder
   username?: Prisma.SortOrder
+  discord_channel_url?: Prisma.SortOrder
+  reward_page_url?: Prisma.SortOrder
   access_token?: Prisma.SortOrder
   refresh_token?: Prisma.SortOrder
   token_expires_at?: Prisma.SortOrder
@@ -741,6 +785,8 @@ export type creator_socialsSelect<ExtArgs extends runtime.Types.Extensions.Inter
   platform?: boolean
   platform_user_id?: boolean
   username?: boolean
+  discord_channel_url?: boolean
+  reward_page_url?: boolean
   access_token?: boolean
   refresh_token?: boolean
   token_expires_at?: boolean
@@ -764,6 +810,8 @@ export type creator_socialsSelectCreateManyAndReturn<ExtArgs extends runtime.Typ
   platform?: boolean
   platform_user_id?: boolean
   username?: boolean
+  discord_channel_url?: boolean
+  reward_page_url?: boolean
   access_token?: boolean
   refresh_token?: boolean
   token_expires_at?: boolean
@@ -787,6 +835,8 @@ export type creator_socialsSelectUpdateManyAndReturn<ExtArgs extends runtime.Typ
   platform?: boolean
   platform_user_id?: boolean
   username?: boolean
+  discord_channel_url?: boolean
+  reward_page_url?: boolean
   access_token?: boolean
   refresh_token?: boolean
   token_expires_at?: boolean
@@ -810,6 +860,8 @@ export type creator_socialsSelectScalar = {
   platform?: boolean
   platform_user_id?: boolean
   username?: boolean
+  discord_channel_url?: boolean
+  reward_page_url?: boolean
   access_token?: boolean
   refresh_token?: boolean
   token_expires_at?: boolean
@@ -827,7 +879,7 @@ export type creator_socialsSelectScalar = {
   updated_at?: boolean
 }
 
-export type creator_socialsOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "target_user_id" | "platform" | "platform_user_id" | "username" | "access_token" | "refresh_token" | "token_expires_at" | "follower_count" | "subscriber_count" | "total_views" | "avg_views_30d" | "avg_viewers" | "avg_viewers_30d" | "engagement_rate" | "likes_avg" | "stats_json" | "last_fetched_at" | "created_at" | "updated_at", ExtArgs["result"]["creator_socials"]>
+export type creator_socialsOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "target_user_id" | "platform" | "platform_user_id" | "username" | "discord_channel_url" | "reward_page_url" | "access_token" | "refresh_token" | "token_expires_at" | "follower_count" | "subscriber_count" | "total_views" | "avg_views_30d" | "avg_viewers" | "avg_viewers_30d" | "engagement_rate" | "likes_avg" | "stats_json" | "last_fetched_at" | "created_at" | "updated_at", ExtArgs["result"]["creator_socials"]>
 
 export type $creator_socialsPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   name: "creator_socials"
@@ -838,6 +890,8 @@ export type $creator_socialsPayload<ExtArgs extends runtime.Types.Extensions.Int
     platform: $Enums.social_platform
     platform_user_id: string | null
     username: string
+    discord_channel_url: string | null
+    reward_page_url: string | null
     access_token: string | null
     refresh_token: string | null
     token_expires_at: Date | null
@@ -1281,6 +1335,8 @@ export interface creator_socialsFieldRefs {
   readonly platform: Prisma.FieldRef<"creator_socials", 'social_platform'>
   readonly platform_user_id: Prisma.FieldRef<"creator_socials", 'String'>
   readonly username: Prisma.FieldRef<"creator_socials", 'String'>
+  readonly discord_channel_url: Prisma.FieldRef<"creator_socials", 'String'>
+  readonly reward_page_url: Prisma.FieldRef<"creator_socials", 'String'>
   readonly access_token: Prisma.FieldRef<"creator_socials", 'String'>
   readonly refresh_token: Prisma.FieldRef<"creator_socials", 'String'>
   readonly token_expires_at: Prisma.FieldRef<"creator_socials", 'DateTime'>

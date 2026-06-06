@@ -3,13 +3,8 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 
-import { verifySession } from "@/lib/dal";
-import { adminDb } from "@/lib/admin-db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import {
-  canAccessCreatorHub,
-  getCreatorHubAccessSettings,
-} from "@/lib/creator-hub-access";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import {
   runCreatorCheck,
   normalizeHandle,
@@ -42,32 +37,6 @@ import {
  * kick_streams / twitter_profiles / tweets / twitter_mentions) via the barrel.
  * MAIN/prod is never touched.
  */
-
-// ─── Auth helper (mirrors settings/actions.ts) ──────────────────────────────
-
-async function requireCreatorHubAccess(): Promise<{ userId: string }> {
-  const session = await verifySession();
-
-  // Re-read the live account so a deactivated user / changed username can't
-  // slip through on a stale JWT.
-  const user = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { username: true, is_active: true },
-  });
-  if (!user?.is_active) {
-    throw new Error("Not authorized to use Creator Check.");
-  }
-
-  const settings = await getCreatorHubAccessSettings();
-  const allowed = canAccessCreatorHub(
-    { username: user.username, role: session.role, roles: session.roles },
-    settings,
-  );
-  if (!allowed) {
-    throw new Error("Not authorized to use Creator Check.");
-  }
-  return { userId: session.userId };
-}
 
 // ─── Input validation ───────────────────────────────────────────────────────
 
@@ -123,7 +92,10 @@ export async function runCheck(input: {
 }): Promise<RunCheckResult> {
   let userId: string;
   try {
-    ({ userId } = await requireCreatorHubAccess());
+    const session = await requireCreatorHubAccess(
+      "Not authorized to use Creator Check.",
+    );
+    userId = session.userId;
   } catch (err) {
     return {
       success: false,
@@ -232,7 +204,7 @@ export async function getCheckDetail(
   rawHandle: string,
 ): Promise<CheckDetailResult> {
   try {
-    await requireCreatorHubAccess();
+    await requireCreatorHubAccess("Not authorized to use Creator Check.");
   } catch (err) {
     return {
       success: false,
@@ -271,7 +243,7 @@ export async function refetchCheck(
   rawHandle: string,
 ): Promise<CheckDetailResult> {
   try {
-    await requireCreatorHubAccess();
+    await requireCreatorHubAccess("Not authorized to use Creator Check.");
   } catch (err) {
     return {
       success: false,

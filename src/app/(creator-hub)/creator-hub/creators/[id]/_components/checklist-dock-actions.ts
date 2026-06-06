@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { getCreatorChecklist } from "../_queries/onboarding-checklist-data";
 import type { CreatorChecklistData } from "./onboarding-checklist-shared";
 
@@ -16,9 +16,8 @@ import type { CreatorChecklistData } from "./onboarding-checklist-shared";
  * through THIS action — only when the manager is actually on a creator detail
  * page (lazy / active-surface-only; nothing fetches on other Hub routes).
  *
- * Gate: `requireRole(['admin','creator_manager'])` — the SAME access set the
- * page + the manual checklist actions enforce, re-verified server-side against
- * the ADMIN DB. The client identity is never trusted.
+ * Gate: `requireCreatorHubAccess` — the SAME access rule the page + the manual
+ * checklist actions enforce, re-verified server-side against the ADMIN DB.
  *
  * DB policy: reuses {@link getCreatorChecklist}, which reads MAIN/prod
  * READ-ONLY (PFP / socials / deals / leaderboards / api-key lookups) and writes
@@ -35,10 +34,9 @@ export async function fetchCreatorChecklistForDock(
   targetUserId: string,
 ): Promise<CreatorChecklistData | null> {
   try {
-    await requireRole(["admin", "creator_manager"]);
+    await requireCreatorHubAccess();
   } catch {
-    // requireRole redirects on a real auth miss; this guard keeps the action
-    // from throwing an opaque error into the client dock.
+    // Auth miss → render nothing in the client dock rather than an opaque error.
     return null;
   }
 

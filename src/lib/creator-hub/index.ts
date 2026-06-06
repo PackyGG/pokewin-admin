@@ -62,6 +62,19 @@ export type {
 } from "./twitter";
 
 export {
+  getCreatorActivitySeries,
+  parseCreatorActivityPeriod,
+  CREATOR_ACTIVITY_PERIODS,
+  DEFAULT_CREATOR_ACTIVITY_PERIOD,
+  CREATOR_ACTIVITY_PERIOD_LABELS,
+} from "./creator-activity-series";
+export type {
+  CreatorActivityPeriod,
+  CreatorActivityPoint,
+  CreatorActivitySeries,
+} from "./creator-activity-series";
+
+export {
   // Shared helpers / config
   normalizeHandle,
   isNoKeyConfigured,

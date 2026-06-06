@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FadeIn } from "@/components/fade-in";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatCurrency } from "@/lib/utils/format";
 
 import { getCreatorDetailCached } from "../_queries/overview-data";
 import {
@@ -18,7 +18,14 @@ import {
   WindowedPnlTiles,
   WindowedPnlTilesSkeleton,
 } from "./windowed-pnl-tiles";
+import {
+  getCreatorActivitySeries,
+  parseCreatorActivityPeriod,
+  type CreatorActivityPeriod,
+} from "@/lib/creator-hub/creator-activity-series";
+
 import { ActivityChart } from "./activity-chart";
+import { ActivityPeriodControl } from "./activity-period-control";
 import { DealCard } from "./deal-card";
 import { LeaderboardsCard } from "./leaderboards-card";
 
@@ -31,19 +38,22 @@ import { LeaderboardsCard } from "./leaderboards-card";
  *   3. Performance section:
  *      • Creator Net (P&L) box with (i) hover + breakdown.
  *      • Small windowed PnL tiles (1d / 3d / 7d / 2w / 1m).
- *      • Activity chart (sign-ups / FTDs / wager / deposits).
+ *      • Activity chart (wager / deposits / GGR time-series).
  *
  * LAZY / never-preload: every heavy region streams in its OWN keyed Suspense
  * boundary so the banner + tab bar paint immediately and each read runs in
- * parallel rather than serially behind a shared blocking await. The KPI strip
- * + the activity-chart headline share the SAME `getCreatorDetail` aggregate
- * via one in-flight promise, so that 12-round-trip read fires exactly once.
+ * parallel rather than serially behind a shared blocking await. The activity
+ * chart boundary is additionally keyed on `activityPeriod` so only the active
+ * window is fetched (never preloading all windows).
  */
-export function OverviewTab({ userId }: { userId: string }) {
-  // Single shared aggregate read — consumed by BOTH the KPI strip (top) and
-  // the activity-chart headline chips (bottom), kicked off ONCE (not awaited
-  // on this component's path) and handed to both slots so it fires once.
-  // Timeout-bounded so a slow scan degrades per-slot instead of hanging.
+export function OverviewTab({
+  userId,
+  activityPeriod,
+}: {
+  userId: string;
+  activityPeriod: CreatorActivityPeriod;
+}) {
+  // KPI strip aggregate — kicked off once for the top strip only.
   const profilePromise = safeQueryOrNull(
     () => getCreatorDetailCached(userId),
     "creator-hub.creators.profile",
@@ -82,10 +92,16 @@ export function OverviewTab({ userId }: { userId: string }) {
           <WindowedPnlTiles userId={userId} />
         </Suspense>
 
-        {/* Activity chart — headline chips from the shared aggregate; the
-            per-creator time-series isn't wired yet (honest placeholder body). */}
-        <Suspense fallback={<ActivityChartSkeleton />}>
-          <ActivitySlot profilePromise={profilePromise} />
+        {/* Activity chart — bucketed wager / deposits / GGR for the active
+            window only (`activityPeriod` keys this boundary). */}
+        <Suspense
+          key={activityPeriod}
+          fallback={<ActivityChartSkeleton />}
+        >
+          <ActivitySlot
+            userId={userId}
+            activityPeriod={activityPeriod}
+          />
         </Suspense>
       </div>
     </FadeIn>
@@ -108,61 +124,74 @@ async function KpiStripSlot({
 }
 
 async function ActivitySlot({
-  profilePromise,
+  userId,
+  activityPeriod,
 }: {
-  profilePromise: ProfilePromise;
+  userId: string;
+  activityPeriod: CreatorActivityPeriod;
 }) {
-  const { data } = await profilePromise;
+  const { data, error } = await safeQueryOrNull(
+    () => getCreatorActivitySeries(userId, activityPeriod),
+    "creator-hub.creators.activitySeries",
+    45_000,
+  );
 
-  // REAL totals we have today (house-POV colors). The 3-day momentum figures
-  // aren't on this aggregate, so we surface the lifetime wager + funnel
-  // counts the aggregate DOES carry. Deposits has no lifetime figure on this
-  // read, so it's omitted rather than fabricated.
+  const totals = data?.totals;
+  const ggrPositive = (totals?.ggrUsd ?? 0) > 0;
+  const ggrNegative = (totals?.ggrUsd ?? 0) < 0;
+
   const chips = data
     ? [
         {
-          label: "Signups",
-          value: formatNumber(data.signups.total),
-          colorClass: "text-blue-600 dark:text-blue-400",
-        },
-        {
-          label: "FTDs",
-          value: formatNumber(data.ftdCount),
-          colorClass: "text-cyan-600 dark:text-cyan-400",
-        },
-        {
-          label: "Wager (all-time)",
-          value: formatCurrency(data.totalWagerVolumeUsd),
+          label: "Wager",
+          value: formatCurrency(totals?.wagerUsd ?? 0),
           colorClass: "text-emerald-600 dark:text-emerald-400",
         },
         {
-          label: "Active affi (7d)",
-          value: formatNumber(data.activeReferrals7d),
-          colorClass: "text-amber-600 dark:text-amber-400",
+          label: "Deposits",
+          value: formatCurrency(totals?.depositsUsd ?? 0),
+          colorClass: "text-teal-600 dark:text-teal-400",
+        },
+        {
+          label: "GGR",
+          value: formatCurrency(totals?.ggrUsd ?? 0),
+          colorClass: ggrPositive
+            ? "text-emerald-600 dark:text-emerald-400"
+            : ggrNegative
+              ? "text-rose-600 dark:text-rose-400"
+              : "text-muted-foreground",
         },
       ]
     : [
-        { label: "Signups", value: "—", colorClass: "text-muted-foreground" },
-        { label: "FTDs", value: "—", colorClass: "text-muted-foreground" },
-        {
-          label: "Wager (all-time)",
-          value: "—",
-          colorClass: "text-muted-foreground",
-        },
-        {
-          label: "Active affi (7d)",
-          value: "—",
-          colorClass: "text-muted-foreground",
-        },
+        { label: "Wager", value: "—", colorClass: "text-muted-foreground" },
+        { label: "Deposits", value: "—", colorClass: "text-muted-foreground" },
+        { label: "GGR", value: "—", colorClass: "text-muted-foreground" },
       ];
+
+  const series =
+    data?.series.map((p) => ({
+      label: p.label,
+      wagerUsd: p.wagerUsd,
+      depositsUsd: p.depositsUsd,
+      ggrUsd: p.ggrUsd,
+    })) ?? [];
 
   return (
     <ActivityChart
       headlineChips={chips}
-      placeholderNote="Per-creator sign-ups / FTDs / wager / deposits time-series not wired yet — totals above are live."
+      series={series}
+      periodControl={<ActivityPeriodControl current={activityPeriod} />}
+      emptyNote={
+        error
+          ? "Activity time-series timed out — refresh to retry."
+          : undefined
+      }
     />
   );
 }
+
+/** Parse `?activityPeriod=` for the Overview activity chart (7d / 30d / 90d). */
+export { parseCreatorActivityPeriod };
 
 // ── Suspense fallbacks ───────────────────────────────────────────────
 
@@ -204,8 +233,8 @@ function ActivityChartSkeleton() {
   return (
     <Card size="sm" className="space-y-3 p-4 sm:p-5">
       <Skeleton className="h-5 w-24" />
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {[0, 1, 2].map((i) => (
           <Skeleton key={i} className="h-14 w-full rounded-lg" />
         ))}
       </div>

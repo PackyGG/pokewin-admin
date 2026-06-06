@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ExternalLink, HandCoins, Plus } from "lucide-react";
+import { ExternalLink, HandCoins } from "lucide-react";
 
 import { SectionHeading } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 // Reuse the EXISTING backend deal read from the (admin) creators group.
 import { getCreatorDealData } from "../../../../../(admin)/creators/[userId]/_queries/get-creator-deal-data";
 import type { CreatorDealResponse } from "@/lib/backend-api";
-import { LinkButton } from "./link-button";
+import { NewDealDialog } from "./new-deal-dialog";
 
 /**
  * Deal card (left half of the Overview "Deal | Affiliate Leaderboards" row).
@@ -22,9 +22,8 @@ import { LinkButton } from "./link-button";
  * cap (used / total), conversion rate, tip + sponsor caps, leaderboard
  * allowances. Picks the active deal if one exists, else the most recent.
  *
- * "New Deal" links to the EXISTING create-deal flow on the original creator
- * detail page (`/creators/[userId]` deals tab) for now — the redesigned
- * in-Hub dialog is a later wave. Nothing fabricated: a creator with no deal
+ * "New Deal" opens the hub-native create dialog (reuses admin server
+ * actions). Nothing fabricated: a creator with no deal
  * shows a clean empty state; a backend outage shows a degraded note.
  *
  * Streamed in its own Suspense boundary from the Overview tab.
@@ -66,17 +65,12 @@ function DealTerm({
 }
 
 export async function DealCard({ userId }: { userId: string }) {
-  const newDealHref = `/creators/${userId}?tab=deals`;
+  const manageDealsHref = `/creator-hub/creators/${userId}`;
   const heading = (
     <SectionHeading
       icon={HandCoins}
       title="Deal"
-      action={
-        <LinkButton href={newDealHref}>
-          <Plus className="mr-1 size-3.5" />
-          New Deal
-        </LinkButton>
-      }
+      action={<NewDealDialog userId={userId} />}
     />
   );
 
@@ -226,7 +220,7 @@ export async function DealCard({ userId }: { userId: string }) {
           </div>
 
           <Link
-            href={newDealHref}
+            href={manageDealsHref}
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
             Manage deals

@@ -76,6 +76,8 @@ export type RosterCreator = {
   lifetimePnlUsd: number | null;
   /** Composed full deal value (cap + LB×house% + tip + sponsor). null when none. */
   dealValue: CreatorDealValue | null;
+  /** True on the Past tab — role-removed / canceled ex-creators. */
+  isPastCreator?: boolean;
 };
 
 export type RosterResult = {
@@ -104,7 +106,7 @@ async function walkAllCreators(): Promise<CreatorListItem[]> {
  * fall through to username) so the order is deterministic. The metric maps
  * are threaded in so the comparator reads pre-merged values.
  */
-function sortRoster(
+export function sortRoster(
   rows: RosterCreator[],
   sortBy: RosterSortMode,
 ): RosterCreator[] {

@@ -11,6 +11,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 // — not editing — them, the same cross-group reuse the Hub dashboard does.
 import { MaskedEmail } from "../../../../../(admin)/creators/[userId]/masked-email";
 import { getCreatorHeaderSocials } from "../../../../../(admin)/creators/[userId]/_queries/header-socials";
+import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
 
 import { SocialButtons } from "./social-buttons";
 
@@ -28,11 +29,8 @@ import { SocialButtons } from "./social-buttons";
  * thin admin-DB read (`getCreatorHeaderSocials`) so they never block the
  * banner text.
  *
- * NOTE on the Discord channel link: the plan stores a per-creator Discord
- * channel URL in the admin DB (added on creation, a later wave). That column
- * does not exist yet, so `discordChannelUrl` is null here and the
- * Discord-channel button renders in its disabled "not set" state — no
- * fabricated URL.
+ * Discord channel link is read from `creator_socials.discord_channel_url`
+ * (admin DB) and passed to `SocialButtons`.
  */
 
 export type CreatorBannerHeader = {
@@ -115,13 +113,17 @@ export function CreatorBanner({ header }: { header: CreatorBannerHeader }) {
 }
 
 async function BannerSocials({ userId }: { userId: string }) {
-  const socials = await getCreatorHeaderSocials(userId).catch(() => []);
+  const [socials, urls] = await Promise.all([
+    getCreatorHeaderSocials(userId).catch(() => []),
+    getCreatorSocialUrls(userId).catch(() => ({
+      discordChannelUrl: null,
+      rewardPageUrl: null,
+    })),
+  ]);
   return (
     <SocialButtons
       socials={socials}
-      // Per-creator Discord channel link is not stored yet (admin-DB column
-      // lands in a later wave) → null renders the disabled "not set" button.
-      discordChannelUrl={null}
+      discordChannelUrl={urls.discordChannelUrl}
     />
   );
 }

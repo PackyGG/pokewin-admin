@@ -12,7 +12,7 @@ import {
   Sparkles,
 } from "lucide-react";
 
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import {
   PageHero,
   PageHeroIdentity,
@@ -28,6 +28,7 @@ import {
 import { formatCurrency, formatNumber, formatCompactUsd } from "@/lib/utils/format";
 
 import { HubQuickTools } from "./_components/hub-quick-tools";
+import { HubCreatorCheckWidget } from "./_components/hub-creator-check-widget";
 import { HubKpiBox } from "./_components/hub-kpi-box";
 import { HubTopCreators } from "./_components/hub-top-creators";
 import { HubChartCard } from "./_components/hub-chart-card";
@@ -46,9 +47,8 @@ export const metadata = { title: "Creator Hub" };
  *   3. Overview KPI boxes (house-POV colors).
  *   4. 3-up row: Top Creators (ranked) + Wager chart + Deposits chart.
  *
- * ACCESS: admin + creator_manager only (the layout enforces it; this page
- * adds the explicit DAL gate too — every protected page gates server-side
- * first per the house convention).
+ * ACCESS: `canAccessCreatorHub` (the layout enforces it; this page adds the
+ * explicit gate too — every protected page gates server-side first).
  *
  * ACTIVE-TIMEFRAME-ONLY: the period selector defaults to 24h; the data
  * section is wrapped in a Suspense boundary keyed on `period`, so only the
@@ -60,7 +60,7 @@ export default async function CreatorHubDashboardPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requireRole(["admin", "creator_manager"]);
+  await requireCreatorHubPageAccess();
 
   const period = parseDashboardPeriod((await searchParams).period);
   const windowLabel = DASHBOARD_PERIOD_LABELS[period].toLowerCase();
@@ -79,6 +79,8 @@ export default async function CreatorHubDashboardPage({
 
       {/* Quick tools */}
       <HubQuickTools />
+
+      <HubCreatorCheckWidget />
 
       {/* Overview — window selector + KPI boxes + 3-up row. The whole
           data-bearing block is keyed on `period` so only the active window
@@ -107,10 +109,8 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
     <FadeIn className="space-y-4">
       {/* KPI boxes — house-POV colors:
             • blue   = neutral count (creators / live / signups / FTDs)
-            • emerald = house gain (affiliate wager / deposits)
-            • rose   = house cost (creator cost)
-          The four figures with no real windowed query render the honest
-          em-dash placeholder (no fabricated numbers). */}
+            • emerald = house gain (affiliate wager / deposits / GGR)
+            • rose   = house cost (creator cost) */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <HubKpiBox
           label="Total Creators"
@@ -139,9 +139,13 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           label={`Creator Cost · ${period}`}
           icon={Coins}
           accent="rose"
-          value="—"
-          placeholder
-          placeholderNote="Windowed cost query pending"
+          value={
+            data.creatorCostUsd != null
+              ? formatCurrency(data.creatorCostUsd)
+              : "—"
+          }
+          sub={`withdrawals + tips + LB · ${windowLabel}`}
+          placeholder={data.creatorCostUsd == null}
         />
         <HubKpiBox
           label="Live Now"
@@ -159,25 +163,31 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           label={`Sign-ups · ${period}`}
           icon={UserPlus}
           accent="blue"
-          value="—"
-          placeholder
-          placeholderNote="Windowed signup query pending"
+          value={
+            data.signups != null ? formatNumber(data.signups) : "—"
+          }
+          sub={`referred by creators · ${windowLabel}`}
+          placeholder={data.signups == null}
         />
         <HubKpiBox
           label={`New FTDs · ${period}`}
           icon={Check}
           accent="blue"
-          value="—"
-          placeholder
-          placeholderNote="Windowed FTD query pending"
+          value={data.ftds != null ? formatNumber(data.ftds) : "—"}
+          sub={`code-attributed depositors · ${windowLabel}`}
+          placeholder={data.ftds == null}
         />
         <HubKpiBox
           label={`Deposits · ${period}`}
           icon={ArrowDownToLine}
           accent="emerald"
-          value="—"
-          placeholder
-          placeholderNote="Windowed deposits query pending"
+          value={
+            data.depositsUsd != null
+              ? formatCurrency(data.depositsUsd)
+              : "—"
+          }
+          sub={`coverage-attributed · ${windowLabel}`}
+          placeholder={data.depositsUsd == null}
         />
         {/* Net Code-User GGR — a real bonus figure from the same windowed
             pass (house POV). Emerald when the cohort net-lost to us; we
@@ -210,8 +220,6 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           <HubTopCreators creators={data.topCreators} />
         </div>
 
-        {/* Wager chart — headline is the REAL windowed cohort wager total;
-            the per-hour series isn't wired yet (honest placeholder body). */}
         <HubChartCard
           title="Wager"
           headline={
@@ -219,15 +227,17 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
               ? formatCompactUsd(data.affiliateWagerUsd)
               : null
           }
-          placeholderNote="Hourly breakdown not wired yet — total above is live."
+          series={data.wagerSeries}
         />
 
-        {/* Deposits chart — no real windowed deposits figure yet, so both
-            the headline and the series are honest placeholders. */}
         <HubChartCard
           title="Deposits"
-          headline={null}
-          placeholderNote="Windowed deposits query pending."
+          headline={
+            data.depositsUsd != null
+              ? formatCompactUsd(data.depositsUsd)
+              : null
+          }
+          series={data.depositSeries}
         />
       </div>
     </FadeIn>

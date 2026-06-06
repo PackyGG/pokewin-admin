@@ -209,7 +209,12 @@ async function CreatorMetadataTabContent({ userId }: { userId: string }) {
       {/* ── Social links editor ───────────────────────────────────────── */}
       <div className="space-y-3">
         <SectionHeading icon={Link2} title="Social links" />
-        <SocialLinksEditor userId={meta.userId} initialSocials={editorSocials} />
+        <SocialLinksEditor
+          userId={meta.userId}
+          initialSocials={editorSocials}
+          initialDiscordChannelUrl={meta.discordChannelUrl}
+          initialRewardPageUrl={meta.rewardPageUrl}
+        />
 
         {/* Read-only summary of ANY other linked platforms the editor above
             doesn't manage (youtube / instagram), so they're still visible. */}

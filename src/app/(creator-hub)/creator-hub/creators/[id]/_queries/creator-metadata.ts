@@ -2,6 +2,7 @@ import "server-only";
 
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
+import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
 
 /**
  * Data layer for the `creators/[id]` **Creator (metadata)** tab.
@@ -18,8 +19,7 @@ import { adminDb } from "@/lib/admin-db";
  *     show which manager onboarded them.
  *
  * Nothing here writes anything; the MAIN reads are plain SELECTs. No data is
- * fabricated — a field we don't have (e.g. a stored Reward-page URL, which
- * has no column today) is simply omitted / returned null, never guessed.
+ * fabricated — missing admin-DB fields are returned null, never guessed.
  *
  * LAZY: this runs only when the Creator tab is opened (the tab is its own
  * keyed Suspense boundary on the detail page), per the active-tab-only rule.
@@ -71,6 +71,10 @@ export type CreatorMetadata = {
   affiliateCodeActive: boolean;
   // Linked socials (admin DB)
   socials: CreatorSocialRow[];
+  /** Discord server/channel deep-link (admin DB `creator_socials`). */
+  discordChannelUrl: string | null;
+  /** Creator reward-page URL (admin DB `creator_socials`). */
+  rewardPageUrl: string | null;
   // Who onboarded them (admin audit)
   onboardedBy: OnboardedBy | null;
 };
@@ -128,7 +132,7 @@ export async function getCreatorMetadata(
   }
 
   // ── ADMIN: socials + the onboarding audit event, in parallel.
-  const [socials, madeCreatorEvent] = await Promise.all([
+  const [socials, socialUrls, madeCreatorEvent] = await Promise.all([
     adminDb.creator_socials.findMany({
       where: { target_user_id: userId },
       orderBy: { platform: "asc" },
@@ -141,6 +145,10 @@ export async function getCreatorMetadata(
         last_fetched_at: true,
       },
     }),
+    getCreatorSocialUrls(userId).catch(() => ({
+      discordChannelUrl: null,
+      rewardPageUrl: null,
+    })),
     // The earliest `user_made_creator` event for this target = the initial
     // onboarding. Joined to the acting admin so we can name the manager.
     // `admin_user` is a nullable relation (the actor may have been deleted),
@@ -200,6 +208,8 @@ export async function getCreatorMetadata(
       subscriberCount: s.subscriber_count,
       lastFetchedAt: s.last_fetched_at?.toISOString() ?? null,
     })),
+    discordChannelUrl: socialUrls.discordChannelUrl,
+    rewardPageUrl: socialUrls.rewardPageUrl,
     onboardedBy,
   };
 }

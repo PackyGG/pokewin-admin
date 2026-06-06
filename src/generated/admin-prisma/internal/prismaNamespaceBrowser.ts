@@ -55,6 +55,7 @@ export const ModelName = {
   admin_giveaway_actions: 'admin_giveaway_actions',
   admin_user_tags: 'admin_user_tags',
   excluded_users: 'excluded_users',
+  admin_excluded_user_balance_v2: 'admin_excluded_user_balance_v2',
   admin_roles: 'admin_roles',
   admin_sessions: 'admin_sessions',
   admin_notes: 'admin_notes',
@@ -84,7 +85,17 @@ export const ModelName = {
   admin_account_wipes: 'admin_account_wipes',
   admin_balance_adjustment_meta: 'admin_balance_adjustment_meta',
   admin_leaderboard_sponsorship: 'admin_leaderboard_sponsorship',
-  admin_changelog_entries: 'admin_changelog_entries'
+  admin_leaderboard_creator_paid: 'admin_leaderboard_creator_paid',
+  admin_changelog_entries: 'admin_changelog_entries',
+  kick_profiles: 'kick_profiles',
+  kick_streams: 'kick_streams',
+  twitter_profiles: 'twitter_profiles',
+  tweets: 'tweets',
+  twitter_mentions: 'twitter_mentions',
+  creator_onboarding_checklist: 'creator_onboarding_checklist',
+  creator_crm: 'creator_crm',
+  creator_alerts: 'creator_alerts',
+  creator_session_meta: 'creator_session_meta'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -162,6 +173,17 @@ export const Excluded_usersScalarFieldEnum = {
 } as const
 
 export type Excluded_usersScalarFieldEnum = (typeof Excluded_usersScalarFieldEnum)[keyof typeof Excluded_usersScalarFieldEnum]
+
+
+export const Admin_excluded_user_balance_v2ScalarFieldEnum = {
+  target_user_id: 'target_user_id',
+  balance_v2: 'balance_v2',
+  set_by_admin_id: 'set_by_admin_id',
+  set_at: 'set_at',
+  notes: 'notes'
+} as const
+
+export type Admin_excluded_user_balance_v2ScalarFieldEnum = (typeof Admin_excluded_user_balance_v2ScalarFieldEnum)[keyof typeof Admin_excluded_user_balance_v2ScalarFieldEnum]
 
 
 export const Admin_rolesScalarFieldEnum = {
@@ -290,6 +312,8 @@ export const Creator_socialsScalarFieldEnum = {
   platform: 'platform',
   platform_user_id: 'platform_user_id',
   username: 'username',
+  discord_channel_url: 'discord_channel_url',
+  reward_page_url: 'reward_page_url',
   access_token: 'access_token',
   refresh_token: 'refresh_token',
   token_expires_at: 'token_expires_at',
@@ -545,6 +569,7 @@ export const Admin_balance_adjustment_wipesScalarFieldEnum = {
   balance_after: 'balance_after',
   adjustment_count: 'adjustment_count',
   snapshot: 'snapshot',
+  status: 'status',
   restored_at: 'restored_at',
   restored_by: 'restored_by'
 } as const
@@ -563,6 +588,7 @@ export const Admin_account_wipesScalarFieldEnum = {
   amount: 'amount',
   item_count: 'item_count',
   snapshot: 'snapshot',
+  status: 'status',
   restored_at: 'restored_at',
   restored_by: 'restored_by'
 } as const
@@ -601,6 +627,19 @@ export const Admin_leaderboard_sponsorshipScalarFieldEnum = {
 export type Admin_leaderboard_sponsorshipScalarFieldEnum = (typeof Admin_leaderboard_sponsorshipScalarFieldEnum)[keyof typeof Admin_leaderboard_sponsorshipScalarFieldEnum]
 
 
+export const Admin_leaderboard_creator_paidScalarFieldEnum = {
+  id: 'id',
+  leaderboard_id: 'leaderboard_id',
+  paid: 'paid',
+  paid_at: 'paid_at',
+  set_by_admin_id: 'set_by_admin_id',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Admin_leaderboard_creator_paidScalarFieldEnum = (typeof Admin_leaderboard_creator_paidScalarFieldEnum)[keyof typeof Admin_leaderboard_creator_paidScalarFieldEnum]
+
+
 export const Admin_changelog_entriesScalarFieldEnum = {
   id: 'id',
   published_at: 'published_at',
@@ -615,6 +654,171 @@ export const Admin_changelog_entriesScalarFieldEnum = {
 } as const
 
 export type Admin_changelog_entriesScalarFieldEnum = (typeof Admin_changelog_entriesScalarFieldEnum)[keyof typeof Admin_changelog_entriesScalarFieldEnum]
+
+
+export const Kick_profilesScalarFieldEnum = {
+  id: 'id',
+  username: 'username',
+  kick_user_id: 'kick_user_id',
+  display_name: 'display_name',
+  avatar_url: 'avatar_url',
+  bio: 'bio',
+  follower_count: 'follower_count',
+  is_verified: 'is_verified',
+  is_live: 'is_live',
+  raw_json: 'raw_json',
+  last_fetched_at: 'last_fetched_at',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Kick_profilesScalarFieldEnum = (typeof Kick_profilesScalarFieldEnum)[keyof typeof Kick_profilesScalarFieldEnum]
+
+
+export const Kick_streamsScalarFieldEnum = {
+  id: 'id',
+  username: 'username',
+  kick_stream_id: 'kick_stream_id',
+  title: 'title',
+  category: 'category',
+  thumbnail_url: 'thumbnail_url',
+  started_at: 'started_at',
+  ended_at: 'ended_at',
+  duration_seconds: 'duration_seconds',
+  vod_views: 'vod_views',
+  peak_viewers: 'peak_viewers',
+  vod_url: 'vod_url',
+  raw_json: 'raw_json',
+  last_fetched_at: 'last_fetched_at',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Kick_streamsScalarFieldEnum = (typeof Kick_streamsScalarFieldEnum)[keyof typeof Kick_streamsScalarFieldEnum]
+
+
+export const Twitter_profilesScalarFieldEnum = {
+  id: 'id',
+  username: 'username',
+  twitter_user_id: 'twitter_user_id',
+  display_name: 'display_name',
+  avatar_url: 'avatar_url',
+  bio: 'bio',
+  follower_count: 'follower_count',
+  following_count: 'following_count',
+  tweet_count: 'tweet_count',
+  is_verified: 'is_verified',
+  raw_json: 'raw_json',
+  last_fetched_at: 'last_fetched_at',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Twitter_profilesScalarFieldEnum = (typeof Twitter_profilesScalarFieldEnum)[keyof typeof Twitter_profilesScalarFieldEnum]
+
+
+export const TweetsScalarFieldEnum = {
+  id: 'id',
+  username: 'username',
+  tweet_id: 'tweet_id',
+  text: 'text',
+  like_count: 'like_count',
+  retweet_count: 'retweet_count',
+  reply_count: 'reply_count',
+  view_count: 'view_count',
+  mentions_us: 'mentions_us',
+  url: 'url',
+  posted_at: 'posted_at',
+  raw_json: 'raw_json',
+  last_fetched_at: 'last_fetched_at',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type TweetsScalarFieldEnum = (typeof TweetsScalarFieldEnum)[keyof typeof TweetsScalarFieldEnum]
+
+
+export const Twitter_mentionsScalarFieldEnum = {
+  id: 'id',
+  username: 'username',
+  tweet_id: 'tweet_id',
+  text: 'text',
+  matched_keyword: 'matched_keyword',
+  url: 'url',
+  posted_at: 'posted_at',
+  last_fetched_at: 'last_fetched_at',
+  raw_json: 'raw_json',
+  created_at: 'created_at'
+} as const
+
+export type Twitter_mentionsScalarFieldEnum = (typeof Twitter_mentionsScalarFieldEnum)[keyof typeof Twitter_mentionsScalarFieldEnum]
+
+
+export const Creator_onboarding_checklistScalarFieldEnum = {
+  id: 'id',
+  target_user_id: 'target_user_id',
+  lb_funds_collected: 'lb_funds_collected',
+  lb_funds_collected_at: 'lb_funds_collected_at',
+  twitter_giveaway_done: 'twitter_giveaway_done',
+  twitter_giveaway_url: 'twitter_giveaway_url',
+  streaming_assets_provided: 'streaming_assets_provided',
+  lb_prepaid_coin: 'lb_prepaid_coin',
+  lb_prepaid_tx_url: 'lb_prepaid_tx_url',
+  completed_at: 'completed_at',
+  updated_by: 'updated_by',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Creator_onboarding_checklistScalarFieldEnum = (typeof Creator_onboarding_checklistScalarFieldEnum)[keyof typeof Creator_onboarding_checklistScalarFieldEnum]
+
+
+export const Creator_crmScalarFieldEnum = {
+  id: 'id',
+  target_user_id: 'target_user_id',
+  account_owner_id: 'account_owner_id',
+  stage: 'stage',
+  onboarded_by: 'onboarded_by',
+  onboarded_at: 'onboarded_at',
+  next_followup_at: 'next_followup_at',
+  updated_by: 'updated_by',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Creator_crmScalarFieldEnum = (typeof Creator_crmScalarFieldEnum)[keyof typeof Creator_crmScalarFieldEnum]
+
+
+export const Creator_alertsScalarFieldEnum = {
+  id: 'id',
+  target_user_id: 'target_user_id',
+  alert_type: 'alert_type',
+  dedupe_key: 'dedupe_key',
+  severity: 'severity',
+  metadata: 'metadata',
+  read_at: 'read_at',
+  read_by: 'read_by',
+  dismissed_at: 'dismissed_at',
+  dismissed_by: 'dismissed_by',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Creator_alertsScalarFieldEnum = (typeof Creator_alertsScalarFieldEnum)[keyof typeof Creator_alertsScalarFieldEnum]
+
+
+export const Creator_session_metaScalarFieldEnum = {
+  id: 'id',
+  session_id: 'session_id',
+  target_user_id: 'target_user_id',
+  kick_vod_url: 'kick_vod_url',
+  notes: 'notes',
+  updated_by: 'updated_by',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Creator_session_metaScalarFieldEnum = (typeof Creator_session_metaScalarFieldEnum)[keyof typeof Creator_session_metaScalarFieldEnum]
 
 
 export const SortOrder = {

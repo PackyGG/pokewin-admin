@@ -283,6 +283,7 @@ export type admin_usersWhereInput = {
   salary_employees?: Prisma.Salary_employeesListRelationFilter
   salary_payouts?: Prisma.Salary_payoutsListRelationFilter
   excluded_users?: Prisma.Excluded_usersListRelationFilter
+  excluded_user_balances_v2?: Prisma.Admin_excluded_user_balance_v2ListRelationFilter
   giveaway_actions?: Prisma.Admin_giveaway_actionsListRelationFilter
   user_tags?: Prisma.Admin_user_tagsListRelationFilter
 }
@@ -319,6 +320,7 @@ export type admin_usersOrderByWithRelationInput = {
   salary_employees?: Prisma.salary_employeesOrderByRelationAggregateInput
   salary_payouts?: Prisma.salary_payoutsOrderByRelationAggregateInput
   excluded_users?: Prisma.excluded_usersOrderByRelationAggregateInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2OrderByRelationAggregateInput
   giveaway_actions?: Prisma.admin_giveaway_actionsOrderByRelationAggregateInput
   user_tags?: Prisma.admin_user_tagsOrderByRelationAggregateInput
 }
@@ -358,6 +360,7 @@ export type admin_usersWhereUniqueInput = Prisma.AtLeast<{
   salary_employees?: Prisma.Salary_employeesListRelationFilter
   salary_payouts?: Prisma.Salary_payoutsListRelationFilter
   excluded_users?: Prisma.Excluded_usersListRelationFilter
+  excluded_user_balances_v2?: Prisma.Admin_excluded_user_balance_v2ListRelationFilter
   giveaway_actions?: Prisma.Admin_giveaway_actionsListRelationFilter
   user_tags?: Prisma.Admin_user_tagsListRelationFilter
 }, "id" | "email" | "username">
@@ -441,6 +444,7 @@ export type admin_usersCreateInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -476,6 +480,7 @@ export type admin_usersUncheckedCreateInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -511,6 +516,7 @@ export type admin_usersUpdateInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -546,6 +552,7 @@ export type admin_usersUncheckedUpdateInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -796,6 +803,20 @@ export type admin_usersUpdateOneRequiredWithoutExcluded_usersNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.admin_usersUpdateToOneWithWhereWithoutExcluded_usersInput, Prisma.admin_usersUpdateWithoutExcluded_usersInput>, Prisma.admin_usersUncheckedUpdateWithoutExcluded_usersInput>
 }
 
+export type admin_usersCreateNestedOneWithoutExcluded_user_balances_v2Input = {
+  create?: Prisma.XOR<Prisma.admin_usersCreateWithoutExcluded_user_balances_v2Input, Prisma.admin_usersUncheckedCreateWithoutExcluded_user_balances_v2Input>
+  connectOrCreate?: Prisma.admin_usersCreateOrConnectWithoutExcluded_user_balances_v2Input
+  connect?: Prisma.admin_usersWhereUniqueInput
+}
+
+export type admin_usersUpdateOneRequiredWithoutExcluded_user_balances_v2NestedInput = {
+  create?: Prisma.XOR<Prisma.admin_usersCreateWithoutExcluded_user_balances_v2Input, Prisma.admin_usersUncheckedCreateWithoutExcluded_user_balances_v2Input>
+  connectOrCreate?: Prisma.admin_usersCreateOrConnectWithoutExcluded_user_balances_v2Input
+  upsert?: Prisma.admin_usersUpsertWithoutExcluded_user_balances_v2Input
+  connect?: Prisma.admin_usersWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.admin_usersUpdateToOneWithWhereWithoutExcluded_user_balances_v2Input, Prisma.admin_usersUpdateWithoutExcluded_user_balances_v2Input>, Prisma.admin_usersUncheckedUpdateWithoutExcluded_user_balances_v2Input>
+}
+
 export type admin_usersCreateNestedManyWithoutCustom_roleInput = {
   create?: Prisma.XOR<Prisma.admin_usersCreateWithoutCustom_roleInput, Prisma.admin_usersUncheckedCreateWithoutCustom_roleInput> | Prisma.admin_usersCreateWithoutCustom_roleInput[] | Prisma.admin_usersUncheckedCreateWithoutCustom_roleInput[]
   connectOrCreate?: Prisma.admin_usersCreateOrConnectWithoutCustom_roleInput | Prisma.admin_usersCreateOrConnectWithoutCustom_roleInput[]
@@ -1025,6 +1046,7 @@ export type admin_usersCreateWithoutGiveaway_actionsInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
 
@@ -1059,6 +1081,7 @@ export type admin_usersUncheckedCreateWithoutGiveaway_actionsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
 
@@ -1109,6 +1132,7 @@ export type admin_usersUpdateWithoutGiveaway_actionsInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
 
@@ -1143,6 +1167,7 @@ export type admin_usersUncheckedUpdateWithoutGiveaway_actionsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
 
@@ -1177,6 +1202,7 @@ export type admin_usersCreateWithoutUser_tagsInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
 }
 
@@ -1211,6 +1237,7 @@ export type admin_usersUncheckedCreateWithoutUser_tagsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
 
@@ -1261,6 +1288,7 @@ export type admin_usersUpdateWithoutUser_tagsInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
 }
 
@@ -1295,6 +1323,7 @@ export type admin_usersUncheckedUpdateWithoutUser_tagsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
 
@@ -1328,6 +1357,7 @@ export type admin_usersCreateWithoutExcluded_usersInput = {
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -1362,6 +1392,7 @@ export type admin_usersUncheckedCreateWithoutExcluded_usersInput = {
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -1412,6 +1443,7 @@ export type admin_usersUpdateWithoutExcluded_usersInput = {
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -1446,6 +1478,163 @@ export type admin_usersUncheckedUpdateWithoutExcluded_usersInput = {
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
+  giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
+}
+
+export type admin_usersCreateWithoutExcluded_user_balances_v2Input = {
+  id?: string
+  email: string
+  username: string
+  password_hash: string
+  role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
+  totp_secret?: string | null
+  totp_enabled?: boolean
+  recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
+  is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  created_at?: Date | string
+  updated_at?: Date | string
+  allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesCreateNestedOneWithoutAdmin_usersInput
+  audit_events?: Prisma.admin_audit_eventsCreateNestedManyWithoutAdmin_userInput
+  sessions?: Prisma.admin_sessionsCreateNestedManyWithoutAdmin_userInput
+  notes?: Prisma.admin_notesCreateNestedManyWithoutAdmin_userInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsCreateNestedManyWithoutAdmin_userInput
+  voucher_actions?: Prisma.admin_voucher_actionsCreateNestedManyWithoutAdmin_userInput
+  expenses?: Prisma.expensesCreateNestedManyWithoutCreated_byInput
+  recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
+  shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
+  shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
+  excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
+  user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
+}
+
+export type admin_usersUncheckedCreateWithoutExcluded_user_balances_v2Input = {
+  id?: string
+  email: string
+  username: string
+  password_hash: string
+  role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
+  role_id?: string | null
+  totp_secret?: string | null
+  totp_enabled?: boolean
+  recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
+  is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  created_at?: Date | string
+  updated_at?: Date | string
+  allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  audit_events?: Prisma.admin_audit_eventsUncheckedCreateNestedManyWithoutAdmin_userInput
+  sessions?: Prisma.admin_sessionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  notes?: Prisma.admin_notesUncheckedCreateNestedManyWithoutAdmin_userInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  voucher_actions?: Prisma.admin_voucher_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  expenses?: Prisma.expensesUncheckedCreateNestedManyWithoutCreated_byInput
+  recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
+  shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
+  shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
+  excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
+}
+
+export type admin_usersCreateOrConnectWithoutExcluded_user_balances_v2Input = {
+  where: Prisma.admin_usersWhereUniqueInput
+  create: Prisma.XOR<Prisma.admin_usersCreateWithoutExcluded_user_balances_v2Input, Prisma.admin_usersUncheckedCreateWithoutExcluded_user_balances_v2Input>
+}
+
+export type admin_usersUpsertWithoutExcluded_user_balances_v2Input = {
+  update: Prisma.XOR<Prisma.admin_usersUpdateWithoutExcluded_user_balances_v2Input, Prisma.admin_usersUncheckedUpdateWithoutExcluded_user_balances_v2Input>
+  create: Prisma.XOR<Prisma.admin_usersCreateWithoutExcluded_user_balances_v2Input, Prisma.admin_usersUncheckedCreateWithoutExcluded_user_balances_v2Input>
+  where?: Prisma.admin_usersWhereInput
+}
+
+export type admin_usersUpdateToOneWithWhereWithoutExcluded_user_balances_v2Input = {
+  where?: Prisma.admin_usersWhereInput
+  data: Prisma.XOR<Prisma.admin_usersUpdateWithoutExcluded_user_balances_v2Input, Prisma.admin_usersUncheckedUpdateWithoutExcluded_user_balances_v2Input>
+}
+
+export type admin_usersUpdateWithoutExcluded_user_balances_v2Input = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  username?: Prisma.StringFieldUpdateOperationsInput | string
+  password_hash?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
+  totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
+  is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesUpdateOneWithoutAdmin_usersNestedInput
+  audit_events?: Prisma.admin_audit_eventsUpdateManyWithoutAdmin_userNestedInput
+  sessions?: Prisma.admin_sessionsUpdateManyWithoutAdmin_userNestedInput
+  notes?: Prisma.admin_notesUpdateManyWithoutAdmin_userNestedInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsUpdateManyWithoutAdmin_userNestedInput
+  voucher_actions?: Prisma.admin_voucher_actionsUpdateManyWithoutAdmin_userNestedInput
+  expenses?: Prisma.expensesUpdateManyWithoutCreated_byNestedInput
+  recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
+  shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
+  shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
+  excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
+  user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
+}
+
+export type admin_usersUncheckedUpdateWithoutExcluded_user_balances_v2Input = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  username?: Prisma.StringFieldUpdateOperationsInput | string
+  password_hash?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
+  role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
+  is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  audit_events?: Prisma.admin_audit_eventsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  sessions?: Prisma.admin_sessionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  notes?: Prisma.admin_notesUncheckedUpdateManyWithoutAdmin_userNestedInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  voucher_actions?: Prisma.admin_voucher_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  expenses?: Prisma.expensesUncheckedUpdateManyWithoutCreated_byNestedInput
+  recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
+  shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
+  shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
+  excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -1480,6 +1669,7 @@ export type admin_usersCreateWithoutCustom_roleInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -1514,6 +1704,7 @@ export type admin_usersUncheckedCreateWithoutCustom_roleInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -1598,6 +1789,7 @@ export type admin_usersCreateWithoutSessionsInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -1632,6 +1824,7 @@ export type admin_usersUncheckedCreateWithoutSessionsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -1682,6 +1875,7 @@ export type admin_usersUpdateWithoutSessionsInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -1716,6 +1910,7 @@ export type admin_usersUncheckedUpdateWithoutSessionsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -1750,6 +1945,7 @@ export type admin_usersCreateWithoutNotesInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -1784,6 +1980,7 @@ export type admin_usersUncheckedCreateWithoutNotesInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -1834,6 +2031,7 @@ export type admin_usersUpdateWithoutNotesInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -1868,6 +2066,7 @@ export type admin_usersUncheckedUpdateWithoutNotesInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -1902,6 +2101,7 @@ export type admin_usersCreateWithoutAudit_eventsInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -1936,6 +2136,7 @@ export type admin_usersUncheckedCreateWithoutAudit_eventsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -1986,6 +2187,7 @@ export type admin_usersUpdateWithoutAudit_eventsInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2020,6 +2222,7 @@ export type admin_usersUncheckedUpdateWithoutAudit_eventsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2054,6 +2257,7 @@ export type admin_usersCreateWithoutGift_card_actionsInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -2088,6 +2292,7 @@ export type admin_usersUncheckedCreateWithoutGift_card_actionsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -2138,6 +2343,7 @@ export type admin_usersUpdateWithoutGift_card_actionsInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2172,6 +2378,7 @@ export type admin_usersUncheckedUpdateWithoutGift_card_actionsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2206,6 +2413,7 @@ export type admin_usersCreateWithoutVoucher_actionsInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -2240,6 +2448,7 @@ export type admin_usersUncheckedCreateWithoutVoucher_actionsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -2290,6 +2499,7 @@ export type admin_usersUpdateWithoutVoucher_actionsInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2324,6 +2534,7 @@ export type admin_usersUncheckedUpdateWithoutVoucher_actionsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2358,6 +2569,7 @@ export type admin_usersCreateWithoutExpensesInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -2392,6 +2604,7 @@ export type admin_usersUncheckedCreateWithoutExpensesInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -2442,6 +2655,7 @@ export type admin_usersUpdateWithoutExpensesInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2476,6 +2690,7 @@ export type admin_usersUncheckedUpdateWithoutExpensesInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2510,6 +2725,7 @@ export type admin_usersCreateWithoutRecurring_expensesInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -2544,6 +2760,7 @@ export type admin_usersUncheckedCreateWithoutRecurring_expensesInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -2594,6 +2811,7 @@ export type admin_usersUpdateWithoutRecurring_expensesInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2628,6 +2846,7 @@ export type admin_usersUncheckedUpdateWithoutRecurring_expensesInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2662,6 +2881,7 @@ export type admin_usersCreateWithoutShifts_createdInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -2696,6 +2916,7 @@ export type admin_usersUncheckedCreateWithoutShifts_createdInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -2746,6 +2967,7 @@ export type admin_usersUpdateWithoutShifts_createdInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2780,6 +3002,7 @@ export type admin_usersUncheckedUpdateWithoutShifts_createdInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2814,6 +3037,7 @@ export type admin_usersCreateWithoutShift_assignmentsInput = {
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -2848,6 +3072,7 @@ export type admin_usersUncheckedCreateWithoutShift_assignmentsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -2898,6 +3123,7 @@ export type admin_usersUpdateWithoutShift_assignmentsInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2932,6 +3158,7 @@ export type admin_usersUncheckedUpdateWithoutShift_assignmentsInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -2966,6 +3193,7 @@ export type admin_usersCreateWithoutSalary_employeesInput = {
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
   salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -3000,6 +3228,7 @@ export type admin_usersUncheckedCreateWithoutSalary_employeesInput = {
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
   salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -3050,6 +3279,7 @@ export type admin_usersUpdateWithoutSalary_employeesInput = {
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -3084,6 +3314,7 @@ export type admin_usersUncheckedUpdateWithoutSalary_employeesInput = {
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -3118,6 +3349,7 @@ export type admin_usersCreateWithoutSalary_payoutsInput = {
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
   salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
   excluded_users?: Prisma.excluded_usersCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2CreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsCreateNestedManyWithoutAdmin_userInput
 }
@@ -3152,6 +3384,7 @@ export type admin_usersUncheckedCreateWithoutSalary_payoutsInput = {
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
   salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
   excluded_users?: Prisma.excluded_usersUncheckedCreateNestedManyWithoutAdmin_userInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedCreateNestedManyWithoutAdmin_userInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
   user_tags?: Prisma.admin_user_tagsUncheckedCreateNestedManyWithoutAdmin_userInput
 }
@@ -3202,6 +3435,7 @@ export type admin_usersUpdateWithoutSalary_payoutsInput = {
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -3236,6 +3470,7 @@ export type admin_usersUncheckedUpdateWithoutSalary_payoutsInput = {
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -3290,6 +3525,7 @@ export type admin_usersUpdateWithoutCustom_roleInput = {
   salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUpdateManyWithoutAdmin_userNestedInput
 }
@@ -3324,6 +3560,7 @@ export type admin_usersUncheckedUpdateWithoutCustom_roleInput = {
   salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
   salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
   excluded_users?: Prisma.excluded_usersUncheckedUpdateManyWithoutAdmin_userNestedInput
+  excluded_user_balances_v2?: Prisma.admin_excluded_user_balance_v2UncheckedUpdateManyWithoutAdmin_userNestedInput
   giveaway_actions?: Prisma.admin_giveaway_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   user_tags?: Prisma.admin_user_tagsUncheckedUpdateManyWithoutAdmin_userNestedInput
 }
@@ -3366,6 +3603,7 @@ export type Admin_usersCountOutputType = {
   salary_employees: number
   salary_payouts: number
   excluded_users: number
+  excluded_user_balances_v2: number
   giveaway_actions: number
   user_tags: number
 }
@@ -3383,6 +3621,7 @@ export type Admin_usersCountOutputTypeSelect<ExtArgs extends runtime.Types.Exten
   salary_employees?: boolean | Admin_usersCountOutputTypeCountSalary_employeesArgs
   salary_payouts?: boolean | Admin_usersCountOutputTypeCountSalary_payoutsArgs
   excluded_users?: boolean | Admin_usersCountOutputTypeCountExcluded_usersArgs
+  excluded_user_balances_v2?: boolean | Admin_usersCountOutputTypeCountExcluded_user_balances_v2Args
   giveaway_actions?: boolean | Admin_usersCountOutputTypeCountGiveaway_actionsArgs
   user_tags?: boolean | Admin_usersCountOutputTypeCountUser_tagsArgs
 }
@@ -3484,6 +3723,13 @@ export type Admin_usersCountOutputTypeCountExcluded_usersArgs<ExtArgs extends ru
 /**
  * Admin_usersCountOutputType without action
  */
+export type Admin_usersCountOutputTypeCountExcluded_user_balances_v2Args<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.admin_excluded_user_balance_v2WhereInput
+}
+
+/**
+ * Admin_usersCountOutputType without action
+ */
 export type Admin_usersCountOutputTypeCountGiveaway_actionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   where?: Prisma.admin_giveaway_actionsWhereInput
 }
@@ -3528,6 +3774,7 @@ export type admin_usersSelect<ExtArgs extends runtime.Types.Extensions.InternalA
   salary_employees?: boolean | Prisma.admin_users$salary_employeesArgs<ExtArgs>
   salary_payouts?: boolean | Prisma.admin_users$salary_payoutsArgs<ExtArgs>
   excluded_users?: boolean | Prisma.admin_users$excluded_usersArgs<ExtArgs>
+  excluded_user_balances_v2?: boolean | Prisma.admin_users$excluded_user_balances_v2Args<ExtArgs>
   giveaway_actions?: boolean | Prisma.admin_users$giveaway_actionsArgs<ExtArgs>
   user_tags?: boolean | Prisma.admin_users$user_tagsArgs<ExtArgs>
   _count?: boolean | Prisma.Admin_usersCountOutputTypeDefaultArgs<ExtArgs>
@@ -3613,6 +3860,7 @@ export type admin_usersInclude<ExtArgs extends runtime.Types.Extensions.Internal
   salary_employees?: boolean | Prisma.admin_users$salary_employeesArgs<ExtArgs>
   salary_payouts?: boolean | Prisma.admin_users$salary_payoutsArgs<ExtArgs>
   excluded_users?: boolean | Prisma.admin_users$excluded_usersArgs<ExtArgs>
+  excluded_user_balances_v2?: boolean | Prisma.admin_users$excluded_user_balances_v2Args<ExtArgs>
   giveaway_actions?: boolean | Prisma.admin_users$giveaway_actionsArgs<ExtArgs>
   user_tags?: boolean | Prisma.admin_users$user_tagsArgs<ExtArgs>
   _count?: boolean | Prisma.Admin_usersCountOutputTypeDefaultArgs<ExtArgs>
@@ -3640,6 +3888,7 @@ export type $admin_usersPayload<ExtArgs extends runtime.Types.Extensions.Interna
     salary_employees: Prisma.$salary_employeesPayload<ExtArgs>[]
     salary_payouts: Prisma.$salary_payoutsPayload<ExtArgs>[]
     excluded_users: Prisma.$excluded_usersPayload<ExtArgs>[]
+    excluded_user_balances_v2: Prisma.$admin_excluded_user_balance_v2Payload<ExtArgs>[]
     giveaway_actions: Prisma.$admin_giveaway_actionsPayload<ExtArgs>[]
     user_tags: Prisma.$admin_user_tagsPayload<ExtArgs>[]
   }
@@ -4069,6 +4318,7 @@ export interface Prisma__admin_usersClient<T, Null = never, ExtArgs extends runt
   salary_employees<T extends Prisma.admin_users$salary_employeesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$salary_employeesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$salary_employeesPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   salary_payouts<T extends Prisma.admin_users$salary_payoutsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$salary_payoutsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$salary_payoutsPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   excluded_users<T extends Prisma.admin_users$excluded_usersArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$excluded_usersArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$excluded_usersPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  excluded_user_balances_v2<T extends Prisma.admin_users$excluded_user_balances_v2Args<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$excluded_user_balances_v2Args<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$admin_excluded_user_balance_v2Payload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   giveaway_actions<T extends Prisma.admin_users$giveaway_actionsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$giveaway_actionsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$admin_giveaway_actionsPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   user_tags<T extends Prisma.admin_users$user_tagsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$user_tagsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$admin_user_tagsPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
@@ -4823,6 +5073,30 @@ export type admin_users$excluded_usersArgs<ExtArgs extends runtime.Types.Extensi
   take?: number
   skip?: number
   distinct?: Prisma.Excluded_usersScalarFieldEnum | Prisma.Excluded_usersScalarFieldEnum[]
+}
+
+/**
+ * admin_users.excluded_user_balances_v2
+ */
+export type admin_users$excluded_user_balances_v2Args<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the admin_excluded_user_balance_v2
+   */
+  select?: Prisma.admin_excluded_user_balance_v2Select<ExtArgs> | null
+  /**
+   * Omit specific fields from the admin_excluded_user_balance_v2
+   */
+  omit?: Prisma.admin_excluded_user_balance_v2Omit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.admin_excluded_user_balance_v2Include<ExtArgs> | null
+  where?: Prisma.admin_excluded_user_balance_v2WhereInput
+  orderBy?: Prisma.admin_excluded_user_balance_v2OrderByWithRelationInput | Prisma.admin_excluded_user_balance_v2OrderByWithRelationInput[]
+  cursor?: Prisma.admin_excluded_user_balance_v2WhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.Admin_excluded_user_balance_v2ScalarFieldEnum | Prisma.Admin_excluded_user_balance_v2ScalarFieldEnum[]
 }
 
 /**

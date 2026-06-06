@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import {
   refetchTwitterProfile,
   refetchLatestTweets,
@@ -22,8 +22,7 @@ import {
  * there is no loop/poll. The `scanBrandMentions` call reuses the same tweets
  * cache the `refetchLatestTweets` call just warmed, so it adds no extra API hit.
  *
- * SECURITY: gated to the Hub's access set (admin / creator_manager) — redirects
- * on failure, same as every protected action. The RapidAPI key is read
+ * SECURITY: gated with `requireCreatorHubAccess` (the Hub's access rule). The RapidAPI key is read
  * server-only inside the integration and never returned. MAIN/prod DB is never
  * touched (the handle + cache are ADMIN-DB only).
  *
@@ -34,7 +33,7 @@ export async function refetchTwitterTab(
   userId: string,
   handle: string,
 ): Promise<void> {
-  await requireRole(["admin", "creator_manager"]);
+  await requireCreatorHubAccess();
 
   const trimmed = handle?.trim();
   if (!userId) throw new Error("Missing creator id");

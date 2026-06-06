@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { adminDb } from "@/lib/admin-db";
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 import {
@@ -15,11 +15,10 @@ import {
 /**
  * Per-creator Onboarding Checklist — manager actions for the MANUAL items.
  *
- * Gate: every mutation runs `requireRole(['admin','creator_manager'])` — the
- * SAME access set the rest of the Creator-Hub `creators/[id]` tab actions use
- * (`creator-tab-actions.ts`). `requireRole` re-verifies the session and reads
- * the live role/active flag from the ADMIN DB, then redirects on failure — the
- * client identity is never trusted.
+ * Gate: every mutation runs `requireCreatorHubAccess` — the SAME access rule
+ * the rest of the Creator-Hub `creators/[id]` tab actions use
+ * (`creator-tab-actions.ts`). Re-verifies the session and reads the live
+ * role/active flag from the ADMIN DB — the client identity is never trusted.
  *
  * Writes: ADMIN DB ONLY (`creator_onboarding_checklist`). MAIN/prod game DB is
  * never touched here. Each mutation is audit-logged via `createAdminAuditEvent`
@@ -93,11 +92,10 @@ export async function setChecklistToggle(
 ): Promise<ActionResult> {
   let adminUserId: string;
   try {
-    const session = await requireRole(["admin", "creator_manager"]);
+    const session = await requireCreatorHubAccess();
     adminUserId = session.userId;
   } catch {
-    // requireRole redirects on a real auth miss; this catch is a belt-and-
-    // braces guard so the action never throws an opaque error to the client.
+    // Auth miss → toast via caller catch.
     return { success: false, error: "Not authorized." };
   }
 
@@ -157,7 +155,7 @@ export async function setChecklistGiveawayUrl(
 ): Promise<ActionResult> {
   let adminUserId: string;
   try {
-    const session = await requireRole(["admin", "creator_manager"]);
+    const session = await requireCreatorHubAccess();
     adminUserId = session.userId;
   } catch {
     return { success: false, error: "Not authorized." };
@@ -224,7 +222,7 @@ export async function setChecklistLbPrepaidProof(
 ): Promise<ActionResult> {
   let adminUserId: string;
   try {
-    const session = await requireRole(["admin", "creator_manager"]);
+    const session = await requireCreatorHubAccess();
     adminUserId = session.userId;
   } catch {
     return { success: false, error: "Not authorized." };

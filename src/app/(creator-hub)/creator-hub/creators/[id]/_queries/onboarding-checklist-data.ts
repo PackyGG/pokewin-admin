@@ -170,18 +170,26 @@ async function syncCompletedSnapshot(
 }
 
 /**
- * Count a creator's distinct linked social platforms (ADMIN DB). The owner
- * spec's "≥ 2 of {Twitter, Kick, Discord, Reward page}" maps to the
- * `creator_socials` table — the canonical store of a creator's linked handles
- * (the only one that exists today; there is no separate reward-page column, so
- * it is intentionally not counted rather than guessed).
+ * Count linked social slots (ADMIN DB). Owner spec: "≥ 2 of {Twitter, Kick,
+ * Discord ID, Reward page}" — each handle/URL is counted once when set.
  */
 async function countSocials(targetUserId: string): Promise<number> {
   const rows = await adminDb.creator_socials.findMany({
     where: { target_user_id: targetUserId },
-    select: { platform: true },
+    select: {
+      platform: true,
+      username: true,
+      reward_page_url: true,
+    },
   });
-  return new Set(rows.map((r) => r.platform)).size;
+
+  let count = 0;
+  for (const platform of ["twitter", "kick", "discord"] as const) {
+    const row = rows.find((r) => r.platform === platform);
+    if (row?.username?.trim() && row.username.trim() !== "pending") count++;
+  }
+  if (rows.some((r) => r.reward_page_url?.trim())) count++;
+  return count;
 }
 
 /**
@@ -267,7 +275,7 @@ export async function getCreatorChecklist(
       id: "two_socials",
       kind: "auto",
       label: "Link at least 2 socials",
-      hint: "Twitter, Kick or Discord handles linked on the Creator tab.",
+      hint: "Twitter, Kick, Discord ID, or reward-page URL on the Creator tab.",
       done: socialsCount >= MIN_SOCIALS,
       detail:
         socialsCount >= MIN_SOCIALS

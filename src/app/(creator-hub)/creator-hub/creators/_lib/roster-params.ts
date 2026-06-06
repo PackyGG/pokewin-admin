@@ -91,6 +91,15 @@ export const ROSTER_PERIODS: readonly DashboardPeriod[] = [
 export const ROSTER_DEFAULT_PERIOD: DashboardPeriod = "7d";
 
 /**
+ * Roster population tab — active creators (live backend roster) vs past /
+ * ex-creators (DB-sourced via `list-ex-creators` patterns). Default `active`
+ * carries no `?tab` param.
+ */
+export const RosterTab = z.enum(["active", "past"]);
+export type RosterTab = z.infer<typeof RosterTab>;
+export const ROSTER_DEFAULT_TAB: RosterTab = "active";
+
+/**
  * Resolve a raw `?period=` value to a roster window. Unknown / unsupported
  * values fall back to the default. Shared by the server page parse and the
  * client period chips so the loaded window and the highlighted chip agree.
@@ -109,6 +118,17 @@ export function resolveRosterPeriod(
 }
 
 const RosterSearchParamsSchema = z.object({
+  /**
+   * Active vs past/ex-creator roster. `active` is the default (omitted from
+   * the URL). Past creators are DB-sourced — see `list-roster-ex-creators`.
+   */
+  tab: z
+    .string()
+    .optional()
+    .transform((v) => {
+      const parsed = RosterTab.safeParse(v);
+      return parsed.success ? parsed.data : ROSTER_DEFAULT_TAB;
+    }),
   /**
    * Username / email / code instant filter. Lives in the URL for
    * bookmark + share parity, but NEVER gates a server query — the page

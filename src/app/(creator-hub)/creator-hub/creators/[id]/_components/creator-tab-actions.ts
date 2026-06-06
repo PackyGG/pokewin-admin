@@ -3,8 +3,14 @@
 import { revalidatePath } from "next/cache";
 
 import { adminDb } from "@/lib/admin-db";
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import {
+  clearDiscordChannelUrl,
+  clearRewardPageUrl,
+  persistDiscordChannelUrl,
+  persistRewardPageUrl,
+} from "@/lib/creator-social-urls";
 import { fetchPublicStats } from "@/lib/socials-public";
 
 /**
@@ -19,8 +25,7 @@ import { fetchPublicStats } from "@/lib/socials-public";
  * MAIN/prod is never touched.
  *
  * Every mutation:
- *   • is gated with `requireRole(['admin','creator_manager'])` (the Hub's
- *     own access set) — redirects on failure, same as every protected action;
+ *   • is gated with `requireCreatorHubAccess` (the Hub's own access rule);
  *   • validates input server-side (no trust in the client);
  *   • refreshes the public follower stat via the existing `fetchPublicStats`
  *     helper (best-effort — a scraper miss never blocks the save);
@@ -62,8 +67,9 @@ export async function upsertCreatorSocial(
   targetUserId: string,
   platform: string,
   username: string,
+  options?: { discordChannelUrl?: string | null },
 ): Promise<{ followerCount: number | null }> {
-  const session = await requireRole(["admin", "creator_manager"]);
+  const session = await requireCreatorHubAccess();
 
   if (!targetUserId) throw new Error("Missing creator id");
   assertEditablePlatform(platform);
@@ -107,6 +113,14 @@ export async function upsertCreatorSocial(
     select: { id: true },
   });
 
+  if (platform === "discord" && options?.discordChannelUrl?.trim()) {
+    await persistDiscordChannelUrl(
+      targetUserId,
+      options.discordChannelUrl,
+      trimmed,
+    );
+  }
+
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "creator_social_edited",
@@ -126,7 +140,7 @@ export async function removeCreatorSocial(
   targetUserId: string,
   platform: string,
 ): Promise<void> {
-  const session = await requireRole(["admin", "creator_manager"]);
+  const session = await requireCreatorHubAccess();
 
   if (!targetUserId) throw new Error("Missing creator id");
   assertEditablePlatform(platform);
@@ -153,6 +167,109 @@ export async function removeCreatorSocial(
     eventType: "creator_social_removed",
     targetUserId,
     metadata: { platform, via: "creator_hub_tab" },
+  });
+
+  revalidateCreator(targetUserId);
+}
+
+/** Save the per-creator Discord channel deep-link (admin DB only). */
+export async function upsertCreatorDiscordChannel(
+  targetUserId: string,
+  channelUrl: string,
+): Promise<void> {
+  const session = await requireCreatorHubAccess();
+  if (!targetUserId) throw new Error("Missing creator id");
+
+  const existing = await adminDb.creator_socials.findUnique({
+    where: {
+      target_user_id_platform: {
+        target_user_id: targetUserId,
+        platform: "discord",
+      },
+    },
+    select: { username: true },
+  });
+
+  await persistDiscordChannelUrl(
+    targetUserId,
+    channelUrl,
+    existing?.username,
+  );
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_social_edited",
+    targetUserId,
+    metadata: {
+      field: "discord_channel_url",
+      via: "creator_hub_tab",
+    },
+  });
+
+  revalidateCreator(targetUserId);
+}
+
+export async function removeCreatorDiscordChannel(
+  targetUserId: string,
+): Promise<void> {
+  const session = await requireCreatorHubAccess();
+  if (!targetUserId) throw new Error("Missing creator id");
+
+  await clearDiscordChannelUrl(targetUserId);
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_social_removed",
+    targetUserId,
+    metadata: { field: "discord_channel_url", via: "creator_hub_tab" },
+  });
+
+  revalidateCreator(targetUserId);
+}
+
+/** Save or clear the creator reward-page URL (admin DB only). */
+export async function upsertCreatorRewardPage(
+  targetUserId: string,
+  rewardUrl: string,
+): Promise<void> {
+  const session = await requireCreatorHubAccess();
+  if (!targetUserId) throw new Error("Missing creator id");
+
+  const existing = await adminDb.creator_socials.findUnique({
+    where: {
+      target_user_id_platform: {
+        target_user_id: targetUserId,
+        platform: "discord",
+      },
+    },
+    select: { username: true },
+  });
+
+  await persistRewardPageUrl(targetUserId, rewardUrl, existing?.username);
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_social_edited",
+    targetUserId,
+    metadata: { field: "reward_page_url", via: "creator_hub_tab" },
+  });
+
+  revalidateCreator(targetUserId);
+}
+
+export async function removeCreatorRewardPage(
+  targetUserId: string,
+): Promise<void> {
+  const session = await requireCreatorHubAccess();
+  if (!targetUserId) throw new Error("Missing creator id");
+
+  await clearRewardPageUrl(targetUserId);
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_social_removed",
+    targetUserId,
+    metadata: { field: "reward_page_url", via: "creator_hub_tab" },
   });
 
   revalidateCreator(targetUserId);

@@ -8,7 +8,7 @@ import {
   Ban,
 } from "lucide-react";
 
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import {
   PageHero,
   PageHeroIdentity,
@@ -44,9 +44,8 @@ export const metadata = { title: "Changelog · Creator Hub" };
  * (one shared query, two surfaces) — but rendered in the Hub's modern
  * chrome (slim `PageHero` + Hub KPI boxes + the Hub card container).
  *
- * ACCESS: admin + creator_manager only. The Hub layout enforces it; this
- * page adds the explicit DAL gate too (every protected page gates
- * server-side first per the house convention).
+ * ACCESS: `canAccessCreatorHub`. The Hub layout enforces it; this page adds
+ * the explicit gate too (every protected page gates server-side first).
  *
  * ACTIVE-TIMEFRAME-ONLY: the period selector defaults to 24h; the data
  * segment is wrapped in a `<Suspense key={period}>` boundary, so only the
@@ -59,7 +58,7 @@ export default async function CreatorHubChangelogPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requireRole(["admin", "creator_manager"]);
+  await requireCreatorHubPageAccess();
 
   // Reuse the canonical dashboard period parse so the changelog selector
   // (24h / 7d / 30d / all) and the rest of the Hub agree on the window

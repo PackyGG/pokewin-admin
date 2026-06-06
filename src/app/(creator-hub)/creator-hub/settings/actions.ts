@@ -2,14 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 
-import { verifySession } from "@/lib/dal";
-import { adminDb } from "@/lib/admin-db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { AdminSettingsTableMissingError } from "@/lib/admin-settings";
-import {
-  canAccessCreatorHub,
-  getCreatorHubAccessSettings,
-} from "@/lib/creator-hub-access";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import {
   integrationKeyInputSchema,
   setIntegrationKey,
@@ -41,42 +36,6 @@ type ActionResult =
   | { success: false; error: string };
 
 /**
- * Re-verify + authorize the caller against the Creator-Hub access rule and
- * return the acting admin's id for audit stamping. Throws (caught at the call
- * site → toast) when the caller can't access the Hub or the account is gone /
- * inactive. Mirrors the layout gate so the page and its mutations can't drift.
- */
-async function requireCreatorHubAccess(): Promise<{ userId: string }> {
-  const session = await verifySession();
-
-  // Re-read the live account from the ADMIN DB by the verified userId so a
-  // deactivated account (or one whose username changed) can't slip through on
-  // a stale JWT. We rebuild the access decision from the DB-fresh username +
-  // the session's effective roles.
-  const user = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { username: true, is_active: true },
-  });
-  if (!user?.is_active) {
-    throw new Error("Not authorized to manage integration keys.");
-  }
-
-  const settings = await getCreatorHubAccessSettings();
-  const allowed = canAccessCreatorHub(
-    {
-      username: user.username,
-      role: session.role,
-      roles: session.roles,
-    },
-    settings,
-  );
-  if (!allowed) {
-    throw new Error("Not authorized to manage integration keys.");
-  }
-  return { userId: session.userId };
-}
-
-/**
  * Save (create or replace) one integration API key. The new raw value is
  * written to the ADMIN DB; the response carries only the refreshed masked
  * statuses so the UI can update without the secret ever crossing the wire.
@@ -87,7 +46,10 @@ export async function saveIntegrationKey(
 ): Promise<ActionResult> {
   let userId: string;
   try {
-    ({ userId } = await requireCreatorHubAccess());
+    const session = await requireCreatorHubAccess(
+      "Not authorized to manage integration keys.",
+    );
+    userId = session.userId;
   } catch (err) {
     return {
       success: false,
@@ -136,7 +98,10 @@ export async function saveIntegrationKey(
 export async function removeIntegrationKey(id: string): Promise<ActionResult> {
   let userId: string;
   try {
-    ({ userId } = await requireCreatorHubAccess());
+    const session = await requireCreatorHubAccess(
+      "Not authorized to manage integration keys.",
+    );
+    userId = session.userId;
   } catch (err) {
     return {
       success: false,

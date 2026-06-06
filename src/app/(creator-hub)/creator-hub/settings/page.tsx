@@ -1,12 +1,6 @@
-import { redirect } from "next/navigation";
 import { KeyRound, ShieldCheck } from "lucide-react";
 
-import { verifySession, sessionRoles, getUserPermissions } from "@/lib/dal";
-import { getDefaultRouteForRoles } from "@/lib/admin-roles";
-import {
-  canAccessCreatorHub,
-  getCreatorHubAccessSettings,
-} from "@/lib/creator-hub-access";
+import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { getIntegrationKeyRows } from "@/lib/integration-settings";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -36,16 +30,7 @@ export const metadata = { title: "Settings · Creator Hub" };
  *    server action and read only server-side for the API calls.
  */
 export default async function CreatorHubSettingsPage() {
-  const session = await verifySession();
-
-  // Explicit page-level gate (defence in depth; the layout already guards the
-  // segment). Same decision the Hub layout makes — fail-closed to the
-  // viewer's normal landing route when they can't access the Hub.
-  const accessSettings = await getCreatorHubAccessSettings();
-  if (!canAccessCreatorHub(session, accessSettings)) {
-    const allowedPages = await getUserPermissions(session.userId);
-    redirect(getDefaultRouteForRoles(sessionRoles(session), allowedPages));
-  }
+  await requireCreatorHubPageAccess();
 
   // Masked, name-resolved rows only — no raw secret crosses the RSC boundary.
   const rows = await getIntegrationKeyRows();

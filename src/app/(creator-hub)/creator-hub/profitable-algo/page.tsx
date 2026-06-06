@@ -1,6 +1,6 @@
 import { Calculator } from "lucide-react";
 
-import { requireRole } from "@/lib/dal";
+import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
@@ -22,11 +22,11 @@ export const metadata = { title: "Profitable Algo · Creator Hub" };
  *
  * Because there's no data fetch, there's nothing to lazy-load here — the
  * whole tool is a single client island below the hero. ACCESS is gated to
- * admin + creator_manager (same boundary the Hub layout enforces; the page
- * adds the explicit server-side DAL gate per house convention).
+ * `canAccessCreatorHub` (same boundary the Hub layout enforces; the page
+ * adds the explicit server-side gate).
  */
 export default async function ProfitableAlgoPage() {
-  await requireRole(["admin", "creator_manager"]);
+  await requireCreatorHubPageAccess();
 
   return (
     <div className="space-y-6">

@@ -4,6 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeft,
+  Bell,
+  CalendarRange,
+  GitCompareArrows,
   LayoutDashboard,
   Users,
   Trophy,
@@ -41,12 +44,9 @@ import { LinkPending } from "@/components/ux";
  * identity: a pink "Creator Hub" wordmark, a "Back to Admin" exit at the
  * top, and its own nav list.
  *
- * Live nav: Dashboard, Creators, Leaderboards, Creator Check (Kick/Twitter
- * recon lookup), ROI Calculator (Profitable Algo), Changelog and Settings all
- * link to real routes. The remaining sections are placeholders (the future
- * Acquisition / Codes & Ads / Socials Review sub-apps), rendered disabled so
- * the eventual structure is visible without dead links. They carry no
- * functional href and never navigate.
+ * Live nav: Dashboard, Creators, Leaderboards, Creator Check, Acquisition,
+ * Codes & Ads, Socials Review, ROI Calculator, Changelog, Settings; plus an
+ * Ops group (Alerts, Deal Tracker, Compare).
  *
  * Client-safe: no DB / server-only imports. Icons are direct
  * `lucide-react` component refs (not the string-keyed ICONS map the main
@@ -57,8 +57,6 @@ type HubNavItem = {
   label: string;
   href: string;
   icon: LucideIcon;
-  /** Placeholder (future section) — rendered disabled, never navigates. */
-  soon?: boolean;
 };
 
 const HUB_NAV: HubNavItem[] = [
@@ -70,13 +68,20 @@ const HUB_NAV: HubNavItem[] = [
     href: "/creator-hub/creator-check",
     icon: UserSearch,
   },
-  { label: "Acquisition", href: "/creator-hub", icon: LineChart, soon: true },
-  { label: "Codes & Ads", href: "/creator-hub", icon: Megaphone, soon: true },
+  {
+    label: "Acquisition",
+    href: "/creator-hub/acquisition",
+    icon: LineChart,
+  },
+  {
+    label: "Codes & Ads",
+    href: "/creator-hub/codes-ads",
+    icon: Megaphone,
+  },
   {
     label: "Socials Review",
-    href: "/creator-hub",
+    href: "/creator-hub/socials-review",
     icon: ShieldCheck,
-    soon: true,
   },
   {
     label: "ROI Calculator",
@@ -86,6 +91,61 @@ const HUB_NAV: HubNavItem[] = [
   { label: "Changelog", href: "/creator-hub/changelog", icon: History },
   { label: "Settings", href: "/creator-hub/settings", icon: Settings },
 ];
+
+const HUB_OPS_NAV: HubNavItem[] = [
+  { label: "Alerts", href: "/creator-hub/alerts", icon: Bell },
+  {
+    label: "Deal Tracker",
+    href: "/creator-hub/deal-tracker",
+    icon: CalendarRange,
+  },
+  { label: "Compare", href: "/creator-hub/compare", icon: GitCompareArrows },
+];
+
+function HubNavMenu({
+  items,
+  pathname,
+  onNavTap,
+}: {
+  items: HubNavItem[];
+  pathname: string;
+  onNavTap: () => void;
+}) {
+  return (
+    <SidebarMenu>
+      {items.map((item, i) => {
+        const Icon = item.icon;
+        const isActive =
+          pathname === item.href ||
+          (item.href !== "/creator-hub" &&
+            pathname.startsWith(item.href + "/"));
+        return (
+          <SidebarMenuItem key={`${item.label}-${i}`}>
+            <SidebarMenuButton
+              isActive={isActive}
+              tooltip={item.label}
+              render={<Link href={item.href} />}
+              onClick={onNavTap}
+              className="h-11 md:h-9 group-data-[collapsible=icon]:h-8!"
+            >
+              <Icon
+                className={cn(
+                  "size-4",
+                  isActive ? "text-pink-500" : "text-muted-foreground",
+                )}
+              />
+              <span>{item.label}</span>
+              <LinkPending
+                size={13}
+                className="ml-auto shrink-0 group-data-[collapsible=icon]:hidden"
+              />
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        );
+      })}
+    </SidebarMenu>
+  );
+}
 
 export function CreatorHubSidebar() {
   const pathname = usePathname();
@@ -147,64 +207,22 @@ export function CreatorHubSidebar() {
         <SidebarGroup className="px-2 py-1">
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {HUB_NAV.map((item, i) => {
-                const Icon = item.icon;
-                // Active when the route matches. Dashboard ("/creator-hub")
-                // is exact-only so it doesn't light up on every sub-page;
-                // the deeper items also match their nested routes (e.g.
-                // "/creator-hub/creators/[id]" keeps "Creators" active).
-                // Placeholder items never navigate, so never active.
-                const isActive =
-                  !item.soon &&
-                  (pathname === item.href ||
-                    (item.href !== "/creator-hub" &&
-                      pathname.startsWith(item.href + "/")));
-                if (item.soon) {
-                  return (
-                    <SidebarMenuItem key={`${item.label}-${i}`}>
-                      <SidebarMenuButton
-                        // Disabled placeholder — non-interactive, dimmed,
-                        // with a "Soon" badge. Rendered as a plain button
-                        // (no Link) so it can't navigate.
-                        disabled
-                        tooltip={`${item.label} — coming soon`}
-                        className="h-11 cursor-default opacity-55 md:h-9 group-data-[collapsible=icon]:h-8!"
-                      >
-                        <Icon className="size-4 text-muted-foreground" />
-                        <span>{item.label}</span>
-                        <span className="ml-auto rounded-sm bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground group-data-[collapsible=icon]:hidden">
-                          Soon
-                        </span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                }
-                return (
-                  <SidebarMenuItem key={`${item.label}-${i}`}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      tooltip={item.label}
-                      render={<Link href={item.href} />}
-                      onClick={handleNavTap}
-                      className="h-11 md:h-9 group-data-[collapsible=icon]:h-8!"
-                    >
-                      <Icon
-                        className={cn(
-                          "size-4",
-                          isActive ? "text-pink-500" : "text-muted-foreground",
-                        )}
-                      />
-                      <span>{item.label}</span>
-                      <LinkPending
-                        size={13}
-                        className="ml-auto shrink-0 group-data-[collapsible=icon]:hidden"
-                      />
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
+            <HubNavMenu
+              items={HUB_NAV}
+              pathname={pathname}
+              onNavTap={handleNavTap}
+            />
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup className="px-2 py-1">
+          <SidebarGroupLabel>Ops</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <HubNavMenu
+              items={HUB_OPS_NAV}
+              pathname={pathname}
+              onNavTap={handleNavTap}
+            />
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

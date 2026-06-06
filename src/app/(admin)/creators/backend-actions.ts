@@ -58,6 +58,8 @@ export async function promoteUserToCreator(userId: string) {
 
     revalidatePath("/creators");
     revalidatePath(`/creators/${userId}`);
+    revalidatePath("/creator-hub/creators");
+    revalidatePath(`/creator-hub/creators/${userId}`);
     return result;
   } catch (err) {
     throw toActionError(err);
