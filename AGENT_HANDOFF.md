@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `9f0c02f8` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub deferred wave — `/creator-hub/codes-ads` **DONE** (PARTIAL: ad detail still admin route)
+- **HEAD:** `634b12e3` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub responsive harness **DONE** (`RESPONSIVE_EXPECT_CLEAN=1` PASS on 12 hub routes; detail/forecast skipped when no creator in MAIN)
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
@@ -28,6 +28,7 @@
 - **Plan closeout (2026-06-06)** — audit fixes (Hub gates on add-creator + alerts redirect), `creator_manager` assignable (schema + SQL applied), plan file recreated, e2e smoke `e2e/tests/creator-hub.spec.ts` PASS (12 routes; detail/forecast skipped on empty local MAIN DB)
 - **Forecast tab deal allowance (`d629ba09`)** — weekly tip/sponsor spend uses deal per-stream caps × `fills_allowed`; realized lifetime cadence only when no deal; UI labels source + fallback
 - **Codes & Ads hub route (`9f0c02f8`)** — `/creator-hub/codes-ads` lazy tabs (affiliate codes table + ads dashboard); hub-gated mutations; sidebar nav; e2e smoke route added (13 hub routes)
+- **Responsive harness — Creator Hub (`634b12e3`)** — `CREATOR_HUB_ROUTES` + `e2e/responsive/creator-hub-audit.spec.ts` (minted `canAccessCreatorHub` session); roster SectionHeading action stack fix at md; `RESPONSIVE_EXPECT_CLEAN=1` PASS (detail routes skip without creator in MAIN)
 
 **Earlier admin (pre-Hub):** dashboard rework, system-edge-plan, `/users` search, Balance 2.0, insights hub, responsive harness (`e2e/responsive/*`), smoothness primitives (`@/components/ux`)
 
@@ -45,8 +46,8 @@ _None — Creator Hub plan closed. Pick up deferred items below when owner prior
 2. Packy.gg avatar write — **BLOCKED** (no confirmed backend endpoint; ADMIN-only pfp preview OK)
 3. Bulk delete `/gift-cards` + `/vouchers` — **BLOCKED** (MAIN DB write forbidden)
 4. Fold durable reward findings into `ONBOARDING.md` (affiliate commission basis; signup $5.71 clarification)
-5. Responsive sweep — add `/creator-hub/*` to responsive matrix; run `RESPONSIVE_EXPECT_CLEAN=1`
-6. Hub ad-code **detail** route (`/creator-hub/codes-ads/ads/[code]`) — cards still deep-link to admin `/creators/ads/[code]`
+5. Hub ad-code **detail** route (`/creator-hub/codes-ads/ads/[code]`) — cards still deep-link to admin `/creators/ads/[code]`
+6. Add `/creator-hub/codes-ads` + `/creator-hub/tips-sponsors` to responsive matrix (new routes since harness wave)
 
 ---
 

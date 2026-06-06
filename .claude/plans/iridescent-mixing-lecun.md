@@ -73,7 +73,7 @@ Build a self-contained **Creator Hub** sub-app (`/creator-hub/*`) for the in-hou
 | Admin-DB schema drift (`creator_deals` cashout limits + `creator_deal_estimates`) | **OPEN** | `db push` refuses; owner decision: restore schema or archive+drop |
 | `codes-ads` dedicated hub route | **DONE** (`9f0c02f8`) | `/creator-hub/codes-ads` — lazy tabs; ad card detail still links to admin `/creators/ads/[code]` |
 | Forecast tab — deal `tip/sponsor allowance` from deal terms | **DONE** (`d629ba09`) | Primary: `(max_tip_per_stream + max_sponsorship_per_stream) × fills_allowed`; fallback: realized lifetime ÷ active weeks when no deal; UI labels source |
-| Responsive harness `RESPONSIVE_EXPECT_CLEAN=1` full sweep | **OPEN** | Hub routes not yet in responsive matrix (smoke e2e covers render) |
+| Responsive harness `RESPONSIVE_EXPECT_CLEAN=1` full sweep | **DONE** (`634b12e3`) | 12 core hub routes in matrix; detail/forecast skip without creator in MAIN; codes-ads/tips-sponsors not yet in matrix |
 | Fold durable reward findings into `ONBOARDING.md` | **OPEN** | Affiliate commission basis; signup $5.71 clarification |
 
 ---
