@@ -596,20 +596,35 @@ export async function getUserTransactions(
     .filter((t) => t.type === "upgrader_bet" && t.game_session_id)
     .map((t) => t.game_session_id as string);
   const upgraderWinningsByGsid = new Map<string, number>();
+  /** PF result_metadata per upgrader game_session — LATERAL join matches
+   *  /transactions/upgrader (Prisma include often omits PF rows). */
+  const upgraderPfMetadataByGsid = new Map<string, unknown>();
   if (upgraderBetSessionIds.length > 0) {
     try {
       const rows = await db.$queryRawUnsafe<
-        { gsid: string; won_amount: string }[]
+        { gsid: string; won_amount: string; result_metadata: unknown }[]
       >(
-        `SELECT gs.id::text AS gsid, ug.won_amount::text AS won_amount
+        `SELECT gs.id::text AS gsid,
+                ug.won_amount::text AS won_amount,
+                pf.result_metadata AS result_metadata
          FROM game_sessions gs
          JOIN upgrader_games ug ON ug.id = gs.game_id
+         LEFT JOIN LATERAL (
+           SELECT result_metadata
+           FROM provably_fair_results
+           WHERE game_session_id = gs.id
+           ORDER BY cursor ASC
+           LIMIT 1
+         ) pf ON true
          WHERE gs.id = ANY($1::uuid[])
            AND gs.game_type = 'upgrader'`,
         upgraderBetSessionIds,
       );
       for (const r of rows) {
         upgraderWinningsByGsid.set(r.gsid, toNumber(r.won_amount));
+        if (r.result_metadata != null) {
+          upgraderPfMetadataByGsid.set(r.gsid, r.result_metadata);
+        }
       }
     } catch (e) {
       console.error(
@@ -738,11 +753,14 @@ export async function getUserTransactions(
           upgraderWinnings = 0;
         }
         const firstPf = gs?.provably_fair_results[0];
-        if (firstPf) {
-          const cfg = parseUpgraderMetadata(firstPf.result_metadata);
-          upgraderTargetMultiplier = cfg.targetMultiplier;
-          upgraderTargetChance = cfg.targetChance;
-        }
+        const pfMetadata =
+          firstPf?.result_metadata ??
+          (t.game_session_id
+            ? upgraderPfMetadataByGsid.get(t.game_session_id)
+            : undefined);
+        const cfg = parseUpgraderMetadata(pfMetadata ?? t.metadata);
+        upgraderTargetMultiplier = cfg.targetMultiplier;
+        upgraderTargetChance = cfg.targetChance;
       }
 
       // Total worth (cash balance + held inventory) before/after this tx,

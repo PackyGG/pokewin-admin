@@ -41,7 +41,7 @@ import {
   formatCurrency,
   formatRelative,
 } from "@/lib/utils/format";
-import { formatUpgraderChance } from "@/lib/utils/upgrader-metadata";
+import { formatUpgraderChance, formatUpgraderMultiplier } from "@/lib/utils/upgrader-metadata";
 import {
   amountColorFor,
   amountSignFor,
@@ -56,21 +56,6 @@ import type {
   PaginatedTransactions,
   UserDetail,
 } from "./user-tabs-types";
-
-/**
- * Compact multiplier formatter used on the upgrader_bet "Won Value"
- * cell. Mirrors the badge style on /transactions/upgrader's data
- * table (formatMultiplier there) so the same realized multiplier
- * reads identically across both surfaces:
- *   • < 10×   → one decimal (e.g. 2.5×, 8.3×)
- *   • < 1000× → integer    (e.g. 12×, 100×)
- *   • ≥ 1000× → k-suffixed (e.g. 1.2k×)
- */
-function formatUpgraderMultiplier(m: number): string {
-  if (m < 10) return `${m.toFixed(1)}×`;
-  if (m < 1000) return `${Math.round(m)}×`;
-  return `${(m / 1000).toFixed(1)}k×`;
-}
 
 // The transaction detail modal is heavy (Dialog primitives + provably-fair
 // game-session viewer + a large metadata-label map) and only mounts when an
@@ -348,9 +333,29 @@ export const CategoryTransactionsTable = React.memo(
                   )}
                   <TableCell>
                     <div className="flex flex-col items-start gap-0.5">
-                      <Badge variant="outline" className="font-mono text-xs">
-                        {t.type}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge variant="outline" className="font-mono text-xs">
+                          {t.type}
+                        </Badge>
+                        {t.type === "upgrader_bet" &&
+                          t.upgraderTargetMultiplier != null && (
+                            <span
+                              className="inline-flex items-center rounded border border-cyan-500/30 bg-cyan-500/15 px-1.5 py-0 text-[10px] font-medium text-cyan-600 dark:text-cyan-400"
+                              title="Target multiplier the user picked before the spin"
+                            >
+                              ⇡{" "}
+                              {formatUpgraderMultiplier(
+                                t.upgraderTargetMultiplier,
+                              )}
+                            </span>
+                          )}
+                        {t.type === "upgrader_bet" &&
+                          t.upgraderTargetChance != null && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {formatUpgraderChance(t.upgraderTargetChance)}
+                            </span>
+                          )}
+                      </div>
                       {/* Borrow signal lives directly under the type
                           chip so admins scrolling a long activity
                           tab can spot borrowed opens at a glance.
