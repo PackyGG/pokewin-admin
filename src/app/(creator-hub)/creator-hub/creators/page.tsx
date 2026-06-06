@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { Users, TrendingUp, UserX } from "lucide-react";
+import { Coins, TrendingUp, UserX, Zap } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import {
@@ -37,21 +37,30 @@ export default async function CreatorHubRosterPage({
 
   const params = parseRosterSearchParams(await searchParams);
   const isPast = params.tab === "past";
+  const isMultiplier = params.tab === "multiplier";
   const windowLabel = DASHBOARD_PERIOD_LABELS[params.period];
+
+  const heroIcon = isPast ? UserX : isMultiplier ? Zap : Coins;
+  const heroTitle = isPast
+    ? "Past Creators"
+    : isMultiplier
+      ? "Multiplier Creators"
+      : "Active Creators";
+  const heroSubtitle = isPast
+    ? "Canceled / role-removed ex-creators — historical roster."
+    : isMultiplier
+      ? "Multiplier-program creators with no fill deal — search, rank, and drill in."
+      : "Fill-deal creators on active or scheduled deals — search, rank, and drill in.";
 
   return (
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={isPast ? UserX : Users}
+          icon={heroIcon}
           accent="pink"
-          title={isPast ? "Past Creators" : "Creators"}
-          subtitle={
-            isPast
-              ? "Canceled / role-removed ex-creators — historical roster."
-              : "Your full creator roster — search, rank, and drill in."
-          }
-          action={isPast ? undefined : <AddCreatorDialogV2 />}
+          title={heroTitle}
+          subtitle={heroSubtitle}
+          action={isPast || isMultiplier ? undefined : <AddCreatorDialogV2 />}
         />
       </PageHero>
 
@@ -79,7 +88,7 @@ export default async function CreatorHubRosterPage({
                 key={
                   isPast
                     ? `past-${params.sortBy}`
-                    : `${params.sortBy}-${params.period}`
+                    : `${params.tab}-${params.sortBy}-${params.period}`
                 }
                 fallback={<RosterSkeleton />}
               >
@@ -111,9 +120,14 @@ async function RosterSection({
   windowLabel: string;
 }) {
   const isPast = tab === "past";
+  const isMultiplier = tab === "multiplier";
   const { creators, rosterUnavailable } = isPast
     ? await listRosterExCreators(sortBy)
-    : await listRosterCreators(period, sortBy);
+    : await listRosterCreators(
+        period,
+        sortBy,
+        isMultiplier ? "multiplier" : "active",
+      );
 
   if (rosterUnavailable) {
     return <RosterError />;
@@ -135,10 +149,15 @@ async function RosterSection({
             Lifetime wager, sign-ups, FTDs, and PnL for ex-creators. Windowed
             GGR is unavailable once the creator role is removed.
           </>
+        ) : isMultiplier ? (
+          <>
+            Multiplier creators without a fill deal. Wager + GGR scoped to{" "}
+            {windowLabel}. Sign-ups, FTDs, and PnL are lifetime.
+          </>
         ) : (
           <>
-            Wager + GGR scoped to {windowLabel}. Sign-ups, FTDs, PnL, and deal
-            value are lifetime.
+            Fill-deal creators. Wager + GGR scoped to {windowLabel}. Sign-ups,
+            FTDs, PnL, and deal value are lifetime.
           </>
         )}
       </p>

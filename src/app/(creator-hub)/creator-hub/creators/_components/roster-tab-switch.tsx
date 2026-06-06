@@ -2,27 +2,43 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { UserX, Users } from "lucide-react";
+import { Coins, UserX, Zap } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-const TABS = [
-  { value: "active", label: "Active", Icon: Users },
-  // Canceled / ex-creators — DB-sourced (see admin list-ex-creators.ts).
+import type { RosterTab } from "../_lib/roster-params";
+
+const TABS: {
+  value: RosterTab;
+  label: string;
+  Icon: typeof Coins;
+}[] = [
+  { value: "active", label: "Active", Icon: Coins },
+  {
+    value: "multiplier",
+    label: "Multiplier",
+    Icon: Zap,
+  },
   { value: "past", label: "Past Creators", Icon: UserX },
-] as const;
+];
+
+function resolveTab(raw: string | null): RosterTab {
+  if (raw === "multiplier") return "multiplier";
+  if (raw === "past") return "past";
+  return "active";
+}
 
 /**
- * URL-driven Active / Past tab switcher for `/creator-hub/creators`.
- * `active` is the default and carries no `?tab` param.
+ * URL-driven Active / Multiplier / Past tab switcher for
+ * `/creator-hub/creators`. `active` (fill-deal creators) is the default and
+ * carries no `?tab` param.
  *
  * Switching tabs drops `q`, `sortBy`, and `period` (different pools +
  * defaults) but preserves grid/list `view`.
  */
 export function RosterTabSwitch() {
   const searchParams = useSearchParams();
-  const raw = searchParams.get("tab");
-  const current = raw === "past" ? "past" : "active";
+  const current = resolveTab(searchParams.get("tab"));
 
   const viewParam = searchParams.get("view");
   const viewSuffix = viewParam === "list" ? "view=list" : "";

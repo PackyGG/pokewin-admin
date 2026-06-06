@@ -20,9 +20,10 @@ import {
 } from "../../../../(admin)/creators/_queries/all-creators-net-pnl";
 import { getAllCreatorsLifetimePnl } from "../../../../(admin)/creators/_queries/all-creators-lifetime-pnl";
 import { getDealValueByUser, type CreatorDealValue } from "./deal-value-by-user";
+import { getMultiplierCreatorIds } from "../../../../(admin)/creators/_queries/multiplier-creator-count";
 
 import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
-import type { RosterSortMode } from "../_lib/roster-params";
+import type { RosterSortMode, RosterTab } from "../_lib/roster-params";
 
 /**
  * Creator Hub roster — the full enriched + sorted creator list for
@@ -178,15 +179,30 @@ export function sortRoster(
   return sorted;
 }
 
+async function filterRosterByTab(
+  roster: CreatorListItem[],
+  tab: Exclude<RosterTab, "past">,
+): Promise<CreatorListItem[]> {
+  if (tab === "active") {
+    return roster.filter((c) => c.total_deals_count > 0);
+  }
+  const multiplierIds = await getMultiplierCreatorIds();
+  if (!multiplierIds) return [];
+  return roster.filter(
+    (c) => multiplierIds.has(c.id) && c.total_deals_count === 0,
+  );
+}
+
 export async function listRosterCreators(
   period: DashboardPeriod,
   sortBy: RosterSortMode,
+  tab: Exclude<RosterTab, "past"> = "active",
 ): Promise<RosterResult> {
   // 1) The roster walk is the backbone — if it fails, the page renders the
   //    "backend unavailable" card. Everything else degrades to empty.
   let roster: CreatorListItem[];
   try {
-    roster = await walkAllCreators();
+    roster = await filterRosterByTab(await walkAllCreators(), tab);
   } catch (err) {
     console.error("[creator-hub roster] backend roster walk failed:", err);
     return { creators: [], rosterUnavailable: true };

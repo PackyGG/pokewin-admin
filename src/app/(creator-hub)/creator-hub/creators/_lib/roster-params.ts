@@ -91,11 +91,16 @@ export const ROSTER_PERIODS: readonly DashboardPeriod[] = [
 export const ROSTER_DEFAULT_PERIOD: DashboardPeriod = "7d";
 
 /**
- * Roster population tab — active creators (live backend roster) vs past /
- * ex-creators (DB-sourced via `list-ex-creators` patterns). Default `active`
- * carries no `?tab` param.
+ * Roster population tab — mirrors the admin `/creators` deal-program split,
+ * adapted for Creator Hub:
+ *
+ *   active     — fill-deal creators (`total_deals_count > 0`).
+ *   multiplier — multiplier-program creators with no fill deal.
+ *   past       — ex-creators (DB-sourced via `list-roster-ex-creators`).
+ *
+ * Default `active` carries no `?tab` param.
  */
-export const RosterTab = z.enum(["active", "past"]);
+export const RosterTab = z.enum(["active", "multiplier", "past"]);
 export type RosterTab = z.infer<typeof RosterTab>;
 export const ROSTER_DEFAULT_TAB: RosterTab = "active";
 
