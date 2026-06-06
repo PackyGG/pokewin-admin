@@ -4,7 +4,7 @@ import {
   Users,
   Trophy,
   Calculator,
-  Megaphone,
+  UserSearch,
   History,
   type LucideIcon,
 } from "lucide-react";
@@ -14,9 +14,8 @@ import { cn } from "@/lib/utils";
  * Creator Hub dashboard — quick-tools button row (mockup top strip).
  *
  * Five tool shortcuts: My Creators · Leaderboards · ROI Calculator ·
- * Social Posts · Changelogs. Four link to live routes; Social Posts is the
- * one tool whose page doesn't exist yet, so it points at a `#` placeholder
- * (rendered with a subtle "Soon" affordance) until that sub-app lands.
+ * Creator Check · Changelogs. All link to live routes (Creator Check is the
+ * Kick/Twitter recon lookup the owner wants surfaced on the dashboard).
  * Pure presentational, server-safe.
  */
 
@@ -56,10 +55,10 @@ const TOOLS: Tool[] = [
     iconColor: "text-emerald-500",
   },
   {
-    label: "Social Posts",
-    sub: "content & promo",
-    href: "#",
-    icon: Megaphone,
+    label: "Creator Check",
+    sub: "Kick / X recon",
+    href: "/creator-hub/creator-check",
+    icon: UserSearch,
     tint: "bg-purple-500/15",
     iconColor: "text-purple-500",
   },

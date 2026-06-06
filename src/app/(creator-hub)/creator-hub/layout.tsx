@@ -35,6 +35,7 @@ import { isNextControlFlowError } from "@/lib/utils/action-error";
 // so this relative path resolves across the group boundary.
 import { ScrollToTopOnNav } from "../../(admin)/scroll-to-top-on-nav";
 import { CreatorHubSidebar } from "./_components/creator-hub-sidebar";
+import { CreatorChecklistDock } from "./creators/[id]/_components/creator-checklist-dock";
 
 /**
  * Creator Hub layout — the dedicated route segment that renders the
@@ -219,6 +220,13 @@ export default async function CreatorHubLayout({
             {children}
           </div>
         </SidebarInset>
+        {/* Onboarding checklist DOCK — the TOP of the right rail (above the
+            live/recent docks), the owner's most-prominent rail item. It's a
+            self-contained client island: it reads the `creators/[id]` id from
+            the pathname, shows ONLY on a creator detail page, sits at `z-40`
+            above the `z-30` rail, and auto-hides once that creator is fully
+            onboarded. Lazy — it fetches nothing on any other Hub route. */}
+        <CreatorChecklistDock />
         {/* Right-edge docks — reused 1:1 from the main shell so live money /
             recent activity stay available inside the Hub. Chat dock is
             gated to the same permission boundary as the main layout. */}

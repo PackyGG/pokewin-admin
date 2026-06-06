@@ -23,15 +23,11 @@ import { LinkPendingShell } from "@/components/ux";
  * Tab set (owner-confirmed): Overview · Creator · Sessions · Kick · Twitter ·
  * Risk · Forecast · Cohorts & LTV · Alt Accounts.
  *
- * NAVIGABLE this wave (drive the active tab via `?tab=`): Overview (default) ·
- * Creator · Risk · Forecast · Cohorts & LTV · Alt Accounts. These render as
+ * ALL tabs are now NAVIGABLE (drive the active tab via `?tab=`): they render as
  * `<Link replace>` chips that swap the URL's `tab` param — the page reads it and
  * mounts ONLY that tab's component lazily in a keyed Suspense boundary, so a
  * non-active tab never fetches its data (active-tab-only / never-preload).
- *
- * STILL "Soon" (later waves): Sessions · Kick · Twitter — rendered as inert,
- * non-navigating placeholders so the eventual structure is visible without dead
- * links and nothing extra is loaded.
+ * Overview is the default for a missing/unknown `?tab=`.
  *
  * Mirrors the house tab-strip pattern (`insights/analytics` `InsightsTabNav`):
  * a client component that reads the current `?tab=` and highlights it, with the
@@ -52,7 +48,17 @@ type CreatorTab = {
  * value from this Client Component would throw at render). Order matters — it's
  * the on-screen left→right order of the live chips.
  */
-const NAV_TABS = ["overview", "creator", "risk", "forecast", "cohorts", "alts"] as const;
+const NAV_TABS = [
+  "overview",
+  "creator",
+  "sessions",
+  "kick",
+  "twitter",
+  "risk",
+  "forecast",
+  "cohorts",
+  "alts",
+] as const;
 
 /**
  * Coerce an arbitrary `?tab=` value to a navigable tab key, falling back to
@@ -66,9 +72,9 @@ function currentTabFrom(value: string | null): string {
 const TABS: CreatorTab[] = [
   { key: "overview", label: "Overview", icon: TrendingUp },
   { key: "creator", label: "Creator", icon: IdCard },
-  { key: "sessions", label: "Sessions", icon: BarChart3, soon: true },
-  { key: "kick", label: "Kick", icon: Tv, soon: true },
-  { key: "twitter", label: "Twitter", icon: Twitter, soon: true },
+  { key: "sessions", label: "Sessions", icon: BarChart3 },
+  { key: "kick", label: "Kick", icon: Tv },
+  { key: "twitter", label: "Twitter", icon: Twitter },
   { key: "risk", label: "Risk", icon: ShieldAlert },
   { key: "forecast", label: "Forecast", icon: CalendarClock },
   { key: "cohorts", label: "Cohorts & LTV", icon: UsersRound },

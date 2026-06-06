@@ -13,6 +13,7 @@ import {
   Calculator,
   History,
   Settings,
+  UserSearch,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -40,11 +41,12 @@ import { LinkPending } from "@/components/ux";
  * identity: a pink "Creator Hub" wordmark, a "Back to Admin" exit at the
  * top, and its own nav list.
  *
- * Live nav: Dashboard, Creators, Leaderboards, ROI Calculator (Profitable
- * Algo), Changelog and Settings all link to real routes. The remaining
- * sections are placeholders (the future Acquisition / Codes & Ads / Socials
- * Review sub-apps), rendered disabled so the eventual structure is visible
- * without dead links. They carry no functional href and never navigate.
+ * Live nav: Dashboard, Creators, Leaderboards, Creator Check (Kick/Twitter
+ * recon lookup), ROI Calculator (Profitable Algo), Changelog and Settings all
+ * link to real routes. The remaining sections are placeholders (the future
+ * Acquisition / Codes & Ads / Socials Review sub-apps), rendered disabled so
+ * the eventual structure is visible without dead links. They carry no
+ * functional href and never navigate.
  *
  * Client-safe: no DB / server-only imports. Icons are direct
  * `lucide-react` component refs (not the string-keyed ICONS map the main
@@ -63,6 +65,11 @@ const HUB_NAV: HubNavItem[] = [
   { label: "Dashboard", href: "/creator-hub", icon: LayoutDashboard },
   { label: "Creators", href: "/creator-hub/creators", icon: Users },
   { label: "Leaderboards", href: "/creator-hub/leaderboards", icon: Trophy },
+  {
+    label: "Creator Check",
+    href: "/creator-hub/creator-check",
+    icon: UserSearch,
+  },
   { label: "Acquisition", href: "/creator-hub", icon: LineChart, soon: true },
   { label: "Codes & Ads", href: "/creator-hub", icon: Megaphone, soon: true },
   {

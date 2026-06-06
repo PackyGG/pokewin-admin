@@ -8,6 +8,9 @@ import { CreatorBanner } from "./_components/creator-banner";
 import { CreatorTabBar } from "./_components/creator-tab-bar";
 import { OverviewTab } from "./_components/overview-tab";
 import { CreatorMetadataTab } from "./_components/creator-metadata-tab";
+import { SessionsTab } from "./_components/sessions-tab";
+import { KickTab } from "./_components/kick-tab";
+import { TwitterTab } from "./_components/twitter-tab";
 import { RiskTab, RiskTabSkeleton } from "./_components/risk-tab";
 import { ForecastTab } from "./_components/forecast-tab";
 import { CohortsLtvTab } from "./_components/cohorts-ltv-tab";
@@ -16,9 +19,8 @@ import { AltAccountsTab } from "./_components/alt-accounts-tab";
 export const metadata = { title: "Creator · Creator Hub" };
 
 /**
- * Tab keys that are wired (navigable) this wave — Overview (default) + the five
- * tabs landed in this wave. Sessions / Kick / Twitter are intentionally NOT
- * here (still "Soon"); a `?tab=` outside this set falls back to Overview.
+ * Tab keys that are wired (navigable) — Overview (default) + every creator
+ * detail tab. A `?tab=` outside this set falls back to Overview.
  *
  * Kept inline in this server file (and mirrored by the client tab bar) on
  * purpose: `creator-tab-bar.tsx` is a Client Component, so a server import of a
@@ -28,6 +30,9 @@ export const metadata = { title: "Creator · Creator Hub" };
 const NAV_TABS = [
   "overview",
   "creator",
+  "sessions",
+  "kick",
+  "twitter",
   "risk",
   "forecast",
   "cohorts",
@@ -48,9 +53,8 @@ function parseTab(value: string | undefined): NavTab {
  *   1. Top banner (identity bar): pfp, username, creator code chip(s), email
  *      with hide/show toggle, a button per linked social, a Discord-channel
  *      button.
- *   2. Tab bar: Overview (default) + Creator / Risk / Forecast / Cohorts & LTV
- *      / Alt Accounts (all navigable via `?tab=`). Sessions / Kick / Twitter
- *      stay "Soon" placeholders — built in later waves.
+ *   2. Tab bar: Overview (default) + Creator / Sessions / Kick / Twitter / Risk
+ *      / Forecast / Cohorts & LTV / Alt Accounts (all navigable via `?tab=`).
  *   3. The active tab's content.
  *
  * ACCESS: admin + creator_manager only (the (creator-hub) layout enforces it;
@@ -99,6 +103,9 @@ export default async function CreatorHubCreatorDetailPage({
       <Suspense key={tab} fallback={<RiskTabSkeleton />}>
         {tab === "overview" && <OverviewTab userId={id} />}
         {tab === "creator" && <CreatorMetadataTab userId={id} />}
+        {tab === "sessions" && <SessionsTab userId={id} />}
+        {tab === "kick" && <KickTab userId={id} />}
+        {tab === "twitter" && <TwitterTab userId={id} />}
         {tab === "risk" && <RiskTab userId={id} code={header.code} />}
         {tab === "forecast" && <ForecastTab userId={id} />}
         {tab === "cohorts" && <CohortsLtvTab userId={id} />}
