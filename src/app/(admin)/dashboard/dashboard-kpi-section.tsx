@@ -248,17 +248,25 @@ function DualHero({
   );
 }
 
-/** Small labelled chip used in the 2/3-col breakdown grids. */
+/**
+ * Small labelled chip used in the 2/3-col breakdown grids. Optional
+ * {@link hint} renders a one-line caption under the value (same muted,
+ * truncating style as {@link DualHero}'s hint), and — because the chip is
+ * tight on width — the full hint is also surfaced via a native `title`
+ * tooltip on hover so it stays legible when truncated.
+ */
 function PanelChip({
   label,
   value,
   format = "currency",
   tone = "neutral",
+  hint,
 }: {
   label: string;
   value: number;
   format?: AnimatedNumberFormat;
   tone?: "neutral" | "emerald" | "rose";
+  hint?: string;
 }) {
   const border =
     tone === "emerald"
@@ -275,6 +283,7 @@ function PanelChip({
   return (
     <div
       className={cn("rounded-md border bg-background/40 px-2 py-1.5 min-w-0", border)}
+      title={hint}
     >
       <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
         {label}
@@ -282,6 +291,11 @@ function PanelChip({
       <p className={cn("text-xs font-semibold tabular-nums truncate", valueColor)}>
         <AnimatedNumber value={value} format={format} />
       </p>
+      {hint && (
+        <p className="text-[10px] leading-tight text-muted-foreground truncate">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }
@@ -379,11 +393,15 @@ export function DashboardKpiSection({
           const mode = modeFor("ggr");
           const isProfit = p.ggr >= 0;
           // Sub-boxes mirror the Wager box's chip row. The two legs of the
-          // GGR formula (wagers in − payouts out = GGR) plus the hold margin
-          // (GGR ÷ wagers), all read off the breakdown already in the payload
-          // so the chips reconcile with the Info popover by construction.
-          // House-POV colours: wagers neutral (flow-in), payouts rose (money
-          // out), margin emerald/rose by sign.
+          // GGR formula (net wager in − payouts out = GGR) plus the hold
+          // margin (GGR ÷ net wager), all read off the breakdown already in
+          // the payload so the chips reconcile with the Info popover by
+          // construction. This "Net wager" is the GGR-BASIS wager — it
+          // deliberately excludes borrow-funded battle stakes and
+          // reward/daily-pack opens, so it is SMALLER than (and must not be
+          // confused with) the gross figure in the adjacent Wager tile's
+          // "Total". House-POV colours: net wager neutral (flow-in), payouts
+          // rose (money out), margin emerald/rose by sign.
           const ggrWagers = p.ggrBreakdown.wagersTotal;
           const ggrPayouts = p.ggrBreakdown.payoutsTotal;
           const ggrMarginPct =
@@ -409,7 +427,11 @@ export function DashboardKpiSection({
               icon={isProfit ? TrendingUp : TrendingDown}
               footer={
                 <div className="grid grid-cols-3 gap-1.5 sm:-mx-0.5">
-                  <PanelChip label="Wagers" value={ggrWagers} />
+                  <PanelChip
+                    label="Net wager"
+                    value={ggrWagers}
+                    hint="GGR basis · excl. borrow & reward packs"
+                  />
                   <PanelChip label="Payouts" value={ggrPayouts} tone="rose" />
                   <PanelChip
                     label="Margin"
