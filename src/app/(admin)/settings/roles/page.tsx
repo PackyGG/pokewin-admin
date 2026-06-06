@@ -1,12 +1,23 @@
 import Link from "next/link";
-import { KeyRound, ShieldCheck } from "lucide-react";
+import { KeyRound, ShieldCheck, Sparkles } from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
+import { adminDb } from "@/lib/admin-db";
 import { ADMIN_PAGES } from "@/lib/admin-pages";
 import { formatDateTime } from "@/lib/utils/format";
+import {
+  isCreatorHubAccessOwner,
+  getCreatorHubAccessSettings,
+  CREATOR_HUB_TOGGLE_ROLES,
+} from "@/lib/creator-hub-access";
+import { isPersistableAdminRole } from "@/lib/admin-roles";
 import { getRolePermissions } from "./actions";
 import { listRoles } from "./custom-roles-actions";
 import { RolePermissionsEditor } from "./role-permissions-editor";
 import { CreateRoleButton } from "./create-role-button";
+import {
+  CreatorHubAccessCard,
+  type CreatorHubAccessRow,
+} from "./creator-hub-access-card";
 import {
   PageHero,
   PageHeroIdentity,
@@ -14,6 +25,23 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
+
+/** Display labels + descriptions for each per-role Creator-Hub toggle. */
+const CREATOR_HUB_ROLE_LABELS: Record<
+  (typeof CREATOR_HUB_TOGGLE_ROLES)[number],
+  { label: string; description: string }
+> = {
+  admin: {
+    label: "Admins",
+    description:
+      "Let every admin open the Creator Hub. While off, other admins are blocked — only the founder account reaches the Hub.",
+  },
+  creator_manager: {
+    label: "Creator Managers",
+    description:
+      "Let every user with the Creator Manager role open the Creator Hub. The role isn't assignable yet, so this stays inert until it is — flip it on now and it applies the moment the role can be granted.",
+  },
+};
 
 export const metadata = { title: "Roles" };
 
@@ -27,11 +55,36 @@ export const metadata = { title: "Roles" };
  * /settings/roles) which made the New Role button hard to find.
  */
 export default async function RolesPage() {
-  await requireAdmin();
+  const session = await requireAdmin();
   const [permissions, customRoles] = await Promise.all([
     getRolePermissions(),
     listRoles(),
   ]);
+
+  // Creator-Hub access toggles are founder-only ("motha"). Resolve the
+  // username from the ADMIN DB (never trust the JWT alone for a security
+  // surface) and only load + render the card for the owner. A non-owner
+  // admin never sees it; the server actions enforce the same gate.
+  const ownerRow = await adminDb.admin_users.findUnique({
+    where: { id: session.userId },
+    select: { username: true },
+  });
+  const isHubAccessOwner = isCreatorHubAccessOwner({
+    username: ownerRow?.username ?? "",
+  });
+  const hubAccessEnabled = isHubAccessOwner
+    ? await getCreatorHubAccessSettings()
+    : null;
+  const hubAccessRows: CreatorHubAccessRow[] = isHubAccessOwner
+    ? CREATOR_HUB_TOGGLE_ROLES.map((role) => ({
+        role,
+        label: CREATOR_HUB_ROLE_LABELS[role].label,
+        description: CREATOR_HUB_ROLE_LABELS[role].description,
+        // A role is assignable only if it's a real ADMIN-DB enum value.
+        // `creator_manager` is code-only for now → flagged not-assignable.
+        assignable: isPersistableAdminRole(role),
+      }))
+    : [];
 
   // Group pages by their group label for the built-in role editor.
   const groupedPages: {
@@ -168,6 +221,20 @@ export default async function RolesPage() {
           />
         </FadeIn>
       </div>
+
+      {/* Creator Hub access — founder-only ("motha") per-role on/off toggles
+          for who can enter the Creator Hub sub-app. Both default off. */}
+      {isHubAccessOwner && hubAccessEnabled && (
+        <div className="space-y-3">
+          <SectionHeading icon={Sparkles} title="Creator Hub access" />
+          <FadeIn>
+            <CreatorHubAccessCard
+              rows={hubAccessRows}
+              initialEnabled={hubAccessEnabled}
+            />
+          </FadeIn>
+        </div>
+      )}
     </div>
   );
 }

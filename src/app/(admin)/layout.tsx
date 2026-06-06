@@ -17,6 +17,12 @@ import { redirect } from "next/navigation";
 import { verifySession, getUserPermissions } from "@/lib/dal";
 import { getSession, type SessionPayload } from "@/lib/session";
 import { getEffectiveRoles } from "@/lib/admin-roles";
+import {
+  canAccessCreatorHub,
+  getCreatorHubAccessSettings,
+  CREATOR_HUB_TOGGLE_ROLES,
+  type CreatorHubAccessSettings,
+} from "@/lib/creator-hub-access";
 import { adminDb } from "@/lib/admin-db";
 import { getAdminPreferences } from "@/lib/admin-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
@@ -95,6 +101,30 @@ async function loadPreferences(userId: string) {
 }
 
 /**
+ * Resilient read of the per-role Creator-Hub access toggles, used to decide
+ * whether the "Switch to Creator Hub" portal button is shown in the
+ * sidebar. The decision MUST be computed server-side (it depends on ADMIN-DB
+ * settings the client can't read) and is gated identically to the
+ * /creator-hub route guard. Any DB fault degrades to every toggle OFF
+ * (fail-closed) so a blip can't reveal the portal to a non-owner — only the
+ * hard-coded `motha` bypass in `canAccessCreatorHub` survives.
+ */
+async function loadCreatorHubAccessSettings(): Promise<CreatorHubAccessSettings> {
+  try {
+    return await getCreatorHubAccessSettings();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[admin-layout] loadCreatorHubAccessSettings failed, hiding portal for non-owner:",
+      err,
+    );
+    return Object.fromEntries(
+      CREATOR_HUB_TOGGLE_ROLES.map((role) => [role, false]),
+    ) as CreatorHubAccessSettings;
+  }
+}
+
+/**
  * Resilient wrapper around `verifySession()`. The session check itself is
  * cookie-only (cheap, can't throw for connectivity reasons), but the
  * DB-side `is_active` / role re-read inside it can throw if adminDb has a
@@ -143,7 +173,7 @@ export default async function AdminLayout({
   // that white-screened /dashboard, /cards, /packs in prod after their
   // page-body queries were already hardened with safeQuery). Each wrapper
   // re-throws `redirect()` / `notFound()` so navigation still works.
-  const [allowedPages, profile, preferences, dbEnv, tzCookie] =
+  const [allowedPages, profile, preferences, dbEnv, tzCookie, hubAccessSettings] =
     await Promise.all([
       loadUserPermissions(session.userId),
       loadHeaderProfile(session.userId),
@@ -154,10 +184,18 @@ export default async function AdminLayout({
       // (no hydration flash) when the admin has no explicit pref. readTzCookie
       // never throws (background-ctx safe) and returns null when absent.
       readTzCookie(),
+      loadCreatorHubAccessSettings(),
     ]);
   // Only surface the switcher to admins on servers where a dev DB is
   // actually configured; otherwise the toggle would be a dead option.
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
+
+  // Whether to show the "Switch to Creator Hub" portal in the sidebar.
+  // Computed server-side (it depends on ADMIN-DB toggles) and matched 1:1
+  // to the /creator-hub route guard so the button never appears for a user
+  // who would be redirected out of the Hub. Default (both toggles off):
+  // only `motha`.
+  const canEnterCreatorHub = canAccessCreatorHub(session, hubAccessSettings);
 
   // Chat/mutes panel is only surfaced to users who could reach the old
   // /chat page — keeps the same permission boundary as the removed route.
@@ -182,6 +220,7 @@ export default async function AdminLayout({
           allowedPages={allowedPages}
           username={session.username}
           dbEnv={dbEnv}
+          canEnterCreatorHub={canEnterCreatorHub}
         />
         {/* SidebarInset is the shadcn shell partner to <Sidebar> — it's the
             <main> landmark that flexes to fill the space beside the sidebar

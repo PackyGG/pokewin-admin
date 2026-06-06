@@ -238,6 +238,7 @@ export function AppSidebar({
   allowedPages,
   username,
   dbEnv,
+  canEnterCreatorHub = false,
 }: {
   role: string;
   // Full effective role set (defaults to [role] for legacy single-role).
@@ -248,17 +249,18 @@ export function AppSidebar({
   allowedPages: string[];
   username: string;
   dbEnv: "prod" | "dev";
+  // Whether to show the "Switch to Creator Hub" portal button. Computed
+  // SERVER-SIDE by the layout (it depends on ADMIN-DB access toggles the
+  // client can't read) via `canAccessCreatorHub`, and matched 1:1 to the
+  // /creator-hub route guard. Defaults to false (fail-closed) so a missing
+  // prop never reveals the portal. With both toggles off only `motha` gets
+  // `true`.
+  canEnterCreatorHub?: boolean;
 }) {
   const pathname = usePathname();
   const effectiveRoles = roles ?? [role];
   const isAdmin = effectiveRoles.includes("admin");
   const isCreator = effectiveRoles.includes("creator");
-  // The Creator-Hub portal button is shown ONLY to users who can actually
-  // enter the Hub — admin or creator_manager. Everyone else never sees it
-  // (and the route itself is DAL-gated server-side regardless). Mirrors the
-  // requireRole(['admin','creator_manager']) gate on /creator-hub.
-  const canEnterCreatorHub =
-    isAdmin || effectiveRoles.includes("creator_manager");
 
   const groupsWithVisibility = useMemo(() =>
     NAV_GROUPS
@@ -344,9 +346,11 @@ export function AppSidebar({
       {/* Creator Hub portal — sits directly below the logo, above the
           Overview group. A distinct accent "switch to a sub-app" affordance
           (not a normal nav link): pink gradient, sparkle mark, nudging
-          arrow. Visible ONLY to admin + creator_manager (canEnterCreatorHub);
-          the /creator-hub route is independently DAL-gated. In icon-collapsed
-          mode it shrinks to a centered pink mark with a hover tooltip. */}
+          arrow. Visibility is decided SERVER-SIDE (canEnterCreatorHub prop):
+          username `motha` OR a per-role ADMIN-DB toggle (both default off),
+          identical to the /creator-hub route guard. The route itself is
+          independently gated regardless. In icon-collapsed mode it shrinks
+          to a centered pink mark with a hover tooltip. */}
       {canEnterCreatorHub && (
         <div className="px-2 pt-2 group-data-[collapsible=icon]:px-0">
           <Link

@@ -17,6 +17,12 @@ import { DevDbBanner } from "@/components/dev-db-banner";
 import { verifySession, getUserPermissions, sessionRoles } from "@/lib/dal";
 import { getSession, type SessionPayload } from "@/lib/session";
 import { getEffectiveRoles, getDefaultRouteForRoles } from "@/lib/admin-roles";
+import {
+  canAccessCreatorHub,
+  getCreatorHubAccessSettings,
+  CREATOR_HUB_TOGGLE_ROLES,
+  type CreatorHubAccessSettings,
+} from "@/lib/creator-hub-access";
 import { adminDb } from "@/lib/admin-db";
 import { getAdminPreferences } from "@/lib/admin-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
@@ -80,6 +86,28 @@ async function loadUserPermissions(userId: string): Promise<string[]> {
   }
 }
 
+/**
+ * Resilient read of the per-role Creator-Hub access toggles. A transient
+ * admin-DB fault must NOT silently widen access, so any failure degrades to
+ * every toggle OFF (fail-closed) — only the hard-coded `motha` bypass in
+ * `canAccessCreatorHub` survives a DB blip, which is the safe outcome for a
+ * security gate.
+ */
+async function loadCreatorHubAccessSettings(): Promise<CreatorHubAccessSettings> {
+  try {
+    return await getCreatorHubAccessSettings();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[creator-hub-layout] loadCreatorHubAccessSettings failed, denying non-owner access:",
+      err,
+    );
+    return Object.fromEntries(
+      CREATOR_HUB_TOGGLE_ROLES.map((role) => [role, false]),
+    ) as CreatorHubAccessSettings;
+  }
+}
+
 async function loadPreferences(userId: string) {
   try {
     return await getAdminPreferences(userId);
@@ -120,14 +148,15 @@ export default async function CreatorHubLayout({
 }) {
   const session = await safeVerifySession();
 
-  // Hub access gate: admin OR creator_manager only. Everyone else is
-  // bounced to their normal landing route. (We resolve the redirect target
-  // the same way the DAL does so a non-eligible user lands somewhere they
-  // can actually use, rather than a generic page.)
+  // Hub access gate (security-sensitive): username `motha` OR a per-role
+  // toggle (ADMIN DB, both default OFF) enabled for one of the viewer's
+  // effective roles — see `canAccessCreatorHub`. With both toggles off ONLY
+  // motha reaches the Hub; everyone else (incl. other admins) is bounced to
+  // their normal landing route. We resolve the redirect the same way the
+  // DAL does so a non-eligible user lands somewhere they can actually use.
   const roles = sessionRoles(session);
-  const canEnter =
-    roles.includes("admin") || roles.includes("creator_manager");
-  if (!canEnter) {
+  const hubAccessSettings = await loadCreatorHubAccessSettings();
+  if (!canAccessCreatorHub(session, hubAccessSettings)) {
     const allowedPages = await loadUserPermissions(session.userId);
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }

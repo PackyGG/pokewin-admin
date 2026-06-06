@@ -8,6 +8,14 @@ import { adminDb } from "@/lib/admin-db";
 export const SETTINGS_KEYS = {
   /** user.id of the real user account that owns all /creators/ads codes. */
   HOUSE_AFFILIATE_USER_ID: "house_affiliate_user_id",
+  /**
+   * Prefix for the per-role Creator-Hub access toggles. The concrete key is
+   * `creator_hub_access_<role>_enabled` (e.g.
+   * `creator_hub_access_admin_enabled`). Built via
+   * `creatorHubToggleKey()` in `@/lib/creator-hub-access` — import that
+   * helper rather than concatenating the string by hand.
+   */
+  CREATOR_HUB_ACCESS_PREFIX: "creator_hub_access_",
 } as const;
 
 /** Marker thrown when the admin_settings table hasn't been migrated yet. */
