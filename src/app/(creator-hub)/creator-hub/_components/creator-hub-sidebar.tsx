@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Calculator,
   History,
+  Settings,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -40,10 +41,10 @@ import { LinkPending } from "@/components/ux";
  * top, and its own nav list.
  *
  * Live nav: Dashboard, Creators, Leaderboards, ROI Calculator (Profitable
- * Algo) and Changelog all link to real routes. The remaining sections are
- * placeholders (the future Acquisition / Codes & Ads / Socials Review
- * sub-apps), rendered disabled so the eventual structure is visible without
- * dead links. They carry no functional href and never navigate.
+ * Algo), Changelog and Settings all link to real routes. The remaining
+ * sections are placeholders (the future Acquisition / Codes & Ads / Socials
+ * Review sub-apps), rendered disabled so the eventual structure is visible
+ * without dead links. They carry no functional href and never navigate.
  *
  * Client-safe: no DB / server-only imports. Icons are direct
  * `lucide-react` component refs (not the string-keyed ICONS map the main
@@ -76,6 +77,7 @@ const HUB_NAV: HubNavItem[] = [
     icon: Calculator,
   },
   { label: "Changelog", href: "/creator-hub/changelog", icon: History },
+  { label: "Settings", href: "/creator-hub/settings", icon: Settings },
 ];
 
 export function CreatorHubSidebar() {
