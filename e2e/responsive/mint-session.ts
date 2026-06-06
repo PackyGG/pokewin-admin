@@ -212,6 +212,39 @@ export async function mintCreatorHubSession(): Promise<MintedSession> {
   }
 }
 
+/** Pick one house ad code for Hub ads detail (null → skip). Read-only. */
+export async function readSampleAdCode(): Promise<string | null> {
+  const adminUrl = process.env.ADMIN_DATABASE_URL;
+  const mainUrl = process.env.DATABASE_URL;
+  if (!adminUrl || !mainUrl) return null;
+
+  const adminPool = new pg.Pool({ connectionString: adminUrl, max: 1 });
+  let houseUserId: string | null = null;
+  try {
+    const setting = await adminPool.query<{ value: string }>(
+      `SELECT value FROM admin_settings WHERE key = 'house_affiliate_user_id' LIMIT 1`,
+    );
+    houseUserId =
+      setting.rowCount && setting.rowCount > 0 ? setting.rows[0].value : null;
+  } finally {
+    await adminPool.end();
+  }
+  if (!houseUserId) return null;
+
+  const mainPool = new pg.Pool({ connectionString: mainUrl, max: 1 });
+  try {
+    const res = await mainPool.query<{ code: string }>(
+      `SELECT code FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [houseUserId],
+    );
+    return res.rowCount && res.rowCount > 0 ? res.rows[0].code : null;
+  } catch {
+    return null;
+  } finally {
+    await mainPool.end();
+  }
+}
+
 /** Pick one creator-role user for Hub detail routes (null → skip). */
 export async function readSampleCreatorId(): Promise<string | null> {
   const url = process.env.DATABASE_URL;

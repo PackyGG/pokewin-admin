@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { loadEnvFiles } from "../helpers/env";
 import {
   mintCreatorHubSession,
+  readSampleAdCode,
   readSampleCreatorId,
   SESSION_COOKIE_NAME,
 } from "../responsive/mint-session";
@@ -120,6 +121,59 @@ test.describe("Creator Hub routes (minted session)", () => {
     await expect(
       page.getByText(/Deal profitability forecast/i).first(),
     ).toBeVisible({ timeout: 30_000 });
+
+    await context.close();
+  });
+
+  test("ads tab + hub ad detail render when a house code exists", async ({
+    browser,
+  }) => {
+    const adCode = await readSampleAdCode();
+    test.skip(!adCode, "No house ad code in MAIN DB — skip ads detail route");
+
+    const { cookieValue } = await mintCreatorHubSession();
+    const context = await browser.newContext();
+    await context.addCookies([
+      {
+        name: SESSION_COOKIE_NAME,
+        value: cookieValue,
+        domain: "localhost",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+    const page = await context.newPage();
+
+    const adsListUrl = "/creator-hub/codes-ads?tab=ads";
+    const listResponse = await page.goto(adsListUrl, {
+      waitUntil: "domcontentloaded",
+    });
+    expect(listResponse?.status()).toBeLessThan(500);
+    await expect(page.getByText(/Creator Hub/i).first()).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText(/Campaign Codes/i).first()).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const detailUrl = `/creator-hub/codes-ads/ads/${encodeURIComponent(adCode!)}`;
+    const detailResponse = await page.goto(detailUrl, {
+      waitUntil: "domcontentloaded",
+    });
+    expect(detailResponse?.status()).toBeLessThan(500);
+    expect(page.url(), "detail should stay on hub route").toMatch(
+      /\/creator-hub\/codes-ads\/ads\//,
+    );
+    expect(page.url(), "detail should not redirect to legacy admin").not.toMatch(
+      /\/creators\/ads\//,
+    );
+    await expect(page.getByText(adCode!).first()).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText(/Wager Source/i).first()).toBeVisible({
+      timeout: 15_000,
+    });
 
     await context.close();
   });

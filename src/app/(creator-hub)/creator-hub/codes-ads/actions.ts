@@ -11,7 +11,7 @@ import {
   setAdminSetting,
 } from "@/lib/admin-settings";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { HUB_CODES_ADS_PATH } from "./_lib/tab";
+import { HUB_CODES_ADS_PATH, hubAdDetailPath } from "./_lib/tab";
 
 const HUB_REVALIDATE_PATHS = [HUB_CODES_ADS_PATH, "/creators/ads", "/creators/codes"];
 
@@ -146,6 +146,7 @@ export async function deleteAdCode(code: string) {
 
   for (const path of HUB_REVALIDATE_PATHS) revalidatePath(path);
   revalidatePath(`/creators/ads/${value}`);
+  revalidatePath(hubAdDetailPath(value));
 }
 
 export async function searchUsersForHouse(query: string) {

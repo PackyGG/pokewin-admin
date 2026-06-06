@@ -40,6 +40,7 @@ import {
 import type { AdCodeSummary } from "@/lib/queries/ads";
 import { EmptyState } from "@/components/empty-state";
 import { getAdLink } from "@/app/(admin)/creators/ads/ad-link";
+import { hubAdDetailPath } from "../_lib/tab";
 import { createAdCode, deleteAdCode } from "../actions";
 
 export function HubAdsList({ codes }: { codes: AdCodeSummary[] }) {
@@ -97,7 +98,7 @@ export function HubAdsList({ codes }: { codes: AdCodeSummary[] }) {
 
 function AdCodeCard({ code: c }: { code: AdCodeSummary }) {
   const router = useRouter();
-  const detailHref = `/creators/ads/${encodeURIComponent(c.code)}`;
+  const detailHref = hubAdDetailPath(c.code);
   const convPct =
     c.clicks > 0 ? `${(c.conversionRate * 100).toFixed(1)}%` : "—";
   return (
