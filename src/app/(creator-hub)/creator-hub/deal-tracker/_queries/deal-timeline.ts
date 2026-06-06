@@ -3,9 +3,9 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { creatorsApi, type CreatorListItem } from "@/lib/backend-api";
-import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import { getDb } from "@/lib/db";
 import { getLeaderboardSponsorshipMap } from "../../../../(admin)/creators/_queries/leaderboard-sponsorship";
+import { fetchAllApprovedLeaderboards } from "../../leaderboards/_queries/live-leaderboards";
 
 import {
   type DealTrackerWindow,
@@ -78,15 +78,15 @@ async function hydrateUsernames(
 const getDealTimelineBase = unstable_cache(
   async (): Promise<{
     events: Omit<TimelineEvent, "creatorUsername" | "daysFromNow" | "status">[];
-    backendUnavailable: boolean;
-    snapshotMs: number;
+    dealsUnavailable: boolean;
+    leaderboardsUnavailable: boolean;
   }> => {
-    const nowMs = Date.now();
     const events: Omit<
       TimelineEvent,
       "creatorUsername" | "daysFromNow" | "status"
     >[] = [];
-    let backendUnavailable = false;
+    let dealsUnavailable = false;
+    let leaderboardsUnavailable = false;
 
     try {
       const roster = await walkAllCreators();
@@ -122,20 +122,16 @@ const getDealTimelineBase = unstable_cache(
       }
     } catch (err) {
       console.error("[deal-timeline] roster walk failed:", err);
-      backendUnavailable = true;
+      dealsUnavailable = true;
     }
 
     try {
-      const lbPage = await affiliateLeaderboardsApi.list({
-        status: "approved",
-        offset: 0,
-        limit: FETCH_CAP,
-      });
+      const leaderboards = await fetchAllApprovedLeaderboards();
       const sponsorship = await getLeaderboardSponsorshipMap(
-        lbPage.leaderboards.map((lb) => lb.id),
+        leaderboards.map((lb) => lb.id),
       ).catch(() => new Map<string, number>());
 
-      for (const lb of lbPage.leaderboards) {
+      for (const lb of leaderboards) {
         if (lb.cancelled_at) continue;
         const prize = Number(lb.total_prize_usd) || 0;
         const housePct = sponsorship.get(lb.id) ?? 100;
@@ -164,12 +160,12 @@ const getDealTimelineBase = unstable_cache(
       }
     } catch (err) {
       console.error("[deal-timeline] leaderboard walk failed:", err);
-      backendUnavailable = true;
+      leaderboardsUnavailable = true;
     }
 
-    return { events, backendUnavailable, snapshotMs: nowMs };
+    return { events, dealsUnavailable, leaderboardsUnavailable };
   },
-  ["creator-hub:deal-timeline-base:v1"],
+  ["creator-hub:deal-timeline-base:v2"],
   { revalidate: 60, tags: ["creator-hub-deal-timeline"] },
 );
 
@@ -182,7 +178,7 @@ export async function getDealTimeline(
   window: DealTrackerWindow = "30d",
 ): Promise<DealTimelineResult> {
   const base = await getDealTimelineBase();
-  const nowMs = base.snapshotMs;
+  const nowMs = Date.now();
   const days = dealTrackerWindowDays(window);
 
   const creatorIds = [...new Set(base.events.map((e) => e.creatorUserId))];
@@ -213,6 +209,8 @@ export async function getDealTimeline(
   return {
     events,
     counts,
-    backendUnavailable: base.backendUnavailable,
+    dealsUnavailable: base.dealsUnavailable,
+    leaderboardsUnavailable: base.leaderboardsUnavailable,
+    backendUnavailable: base.dealsUnavailable || base.leaderboardsUnavailable,
   };
 }

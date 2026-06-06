@@ -31,5 +31,10 @@ export type DealTimelineResult = {
     lbStarts: number;
     upcoming: number;
   };
+  /** True when the creator roster walk failed. */
+  dealsUnavailable: boolean;
+  /** True when the approved-leaderboard walk failed. */
+  leaderboardsUnavailable: boolean;
+  /** Either source failed — legacy aggregate for callers. */
   backendUnavailable: boolean;
 };

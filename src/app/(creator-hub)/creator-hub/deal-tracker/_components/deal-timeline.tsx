@@ -82,39 +82,55 @@ function groupByDate(
 
 export function DealTimeline({
   events,
-  backendUnavailable,
+  dealsUnavailable,
+  leaderboardsUnavailable,
 }: {
   events: TimelineEvent[];
-  backendUnavailable: boolean;
+  dealsUnavailable: boolean;
+  leaderboardsUnavailable: boolean;
 }) {
   const formatDateTime = useFormatDateTime();
   const groups = groupByDate(events, formatDateTime);
 
-  if (backendUnavailable && events.length === 0) {
+  if (dealsUnavailable && events.length === 0) {
     return (
       <EmptyState
         icon={Calendar}
         title="Timeline unavailable"
-        description="The backend roster or leaderboard walk failed — try refreshing."
+        description="The creator roster could not be loaded — try refreshing."
       />
     );
   }
 
   if (events.length === 0) {
     return (
-      <EmptyState
-        icon={Calendar}
-        title="No milestones in this window"
-        description="Widen the horizon or check back when new deals and leaderboards are scheduled."
-      />
+      <div className="space-y-3">
+        {leaderboardsUnavailable && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-muted-foreground">
+            Leaderboard milestones could not be loaded — deal windows may still
+            appear after a refresh.
+          </div>
+        )}
+        <EmptyState
+          icon={Calendar}
+          title="No milestones in this window"
+          description="Widen the horizon or check back when new deals and leaderboards are scheduled."
+        />
+      </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {backendUnavailable && (
+      {leaderboardsUnavailable && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-muted-foreground">
-          Some data sources were unavailable — the timeline may be incomplete.
+          Leaderboard milestones are missing from this view — deal windows loaded
+          normally. Try refreshing if you expect LB events.
+        </div>
+      )}
+      {dealsUnavailable && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-muted-foreground">
+          Deal windows may be incomplete — the creator roster failed to load.
         </div>
       )}
 

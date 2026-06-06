@@ -133,7 +133,8 @@ export type LiveLeaderboardsResult = {
  * FETCH_CAP rows. Mirrors the leaderboard-cost.ts walk (kept local rather than
  * exported from there to avoid editing that shared cost module).
  */
-async function fetchAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
+/** Paginated approved-board walk (backend caps `limit` at 100 per page). */
+export async function fetchAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
   const firstPage = await affiliateLeaderboardsApi.list({
     status: "approved",
     offset: 0,

@@ -114,7 +114,8 @@ async function DealTrackerSection({
         <SectionHeading icon={CalendarRange} title="Timeline" />
         <DealTimeline
           events={data.events}
-          backendUnavailable={data.backendUnavailable}
+          dealsUnavailable={data.dealsUnavailable}
+          leaderboardsUnavailable={data.leaderboardsUnavailable}
         />
       </div>
     </FadeIn>
