@@ -29,7 +29,11 @@ import { formatCurrency, formatNumber, formatCompactUsd } from "@/lib/utils/form
 
 import { HubQuickTools } from "./_components/hub-quick-tools";
 import { HubCreatorCheckWidget } from "./_components/hub-creator-check-widget";
+import { NetGgrBreakdownPopover } from "../../(admin)/creators/_components/net-ggr-breakdown-popover";
+
 import { HubKpiBox } from "./_components/hub-kpi-box";
+import { HubKpiInfoPopover } from "./_components/hub-kpi-info-popover";
+import { HubWagerBreakdownPopover } from "./_components/hub-wager-breakdown-popover";
 import { HubTopCreators } from "./_components/hub-top-creators";
 import { HubChartCard } from "./_components/hub-chart-card";
 import { HubPeriodSelector } from "./_components/hub-period-selector";
@@ -104,6 +108,27 @@ export default async function CreatorHubDashboardPage({
 async function OverviewSection({ period }: { period: DashboardPeriod }) {
   const data = await getHubDashboardOverview(period);
   const windowLabel = DASHBOARD_PERIOD_LABELS[period].toLowerCase();
+  const periodLabel =
+    windowLabel.charAt(0).toUpperCase() + windowLabel.slice(1);
+
+  const signupLeaderLines = [...data.topCreators]
+    .filter((c) => c.signups > 0)
+    .sort((a, b) => b.signups - a.signups)
+    .slice(0, 5)
+    .map((c) => ({
+      label: c.username ?? "Unknown",
+      value: formatNumber(c.signups),
+      tone: "foreground" as const,
+    }));
+
+  const creatorCostLines =
+    data.creatorCostBreakdown?.lines
+      .filter((l) => l.amount > 0)
+      .map((l) => ({
+        label: l.label,
+        value: formatCurrency(l.amount),
+        tone: "rose" as const,
+      })) ?? [];
 
   return (
     <FadeIn className="space-y-4">
@@ -122,6 +147,32 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           placeholderNote={
             data.rosterUnavailable ? "Backend unavailable" : "No data yet"
           }
+          info={
+            data.totalCreators != null ? (
+              <HubKpiInfoPopover
+                title="Total creators · breakdown"
+                description="Live backend roster count. Sub-lines show fill-program creators and those with an active or scheduled deal."
+                lines={[
+                  {
+                    label: "All creators",
+                    value: formatNumber(data.totalCreators),
+                  },
+                  ...(data.creatorsStats
+                    ? [
+                        {
+                          label: "With fill deals",
+                          value: formatNumber(data.creatorsStats.fillCreatorCount),
+                        },
+                        {
+                          label: "Active / scheduled deal",
+                          value: formatNumber(data.creatorsStats.activeDealCount),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            ) : undefined
+          }
         />
         <HubKpiBox
           label={`Affiliate Wager · ${period}`}
@@ -139,6 +190,16 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
               ? "Windowed GGR query unavailable"
               : undefined
           }
+          info={
+            data.ggrLegs ? (
+              <HubWagerBreakdownPopover
+                packBattleWager={data.ggrLegs.packBattleWager}
+                upgraderWager={data.ggrLegs.upgraderWager}
+                wagersTotal={data.ggrLegs.wagersTotal}
+                periodLabel={periodLabel}
+              />
+            ) : undefined
+          }
         />
         <HubKpiBox
           label={`Creator Cost · ${period}`}
@@ -151,6 +212,21 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           }
           sub={`withdrawals + tips + LB · ${windowLabel}`}
           placeholder={data.creatorCostUsd == null}
+          info={
+            data.creatorCostBreakdown ? (
+              <HubKpiInfoPopover
+                title={`Creator cost · ${periodLabel}`}
+                description="House spend on creator activity in the selected window — every line is money paid out (a house cost): session conversions, house-funded tips, and full leaderboard prize gross."
+                lines={creatorCostLines}
+                footer={{
+                  label: "Total",
+                  value: formatCurrency(data.creatorCostBreakdown.total),
+                  tone: "rose",
+                }}
+                ringClassName="focus-visible:ring-rose-500/40"
+              />
+            ) : undefined
+          }
         />
         <HubKpiBox
           label="Live Now"
@@ -162,6 +238,20 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           placeholder={data.liveCount == null}
           placeholderNote={
             data.rosterUnavailable ? "Backend unavailable" : "No data yet"
+          }
+          info={
+            data.liveCount != null ? (
+              <HubKpiInfoPopover
+                title="Live now"
+                description="Creators with an active fill stream session right now (`active_session_id` on the backend roster). Updates as creators go live or end a session."
+                lines={[
+                  {
+                    label: "Streaming now",
+                    value: formatNumber(data.liveCount),
+                  },
+                ]}
+              />
+            ) : undefined
           }
         />
         <HubKpiBox
@@ -176,6 +266,19 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           placeholderNote={
             data.cohortUnavailable ? "Cohort metrics unavailable" : undefined
           }
+          info={
+            data.signups != null ? (
+              <HubKpiInfoPopover
+                title={`Sign-ups · ${periodLabel}`}
+                description="New users who joined in the window and were referred by a creator (`user.referred_by` points at a creator account). Staff and excluded users are dropped."
+                lines={signupLeaderLines}
+                footer={{
+                  label: "Total",
+                  value: formatNumber(data.signups),
+                }}
+              />
+            ) : undefined
+          }
         />
         <HubKpiBox
           label={`New FTDs · ${period}`}
@@ -186,6 +289,18 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           placeholder={data.ftds == null}
           placeholderNote={
             data.cohortUnavailable ? "Cohort metrics unavailable" : undefined
+          }
+          info={
+            data.ftds != null ? (
+              <HubKpiInfoPopover
+                title={`New FTDs · ${periodLabel}`}
+                description="Distinct referred players who made their first code-attributed deposit in the window (`affiliate_code_usages` with `usage_type = deposit`). Self-attributed creator play is excluded."
+                footer={{
+                  label: "Total FTDs",
+                  value: formatNumber(data.ftds),
+                }}
+              />
+            ) : undefined
           }
         />
         <HubKpiBox
@@ -201,6 +316,20 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           placeholder={data.depositsUsd == null}
           placeholderNote={
             data.cohortUnavailable ? "Cohort metrics unavailable" : undefined
+          }
+          info={
+            data.depositsUsd != null ? (
+              <HubKpiInfoPopover
+                title={`Deposits · ${periodLabel}`}
+                description="Sum of completed player deposits in the window, attributed to the creator whose code covered the player at deposit time (7-day lookback, most recent code wins)."
+                footer={{
+                  label: "Total",
+                  value: formatCurrency(data.depositsUsd),
+                  tone: "emerald",
+                }}
+                ringClassName="focus-visible:ring-emerald-500/40"
+              />
+            ) : undefined
           }
         />
         {/* Net Code-User GGR — a real bonus figure from the same windowed
@@ -220,6 +349,21 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
             data.netGgrUsd == null
               ? "Windowed GGR query unavailable"
               : undefined
+          }
+          info={
+            data.ggrLegs && data.netGgrUsd != null ? (
+              <NetGgrBreakdownPopover
+                packBattleWager={data.ggrLegs.packBattleWager}
+                upgraderWager={data.ggrLegs.upgraderWager}
+                inventoryPayout={data.ggrLegs.inventoryPayout}
+                battleRefundLedger={data.ggrLegs.battleRefundLedger}
+                upgraderPayout={data.ggrLegs.upgraderPayout}
+                wagersTotal={data.ggrLegs.wagersTotal}
+                payoutsTotal={data.ggrLegs.payoutsTotal}
+                ggr={data.netGgrUsd}
+                periodLabel={periodLabel}
+              />
+            ) : undefined
           }
         />
       </div>

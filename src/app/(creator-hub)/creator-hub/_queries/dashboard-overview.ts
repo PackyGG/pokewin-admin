@@ -11,7 +11,11 @@ import {
   REWARD_QUERY_TIMEOUT_MS,
 } from "@/lib/errors/safe-query";
 import { getCodeAndWagerByUser } from "../../../(admin)/creators/_queries/code-and-wager-by-user";
-import { getHubCreatorCostUsd } from "./hub-dashboard-creator-cost";
+import {
+  getHubCreatorCostBreakdown,
+  type HubCreatorCostBreakdown,
+} from "./hub-dashboard-creator-cost";
+import type { CohortGgrLegs } from "../../../(admin)/creators/_queries/all-creators-net-pnl";
 import { getHubCohortWindowed } from "./hub-dashboard-cohort";
 import { getWindowedSignupsByCreatorIds } from "./hub-top-creator-meta";
 import { type HubChartPoint } from "./hub-types";
@@ -59,6 +63,12 @@ export type HubDashboardOverview = {
   affiliateWagerUsd: number | null;
   netGgrUsd: number | null;
   creatorCostUsd: number | null;
+  creatorCostBreakdown: HubCreatorCostBreakdown | null;
+  ggrLegs: CohortGgrLegs | null;
+  creatorsStats: {
+    fillCreatorCount: number;
+    activeDealCount: number;
+  } | null;
   signups: number | null;
   ftds: number | null;
   depositsUsd: number | null;
@@ -106,8 +116,8 @@ export async function getHubDashboardOverview(
       HUB_OVERVIEW_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
-      () => getHubCreatorCostUsd(period),
-      0,
+      () => getHubCreatorCostBreakdown(period),
+      { total: 0, lines: [] },
       "creator-hub.creatorCost",
       HUB_OVERVIEW_QUERY_TIMEOUT_MS,
     ),
@@ -174,7 +184,15 @@ export async function getHubDashboardOverview(
     liveCount: stats ? stats.liveCount : null,
     affiliateWagerUsd: ggr ? ggr.legs.wagersTotal : null,
     netGgrUsd: ggr ? ggr.totalGgr : null,
-    creatorCostUsd: costOk ? costResult.data : null,
+    creatorCostUsd: costOk ? costResult.data.total : null,
+    creatorCostBreakdown: costOk ? costResult.data : null,
+    ggrLegs: ggr?.legs ?? null,
+    creatorsStats: stats
+      ? {
+          fillCreatorCount: stats.fillCreatorCount,
+          activeDealCount: stats.activeDealCount,
+        }
+      : null,
     signups: cohort ? cohort.signups : EMPTY_COHORT.signups,
     ftds: cohort ? cohort.ftds : EMPTY_COHORT.ftds,
     depositsUsd: cohort ? cohort.depositsUsd : EMPTY_COHORT.depositsUsd,

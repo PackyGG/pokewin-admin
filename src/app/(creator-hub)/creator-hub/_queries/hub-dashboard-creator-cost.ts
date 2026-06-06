@@ -25,8 +25,19 @@ import {
  * via `NOW() - INTERVAL` (same cache-key pattern as net GGR scans).
  */
 
+export type HubCreatorCostLine = {
+  key: string;
+  label: string;
+  amount: number;
+};
+
+export type HubCreatorCostBreakdown = {
+  total: number;
+  lines: HubCreatorCostLine[];
+};
+
 const cachedHubCreatorCost = unstable_cache(
-  async (period: DashboardPeriod): Promise<number> => {
+  async (period: DashboardPeriod): Promise<HubCreatorCostBreakdown> => {
     return withTiming("creator-hub.creatorCost", async () => {
       const db = await getDb();
       const interval = hubPeriodToInterval(period);
@@ -74,15 +85,40 @@ const cachedHubCreatorCost = unstable_cache(
       );
       const leaderboardGross = toNumber(leaderboardRows[0]?.gross);
 
-      return creatorWithdrawals + tips + leaderboardGross;
+      const lines: HubCreatorCostLine[] = [
+        {
+          key: "converted_payouts",
+          label: "Converted deal payouts",
+          amount: creatorWithdrawals,
+        },
+        { key: "tips", label: "House-funded tips", amount: tips },
+        {
+          key: "leaderboard",
+          label: "Leaderboard prizes (gross)",
+          amount: leaderboardGross,
+        },
+      ];
+
+      return {
+        total: creatorWithdrawals + tips + leaderboardGross,
+        lines,
+      };
     });
   },
-  ["hub-creator-cost-v3-session-converted"],
+  ["hub-creator-cost-v4-breakdown"],
   { revalidate: 60, tags: ["creator-hub"] },
 );
 
+export async function getHubCreatorCostBreakdown(
+  period: DashboardPeriod,
+): Promise<HubCreatorCostBreakdown> {
+  return cachedHubCreatorCost(period);
+}
+
+/** @deprecated Prefer {@link getHubCreatorCostBreakdown}. */
 export async function getHubCreatorCostUsd(
   period: DashboardPeriod,
 ): Promise<number> {
-  return cachedHubCreatorCost(period);
+  const breakdown = await getHubCreatorCostBreakdown(period);
+  return breakdown.total;
 }

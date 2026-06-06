@@ -56,6 +56,7 @@ export function HubKpiBox({
   live,
   placeholder,
   placeholderNote,
+  info,
 }: {
   label: string;
   /** Pre-formatted value string (ignored when `placeholder`). */
@@ -69,6 +70,8 @@ export function HubKpiBox({
   placeholder?: boolean;
   /** Short note shown under the em-dash in placeholder mode. */
   placeholderNote?: string;
+  /** Optional (i) breakdown popover — client component, serializable props. */
+  info?: React.ReactNode;
 }) {
   const colors = ACCENT[accent];
   return (
@@ -98,9 +101,10 @@ export function HubKpiBox({
             placeholder ? "text-muted-foreground" : colors.icon,
           )}
         />
-        <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
           {label}
         </span>
+        {info ? <span className="ml-auto shrink-0">{info}</span> : null}
       </div>
 
       {placeholder ? (
