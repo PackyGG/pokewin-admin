@@ -8,8 +8,8 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `7f72f6d0` (local checkout behind `origin/main` by 4) · **Updated:** 2026-06-06 · **Active focus:** Creator Hub — post wave B+C; audit + live verify next
-- **Cloud VM dev env (2026-06-06):** `npm install` + local Postgres 16 (`pokewin_admin` / `pokewin_main`) + `.env.local` — lint/tsc/build green; `npm run dev` :3000; Playwright auth → dashboard PASS. Docs: `AGENTS.md` § Cursor Cloud specific instructions. Update script: `npm install` only.
+- **HEAD:** `bfa60316` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub — post wave B+C; audit + live verify next
+- **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
 
