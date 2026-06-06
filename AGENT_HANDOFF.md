@@ -37,7 +37,7 @@
 
 ## 🟡 In-flight
 
-- **Hub nav cleanup (`cursor/hub-nav-cleanup-775d`, PR #51)** — Deal Tracker page deleted; `/creator-hub/deal-tracker` → creators redirect; Compare moved from Ops into Workspace nav; Ops group removed; tsc/lint/build PASS
+- **Hub nav cleanup (`cursor/hub-nav-cleanup-775d`, PR #51)** — Deal Tracker removed; Codes & Ads hub page removed (redirects → `/creators/ads`); Compare in Workspace nav; Ops group removed; tsc/lint/build PASS
 
 ---
 

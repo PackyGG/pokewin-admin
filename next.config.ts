@@ -45,6 +45,16 @@ const nextConfig: NextConfig = {
         destination: "/creator-hub/creators",
         permanent: true,
       },
+      {
+        source: "/creator-hub/codes-ads",
+        destination: "/creators/ads",
+        permanent: true,
+      },
+      {
+        source: "/creator-hub/codes-ads/ads/:code",
+        destination: "/creators/ads/:code",
+        permanent: true,
+      },
     ];
   },
 };

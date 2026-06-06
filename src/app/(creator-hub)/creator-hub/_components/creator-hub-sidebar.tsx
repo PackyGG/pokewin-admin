@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   ArrowLeft,
   GitCompareArrows,
-  Code2,
   Gift,
   LayoutDashboard,
   Users,
@@ -44,7 +43,7 @@ import { LinkPending } from "@/components/ux";
  * "Back to Admin" exit at the top, and its own nav list.
  *
  * Live nav: Dashboard, Creators, Leaderboards, Tips & Sponsors, Creator Check, Acquisition,
- * Codes & Ads, Socials Review, ROI Calculator, Compare, Changelog. Settings is
+ * Socials Review, ROI Calculator, Compare, Changelog. Settings is
  * pinned in the footer above the theme toggle. Alerts
  * live on the right rail dock.
  *
@@ -82,11 +81,6 @@ const HUB_NAV: HubNavItem[] = [
     label: "Acquisition",
     href: "/creator-hub/acquisition",
     icon: LineChart,
-  },
-  {
-    label: "Codes & Ads",
-    href: "/creator-hub/codes-ads",
-    icon: Code2,
   },
   {
     label: "Socials Review",
