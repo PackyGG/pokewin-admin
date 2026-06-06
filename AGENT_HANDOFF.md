@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `5ad928bd` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub — post wave B+C; audit + live verify next
+- **HEAD:** `7f72f6d0` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub — post wave B+C; audit + live verify next
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
 
