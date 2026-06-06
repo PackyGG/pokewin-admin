@@ -1,30 +1,30 @@
 "use client";
 
-import * as React from "react";
-import {
-  Area,
-  AreaChart,
-  ResponsiveContainer,
-  CartesianGrid,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { LineChart as LineChartIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatCompactUsd } from "@/lib/utils/format";
+import {
+  type ChartConfig,
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
+import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 import { type HubChartPoint } from "../_queries/hub-types";
 
 /**
- * Creator Hub dashboard — time-series chart card (Wager / Deposits) in the
- * 3-up row. Recharts area chart in house style (emerald = house gain).
- * Headline totals come from the windowed overview query; bucketed series
- * are hourly for 24h and daily for longer chips.
- *
- * Client component (recharts needs the browser). Props are serializable.
+ * Creator Hub dashboard — Wager / Deposits area chart (3-up row).
+ * Uses the shared shadcn ChartContainer so axes, grid, and tooltip match
+ * the main admin dashboard charts.
  */
 
 export type { HubChartPoint };
+
+const EMERALD = "#34d399";
+
+const chartConfig = {
+  value: { label: "Total", color: EMERALD },
+} satisfies ChartConfig;
 
 export function HubChartCard({
   title,
@@ -33,89 +33,83 @@ export function HubChartCard({
   placeholderNote,
 }: {
   title: string;
-  /** Pre-formatted real total (null → em-dash). */
   headline: string | null;
-  /** Bucketed series; empty → placeholder grid (no fabricated line). */
   series?: HubChartPoint[];
   placeholderNote?: string;
 }) {
-  const hasSeries = series.length > 0;
-  // Stable gradient id per title so two cards on the same page don't clash.
-  const gradId = React.useId();
+  const hasActivity = series.some((p) => p.value > 0);
+  const gradientId =
+    title === "Deposits" ? "hubDepositsAreaGradient" : "hubWagerAreaGradient";
 
   return (
-    <div className="rounded-2xl border bg-card p-4 sm:p-5">
+    <div className="flex h-full flex-col rounded-2xl border bg-card p-4 sm:p-5">
       <div className="mb-1 flex items-center justify-between gap-2">
         <span className="text-sm font-semibold">{title}</span>
         <LineChartIcon className="size-4 text-emerald-500" />
       </div>
-      {/* Headline = REAL windowed total (house gain → emerald). */}
+
       <p className="text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
         {headline ?? <span className="text-muted-foreground/60">—</span>}
       </p>
 
-      <div className="mt-3 h-[160px] w-full">
-        {hasSeries ? (
-          <ResponsiveContainer width="100%" height="100%">
+      <div className="mt-3 min-h-[172px] flex-1 w-full">
+        {hasActivity ? (
+          <ChartContainer
+            config={chartConfig}
+            className="aspect-auto h-[172px] w-full"
+          >
             <AreaChart
               data={series}
-              margin={{ top: 6, right: 4, left: 4, bottom: 0 }}
+              margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+              accessibilityLayer
             >
               <defs>
-                <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#34d399" stopOpacity={0.35} />
-                  <stop offset="100%" stopColor="#34d399" stopOpacity={0} />
+                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={EMERALD} stopOpacity={0.35} />
+                  <stop offset="100%" stopColor={EMERALD} stopOpacity={0.02} />
                 </linearGradient>
               </defs>
-              <CartesianGrid
-                strokeDasharray="3 3"
-                stroke="currentColor"
-                className="text-border/50"
-                vertical={false}
-              />
+              <CartesianGrid vertical={false} />
               <XAxis
                 dataKey="label"
                 tickLine={false}
                 axisLine={false}
-                tick={{ fontSize: 10 }}
-                stroke="currentColor"
-                className="text-muted-foreground"
-                minTickGap={24}
+                tickMargin={8}
+                fontSize={10}
+                minTickGap={28}
+                interval="preserveStartEnd"
               />
               <YAxis
                 tickLine={false}
                 axisLine={false}
-                tick={{ fontSize: 10 }}
-                stroke="currentColor"
-                className="text-muted-foreground"
-                width={48}
-                tickFormatter={(v: number) => formatCompactUsd(v)}
+                tickMargin={4}
+                width={52}
+                fontSize={10}
+                tickFormatter={formatCompactUsd}
               />
-              <Tooltip
-                cursor={{ stroke: "rgba(52,211,153,0.4)" }}
-                formatter={(v: number) => [formatCompactUsd(v), title]}
-                contentStyle={{
-                  borderRadius: 8,
-                  border: "1px solid var(--border)",
-                  background: "var(--card)",
-                  fontSize: 12,
-                }}
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent
+                    formatter={(value) => formatCurrency(Number(value))}
+                    hideIndicator
+                  />
+                }
               />
               <Area
                 type="monotone"
                 dataKey="value"
-                stroke="#34d399"
+                stroke={EMERALD}
+                fill={`url(#${gradientId})`}
                 strokeWidth={2}
-                fill={`url(#${gradId})`}
                 animationDuration={700}
                 animationEasing="ease-out"
+                dot={false}
+                activeDot={{ r: 3, strokeWidth: 0 }}
               />
             </AreaChart>
-          </ResponsiveContainer>
+          </ChartContainer>
         ) : (
-          // Placeholder: empty recharts-style grid + an honest note. No
-          // fabricated data points.
-          <div className="relative flex h-full w-full flex-col">
+          <div className="relative flex h-[172px] w-full flex-col">
             <div
               aria-hidden
               className="flex-1 rounded-md border border-dashed border-border/60 bg-[linear-gradient(to_bottom,transparent_calc(50%-0.5px),var(--border)_50%,transparent_calc(50%+0.5px)),linear-gradient(to_bottom,transparent_calc(25%-0.5px),color-mix(in_oklab,var(--border)_50%,transparent)_25%,transparent_calc(25%+0.5px)),linear-gradient(to_bottom,transparent_calc(75%-0.5px),color-mix(in_oklab,var(--border)_50%,transparent)_75%,transparent_calc(75%+0.5px))]"

@@ -10,8 +10,10 @@ import {
   safeQuery,
   REWARD_QUERY_TIMEOUT_MS,
 } from "@/lib/errors/safe-query";
+import { getCodeAndWagerByUser } from "../../../(admin)/creators/_queries/code-and-wager-by-user";
 import { getHubCreatorCostUsd } from "./hub-dashboard-creator-cost";
 import { getHubCohortWindowed } from "./hub-dashboard-cohort";
+import { getWindowedSignupsByCreatorIds } from "./hub-top-creator-meta";
 import { type HubChartPoint } from "./hub-types";
 
 export type { HubChartPoint };
@@ -34,6 +36,10 @@ export type HubTopCreator = {
   creatorUserId: string;
   username: string | null;
   image: string | null;
+  /** Primary affiliate code (oldest-first). */
+  code: string | null;
+  /** Referred sign-ups in the active window. */
+  signups: number;
   wagerUsd: number;
   ggrUsd: number;
 };
@@ -133,16 +139,32 @@ export async function getHubDashboardOverview(
   const cohortOk = cohortResult.error == null;
   const costOk = costResult.error == null;
 
-  const topCreators: HubTopCreator[] = [...(ggr?.byCreator ?? [])]
+  const ranked: CreatorNetGgrRow[] = [...(ggr?.byCreator ?? [])]
+    .filter((r) => r.wager > 0)
     .sort((a, b) => b.wager - a.wager || b.ggr - a.ggr)
-    .slice(0, TOP_CREATORS_LIMIT)
-    .map((r: CreatorNetGgrRow) => ({
-      creatorUserId: r.creatorUserId,
-      username: r.username,
-      image: r.image,
-      wagerUsd: r.wager,
-      ggrUsd: r.ggr,
-    }));
+    .slice(0, TOP_CREATORS_LIMIT);
+
+  const topIds = ranked.map((r) => r.creatorUserId);
+  const [codeMeta, signupsMeta] = await Promise.all([
+    getCodeAndWagerByUser(topIds).catch((err) => {
+      console.error("[creator-hub] top-creator code meta failed:", err);
+      return new Map();
+    }),
+    getWindowedSignupsByCreatorIds(topIds, period).catch((err) => {
+      console.error("[creator-hub] top-creator signups meta failed:", err);
+      return new Map();
+    }),
+  ]);
+
+  const topCreators: HubTopCreator[] = ranked.map((r) => ({
+    creatorUserId: r.creatorUserId,
+    username: r.username,
+    image: r.image,
+    code: codeMeta.get(r.creatorUserId)?.code ?? null,
+    signups: signupsMeta.get(r.creatorUserId) ?? 0,
+    wagerUsd: r.wager,
+    ggrUsd: r.ggr,
+  }));
 
   const cohort = cohortOk ? cohortResult.data : null;
 

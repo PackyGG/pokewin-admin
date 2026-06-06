@@ -225,7 +225,7 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
       </div>
 
       {/* 3-up row: Top Creators (hero) + Wager chart + Deposits chart. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.05fr_1fr_1fr]">
         <div className="rounded-2xl border bg-card p-4 sm:p-5">
           <div className="mb-2 flex items-center justify-between gap-2">
             <span className="flex items-center gap-2 text-sm font-semibold">
@@ -236,7 +236,10 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
               {windowLabel}
             </span>
           </div>
-          <HubTopCreators creators={data.topCreators} />
+          <HubTopCreators
+            creators={data.topCreators}
+            periodLabel={period}
+          />
         </div>
 
         <HubChartCard

@@ -17,6 +17,7 @@ import {
   hubBucketTrunc,
   hubCoveringLateral,
 } from "./hub-period-sql";
+import { padHubChartSeries } from "./hub-chart-series";
 import { type HubChartPoint } from "./hub-types";
 
 export type { HubChartPoint };
@@ -207,8 +208,11 @@ const cachedHubCohortScans = (
           : Promise.resolve([] as BucketRow[]),
       ]);
 
-      const wagerSeries = mergeBucketRows(
-        [...ledgerWagerSeriesRows, ...upgraderWagerSeriesRows],
+      const wagerSeries = padHubChartSeries(
+        mergeBucketRows(
+          [...ledgerWagerSeriesRows, ...upgraderWagerSeriesRows],
+          period,
+        ),
         period,
       );
 
@@ -218,11 +222,14 @@ const cachedHubCohortScans = (
         ftds: toNumber(ftdRows[0]?.value),
         depositsUsd: toNumber(depositTotalRows[0]?.value),
         wagerSeries,
-        depositSeries: mergeBucketRows(depositSeriesRows, period),
+        depositSeries: padHubChartSeries(
+          mergeBucketRows(depositSeriesRows, period),
+          period,
+        ),
       };
     },
     [
-      "hub-cohort-windowed-v2-deposit-bucket",
+      "hub-cohort-windowed-v3-padded-charts",
       period,
       env,
       blacklistAnd,
