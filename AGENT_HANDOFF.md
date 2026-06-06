@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `ff6ea75a` · **Updated:** 2026-06-06 · **Active focus:** Hub ad-code detail route **DONE** (`73282fc9`); prod browser verify **PARTIAL** (minted cookie rejected on Vercel — `SESSION_SECRET` mismatch vs local `.env.local`)
+- **HEAD:** `7b96cac7` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub revamp **DONE** — hub ad detail prod-verified (Desktop Chrome, `pokewin-admin.vercel.app`)
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
