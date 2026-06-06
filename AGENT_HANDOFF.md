@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** _(pending push — Creator Hub plan closeout)_
+- **HEAD:** `dfa38aee` · **Updated:** 2026-06-06 · Creator Hub plan closeout pushed to `main`
 - **Updated:** 2026-06-06 · **Active focus:** Creator Hub plan **CLOSED** (PARTIAL on owner-blocked items only)
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
