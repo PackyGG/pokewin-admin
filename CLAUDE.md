@@ -4,10 +4,12 @@ Dieses File definiert verbindliche Arbeitsregeln für jede Claude Code Session i
 
 ### 📎 Companion-Docs (zu Beginn jeder Session lesen)
 
-Diese Datei (`CLAUDE.md`) ist die **bindende Regel-Quelle**. Zwei weitere Dateien gehören dazu und werden zu Sessionbeginn mitgelesen:
+**Erzwungenes Protokoll:** **`SESSION_MEMORY.md`** — Read-on-start + Write-before-done. Kein DONE ohne Doc-Update.
 
-- **`AGENT_HANDOFF.md`** — das **live Operating-Manual + der aktuelle Session-State-Snapshot** (was zuletzt geshipped wurde, was in-flight ist, was blocked/failed ist, frische Gotchas). **Zuerst lesen**, wenn du eine laufende Session übernimmst.
-- **`ONBOARDING.md`** — die **volle Architektur + Domain-Wissen** (Key-Files-Tabelle, Reward-/Ledger-Modell, Query-Layer, etc.).
+Diese Datei (`CLAUDE.md`) ist die **bindende Regel-Quelle**. Zu Sessionbeginn mitlesen:
+
+- **`AGENT_HANDOFF.md`** — **live Session-State** (shipped, in-flight, blocked, next). **Zuerst lesen.**
+- **`ONBOARDING.md`** — **Architektur + Domain-Wissen** (Key-Files, Reward-/Ledger-Modell, Gotchas).
 
 **Boundary:** Session-State (CURRENT STATE, IN-FLIGHT, OPEN/NEXT, FAILED/BLOCKED) lebt in `AGENT_HANDOFF.md`, **nicht hier**. In `CLAUDE.md` kommen nur **durable Regeln & Konventionen**. Wenn `AGENT_HANDOFF.md` eine durable Regel korrigiert/verschärft, wird sie hierher übernommen (genau das ist 2026-06-05 passiert: Worktree-`npm install` statt `npm ci`, Admin-DB-`db push` statt `migrate`, Build-/Verify-Agent-Contract, UI-Verify-Fallback, Gotchas-Liste).
 

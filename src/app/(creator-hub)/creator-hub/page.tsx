@@ -134,6 +134,11 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           }
           sub={`code-cohort wager · ${windowLabel}`}
           placeholder={data.affiliateWagerUsd == null}
+          placeholderNote={
+            data.affiliateWagerUsd == null
+              ? "Windowed GGR query unavailable"
+              : undefined
+          }
         />
         <HubKpiBox
           label={`Creator Cost · ${period}`}
@@ -168,6 +173,9 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           }
           sub={`referred by creators · ${windowLabel}`}
           placeholder={data.signups == null}
+          placeholderNote={
+            data.cohortUnavailable ? "Cohort metrics unavailable" : undefined
+          }
         />
         <HubKpiBox
           label={`New FTDs · ${period}`}
@@ -176,6 +184,9 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           value={data.ftds != null ? formatNumber(data.ftds) : "—"}
           sub={`code-attributed depositors · ${windowLabel}`}
           placeholder={data.ftds == null}
+          placeholderNote={
+            data.cohortUnavailable ? "Cohort metrics unavailable" : undefined
+          }
         />
         <HubKpiBox
           label={`Deposits · ${period}`}
@@ -188,6 +199,9 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           }
           sub={`coverage-attributed · ${windowLabel}`}
           placeholder={data.depositsUsd == null}
+          placeholderNote={
+            data.cohortUnavailable ? "Cohort metrics unavailable" : undefined
+          }
         />
         {/* Net Code-User GGR — a real bonus figure from the same windowed
             pass (house POV). Emerald when the cohort net-lost to us; we
@@ -202,6 +216,11 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           }
           sub={`wager − payout · ${windowLabel}`}
           placeholder={data.netGgrUsd == null}
+          placeholderNote={
+            data.netGgrUsd == null
+              ? "Windowed GGR query unavailable"
+              : undefined
+          }
         />
       </div>
 
@@ -228,6 +247,11 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
               : null
           }
           series={data.wagerSeries}
+          placeholderNote={
+            data.cohortUnavailable
+              ? "Chart unavailable — cohort query failed"
+              : undefined
+          }
         />
 
         <HubChartCard
@@ -238,6 +262,11 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
               : null
           }
           series={data.depositSeries}
+          placeholderNote={
+            data.cohortUnavailable
+              ? "Chart unavailable — cohort query failed"
+              : undefined
+          }
         />
       </div>
     </FadeIn>

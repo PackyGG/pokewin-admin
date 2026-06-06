@@ -60,16 +60,19 @@ export type HubDashboardOverview = {
   depositSeries: HubChartPoint[];
   topCreators: HubTopCreator[];
   rosterUnavailable: boolean;
+  /** True when the cohort funnel/chart query failed (KPIs may show "—"). */
+  cohortUnavailable: boolean;
 };
 
 const TOP_CREATORS_LIMIT = 6;
+const HUB_OVERVIEW_QUERY_TIMEOUT_MS = REWARD_QUERY_TIMEOUT_MS * 2;
 
 export async function getHubDashboardOverview(
   period: DashboardPeriod,
 ): Promise<HubDashboardOverview> {
   const [
     statsResult,
-    netGgr,
+    netGgrResult,
     cohortResult,
     costResult,
   ] = await Promise.all([
@@ -77,9 +80,11 @@ export async function getHubDashboardOverview(
       (value) => ({ status: "fulfilled" as const, value }),
       (reason) => ({ status: "rejected" as const, reason }),
     ),
-    getAllCreatorsNetGgr(period).then(
-      (value) => ({ status: "fulfilled" as const, value }),
-      (reason) => ({ status: "rejected" as const, reason }),
+    safeQuery(
+      () => getAllCreatorsNetGgr(period),
+      null,
+      "creator-hub.netGgr",
+      HUB_OVERVIEW_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getHubCohortWindowed(period),
@@ -92,19 +97,19 @@ export async function getHubDashboardOverview(
         depositSeries: [],
       },
       "creator-hub.cohort",
-      REWARD_QUERY_TIMEOUT_MS,
+      HUB_OVERVIEW_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getHubCreatorCostUsd(period),
       0,
       "creator-hub.creatorCost",
-      REWARD_QUERY_TIMEOUT_MS,
+      HUB_OVERVIEW_QUERY_TIMEOUT_MS,
     ),
   ]);
 
   const stats =
     statsResult.status === "fulfilled" ? statsResult.value : null;
-  const ggr = netGgr.status === "fulfilled" ? netGgr.value : null;
+  const ggr = netGgrResult.error == null ? netGgrResult.data : null;
 
   if (statsResult.status === "rejected") {
     console.error(
@@ -112,10 +117,10 @@ export async function getHubDashboardOverview(
       statsResult.reason,
     );
   }
-  if (netGgr.status === "rejected") {
+  if (netGgrResult.error) {
     console.error(
       "[creator-hub] windowed net GGR failed (wager/GGR/top render '—'):",
-      netGgr.reason,
+      netGgrResult.error,
     );
   }
   if (cohortResult.error) {
@@ -128,7 +133,8 @@ export async function getHubDashboardOverview(
   const cohortOk = cohortResult.error == null;
   const costOk = costResult.error == null;
 
-  const topCreators: HubTopCreator[] = (ggr?.byCreator ?? [])
+  const topCreators: HubTopCreator[] = [...(ggr?.byCreator ?? [])]
+    .sort((a, b) => b.wager - a.wager || b.ggr - a.ggr)
     .slice(0, TOP_CREATORS_LIMIT)
     .map((r: CreatorNetGgrRow) => ({
       creatorUserId: r.creatorUserId,
@@ -154,5 +160,6 @@ export async function getHubDashboardOverview(
     depositSeries: cohort ? cohort.depositSeries : EMPTY_COHORT.depositSeries,
     topCreators,
     rosterUnavailable: statsResult.status === "rejected",
+    cohortUnavailable: cohortResult.error != null,
   };
 }

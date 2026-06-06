@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 import { fetchCreatorWithdrawalsBreakdown } from "./creator-cost-withdrawals-actions";
 import type {
+  CreatorConvertedPayout,
   CreatorWithdrawalCreator,
   CreatorWithdrawalsBreakdown,
 } from "@/lib/queries/dashboard-creator-costs-today";
@@ -20,10 +21,9 @@ import type {
  * caches the result in local state, and reuses it on re-toggle (no
  * re-fetch). The dashboard's initial render never calls the action.
  *
- * Every amount is a deal-payout voucher minted today (session convert or
- * multiplier settle) → a house cost → rose per House-POV. Per-creator and
- * grand totals reconcile to the line above (`withdrawalsTotal`) by
- * construction (same mint-time voucher scan as the aggregate).
+ * Fill rows are stream sessions the creator withdrew from and ended today
+ * (`converted_at`); multiplier rows are payout vouchers minted today → house
+ * costs → rose per House-POV. Totals reconcile to the line above.
  */
 export function CreatorWithdrawalsDrilldown({
   withdrawalsTotal,
@@ -72,7 +72,7 @@ export function CreatorWithdrawalsDrilldown({
         title={`Converted payouts today: ${formatCurrency(withdrawalsTotal)}`}
         className="flex w-full items-center justify-between rounded px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-60"
       >
-        <span>{state.open ? "Hide" : "Show"} who converted</span>
+        <span>{state.open ? "Hide" : "Show"} who withdrew sessions</span>
         {isPending ? (
           <Loader2 className="size-3 motion-safe:animate-spin" />
         ) : (
@@ -122,14 +122,13 @@ export function CreatorWithdrawalsDrilldown({
 
 /**
  * One creator's group: header (username + today's converted total) and
- * per-voucher rows beneath it.
+ * per-session / per-voucher rows beneath it.
  */
 function CreatorGroup({ creator }: { creator: CreatorWithdrawalCreator }) {
   const displayName =
     creator.username ?? `${creator.creatorUserId.slice(0, 6)}…`;
   const href = `/creator-hub/creators/${creator.creatorUserId}`;
-  const payoutLabel =
-    creator.withdrawals.length === 1 ? "payout" : "payouts";
+  const payoutLabel = creator.payouts.length === 1 ? "payout" : "payouts";
 
   return (
     <div className="rounded border border-border/50">
@@ -146,7 +145,7 @@ function CreatorGroup({ creator }: { creator: CreatorWithdrawalCreator }) {
               {displayName}
             </Link>
             <span className="block truncate text-[9px] text-muted-foreground">
-              {creator.withdrawals.length} {payoutLabel}
+              {creator.payouts.length} {payoutLabel}
             </span>
           </span>
         </span>
@@ -167,29 +166,39 @@ function CreatorGroup({ creator }: { creator: CreatorWithdrawalCreator }) {
         </span>
       </div>
       <ul className="divide-y divide-border/40">
-        {creator.withdrawals.map((w) => (
-          <li key={w.voucherId}>
+        {creator.payouts.map((p) => (
+          <li
+            key={
+              p.kind === "fill_session"
+                ? `session-${p.sessionId}`
+                : `voucher-${p.voucherId}`
+            }
+          >
             <div className="flex items-center justify-between gap-2 px-1.5 py-1 text-[10px]">
               <span className="min-w-0">
                 <Link
-                  href={`/users/${creator.creatorUserId}`}
+                  href={
+                    p.kind === "fill_session"
+                      ? `${href}?tab=sessions`
+                      : `/users/${creator.creatorUserId}`
+                  }
                   className="block truncate font-medium text-foreground/90 hover:underline"
                 >
-                  {formatPayoutLabel(w.origin)}
+                  {formatPayoutLabel(p)}
                 </Link>
                 <span className="block truncate text-[9px] text-muted-foreground tabular-nums">
-                  {formatMintedAt(w.mintedAtIso)}
+                  {formatPayoutTime(p)}
                 </span>
               </span>
               <span
                 className={cn(
                   "min-w-[56px] shrink-0 text-right font-semibold tabular-nums",
-                  w.amount > 0
+                  p.amount > 0
                     ? "text-rose-600 dark:text-rose-400"
                     : "text-muted-foreground",
                 )}
               >
-                −{formatCurrency(w.amount)}
+                −{formatCurrency(p.amount)}
               </span>
             </div>
           </li>
@@ -199,15 +208,15 @@ function CreatorGroup({ creator }: { creator: CreatorWithdrawalCreator }) {
   );
 }
 
-function formatPayoutLabel(
-  origin: "creator_fill_conversion" | "creator_multiplier_payout",
-): string {
-  return origin === "creator_fill_conversion"
-    ? "Fill session payout"
-    : "Multiplier payout";
+function formatPayoutLabel(p: CreatorConvertedPayout): string {
+  if (p.kind === "fill_session") {
+    return `Session ended · withdrew`;
+  }
+  return "Multiplier payout";
 }
 
-function formatMintedAt(iso: string): string {
+function formatPayoutTime(p: CreatorConvertedPayout): string {
+  const iso = p.kind === "fill_session" ? p.convertedAtIso : p.mintedAtIso;
   const d = new Date(iso);
   return d.toLocaleString("en-US", {
     month: "short",

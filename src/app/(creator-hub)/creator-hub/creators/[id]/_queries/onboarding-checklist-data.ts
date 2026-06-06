@@ -5,6 +5,8 @@ import { safeQuery } from "@/lib/errors/safe-query";
 import { logWarn } from "@/lib/errors/logger";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import { creatorsApi } from "@/lib/backend-api";
+import { isLinkedSocialUsername } from "../../../../../(admin)/creators/_queries/socials-by-user";
+import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
 import { getCreatorHeader } from "@/lib/queries/creators-detail";
 
 import {
@@ -179,16 +181,17 @@ async function countSocials(targetUserId: string): Promise<number> {
     select: {
       platform: true,
       username: true,
-      reward_page_url: true,
     },
   });
 
   let count = 0;
   for (const platform of ["twitter", "kick", "discord"] as const) {
     const row = rows.find((r) => r.platform === platform);
-    if (row?.username?.trim() && row.username.trim() !== "pending") count++;
+    if (isLinkedSocialUsername(row?.username)) count++;
   }
-  if (rows.some((r) => r.reward_page_url?.trim())) count++;
+
+  const urls = await getCreatorSocialUrls(targetUserId).catch(() => null);
+  if (urls?.rewardPageUrl?.trim()) count++;
   return count;
 }
 

@@ -109,7 +109,7 @@ export function CreatorChecklistDock() {
       aria-label="Creator onboarding checklist"
       className="fixed right-0 top-20 z-40 w-[320px] max-w-[calc(100vw-1rem)] pr-2"
     >
-      <div className="max-h-[min(60vh,32rem)] overflow-y-auto rounded-l-2xl">
+      <div className="max-h-[min(60vh,32rem)] overflow-y-auto rounded-l-2xl bg-card shadow-md">
         <OnboardingChecklistPanel data={data} />
       </div>
     </div>

@@ -182,28 +182,36 @@ export function CreatorHubSidebar() {
         </Link>
       </SidebarHeader>
 
-      <SidebarContent>
-        {/* Back to Admin — the symmetric exit from the sub-app back to the
-            main admin shell. Distinct from the nav list (muted, leading
-            arrow). */}
-        <div className="px-2 pt-2 group-data-[collapsible=icon]:px-0">
-          <Link
-            href="/dashboard"
-            onClick={handleNavTap}
-            title="Back to Admin"
-            className={cn(
-              "group/back flex items-center gap-2.5 rounded-lg border border-border bg-card/40 px-3 py-2 text-xs font-semibold text-muted-foreground outline-none",
-              "transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-              "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
-            )}
-          >
-            <ArrowLeft className="size-4 shrink-0 transition-transform motion-safe:group-hover/back:-translate-x-0.5" />
-            <span className="group-data-[collapsible=icon]:hidden">
+      {/* Back to Admin — symmetric portal to the main sidebar's
+          "Switch to Creator Hub" affordance: same pink gradient card,
+          two-line label, mirrored arrow + icon placement. */}
+      <div className="px-2 pt-2 group-data-[collapsible=icon]:px-0">
+        <Link
+          href="/dashboard"
+          onClick={handleNavTap}
+          title="Back to Admin"
+          className={cn(
+            "group/back relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-pink-500/30 bg-gradient-to-r from-pink-500/15 via-pink-500/10 to-transparent px-3 py-2.5 outline-none",
+            "transition-colors hover:border-pink-500/50 hover:from-pink-500/25 hover:via-pink-500/15 focus-visible:ring-2 focus-visible:ring-pink-500/40",
+            "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
+          )}
+        >
+          <ArrowLeft className="size-4 shrink-0 text-pink-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/back:-translate-x-0.5" />
+          <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+            <span className="block truncate text-xs font-semibold text-pink-600 dark:text-pink-300">
               Back to Admin
             </span>
-          </Link>
-        </div>
+            <span className="block truncate text-[11px] text-muted-foreground">
+              Main dashboard
+            </span>
+          </span>
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-pink-500/20 text-pink-600 ring-1 ring-inset ring-pink-500/30 dark:text-pink-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
+            <LayoutDashboard className="size-4" />
+          </span>
+        </Link>
+      </div>
 
+      <SidebarContent>
         <SidebarGroup className="px-2 py-1">
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarGroupContent>

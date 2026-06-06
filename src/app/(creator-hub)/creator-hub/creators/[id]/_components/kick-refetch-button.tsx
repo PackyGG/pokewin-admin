@@ -38,7 +38,19 @@ export function KickRefetchButton({ userId }: { userId: string }) {
           toast.error("Kick API key not configured — set it in Hub Settings.");
           return;
         }
-        toast.success("Kick data refreshed");
+        if (!res.profileFound && res.streamCount === 0) {
+          toast.error(
+            res.staleError
+              ? `Kick refresh failed: ${res.staleError}`
+              : "Kick returned no data for this handle — check the slug on the Creator tab.",
+          );
+          return;
+        }
+        toast.success(
+          res.streamCount > 0
+            ? `Kick data refreshed (${res.streamCount} stream${res.streamCount === 1 ? "" : "s"})`
+            : "Kick profile refreshed",
+        );
         // The server action already revalidated the route; refresh the client
         // cache so the streamed tab re-reads the new cached rows immediately.
         router.refresh();

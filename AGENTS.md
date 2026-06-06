@@ -4,6 +4,30 @@ Dieses File definiert verbindliche Arbeitsregeln für jede Codex Session in dies
 
 ---
 
+## 🧠 ABSOLUTE PFLICHT — Session Memory (2026-06-06, erzwungen)
+
+**Jede Session ist Teil einer Agent-Kette. Chat überlebt keinen Session-Wechsel — die Repo-Docs schon.**
+
+Vollständiges Protokoll: **`SESSION_MEMORY.md`** (`.cursor/rules/session-memory.mdc` erzwingt das in Cursor).
+
+### Erzwungen beim Start (vor dem ersten Tool-Call)
+1. `AGENT_HANDOFF.md` — aktueller Stand, in-flight, blocked, next
+2. `ONBOARDING.md` — Architektur + Domain
+3. `AGENTS.md` (+ `CLAUDE.md` / `CLAUDE.local.md` wenn vorhanden)
+4. Aktiver Plan unter `.claude/plans/` wenn die Aufgabe das betrifft
+
+### Erzwungen vor DONE / Ende jeder substantiellen Aufgabe
+- **`AGENT_HANDOFF.md` aktualisieren** (HEAD sha, shipped, in-flight, open, blocked, gotchas)
+- **Durable Facts** nach `ONBOARDING.md` oder Plan-File promoten
+- **Kein DONE** ohne Doc-Update — Ausnahme nur: reine Frage ohne neue Fakten und ohne Code-Änderung
+
+### Sub-Agents
+Jeder delegierte Agent bekommt den §4-Vertrag aus `SESSION_MEMORY.md` und muss Handoff selbst updaten.
+
+**Selbst-Check:** Würde eine brandneue Session nur mit diesen Files wissen, was als Nächstes zu tun ist? Wenn nein → erst Docs schreiben, dann antworten.
+
+---
+
 ## 🚫 ABSOLUTE SICHERHEITSREGEL — Prod-DB-Policy (höchste Priorität, 2026-06-05, präzisiert)
 
 **Die zwei DBs werden unterschiedlich behandelt — diese Regel überschreibt alle früheren DB-Regeln.**

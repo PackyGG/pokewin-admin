@@ -125,8 +125,7 @@ export function HubChartCard({
                 "pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-[11px] text-muted-foreground",
               )}
             >
-              {placeholderNote ??
-                "Hourly breakdown not wired yet — total above is live."}
+              {placeholderNote ?? "No activity in this window yet."}
             </p>
           </div>
         )}

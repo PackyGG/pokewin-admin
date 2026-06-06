@@ -39,8 +39,8 @@ import {
  * Rendered inside the server `<CreatorChecklist>` wrapper, which only mounts it
  * when the checklist is NOT yet complete (auto-hide lives on the server). The
  * owner wants this panel to be the MOST prominent item in the right rail, so it
- * styles as an accent-emphasised, expanded-by-default dock (gradient header,
- * primary ring) — louder than the live/recent docks.
+ * styles as an accent-emphasised, expanded-by-default dock (solid card
+ * background, primary ring) — louder than the live/recent docks.
  *
  * AUTO items are read-only (a lock chip explains they complete elsewhere).
  * MANUAL items carry a Switch; the giveaway item adds a URL input, and the
@@ -67,8 +67,8 @@ export function OnboardingChecklistPanel({
       open={open}
       onOpenChange={setOpen}
       className={cn(
-        "overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-br from-primary/10 via-card to-card",
-        "shadow-sm ring-1 ring-inset ring-primary/10",
+        "overflow-hidden rounded-xl border border-primary/30 bg-card",
+        "shadow-md ring-1 ring-inset ring-primary/10",
       )}
     >
       <CollapsibleTrigger
@@ -151,8 +151,8 @@ function ChecklistRow({
       className={cn(
         "rounded-lg border px-2.5 py-2 transition-colors",
         item.done
-          ? "border-emerald-500/25 bg-emerald-500/[0.06]"
-          : "border-border/60 bg-muted/30",
+          ? "border-emerald-500/25 bg-emerald-500/10"
+          : "border-border/60 bg-muted",
       )}
     >
       <div className="flex items-center gap-2.5">

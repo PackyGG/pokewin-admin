@@ -1,6 +1,9 @@
 # Packy.GG Admin Dashboard — Master Knowledge & Operating Guide
 
-> Single source of truth for working on **pokewin-admin** (the internal admin/back-office for the Packy.GG game platform). Consolidates the strict CLAUDE.md working rules, global architecture knowledge, domain knowledge, and hard-won gotchas. Read this before touching anything.
+> **Durable architecture + domain knowledge** for **pokewin-admin**. Does NOT hold live session state.
+>
+> **Read order every session:** `AGENT_HANDOFF.md` (state) → **this file** (knowledge) → `AGENTS.md` (rules).
+> **Forced protocol:** `SESSION_MEMORY.md` — agents MUST read on start and write before done.
 
 ---
 
@@ -141,8 +144,11 @@ Two fully separate Postgres databases, treated **very differently**:
 
 ---
 
-## 9. 📌 RECENT STATE (as of this session)
-Shipped to `main`: dashboard windowing perf + full rework (panel boxes, today/24h, per-program Reward Costs), unified forecast hub (all rewards), rakeback/affiliate real-config forecasts, system-edge-plan planner (+ races/raffles split, saveable presets, exact-% inputs, resilient aggregates), creator changelog + fired-creator detection + artifact-anchored ex-creators, `/users` search rebuild (prefix-index), Total Withdrawn tile, Balance 2.0 on excluded-users (admin-DB table applied), `/insights` hub (was 404), a quick-win sweep (security gates, 2FA on XP, audit event types, a11y/motion-safe, mobile grids, forecast tabs). In flight: full **responsive audit** (Playwright rendered-detection harness, fix waves) + **smoothness** initiative (skeletons, route/tab transitions, View Transitions — gated) + reworking the system-edge-plan reward levers into concrete, real-data, explained controls (deposit/races/raffles/daily-packs/signup/rain).
+## 9. 📌 Live session state (not stored here)
+
+**Current shipped / in-flight / blocked work lives in `AGENT_HANDOFF.md`** — update that file every task, not this one.
+
+This file is for **durable** facts only (architecture, domain math, schema, gotchas). When a handoff gotcha becomes permanent, promote it to §7 here and trim it from the handoff.
 
 ---
-*Living document — update it when rules, schema, or domain facts change.*
+*Living document — update when rules, schema, or domain facts change. Follow `SESSION_MEMORY.md` for read/write protocol.*

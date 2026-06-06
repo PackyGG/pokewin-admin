@@ -6,7 +6,7 @@ import {
   getKickProfile,
   getKickStreams,
   isNoKeyConfigured,
-  normalizeHandle,
+  resolveLinkedHandle,
   type KickProfile,
   type KickStream,
 } from "@/lib/creator-hub";
@@ -80,7 +80,7 @@ async function getLinkedKickHandle(userId: string): Promise<string | null> {
       },
       select: { username: true },
     });
-    return normalizeHandle(row?.username ?? null);
+    return resolveLinkedHandle(row?.username ?? null);
   } catch (err) {
     if (isMissingRelation(err)) {
       logWarn(

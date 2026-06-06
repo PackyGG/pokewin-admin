@@ -5,6 +5,10 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
+import {
+  getConvertedFillSessionsInWindow,
+  sumConvertedFillSessions,
+} from "@/lib/queries/creator-converted-sessions-in-window";
 
 /**
  * "Creators Costs (today)" dashboard box — what CREATORS cost the house for
@@ -18,15 +22,13 @@ import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboar
  * Every line mirrors EXACTLY a definition that already exists elsewhere,
  * just re-scoped to [today 00:00 UTC, now):
  *
- *   • Converted deal payouts today — Σ `vouchers.value` of the two creator
- *     deal-payout voucher origins (`creator_fill_conversion` +
- *     `creator_multiplier_payout`) MINTED in the window (`vouchers.created_at`).
- *     This is when a weekly-fill session converts or a multiplier deal settles
- *     into a payout voucher — the SAME source as the /creators "Converted" KPI
- *     and `getCreatorFillConversionCost`. Card cash-out timing is a separate
- *     lifecycle step; counting only completed `card_withdrawal_requests` misses
- *     conversions that haven't (or won't) ship yet. The two origins are disjoint
- *     → no double-count between fill vs multiplier payouts.
+ *   • Converted deal payouts today — fill-program stream sessions where the
+ *     creator withdrew and ended the session (`status = 'converted'`,
+ *     `converted_at` in the window, amount = `converted_to_raw_usd` from the
+ *     backend creators API) PLUS multiplier-deal payout vouchers minted in the
+ *     window (`creator_multiplier_payout`, MAIN `vouchers.created_at`). Fill
+ *     conversions are session events, not voucher mint or card cash-out time.
+ *     The two legs are disjoint → no double-count between fill vs multiplier.
  *
  *   • Tips today — the `creator_fill_spend_tip` leg of
  *     `creators/_queries/tips-sponsor-spend.ts` (creator-funded tips handed
@@ -133,19 +135,22 @@ const cachedCreatorCostsToday = unstable_cache(
       const db = await getDb();
       const since = `'${sinceIso}'::timestamptz`;
 
-      // ── Converted deal-payout vouchers minted today ────────────────────
-      // Same voucher set as /creators "Converted" + per-creator fill cost:
-      // mint time (`created_at`), NOT card cash-out time. Session converts
-      // mint `creator_fill_conversion` immediately; waiting for cwr.status
-      // = completed would hide same-day conversions from this box.
-      type WithdrawalRow = { creator_withdrawals: string };
-      const withdrawalRows = await db.$queryRawUnsafe<WithdrawalRow[]>(
-        `SELECT COALESCE(SUM(v.value::numeric), 0)::text AS creator_withdrawals
+      // ── Converted deal payouts today ───────────────────────────────────
+      // Fill: backend session convert (`converted_at`, `converted_to_raw_usd`).
+      // Multiplier: payout vouchers minted in the window (no fill session).
+      const sinceDate = new Date(sinceIso);
+      const fillSessions = await getConvertedFillSessionsInWindow(sinceDate);
+      const fillConverted = sumConvertedFillSessions(fillSessions);
+
+      type MultiplierRow = { multiplier_payouts: string };
+      const multiplierRows = await db.$queryRawUnsafe<MultiplierRow[]>(
+        `SELECT COALESCE(SUM(v.value::numeric), 0)::text AS multiplier_payouts
          FROM vouchers v
-         WHERE v.origin::text IN ('creator_fill_conversion', 'creator_multiplier_payout')
+         WHERE v.origin::text = 'creator_multiplier_payout'
            AND v.created_at >= ${since}`,
       );
-      const creatorWithdrawals = toNumber(withdrawalRows[0]?.creator_withdrawals);
+      const creatorWithdrawals =
+        fillConverted + toNumber(multiplierRows[0]?.multiplier_payouts);
 
       // ── Creator tips today (house-funded fill-spend tip leg) ─────────
       // `type::text IN (...)` — text comparison, never an enum-membership
@@ -181,7 +186,7 @@ const cachedCreatorCostsToday = unstable_cache(
       return { creatorWithdrawals, tips, leaderboardGross };
     });
   },
-  ["dashboard-creator-costs-today-v3-minted-payouts"],
+  ["dashboard-creator-costs-today-v4-session-converted"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -401,22 +406,30 @@ export async function getLeaderboardGrossClaimants(): Promise<LeaderboardGrossBr
 
 // ─── Converted deal-payout drilldown (lazy, click-to-load) ──────────────────
 
-/** One deal-payout voucher minted in the window. */
-export type CreatorWithdrawalRequest = {
-  voucherId: string;
-  amount: number;
-  mintedAtIso: string;
-  origin: "creator_fill_conversion" | "creator_multiplier_payout";
-};
+/** One converted payout row in the window (fill session or multiplier voucher). */
+export type CreatorConvertedPayout =
+  | {
+      kind: "fill_session";
+      sessionId: string;
+      dealId: string;
+      amount: number;
+      convertedAtIso: string;
+    }
+  | {
+      kind: "multiplier";
+      voucherId: string;
+      amount: number;
+      mintedAtIso: string;
+    };
 
 /** One creator's converted deal payouts in the window. */
 export type CreatorWithdrawalCreator = {
   creatorUserId: string;
   username: string | null;
-  /** Σ voucher values for this creator in the window. */
+  /** Σ payout amounts for this creator in the window. */
   amount: number;
-  /** Per-voucher rows, largest amount first. */
-  withdrawals: CreatorWithdrawalRequest[];
+  /** Per-session / per-voucher rows, largest amount first. */
+  payouts: CreatorConvertedPayout[];
 };
 
 export type CreatorWithdrawalsBreakdown = {
@@ -429,14 +442,14 @@ export type CreatorWithdrawalsBreakdown = {
 };
 
 /**
- * Per-creator / per-voucher breakdown behind the Creators Costs card's
- * "Converted payouts" line — WHO minted deal-payout vouchers today.
+ * Per-creator breakdown behind the Creators Costs card's "Converted payouts"
+ * line — WHO withdrew from a fill session (ended + converted) today, plus
+ * any multiplier payout vouchers minted today.
  *
  * ─── WHY IT RECONCILES ──────────────────────────────────────────────────
  *
- * Same mint-time voucher scan as the aggregate line (`vouchers.created_at`
- * in [today 00:00 UTC, now), same two origins). Creator totals sum voucher
- * values; `totalAmount` sums creators — identical to the line above.
+ * Same sources as the aggregate line: backend `converted_at` fill sessions +
+ * `creator_multiplier_payout` vouchers minted in [today 00:00 UTC, now).
  *
  * ─── SCOPE / WINDOW (identical to the card's payouts line) ────────────
  *
@@ -460,61 +473,77 @@ export async function getCreatorWithdrawalsBreakdown(): Promise<CreatorWithdrawa
       const db = await getDb();
       const sinceSql = `'${sinceIso}'::timestamptz`;
 
-      type VoucherRow = {
+      const fillSessions = await getConvertedFillSessionsInWindow(since);
+
+      type MultiplierVoucherRow = {
         creator_user_id: string;
         username: string | null;
         voucher_id: string;
         amount: string;
         minted_at: Date;
-        origin: string;
       };
-      const rows = await db.$queryRawUnsafe<VoucherRow[]>(
+      const multiplierRows = await db.$queryRawUnsafe<MultiplierVoucherRow[]>(
         `SELECT
            v.user_id AS creator_user_id,
            u.username,
            v.id AS voucher_id,
            v.value::numeric AS amount,
-           v.created_at AS minted_at,
-           v.origin::text AS origin
+           v.created_at AS minted_at
          FROM vouchers v
          JOIN "user" u ON u.id = v.user_id
-         WHERE v.origin::text IN ('creator_fill_conversion', 'creator_multiplier_payout')
+         WHERE v.origin::text = 'creator_multiplier_payout'
            AND v.created_at >= ${sinceSql}
          ORDER BY v.created_at DESC`,
       );
 
       const byCreator = new Map<string, CreatorWithdrawalCreator>();
-      for (const r of rows) {
-        const amount = toNumber(r.amount);
-        const origin =
-          r.origin === "creator_fill_conversion" ||
-          r.origin === "creator_multiplier_payout"
-            ? r.origin
-            : null;
-        if (!origin) continue;
 
-        let creator = byCreator.get(r.creator_user_id);
+      const ensureCreator = (
+        userId: string,
+        username: string | null,
+      ): CreatorWithdrawalCreator => {
+        let creator = byCreator.get(userId);
         if (!creator) {
           creator = {
-            creatorUserId: r.creator_user_id,
-            username: r.username,
+            creatorUserId: userId,
+            username,
             amount: 0,
-            withdrawals: [],
+            payouts: [],
           };
-          byCreator.set(r.creator_user_id, creator);
+          byCreator.set(userId, creator);
+        } else if (!creator.username && username) {
+          creator.username = username;
         }
+        return creator;
+      };
+
+      for (const s of fillSessions) {
+        const creator = ensureCreator(s.userId, s.username);
+        creator.amount += s.amountUsd;
+        creator.payouts.push({
+          kind: "fill_session",
+          sessionId: s.sessionId,
+          dealId: s.dealId,
+          amount: s.amountUsd,
+          convertedAtIso: s.convertedAtIso,
+        });
+      }
+
+      for (const r of multiplierRows) {
+        const amount = toNumber(r.amount);
+        const creator = ensureCreator(r.creator_user_id, r.username);
         creator.amount += amount;
-        creator.withdrawals.push({
+        creator.payouts.push({
+          kind: "multiplier",
           voucherId: r.voucher_id,
           amount,
           mintedAtIso: new Date(r.minted_at).toISOString(),
-          origin,
         });
       }
 
       const creators = Array.from(byCreator.values());
       for (const c of creators) {
-        c.withdrawals.sort((a, b) => b.amount - a.amount);
+        c.payouts.sort((a, b) => b.amount - a.amount);
       }
       creators.sort((a, b) => b.amount - a.amount);
 

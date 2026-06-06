@@ -77,6 +77,7 @@ export type {
 export {
   // Shared helpers / config
   normalizeHandle,
+  resolveLinkedHandle,
   isNoKeyConfigured,
   matchBrandKeywords,
   mentionsBrand,

@@ -7,7 +7,7 @@ import {
   getTwitterProfile,
   isNoKeyConfigured,
   scanBrandMentions,
-  normalizeHandle,
+  resolveLinkedHandle,
   BRAND_KEYWORDS,
   type Tweet,
   type TwitterProfile,
@@ -180,7 +180,7 @@ async function getLinkedTwitterHandle(userId: string): Promise<string | null> {
       );
       return null;
     })) as { username: string } | null;
-  return normalizeHandle(row?.username ?? null);
+  return resolveLinkedHandle(row?.username ?? null);
 }
 
 /**

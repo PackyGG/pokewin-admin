@@ -8,8 +8,7 @@ import {
   getCodeAndWagerByUser,
   type CreatorCodeAndWager,
 } from "../../../../(admin)/creators/_queries/code-and-wager-by-user";
-import { getApprovedSocialsByUser } from "../../../../(admin)/creators/_queries/socials-by-user";
-import type { CreatorSocialSummary } from "../../../../(admin)/creators/_queries/socials-by-user";
+import { getRosterSocialsByUser } from "../../../../(admin)/creators/_queries/socials-by-user";
 import { getAllCreatorsLifetimePnl } from "../../../../(admin)/creators/_queries/all-creators-lifetime-pnl";
 
 import type { RosterSortMode } from "../_lib/roster-params";
@@ -57,12 +56,12 @@ export async function listRosterExCreators(
       );
       return new Map<string, CreatorCodeAndWager>();
     }),
-    getApprovedSocialsByUser().catch((err) => {
+    getRosterSocialsByUser(ids).catch((err) => {
       console.error(
         "[creator-hub roster] ex-creator socials fetch failed:",
         err,
       );
-      return new Map<string, CreatorSocialSummary[]>();
+      return new Map();
     }),
     getAllCreatorsLifetimePnl(undefined).catch((err) => {
       console.error(

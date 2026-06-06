@@ -75,7 +75,7 @@ const cachedHubCohortScans = (
       const sinceLt = hubSinceClause("lt.created_at", period);
       const sinceLedger = hubSinceClause("ledger_transactions.created_at", period);
       const sinceUpg = hubSinceClause("upgrader_games.created_at", period);
-      const bucketLt = hubBucketTrunc("lt.created_at", period);
+      const bucketDeposit = hubBucketTrunc("cd.created_at", period);
       const bucketLedger = hubBucketTrunc("ledger_transactions.created_at", period);
       const bucketUpg = hubBucketTrunc("upgrader_games.created_at", period);
       const covering = hubCoveringLateral;
@@ -157,7 +157,7 @@ const cachedHubCohortScans = (
                 ${blacklistAnd}
               ORDER BY lt.id, acu.created_at DESC
            )
-           SELECT ${bucketLt} AS bucket,
+           SELECT ${bucketDeposit} AS bucket,
                   COALESCE(SUM(cd.amount), 0)::text AS amount
              FROM covered_deposits cd
              JOIN "user" c ON c.id = cd.creator_id AND c.role = 'creator'
@@ -222,7 +222,7 @@ const cachedHubCohortScans = (
       };
     },
     [
-      "hub-cohort-windowed-v1",
+      "hub-cohort-windowed-v2-deposit-bucket",
       period,
       env,
       blacklistAnd,

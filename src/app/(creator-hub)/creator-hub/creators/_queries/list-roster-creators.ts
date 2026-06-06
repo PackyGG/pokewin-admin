@@ -10,8 +10,10 @@ import {
   getCodeAndWagerByUser,
   type CreatorCodeAndWager,
 } from "../../../../(admin)/creators/_queries/code-and-wager-by-user";
-import { getApprovedSocialsByUser } from "../../../../(admin)/creators/_queries/socials-by-user";
-import type { CreatorSocialSummary } from "../../../../(admin)/creators/_queries/socials-by-user";
+import {
+  getRosterSocialsByUser,
+  type CreatorSocialSummary,
+} from "../../../../(admin)/creators/_queries/socials-by-user";
 import {
   getAllCreatorsNetGgr,
   type CreatorNetGgrRow,
@@ -215,12 +217,12 @@ export async function listRosterCreators(
         );
         return new Map<string, CreatorCodeAndWager>();
       }),
-      getApprovedSocialsByUser().catch((err) => {
+      getRosterSocialsByUser(ids).catch((err) => {
         console.error(
           "[creator-hub roster] socials fetch failed (chips hidden):",
           err,
         );
-        return new Map<string, CreatorSocialSummary[]>();
+        return new Map();
       }),
       getAllCreatorsNetGgr(period).catch((err) => {
         console.error(

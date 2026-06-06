@@ -204,6 +204,23 @@ export function normalizeHandle(input: string | null | undefined): string | null
   return h;
 }
 
+/**
+ * Resolve a linked handle for "is this creator linked?" checks. Uses
+ * {@link normalizeHandle} when possible; otherwise accepts a trimmed raw
+ * username so valid handles that fail strict normalization still count as
+ * linked (the Creator tab stores handles as-entered).
+ */
+export function resolveLinkedHandle(
+  input: string | null | undefined,
+): string | null {
+  const normalized = normalizeHandle(input);
+  if (normalized) return normalized;
+  const raw = input?.trim().replace(/^@+/, "");
+  if (!raw || raw.toLowerCase() === "pending") return null;
+  if (raw.length > 100) return null;
+  return raw.toLowerCase();
+}
+
 // ─── Brand mention keywords (Twitter 7-day scan) ────────────────────────────
 
 /**

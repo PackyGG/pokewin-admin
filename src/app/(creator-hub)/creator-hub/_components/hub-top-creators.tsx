@@ -8,7 +8,7 @@ import { type HubTopCreator } from "../_queries/dashboard-overview";
 /**
  * Creator Hub dashboard — Top Creators ranked list (left/hero element of
  * the 3-up row). Best-performing creators over the active window, ranked
- * by windowed affiliate wager (already wager-desc from the query).
+ * by windowed affiliate wager (wager-desc from the overview query).
  *
  * House-POV: a creator's cohort WAGER is house gain → emerald. Each row
  * links into the Hub creator detail page (`/creator-hub/creators/[id]`) so the

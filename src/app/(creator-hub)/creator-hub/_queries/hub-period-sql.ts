@@ -39,6 +39,46 @@ export function hubSinceClause(col: string, period: DashboardPeriod): string {
   return `AND ${col} >= NOW() - INTERVAL '${hubPeriodToInterval(period)}'`;
 }
 
+/** Trailing-window start for API-backed metrics (matches `hubPeriodToInterval`). */
+export function hubPeriodToSinceDate(
+  period: DashboardPeriod,
+  now: Date = new Date(),
+): Date {
+  const d = new Date(now);
+  switch (period) {
+    case "1h":
+      d.setHours(d.getHours() - 1);
+      return d;
+    case "3h":
+      d.setHours(d.getHours() - 3);
+      return d;
+    case "6h":
+      d.setHours(d.getHours() - 6);
+      return d;
+    case "12h":
+      d.setHours(d.getHours() - 12);
+      return d;
+    case "24h":
+      d.setHours(d.getHours() - 24);
+      return d;
+    case "48h":
+      d.setHours(d.getHours() - 48);
+      return d;
+    case "3d":
+      d.setDate(d.getDate() - 3);
+      return d;
+    case "7d":
+      d.setDate(d.getDate() - 7);
+      return d;
+    case "30d":
+      d.setDate(d.getDate() - 30);
+      return d;
+    case "all":
+      d.setDate(d.getDate() - HUB_LIFETIME_LOOKBACK_DAYS);
+      return d;
+  }
+}
+
 /** Hour buckets for 24h; day buckets for every other Hub chip. */
 export function hubBucketByHour(period: DashboardPeriod): boolean {
   return period === "24h";

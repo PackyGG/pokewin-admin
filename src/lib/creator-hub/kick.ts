@@ -109,6 +109,7 @@ type KickRawUser = {
   username?: string | null;
   bio?: string | null;
   profile_pic?: string | null;
+  profilepic?: string | null;
   agreed_to_terms?: boolean | null;
 } & KickRawSocials;
 
@@ -128,13 +129,17 @@ type KickRawLivestream = {
 type KickRawChannel = {
   id?: number | string | null;
   user_id?: number | string | null;
+  broadcaster_user_id?: number | string | null;
   slug?: string | null;
+  channel_description?: string | null;
   followersCount?: number | null;
   followers_count?: number | null;
-  verified?: boolean | null;
+  follower_count?: number | null;
+  verified?: boolean | Record<string, unknown> | null;
   is_banned?: boolean | null;
   user?: KickRawUser | null;
   livestream?: KickRawLivestream;
+  stream?: Record<string, unknown> | null;
   previous_livestreams?: KickRawVideo[] | null;
 };
 
@@ -173,6 +178,167 @@ function toIso(v: unknown): string | null {
   if (!s) return null;
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** Kick v1 returns `verified` as an object when the channel is verified. */
+function parseIsVerified(v: unknown): boolean | null {
+  if (v == null) return null;
+  if (typeof v === "boolean") return v;
+  if (isRecord(v)) return true;
+  return null;
+}
+
+function looksLikeKickChannel(v: unknown): v is KickRawChannel {
+  if (!isRecord(v)) return false;
+  return (
+    "user" in v ||
+    "slug" in v ||
+    "user_id" in v ||
+    "followersCount" in v ||
+    "followers_count" in v ||
+    "broadcaster_user_id" in v ||
+    "livestream" in v ||
+    "stream" in v
+  );
+}
+
+/**
+ * Normalize Kick channel payloads — RapidAPI / Kick return several shapes:
+ *   • bare v1 channel object
+ *   • `{ data: channel }` or `{ data: [channel] }` wrappers
+ *   • public API `{ data: [{ slug, stream, … }] }`
+ */
+function unwrapKickChannel(payload: unknown): KickRawChannel | null {
+  if (!payload) return null;
+  if (looksLikeKickChannel(payload)) return payload;
+
+  if (!isRecord(payload)) return null;
+
+  const data = payload.data;
+  if (Array.isArray(data)) {
+    if (data.length === 0) return null;
+    const match =
+      data.find((row) => looksLikeKickChannel(row)) ?? data[0];
+    return looksLikeKickChannel(match) ? match : null;
+  }
+
+  if (looksLikeKickChannel(data)) return data;
+  return null;
+}
+
+/** Map public + v1 channel fields onto the shape our mappers expect. */
+function normalizeKickChannel(
+  raw: KickRawChannel,
+  handle: string,
+): KickRawChannel {
+  const user = isRecord(raw.user) ? { ...raw.user } : ({} as KickRawUser);
+  const stream = isRecord(raw.stream) ? raw.stream : null;
+
+  if (!user.username) {
+    user.username = toStr(raw.slug) ?? handle;
+  }
+  if (!user.bio && typeof raw.channel_description === "string") {
+    user.bio = raw.channel_description;
+  }
+  if (!user.profile_pic && typeof user.profilepic === "string") {
+    user.profile_pic = user.profilepic;
+  }
+
+  const livestream: KickRawLivestream | null =
+    raw.livestream ??
+    (stream
+      ? ({
+          is_live: stream.is_live as boolean | null | undefined,
+          viewer_count: (stream.viewer_count ?? stream.viewers) as
+            | number
+            | string
+            | null
+            | undefined,
+          created_at: (stream.start_time ?? stream.created_at) as
+            | string
+            | null
+            | undefined,
+          start_time: stream.start_time as string | null | undefined,
+          session_title: (stream.stream_title ?? stream.session_title) as
+            | string
+            | null
+            | undefined,
+          categories: isRecord(stream.category)
+            ? [{ name: stream.category.name as string | null | undefined }]
+            : Array.isArray(stream.categories)
+              ? (stream.categories as KickRawCategory[])
+              : null,
+        } as KickRawLivestream)
+      : null);
+
+  return {
+    ...raw,
+    user,
+    livestream,
+    followersCount:
+      raw.followersCount ??
+      raw.followers_count ??
+      (typeof raw.follower_count === "number" ? raw.follower_count : null),
+    verified: raw.verified,
+  };
+}
+
+function unwrapKickVideos(payload: unknown): KickRawVideo[] {
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+  if (!isRecord(payload)) return [];
+
+  const data = payload.data;
+  if (Array.isArray(data)) return data as KickRawVideo[];
+  if (isRecord(data)) {
+    if (Array.isArray(data.videos)) return data.videos as KickRawVideo[];
+    if (Array.isArray(data.data)) return data.data as KickRawVideo[];
+  }
+  if (Array.isArray(payload.videos)) return payload.videos as KickRawVideo[];
+  return [];
+}
+
+function videosFromChannel(channel: KickRawChannel): KickRawVideo[] {
+  const fromPrevious = channel.previous_livestreams;
+  if (Array.isArray(fromPrevious) && fromPrevious.length > 0) {
+    return fromPrevious;
+  }
+  return [];
+}
+
+async function fetchFollowerCount(
+  handle: string,
+  apiKey: string,
+): Promise<number | null> {
+  const payload = await kickGet<unknown>(
+    `/api/v1/channels/${encodeURIComponent(handle)}/followers-count`,
+    apiKey,
+  );
+  if (!payload) return null;
+  if (isRecord(payload)) {
+    const nested = payload.data;
+    if (isRecord(nested) && nested.count != null) {
+      return toInt(nested.count);
+    }
+    return toInt(payload.count ?? payload.followersCount ?? payload.followers_count);
+  }
+  return null;
+}
+
+function shouldKickFetch(
+  lastFetchedAt: Date | null | undefined,
+  ttlMs: number,
+  force: boolean,
+  hasCache: boolean,
+): boolean {
+  if (lastFetchedAt == null) return true;
+  // Manual refetch with nothing cached yet must always hit the API once.
+  if (force && !hasCache) return true;
+  return shouldFetch(lastFetchedAt, ttlMs, force);
 }
 
 /**
@@ -296,6 +462,38 @@ function extractThumb(thumb: KickRawVideo["thumbnail"]): string | null {
 
 // ─── VOD → stream-row mapping ───────────────────────────────────────────────
 
+async function upsertKickStreamRows(
+  handle: string,
+  list: KickRawVideo[],
+  fetchedAt: Date,
+): Promise<number> {
+  let upserts = 0;
+  for (const v of list.slice(0, 50)) {
+    const row = videoToStreamRow(handle, v);
+    if (!row) continue;
+    const { kick_stream_id, raw_json, ...rest } = row;
+    const payload = {
+      username: handle,
+      kick_stream_id,
+      ...rest,
+      raw_json: raw_json as unknown as object,
+      last_fetched_at: fetchedAt,
+    };
+    await adminDb.kick_streams.upsert({
+      where: {
+        username_kick_stream_id: {
+          username: handle,
+          kick_stream_id,
+        },
+      },
+      update: payload,
+      create: payload,
+    });
+    upserts++;
+  }
+  return upserts;
+}
+
 function videoToStreamRow(
   username: string,
   v: KickRawVideo,
@@ -316,7 +514,7 @@ function videoToStreamRow(
   const streamId =
     toStr(v.video?.uuid) ?? toStr(v.id) ?? toStr(v.video?.id);
   if (!streamId) return null;
-  const startedAtIso = toIso(v.created_at ?? v.start_time);
+  const startedAtIso = toIso(v.start_time ?? v.created_at);
   const startedAt = startedAtIso ? new Date(startedAtIso) : null;
   const durationSeconds = toInt(v.duration);
   // Kick `duration` is milliseconds on the videos payload; normalize to s if
@@ -388,7 +586,14 @@ export async function getKickProfile(
   }
 
   const force = opts.force === true;
-  if (!shouldFetch(cached?.last_fetched_at ?? null, CACHE_TTL_MS.PROFILE, force)) {
+  if (
+    !shouldKickFetch(
+      cached?.last_fetched_at ?? null,
+      CACHE_TTL_MS.PROFILE,
+      force,
+      cached != null,
+    )
+  ) {
     return {
       ok: true,
       profile: cached ? rowToProfile(cached) : null,
@@ -398,27 +603,42 @@ export async function getKickProfile(
 
   // Fetch fresh. One call returns profile + (current) live status.
   try {
-    const channel = await kickGet<KickRawChannel>(
+    const payload = await kickGet<unknown>(
       `/api/v1/channels/${encodeURIComponent(handle)}`,
       apiKey,
     );
-    if (!channel) {
-      // 404 — unknown handle. Don't write a row; return cache if any.
+    const unwrapped = unwrapKickChannel(payload);
+    if (!unwrapped) {
+      // 404 / empty data — unknown handle. Don't write a row; return cache if any.
       if (cached) {
         return { ok: true, profile: rowToProfile(cached), fromCache: true };
       }
       return { ok: true, profile: null, fromCache: false };
     }
 
+    const channel = normalizeKickChannel(unwrapped, handle);
     const live = extractLive(channel.livestream ?? null);
+
+    let followerCount = toInt(
+      channel.followersCount ?? channel.followers_count ?? channel.follower_count,
+    );
+    if (followerCount == null) {
+      followerCount = await fetchFollowerCount(handle, apiKey);
+    }
+
     const data = {
       username: handle,
-      kick_user_id: toStr(channel.user_id ?? channel.id ?? channel.user?.id),
+      kick_user_id: toStr(
+        channel.user_id ??
+          channel.broadcaster_user_id ??
+          channel.id ??
+          channel.user?.id,
+      ),
       display_name: toStr(channel.user?.username) ?? handle,
-      avatar_url: toStr(channel.user?.profile_pic),
-      bio: toStr(channel.user?.bio),
-      follower_count: toInt(channel.followersCount ?? channel.followers_count),
-      is_verified: channel.verified ?? null,
+      avatar_url: toStr(channel.user?.profile_pic ?? channel.user?.profilepic),
+      bio: toStr(channel.user?.bio ?? channel.channel_description),
+      follower_count: followerCount,
+      is_verified: parseIsVerified(channel.verified),
       is_live: live.isLive,
       raw_json: channel as unknown as object,
       last_fetched_at: new Date(),
@@ -429,6 +649,13 @@ export async function getKickProfile(
       update: data,
       create: data,
     })) as unknown as KickProfileRow;
+
+    // Seed past streams from the channel payload when the videos endpoint is
+    // empty — v1 channel responses often embed `previous_livestreams`.
+    const embeddedVideos = videosFromChannel(channel);
+    if (embeddedVideos.length > 0) {
+      await upsertKickStreamRows(handle, embeddedVideos, data.last_fetched_at);
+    }
 
     return { ok: true, profile: rowToProfile(saved), fromCache: false };
   } catch (err) {
@@ -511,11 +738,19 @@ export async function getKickStreams(
     return NO_KEY_CONFIGURED;
   }
 
+  const cachedStreams = await readCache();
   const force = opts.force === true;
-  if (!shouldFetch(newest?.last_fetched_at ?? null, CACHE_TTL_MS.STREAMS, force)) {
+  if (
+    !shouldKickFetch(
+      newest?.last_fetched_at ?? null,
+      CACHE_TTL_MS.STREAMS,
+      force,
+      cachedStreams.length > 0,
+    )
+  ) {
     return {
       ok: true,
-      streams: await readCache(),
+      streams: cachedStreams,
       lastFetchedAt: newest?.last_fetched_at?.toISOString() ?? null,
       fromCache: true,
     };
@@ -523,41 +758,24 @@ export async function getKickStreams(
 
   // Fetch fresh VODs and upsert each.
   try {
-    const videos = await kickGet<KickRawVideo[] | { data?: KickRawVideo[] }>(
+    const videosPayload = await kickGet<unknown>(
       `/api/v2/channels/${encodeURIComponent(handle)}/videos`,
       apiKey,
     );
-    const list: KickRawVideo[] = Array.isArray(videos)
-      ? videos
-      : Array.isArray(videos?.data)
-        ? videos.data
-        : [];
+    let list = unwrapKickVideos(videosPayload);
+
+    // Fall back to previous_livestreams embedded on the channel payload.
+    if (list.length === 0) {
+      const profilePayload = await kickGet<unknown>(
+        `/api/v1/channels/${encodeURIComponent(handle)}`,
+        apiKey,
+      );
+      const channel = unwrapKickChannel(profilePayload);
+      if (channel) list = videosFromChannel(normalizeKickChannel(channel, handle));
+    }
 
     const now = new Date();
-    let upserts = 0;
-    for (const v of list.slice(0, 50)) {
-      const row = videoToStreamRow(handle, v);
-      if (!row) continue;
-      const { kick_stream_id, raw_json, ...rest } = row;
-      const payload = {
-        username: handle,
-        kick_stream_id,
-        ...rest,
-        raw_json: raw_json as unknown as object,
-        last_fetched_at: now,
-      };
-      await adminDb.kick_streams.upsert({
-        where: {
-          username_kick_stream_id: {
-            username: handle,
-            kick_stream_id,
-          },
-        },
-        update: payload,
-        create: payload,
-      });
-      upserts++;
-    }
+    const upserts = await upsertKickStreamRows(handle, list, now);
 
     if (upserts === 0) {
       // Nothing returned — still stamp freshness via the newest existing row's

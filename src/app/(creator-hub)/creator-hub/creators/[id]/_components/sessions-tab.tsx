@@ -1,7 +1,6 @@
 import {
   Activity,
   BarChart3,
-  Coins,
   Gift,
   Info,
   Radio,
@@ -32,8 +31,8 @@ import { SessionsTable } from "./sessions-table";
  * spend are surfaced per session AND summed in the KPI strip.
  *
  * House-POV finance colors:
- *   • Spent / wagered fill (house gain) → emerald.
  *   • Loaded / converted-out / tips + sponsor (house outflow) → rose.
+ *   • Per-row spent (wagered fill) stays in the table only → emerald.
  *
  * LAZY (owner-mandated never-preload): this component is the ONLY caller of
  * {@link getCreatorSessionsData}, so the backend session read + the admin-DB
@@ -89,7 +88,7 @@ export async function SessionsTab({ userId }: { userId: string }) {
 
       {/* KPI strip — session counts + lifetime fill economics + the per-spec
           tip + sponsorship spend, all house-POV. */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <KpiTile
           label="Sessions"
           value={formatNumber(data.total)}
@@ -107,13 +106,6 @@ export async function SessionsTab({ userId }: { userId: string }) {
           sub="House-provided"
           icon={Wallet}
           accent="rose"
-        />
-        <KpiTile
-          label="Fill spent"
-          value={formatCurrency(summary.spentUsd)}
-          sub="Wagered → house"
-          icon={Coins}
-          accent="emerald"
         />
         <KpiTile
           label="Converted out"
@@ -182,7 +174,6 @@ function SessionsHeading({ total }: { total?: number }) {
 type Summary = {
   activeCount: number;
   loadedUsd: number;
-  spentUsd: number;
   convertedUsd: number;
   tipsUsd: number;
   sponsorUsd: number;
@@ -193,7 +184,6 @@ function summarize(rows: CreatorSessionRow[]): Summary {
   const acc: Summary = {
     activeCount: 0,
     loadedUsd: 0,
-    spentUsd: 0,
     convertedUsd: 0,
     tipsUsd: 0,
     sponsorUsd: 0,
@@ -201,7 +191,6 @@ function summarize(rows: CreatorSessionRow[]): Summary {
   for (const r of rows) {
     if (r.status === "active") acc.activeCount += 1;
     acc.loadedUsd += num(r.fill_loaded_usd);
-    acc.spentUsd += num(r.fill_spent_usd);
     acc.convertedUsd += num(r.converted_to_raw_usd);
     acc.tipsUsd += num(r.tips_spent_this_session_usd);
     acc.sponsorUsd += num(r.sponsorship_spent_this_session_usd);
@@ -241,8 +230,8 @@ export function SessionsTabSkeleton() {
         <Skeleton className="size-7 rounded-lg" />
         <Skeleton className="h-5 w-40" />
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {[0, 1, 2, 3, 4, 5].map((i) => (
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((i) => (
           <Skeleton key={i} className="h-20 w-full rounded-xl" />
         ))}
       </div>

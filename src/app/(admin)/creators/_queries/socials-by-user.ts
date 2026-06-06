@@ -1,5 +1,6 @@
 import "server-only";
 
+import { adminDb } from "@/lib/admin-db";
 import {
   creatorsApi,
   type AdminCreatorSocial,
@@ -64,4 +65,126 @@ function addSocial(
   } else {
     map.set(s.user_id, [entry]);
   }
+}
+
+/** True when a `creator_socials.username` is a real linked handle (not empty/pending). */
+export function isLinkedSocialUsername(
+  username: string | null | undefined,
+): boolean {
+  const trimmed = username?.trim();
+  return Boolean(trimmed && trimmed.toLowerCase() !== "pending");
+}
+
+/** Map admin-DB `social_platform` to the roster chip enum (`twitter` → `x`). */
+function adminPlatformToChipPlatform(
+  platform: string,
+): CreatorSocialPlatform {
+  if (platform === "twitter") return "x";
+  return platform as CreatorSocialPlatform;
+}
+
+function profileUrlForPlatform(
+  platform: CreatorSocialPlatform,
+  username: string,
+): string | null {
+  const handle = username.trim().replace(/^@+/, "");
+  if (!handle) return null;
+  switch (platform) {
+    case "x":
+      return `https://x.com/${encodeURIComponent(handle)}`;
+    case "kick":
+      return `https://kick.com/${encodeURIComponent(handle)}`;
+    case "youtube":
+      return `https://youtube.com/@${encodeURIComponent(handle)}`;
+    case "instagram":
+      return `https://instagram.com/${encodeURIComponent(handle)}`;
+    case "tiktok":
+      return `https://tiktok.com/@${encodeURIComponent(handle)}`;
+    case "twitch":
+      return `https://twitch.tv/${encodeURIComponent(handle)}`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Linked social handles from ADMIN DB `creator_socials` (manager-entered on
+ * the Creator Hub Creator tab). This is the Hub's source of truth; the
+ * backend approval queue only covers creator-submitted socials.
+ */
+export async function getAdminDbLinkedSocialsByUser(
+  userIds: string[],
+): Promise<Map<string, CreatorSocialSummary[]>> {
+  const result = new Map<string, CreatorSocialSummary[]>();
+  if (userIds.length === 0) return result;
+
+  const rows = await adminDb.creator_socials.findMany({
+    where: { target_user_id: { in: userIds } },
+    select: {
+      id: true,
+      target_user_id: true,
+      platform: true,
+      username: true,
+    },
+    orderBy: [{ target_user_id: "asc" }, { platform: "asc" }],
+  });
+
+  for (const row of rows) {
+    if (!isLinkedSocialUsername(row.username)) continue;
+    const platform = adminPlatformToChipPlatform(row.platform);
+    const entry: CreatorSocialSummary = {
+      id: row.id,
+      platform,
+      username: row.username.trim().replace(/^@+/, ""),
+      url: profileUrlForPlatform(platform, row.username),
+    };
+    const existing = result.get(row.target_user_id);
+    if (existing) existing.push(entry);
+    else result.set(row.target_user_id, [entry]);
+  }
+
+  return result;
+}
+
+/** Merge admin-DB + backend-approved socials; admin wins per platform. */
+export function mergeCreatorSocialMaps(
+  admin: Map<string, CreatorSocialSummary[]>,
+  backend: Map<string, CreatorSocialSummary[]>,
+  userIds: string[],
+): Map<string, CreatorSocialSummary[]> {
+  const merged = new Map<string, CreatorSocialSummary[]>();
+  for (const userId of userIds) {
+    const byPlatform = new Map<CreatorSocialPlatform, CreatorSocialSummary>();
+    for (const s of backend.get(userId) ?? []) {
+      byPlatform.set(s.platform, s);
+    }
+    for (const s of admin.get(userId) ?? []) {
+      byPlatform.set(s.platform, s);
+    }
+    const list = [...byPlatform.values()].sort((a, b) =>
+      a.platform.localeCompare(b.platform),
+    );
+    if (list.length > 0) merged.set(userId, list);
+  }
+  return merged;
+}
+
+/**
+ * Social chips for Creator Hub roster cards — admin DB first, backend
+ * approval queue as fallback (union per platform, admin wins ties).
+ */
+export async function getRosterSocialsByUser(
+  userIds: string[],
+): Promise<Map<string, CreatorSocialSummary[]>> {
+  const [admin, backend] = await Promise.all([
+    getAdminDbLinkedSocialsByUser(userIds).catch((err) => {
+      console.error("[roster] admin DB socials read failed:", err);
+      return new Map<string, CreatorSocialSummary[]>();
+    }),
+    getApprovedSocialsByUser().catch((err) => {
+      console.error("[roster] backend socials read failed:", err);
+      return new Map<string, CreatorSocialSummary[]>();
+    }),
+  ]);
+  return mergeCreatorSocialMaps(admin, backend, userIds);
 }

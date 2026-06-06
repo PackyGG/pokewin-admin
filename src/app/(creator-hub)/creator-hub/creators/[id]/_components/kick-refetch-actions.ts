@@ -8,7 +8,7 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { logWarn } from "@/lib/errors/logger";
 import {
   isNoKeyConfigured,
-  normalizeHandle,
+  resolveLinkedHandle,
   refetchKickProfile,
   refetchKickStreams,
 } from "@/lib/creator-hub";
@@ -27,7 +27,16 @@ import {
  */
 export async function refetchCreatorKick(
   userId: string,
-): Promise<{ ok: true; noKeyConfigured: boolean } | { ok: false; reason: string }> {
+): Promise<
+  | {
+      ok: true;
+      noKeyConfigured: boolean;
+      profileFound: boolean;
+      streamCount: number;
+      staleError: string | null;
+    }
+  | { ok: false; reason: string }
+> {
   const session = await requireCreatorHubAccess();
   if (!userId) throw new Error("Missing creator id");
 
@@ -40,7 +49,7 @@ export async function refetchCreatorKick(
       },
       select: { username: true },
     });
-    handle = normalizeHandle(row?.username ?? null);
+    handle = resolveLinkedHandle(row?.username ?? null);
   } catch (err) {
     logWarn("creator-hub.kick-tab", "refetch: creator_socials read failed", err);
   }
@@ -58,6 +67,16 @@ export async function refetchCreatorKick(
   const noKeyConfigured =
     isNoKeyConfigured(profileResult) || isNoKeyConfigured(streamsResult);
 
+  const profileFound =
+    !isNoKeyConfigured(profileResult) && profileResult.profile != null;
+  const streamCount = isNoKeyConfigured(streamsResult)
+    ? 0
+    : streamsResult.streams.length;
+  const staleError =
+    (!isNoKeyConfigured(profileResult) ? profileResult.staleError : null) ??
+    (!isNoKeyConfigured(streamsResult) ? streamsResult.staleError : null) ??
+    null;
+
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "creator_kick_refetched",
@@ -68,5 +87,11 @@ export async function refetchCreatorKick(
   // Re-read the tab from the freshly-cached rows.
   revalidatePath(`/creator-hub/creators/${userId}`);
 
-  return { ok: true, noKeyConfigured };
+  return {
+    ok: true,
+    noKeyConfigured,
+    profileFound,
+    streamCount,
+    staleError,
+  };
 }

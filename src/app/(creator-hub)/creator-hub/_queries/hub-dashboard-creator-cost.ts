@@ -5,15 +5,19 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
-import { hubPeriodToInterval } from "./hub-period-sql";
+import { hubPeriodToInterval, hubPeriodToSinceDate } from "./hub-period-sql";
+import {
+  getConvertedFillSessionsInWindow,
+  sumConvertedFillSessions,
+} from "@/lib/queries/creator-converted-sessions-in-window";
 
 /**
  * Windowed creator cost for the Creator Hub dashboard — the SAME three
  * house-cost legs as `dashboard-creator-costs-today.ts`, re-scoped to the
  * active `DashboardPeriod` chip instead of calendar-today:
  *
- *   • Converted deal payouts (creator_fill_conversion +
- *     creator_multiplier_payout vouchers minted in the window).
+ *   • Converted deal payouts (fill sessions converted in the window via
+ *     backend `converted_at` + multiplier payout vouchers minted in window).
  *   • House-funded creator tips (`creator_fill_spend_tip`).
  *   • Full affiliate leaderboard prize gross (`affiliate_leaderboard_prize`).
  *
@@ -28,14 +32,27 @@ const cachedHubCreatorCost = unstable_cache(
       const interval = hubPeriodToInterval(period);
       const since = `NOW() - INTERVAL '${interval}'`;
 
-      type WithdrawalRow = { creator_withdrawals: string };
-      const withdrawalRows = await db.$queryRawUnsafe<WithdrawalRow[]>(
-        `SELECT COALESCE(SUM(v.value::numeric), 0)::text AS creator_withdrawals
+      const sinceDate = hubPeriodToSinceDate(period);
+      let fillConverted = 0;
+      try {
+        const fillSessions = await getConvertedFillSessionsInWindow(sinceDate);
+        fillConverted = sumConvertedFillSessions(fillSessions);
+      } catch (err) {
+        console.error(
+          "[creator-hub] fill converted sessions failed (cost uses tips+LB only):",
+          err,
+        );
+      }
+
+      type MultiplierRow = { multiplier_payouts: string };
+      const multiplierRows = await db.$queryRawUnsafe<MultiplierRow[]>(
+        `SELECT COALESCE(SUM(v.value::numeric), 0)::text AS multiplier_payouts
          FROM vouchers v
-         WHERE v.origin::text IN ('creator_fill_conversion', 'creator_multiplier_payout')
+         WHERE v.origin::text = 'creator_multiplier_payout'
            AND v.created_at >= ${since}`,
       );
-      const creatorWithdrawals = toNumber(withdrawalRows[0]?.creator_withdrawals);
+      const creatorWithdrawals =
+        fillConverted + toNumber(multiplierRows[0]?.multiplier_payouts);
 
       type TipsRow = { tips: string };
       const tipsRows = await db.$queryRawUnsafe<TipsRow[]>(
@@ -60,7 +77,7 @@ const cachedHubCreatorCost = unstable_cache(
       return creatorWithdrawals + tips + leaderboardGross;
     });
   },
-  ["hub-creator-cost-v2-minted-payouts"],
+  ["hub-creator-cost-v3-session-converted"],
   { revalidate: 60, tags: ["creator-hub"] },
 );
 
