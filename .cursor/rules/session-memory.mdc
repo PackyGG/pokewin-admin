@@ -1,0 +1,28 @@
+---
+description: FORCED cross-session memory — read on start, write before done
+alwaysApply: true
+---
+
+# FORCED Session Memory (non-negotiable)
+
+Full protocol: **`SESSION_MEMORY.md`**. You MUST follow it. Chat does not survive session switches.
+
+## FORCED on session start — before any tool call
+
+Read in order: `AGENT_HANDOFF.md` → `ONBOARDING.md` → `AGENTS.md` → active `.claude/plans/*.md` if relevant.
+
+## FORCED before saying DONE or ending a substantive turn
+
+1. **Update `AGENT_HANDOFF.md`** — HEAD sha, shipped, in-flight, open/next, blocked, gotchas
+2. **Promote durable facts** to `ONBOARDING.md` or the active plan file
+3. **Never** leave task state only in chat
+
+**You are NOT allowed to mark a task complete without updating the repo docs.** Exception: pure Q&A with zero new facts and zero code changes.
+
+## Sub-agents
+
+Every `Agent` / workflow prompt MUST include the §4 contract from `SESSION_MEMORY.md` and require handoff updates before reporting done.
+
+## Self-check (mandatory)
+
+Before your final message on substantive work: "Would a brand-new session reading only repo docs know what to do next?" If no → write docs first.

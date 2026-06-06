@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `c1e26f0b` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub — post wave B+C; audit + live verify next
+- **HEAD:** `5ad928bd` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub — post wave B+C; audit + live verify next
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
 
@@ -23,6 +23,8 @@
 - Per-creator tabs — Creator, Risk, Forecast (PARTIAL), Cohorts&LTV, Alt Accounts, Kick, Twitter, Sessions+VOD
 - Ops tools — Creator Check, onboarding checklist dock, acquisition, compare, alerts, deal-tracker, codes-ads (port), socials-review (port)
 - **Wave B+C** (`c1e26f0b`) — dashboard 24h real-data + bucketed charts, Add Creator v2, ops routes wired, Top Creators = most wager
+- **Post-B+C fixes** (`e3cb6683`, `5ad928bd`) — Vercel build + creator cost converted payouts; dashboard data, linked socials, Kick refetch
+- **Session memory system** — `SESSION_MEMORY.md` + `.cursor/rules/session-memory.mdc` + `CURSOR_USER_RULE.md` (forced read/write protocol)
 
 **Earlier admin (pre-Hub):** dashboard rework, system-edge-plan, `/users` search, Balance 2.0, insights hub, responsive harness (`e2e/responsive/*`), smoothness primitives (`@/components/ux`)
 
