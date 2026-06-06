@@ -12,6 +12,7 @@ import {
   RAPIDAPI_HOSTS,
   shouldFetch,
 } from "./cache";
+import { fetchKickProfileFromAerokick } from "./kick-aerokick";
 
 /**
  * Kick integration service (RapidAPI `kick-com-api` / KickLib).
@@ -314,6 +315,62 @@ function videosFromChannel(channel: KickRawChannel): KickRawVideo[] {
   return [];
 }
 
+async function fetchKickChannelFromRapidApi(
+  handle: string,
+  apiKey: string,
+): Promise<KickRawChannel | null> {
+  const paths = [
+    `/api/v1/channels/${encodeURIComponent(handle)}`,
+    `/api/v2/channels/${encodeURIComponent(handle)}`,
+  ];
+  for (const path of paths) {
+    try {
+      const payload = await kickGet<unknown>(path, apiKey);
+      const unwrapped = unwrapKickChannel(payload);
+      if (unwrapped) return unwrapped;
+    } catch (err) {
+      logWarn(
+        "creator-hub.kick",
+        `RapidAPI channel fetch failed for ${handle} on ${path}`,
+        err,
+      );
+    }
+  }
+  return null;
+}
+
+async function persistAerokickProfile(
+  handle: string,
+  sourceError?: string,
+): Promise<KickProfileRow | null> {
+  const aerokick = await fetchKickProfileFromAerokick(handle);
+  if (!aerokick) return null;
+
+  const data = {
+    username: handle,
+    kick_user_id: aerokick.kickUserId,
+    display_name: aerokick.displayName,
+    avatar_url: aerokick.avatarUrl,
+    bio: aerokick.bio,
+    follower_count: aerokick.followerCount,
+    is_verified: null,
+    is_live: false,
+    raw_json: {
+      source: "aerokick",
+      fetchedAt: new Date().toISOString(),
+      rapidApiError: sourceError ?? null,
+      ...aerokick,
+    } as unknown as object,
+    last_fetched_at: new Date(),
+  };
+
+  return (await adminDb.kick_profiles.upsert({
+    where: { username: handle },
+    update: data,
+    create: data,
+  })) as unknown as KickProfileRow;
+}
+
 async function fetchFollowerCount(
   handle: string,
   apiKey: string,
@@ -581,14 +638,6 @@ export async function getKickProfile(
       return null;
     })) as KickProfileRow | null;
 
-  if (!apiKey) {
-    // Without a key we can still serve whatever we cached earlier.
-    if (cached) {
-      return { ok: true, profile: rowToProfile(cached), fromCache: true };
-    }
-    return NO_KEY_CONFIGURED;
-  }
-
   const force = opts.force === true;
   if (
     !shouldKickFetch(
@@ -605,18 +654,44 @@ export async function getKickProfile(
     };
   }
 
+  const tryAerokickFallback = async (
+    sourceError?: string,
+  ): Promise<KickProfileResult | null> => {
+    const saved = await persistAerokickProfile(handle, sourceError);
+    if (!saved) return null;
+    if (sourceError) {
+      logWarn(
+        "creator-hub.kick",
+        `AeroKick fallback used for ${handle}: ${sourceError}`,
+      );
+    }
+    return {
+      ok: true,
+      profile: rowToProfile(saved),
+      fromCache: false,
+    };
+  };
+
+  if (!apiKey) {
+    if (cached) {
+      return { ok: true, profile: rowToProfile(cached), fromCache: true };
+    }
+    const fallback = await tryAerokickFallback("Kick RapidAPI key not configured");
+    if (fallback) return fallback;
+    return NO_KEY_CONFIGURED;
+  }
+
   // Fetch fresh. One call returns profile + (current) live status.
   try {
-    const payload = await kickGet<unknown>(
-      `/api/v1/channels/${encodeURIComponent(handle)}`,
-      apiKey,
-    );
-    const unwrapped = unwrapKickChannel(payload);
+    const unwrapped = await fetchKickChannelFromRapidApi(handle, apiKey);
     if (!unwrapped) {
-      // 404 / empty data — unknown handle. Don't write a row; return cache if any.
       if (cached) {
         return { ok: true, profile: rowToProfile(cached), fromCache: true };
       }
+      const fallback = await tryAerokickFallback(
+        "Kick RapidAPI returned no channel data",
+      );
+      if (fallback) return fallback;
       return { ok: true, profile: null, fromCache: false };
     }
 
@@ -663,21 +738,23 @@ export async function getKickProfile(
 
     return { ok: true, profile: rowToProfile(saved), fromCache: false };
   } catch (err) {
+    const message = err instanceof Error ? err.message : "Kick fetch failed";
     logError("creator-hub.kick", `getKickProfile failed for ${handle}`, err);
     if (cached) {
       return {
         ok: true,
         profile: rowToProfile(cached),
         fromCache: true,
-        staleError: err instanceof Error ? err.message : "Kick fetch failed",
+        staleError: message,
       };
     }
-    // Re-throw shape as a graceful empty so the tab renders an error state.
+    const fallback = await tryAerokickFallback(message);
+    if (fallback) return fallback;
     return {
       ok: true,
       profile: null,
       fromCache: false,
-      staleError: err instanceof Error ? err.message : "Kick fetch failed",
+      staleError: message,
     };
   }
 }
