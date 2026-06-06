@@ -12,6 +12,7 @@ import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { LeaderboardGrossClaimants } from "./creator-cost-leaderboard-claimants";
+import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldown";
 
 /**
  * "Creators Costs (today)" dashboard tile — what CREATORS cost the house for
@@ -31,9 +32,10 @@ import { LeaderboardGrossClaimants } from "./creator-cost-leaderboard-claimants"
  * The card face shows the rose total + the two largest lines as chips; the
  * Info popover (styled exactly like the Reward Costs / GGR breakdown popover)
  * spells out every line. The leaderboard line carries a click-to-reveal
- * per-claimant drilldown (`LeaderboardGrossClaimants`) showing the full gross
- * per board + per winner, reconciling to the line by construction. It loads
- * lazily on click (a server action), never on the dashboard's initial render.
+ * per-claimant drilldown (`LeaderboardGrossClaimants`); the creator-
+ * withdrawals line carries a sibling drilldown (`CreatorWithdrawalsDrilldown`).
+ * Both reconcile to their line amounts and load lazily on click (server
+ * actions), never on the dashboard's initial render.
  *
  * The header's top-right corner also carries a SMALL aggregate-P&L badge
  * (`affiliateReferredPnl`) — house P&L on affiliate-referred players for the
@@ -206,9 +208,10 @@ function lineIcon(key: string) {
  * Info popover styled exactly like the Reward Costs / GGR breakdown button
  * (Popover + render-prop trigger + Info icon + small PopoverContent). Lists
  * every creator-cost line with its magnitude (rose — all are house costs).
- * The leaderboard row carries a click-to-reveal per-claimant drilldown (full
- * gross per board + per winner) that reconciles to its amount. The total at
- * the bottom equals creator withdrawals + tips + the full leaderboard gross.
+ * The leaderboard row carries a click-to-reveal per-claimant drilldown; the
+ * creator-withdrawals row carries a per-creator / per-request drilldown.
+ * Both reconcile to their line amounts. The total at the bottom equals
+ * creator withdrawals + tips + the full leaderboard gross.
  */
 function CreatorCostsInfoPopover({
   total,
@@ -263,6 +266,9 @@ function CreatorCostsInfoPopover({
               label={l.label}
               amount={l.amount}
             >
+              {l.key === "creator_withdrawals" && l.amount > 0 && (
+                <CreatorWithdrawalsDrilldown withdrawalsTotal={l.amount} />
+              )}
               {l.key === "leaderboard" && l.amount > 0 && (
                 <LeaderboardGrossClaimants grossTotal={l.amount} />
               )}

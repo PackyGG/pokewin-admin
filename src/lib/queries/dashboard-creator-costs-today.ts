@@ -67,8 +67,9 @@ import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboar
  * legs (the receiving user is whoever the creator paid/sponsored), so the
  * gross house spend is the honest figure — matching how the canonical
  * per-creator + tile definitions sum them. The per-leaderboard / per-claimant
- * drilldown behind the leaderboard line is a SEPARATE lazy read
- * (`getLeaderboardGrossClaimants`), fetched only when an admin expands it.
+ * drilldown and the per-creator / per-request withdrawals drilldown are
+ * SEPARATE lazy reads (`getLeaderboardGrossClaimants`,
+ * `getCreatorWithdrawalsBreakdown`), fetched only when an admin expands them.
  */
 
 /** One creator-cost line on the box. */
@@ -408,6 +409,158 @@ export async function getLeaderboardGrossClaimants(): Promise<LeaderboardGrossBr
       const totalGross = boards.reduce((sum, b) => sum + b.gross, 0);
 
       return { boards, totalGross, dayStartIso: sinceIso };
+    },
+  );
+}
+
+// ─── Creator deal-payout withdrawal drilldown (lazy, click-to-load) ─────────
+
+/** One completed/shipped withdrawal request's deal-payout slice for a creator. */
+export type CreatorWithdrawalRequest = {
+  requestId: string;
+  /** Σ voucher value of deal-payout vouchers in this request today. */
+  amount: number;
+  /** Distinct deal-payout vouchers cashed out in this request. */
+  voucherCount: number;
+  /** Money-out timestamp (completed_at, else shipped_at). */
+  effectiveAtIso: string;
+  /** Which deal-payout voucher origin(s) this request carried. */
+  origins: Array<"creator_fill_conversion" | "creator_multiplier_payout">;
+};
+
+/** One creator's deal-payout withdrawals today, grouped for the drilldown. */
+export type CreatorWithdrawalCreator = {
+  creatorUserId: string;
+  username: string | null;
+  /** Σ request amounts for this creator today. */
+  amount: number;
+  /** Per-request rows, largest amount first. */
+  withdrawals: CreatorWithdrawalRequest[];
+};
+
+export type CreatorWithdrawalsBreakdown = {
+  /** Per-creator groups, largest amount first. */
+  creators: CreatorWithdrawalCreator[];
+  /** Σ of every creator's amount — reconciles to the card's withdrawals line. */
+  totalAmount: number;
+  /** ISO window start (today 00:00 UTC) — the same boundary the card covers. */
+  dayStartIso: string;
+};
+
+/**
+ * Per-creator / per-request breakdown behind the Creators Costs card's
+ * "Creator withdrawals" line — the click-to-load drilldown that shows WHO
+ * cashed out deal-payout vouchers today and through which withdrawal
+ * requests.
+ *
+ * ─── WHY IT RECONCILES ──────────────────────────────────────────────────
+ *
+ * Reuses the SAME `creator_deal_payouts` CTE as the card's aggregate line
+ * (`getCreatorCostsToday` / `getDashboardStats` creator_wd_amount): DISTINCT
+ * on (request, voucher), the two disjoint deal-payout origins, scoped by
+ * `COALESCE(completed_at, shipped_at)`. Each request row's amount is the Σ
+ * voucher value in that request's deal-payout slice; creator totals sum
+ * those rows; `totalAmount` sums creators — identical to the line above.
+ *
+ * ─── SCOPE / WINDOW (identical to the card's withdrawals line) ──────────
+ *
+ * SAME un-scoped gross + SAME window [today 00:00 UTC, now) as the card's
+ * creator-withdrawals line (no staff/blacklist filter — matching how the
+ * line total sums it). Window derived from trusted server time only.
+ *
+ * ─── PERFORMANCE (lazy) ─────────────────────────────────────────────────
+ *
+ * NOT cached and NOT called on the dashboard's initial render — runs ONLY
+ * when an admin expands the line (server action). Today-only window, one
+ * grouped read over the deal-payout CTE. Read-only against the Main DB.
+ */
+export async function getCreatorWithdrawalsBreakdown(): Promise<CreatorWithdrawalsBreakdown> {
+  return withTiming(
+    "dashboard.creatorCostsToday.withdrawalsBreakdown",
+    async () => {
+      const now = new Date();
+      const since = utcStartOfDay(now);
+      const sinceIso = since.toISOString();
+
+      const db = await getDb();
+      const sinceSql = `'${sinceIso}'::timestamptz`;
+
+      type RequestRow = {
+        creator_user_id: string;
+        username: string | null;
+        request_id: string;
+        request_amount: string;
+        voucher_count: string;
+        effective_at: Date;
+        origins: string[];
+      };
+      const rows = await db.$queryRawUnsafe<RequestRow[]>(
+        `WITH creator_deal_payouts AS (
+           SELECT DISTINCT
+             cwr.id AS request_id,
+             v.id   AS voucher_id,
+             v.user_id AS creator_user_id,
+             v.origin::text AS voucher_origin,
+             v.value::numeric AS amount,
+             COALESCE(cwr.completed_at, cwr.shipped_at) AS effective_at
+           FROM card_withdrawal_requests cwr
+           JOIN vouchers v ON v.id = ANY(cwr.voucher_ids)
+           WHERE cwr.status IN ('completed', 'shipped')
+             AND v.origin::text IN ('creator_fill_conversion', 'creator_multiplier_payout')
+             AND COALESCE(cwr.completed_at, cwr.shipped_at) >= ${sinceSql}
+         )
+         SELECT
+           cdp.creator_user_id,
+           u.username,
+           cdp.request_id,
+           COALESCE(SUM(cdp.amount), 0)::text AS request_amount,
+           COUNT(DISTINCT cdp.voucher_id)::text AS voucher_count,
+           MAX(cdp.effective_at) AS effective_at,
+           array_agg(DISTINCT cdp.voucher_origin) AS origins
+         FROM creator_deal_payouts cdp
+         JOIN "user" u ON u.id = cdp.creator_user_id
+         GROUP BY cdp.creator_user_id, u.username, cdp.request_id`,
+      );
+
+      const byCreator = new Map<string, CreatorWithdrawalCreator>();
+      for (const r of rows) {
+        const amount = toNumber(r.request_amount);
+        const origins = r.origins.filter(
+          (
+            o,
+          ): o is "creator_fill_conversion" | "creator_multiplier_payout" =>
+            o === "creator_fill_conversion" || o === "creator_multiplier_payout",
+        );
+
+        let creator = byCreator.get(r.creator_user_id);
+        if (!creator) {
+          creator = {
+            creatorUserId: r.creator_user_id,
+            username: r.username,
+            amount: 0,
+            withdrawals: [],
+          };
+          byCreator.set(r.creator_user_id, creator);
+        }
+        creator.amount += amount;
+        creator.withdrawals.push({
+          requestId: r.request_id,
+          amount,
+          voucherCount: Number(r.voucher_count ?? 0) || 0,
+          effectiveAtIso: new Date(r.effective_at).toISOString(),
+          origins,
+        });
+      }
+
+      const creators = Array.from(byCreator.values());
+      for (const c of creators) {
+        c.withdrawals.sort((a, b) => b.amount - a.amount);
+      }
+      creators.sort((a, b) => b.amount - a.amount);
+
+      const totalAmount = creators.reduce((sum, c) => sum + c.amount, 0);
+
+      return { creators, totalAmount, dayStartIso: sinceIso };
     },
   );
 }
