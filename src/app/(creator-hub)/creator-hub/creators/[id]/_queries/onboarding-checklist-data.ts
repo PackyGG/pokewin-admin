@@ -1,10 +1,12 @@
 import "server-only";
 
+import { cache } from "react";
+
 import { adminDb } from "@/lib/admin-db";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { logWarn } from "@/lib/errors/logger";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
-import { creatorsApi } from "@/lib/backend-api";
+import { BackendApiError, creatorsApi } from "@/lib/backend-api";
 import { isLinkedSocialUsername } from "../../../../../(admin)/creators/_queries/socials-by-user";
 import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
 import { getCreatorHeader } from "@/lib/queries/creators-detail";
@@ -23,7 +25,9 @@ import {
  * Owner spec (plan §"Per-creator Onboarding Checklist"):
  *   AUTO items (derived live, never a stored checkbox):
  *     1. ≥ 2 socials set        → distinct linked platforms in creator_socials.
- *     2. First deal set up      → a creator deal exists (backend).
+ *     2. First deal set up      → creator has ever had a fill deal (backend
+ *                                 lifetime `total_deals_count`, not only an
+ *                                 active/scheduled deal).
  *     3. Leaderboard set up     → an affiliate leaderboard exists (backend).
  *     4. API key set up         → creator has an API key (backend status).
  *     5. Creator has a PFP      → the packy.gg user has an avatar image.
@@ -62,6 +66,32 @@ type ChecklistRow = {
   lb_prepaid_tx_url: string | null;
   completed_at: Date | null;
 };
+
+const ROSTER_WALK_PAGE_SIZE = 100;
+const ROSTER_WALK_CAP = 500;
+
+/**
+ * Lifetime fill-deal counts keyed by creator user id. One paginated walk of the
+ * backend roster per request (`cache` dedupes within a render — roster badges
+ * + a detail checklist share a single walk).
+ *
+ * Uses `total_deals_count` (every deal ever — active, completed, terminated,
+ * scheduled) instead of `listDeals`, which can omit non-active deals.
+ */
+const getCreatorTotalDealCounts = cache(async (): Promise<Map<string, number>> => {
+  const map = new Map<string, number>();
+  let offset = 0;
+  while (offset < ROSTER_WALK_CAP) {
+    const page = await creatorsApi.list({
+      offset,
+      limit: ROSTER_WALK_PAGE_SIZE,
+    });
+    for (const c of page.data) map.set(c.id, c.total_deals_count);
+    offset += ROSTER_WALK_PAGE_SIZE;
+    if (offset >= page.total) break;
+  }
+  return map;
+});
 
 /** True if an error is a "relation does not exist" (table not migrated yet). */
 export function isChecklistTableMissing(err: unknown): boolean {
@@ -196,6 +226,35 @@ async function countSocials(targetUserId: string): Promise<number> {
 }
 
 /**
+ * True when the creator has ever had a fill (weekly) deal — including
+ * completed/terminated/expired history, not only an active or scheduled deal.
+ *
+ * Source order:
+ *   1. Backend roster `total_deals_count` (lifetime fill-deal count).
+ *   2. `listDeals` paginated total / first row (covers edge cases).
+ *   3. Admin audit `creator_deal_created` (demoted / off-roster creators).
+ */
+async function creatorEverHadFillDeal(userId: string): Promise<boolean> {
+  const dealCounts = await getCreatorTotalDealCounts();
+  if ((dealCounts.get(userId) ?? 0) > 0) return true;
+
+  try {
+    const dealsPage = await creatorsApi.listDeals(userId, { limit: 1, offset: 0 });
+    if ((dealsPage.total ?? 0) > 0 || (dealsPage.data?.length ?? 0) > 0) {
+      return true;
+    }
+  } catch (err) {
+    if (!(err instanceof BackendApiError && err.isNotFound)) throw err;
+  }
+
+  const legacyDeal = await adminDb.admin_audit_events.findFirst({
+    where: { target_user_id: userId, event_type: "creator_deal_created" },
+    select: { id: true },
+  });
+  return legacyDeal != null;
+}
+
+/**
  * Build the full checklist for one creator: derive the AUTO items from live
  * data, merge the persisted MANUAL state, compute progress, and sync the
  * auto-hide snapshot.
@@ -228,8 +287,8 @@ export async function getCreatorChecklist(
       CHECKLIST_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
-      () => creatorsApi.listDeals(targetUserId, { limit: 1, offset: 0 }),
-      null,
+      () => creatorEverHadFillDeal(targetUserId),
+      false,
       "creator-hub.onboarding-checklist.deals",
       CHECKLIST_QUERY_TIMEOUT_MS,
     ),
@@ -258,7 +317,7 @@ export async function getCreatorChecklist(
   ]);
 
   const socialsCount = socialsRes.data;
-  const hasDeal = (dealRes.data?.total ?? 0) > 0;
+  const hasDeal = dealRes.data === true;
   const hasLeaderboard = (lbRes.data?.total ?? 0) > 0;
   const hasApiKey = apiKeyRes.data?.has_api_key === true;
   const hasPfp = Boolean(headerRes.data?.image?.trim());
@@ -289,7 +348,7 @@ export async function getCreatorChecklist(
       id: "first_deal",
       kind: "auto",
       label: "Set up the first deal",
-      hint: "A creator deal exists.",
+      hint: "The creator has ever had a fill deal (including past/completed).",
       done: hasDeal,
       detail: hasDeal ? undefined : "No deal yet — create one in the Overview.",
     },
