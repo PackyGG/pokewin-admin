@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `8d795596` · **Updated:** 2026-06-06 · **Active focus:** Hub nav cleanup — Deal Tracker removed, Compare in Workspace sidebar (`cursor/hub-nav-cleanup-775d`, **PR #51**)
+- **HEAD:** `df995bac` · **Updated:** 2026-06-06 · **Active focus:** Hub nav cleanup — Deal Tracker + Codes & Ads removed, Compare in Workspace (`cursor/hub-nav-cleanup-775d`, **PR #51**)
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
