@@ -3,9 +3,9 @@ import { toNumber } from "@/lib/utils/decimal";
 import { Prisma } from "@/generated/prisma/client";
 import { filterLedgerTxTypes, LEDGER_TX_TYPES } from "./_ledger-tx-types";
 import {
-  resolveUpgraderMetadata,
-  upgraderTargetMultiplierSql,
-} from "@/lib/utils/upgrader-metadata";
+  fetchUpgraderTargetByLedgerTxIds,
+  resolveUpgraderTargetFromBatch,
+} from "./upgrader-target-batch";
 import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
 import type { ledger_transaction_type } from "@/generated/prisma/enums";
 
@@ -598,63 +598,14 @@ export async function getUserTransactions(
   const upgraderBetLedgerIds = transactions
     .filter((t) => t.type === "upgrader_bet")
     .map((t) => t.id);
-  type UpgraderBetBatchRow = {
-    ledger_tx_id: string;
-    gsid: string | null;
-    won_amount: string | null;
-    result_metadata: unknown;
-    ledger_metadata: unknown;
-  };
-  const upgraderBetByLedgerId = new Map<string, UpgraderBetBatchRow>();
+  const upgraderBetByLedgerId = await fetchUpgraderTargetByLedgerTxIds(
+    db,
+    upgraderBetLedgerIds,
+  );
   const upgraderWinningsByGsid = new Map<string, number>();
-  if (upgraderBetLedgerIds.length > 0) {
-    try {
-      const pfTargetExpr = upgraderTargetMultiplierSql("result_metadata");
-      const rows = await db.$queryRawUnsafe<UpgraderBetBatchRow[]>(
-        `SELECT lt.id::text AS ledger_tx_id,
-                gs.id::text AS gsid,
-                ug.won_amount::text AS won_amount,
-                pf.result_metadata AS result_metadata,
-                lt.metadata AS ledger_metadata
-         FROM unnest($1::uuid[]) AS bet_id(id)
-         JOIN ledger_transactions lt ON lt.id = bet_id.id
-         LEFT JOIN LATERAL (
-           SELECT id
-           FROM game_sessions
-           WHERE game_type = 'upgrader'
-             AND (
-               id = lt.game_session_id
-               OR bet_ledger_tx_id = lt.id
-             )
-           ORDER BY
-             CASE WHEN id = lt.game_session_id THEN 0 ELSE 1 END,
-             created_at DESC
-           LIMIT 1
-         ) gs_pick ON true
-         LEFT JOIN game_sessions gs ON gs.id = gs_pick.id
-         LEFT JOIN upgrader_games ug ON ug.id = gs.game_id
-         LEFT JOIN LATERAL (
-           SELECT result_metadata
-           FROM provably_fair_results
-           WHERE game_session_id = gs.id
-           ORDER BY
-             CASE WHEN ${pfTargetExpr} IS NOT NULL THEN 0 ELSE 1 END,
-             cursor ASC
-           LIMIT 1
-         ) pf ON gs.id IS NOT NULL`,
-        upgraderBetLedgerIds,
-      );
-      for (const r of rows) {
-        upgraderBetByLedgerId.set(r.ledger_tx_id, r);
-        if (r.gsid && r.won_amount != null) {
-          upgraderWinningsByGsid.set(r.gsid, toNumber(r.won_amount));
-        }
-      }
-    } catch (e) {
-      console.error(
-        "[getUserTransactions] upgrader winnings (upgrader_games) lookup failed (non-fatal):",
-        e,
-      );
+  for (const r of upgraderBetByLedgerId.values()) {
+    if (r.gsid && r.won_amount != null) {
+      upgraderWinningsByGsid.set(r.gsid, toNumber(r.won_amount));
     }
   }
 
@@ -784,13 +735,14 @@ export async function getUserTransactions(
         }
         const pfMetadataSources = [
           ...(gs?.provably_fair_results ?? []).map((pf) => pf.result_metadata),
-          upgraderRow?.result_metadata,
-          upgraderRow?.ledger_metadata,
           t.metadata,
         ];
-        const cfg = resolveUpgraderMetadata(...pfMetadataSources);
-        upgraderTargetMultiplier = cfg.targetMultiplier;
-        upgraderTargetChance = cfg.targetChance;
+        const resolved = resolveUpgraderTargetFromBatch(
+          upgraderRow,
+          ...pfMetadataSources,
+        );
+        upgraderTargetMultiplier = resolved.targetMultiplier;
+        upgraderTargetChance = resolved.targetChance;
       }
 
       // Total worth (cash balance + held inventory) before/after this tx,

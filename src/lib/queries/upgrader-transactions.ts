@@ -1,6 +1,9 @@
 import { getDb } from "@/lib/db";
 import type { PaginatedResult } from "@/lib/types";
-import { parseUpgraderMetadata } from "@/lib/utils/upgrader-metadata";
+import {
+  resolveUpgraderMetadata,
+  upgraderTargetMultiplierSql,
+} from "@/lib/utils/upgrader-metadata";
 
 /**
  * Upgrader transactions query — paginated list of upgrader_games rows.
@@ -214,6 +217,7 @@ export async function getUpgraderTransactions(params: {
   // result_metadata comes back as JSONB; parsing is done in JS via the
   // shared `parseUpgraderMetadata` helper so we don't reimplement the
   // candidate-key fallback in SQL.
+  const pfTargetExpr = upgraderTargetMultiplierSql("pf.result_metadata");
   const dataSql = `
     SELECT
       g.id::text AS id,
@@ -223,29 +227,42 @@ export async function getUpgraderTransactions(params: {
       g.bet_amount::text AS bet_amount,
       g.won_amount::text AS won_amount,
       g.created_at,
-      -- Bet-side ledger transaction id for this game. Walked through
-      -- game_sessions, where game_id = upgrader_games.id and
-      -- bet_ledger_tx_id is the upgrader_bet row that paid the stake.
-      -- Lets the UI deep-link each row to the canonical
-      -- /transactions/[id] detail page (which already surfaces the PF
-      -- roll + the card the ticket landed on).
       gs.bet_ledger_tx_id::text AS ledger_tx_id,
-      -- Raw PF metadata blob — parsed in JS by parseUpgraderMetadata
-      -- to extract target_multiplier / target_chance / etc. The blob
-      -- shape isn't pinned by the backend, so we don't try to do this
-      -- in SQL. Returns NULL when no PF row exists yet (defensive —
-      -- shouldn't happen post-resolution).
-      pf.result_metadata AS result_metadata
+      to_jsonb(g) AS upgrader_game,
+      pf.best_metadata AS result_metadata,
+      pf.all_metadata AS all_metadata,
+      pf.best_target::text AS sql_target_multiplier
     FROM upgrader_games g
     LEFT JOIN "user" u ON u.id = g.user_id
-    LEFT JOIN game_sessions gs
-      ON gs.game_type = 'upgrader' AND gs.game_id = g.id
     LEFT JOIN LATERAL (
-      SELECT result_metadata
-      FROM provably_fair_results
-      WHERE game_session_id = gs.id
-      ORDER BY cursor ASC
+      SELECT gs_inner.*
+      FROM game_sessions gs_inner
+      WHERE gs_inner.game_type::text = 'upgrader'
+        AND gs_inner.game_id = g.id
+      ORDER BY
+        CASE WHEN gs_inner.bet_ledger_tx_id IS NOT NULL THEN 0 ELSE 1 END,
+        gs_inner.created_at DESC
       LIMIT 1
+    ) gs ON true
+    LEFT JOIN LATERAL (
+      SELECT
+        (array_agg(pf.result_metadata ORDER BY
+          CASE WHEN ${pfTargetExpr} IS NOT NULL THEN 0 ELSE 1 END,
+          pf.cursor ASC
+        ))[1] AS best_metadata,
+        COALESCE(
+          jsonb_agg(pf.result_metadata ORDER BY pf.cursor ASC)
+            FILTER (WHERE pf.result_metadata IS NOT NULL),
+          '[]'::jsonb
+        ) AS all_metadata,
+        MAX(${pfTargetExpr}) AS best_target
+      FROM provably_fair_results pf
+      WHERE pf.game_session_id IN (
+        SELECT gs2.id
+        FROM game_sessions gs2
+        WHERE gs2.game_type::text = 'upgrader'
+          AND gs2.game_id = g.id
+      )
     ) pf ON true
     ${baseWhere}
     ${orderBy}
@@ -262,7 +279,10 @@ export async function getUpgraderTransactions(params: {
     won_amount: string;
     created_at: Date;
     ledger_tx_id: string | null;
+    upgrader_game: unknown;
     result_metadata: unknown;
+    all_metadata: unknown[] | null;
+    sql_target_multiplier: string | null;
   };
 
   const [countResult, rows] = await Promise.all([
@@ -280,7 +300,19 @@ export async function getUpgraderTransactions(params: {
     // out of the PF metadata blob. parseUpgraderMetadata is safe to
     // call on any value (returns the all-null shape on non-objects /
     // missing rows), so we don't need to guard on r.result_metadata.
-    const cfg = parseUpgraderMetadata(r.result_metadata);
+    const pfAll = Array.isArray(r.all_metadata) ? r.all_metadata : [];
+    const sqlMult =
+      r.sql_target_multiplier != null &&
+      r.sql_target_multiplier !== "" &&
+      Number.isFinite(Number(r.sql_target_multiplier))
+        ? Number(r.sql_target_multiplier)
+        : null;
+    const cfg = resolveUpgraderMetadata(
+      sqlMult != null ? { target_multiplier: sqlMult } : null,
+      r.result_metadata,
+      ...pfAll,
+      r.upgrader_game,
+    );
     return {
       id: r.id,
       userId: r.user_id,

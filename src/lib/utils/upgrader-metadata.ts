@@ -95,7 +95,18 @@ export const UPGRADER_MULTIPLIER_KEYS = [
   "targetX",
   "win_multiplier",
   "winMultiplier",
+  "target",
+  "mult",
+  "x",
+  "upgrade_target",
+  "upgradeTarget",
+  "cashout_at",
+  "cashoutAt",
 ] as const;
+
+/** Key substrings that suggest a numeric field is a target multiplier. */
+const MULTIPLIER_KEY_HINT =
+  /multiplier|^mult$|^x$|target.*mult|upgrade.*mult|cashout|payout/i;
 
 export const UPGRADER_CHANCE_KEYS = [
   "target_chance",
@@ -219,6 +230,39 @@ function pickNumberDeep(
   return null;
 }
 
+/** Walk JSON up to `depth` levels, picking the first plausible multiplier. */
+function pickMultiplierByKeyHint(
+  metadata: unknown,
+  depth = 0,
+): number | null {
+  if (metadata == null || depth > 3) return null;
+  if (typeof metadata !== "object" || Array.isArray(metadata)) return null;
+
+  const record = metadata as Record<string, unknown>;
+  for (const [key, value] of Object.entries(record)) {
+    if (MULTIPLIER_KEY_HINT.test(key)) {
+      const n = readNumber(value);
+      if (n != null && n >= 1 && n <= 1_000_000) return n;
+    }
+    if (value != null && typeof value === "object" && !Array.isArray(value)) {
+      const nested = pickMultiplierByKeyHint(value, depth + 1);
+      if (nested != null) return nested;
+    }
+  }
+  return null;
+}
+
+function deriveMultiplierFromChance(
+  targetChance: number,
+  houseEdge: number | null,
+): number | null {
+  if (targetChance <= 0 || targetChance > 100) return null;
+  const edge = houseEdge ?? 0;
+  const mult = ((1 - edge) * 100) / targetChance;
+  if (!Number.isFinite(mult) || mult < 1 || mult > 1_000_000) return null;
+  return mult;
+}
+
 function parseUpgraderMetadataFromRecord(
   metadata: unknown,
 ): UpgraderMetadata {
@@ -233,7 +277,9 @@ function parseUpgraderMetadataFromRecord(
     return empty;
   }
 
-  const targetMultiplier = pickNumberDeep(metadata, UPGRADER_MULTIPLIER_KEYS);
+  let targetMultiplier =
+    pickNumberDeep(metadata, UPGRADER_MULTIPLIER_KEYS) ??
+    pickMultiplierByKeyHint(metadata);
   const targetChanceRaw = pickNumberDeep(metadata, UPGRADER_CHANCE_KEYS);
   const houseEdge = pickNumberDeep(metadata, UPGRADER_HOUSE_EDGE_KEYS);
   const roll = pickNumberDeep(metadata, UPGRADER_ROLL_KEYS);
@@ -256,10 +302,19 @@ function parseUpgraderMetadataFromRecord(
     }
   }
 
+  let targetMultiplierDerived = false;
+  if (targetMultiplier == null && targetChance != null) {
+    const derivedMult = deriveMultiplierFromChance(targetChance, houseEdge);
+    if (derivedMult != null) {
+      targetMultiplier = derivedMult;
+      targetMultiplierDerived = true;
+    }
+  }
+
   return {
     targetMultiplier,
     targetChance,
-    targetChanceDerived,
+    targetChanceDerived: targetChanceDerived || targetMultiplierDerived,
     houseEdge,
     roll,
   };

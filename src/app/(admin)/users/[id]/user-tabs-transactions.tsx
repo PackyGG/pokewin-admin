@@ -350,15 +350,6 @@ export const CategoryTransactionsTable = React.memo(
                             </span>
                           )}
                         {t.type === "upgrader_bet" &&
-                          t.upgraderTargetMultiplier == null && (
-                            <span
-                              className="inline-flex items-center rounded border border-muted-foreground/20 bg-muted/40 px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
-                              title="Target multiplier not found in PF or ledger metadata"
-                            >
-                              Target unknown
-                            </span>
-                          )}
-                        {t.type === "upgrader_bet" &&
                           t.upgraderTargetChance != null && (
                             <span className="text-[10px] text-muted-foreground">
                               {formatUpgraderChance(t.upgraderTargetChance)}
@@ -710,12 +701,13 @@ export const CategoryTransactionsTable = React.memo(
                         Sold: {t.soldCard.name}
                       </span>
                     ) : t.type === "upgrader_bet" &&
-                      t.upgraderTargetMultiplier == null ? (
+                      t.upgraderTargetMultiplier != null ? (
                       <span className="truncate block">
                         {t.description}
-                        <span className="text-muted-foreground/70">
+                        <span className="text-cyan-600 dark:text-cyan-400">
                           {" "}
-                          · Target unknown
+                          · Aimed for{" "}
+                          {formatUpgraderMultiplier(t.upgraderTargetMultiplier)}
                         </span>
                       </span>
                     ) : (

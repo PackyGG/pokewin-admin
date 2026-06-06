@@ -9,7 +9,10 @@ import {
   ledger_transaction_status,
 } from "@/generated/prisma/enums";
 import type { UserTagValue } from "@/lib/queries/user-tags";
-import { resolveUpgraderMetadata } from "@/lib/utils/upgrader-metadata";
+import {
+  fetchUpgraderTargetByLedgerTxIds,
+  resolveUpgraderTargetFromBatch,
+} from "./upgrader-target-batch";
 import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
 
 // Allowlists derived from the generated Prisma enums — used to validate
@@ -682,6 +685,14 @@ export async function getTransactions(params: {
     }
   }
 
+  const upgraderBetLedgerIds = transactions
+    .filter((t) => t.type === "upgrader_bet")
+    .map((t) => t.id);
+  const upgraderTargetByLedgerId = await fetchUpgraderTargetByLedgerTxIds(
+    db,
+    upgraderBetLedgerIds,
+  );
+
   return {
     data: transactions.map((t) => {
       const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
@@ -747,11 +758,17 @@ export async function getTransactions(params: {
         // don't accidentally pick up a multiplier from a
         // non-upgrader PF blob.
         if (t.type === "upgrader_bet") {
-          const cfg = resolveUpgraderMetadata(
+          const resolved = resolveUpgraderTargetFromBatch(
+            upgraderTargetByLedgerId.get(t.id),
             ...gs.provably_fair_results.map((pf) => pf.result_metadata),
           );
-          upgraderTargetMultiplier = cfg.targetMultiplier;
+          upgraderTargetMultiplier = resolved.targetMultiplier;
         }
+      } else if (t.type === "upgrader_bet") {
+        const resolved = resolveUpgraderTargetFromBatch(
+          upgraderTargetByLedgerId.get(t.id),
+        );
+        upgraderTargetMultiplier = resolved.targetMultiplier;
       }
       const balanceBefore = toNumber(t.balance_before);
       const balanceAfter = toNumber(t.balance_after);
@@ -879,13 +896,32 @@ export async function getTransactionDetail(id: string) {
     }[];
   } | null = null;
 
-  if (tx.game_session_id) {
+  // Upgrader bets link the canonical session via
+  // `game_sessions.bet_ledger_tx_id` — ledger.game_session_id can be
+  // null or point at a stale row. Prefer the bet_ledger_tx_id match.
+  let resolvedSessionId = tx.game_session_id;
+  if (tx.type === "upgrader_bet") {
+    const canonical = await db.game_sessions.findFirst({
+      where: { bet_ledger_tx_id: tx.id, game_type: "upgrader" },
+      select: { id: true },
+    });
+    if (canonical) resolvedSessionId = canonical.id;
+    else if (!resolvedSessionId) {
+      const fallback = await db.game_sessions.findFirst({
+        where: { bet_ledger_tx_id: tx.id },
+        select: { id: true },
+      });
+      resolvedSessionId = fallback?.id ?? null;
+    }
+  }
+
+  if (resolvedSessionId) {
     // Narrow `provably_fair_results` columns to just what downstream uses.
     // The PF table is wide (client_seed, server_seed, server_seed_hash,
     // result_hash, ticket, result_metadata, etc.) but on this page we only
     // join through it to grab the linked inventory item.
     const session = await db.game_sessions.findUnique({
-      where: { id: tx.game_session_id },
+      where: { id: resolvedSessionId },
       select: {
         game_type: true,
         game_id: true,
@@ -968,7 +1004,7 @@ export async function getTransactionDetail(id: string) {
           : Promise.resolve([] as { name: string; imageUrl: string | null; priceUsd: number; quantity: number }[]);
 
       const relatedTxsPromise = db.ledger_transactions.findMany({
-        where: { game_session_id: tx.game_session_id! },
+        where: { game_session_id: resolvedSessionId },
         orderBy: { created_at: "asc" },
         select: { id: true, type: true, amount: true, balance_before: true, balance_after: true, description: true },
       });
@@ -978,7 +1014,7 @@ export async function getTransactionDetail(id: string) {
       // user won (invariant inventory = cards + vouchers), so it's
       // surfaced alongside the cards on the detail page.
       const vouchersPromise = db.vouchers.findMany({
-        where: { origin_id: tx.game_session_id! },
+        where: { origin_id: resolvedSessionId },
         select: { value: true },
       });
 
@@ -1022,7 +1058,7 @@ export async function getTransactionDetail(id: string) {
               // tx.game_session_id == game_sessions.id (the row we just
               // selected) so we read it off tx to avoid a redundant
               // `select: { id: true }` on the session query.
-              source_id: { in: [tx.game_session_id!, session.game_id!] },
+              source_id: { in: [resolvedSessionId, session.game_id!] },
             },
             select: {
               id: true,
