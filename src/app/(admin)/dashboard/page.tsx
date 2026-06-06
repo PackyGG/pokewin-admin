@@ -4,11 +4,7 @@ import {
   getDashboardStats,
   getDashboardKpiStats,
   getActiveRain,
-  parseDashboardPeriod,
-  type DashboardPeriod,
 } from "@/lib/queries/dashboard";
-import { dashboardChartTitleSuffix } from "@/lib/queries/dashboard-chart-series";
-import { DashboardPeriodSelector } from "./dashboard-period-selector";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
 import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
@@ -55,23 +51,13 @@ import { ChartRowSkeleton, UpgraderPanelSkeleton } from "./dashboard-skeletons";
 
 export const metadata = { title: "Dashboard" };
 
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | undefined>>;
-}) {
+export default async function DashboardPage() {
   await requirePageAccess("/dashboard");
 
-  // `period` drives ONLY the trend charts + Wager Attribution now (sub-hour
-  // / day / lifetime windows, computed on demand when the admin picks a chip
-  // in the global <DashboardPeriodSelector>; default 24h on a cold load).
+  // Trend charts + Wager Attribution are ALWAYS 30-day daily buckets (fixed).
   // The headline KPI boxes are independent — they default to "today" (since
   // 00:00 UTC) via getDashboardKpiStats and carry their own per-box today/24h
-  // toggle, fetching the 24h window lazily on first toggle. getDashboardStats
-  // stays React-cached + keyed on `period`, so the chart segments below that
-  // read it still share a single fetch per render.
-  const params = await searchParams;
-  const period: DashboardPeriod = parseDashboardPeriod(params.period);
+  // toggle, fetching the 24h window lazily on first toggle.
 
   // The live feeds (Recent Activity, Live Money Movements) all live in
   // the admin shell now as docked right-edge widgets and bootstrap their
@@ -113,20 +99,12 @@ export default async function DashboardPage({
                   <Skeleton className="h-[26px] w-40 rounded-full" />
                 }
               >
-                <DashboardLoadTime period={period} />
+                <DashboardLoadTime />
               </Suspense>
             </div>
           }
         />
       </PageHero>
-
-      {/* Global period selector. Drives the `?period=` URL param for the
-          TREND CHARTS + Wager Attribution below (the headline KPI boxes now
-          own their own per-box today/24h window via the toggle next to each
-          title, so they no longer read this). Client component — server
-          cards don't re-render when a chip is hovered, only when it's
-          clicked (router.replace). */}
-      <DashboardPeriodSelector />
 
       {/* FIRST 3 BOXES — P&L Today + Reward Costs + Creators Costs, in that
           order, at the top. All three are house figures for the CURRENT
@@ -165,9 +143,8 @@ export default async function DashboardPage({
           lazily on the first toggle inside the client section
           (active-timeframe-only).
 
-          NOT keyed on the global `?period=` selector — these boxes own their
-          own today/24h window now. The global selector drives the Trends
-          charts + Wager Attribution below. Streams behind its own Suspense
+          NOT keyed on any global selector — these boxes own their own today/24h
+          window via the toggle next to each title. Streams behind its own Suspense
           so the today-window aggregate never blocks the 3 cost cards above;
           the skeleton mirrors the 4-up period strip + 6-up snapshot strip. */}
       <Suspense
@@ -209,14 +186,8 @@ export default async function DashboardPage({
         <Suspense fallback={<UpgraderPanelSkeleton />}>
           <DashboardUpgraderSection />
         </Suspense>
-        {/* Wager Attribution IS period-bound, but we intentionally DON'T key
-            it on `period` — keeping the prior chart on screen during a
-            refetch (driven by the selector's transition) reads far better
-            than blanking it back to a skeleton on every chip change. The
-            chart skeleton is matched to the card chrome + height for the
-            cold load. */}
+        {/* Wager Attribution — always 30-day daily buckets (same as Trends). */}
         <Suspense
-          key={period}
           fallback={
             <SkeletonChart
               height={400}
@@ -224,7 +195,7 @@ export default async function DashboardPage({
             />
           }
         >
-          <DashboardWagerAttribution period={period} />
+          <DashboardWagerAttribution />
         </Suspense>
       </div>
 
@@ -249,14 +220,11 @@ export default async function DashboardPage({
             fast charts no longer wait on the slow P&L scan, and the P&L
             cell shows a chart skeleton until getDailyPnl resolves.
 
-            Not period-keyed: the trend charts stay on screen during a
-            period refetch (the selector's transition keeps the prior
-            render) rather than flashing skeletons on each chip change.
-            The skeleton is for the cold load only and mirrors the
-            chart-card chrome (rounded-xl, faux bars) so it doesn't pop a
-            flat block into a chart. */}
+            Not period-keyed: the trend charts stay on screen during refresh
+            rather than flashing skeletons. The skeleton is for the cold load
+            only and mirrors the chart-card chrome (rounded-xl, faux bars) so
+            it doesn't pop a flat block into a chart. */}
         <Suspense
-          key={period}
           fallback={
             <>
               <ChartRowSkeleton count={3} height={300} />
@@ -264,7 +232,7 @@ export default async function DashboardPage({
             </>
           }
         >
-          <DashboardCharts period={period} />
+          <DashboardCharts />
         </Suspense>
       </div>
 
@@ -277,20 +245,23 @@ export default async function DashboardPage({
   );
 }
 
+/** Fixed period for trend charts — always 30-day daily buckets. */
+const DASHBOARD_CHART_PERIOD = "30d" as const;
+
 /**
  * Data-freshness chip for the hero action slot. Streams behind its own tiny
- * Suspense; reads the same React-cached getDashboardStats, so it adds no
- * extra query — it just surfaces the generatedAt timestamp the aggregate
- * already records for the "Updated Ns ago" label.
+ * Suspense; reads the same React-cached getDashboardStats used by the charts,
+ * so it adds no extra query — it just surfaces the generatedAt timestamp the
+ * aggregate already records for the "Updated Ns ago" label.
  */
-async function DashboardLoadTime({ period }: { period: DashboardPeriod }) {
+async function DashboardLoadTime() {
   // Wrapped in safeQuery so a failing/slow stats aggregate degrades this
   // hero chip to nothing instead of throwing up the route boundary (the
   // chip is decorative — a missing freshness indicator must never take
   // the page down). The KPI strip surfaces the same failure as a tile
   // fallback, so the operator still sees the degraded state there.
   const { data: stats, error } = await safeQuery(
-    () => getDashboardStats(period),
+    () => getDashboardStats(DASHBOARD_CHART_PERIOD),
     null,
     "dashboard.loadTime",
   );
@@ -567,15 +538,16 @@ async function DashboardActiveRain() {
  * The Wager Attribution chart used to live as a third full-width row here; it
  * was promoted next to the Upgrader Stats section.
  */
-async function DashboardCharts({ period }: { period: DashboardPeriod }) {
+async function DashboardCharts() {
   // getDashboardStats backs the wager/deposit/ftds/signup/depositor charts.
+  // Always 30-day daily buckets — NOT tied to any global period selector.
   // Wrapped in safeQuery so a throw degrades to a fallback instead of
   // escaping to the route error boundary (which would white-screen the
   // whole dashboard — the failure mode this page hit in prod). getDailyPnl
   // is intentionally NOT awaited here anymore — the Daily P&L cell owns its
   // own fetch + Suspense below so it can stream independently.
   const statsResult = await safeQuery(
-    () => getDashboardStats(period),
+    () => getDashboardStats(DASHBOARD_CHART_PERIOD),
     null,
     "dashboard.charts",
   );
@@ -589,27 +561,12 @@ async function DashboardCharts({ period }: { period: DashboardPeriod }) {
     );
   }
   const stats = statsResult.data;
-  const hourlyXAxis = stats.chartHourlyBuckets ?? false;
-  const periodSuffix = dashboardChartTitleSuffix(period);
-  const chartTitle = (label: string) => `${label} (${periodSuffix})`;
   return (
     <FadeIn className="space-y-3 sm:space-y-4">
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <WagerChart
-          data={stats.dailyWagers}
-          title={chartTitle("Wagers")}
-          hourlyXAxis={hourlyXAxis}
-        />
-        <DepositsChart
-          data={stats.dailyDeposits}
-          title={chartTitle("Deposits")}
-          hourlyXAxis={hourlyXAxis}
-        />
-        <FtdsChart
-          data={stats.dailyFtds}
-          title={chartTitle("FTDs")}
-          hourlyXAxis={hourlyXAxis}
-        />
+        <WagerChart data={stats.dailyWagers} />
+        <DepositsChart data={stats.dailyDeposits} />
+        <FtdsChart data={stats.dailyFtds} />
       </div>
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
         {/* Daily P&L — its own nested Suspense so the heavy getDailyPnl
@@ -623,16 +580,8 @@ async function DashboardCharts({ period }: { period: DashboardPeriod }) {
         >
           <DashboardDailyPnlChart />
         </Suspense>
-        <SignupsChart
-          data={stats.dailySignups}
-          title={chartTitle("Signups")}
-          hourlyXAxis={hourlyXAxis}
-        />
-        <ActiveDepositorsChart
-          data={stats.dailyActiveDepositors}
-          title={chartTitle("Active Depositors")}
-          hourlyXAxis={hourlyXAxis}
-        />
+        <SignupsChart data={stats.dailySignups} />
+        <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
       </div>
     </FadeIn>
   );
@@ -670,17 +619,13 @@ async function DashboardDailyPnlChart() {
  * call dedupes against the KPI strips + charts within the same render,
  * so this segment adds no extra query.
  */
-async function DashboardWagerAttribution({
-  period,
-}: {
-  period: DashboardPeriod;
-}) {
+async function DashboardWagerAttribution() {
   // Wrapped in safeQuery so a failing stats aggregate degrades this chart
   // (the right half of the Upgrader/Attribution row) to a fallback panel
   // instead of escaping to the route error boundary and white-screening
   // the whole dashboard.
   const { data: stats, error } = await safeQuery(
-    () => getDashboardStats(period),
+    () => getDashboardStats(DASHBOARD_CHART_PERIOD),
     null,
     "dashboard.wagerAttribution",
   );
@@ -696,14 +641,7 @@ async function DashboardWagerAttribution({
   }
   // The chart card is itself `h-full`, so it fills the 50/50 cell and aligns
   // with the Upgrader panel at the bottom.
-  const hourlyXAxis = stats.chartHourlyBuckets ?? false;
-  return (
-    <WagerAttributionChart
-      data={stats.dailyWagerAttribution}
-      title={`Wager Attribution (${dashboardChartTitleSuffix(period)})`}
-      hourlyXAxis={hourlyXAxis}
-    />
-  );
+  return <WagerAttributionChart data={stats.dailyWagerAttribution} />;
 }
 
 // `DashboardActivityFeed` was removed when the Recent Activity card moved

@@ -1207,7 +1207,6 @@ export const getDashboardStats = cache(async (period: DashboardPeriod = DEFAULT_
       metricWindow: periodToMetricWindow(period, new Date()),
       periodLabel: DASHBOARD_PERIOD_LABELS[period],
       windowMetricsKey: period,
-      chartPeriod: period,
       loadWindowMetrics: (blacklistIdNotIn) =>
         cachedWindowMetricsForPeriod(period, blacklistIdNotIn),
     }),
