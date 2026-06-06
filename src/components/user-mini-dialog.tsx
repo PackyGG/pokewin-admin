@@ -14,6 +14,8 @@ import {
   Mail,
   Calendar,
   Loader2,
+  RefreshCw,
+  AlertTriangle,
 } from "lucide-react";
 import {
   Dialog,
@@ -31,6 +33,7 @@ import {
   formatRelative,
 } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { ROLE_COLORS } from "@/lib/constants";
 import type { UserMiniSummary } from "@/lib/queries/users-mini";
 import { fetchUserMiniSummary } from "@/app/(admin)/users/mini-actions";
@@ -67,25 +70,32 @@ export function UserMiniDialog({
   const [data, setData] = React.useState<UserMiniSummary | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [errorCode, setErrorCode] = React.useState<string | null>(null);
+  const [retryKey, setRetryKey] = React.useState(0);
 
   React.useEffect(() => {
     if (!open || !userId) return;
     let alive = true;
     setLoading(true);
     setError(null);
+    setErrorCode(null);
     setData(null);
     fetchUserMiniSummary(userId)
-      .then((res) => {
+      .then((result) => {
         if (!alive) return;
-        if (!res) {
-          setError("User not found");
-        } else {
-          setData(res);
+        if (!result.success) {
+          setError(result.error);
+          setErrorCode(result.code ?? null);
+          return;
         }
+        setData(result.data);
       })
-      .catch((err) => {
+      .catch(() => {
         if (!alive) return;
-        setError(err instanceof Error ? err.message : "Failed to load user");
+        setError(
+          "Couldn't load this preview right now. Try again or open the full profile.",
+        );
+        setErrorCode("LOAD_FAILED");
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -93,7 +103,14 @@ export function UserMiniDialog({
     return () => {
       alive = false;
     };
-  }, [open, userId]);
+  }, [open, userId, retryKey]);
+
+  const handleRetry = React.useCallback(() => {
+    setError(null);
+    setErrorCode(null);
+    setLoading(true);
+    setRetryKey((k) => k + 1);
+  }, []);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -101,7 +118,13 @@ export function UserMiniDialog({
         {loading || (!data && !error) ? (
           <DialogLoadingSkeleton />
         ) : error ? (
-          <ErrorState message={error} />
+          <ErrorState
+            message={error}
+            code={errorCode}
+            userId={userId}
+            onRetry={handleRetry}
+            retrying={loading}
+          />
         ) : data ? (
           <UserMiniContent data={data} />
         ) : null}
@@ -140,13 +163,63 @@ function DialogLoadingSkeleton() {
   );
 }
 
-function ErrorState({ message }: { message: string }) {
+function ErrorState({
+  message,
+  code,
+  userId,
+  onRetry,
+  retrying,
+}: {
+  message: string;
+  code: string | null;
+  userId: string | null;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  const title =
+    code === "FORBIDDEN"
+      ? "No access"
+      : code === "NOT_FOUND"
+        ? "User not found"
+        : "Preview unavailable";
+
   return (
     <>
       <DialogHeader>
-        <DialogTitle>User unavailable</DialogTitle>
+        <DialogTitle className="flex items-center gap-2">
+          <AlertTriangle className="size-4 text-amber-500 shrink-0" />
+          {title}
+        </DialogTitle>
         <DialogDescription>{message}</DialogDescription>
       </DialogHeader>
+      <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onRetry}
+          disabled={retrying}
+          className="w-full sm:w-auto"
+        >
+          {retrying ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="size-3.5" />
+          )}
+          Try again
+        </Button>
+        {userId && code !== "FORBIDDEN" && (
+          <Link
+            href={`/users/${userId}`}
+            className={cn(
+              "inline-flex w-full items-center justify-center gap-1 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 sm:w-auto",
+            )}
+          >
+            Open full profile
+            <ExternalLink className="size-3.5" />
+          </Link>
+        )}
+      </DialogFooter>
     </>
   );
 }
@@ -170,6 +243,8 @@ function UserMiniContent({ data }: { data: UserMiniSummary }) {
   // `card_withdrawal_requests`, which we don't ship separately).
   const pnl = data.pnl;
   const pnlPositive = pnl >= 0;
+  const pnlDegraded = data.degraded?.pnl === true;
+  const recentTxDegraded = data.degraded?.recentTransactions === true;
 
   // Avg RTP — total_won / total_wagered.
   const rtp =
@@ -226,6 +301,19 @@ function UserMiniContent({ data }: { data: UserMiniSummary }) {
         </div>
       </DialogHeader>
 
+      {(pnlDegraded || recentTxDegraded) && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-500" />
+          <span>
+            {pnlDegraded && recentTxDegraded
+              ? "Some stats timed out — numbers may be incomplete. Open the full profile for the complete view."
+              : pnlDegraded
+                ? "House P&L timed out — other stats still loaded. Open the full profile for exact numbers."
+                : "Recent activity timed out — other stats still loaded."}
+          </span>
+        </div>
+      )}
+
       {/* Stat grid — 2x2 hero. */}
       <div className="grid grid-cols-2 gap-2">
         <MiniStat
@@ -238,13 +326,19 @@ function UserMiniContent({ data }: { data: UserMiniSummary }) {
         <MiniStat
           icon={pnlPositive ? TrendingUp : TrendingDown}
           label="House P&L"
-          value={`${pnlPositive ? "+" : ""}${formatCurrency(pnl)}`}
-          accentClass={
-            pnlPositive
-              ? "text-emerald-600 dark:text-emerald-400"
-              : "text-rose-600 dark:text-rose-400"
+          value={
+            pnlDegraded
+              ? "—"
+              : `${pnlPositive ? "+" : ""}${formatCurrency(pnl)}`
           }
-          sub="lifetime"
+          accentClass={
+            pnlDegraded
+              ? "text-muted-foreground"
+              : pnlPositive
+                ? "text-emerald-600 dark:text-emerald-400"
+                : "text-rose-600 dark:text-rose-400"
+          }
+          sub={pnlDegraded ? "timed out" : "lifetime"}
         />
         <MiniStat
           icon={Coins}
@@ -287,7 +381,11 @@ function UserMiniContent({ data }: { data: UserMiniSummary }) {
         <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           Recent activity
         </p>
-        {data.recentTransactions.length === 0 ? (
+        {recentTxDegraded ? (
+          <p className="text-xs text-muted-foreground">
+            Recent activity timed out — open the full profile to see it.
+          </p>
+        ) : data.recentTransactions.length === 0 ? (
           <p className="text-xs text-muted-foreground">No activity yet.</p>
         ) : (
           <ul className="divide-y divide-border/60 rounded-lg border bg-muted/30">

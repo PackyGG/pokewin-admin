@@ -1,6 +1,32 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
-import { calculateUserPnl } from "./pnl";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { calculateUserPnl, type UserPnl } from "./pnl";
+
+const USER_MINI_PNL_TIMEOUT_MS = 8_000;
+const USER_MINI_TX_TIMEOUT_MS = 5_000;
+
+const EMPTY_PNL: UserPnl = {
+  deposits: 0,
+  withdrawals: 0,
+  onSiteBalance: 0,
+  inventoryValue: 0,
+  unclaimedVouchers: 0,
+  pnl: 0,
+};
+
+async function resolveCanonicalUserId(
+  db: Awaited<ReturnType<typeof getDb>>,
+  userId: string,
+): Promise<string | null> {
+  const user = await db.user.findFirst({
+    where: {
+      OR: [{ id: userId }, { id: { equals: userId, mode: "insensitive" } }],
+    },
+    select: { id: true },
+  });
+  return user?.id ?? null;
+}
 
 /**
  * Mini summary of a user for the LiveMoneyChat pop-up dialog. Compact,
@@ -54,22 +80,29 @@ export type UserMiniSummary = {
     createdAt: string;
     description: string | null;
   }>;
+  /** Set when a non-critical leg timed out — preview still renders. */
+  degraded?: {
+    pnl?: boolean;
+    recentTransactions?: boolean;
+  };
 };
 
 export async function getUserMiniSummary(
   userId: string,
 ): Promise<UserMiniSummary | null> {
   const db = await getDb();
+  const canonicalUserId = await resolveCanonicalUserId(db, userId);
+  if (!canonicalUserId) return null;
 
   // calculateUserPnl already fetches balances + inventory + vouchers
   // + card_withdrawal_requests internally and applies the canonical
   // formula. We piggy-back on it so the numbers match /users/[id]
   // exactly, and run a tiny separate query for the inventory COUNT +
   // wager/won (which the PnL helper doesn't expose).
-  const [user, pnl, balanceExtra, inventoryCount, recentTx] =
+  const [user, pnlResult, balanceExtra, inventoryCount, recentTxResult] =
     await Promise.all([
       db.user.findUnique({
-        where: { id: userId },
+        where: { id: canonicalUserId },
         select: {
           id: true,
           username: true,
@@ -80,13 +113,18 @@ export async function getUserMiniSummary(
           created_at: true,
         },
       }),
-      calculateUserPnl(userId),
+      safeQuery(
+        () => calculateUserPnl(canonicalUserId),
+        EMPTY_PNL,
+        "users.mini.pnl",
+        USER_MINI_PNL_TIMEOUT_MS,
+      ),
       // Wager + won come straight from `balances` — the canonical
       // RTP formula uses them as-is. Also re-read available + locked
       // even though `calculateUserPnl` has the sum, because the UI
       // shows the per-component "cash" breakdown.
       db.balances.findUnique({
-        where: { user_id: userId },
+        where: { user_id: canonicalUserId },
         select: {
           available_balance: true,
           locked_balance: true,
@@ -96,30 +134,40 @@ export async function getUserMiniSummary(
       }),
       db.user_inventory.count({
         where: {
-          user_id: userId,
+          user_id: canonicalUserId,
           sold_at: null,
           exchanged_at: null,
           withdrawal_locked_at: null,
         },
       }),
-      // Recent activity — last 5 completed ledger rows. The dialog
-      // renders them as a compact mini feed for context.
-      db.ledger_transactions.findMany({
-        where: { user_id: userId, status: "completed" },
-        orderBy: { created_at: "desc" },
-        take: 5,
-        select: {
-          id: true,
-          type: true,
-          amount: true,
-          balance_after: true,
-          created_at: true,
-          description: true,
-        },
-      }),
+      safeQuery(
+        () =>
+          db.ledger_transactions.findMany({
+            where: { user_id: canonicalUserId, status: "completed" },
+            orderBy: { created_at: "desc" },
+            take: 5,
+            select: {
+              id: true,
+              type: true,
+              amount: true,
+              balance_after: true,
+              created_at: true,
+              description: true,
+            },
+          }),
+        [],
+        "users.mini.recentTx",
+        USER_MINI_TX_TIMEOUT_MS,
+      ),
     ]);
 
   if (!user) return null;
+
+  const pnl = pnlResult.data;
+  const recentTx = recentTxResult.data;
+  const degraded: UserMiniSummary["degraded"] = {};
+  if (pnlResult.error) degraded.pnl = true;
+  if (recentTxResult.error) degraded.recentTransactions = true;
 
   return {
     user: {
@@ -153,5 +201,6 @@ export async function getUserMiniSummary(
       createdAt: r.created_at.toISOString(),
       description: r.description,
     })),
+    ...(Object.keys(degraded).length > 0 ? { degraded } : {}),
   };
 }
