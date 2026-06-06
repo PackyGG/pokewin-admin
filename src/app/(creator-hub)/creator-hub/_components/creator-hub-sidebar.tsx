@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeft,
-  Bell,
   CalendarRange,
   GitCompareArrows,
   LayoutDashboard,
@@ -46,7 +45,7 @@ import { LinkPending } from "@/components/ux";
  *
  * Live nav: Dashboard, Creators, Leaderboards, Creator Check, Acquisition,
  * Codes & Ads, Socials Review, ROI Calculator, Changelog, Settings; plus an
- * Ops group (Alerts, Deal Tracker, Compare).
+ * Ops group (Deal Tracker, Compare). Alerts live on the right rail dock.
  *
  * Client-safe: no DB / server-only imports. Icons are direct
  * `lucide-react` component refs (not the string-keyed ICONS map the main
@@ -93,7 +92,6 @@ const HUB_NAV: HubNavItem[] = [
 ];
 
 const HUB_OPS_NAV: HubNavItem[] = [
-  { label: "Alerts", href: "/creator-hub/alerts", icon: Bell },
   {
     label: "Deal Tracker",
     href: "/creator-hub/deal-tracker",

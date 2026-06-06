@@ -35,6 +35,7 @@ import { isNextControlFlowError } from "@/lib/utils/action-error";
 // so this relative path resolves across the group boundary.
 import { ScrollToTopOnNav } from "../../(admin)/scroll-to-top-on-nav";
 import { CreatorHubSidebar } from "./_components/creator-hub-sidebar";
+import { DockedAlerts } from "./_components/docked-alerts";
 import { CreatorChecklistDock } from "./creators/[id]/_components/creator-checklist-dock";
 
 /**
@@ -230,9 +231,10 @@ export default async function CreatorHubLayout({
         {/* Right-edge docks — reused 1:1 from the main shell so live money /
             recent activity stay available inside the Hub. Chat dock is
             gated to the same permission boundary as the main layout. */}
-        <RightRailProvider mounted={{ chat: canOpenChatPanel }}>
+        <RightRailProvider mounted={{ chat: canOpenChatPanel, alerts: true }}>
           <LiveMoneyChat />
           <DockedRecentActivity />
+          <DockedAlerts />
         </RightRailProvider>
       </SidebarProvider>
     </TimezoneProvider>

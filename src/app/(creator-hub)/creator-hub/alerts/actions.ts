@@ -14,7 +14,7 @@ export type AlertActionResult =
 
 function revalidateAlerts() {
   revalidateTag("creator-hub-alerts");
-  revalidatePath("/creator-hub/alerts");
+  revalidatePath("/creator-hub", "layout");
 }
 
 export async function markAlertRead(alertId: string): Promise<AlertActionResult> {

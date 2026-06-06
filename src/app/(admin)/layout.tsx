@@ -308,7 +308,7 @@ export default async function AdminLayout({
             every admin user. `mounted={{ chat }}` tells the rail
             geometry whether to reserve space for chat — without it the
             non-admin shell would leave a 5rem empty band at the bottom. */}
-        <RightRailProvider mounted={{ chat: canOpenChatPanel }}>
+        <RightRailProvider mounted={{ chat: canOpenChatPanel, alerts: false }}>
           <LiveMoneyChat />
           <DockedRecentActivity />
           {canOpenChatPanel && <DockedChat role={session.role} />}

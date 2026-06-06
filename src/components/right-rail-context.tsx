@@ -6,9 +6,10 @@ import * as React from "react";
  * Shared state for the right-edge widget rail. Three docked widgets live
  * on the right edge of the admin shell:
  *
- *   • Live  (LiveMoneyChat)        — top slot
- *   • Recent (DockedRecentActivity) — middle slot
- *   • Chat  (DockedChat)            — bottom slot
+ *   • Live   (LiveMoneyChat)         — top slot
+ *   • Recent (DockedRecentActivity)  — middle slot
+ *   • Alerts (DockedAlerts)          — third slot (Creator Hub only)
+ *   • Chat   (DockedChat)            — bottom slot (admin shell only)
  *
  * Order is fixed (top → bottom: live → recent → chat); each widget reads
  * + writes its open/closed state through this context so the three stay
@@ -30,7 +31,7 @@ import * as React from "react";
  * added) until the mount effect reads the stored values.
  */
 
-export const RAIL_KEYS = ["live", "recent", "chat"] as const;
+export const RAIL_KEYS = ["live", "recent", "alerts", "chat"] as const;
 export type RailKey = (typeof RAIL_KEYS)[number];
 
 type RailState = {
@@ -62,6 +63,7 @@ const RightRailCtx = React.createContext<RightRailState | null>(null);
 const STORAGE_KEYS: Record<RailKey, string> = {
     live: "live-money-chat:open",
     recent: "docked-recent-activity:open",
+    alerts: "docked-alerts:open",
     chat: "docked-chat:open",
 };
 const STORAGE_ORDER = "right-rail:open-order";
@@ -73,6 +75,7 @@ const STORAGE_ORDER = "right-rail:open-order";
 const DEFAULT_OPEN: Record<RailKey, boolean> = {
     live: true,
     recent: false,
+    alerts: false,
     chat: true,
 };
 
@@ -181,9 +184,10 @@ export function RightRailProvider({
         () => ({
             live: mounted?.live ?? true,
             recent: mounted?.recent ?? true,
+            alerts: mounted?.alerts ?? false,
             chat: mounted?.chat ?? true,
         }),
-        [mounted?.live, mounted?.recent, mounted?.chat],
+        [mounted?.live, mounted?.recent, mounted?.alerts, mounted?.chat],
     );
 
     // SSR default mirrors the historical layout (live + chat open). On
@@ -226,6 +230,7 @@ export function RightRailProvider({
         () => ({
             live: resolvedMounted.live && state.open.live,
             recent: resolvedMounted.recent && state.open.recent,
+            alerts: resolvedMounted.alerts && state.open.alerts,
             chat: resolvedMounted.chat && state.open.chat,
         }),
         [resolvedMounted, state.open],
@@ -262,7 +267,12 @@ export function useRailWidget(key: RailKey): {
         // (e.g. a Storybook story or test) without crashing. Setter is a
         // no-op; state mirrors DEFAULT_OPEN and assumes all widgets are
         // mounted.
-        const allMounted: Record<RailKey, boolean> = { live: true, recent: true, chat: true };
+        const allMounted: Record<RailKey, boolean> = {
+            live: true,
+            recent: true,
+            alerts: false,
+            chat: true,
+        };
         return {
             open: DEFAULT_OPEN[key],
             setOpen: () => {},
@@ -307,7 +317,12 @@ export const COLLAPSED_CHAT_HEIGHT_REM = COLLAPSED_TAB_HEIGHT_REM;
  * Slot index for each widget (0 = top, 1 = middle, 2 = bottom). Used to
  * compute the cumulative offsets when resolving each widget's position.
  */
-const SLOT_INDEX: Record<RailKey, number> = { live: 0, recent: 1, chat: 2 };
+const SLOT_INDEX: Record<RailKey, number> = {
+    live: 0,
+    recent: 1,
+    alerts: 2,
+    chat: 3,
+};
 
 /**
  * Returns the inline-style positioning for a docked rail widget given
@@ -339,7 +354,12 @@ const SLOT_INDEX: Record<RailKey, number> = { live: 0, recent: 1, chat: 2 };
 export function railSlotStyle(
     key: RailKey,
     allOpen: Record<RailKey, boolean>,
-    mounted: Record<RailKey, boolean> = { live: true, recent: true, chat: true },
+    mounted: Record<RailKey, boolean> = {
+        live: true,
+        recent: true,
+        alerts: false,
+        chat: true,
+    },
 ): React.CSSProperties {
     const myIdx = SLOT_INDEX[key];
 
@@ -362,7 +382,10 @@ export function railSlotStyle(
     }
     const isOpen = allOpen[key];
     const mountedCount =
-        (mounted.live ? 1 : 0) + (mounted.recent ? 1 : 0) + (mounted.chat ? 1 : 0);
+        (mounted.live ? 1 : 0) +
+        (mounted.recent ? 1 : 0) +
+        (mounted.alerts ? 1 : 0) +
+        (mounted.chat ? 1 : 0);
     const totalOpen = openAbove + openBelow + (isOpen ? 1 : 0);
     const totalCollapsed = mountedCount - totalOpen;
     // One gap per pair of adjacent mounted slots.

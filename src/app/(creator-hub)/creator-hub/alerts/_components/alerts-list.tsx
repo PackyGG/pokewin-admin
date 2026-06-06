@@ -70,9 +70,13 @@ type Filter = "all" | "unread" | "critical";
 export function AlertsList({
   alerts,
   syncError,
+  onMutate,
+  compact = false,
 }: {
   alerts: CreatorAlertItem[];
   syncError: boolean;
+  onMutate?: () => void;
+  compact?: boolean;
 }) {
   const router = useRouter();
   const formatDateTime = useFormatDateTime();
@@ -95,6 +99,7 @@ export function AlertsList({
       toast.error(result.error);
       return;
     }
+    onMutate?.();
     router.refresh();
   }
 
@@ -106,6 +111,7 @@ export function AlertsList({
       toast.error(result.error);
       return;
     }
+    onMutate?.();
     router.refresh();
   }
 
@@ -118,11 +124,12 @@ export function AlertsList({
       return;
     }
     toast.success("All alerts marked read");
+    onMutate?.();
     router.refresh();
   }
 
   return (
-    <div className="space-y-4">
+    <div className={cn("space-y-4", compact && "space-y-3")}>
       {syncError && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-muted-foreground sm:text-sm">
           Alert sync hit a transient issue — counts may be stale. Refresh to retry.
@@ -184,6 +191,7 @@ export function AlertsList({
                 key={alert.id}
                 className={cn(
                   "flex flex-col gap-3 rounded-2xl border bg-card p-4 sm:flex-row sm:items-start",
+                  compact && "rounded-xl p-3",
                   alert.isUnread && "border-pink-500/25 bg-pink-500/[0.03]",
                 )}
               >
