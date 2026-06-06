@@ -1082,3 +1082,292 @@ model admin_changelog_entries {
 
   @@index([published_at(sort: Desc)], map: "admin_changelog_entries_published_at_idx")
 }
+
+// ─── Creator Hub substrate (external data + onboarding/CRM/alerts) ──────────
+// All tables below are ADMIN-DB only, additive, and provisioned at runtime via
+// IF-NOT-EXISTS SQL (prisma/admin/sql/20260606_creator_hub_substrate.sql +
+// per-feature ensure-schema.ts) — NOT a Prisma migration, because the admin DB
+// has a drifted migration history (never `migrate deploy` on it). These model
+// blocks are MIRRORS so typed `adminDb.<table>.*` queries work; every read path
+// MUST catch the missing-table error (P2021 / 42P01) and degrade gracefully,
+// exactly like src/lib/admin-settings.ts. NO real FKs to admin_users or to
+// packy.gg user IDs — loose String / String @db.Uuid columns only (the
+// established current convention: salary_payments, employee_managers,
+// admin_leaderboard_sponsorship, admin_changelog_entries) so adding these never
+// perturbs the admin_users model. RapidAPI keys do NOT live here — they go in
+// the existing admin_settings key/value store (server-only, masked in UI).
+
+// Cached Kick channel profile (Bukk/kick-com-api). Keyed on the lowercased
+// Kick username so it's shared by both the creator/[id] Kick tab AND the
+// "Creator Check" recon tool (which works for ANY handle). Served from DB;
+// a Refetch button refreshes on demand. STRICT no-spam: static profile data
+// is fetched once → DB and only re-fetched via the manual Refetch button.
+model kick_profiles {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Lowercased Kick username — the natural key. Unique so upsert keys on it.
+  username        String    @unique
+  // Kick's internal channel/user id (string — external system, not an FK).
+  kick_user_id    String?
+  display_name    String?
+  avatar_url      String?
+  bio             String?
+  follower_count  Int?
+  is_verified     Boolean?
+  // Last known live snapshot (cheap to keep; the live tab still refetches).
+  is_live         Boolean   @default(false)
+  // Full raw API payload for fields we don't promote to columns yet.
+  raw_json        Json?     @db.JsonB
+  // Drives cache/refetch — null = never fetched.
+  last_fetched_at DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([last_fetched_at], map: "kick_profiles_last_fetched_at_idx")
+}
+
+// Cached Kick streams / VODs for a channel (Bukk "channel videos" /
+// "latest video"). The "live-ish" set the Hub refreshes often. One row per
+// stream (keyed by Kick's stream/video id). avg LIVE viewers is NOT available
+// from Bukk (owner dropped that requirement) — we store what the API gives
+// (date, duration, title, category, replay views, peak if present).
+model kick_streams {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Lowercased Kick username this stream belongs to (matches
+  // kick_profiles.username — loose link, no FK so a stream can exist before
+  // the profile row, and Creator Check works on any handle).
+  username         String
+  // Kick's stream/video id — the natural per-stream key.
+  kick_stream_id   String
+  title            String?
+  category         String?
+  thumbnail_url    String?
+  // When the stream started + ended (→ duration). ended_at null = still live.
+  started_at       DateTime? @db.Timestamptz(6)
+  ended_at         DateTime? @db.Timestamptz(6)
+  duration_seconds Int?
+  // VOD replay views (NOT live viewers). peak_viewers only if the API
+  // surfaces it for that stream; otherwise null.
+  vod_views        Int?
+  peak_viewers     Int?
+  // Replay URL from the API (distinct from the manual per-session VOD URL,
+  // which lives on creator_session_meta).
+  vod_url          String?
+  raw_json         Json?     @db.JsonB
+  last_fetched_at  DateTime? @db.Timestamptz(6)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  // One row per (channel, stream). Upsert keys on this pair.
+  @@unique([username, kick_stream_id], map: "kick_streams_username_stream_unique")
+  @@index([username, started_at(sort: Desc)], map: "kick_streams_username_started_idx")
+}
+
+// Cached Twitter/X profile (RapidAPI twitter241). Keyed on lowercased handle
+// so it's shared by the creator/[id] Twitter tab AND Creator Check.
+// Static-ish; served from DB with a Refetch button (no auto-poll / no spam).
+model twitter_profiles {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Lowercased @handle (without the @) — natural key.
+  username        String    @unique
+  // Twitter's numeric user id as text (external system, not an FK).
+  twitter_user_id String?
+  display_name    String?
+  avatar_url      String?
+  bio             String?
+  follower_count  Int?
+  following_count Int?
+  tweet_count     Int?
+  is_verified     Boolean?
+  raw_json        Json?     @db.JsonB
+  last_fetched_at DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([last_fetched_at], map: "twitter_profiles_last_fetched_at_idx")
+}
+
+// Cached latest tweets per handle (twitter241). The "live-ish" Twitter set
+// the Hub refreshes often. Stores tweet text so the 7-day mention scan
+// (packydotgg / @packydotgg / packy.gg / … keyword match) runs over OUR DB
+// without re-hitting the API.
+model tweets {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Lowercased handle this tweet belongs to (matches
+  // twitter_profiles.username — loose link, no FK).
+  username        String
+  // Twitter's tweet id — natural per-tweet key.
+  tweet_id        String
+  text            String
+  // Engagement at fetch time.
+  like_count      Int?
+  retweet_count   Int?
+  reply_count     Int?
+  view_count      Int?
+  // True if `text` matches any of OUR brand keywords (computed at store time
+  // so the 7-day mention COUNT is a cheap WHERE, not a re-scan).
+  mentions_us     Boolean   @default(false)
+  url             String?
+  // Tweet's own publish time (drives the 7-day window) — distinct from
+  // created_at (when WE stored it).
+  posted_at       DateTime? @db.Timestamptz(6)
+  raw_json        Json?     @db.JsonB
+  last_fetched_at DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([username, tweet_id], map: "tweets_username_tweet_unique")
+  @@index([username, posted_at(sort: Desc)], map: "tweets_username_posted_idx")
+  @@index([username, mentions_us, posted_at(sort: Desc)], map: "tweets_username_mentions_posted_idx")
+}
+
+// Brand-mention tracking ledger. One row per tweet that mentions one of our
+// keywords (packydotgg / @packydotgg / packygg / packy.gg / …), from ANY
+// handle (not only linked creators). Distinct from `tweets` (the per-creator
+// cache): this is the brand-monitoring surface. The per-creator 7-day count
+// is normally served from tweets.mentions_us; this table backs an optional
+// cross-handle "who's talking about us" feed.
+model twitter_mentions {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Author handle (lowercased) — loose, no FK.
+  username        String
+  tweet_id        String
+  text            String
+  // Which keyword(s) matched — drives filtering/badges.
+  matched_keyword String?
+  url             String?
+  posted_at       DateTime? @db.Timestamptz(6)
+  // When this mention sweep last ran for the source it came from.
+  last_fetched_at DateTime? @db.Timestamptz(6)
+  raw_json        Json?     @db.JsonB
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+
+  // One mention row per tweet — dedupe across repeated sweeps.
+  @@unique([tweet_id], map: "twitter_mentions_tweet_unique")
+  @@index([posted_at(sort: Desc)], map: "twitter_mentions_posted_idx")
+  @@index([username, posted_at(sort: Desc)], map: "twitter_mentions_username_posted_idx")
+}
+
+// Per-creator onboarding checklist state (ADMIN-DB; writable). ONE row per
+// creator. The AUTO items (>=2 socials, first deal, leaderboard, API key,
+// has PFP) are DERIVED from live data at render and are NOT stored here (so
+// they can't drift). This table stores the MANUAL toggles + manual inputs +
+// a completion snapshot so the panel can auto-hide once everything is done.
+model creator_onboarding_checklist {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // packy.gg user id of the creator (text, no FK). One row per creator.
+  target_user_id              String    @unique
+  // Manual: "Leaderboard funds collected" (sits below the leaderboard item).
+  lb_funds_collected          Boolean   @default(false)
+  lb_funds_collected_at       DateTime? @db.Timestamptz(6)
+  // Manual: "Twitter giveaway hosted" — toggle + the URL the manager pastes.
+  twitter_giveaway_done       Boolean   @default(false)
+  twitter_giveaway_url        String?
+  // Manual: "Streaming assets provided" toggle/click.
+  streaming_assets_provided   Boolean   @default(false)
+  // Leaderboard prepaid proof (owner spec): which coin the creator prepaid
+  // their % with + the explorer TX link proving the off-site payment. Ties
+  // into the lb_funds_collected item.
+  lb_prepaid_coin             String?
+  lb_prepaid_tx_url           String?
+  // Auto-hide snapshot: set when ALL items (auto + manual) are satisfied so
+  // the panel stops rendering for this creator. Cleared if an item regresses.
+  // The auto items are re-checked at render; this just caches "fully done".
+  completed_at                DateTime? @db.Timestamptz(6)
+  // Who last touched the manual state (loose admin_users.id column, no FK).
+  updated_by                  String?   @db.Uuid
+  created_at                  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at                  DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([completed_at], map: "creator_onboarding_checklist_completed_idx")
+}
+
+// Per-creator CRM record (ADMIN-DB). ONE row per creator. Structured CRM
+// state only — the free-text contact log REUSES the existing `admin_notes`
+// table (keyed on target_user_id), so no new note table is introduced and
+// admin_notes is left untouched (it's reused by /users/[id], admin-users,
+// fraud).
+model creator_crm {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // packy.gg creator user id (text, no FK). One row per creator.
+  target_user_id    String    @unique
+  // Account owner = the manager responsible for this creator (admin_users.id,
+  // loose column, no FK). Distinct from "who onboarded" (onboarded_by below).
+  account_owner_id  String?   @db.Uuid
+  // CRM pipeline stage — TEXT (no enum) so the stage set can change without a
+  // migration, matching the salary_employees.cadence convention. Validated at
+  // the action boundary (Zod). e.g. 'prospect' | 'onboarding' | 'active' |
+  // 'paused' | 'churned'.
+  stage             String    @default("onboarding")
+  // Who did the initial setup/onboarding (the manager who created them).
+  // Sourced from the user_made_creator audit event, cached here for display
+  // on the Creator tab. Loose admin_users.id column, no FK.
+  onboarded_by      String?   @db.Uuid
+  onboarded_at      DateTime? @db.Timestamptz(6)
+  // Next planned touchpoint (drives a soft "follow up" surface if wanted).
+  next_followup_at  DateTime? @db.Timestamptz(6)
+  updated_by        String?   @db.Uuid
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([account_owner_id], map: "creator_crm_account_owner_idx")
+  @@index([stage], map: "creator_crm_stage_idx")
+}
+
+// Creator Hub "needs attention" alerts — read/dismiss state only. Alert
+// CONTENT is derived live from existing data (deal expiring, withdraw cap
+// near, leaderboard ending, Risk flag, PnL turned red, big FTD, went live);
+// this table persists whether a manager has read/dismissed a given derived
+// alert so it isn't re-shown. The dedupe_key (e.g. "deal_expiring:<deal_id>")
+// is the idempotency key — the generator upserts on it.
+model creator_alerts {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Which creator the alert is about (text user id, no FK). Nullable for
+  // roster-wide / non-creator-scoped alerts.
+  target_user_id  String?
+  // Alert type — TEXT (no enum) so new alert kinds don't need a migration.
+  // e.g. 'deal_expiring' | 'withdraw_cap_near' | 'leaderboard_ending' |
+  // 'risk_flagged' | 'pnl_red' | 'big_ftd' | 'went_live'.
+  alert_type      String
+  // Stable dedupe key for THIS specific derived alert instance, e.g.
+  // "deal_expiring:<deal_id>" or "big_ftd:<ledger_tx_id>". UNIQUE so the
+  // generator upserts instead of duplicating on every recompute.
+  dedupe_key      String    @unique
+  // Severity for sort/badge color — TEXT, validated at boundary.
+  // 'info' | 'warning' | 'critical'.
+  severity        String    @default("info")
+  // Snapshot of the alert payload at generation time (title, value, link), so
+  // the list renders without recomputing every derived source.
+  metadata        Json?     @db.JsonB
+  // Read/dismiss state.
+  read_at         DateTime? @db.Timestamptz(6)
+  read_by         String?   @db.Uuid
+  dismissed_at    DateTime? @db.Timestamptz(6)
+  dismissed_by    String?   @db.Uuid
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([dismissed_at, severity, created_at(sort: Desc)], map: "creator_alerts_active_idx")
+  @@index([target_user_id], map: "creator_alerts_target_user_idx")
+}
+
+// Admin-side per-session metadata sidecar. Sessions themselves live in the
+// backend/MAIN (read-only) via creatorsApi.listSessions — we can't add columns
+// there, so manager-entered per-session data (the Kick VOD URL the owner wants
+// inline + in the modal, plus notes) lives here, keyed on the backend session
+// id.
+model creator_session_meta {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Backend fill/stream session id (string — separate system, not an FK).
+  session_id      String    @unique
+  // The creator the session belongs to (text user id) — lets us list all
+  // session-meta for a creator without round-tripping the backend.
+  target_user_id  String
+  // Manager-entered Kick VOD URL for this session (inline-editable).
+  kick_vod_url    String?
+  notes           String?
+  updated_by      String?   @db.Uuid
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([target_user_id], map: "creator_session_meta_target_user_idx")
+}
