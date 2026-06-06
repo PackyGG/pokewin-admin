@@ -8,7 +8,8 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `bfa60316` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub — post wave B+C; audit + live verify next
+- **HEAD:** _(pending push — Creator Hub plan closeout)_
+- **Updated:** 2026-06-06 · **Active focus:** Creator Hub plan **CLOSED** (PARTIAL on owner-blocked items only)
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
@@ -17,15 +18,15 @@
 
 ## ✅ Shipped (recent — on `main`)
 
-**Creator Hub (waves 0 → B+C):**
+**Creator Hub (waves 0 → B+C + audit closeout):**
 - Access control — motha + per-role toggles (`admin_settings`, default OFF) · `757e996`
 - Wave 1 pages — roster, detail/Overview, profitable-algo, live-leaderboards, changelog · nav wiring
 - Substrate — 9 admin tables (kick/twitter/crm/alerts/session meta) + `src/lib/creator-hub/*` integration (TTL cache, throttle, server-only) + Settings (API keys in `admin_settings`)
-- Per-creator tabs — Creator, Risk, Forecast (PARTIAL), Cohorts&LTV, Alt Accounts, Kick, Twitter, Sessions+VOD
-- Ops tools — Creator Check, onboarding checklist dock, acquisition, compare, alerts, deal-tracker, codes-ads (port), socials-review (port)
+- Per-creator tabs — Creator, Risk, Forecast, Cohorts&LTV, Alt Accounts, Kick, Twitter, Sessions+VOD
+- Ops tools — Creator Check, onboarding checklist dock, acquisition, compare, alerts (right-rail dock), deal-tracker, socials-review
 - **Wave B+C** (`c1e26f0b`) — dashboard 24h real-data + bucketed charts, Add Creator v2, ops routes wired, Top Creators = most wager
-- **Post-B+C fixes** (`e3cb6683`, `5ad928bd`) — Vercel build + creator cost converted payouts; dashboard data, linked socials, Kick refetch
-- **Session memory system** — `SESSION_MEMORY.md` + `.cursor/rules/session-memory.mdc` + `CURSOR_USER_RULE.md` (forced read/write protocol)
+- **Post-B+C fixes** (`e3cb6683`, `5ad928bd`, `937844c1`) — Vercel build, creator cost converted payouts, dashboard data, linked socials, Kick refetch, 30-day charts
+- **Plan closeout (2026-06-06)** — audit fixes (Hub gates on add-creator + alerts redirect), `creator_manager` assignable (schema + SQL applied), plan file recreated, e2e smoke `e2e/tests/creator-hub.spec.ts` PASS (12 routes; detail/forecast skipped on empty local MAIN DB)
 
 **Earlier admin (pre-Hub):** dashboard rework, system-edge-plan, `/users` search, Balance 2.0, insights hub, responsive harness (`e2e/responsive/*`), smoothness primitives (`@/components/ux`)
 
@@ -33,22 +34,18 @@
 
 ## 🟡 In-flight
 
-- **Creator Hub AUDIT wave** — design, security, perf, math, skeletons; fix findings from backlog below
-- **Creator Hub LIVE VERIFY** — click every tab/page (Chrome if connected, else minted-session Playwright on prod)
-- **Plan file stale** — `.claude/plans/iridescent-mixing-lecun.md` progress log still shows waveB as `[running]`; update to DONE when confirming B+C on disk
+_None — Creator Hub plan closed. Pick up deferred items below when owner prioritizes._
 
 ---
 
 ## 📋 Open / next (priority order)
 
-1. Run audit + fix backlog (see plan file § AUDIT-FIX)
-2. Align `creator-hub/page.tsx` gate to `canAccessCreatorHub` (layout already gates; page uses weaker `requireRole`)
-3. Discord channel link field + reward-page storage gaps (noted in plan)
-4. `creator_manager` enum — make assignable (additive `prisma db execute`, watch schema drift)
-5. Packy.gg avatar write — **BLOCKED** (no confirmed backend endpoint; ADMIN-only pfp preview OK)
-6. Fold durable reward findings into `ONBOARDING.md` (affiliate commission = % of wager; signup $5.71 = cash claim avg not welcome packs)
-7. Admin-DB schema drift decision — `creator_deals` cashout limits + `creator_deal_estimates` (17 rows) exist in prod but dropped from schema
-8. Responsive sweep — verify harness with `RESPONSIVE_EXPECT_CLEAN=1` if not already green
+1. Admin-DB schema drift decision — `creator_deals` cashout limits + `creator_deal_estimates` (17 rows) exist in prod but dropped from schema
+2. Packy.gg avatar write — **BLOCKED** (no confirmed backend endpoint; ADMIN-only pfp preview OK)
+3. Bulk delete `/gift-cards` + `/vouchers` — **BLOCKED** (MAIN DB write forbidden)
+4. Fold durable reward findings into `ONBOARDING.md` (affiliate commission basis; signup $5.71 clarification)
+5. Responsive sweep — add `/creator-hub/*` to responsive matrix; run `RESPONSIVE_EXPECT_CLEAN=1`
+6. `codes-ads` dedicated hub route — deferred (functionality exists on admin `/creators/codes`)
 
 ---
 
@@ -56,15 +53,16 @@
 
 | Item | Why | Options |
 |---|---|---|
-| Bulk delete `/gift-cards` + `/vouchers` | Tables in **MAIN DB** — write forbidden | H1: allow MAIN write (like promo-codes) · H2: gift-cards admin cancel only · H3: drop |
+| Bulk delete `/gift-cards` + `/vouchers` | Tables in **MAIN DB** — write forbidden | H1: allow MAIN write · H2: gift-cards admin cancel only · H3: drop |
 | Packy.gg PFP update on Add Creator | MAIN write / no API | ADMIN-only preview until backend endpoint exists |
 
 ---
 
 ## ⚠️ Gotchas (session-relevant)
 
-- **Stale local game DB** — live admin pages throw locally → use fixtures (`src/app/responsive-fixture/*`) or prod
-- **Admin DB = `db push` only** — never `prisma migrate dev/deploy` (destructive reset)
+- **Stale local game DB** — live admin pages throw locally → use fixtures (`src/app/responsive-fixture/*`) or prod; Creator Hub e2e detail tab skips when no `creator` role user in MAIN
+- **Backend API env** — Hub dashboard/roster/deal-tracker degrade gracefully when `BACKEND_API_URL_*` missing (KPIs show `—`); not a render failure
+- **Admin DB = `db push` only** — never `prisma migrate dev/deploy` (destructive reset); additive enum: `prisma/admin/sql/20260606_add_creator_manager_role.sql`
 - **MAIN DB = read-only** — no schema changes, no writes; `gift_cards` + `vouchers` live in MAIN
 - **React #130** — register new nav icons in `app-sidebar.tsx` ICONS map
 - **PowerShell UTF-8 BOM** breaks `.sql` — write SQL via Bash/`printf`
@@ -81,6 +79,6 @@
 | Architecture + domain | `ONBOARDING.md` |
 | Work rules | `AGENTS.md` · `CLAUDE.md` · `CLAUDE.local.md` |
 | Creator Hub plan + progress | `.claude/plans/iridescent-mixing-lecun.md` |
-| Ex-creator GGR spec | `.claude/plans/iridescent-mixing-lecun-agent-a2e6b570aacbcb19d.md` |
 | Layout audit | `AUDIT_REPORT.md` |
 | Responsive harness | `e2e/responsive/*` · `playwright.responsive.config.ts` |
+| Creator Hub e2e smoke | `e2e/tests/creator-hub.spec.ts` |
