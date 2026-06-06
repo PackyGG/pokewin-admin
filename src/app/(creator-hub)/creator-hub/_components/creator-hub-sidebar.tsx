@@ -10,7 +10,6 @@ import {
   Users,
   Trophy,
   LineChart,
-  Megaphone,
   ShieldCheck,
   Calculator,
   History,
@@ -40,12 +39,13 @@ import { LinkPending } from "@/components/ux";
  * layout INSTEAD of the main `AppSidebar`. Reuses the same shadcn
  * `Sidebar` primitive geometry (so the SidebarProvider/SidebarInset
  * collapse + width math is shared), but gives the sub-app its own
- * identity: a pink "Creator Hub" wordmark, a "Back to Admin" exit at the
- * top, and its own nav list.
+ * identity: the Packy wordmark (same assets as the main sidebar), a
+ * "Back to Admin" exit at the top, and its own nav list.
  *
  * Live nav: Dashboard, Creators, Leaderboards, Creator Check, Acquisition,
- * Codes & Ads, Socials Review, ROI Calculator, Changelog, Settings; plus an
- * Ops group (Deal Tracker, Compare). Alerts live on the right rail dock.
+ * Socials Review, ROI Calculator, Changelog; plus an Ops group (Deal Tracker,
+ * Compare). Settings is pinned in the footer above the theme toggle. Alerts
+ * live on the right rail dock.
  *
  * Client-safe: no DB / server-only imports. Icons are direct
  * `lucide-react` component refs (not the string-keyed ICONS map the main
@@ -73,11 +73,6 @@ const HUB_NAV: HubNavItem[] = [
     icon: LineChart,
   },
   {
-    label: "Codes & Ads",
-    href: "/creator-hub/codes-ads",
-    icon: Megaphone,
-  },
-  {
     label: "Socials Review",
     href: "/creator-hub/socials-review",
     icon: ShieldCheck,
@@ -88,6 +83,9 @@ const HUB_NAV: HubNavItem[] = [
     icon: Calculator,
   },
   { label: "Changelog", href: "/creator-hub/changelog", icon: History },
+];
+
+const HUB_FOOTER_NAV: HubNavItem[] = [
   { label: "Settings", href: "/creator-hub/settings", icon: Settings },
 ];
 
@@ -157,24 +155,35 @@ export function CreatorHubSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      {/* Creator Hub identity — same pink portal card as the main sidebar's
-          "Switch to Creator Hub" affordance (symmetric sub-app branding). */}
-      <SidebarHeader className="border-b border-border px-2 pt-2 pb-2 group-data-[collapsible=icon]:px-0">
+      {/* Packy wordmark — same assets + sizing as the main AppSidebar header.
+          Creator Hub title/subtitle sit below the logo when expanded. */}
+      <SidebarHeader className="border-b border-border px-4 py-3 flex items-center justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:h-14 group-data-[collapsible=icon]:py-0">
         <Link
           href="/creator-hub"
           onClick={handleNavTap}
           title="Creator Hub"
-          className={cn(
-            "group/hub relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-pink-500/30 bg-gradient-to-r from-pink-500/15 via-pink-500/10 to-transparent px-3 py-2.5 outline-none",
-            "transition-colors hover:border-pink-500/50 hover:from-pink-500/25 hover:via-pink-500/15 focus-visible:ring-2 focus-visible:ring-pink-500/40",
-            "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
-          )}
+          className="flex flex-col items-center rounded-md outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring motion-safe:transition-[transform,opacity] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-95"
         >
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-pink-500/20 text-pink-600 ring-1 ring-inset ring-pink-500/30 dark:text-pink-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
-            <Megaphone className="size-4" />
-          </span>
-          <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-            <span className="block truncate text-xs font-semibold text-pink-600 dark:text-pink-300">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo-light.png"
+            alt="PackyGG"
+            className="h-6 group-data-[collapsible=icon]:hidden dark:hidden"
+          />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo.png"
+            alt="PackyGG"
+            className="h-6 hidden dark:block group-data-[collapsible=icon]:hidden"
+          />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/icon.png"
+            alt="PackyGG"
+            className="h-7 w-7 hidden group-data-[collapsible=icon]:block"
+          />
+          <span className="mt-1 min-w-0 text-center group-data-[collapsible=icon]:hidden">
+            <span className="block truncate text-xs font-semibold text-foreground">
               Creator Hub
             </span>
             <span className="block truncate text-[11px] text-muted-foreground">
@@ -238,6 +247,11 @@ export function CreatorHubSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="border-t border-border">
+        <HubNavMenu
+          items={HUB_FOOTER_NAV}
+          pathname={pathname}
+          onNavTap={handleNavTap}
+        />
         <div className="flex items-center justify-between px-2 group-data-[collapsible=icon]:justify-center">
           <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
             Theme
