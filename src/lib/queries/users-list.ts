@@ -8,7 +8,7 @@ import {
   computeRiskScoresForList,
   type RiskTier,
 } from "@/lib/fraud/score";
-import { calculateUsersPnlBatch } from "./pnl";
+import { calculateUsersPnlBatch, type UserPnl } from "./pnl";
 import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import { isUserId, isUuid } from "@/lib/utils/ids";
 
@@ -100,7 +100,9 @@ function buildUserListWhereClause(input: UserListFilterInput): string {
   if (searchTerm) {
     const safe = searchTerm.replace(/'/g, "''");
     if (isExactId) {
-      whereSql.push(`LOWER(u.id) = LOWER('${safe}')`);
+      // Primary-key lookup — exact match first, then case-insensitive fallback
+      // for pasted ids with different casing (nanoid ids are mixed-case).
+      whereSql.push(`(u.id = '${safe}' OR LOWER(u.id) = LOWER('${safe}'))`);
     } else if (isEmailLike) {
       whereSql.push(`LOWER(u.email) = LOWER('${safe}')`);
     } else if (isDiscordId) {
@@ -113,8 +115,24 @@ function buildUserListWhereClause(input: UserListFilterInput): string {
         searchMode === "substring"
           ? `'%' || ${lower} || '%'`
           : `${lower} || '%'`;
+      // UNION per column so Postgres can index-range each leg instead of
+      // OR-ing four ILIKE predicates (which often devolves to a seq scan).
       whereSql.push(
-        `(LOWER(u.username) LIKE ${pattern} OR LOWER(u.display_username) LIKE ${pattern} OR LOWER(u.name) LIKE ${pattern} OR LOWER(u.email) LIKE ${pattern} OR LOWER(u.id) = LOWER('${safe}'))`,
+        `u.id IN (
+          SELECT id FROM (
+            SELECT id FROM "user" WHERE LOWER(username) LIKE ${pattern}
+            UNION
+            SELECT id FROM "user" WHERE LOWER(display_username) LIKE ${pattern}
+            UNION
+            SELECT id FROM "user" WHERE LOWER(name) LIKE ${pattern}
+            UNION
+            SELECT id FROM "user" WHERE LOWER(email) LIKE ${pattern}
+            UNION
+            SELECT id FROM "user" WHERE LOWER(id) LIKE ${pattern}
+            UNION
+            SELECT id FROM "user" WHERE LOWER(id) = ${lower}
+          ) matched
+        )`,
       );
     }
   }
@@ -219,7 +237,7 @@ async function fetchColumnSortUserIds(
 
 const cachedFilteredColumnSortUserIds = unstable_cache(
   fetchColumnSortUserIds,
-  ["users-column-sort-filtered-v1"],
+  ["users-column-sort-filtered-v2"],
   { revalidate: 30, tags: ["users-list"] },
 );
 
@@ -497,6 +515,126 @@ type UserListItem = {
   sharedFingerprintCount: number;
 };
 
+const USER_LIST_SELECT = {
+  id: true,
+  username: true,
+  email: true,
+  image: true,
+  role: true,
+  is_banned: true,
+  is_locked: true,
+  country: true,
+  country_code: true,
+  created_at: true,
+  balances: {
+    select: {
+      available_balance: true,
+      locked_balance: true,
+      total_deposited: true,
+      total_withdrawn: true,
+      total_wagered: true,
+    },
+  },
+} satisfies Prisma.UserSelect;
+
+type UserListRow = Prisma.UserGetPayload<{ select: typeof USER_LIST_SELECT }>;
+
+async function hydrateUserListPage(
+  users: UserListRow[],
+  total: number,
+  page: number,
+  perPage: number,
+  opts: { skipListRisk?: boolean; skipPnlBatch?: boolean } = {},
+): Promise<PaginatedResult<UserListItem>> {
+  const db = await getDb();
+  const userIds = users.map((u) => u.id);
+  const empty = {
+    deposits: [] as Array<{ user_id: string; _count: { _all: number } }>,
+  };
+  const skipListRisk = opts.skipListRisk ?? false;
+  const emptyRisk = new Map<
+    string,
+    {
+      score: number;
+      tier: RiskTier;
+      sharedIpCount: number;
+      sharedFingerprintCount: number;
+    }
+  >();
+
+  const [pnlByUserId, depositCountRows, riskScoresMap] = await Promise.all([
+    opts.skipPnlBatch || userIds.length === 0
+      ? Promise.resolve(new Map<string, UserPnl>())
+      : calculateUsersPnlBatch(userIds),
+    userIds.length > 0
+      ? db.ledger_transactions.groupBy({
+          by: ["user_id"],
+          where: {
+            user_id: { in: userIds },
+            type: "deposit",
+            status: "completed",
+          },
+          _count: { _all: true },
+        })
+      : Promise.resolve(empty.deposits),
+    userIds.length > 0 && !skipListRisk
+      ? computeRiskScoresForList(userIds)
+      : Promise.resolve(emptyRisk),
+  ]);
+
+  const depositCountMap = new Map(
+    depositCountRows.map((d) => [d.user_id, d._count._all]),
+  );
+
+  return {
+    data: users.map((u) => {
+      const lockedBalance = toNumber(u.balances?.locked_balance);
+      const totalWagered = toNumber(u.balances?.total_wagered);
+      const userPnl = pnlByUserId.get(u.id);
+      const availableBalance = userPnl
+        ? Math.max(0, userPnl.onSiteBalance - lockedBalance)
+        : toNumber(u.balances?.available_balance);
+      const totalDeposited =
+        userPnl?.deposits ?? toNumber(u.balances?.total_deposited);
+      const totalWithdrawn =
+        userPnl?.withdrawals ?? toNumber(u.balances?.total_withdrawn);
+      const inventoryValue = userPnl?.inventoryValue ?? 0;
+      const unclaimedVouchers = userPnl?.unclaimedVouchers ?? 0;
+      const pnl = userPnl ? -userPnl.pnl : 0;
+      const netHoldings =
+        availableBalance + lockedBalance + inventoryValue + unclaimedVouchers;
+      const risk = riskScoresMap.get(u.id);
+      return {
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        image: u.image,
+        role: u.role,
+        status: u.is_banned ? "banned" : u.is_locked ? "locked" : "active",
+        country: u.country,
+        countryCode: u.country_code,
+        availableBalance,
+        inventoryValue,
+        netHoldings,
+        totalDeposited,
+        totalWithdrawn,
+        totalWagered,
+        depositCount: depositCountMap.get(u.id) ?? 0,
+        pnl,
+        createdAt: u.created_at.toISOString(),
+        riskScore: risk?.score ?? 0,
+        riskTier: risk?.tier ?? ("low" as RiskTier),
+        sharedIpCount: risk?.sharedIpCount ?? 0,
+        sharedFingerprintCount: risk?.sharedFingerprintCount ?? 0,
+      };
+    }),
+    total,
+    page,
+    perPage,
+    totalPages: Math.ceil(total / perPage),
+  };
+}
+
 export async function getUsers(params: {
   page?: number;
   perPage?: number;
@@ -567,6 +705,62 @@ export async function getUsers(params: {
   const isDiscordId = /^\d{17,20}$/.test(searchTerm ?? "");
   const isFreeFormTextSearch =
     !!searchTerm && !isExactId && !isEmailLike && !isDiscordId;
+  const isAnySearch = !!searchTerm;
+  const filterInput: UserListFilterInput = {
+    searchTerm,
+    isExactId,
+    isEmailLike,
+    isDiscordId,
+    searchMode,
+    role,
+    status,
+  };
+
+  // ── Exact-match fast path (user id / email / discord snowflake) ───────
+  // Single indexed lookup — never touch the global PnL ranking scan or
+  // the heavy raw-SQL sort path. Case on user id is ignored (OR + Prisma
+  // insensitive). This is what admins paste from the URL bar.
+  if (isAnySearch && (isExactId || isEmailLike || isDiscordId)) {
+    const exactWhere: Prisma.UserWhereInput = {};
+    if (isExactId) {
+      exactWhere.OR = [
+        { id: searchTerm },
+        { id: { equals: searchTerm, mode: "insensitive" } },
+      ];
+    } else if (isEmailLike) {
+      exactWhere.email = { equals: searchTerm, mode: "insensitive" };
+    } else if (isDiscordId) {
+      exactWhere.account = {
+        some: { providerId: "discord", accountId: searchTerm },
+      };
+    }
+    if (role && role !== "all" && USER_ROLES.has(role)) {
+      exactWhere.role = role as user_role;
+    }
+    if (status === "banned") exactWhere.is_banned = true;
+    else if (status === "locked") exactWhere.is_locked = true;
+    else if (status === "active") {
+      exactWhere.is_banned = false;
+      exactWhere.is_locked = false;
+    }
+
+    const exactUsers = await db.user.findMany({
+      where: exactWhere,
+      select: USER_LIST_SELECT,
+      orderBy: { created_at: "desc" },
+      take: perPage,
+      skip: (page - 1) * perPage,
+    });
+    const exactTotal = await db.user.count({ where: exactWhere });
+
+    return hydrateUserListPage(
+      exactUsers,
+      exactTotal,
+      page,
+      perPage,
+      { skipListRisk: true, skipPnlBatch: true },
+    );
+  }
 
   if (searchTerm) {
     if (isExactId) {
@@ -639,36 +833,16 @@ export async function getUsers(params: {
     "country",
   ]);
 
-  // Narrow projection — only the columns the list view actually renders.
-  // The `user` table has 50+ columns; pulling them all back per page row
-  // adds non-trivial bytes on every list query. Keep select in sync with
-  // the fields read in the `data` mapping at the bottom of this file.
-  const userSelect = {
-    id: true,
-    username: true,
-    email: true,
-    image: true,
-    role: true,
-    is_banned: true,
-    is_locked: true,
-    country: true,
-    country_code: true,
-    created_at: true,
-    balances: {
-      select: {
-        available_balance: true,
-        locked_balance: true,
-        total_deposited: true,
-        total_withdrawn: true,
-        total_wagered: true,
-      },
-    },
-  } satisfies Prisma.UserSelect;
+  // Narrow projection — see USER_LIST_SELECT at module scope.
+  const userSelect = USER_LIST_SELECT;
 
-  let users: Array<Prisma.UserGetPayload<{ select: typeof userSelect }>>;
+  let users: UserListRow[];
   let total: number;
 
-  if (RAW_SQL_SORTS.has(sortBy)) {
+  // Never run the global lifetime ranking scan while a search filter is
+  // active — that was the main source of 15s timeouts on ?search=….
+  // Text / id searches use the index-friendly column-sort SQL instead.
+  if (RAW_SQL_SORTS.has(sortBy) && !isAnySearch) {
     // Heavy computed-sort path. The global ORDER BY scan (the source of
     // the "/users timed out" failure — most acutely the Top winners /
     // Top losers lifetime-PnL ranking) is delegated to the cached
@@ -745,20 +919,13 @@ export async function getUsers(params: {
       ];
     }
 
-    if (isFreeFormTextSearch) {
-      const filterInput: UserListFilterInput = {
-        searchTerm,
-        isExactId,
-        isEmailLike,
-        isDiscordId,
-        searchMode,
-        role,
-        status,
-      };
+    if (isFreeFormTextSearch || (isAnySearch && RAW_SQL_SORTS.has(sortBy))) {
+      const effectiveSort =
+        isAnySearch && RAW_SQL_SORTS.has(sortBy) ? "created_at" : sortBy;
       const { ids, total: totalCount } = await cachedFilteredColumnSortUserIds(
         {
           ...filterInput,
-          sortBy,
+          sortBy: effectiveSort,
           order,
           page,
           perPage,
@@ -792,112 +959,9 @@ export async function getUsers(params: {
     }
   }
 
-  // Per-page aggregates are independent keyed on user_id and run in
-  // parallel. The P&L components (inventory / card-withdrawals / vouchers
-  // / balances) are bundled in calculateUsersPnlBatch so the canonical
-  // formula lives in exactly one place. depositCount and riskScore stay
-  // separate — they're used for other columns.
-  const userIds = users.map((u) => u.id);
-  const empty = {
-    deposits: [] as Array<{ user_id: string; _count: { _all: number } }>,
-  };
-  // Skip the heavy list-level risk BATCH_SQL during free-form search —
-  // finding the user fast matters more than per-row risk on the slice.
-  const skipListRisk = isFreeFormTextSearch;
-  const emptyRisk = new Map<
-    string,
-    {
-      score: number;
-      tier: RiskTier;
-      sharedIpCount: number;
-      sharedFingerprintCount: number;
-    }
-  >();
-  const [pnlByUserId, depositCountRows, riskScoresMap] = await Promise.all([
-    calculateUsersPnlBatch(userIds),
-    userIds.length > 0
-      ? db.ledger_transactions.groupBy({
-          by: ["user_id"],
-          where: {
-            user_id: { in: userIds },
-            type: "deposit",
-            status: "completed",
-          },
-          _count: { _all: true },
-        })
-      : Promise.resolve(empty.deposits),
-    userIds.length > 0 && !skipListRisk
-      ? computeRiskScoresForList(userIds)
-      : Promise.resolve(emptyRisk),
-  ]);
-
-  const depositCountMap = new Map(
-    depositCountRows.map((d) => [d.user_id, d._count._all]),
-  );
-
-  return {
-    data: users.map((u) => {
-      const lockedBalance = toNumber(u.balances?.locked_balance);
-      const totalWagered = toNumber(u.balances?.total_wagered);
-      const userPnl = pnlByUserId.get(u.id);
-      // FAKE-BALANCE: net the signed official_stream credit out of the
-      // DISPLAYED available balance (and netHoldings) so the list matches
-      // the P&L treatment AND the user-detail page. calculateUsersPnlBatch
-      // already nets it from onSiteBalance, so derive available from there
-      // (onSiteBalance = available + locked − officialStreamNet ⇒
-      // available_netted = onSiteBalance − locked). No second query, can't
-      // drift from the PnL column. Clamp ≥ 0 defensively. Falls back to the
-      // raw available balance only when the batch row is missing.
-      const availableBalance = userPnl
-        ? Math.max(0, userPnl.onSiteBalance - lockedBalance)
-        : toNumber(u.balances?.available_balance);
-      const totalDeposited = userPnl?.deposits ?? 0;
-      const totalWithdrawn = userPnl?.withdrawals ?? 0;
-      const inventoryValue = userPnl?.inventoryValue ?? 0;
-      const unclaimedVouchers = userPnl?.unclaimedVouchers ?? 0;
-      // The data-table renders user-POV pnl (positive = user winning,
-      // shown red because that's our liability). The shared helper returns
-      // House-POV; flip the sign here to keep the column semantics intact.
-      const pnl = userPnl ? -userPnl.pnl : 0;
-      // Net on-platform holdings = cash (available + locked vault) +
-      // open inventory + unclaimed vouchers. Vouchers are inventory
-      // exactly like cards (cards + vouchers = inventory), so they're
-      // part of what the user holds on-site. Uses the official_stream-netted
-      // availableBalance above so the hidden fake balance never inflates net
-      // holdings. (The SQL ORDER BY expression for the `netHoldings` sort
-      // still uses raw balance for ordering only — see note below.)
-      const netHoldings =
-        availableBalance + lockedBalance + inventoryValue + unclaimedVouchers;
-      const risk = riskScoresMap.get(u.id);
-      return {
-        id: u.id,
-        username: u.username,
-        email: u.email,
-        image: u.image,
-        role: u.role,
-        status: u.is_banned ? "banned" : u.is_locked ? "locked" : "active",
-        country: u.country,
-        countryCode: u.country_code,
-        availableBalance,
-        inventoryValue,
-        netHoldings,
-        totalDeposited,
-        totalWithdrawn,
-        totalWagered,
-        depositCount: depositCountMap.get(u.id) ?? 0,
-        pnl,
-        createdAt: u.created_at.toISOString(),
-        riskScore: risk?.score ?? 0,
-        riskTier: risk?.tier ?? ("low" as RiskTier),
-        sharedIpCount: risk?.sharedIpCount ?? 0,
-        sharedFingerprintCount: risk?.sharedFingerprintCount ?? 0,
-      };
-    }),
-    total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
-  };
+  return hydrateUserListPage(users, total, page, perPage, {
+    skipListRisk: isAnySearch,
+  });
 }
 
 // ─── Global KPI stats for the /users page hero strip ──────────────────

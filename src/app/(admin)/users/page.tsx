@@ -43,7 +43,9 @@ export const metadata = { title: "Users" };
  * it; the underlying statement keeps running on its own connection and
  * warms the next cache fill (see safe-query.ts TIMEOUT note).
  */
-const USERS_LIST_TIMEOUT_MS = 15_000;
+const USERS_LIST_TIMEOUT_MS = 45_000;
+/** Search uses fast indexed paths — no wall-clock cap (completes in ms). */
+const USERS_LIST_SEARCH_TIMEOUT_MS = undefined;
 
 export default async function UsersPage({
   searchParams,
@@ -140,7 +142,9 @@ export default async function UsersPage({
         }),
       EMPTY_LIST,
       "users.list",
-      USERS_LIST_TIMEOUT_MS,
+      params.search?.trim()
+        ? USERS_LIST_SEARCH_TIMEOUT_MS
+        : USERS_LIST_TIMEOUT_MS,
     ),
     safeQuery(() => getUsersListStats(), null, "users.listStats"),
   ]);
@@ -250,7 +254,7 @@ export default async function UsersPage({
               clear filters or refresh without a full page crash. Never
               echoes the raw error string (see safe-query.ts SECURITY
               note) — a generic, actionable notice only. */}
-          {listFailed && (
+          {listFailed && !params.search?.trim() && (
             <div
               role="status"
               aria-live="polite"
