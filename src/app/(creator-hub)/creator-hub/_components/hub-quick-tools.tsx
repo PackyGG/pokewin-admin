@@ -14,10 +14,10 @@ import { cn } from "@/lib/utils";
  * Creator Hub dashboard — quick-tools button row (mockup top strip).
  *
  * Five tool shortcuts: My Creators · Leaderboards · ROI Calculator ·
- * Social Posts · Changelogs. For v1 the destination sub-apps don't exist
- * yet, so each points at a `#` placeholder (rendered with a subtle
- * "Soon" affordance) — they're laid out exactly so the eventual links can
- * drop in. Pure presentational, server-safe.
+ * Social Posts · Changelogs. Four link to live routes; Social Posts is the
+ * one tool whose page doesn't exist yet, so it points at a `#` placeholder
+ * (rendered with a subtle "Soon" affordance) until that sub-app lands.
+ * Pure presentational, server-safe.
  */
 
 type Tool = {
@@ -34,7 +34,7 @@ const TOOLS: Tool[] = [
   {
     label: "My Creators",
     sub: "roster & deals",
-    href: "#",
+    href: "/creator-hub/creators",
     icon: Users,
     tint: "bg-blue-500/15",
     iconColor: "text-blue-500",
@@ -42,7 +42,7 @@ const TOOLS: Tool[] = [
   {
     label: "Leaderboards",
     sub: "races & prizes",
-    href: "#",
+    href: "/creator-hub/leaderboards",
     icon: Trophy,
     tint: "bg-amber-500/15",
     iconColor: "text-amber-500",
@@ -50,7 +50,7 @@ const TOOLS: Tool[] = [
   {
     label: "ROI Calculator",
     sub: "deal modeling",
-    href: "#",
+    href: "/creator-hub/profitable-algo",
     icon: Calculator,
     tint: "bg-emerald-500/15",
     iconColor: "text-emerald-500",
@@ -66,7 +66,7 @@ const TOOLS: Tool[] = [
   {
     label: "Changelogs",
     sub: "audit feed",
-    href: "#",
+    href: "/creator-hub/changelog",
     icon: History,
     tint: "bg-pink-500/15",
     iconColor: "text-pink-500",

@@ -39,11 +39,11 @@ import { LinkPending } from "@/components/ux";
  * identity: a pink "Creator Hub" wordmark, a "Back to Admin" exit at the
  * top, and its own nav list.
  *
- * v1 nav: only Dashboard is live. The remaining sections are placeholders
- * (the future Creators / Leaderboards / Acquisition / Codes & Ads /
- * Socials Review / Changelog sub-apps), rendered disabled so the eventual
- * structure is visible without dead links. They carry no href and never
- * navigate.
+ * Live nav: Dashboard, Creators, Leaderboards, ROI Calculator (Profitable
+ * Algo) and Changelog all link to real routes. The remaining sections are
+ * placeholders (the future Acquisition / Codes & Ads / Socials Review
+ * sub-apps), rendered disabled so the eventual structure is visible without
+ * dead links. They carry no functional href and never navigate.
  *
  * Client-safe: no DB / server-only imports. Icons are direct
  * `lucide-react` component refs (not the string-keyed ICONS map the main
@@ -60,8 +60,8 @@ type HubNavItem = {
 
 const HUB_NAV: HubNavItem[] = [
   { label: "Dashboard", href: "/creator-hub", icon: LayoutDashboard },
-  { label: "Creators", href: "/creator-hub", icon: Users, soon: true },
-  { label: "Leaderboards", href: "/creator-hub", icon: Trophy, soon: true },
+  { label: "Creators", href: "/creator-hub/creators", icon: Users },
+  { label: "Leaderboards", href: "/creator-hub/leaderboards", icon: Trophy },
   { label: "Acquisition", href: "/creator-hub", icon: LineChart, soon: true },
   { label: "Codes & Ads", href: "/creator-hub", icon: Megaphone, soon: true },
   {
@@ -70,8 +70,12 @@ const HUB_NAV: HubNavItem[] = [
     icon: ShieldCheck,
     soon: true,
   },
-  { label: "ROI Calculator", href: "/creator-hub", icon: Calculator, soon: true },
-  { label: "Changelog", href: "/creator-hub", icon: History, soon: true },
+  {
+    label: "ROI Calculator",
+    href: "/creator-hub/profitable-algo",
+    icon: Calculator,
+  },
+  { label: "Changelog", href: "/creator-hub/changelog", icon: History },
 ];
 
 export function CreatorHubSidebar() {
@@ -137,9 +141,16 @@ export function CreatorHubSidebar() {
             <SidebarMenu>
               {HUB_NAV.map((item, i) => {
                 const Icon = item.icon;
-                // Only the live Dashboard item can be active; the
-                // placeholder items never navigate.
-                const isActive = !item.soon && pathname === item.href;
+                // Active when the route matches. Dashboard ("/creator-hub")
+                // is exact-only so it doesn't light up on every sub-page;
+                // the deeper items also match their nested routes (e.g.
+                // "/creator-hub/creators/[id]" keeps "Creators" active).
+                // Placeholder items never navigate, so never active.
+                const isActive =
+                  !item.soon &&
+                  (pathname === item.href ||
+                    (item.href !== "/creator-hub" &&
+                      pathname.startsWith(item.href + "/")));
                 if (item.soon) {
                   return (
                     <SidebarMenuItem key={`${item.label}-${i}`}>
