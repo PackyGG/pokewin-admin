@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   CalendarRange,
   GitCompareArrows,
+  Gift,
   LayoutDashboard,
   Users,
   Trophy,
@@ -42,7 +43,7 @@ import { LinkPending } from "@/components/ux";
  * identity: the Packy wordmark (same assets as the main sidebar), a
  * "Back to Admin" exit at the top, and its own nav list.
  *
- * Live nav: Dashboard, Creators, Leaderboards, Creator Check, Acquisition,
+ * Live nav: Dashboard, Creators, Leaderboards, Tips & Sponsors, Creator Check, Acquisition,
  * Socials Review, ROI Calculator, Changelog; plus an Ops group (Deal Tracker,
  * Compare). Settings is pinned in the footer above the theme toggle. Alerts
  * live on the right rail dock.
@@ -62,6 +63,11 @@ const HUB_NAV: HubNavItem[] = [
   { label: "Dashboard", href: "/creator-hub", icon: LayoutDashboard },
   { label: "Creators", href: "/creator-hub/creators", icon: Users },
   { label: "Leaderboards", href: "/creator-hub/leaderboards", icon: Trophy },
+  {
+    label: "Tips & Sponsors",
+    href: "/creator-hub/tips-sponsors",
+    icon: Gift,
+  },
   {
     label: "Creator Check",
     href: "/creator-hub/creator-check",
