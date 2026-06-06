@@ -46,6 +46,10 @@ import {
   type DashboardPeriod,
   type DashboardKpiWindow,
 } from "./dashboard-period";
+import {
+  getDashboardTrendSeries,
+  type DashboardTrendSeries,
+} from "./dashboard-trend-series";
 
 // Re-export the client-safe period constants so existing call sites
 // that import from "@/lib/queries/dashboard" don't have to change. The
@@ -1203,6 +1207,7 @@ export const getDashboardStats = cache(async (period: DashboardPeriod = DEFAULT_
       metricWindow: periodToMetricWindow(period, new Date()),
       periodLabel: DASHBOARD_PERIOD_LABELS[period],
       windowMetricsKey: period,
+      chartPeriod: period,
       loadWindowMetrics: (blacklistIdNotIn) =>
         cachedWindowMetricsForPeriod(period, blacklistIdNotIn),
     }),
@@ -1255,6 +1260,8 @@ type DashboardStatsConfig = {
   periodLabel: string;
   /** Stable discriminator returned on the payload (for debugging / keys). */
   windowMetricsKey: string;
+  /** When set, trend charts + wager attribution use period-scoped buckets. */
+  chartPeriod?: DashboardPeriod;
   /** Loader for the (cached, timeout-wrapped) headline window metrics. */
   loadWindowMetrics: (blacklistIdNotIn: string) => Promise<WindowMetrics>;
 };
@@ -1313,6 +1320,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // the chip-enum path passes `periodToCutoff(period)` (epoch for "all"),
   // the today/24h path passes `kpiWindowToCutoff(window)`.
   const periodCutoff = config.cutoff;
+  const chartPeriod = config.chartPeriod;
   // Canonical metric window for the headline GGR + upgrader reads, which
   // bake in the central real-customer + borrow-corrected scope (so the
   // session-window / scope fixes landing in `@/lib/metrics` propagate here
@@ -1361,6 +1369,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     dailyUpgraderT,
     dailySignupsT,
     dailyWagerAttributionT,
+    trendSeriesT,
     periodAggregatesT,
     windowMetricsResultT,
     upgraderWindowT,
@@ -1405,18 +1414,33 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // days in ONE ledger scan. 5-min cached — historic days don't
     // change and today's row moves slowly enough that operators
     // wouldn't notice a 5-min lag.
-    withTimingResult("dashboard.dailyChart", () => cachedDailyChart(blacklistIdNotIn)),
+    withTimingResult("dashboard.dailyChart", () =>
+      chartPeriod ? Promise.resolve([]) : cachedDailyChart(blacklistIdNotIn),
+    ),
     // Daily upgrader wager (last 30 days) from `upgrader_games` — the
     // upgrader-native companion to the daily ledger scan above. Merged
     // into the dailyWagers series by date. Empty on a pre-upgrader DB
     // (to_regclass guard). 5-min cached.
-    withTimingResult("dashboard.dailyUpgrader", () => cachedDailyUpgrader(blacklistIdNotIn)),
+    withTimingResult("dashboard.dailyUpgrader", () =>
+      chartPeriod ? Promise.resolve([]) : cachedDailyUpgrader(blacklistIdNotIn),
+    ),
     // Signups last 30 days. 5-min cached for the same reason.
-    withTimingResult("dashboard.dailySignups", () => cachedDailySignups(blacklistIdNotIn)),
+    withTimingResult("dashboard.dailySignups", () =>
+      chartPeriod ? Promise.resolve([]) : cachedDailySignups(blacklistIdNotIn),
+    ),
     // Daily wager attribution split — organic (no creator-code
     // referral) vs creator-attributed. 5-min cached.
     withTimingResult("dashboard.dailyWagerAttribution", () =>
-      cachedDailyWagerAttribution(blacklistIdNotIn),
+      chartPeriod
+        ? Promise.resolve([])
+        : cachedDailyWagerAttribution(blacklistIdNotIn),
+    ),
+    // Period-scoped trend series (replaces the four 30-day caches above
+    // when the global chip selector drives getDashboardStats).
+    withTimingResult("dashboard.trendSeries", () =>
+      chartPeriod
+        ? getDashboardTrendSeries(chartPeriod, blacklistIdNotIn)
+        : Promise.resolve(null as DashboardTrendSeries | null),
     ),
     // Single batched query — computes revenue / withdrawal / wager /
     // deposit_count / balance_change / manual_wd for the SELECTED
@@ -1556,6 +1580,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   const dailyUpgrader = dailyUpgraderT.data;
   const dailySignups = dailySignupsT.data;
   const dailyWagerAttribution = dailyWagerAttributionT.data;
+  const trendSeries = trendSeriesT.data;
   const periodAggregates = periodAggregatesT.data;
   const windowMetricsResult = windowMetricsResultT.data;
   const upgraderWindow = upgraderWindowT.data;
@@ -1578,6 +1603,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     dailyUpgrader: dailyUpgraderT.durationMs,
     dailySignups: dailySignupsT.durationMs,
     dailyWagerAttribution: dailyWagerAttributionT.durationMs,
+    trendSeries: trendSeriesT.durationMs,
     periodAggregates: periodAggregatesT.durationMs,
     windowMetrics: windowMetricsResultT.durationMs,
     upgraderWindow: upgraderWindowT.durationMs,
@@ -1876,58 +1902,55 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
       battlesPlayed24h,
       signups24h: Number(userCounts[0]?.rolling24h ?? 0),
     },
-    dailyWagers: dailyChart.map((d) => {
-      const date = new Date(d.date).toISOString().split("T")[0];
-      return {
-        date,
-        packs: Number(d.packs),
-        battles: Number(d.battles),
-        // Upgrader segment sourced from `upgrader_games` (merged by
-        // date), not the ledger. 0 on days with no upgrader plays or on
-        // a pre-upgrader DB.
-        upgrader: dailyUpgraderByDate.get(date) ?? 0,
-      };
-    }),
-    dailyDeposits: dailyChart.map((d) => ({
-      date: new Date(d.date).toISOString().split("T")[0],
-      amount: Math.abs(Number(d.deposits)),
-    })),
-    dailySignups: dailySignups.map((d) => ({
-      date: new Date(d.date).toISOString().split("T")[0],
-      count: Number(d.count),
-    })),
-    // Daily FTDs — count + summed first-deposit value per day, plus the
-    // derived average (total / count, guarded against div-by-zero).
-    // Sourced from the ftdCombined UNION rows tagged 'daily'.
-    dailyFtds: ftdDailyRows.map((d) => {
-      const count = Number(d.count);
-      const total = Number(d.total);
-      return {
-        date: new Date(d.bucket as Date | string).toISOString().split("T")[0],
-        count,
-        total,
-        avg: count > 0 ? total / count : 0,
-      };
-    }),
-    // Daily Active Depositors — distinct users who deposited each day
-    // in the last 30 days. Sourced from the dailyChart 30-day ledger
-    // scan (active_depositors column), which used to be a separate
-    // 30-day scan.
-    dailyActiveDepositors: dailyChart.map((d) => ({
-      date: new Date(d.date).toISOString().split("T")[0],
-      count: Number(d.active_depositors),
-    })),
-    // Daily Wager Attribution — organic (customers without a
-    // creator-code referral) vs creator-coded (customers whose
-    // referrer is a creator) per day for the last 30 days. The two
-    // stack to the day's total customer wager. Excludes the creator
-    // role itself + staff on both sides so neither bucket carries
-    // creator-on-stream play.
-    dailyWagerAttribution: dailyWagerAttribution.map((d) => ({
-      date: new Date(d.date).toISOString().split("T")[0],
-      organic: Number(d.organic),
-      creatorCoded: Number(d.creator_attributed),
-    })),
+    dailyWagers: trendSeries
+      ? trendSeries.dailyWagers
+      : dailyChart.map((d) => {
+          const date = new Date(d.date).toISOString().split("T")[0];
+          return {
+            date,
+            packs: Number(d.packs),
+            battles: Number(d.battles),
+            upgrader: dailyUpgraderByDate.get(date) ?? 0,
+          };
+        }),
+    dailyDeposits: trendSeries
+      ? trendSeries.dailyDeposits
+      : dailyChart.map((d) => ({
+          date: new Date(d.date).toISOString().split("T")[0],
+          amount: Math.abs(Number(d.deposits)),
+        })),
+    dailySignups: trendSeries
+      ? trendSeries.dailySignups
+      : dailySignups.map((d) => ({
+          date: new Date(d.date).toISOString().split("T")[0],
+          count: Number(d.count),
+        })),
+    dailyFtds: trendSeries
+      ? trendSeries.dailyFtds
+      : ftdDailyRows.map((d) => {
+          const count = Number(d.count);
+          const total = Number(d.total);
+          return {
+            date: new Date(d.bucket as Date | string).toISOString().split("T")[0],
+            count,
+            total,
+            avg: count > 0 ? total / count : 0,
+          };
+        }),
+    dailyActiveDepositors: trendSeries
+      ? trendSeries.dailyActiveDepositors
+      : dailyChart.map((d) => ({
+          date: new Date(d.date).toISOString().split("T")[0],
+          count: Number(d.active_depositors),
+        })),
+    dailyWagerAttribution: trendSeries
+      ? trendSeries.dailyWagerAttribution
+      : dailyWagerAttribution.map((d) => ({
+          date: new Date(d.date).toISOString().split("T")[0],
+          organic: Number(d.organic),
+          creatorCoded: Number(d.creator_attributed),
+        })),
+    chartHourlyBuckets: trendSeries?.chartHourlyBuckets ?? false,
     // Per-sub-query server-measured fetch time (ms), keyed by the KPI tile in
     // the primary + secondary strips that each sub-query feeds. Each value is
     // the elapsed time of the sub-query (in the parallel batch above) that

@@ -23,6 +23,8 @@ function fixedRoleBaseline(role: admin_role): string[] {
       return [...PACK_CREATOR_DEFAULT_PAGES];
     case "support":
       return ["/users", "/dashboard"];
+    case "creator_manager":
+      return ["/creators"];
     default:
       return [];
   }

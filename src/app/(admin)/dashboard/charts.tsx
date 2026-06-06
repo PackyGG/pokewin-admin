@@ -345,13 +345,17 @@ function DepositsTooltipContent({
 
 export function SignupsChart({
   data,
+  title = "Signups (30 days)",
+  hourlyXAxis = false,
 }: {
   data: { date: string; count: number }[];
+  title?: string;
+  hourlyXAxis?: boolean;
 }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm font-medium">Signups (30 days)</CardTitle>
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer config={signupsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
@@ -362,7 +366,7 @@ export function SignupsChart({
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={(v) => v.slice(5)}
+              tickFormatter={(v) => formatChartXTick(v, hourlyXAxis)}
             />
             <YAxis tickLine={false} axisLine={false} tickMargin={8} />
             <ChartTooltip content={<ChartTooltipContent />} />
@@ -382,15 +386,17 @@ export function SignupsChart({
 
 export function ActiveDepositorsChart({
   data,
+  title = "Active Depositors (30 days)",
+  hourlyXAxis = false,
 }: {
   data: { date: string; count: number }[];
+  title?: string;
+  hourlyXAxis?: boolean;
 }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm font-medium">
-          Active Depositors (30 days)
-        </CardTitle>
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer config={activeDepositorsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
@@ -401,7 +407,7 @@ export function ActiveDepositorsChart({
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={(v) => v.slice(5)}
+              tickFormatter={(v) => formatChartXTick(v, hourlyXAxis)}
             />
             <YAxis tickLine={false} axisLine={false} tickMargin={8} />
             <ChartTooltip content={<ChartTooltipContent />} />
@@ -449,13 +455,17 @@ function FtdsTooltip({
 
 export function FtdsChart({
   data,
+  title = "FTDs (30 days)",
+  hourlyXAxis = false,
 }: {
   data: { date: string; count: number; total: number; avg: number }[];
+  title?: string;
+  hourlyXAxis?: boolean;
 }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm font-medium">FTDs (30 days)</CardTitle>
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer config={ftdsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
@@ -466,7 +476,7 @@ export function FtdsChart({
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={(v) => v.slice(5)}
+              tickFormatter={(v) => formatChartXTick(v, hourlyXAxis)}
             />
             <YAxis tickLine={false} axisLine={false} tickMargin={8} />
             <ChartTooltip content={<FtdsTooltip />} />
@@ -691,8 +701,12 @@ function WagerAttributionTooltipContent({
  */
 export function WagerAttributionChart({
   data,
+  title = "Wager Attribution (30 days)",
+  hourlyXAxis = false,
 }: {
   data: { date: string; organic: number; creatorCoded: number }[];
+  title?: string;
+  hourlyXAxis?: boolean;
 }) {
   // 30-day rollup for the card header. The bars expose per-day
   // numbers; the title strip carries the period sum + the organic /
@@ -710,9 +724,7 @@ export function WagerAttributionChart({
     <Card className="h-full">
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-sm font-medium">
-            Wager Attribution (30 days)
-          </CardTitle>
+          <CardTitle className="text-sm font-medium">{title}</CardTitle>
           <span className="font-mono text-xs font-semibold tabular-nums text-foreground">
             {formatCurrency(periodTotal)}
           </span>
@@ -762,7 +774,7 @@ export function WagerAttributionChart({
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              tickFormatter={(v) => v.slice(5)}
+              tickFormatter={(v) => formatChartXTick(v, hourlyXAxis)}
             />
             <YAxis
               tickLine={false}

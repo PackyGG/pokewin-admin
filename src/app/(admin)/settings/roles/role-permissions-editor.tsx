@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Info } from "lucide-react";
+import { Info, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Spinner, transition } from "@/components/ux";
 import { updateRolePermissions, type RoleConfig } from "./actions";
@@ -17,8 +17,23 @@ import {
   type CapabilityState,
   getCapabilityGroups,
 } from "./permissions-utils";
+import { setCreatorHubAccessToggle } from "./creator-hub-access-actions";
 
-const ROLES = ["support", "marketing", "creator", "pack_creator"] as const;
+const ROLES = [
+  "support",
+  "marketing",
+  "creator",
+  "pack_creator",
+  "creator_manager",
+] as const;
+
+const ROLE_TAB_LABELS: Record<(typeof ROLES)[number], string> = {
+  support: "Support",
+  marketing: "Marketing",
+  creator: "Creator",
+  pack_creator: "Pack Creator",
+  creator_manager: "Creator Manager",
+};
 
 const ROLE_DESCRIPTIONS: Record<string, string> = {
   support: "Customer support — typically needs Users, Chat, Transactions",
@@ -26,6 +41,8 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
   creator: "Content creators — typically only needs My Profile",
   pack_creator:
     "Pack creator employee — Packs, Cards, and Sets. Demo (inactive) packs are always editable; grant 'Edit Live Packs' if you want them to be able to change card pool / price / house edge on packs that are already live in production. Card + set tools (create/edit/bulk-assign) let them build the catalog the packs draw from; the destructive set ops (Seed Initial Sets, Force-Absorb Cards, Delete Set) are individual toggles — leave them off unless this person is trusted to run catalog-wide bulk moves.",
+  creator_manager:
+    "Creator Hub CM team — configure main-admin Creators access below. Creator Hub entry is controlled separately (toggle); both default off until you enable them.",
 };
 
 /**
@@ -53,6 +70,10 @@ const ROLE_SCOPES: Record<
     capabilityGroups: ["Packs", "Cards", "Sets", "Upgrader"],
     pageKeys: ["/packs", "/cards", "/sets", "/upgrader"],
   },
+  creator_manager: {
+    capabilityGroups: ["Creators"],
+    pageKeys: ["/creators"],
+  },
   // Other roles: no scoping (full catalog).
   support: null,
   marketing: null,
@@ -67,15 +88,25 @@ type GroupedPages = {
 export function RolePermissionsEditor({
   groupedPages,
   initialPermissions,
+  creatorHubAccess,
 }: {
   groupedPages: GroupedPages;
   initialPermissions: Record<string, RoleConfig>;
+  /** Founder-only Creator Hub toggle for the built-in Creator Manager role. */
+  creatorHubAccess?: {
+    enabled: boolean;
+    canManage: boolean;
+  };
 }) {
   const [activeRole, setActiveRole] = useState<string>(ROLES[0]);
   const [configs, setConfigs] = useState<Record<string, RoleConfig>>(
     initialPermissions,
   );
   const [isPending, startTransition] = useTransition();
+  const [hubEnabled, setHubEnabled] = useState(
+    creatorHubAccess?.enabled ?? false,
+  );
+  const [hubPending, setHubPending] = useState(false);
   const router = useRouter();
 
   const [savedConfigs] = useState<Record<string, RoleConfig>>(() =>
@@ -231,7 +262,7 @@ export function RolePermissionsEditor({
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {role}
+            {ROLE_TAB_LABELS[role]}
             {hasChanges(role) && (
               <span className="absolute top-1 right-1 size-2 rounded-full bg-amber-500" />
             )}
@@ -242,6 +273,66 @@ export function RolePermissionsEditor({
       <p className="text-sm text-muted-foreground">
         {ROLE_DESCRIPTIONS[activeRole]}
       </p>
+
+      {activeRole === "creator_manager" && creatorHubAccess?.canManage && (
+        <Card className="border-pink-500/20 bg-pink-500/5">
+          <CardContent className="flex items-start justify-between gap-4 p-4">
+            <div className="min-w-0 space-y-1">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-pink-500/15 text-pink-600 ring-1 ring-inset ring-pink-500/30 dark:text-pink-400">
+                  <Sparkles className="size-3.5" />
+                </span>
+                Creator Hub access
+              </div>
+              <p className="text-xs text-muted-foreground">
+                When off, Creator Managers cannot open the Creator Hub sub-app
+                (only the founder account bypasses this). Defaults to off.
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 pt-0.5">
+              {hubPending && <Spinner size={14} label="Saving…" />}
+              <Switch
+                checked={hubEnabled}
+                disabled={hubPending}
+                onCheckedChange={(checked) => {
+                  const previous = hubEnabled;
+                  setHubEnabled(checked);
+                  setHubPending(true);
+                  startTransition(async () => {
+                    try {
+                      const res = await setCreatorHubAccessToggle(
+                        "creator_manager",
+                        checked,
+                      );
+                      if (!res.success) {
+                        setHubEnabled(previous);
+                        toast.error(res.error);
+                        return;
+                      }
+                      toast.success(
+                        checked
+                          ? "Creator Hub access enabled for Creator Managers"
+                          : "Creator Hub access disabled for Creator Managers",
+                      );
+                      router.refresh();
+                    } catch (err) {
+                      setHubEnabled(previous);
+                      toast.error(
+                        err instanceof Error
+                          ? err.message
+                          : "Failed to update Creator Hub access",
+                      );
+                    } finally {
+                      setHubPending(false);
+                    }
+                  });
+                }}
+                aria-label="Toggle Creator Hub access for Creator Managers"
+              />
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Capabilities ─────────────────────────────────────────────── */}
       <div>

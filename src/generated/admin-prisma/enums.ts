@@ -23,7 +23,8 @@ export const admin_role = {
   support: 'support',
   marketing: 'marketing',
   creator: 'creator',
-  pack_creator: 'pack_creator'
+  pack_creator: 'pack_creator',
+  creator_manager: 'creator_manager'
 } as const
 
 export type admin_role = (typeof admin_role)[keyof typeof admin_role]

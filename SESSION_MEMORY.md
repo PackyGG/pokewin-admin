@@ -44,7 +44,7 @@ If `AGENT_HANDOFF.md` HEAD sha ≠ `git rev-parse --short HEAD`, trust **git log
 | You learned or changed… | Write to |
 |---|---|
 | Shipped work, in-flight, blocked, next steps, fresh gotchas | `AGENT_HANDOFF.md` |
-| Durable facts: schema, domain math, DB policy, conventions | `ONBOARDING.md` |
+| Durable facts: schema, domain math, DB policy, conventions | `ONBOARDING.md` + `DB_ACCESS.md` |
 | New binding policy or workflow rule | `CLAUDE.md` or `AGENTS.md` |
 | Owner pacing / parallel-mode override | `CLAUDE.local.md` |
 | Creator Hub wave progress, decisions, backlog | `.claude/plans/iridescent-mixing-lecun.md` |

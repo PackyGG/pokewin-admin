@@ -37,15 +37,24 @@ export type RoleRow = {
   user_count: number;
 };
 
-// Enum-role names are reserved so a custom role can't be confused with a
-// built-in role (those are managed on /settings/roles).
+// Built-in role names are reserved so a custom role can't shadow them.
+// Normalized form: lowercase, whitespace/hyphens → underscores.
 const RESERVED_NAMES: ReadonlySet<string> = new Set([
   "admin",
   "support",
   "marketing",
   "creator",
   "pack_creator",
+  "creator_manager",
 ]);
+
+function normalizeCustomRoleName(name: string): string {
+  return name.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function isReservedCustomRoleName(name: string): boolean {
+  return RESERVED_NAMES.has(normalizeCustomRoleName(name));
+}
 
 function isUniqueViolation(err: unknown): boolean {
   const code = (err as { code?: string })?.code;
@@ -159,7 +168,7 @@ export async function createRole(
   }
 
   const { name, description, capabilities } = parsed.data;
-  if (RESERVED_NAMES.has(name.toLowerCase())) {
+  if (isReservedCustomRoleName(name)) {
     return { ok: false, error: "That name is reserved for a built-in role" };
   }
 
@@ -211,8 +220,8 @@ export async function updateRole(
   if (!existing) return { ok: false, error: "Role not found" };
 
   if (
-    name.toLowerCase() !== existing.name.toLowerCase() &&
-    RESERVED_NAMES.has(name.toLowerCase())
+    normalizeCustomRoleName(name) !== normalizeCustomRoleName(existing.name) &&
+    isReservedCustomRoleName(name)
   ) {
     return { ok: false, error: "That name is reserved for a built-in role" };
   }

@@ -20,10 +20,12 @@ import {
 import {
   chartDateForBucket,
   padHubDepositChartSeries,
+  padHubSignupsFtdsChartSeries,
   padHubWagerChartSeries,
 } from "./hub-chart-series";
 import {
   type HubDepositChartRow,
+  type HubSignupsFtdsChartRow,
   type HubWagerChartRow,
 } from "./hub-types";
 
@@ -34,9 +36,11 @@ export type HubCohortWindowed = {
   depositsUsd: number;
   dailyWagers: HubWagerChartRow[];
   dailyDeposits: HubDepositChartRow[];
+  dailySignupsFtds: HubSignupsFtdsChartRow[];
 };
 
 type BucketRow = { bucket: Date; amount: string };
+type CountBucketRow = { bucket: Date; value: string };
 type WagerBucketRow = { bucket: Date; packs: string; battles: string };
 
 function mergeWagerBucketRows(
@@ -69,6 +73,42 @@ function mergeWagerBucketRows(
       packs: prev?.packs ?? 0,
       battles: prev?.battles ?? 0,
       upgrader: (prev?.upgrader ?? 0) + toNumber(r.amount),
+    });
+  }
+
+  return [...byBucket.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, row]) => row);
+}
+
+function mergeSignupsFtdsBucketRows(
+  signupRows: CountBucketRow[],
+  ftdRows: CountBucketRow[],
+  period: DashboardPeriod,
+): HubSignupsFtdsChartRow[] {
+  const byBucket = new Map<number, HubSignupsFtdsChartRow>();
+
+  for (const r of signupRows) {
+    const d = new Date(r.bucket);
+    const ts = d.getTime();
+    const date = chartDateForBucket(d, period);
+    const prev = byBucket.get(ts);
+    byBucket.set(ts, {
+      date,
+      signups: (prev?.signups ?? 0) + toNumber(r.value),
+      ftds: prev?.ftds ?? 0,
+    });
+  }
+
+  for (const r of ftdRows) {
+    const d = new Date(r.bucket);
+    const ts = d.getTime();
+    const date = chartDateForBucket(d, period);
+    const prev = byBucket.get(ts);
+    byBucket.set(ts, {
+      date,
+      signups: prev?.signups ?? 0,
+      ftds: (prev?.ftds ?? 0) + toNumber(r.value),
     });
   }
 
@@ -129,10 +169,17 @@ const cachedHubCohortScans = (
 
       type CountRow = { value: string };
 
+      const bucketSignup = hubBucketTrunc("u.created_at", chartPeriod);
+      const bucketFtd = hubBucketTrunc("acu.created_at", chartPeriod);
+      const sinceChartSignup = hubSinceClause("u.created_at", chartPeriod);
+      const sinceChartAcu = hubSinceClause("acu.created_at", chartPeriod);
+
       const [
         signupRows,
         ftdRows,
         depositTotalRows,
+        signupSeriesRows,
+        ftdSeriesRows,
         depositSeriesRows,
         ledgerWagerSeriesRows,
         upgraderWagerSeriesRows,
@@ -182,6 +229,33 @@ const cachedHubCohortScans = (
              FROM covered_deposits cd
              JOIN "user" c ON c.id = cd.creator_id AND c.role = 'creator'
             WHERE cd.creator_id IS NOT NULL`,
+        ),
+
+        db.$queryRawUnsafe<CountBucketRow[]>(
+          `SELECT ${bucketSignup} AS bucket, COUNT(*)::text AS value
+             FROM "user" u
+             JOIN "user" c ON c.id = u.referred_by AND c.role = 'creator'
+            WHERE u.role NOT IN ('admin', 'support', 'creator')
+              AND u.referred_by IS NOT NULL
+              ${sinceChartSignup}
+              ${blacklistAnd}
+            GROUP BY 1
+            ORDER BY 1`,
+        ),
+
+        db.$queryRawUnsafe<CountBucketRow[]>(
+          `SELECT ${bucketFtd} AS bucket,
+                  COUNT(DISTINCT acu.referred_user_id)::text AS value
+             FROM affiliate_code_usages acu
+             JOIN "user" c ON c.id = acu.affiliate_user_id AND c.role = 'creator'
+             JOIN "user" u ON u.id = acu.referred_user_id
+            WHERE acu.usage_type::text = 'deposit'
+              AND acu.referred_user_id <> acu.affiliate_user_id
+              AND u.role NOT IN ('admin', 'support', 'creator')
+              ${sinceChartAcu}
+              ${blacklistAnd}
+            GROUP BY 1
+            ORDER BY 1`,
         ),
 
         db.$queryRawUnsafe<BucketRow[]>(
@@ -275,10 +349,18 @@ const cachedHubCohortScans = (
           mergeDepositBucketRows(depositSeriesRows, chartPeriod),
           chartPeriod,
         ),
+        dailySignupsFtds: padHubSignupsFtdsChartSeries(
+          mergeSignupsFtdsBucketRows(
+            signupSeriesRows,
+            ftdSeriesRows,
+            chartPeriod,
+          ),
+          chartPeriod,
+        ),
       };
     },
     [
-      "hub-cohort-windowed-v5-chart-30d-daily",
+      "hub-cohort-windowed-v6-signups-ftds-chart",
       period,
       env,
       blacklistAnd,

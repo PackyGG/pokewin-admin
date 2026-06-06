@@ -16,6 +16,8 @@
 
 ## 1. 🚫 DATABASE POLICY — HARD RULE (highest priority)
 
+> **Canonical short reference:** [`DB_ACCESS.md`](./DB_ACCESS.md) — admin DB **full access** (agent applies migrations), MAIN/prod game DB **read-only**. Owner (2026-06-06): agents may run any admin DB operations.
+
 Two fully separate Postgres databases, treated **very differently**:
 
 ### 🟢 ADMIN DB — full access

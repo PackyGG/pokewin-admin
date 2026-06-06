@@ -25,6 +25,7 @@ const CONFIGURABLE_ROLES = [
   "marketing",
   "creator",
   "pack_creator",
+  "creator_manager",
 ] as const;
 type ConfigurableRole = (typeof CONFIGURABLE_ROLES)[number];
 
@@ -82,6 +83,7 @@ export async function getRolePermissions(): Promise<
     marketing: emptyConfig(),
     creator: emptyConfig(),
     pack_creator: emptyConfig(),
+    creator_manager: emptyConfig(),
   };
 
   // Track the richest allowed_pages seen per role so the editor seeds from

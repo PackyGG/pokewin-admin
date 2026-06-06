@@ -3,12 +3,12 @@ import { Users } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import { type HubTopCreator } from "../_queries/dashboard-overview";
+import { type HubTopCreator } from "../_queries/hub-top-creators-query";
 
 /**
- * Creator Hub dashboard — Top Creators ranked list (mockup-aligned).
- * Ranked by windowed affiliate wager (desc); each row shows code +
- * period sign-ups, with wager as the hero figure on the right.
+ * Creator Hub dashboard — Top Creators ranked list.
+ * Ranked by code-attributed deposits in the active window (desc);
+ * each row shows code + period sign-ups, with deposits as the hero figure.
  */
 
 const RANK_GRADIENTS = [
@@ -42,7 +42,7 @@ export function HubTopCreators({
           No creator activity in this window
         </p>
         <p className="text-xs text-muted-foreground/70">
-          Wagers from creator-code cohorts will rank here.
+          Code-attributed deposits in this window will rank here.
         </p>
       </div>
     );
@@ -86,10 +86,10 @@ export function HubTopCreators({
               </span>
               <span className="shrink-0 text-right">
                 <span className="block text-sm font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                  {formatCompactUsd(c.wagerUsd)}
+                  {formatCompactUsd(c.depositsUsd)}
                 </span>
                 <span className="block text-[10px] text-muted-foreground">
-                  wager · {periodLabel}
+                  deposits · {periodLabel}
                 </span>
               </span>
             </Link>

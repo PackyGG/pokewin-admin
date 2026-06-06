@@ -60,12 +60,16 @@ export const BALANCE_ADJUSTMENT_CATEGORY_KEYS = [
   "deposit_problem",
   "giveaway",
   "bonus",
+  "bugs",
   "reload",
   "lossback",
   "leaderboard",
   "official_stream",
   "other",
 ] as const;
+
+/** Minimum explanation length when category is `bugs`. */
+export const BUGS_ADJUSTMENT_MIN_REASON_CHARS = 30;
 
 export type BalanceAdjustmentCategory =
   (typeof BALANCE_ADJUSTMENT_CATEGORY_KEYS)[number];
@@ -234,6 +238,13 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     label: "Bonus",
     costLabel: "Manual bonus credits",
     why: "Discretionary admin bonus credited to a user's balance (exact reason recorded). A house-funded incentive cost.",
+    counted: true,
+  },
+  bugs: {
+    key: "bugs",
+    label: "Bugs",
+    costLabel: "Bug-compensation credits",
+    why: "Balance credited to compensate a user for a platform bug (detailed explanation required, min 30 characters). A house-funded remediation cost.",
     counted: true,
   },
   reload: {

@@ -26,11 +26,7 @@ function normalizeRoles(input: {
 }): admin_role[] | null {
   const set = new Set<admin_role>();
   for (const r of [...(input.roles ?? []), ...(input.role ? [input.role] : [])]) {
-    // Only PERSISTABLE built-in roles (those present in the admin-DB
-    // `admin_role` enum) may be stored. `isPersistableAdminRole` narrows to
-    // the exact Prisma-enum subset, so the code-only `creator_manager` is
-    // dropped here — it can't be written to the DB until the enum carries
-    // it (see PERSISTABLE_ADMIN_ROLES in src/lib/admin-roles.ts).
+    // Only PERSISTABLE built-in roles (admin-DB `admin_role` enum values).
     if (isPersistableAdminRole(r)) set.add(r);
   }
   return set.size > 0 ? [...set] : null;

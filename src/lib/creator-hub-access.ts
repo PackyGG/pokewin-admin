@@ -12,7 +12,7 @@ import { getAdminSetting, setAdminSetting, SETTINGS_KEYS } from "@/lib/admin-set
  *
  *   • `creator_hub_access_admin_enabled`           — lets every `admin` in.
  *   • `creator_hub_access_creator_manager_enabled` — lets every
- *     `creator_manager` in (once that role becomes assignable).
+ *     `creator_manager` in.
  *
  * Effective rule (single source of truth for BOTH the portal button
  * visibility in the sidebar AND the /creator-hub route guard):
@@ -34,10 +34,7 @@ const CREATOR_HUB_OWNER_USERNAME = "motha";
 /**
  * The roles that carry a per-role Creator-Hub access toggle. These are the
  * only roles a toggle can ever grant — every other effective role is
- * ignored by the gate (fail-closed). `creator_manager` is included now even
- * though it isn't assignable yet (its ADMIN-DB enum value doesn't exist):
- * the toggle simply has no effect until the role can be handed out, at
- * which point it starts working with no further change here.
+ * ignored by the gate (fail-closed).
  */
 export const CREATOR_HUB_TOGGLE_ROLES = [
   "admin",

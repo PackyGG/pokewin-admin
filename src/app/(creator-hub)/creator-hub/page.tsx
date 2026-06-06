@@ -38,8 +38,16 @@ import { HubKpiBox } from "./_components/hub-kpi-box";
 import { HubKpiInfoPopover } from "./_components/hub-kpi-info-popover";
 import { HubWagerBreakdownPopover } from "./_components/hub-wager-breakdown-popover";
 import { HubTopCreators } from "./_components/hub-top-creators";
+import { HubTopCreatorsPeriodSelector } from "./_components/hub-top-creators-period-selector";
+import { HubSignupsFtdsChart } from "./_components/hub-signups-ftds-chart";
 import { HubPeriodSelector } from "./_components/hub-period-selector";
 import { getHubDashboardOverview } from "./_queries/dashboard-overview";
+import { getHubTopCreatorsByDeposits } from "./_queries/hub-top-creators-query";
+import { getTopSignupLeaders } from "./_queries/hub-top-creator-meta";
+import {
+  parseTopCreatorsPeriod,
+  type TopCreatorsPeriod,
+} from "./_lib/top-creators-period";
 
 export const metadata = { title: "Creator Hub" };
 
@@ -68,7 +76,9 @@ export default async function CreatorHubDashboardPage({
 }) {
   await requireCreatorHubPageAccess();
 
-  const period = parseDashboardPeriod((await searchParams).period);
+  const params = await searchParams;
+  const period = parseDashboardPeriod(params.period);
+  const topPeriod = parseTopCreatorsPeriod(params.topPeriod);
   const windowLabel = DASHBOARD_PERIOD_LABELS[period].toLowerCase();
 
   return (
@@ -96,7 +106,7 @@ export default async function CreatorHubDashboardPage({
           action={<HubPeriodSelector current={period} />}
         />
         <Suspense key={period} fallback={<OverviewSkeleton />}>
-          <OverviewSection period={period} />
+          <OverviewSection period={period} topPeriod={topPeriod} />
         </Suspense>
       </div>
     </div>
@@ -105,21 +115,29 @@ export default async function CreatorHubDashboardPage({
 
 // ─── Overview section (data-bearing, streamed via Suspense) ─────────
 
-async function OverviewSection({ period }: { period: DashboardPeriod }) {
-  const data = await getHubDashboardOverview(period);
+async function OverviewSection({
+  period,
+  topPeriod,
+}: {
+  period: DashboardPeriod;
+  topPeriod: TopCreatorsPeriod;
+}) {
+  const [data, signupLeaders] = await Promise.all([
+    getHubDashboardOverview(period),
+    getTopSignupLeaders(period).catch((err) => {
+      console.error("[creator-hub] signup leaders failed:", err);
+      return [];
+    }),
+  ]);
   const windowLabel = DASHBOARD_PERIOD_LABELS[period].toLowerCase();
   const periodLabel =
     windowLabel.charAt(0).toUpperCase() + windowLabel.slice(1);
 
-  const signupLeaderLines = [...data.topCreators]
-    .filter((c) => c.signups > 0)
-    .sort((a, b) => b.signups - a.signups)
-    .slice(0, 5)
-    .map((c) => ({
-      label: c.username ?? "Unknown",
-      value: formatNumber(c.signups),
-      tone: "foreground" as const,
-    }));
+  const signupLeaderLines = signupLeaders.map((c) => ({
+    label: c.username ?? "Unknown",
+    value: formatNumber(c.signups),
+    tone: "foreground" as const,
+  }));
 
   const creatorCostLines =
     data.creatorCostBreakdown?.lines
@@ -371,19 +389,19 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
       {/* 3-up row: Top Creators (hero) + Wager chart + Deposits chart. */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.05fr_1fr_1fr]">
         <div className="rounded-2xl border bg-card p-4 sm:p-5">
-          <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <span className="flex items-center gap-2 text-sm font-semibold">
               <Trophy className="size-4 text-amber-500" />
               Top Creators
             </span>
-            <span className="text-[11px] text-muted-foreground">
-              {windowLabel}
-            </span>
+            <HubTopCreatorsPeriodSelector current={topPeriod} />
           </div>
-          <HubTopCreators
-            creators={data.topCreators}
-            periodLabel={period}
-          />
+          <Suspense
+            key={topPeriod}
+            fallback={<Skeleton className="h-[220px] w-full rounded-lg" />}
+          >
+            <TopCreatorsList period={topPeriod} />
+          </Suspense>
         </div>
 
         <WagerChart
@@ -396,8 +414,15 @@ async function OverviewSection({ period }: { period: DashboardPeriod }) {
           data={data.dailyDeposits}
         />
       </div>
+
+      <HubSignupsFtdsChart data={data.dailySignupsFtds} />
     </FadeIn>
   );
+}
+
+async function TopCreatorsList({ period }: { period: TopCreatorsPeriod }) {
+  const creators = await getHubTopCreatorsByDeposits(period);
+  return <HubTopCreators creators={creators} periodLabel={period} />;
 }
 
 // ─── Skeleton ──────────────────────────────────────────────────────
@@ -415,6 +440,7 @@ function OverviewSkeleton() {
           <Skeleton key={i} className="h-[260px] rounded-2xl" />
         ))}
       </div>
+      <Skeleton className="h-[300px] rounded-2xl" />
     </div>
   );
 }

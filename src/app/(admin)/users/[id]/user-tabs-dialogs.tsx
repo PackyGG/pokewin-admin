@@ -29,6 +29,7 @@ import { parseUsdAmount } from "@/lib/utils/money";
 import {
   SELECTABLE_ADJUSTMENT_CATEGORY_KEYS,
   BALANCE_ADJUSTMENT_CATEGORY_META,
+  BUGS_ADJUSTMENT_MIN_REASON_CHARS,
   isRemovalOnlyAdjustmentCategory,
   isCreatorLinkedAdjustmentCategory,
   isCountedAdjustmentCategory,
@@ -99,7 +100,7 @@ export function BalanceAdjustDialog({
   const [txHash, setTxHash] = useState("");
   // giveaway
   const [socialLink, setSocialLink] = useState("");
-  // bonus (exact reason ≥20 chars) / other (reason ≥20 chars) / lossback note
+  // bonus (≥20 chars) / bugs (≥30 chars) / other (≥20 chars) / lossback note
   const [reasonText, setReasonText] = useState("");
   // leaderboard (removal-only) — the linked creator. `{ id, label }` so the
   // trigger can show the chosen creator without re-fetching.
@@ -141,7 +142,7 @@ export function BalanceAdjustDialog({
   // appended when it adds signal beyond the category label.
   function resolveReason(cat: BalanceAdjustmentCategory): string {
     const label = BALANCE_ADJUSTMENT_CATEGORY_META[cat].label;
-    if (cat === "bonus" || cat === "other") {
+    if (cat === "bonus" || cat === "bugs" || cat === "other") {
       const t = reasonText.trim();
       return t.length > 0 ? `${label}: ${t}` : label;
     }
@@ -175,6 +176,12 @@ export function BalanceAdjustDialog({
       if (!socialLink.trim()) return void toast.error("Giveaway needs a Twitter or Discord link");
     } else if (category === "bonus") {
       if (reasonText.trim().length < 20) return void toast.error("Bonus needs an exact reason (min 20 chars)");
+    } else if (category === "bugs") {
+      if (reasonText.trim().length < BUGS_ADJUSTMENT_MIN_REASON_CHARS) {
+        return void toast.error(
+          `Bugs needs an explanation (min ${BUGS_ADJUSTMENT_MIN_REASON_CHARS} chars)`,
+        );
+      }
     } else if (category === "lossback") {
       if (!pnl7dValue.trim()) return void toast.error("Lossback needs a 7-day PnL value");
       if (!lossbackPercent.trim()) return void toast.error("Lossback needs a lossback %");
@@ -232,7 +239,10 @@ export function BalanceAdjustDialog({
             txHash: category === "deposit_problem" ? txHash.trim() : undefined,
             socialLink: category === "giveaway" ? socialLink.trim() : undefined,
             reasonText:
-              category === "bonus" || category === "other" || category === "lossback"
+              category === "bonus" ||
+              category === "bugs" ||
+              category === "other" ||
+              category === "lossback"
                 ? reasonText.trim() || undefined
                 : undefined,
             lossbackPercent: lossbackPercentNum,
@@ -482,6 +492,22 @@ export function BalanceAdjustDialog({
                 />
                 <p className="text-[10px] text-muted-foreground">
                   {reasonText.trim().length}/20 characters minimum.
+                </p>
+              </div>
+            )}
+
+            {/* Bugs: detailed explanation, min 30 chars. */}
+            {category === "bugs" && (
+              <div className="mt-2 space-y-1">
+                <Textarea
+                  placeholder="Describe the bug and why this compensation is owed (min 30 characters)..."
+                  value={reasonText}
+                  onChange={(e) => setReasonText(e.target.value)}
+                  rows={3}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  {reasonText.trim().length}/{BUGS_ADJUSTMENT_MIN_REASON_CHARS}{" "}
+                  characters minimum.
                 </p>
               </div>
             )}

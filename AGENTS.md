@@ -32,6 +32,8 @@ Jeder delegierte Agent bekommt den §4-Vertrag aus `SESSION_MEMORY.md` und muss 
 
 **Die zwei DBs werden unterschiedlich behandelt — diese Regel überschreibt alle früheren DB-Regeln.**
 
+> **Kurzreferenz (EN):** [`DB_ACCESS.md`](./DB_ACCESS.md) — Admin DB **full access** (Agent führt Migrationen selbst aus), MAIN/prod game DB **read-only**. Owner 2026-06-06: alle Admin-DB-Operationen durch den Agent erlaubt.
+
 ### 🟢 ADMIN DB — voller Zugriff erlaubt
 - **Schreiben, migrieren, `prisma migrate dev/deploy`, `prisma db push`, DDL/DML, `npm run admin:migrate`** — alles erlaubt, der Agent führt es selbst aus.
 - Schema-Änderungen an `prisma/admin/schema.prisma` + zugehörige Migration werden vom Agent **direkt angewendet** (nicht nur "Migration-File schreiben und User macht es"). Der User will das nicht mehr selbst tun.

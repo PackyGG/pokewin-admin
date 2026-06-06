@@ -8,8 +8,10 @@ import {
 import {
   type HubChartPoint,
   type HubDepositChartRow,
+  type HubSignupsFtdsChartRow,
   type HubWagerChartRow,
 } from "./hub-types";
+import { HUB_CHART_PERIOD } from "./hub-period-sql";
 
 /** UTC label for one bucket — must match cohort SQL `formatBucketLabel`. */
 export function chartDateForBucket(d: Date, period: DashboardPeriod): string {
@@ -132,6 +134,36 @@ export function padHubDepositChartSeries(
     }
     const date = chartDateForBucket(d, period);
     out.push({ date, amount: byDate.get(date) ?? 0 });
+  }
+
+  return out;
+}
+
+export function padHubSignupsFtdsChartSeries(
+  rows: HubSignupsFtdsChartRow[],
+  period: DashboardPeriod = HUB_CHART_PERIOD,
+): HubSignupsFtdsChartRow[] {
+  const hourly = hubBucketByHour(period);
+  const count = bucketCount(period);
+  const byDate = new Map(rows.map((r) => [r.date, r]));
+
+  const now = new Date();
+  const out: HubSignupsFtdsChartRow[] = [];
+
+  for (let i = count - 1; i >= 0; i--) {
+    const d = new Date(now);
+    if (hourly) {
+      d.setUTCMinutes(0, 0, 0);
+      d.setUTCHours(d.getUTCHours() - i);
+    } else {
+      d.setUTCHours(0, 0, 0, 0);
+      d.setUTCDate(d.getUTCDate() - i);
+    }
+    const date = chartDateForBucket(d, period);
+    const prev = byDate.get(date);
+    out.push(
+      prev ?? { date, signups: 0, ftds: 0 },
+    );
   }
 
   return out;

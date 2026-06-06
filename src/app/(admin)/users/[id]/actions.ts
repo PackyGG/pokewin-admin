@@ -22,6 +22,7 @@ import {
 import { usdAmountSchema } from "@/lib/utils/money";
 import {
   BALANCE_ADJUSTMENT_CATEGORY_KEYS,
+  BUGS_ADJUSTMENT_MIN_REASON_CHARS,
   isCreatorLinkedAdjustmentCategory,
   type BalanceAdjustmentCategory,
 } from "@/lib/balance-adjustment-categories";
@@ -150,6 +151,7 @@ type ResolvedAdjustmentMeta = {
  *   deposit_problem → coin type + tx hash
  *   giveaway        → a Twitter OR Discord link
  *   bonus           → exact reason, min 20 chars
+ *   bugs            → explanation, min 30 chars
  *   reload          → (no input)
  *   lossback        → 7d PnL value + % lossback + OPTIONAL explanation
  *   other           → free-text, min 20 chars (NOT counted)
@@ -206,6 +208,16 @@ function validateAdjustmentCategory(
       const reasonText = (d.reasonText ?? "").trim();
       if (reasonText.length < 20) {
         return { ok: false, error: "Bonus requires an exact reason of at least 20 characters" };
+      }
+      return { ok: true, meta: { ...base, reasonText } };
+    }
+    case "bugs": {
+      const reasonText = (d.reasonText ?? "").trim();
+      if (reasonText.length < BUGS_ADJUSTMENT_MIN_REASON_CHARS) {
+        return {
+          ok: false,
+          error: `Bugs requires an explanation of at least ${BUGS_ADJUSTMENT_MIN_REASON_CHARS} characters`,
+        };
       }
       return { ok: true, meta: { ...base, reasonText } };
     }

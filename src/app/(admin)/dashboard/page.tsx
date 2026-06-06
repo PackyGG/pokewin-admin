@@ -7,6 +7,7 @@ import {
   parseDashboardPeriod,
   type DashboardPeriod,
 } from "@/lib/queries/dashboard";
+import { dashboardChartTitleSuffix } from "@/lib/queries/dashboard-chart-series";
 import { DashboardPeriodSelector } from "./dashboard-period-selector";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
@@ -215,6 +216,7 @@ export default async function DashboardPage({
             chart skeleton is matched to the card chrome + height for the
             cold load. */}
         <Suspense
+          key={period}
           fallback={
             <SkeletonChart
               height={400}
@@ -254,6 +256,7 @@ export default async function DashboardPage({
             chart-card chrome (rounded-xl, faux bars) so it doesn't pop a
             flat block into a chart. */}
         <Suspense
+          key={period}
           fallback={
             <>
               <ChartRowSkeleton count={3} height={300} />
@@ -586,12 +589,27 @@ async function DashboardCharts({ period }: { period: DashboardPeriod }) {
     );
   }
   const stats = statsResult.data;
+  const hourlyXAxis = stats.chartHourlyBuckets ?? false;
+  const periodSuffix = dashboardChartTitleSuffix(period);
+  const chartTitle = (label: string) => `${label} (${periodSuffix})`;
   return (
     <FadeIn className="space-y-3 sm:space-y-4">
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <WagerChart data={stats.dailyWagers} />
-        <DepositsChart data={stats.dailyDeposits} />
-        <FtdsChart data={stats.dailyFtds} />
+        <WagerChart
+          data={stats.dailyWagers}
+          title={chartTitle("Wagers")}
+          hourlyXAxis={hourlyXAxis}
+        />
+        <DepositsChart
+          data={stats.dailyDeposits}
+          title={chartTitle("Deposits")}
+          hourlyXAxis={hourlyXAxis}
+        />
+        <FtdsChart
+          data={stats.dailyFtds}
+          title={chartTitle("FTDs")}
+          hourlyXAxis={hourlyXAxis}
+        />
       </div>
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
         {/* Daily P&L — its own nested Suspense so the heavy getDailyPnl
@@ -605,8 +623,16 @@ async function DashboardCharts({ period }: { period: DashboardPeriod }) {
         >
           <DashboardDailyPnlChart />
         </Suspense>
-        <SignupsChart data={stats.dailySignups} />
-        <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
+        <SignupsChart
+          data={stats.dailySignups}
+          title={chartTitle("Signups")}
+          hourlyXAxis={hourlyXAxis}
+        />
+        <ActiveDepositorsChart
+          data={stats.dailyActiveDepositors}
+          title={chartTitle("Active Depositors")}
+          hourlyXAxis={hourlyXAxis}
+        />
       </div>
     </FadeIn>
   );
@@ -670,7 +696,14 @@ async function DashboardWagerAttribution({
   }
   // The chart card is itself `h-full`, so it fills the 50/50 cell and aligns
   // with the Upgrader panel at the bottom.
-  return <WagerAttributionChart data={stats.dailyWagerAttribution} />;
+  const hourlyXAxis = stats.chartHourlyBuckets ?? false;
+  return (
+    <WagerAttributionChart
+      data={stats.dailyWagerAttribution}
+      title={`Wager Attribution (${dashboardChartTitleSuffix(period)})`}
+      hourlyXAxis={hourlyXAxis}
+    />
+  );
 }
 
 // `DashboardActivityFeed` was removed when the Recent Activity card moved
