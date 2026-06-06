@@ -159,24 +159,28 @@ export function CreatorHubSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      {/* Identity header — Creator Hub wordmark (pink mark + label). Reuses
-          the main sidebar's 14-unit header height so the inset geometry
-          lines up. Collapses to just the mark in icon mode. */}
-      <SidebarHeader className="border-b border-border px-3 h-14 flex items-center justify-center group-data-[collapsible=icon]:px-0">
+      {/* Creator Hub identity — same pink portal card as the main sidebar's
+          "Switch to Creator Hub" affordance (symmetric sub-app branding). */}
+      <SidebarHeader className="border-b border-border px-2 pt-2 pb-2 group-data-[collapsible=icon]:px-0">
         <Link
           href="/creator-hub"
           onClick={handleNavTap}
-          className="flex items-center gap-2.5 rounded-md outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-pink-500/40 group-data-[collapsible=icon]:gap-0"
+          title="Creator Hub"
+          className={cn(
+            "group/hub relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-pink-500/30 bg-gradient-to-r from-pink-500/15 via-pink-500/10 to-transparent px-3 py-2.5 outline-none",
+            "transition-colors hover:border-pink-500/50 hover:from-pink-500/25 hover:via-pink-500/15 focus-visible:ring-2 focus-visible:ring-pink-500/40",
+            "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
+          )}
         >
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-pink-500 to-pink-600 text-sm font-extrabold text-white shadow-sm shadow-pink-500/30">
-            C
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-pink-500/20 text-pink-600 ring-1 ring-inset ring-pink-500/30 dark:text-pink-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
+            <Megaphone className="size-4" />
           </span>
-          <span className="min-w-0 leading-tight group-data-[collapsible=icon]:hidden">
-            <span className="block truncate text-sm font-bold tracking-tight">
+          <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+            <span className="block truncate text-xs font-semibold text-pink-600 dark:text-pink-300">
               Creator Hub
             </span>
             <span className="block truncate text-[11px] text-muted-foreground">
-              CM workspace
+              CM team workspace
             </span>
           </span>
         </Link>
