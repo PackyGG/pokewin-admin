@@ -109,7 +109,6 @@ export const CREATOR_HUB_ROUTES: AuditRoute[] = [
   { key: "hub-socials-review", path: "/creator-hub/socials-review" },
   { key: "hub-profitable-algo", path: "/creator-hub/profitable-algo" },
   { key: "hub-changelog", path: "/creator-hub/changelog" },
-  { key: "hub-deal-tracker", path: "/creator-hub/deal-tracker" },
   { key: "hub-compare", path: "/creator-hub/compare" },
   { key: "hub-settings", path: "/creator-hub/settings" },
   { key: "hub-alerts-redirect", path: "/creator-hub/alerts" },

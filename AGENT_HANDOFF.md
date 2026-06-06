@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `7b96cac7` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub revamp **DONE** — hub ad detail prod-verified (Desktop Chrome, `pokewin-admin.vercel.app`)
+- **HEAD:** `b2321310` · **Updated:** 2026-06-06 · **Active focus:** Hub nav cleanup — Deal Tracker removed, Compare in Workspace sidebar (`cursor/hub-nav-cleanup-775d`, PR pending)
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
@@ -22,7 +22,7 @@
 - Wave 1 pages — roster, detail/Overview, profitable-algo, live-leaderboards, changelog · nav wiring
 - Substrate — 9 admin tables (kick/twitter/crm/alerts/session meta) + `src/lib/creator-hub/*` integration (TTL cache, throttle, server-only) + Settings (API keys in `admin_settings`)
 - Per-creator tabs — Creator, Risk, Forecast, Cohorts&LTV, Alt Accounts, Kick, Twitter, Sessions+VOD
-- Ops tools — Creator Check, onboarding checklist dock, acquisition, compare, alerts (right-rail dock), deal-tracker, socials-review
+- Ops tools — Creator Check, onboarding checklist dock, acquisition, compare (Workspace nav), alerts (right-rail dock), socials-review
 - **Wave B+C** (`c1e26f0b`) — dashboard 24h real-data + bucketed charts, Add Creator v2, ops routes wired, Top Creators = most wager
 - **Post-B+C fixes** (`e3cb6683`, `5ad928bd`, `937844c1`) — Vercel build, creator cost converted payouts, dashboard data, linked socials, Kick refetch, 30-day charts
 - **Plan closeout (2026-06-06)** — audit fixes (Hub gates on add-creator + alerts redirect), `creator_manager` assignable (schema + SQL applied), plan file recreated, e2e smoke `e2e/tests/creator-hub.spec.ts` PASS (12 routes; detail/forecast skipped on empty local MAIN DB)
@@ -63,7 +63,7 @@ _None — Creator Hub plan closed. Pick up deferred items below when owner prior
 ## ⚠️ Gotchas (session-relevant)
 
 - **Stale local game DB** — live admin pages throw locally → use fixtures (`src/app/responsive-fixture/*`) or prod; Creator Hub e2e detail tab skips when no `creator` role user in MAIN
-- **Backend API env** — Hub dashboard/roster/deal-tracker degrade gracefully when `BACKEND_API_URL_*` missing (KPIs show `—`); not a render failure
+- **Backend API env** — Hub dashboard/roster degrade gracefully when `BACKEND_API_URL_*` missing (KPIs show `—`); not a render failure
 - **Admin DB = `db push` only** — never `prisma migrate dev/deploy` (destructive reset); additive enum: `prisma/admin/sql/20260606_add_creator_manager_role.sql`
 - **MAIN DB = read-only** — no schema changes, no writes; `gift_cards` + `vouchers` live in MAIN
 - **React #130** — register new nav icons in `app-sidebar.tsx` ICONS map

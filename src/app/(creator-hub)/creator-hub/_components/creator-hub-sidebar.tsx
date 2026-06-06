@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeft,
-  CalendarRange,
   GitCompareArrows,
   Code2,
   Gift,
@@ -45,8 +44,8 @@ import { LinkPending } from "@/components/ux";
  * "Back to Admin" exit at the top, and its own nav list.
  *
  * Live nav: Dashboard, Creators, Leaderboards, Tips & Sponsors, Creator Check, Acquisition,
- * Codes & Ads, Socials Review, ROI Calculator, Changelog; plus an Ops group (Deal Tracker,
- * Compare). Settings is pinned in the footer above the theme toggle. Alerts
+ * Codes & Ads, Socials Review, ROI Calculator, Compare, Changelog. Settings is
+ * pinned in the footer above the theme toggle. Alerts
  * live on the right rail dock.
  *
  * Client-safe: no DB / server-only imports. Icons are direct
@@ -63,6 +62,11 @@ type HubNavItem = {
 const HUB_NAV: HubNavItem[] = [
   { label: "Dashboard", href: "/creator-hub", icon: LayoutDashboard },
   { label: "Creators", href: "/creator-hub/creators", icon: Users },
+  {
+    label: "Compare",
+    href: "/creator-hub/compare",
+    icon: GitCompareArrows,
+  },
   { label: "Leaderboards", href: "/creator-hub/leaderboards", icon: Trophy },
   {
     label: "Tips & Sponsors",
@@ -99,15 +103,6 @@ const HUB_NAV: HubNavItem[] = [
 
 const HUB_FOOTER_NAV: HubNavItem[] = [
   { label: "Settings", href: "/creator-hub/settings", icon: Settings },
-];
-
-const HUB_OPS_NAV: HubNavItem[] = [
-  {
-    label: "Deal Tracker",
-    href: "/creator-hub/deal-tracker",
-    icon: CalendarRange,
-  },
-  { label: "Compare", href: "/creator-hub/compare", icon: GitCompareArrows },
 ];
 
 function HubNavMenu({
@@ -240,17 +235,6 @@ export function CreatorHubSidebar() {
           <SidebarGroupContent>
             <HubNavMenu
               items={HUB_NAV}
-              pathname={pathname}
-              onNavTap={handleNavTap}
-            />
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup className="px-2 py-1">
-          <SidebarGroupLabel>Ops</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <HubNavMenu
-              items={HUB_OPS_NAV}
               pathname={pathname}
               onNavTap={handleNavTap}
             />

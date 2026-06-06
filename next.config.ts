@@ -40,6 +40,11 @@ const nextConfig: NextConfig = {
         destination: "/rewards/leaderboards",
         permanent: true,
       },
+      {
+        source: "/creator-hub/deal-tracker",
+        destination: "/creator-hub/creators",
+        permanent: true,
+      },
     ];
   },
 };
