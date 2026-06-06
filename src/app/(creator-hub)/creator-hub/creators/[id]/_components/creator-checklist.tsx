@@ -39,8 +39,8 @@ export function CreatorChecklist({ userId }: { userId: string }) {
 async function CreatorChecklistContent({ userId }: { userId: string }) {
   const data = await getCreatorChecklist(userId);
 
-  // Auto-hide: nothing to show once fully onboarded.
-  if (data.complete) return null;
+  // Auto-hide: nothing to show once fully onboarded or not a new creator.
+  if (!data || data.complete) return null;
 
   return <OnboardingChecklistPanel data={data} />;
 }

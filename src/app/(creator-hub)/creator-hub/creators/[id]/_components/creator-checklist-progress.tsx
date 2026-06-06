@@ -56,8 +56,8 @@ async function CreatorChecklistProgressContent({
 }) {
   const progress = await getCreatorChecklistProgress(userId);
 
-  // Auto-hide once fully onboarded.
-  if (progress.complete) return null;
+  // Auto-hide once fully onboarded or not a new creator.
+  if (!progress || progress.complete) return null;
 
   return (
     <span

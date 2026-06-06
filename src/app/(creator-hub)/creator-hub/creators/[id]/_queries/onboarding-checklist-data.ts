@@ -3,6 +3,7 @@ import "server-only";
 import { cache } from "react";
 
 import { adminDb } from "@/lib/admin-db";
+import { getDb } from "@/lib/db";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { logWarn } from "@/lib/errors/logger";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
@@ -10,10 +11,12 @@ import { BackendApiError, creatorsApi } from "@/lib/backend-api";
 import { isLinkedSocialUsername } from "../../../../../(admin)/creators/_queries/socials-by-user";
 import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
 import { getCreatorHeader } from "@/lib/queries/creators-detail";
+import { getUserCreatorHistory } from "@/lib/queries/user-role-history";
 
 import {
   EMPTY_MANUAL_STATE,
   MIN_SOCIALS,
+  NEW_CREATOR_CHECKLIST_DAYS,
   type ChecklistItem,
   type ChecklistManualState,
   type CreatorChecklistData,
@@ -47,6 +50,10 @@ import {
  * its dock host (its own Suspense boundary), so these reads run only when the
  * checklist is mounted.
  *
+ * New-creator-only: established creators (promoted before
+ * {@link NEW_CREATOR_CHECKLIST_DAYS}) never see the widget/badge unless they
+ * have a recent in-progress checklist row.
+ *
  * Schema self-heal: `creator_onboarding_checklist` is an ADMIN-DB table that
  * may not be present on every environment yet. Every read/write path here
  * tolerates a missing relation (Postgres 42P01 / Prisma P2021) by degrading to
@@ -65,6 +72,7 @@ type ChecklistRow = {
   lb_prepaid_coin: string | null;
   lb_prepaid_tx_url: string | null;
   completed_at: Date | null;
+  created_at: Date;
 };
 
 const ROSTER_WALK_PAGE_SIZE = 100;
@@ -92,6 +100,66 @@ const getCreatorTotalDealCounts = cache(async (): Promise<Map<string, number>> =
   }
   return map;
 });
+
+/**
+ * Best-effort "creator since" — earliest promotion signal we can find:
+ *   1. `user_made_creator` audit (admin-panel promotion)
+ *   2. `role_changed → creator` audit
+ *   3. Oldest owned affiliate code (creator-only artifact)
+ */
+async function resolveCreatorPromotedAt(
+  targetUserId: string,
+): Promise<Date | null> {
+  const db = await getDb();
+  const [madeCreatorEvent, roleHistory, codeRows] = await Promise.all([
+    adminDb.admin_audit_events
+      .findFirst({
+        where: {
+          target_user_id: targetUserId,
+          event_type: "user_made_creator",
+        },
+        orderBy: { created_at: "asc" },
+        select: { created_at: true },
+      })
+      .catch(() => null),
+    getUserCreatorHistory(targetUserId),
+    db.$queryRawUnsafe<{ created_at: Date }[]>(
+      `SELECT created_at FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1`,
+      targetUserId,
+    ),
+  ]);
+
+  const candidates: Date[] = [];
+  if (madeCreatorEvent?.created_at) candidates.push(madeCreatorEvent.created_at);
+  if (roleHistory.creatorSince) candidates.push(new Date(roleHistory.creatorSince));
+  if (codeRows[0]?.created_at) candidates.push(codeRows[0].created_at);
+
+  if (candidates.length === 0) return null;
+  return new Date(Math.min(...candidates.map((d) => d.getTime())));
+}
+
+/**
+ * New-creator-only gate. Established creators (promoted before the window, with
+ * no recent in-progress checklist row) never see the widget/badge.
+ */
+export async function isCreatorChecklistEligible(
+  targetUserId: string,
+): Promise<boolean> {
+  const cutoffMs = Date.now() - NEW_CREATOR_CHECKLIST_DAYS * 86_400_000;
+
+  const [promotedAt, row] = await Promise.all([
+    resolveCreatorPromotedAt(targetUserId),
+    readChecklistRow(targetUserId),
+  ]);
+
+  if (promotedAt && promotedAt.getTime() >= cutoffMs) return true;
+
+  if (row && row.completed_at == null && row.created_at.getTime() >= cutoffMs) {
+    return true;
+  }
+
+  return false;
+}
 
 /** True if an error is a "relation does not exist" (table not migrated yet). */
 export function isChecklistTableMissing(err: unknown): boolean {
@@ -126,6 +194,7 @@ async function readChecklistRow(
         lb_prepaid_coin: true,
         lb_prepaid_tx_url: true,
         completed_at: true,
+        created_at: true,
       },
     });
   } catch (err) {
@@ -266,7 +335,9 @@ async function creatorEverHadFillDeal(userId: string): Promise<boolean> {
  */
 export async function getCreatorChecklist(
   targetUserId: string,
-): Promise<CreatorChecklistData> {
+): Promise<CreatorChecklistData | null> {
+  if (!(await isCreatorChecklistEligible(targetUserId))) return null;
+
   // Persisted manual row first (also gives us the prior completed_at + whether
   // a row exists, which the snapshot sync needs).
   const rowResult = await safeQuery(
@@ -451,8 +522,9 @@ export type CreatorChecklistProgress = {
 
 export async function getCreatorChecklistProgress(
   targetUserId: string,
-): Promise<CreatorChecklistProgress> {
+): Promise<CreatorChecklistProgress | null> {
   const full = await getCreatorChecklist(targetUserId);
+  if (!full) return null;
   return {
     doneCount: full.doneCount,
     totalCount: full.totalCount,

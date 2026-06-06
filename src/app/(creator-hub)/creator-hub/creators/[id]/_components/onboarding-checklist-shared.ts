@@ -109,3 +109,9 @@ export type ManualToggleField = (typeof MANUAL_TOGGLE_FIELDS)[number];
 
 /** Minimum distinct linked socials for the "≥ 2 socials set" auto item. */
 export const MIN_SOCIALS = 2;
+
+/**
+ * Onboarding checklist is shown only for creators promoted (or checklist-started)
+ * within this window. Established/long-tenured creators never see the widget.
+ */
+export const NEW_CREATOR_CHECKLIST_DAYS = 90;
