@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `d8ca712f` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub roster 3-tab split — branch `cursor/creator-hub-roster-tabs-775d` (PR pending merge)
+- **HEAD:** `b2ff9ab1` · **Updated:** 2026-06-06 · **Active focus:** Kick API AeroKick fallback — branch `cursor/kick-api-packygg-775d` (PR pending); roster tabs on `cursor/creator-hub-roster-tabs-775d` (PR #49)
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
@@ -71,6 +71,7 @@
 - **PowerShell UTF-8 BOM** breaks `.sql` — write SQL via Bash/`printf`
 - **Verify agents** — `git fetch && checkout exact SHA` before "not found" verdicts
 - **Twitter API shape** — read `core` + `avatar`, not only `legacy` (`src/lib/creator-hub/`)
+- **Kick RapidAPI** — direct `kick.com/api/*` returns 403 from server IPs; RapidAPI needs subscribed key in Hub Settings. Profile fallback: AeroKick (`fetchKickProfileFromAerokick` in `kick-aerokick.ts`). Past streams/VODs still need RapidAPI key or prior cache
 - **Hub ads e2e** — `readSampleAdCode()` needs `admin_settings.house_affiliate_user_id` + a row in MAIN `affiliate_codes`; local VM has neither → detail e2e skips; ads tab still renders house-setup empty state
 - **Prod Playwright mint** — cookie signed with VM `SESSION_SECRET` must match Vercel env or prod smoke lands on `/login`
 
