@@ -140,9 +140,9 @@ const TABS: TabDef[] = [
 
 export function UserViewModern({
   data,
-  gamingTx,
-  financialTx,
-  adjustmentsTx,
+  gamingTxPromise,
+  financialTxPromise,
+  adjustmentsTxPromise,
   rewards,
   notes,
   pnlBreakdown,
@@ -154,23 +154,24 @@ export function UserViewModern({
   initialTab,
 }: {
   data: UserDetail;
-  gamingTx: PaginatedTransactions;
-  financialTx: PaginatedTransactions;
+  // Gaming + financial ledger pages streamed in as in-flight promises from
+  // page.tsx so the hero + balance panels paint without blocking on ledger
+  // enrichment (battles, inventory sweep, upgrader joins). Each is `use()`d
+  // inside a Suspense scoped to the section/tab that needs it.
+  gamingTxPromise: Promise<PaginatedTransactions>;
+  financialTxPromise: Promise<PaginatedTransactions>;
   // Dedicated uncapped admin_balance_adjustment page (see page.tsx ADJ_LIMIT)
   // so the Overview tab can surface every adjustment without the shared
   // financial page hiding older ones behind newer activity.
-  adjustmentsTx: PaginatedTransactions;
+  adjustmentsTxPromise: Promise<PaginatedTransactions>;
   rewards: UserRewards;
   notes: AdminNote[];
   pnlBreakdown: PnlBreakdown;
   inventory: PaginatedInventory;
   // Tab-gated, non-critical reads streamed in as in-flight promises from
-  // page.tsx so the hero + Overview tab paint without blocking on them.
-  // They resolve to the exact same shapes the eager props used to carry;
-  // each is `use()`d inside a Suspense scoped to just the tab that needs it
-  // (disposed inventory → Inventory tab; shared IPs/fingerprints → Trust
-  // tab), so opening that tab shows a brief skeleton instead of the whole
-  // body having waited for the network/identity fan-out up front.
+  // page.tsx. Each is `use()`d inside a Suspense scoped to just the tab
+  // that needs it (disposed inventory → Inventory tab; shared IPs/
+  // fingerprints → Trust tab).
   disposedInventoryPromise: Promise<PaginatedInventory>;
   riskBreakdown: RiskScoreBreakdown;
   sharedIpsPromise: Promise<SharedIdentityUser[]>;
@@ -528,17 +529,17 @@ export function UserViewModern({
       />
 
       {/* ── TAB CONTENT ──────────────────────────────────────────────
-          All data is fetched upfront in page.tsx and threaded down as
-          props, so tab switches are instant client-side toggles — no
-          server round-trip, no streaming wait. FadeIn keyed on the
-          active tab matches the analytics-tab crossfade behaviour. */}
+          Tab switches are instant client-side toggles. Ledger-backed
+          sections stream in behind scoped Suspense boundaries so the hero
+          and balance panels never wait on gaming enrichment. FadeIn keyed
+          on the active tab matches the analytics-tab crossfade behaviour. */}
       <FadeIn key={activeTab} speed="fast">
         {activeTab === "overview" && (
           <OverviewTab
             data={data}
-            gamingTx={gamingTx}
-            financialTx={financialTx}
-            adjustmentsTx={adjustmentsTx}
+            gamingTxPromise={gamingTxPromise}
+            financialTxPromise={financialTxPromise}
+            adjustmentsTxPromise={adjustmentsTxPromise}
             pnlBreakdown={pnlBreakdown}
             isAdmin={isAdmin}
           />
@@ -547,7 +548,7 @@ export function UserViewModern({
         {activeTab === "finances" && (
           <FinancesTab
             data={data}
-            financialTx={financialTx}
+            financialTxPromise={financialTxPromise}
             isAdmin={isAdmin}
           />
         )}
@@ -555,7 +556,7 @@ export function UserViewModern({
         {activeTab === "rewards" && <RewardsTab rewards={rewards} />}
 
         {activeTab === "gaming" && (
-          <GamingTab data={data} gamingTx={gamingTx} />
+          <GamingTab data={data} gamingTxPromise={gamingTxPromise} />
         )}
 
         {activeTab === "inventory" && (

@@ -6,6 +6,129 @@ import { parseUpgraderMetadata } from "@/lib/utils/upgrader-metadata";
 import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
 import type { ledger_transaction_type } from "@/generated/prisma/enums";
 
+/** Ledger types that pull in pack/battle/upgrader enrichment (expensive). */
+const GAMING_LEDGER_TYPES = new Set<string>([
+  "pack_opening",
+  "battle_bet",
+  "battle_sponsorship",
+  "battle_refund",
+  "upgrader_bet",
+  "upgrader_payout",
+  "voucher_redeemed",
+]);
+
+function isFinancialOnlyFilter(filters?: {
+  type?: string;
+  types?: string[];
+}): boolean {
+  if (filters?.type && filters.type !== "all") {
+    return !GAMING_LEDGER_TYPES.has(filters.type);
+  }
+  if (filters?.types && filters.types.length > 0) {
+    const valid = filterLedgerTxTypes(filters.types);
+    return (
+      valid.length > 0 &&
+      valid.every((t) => !GAMING_LEDGER_TYPES.has(t))
+    );
+  }
+  return false;
+}
+
+async function resolveCanonicalUserId(
+  db: Awaited<ReturnType<typeof getDb>>,
+  userId: string,
+): Promise<string | null> {
+  const user = await db.user.findFirst({
+    where: {
+      OR: [{ id: userId }, { id: { equals: userId, mode: "insensitive" } }],
+    },
+    select: { id: true },
+  });
+  return user?.id ?? null;
+}
+
+type LedgerRow = Awaited<
+  ReturnType<
+    Awaited<ReturnType<typeof getDb>>["ledger_transactions"]["findMany"]
+  >
+>[number];
+
+function mapFinancialLedgerRow(t: LedgerRow) {
+  const balanceBeforeNum = toNumber(t.balance_before);
+  const balanceAfterNum = toNumber(t.balance_after);
+  const meta = t.metadata as Record<string, unknown> | null;
+  const invItemId = meta?.inventory_item_id as string | undefined;
+
+  return {
+    id: t.id,
+    type: t.type,
+    amount: toNumber(t.amount),
+    balanceBefore: balanceBeforeNum,
+    balanceAfter: balanceAfterNum,
+    worthBefore: balanceBeforeNum,
+    worthAfter: balanceAfterNum,
+    description: t.description,
+    status: t.status,
+    gameSessionId: t.game_session_id,
+    packId: null,
+    packName: null,
+    cardsValue: null,
+    gameResult: null,
+    inventoryValue: 0,
+    soldCard: invItemId
+      ? { name: "Card sale", imageUrl: null, rarity: null }
+      : null,
+    cryptoAsset: t.crypto_asset,
+    cryptoAmount: t.crypto_amount ? toNumber(t.crypto_amount) : null,
+    exchangeRate: t.exchange_rate ? toNumber(t.exchange_rate) : null,
+    blockchainTxHash: t.blockchain_tx_hash,
+    sourceAddress: t.source_address,
+    destinationAddress: t.destination_address,
+    depositAddressId: t.deposit_address_id,
+    failureReason: t.failure_reason,
+    metadata: t.metadata ? JSON.parse(JSON.stringify(t.metadata)) : null,
+    fireblocksTxId: t.fireblocks_tx_id,
+    externalTxId: t.external_tx_id,
+    createdAt: t.created_at.toISOString(),
+    updatedAt: t.updated_at.toISOString(),
+    borrowPercentage: null,
+    borrowedAmountUsd: null,
+    sponsorshipPercentage: null,
+    battleId: null,
+    hasPassword: null,
+    battleWinnings: null,
+    upgraderResult: null,
+    upgraderWinnings: null,
+    upgraderTargetMultiplier: null,
+    upgraderTargetChance: null,
+  };
+}
+
+async function getUserFinancialTransactionsLight(
+  db: Awaited<ReturnType<typeof getDb>>,
+  where: Prisma.ledger_transactionsWhereInput,
+  page: number,
+  perPage: number,
+) {
+  const [transactions, total] = await Promise.all([
+    db.ledger_transactions.findMany({
+      where,
+      orderBy: { created_at: "desc" },
+      skip: (page - 1) * perPage,
+      take: perPage,
+    }),
+    db.ledger_transactions.count({ where }),
+  ]);
+
+  return {
+    data: transactions.map(mapFinancialLedgerRow),
+    total,
+    page,
+    perPage,
+    totalPages: Math.ceil(total / perPage),
+  };
+}
+
 export async function getUserTransactions(
   userId: string,
   page: number = 1,
@@ -46,6 +169,22 @@ export async function getUserTransactions(
     if (dateFilter.gte || dateFilter.lte) {
       where.created_at = dateFilter;
     }
+  }
+
+  const canonicalUserId = await resolveCanonicalUserId(db, userId);
+  if (!canonicalUserId) {
+    return {
+      data: [],
+      total: 0,
+      page,
+      perPage,
+      totalPages: 0,
+    };
+  }
+  where.user_id = canonicalUserId;
+
+  if (isFinancialOnlyFilter(filters)) {
+    return getUserFinancialTransactionsLight(db, where, page, perPage);
   }
 
   const [transactions, total] = await Promise.all([
@@ -230,7 +369,7 @@ export async function getUserTransactions(
       resolveInventoryWithCards(),
       db.user_inventory.findMany({
         where: {
-          user_id: userId,
+          user_id: canonicalUserId,
           ...(maxTxTs ? { obtained_at: { lte: maxTxTs } } : {}),
         },
         select: {
@@ -251,7 +390,7 @@ export async function getUserTransactions(
       // parked as a voucher until the user redeems it. Pulled so the
       // per-tx held-value snapshot can count them alongside cards.
       db.vouchers.findMany({
-        where: { user_id: userId },
+        where: { user_id: canonicalUserId },
         select: { value: true, created_at: true, claimed_at: true, origin_id: true },
       }),
     ]);
@@ -420,7 +559,7 @@ export async function getUserTransactions(
       const grouped = await db.user_inventory.groupBy({
         by: ["source_id"],
         where: {
-          user_id: userId,
+          user_id: canonicalUserId,
           source_type: "battle",
           source_id: { in: wonGameSessionIds },
         },

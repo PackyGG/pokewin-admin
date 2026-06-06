@@ -91,9 +91,9 @@ export async function OverviewTabContent({
   return (
     <OverviewTab
       data={data}
-      gamingTx={gamingTx}
-      financialTx={financialTx}
-      adjustmentsTx={adjustmentsTx}
+      gamingTxPromise={Promise.resolve(gamingTx)}
+      financialTxPromise={Promise.resolve(financialTx)}
+      adjustmentsTxPromise={Promise.resolve(adjustmentsTx)}
       pnlBreakdown={pnlBreakdown}
       isAdmin={data.sessionRole === "admin"}
     />
@@ -108,7 +108,9 @@ export async function GamingTabContent({ data }: { data: UserDetail }) {
   const gamingTx = await getUserTransactions(data.user.id, 1, 10, {
     types: GAMING_TYPES,
   });
-  return <GamingTab data={data} gamingTx={gamingTx} />;
+  return (
+    <GamingTab data={data} gamingTxPromise={Promise.resolve(gamingTx)} />
+  );
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -122,7 +124,7 @@ export async function FinancesTabContent({ data }: { data: UserDetail }) {
   return (
     <FinancesTab
       data={data}
-      financialTx={financialTx}
+      financialTxPromise={Promise.resolve(financialTx)}
       isAdmin={data.sessionRole === "admin"}
     />
   );

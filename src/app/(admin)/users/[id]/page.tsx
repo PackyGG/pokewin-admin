@@ -346,9 +346,6 @@ async function UserDetailBody({
     inventoryResult,
     pnlResult,
     notesResult,
-    gamingTxResult,
-    financialTxResult,
-    adjustmentsTxResult,
     rewardsResult,
     creatorHistoryResult,
     riskResult,
@@ -388,35 +385,6 @@ async function UserDetailBody({
     // doesn't blank the page — the Account tab renders its empty notes
     // state instead.
     safeQuery(() => getNotesForUser(id), [], "users.detail.notes"),
-    // Gaming + Finances tab data — the gaming query path joins through
-    // provably_fair_results, battle_participants, and a raw-SQL
-    // upgrader_games lookup. A transient failure in any of those used to
-    // crash the entire page via the segment error boundary, surfacing as
-    // "I can't click Gaming" because the redirect to error.tsx replaced
-    // the tab bar. Degrading to an empty tx page keeps the tabs clickable
-    // while logging the failure for engineering.
-    safeQuery(
-      () => getUserTransactions(id, 1, 10, { types: GAMING_TYPES }),
-      EMPTY_TX_PAGE,
-      "users.detail.gamingTx",
-      USER_DETAIL_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getUserTransactions(id, 1, 10, { types: FINANCIAL_TYPES }),
-      EMPTY_TX_PAGE,
-      "users.detail.financialTx",
-      USER_DETAIL_QUERY_TIMEOUT_MS,
-    ),
-    // Dedicated uncapped admin_balance_adjustment fetch — keeps every
-    // adjustment available to the Overview feed + block regardless of how
-    // much newer financial activity sits in front of it (see ADJ_LIMIT
-    // comment). Degrades to an empty page on failure like the others.
-    safeQuery(
-      () => getUserTransactions(id, 1, ADJ_LIMIT, { types: ADJUSTMENT_TYPES }),
-      EMPTY_TX_PAGE,
-      "users.detail.adjustmentsTx",
-      USER_DETAIL_QUERY_TIMEOUT_MS,
-    ),
     // Rewards summary (one_time reward count + rakeback claimable/claimed).
     // Un-wrapped before; degrade to the zeroed summary so the Rewards tab
     // renders its empty state.
@@ -466,14 +434,31 @@ async function UserDetailBody({
 
   // ── NON-CRITICAL STREAMED GROUP ────────────────────────────────────
   //
-  // Kicked off here but deliberately NOT awaited — these feed only the
-  // tab-gated Inventory "Sold & Exchanged" table + the Trust tab, which
-  // don't render until the operator opens that tab. Each promise resolves
-  // to the SAME bare data shape the critical reads above produce (the
-  // safeQuery result, unwrapped via `.data`), so the downstream
-  // components are unchanged — only WHEN the value is awaited moves off
-  // the first-paint path. UserViewModern `use()`s these inside a second
-  // Suspense boundary scoped to just those two tabs.
+  // Kicked off here but deliberately NOT awaited — gaming + financial tx
+  // (plus the dedicated adjustments page) and the tab-gated disposed
+  // inventory + Trust shared-identity reads. Each promise resolves to the
+  // SAME bare data shape the critical reads used to produce (safeQuery
+  // result unwrapped via `.data`). UserViewModern `use()`s them inside
+  // Suspense boundaries scoped to the sections/tabs that need them so the
+  // hero + balance panels paint without waiting on ledger enrichment.
+  const gamingTxPromise = safeQuery(
+    () => getUserTransactions(id, 1, 10, { types: GAMING_TYPES }),
+    EMPTY_TX_PAGE,
+    "users.detail.gamingTx",
+    USER_DETAIL_QUERY_TIMEOUT_MS,
+  ).then((r) => r.data);
+  const financialTxPromise = safeQuery(
+    () => getUserTransactions(id, 1, 10, { types: FINANCIAL_TYPES }),
+    EMPTY_TX_PAGE,
+    "users.detail.financialTx",
+    USER_DETAIL_QUERY_TIMEOUT_MS,
+  ).then((r) => r.data);
+  const adjustmentsTxPromise = safeQuery(
+    () => getUserTransactions(id, 1, ADJ_LIMIT, { types: ADJUSTMENT_TYPES }),
+    EMPTY_TX_PAGE,
+    "users.detail.adjustmentsTx",
+    USER_DETAIL_QUERY_TIMEOUT_MS,
+  ).then((r) => r.data);
   const disposedInventoryPromise = safeQuery(
     () => getUserInventory(id, 1, 24, { status: "disposed" }),
     EMPTY_INVENTORY_PAGE,
@@ -524,11 +509,6 @@ async function UserDetailBody({
   const pnlBreakdown = pnlResult.data;
   const notes = notesResult.data;
   const rewards = rewardsResult.data;
-  // Unwrap the gaming + financial tx safeQuery results back to the bare
-  // PaginatedTransactions shape UserViewModern + the tab tables expect.
-  const gamingTx = gamingTxResult.data;
-  const financialTx = financialTxResult.data;
-  const adjustmentsTx = adjustmentsTxResult.data;
 
   // "Ever a creator?" = currently creator, OR an audit role-change to
   // creator exists, OR they own affiliate codes (created only for
@@ -576,17 +556,13 @@ async function UserDetailBody({
   return (
     <UserViewModern
       data={detailWithSession}
-      gamingTx={gamingTx}
-      financialTx={financialTx}
-      adjustmentsTx={adjustmentsTx}
+      gamingTxPromise={gamingTxPromise}
+      financialTxPromise={financialTxPromise}
+      adjustmentsTxPromise={adjustmentsTxPromise}
       rewards={rewards}
       notes={notes}
       pnlBreakdown={pnlBreakdown}
       inventory={inventory}
-      // Non-critical, tab-gated reads passed as in-flight promises so the
-      // hero + Overview paint without waiting on them; UserViewModern
-      // streams them into the Inventory + Trust tabs behind a second
-      // Suspense. Same query results, just resolved off the critical path.
       disposedInventoryPromise={disposedInventoryPromise}
       riskBreakdown={riskBreakdown}
       sharedIpsPromise={sharedIpsPromise}

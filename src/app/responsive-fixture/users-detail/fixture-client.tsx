@@ -237,9 +237,9 @@ export function UserDetailFixtureClient() {
   return (
     <UserViewModern
       data={DATA}
-      gamingTx={EMPTY_TX}
-      financialTx={EMPTY_TX}
-      adjustmentsTx={EMPTY_TX}
+      gamingTxPromise={Promise.resolve(EMPTY_TX)}
+      financialTxPromise={Promise.resolve(EMPTY_TX)}
+      adjustmentsTxPromise={Promise.resolve(EMPTY_TX)}
       rewards={REWARDS}
       notes={NOTES}
       pnlBreakdown={PNL}

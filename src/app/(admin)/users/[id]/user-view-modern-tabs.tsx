@@ -103,15 +103,15 @@ import {
 
 export function OverviewTab({
   data,
-  gamingTx,
-  financialTx,
-  adjustmentsTx,
+  gamingTxPromise,
+  financialTxPromise,
+  adjustmentsTxPromise,
   pnlBreakdown,
   isAdmin,
 }: {
   data: UserDetail;
-  gamingTx: PaginatedTransactions;
-  financialTx: PaginatedTransactions;
+  gamingTxPromise: Promise<PaginatedTransactions>;
+  financialTxPromise: Promise<PaginatedTransactions>;
   // Dedicated, UNCAPPED admin_balance_adjustment fetch (separate from the
   // shared 10-row `financialTx` page, which lumps adjustments together with
   // deposits/withdrawals/claims and can push an older adjustment off page 1
@@ -120,7 +120,7 @@ export function OverviewTab({
   // below, no matter how much newer financial activity sits in front of it.
   // Same query path, so the official_stream fake-balance NOT-filter still
   // applies automatically.
-  adjustmentsTx: PaginatedTransactions;
+  adjustmentsTxPromise: Promise<PaginatedTransactions>;
   pnlBreakdown: PnlBreakdown;
   isAdmin: boolean;
 }) {
@@ -152,42 +152,25 @@ export function OverviewTab({
         />
       </div>
 
-      {/* Deposits & Withdrawals — recent financial activity on overview
-          per admin request. Full history still lives on Finances tab.
-          isAdmin pass-through gates the password-reveal row inside the
-          transaction-detail modal (which can mount for battle_refund
-          rows reachable from this table on some flows). */}
+      {/* Deposits & Withdrawals — streamed so balance panels paint first. */}
       <SectionHeading icon={ArrowDownToLine} title="Deposits & Withdrawals" />
-      <CategoryTransactionsTable
-        title="Deposits & Withdrawals"
-        userId={user.id}
-        types={FINANCIAL_TX_TYPES}
-        initialTx={financialTx}
-        cardWithdrawals={data.cardWithdrawals}
-        isAdmin={isAdmin}
-      />
+      <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
+        <DepositsWithdrawalsStreamed
+          userId={user.id}
+          cardWithdrawals={data.cardWithdrawals}
+          financialTxPromise={financialTxPromise}
+          isAdmin={isAdmin}
+        />
+      </Suspense>
 
-      {/* Admin balance adjustments — every manual credit/clawback an admin
-          applied to this user, fed by a DEDICATED uncapped fetch so none can
-          be hidden behind newer financial activity (the bug this block fixes:
-          the shared 10-row financial page could drop an older adjustment).
-          Rendered as its own section so adjustments are ALWAYS visible without
-          paging. Reuses CategoryTransactionsTable → house-POV colors
-          (admin credit to user = user gain = rose; clawback = emerald) come
-          from the shared ledgerDirection mapping. Only shown when at least one
-          adjustment exists so quiet users don't get an empty section. */}
-      {adjustmentsTx.total > 0 && (
-        <>
-          <SectionHeading icon={Coins} title="Admin balance adjustments" />
-          <CategoryTransactionsTable
-            title="Admin balance adjustments"
-            userId={user.id}
-            types={ADJUSTMENT_TX_TYPES}
-            initialTx={adjustmentsTx}
-            isAdmin={isAdmin}
-          />
-        </>
-      )}
+      {/* Admin balance adjustments — streamed; section hidden when empty. */}
+      <Suspense fallback={null}>
+        <AdminAdjustmentsStreamed
+          userId={user.id}
+          adjustmentsTxPromise={adjustmentsTxPromise}
+          isAdmin={isAdmin}
+        />
+      </Suspense>
 
       {/* Tips & Rain — creator tips this user received/sent + rain
           prizes won. Sits directly below deposits per admin request
@@ -196,17 +179,87 @@ export function OverviewTab({
       <TipsSection tips={data.tips} />
 
       {/* Recent activity — unified timeline (gaming + financial +
-          adjustments). Colors are flipped to HOUSE perspective: if the user
-          made money the dot/amount shows RED (we lost), user losses show
-          GREEN. Adjustments are passed in full (deduped against financialTx)
-          so every admin balance adjustment is guaranteed to surface here. */}
+          adjustments). Streamed so the heaviest gaming enrichment never
+          blocks the panels above. */}
       <SectionHeading icon={Activity} title="Recent Activity" />
-      <RecentActivityTimeline
-        gamingTx={gamingTx.data.slice(0, 5)}
-        financialTx={financialTx.data.slice(0, 5)}
-        adjustmentsTx={adjustmentsTx.data}
-      />
+      <Suspense fallback={<SkeletonTable rows={5} columns={4} />}>
+        <RecentActivityStreamed
+          gamingTxPromise={gamingTxPromise}
+          financialTxPromise={financialTxPromise}
+          adjustmentsTxPromise={adjustmentsTxPromise}
+        />
+      </Suspense>
     </div>
+  );
+}
+
+function DepositsWithdrawalsStreamed({
+  userId,
+  cardWithdrawals,
+  financialTxPromise,
+  isAdmin,
+}: {
+  userId: string;
+  cardWithdrawals: UserDetail["cardWithdrawals"];
+  financialTxPromise: Promise<PaginatedTransactions>;
+  isAdmin: boolean;
+}) {
+  const financialTx = use(financialTxPromise);
+  return (
+    <CategoryTransactionsTable
+      title="Deposits & Withdrawals"
+      userId={userId}
+      types={FINANCIAL_TX_TYPES}
+      initialTx={financialTx}
+      cardWithdrawals={cardWithdrawals}
+      isAdmin={isAdmin}
+    />
+  );
+}
+
+function AdminAdjustmentsStreamed({
+  userId,
+  adjustmentsTxPromise,
+  isAdmin,
+}: {
+  userId: string;
+  adjustmentsTxPromise: Promise<PaginatedTransactions>;
+  isAdmin: boolean;
+}) {
+  const adjustmentsTx = use(adjustmentsTxPromise);
+  if (adjustmentsTx.total <= 0) return null;
+  return (
+    <>
+      <SectionHeading icon={Coins} title="Admin balance adjustments" />
+      <CategoryTransactionsTable
+        title="Admin balance adjustments"
+        userId={userId}
+        types={ADJUSTMENT_TX_TYPES}
+        initialTx={adjustmentsTx}
+        isAdmin={isAdmin}
+      />
+    </>
+  );
+}
+
+function RecentActivityStreamed({
+  gamingTxPromise,
+  financialTxPromise,
+  adjustmentsTxPromise,
+}: {
+  gamingTxPromise: Promise<PaginatedTransactions>;
+  financialTxPromise: Promise<PaginatedTransactions>;
+  adjustmentsTxPromise: Promise<PaginatedTransactions>;
+}) {
+  const gamingTx = use(gamingTxPromise);
+  const financialTx = use(financialTxPromise);
+  const adjustmentsTx = use(adjustmentsTxPromise);
+  return (
+    <RecentActivityTimeline
+      gamingTx={gamingTx.data.slice(0, 5)}
+      financialTx={financialTx.data.slice(0, 5)}
+      adjustmentsTx={adjustmentsTx.data}
+    />
   );
 }
 
@@ -433,27 +486,25 @@ export function RewardsTab({ rewards }: { rewards: UserRewards }) {
 
 export function FinancesTab({
   data,
-  financialTx,
+  financialTxPromise,
   isAdmin,
 }: {
   data: UserDetail;
-  financialTx: PaginatedTransactions;
+  financialTxPromise: Promise<PaginatedTransactions>;
   isAdmin: boolean;
 }) {
-  const { user, balances, capabilities } = data;
-  void balances;
-  void capabilities;
+  const { user } = data;
   return (
     <div className="space-y-6">
       <SectionHeading icon={ArrowDownToLine} title="Deposits & Withdrawals" />
-      <CategoryTransactionsTable
-        title="Deposits & Withdrawals"
-        userId={user.id}
-        types={FINANCIAL_TX_TYPES}
-        initialTx={financialTx}
-        cardWithdrawals={data.cardWithdrawals}
-        isAdmin={isAdmin}
-      />
+      <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
+        <DepositsWithdrawalsStreamed
+          userId={user.id}
+          cardWithdrawals={data.cardWithdrawals}
+          financialTxPromise={financialTxPromise}
+          isAdmin={isAdmin}
+        />
+      </Suspense>
     </div>
   );
 }
@@ -464,10 +515,10 @@ export function FinancesTab({
 
 export function GamingTab({
   data,
-  gamingTx,
+  gamingTxPromise,
 }: {
   data: UserDetail;
-  gamingTx: PaginatedTransactions;
+  gamingTxPromise: Promise<PaginatedTransactions>;
 }) {
   const { user } = data;
   // sessionRole drives the password-aware Watch button + password-reveal
@@ -479,15 +530,36 @@ export function GamingTab({
   return (
     <div className="space-y-6">
       <SectionHeading icon={Swords} title="Gaming Transactions" />
-      <CategoryTransactionsTable
-        title="Gaming"
-        userId={user.id}
-        types={GAMING_TX_TYPES}
-        initialTx={gamingTx}
-        showCardsValue
-        isAdmin={isAdmin}
-      />
+      <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
+        <GamingTransactionsStreamed
+          userId={user.id}
+          gamingTxPromise={gamingTxPromise}
+          isAdmin={isAdmin}
+        />
+      </Suspense>
     </div>
+  );
+}
+
+function GamingTransactionsStreamed({
+  userId,
+  gamingTxPromise,
+  isAdmin,
+}: {
+  userId: string;
+  gamingTxPromise: Promise<PaginatedTransactions>;
+  isAdmin: boolean;
+}) {
+  const gamingTx = use(gamingTxPromise);
+  return (
+    <CategoryTransactionsTable
+      title="Gaming"
+      userId={userId}
+      types={GAMING_TX_TYPES}
+      initialTx={gamingTx}
+      showCardsValue
+      isAdmin={isAdmin}
+    />
   );
 }
 
