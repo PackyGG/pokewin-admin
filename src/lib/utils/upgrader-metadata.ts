@@ -64,6 +64,103 @@ export type UpgraderMetadata = {
   roll: number | null;
 };
 
+/** Top-level + nested JSON object keys the backend may tuck config under. */
+export const UPGRADER_NESTED_OBJECT_KEYS = [
+  "config",
+  "upgrader",
+  "play",
+  "game",
+  "params",
+  "settings",
+  "bet",
+  "spin",
+] as const;
+
+export const UPGRADER_MULTIPLIER_KEYS = [
+  "target_multiplier",
+  "targetMultiplier",
+  "selected_multiplier",
+  "selectedMultiplier",
+  "upgrade_multiplier",
+  "upgradeMultiplier",
+  "desired_multiplier",
+  "desiredMultiplier",
+  "multiplier",
+  "target_payout",
+  "payout_multiplier",
+  "cashout_multiplier",
+  "cashout",
+  "payout",
+  "target_x",
+  "targetX",
+  "win_multiplier",
+  "winMultiplier",
+] as const;
+
+export const UPGRADER_CHANCE_KEYS = [
+  "target_chance",
+  "targetChance",
+  "win_chance",
+  "winChance",
+  "chance",
+  "probability",
+  "win_probability",
+  "winProbability",
+] as const;
+
+export const UPGRADER_HOUSE_EDGE_KEYS = [
+  "house_edge",
+  "houseEdge",
+  "edge",
+] as const;
+
+export const UPGRADER_ROLL_KEYS = [
+  "roll",
+  "result",
+  "random",
+  "random_value",
+  "roll_value",
+  "result_value",
+] as const;
+
+/**
+ * Build a SQL COALESCE expression that reads a target multiplier off a
+ * JSON/JSONB column. Pass the column expression (e.g.
+ * `pf.result_metadata` or `lt.metadata`). Mirrors the candidate-key
+ * list used by `parseUpgraderMetadata`, including one-level nested
+ * objects (`config`, `upgrader`, `play`, ...).
+ */
+export function upgraderTargetMultiplierSql(metadataJsonExpr: string): string {
+  const parts: string[] = [];
+  for (const key of UPGRADER_MULTIPLIER_KEYS) {
+    parts.push(
+      `NULLIF(${metadataJsonExpr}->>'${key}', '')::numeric`,
+    );
+    for (const nest of UPGRADER_NESTED_OBJECT_KEYS) {
+      parts.push(
+        `NULLIF(${metadataJsonExpr}->'${nest}'->>'${key}', '')::numeric`,
+      );
+    }
+  }
+  return `COALESCE(\n        ${parts.join(",\n        ")}\n      )`;
+}
+
+/** SQL COALESCE for explicit win-chance keys (0-1 fraction or 0-100 %). */
+export function upgraderTargetChanceSql(metadataJsonExpr: string): string {
+  const parts: string[] = [];
+  for (const key of UPGRADER_CHANCE_KEYS) {
+    parts.push(
+      `NULLIF(${metadataJsonExpr}->>'${key}', '')::numeric`,
+    );
+    for (const nest of UPGRADER_NESTED_OBJECT_KEYS) {
+      parts.push(
+        `NULLIF(${metadataJsonExpr}->'${nest}'->>'${key}', '')::numeric`,
+      );
+    }
+  }
+  return `COALESCE(\n        ${parts.join(",\n        ")}\n      )`;
+}
+
 /**
  * Read a number from an unknown value — accepts native numbers and
  * stringified numbers. Returns null for anything else.
@@ -95,49 +192,36 @@ function pickNumber(
   return null;
 }
 
-const MULTIPLIER_KEYS = [
-  "target_multiplier",
-  "targetMultiplier",
-  "multiplier",
-  "target_payout",
-  "payout_multiplier",
-  "cashout_multiplier",
-  "cashout",
-  "payout",
-] as const;
+/** Flatten a metadata blob into root + known nested object records. */
+function collectMetadataRecords(metadata: unknown): Record<string, unknown>[] {
+  if (metadata == null || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return [];
+  }
+  const root = metadata as Record<string, unknown>;
+  const records: Record<string, unknown>[] = [root];
+  for (const key of UPGRADER_NESTED_OBJECT_KEYS) {
+    const nested = root[key];
+    if (nested != null && typeof nested === "object" && !Array.isArray(nested)) {
+      records.push(nested as Record<string, unknown>);
+    }
+  }
+  return records;
+}
 
-const CHANCE_KEYS = [
-  "target_chance",
-  "targetChance",
-  "win_chance",
-  "winChance",
-  "chance",
-  "probability",
-  "win_probability",
-] as const;
+function pickNumberDeep(
+  metadata: unknown,
+  keys: readonly string[],
+): number | null {
+  for (const record of collectMetadataRecords(metadata)) {
+    const n = pickNumber(record, keys);
+    if (n != null) return n;
+  }
+  return null;
+}
 
-const HOUSE_EDGE_KEYS = [
-  "house_edge",
-  "houseEdge",
-  "edge",
-] as const;
-
-const ROLL_KEYS = [
-  "roll",
-  "result",
-  "random",
-  "random_value",
-  "roll_value",
-  "result_value",
-] as const;
-
-/**
- * Parse upgrader play context out of a `provably_fair_results.result_metadata`
- * blob. Returns a struct with every field resolved to either a number
- * or null. Safe to call with any value (returns the all-null shape for
- * non-objects / nulls).
- */
-export function parseUpgraderMetadata(metadata: unknown): UpgraderMetadata {
+function parseUpgraderMetadataFromRecord(
+  metadata: unknown,
+): UpgraderMetadata {
   const empty: UpgraderMetadata = {
     targetMultiplier: null,
     targetChance: null,
@@ -148,18 +232,12 @@ export function parseUpgraderMetadata(metadata: unknown): UpgraderMetadata {
   if (metadata == null || typeof metadata !== "object" || Array.isArray(metadata)) {
     return empty;
   }
-  const record = metadata as Record<string, unknown>;
-  const targetMultiplier = pickNumber(record, MULTIPLIER_KEYS);
-  const targetChanceRaw = pickNumber(record, CHANCE_KEYS);
-  const houseEdge = pickNumber(record, HOUSE_EDGE_KEYS);
-  const roll = pickNumber(record, ROLL_KEYS);
 
-  // Normalize targetChance to a 0-100 percentage. The backend could be
-  // storing either:
-  //   • 0-1 fraction      (0.198 → 19.8%)
-  //   • 0-100 percentage  (19.8 stays)
-  // The split is heuristic: anything <= 1 is treated as a fraction. A
-  // chance >100% would be malformed; clamp at 100 to keep the UI sane.
+  const targetMultiplier = pickNumberDeep(metadata, UPGRADER_MULTIPLIER_KEYS);
+  const targetChanceRaw = pickNumberDeep(metadata, UPGRADER_CHANCE_KEYS);
+  const houseEdge = pickNumberDeep(metadata, UPGRADER_HOUSE_EDGE_KEYS);
+  const roll = pickNumberDeep(metadata, UPGRADER_ROLL_KEYS);
+
   let targetChance: number | null = null;
   if (targetChanceRaw != null) {
     targetChance =
@@ -168,11 +246,6 @@ export function parseUpgraderMetadata(metadata: unknown): UpgraderMetadata {
         : Math.min(100, targetChanceRaw);
   }
 
-  // Derive chance from multiplier when not stored. The textbook
-  // relation is `chance = (1 − houseEdge) / multiplier`. Without a
-  // stored house edge we fall back to chance = 1 / multiplier (the
-  // upper bound; the UI flags this as "≈"). Skip the derivation on
-  // multiplier <= 1 (no upgrade) to avoid divide-by-zero / >100%.
   let targetChanceDerived = false;
   if (targetChance == null && targetMultiplier != null && targetMultiplier > 1) {
     const edgeFraction = houseEdge ?? 0;
@@ -190,6 +263,52 @@ export function parseUpgraderMetadata(metadata: unknown): UpgraderMetadata {
     houseEdge,
     roll,
   };
+}
+
+/**
+ * Parse upgrader play context out of a `provably_fair_results.result_metadata`
+ * blob. Returns a struct with every field resolved to either a number
+ * or null. Safe to call with any value (returns the all-null shape for
+ * non-objects / nulls).
+ */
+export function parseUpgraderMetadata(metadata: unknown): UpgraderMetadata {
+  return parseUpgraderMetadataFromRecord(metadata);
+}
+
+/**
+ * Merge multiple metadata sources (PF rows, ledger metadata, Prisma
+ * includes) — first non-null field wins per attribute. Callers pass
+ * sources in priority order (most authoritative first).
+ */
+export function resolveUpgraderMetadata(
+  ...sources: unknown[]
+): UpgraderMetadata {
+  const empty: UpgraderMetadata = {
+    targetMultiplier: null,
+    targetChance: null,
+    targetChanceDerived: false,
+    houseEdge: null,
+    roll: null,
+  };
+  const merged = { ...empty };
+  for (const source of sources) {
+    if (source == null) continue;
+    const parsed = parseUpgraderMetadataFromRecord(source);
+    if (merged.targetMultiplier == null && parsed.targetMultiplier != null) {
+      merged.targetMultiplier = parsed.targetMultiplier;
+    }
+    if (merged.targetChance == null && parsed.targetChance != null) {
+      merged.targetChance = parsed.targetChance;
+      merged.targetChanceDerived = parsed.targetChanceDerived;
+    }
+    if (merged.houseEdge == null && parsed.houseEdge != null) {
+      merged.houseEdge = parsed.houseEdge;
+    }
+    if (merged.roll == null && parsed.roll != null) {
+      merged.roll = parsed.roll;
+    }
+  }
+  return merged;
 }
 
 /**

@@ -9,7 +9,7 @@ import {
   ledger_transaction_status,
 } from "@/generated/prisma/enums";
 import type { UserTagValue } from "@/lib/queries/user-tags";
-import { parseUpgraderMetadata } from "@/lib/utils/upgrader-metadata";
+import { resolveUpgraderMetadata } from "@/lib/utils/upgrader-metadata";
 import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
 
 // Allowlists derived from the generated Prisma enums — used to validate
@@ -746,8 +746,10 @@ export async function getTransactions(params: {
         // we only assign for upgrader_bet rows so other types
         // don't accidentally pick up a multiplier from a
         // non-upgrader PF blob.
-        if (t.type === "upgrader_bet" && firstPf) {
-          const cfg = parseUpgraderMetadata(firstPf.result_metadata);
+        if (t.type === "upgrader_bet") {
+          const cfg = resolveUpgraderMetadata(
+            ...gs.provably_fair_results.map((pf) => pf.result_metadata),
+          );
           upgraderTargetMultiplier = cfg.targetMultiplier;
         }
       }

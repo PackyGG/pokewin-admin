@@ -2,7 +2,10 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { Prisma } from "@/generated/prisma/client";
 import { filterLedgerTxTypes, LEDGER_TX_TYPES } from "./_ledger-tx-types";
-import { parseUpgraderMetadata } from "@/lib/utils/upgrader-metadata";
+import {
+  resolveUpgraderMetadata,
+  upgraderTargetMultiplierSql,
+} from "@/lib/utils/upgrader-metadata";
 import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
 import type { ledger_transaction_type } from "@/generated/prisma/enums";
 
@@ -592,38 +595,59 @@ export async function getUserTransactions(
   // `game_sessions.game_id` is the upgrader_games row's UUID for
   // game_type='upgrader' — verified against analytics-packs.ts's same
   // convention for packs.
-  const upgraderBetSessionIds = transactions
-    .filter((t) => t.type === "upgrader_bet" && t.game_session_id)
-    .map((t) => t.game_session_id as string);
+  const upgraderBetLedgerIds = transactions
+    .filter((t) => t.type === "upgrader_bet")
+    .map((t) => t.id);
+  type UpgraderBetBatchRow = {
+    ledger_tx_id: string;
+    gsid: string | null;
+    won_amount: string | null;
+    result_metadata: unknown;
+    ledger_metadata: unknown;
+  };
+  const upgraderBetByLedgerId = new Map<string, UpgraderBetBatchRow>();
   const upgraderWinningsByGsid = new Map<string, number>();
-  /** PF result_metadata per upgrader game_session — LATERAL join matches
-   *  /transactions/upgrader (Prisma include often omits PF rows). */
-  const upgraderPfMetadataByGsid = new Map<string, unknown>();
-  if (upgraderBetSessionIds.length > 0) {
+  if (upgraderBetLedgerIds.length > 0) {
     try {
-      const rows = await db.$queryRawUnsafe<
-        { gsid: string; won_amount: string; result_metadata: unknown }[]
-      >(
-        `SELECT gs.id::text AS gsid,
+      const pfTargetExpr = upgraderTargetMultiplierSql("result_metadata");
+      const rows = await db.$queryRawUnsafe<UpgraderBetBatchRow[]>(
+        `SELECT lt.id::text AS ledger_tx_id,
+                gs.id::text AS gsid,
                 ug.won_amount::text AS won_amount,
-                pf.result_metadata AS result_metadata
-         FROM game_sessions gs
-         JOIN upgrader_games ug ON ug.id = gs.game_id
+                pf.result_metadata AS result_metadata,
+                lt.metadata AS ledger_metadata
+         FROM unnest($1::uuid[]) AS bet_id(id)
+         JOIN ledger_transactions lt ON lt.id = bet_id.id
+         LEFT JOIN LATERAL (
+           SELECT id
+           FROM game_sessions
+           WHERE game_type = 'upgrader'
+             AND (
+               id = lt.game_session_id
+               OR bet_ledger_tx_id = lt.id
+             )
+           ORDER BY
+             CASE WHEN id = lt.game_session_id THEN 0 ELSE 1 END,
+             created_at DESC
+           LIMIT 1
+         ) gs_pick ON true
+         LEFT JOIN game_sessions gs ON gs.id = gs_pick.id
+         LEFT JOIN upgrader_games ug ON ug.id = gs.game_id
          LEFT JOIN LATERAL (
            SELECT result_metadata
            FROM provably_fair_results
            WHERE game_session_id = gs.id
-           ORDER BY cursor ASC
+           ORDER BY
+             CASE WHEN ${pfTargetExpr} IS NOT NULL THEN 0 ELSE 1 END,
+             cursor ASC
            LIMIT 1
-         ) pf ON true
-         WHERE gs.id = ANY($1::uuid[])
-           AND gs.game_type = 'upgrader'`,
-        upgraderBetSessionIds,
+         ) pf ON gs.id IS NOT NULL`,
+        upgraderBetLedgerIds,
       );
       for (const r of rows) {
-        upgraderWinningsByGsid.set(r.gsid, toNumber(r.won_amount));
-        if (r.result_metadata != null) {
-          upgraderPfMetadataByGsid.set(r.gsid, r.result_metadata);
+        upgraderBetByLedgerId.set(r.ledger_tx_id, r);
+        if (r.gsid && r.won_amount != null) {
+          upgraderWinningsByGsid.set(r.gsid, toNumber(r.won_amount));
         }
       }
     } catch (e) {
@@ -742,23 +766,29 @@ export async function getUserTransactions(
       let upgraderTargetMultiplier: number | null = null;
       let upgraderTargetChance: number | null = null;
       if (t.type === "upgrader_bet") {
-        const won = t.game_session_id
-          ? upgraderWinningsByGsid.get(t.game_session_id)
-          : undefined;
+        const upgraderRow = upgraderBetByLedgerId.get(t.id);
+        const resolvedGsid =
+          t.game_session_id ?? upgraderRow?.gsid ?? null;
+        const won =
+          resolvedGsid != null
+            ? upgraderWinningsByGsid.get(resolvedGsid)
+            : upgraderRow?.won_amount != null
+              ? toNumber(upgraderRow.won_amount)
+              : undefined;
         if (won !== undefined && won > 0) {
           upgraderResult = "win";
           upgraderWinnings = won;
-        } else {
+        } else if (won !== undefined) {
           upgraderResult = "lose";
           upgraderWinnings = 0;
         }
-        const firstPf = gs?.provably_fair_results[0];
-        const pfMetadata =
-          firstPf?.result_metadata ??
-          (t.game_session_id
-            ? upgraderPfMetadataByGsid.get(t.game_session_id)
-            : undefined);
-        const cfg = parseUpgraderMetadata(pfMetadata ?? t.metadata);
+        const pfMetadataSources = [
+          ...(gs?.provably_fair_results ?? []).map((pf) => pf.result_metadata),
+          upgraderRow?.result_metadata,
+          upgraderRow?.ledger_metadata,
+          t.metadata,
+        ];
+        const cfg = resolveUpgraderMetadata(...pfMetadataSources);
         upgraderTargetMultiplier = cfg.targetMultiplier;
         upgraderTargetChance = cfg.targetChance;
       }
