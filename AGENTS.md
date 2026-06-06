@@ -800,6 +800,78 @@ npm run admin:seed       # Admin DB Seed
 
 ---
 
+## Cursor Cloud specific instructions
+
+### Services (single app + two Postgres DBs)
+
+| Service | Required | Notes |
+|---|---|---|
+| **Next.js dev server** | Yes | `npm run dev` → `http://localhost:3000` (Turbopack; runs dual `prisma generate` first) |
+| **PostgreSQL — Admin DB** | Yes | `ADMIN_DATABASE_URL` — auth, audit, admin-only tables |
+| **PostgreSQL — Main DB** | Yes (most pages) | `DATABASE_URL` — game data; **read-only** in agent policy |
+| **Backend API / Packy WS** | Optional | Creator mutations, live chat — need `BACKEND_API_*` / upstream WS |
+
+No Docker Compose in repo. Databases are external hosted Postgres **or** a local Postgres instance on the VM.
+
+### Dependency install (update script)
+
+`npm install` only. Prisma clients are regenerated automatically by `npm run dev` / `npm run build`.
+
+### Environment
+
+Create `.env.local` (gitignored) with at minimum:
+
+- `ADMIN_DATABASE_URL`
+- `DATABASE_URL`
+- `SESSION_SECRET`
+- `ADMIN_SEED_PASSWORD` (for `npm run admin:seed`)
+
+Prisma CLI reads `.env` / shell exports — `dotenv/config` in `prisma*.config.ts` does **not** load `.env.local`. Either export vars before `prisma db push`, or duplicate keys into `.env`.
+
+**Preferred for real work:** use the owner's hosted `ADMIN_DATABASE_URL` + `DATABASE_URL` secrets (Cursor Cloud secrets). **Ephemeral VM fallback:** local Postgres 16 (`sudo pg_ctlcluster 16 main start`), two databases, then:
+
+```bash
+export $(grep -v '^#' .env.local | xargs)
+npx prisma db push --schema=prisma/admin/schema.prisma --config=prisma/admin/prisma.config.ts
+npx prisma db push
+npm run admin:seed
+```
+
+Admin DB is **`db push`-managed** — do **not** run `npm run admin:migrate` on a db-push-shaped DB (destructive reset risk).
+
+### Lint / typecheck / build / test
+
+```bash
+npm run lint          # ESLint (warnings exist; 0 errors required)
+npx tsc --noEmit      # TypeScript
+npm run build         # Authoritative gate (RSC boundary errors surface here)
+E2E_USE_EXISTING_SERVER=1 npm run test:e2e   # Playwright (needs E2E seed + TOTP secret)
+```
+
+### Dev server
+
+```bash
+npm run dev
+# or reuse: E2E_USE_EXISTING_SERVER=1 npm run test:e2e
+```
+
+Use **tmux** for long-running `npm run dev` in Cloud Agent VMs.
+
+### Hello-world verification
+
+1. `GET /` → redirects to `/login` (307).
+2. `npm run admin:seed` → `admin@packy.gg` (password = `ADMIN_SEED_PASSWORD`).
+3. Playwright `e2e/tests/auth.spec.ts` — real `/login` + `/verify-2fa` → `/dashboard` (seed E2E admin + `E2E_ADMIN_TOTP_SECRET` in `.env.local`; `npm run test:e2e:seed` may need `updated_at` on INSERT against a fresh local admin schema — set via SQL `NOW()` if seed fails).
+4. Empty local Main DB: dashboard KPIs may be zero/empty; auth shell still proves the stack.
+
+### Gotchas
+
+- **Stale local Main DB** vs prod — many analytics pages need real data; use `src/app/responsive-fixture/*` or hosted read-only `DATABASE_URL`.
+- **`.next` stale** — delete `.next` if `tsc` references removed routes.
+- **Playwright** — `npx playwright install chromium` once per VM; auth tests use real forms (no cookie bypass except `e2e/responsive/mint-session.ts` harness).
+
+---
+
 ## Verhalten bei Unklarheiten (Kurzregel zum Merken)
 
 1. **Existiert schon?** → Codebase prüfen, wiederverwenden.
