@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `7b96cac7` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub revamp **DONE** — hub ad detail prod-verified (Desktop Chrome, `pokewin-admin.vercel.app`)
+- **HEAD:** `d8ca712f` · **Updated:** 2026-06-06 · **Active focus:** Creator Hub roster 3-tab split — branch `cursor/creator-hub-roster-tabs-775d` (PR pending merge)
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
 - **Route segment:** `src/app/(creator-hub)/creator-hub/` (sub-app with own layout + sidebar)
@@ -37,7 +37,7 @@
 
 ## 🟡 In-flight
 
-_None — Creator Hub plan closed. Pick up deferred items below when owner prioritizes._
+- **Hub roster tabs (`cursor/creator-hub-roster-tabs-775d`, `d8ca712f`)** — `/creator-hub/creators` split into Active (fill deal), Multiplier (no fill deal), Past; local Playwright `e2e/tests/creator-hub-roster-tabs.spec.ts` PASS; prod verify after merge/deploy
 
 ---
 
