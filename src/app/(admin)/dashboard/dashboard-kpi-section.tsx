@@ -378,16 +378,6 @@ export function DashboardKpiSection({
           const p = payloadFor("ggr");
           const mode = modeFor("ggr");
           const isProfit = p.ggr >= 0;
-          // Sub-boxes mirror the Wager box's chip row. The two legs of the
-          // GGR formula (wagers in − payouts out = GGR) plus the hold margin
-          // (GGR ÷ wagers), all read off the breakdown already in the payload
-          // so the chips reconcile with the Info popover by construction.
-          // House-POV colours: wagers neutral (flow-in), payouts rose (money
-          // out), margin emerald/rose by sign.
-          const ggrWagers = p.ggrBreakdown.wagersTotal;
-          const ggrPayouts = p.ggrBreakdown.payoutsTotal;
-          const ggrMarginPct =
-            ggrWagers > 0 ? (p.ggrBreakdown.ggr / ggrWagers) * 100 : 0;
           return (
             <KpiPanel
               title="GGR"
@@ -407,18 +397,6 @@ export function DashboardKpiSection({
                 />
               }
               icon={isProfit ? TrendingUp : TrendingDown}
-              footer={
-                <div className="grid grid-cols-3 gap-1.5 sm:-mx-0.5">
-                  <PanelChip label="Wagers" value={ggrWagers} />
-                  <PanelChip label="Payouts" value={ggrPayouts} tone="rose" />
-                  <PanelChip
-                    label="Margin"
-                    value={ggrMarginPct}
-                    format="percent"
-                    tone={p.ggrBreakdown.ggr >= 0 ? "emerald" : "rose"}
-                  />
-                </div>
-              }
             >
               <SignedHero value={p.ggr} />
             </KpiPanel>
