@@ -30,6 +30,8 @@ npx prisma db execute --config prisma/admin/prisma.config.ts --file prisma/admin
 # Schema sync from prisma/admin/schema.prisma (refuses on data loss)
 npx prisma db push --schema prisma/admin/schema.prisma --config prisma/admin/prisma.config.ts
 
+# NEVER pass --accept-data-loss on admin — prod has drift columns/tables not in schema.prisma
+
 # Regenerate client after schema edits
 npx prisma generate --schema prisma/admin/schema.prisma --config prisma/admin/prisma.config.ts
 ```
@@ -54,6 +56,8 @@ Put new SQL under `prisma/admin/sql/` with a dated filename. Keep `prisma/admin/
 |---|---|---|
 | 2026-06-06 | `prisma/admin/sql/20260606_creator_manager_role.sql` | `ALTER TYPE admin_role ADD VALUE IF NOT EXISTS 'creator_manager'` |
 | 2026-06-06 | `prisma/admin/sql/20260606_creator_social_urls.sql` | `creator_socials.discord_channel_url`, `creator_socials.reward_page_url` |
+| 2026-06-06 | `prisma/admin/sql/20260606_creator_hub_substrate.sql` | Creator Hub cache/CRM tables (kick, twitter, onboarding, alerts, session meta) |
+| 2026-06-06 | `prisma/admin/sql/20260606_restore_drift_objects.sql` | Re-add `creator_deals` cashout limit columns + `creator_deal_estimates` table after accidental `db push` |
 
 ---
 
