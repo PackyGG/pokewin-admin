@@ -246,6 +246,7 @@ export function UserDetailFixtureClient() {
       inventory={EMPTY_INVENTORY}
       disposedInventoryPromise={disposed}
       riskBreakdown={RISK}
+      wagerRequirement={null}
       sharedIpsPromise={sharedIps}
       sharedFingerprintsPromise={sharedFps}
       initialTab="overview"

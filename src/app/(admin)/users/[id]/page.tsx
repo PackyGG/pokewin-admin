@@ -29,6 +29,10 @@ import { UserViewModern } from "./user-view-modern";
 import { coerceTab } from "./user-tabs-types";
 import type { TabKey } from "./user-tabs-types";
 import { safeQuery, safeQueryOrNull } from "@/lib/errors/safe-query";
+import {
+  getUserWagerRequirement,
+  type UserWagerRequirement,
+} from "@/lib/backend-api/wager-requirements";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   KpiStripSkeleton,
@@ -479,6 +483,19 @@ async function UserDetailBody({
     "users.detail.sharedFingerprints",
   ).then((r) => r.data);
 
+  // Per-user withdrawal wager-requirement override (backend API, NOT the
+  // MAIN DB). Read NON-critically in its own try/catch — deliberately kept
+  // OUT of the heavy getUserDetailCached aggregate above so a backend
+  // outage / undeployed branch can never block or crash the user-detail
+  // body. null → the Account-tab card shows its muted "awaiting backend
+  // deploy" state.
+  let wagerRequirement: UserWagerRequirement | null = null;
+  try {
+    wagerRequirement = await getUserWagerRequirement(id);
+  } catch {
+    wagerRequirement = null;
+  }
+
   const data = detailResult.data;
 
   // getUserDetail returns null only for a truly unknown user — but the
@@ -567,6 +584,7 @@ async function UserDetailBody({
       riskBreakdown={riskBreakdown}
       sharedIpsPromise={sharedIpsPromise}
       sharedFingerprintsPromise={sharedFingerprintsPromise}
+      wagerRequirement={wagerRequirement}
       initialTab={initialTab}
     />
   );

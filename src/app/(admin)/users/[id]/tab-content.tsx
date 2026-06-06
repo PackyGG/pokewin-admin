@@ -21,6 +21,10 @@ import {
   getUserTransactions,
 } from "@/lib/queries/users";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
+import {
+  getUserWagerRequirement,
+  type UserWagerRequirement,
+} from "@/lib/backend-api/wager-requirements";
 import { computeRiskScore } from "@/lib/fraud/score";
 import {
   getSharedIpUsers,
@@ -206,11 +210,21 @@ export async function AccountTabContent({ data }: { data: UserDetail }) {
     getNotesForUser(data.user.id),
     getUserPnlBreakdown(data.user.id),
   ]);
+  // Per-user withdrawal wager-requirement override (backend API). Read
+  // non-critically so an undeployed backend branch can't crash this tab —
+  // null degrades the card to its "awaiting backend deploy" state.
+  let wagerRequirement: UserWagerRequirement | null = null;
+  try {
+    wagerRequirement = await getUserWagerRequirement(data.user.id);
+  } catch {
+    wagerRequirement = null;
+  }
   return (
     <AccountTab
       data={data}
       notes={notes}
       pnlBreakdown={pnlBreakdown}
+      wagerRequirement={wagerRequirement}
     />
   );
 }

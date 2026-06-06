@@ -60,6 +60,7 @@ import {
 import type { UserRewards } from "@/lib/queries/users";
 import type { PaginatedInventory } from "./user-tabs-types";
 import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
+import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { TILE_COLORS } from "./user-view-modern-panels";
 import {
   OverviewTab,
@@ -151,6 +152,7 @@ export function UserViewModern({
   riskBreakdown,
   sharedIpsPromise,
   sharedFingerprintsPromise,
+  wagerRequirement,
   initialTab,
 }: {
   data: UserDetail;
@@ -176,6 +178,9 @@ export function UserViewModern({
   riskBreakdown: RiskScoreBreakdown;
   sharedIpsPromise: Promise<SharedIdentityUser[]>;
   sharedFingerprintsPromise: Promise<SharedIdentityUser[]>;
+  // Per-user withdrawal wager-requirement override (backend API). null when
+  // the backend branch isn't deployed yet — the Account-tab card degrades.
+  wagerRequirement: UserWagerRequirement | null;
   // Initial tab seeded from the ?tab= URL param so deep-links (e.g.
   // the hero risk badges that linked to ?tab=trust, or external
   // bookmarks) still land on the correct tab. After mount the tab
@@ -591,6 +596,7 @@ export function UserViewModern({
             data={data}
             notes={notes}
             pnlBreakdown={pnlBreakdown}
+            wagerRequirement={wagerRequirement}
           />
         )}
       </FadeIn>

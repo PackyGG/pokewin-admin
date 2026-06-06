@@ -83,6 +83,8 @@ import {
   ADJUSTMENT_TX_TYPES,
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
+import { UserWagerRequirementCard } from "./user-wager-requirement-card";
+import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import type {
   PaginatedInventory,
   TipEntry,
@@ -1302,10 +1304,12 @@ export function AccountTab({
   data,
   notes,
   pnlBreakdown,
+  wagerRequirement,
 }: {
   data: UserDetail;
   notes: AdminNote[];
   pnlBreakdown: PnlBreakdown;
+  wagerRequirement: UserWagerRequirement | null;
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
   return (
@@ -1347,6 +1351,12 @@ export function AccountTab({
       <UserBattleLimitsCard
         userId={user.id}
         limits={battleLimits}
+        canManage={data.sessionRole === "admin"}
+      />
+      <SectionHeading icon={Banknote} title="Withdrawal Wager Requirement" />
+      <UserWagerRequirementCard
+        userId={user.id}
+        data={wagerRequirement}
         canManage={data.sessionRole === "admin"}
       />
       <SectionHeading icon={ShieldCheck} title="Moderation" />
