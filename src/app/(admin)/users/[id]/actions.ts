@@ -1653,6 +1653,90 @@ export async function getUserDeposits(
   }));
 }
 
+export type JoinedBattleRow = {
+  battleId: string;
+  gameSessionId: string;
+  at: string;
+  result: "win" | "lose" | "pending";
+  winnings: number;
+  betAmount: number;
+  sponsorshipPercentage: number;
+};
+
+/**
+ * Battles the user JOINED as a participant that have NO `battle_bet` ledger
+ * row — overwhelmingly fully-sponsored / free-entry joins ($0 stake books no
+ * ledger row). These are invisible in the normal gaming history (which reads
+ * only `ledger_transactions`) even though the user got `battle_participants`
+ * + won cards in `user_inventory`. This surfaces them so the "unexplained"
+ * inventory/balance changes are accounted for. Newest first, capped.
+ */
+export async function getUserJoinedSponsoredBattles(
+  userId: string,
+): Promise<JoinedBattleRow[]> {
+  await requirePageAccess("/users");
+  const db = await getDb();
+  const rows = await db.$queryRawUnsafe<
+    {
+      battle_id: string;
+      game_session_id: string;
+      team_number: number;
+      winner_team: number | null;
+      status: string;
+      bet_amount: string;
+      sponsorship_percentage: number;
+      created_at: Date;
+      winnings: string;
+    }[]
+  >(
+    `SELECT bp.battle_id,
+            bp.game_session_id,
+            bp.team_number,
+            b.winner_team,
+            b.status::text AS status,
+            b.bet_amount::text AS bet_amount,
+            b.sponsorship_percentage,
+            gs.created_at,
+            COALESCE((
+              SELECT SUM(ui.value_at_obtained::numeric)
+              FROM user_inventory ui
+              WHERE ui.user_id = bp.user_id
+                AND ui.source_type::text = 'battle'
+                AND ui.source_id = bp.game_session_id
+            ), 0)::text AS winnings
+       FROM battle_participants bp
+       JOIN battles b ON b.id = bp.battle_id
+       JOIN game_sessions gs ON gs.id = bp.game_session_id
+      WHERE bp.user_id = $1
+        AND bp.bot_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM ledger_transactions lt
+           WHERE lt.type::text = 'battle_bet'
+             AND lt.game_session_id = bp.game_session_id
+             AND lt.user_id = bp.user_id
+        )
+      ORDER BY gs.created_at DESC
+      LIMIT 100`,
+    userId,
+  );
+
+  return rows.map((r) => {
+    let result: JoinedBattleRow["result"] = "pending";
+    if (r.status === "completed" && r.winner_team != null) {
+      result = r.team_number === r.winner_team ? "win" : "lose";
+    }
+    return {
+      battleId: r.battle_id,
+      gameSessionId: r.game_session_id,
+      at: r.created_at.toISOString(),
+      result,
+      winnings: Number(r.winnings),
+      betAmount: Number(r.bet_amount),
+      sponsorshipPercentage: r.sponsorship_percentage,
+    };
+  });
+}
+
 export type InventorySaleBatch = {
   /** First ledger-row id in the batch (stable React key). */
   id: string;
