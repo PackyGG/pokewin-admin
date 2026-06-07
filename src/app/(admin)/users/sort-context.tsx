@@ -38,6 +38,21 @@ const ROLE_RANK: Record<string, number> = {
   user: 0,
 };
 
+/**
+ * Sort keys whose ORDER BY runs in SQL across the full filtered user base.
+ * Never re-sort these client-side — local comparators only see the current
+ * page (~20 rows) and will surface the wrong "top" users when the server
+ * slice and the displayed metric disagree (netHoldings / PnL toolbar
+ * shortcuts).
+ */
+export const SERVER_RANKED_SORTS = new Set([
+  "pnl",
+  "netHoldings",
+  "totalWithdrawn",
+  "inventoryValue",
+  "depositCount",
+]);
+
 const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
   username: (a, b) =>
     (a.username ?? a.email ?? "").localeCompare(b.username ?? b.email ?? ""),
@@ -94,27 +109,37 @@ export function UsersSortProvider({
   const [sortBy, setSortBy] = React.useState(urlSortBy);
   const [sortOrder, setSortOrder] = React.useState<Order>(urlSortOrder);
   const [localRows, setLocalRows] = React.useState<UserRow[]>(() =>
-    sortRowsLocally(initialRows, urlSortBy, urlSortOrder),
+    SERVER_RANKED_SORTS.has(urlSortBy)
+      ? initialRows
+      : sortRowsLocally(initialRows, urlSortBy, urlSortOrder),
   );
 
   // Toolbar shortcut buttons (Top user net worth, Top losers, etc.) update
   // the URL via router.replace but do NOT call setSort, so sortBy/sortOrder
   // state would stay stale (often created_at). Always derive the active
-  // sort from the URL when fresh server rows land — otherwise the effect
-  // below re-shuffles a correctly-ordered page back to registration date.
+  // sort from the URL when fresh server rows land. For SQL-ranked sorts,
+  // preserve the server row order exactly — re-sorting the current page
+  // client-side was the "top net worth shows pennies" bug.
   React.useEffect(() => {
     setSortBy(urlSortBy);
     setSortOrder(urlSortOrder);
-    setLocalRows(sortRowsLocally(initialRows, urlSortBy, urlSortOrder));
+    setLocalRows(
+      SERVER_RANKED_SORTS.has(urlSortBy)
+        ? initialRows
+        : sortRowsLocally(initialRows, urlSortBy, urlSortOrder),
+    );
   }, [initialRows, urlSortBy, urlSortOrder]);
 
   const setSort = React.useCallback(
     (key: string, order: Order) => {
-      // 1) Instant client-side reorder of CURRENTLY visible rows so the user
-      //    sees feedback in the same frame as their click.
+      // 1) Instant client-side reorder for column sorts only. Computed
+      //    sorts (netHoldings, pnl, …) must wait for the server — reordering
+      //    20 rows locally hides whales on other pages.
       setSortBy(key);
       setSortOrder(order);
-      setLocalRows((current) => sortRowsLocally(current, key, order));
+      if (!SERVER_RANKED_SORTS.has(key)) {
+        setLocalRows((current) => sortRowsLocally(current, key, order));
+      }
 
       // 2) In the background, ask the server for the *correct* sorted page
       //    (different users may belong on this page now). When the new data

@@ -575,13 +575,13 @@ async function computeRankedUserIds(
  */
 const cachedGlobalRankedUserIds = unstable_cache(
   computeRankedUserIds,
-  ["users-ranked-ids-global-v4"],
+  ["users-ranked-ids-global-v5"],
   { revalidate: 300, tags: ["users-list"] },
 );
 
 const cachedFilteredRankedUserIds = unstable_cache(
   computeRankedUserIds,
-  ["users-ranked-ids-filtered-v4"],
+  ["users-ranked-ids-filtered-v5"],
   { revalidate: 30, tags: ["users-list"] },
 );
 
@@ -1047,16 +1047,14 @@ export async function getUsers(params: {
       .filter((u): u is (typeof unordered)[number] => Boolean(u));
     total = totalCount;
 
-    // PnL / netHoldings ranking is approximate (no ledger carve-out CTE).
-    // Hydrate via the per-page PnL batch for accurate displayed values.
-    // Risk scoring is skipped here — it adds ~40–80ms+ per page on top of
-    // an already-heavy ranking scan and is non-essential for whale/loser
-    // sort views; detail view still computes full risk.
-    const needsAccuratePnlHydrate =
-      sortBy === "pnl" || sortBy === "netHoldings";
+    // netHoldings: keep ranking-scan metrics so the Net column matches the
+    // SQL ORDER BY (client must not re-sort this page — see sort-context).
+    // pnl: ranking key is approximate; hydrate via PnL batch for display
+    // but preserve the server row order.
     return hydrateUserListPage(users, total, page, perPage, {
-      precomputedMetrics: needsAccuratePnlHydrate ? undefined : metricsById,
-      rankedSortBy: needsAccuratePnlHydrate ? undefined : sortBy,
+      precomputedMetrics:
+        sortBy === "pnl" ? undefined : metricsById,
+      rankedSortBy: sortBy === "pnl" ? undefined : sortBy,
       skipListRisk: true,
     });
   } else {
