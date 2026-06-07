@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ArrowDownToLine, Pencil, ShieldAlert, ShieldCheck } from "lucide-react";
@@ -327,29 +327,19 @@ export function BalanceAdjustDialog({
       ? lockedBalance + previewValue
       : null;
 
-  // The category options to offer right now. Removal-only categories (e.g.
-  // Leaderboard) are gated to the REMOVE-balance direction: they only
-  // appear once the parsed amount is negative. Until the admin types a
-  // negative amount, the option is hidden entirely.
-  const visibleCategories = BALANCE_ADJUST_CATEGORIES.filter(
-    (c) => !c.removalOnly || isRemoval,
-  );
+  // Every selectable category is always offered. Removal-only categories
+  // (Remove locked balance, Fraud / abuse, Leaderboard) used to be HIDDEN
+  // until the admin typed a negative amount, which made them look missing.
+  // They now always render; selecting one with a non-negative amount is
+  // caught by the submit-time validation + an inline hint below.
+  const visibleCategories = BALANCE_ADJUST_CATEGORIES;
 
-  // If the direction flips away from "remove" (or the amount becomes
-  // invalid) while a removal-only category is selected, drop the selection
-  // + its linked creator so a stale Leaderboard pick can't be submitted in
-  // the add direction. Mirrors how the server rejects it, but keeps the UI
-  // honest instead of letting a now-hidden option stay chosen.
-  useEffect(() => {
-    if (
-      category &&
-      isRemovalOnlyAdjustmentCategory(category) &&
-      !isRemoval
-    ) {
-      setCategory("");
-      setCreatorLink(null);
-    }
-  }, [category, isRemoval]);
+  // True when a removal-only category is selected but the amount isn't a
+  // valid negative yet — drives the inline "enter a negative amount" hint.
+  const removalNeedsNegative =
+    !!category &&
+    isRemovalOnlyAdjustmentCategory(category) &&
+    !isRemoval;
 
   // ── Lossback derivations (house POV) ──────────────────────────────
   // `pnl7d` is the rolling 7-day house P&L: POSITIVE = the house gained =
@@ -494,10 +484,21 @@ export function BalanceAdjustDialog({
                 {visibleCategories.map((r) => (
                   <SelectItem key={r.value} value={r.value}>
                     {r.label}
+                    {r.removalOnly ? " (removes balance)" : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+
+            {/* Removal-only categories require a negative amount. Surface a
+                hint inline so the admin knows what to do instead of getting
+                a toast only on submit. */}
+            {removalNeedsNegative && (
+              <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+                This category removes balance — enter a negative amount
+                (e.g. -50).
+              </p>
+            )}
 
             {/* Deposit problem: coin type + on-chain tx hash. Recorded in
                 the admin metadata table for the audit trail. */}
