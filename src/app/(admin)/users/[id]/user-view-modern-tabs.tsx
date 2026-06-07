@@ -605,7 +605,10 @@ export function InventoryTab({
         statusFilter="owned"
         canDeleteInventory={data.capabilities.canAdjustBalance}
       />
-      <UserVouchersPanel userId={user.id} />
+      <UserVouchersPanel
+        userId={user.id}
+        canRemove={data.capabilities.canAdjustBalance}
+      />
       <SectionHeading icon={Trophy} title="Sold & Exchanged" />
       <Suspense fallback={<SkeletonTable rows={5} columns={5} />}>
         <DisposedCardsStreamed

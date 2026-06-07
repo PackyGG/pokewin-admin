@@ -444,7 +444,23 @@ export function BalanceAdjustDialog({
         </DialogHeader>
         <div className="space-y-3 py-2">
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Amount</Label>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs text-muted-foreground">Amount</Label>
+              {/* Quick-fill the exact removable cash for removal-only
+                  categories so admins don't trip the "would go negative"
+                  guard by entering more than the real spendable balance. */}
+              {isRemovalCategory &&
+                spendableBalance !== undefined &&
+                spendableBalance > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setAmount(String(spendableBalance))}
+                    className="text-[10px] font-medium text-primary hover:underline"
+                  >
+                    Max removable {formatCurrency(spendableBalance)}
+                  </button>
+                )}
+            </div>
             {/* text + inputMode="decimal" (not type="number") so commas and
                 malformed multi-dot input reach the robust parser intact —
                 a number input would silently drop them. */}

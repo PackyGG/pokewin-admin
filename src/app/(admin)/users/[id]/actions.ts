@@ -1621,6 +1621,143 @@ export type UserVoucherRow = {
   createdAt: string;
 };
 
+const deleteVoucherSchema = z.object({
+  userId: z.string().min(1),
+  voucherId: z.string().uuid(),
+  reason: z
+    .string()
+    .trim()
+    .min(20, { message: "Reason must be at least 20 characters" })
+    .max(5000),
+  totpCode: z.string().trim().min(1, { message: "2FA code is required" }),
+});
+
+/**
+ * Remove (sell off) an unclaimed voucher from a user. Same gate as inventory
+ * removal (admin or __can_adjust_balance, + 2FA). Deletes the voucher row
+ * and writes a VISIBLE `admin_balance_adjustment` record (balance unchanged)
+ * so the removal shows in the transactions box like a balance adjustment.
+ */
+export async function deleteUserVoucher(data: {
+  userId: string;
+  voucherId: string;
+  reason: string;
+  totpCode: string;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
+  const session = await requirePageAccess("/users");
+
+  const parsed = deleteVoucherSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  if (session.role !== "admin") {
+    const perms = await adminDb.admin_users.findUnique({
+      where: { id: session.userId },
+      select: { allowed_pages: true },
+    });
+    if (!perms || !canUserAdjustBalance(perms.allowed_pages)) {
+      return {
+        success: false,
+        error: "You do not have permission to remove vouchers",
+      };
+    }
+  }
+
+  try {
+    await require2FA(session.userId, parsed.data.totpCode);
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "2FA verification failed",
+    };
+  }
+
+  const voucher = await db.vouchers.findFirst({
+    where: { id: parsed.data.voucherId, user_id: parsed.data.userId },
+    select: { id: true, value: true, origin: true, claimed_at: true },
+  });
+  if (!voucher) {
+    return { success: false, error: "Voucher not found for this user" };
+  }
+  if (voucher.claimed_at) {
+    return {
+      success: false,
+      error: "This voucher was already claimed — only open vouchers can be removed",
+    };
+  }
+
+  const value = Number(voucher.value);
+
+  try {
+    await db.$transaction(async (tx) => {
+      const bal = await tx.balances.findUnique({
+        where: { user_id: parsed.data.userId },
+        select: { available_balance: true },
+      });
+      const currentAvailable = bal ? Number(bal.available_balance) : 0;
+
+      const deleted = await tx.vouchers.deleteMany({
+        where: {
+          id: parsed.data.voucherId,
+          user_id: parsed.data.userId,
+          claimed_at: null,
+        },
+      });
+      if (deleted.count !== 1) {
+        throw new Error("Voucher changed since you opened this dialog");
+      }
+
+      await tx.ledger_transactions.create({
+        data: {
+          id: crypto.randomUUID(),
+          user_id: parsed.data.userId,
+          type: "admin_balance_adjustment",
+          amount: -Math.abs(value),
+          balance_before: currentAvailable,
+          balance_after: currentAvailable,
+          description: `Voucher removed: $${value.toFixed(2)} (${String(voucher.origin)}) — ${parsed.data.reason}`,
+          metadata: {
+            kind: "voucher_removal",
+            voucher_id: parsed.data.voucherId,
+            origin: String(voucher.origin),
+            value,
+          },
+          status: "completed",
+        },
+      });
+    });
+  } catch (err) {
+    console.error("[deleteUserVoucher] delete failed:", err);
+    return {
+      success: false,
+      error:
+        err instanceof Error
+          ? `Failed to remove voucher: ${err.message}`
+          : "Failed to remove voucher",
+    };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "voucher_removed",
+    targetUserId: parsed.data.userId,
+    metadata: {
+      voucherId: parsed.data.voucherId,
+      origin: String(voucher.origin),
+      value,
+      reason: parsed.data.reason,
+    },
+  });
+
+  revalidatePath(`/users/${parsed.data.userId}`);
+  return { success: true };
+}
+
 /**
  * The user's UNCLAIMED vouchers — held value shown alongside cards in the
  * Current Inventory section. Claimed vouchers are excluded (they've already
