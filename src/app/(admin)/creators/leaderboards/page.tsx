@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { getAdminDisplayTimeZone } from "@/lib/timezone/server";
 
 import { LeaderboardsTable } from "./_components/leaderboards-table";
 import { CreateDialog } from "./_components/create-dialog";
@@ -83,6 +84,7 @@ export default async function AffiliateLeaderboardsPage({
     searchParams: Promise<Record<string, string | undefined>>;
 }) {
     await requirePageAccess("/creators/leaderboards");
+    const timezone = await getAdminDisplayTimeZone();
     const params = await searchParams;
     const tab: StatusTab = STATUS_TABS.some((t) => t.value === params.status)
         ? (params.status as StatusTab)
@@ -387,6 +389,7 @@ export default async function AffiliateLeaderboardsPage({
                         rows={rows}
                         creatorMap={creatorMap}
                         sponsorshipMap={sponsorshipMap}
+                        timezone={timezone}
                     />
                 </FadeIn>
 

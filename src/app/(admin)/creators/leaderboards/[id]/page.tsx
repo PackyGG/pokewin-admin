@@ -24,6 +24,8 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import { getAdminDisplayTimeZone } from "@/lib/timezone/server";
+import { timezoneLabel } from "@/lib/timezones";
 import { cn } from "@/lib/utils";
 import { getAffiliateLeaderboardRankings } from "@/lib/queries/creators";
 import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsorship";
@@ -51,6 +53,8 @@ export default async function AffiliateLeaderboardDetailPage({
     params: Promise<{ id: string }>;
 }) {
     await requirePageAccess("/creators/leaderboards");
+    const tz = await getAdminDisplayTimeZone();
+    const fmt = (iso: string) => formatDateTime(iso, tz);
     const { id } = await params;
     // Shape-check UUID before any DB / backend call — see src/lib/utils/ids.ts.
     if (!isUuid(id)) notFound();
@@ -159,9 +163,14 @@ export default async function AffiliateLeaderboardDetailPage({
             <div className="grid gap-6 md:grid-cols-2">
                 <FadeIn>
                     <div className="rounded-lg border p-5 space-y-3">
-                        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                            Definition
-                        </h2>
+                        <div>
+                            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                                Definition
+                            </h2>
+                            <p className="text-xs text-muted-foreground mt-1">
+                                Times in {timezoneLabel(tz)}
+                            </p>
+                        </div>
                         <DefRow label="ID" value={<span className="font-mono text-xs">{lb.id}</span>} />
                         <DefRow
                             label="Creator"
@@ -203,9 +212,9 @@ export default async function AffiliateLeaderboardDetailPage({
                                 )
                             }
                         />
-                        <DefRow label="Starts" value={formatDateTime(lb.start_date)} />
-                        <DefRow label="Ends" value={formatDateTime(lb.end_date)} />
-                        <DefRow label="Created" value={formatDateTime(lb.created_at)} />
+                        <DefRow label="Starts" value={fmt(lb.start_date)} />
+                        <DefRow label="Ends" value={fmt(lb.end_date)} />
+                        <DefRow label="Created" value={fmt(lb.created_at)} />
                     </div>
                 </FadeIn>
 
@@ -230,7 +239,7 @@ export default async function AffiliateLeaderboardDetailPage({
                         </h2>
                         <DefRow
                             label="Approved at"
-                            value={lb.approved_at ? formatDateTime(lb.approved_at) : "—"}
+                            value={lb.approved_at ? fmt(lb.approved_at) : "—"}
                         />
                         <DefRow
                             label="Approved by"
@@ -256,7 +265,7 @@ export default async function AffiliateLeaderboardDetailPage({
                         </h2>
                         <DefRow
                             label="Cancelled at"
-                            value={lb.cancelled_at ? formatDateTime(lb.cancelled_at) : "—"}
+                            value={lb.cancelled_at ? fmt(lb.cancelled_at) : "—"}
                         />
                         <DefRow
                             label="Cancelled by"
@@ -270,7 +279,7 @@ export default async function AffiliateLeaderboardDetailPage({
                         />
                         <DefRow
                             label="Refunded at"
-                            value={lb.refunded_at ? formatDateTime(lb.refunded_at) : "—"}
+                            value={lb.refunded_at ? fmt(lb.refunded_at) : "—"}
                         />
                         <DefRow
                             label="Refund amount"

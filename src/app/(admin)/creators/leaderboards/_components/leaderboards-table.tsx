@@ -159,11 +159,14 @@ export function LeaderboardsTable({
   rows,
   creatorMap,
   sponsorshipMap,
+  timezone,
 }: {
   rows: LeaderboardAdminRow[];
   creatorMap: Map<string, CreatorInfo>;
   // leaderboard id → admin-side sponsored % (0–100). Absent = 100%.
   sponsorshipMap: Map<string, number>;
+  /** Admin's resolved IANA zone — see getAdminDisplayTimeZone(). */
+  timezone: string;
 }) {
   return (
     <>
@@ -317,10 +320,10 @@ export function LeaderboardsTable({
                       )}
                     </TableCell>
                     <TableCell className="text-xs">
-                      {formatDateTime(r.start_date)}
+                      {formatDateTime(r.start_date, timezone)}
                     </TableCell>
                     <TableCell className="text-xs">
-                      {formatDateTime(r.end_date)}
+                      {formatDateTime(r.end_date, timezone)}
                     </TableCell>
                     <TableCell>
                       <ListRowActions row={r} />

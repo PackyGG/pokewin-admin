@@ -1,6 +1,8 @@
 import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
+import { getAdminPreferences } from "@/lib/admin-preferences";
+import { getSession } from "@/lib/session";
 import { TZ_COOKIE } from "./cookie";
 import { getEffectiveTimeZone, isValidTimeZone } from "./core";
 
@@ -66,3 +68,20 @@ export const getServerTimeZone = cache(
     return getEffectiveTimeZone(explicitPref, cookieTz);
   },
 );
+
+/**
+ * Resolved IANA zone for the signed-in admin's current request — profile
+ * preference → `admin_tz` cookie → UTC. Use at server render sites that
+ * call `formatDateTime(d, tz)` so SSR matches the TimezoneProvider.
+ */
+export const getAdminDisplayTimeZone = cache(async (): Promise<string> => {
+  try {
+    const session = await getSession();
+    const explicitPref = session
+      ? (await getAdminPreferences(session.userId)).timezone
+      : null;
+    return getServerTimeZone(explicitPref);
+  } catch {
+    return "UTC";
+  }
+});
