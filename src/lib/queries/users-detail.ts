@@ -608,6 +608,11 @@ export async function getUserDetail(id: string) {
             0,
             userPnl.onSiteBalance - toNumber(balances.locked_balance),
           ),
+          // Raw spendable column — what a removal adjustment actually debits.
+          // The Adjust-Balance dialog validates against this so its preview
+          // matches the server (the netted `availableBalance` above can be
+          // inflated by official-stream credits that aren't real cash).
+          availableBalanceRaw: toNumber(balances.available_balance),
           lockedBalance: toNumber(balances.locked_balance),
           // P&L components come from the shared helper so this view can
           // never drift from users-list / dashboard.

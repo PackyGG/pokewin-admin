@@ -65,6 +65,13 @@ export type UserDetail = {
   };
   balances: {
     availableBalance: number;
+    /**
+     * The RAW `balances.available_balance` column — the actual spendable
+     * cash a removal adjustment debits. Differs from `availableBalance`
+     * (which nets official-stream fake balance for display/P&L parity), so
+     * the Adjust-Balance preview validates against THIS to match the server.
+     */
+    availableBalanceRaw: number;
     lockedBalance: number;
     totalDeposited: number;
     totalWithdrawn: number;

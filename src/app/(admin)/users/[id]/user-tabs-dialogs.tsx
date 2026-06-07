@@ -76,6 +76,7 @@ const LOSSBACK_MAX_PERCENT = 35;
 export function BalanceAdjustDialog({
   userId,
   availableBalance,
+  availableBalanceRaw,
   lockedBalance,
   pnl7d,
   open,
@@ -86,6 +87,12 @@ export function BalanceAdjustDialog({
   // balance" preview. Optional so existing call sites that don't have it
   // still render (the preview just omits the resulting-balance line).
   availableBalance?: number;
+  // The RAW spendable balance the server actually debits (the displayed
+  // `availableBalance` can be inflated by official-stream credits that
+  // aren't real cash). The preview + negative check use THIS so the dialog
+  // never promises a removal the server will reject. Falls back to
+  // `availableBalance` when not supplied.
+  availableBalanceRaw?: number;
   // Current locked (vault) balance — used for the remove_locked_balance
   // category preview. Optional for legacy call sites.
   lockedBalance?: number;
@@ -342,12 +349,24 @@ export function BalanceAdjustDialog({
   // Direction label from the effective sign (explicit add vs remove).
   const isRemoval = previewValue !== null && previewValue < 0;
   const affectsLockedPreview = category === "remove_locked_balance";
+  // The server debits the RAW available column, which can be lower than the
+  // displayed (official-stream-netted) cash. Preview against the raw value
+  // so a removal the server would reject shows as negative HERE first.
+  const spendableBalance =
+    availableBalanceRaw ?? availableBalance;
   const newBalance =
     previewValue !== null &&
     !affectsLockedPreview &&
-    availableBalance !== undefined
-      ? availableBalance + previewValue
+    spendableBalance !== undefined
+      ? spendableBalance + previewValue
       : null;
+  // True when the shown cash is inflated by non-removable balance (e.g.
+  // official-stream credit): a removal can only touch the raw spendable
+  // amount, so warn the admin when the two diverge meaningfully.
+  const hasInflatedDisplay =
+    availableBalance !== undefined &&
+    availableBalanceRaw !== undefined &&
+    availableBalanceRaw < availableBalance - 0.01;
   const newLockedBalance =
     previewValue !== null &&
     affectsLockedPreview &&
@@ -465,10 +484,25 @@ export function BalanceAdjustDialog({
                   {newBalance !== null && (
                     <div className="mt-1 flex items-center justify-between gap-2 border-t pt-1">
                       <span className="text-muted-foreground">New cash balance</span>
-                      <span className="font-semibold tabular-nums">
+                      <span
+                        className={`font-semibold tabular-nums ${
+                          newBalance < 0
+                            ? "text-rose-600 dark:text-rose-400"
+                            : ""
+                        }`}
+                      >
                         {formatCurrency(newBalance)}
                       </span>
                     </div>
+                  )}
+                  {newBalance !== null && newBalance < 0 && (
+                    <p className="mt-1 text-[10px] text-rose-600 dark:text-rose-400">
+                      Exceeds removable cash
+                      {spendableBalance !== undefined
+                        ? ` (max ${formatCurrency(spendableBalance)})`
+                        : ""}{" "}
+                      — the server will reject this.
+                    </p>
                   )}
                   {newLockedBalance !== null && (
                     <div className="mt-1 flex items-center justify-between gap-2 border-t pt-1">
@@ -486,6 +520,13 @@ export function BalanceAdjustDialog({
                     : parsedPreview.error}
                 </p>
               ))}
+            {hasInflatedDisplay && availableBalanceRaw !== undefined && (
+              <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                Heads up: only {formatCurrency(availableBalanceRaw)} of this
+                user&apos;s shown cash is real spendable balance (the rest is
+                official-stream credit). Removals can&apos;t exceed that.
+              </p>
+            )}
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Category</Label>

@@ -272,6 +272,7 @@ export function ModernBalancePanel({
         <BalanceAdjustDialog
           userId={userId}
           availableBalance={balances.availableBalance}
+          availableBalanceRaw={balances.availableBalanceRaw}
           lockedBalance={balances.lockedBalance}
           pnl7d={pnl7d}
           open={adjustOpen}
