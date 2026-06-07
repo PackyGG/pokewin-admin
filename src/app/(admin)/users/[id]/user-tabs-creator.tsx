@@ -70,6 +70,16 @@ export const CreatorSection = React.memo(function CreatorSection({
 
   // affiliate_code on user table may be null even when affiliate_accounts exists
   const effectiveCode = user.affiliateCode ?? affiliate?.code ?? null;
+  // user.affiliate_code is the code they're ON (referral cookie / active
+  // routing). Distinct from ownedCodes — only treat as removable referral
+  // when it isn't one of their own minted codes.
+  const carryingReferralCode =
+    user.affiliateCode != null &&
+    user.affiliateCode !== "" &&
+    !user.ownedCodes.some(
+      (c) => c.code.toLowerCase() === user.affiliateCode!.toLowerCase(),
+    );
+  const canClearReferral = Boolean(user.referredBy || carryingReferralCode);
 
   const handleAssign = () => {
     startTransition(async () => {
@@ -90,7 +100,9 @@ export const CreatorSection = React.memo(function CreatorSection({
     startTransition(async () => {
       try {
         await assignAffiliateCode(user.id, null);
-        toast.success("Affiliate code cleared");
+        toast.success(
+          "Referral removed — future wagers won't route to this code",
+        );
         setCodeInput("");
         router.refresh();
       } catch (e) {
@@ -130,6 +142,13 @@ export const CreatorSection = React.memo(function CreatorSection({
                   </Link>
                 }
               />
+            ) : carryingReferralCode ? (
+              <InfoRow
+                label="Referral cookie"
+                value={
+                  <span className="font-mono text-sm">{user.affiliateCode}</span>
+                }
+              />
             ) : (
               <p className="text-sm text-muted-foreground">Not referred</p>
             )}
@@ -156,14 +175,14 @@ export const CreatorSection = React.memo(function CreatorSection({
                     "Save"
                   )}
                 </Button>
-                {user.referredBy && (
+                {canClearReferral && (
                   <Button
                     size="sm"
                     variant="destructive"
                     disabled={isPending}
                     onClick={handleClear}
                   >
-                    Clear
+                    Remove referral
                   </Button>
                 )}
               </div>

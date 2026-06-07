@@ -988,7 +988,9 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
     startTransition(async () => {
       try {
         await assignAffiliateCode(user.id, null);
-        toast.success("Referrer cleared");
+        toast.success(
+          "Referral removed — future wagers won't route to this code",
+        );
         setConfirmClearOpen(false);
         router.refresh();
       } catch (e) {
@@ -1018,6 +1020,7 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
   const carriedCookie = user.affiliateCode;
   const hasFormalReferrer = Boolean(user.referredBy);
   const hasCarriedCookie = Boolean(carriedCookie);
+  const canClearReferral = hasFormalReferrer || hasCarriedCookie;
 
   return (
     // Subtle blue accent on this card so it visually distinguishes
@@ -1067,7 +1070,7 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
                   onClick={() => setConfirmClearOpen(true)}
                   disabled={isPending}
                 >
-                  Clear
+                  Remove referral
                 </Button>
               </div>
             </div>
@@ -1086,6 +1089,15 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
                 >
                   Not yet attributed
                 </Badge>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-auto h-7 gap-1.5 text-xs text-rose-500 border-rose-500/40 hover:bg-rose-500/10"
+                  onClick={() => setConfirmClearOpen(true)}
+                  disabled={isPending}
+                >
+                  Remove code
+                </Button>
               </div>
               <p className="text-[11px] text-muted-foreground">
                 This user clicked a referral link but isn&apos;t yet
@@ -1151,28 +1163,47 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
       <AlertDialog open={confirmClearOpen} onOpenChange={setConfirmClearOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Clear referrer?</AlertDialogTitle>
+            <AlertDialogTitle>Remove referral code?</AlertDialogTitle>
             <AlertDialogDescription>
-              Removes this user&apos;s{" "}
-              <span className="font-mono">referred_by</span> link, clears
-              their active{" "}
-              <span className="font-mono">affiliate_code</span> (so wager
-              income stops routing to the old owner), and decrements the
-              previous referrer&apos;s{" "}
-              <span className="font-mono">total_referred</span>{" "}
-              counter. Historical{" "}
-              <span className="font-mono">affiliate_code_usages</span>{" "}
-              rows are not touched (those are a permanent audit trail).
+              {hasFormalReferrer ? (
+                <>
+                  Removes this user&apos;s{" "}
+                  <span className="font-mono">referred_by</span> link and
+                  clears their active{" "}
+                  <span className="font-mono">affiliate_code</span>, so{" "}
+                  <span className="font-semibold">
+                    future wagers stop routing affiliate income
+                  </span>{" "}
+                  to the old code owner. Decrements the previous
+                  referrer&apos;s{" "}
+                  <span className="font-mono">total_referred</span> counter.
+                </>
+              ) : (
+                <>
+                  Clears the referral cookie (
+                  <span className="font-mono">{carriedCookie}</span>) from
+                  this profile so{" "}
+                  <span className="font-semibold">
+                    future wagers won&apos;t count toward that code
+                  </span>{" "}
+                  if they deposit later. No formal{" "}
+                  <span className="font-mono">referred_by</span> link exists
+                  yet.
+                </>
+              )}{" "}
+              Historical{" "}
+              <span className="font-mono">affiliate_code_usages</span> rows
+              are kept as an audit trail — only live routing is removed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleClear}
-              disabled={isPending}
+              disabled={isPending || !canClearReferral}
               className="bg-rose-500 hover:bg-rose-500/90"
             >
-              {isPending ? "Clearing…" : "Clear referrer"}
+              {isPending ? "Removing…" : "Remove referral"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

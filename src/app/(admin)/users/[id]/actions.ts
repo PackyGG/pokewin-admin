@@ -1,7 +1,7 @@
 "use server";
 
 import crypto from "crypto";
-import { revalidatePath, unstable_cache } from "next/cache";
+import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
@@ -1450,24 +1450,28 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
   await requireCapability(session, "__can_assign_affiliate", "assign affiliate codes");
 
   if (!affiliateCode || affiliateCode.trim() === "") {
-    // Find current referrer to decrement their total_referred
     const currentUser = await db.user.findUnique({
       where: { id: userId },
-      select: { referred_by: true },
+      select: { referred_by: true, affiliate_code: true },
     });
 
-    await db.user.update({
-      where: { id: userId },
-      data: {
-        referred_by: null,
-        // Clearing reverts BOTH columns: drop the active code too so
-        // wager income stops routing to the old owner, and leave no
-        // lock behind.
-        affiliate_code: null,
-        affiliate_code_active: false,
-        affiliate_code_expires_at: null,
-      },
-    });
+    await db.$transaction([
+      db.user.update({
+        where: { id: userId },
+        data: {
+          referred_by: null,
+          // Drop the active code so FUTURE wager affiliate income stops
+          // routing to the old owner. Historical affiliate_code_usages
+          // rows are kept as audit (see dialog copy).
+          affiliate_code: null,
+          affiliate_code_active: false,
+          affiliate_code_expires_at: null,
+        },
+      }),
+      // Pending frontend lock / cookie queue — drop so the site can't
+      // re-apply the old code from a stale queue row.
+      db.affiliate_code_queue.deleteMany({ where: { user_id: userId } }),
+    ]);
 
     if (currentUser?.referred_by) {
       await db.affiliate_accounts.update({
@@ -1480,10 +1484,14 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
       adminUserId: session.userId,
       eventType: "affiliate_code_cleared",
       targetUserId: userId,
-      metadata: {},
+      metadata: {
+        previousReferrerId: currentUser?.referred_by ?? null,
+        clearedCode: currentUser?.affiliate_code ?? null,
+      },
     });
 
     revalidatePath(`/users/${userId}`);
+    revalidateTag(`user-attribution-${userId}`);
     if (currentUser?.referred_by) revalidatePath(`/users/${currentUser.referred_by}`);
     return { success: true };
   }
