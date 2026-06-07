@@ -269,9 +269,12 @@ export default async function UsersPage({
               <p className="text-xs text-amber-700 dark:text-amber-300">
                 Couldn&apos;t load the user list — the query timed out or
                 failed. Try{" "}
-                <span className="font-medium">clearing your filters</span>{" "}
-                or refreshing the page. If it keeps failing, a narrower
-                search (exact username, email, or user ID) loads faster.
+                <span className="font-medium">
+                  clearing your filters and sort shortcuts
+                </span>{" "}
+                (Top losers / Top winners / Net holdings) or refreshing the
+                page. If it keeps failing, a narrower search (exact username,
+                email, or user ID) loads faster.
               </p>
             </div>
           )}

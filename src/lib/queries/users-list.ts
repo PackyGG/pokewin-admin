@@ -9,8 +9,10 @@ import {
   type RiskTier,
 } from "@/lib/fraud/score";
 import { calculateUsersPnlBatch, type UserPnl } from "./pnl";
-import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
+import { statsExcludedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import { isUserId, isUuid } from "@/lib/utils/ids";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { escapeBlacklistIds } from "./_blacklist";
 
 // Allowlist from the generated Prisma user_role enum — validate the
 // role filter before it reaches either the Prisma where or the raw-SQL
@@ -71,7 +73,18 @@ type UserListFilterInput = {
   searchMode: UserSearchMode;
   role: string | undefined;
   status: string | undefined;
+  /** packy.gg user_ids from admin `excluded_users` — hidden from list results. */
+  excludedUserIds: string[];
 };
+
+/** AND-wrap a Prisma where with the analytics blacklist exclusion. */
+function withExcludedUsers(
+  where: Prisma.UserWhereInput,
+  excludedIds: string[],
+): Prisma.UserWhereInput {
+  if (excludedIds.length === 0) return where;
+  return { AND: [where, { id: { notIn: excludedIds } }] };
+}
 
 type RankedUserIdsInput = UserListFilterInput & {
   sortBy: string;
@@ -154,7 +167,7 @@ function buildAggregateCtes(
           FROM ledger_transactions lt
          INNER JOIN filtered f ON f.id = lt.user_id
          WHERE lt.status = 'completed'
-           AND ${officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })}
+           AND ${statsExcludedAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })}
          GROUP BY lt.user_id
       )`);
   }
@@ -343,6 +356,11 @@ function buildUserListWhereClause(input: UserListFilterInput): string {
   else if (status === "locked") whereSql.push("u.is_locked = true");
   else if (status === "active")
     whereSql.push("u.is_banned = false AND u.is_locked = false");
+  if (input.excludedUserIds.length > 0) {
+    whereSql.push(
+      `u.id NOT IN (${escapeBlacklistIds(input.excludedUserIds)})`,
+    );
+  }
   return whereSql.length ? `WHERE ${whereSql.join(" AND ")}` : "";
 }
 
@@ -811,6 +829,8 @@ export async function getUsers(params: {
     searchMode = "prefix",
   } = params;
 
+  const excludedUserIds = await getExcludedUserIds();
+
   const where: Prisma.UserWhereInput = {};
 
   // Trim so stray leading/trailing whitespace (easy to paste in by
@@ -853,6 +873,15 @@ export async function getUsers(params: {
   const isFreeFormTextSearch =
     !!searchTerm && !isExactId && !isEmailLike && !isDiscordId;
   const isAnySearch = !!searchTerm;
+  // Role / status toolbar filters narrow the list but must NOT trigger the
+  // global lifetime PnL / net-holdings ranking scan — same rule as search.
+  // A ?role=user + ?sortBy=pnl URL (common after clicking Top losers then
+  // refining the role chip) was scanning thousands of matched users through
+  // inventory + ledger aggregate CTEs and timing out the page.
+  const isToolbarFiltered =
+    (!!role && role !== "all") || !!status;
+  const skipHeavyRanking = isAnySearch || isToolbarFiltered;
+  const skipListRiskForFilter = skipHeavyRanking;
   const filterInput: UserListFilterInput = {
     searchTerm,
     isExactId,
@@ -861,6 +890,7 @@ export async function getUsers(params: {
     searchMode,
     role,
     status,
+    excludedUserIds,
   };
 
   // ── Exact-match fast path (user id / email / discord snowflake) ───────
@@ -891,14 +921,16 @@ export async function getUsers(params: {
       exactWhere.is_locked = false;
     }
 
+    const exactWhereFiltered = withExcludedUsers(exactWhere, excludedUserIds);
+
     const exactUsers = await db.user.findMany({
-      where: exactWhere,
+      where: exactWhereFiltered,
       select: USER_LIST_SELECT,
       orderBy: { created_at: "desc" },
       take: perPage,
       skip: (page - 1) * perPage,
     });
-    const exactTotal = await db.user.count({ where: exactWhere });
+    const exactTotal = await db.user.count({ where: exactWhereFiltered });
 
     return hydrateUserListPage(
       exactUsers,
@@ -986,10 +1018,12 @@ export async function getUsers(params: {
   let users: UserListRow[];
   let total: number;
 
-  // Never run the global lifetime ranking scan while a search filter is
-  // active — that was the main source of 15s timeouts on ?search=….
-  // Text / id searches use the index-friendly column-sort SQL instead.
-  if (RAW_SQL_SORTS.has(sortBy) && !isAnySearch) {
+  // Never run the global lifetime ranking scan while a search OR toolbar
+  // filter is active — that was the main source of 15s timeouts on
+  // ?search=… and ?role=user&sortBy=pnl. Text / id searches and
+  // role/status-filtered views use the index-friendly column-sort SQL
+  // instead (see branch below).
+  if (RAW_SQL_SORTS.has(sortBy) && !skipHeavyRanking) {
     // Heavy computed-sort path. The global ORDER BY scan (the source of
     // the "/users timed out" failure — most acutely the Top winners /
     // Top losers lifetime-PnL ranking) is delegated to the cached
@@ -998,17 +1032,11 @@ export async function getUsers(params: {
     // HYDRATION stays here and stays UNCACHED so balances / PnL / risk
     // are always live; only the slow ordering is served from cache.
     const { ids, total: totalCount, metricsById } = await cachedRankedUserIds({
+      ...filterInput,
       sortBy,
       order,
       page,
       perPage,
-      searchTerm,
-      isExactId,
-      isEmailLike,
-      isDiscordId,
-      searchMode,
-      role,
-      status,
     });
     const unordered =
       ids.length > 0
@@ -1072,9 +1100,12 @@ export async function getUsers(params: {
       ];
     }
 
-    if (isFreeFormTextSearch || (isAnySearch && RAW_SQL_SORTS.has(sortBy))) {
+    if (
+      isFreeFormTextSearch ||
+      (skipHeavyRanking && RAW_SQL_SORTS.has(sortBy))
+    ) {
       const effectiveSort =
-        isAnySearch && RAW_SQL_SORTS.has(sortBy) ? "created_at" : sortBy;
+        skipHeavyRanking && RAW_SQL_SORTS.has(sortBy) ? "created_at" : sortBy;
       const { ids, total: totalCount } = await cachedFilteredColumnSortUserIds(
         {
           ...filterInput,
@@ -1097,15 +1128,16 @@ export async function getUsers(params: {
         .filter((u): u is (typeof unordered)[number] => Boolean(u));
       total = totalCount;
     } else {
+      const whereFiltered = withExcludedUsers(where, excludedUserIds);
       const result = await Promise.all([
         db.user.findMany({
-          where,
+          where: whereFiltered,
           orderBy,
           skip: (page - 1) * perPage,
           take: perPage,
           select: userSelect,
         }),
-        db.user.count({ where }),
+        db.user.count({ where: whereFiltered }),
       ]);
       users = result[0];
       total = result[1];
@@ -1113,7 +1145,7 @@ export async function getUsers(params: {
   }
 
   return hydrateUserListPage(users, total, page, perPage, {
-    skipListRisk: isAnySearch,
+    skipListRisk: skipListRiskForFilter,
   });
 }
 
