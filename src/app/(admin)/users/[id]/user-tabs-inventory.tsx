@@ -311,7 +311,7 @@ export const InventoryGrid = React.memo(function InventoryGrid({
                   type="button"
                   variant="destructive"
                   size="icon"
-                  className="absolute right-1 top-1 z-10 size-7 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                  className="absolute right-1 top-1 z-10 size-7 opacity-90 hover:opacity-100 transition-opacity"
                   aria-label={`Remove ${item.cardName} from inventory`}
                   onClick={() => setDeleteTarget(item)}
                 >
