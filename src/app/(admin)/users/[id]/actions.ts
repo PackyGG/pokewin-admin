@@ -1674,11 +1674,47 @@ export async function deleteUserInventoryItem(data: {
     };
   }
 
+  const result = await removeOneInventoryItem(
+    db,
+    session.userId,
+    parsed.data.userId,
+    parsed.data.inventoryItemId,
+    parsed.data.reason,
+  );
+  if (!result.ok) {
+    return { success: false, error: result.error };
+  }
+
+  revalidatePath(`/users/${parsed.data.userId}`);
+  return { success: true };
+}
+
+type RemoveInventoryItemResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Core per-item inventory removal: validates the item is removable, deletes
+ * it (with its dependent provably-fair rows), and writes a VISIBLE
+ * `admin_balance_adjustment` ledger row so the removal shows up in the
+ * user's Deposits & Withdrawals / Admin balance adjustments box — exactly
+ * like a balance adjustment. The ledger row leaves `balance_before ==
+ * balance_after` (removing a card doesn't change cash), so PnL /
+ * onSiteBalance are untouched; the signed `amount` (− item value) and the
+ * description carry the removed value for display only. NOT tagged with an
+ * `adjustment_category`, so it's never counted as a balance-adjustment
+ * credit/debit in GGR/cost.
+ *
+ * Auth + 2FA are the CALLER's responsibility (so the bulk path verifies
+ * once). Returns ok/error per item so the bulk path can skip-and-continue.
+ */
+async function removeOneInventoryItem(
+  db: Awaited<ReturnType<typeof getDb>>,
+  adminUserId: string,
+  userId: string,
+  inventoryItemId: string,
+  reason: string,
+): Promise<RemoveInventoryItemResult> {
   const item = await db.user_inventory.findFirst({
-    where: {
-      id: parsed.data.inventoryItemId,
-      user_id: parsed.data.userId,
-    },
+    where: { id: inventoryItemId, user_id: userId },
     select: {
       id: true,
       card_id: true,
@@ -1690,35 +1726,32 @@ export async function deleteUserInventoryItem(data: {
   });
 
   if (!item) {
-    return { success: false, error: "Inventory item not found for this user" };
+    return { ok: false, error: "Inventory item not found for this user" };
   }
-
   if (item.sold_at || item.exchanged_at) {
     return {
-      success: false,
-      error: "Only open inventory items can be removed — this item was already sold or exchanged",
+      ok: false,
+      error: "Only open items can be removed — this one was already sold or exchanged",
     };
   }
-
   if (item.withdrawal_locked_at) {
     return {
-      success: false,
+      ok: false,
       error: "This item is withdrawal-locked — unlock or cancel the withdrawal first",
     };
   }
 
   const openWithdrawal = await db.card_withdrawal_requests.findFirst({
     where: {
-      user_id: parsed.data.userId,
+      user_id: userId,
       status: { in: [...OPEN_WITHDRAWAL_STATUSES] },
-      inventory_item_ids: { has: parsed.data.inventoryItemId },
+      inventory_item_ids: { has: inventoryItemId },
     },
     select: { id: true },
   });
-
   if (openWithdrawal) {
     return {
-      success: false,
+      ok: false,
       error: "This item is tied to an open card withdrawal — cancel or complete it first",
     };
   }
@@ -1727,32 +1760,60 @@ export async function deleteUserInventoryItem(data: {
     where: { id: item.card_id },
     select: { name: true },
   });
+  const value = Number(item.value_at_obtained);
+  const cardName = card?.name ?? "Unknown item";
 
   let deletedCount = 0;
   try {
     deletedCount = await db.$transaction(async (tx) => {
-      // Remove dependent provably-fair rows first. The schema declares an
-      // ON DELETE CASCADE FK, but doing it explicitly keeps the delete
-      // working even if the live DB's FK isn't cascading — otherwise a
-      // RESTRICT throws and the whole action rejected (silently, before the
-      // dialog had a try/catch).
+      const bal = await tx.balances.findUnique({
+        where: { user_id: userId },
+        select: { available_balance: true },
+      });
+      const currentAvailable = bal ? Number(bal.available_balance) : 0;
+
+      // Remove dependent provably-fair rows first (explicit, so the delete
+      // works even if the live DB's FK isn't actually cascading).
       await tx.provably_fair_results.deleteMany({
-        where: { inventory_item_id: parsed.data.inventoryItemId },
+        where: { inventory_item_id: inventoryItemId },
       });
       const deleted = await tx.user_inventory.deleteMany({
         where: {
-          id: parsed.data.inventoryItemId,
-          user_id: parsed.data.userId,
+          id: inventoryItemId,
+          user_id: userId,
           sold_at: null,
           exchanged_at: null,
         },
       });
+
+      if (deleted.count === 1) {
+        // Visible record in the transactions box. Balance UNCHANGED.
+        await tx.ledger_transactions.create({
+          data: {
+            id: crypto.randomUUID(),
+            user_id: userId,
+            type: "admin_balance_adjustment",
+            amount: -Math.abs(value),
+            balance_before: currentAvailable,
+            balance_after: currentAvailable,
+            description: `Inventory removed: ${cardName} ($${value.toFixed(2)}) — ${reason}`,
+            metadata: {
+              kind: "inventory_removal",
+              inventory_item_id: inventoryItemId,
+              card_id: item.card_id,
+              card_name: cardName,
+              value_at_obtained: value,
+            },
+            status: "completed",
+          },
+        });
+      }
       return deleted.count;
     });
   } catch (err) {
-    console.error("[deleteUserInventoryItem] delete failed:", err);
+    console.error("[removeOneInventoryItem] delete failed:", err);
     return {
-      success: false,
+      ok: false,
       error:
         err instanceof Error
           ? `Failed to remove item: ${err.message}`
@@ -1762,26 +1823,122 @@ export async function deleteUserInventoryItem(data: {
 
   if (deletedCount !== 1) {
     return {
-      success: false,
+      ok: false,
       error: "Could not remove item — it may have changed since you opened this dialog",
     };
   }
 
   await createAdminAuditEvent({
-    adminUserId: session.userId,
+    adminUserId,
     eventType: "inventory_item_deleted",
-    targetUserId: parsed.data.userId,
+    targetUserId: userId,
     metadata: {
       inventoryItemId: item.id,
       cardId: item.card_id,
-      cardName: card?.name ?? null,
-      valueAtObtained: Number(item.value_at_obtained),
-      reason: parsed.data.reason,
+      cardName,
+      valueAtObtained: value,
+      reason,
     },
   });
 
+  return { ok: true };
+}
+
+const bulkDeleteInventorySchema = z.object({
+  userId: z.string().min(1),
+  inventoryItemIds: z
+    .array(z.string().uuid())
+    .min(1, { message: "Select at least one item" })
+    .max(200, { message: "Remove at most 200 items at once" }),
+  reason: z
+    .string()
+    .trim()
+    .min(INVENTORY_DELETE_MIN_REASON_CHARS, {
+      message: `Reason must be at least ${INVENTORY_DELETE_MIN_REASON_CHARS} characters`,
+    })
+    .max(5000),
+  totpCode: z.string().trim().min(1, { message: "2FA code is required" }),
+});
+
+/**
+ * Remove MANY inventory items in one go (the multi-select flow). Verifies
+ * permission + 2FA ONCE, then removes each selected item independently —
+ * invalid ones (sold / locked / tied to a withdrawal) are skipped and
+ * counted rather than failing the whole batch. Each successful removal
+ * writes its own visible ledger record + audit event.
+ */
+export async function bulkDeleteUserInventoryItems(data: {
+  userId: string;
+  inventoryItemIds: string[];
+  reason: string;
+  totpCode: string;
+}): Promise<
+  | { success: true; deleted: number; skipped: number; firstError?: string }
+  | { success: false; error: string }
+> {
+  const db = await getDb();
+  const session = await requirePageAccess("/users");
+
+  const parsed = bulkDeleteInventorySchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  if (session.role !== "admin") {
+    const perms = await adminDb.admin_users.findUnique({
+      where: { id: session.userId },
+      select: { allowed_pages: true },
+    });
+    if (!perms || !canUserAdjustBalance(perms.allowed_pages)) {
+      return {
+        success: false,
+        error: "You do not have permission to remove inventory items",
+      };
+    }
+  }
+
+  try {
+    await require2FA(session.userId, parsed.data.totpCode);
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "2FA verification failed",
+    };
+  }
+
+  // De-dupe ids so a doubled selection can't double-count.
+  const ids = [...new Set(parsed.data.inventoryItemIds)];
+  let deleted = 0;
+  let skipped = 0;
+  let firstError: string | undefined;
+  for (const id of ids) {
+    const r = await removeOneInventoryItem(
+      db,
+      session.userId,
+      parsed.data.userId,
+      id,
+      parsed.data.reason,
+    );
+    if (r.ok) {
+      deleted += 1;
+    } else {
+      skipped += 1;
+      if (!firstError) firstError = r.error;
+    }
+  }
+
   revalidatePath(`/users/${parsed.data.userId}`);
-  return { success: true };
+
+  if (deleted === 0) {
+    return {
+      success: false,
+      error: firstError ?? "No items could be removed",
+    };
+  }
+  return { success: true, deleted, skipped, firstError };
 }
 
 export async function getGameSessionDetails(

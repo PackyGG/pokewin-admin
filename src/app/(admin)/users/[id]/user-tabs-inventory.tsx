@@ -24,11 +24,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { Checkbox } from "@/components/ui/checkbox";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { CardImage } from "@/components/card-image";
 import { EmptyState } from "@/components/empty-state";
 import { fetchInventory } from "./actions";
 import { InventoryItemDeleteDialog } from "./inventory-item-delete-dialog";
+import { InventoryBulkDeleteDialog } from "./inventory-bulk-delete-dialog";
 import type {
   InventoryItem,
   PaginatedInventory,
@@ -67,6 +69,23 @@ export const InventoryGrid = React.memo(function InventoryGrid({
   const [inventory, setInventory] = useState(initialInventory);
   const [loading, setLoading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
+  // Multi-select for bulk removal. Holds inventory-item ids + their values
+  // (value kept so the bulk dialog can show a total without a re-fetch).
+  // Persists across pages so an admin can sweep a large inventory.
+  const [selected, setSelected] = useState<Map<string, number>>(new Map());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const canSelect = canDeleteInventory && statusFilter === "owned";
+
+  const toggleSelect = (item: InventoryItem) => {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      if (next.has(item.id)) next.delete(item.id);
+      else next.set(item.id, item.value);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelected(new Map());
+  const selectedValue = [...selected.values()].reduce((a, b) => a + b, 0);
   const [rarity, setRarity] = useState("all");
   const [sort, setSort] = useState("newest");
   const [searchInput, setSearchInput] = useState("");
@@ -300,12 +319,51 @@ export const InventoryGrid = React.memo(function InventoryGrid({
             <Loader2 className="size-6 animate-spin text-muted-foreground" />
           </div>
         )}
+        {canSelect && selected.size > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
+            <span className="text-sm font-medium">
+              {selected.size} selected
+              <span className="ml-1 text-muted-foreground tabular-nums">
+                ({formatCurrency(selectedValue)})
+              </span>
+            </span>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-7 gap-1.5"
+              onClick={() => setBulkOpen(true)}
+            >
+              <Trash2 className="size-3" />
+              Remove selected
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={clearSelection}
+            >
+              Clear
+            </Button>
+          </div>
+        )}
         {(() => {
           const renderCard = (item: InventoryItem) => (
             <div
               key={item.id}
               className="group relative rounded-lg border bg-card overflow-hidden transition-shadow hover:shadow-md"
             >
+              {canSelect && (
+                <span
+                  className="absolute left-1 top-1 z-10 rounded bg-background/80 p-0.5 backdrop-blur-sm"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Checkbox
+                    checked={selected.has(item.id)}
+                    onCheckedChange={() => toggleSelect(item)}
+                    aria-label={`Select ${item.cardName}`}
+                  />
+                </span>
+              )}
               {canDeleteInventory && statusFilter === "owned" && (
                 <Button
                   type="button"
@@ -379,6 +437,19 @@ export const InventoryGrid = React.memo(function InventoryGrid({
               if (!open) setDeleteTarget(null);
             }}
             onDeleted={() => load({ page })}
+          />
+        )}
+        {canSelect && (
+          <InventoryBulkDeleteDialog
+            userId={userId}
+            itemIds={[...selected.keys()]}
+            totalValue={selectedValue}
+            open={bulkOpen}
+            onOpenChange={setBulkOpen}
+            onDeleted={() => {
+              clearSelection();
+              load({ page });
+            }}
           />
         )}
       </CardContent>
