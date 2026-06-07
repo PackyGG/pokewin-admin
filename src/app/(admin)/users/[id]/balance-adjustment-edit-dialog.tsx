@@ -112,7 +112,10 @@ export function BalanceAdjustmentEditDialog({
       const result = await updateBalanceAdjustmentMeta({
         ledgerTxId: transaction.id,
         targetUserId: userId,
-        category: payload.kind === "admin" ? category : undefined,
+        category:
+          payload.kind === "admin" && category !== ""
+            ? category
+            : undefined,
         reason: reason.trim(),
         totpCode: totpCode.trim(),
       });

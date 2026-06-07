@@ -7,7 +7,7 @@ import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin, requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
-import { user_role } from "@/generated/prisma/client";
+import { Prisma, user_role } from "@/generated/prisma/client";
 import { getUserInventory, getUserTransactions, getCreatorReferralClicks, getCreatorCodeUsages, getCreatorWithdrawalLimits, getUserAttributionJourney, getProvablyFairResults, getSeedRotationHistory, getUserBalanceHistory } from "@/lib/queries/users";
 import type { AttributionJourneyEntry } from "@/lib/queries/users";
 import { safeQuery } from "@/lib/errors/safe-query";
@@ -928,7 +928,7 @@ export async function updateBalanceAdjustmentMeta(data: {
       where: { id: parsed.ledgerTxId },
       data: {
         description: newDescription,
-        metadata: nextMetadata,
+        metadata: nextMetadata as Prisma.InputJsonValue,
       },
     });
   } catch (err) {
