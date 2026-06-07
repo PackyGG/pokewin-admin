@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -10,6 +10,7 @@ import {
   Loader2,
   Package,
   Search,
+  Trash2,
   X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +28,7 @@ import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { CardImage } from "@/components/card-image";
 import { EmptyState } from "@/components/empty-state";
 import { fetchInventory } from "./actions";
+import { InventoryItemDeleteDialog } from "./inventory-item-delete-dialog";
 import type {
   InventoryItem,
   PaginatedInventory,
@@ -49,6 +51,7 @@ export const InventoryGrid = React.memo(function InventoryGrid({
   inventoryValue,
   vouchersValue = 0,
   statusFilter = "owned",
+  canDeleteInventory = false,
 }: {
   userId: string;
   initialInventory: PaginatedInventory;
@@ -58,9 +61,12 @@ export const InventoryGrid = React.memo(function InventoryGrid({
    *  voucher is held value just like a card. */
   vouchersValue?: number;
   statusFilter?: string;
+  /** Same gate as Adjust Balance — admin or __can_adjust_balance. */
+  canDeleteInventory?: boolean;
 }) {
   const [inventory, setInventory] = useState(initialInventory);
   const [loading, setLoading] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
   const [rarity, setRarity] = useState("all");
   const [sort, setSort] = useState("newest");
   const [searchInput, setSearchInput] = useState("");
@@ -68,6 +74,10 @@ export const InventoryGrid = React.memo(function InventoryGrid({
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
   const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    setInventory(initialInventory);
+  }, [initialInventory]);
 
   const { data, totalPages, total } = inventory;
 
@@ -296,6 +306,18 @@ export const InventoryGrid = React.memo(function InventoryGrid({
               key={item.id}
               className="group relative rounded-lg border bg-card overflow-hidden transition-shadow hover:shadow-md"
             >
+              {canDeleteInventory && statusFilter === "owned" && (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="icon"
+                  className="absolute right-1 top-1 z-10 size-7 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                  aria-label={`Remove ${item.cardName} from inventory`}
+                  onClick={() => setDeleteTarget(item)}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              )}
               <div className="aspect-[2/3] relative bg-muted">
                 <CardImage
                   src={item.imageUrl}
@@ -348,6 +370,17 @@ export const InventoryGrid = React.memo(function InventoryGrid({
             </>
           );
         })()}
+        {deleteTarget && (
+          <InventoryItemDeleteDialog
+            userId={userId}
+            item={deleteTarget}
+            open={Boolean(deleteTarget)}
+            onOpenChange={(open) => {
+              if (!open) setDeleteTarget(null);
+            }}
+            onDeleted={() => load({ page })}
+          />
+        )}
       </CardContent>
     </Card>
   );

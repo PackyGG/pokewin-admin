@@ -593,6 +593,7 @@ export function InventoryTab({
         inventoryValue={balances?.inventoryValue ?? 0}
         vouchersValue={balances?.vouchersValue ?? 0}
         statusFilter="owned"
+        canDeleteInventory={data.capabilities.canAdjustBalance}
       />
       <SectionHeading icon={Trophy} title="Sold & Exchanged" />
       <Suspense fallback={<SkeletonTable rows={5} columns={5} />}>

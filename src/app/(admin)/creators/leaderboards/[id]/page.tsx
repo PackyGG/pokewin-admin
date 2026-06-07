@@ -32,6 +32,10 @@ import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsor
 
 import { DetailActions } from "../_components/detail-actions";
 import { ManualPaymentPanel } from "../_components/manual-payment-panel";
+import {
+    LeaderboardDetailCountdown,
+    type LeaderboardCountdownMode,
+} from "../_components/leaderboard-detail-countdown";
 
 export const metadata = { title: "Affiliate Leaderboard" };
 
@@ -115,6 +119,30 @@ export default async function AffiliateLeaderboardDetailPage({
         email: creatorById.get(id)?.email ?? null,
     }));
     const currentSponsoredPct = sponsorshipMap.get(id) ?? null;
+
+    const now = Date.now();
+    const startMs = new Date(lb.start_date).getTime();
+    const endMs = new Date(lb.end_date).getTime();
+    let countdownMode: LeaderboardCountdownMode;
+    let countdownEdgeIso: string;
+    let countdownInitialMs: number;
+    if (lb.cancelled_at) {
+        countdownMode = "cancelled";
+        countdownEdgeIso = lb.end_date;
+        countdownInitialMs = 0;
+    } else if (lb.time_status === "upcoming" || now < startMs) {
+        countdownMode = "starts_in";
+        countdownEdgeIso = lb.start_date;
+        countdownInitialMs = Math.max(0, startMs - now);
+    } else if (lb.time_status === "active" || now < endMs) {
+        countdownMode = "ends_in";
+        countdownEdgeIso = lb.end_date;
+        countdownInitialMs = Math.max(0, endMs - now);
+    } else {
+        countdownMode = "ended";
+        countdownEdgeIso = lb.end_date;
+        countdownInitialMs = 0;
+    }
 
     return (
         <div className="space-y-6">
@@ -214,6 +242,11 @@ export default async function AffiliateLeaderboardDetailPage({
                         />
                         <DefRow label="Starts" value={fmt(lb.start_date)} />
                         <DefRow label="Ends" value={fmt(lb.end_date)} />
+                        <LeaderboardDetailCountdown
+                            mode={countdownMode}
+                            edgeIso={countdownEdgeIso}
+                            initialMs={countdownInitialMs}
+                        />
                         <DefRow label="Created" value={fmt(lb.created_at)} />
                     </div>
                 </FadeIn>
