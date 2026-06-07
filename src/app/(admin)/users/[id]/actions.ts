@@ -23,6 +23,7 @@ import { usdAmountSchema } from "@/lib/utils/money";
 import {
   BALANCE_ADJUSTMENT_CATEGORY_KEYS,
   BUGS_ADJUSTMENT_MIN_REASON_CHARS,
+  REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS,
   isCreatorLinkedAdjustmentCategory,
   type BalanceAdjustmentCategory,
 } from "@/lib/balance-adjustment-categories";
@@ -268,6 +269,26 @@ function validateAdjustmentCategory(
       }
       return { ok: true, meta: { ...base, creatorId } };
     }
+    case "remove_locked_balance": {
+      // Removal-only: decrements `balances.locked_balance` (vault), not
+      // available_balance. Used to clear escrowed leaderboard deposits
+      // or other locked funds without affecting GGR/NGR/P&L (netted out
+      // at the query layer — see balance-adjustment-categories.ts).
+      if (amount >= 0) {
+        return {
+          ok: false,
+          error: "Remove locked balance must use a negative amount",
+        };
+      }
+      const reasonText = (d.reasonText ?? "").trim();
+      if (reasonText.length < REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS) {
+        return {
+          ok: false,
+          error: `Remove locked balance requires a reason of at least ${REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS} characters`,
+        };
+      }
+      return { ok: true, meta: { ...base, reasonText } };
+    }
     case "official_stream": {
       // Creator-linked, but NOT removal-only — both add (credit) and
       // remove (debit) are allowed, so there is NO sign check here. Only
@@ -384,6 +405,7 @@ export async function adjustBalance(data: {
   // version still matches; on mismatch we abort + return a friendly retry.
   let currentBalance = 0;
   let newBalance = 0;
+  const affectsLockedBalance = parsed.category === "remove_locked_balance";
   // Capture the ledger row id so the admin-side metadata write below can
   // cross-reference it.
   const ledgerTxId = crypto.randomUUID();
@@ -395,6 +417,47 @@ export async function adjustBalance(data: {
       if (!b) throw new Error("User balances not found");
 
       currentBalance = Number(b.available_balance);
+
+      if (affectsLockedBalance) {
+        const lockedBefore = Number(b.locked_balance);
+        const lockedAfter = lockedBefore + parsed.amount;
+        if (lockedAfter < 0) {
+          throw new Error("Resulting locked balance would be negative");
+        }
+        newBalance = currentBalance;
+
+        const updated = await tx.balances.updateMany({
+          where: { user_id: parsed.userId, version: b.version },
+          data: {
+            locked_balance: lockedAfter,
+            version: { increment: 1 },
+          },
+        });
+        if (updated.count !== 1) {
+          throw new Error("Balance changed concurrently — please retry");
+        }
+
+        await tx.ledger_transactions.create({
+          data: {
+            id: ledgerTxId,
+            user_id: parsed.userId,
+            type: "admin_balance_adjustment",
+            amount: parsed.amount,
+            // Ledger balance_before/after track available_balance (platform
+            // convention). Locked-balance removals leave available unchanged.
+            balance_before: currentBalance,
+            balance_after: currentBalance,
+            description: `Admin adjustment: ${parsed.reason}`,
+            metadata: {
+              adjustment_category: parsed.category,
+              balance_target: "locked",
+            },
+            status: "completed",
+          },
+        });
+        return;
+      }
+
       newBalance = currentBalance + parsed.amount;
       if (newBalance < 0) {
         throw new Error("Resulting balance would be negative");
@@ -452,6 +515,7 @@ export async function adjustBalance(data: {
     if (
       message === "User balances not found" ||
       message === "Resulting balance would be negative" ||
+      message === "Resulting locked balance would be negative" ||
       message.includes("concurrently")
     ) {
       return { success: false, error: message };

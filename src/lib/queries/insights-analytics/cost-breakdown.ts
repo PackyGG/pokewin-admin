@@ -11,7 +11,7 @@ import {
   getWindowMetrics,
   getDailyGamingMetrics,
   sumLedgerTypes,
-  sumOfficialStreamAdjustments,
+  sumStatsExcludedAdjustments,
   type MetricWindow,
 } from "@/lib/metrics/queries";
 import { calculateWindowedPnl } from "@/lib/metrics/realized-pnl";
@@ -702,7 +702,7 @@ export async function getCostBreakdown(
     dailyMetrics,
     contributors,
     countedAdjustments,
-    officialStreamSum,
+    statsExcludedAdjSum,
   ] = await Promise.all([
     getWindowMetrics({ window }),
     calculateWindowedPnl({ since: cutoff, excludeUserIds: dropUserIds }),
@@ -710,10 +710,10 @@ export async function getCostBreakdown(
     getDailyGamingMetrics(window),
     getCostContributors(contributorLimit),
     getCountedAdjustmentSumsByCategory(window),
-    // FAKE-BALANCE: Σ |amount| of official_stream adjustments (same scope) —
-    // subtracted from the residual admin-adjustment line below so the fake
-    // balance is never surfaced as a residual cost.
-    sumOfficialStreamAdjustments({ window }),
+    // Stats-excluded adjustments (official_stream, remove_locked_balance):
+    // Σ |amount| in the same scope — subtracted from the residual
+    // admin-adjustment line below so they never surface as a residual cost.
+    sumStatsExcludedAdjustments({ window }),
   ]);
 
   const totalWager = metrics.wager;
@@ -832,12 +832,11 @@ export async function getCostBreakdown(
       // residual admin-adjustment line so they are not double-counted —
       // what remains is the uncounted slice (`other` + corrections +
       // manual-withdrawal debits). ALSO subtract the FAKE-BALANCE
-      // official_stream slice (`officialStreamSum`) so it is never surfaced
-      // as a residual admin-adjustment cost — owner-designated fake balance
-      // is hidden from every computed figure. Clamp ≥ 0 defensively.
+      // stats-excluded slice (`statsExcludedAdjSum`) so it is never surfaced
+      // as a residual admin-adjustment cost. Clamp ≥ 0 defensively.
       const total =
         type === "admin_balance_adjustment"
-          ? Math.max(0, raw - countedAdjustments.total - officialStreamSum)
+          ? Math.max(0, raw - countedAdjustments.total - statsExcludedAdjSum)
           : raw;
       return { type, total };
     }),

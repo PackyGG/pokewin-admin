@@ -64,12 +64,16 @@ export const BALANCE_ADJUSTMENT_CATEGORY_KEYS = [
   "reload",
   "lossback",
   "leaderboard",
+  "remove_locked_balance",
   "official_stream",
   "other",
 ] as const;
 
 /** Minimum explanation length when category is `bugs`. */
 export const BUGS_ADJUSTMENT_MIN_REASON_CHARS = 30;
+
+/** Minimum reason length when category is `remove_locked_balance`. */
+export const REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS = 20;
 
 export type BalanceAdjustmentCategory =
   (typeof BALANCE_ADJUSTMENT_CATEGORY_KEYS)[number];
@@ -83,7 +87,10 @@ export type BalanceAdjustmentCategory =
  * and must never be summed into the reward-cost side. The dialog uses this
  * set to gate the option to the REMOVE-balance direction only.
  */
-export const REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS = ["leaderboard"] as const;
+export const REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS = [
+  "leaderboard",
+  "remove_locked_balance",
+] as const;
 
 export type RemovalOnlyAdjustmentCategory =
   (typeof REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS)[number];
@@ -268,6 +275,13 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     why: "Balance REMOVED from a user and linked to a creator's leaderboard. A removal (debit) — NOT counted in the reward-cost / NGR side here (the counted-credit predicates only sum money given to users). Creator-leaderboard cost accounting is a separate follow-up.",
     counted: false,
   },
+  remove_locked_balance: {
+    key: "remove_locked_balance",
+    label: "Remove locked balance",
+    costLabel: "Locked-balance removals (uncounted)",
+    why: "Locked (vault) balance REMOVED from a user — e.g. reversing a leaderboard deposit escrow stuck in locked_balance. NOT counted in GGR/NGR/cost or P&L (the onSiteBalance carve-out nets it out). Requires a detailed reason (min 20 characters).",
+    counted: false,
+  },
   official_stream: {
     key: "official_stream",
     label: "Official stream",
@@ -353,6 +367,26 @@ export const OFFICIAL_STREAM_ADJUSTMENT_CATEGORY: BalanceAdjustmentCategory =
   "official_stream";
 
 /**
+ * The REMOVE-LOCKED-BALANCE category key — admin adjustments that decrement
+ * `balances.locked_balance` (vault) rather than `available_balance`. Used for
+ * clearing escrowed leaderboard deposits or other locked funds without moving
+ * the liability through GGR/NGR/cost or the canonical P&L formula (netted out
+ * of onSiteBalance the same way as {@link OFFICIAL_STREAM_ADJUSTMENT_CATEGORY}).
+ */
+export const REMOVE_LOCKED_BALANCE_ADJUSTMENT_CATEGORY: BalanceAdjustmentCategory =
+  "remove_locked_balance";
+
+/**
+ * Categories excluded from every computed figure (PnL live-balance term,
+ * balance-delta term, cost breakdowns, balance-adjustment insights). Both are
+ * `admin_balance_adjustment` rows classified by `metadata.adjustment_category`.
+ */
+export const STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS = [
+  OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
+  REMOVE_LOCKED_BALANCE_ADJUSTMENT_CATEGORY,
+] as const;
+
+/**
  * SQL predicate matching ONLY the fake-balance `official_stream`
  * `admin_balance_adjustment` rows. Single source of truth for every
  * "subtract / exclude / hide official_stream" call site.
@@ -374,6 +408,54 @@ export function officialStreamAdjustmentSqlPredicate(opts?: {
   const metaCol = opts?.metadataColumn ?? "metadata";
   const key = `'${OFFICIAL_STREAM_ADJUSTMENT_CATEGORY.replace(/'/g, "''")}'`;
   return `${typeCol}::text = 'admin_balance_adjustment' AND ${metaCol}->>'adjustment_category' = ${key}`;
+}
+
+/**
+ * SQL predicate matching ONLY `remove_locked_balance` `admin_balance_adjustment`
+ * rows. Used to net locked-balance removals out of onSiteBalance / P&L (signed
+ * `SUM(amount)` — amounts are negative debits from locked_balance).
+ */
+export function removeLockedBalanceAdjustmentSqlPredicate(opts?: {
+  typeColumn?: string;
+  metadataColumn?: string;
+}): string {
+  const typeCol = opts?.typeColumn ?? "type";
+  const metaCol = opts?.metadataColumn ?? "metadata";
+  const key = `'${REMOVE_LOCKED_BALANCE_ADJUSTMENT_CATEGORY.replace(/'/g, "''")}'`;
+  return `${typeCol}::text = 'admin_balance_adjustment' AND ${metaCol}->>'adjustment_category' = ${key}`;
+}
+
+/**
+ * SQL predicate matching ANY stats-excluded `admin_balance_adjustment` row
+ * (`official_stream` or `remove_locked_balance`). Single source of truth for
+ * insights filters and residual-adjustment carve-outs.
+ */
+export function statsExcludedAdjustmentSqlPredicate(opts?: {
+  typeColumn?: string;
+  metadataColumn?: string;
+}): string {
+  const typeCol = opts?.typeColumn ?? "type";
+  const metaCol = opts?.metadataColumn ?? "metadata";
+  const list = STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS.map(
+    (k) => `'${k.replace(/'/g, "''")}'`,
+  ).join(",");
+  return `${typeCol}::text = 'admin_balance_adjustment' AND ${metaCol}->>'adjustment_category' IN (${list})`;
+}
+
+/**
+ * Prisma JSON-filter for `remove_locked_balance` ledger rows.
+ */
+export function removeLockedBalanceAdjustmentPrismaWhere(): {
+  type: "admin_balance_adjustment";
+  metadata: { path: string[]; equals: string };
+} {
+  return {
+    type: "admin_balance_adjustment",
+    metadata: {
+      path: ["adjustment_category"],
+      equals: REMOVE_LOCKED_BALANCE_ADJUSTMENT_CATEGORY,
+    },
+  };
 }
 
 /**

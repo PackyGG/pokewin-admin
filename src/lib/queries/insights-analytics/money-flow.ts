@@ -10,7 +10,7 @@ import {
   getWindowMetrics,
   getDailyGamingMetrics,
   sumLedgerTypes,
-  sumOfficialStreamAdjustments,
+  sumStatsExcludedAdjustments,
   type MetricWindow,
 } from "@/lib/metrics/queries";
 import { calculateWindowedPnl } from "@/lib/metrics/realized-pnl";
@@ -420,7 +420,7 @@ export async function getMoneyFlowDecomposition(
     dailyPnl,
     rewardSums,
     residualSums,
-    officialStreamSum,
+    statsExcludedAdjSum,
   ] = await Promise.all([
     getWindowMetrics({ window }),
     calculateWindowedPnl({ since: cutoff, excludeUserIds: dropUserIds }),
@@ -444,10 +444,9 @@ export async function getMoneyFlowDecomposition(
         total: await sumLedgerTypes({ types: [type], window }),
       })),
     ),
-    // FAKE-BALANCE: Σ |amount| of official_stream adjustments (same scope) —
-    // subtracted from the admin_balance_adjustment residual term below so
-    // the fake balance never moves the surfaced residual.
-    sumOfficialStreamAdjustments({ window }),
+    // Stats-excluded adjustments (official_stream, remove_locked_balance):
+    // Σ |amount| in the same scope — subtracted from the residual term below.
+    sumStatsExcludedAdjustments({ window }),
   ]);
 
   const wagers = metrics.wager;
@@ -480,14 +479,12 @@ export async function getMoneyFlowDecomposition(
   // Sum the RESIDUAL_TYPES flows with their house-POV sign on P&L (mirrors
   // cost-breakdown's `residualNamedTotal`). The admin_balance_adjustment
   // residual leg drops its FAKE-BALANCE official_stream slice
-  // (`officialStreamSum`, Σ |amount| in the same scope) so the hidden fake
-  // balance never moves the surfaced residual — consistent with the
-  // balance-delta carve-out above (which already excludes official_stream
-  // from `windowedPnl`). Clamp ≥ 0 defensively.
+  // (`statsExcludedAdjSum`, Σ |amount| in the same scope) so hidden
+  // non-metric adjustments never move the surfaced residual. Clamp ≥ 0.
   const residualNamedTotal = residualSums.reduce((sum, { type, total }) => {
     const adjusted =
       type === "admin_balance_adjustment"
-        ? Math.max(0, total - officialStreamSum)
+        ? Math.max(0, total - statsExcludedAdjSum)
         : total;
     return sum + residualSign(type) * adjusted;
   }, 0);

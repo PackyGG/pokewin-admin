@@ -6,6 +6,7 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   officialStreamAdjustmentSqlPredicate,
   officialStreamAdjustmentPrismaWhere,
+  removeLockedBalanceAdjustmentPrismaWhere,
 } from "@/lib/balance-adjustment-categories";
 
 /**
@@ -127,8 +128,14 @@ export function computeHousePnl(c: PnlComponents): number {
 export async function calculateUserPnl(userId: string): Promise<UserPnl> {
   return withTiming("pnl.user", async () => {
     const db = await getDb();
-    const [balances, cardWithdrawals, inventoryAgg, vouchersAgg, officialStreamAgg] =
-      await Promise.all([
+    const [
+      balances,
+      cardWithdrawals,
+      inventoryAgg,
+      vouchersAgg,
+      officialStreamAgg,
+      removeLockedAgg,
+    ] = await Promise.all([
         db.balances.findUnique({
           where: { user_id: userId },
           select: {
@@ -184,6 +191,17 @@ export async function calculateUserPnl(userId: string): Promise<UserPnl> {
           },
           _sum: { amount: true },
         }),
+        // REMOVE-LOCKED carve-out: SIGNED NET of completed remove_locked_balance
+        // adjustments. Locked_balance drops in the raw balance row, so subtract
+        // the signed ledger amount to keep onSiteBalance / P&L unchanged.
+        db.ledger_transactions.aggregate({
+          where: {
+            user_id: userId,
+            status: "completed",
+            ...removeLockedBalanceAdjustmentPrismaWhere(),
+          },
+          _sum: { amount: true },
+        }),
       ]);
 
     const components: PnlComponents = {
@@ -195,7 +213,9 @@ export async function calculateUserPnl(userId: string): Promise<UserPnl> {
         toNumber(balances?.available_balance) +
         toNumber(balances?.locked_balance) -
         // Net out fake-balance official_stream credit.
-        toNumber(officialStreamAgg._sum.amount),
+        toNumber(officialStreamAgg._sum.amount) -
+        // Net out remove_locked_balance debits (signed; amounts are negative).
+        toNumber(removeLockedAgg._sum.amount),
       inventoryValue: toNumber(inventoryAgg._sum.value_at_obtained),
       unclaimedVouchers: toNumber(vouchersAgg._sum.value),
     };
@@ -371,6 +391,7 @@ export async function calculateUsersPnlBatch(
       inventoryRows,
       voucherRows,
       officialStreamRows,
+      removeLockedRows,
     ] = await Promise.all([
         db.balances.findMany({
           where: { user_id: { in: userIds } },
@@ -426,6 +447,15 @@ export async function calculateUsersPnlBatch(
           },
           _sum: { amount: true },
         }),
+        db.ledger_transactions.groupBy({
+          by: ["user_id"],
+          where: {
+            user_id: { in: userIds },
+            status: "completed",
+            ...removeLockedBalanceAdjustmentPrismaWhere(),
+          },
+          _sum: { amount: true },
+        }),
       ]);
 
     const balanceMap = new Map(balanceRows.map((b) => [b.user_id, b]));
@@ -444,6 +474,9 @@ export async function calculateUsersPnlBatch(
     const officialStreamMap = new Map(
       officialStreamRows.map((o) => [o.user_id, toNumber(o._sum.amount)]),
     );
+    const removeLockedMap = new Map(
+      removeLockedRows.map((o) => [o.user_id, toNumber(o._sum.amount)]),
+    );
 
     for (const userId of userIds) {
       const b = balanceMap.get(userId);
@@ -455,7 +488,8 @@ export async function calculateUsersPnlBatch(
           toNumber(b?.available_balance) +
           toNumber(b?.locked_balance) -
           // Net out fake-balance official_stream credit (matches detail).
-          (officialStreamMap.get(userId) ?? 0),
+          (officialStreamMap.get(userId) ?? 0) -
+          (removeLockedMap.get(userId) ?? 0),
         inventoryValue: inventoryMap.get(userId) ?? 0,
         unclaimedVouchers: voucherMap.get(userId) ?? 0,
       };

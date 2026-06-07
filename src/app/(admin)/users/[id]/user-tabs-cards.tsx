@@ -158,6 +158,7 @@ export const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
       <BalanceAdjustDialog
         userId={userId}
         availableBalance={balances.availableBalance}
+        lockedBalance={balances.lockedBalance}
         open={adjustOpen}
         onOpenChange={setAdjustOpen}
       />

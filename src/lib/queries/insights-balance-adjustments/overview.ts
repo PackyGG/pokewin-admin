@@ -15,7 +15,7 @@ import {
   windowDateFilter,
   notOfficialStreamFilter,
 } from "./_shared";
-import { OFFICIAL_STREAM_ADJUSTMENT_CATEGORY } from "@/lib/balance-adjustment-categories";
+import { STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS } from "@/lib/balance-adjustment-categories";
 
 /**
  * Overview rollup for /insights/balance-adjustments.
@@ -172,14 +172,16 @@ async function computeOverview(
       ? { created_at: { gte: new Date(Date.now() - days * 86_400_000) } }
       : {}),
     admin_user_id: { not: null },
-    // FAKE-BALANCE: drop official_stream adjustments — the writer stamps
-    // `metadata.category` on the admin-DB audit event (actions.ts), so the
-    // hidden category never inflates the distinct-admin count.
+    // Stats-excluded categories — the writer stamps `metadata.category` on
+    // the admin-DB audit event (actions.ts), so hidden categories never
+    // inflate the distinct-admin count.
     NOT: {
-      metadata: {
-        path: ["category"],
-        equals: OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
-      },
+      OR: STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS.map((category) => ({
+        metadata: {
+          path: ["category"],
+          equals: category,
+        },
+      })),
     },
   };
   const adminGroups = await adminDb.admin_audit_events.findMany({

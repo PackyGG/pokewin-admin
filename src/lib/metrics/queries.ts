@@ -15,6 +15,7 @@ import {
 import {
   countedAdjustmentSqlPredicate,
   officialStreamAdjustmentSqlPredicate,
+  statsExcludedAdjustmentSqlPredicate,
 } from "@/lib/balance-adjustment-categories";
 import {
   ggr as ggrFormula,
@@ -841,6 +842,33 @@ export async function sumOfficialStreamAdjustments(opts: {
        FROM ledger_transactions
        WHERE status = 'completed'
          AND ${officialStreamAdjustmentSqlPredicate()}
+         AND user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("user_id", "created_at")}
+         ${sinceClause("created_at", opts.window.since)}`,
+    );
+    return toNumber(rows[0]?.total);
+  });
+}
+
+/**
+ * Σ |amount| of stats-excluded `admin_balance_adjustment` rows
+ * (`official_stream`, `remove_locked_balance`) over a window, through the
+ * SAME canonical scope as the gaming metrics. Subtracted from the residual
+ * admin-adjustment line so neither category surfaces as a residual cost.
+ */
+export async function sumStatsExcludedAdjustments(opts: {
+  window: MetricWindow;
+}): Promise<number> {
+  return withTiming("metrics.sumStatsExcludedAdjustments", async () => {
+    const db = await getDb();
+    const scope = await getMetricsScope();
+    type Row = { total: string };
+    const rows = await db.$queryRawUnsafe<Row[]>(
+      `WITH ${scope.sessionWindowsCte}
+       SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
+       FROM ledger_transactions
+       WHERE status = 'completed'
+         AND ${statsExcludedAdjustmentSqlPredicate()}
          AND user_id IN ${scope.userScopeSql}
          AND ${scope.notInCreatorSession("user_id", "created_at")}
          ${sinceClause("created_at", opts.window.since)}`,

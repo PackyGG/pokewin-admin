@@ -30,6 +30,7 @@ import {
   SELECTABLE_ADJUSTMENT_CATEGORY_KEYS,
   BALANCE_ADJUSTMENT_CATEGORY_META,
   BUGS_ADJUSTMENT_MIN_REASON_CHARS,
+  REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS,
   isRemovalOnlyAdjustmentCategory,
   isCreatorLinkedAdjustmentCategory,
   isCountedAdjustmentCategory,
@@ -73,6 +74,7 @@ const LOSSBACK_MAX_PERCENT = 35;
 export function BalanceAdjustDialog({
   userId,
   availableBalance,
+  lockedBalance,
   pnl7d,
   open,
   onOpenChange,
@@ -82,6 +84,9 @@ export function BalanceAdjustDialog({
   // balance" preview. Optional so existing call sites that don't have it
   // still render (the preview just omits the resulting-balance line).
   availableBalance?: number;
+  // Current locked (vault) balance — used for the remove_locked_balance
+  // category preview. Optional for legacy call sites.
+  lockedBalance?: number;
   // The user's rolling 7-day house P&L — the SAME derived value the
   // Accounts tab shows (`pnlBreakdown.pnl7d`, computed once on the server
   // via `getUserWindowedPnlMulti`). Passed in as a plain number so the
@@ -142,7 +147,12 @@ export function BalanceAdjustDialog({
   // appended when it adds signal beyond the category label.
   function resolveReason(cat: BalanceAdjustmentCategory): string {
     const label = BALANCE_ADJUSTMENT_CATEGORY_META[cat].label;
-    if (cat === "bonus" || cat === "bugs" || cat === "other") {
+    if (
+      cat === "bonus" ||
+      cat === "bugs" ||
+      cat === "other" ||
+      cat === "remove_locked_balance"
+    ) {
       const t = reasonText.trim();
       return t.length > 0 ? `${label}: ${t}` : label;
     }
@@ -196,6 +206,17 @@ export function BalanceAdjustDialog({
       if (!creatorLink) {
         return void toast.error("Pick the creator to link this leaderboard adjustment to");
       }
+    } else if (category === "remove_locked_balance") {
+      if (numAmount > 0) {
+        return void toast.error(
+          "Remove locked balance must use a negative amount",
+        );
+      }
+      if (reasonText.trim().length < REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS) {
+        return void toast.error(
+          `Remove locked balance needs a reason (min ${REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS} chars)`,
+        );
+      }
     } else if (category === "official_stream") {
       // Creator-linked, but NOT removal-only: both add + remove are
       // allowed. Only the linked creator is required. The server
@@ -242,6 +263,7 @@ export function BalanceAdjustDialog({
               category === "bonus" ||
               category === "bugs" ||
               category === "other" ||
+              category === "remove_locked_balance" ||
               category === "lossback"
                 ? reasonText.trim() || undefined
                 : undefined,
@@ -277,9 +299,18 @@ export function BalanceAdjustDialog({
   const isAmountValid = previewValue !== null && previewValue !== 0;
   // Direction label from the parsed sign (explicit add vs remove).
   const isRemoval = previewValue !== null && previewValue < 0;
+  const affectsLockedPreview = category === "remove_locked_balance";
   const newBalance =
-    previewValue !== null && availableBalance !== undefined
+    previewValue !== null &&
+    !affectsLockedPreview &&
+    availableBalance !== undefined
       ? availableBalance + previewValue
+      : null;
+  const newLockedBalance =
+    previewValue !== null &&
+    affectsLockedPreview &&
+    lockedBalance !== undefined
+      ? lockedBalance + previewValue
       : null;
 
   // The category options to offer right now. Removal-only categories (e.g.
@@ -391,7 +422,11 @@ export function BalanceAdjustDialog({
                 <div className="rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">
-                      {isRemoval ? "Removing" : "Adding"}
+                      {isRemoval
+                        ? affectsLockedPreview
+                          ? "Removing from locked"
+                          : "Removing"
+                        : "Adding"}
                     </span>
                     <span
                       className={`font-semibold tabular-nums ${
@@ -406,9 +441,17 @@ export function BalanceAdjustDialog({
                   </div>
                   {newBalance !== null && (
                     <div className="mt-1 flex items-center justify-between gap-2 border-t pt-1">
-                      <span className="text-muted-foreground">New balance</span>
+                      <span className="text-muted-foreground">New cash balance</span>
                       <span className="font-semibold tabular-nums">
                         {formatCurrency(newBalance)}
+                      </span>
+                    </div>
+                  )}
+                  {newLockedBalance !== null && (
+                    <div className="mt-1 flex items-center justify-between gap-2 border-t pt-1">
+                      <span className="text-muted-foreground">New locked balance</span>
+                      <span className="font-semibold tabular-nums">
+                        {formatCurrency(newLockedBalance)}
                       </span>
                     </div>
                   )}
@@ -636,6 +679,23 @@ export function BalanceAdjustDialog({
                   onChange={(e) => setReasonText(e.target.value)}
                   rows={2}
                 />
+              </div>
+            )}
+
+            {/* Remove locked balance: detailed reason (min 20 chars). */}
+            {category === "remove_locked_balance" && (
+              <div className="mt-2 space-y-1">
+                <Textarea
+                  placeholder="Why is this locked balance being removed? (min 20 characters)..."
+                  value={reasonText}
+                  onChange={(e) => setReasonText(e.target.value)}
+                  rows={3}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  {reasonText.trim().length}/{REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS}{" "}
+                  characters minimum. Applies to vault / locked balance only — cash
+                  balance is unchanged.
+                </p>
               </div>
             )}
 
