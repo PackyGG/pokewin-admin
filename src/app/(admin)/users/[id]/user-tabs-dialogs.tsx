@@ -44,6 +44,7 @@ import {
   changeRole,
   forceResetCreatorToUser,
   recordManualWithdrawal,
+  setUserTag,
   updateUserIdentity,
 } from "./actions";
 import type { UserDetail } from "./user-tabs-types";
@@ -120,6 +121,12 @@ export function BalanceAdjustDialog({
   // and this state is unused.
   const [pnl7dManual, setPnl7dManual] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  // Optional: also apply the Wager / Fraud Abuser profile tag together with
+  // this adjustment (separate from the balance-adjustment category — this is
+  // the persistent user-profile flag surfaced on the Tags panel + Creator Hub
+  // Wager / Fraud Abusers page).
+  const [tagWagerAbuser, setTagWagerAbuser] = useState(false);
+  const [tagFraudAbuser, setTagFraudAbuser] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -140,6 +147,8 @@ export function BalanceAdjustDialog({
     setLossbackPercent("");
     setPnl7dManual("");
     setTotpCode("");
+    setTagWagerAbuser(false);
+    setTagFraudAbuser(false);
   }
 
   // The human-readable description text sent as `reason` (kept so the
@@ -293,6 +302,21 @@ export function BalanceAdjustDialog({
           return;
         }
         toast.success("Balance adjusted");
+
+        // Optionally apply the persistent abuser profile tag(s) alongside
+        // the adjustment. Tagging failures are non-fatal — the balance
+        // change already succeeded, so we surface a soft warning instead of
+        // rolling anything back.
+        const tagsToApply: ("wager_abuser" | "fraud_abuser")[] = [];
+        if (tagWagerAbuser) tagsToApply.push("wager_abuser");
+        if (tagFraudAbuser) tagsToApply.push("fraud_abuser");
+        for (const t of tagsToApply) {
+          const tagResult = await setUserTag(userId, t);
+          if (!tagResult.success) {
+            toast.warning(`Adjusted, but couldn't tag: ${tagResult.error}`);
+          }
+        }
+
         resetFields();
         onOpenChange(false);
         router.refresh();
@@ -782,6 +806,48 @@ export function BalanceAdjustDialog({
                   {reasonText.trim().length}/20 characters minimum.
                 </p>
               </div>
+            )}
+          </div>
+          {/* Optional persistent profile flags — applied alongside the
+              adjustment. These are the SAME user-profile tags shown on the
+              Tags panel + Creator Hub Wager / Fraud Abusers page (not the
+              balance-adjustment category). Toggle on to flag the user. */}
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">
+              Flag user (optional)
+            </Label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setTagWagerAbuser((v) => !v)}
+                className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                  tagWagerAbuser
+                    ? "border-red-500/40 bg-red-500/15 text-red-700 dark:text-red-300"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <ShieldAlert className="size-3.5" />
+                Wager Abuser
+              </button>
+              <button
+                type="button"
+                onClick={() => setTagFraudAbuser((v) => !v)}
+                className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
+                  tagFraudAbuser
+                    ? "border-rose-600/40 bg-rose-600/15 text-rose-800 dark:text-rose-300"
+                    : "border-border text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <ShieldAlert className="size-3.5" />
+                Fraud Abuser
+              </button>
+            </div>
+            {(tagWagerAbuser || tagFraudAbuser) && (
+              <p className="text-[10px] text-muted-foreground">
+                Adds a permanent profile tag (also listed on Creator Hub →
+                Wager / Fraud Abusers). Remove it later from the user&apos;s
+                Tags panel.
+              </p>
             )}
           </div>
           <div className="space-y-1">
