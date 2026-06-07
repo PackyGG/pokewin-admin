@@ -32,6 +32,7 @@ import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsor
 
 import { DetailActions } from "../_components/detail-actions";
 import { ManualPaymentPanel } from "../_components/manual-payment-panel";
+import { FreezeClaimCell } from "../_components/freeze-claim-cell";
 import {
     LeaderboardDetailCountdown,
     type LeaderboardCountdownMode,
@@ -74,7 +75,7 @@ export default async function AffiliateLeaderboardDetailPage({
     }
     const db = await getDb();
     const participatingCreatorIds = [lb.creator_user_id, ...(lb.co_creator_user_ids ?? [])];
-    const [creators, rankings, sponsorshipMap] = await Promise.all([
+    const [creators, rankings, sponsorshipMap, claimHolds] = await Promise.all([
         // Hydrate the primary creator plus every co-creator in one query so we
         // can render names alongside each id on the definition card.
         // Best-effort — a failure just renders the raw ids (names omitted)
@@ -110,7 +111,16 @@ export default async function AffiliateLeaderboardDetailPage({
             console.error("[leaderboard] sponsorship query failed", err);
             return new Map<string, number>();
         }),
+        // Active claim holds (freezes) so each standings row can show a
+        // Freeze / Unfreeze control. Best-effort — a failure just renders the
+        // standings without freeze state instead of throwing the whole page.
+        affiliateLeaderboardsApi.listClaimHolds(id).catch((err) => {
+            console.error("[leaderboard] claim holds query failed", err);
+            return [] as Awaited<ReturnType<typeof affiliateLeaderboardsApi.listClaimHolds>>;
+        }),
     ]);
+    // Map user_id → active hold so standings rows can render freeze state in O(1).
+    const holdByUserId = new Map(claimHolds.map((h) => [h.user_id, h]));
     const creatorById = new Map(creators.map((c) => [c.id, c]));
     const creator = creatorById.get(lb.creator_user_id) ?? null;
     const coCreatorRows = (lb.co_creator_user_ids ?? []).map((id) => ({
@@ -415,12 +425,13 @@ export default async function AffiliateLeaderboardDetailPage({
                                 <TableHead>User</TableHead>
                                 <TableHead className="text-right">Wagered</TableHead>
                                 <TableHead className="text-right">Prize</TableHead>
+                                <TableHead className="text-right w-36">Claim</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {rankings.length === 0 ? (
                                 <TableRow className="hover:bg-transparent">
-                                    <TableCell colSpan={4} className="p-0">
+                                    <TableCell colSpan={5} className="p-0">
                                         <EmptyState
                                             icon={Trophy}
                                             title={
@@ -454,8 +465,15 @@ export default async function AffiliateLeaderboardDetailPage({
                                               : r.position === 3
                                                 ? "text-orange-500"
                                                 : "text-muted-foreground";
+                                    const frozen = holdByUserId.get(r.userId) ?? null;
                                     return (
-                                        <TableRow key={r.userId}>
+                                        <TableRow
+                                            key={r.userId}
+                                            className={cn(
+                                                frozen &&
+                                                    "bg-sky-500/[0.07] hover:bg-sky-500/10",
+                                            )}
+                                        >
                                             <TableCell>
                                                 <div
                                                     className={cn(
@@ -503,6 +521,21 @@ export default async function AffiliateLeaderboardDetailPage({
                                                 ) : (
                                                     <span className="text-muted-foreground">—</span>
                                                 )}
+                                            </TableCell>
+                                            {/* Freeze / unfreeze this participant's prize
+                                                claim — a wager-abuse hold scoped to this
+                                                leaderboard. Frozen rows show a badge + Unfreeze. */}
+                                            <TableCell className="text-right">
+                                                <FreezeClaimCell
+                                                    leaderboardId={lb.id}
+                                                    userId={r.userId}
+                                                    displayName={
+                                                        r.username ??
+                                                        r.email ??
+                                                        r.userId.slice(0, 8)
+                                                    }
+                                                    hold={frozen}
+                                                />
                                             </TableCell>
                                         </TableRow>
                                     );

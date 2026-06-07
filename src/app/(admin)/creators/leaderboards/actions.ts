@@ -169,6 +169,20 @@ const manualPaymentSchema = z.object({
         .nullable(),
 });
 
+// Freeze a participant's prize claim — a wager-abuse hold that blocks the
+// user from claiming while a review is open. Reason is required (recorded in
+// the audit trail). User id is free-form text (matches the backend param),
+// not a UUID, so it gets its own light validation.
+const userIdSchema = z.string().trim().min(1, "User id is required");
+
+const freezeClaimSchema = z.object({
+    reason: z.string().trim().min(1, "Reason is required").max(500),
+});
+
+const unfreezeClaimSchema = z.object({
+    release_reason: z.string().trim().max(500).optional().nullable(),
+});
+
 function toErrorMessage(err: unknown): string {
     if (err instanceof BackendApiError) {
         return err.message;
@@ -677,6 +691,121 @@ export async function cancelLeaderboard(id: string): Promise<ActionResult> {
         });
     } catch (err) {
         logAuditFailure("cancelLeaderboard", err);
+    }
+
+    revalidate(parsedId.data);
+    return { success: true };
+}
+
+/**
+ * Freeze a participant's prize claim for a leaderboard. Places a hold so the
+ * user cannot claim while a wager-abuse review is open — works at any point in
+ * the leaderboard's life and is scoped to this leaderboard only. The backend
+ * returns 409 if the prize was already claimed or the user is already frozen;
+ * that message is surfaced to the caller as-is.
+ */
+export async function freezeClaim(
+    leaderboardId: string,
+    userId: string,
+    input: { reason: string },
+): Promise<ActionResult> {
+    const session = await requirePageAccess(PAGE_KEY);
+    const parsedId = idSchema.safeParse(leaderboardId);
+    if (!parsedId.success) {
+        return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };
+    }
+    const parsedUserId = userIdSchema.safeParse(userId);
+    if (!parsedUserId.success) {
+        return { success: false, error: parsedUserId.error.issues[0]?.message ?? "Invalid user id" };
+    }
+    const parsed = freezeClaimSchema.safeParse(input);
+    if (!parsed.success) {
+        return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    await requireCapability(session, "__can_approve_leaderboard", "freeze affiliate leaderboard claims");
+
+    try {
+        await affiliateLeaderboardsApi.freezeClaim(
+            parsedId.data,
+            parsedUserId.data,
+            { reason: parsed.data.reason },
+            session.userId,
+        );
+    } catch (err) {
+        return { success: false, error: toErrorMessage(err) };
+    }
+
+    try {
+        await createAdminAuditEvent({
+            adminUserId: session.userId,
+            eventType: "affiliate_leaderboard_claim_frozen",
+            targetUserId: parsedUserId.data,
+            metadata: {
+                leaderboard_id: parsedId.data,
+                user_id: parsedUserId.data,
+                reason: parsed.data.reason,
+            },
+        });
+    } catch (err) {
+        logAuditFailure("freezeClaim", err);
+    }
+
+    revalidate(parsedId.data);
+    return { success: true };
+}
+
+/**
+ * Lift the active freeze on a participant's prize claim, re-enabling the
+ * claim. The hold row is kept (released_at set) for the audit trail. The
+ * backend returns 404 if there is no active hold. An optional release reason
+ * is recorded in the audit trail.
+ */
+export async function unfreezeClaim(
+    leaderboardId: string,
+    userId: string,
+    input: { release_reason?: string | null },
+): Promise<ActionResult> {
+    const session = await requirePageAccess(PAGE_KEY);
+    const parsedId = idSchema.safeParse(leaderboardId);
+    if (!parsedId.success) {
+        return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };
+    }
+    const parsedUserId = userIdSchema.safeParse(userId);
+    if (!parsedUserId.success) {
+        return { success: false, error: parsedUserId.error.issues[0]?.message ?? "Invalid user id" };
+    }
+    const parsed = unfreezeClaimSchema.safeParse(input);
+    if (!parsed.success) {
+        return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    await requireCapability(session, "__can_approve_leaderboard", "unfreeze affiliate leaderboard claims");
+
+    const releaseReason = parsed.data.release_reason?.trim() || null;
+
+    try {
+        await affiliateLeaderboardsApi.unfreezeClaim(
+            parsedId.data,
+            parsedUserId.data,
+            { release_reason: releaseReason },
+            session.userId,
+        );
+    } catch (err) {
+        return { success: false, error: toErrorMessage(err) };
+    }
+
+    try {
+        await createAdminAuditEvent({
+            adminUserId: session.userId,
+            eventType: "affiliate_leaderboard_claim_unfrozen",
+            targetUserId: parsedUserId.data,
+            metadata: {
+                leaderboard_id: parsedId.data,
+                user_id: parsedUserId.data,
+                ...(releaseReason ? { release_reason: releaseReason } : {}),
+            },
+        });
+    } catch (err) {
+        logAuditFailure("unfreezeClaim", err);
     }
 
     revalidate(parsedId.data);

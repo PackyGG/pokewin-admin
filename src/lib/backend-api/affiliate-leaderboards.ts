@@ -93,6 +93,26 @@ export type CreateInput = {
   prize_tiers: Array<{ position: number; prize_amount_usd: number }>;
 };
 
+// A claim hold (freeze) placed on a (leaderboard, user) pair so the user
+// cannot claim their prize while a wager-abuse review is open. At most one
+// active hold exists per pair; releasing sets released_at but keeps the row
+// for the audit trail. Shape mirrors the backend's serializeHold().
+export type ClaimHold = {
+  id: string;
+  leaderboard_id: string;
+  user_id: string;
+  reason: string;
+  created_by: string;
+  released_at: string | null;
+  released_by: string | null;
+  release_reason: string | null;
+  created_at: string;
+};
+
+export type FreezeClaimInput = { reason: string };
+
+export type UnfreezeClaimInput = { release_reason?: string | null };
+
 type Success<T> = { success: boolean; data: T };
 
 const BASE = "/admin/affiliate-leaderboards";
@@ -187,6 +207,48 @@ export const affiliateLeaderboardsApi = {
     backendApi
       .delete<Success<HardDeleteResult>>(
         `${BASE}/${encodeURIComponent(id)}`,
+        input,
+        { headers: adminHeaders(adminUserId) },
+      )
+      .then((r) => r.data),
+
+  // List claim holds (freezes) for a leaderboard. Defaults to active-only;
+  // pass activeOnly=false to include released holds for the full audit trail.
+  listClaimHolds: (id: string, activeOnly: boolean = true) =>
+    backendApi
+      .get<Success<{ holds: ClaimHold[] }>>(
+        `${BASE}/${encodeURIComponent(id)}/holds`,
+        { query: { active_only: activeOnly } },
+      )
+      .then((r) => r.data.holds),
+
+  // Freeze a participant's prize claim. 409 if already claimed or already
+  // frozen; reason is required and recorded in the audit trail.
+  freezeClaim: (
+    id: string,
+    userId: string,
+    input: FreezeClaimInput,
+    adminUserId: string,
+  ) =>
+    backendApi
+      .post<Success<ClaimHold>>(
+        `${BASE}/${encodeURIComponent(id)}/claims/${encodeURIComponent(userId)}/freeze`,
+        input,
+        { headers: adminHeaders(adminUserId) },
+      )
+      .then((r) => r.data),
+
+  // Lift the active freeze on a participant's prize claim. 404 if there is
+  // no active hold. release_reason is optional.
+  unfreezeClaim: (
+    id: string,
+    userId: string,
+    input: UnfreezeClaimInput,
+    adminUserId: string,
+  ) =>
+    backendApi
+      .post<Success<ClaimHold>>(
+        `${BASE}/${encodeURIComponent(id)}/claims/${encodeURIComponent(userId)}/unfreeze`,
         input,
         { headers: adminHeaders(adminUserId) },
       )
