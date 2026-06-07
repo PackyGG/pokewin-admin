@@ -1,7 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
-import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
+import { statsExcludedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import type { WindowedPnl } from "./pnl";
 
 /**
@@ -76,18 +76,28 @@ export async function getUserWindowedPnlMulti(
           `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} AND lt.type::text = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_${i}`,
       )
       .join(", ");
-    // FAKE-BALANCE carve-out: official_stream adjustments credit REAL
-    // balance but are owner-designated fake balance, so they must NOT enter
-    // the balance-delta term of windowed P&L (mirrors calculateWindowedPnl /
-    // getDailyPnl). Zero out their signed delta inside the SUM.
-    const officialStreamExcl = officialStreamAdjustmentSqlPredicate({
+    // Stats-excluded adjustments (official_stream + remove_locked_balance)
+    // must NOT enter the balance-delta term — mirrors calculateWindowedPnl.
+    const statsExcluded = statsExcludedAdjustmentSqlPredicate({
       typeColumn: "lt.type",
       metadataColumn: "lt.metadata",
     });
     const ledgerBalanceChangeCase = windows
       .map(
         (_, i) =>
-          `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} AND NOT (${officialStreamExcl}) THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS balance_change_${i}`,
+          `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} AND NOT (${statsExcluded}) THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS balance_change_${i}`,
+      )
+      .join(", ");
+    const adminInvDisposedCase = windows
+      .map(
+        (_, i) =>
+          `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS admin_inv_disposed_${i}`,
+      )
+      .join(", ");
+    const adminVchClaimedCase = windows
+      .map(
+        (_, i) =>
+          `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS admin_vch_claimed_${i}`,
       )
       .join(", ");
 
@@ -129,7 +139,7 @@ export async function getUserWindowedPnlMulti(
     type InvRow = Record<string, string>;
     type VchRow = Record<string, string>;
 
-    const [ledger, card, inv, vch] = await Promise.all([
+    const [ledger, card, inv, vch, adminInvRem, adminVchRem] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT ${ledgerDepositCase}, ${ledgerManualWdCase}, ${ledgerBalanceChangeCase}
          FROM ledger_transactions lt
@@ -158,12 +168,42 @@ export async function getUserWindowedPnlMulti(
            AND v.user_id = $1`,
         ...params,
       ),
+      db.$queryRawUnsafe<Record<string, string>[]>(
+        `SELECT ${adminInvDisposedCase}
+         FROM ledger_transactions lt
+         WHERE lt.status = 'completed'
+           AND lt.created_at >= $2
+           AND lt.user_id = $1
+           AND lt.type::text = 'admin_balance_adjustment'
+           AND lt.metadata->>'kind' = 'inventory_removal'
+           AND NOT EXISTS (
+             SELECT 1 FROM user_inventory ui2
+             WHERE ui2.id::text = lt.metadata->>'inventory_item_id'
+           )`,
+        ...params,
+      ),
+      db.$queryRawUnsafe<Record<string, string>[]>(
+        `SELECT ${adminVchClaimedCase}
+         FROM ledger_transactions lt
+         WHERE lt.status = 'completed'
+           AND lt.created_at >= $2
+           AND lt.user_id = $1
+           AND lt.type::text = 'admin_balance_adjustment'
+           AND lt.metadata->>'kind' = 'voucher_removal'
+           AND NOT EXISTS (
+             SELECT 1 FROM vouchers v2
+             WHERE v2.id::text = lt.metadata->>'voucher_id'
+           )`,
+        ...params,
+      ),
     ]);
 
     const lRow = ledger[0];
     const cRow = card[0];
     const iRow = inv[0];
     const vRow = vch[0];
+    const adminInvRow = adminInvRem[0];
+    const adminVchRow = adminVchRem[0];
 
     for (let i = 0; i < windows.length; i++) {
       const w = windows[i];
@@ -172,9 +212,13 @@ export async function getUserWindowedPnlMulti(
       const balanceChange = toNumber(lRow?.[`balance_change_${i}`]);
       const cardWd = toNumber(cRow?.[`card_wd_${i}`]);
       const obtained = toNumber(iRow?.[`obtained_${i}`]);
-      const disposed = toNumber(iRow?.[`disposed_${i}`]);
+      const disposed =
+        toNumber(iRow?.[`disposed_${i}`]) +
+        toNumber(adminInvRow?.[`admin_inv_disposed_${i}`]);
       const issued = toNumber(vRow?.[`issued_${i}`]);
-      const claimed = toNumber(vRow?.[`claimed_${i}`]);
+      const claimed =
+        toNumber(vRow?.[`claimed_${i}`]) +
+        toNumber(adminVchRow?.[`admin_vch_claimed_${i}`]);
 
       const withdrawals = manualWd + cardWd;
       const inventoryChange = obtained - disposed;

@@ -71,7 +71,7 @@ const cachedTodayPnl = unstable_cache(
       excludeUserIds,
     });
   },
-  ["dashboard-today-pnl-v1"],
+  ["dashboard-today-pnl-v2"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 

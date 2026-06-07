@@ -7,7 +7,55 @@ import {
   officialStreamAdjustmentSqlPredicate,
   officialStreamAdjustmentPrismaWhere,
   removeLockedBalanceAdjustmentPrismaWhere,
+  statsExcludedAdjustmentSqlPredicate,
 } from "@/lib/balance-adjustment-categories";
+
+/**
+ * Ledger-only admin inventory disposals — rows hard-deleted before we
+ * switched to stamping `sold_at`. Skips rows whose inventory item still
+ * exists (those are counted via `user_inventory.sold_at` instead).
+ */
+export function adminInventoryRemovalDisposedSql(
+  sinceBind: string,
+  scopedUserId: string,
+): string {
+  return `COALESCE((
+    SELECT SUM(ABS(lt.amount::numeric))
+    FROM ledger_transactions lt
+    WHERE lt.status = 'completed'
+      AND lt.created_at >= ${sinceBind}
+      AND lt.type::text = 'admin_balance_adjustment'
+      AND lt.metadata->>'kind' = 'inventory_removal'
+      AND ${scopedUserId}
+      AND NOT EXISTS (
+        SELECT 1 FROM user_inventory ui2
+        WHERE ui2.id::text = lt.metadata->>'inventory_item_id'
+      )
+  ), 0)`;
+}
+
+/**
+ * Ledger-only admin voucher disposals — vouchers hard-deleted before we
+ * switched to stamping `claimed_at`. Skips rows whose voucher still exists.
+ */
+export function adminVoucherRemovalClaimedSql(
+  sinceBind: string,
+  scopedUserId: string,
+): string {
+  return `COALESCE((
+    SELECT SUM(ABS(lt.amount::numeric))
+    FROM ledger_transactions lt
+    WHERE lt.status = 'completed'
+      AND lt.created_at >= ${sinceBind}
+      AND lt.type::text = 'admin_balance_adjustment'
+      AND lt.metadata->>'kind' = 'voucher_removal'
+      AND ${scopedUserId}
+      AND NOT EXISTS (
+        SELECT 1 FROM vouchers v2
+        WHERE v2.id::text = lt.metadata->>'voucher_id'
+      )
+  ), 0)`;
+}
 
 /**
  * Canonical P&L formula — single source of truth.
@@ -297,6 +345,11 @@ export async function calculateWindowedPnl(opts: {
         ? `${col} = $2`
         : `${col} IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist}${populationAnd})`;
     const params: unknown[] = userId ? [since, userId] : [since];
+    const statsExcluded = statsExcludedAdjustmentSqlPredicate({
+      typeColumn: "lt.type",
+      metadataColumn: "lt.metadata",
+    });
+    const userScopeLt = scope("lt.user_id");
 
     type LedgerRow = { deposits: string; manual_wd: string; balance_change: string };
     type CardRow = { card_wd: string };
@@ -311,9 +364,9 @@ export async function calculateWindowedPnl(opts: {
                               AND lt.balance_after < lt.balance_before
                               AND lt.description ILIKE 'Manual withdrawal:%'
                              THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd,
-           COALESCE(SUM(CASE WHEN ${officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::text AS balance_change
+           COALESCE(SUM(CASE WHEN ${statsExcluded} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::text AS balance_change
          FROM ledger_transactions lt
-         WHERE lt.status = 'completed' AND lt.created_at >= $1 AND ${scope("lt.user_id")}`,
+         WHERE lt.status = 'completed' AND lt.created_at >= $1 AND ${userScopeLt}`,
         ...params,
       ),
       db.$queryRawUnsafe<CardRow[]>(
@@ -327,7 +380,10 @@ export async function calculateWindowedPnl(opts: {
       db.$queryRawUnsafe<InvRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN ui.obtained_at >= $1 THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained,
-           COALESCE(SUM(CASE WHEN (ui.sold_at >= $1 OR ui.exchanged_at >= $1) THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed
+           (
+             COALESCE(SUM(CASE WHEN (ui.sold_at >= $1 OR ui.exchanged_at >= $1) THEN ui.value_at_obtained::numeric ELSE 0 END), 0)
+             + ${adminInventoryRemovalDisposedSql("$1", userScopeLt)}
+           )::text AS disposed
          FROM user_inventory ui
          WHERE (ui.obtained_at >= $1 OR ui.sold_at >= $1 OR ui.exchanged_at >= $1)
            AND ${scope("ui.user_id")}`,
@@ -336,7 +392,10 @@ export async function calculateWindowedPnl(opts: {
       db.$queryRawUnsafe<VchRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN v.created_at >= $1 THEN v.value::numeric ELSE 0 END), 0)::text AS issued,
-           COALESCE(SUM(CASE WHEN v.claimed_at >= $1 THEN v.value::numeric ELSE 0 END), 0)::text AS claimed
+           (
+             COALESCE(SUM(CASE WHEN v.claimed_at >= $1 THEN v.value::numeric ELSE 0 END), 0)
+             + ${adminVoucherRemovalClaimedSql("$1", userScopeLt)}
+           )::text AS claimed
          FROM vouchers v
          WHERE (v.created_at >= $1 OR v.claimed_at >= $1)
            AND ${scope("v.user_id")}`,
@@ -345,8 +404,9 @@ export async function calculateWindowedPnl(opts: {
     ]);
 
     const deposits = toNumber(ledger[0]?.deposits);
-    const withdrawals =
-      toNumber(ledger[0]?.manual_wd) + toNumber(card[0]?.card_wd);
+    const manualWd = toNumber(ledger[0]?.manual_wd);
+    const cardWd = toNumber(card[0]?.card_wd);
+    const withdrawalsGross = Math.abs(manualWd) + cardWd;
     const balanceChange = toNumber(ledger[0]?.balance_change);
     const inventoryChange =
       toNumber(inv[0]?.obtained) - toNumber(inv[0]?.disposed);
@@ -360,12 +420,19 @@ export async function calculateWindowedPnl(opts: {
     // surfaced house loss.
     const pnl =
       deposits -
-      withdrawals -
+      (manualWd + cardWd) -
       balanceChange -
       inventoryChange -
       voucherChange;
 
-    return { deposits, withdrawals, balanceChange, inventoryChange, voucherChange, pnl };
+    return {
+      deposits,
+      withdrawals: withdrawalsGross,
+      balanceChange,
+      inventoryChange,
+      voucherChange,
+      pnl,
+    };
   });
 }
 
@@ -545,6 +612,11 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
     const excluded = await getExcludedUserIds();
     const blacklist = blacklistNotInClause("u.id", excluded);
     const usersScope = `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
+    const statsExcluded = statsExcludedAdjustmentSqlPredicate({
+      typeColumn: "lt.type",
+      metadataColumn: "lt.metadata",
+    });
+    const ledgerUserScope = `lt.user_id IN ${usersScope}`;
 
     type LedgerRow = {
       d: Date;
@@ -564,7 +636,7 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
                               AND lt.balance_after < lt.balance_before
                               AND lt.description ILIKE 'Manual withdrawal:%'
                              THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS manual_wd,
-           COALESCE(SUM(CASE WHEN ${officialStreamAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::float8 AS balance_change
+           COALESCE(SUM(CASE WHEN ${statsExcluded} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::float8 AS balance_change
          FROM ledger_transactions lt
          WHERE lt.status = 'completed' AND lt.created_at >= NOW() - INTERVAL '30 days'
            AND lt.user_id IN ${usersScope}
@@ -639,6 +711,18 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
            FROM user_inventory ui
            WHERE (ui.sold_at >= NOW() - INTERVAL '30 days' OR ui.exchanged_at >= NOW() - INTERVAL '30 days')
              AND ui.user_id IN ${usersScope}
+           UNION ALL
+           SELECT DATE(lt.created_at) AS d, 0::numeric AS obtained, ABS(lt.amount::numeric) AS disposed
+           FROM ledger_transactions lt
+           WHERE lt.status = 'completed'
+             AND lt.created_at >= NOW() - INTERVAL '30 days'
+             AND lt.type::text = 'admin_balance_adjustment'
+             AND lt.metadata->>'kind' = 'inventory_removal'
+             AND ${ledgerUserScope}
+             AND NOT EXISTS (
+               SELECT 1 FROM user_inventory ui2
+               WHERE ui2.id::text = lt.metadata->>'inventory_item_id'
+             )
          ) x
          GROUP BY d`,
       ),
@@ -654,6 +738,18 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
            SELECT DATE(v.claimed_at) AS d, 0::numeric AS issued, v.value::numeric AS claimed
            FROM vouchers v
            WHERE v.claimed_at >= NOW() - INTERVAL '30 days' AND v.user_id IN ${usersScope}
+           UNION ALL
+           SELECT DATE(lt.created_at) AS d, 0::numeric AS issued, ABS(lt.amount::numeric) AS claimed
+           FROM ledger_transactions lt
+           WHERE lt.status = 'completed'
+             AND lt.created_at >= NOW() - INTERVAL '30 days'
+             AND lt.type::text = 'admin_balance_adjustment'
+             AND lt.metadata->>'kind' = 'voucher_removal'
+             AND ${ledgerUserScope}
+             AND NOT EXISTS (
+               SELECT 1 FROM vouchers v2
+               WHERE v2.id::text = lt.metadata->>'voucher_id'
+             )
          ) x
          GROUP BY d`,
       ),
@@ -819,6 +915,7 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
     const blacklist = blacklistNotInClause("u.id", excluded);
     // Real-user scope used identically in every query below.
     const scope = `user_id IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
+    const statsExcluded = statsExcludedAdjustmentSqlPredicate();
 
     type LedgerRow = {
       type: string;
@@ -841,15 +938,15 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
     // mwd_* = manual-withdrawal admin adjustments (subset of
     //         admin_balance_adjustment); only non-zero on the
     //         admin_balance_adjustment row in the grouped result.
-    const [ledger, cardWd, inv, vch] = await Promise.all([
+    const [ledger, cardWd, inv, vch, adminInvRem, adminVchRem] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT type,
            COALESCE(SUM(CASE WHEN created_at >= $1 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_h24,
            COALESCE(SUM(CASE WHEN created_at >= $2 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_d3,
            COALESCE(SUM(CASE WHEN created_at >= $3 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_d7,
-           COALESCE(SUM(CASE WHEN created_at >= $1 AND NOT (${officialStreamAdjustmentSqlPredicate()}) THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_h24,
-           COALESCE(SUM(CASE WHEN created_at >= $2 AND NOT (${officialStreamAdjustmentSqlPredicate()}) THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_d3,
-           COALESCE(SUM(CASE WHEN created_at >= $3 AND NOT (${officialStreamAdjustmentSqlPredicate()}) THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_d7,
+           COALESCE(SUM(CASE WHEN created_at >= $1 AND NOT (${statsExcluded}) THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_h24,
+           COALESCE(SUM(CASE WHEN created_at >= $2 AND NOT (${statsExcluded}) THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_d3,
+           COALESCE(SUM(CASE WHEN created_at >= $3 AND NOT (${statsExcluded}) THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_d7,
            COALESCE(SUM(CASE WHEN created_at >= $1 AND type::text = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_h24,
            COALESCE(SUM(CASE WHEN created_at >= $2 AND type::text = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_d3,
            COALESCE(SUM(CASE WHEN created_at >= $3 AND type::text = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_d7
@@ -895,6 +992,40 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
            AND ${scope}`,
         h24, d3, d7,
       ),
+      db.$queryRawUnsafe<InvRow[]>(
+        `SELECT
+           COALESCE(SUM(CASE WHEN lt.created_at >= $1 THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS dis_h24,
+           COALESCE(SUM(CASE WHEN lt.created_at >= $2 THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS dis_d3,
+           COALESCE(SUM(CASE WHEN lt.created_at >= $3 THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS dis_d7
+         FROM ledger_transactions lt
+         WHERE lt.status = 'completed'
+           AND lt.created_at >= $3
+           AND lt.type::text = 'admin_balance_adjustment'
+           AND lt.metadata->>'kind' = 'inventory_removal'
+           AND ${scope.replace(/user_id/g, "lt.user_id")}
+           AND NOT EXISTS (
+             SELECT 1 FROM user_inventory ui2
+             WHERE ui2.id::text = lt.metadata->>'inventory_item_id'
+           )`,
+        h24, d3, d7,
+      ),
+      db.$queryRawUnsafe<VchRow[]>(
+        `SELECT
+           COALESCE(SUM(CASE WHEN lt.created_at >= $1 THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS clm_h24,
+           COALESCE(SUM(CASE WHEN lt.created_at >= $2 THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS clm_d3,
+           COALESCE(SUM(CASE WHEN lt.created_at >= $3 THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS clm_d7
+         FROM ledger_transactions lt
+         WHERE lt.status = 'completed'
+           AND lt.created_at >= $3
+           AND lt.type::text = 'admin_balance_adjustment'
+           AND lt.metadata->>'kind' = 'voucher_removal'
+           AND ${scope.replace(/user_id/g, "lt.user_id")}
+           AND NOT EXISTS (
+             SELECT 1 FROM vouchers v2
+             WHERE v2.id::text = lt.metadata->>'voucher_id'
+           )`,
+        h24, d3, d7,
+      ),
     ]);
 
     // Build per-window aggregates.
@@ -931,9 +1062,13 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
       const cardWdAmount = toNumber(cardWd[0]?.[w.cwdKey]);
       const withdrawals = manualWd + cardWdAmount;
       const inventoryDelta =
-        toNumber(inv[0]?.[w.obtKey]) - toNumber(inv[0]?.[w.disKey]);
+        toNumber(inv[0]?.[w.obtKey]) -
+        toNumber(inv[0]?.[w.disKey]) -
+        toNumber(adminInvRem[0]?.[w.disKey]);
       const voucherDelta =
-        toNumber(vch[0]?.[w.issKey]) - toNumber(vch[0]?.[w.clmKey]);
+        toNumber(vch[0]?.[w.issKey]) -
+        toNumber(vch[0]?.[w.clmKey]) -
+        toNumber(adminVchRem[0]?.[w.clmKey]);
       // Upgrader is fully captured by balanceDelta: upgrader_bet
       // (debit) and upgrader_payout (credit) both flow through the
       // ledger now (since Upgrader shipped on packy.gg, see commit

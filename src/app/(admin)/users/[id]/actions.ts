@@ -1888,14 +1888,16 @@ export async function deleteUserVoucher(data: {
       });
       const currentAvailable = bal ? Number(bal.available_balance) : 0;
 
-      const deleted = await tx.vouchers.deleteMany({
+      const removedAt = new Date();
+      const updated = await tx.vouchers.updateMany({
         where: {
           id: parsed.data.voucherId,
           user_id: parsed.data.userId,
           claimed_at: null,
         },
+        data: { claimed_at: removedAt },
       });
-      if (deleted.count !== 1) {
+      if (updated.count !== 1) {
         throw new Error("Voucher changed since you opened this dialog");
       }
 
@@ -2136,21 +2138,24 @@ async function removeOneInventoryItem(
       });
       const currentAvailable = bal ? Number(bal.available_balance) : 0;
 
-      // Remove dependent provably-fair rows first (explicit, so the delete
-      // works even if the live DB's FK isn't actually cascading).
+      // Stamp sold_at so windowed P&L counts the disposal (open-inventory
+      // queries filter sold_at IS NULL). Keep the row for audit; do not
+      // hard-delete — hard-deletes were invisible to calculateWindowedPnl.
       await tx.provably_fair_results.deleteMany({
         where: { inventory_item_id: inventoryItemId },
       });
-      const deleted = await tx.user_inventory.deleteMany({
+      const removedAt = new Date();
+      const updated = await tx.user_inventory.updateMany({
         where: {
           id: inventoryItemId,
           user_id: userId,
           sold_at: null,
           exchanged_at: null,
         },
+        data: { sold_at: removedAt },
       });
 
-      if (deleted.count === 1) {
+      if (updated.count === 1) {
         // Visible record in the transactions box. Balance UNCHANGED.
         await tx.ledger_transactions.create({
           data: {
@@ -2172,7 +2177,7 @@ async function removeOneInventoryItem(
           },
         });
       }
-      return deleted.count;
+      return updated.count;
     });
   } catch (err) {
     console.error("[removeOneInventoryItem] delete failed:", err);

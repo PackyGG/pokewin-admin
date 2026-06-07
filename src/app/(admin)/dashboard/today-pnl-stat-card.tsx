@@ -62,6 +62,11 @@ export function TodayPnlStatCard({
   dayLabel: string;
 }) {
   const isProfit = pnl >= 0;
+  // Net change in user holdings (balance + inventory + vouchers). When
+  // negative, user liabilities shrank — partially offsets deposits vs
+  // withdrawals on the headline P&L figure.
+  const netHoldingsChange = balanceChange + inventoryChange + voucherChange;
+  const netHoldingsPnlContribution = -netHoldingsChange;
   return (
     <Card className={cn(isProfit ? "bg-emerald-500/10" : "bg-rose-500/10")}>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
@@ -99,9 +104,8 @@ export function TodayPnlStatCard({
             <AnimatedNumber value={Math.abs(pnl)} format="currency" />
           </span>
         </div>
-        {/* Deposits / Withdrawals chips — the two headline components of
-            the day, mirroring the referenced card. Deposits = capital in
-            (emerald, good for house); Withdrawals = money out (rose). */}
+        {/* Deposits / Withdrawals / Net holdings — deposits − withdrawals
+            alone does NOT equal P&L; the third chip explains the gap. */}
         <div className="grid grid-cols-2 gap-1.5 -mx-0.5">
           <TodayComponentChip
             label="Deposits"
@@ -113,7 +117,26 @@ export function TodayPnlStatCard({
             value={withdrawals}
             tone="rose"
           />
+          <TodayComponentChip
+            label="Net holdings Δ"
+            value={Math.abs(netHoldingsChange)}
+            tone={netHoldingsPnlContribution >= 0 ? "emerald" : "rose"}
+            hint={
+              netHoldingsChange === 0
+                ? "No net change in user balance, inventory, or vouchers"
+                : netHoldingsChange < 0
+                  ? "User holdings fell — helps house P&L vs cash flow alone"
+                  : "User holdings grew — drags house P&L vs cash flow alone"
+            }
+            className="col-span-2"
+          />
         </div>
+        <p className="text-[10px] leading-snug text-muted-foreground">
+          P&amp;L ≠ deposits − withdrawals. Balance, inventory, and voucher
+          movement also count — open the{" "}
+          <span className="font-medium text-foreground/80">info</span> icon for
+          the full five-term breakdown (balance-sheet movement, not GGR).
+        </p>
       </CardContent>
     </Card>
   );
@@ -129,10 +152,14 @@ function TodayComponentChip({
   label,
   value,
   tone,
+  hint,
+  className,
 }: {
   label: string;
   value: number;
   tone: "emerald" | "rose";
+  hint?: string;
+  className?: string;
 }) {
   const border =
     tone === "emerald" ? "border-emerald-500/15" : "border-rose-500/15";
@@ -145,7 +172,9 @@ function TodayComponentChip({
       className={cn(
         "rounded-md border bg-background/40 px-2 py-1.5 min-w-0",
         border,
+        className,
       )}
+      title={hint}
     >
       <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
         {label}
@@ -185,9 +214,11 @@ function TodayPnlInfoPopover({
   voucherChange: number;
   dayLabel: string;
 }) {
-  // Signed contribution to house P&L per the canonical formula:
-  //   pnl = deposits − withdrawals − balanceΔ − inventoryΔ − voucherΔ
-  // Deposits add; every other term subtracts. These five sum to `pnl`.
+  // Gross withdrawals on the chip; popover derives the signed formula term
+  // from the headline total so manual-withdrawal sign never breaks the sum.
+  const withdrawalsFormulaTerm =
+    deposits - balanceChange - inventoryChange - voucherChange - pnl;
+  const withdrawalsContribution = -withdrawalsFormulaTerm;
   const rows: Array<{
     id: "deposits" | "withdrawals" | "balance" | "inventory" | "voucher";
     label: string;
@@ -206,7 +237,7 @@ function TodayPnlInfoPopover({
       id: "withdrawals",
       label: "Withdrawals",
       description: "Card withdrawals shipped/completed + manual today",
-      contribution: -withdrawals,
+      contribution: withdrawalsContribution,
       icon: ArrowUpFromLine,
     },
     {
@@ -219,14 +250,15 @@ function TodayPnlInfoPopover({
     {
       id: "inventory",
       label: "Inventory change",
-      description: "Cards obtained minus cards sold/exchanged",
+      description:
+        "Cards obtained minus sold/exchanged/admin-removed today",
       contribution: -inventoryChange,
       icon: Box,
     },
     {
       id: "voucher",
       label: "Voucher change",
-      description: "Vouchers issued minus vouchers claimed",
+      description: "Vouchers issued minus claimed/admin-removed today",
       contribution: -voucherChange,
       icon: Ticket,
     },
@@ -262,9 +294,15 @@ function TodayPnlInfoPopover({
               deposits − withdrawals − balance change − inventory change −
               voucher change
             </span>{" "}
-            over the day. Same formula as the period-P&amp;L card and the
-            daily-P&amp;L chart. Real customers only (staff + excluded users
-            dropped).
+            over the day. This is <strong>balance-sheet movement</strong>, not
+            GGR or gaming margin — the same formula as the period-P&amp;L card
+            and the daily-P&amp;L chart. Real customers only (staff + excluded
+            users dropped).{" "}
+            <strong>Includes:</strong> gaming, rakeback, bonuses, card sales,
+            fraud/abuse cash removals, admin inventory/voucher removals
+            (via sold/claimed stamps).{" "}
+            <strong>Excludes:</strong> official_stream fake balance and
+            remove_locked_balance vault moves (netted out of balance change).
           </p>
         </div>
 
