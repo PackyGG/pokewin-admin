@@ -570,11 +570,6 @@ export const FINANCIAL_TX_TYPES = [
   "gift_card_redeemed",
   "rain_win",
   "race_prize",
-  // Card sales — a card disposed for balance IS a cash-movement event, so
-  // it belongs in Deposits & Withdrawals (admins asked to see inventory
-  // sales here rather than only on the Inventory tab).
-  "card_sale",
-  "reward_card_sale",
 ] as const;
 // Admin balance adjustments only. Used for the dedicated, UNCAPPED Overview
 // fetch + block so every manual admin credit/clawback is guaranteed to

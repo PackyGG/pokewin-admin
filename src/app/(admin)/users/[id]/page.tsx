@@ -87,9 +87,6 @@ const FINANCIAL_TYPES = [
   "gift_card_redeemed",
   "rain_win",
   "race_prize",
-  // Card sales now surface in Deposits & Withdrawals (cash-movement events).
-  "card_sale",
-  "reward_card_sale",
 ];
 // Admin balance adjustments get a DEDICATED, generously-sized fetch on top of
 // the shared FINANCIAL page. Reason: `admin_balance_adjustment` is just one of

@@ -66,8 +66,6 @@ const FINANCIAL_TYPES = [
   "gift_card_redeemed",
   "rain_win",
   "race_prize",
-  "card_sale",
-  "reward_card_sale",
 ];
 // Dedicated uncapped admin_balance_adjustment fetch — see page.tsx
 // (ADJUSTMENT_TYPES / ADJ_LIMIT) for the full rationale. Keeps every

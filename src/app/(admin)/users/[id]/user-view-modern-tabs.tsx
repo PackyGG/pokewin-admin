@@ -84,6 +84,7 @@ import {
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
 import { UserVouchersPanel } from "./user-vouchers-panel";
+import { InventorySalesPanel } from "./inventory-sales-panel";
 import { UserWagerRequirementCard } from "./user-wager-requirement-card";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import type {
@@ -176,6 +177,10 @@ export function OverviewTab({
           canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
         />
       </Suspense>
+
+      {/* Inventory sales — card sales grouped into batches (N cards · $total),
+          self-fetching; hidden when the user has never sold a card. */}
+      <InventorySalesPanel userId={user.id} />
 
       {/* Tips & Rain — creator tips this user received/sent + rain
           prizes won. Sits directly below deposits per admin request
