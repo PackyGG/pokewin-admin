@@ -46,6 +46,12 @@ export type PnlBreakdown = {
   deposits3d: number;
   deposits7d: number;
   deposits14d: number;
+  // Rolling windowed WAGER (sum of bet stakes: pack opens + battle entries +
+  // upgrader bets) over the same windows, for the Account-tab wager line.
+  wager24h: number;
+  wager3d: number;
+  wager7d: number;
+  wager14d: number;
 };
 
 export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown> {
@@ -59,7 +65,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
   const since3d = new Date(nowMs - 3 * 24 * 60 * 60 * 1000);
   const since7d = new Date(nowMs - 7 * 24 * 60 * 60 * 1000);
   const since14d = new Date(nowMs - 14 * 24 * 60 * 60 * 1000);
-  const [rows, inventoryValue, windowed] = await Promise.all([
+  const [rows, inventoryValue, windowed, wagerWindows] = await Promise.all([
     db.$queryRaw<{ type: string; net: string }[]>`
       SELECT type,
              COALESCE(SUM(
@@ -102,7 +108,25 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
       { key: "d7", since: since7d },
       { key: "d14", since: since14d },
     ]),
+    // Windowed WAGER: sum of bet stakes per window. Wager types are the
+    // user's spend on play — pack opens, battle entries (incl. sponsored
+    // host funding), and upgrader bets — taken as ABS(amount) since stakes
+    // are debits (negative) on the ledger. Single round-trip, four windows
+    // via CASE-WHEN; bounded to the deepest (14d) cutoff.
+    db.$queryRaw<{ w24: string; w3d: string; w7d: string; w14d: string }[]>`
+      SELECT
+        COALESCE(SUM(CASE WHEN created_at >= ${since24h} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w24,
+        COALESCE(SUM(CASE WHEN created_at >= ${since3d}  THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w3d,
+        COALESCE(SUM(CASE WHEN created_at >= ${since7d}  THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w7d,
+        COALESCE(SUM(CASE WHEN created_at >= ${since14d} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w14d
+      FROM ledger_transactions
+      WHERE user_id = ${userId}
+        AND status = 'completed'
+        AND created_at >= ${since14d}
+        AND type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+    `,
   ]);
+  const wagerRow = wagerWindows[0];
 
   const byType = new Map(rows.map((r) => [r.type, parseFloat(r.net) || 0]));
   const sum = (...types: string[]) => types.reduce((acc, t) => acc + (byType.get(t) ?? 0), 0);
@@ -170,6 +194,10 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     deposits3d: windowed.d3.deposits,
     deposits7d: windowed.d7.deposits,
     deposits14d: windowed.d14.deposits,
+    wager24h: toNumber(wagerRow?.w24),
+    wager3d: toNumber(wagerRow?.w3d),
+    wager7d: toNumber(wagerRow?.w7d),
+    wager14d: toNumber(wagerRow?.w14d),
   };
 }
 

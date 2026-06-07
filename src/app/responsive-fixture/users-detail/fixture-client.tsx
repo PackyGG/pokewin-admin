@@ -79,6 +79,10 @@ const PNL: PnlBreakdown = {
   deposits3d: 0,
   deposits7d: 0,
   deposits14d: 0,
+  wager24h: 0,
+  wager3d: 0,
+  wager7d: 0,
+  wager14d: 0,
 };
 
 const REWARDS: UserRewards = {

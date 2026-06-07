@@ -1390,6 +1390,8 @@ export function AccountTab({
       <WindowedPnlStrip pnlBreakdown={pnlBreakdown} />
       <SectionHeading icon={Banknote} title="Windowed Deposits" />
       <WindowedDepositsStrip pnlBreakdown={pnlBreakdown} />
+      <SectionHeading icon={Coins} title="Windowed Wager" />
+      <WindowedWagerStrip pnlBreakdown={pnlBreakdown} />
       <SectionHeading icon={ShieldCheck} title="Account Details" />
       <Card>
         <CardContent className="pt-6">
@@ -1587,6 +1589,35 @@ function WindowedDepositsStrip({
           value={formatCurrency(w.amount)}
           accent="emerald"
           icon={Banknote}
+        />
+      ))}
+    </div>
+  );
+}
+
+// Rolling wager tiles (24h / 3d / 7d / 14d) — total bet stakes in each
+// window, mirroring the Windowed Deposits strip directly above. Amber to
+// match the "Total Wagered" tile in the wagering-stats row.
+function WindowedWagerStrip({
+  pnlBreakdown,
+}: {
+  pnlBreakdown: PnlBreakdown;
+}) {
+  const windows: { label: string; amount: number }[] = [
+    { label: "Past 24h", amount: pnlBreakdown.wager24h },
+    { label: "Past 3d", amount: pnlBreakdown.wager3d },
+    { label: "Past 7d", amount: pnlBreakdown.wager7d },
+    { label: "Past 14d", amount: pnlBreakdown.wager14d },
+  ];
+  return (
+    <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+      {windows.map((w) => (
+        <ModernMetricTile
+          key={w.label}
+          label={w.label}
+          value={formatCurrency(w.amount)}
+          accent="amber"
+          icon={Coins}
         />
       ))}
     </div>
