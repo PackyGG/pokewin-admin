@@ -144,6 +144,7 @@ export function UserViewModern({
   gamingTxPromise,
   financialTxPromise,
   adjustmentsTxPromise,
+  inventorySalesTxPromise,
   rewards,
   notes,
   pnlBreakdown,
@@ -166,6 +167,9 @@ export function UserViewModern({
   // so the Overview tab can surface every adjustment without the shared
   // financial page hiding older ones behind newer activity.
   adjustmentsTxPromise: Promise<PaginatedTransactions>;
+  // Dedicated card-sale page so the Overview can show inventory sales in
+  // their own section (see page.tsx CARD_SALE_TYPES).
+  inventorySalesTxPromise: Promise<PaginatedTransactions>;
   rewards: UserRewards;
   notes: AdminNote[];
   pnlBreakdown: PnlBreakdown;
@@ -545,6 +549,7 @@ export function UserViewModern({
             gamingTxPromise={gamingTxPromise}
             financialTxPromise={financialTxPromise}
             adjustmentsTxPromise={adjustmentsTxPromise}
+            inventorySalesTxPromise={inventorySalesTxPromise}
             pnlBreakdown={pnlBreakdown}
             isAdmin={isAdmin}
           />

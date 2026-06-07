@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Trash2 } from "lucide-react";
+import { ShieldAlert, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,6 +17,11 @@ import {
 } from "@/components/ui/dialog";
 import { formatCurrency } from "@/lib/utils/format";
 import { deleteUserInventoryItem } from "./actions";
+import {
+  AbuserTagToggles,
+  applyAbuserTags,
+  useAbuserTags,
+} from "./abuser-tag-toggles";
 import type { InventoryItem } from "./user-tabs-types";
 
 export const INVENTORY_DELETE_MIN_REASON_CHARS = 20;
@@ -36,6 +41,7 @@ export function InventoryItemDeleteDialog({
 }) {
   const [reason, setReason] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  const abuser = useAbuserTags();
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -44,6 +50,7 @@ export function InventoryItemDeleteDialog({
     if (!next) {
       setReason("");
       setTotpCode("");
+      abuser.reset();
     }
     onOpenChange(next);
   }
@@ -74,8 +81,10 @@ export function InventoryItemDeleteDialog({
           return;
         }
         toast.success("Inventory item removed");
+        await applyAbuserTags(userId, abuser.selected);
         setReason("");
         setTotpCode("");
+        abuser.reset();
         onOpenChange(false);
         onDeleted?.();
         router.refresh();
@@ -120,6 +129,7 @@ export function InventoryItemDeleteDialog({
               not a sale or exchange.
             </p>
           </div>
+          <AbuserTagToggles state={abuser} disabled={isPending} />
           <div className="space-y-1.5">
             <Label htmlFor="inventory-delete-2fa">2FA code</Label>
             <Input

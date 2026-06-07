@@ -72,6 +72,7 @@ const FINANCIAL_TYPES = [
 // adjustment available to the Overview feed independent of the shared
 // 10-row financial page.
 const ADJUSTMENT_TYPES = ["admin_balance_adjustment"];
+const CARD_SALE_TYPES = ["card_sale", "reward_card_sale"];
 const ADJ_LIMIT = 200;
 
 // ───────────────────────────────────────────────────────────────────
@@ -83,12 +84,15 @@ export async function OverviewTabContent({
 }: {
   data: UserDetail;
 }) {
-  const [gamingTx, financialTx, adjustmentsTx, pnlBreakdown] =
+  const [gamingTx, financialTx, adjustmentsTx, inventorySalesTx, pnlBreakdown] =
     await Promise.all([
       getUserTransactions(data.user.id, 1, 10, { types: GAMING_TYPES }),
       getUserTransactions(data.user.id, 1, 10, { types: FINANCIAL_TYPES }),
       getUserTransactions(data.user.id, 1, ADJ_LIMIT, {
         types: ADJUSTMENT_TYPES,
+      }),
+      getUserTransactions(data.user.id, 1, ADJ_LIMIT, {
+        types: CARD_SALE_TYPES,
       }),
       getUserPnlBreakdown(data.user.id),
     ]);
@@ -98,6 +102,7 @@ export async function OverviewTabContent({
       gamingTxPromise={Promise.resolve(gamingTx)}
       financialTxPromise={Promise.resolve(financialTx)}
       adjustmentsTxPromise={Promise.resolve(adjustmentsTx)}
+      inventorySalesTxPromise={Promise.resolve(inventorySalesTx)}
       pnlBreakdown={pnlBreakdown}
       isAdmin={data.sessionRole === "admin"}
     />

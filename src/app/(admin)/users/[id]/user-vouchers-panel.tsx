@@ -24,6 +24,11 @@ import {
   getUserVouchers,
   type UserVoucherRow,
 } from "./actions";
+import {
+  AbuserTagToggles,
+  applyAbuserTags,
+  useAbuserTags,
+} from "./abuser-tag-toggles";
 
 const VOUCHER_DELETE_MIN_REASON_CHARS = 20;
 
@@ -191,6 +196,7 @@ function VoucherRemoveDialog({
 }) {
   const [reason, setReason] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  const abuser = useAbuserTags();
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -199,6 +205,7 @@ function VoucherRemoveDialog({
     if (!next) {
       setReason("");
       setTotpCode("");
+      abuser.reset();
     }
     onOpenChange(next);
   }
@@ -228,8 +235,10 @@ function VoucherRemoveDialog({
           return;
         }
         toast.success("Voucher removed");
+        await applyAbuserTags(userId, abuser.selected);
         setReason("");
         setTotpCode("");
+        abuser.reset();
         onOpenChange(false);
         onRemoved?.();
         router.refresh();
@@ -269,6 +278,7 @@ function VoucherRemoveDialog({
               Recorded in the user&apos;s transactions box.
             </p>
           </div>
+          <AbuserTagToggles state={abuser} disabled={isPending} />
           <div className="space-y-1.5">
             <Label htmlFor="voucher-remove-2fa">2FA code</Label>
             <Input

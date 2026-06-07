@@ -81,6 +81,7 @@ import {
   GAMING_TX_TYPES,
   FINANCIAL_TX_TYPES,
   ADJUSTMENT_TX_TYPES,
+  CARD_SALE_TX_TYPES,
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
 import { UserVouchersPanel } from "./user-vouchers-panel";
@@ -109,12 +110,15 @@ export function OverviewTab({
   gamingTxPromise,
   financialTxPromise,
   adjustmentsTxPromise,
+  inventorySalesTxPromise,
   pnlBreakdown,
   isAdmin,
 }: {
   data: UserDetail;
   gamingTxPromise: Promise<PaginatedTransactions>;
   financialTxPromise: Promise<PaginatedTransactions>;
+  /** Dedicated card-sale page — drives the "Inventory sales" Overview block. */
+  inventorySalesTxPromise: Promise<PaginatedTransactions>;
   // Dedicated, UNCAPPED admin_balance_adjustment fetch (separate from the
   // shared 10-row `financialTx` page, which lumps adjustments together with
   // deposits/withdrawals/claims and can push an older adjustment off page 1
@@ -174,6 +178,17 @@ export function OverviewTab({
           adjustmentsTxPromise={adjustmentsTxPromise}
           isAdmin={isAdmin}
           canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
+        />
+      </Suspense>
+
+      {/* Inventory sales — card_sale / reward_card_sale rows in their own
+          block (kept out of Deposits & Withdrawals on purpose). Hidden when
+          the user has never sold a card. */}
+      <Suspense fallback={null}>
+        <InventorySalesStreamed
+          userId={user.id}
+          inventorySalesTxPromise={inventorySalesTxPromise}
+          isAdmin={isAdmin}
         />
       </Suspense>
 
@@ -248,6 +263,31 @@ function AdminAdjustmentsStreamed({
         initialTx={adjustmentsTx}
         isAdmin={isAdmin}
         canEditBalanceAdjustments={canEditBalanceAdjustments}
+      />
+    </>
+  );
+}
+
+function InventorySalesStreamed({
+  userId,
+  inventorySalesTxPromise,
+  isAdmin,
+}: {
+  userId: string;
+  inventorySalesTxPromise: Promise<PaginatedTransactions>;
+  isAdmin: boolean;
+}) {
+  const salesTx = use(inventorySalesTxPromise);
+  if (salesTx.total <= 0) return null;
+  return (
+    <>
+      <SectionHeading icon={Coins} title="Inventory sales" />
+      <CategoryTransactionsTable
+        title="Inventory sales"
+        userId={userId}
+        types={CARD_SALE_TX_TYPES}
+        initialTx={salesTx}
+        isAdmin={isAdmin}
       />
     </>
   );

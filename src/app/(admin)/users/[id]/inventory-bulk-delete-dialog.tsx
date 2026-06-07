@@ -17,6 +17,11 @@ import {
 } from "@/components/ui/dialog";
 import { formatCurrency } from "@/lib/utils/format";
 import { bulkDeleteUserInventoryItems } from "./actions";
+import {
+  AbuserTagToggles,
+  applyAbuserTags,
+  useAbuserTags,
+} from "./abuser-tag-toggles";
 
 const INVENTORY_DELETE_MIN_REASON_CHARS = 20;
 
@@ -43,6 +48,7 @@ export function InventoryBulkDeleteDialog({
 }) {
   const [reason, setReason] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  const abuser = useAbuserTags();
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -51,6 +57,7 @@ export function InventoryBulkDeleteDialog({
     if (!next) {
       setReason("");
       setTotpCode("");
+      abuser.reset();
     }
     onOpenChange(next);
   }
@@ -85,8 +92,10 @@ export function InventoryBulkDeleteDialog({
             ? ` (${result.skipped} skipped${result.firstError ? `: ${result.firstError}` : ""})`
             : "";
         toast.success(`Removed ${result.deleted} item(s)${skippedNote}`);
+        await applyAbuserTags(userId, abuser.selected);
         setReason("");
         setTotpCode("");
+        abuser.reset();
         onOpenChange(false);
         onDeleted?.();
         router.refresh();
@@ -132,6 +141,7 @@ export function InventoryBulkDeleteDialog({
               user&apos;s transactions box. Sold / locked items are skipped.
             </p>
           </div>
+          <AbuserTagToggles state={abuser} disabled={isPending} />
           <div className="space-y-1.5">
             <Label htmlFor="inventory-bulk-delete-2fa">2FA code</Label>
             <Input

@@ -98,6 +98,11 @@ const FINANCIAL_TYPES = [
 // dedicated block. Same query path, so the official_stream fake-balance
 // exclusion still applies automatically.
 const ADJUSTMENT_TYPES = ["admin_balance_adjustment"];
+// Card sales (player or admin disposing a card for balance). Deliberately
+// kept OUT of FINANCIAL_TYPES (they'd bloat Deposits & Withdrawals), but
+// surfaced as their OWN dedicated Overview section so admins can see
+// inventory liquidation alongside (not mixed into) cash movement.
+const CARD_SALE_TYPES = ["card_sale", "reward_card_sale"];
 const ADJ_LIMIT = 200;
 
 export default async function UserDetailPage({
@@ -467,6 +472,12 @@ async function UserDetailBody({
     "users.detail.adjustmentsTx",
     USER_DETAIL_QUERY_TIMEOUT_MS,
   ).then((r) => r.data);
+  const inventorySalesTxPromise = safeQuery(
+    () => getUserTransactions(id, 1, ADJ_LIMIT, { types: CARD_SALE_TYPES }),
+    EMPTY_TX_PAGE,
+    "users.detail.inventorySalesTx",
+    USER_DETAIL_QUERY_TIMEOUT_MS,
+  ).then((r) => r.data);
   const disposedInventoryPromise = safeQuery(
     () => getUserInventory(id, 1, 24, { status: "disposed" }),
     EMPTY_INVENTORY_PAGE,
@@ -584,6 +595,7 @@ async function UserDetailBody({
       gamingTxPromise={gamingTxPromise}
       financialTxPromise={financialTxPromise}
       adjustmentsTxPromise={adjustmentsTxPromise}
+      inventorySalesTxPromise={inventorySalesTxPromise}
       rewards={rewards}
       notes={notes}
       pnlBreakdown={pnlBreakdown}

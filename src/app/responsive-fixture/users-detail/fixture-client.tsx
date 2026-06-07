@@ -242,6 +242,7 @@ export function UserDetailFixtureClient() {
       gamingTxPromise={Promise.resolve(EMPTY_TX)}
       financialTxPromise={Promise.resolve(EMPTY_TX)}
       adjustmentsTxPromise={Promise.resolve(EMPTY_TX)}
+      inventorySalesTxPromise={Promise.resolve(EMPTY_TX)}
       rewards={REWARDS}
       notes={NOTES}
       pnlBreakdown={PNL}
