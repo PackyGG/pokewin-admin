@@ -1264,7 +1264,7 @@ export async function fetchInventory(
 }
 
 /** Minimum explanation when an admin removes an open inventory item. */
-export const INVENTORY_DELETE_MIN_REASON_CHARS = 20;
+const INVENTORY_DELETE_MIN_REASON_CHARS = 20;
 
 const deleteInventoryItemSchema = z.object({
   userId: z.string().min(1),
