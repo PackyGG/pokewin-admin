@@ -84,7 +84,6 @@ import {
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
 import { UserVouchersPanel } from "./user-vouchers-panel";
-import { InventorySalesPanel } from "./inventory-sales-panel";
 import { JoinedBattlesPanel } from "./joined-battles-panel";
 import { UserWagerRequirementCard } from "./user-wager-requirement-card";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
@@ -169,12 +168,10 @@ export function OverviewTab({
         />
       </Suspense>
 
-      {/* Inventory sales — card sales grouped into batches (N cards · $total),
-          sourced from sold inventory so it always matches the inventory tab.
-          Sits right under Deposits & Withdrawals. Hidden when none. */}
-      <InventorySalesPanel userId={user.id} />
-
-      {/* Admin balance adjustments — streamed; section hidden when empty. */}
+      {/* Admin balance adjustments — streamed; section hidden when empty.
+          Admin inventory removals/sales are written as admin_balance_adjustment
+          rows ("Inventory removed: …"), so they surface HERE and in the
+          Deposits & Withdrawals box above — like any other balance adjustment. */}
       <Suspense fallback={null}>
         <AdminAdjustmentsStreamed
           userId={user.id}
