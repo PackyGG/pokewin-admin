@@ -169,6 +169,11 @@ export function OverviewTab({
         />
       </Suspense>
 
+      {/* Inventory sales — card sales grouped into batches (N cards · $total),
+          sourced from sold inventory so it always matches the inventory tab.
+          Sits right under Deposits & Withdrawals. Hidden when none. */}
+      <InventorySalesPanel userId={user.id} />
+
       {/* Admin balance adjustments — streamed; section hidden when empty. */}
       <Suspense fallback={null}>
         <AdminAdjustmentsStreamed
@@ -178,10 +183,6 @@ export function OverviewTab({
           canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
         />
       </Suspense>
-
-      {/* Inventory sales — card sales grouped into batches (N cards · $total),
-          self-fetching; hidden when the user has never sold a card. */}
-      <InventorySalesPanel userId={user.id} />
 
       {/* Sponsored / free battles the user joined with no ledger row — these
           are otherwise invisible in gaming history. Self-fetching; hidden

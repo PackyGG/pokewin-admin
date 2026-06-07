@@ -1748,40 +1748,27 @@ export type InventorySaleBatch = {
 };
 
 /**
- * The user's card sales GROUPED INTO BATCHES — cards sold together in one
- * action (same-second timestamps) collapse into a single entry showing the
- * count + total, instead of one row per card. Powers the "Inventory sales"
- * Overview block. Newest batch first.
+ * The user's card SALES grouped into batches — cards sold together (same-
+ * second `sold_at`) collapse into one entry. Sourced DIRECTLY from
+ * `user_inventory` (rows with `sold_at` set) — the SAME source as the
+ * "Sold & Exchanged" inventory tab — NOT from `card_sale` ledger rows
+ * (which don't always exist). This guarantees every sold card the inventory
+ * tab shows also appears here. Newest batch first.
  */
 export async function getUserInventorySaleBatches(
   userId: string,
 ): Promise<InventorySaleBatch[]> {
   await requirePageAccess("/users");
   const db = await getDb();
-  const rows = await db.ledger_transactions.findMany({
-    where: {
-      user_id: userId,
-      status: "completed",
-      type: { in: ["card_sale", "reward_card_sale"] },
-    },
-    select: { id: true, amount: true, created_at: true, metadata: true },
-    orderBy: { created_at: "desc" },
+  const rows = await db.user_inventory.findMany({
+    where: { user_id: userId, sold_at: { not: null } },
+    select: { id: true, card_id: true, value_at_obtained: true, sold_at: true },
+    orderBy: { sold_at: "desc" },
     take: 500,
   });
   if (rows.length === 0) return [];
 
-  // Resolve card names from each row's inventory_item_id metadata.
-  const itemIds = rows
-    .map((r) => (r.metadata as Record<string, unknown> | null)?.inventory_item_id)
-    .filter((x): x is string => typeof x === "string");
-  const items =
-    itemIds.length > 0
-      ? await db.user_inventory.findMany({
-          where: { id: { in: itemIds } },
-          select: { id: true, card_id: true },
-        })
-      : [];
-  const cardIds = [...new Set(items.map((i) => i.card_id))];
+  const cardIds = [...new Set(rows.map((r) => r.card_id))];
   const cards =
     cardIds.length > 0
       ? await db.cards.findMany({
@@ -1790,27 +1777,25 @@ export async function getUserInventorySaleBatches(
         })
       : [];
   const cardName = new Map(cards.map((c) => [c.id, c.name]));
-  const itemCard = new Map(
-    items.map((i) => [i.id, cardName.get(i.card_id) ?? "Card"]),
-  );
 
-  // Group by second-truncated timestamp — a multi-card sale writes its rows
-  // in one transaction with the same timestamp. `rows` is desc, so the Map
-  // preserves newest-first batch order.
+  // Group by second-truncated sold_at — a multi-card "sell" sets sold_at on
+  // all rows at the same instant. `rows` is desc, so the Map preserves
+  // newest-first batch order.
   const batches = new Map<string, InventorySaleBatch>();
   for (const r of rows) {
-    const key = r.created_at.toISOString().slice(0, 19);
+    if (!r.sold_at) continue;
+    const key = r.sold_at.toISOString().slice(0, 19);
     let b = batches.get(key);
     if (!b) {
-      b = { id: r.id, at: r.created_at.toISOString(), count: 0, total: 0, cards: [] };
+      b = { id: r.id, at: r.sold_at.toISOString(), count: 0, total: 0, cards: [] };
       batches.set(key, b);
     }
-    const value = Math.abs(Number(r.amount));
+    const value = Number(r.value_at_obtained);
     b.count += 1;
     b.total += value;
-    const iid = (r.metadata as Record<string, unknown> | null)?.inventory_item_id;
-    const name = typeof iid === "string" ? itemCard.get(iid) ?? "Card" : "Card";
-    if (b.cards.length < 30) b.cards.push({ name, value });
+    if (b.cards.length < 30) {
+      b.cards.push({ name: cardName.get(r.card_id) ?? "Card", value });
+    }
   }
   return [...batches.values()];
 }
