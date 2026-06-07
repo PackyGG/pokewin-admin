@@ -561,6 +561,11 @@ export function GamingTab({
           isAdmin={isAdmin}
         />
       </Suspense>
+
+      {/* Sponsored / free battles joined — these have no battle_bet ledger
+          row so they never appear in the Gaming Transactions table above.
+          Surfaced here so free battles + their winnings are accounted for. */}
+      <JoinedBattlesPanel userId={user.id} />
     </div>
   );
 }
