@@ -83,6 +83,7 @@ import {
   ADJUSTMENT_TX_TYPES,
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
+import { UserVouchersPanel } from "./user-vouchers-panel";
 import { UserWagerRequirementCard } from "./user-wager-requirement-card";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import type {
@@ -604,6 +605,7 @@ export function InventoryTab({
         statusFilter="owned"
         canDeleteInventory={data.capabilities.canAdjustBalance}
       />
+      <UserVouchersPanel userId={user.id} />
       <SectionHeading icon={Trophy} title="Sold & Exchanged" />
       <Suspense fallback={<SkeletonTable rows={5} columns={5} />}>
         <DisposedCardsStreamed

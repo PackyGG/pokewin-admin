@@ -1613,6 +1613,46 @@ export async function fetchInventory(
   return getUserInventory(userId, page, perPage, filters);
 }
 
+export type UserVoucherRow = {
+  id: string;
+  value: number;
+  origin: string;
+  description: string | null;
+  createdAt: string;
+};
+
+/**
+ * The user's UNCLAIMED vouchers — held value shown alongside cards in the
+ * Current Inventory section. Claimed vouchers are excluded (they've already
+ * converted to balance). Newest first; capped so a pathological account
+ * can't flood the panel.
+ */
+export async function getUserVouchers(
+  userId: string,
+): Promise<UserVoucherRow[]> {
+  await requirePageAccess("/users");
+  const db = await getDb();
+  const rows = await db.vouchers.findMany({
+    where: { user_id: userId, claimed_at: null },
+    select: {
+      id: true,
+      value: true,
+      origin: true,
+      description: true,
+      created_at: true,
+    },
+    orderBy: { created_at: "desc" },
+    take: 200,
+  });
+  return rows.map((v) => ({
+    id: v.id,
+    value: Number(v.value),
+    origin: String(v.origin),
+    description: v.description,
+    createdAt: v.created_at.toISOString(),
+  }));
+}
+
 /** Minimum explanation when an admin removes an open inventory item. */
 const INVENTORY_DELETE_MIN_REASON_CHARS = 20;
 
