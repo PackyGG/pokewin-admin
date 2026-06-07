@@ -25,10 +25,17 @@ import {
   BUGS_ADJUSTMENT_MIN_REASON_CHARS,
   REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS,
   FRAUD_ABUSE_MIN_REASON_CHARS,
+  isBalanceAdjustmentCategory,
   isCreatorLinkedAdjustmentCategory,
+  isRemovalOnlyAdjustmentCategory,
   type BalanceAdjustmentCategory,
 } from "@/lib/balance-adjustment-categories";
+import type { SessionPayload } from "@/lib/session";
 import { ensureBalanceAdjustmentMetaSchema } from "@/lib/balance-adjustment-meta/ensure-schema";
+import {
+  canEditBalanceAdjustments,
+  requireBalanceAdjustmentEditAdmin,
+} from "@/lib/balance-adjustment-edit/motha-gate";
 
 // Hosts we accept as a "Giveaway" source URL. Anything else is rejected
 // at the action boundary so the giveaway log can't be polluted with
@@ -661,6 +668,338 @@ export async function adjustBalance(data: {
     });
 
   revalidatePath(`/users/${parsed.userId}`);
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// Edit balance-adjustment tag (category) + description — motha-only
+// ---------------------------------------------------------------------------
+
+const ADMIN_ADJUSTMENT_PREFIX = "Admin adjustment: ";
+const MANUAL_WITHDRAWAL_PREFIX = "Manual withdrawal: ";
+
+/** Parse the editable reason from a ledger description string. */
+function parseAdjustmentReason(description: string): {
+  kind: "admin" | "manual" | "other";
+  reason: string;
+  manualSuffix: string | null;
+} {
+  if (description.startsWith(ADMIN_ADJUSTMENT_PREFIX)) {
+    return {
+      kind: "admin",
+      reason: description.slice(ADMIN_ADJUSTMENT_PREFIX.length),
+      manualSuffix: null,
+    };
+  }
+  if (description.startsWith(MANUAL_WITHDRAWAL_PREFIX)) {
+    const rest = description.slice(MANUAL_WITHDRAWAL_PREFIX.length);
+    const suffixMatch = rest.match(/^(.*?)( \(total \$[\d.]+.*\))$/);
+    if (suffixMatch) {
+      return {
+        kind: "manual",
+        reason: suffixMatch[1]!.trim(),
+        manualSuffix: suffixMatch[2]!,
+      };
+    }
+    return { kind: "manual", reason: rest.trim(), manualSuffix: null };
+  }
+  return { kind: "other", reason: description, manualSuffix: null };
+}
+
+function rebuildAdjustmentDescription(
+  kind: "admin" | "manual" | "other",
+  reason: string,
+  manualSuffix: string | null,
+): string {
+  const trimmed = reason.trim();
+  if (kind === "admin") {
+    return `${ADMIN_ADJUSTMENT_PREFIX}${trimmed}`;
+  }
+  if (kind === "manual") {
+    return manualSuffix
+      ? `${MANUAL_WITHDRAWAL_PREFIX}${trimmed}${manualSuffix}`
+      : `${MANUAL_WITHDRAWAL_PREFIX}${trimmed}`;
+  }
+  return trimmed;
+}
+
+const updateBalanceAdjustmentSchema = z.object({
+  ledgerTxId: z.string().min(1),
+  targetUserId: z.string().min(1),
+  category: z.enum(BALANCE_ADJUSTMENT_CATEGORY_KEYS).optional(),
+  reason: z.string().trim().min(1).max(5000),
+  totpCode: z.string().min(1),
+});
+
+export type BalanceAdjustmentEditPayload = {
+  ledgerTxId: string;
+  category: BalanceAdjustmentCategory | null;
+  reason: string;
+  kind: "admin" | "manual" | "other";
+  amount: number;
+  description: string;
+  hasMetaRow: boolean;
+};
+
+export async function getBalanceAdjustmentForEdit(
+  ledgerTxId: string,
+  targetUserId: string,
+): Promise<
+  | { success: true; data: BalanceAdjustmentEditPayload }
+  | { success: false; error: string }
+> {
+  try {
+    await requireBalanceAdjustmentEditAdmin();
+  } catch {
+    return { success: false, error: "Not permitted." };
+  }
+
+  await requirePageAccess("/users");
+
+  const db = await getDb();
+  const row = await db.ledger_transactions.findFirst({
+    where: { id: ledgerTxId, user_id: targetUserId },
+    select: {
+      id: true,
+      type: true,
+      amount: true,
+      description: true,
+      metadata: true,
+    },
+  });
+
+  if (!row || row.type !== "admin_balance_adjustment") {
+    return { success: false, error: "Balance adjustment not found" };
+  }
+
+  const parsed = parseAdjustmentReason(row.description);
+  const metaObj = row.metadata as Record<string, unknown> | null;
+  const categoryFromLedger = isBalanceAdjustmentCategory(
+    metaObj?.adjustment_category,
+  )
+    ? metaObj.adjustment_category
+    : null;
+
+  let hasMetaRow = false;
+  let reason = parsed.reason;
+
+  try {
+    await ensureBalanceAdjustmentMetaSchema();
+    const metaRow = await adminDb.admin_balance_adjustment_meta.findFirst({
+      where: { ledger_tx_id: ledgerTxId, target_user_id: targetUserId },
+      select: { category: true, reason_text: true },
+    });
+    if (metaRow) {
+      hasMetaRow = true;
+      if (metaRow.reason_text?.trim()) {
+        reason = metaRow.reason_text.trim();
+      }
+    }
+  } catch (err) {
+    console.error("[getBalanceAdjustmentForEdit] meta lookup failed:", err);
+  }
+
+  return {
+    success: true,
+    data: {
+      ledgerTxId: row.id,
+      category: categoryFromLedger,
+      reason,
+      kind: parsed.kind,
+      amount: Number(row.amount),
+      description: row.description,
+      hasMetaRow,
+    },
+  };
+}
+
+export { canEditBalanceAdjustments };
+
+export async function updateBalanceAdjustmentMeta(data: {
+  ledgerTxId: string;
+  targetUserId: string;
+  category?: BalanceAdjustmentCategory;
+  reason: string;
+  totpCode: string;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  let session: SessionPayload & { username: string };
+  try {
+    session = await requireBalanceAdjustmentEditAdmin();
+  } catch {
+    return { success: false, error: "Not permitted." };
+  }
+
+  await requirePageAccess("/users");
+
+  const parseResult = updateBalanceAdjustmentSchema.safeParse(data);
+  if (!parseResult.success) {
+    return {
+      success: false,
+      error: parseResult.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+  const parsed = parseResult.data;
+
+  try {
+    await require2FA(session.userId, parsed.totpCode);
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "2FA verification failed",
+    };
+  }
+
+  const db = await getDb();
+  const row = await db.ledger_transactions.findFirst({
+    where: { id: parsed.ledgerTxId, user_id: parsed.targetUserId },
+    select: {
+      id: true,
+      type: true,
+      amount: true,
+      description: true,
+      metadata: true,
+    },
+  });
+
+  if (!row || row.type !== "admin_balance_adjustment") {
+    return { success: false, error: "Balance adjustment not found" };
+  }
+
+  const existing = parseAdjustmentReason(row.description);
+  const metaObj = (row.metadata as Record<string, unknown> | null) ?? {};
+  const previousCategory = isBalanceAdjustmentCategory(
+    metaObj.adjustment_category,
+  )
+    ? metaObj.adjustment_category
+    : null;
+
+  const nextCategory =
+    existing.kind === "admin"
+      ? (parsed.category ?? previousCategory)
+      : previousCategory;
+
+  if (existing.kind === "admin" && !nextCategory) {
+    return { success: false, error: "Category is required" };
+  }
+
+  if (nextCategory && isRemovalOnlyAdjustmentCategory(nextCategory)) {
+    if (Number(row.amount) > 0) {
+      return {
+        success: false,
+        error: "Removal-only categories require a negative adjustment amount",
+      };
+    }
+  }
+
+  if (
+    nextCategory &&
+    isCreatorLinkedAdjustmentCategory(nextCategory) &&
+    typeof metaObj.creator_id !== "string"
+  ) {
+    return {
+      success: false,
+      error:
+        "This adjustment has no linked creator — pick a non-creator category",
+    };
+  }
+
+  const newDescription = rebuildAdjustmentDescription(
+    existing.kind,
+    parsed.reason,
+    existing.manualSuffix,
+  );
+
+  const nextMetadata: Record<string, unknown> = { ...metaObj };
+  if (existing.kind === "admin" && nextCategory) {
+    nextMetadata.adjustment_category = nextCategory;
+    if (
+      !isCreatorLinkedAdjustmentCategory(nextCategory) &&
+      "creator_id" in nextMetadata
+    ) {
+      delete nextMetadata.creator_id;
+    }
+  }
+
+  const previousReason = existing.reason;
+  const previousDescription = row.description;
+
+  try {
+    await db.ledger_transactions.update({
+      where: { id: parsed.ledgerTxId },
+      data: {
+        description: newDescription,
+        metadata: nextMetadata,
+      },
+    });
+  } catch (err) {
+    console.error("[updateBalanceAdjustmentMeta] ledger update failed:", err);
+    return { success: false, error: "Failed to update adjustment" };
+  }
+
+  if (nextCategory) {
+    try {
+      await ensureBalanceAdjustmentMetaSchema();
+      const metaUpdate = {
+        category: nextCategory,
+        reason_text: parsed.reason.trim(),
+      };
+      const updated = await adminDb.admin_balance_adjustment_meta.updateMany({
+        where: {
+          ledger_tx_id: parsed.ledgerTxId,
+          target_user_id: parsed.targetUserId,
+        },
+        data: metaUpdate,
+      });
+      if (updated.count === 0) {
+        await adminDb.admin_balance_adjustment_meta.create({
+          data: {
+            admin_user_id: session.userId,
+            target_user_id: parsed.targetUserId,
+            ledger_tx_id: parsed.ledgerTxId,
+            category: nextCategory,
+            amount_usd: Number(row.amount),
+            reason_text: parsed.reason.trim(),
+          },
+        });
+      }
+    } catch (err) {
+      console.error(
+        "[updateBalanceAdjustmentMeta] admin meta update failed (ledger already committed):",
+        err,
+      );
+    }
+
+    if (nextCategory === "giveaway") {
+      try {
+        await adminDb.admin_giveaway_actions.updateMany({
+          where: { ledger_tx_id: parsed.ledgerTxId },
+          data: { reason: parsed.reason.trim() },
+        });
+      } catch (err) {
+        console.error(
+          "[updateBalanceAdjustmentMeta] giveaway row update failed:",
+          err,
+        );
+      }
+    }
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "balance_adjustment_meta_updated",
+    targetUserId: parsed.targetUserId,
+    metadata: {
+      ledgerTxId: parsed.ledgerTxId,
+      previousCategory,
+      nextCategory,
+      previousReason,
+      nextReason: parsed.reason.trim(),
+      previousDescription,
+      nextDescription: newDescription,
+    },
+  });
+
+  revalidatePath(`/users/${parsed.targetUserId}`);
   return { success: true };
 }
 
@@ -2157,14 +2496,19 @@ export async function clearUserBattleLimits(
 // ---------------------------------------------------------------------------
 // VIP Tags — admin-CRM metadata on packy.gg users
 // ---------------------------------------------------------------------------
-// Two-tag system today (Contacted VIP / Confirmed VIP). Stored in the
+// Admin-CRM tag system (Contacted VIP / Confirmed VIP / Wager Abuser).
+// Stored in the
 // admin DB only — no main-DB write. The full set lives in the
 // `admin_user_tags` table; this action only knows about the allow-listed
 // tag values. Adding a new tag = update both the Zod enum here AND the
 // CHECK constraint in
 // prisma/admin/migrations/20260513000000_admin_user_tags/migration.sql.
 
-const USER_TAG_VALUES = ["contacted_vip", "confirmed_vip"] as const;
+const USER_TAG_VALUES = [
+  "contacted_vip",
+  "confirmed_vip",
+  "wager_abuser",
+] as const;
 export type UserTagValue = (typeof USER_TAG_VALUES)[number];
 
 const userTagSchema = z.object({
@@ -2224,6 +2568,7 @@ export async function setUserTag(
   });
 
   revalidatePath(`/users/${parsed.data.userId}`);
+  revalidatePath("/creator-hub/wager-abusers");
   return { success: true };
 }
 
@@ -2273,5 +2618,6 @@ export async function removeUserTag(
   }
 
   revalidatePath(`/users/${parsed.data.userId}`);
+  revalidatePath("/creator-hub/wager-abusers");
   return { success: true };
 }

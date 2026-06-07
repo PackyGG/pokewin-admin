@@ -162,6 +162,7 @@ export function OverviewTab({
           cardWithdrawals={data.cardWithdrawals}
           financialTxPromise={financialTxPromise}
           isAdmin={isAdmin}
+          canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
         />
       </Suspense>
 
@@ -171,6 +172,7 @@ export function OverviewTab({
           userId={user.id}
           adjustmentsTxPromise={adjustmentsTxPromise}
           isAdmin={isAdmin}
+          canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
         />
       </Suspense>
 
@@ -200,11 +202,13 @@ function DepositsWithdrawalsStreamed({
   cardWithdrawals,
   financialTxPromise,
   isAdmin,
+  canEditBalanceAdjustments,
 }: {
   userId: string;
   cardWithdrawals: UserDetail["cardWithdrawals"];
   financialTxPromise: Promise<PaginatedTransactions>;
   isAdmin: boolean;
+  canEditBalanceAdjustments: boolean;
 }) {
   const financialTx = use(financialTxPromise);
   return (
@@ -215,6 +219,7 @@ function DepositsWithdrawalsStreamed({
       initialTx={financialTx}
       cardWithdrawals={cardWithdrawals}
       isAdmin={isAdmin}
+      canEditBalanceAdjustments={canEditBalanceAdjustments}
     />
   );
 }
@@ -223,10 +228,12 @@ function AdminAdjustmentsStreamed({
   userId,
   adjustmentsTxPromise,
   isAdmin,
+  canEditBalanceAdjustments,
 }: {
   userId: string;
   adjustmentsTxPromise: Promise<PaginatedTransactions>;
   isAdmin: boolean;
+  canEditBalanceAdjustments: boolean;
 }) {
   const adjustmentsTx = use(adjustmentsTxPromise);
   if (adjustmentsTx.total <= 0) return null;
@@ -239,6 +246,7 @@ function AdminAdjustmentsStreamed({
         types={ADJUSTMENT_TX_TYPES}
         initialTx={adjustmentsTx}
         isAdmin={isAdmin}
+        canEditBalanceAdjustments={canEditBalanceAdjustments}
       />
     </>
   );
@@ -495,7 +503,7 @@ export function FinancesTab({
   financialTxPromise: Promise<PaginatedTransactions>;
   isAdmin: boolean;
 }) {
-  const { user } = data;
+  const { user, capabilities } = data;
   return (
     <div className="space-y-6">
       <SectionHeading icon={ArrowDownToLine} title="Deposits & Withdrawals" />
@@ -505,6 +513,7 @@ export function FinancesTab({
           cardWithdrawals={data.cardWithdrawals}
           financialTxPromise={financialTxPromise}
           isAdmin={isAdmin}
+          canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
         />
       </Suspense>
     </div>

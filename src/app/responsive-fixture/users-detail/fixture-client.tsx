@@ -223,6 +223,7 @@ const DATA: UserDetail = {
     canAssignAffiliate: true,
     canChangeUserRoles: true,
     canRecordManualWithdrawal: true,
+    canEditBalanceAdjustments: true,
   },
 };
 

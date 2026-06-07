@@ -18,6 +18,7 @@ import { getUserTags } from "@/lib/queries/user-tags";
 import { getUserCreatorHistory } from "@/lib/queries/user-role-history";
 import { requirePageAccess, getUserPermissions } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
+import { canEditBalanceAdjustments } from "@/lib/balance-adjustment-edit/motha-gate";
 import { ensureSupportBaseline } from "@/lib/support-baseline";
 import { UserTagsPanel } from "./user-tags-panel";
 import { AutoRefresh } from "../../dashboard/auto-refresh";
@@ -227,6 +228,7 @@ export default async function UserDetailPage({
         <UserDetailBody
           id={id}
           sessionRole={session.role}
+          sessionUserId={session.userId}
           permissions={permissions}
           initialTab={initialTab}
         />
@@ -247,11 +249,13 @@ export default async function UserDetailPage({
 async function UserDetailBody({
   id,
   sessionRole,
+  sessionUserId,
   permissions,
   initialTab,
 }: {
   id: string;
   sessionRole: string;
+  sessionUserId: string;
   // Union permission keys for non-admin viewers (null for admins), resolved
   // on the critical path and threaded down so capability gating matches the
   // tag panel's and avoids a second (cache()'d, but clearer-as-prop) read.
@@ -537,6 +541,8 @@ async function UserDetailBody({
     data.user.ownedCodes.length > 0;
   const wasCreator = everCreator && data.user.role !== "creator";
 
+  const mothaCanEditAdjustments = await canEditBalanceAdjustments(sessionUserId);
+
   const capabilities =
     sessionRole === "admin"
       ? {
@@ -549,6 +555,7 @@ async function UserDetailBody({
           canAssignAffiliate: true,
           canChangeUserRoles: true,
           canRecordManualWithdrawal: true,
+          canEditBalanceAdjustments: mothaCanEditAdjustments,
         }
       : {
           canAdjustBalance: hasCapability(permissions ?? [], "__can_adjust_balance"),
@@ -560,6 +567,7 @@ async function UserDetailBody({
           canAssignAffiliate: hasCapability(permissions ?? [], "__can_assign_affiliate"),
           canChangeUserRoles: hasCapability(permissions ?? [], "__can_change_user_roles"),
           canRecordManualWithdrawal: hasCapability(permissions ?? [], "__can_record_manual_withdrawal"),
+          canEditBalanceAdjustments: mothaCanEditAdjustments,
         };
 
   const detailWithSession = {

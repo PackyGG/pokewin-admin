@@ -1,8 +1,9 @@
 import "server-only";
 
 import { adminDb } from "@/lib/admin-db";
+import { getDb } from "@/lib/db";
 
-export type UserTagValue = "contacted_vip" | "confirmed_vip";
+export type UserTagValue = "contacted_vip" | "confirmed_vip" | "wager_abuser";
 
 export type UserTagRow = {
   tag: UserTagValue;
@@ -28,11 +29,67 @@ export async function getUserTags(userId: string): Promise<UserTagRow[]> {
   });
 
   return rows.map((r) => ({
-    // The tag column is constrained to the two allow-listed values
-    // by the DB CHECK constraint; cast is safe.
+    // The tag column is constrained to the allow-listed values by the
+    // DB CHECK constraint; cast is safe.
     tag: r.tag as UserTagValue,
     setByAdminId: r.set_by_admin_id,
     setByAdminUsername: r.admin_user?.username ?? null,
     createdAt: r.created_at.toISOString(),
   }));
+}
+
+export type TaggedUserRow = {
+  userId: string;
+  username: string | null;
+  email: string | null;
+  taggedAt: string;
+  setByAdminUsername: string | null;
+};
+
+/**
+ * Lists packy.gg users who have a specific admin tag. Reads tag rows
+ * from the admin DB (indexed on `tag`), then hydrates username/email
+ * from the main DB in one batch lookup.
+ */
+export async function getUsersWithTag(
+  tag: UserTagValue,
+  { limit, offset }: { limit: number; offset: number },
+): Promise<{ items: TaggedUserRow[]; total: number }> {
+  const [tagRows, total] = await Promise.all([
+    adminDb.admin_user_tags.findMany({
+      where: { tag },
+      include: {
+        admin_user: { select: { username: true } },
+      },
+      orderBy: { created_at: "desc" },
+      skip: offset,
+      take: limit,
+    }),
+    adminDb.admin_user_tags.count({ where: { tag } }),
+  ]);
+
+  if (tagRows.length === 0) {
+    return { items: [], total };
+  }
+
+  const db = await getDb();
+  const users = await db.user.findMany({
+    where: { id: { in: tagRows.map((r) => r.target_user_id) } },
+    select: { id: true, username: true, email: true },
+  });
+  const userById = new Map(users.map((u) => [u.id, u]));
+
+  return {
+    items: tagRows.map((r) => {
+      const user = userById.get(r.target_user_id);
+      return {
+        userId: r.target_user_id,
+        username: user?.username ?? null,
+        email: user?.email ?? null,
+        taggedAt: r.created_at.toISOString(),
+        setByAdminUsername: r.admin_user?.username ?? null,
+      };
+    }),
+    total,
+  };
 }

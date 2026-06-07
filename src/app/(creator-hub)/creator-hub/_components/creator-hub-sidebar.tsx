@@ -13,6 +13,7 @@ import {
   Trophy,
   LineChart,
   ShieldCheck,
+  ShieldAlert,
   Calculator,
   History,
   Settings,
@@ -88,6 +89,11 @@ const HUB_NAV: HubNavItem[] = [
     label: "Socials Review",
     href: "/creator-hub/socials-review",
     icon: ShieldCheck,
+  },
+  {
+    label: "Wager Abusers",
+    href: "/creator-hub/wager-abusers",
+    icon: ShieldAlert,
   },
   {
     label: "ROI Calculator",

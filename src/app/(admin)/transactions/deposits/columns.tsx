@@ -2,7 +2,7 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
-import { Crown, Phone } from "lucide-react";
+import { Crown, Phone, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { columns as sharedColumns } from "../columns";
@@ -87,6 +87,12 @@ const TAG_META: Record<
     icon: Crown,
     color:
       "border-purple-500/30 bg-purple-500/15 text-purple-700 dark:text-purple-300",
+  },
+  wager_abuser: {
+    label: "Abuser",
+    icon: ShieldAlert,
+    color:
+      "border-red-500/30 bg-red-500/15 text-red-700 dark:text-red-300",
   },
 };
 

@@ -132,7 +132,7 @@ model admin_user_tags {
   // packy.gg user_id (text — main DB lives in a separate Postgres
   // cluster, can't be an FK).
   target_user_id  String
-  // Tag value — currently 'contacted_vip' | 'confirmed_vip'.
+  // Tag value — currently 'contacted_vip' | 'confirmed_vip' | 'wager_abuser'.
   // The set is also enforced server-side in the action (Zod enum) so
   // even if a future code path bypasses the SQL CHECK we still catch
   // bad values.

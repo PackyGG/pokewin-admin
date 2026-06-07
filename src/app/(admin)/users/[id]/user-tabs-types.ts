@@ -206,6 +206,8 @@ export type UserDetail = {
     canAssignAffiliate: boolean;
     canChangeUserRoles: boolean;
     canRecordManualWithdrawal: boolean;
+    /** Motha-only — edit balance-adjustment tag + description on ledger rows. */
+    canEditBalanceAdjustments: boolean;
   };
 };
 

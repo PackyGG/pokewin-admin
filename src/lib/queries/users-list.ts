@@ -9,7 +9,6 @@ import {
   type RiskTier,
 } from "@/lib/fraud/score";
 import { calculateUsersPnlBatch, type UserPnl } from "./pnl";
-import { statsExcludedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import { isUserId, isUuid } from "@/lib/utils/ids";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "./_blacklist";
@@ -111,17 +110,28 @@ type RankedUserIdsResult = {
   metricsById: Map<string, RankedUserMetrics>;
 };
 
-/** Which satellite aggregates each computed sort needs (balances always joined). */
+/**
+ * Which satellite aggregates each computed sort needs (balances always joined).
+ *
+ * PnL / netHoldings deliberately omit the `os` ledger CTE (official_stream +
+ * remove_locked_balance netting). That CTE scans every completed
+ * admin_balance_adjustment row for the whole filtered cohort and was the
+ * dominant cost of the global "Top losers / Top winners / Net holdings"
+ * ranking — cold-cache runs routinely blew the 45s page timeout. Ranking
+ * uses the lighter balance + inventory + voucher approximation; the visible
+ * page is hydrated with `calculateUsersPnlBatch` for accurate per-row PnL /
+ * net holdings (including ledger carve-outs).
+ */
 const SORT_AGGREGATE_KEYS = {
-  pnl: ["inv", "cw", "vc", "os"] as const,
-  netHoldings: ["inv", "vc", "os"] as const,
+  pnl: ["inv", "cw", "vc"] as const,
+  netHoldings: ["inv", "vc"] as const,
   totalWithdrawn: ["cw"] as const,
   inventoryValue: ["inv"] as const,
   depositCount: ["dc"] as const,
 };
 
 function buildAggregateCtes(
-  needs: readonly ("inv" | "cw" | "vc" | "os" | "dc")[],
+  needs: readonly ("inv" | "cw" | "vc" | "dc")[],
 ): string {
   const parts: string[] = [];
   if (needs.includes("inv")) {
@@ -159,18 +169,6 @@ function buildAggregateCtes(
          GROUP BY v.user_id
       )`);
   }
-  if (needs.includes("os")) {
-    parts.push(`
-      os AS (
-        SELECT lt.user_id,
-               COALESCE(SUM(lt.amount::numeric), 0) AS os_net
-          FROM ledger_transactions lt
-         INNER JOIN filtered f ON f.id = lt.user_id
-         WHERE lt.status = 'completed'
-           AND ${statsExcludedAdjustmentSqlPredicate({ typeColumn: "lt.type", metadataColumn: "lt.metadata" })}
-         GROUP BY lt.user_id
-      )`);
-  }
   if (needs.includes("dc")) {
     parts.push(`
       dc AS (
@@ -187,13 +185,12 @@ function buildAggregateCtes(
 }
 
 function buildRankingJoins(
-  needs: readonly ("inv" | "cw" | "vc" | "os" | "dc")[],
+  needs: readonly ("inv" | "cw" | "vc" | "dc")[],
 ): string {
   const joins: string[] = ["LEFT JOIN balances b ON b.user_id = f.id"];
   if (needs.includes("inv")) joins.push("LEFT JOIN inv ON inv.user_id = f.id");
   if (needs.includes("cw")) joins.push("LEFT JOIN cw ON cw.user_id = f.id");
   if (needs.includes("vc")) joins.push("LEFT JOIN vc ON vc.user_id = f.id");
-  if (needs.includes("os")) joins.push("LEFT JOIN os ON os.user_id = f.id");
   if (needs.includes("dc")) joins.push("LEFT JOIN dc ON dc.user_id = f.id");
   return joins.join("\n      ");
 }
@@ -212,23 +209,23 @@ function buildRankingOrderExpr(sortBy: string): string {
     return `COALESCE(b.available_balance::numeric, 0)
             + COALESCE(b.locked_balance::numeric, 0)
             + COALESCE(inv.inv_value, 0)
-            + COALESCE(vc.voucher_value, 0)
-            - COALESCE(os.os_net, 0)`;
+            + COALESCE(vc.voucher_value, 0)`;
   }
-  // pnl — house-perspective sort key (asc = top losers / house gain)
+  // pnl — house-perspective sort key (asc = top losers / house gain).
+  // Approximate: omits official_stream / remove_locked_balance ledger
+  // netting; accurate values come from calculateUsersPnlBatch on hydrate.
   return `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
           + COALESCE(b.available_balance::numeric, 0)
           + COALESCE(b.locked_balance::numeric, 0)
           + COALESCE(inv.inv_value, 0)
           + COALESCE(vc.voucher_value, 0)
-          - COALESCE(os.os_net, 0)
           - COALESCE(b.total_deposited::numeric, 0)`;
 }
 
 /** Shared SELECT columns for hydration — computed once in the ranking scan. */
 function metricSelectForSort(
   sortBy: string,
-  needs: readonly ("inv" | "cw" | "vc" | "os" | "dc")[],
+  needs: readonly ("inv" | "cw" | "vc" | "dc")[],
 ): string {
   const cols = [
     "COALESCE(b.available_balance::numeric, 0) AS av",
@@ -250,9 +247,7 @@ function metricSelectForSort(
       ? "COALESCE(vc.voucher_value, 0) AS vch_val"
       : "0::numeric AS vch_val",
   );
-  cols.push(
-    needs.includes("os") ? "COALESCE(os.os_net, 0) AS os_net" : "0::numeric AS os_net",
-  );
+  cols.push("0::numeric AS os_net");
   return cols.join(",\n    ");
 }
 
@@ -580,13 +575,13 @@ async function computeRankedUserIds(
  */
 const cachedGlobalRankedUserIds = unstable_cache(
   computeRankedUserIds,
-  ["users-ranked-ids-global-v3"],
+  ["users-ranked-ids-global-v4"],
   { revalidate: 300, tags: ["users-list"] },
 );
 
 const cachedFilteredRankedUserIds = unstable_cache(
   computeRankedUserIds,
-  ["users-ranked-ids-filtered-v3"],
+  ["users-ranked-ids-filtered-v4"],
   { revalidate: 30, tags: ["users-list"] },
 );
 
@@ -873,15 +868,16 @@ export async function getUsers(params: {
   const isFreeFormTextSearch =
     !!searchTerm && !isExactId && !isEmailLike && !isDiscordId;
   const isAnySearch = !!searchTerm;
-  // Role / status toolbar filters narrow the list but must NOT trigger the
-  // global lifetime PnL / net-holdings ranking scan — same rule as search.
-  // A ?role=user + ?sortBy=pnl URL (common after clicking Top losers then
-  // refining the role chip) was scanning thousands of matched users through
-  // inventory + ledger aggregate CTEs and timing out the page.
-  const isToolbarFiltered =
-    (!!role && role !== "all") || !!status;
-  const skipHeavyRanking = isAnySearch || isToolbarFiltered;
-  const skipListRiskForFilter = skipHeavyRanking;
+  // Free-form / exact-match SEARCH must not run the computed-sort ranking
+  // scan — that was the main source of 15s timeouts on ?search=…. Role /
+  // status toolbar filters are safe: computeRankedUserIds is filter-first
+  // (aggregates only matched users) and is cached via
+  // cachedFilteredRankedUserIds (30s TTL). Skipping ranking for toolbar
+  // filters broke "Top user net worth" (?role=user&sortBy=netHoldings),
+  // which fell back to created_at on the server while the client re-sorted
+  // only the current page slice by netHoldings.
+  const skipHeavyRanking = isAnySearch;
+  const skipListRiskForFilter = isAnySearch;
   const filterInput: UserListFilterInput = {
     searchTerm,
     isExactId,
@@ -1018,11 +1014,11 @@ export async function getUsers(params: {
   let users: UserListRow[];
   let total: number;
 
-  // Never run the global lifetime ranking scan while a search OR toolbar
-  // filter is active — that was the main source of 15s timeouts on
-  // ?search=… and ?role=user&sortBy=pnl. Text / id searches and
-  // role/status-filtered views use the index-friendly column-sort SQL
-  // instead (see branch below).
+  // Never run the computed-sort ranking scan while a search filter is
+  // active — that was the main source of 15s timeouts on ?search=….
+  // Text / id searches use the index-friendly column-sort SQL instead
+  // (see branch below). Role / status filters route to the filter-first
+  // ranking path (cachedFilteredRankedUserIds).
   if (RAW_SQL_SORTS.has(sortBy) && !skipHeavyRanking) {
     // Heavy computed-sort path. The global ORDER BY scan (the source of
     // the "/users timed out" failure — most acutely the Top winners /
@@ -1051,10 +1047,17 @@ export async function getUsers(params: {
       .filter((u): u is (typeof unordered)[number] => Boolean(u));
     total = totalCount;
 
+    // PnL / netHoldings ranking is approximate (no ledger carve-out CTE).
+    // Hydrate via the per-page PnL batch for accurate displayed values.
+    // Risk scoring is skipped here — it adds ~40–80ms+ per page on top of
+    // an already-heavy ranking scan and is non-essential for whale/loser
+    // sort views; detail view still computes full risk.
+    const needsAccuratePnlHydrate =
+      sortBy === "pnl" || sortBy === "netHoldings";
     return hydrateUserListPage(users, total, page, perPage, {
-      precomputedMetrics: metricsById,
-      rankedSortBy: sortBy,
-      skipPnlBatch: sortBy === "pnl",
+      precomputedMetrics: needsAccuratePnlHydrate ? undefined : metricsById,
+      rankedSortBy: needsAccuratePnlHydrate ? undefined : sortBy,
+      skipListRisk: true,
     });
   } else {
     // Build a compound orderBy so every Prisma-path sort gets a

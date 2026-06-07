@@ -3,7 +3,14 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Crown, Phone, X, Check, Tag as TagIcon } from "lucide-react";
+import {
+  Crown,
+  Phone,
+  X,
+  Check,
+  Tag as TagIcon,
+  ShieldAlert,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,9 +42,19 @@ const TAG_META: Record<
     color:
       "border-purple-500/30 bg-purple-500/15 text-purple-700 dark:text-purple-300",
   },
+  wager_abuser: {
+    label: "Wager Abuser",
+    icon: ShieldAlert,
+    color:
+      "border-red-500/30 bg-red-500/15 text-red-700 dark:text-red-300",
+  },
 };
 
-const ALL_TAGS: UserTagValue[] = ["contacted_vip", "confirmed_vip"];
+const ALL_TAGS: UserTagValue[] = [
+  "contacted_vip",
+  "confirmed_vip",
+  "wager_abuser",
+];
 
 /**
  * VIP tag manager — renders the user's current tags inline + a small

@@ -85,14 +85,14 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "User Management",
   },
   {
-    // VIP-CRM tagging on user profiles. Today the allow-list is
-    // 'contacted_vip' + 'confirmed_vip'. Stored admin-side only —
-    // never written to the main game DB / never exposed to users.
-    // Useful for sales / support reaching out to high-value players.
+    // Admin-CRM tagging on user profiles. Allow-list:
+    // 'contacted_vip' | 'confirmed_vip' | 'wager_abuser'. Stored
+    // admin-side only — never written to the main game DB / never
+    // exposed to users.
     key: "__can_manage_user_tags",
     label: "Manage User Tags",
     description:
-      "Set or remove VIP tags (Contacted VIP, Confirmed VIP) on user profiles. Tags are admin-internal CRM metadata — never visible to the user themselves.",
+      "Set or remove user tags (Contacted VIP, Confirmed VIP, Wager Abuser) on user profiles. Tags are admin-internal CRM metadata — never visible to the user themselves.",
     group: "User Management",
   },
 

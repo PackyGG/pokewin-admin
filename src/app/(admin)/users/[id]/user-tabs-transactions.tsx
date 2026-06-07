@@ -71,6 +71,14 @@ const TransactionDetailModal = dynamic(
   { ssr: false },
 );
 
+const BalanceAdjustmentEditDialog = dynamic(
+  () =>
+    import("./balance-adjustment-edit-dialog").then(
+      (m) => m.BalanceAdjustmentEditDialog,
+    ),
+  { ssr: false },
+);
+
 const TX_STATUSES = ["all", "pending", "completed", "failed"] as const;
 
 const CW_STATUS_COLORS: Record<string, string> = {
@@ -91,6 +99,7 @@ export const CategoryTransactionsTable = React.memo(
     showCardsValue = false,
     cardWithdrawals,
     isAdmin = false,
+    canEditBalanceAdjustments = false,
   }: {
     title: string;
     userId: string;
@@ -106,6 +115,8 @@ export const CategoryTransactionsTable = React.memo(
      * static link.
      */
     isAdmin?: boolean;
+    /** Motha-only — opens the balance-adjustment edit dialog on ID click. */
+    canEditBalanceAdjustments?: boolean;
   }) {
     const [txData, setTxData] = useState(initialTx);
     const [typeFilter, setTypeFilter] = useState("all");
@@ -113,6 +124,9 @@ export const CategoryTransactionsTable = React.memo(
     const [dateFrom, setDateFrom] = useState("");
     const [dateTo, setDateTo] = useState("");
     const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
+    const [editAdjustmentTx, setEditAdjustmentTx] =
+      useState<Transaction | null>(null);
+    const [editDialogOpen, setEditDialogOpen] = useState(false);
     const [isPending, startTransition] = useTransition();
     const [currentPerPage, setCurrentPerPage] = useState(initialTx.perPage);
 
@@ -312,8 +326,24 @@ export const CategoryTransactionsTable = React.memo(
                 <TableRow key={t.id}>
                   <TableCell>
                     <button
-                      onClick={() => setSelectedTx(t)}
+                      onClick={() => {
+                        if (
+                          canEditBalanceAdjustments &&
+                          t.type === "admin_balance_adjustment"
+                        ) {
+                          setEditAdjustmentTx(t);
+                          setEditDialogOpen(true);
+                          return;
+                        }
+                        setSelectedTx(t);
+                      }}
                       className="font-mono text-xs text-blue-400 hover:underline"
+                      title={
+                        canEditBalanceAdjustments &&
+                        t.type === "admin_balance_adjustment"
+                          ? "Edit balance adjustment"
+                          : "View transaction details"
+                      }
                     >
                       {t.id.slice(0, 8)}...
                     </button>
@@ -751,6 +781,17 @@ export const CategoryTransactionsTable = React.memo(
             onClose={() => setSelectedTx(null)}
             isAdmin={isAdmin}
           />
+          {canEditBalanceAdjustments && (
+            <BalanceAdjustmentEditDialog
+              transaction={editAdjustmentTx}
+              userId={userId}
+              open={editDialogOpen}
+              onOpenChange={(next) => {
+                setEditDialogOpen(next);
+                if (!next) setEditAdjustmentTx(null);
+              }}
+            />
+          )}
           {txData.totalPages > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-3 py-4">
               <p className="text-sm text-muted-foreground">
