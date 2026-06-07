@@ -48,12 +48,19 @@ const TAG_META: Record<
     color:
       "border-red-500/30 bg-red-500/15 text-red-700 dark:text-red-300",
   },
+  fraud_abuser: {
+    label: "Fraud Abuser",
+    icon: ShieldAlert,
+    color:
+      "border-rose-600/30 bg-rose-600/15 text-rose-800 dark:text-rose-300",
+  },
 };
 
 const ALL_TAGS: UserTagValue[] = [
   "contacted_vip",
   "confirmed_vip",
   "wager_abuser",
+  "fraud_abuser",
 ];
 
 /**

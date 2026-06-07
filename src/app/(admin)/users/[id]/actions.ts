@@ -2508,6 +2508,7 @@ const USER_TAG_VALUES = [
   "contacted_vip",
   "confirmed_vip",
   "wager_abuser",
+  "fraud_abuser",
 ] as const;
 export type UserTagValue = (typeof USER_TAG_VALUES)[number];
 

@@ -89,10 +89,16 @@ const TAG_META: Record<
       "border-purple-500/30 bg-purple-500/15 text-purple-700 dark:text-purple-300",
   },
   wager_abuser: {
-    label: "Abuser",
+    label: "Wager",
     icon: ShieldAlert,
     color:
       "border-red-500/30 bg-red-500/15 text-red-700 dark:text-red-300",
+  },
+  fraud_abuser: {
+    label: "Fraud",
+    icon: ShieldAlert,
+    color:
+      "border-rose-600/30 bg-rose-600/15 text-rose-800 dark:text-rose-300",
   },
 };
 

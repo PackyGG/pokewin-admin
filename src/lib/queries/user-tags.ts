@@ -3,7 +3,14 @@ import "server-only";
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
 
-export type UserTagValue = "contacted_vip" | "confirmed_vip" | "wager_abuser";
+export type UserTagValue =
+  | "contacted_vip"
+  | "confirmed_vip"
+  | "wager_abuser"
+  | "fraud_abuser";
+
+/** Tags surfaced together on Creator Hub → Wager / Fraud Abusers. */
+export const ABUSER_HUB_TAGS: UserTagValue[] = ["wager_abuser", "fraud_abuser"];
 
 export type UserTagRow = {
   tag: UserTagValue;
@@ -42,6 +49,7 @@ export type TaggedUserRow = {
   userId: string;
   username: string | null;
   email: string | null;
+  tag: UserTagValue;
   taggedAt: string;
   setByAdminUsername: string | null;
 };
@@ -51,13 +59,13 @@ export type TaggedUserRow = {
  * from the admin DB (indexed on `tag`), then hydrates username/email
  * from the main DB in one batch lookup.
  */
-export async function getUsersWithTag(
-  tag: UserTagValue,
+export async function getUsersWithTags(
+  tags: readonly UserTagValue[],
   { limit, offset }: { limit: number; offset: number },
 ): Promise<{ items: TaggedUserRow[]; total: number }> {
   const [tagRows, total] = await Promise.all([
     adminDb.admin_user_tags.findMany({
-      where: { tag },
+      where: { tag: { in: [...tags] } },
       include: {
         admin_user: { select: { username: true } },
       },
@@ -65,7 +73,7 @@ export async function getUsersWithTag(
       skip: offset,
       take: limit,
     }),
-    adminDb.admin_user_tags.count({ where: { tag } }),
+    adminDb.admin_user_tags.count({ where: { tag: { in: [...tags] } } }),
   ]);
 
   if (tagRows.length === 0) {
@@ -88,8 +96,16 @@ export async function getUsersWithTag(
         email: user?.email ?? null,
         taggedAt: r.created_at.toISOString(),
         setByAdminUsername: r.admin_user?.username ?? null,
+        tag: r.tag as UserTagValue,
       };
     }),
     total,
   };
+}
+
+export async function getUsersWithTag(
+  tag: UserTagValue,
+  paging: { limit: number; offset: number },
+): Promise<{ items: TaggedUserRow[]; total: number }> {
+  return getUsersWithTags([tag], paging);
 }

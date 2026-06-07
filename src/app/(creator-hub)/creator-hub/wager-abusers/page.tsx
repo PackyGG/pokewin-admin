@@ -16,9 +16,9 @@ import {
 } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDateTime } from "@/lib/utils/format";
-import { getUsersWithTag } from "@/lib/queries/user-tags";
+import { ABUSER_HUB_TAGS, getUsersWithTags } from "@/lib/queries/user-tags";
 
-export const metadata = { title: "Wager Abusers · Creator Hub" };
+export const metadata = { title: "Wager / Fraud Abusers · Creator Hub" };
 
 const HUB_WAGER_ABUSERS_PATH = "/creator-hub/wager-abusers";
 const LIMIT = 50;
@@ -26,7 +26,7 @@ const LIMIT = 50;
 /**
  * Creator Hub → Wager Abusers.
  *
- * Lists every packy.gg user tagged `wager_abuser` in the admin DB.
+ * Lists packy.gg users tagged `wager_abuser` or `fraud_abuser` in the admin DB.
  * Tags are applied on `/users/[id]` by admins (or roles with
  * `__can_manage_user_tags`).
  *
@@ -48,8 +48,8 @@ export default async function WagerAbusersPage({
         <PageHeroIdentity
           icon={ShieldAlert}
           accent="pink"
-          title="Wager Abusers"
-          subtitle="Users flagged for wager abuse — tag them on their profile in Admin"
+          title="Wager / Fraud Abusers"
+          subtitle="Users flagged for wager abuse or fraud — tag them on their profile in Admin"
         />
       </PageHero>
 
@@ -61,7 +61,7 @@ export default async function WagerAbusersPage({
 }
 
 async function ListSection({ offset }: { offset: number }) {
-  const { items, total } = await getUsersWithTag("wager_abuser", {
+  const { items, total } = await getUsersWithTags(ABUSER_HUB_TAGS, {
     limit: LIMIT,
     offset,
   });
@@ -72,7 +72,7 @@ async function ListSection({ offset }: { offset: number }) {
         <KpiTile
           label="Tagged users"
           value={String(total)}
-          sub="wager abuser flag"
+          sub="wager / fraud flags"
           icon={Users}
           accent="pink"
         />
@@ -89,10 +89,10 @@ async function ListSection({ offset }: { offset: number }) {
         {items.length === 0 ? (
           <div className="mt-6 flex flex-col items-center gap-2 rounded-xl border border-dashed py-10 text-muted-foreground">
             <ShieldAlert className="size-6" />
-            <span className="text-sm">No wager abusers tagged yet.</span>
+            <span className="text-sm">No abusers tagged yet.</span>
             <span className="max-w-sm text-center text-xs">
-              Open a user in Admin → Users, then add the &quot;Wager
-              Abuser&quot; tag from their profile header.
+              Open a user in Admin → Users, then add &quot;Wager Abuser&quot; or
+              &quot;Fraud Abuser&quot; from their profile header.
             </span>
           </div>
         ) : (
@@ -100,6 +100,7 @@ async function ListSection({ offset }: { offset: number }) {
             <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-muted-foreground">
+                  <th className="pb-2 pr-4 font-medium">Tag</th>
                   <th className="pb-2 pr-4 font-medium">Username</th>
                   <th className="pb-2 pr-4 font-medium">Email</th>
                   <th className="pb-2 pr-4 font-medium">Tagged by</th>
@@ -108,7 +109,10 @@ async function ListSection({ offset }: { offset: number }) {
               </thead>
               <tbody className="divide-y">
                 {items.map((row) => (
-                  <tr key={row.userId} className="align-middle">
+                  <tr key={`${row.userId}-${row.tag}`} className="align-middle">
+                    <td className="py-3 pr-4 capitalize text-xs font-medium text-rose-600 dark:text-rose-400">
+                      {row.tag === "fraud_abuser" ? "Fraud" : "Wager"}
+                    </td>
                     <td className="py-3 pr-4">
                       <Link
                         href={`/users/${row.userId}`}

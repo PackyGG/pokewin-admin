@@ -91,7 +91,7 @@ const HUB_NAV: HubNavItem[] = [
     icon: ShieldCheck,
   },
   {
-    label: "Wager Abusers",
+    label: "Wager / Fraud Abusers",
     href: "/creator-hub/wager-abusers",
     icon: ShieldAlert,
   },
