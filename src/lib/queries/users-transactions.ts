@@ -61,6 +61,14 @@ function mapFinancialLedgerRow(t: LedgerRow) {
   const balanceAfterNum = toNumber(t.balance_after);
   const meta = t.metadata as Record<string, unknown> | null;
   const invItemId = meta?.inventory_item_id as string | undefined;
+  // Admin inventory/voucher REMOVAL records carry `inventory_item_id` /
+  // `kind` in metadata but are NOT card sales — they're manual clawbacks
+  // logged as admin_balance_adjustment rows so they surface in this feed.
+  // Don't slap a "Card sale" label on them (the description already says
+  // "Inventory removed: …" / "Voucher removed: …").
+  const metaKind = meta?.kind as string | undefined;
+  const isAdminRemovalRecord =
+    metaKind === "inventory_removal" || metaKind === "voucher_removal";
 
   return {
     id: t.id,
@@ -78,9 +86,10 @@ function mapFinancialLedgerRow(t: LedgerRow) {
     cardsValue: null,
     gameResult: null,
     inventoryValue: 0,
-    soldCard: invItemId
-      ? { name: "Card sale", imageUrl: null, rarity: null }
-      : null,
+    soldCard:
+      invItemId && !isAdminRemovalRecord
+        ? { name: "Card sale", imageUrl: null, rarity: null }
+        : null,
     cryptoAsset: t.crypto_asset,
     cryptoAmount: t.crypto_amount ? toNumber(t.crypto_amount) : null,
     exchangeRate: t.exchange_rate ? toNumber(t.exchange_rate) : null,
