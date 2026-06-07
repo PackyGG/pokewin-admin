@@ -111,7 +111,8 @@ export type ManualToggleField = (typeof MANUAL_TOGGLE_FIELDS)[number];
 export const MIN_SOCIALS = 2;
 
 /**
- * Onboarding checklist is shown only for creators promoted (or checklist-started)
- * within this window. Established/long-tenured creators never see the widget.
+ * Onboarding checklist is shown only for creators enrolled via Creator Hub
+ * Add Creator v2 — a row in `creator_onboarding_checklist` is created at
+ * onboarding completion. Existing roster creators never get a row and never
+ * see the widget/badge.
  */
-export const NEW_CREATOR_CHECKLIST_DAYS = 90;
