@@ -188,6 +188,12 @@ export function BalanceAdjustDialog({
       toast.error("Please pick a category");
       return;
     }
+    // Removal-only categories ALWAYS subtract — the admin types a positive
+    // amount to remove and we send it as a debit. Computed here so the same
+    // value flows into both the validation below and the action call.
+    const finalAmount = isRemovalOnlyAdjustmentCategory(category)
+      ? -Math.abs(numAmount)
+      : numAmount;
     // Client-side mirror of the server's per-category required-input rules
     // (the server re-validates — this is just a friendlier inline toast).
     if (category === "deposit_problem") {
@@ -207,33 +213,18 @@ export function BalanceAdjustDialog({
       if (!pnl7dValue.trim()) return void toast.error("Lossback needs a 7-day PnL value");
       if (!lossbackPercent.trim()) return void toast.error("Lossback needs a lossback %");
     } else if (category === "leaderboard") {
-      // Removal-only: the amount must REMOVE balance (negative). The
-      // server re-checks this; the inline toast is just friendlier.
-      if (numAmount > 0) {
-        return void toast.error(
-          "Leaderboard adjustments must remove balance — use a negative amount",
-        );
-      }
+      // Removal-only — amount is auto-negated above. Only the linked
+      // creator is required here.
       if (!creatorLink) {
         return void toast.error("Pick the creator to link this leaderboard adjustment to");
       }
     } else if (category === "remove_locked_balance") {
-      if (numAmount > 0) {
-        return void toast.error(
-          "Remove locked balance must use a negative amount",
-        );
-      }
       if (reasonText.trim().length < REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS) {
         return void toast.error(
           `Remove locked balance needs a reason (min ${REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS} chars)`,
         );
       }
     } else if (category === "fraud_abuse") {
-      if (numAmount > 0) {
-        return void toast.error(
-          "Fraud / abuse adjustments must remove balance — use a negative amount",
-        );
-      }
       if (reasonText.trim().length < FRAUD_ABUSE_MIN_REASON_CHARS) {
         return void toast.error(
           `Fraud / abuse needs an explanation (min ${FRAUD_ABUSE_MIN_REASON_CHARS} chars)`,
@@ -273,7 +264,7 @@ export function BalanceAdjustDialog({
       try {
         const result = await adjustBalance({
           userId,
-          amount: numAmount,
+          amount: finalAmount,
           category,
           reason: resolveReason(category),
           totpCode: totpCode.trim(),
@@ -333,9 +324,22 @@ export function BalanceAdjustDialog({
   // visible BEFORE confirming — the same parser the submit handler uses.
   const trimmedAmount = amount.trim();
   const parsedPreview = parseUsdAmount(amount);
-  const previewValue = parsedPreview.ok ? parsedPreview.value : null;
+  const rawPreviewValue = parsedPreview.ok ? parsedPreview.value : null;
+  // Removal-only categories (Remove locked balance, Fraud / abuse,
+  // Leaderboard) ALWAYS subtract: the admin types the amount to remove as a
+  // plain positive number (e.g. 50) and we treat it as a debit. They can
+  // still type -50 and it behaves the same. This removes the old "you must
+  // type a negative amount" trap that made removals look broken.
+  const isRemovalCategory =
+    !!category && isRemovalOnlyAdjustmentCategory(category);
+  const previewValue =
+    rawPreviewValue === null
+      ? null
+      : isRemovalCategory
+        ? -Math.abs(rawPreviewValue)
+        : rawPreviewValue;
   const isAmountValid = previewValue !== null && previewValue !== 0;
-  // Direction label from the parsed sign (explicit add vs remove).
+  // Direction label from the effective sign (explicit add vs remove).
   const isRemoval = previewValue !== null && previewValue < 0;
   const affectsLockedPreview = category === "remove_locked_balance";
   const newBalance =
@@ -354,16 +358,7 @@ export function BalanceAdjustDialog({
   // Every selectable category is always offered. Removal-only categories
   // (Remove locked balance, Fraud / abuse, Leaderboard) used to be HIDDEN
   // until the admin typed a negative amount, which made them look missing.
-  // They now always render; selecting one with a non-negative amount is
-  // caught by the submit-time validation + an inline hint below.
   const visibleCategories = BALANCE_ADJUST_CATEGORIES;
-
-  // True when a removal-only category is selected but the amount isn't a
-  // valid negative yet — drives the inline "enter a negative amount" hint.
-  const removalNeedsNegative =
-    !!category &&
-    isRemovalOnlyAdjustmentCategory(category) &&
-    !isRemoval;
 
   // ── Lossback derivations (house POV) ──────────────────────────────
   // `pnl7d` is the rolling 7-day house P&L: POSITIVE = the house gained =
@@ -514,13 +509,12 @@ export function BalanceAdjustDialog({
               </SelectContent>
             </Select>
 
-            {/* Removal-only categories require a negative amount. Surface a
-                hint inline so the admin knows what to do instead of getting
-                a toast only on submit. */}
-            {removalNeedsNegative && (
+            {/* Removal-only categories always subtract — the admin types the
+                amount to remove as a positive number. */}
+            {isRemovalCategory && (
               <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
-                This category removes balance — enter a negative amount
-                (e.g. -50).
+                This category removes balance — enter the amount to remove
+                (e.g. 50); it&apos;s deducted automatically.
               </p>
             )}
 

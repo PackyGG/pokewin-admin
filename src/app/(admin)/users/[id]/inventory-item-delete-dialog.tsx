@@ -62,22 +62,32 @@ export function InventoryItemDeleteDialog({
     }
 
     startTransition(async () => {
-      const result = await deleteUserInventoryItem({
-        userId,
-        inventoryItemId: item.id,
-        reason: trimmedReason,
-        totpCode: totpCode.trim(),
-      });
-      if (!result.success) {
-        toast.error(result.error);
-        return;
+      try {
+        const result = await deleteUserInventoryItem({
+          userId,
+          inventoryItemId: item.id,
+          reason: trimmedReason,
+          totpCode: totpCode.trim(),
+        });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success("Inventory item removed");
+        setReason("");
+        setTotpCode("");
+        onOpenChange(false);
+        onDeleted?.();
+        router.refresh();
+      } catch (err) {
+        // Without this catch a thrown server action rejected silently — the
+        // dialog just sat there and the item never left. Surface the reason.
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : "Failed to remove inventory item",
+        );
       }
-      toast.success("Inventory item removed");
-      setReason("");
-      setTotpCode("");
-      onOpenChange(false);
-      onDeleted?.();
-      router.refresh();
     });
   }
 

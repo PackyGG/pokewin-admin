@@ -1717,16 +1717,39 @@ export async function deleteUserInventoryItem(data: {
     select: { name: true },
   });
 
-  const deleted = await db.user_inventory.deleteMany({
-    where: {
-      id: parsed.data.inventoryItemId,
-      user_id: parsed.data.userId,
-      sold_at: null,
-      exchanged_at: null,
-    },
-  });
+  let deletedCount = 0;
+  try {
+    deletedCount = await db.$transaction(async (tx) => {
+      // Remove dependent provably-fair rows first. The schema declares an
+      // ON DELETE CASCADE FK, but doing it explicitly keeps the delete
+      // working even if the live DB's FK isn't cascading — otherwise a
+      // RESTRICT throws and the whole action rejected (silently, before the
+      // dialog had a try/catch).
+      await tx.provably_fair_results.deleteMany({
+        where: { inventory_item_id: parsed.data.inventoryItemId },
+      });
+      const deleted = await tx.user_inventory.deleteMany({
+        where: {
+          id: parsed.data.inventoryItemId,
+          user_id: parsed.data.userId,
+          sold_at: null,
+          exchanged_at: null,
+        },
+      });
+      return deleted.count;
+    });
+  } catch (err) {
+    console.error("[deleteUserInventoryItem] delete failed:", err);
+    return {
+      success: false,
+      error:
+        err instanceof Error
+          ? `Failed to remove item: ${err.message}`
+          : "Failed to remove inventory item",
+    };
+  }
 
-  if (deleted.count !== 1) {
+  if (deletedCount !== 1) {
     return {
       success: false,
       error: "Could not remove item — it may have changed since you opened this dialog",
