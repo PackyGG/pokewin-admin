@@ -97,13 +97,16 @@ export function UsersSortProvider({
     sortRowsLocally(initialRows, urlSortBy, urlSortOrder),
   );
 
-  // When new server data arrives (after navigation, filter change, OR sort
-  // refetch), merge it in. We re-sort it locally to be safe in case the server
-  // ordering doesn't perfectly match what we asked for due to ties / pagination.
+  // Toolbar shortcut buttons (Top user net worth, Top losers, etc.) update
+  // the URL via router.replace but do NOT call setSort, so sortBy/sortOrder
+  // state would stay stale (often created_at). Always derive the active
+  // sort from the URL when fresh server rows land — otherwise the effect
+  // below re-shuffles a correctly-ordered page back to registration date.
   React.useEffect(() => {
-    setLocalRows(sortRowsLocally(initialRows, sortBy, sortOrder));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialRows]);
+    setSortBy(urlSortBy);
+    setSortOrder(urlSortOrder);
+    setLocalRows(sortRowsLocally(initialRows, urlSortBy, urlSortOrder));
+  }, [initialRows, urlSortBy, urlSortOrder]);
 
   const setSort = React.useCallback(
     (key: string, order: Order) => {
