@@ -24,8 +24,8 @@
  *   • targetChance     — explicit win-chance % if the backend stores
  *     it. Otherwise we derive it from targetMultiplier + houseEdge.
  *   • houseEdge        — site edge as a fraction (0.05 = 5%). Derived
- *     fallback when not present: 0 (no edge), so the derived chance
- *     becomes exactly 1/multiplier. Flagged so the UI can show "≈"
+ *     fallback when not present: UPGRADER_DEFAULT_HOUSE_EDGE (10%,
+ *     matches product upgrader edge). Flagged so the UI can show "≈"
  *     when the derivation was used.
  *   • roll             — the random roll value the server produced.
  *     Format unknown without a backend reference (could be 0-1 float,
@@ -37,6 +37,9 @@
  * given targetChance. Without targetChance it returns null.
  */
 
+/** Product upgrader house edge (10%) — used when metadata omits edge. */
+export const UPGRADER_DEFAULT_HOUSE_EDGE = 0.1 as const;
+
 export type UpgraderMetadata = {
   /** Target cashout multiplier, e.g. 5 for "5×". Null if not present. */
   targetMultiplier: number | null;
@@ -46,9 +49,9 @@ export type UpgraderMetadata = {
    */
   targetChance: number | null;
   /**
-   * True when targetChance was DERIVED from targetMultiplier (assuming
-   * a house edge of zero — see houseEdge field). The UI can render an
-   * "≈" prefix to flag the approximation.
+   * True when targetChance was DERIVED from targetMultiplier (using
+   * stored houseEdge or UPGRADER_DEFAULT_HOUSE_EDGE). The UI renders
+   * an "≈" prefix to flag the approximation.
    */
   targetChanceDerived: boolean;
   /**
@@ -257,7 +260,7 @@ function deriveMultiplierFromChance(
   houseEdge: number | null,
 ): number | null {
   if (targetChance <= 0 || targetChance > 100) return null;
-  const edge = houseEdge ?? 0;
+  const edge = houseEdge ?? UPGRADER_DEFAULT_HOUSE_EDGE;
   const mult = ((1 - edge) * 100) / targetChance;
   if (!Number.isFinite(mult) || mult < 1 || mult > 1_000_000) return null;
   return mult;
@@ -294,7 +297,7 @@ function parseUpgraderMetadataFromRecord(
 
   let targetChanceDerived = false;
   if (targetChance == null && targetMultiplier != null && targetMultiplier > 1) {
-    const edgeFraction = houseEdge ?? 0;
+    const edgeFraction = houseEdge ?? UPGRADER_DEFAULT_HOUSE_EDGE;
     const derived = ((1 - edgeFraction) / targetMultiplier) * 100;
     if (Number.isFinite(derived) && derived > 0 && derived <= 100) {
       targetChance = derived;
@@ -389,4 +392,43 @@ export function formatUpgraderChance(pct: number | null): string {
   if (pct == null) return "—";
   if (pct >= 10) return `${pct.toFixed(1).replace(/\.0$/, "")}%`;
   return `${pct.toFixed(2).replace(/\.?0+$/, "")}%`;
+}
+
+export type UpgraderWinChanceLabel = {
+  /** Display text, including "≈" prefix when derived. */
+  text: string;
+  /** Tooltip explaining stored vs derived and product-cap warnings. */
+  title: string;
+  /** Stored (not derived) chance exceeds the 90% product cap. */
+  aboveProductCap: boolean;
+};
+
+/**
+ * Build display text + tooltip for upgrader win-chance badges.
+ * Pass `derived: true` when chance was estimated from multiplier.
+ */
+export function formatUpgraderWinChanceLabel(
+  chance: number | null,
+  derived: boolean,
+): UpgraderWinChanceLabel | null {
+  if (chance == null) return null;
+  const formatted = formatUpgraderChance(chance);
+  const edgePct = (UPGRADER_DEFAULT_HOUSE_EDGE * 100).toFixed(0);
+
+  if (derived) {
+    return {
+      text: `≈ ${formatted}`,
+      title: `Estimated from target multiplier (${edgePct}% house edge) — not stored on spin metadata`,
+      aboveProductCap: false,
+    };
+  }
+
+  const aboveProductCap = chance > 90;
+  return {
+    text: formatted,
+    title: aboveProductCap
+      ? "Win chance stored on spin metadata. Above 90% product cap — possible misconfiguration or exploit signal."
+      : "Win chance stored on spin metadata",
+    aboveProductCap,
+  };
 }

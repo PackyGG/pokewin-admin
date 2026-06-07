@@ -41,7 +41,10 @@ import {
   formatCurrency,
   formatRelative,
 } from "@/lib/utils/format";
-import { formatUpgraderChance, formatUpgraderMultiplier } from "@/lib/utils/upgrader-metadata";
+import {
+  formatUpgraderMultiplier,
+  formatUpgraderWinChanceLabel,
+} from "@/lib/utils/upgrader-metadata";
 import {
   amountColorFor,
   amountSignFor,
@@ -350,11 +353,26 @@ export const CategoryTransactionsTable = React.memo(
                             </span>
                           )}
                         {t.type === "upgrader_bet" &&
-                          t.upgraderTargetChance != null && (
-                            <span className="text-[10px] text-muted-foreground">
-                              {formatUpgraderChance(t.upgraderTargetChance)}
-                            </span>
-                          )}
+                          t.upgraderTargetChance != null &&
+                          (() => {
+                            const chanceLabel = formatUpgraderWinChanceLabel(
+                              t.upgraderTargetChance,
+                              t.upgraderTargetChanceDerived === true,
+                            );
+                            if (!chanceLabel) return null;
+                            return (
+                              <span
+                                className={
+                                  chanceLabel.aboveProductCap
+                                    ? "text-[10px] text-amber-600 dark:text-amber-400"
+                                    : "text-[10px] text-muted-foreground"
+                                }
+                                title={chanceLabel.title}
+                              >
+                                {chanceLabel.text}
+                              </span>
+                            );
+                          })()}
                       </div>
                       {/* Borrow signal lives directly under the type
                           chip so admins scrolling a long activity
@@ -515,7 +533,6 @@ export const CategoryTransactionsTable = React.memo(
                         // the backend didn't store it; the chip / sub-
                         // line just skips in that case.
                         const targetMultiplier = t.upgraderTargetMultiplier;
-                        const targetChance = t.upgraderTargetChance;
                         const targetBadge =
                           targetMultiplier != null ? (
                             <span
@@ -525,21 +542,13 @@ export const CategoryTransactionsTable = React.memo(
                               ⇡ {formatUpgraderMultiplier(targetMultiplier)}
                             </span>
                           ) : null;
-                        const chanceSubline =
-                          targetChance != null ? (
-                            <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">
-                              Win % {formatUpgraderChance(targetChance)}
-                            </div>
-                          ) : null;
 
                         if (t.upgraderResult === "lose") {
                           // LOSS: bet kept by the house. Won = $0,
                           // House Profit = +bet (emerald). "Lost" status
                           // chip + target multiplier badge so the row
-                          // reads as "user aimed at X×, lost". Target
-                          // chance % sits on a sub-line beneath the
-                          // House Profit so it's tied to the
-                          // configuration not the outcome.
+                          // reads as "user aimed at X×, lost". Win
+                          // chance % is shown once in the Type column.
                           return (
                             <>
                               <TableCell className="tabular-nums">
@@ -555,7 +564,6 @@ export const CategoryTransactionsTable = React.memo(
                                 <span className="text-emerald-600 dark:text-emerald-400">
                                   +{formatCurrency(t.amount)}
                                 </span>
-                                {chanceSubline}
                               </TableCell>
                             </>
                           );
@@ -598,7 +606,6 @@ export const CategoryTransactionsTable = React.memo(
                                   {profit > 0 ? "+" : ""}
                                   {formatCurrency(profit)}
                                 </span>
-                                {chanceSubline}
                               </TableCell>
                             </>
                           );

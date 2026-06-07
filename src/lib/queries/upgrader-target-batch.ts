@@ -132,7 +132,10 @@ export async function fetchUpgraderTargetByLedgerTxIds(
 export function resolveUpgraderTargetFromBatch(
   row: UpgraderTargetBatchRow | undefined,
   ...extraSources: unknown[]
-): Pick<UpgraderMetadata, "targetMultiplier" | "targetChance"> {
+): Pick<
+  UpgraderMetadata,
+  "targetMultiplier" | "targetChance" | "targetChanceDerived" | "houseEdge"
+> {
   const pfAllRaw = row?.pf_metadata_all;
   const pfAll = Array.isArray(pfAllRaw)
     ? pfAllRaw
@@ -159,5 +162,7 @@ export function resolveUpgraderTargetFromBatch(
   return {
     targetMultiplier: cfg.targetMultiplier,
     targetChance: cfg.targetChance,
+    targetChanceDerived: cfg.targetChanceDerived,
+    houseEdge: cfg.houseEdge,
   };
 }

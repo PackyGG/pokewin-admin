@@ -104,6 +104,8 @@ function mapFinancialLedgerRow(t: LedgerRow) {
     upgraderWinnings: null,
     upgraderTargetMultiplier: null,
     upgraderTargetChance: null,
+    upgraderTargetChanceDerived: null,
+    upgraderHouseEdge: null,
   };
 }
 
@@ -716,6 +718,8 @@ export async function getUserTransactions(
       // (no extra query).
       let upgraderTargetMultiplier: number | null = null;
       let upgraderTargetChance: number | null = null;
+      let upgraderTargetChanceDerived: boolean | null = null;
+      let upgraderHouseEdge: number | null = null;
       if (t.type === "upgrader_bet") {
         const upgraderRow = upgraderBetByLedgerId.get(t.id);
         const resolvedGsid =
@@ -743,6 +747,8 @@ export async function getUserTransactions(
         );
         upgraderTargetMultiplier = resolved.targetMultiplier;
         upgraderTargetChance = resolved.targetChance;
+        upgraderTargetChanceDerived = resolved.targetChanceDerived;
+        upgraderHouseEdge = resolved.houseEdge;
       }
 
       // Total worth (cash balance + held inventory) before/after this tx,
@@ -830,6 +836,8 @@ export async function getUserTransactions(
         upgraderWinnings,
         upgraderTargetMultiplier,
         upgraderTargetChance,
+        upgraderTargetChanceDerived,
+        upgraderHouseEdge,
       };
     }),
     total,

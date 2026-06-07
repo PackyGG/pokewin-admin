@@ -21,7 +21,7 @@ import { CardImage } from "@/components/card-image";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import {
   parseUpgraderMetadata,
-  formatUpgraderChance,
+  formatUpgraderWinChanceLabel,
   formatUpgraderMultiplier as formatTargetMultiplier,
 } from "@/lib/utils/upgrader-metadata";
 import { getUpgraderTxDialogDetails } from "./actions";
@@ -306,15 +306,19 @@ export function UpgraderTxDialog({
                     label="Target chance"
                     value={
                       upgraderConfig.targetChance != null
-                        ? `${upgraderConfig.targetChanceDerived ? "≈ " : ""}${formatUpgraderChance(
+                        ? (formatUpgraderWinChanceLabel(
                             upgraderConfig.targetChance,
-                          )}`
+                            upgraderConfig.targetChanceDerived,
+                          )?.text ?? "—")
                         : "—"
                     }
                     tooltip={
-                      upgraderConfig.targetChanceDerived
-                        ? "Derived from target multiplier — backend didn't store chance directly. Assumes 0 house edge so this is an upper bound."
-                        : "Win-chance % stored on the spin's metadata."
+                      upgraderConfig.targetChance != null
+                        ? (formatUpgraderWinChanceLabel(
+                            upgraderConfig.targetChance,
+                            upgraderConfig.targetChanceDerived,
+                          )?.title ?? undefined)
+                        : undefined
                     }
                   />
                   <ConfigTile

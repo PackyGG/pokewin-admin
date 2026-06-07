@@ -348,6 +348,18 @@ export type Transaction = {
    * Null on non-upgrader rows or when neither path resolves.
    */
   upgraderTargetChance: number | null;
+  /**
+   * True when `upgraderTargetChance` was estimated from the target
+   * multiplier (10% default house edge) rather than stored on spin
+   * metadata. False when chance was read directly from metadata.
+   * Null on non-upgrader rows.
+   */
+  upgraderTargetChanceDerived: boolean | null;
+  /**
+   * House edge fraction from spin metadata (0.1 = 10%). Null when
+   * not stored or not an upgrader row.
+   */
+  upgraderHouseEdge: number | null;
 };
 
 export type PaginatedTransactions = {
