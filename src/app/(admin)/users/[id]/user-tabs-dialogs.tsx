@@ -38,6 +38,7 @@ import {
   type BalanceAdjustmentCategory,
 } from "@/lib/balance-adjustment-categories";
 import { CreatorLinkPicker } from "./creator-link-picker";
+import { DepositBonusCalculator } from "./deposit-bonus-calculator";
 import {
   adjustBalance,
   adjustXp,
@@ -174,6 +175,12 @@ export function BalanceAdjustDialog({
       const t = reasonText.trim();
       return t.length > 0 ? `${label}: ${t}` : label;
     }
+    // deposit_bonus: reasonText is the auto-generated "5% of $X (N deposits)"
+    // line from the calculator (or empty when the admin just typed an amount).
+    if (cat === "deposit_bonus") {
+      const t = reasonText.trim();
+      return t.length > 0 ? t : label;
+    }
     return label;
   }
 
@@ -285,7 +292,8 @@ export function BalanceAdjustDialog({
               category === "other" ||
               category === "remove_locked_balance" ||
               category === "fraud_abuse" ||
-              category === "lossback"
+              category === "lossback" ||
+              category === "deposit_bonus"
                 ? reasonText.trim() || undefined
                 : undefined,
             lossbackPercent: lossbackPercentNum,
@@ -626,6 +634,28 @@ export function BalanceAdjustDialog({
                 <p className="text-[10px] text-muted-foreground">
                   {reasonText.trim().length}/20 characters minimum.
                 </p>
+              </div>
+            )}
+
+            {/* Deposit bonus: OPTIONAL deposit picker + % calculator. The
+                calculator auto-fills the Amount; the admin can also ignore it
+                and just type an amount above. */}
+            {category === "deposit_bonus" && userId && (
+              <div className="mt-2">
+                <DepositBonusCalculator
+                  userId={userId}
+                  onCompute={(computedAmount, computedReason) => {
+                    setAmount(String(computedAmount));
+                    setReasonText(computedReason);
+                  }}
+                  onClear={() => {
+                    // Only clear the auto-filled reason; leave any amount the
+                    // admin typed manually untouched.
+                    setReasonText((prev) =>
+                      prev.startsWith("Deposit bonus:") ? "" : prev,
+                    );
+                  }}
+                />
               </div>
             )}
 

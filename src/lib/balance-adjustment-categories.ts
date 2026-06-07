@@ -60,6 +60,7 @@ export const BALANCE_ADJUSTMENT_CATEGORY_KEYS = [
   "deposit_problem",
   "giveaway",
   "bonus",
+  "deposit_bonus",
   "bugs",
   "reload",
   "lossback",
@@ -250,6 +251,13 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     label: "Bonus",
     costLabel: "Manual bonus credits",
     why: "Discretionary admin bonus credited to a user's balance (exact reason recorded). A house-funded incentive cost.",
+    counted: true,
+  },
+  deposit_bonus: {
+    key: "deposit_bonus",
+    label: "Deposit bonus",
+    costLabel: "Deposit-bonus credits",
+    why: "Bonus credited as a % of a user's deposit(s) — optionally calculated from selected deposits at a chosen rate. A house-funded incentive cost.",
     counted: true,
   },
   bugs: {

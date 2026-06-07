@@ -235,6 +235,13 @@ function validateAdjustmentCategory(
       // No required inputs.
       return { ok: true, meta: base };
     }
+    case "deposit_bonus": {
+      // Optional reason — the dialog auto-fills a descriptive reason when
+      // the amount is calculated from selected deposits (e.g. "Deposit
+      // bonus: 5% of $200 across 2 deposits"), but a bare amount is allowed.
+      const reasonText = (d.reasonText ?? "").trim();
+      return { ok: true, meta: { ...base, reasonText: reasonText || null } };
+    }
     case "lossback": {
       if (d.pnl7dUsd === undefined || !Number.isFinite(d.pnl7dUsd)) {
         return { ok: false, error: "Lossback requires a 7-day PnL value" };
@@ -1611,6 +1618,39 @@ export async function fetchInventory(
 ) {
   await requirePageAccess("/users");
   return getUserInventory(userId, page, perPage, filters);
+}
+
+export type UserDepositRow = {
+  id: string;
+  amount: number;
+  createdAt: string;
+};
+
+/**
+ * A user's recent completed deposits — powers the OPTIONAL "calculate a
+ * deposit bonus from selected deposits" picker in the Adjust Balance
+ * dialog. Newest first, capped to a screenful.
+ */
+export async function getUserDeposits(
+  userId: string,
+): Promise<UserDepositRow[]> {
+  await requirePageAccess("/users");
+  const db = await getDb();
+  const rows = await db.ledger_transactions.findMany({
+    where: {
+      user_id: userId,
+      type: "deposit",
+      status: "completed",
+    },
+    select: { id: true, amount: true, created_at: true },
+    orderBy: { created_at: "desc" },
+    take: 50,
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    amount: Math.abs(Number(r.amount)),
+    createdAt: r.created_at.toISOString(),
+  }));
 }
 
 export type UserVoucherRow = {
