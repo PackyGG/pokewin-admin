@@ -31,6 +31,7 @@ import {
   BALANCE_ADJUSTMENT_CATEGORY_META,
   BUGS_ADJUSTMENT_MIN_REASON_CHARS,
   REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS,
+  FRAUD_ABUSE_MIN_REASON_CHARS,
   isRemovalOnlyAdjustmentCategory,
   isCreatorLinkedAdjustmentCategory,
   isCountedAdjustmentCategory,
@@ -151,7 +152,8 @@ export function BalanceAdjustDialog({
       cat === "bonus" ||
       cat === "bugs" ||
       cat === "other" ||
-      cat === "remove_locked_balance"
+      cat === "remove_locked_balance" ||
+      cat === "fraud_abuse"
     ) {
       const t = reasonText.trim();
       return t.length > 0 ? `${label}: ${t}` : label;
@@ -217,6 +219,17 @@ export function BalanceAdjustDialog({
           `Remove locked balance needs a reason (min ${REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS} chars)`,
         );
       }
+    } else if (category === "fraud_abuse") {
+      if (numAmount > 0) {
+        return void toast.error(
+          "Fraud / abuse adjustments must remove balance — use a negative amount",
+        );
+      }
+      if (reasonText.trim().length < FRAUD_ABUSE_MIN_REASON_CHARS) {
+        return void toast.error(
+          `Fraud / abuse needs an explanation (min ${FRAUD_ABUSE_MIN_REASON_CHARS} chars)`,
+        );
+      }
     } else if (category === "official_stream") {
       // Creator-linked, but NOT removal-only: both add + remove are
       // allowed. Only the linked creator is required. The server
@@ -264,6 +277,7 @@ export function BalanceAdjustDialog({
               category === "bugs" ||
               category === "other" ||
               category === "remove_locked_balance" ||
+              category === "fraud_abuse" ||
               category === "lossback"
                 ? reasonText.trim() || undefined
                 : undefined,
@@ -695,6 +709,21 @@ export function BalanceAdjustDialog({
                   {reasonText.trim().length}/{REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS}{" "}
                   characters minimum. Applies to vault / locked balance only — cash
                   balance is unchanged.
+                </p>
+              </div>
+            )}
+
+            {category === "fraud_abuse" && (
+              <div className="mt-2 space-y-1">
+                <Textarea
+                  placeholder="Describe the fraud or abuse and why balance is being removed (min 20 characters)..."
+                  value={reasonText}
+                  onChange={(e) => setReasonText(e.target.value)}
+                  rows={3}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  {reasonText.trim().length}/{FRAUD_ABUSE_MIN_REASON_CHARS}{" "}
+                  characters minimum. Removes from available balance only.
                 </p>
               </div>
             )}

@@ -65,6 +65,7 @@ export const BALANCE_ADJUSTMENT_CATEGORY_KEYS = [
   "lossback",
   "leaderboard",
   "remove_locked_balance",
+  "fraud_abuse",
   "official_stream",
   "other",
 ] as const;
@@ -74,6 +75,9 @@ export const BUGS_ADJUSTMENT_MIN_REASON_CHARS = 30;
 
 /** Minimum reason length when category is `remove_locked_balance`. */
 export const REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS = 20;
+
+/** Minimum explanation length when category is `fraud_abuse`. */
+export const FRAUD_ABUSE_MIN_REASON_CHARS = 20;
 
 export type BalanceAdjustmentCategory =
   (typeof BALANCE_ADJUSTMENT_CATEGORY_KEYS)[number];
@@ -90,6 +94,7 @@ export type BalanceAdjustmentCategory =
 export const REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS = [
   "leaderboard",
   "remove_locked_balance",
+  "fraud_abuse",
 ] as const;
 
 export type RemovalOnlyAdjustmentCategory =
@@ -280,6 +285,13 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     label: "Remove locked balance",
     costLabel: "Locked-balance removals (uncounted)",
     why: "Locked (vault) balance REMOVED from a user — e.g. reversing a leaderboard deposit escrow stuck in locked_balance. NOT counted in GGR/NGR/cost or P&L (the onSiteBalance carve-out nets it out). Requires a detailed reason (min 20 characters).",
+    counted: false,
+  },
+  fraud_abuse: {
+    key: "fraud_abuse",
+    label: "Fraud / abuse",
+    costLabel: "Fraud / abuse clawbacks (uncounted)",
+    why: "Available balance REMOVED from a user for fraud or abuse (chargeback, multi-account, bonus abuse, etc.). NOT counted in GGR/NGR reward-cost — a debit clawback, not a marketing credit. Requires a detailed explanation (min 20 characters).",
     counted: false,
   },
   official_stream: {

@@ -24,6 +24,7 @@ import {
   BALANCE_ADJUSTMENT_CATEGORY_KEYS,
   BUGS_ADJUSTMENT_MIN_REASON_CHARS,
   REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS,
+  FRAUD_ABUSE_MIN_REASON_CHARS,
   isCreatorLinkedAdjustmentCategory,
   type BalanceAdjustmentCategory,
 } from "@/lib/balance-adjustment-categories";
@@ -285,6 +286,22 @@ function validateAdjustmentCategory(
         return {
           ok: false,
           error: `Remove locked balance requires a reason of at least ${REMOVE_LOCKED_BALANCE_MIN_REASON_CHARS} characters`,
+        };
+      }
+      return { ok: true, meta: { ...base, reasonText } };
+    }
+    case "fraud_abuse": {
+      if (amount >= 0) {
+        return {
+          ok: false,
+          error: "Fraud / abuse adjustments must remove balance (negative amount)",
+        };
+      }
+      const reasonText = (d.reasonText ?? "").trim();
+      if (reasonText.length < FRAUD_ABUSE_MIN_REASON_CHARS) {
+        return {
+          ok: false,
+          error: `Fraud / abuse requires an explanation of at least ${FRAUD_ABUSE_MIN_REASON_CHARS} characters`,
         };
       }
       return { ok: true, meta: { ...base, reasonText } };
@@ -1244,6 +1261,154 @@ export async function fetchInventory(
 ) {
   await requirePageAccess("/users");
   return getUserInventory(userId, page, perPage, filters);
+}
+
+/** Minimum explanation when an admin removes an open inventory item. */
+export const INVENTORY_DELETE_MIN_REASON_CHARS = 20;
+
+const deleteInventoryItemSchema = z.object({
+  userId: z.string().min(1),
+  inventoryItemId: z.string().uuid(),
+  reason: z
+    .string()
+    .trim()
+    .min(INVENTORY_DELETE_MIN_REASON_CHARS, {
+      message: `Reason must be at least ${INVENTORY_DELETE_MIN_REASON_CHARS} characters`,
+    })
+    .max(5000),
+  totpCode: z.string().trim().min(1, { message: "2FA code is required" }),
+});
+
+const OPEN_WITHDRAWAL_STATUSES = [
+  "pending",
+  "processing",
+  "shipped",
+] as const;
+
+export async function deleteUserInventoryItem(data: {
+  userId: string;
+  inventoryItemId: string;
+  reason: string;
+  totpCode: string;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
+  const session = await requirePageAccess("/users");
+
+  const parsed = deleteInventoryItemSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  if (session.role !== "admin") {
+    const perms = await adminDb.admin_users.findUnique({
+      where: { id: session.userId },
+      select: { allowed_pages: true },
+    });
+    if (!perms || !canUserAdjustBalance(perms.allowed_pages)) {
+      return {
+        success: false,
+        error: "You do not have permission to remove inventory items",
+      };
+    }
+  }
+
+  try {
+    await require2FA(session.userId, parsed.data.totpCode);
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "2FA verification failed",
+    };
+  }
+
+  const item = await db.user_inventory.findFirst({
+    where: {
+      id: parsed.data.inventoryItemId,
+      user_id: parsed.data.userId,
+    },
+    select: {
+      id: true,
+      card_id: true,
+      value_at_obtained: true,
+      sold_at: true,
+      exchanged_at: true,
+      withdrawal_locked_at: true,
+    },
+  });
+
+  if (!item) {
+    return { success: false, error: "Inventory item not found for this user" };
+  }
+
+  if (item.sold_at || item.exchanged_at) {
+    return {
+      success: false,
+      error: "Only open inventory items can be removed — this item was already sold or exchanged",
+    };
+  }
+
+  if (item.withdrawal_locked_at) {
+    return {
+      success: false,
+      error: "This item is withdrawal-locked — unlock or cancel the withdrawal first",
+    };
+  }
+
+  const openWithdrawal = await db.card_withdrawal_requests.findFirst({
+    where: {
+      user_id: parsed.data.userId,
+      status: { in: [...OPEN_WITHDRAWAL_STATUSES] },
+      inventory_item_ids: { has: parsed.data.inventoryItemId },
+    },
+    select: { id: true },
+  });
+
+  if (openWithdrawal) {
+    return {
+      success: false,
+      error: "This item is tied to an open card withdrawal — cancel or complete it first",
+    };
+  }
+
+  const card = await db.cards.findUnique({
+    where: { id: item.card_id },
+    select: { name: true },
+  });
+
+  const deleted = await db.user_inventory.deleteMany({
+    where: {
+      id: parsed.data.inventoryItemId,
+      user_id: parsed.data.userId,
+      sold_at: null,
+      exchanged_at: null,
+    },
+  });
+
+  if (deleted.count !== 1) {
+    return {
+      success: false,
+      error: "Could not remove item — it may have changed since you opened this dialog",
+    };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "inventory_item_deleted",
+    targetUserId: parsed.data.userId,
+    metadata: {
+      inventoryItemId: item.id,
+      cardId: item.card_id,
+      cardName: card?.name ?? null,
+      valueAtObtained: Number(item.value_at_obtained),
+      reason: parsed.data.reason,
+    },
+  });
+
+  revalidatePath(`/users/${parsed.data.userId}`);
+  return { success: true };
 }
 
 export async function getGameSessionDetails(
