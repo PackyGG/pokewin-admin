@@ -604,3 +604,42 @@ export async function getExCreatorCount(): Promise<number> {
   const users = await getExCreatorUsers();
   return users.length;
 }
+
+/**
+ * Whether a user was EVER a creator (any creator artifact in either DB),
+ * regardless of their current role. Used to authorize linking a balance
+ * adjustment (e.g. Leaderboard) to a past / ex creator, not just an active
+ * one. Reuses the same artifact-anchored candidate set as the Past-creators
+ * list so the two surfaces agree on who counts as a creator.
+ */
+export async function isEverCreator(userId: string): Promise<boolean> {
+  if (!userId) return false;
+  const candidates = await getEverCreatorCandidateIds();
+  return candidates.has(userId);
+}
+
+/** A creator-link picker option for a past / ex creator. */
+export type ExCreatorLinkOption = {
+  id: string;
+  username: string | null;
+  email: string | null;
+  image: string | null;
+};
+
+/**
+ * Ex-creators matching a search term, shaped for the creator-link picker
+ * (Adjust Balance → Leaderboard). Same identification + search as the
+ * Past-creators tab, capped to a screenful for the dropdown.
+ */
+export async function searchExCreatorsForLink(
+  search: string,
+  limit: number,
+): Promise<ExCreatorLinkOption[]> {
+  const users = await getExCreatorUsers(search);
+  return users.slice(0, Math.max(1, limit)).map((u) => ({
+    id: u.id,
+    username: u.username,
+    email: u.email,
+    image: u.image,
+  }));
+}

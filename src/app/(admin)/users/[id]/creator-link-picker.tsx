@@ -149,7 +149,14 @@ export function CreatorLinkPicker({
                         </div>
                       )}
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm">{label}</div>
+                        <div className="flex items-center gap-1.5 truncate text-sm">
+                          <span className="truncate">{label}</span>
+                          {c.isExCreator ? (
+                            <span className="shrink-0 rounded border border-amber-500/40 bg-amber-500/15 px-1 text-[9px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                              Past
+                            </span>
+                          ) : null}
+                        </div>
                         {c.username && c.email ? (
                           <div className="truncate text-xs text-muted-foreground">
                             {c.email}

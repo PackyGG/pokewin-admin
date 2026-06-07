@@ -32,6 +32,7 @@ import {
 } from "@/lib/balance-adjustment-categories";
 import type { SessionPayload } from "@/lib/session";
 import { ensureBalanceAdjustmentMetaSchema } from "@/lib/balance-adjustment-meta/ensure-schema";
+import { isEverCreator } from "@/app/(admin)/creators/_queries/list-ex-creators";
 import {
   canEditBalanceAdjustments,
   requireBalanceAdjustmentEditAdmin,
@@ -385,15 +386,25 @@ export async function adjustBalance(data: {
     if (!meta.creatorId) {
       return { success: false, error: "This adjustment requires a linked creator" };
     }
-    const creator = await db.user.findFirst({
-      where: { id: meta.creatorId, role: "creator" },
-      select: { id: true },
+    const linkedUser = await db.user.findUnique({
+      where: { id: meta.creatorId },
+      select: { id: true, role: true },
     });
-    if (!creator) {
-      return {
-        success: false,
-        error: "Linked creator not found (or is no longer a creator)",
-      };
+    if (!linkedUser) {
+      return { success: false, error: "Linked creator not found" };
+    }
+    // Accept either a CURRENT creator or a PAST / ex creator (their role
+    // was since removed but they still have creator artifacts). Linking a
+    // leaderboard adjustment to a retired creator is a legitimate
+    // back-fill, so don't hard-require role === 'creator'.
+    if (linkedUser.role !== "creator") {
+      const everCreator = await isEverCreator(meta.creatorId);
+      if (!everCreator) {
+        return {
+          success: false,
+          error: "Linked user was never a creator",
+        };
+      }
     }
   }
 

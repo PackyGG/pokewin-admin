@@ -2,6 +2,7 @@
 
 import { requirePageAccess } from "@/lib/dal";
 import { creatorsApi } from "@/lib/backend-api";
+import { searchExCreatorsForLink } from "./list-ex-creators";
 
 /**
  * A single creator option for a "link a creator" searchable dropdown
@@ -13,6 +14,8 @@ export type CreatorLinkOption = {
   username: string | null;
   email: string | null;
   image: string | null;
+  /** True when this option is a PAST / ex creator (not currently role=creator). */
+  isExCreator?: boolean;
 };
 
 /**
@@ -48,10 +51,41 @@ export async function searchCreatorsForLink(
     limit: safeLimit,
   });
 
-  return data.map((c) => ({
+  const current: CreatorLinkOption[] = data.map((c) => ({
     id: c.id,
     username: c.username,
     email: c.email,
     image: c.image,
+    isExCreator: false,
   }));
+
+  // Also surface PAST / ex creators so admins can link a Leaderboard (or
+  // other creator-linked) adjustment to someone whose creator role was
+  // since removed. Failures here must not break the picker — fall back to
+  // just the active roster.
+  let exCreators: CreatorLinkOption[] = [];
+  try {
+    const ex = await searchExCreatorsForLink(trimmed, safeLimit);
+    exCreators = ex.map((c) => ({
+      id: c.id,
+      username: c.username,
+      email: c.email,
+      image: c.image,
+      isExCreator: true,
+    }));
+  } catch {
+    exCreators = [];
+  }
+
+  // Active creators first, then ex-creators; dedupe by id (a user the
+  // backend already returned as active should never re-appear as "past").
+  const seen = new Set(current.map((c) => c.id));
+  const merged = [...current];
+  for (const c of exCreators) {
+    if (seen.has(c.id)) continue;
+    seen.add(c.id);
+    merged.push(c);
+  }
+
+  return merged.slice(0, safeLimit);
 }
