@@ -1,4 +1,4 @@
-import { Lock, Banknote } from "lucide-react";
+import { Lock, Banknote, Trophy } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getSiteConfig } from "@/lib/queries/security";
 import { SecurityContent } from "./security-content";
@@ -7,10 +7,16 @@ import { FadeIn } from "@/components/fade-in";
 import { RAIN_CONFIG_SITE_CONFIG_KEYS } from "../rain/config-keys";
 import { WAGER_REQUIREMENT_SITE_CONFIG_KEYS } from "./wager-requirement-keys";
 import { WagerRequirementCard } from "./wager-requirement-card";
+import { LEADERBOARD_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./leaderboard-wager-weights-keys";
+import { LeaderboardWagerWeightsCard } from "./leaderboard-wager-weights-card";
 import {
   getWagerRequirementDefaults,
   type WagerRequirementDefaults,
 } from "@/lib/backend-api/wager-requirements";
+import {
+  getLeaderboardWagerWeights,
+  type LeaderboardWagerWeights,
+} from "@/lib/backend-api/leaderboard-wager-weights";
 
 export const metadata = { title: "Security" };
 
@@ -19,13 +25,15 @@ export default async function SecurityPage() {
   const allConfig = await getSiteConfig();
 
   // Rain-specific site_config keys are managed on /rain?tab=config; the
-  // withdrawal wager-requirement keys are managed by the dedicated card
-  // below (written through the backend API). Hide both groups from the
-  // generic config table so the same row isn't editable in two surfaces
-  // (would cause confusion + duplicate audit events).
+  // withdrawal wager-requirement and leaderboard wager-weight keys are
+  // managed by the dedicated cards below (written through the backend
+  // API). Hide all groups from the generic config table so the same row
+  // isn't editable in two surfaces (would cause confusion + duplicate
+  // audit events).
   const movedKeys = new Set<string>([
     ...RAIN_CONFIG_SITE_CONFIG_KEYS,
     ...WAGER_REQUIREMENT_SITE_CONFIG_KEYS,
+    ...LEADERBOARD_WAGER_WEIGHT_SITE_CONFIG_KEYS,
   ]);
   const config = allConfig.filter((row) => !movedKeys.has(row.key));
   const hasMovedKeys = allConfig.some((row) =>
@@ -43,6 +51,15 @@ export default async function SecurityPage() {
     wagerDefaults = null;
   }
 
+  // Same non-critical pattern for the leaderboard wager weights — the
+  // backend branch may not be deployed yet.
+  let leaderboardWeights: LeaderboardWagerWeights | null = null;
+  try {
+    leaderboardWeights = await getLeaderboardWagerWeights();
+  } catch {
+    leaderboardWeights = null;
+  }
+
   return (
     <div className="space-y-6">
       <PageHero>
@@ -57,6 +74,13 @@ export default async function SecurityPage() {
         <div className="space-y-3">
           <SectionHeading icon={Banknote} title="Withdrawal Wager Requirements" />
           <WagerRequirementCard initial={wagerDefaults} />
+        </div>
+      </FadeIn>
+
+      <FadeIn>
+        <div className="space-y-3">
+          <SectionHeading icon={Trophy} title="Leaderboard Wager Weights" />
+          <LeaderboardWagerWeightsCard initial={leaderboardWeights} />
         </div>
       </FadeIn>
 
