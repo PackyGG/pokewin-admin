@@ -32,6 +32,7 @@ import {
   Wallet,
   Zap,
   CloudRain,
+  ChevronDown,
   Layers,
 } from "lucide-react";
 
@@ -50,6 +51,11 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   type ChartConfig,
   ChartContainer,
   ChartTooltip,
@@ -67,6 +73,7 @@ import {
   sanitizeLevers,
   PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
   REMOVE_WAGER_REQ_COST_UPLIFT,
+  type DailyPackLeverRow,
   type GameTypeId,
   type NetEdgeScenario,
   type PlannedLevers,
@@ -76,7 +83,7 @@ import {
 import { LeverSlider } from "./_planner-ui";
 import { PlannerPresets, usePlannerPresets } from "./_presets";
 import {
-  PackDesignCard,
+  DailyPackTunerCard,
   RewardPackCatalogGrid,
   WelcomePackGrid,
 } from "./_pack-visual";
@@ -432,32 +439,18 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
         className="sticky top-0 z-10 backdrop-blur-md supports-[backdrop-filter]:bg-background/80"
       />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
-        {/* Main column — tabbed lever panels */}
-        <div className="min-w-0 space-y-5">
+      <div className="min-w-0">
           <PlannerSectionPanel id="overview" active={activeSection}>
-            <div className="rounded-xl border border-dashed bg-muted/20 px-4 py-6 text-center text-sm text-muted-foreground lg:hidden">
-              Charts and breakdowns are in the sidebar on desktop — scroll down on
-              mobile or switch to a lever tab to tune settings.
-            </div>
-            <div className="space-y-5 lg:hidden">
+            <div className="grid gap-4 md:grid-cols-2">
               <GgrByTypePanel projection={projection} />
               <NetEdgeByScenarioPanel scenarios={netEdgeScenarios} />
-              <RewardCostComparisonChart projection={projection} />
-              <LeverBreakdownPanel projection={projection} />
+              <div className="md:col-span-2">
+                <RewardCostComparisonChart projection={projection} />
+              </div>
+              <div className="md:col-span-2">
+                <LeverBreakdownPanel projection={projection} />
+              </div>
             </div>
-            <StatPanel title="Quick start" icon={SlidersHorizontal} accent="cyan">
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                Use the tabs above to tune house edge, rewards, and pack EVs. The
-                headline profit delta updates live — anchored on{" "}
-                <span className="font-medium text-foreground">
-                  {baseline.periodLabel}
-                </span>{" "}
-                wager and cost. Pack art previews link straight to{" "}
-                <span className="font-medium text-foreground">/packs</span> for
-                catalog edits.
-              </p>
-            </StatPanel>
           </PlannerSectionPanel>
 
           <PlannerSectionPanel id="gaming" active={activeSection}>
@@ -499,7 +492,9 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
           </PlannerSectionPanel>
 
           <PlannerSectionPanel id="rewards" active={activeSection}>
+          <div className="grid gap-5 lg:grid-cols-2">
           {/* ── RAKEBACK ── */}
+          <div className="lg:col-span-2">
           <StatPanel title="Rakeback" icon={Wallet} accent="rose">
             <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
               Per-cadence rebate rates from the live{" "}
@@ -611,6 +606,7 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
               />
             </div>
           </StatPanel>
+          </div>
 
           {/* ── DEPOSIT BONUS — concrete, explained controls ── */}
           <DepositBonusPanel
@@ -632,6 +628,7 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
           />
 
           {/* ── RAFFLES (on-site ticket raffles · real reconstructed cost) ── */}
+          <div className="lg:col-span-2">
           <StatPanel title="Raffles" icon={Ticket} accent="orange">
             <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
               On-site ticket raffles (users earn tickets per $X wagered). Raffles
@@ -691,6 +688,7 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
               </div>
             )}
           </StatPanel>
+          </div>
 
           {/* ── RAIN — concrete net-slice breakdown ── */}
           <RainPanel
@@ -700,6 +698,7 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
           />
 
           {/* ── AFFILIATE ── */}
+          <div className="lg:col-span-2">
           <StatPanel title="Affiliate commission" icon={Share2} accent="rose">
             <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
               Per-tier commission rates from the live{" "}
@@ -767,7 +766,9 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
               </div>
             )}
           </StatPanel>
+          </div>
 
+          <div className="lg:col-span-2">
           <OtherRewardsPanel
             baseline={baseline}
             otherMult={levers.otherRewardCostMult}
@@ -775,18 +776,11 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
             onOther={setOtherRewardMult}
             onMotha={setMothaMult}
           />
+          </div>
+          </div>
           </PlannerSectionPanel>
 
           <PlannerSectionPanel id="packs" active={activeSection}>
-          <StatPanel title="Reward pack catalog" icon={Boxes} accent="pink">
-            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-              Every <span className="font-medium text-foreground">pack_type = reward</span>{" "}
-              pack in production — the same art users see when they claim daily or
-              welcome packs. Click a tile to open the pack admin.
-            </p>
-            <RewardPackCatalogGrid packs={baseline.rewardPackCatalog} />
-          </StatPanel>
-
           <DailyPacksPanel
             baseline={baseline}
             levers={levers}
@@ -799,20 +793,13 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
             grantUsd={levers.signupGrantUsd}
             onChangeGrant={setSignupGrant}
           />
+
+          <RewardPackCatalogCollapsible catalog={baseline.rewardPackCatalog} />
           </PlannerSectionPanel>
 
           <PlannerSectionPanel id="ideas" active={activeSection}>
             <PlannerIdeasPanel />
           </PlannerSectionPanel>
-        </div>
-
-        {/* Breakdown sidebar — sticky on desktop */}
-        <aside className="hidden space-y-5 xl:block xl:sticky xl:top-[4.5rem] xl:self-start">
-          <GgrByTypePanel projection={projection} />
-          <NetEdgeByScenarioPanel scenarios={netEdgeScenarios} />
-          <RewardCostComparisonChart projection={projection} />
-          <LeverBreakdownPanel projection={projection} />
-        </aside>
       </div>
     </div>
   );
@@ -1026,7 +1013,29 @@ function DailyPacksPanel({
   onChangeEv: (packId: string, usd: number) => void;
   onChangeFreq: (pct: number) => void;
 }) {
-  const rows = baseline.dailyPackRows;
+  const rows = React.useMemo(() => {
+    const measured = new Map(baseline.dailyPackRows.map((r) => [r.packId, r]));
+    return baseline.rewardPackCatalog
+      .map((cat) => {
+        const hit = measured.get(cat.packId);
+        if (hit) return hit;
+        return {
+          packId: cat.packId,
+          name: cat.name,
+          slug: cat.slug,
+          opens: 0,
+          claimers: 0,
+          giveawayPayout: 0,
+          measuredEvUsd: cat.theoreticalEvUsd,
+          imageUrl: cat.imageUrl,
+          cardPreviews: cat.cardPreviews,
+        } satisfies DailyPackLeverRow;
+      })
+      .sort((a, b) => {
+        if (b.opens !== a.opens) return b.opens - a.opens;
+        return a.name.localeCompare(b.name);
+      });
+  }, [baseline.dailyPackRows, baseline.rewardPackCatalog]);
   // Planned per-pack giveaway (EV × opens), then frequency-scaled, for the
   // live total readout.
   const freq = Math.max(0, levers.dailyPacksFrequencyMult);
@@ -1038,90 +1047,86 @@ function DailyPacksPanel({
 
   return (
     <StatPanel title="Daily / free packs" icon={Boxes} accent="pink">
-      <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-        Daily / free packs are the reward packs (
-        <span className="font-medium text-foreground">pack_type = reward</span>)
-        the site hands out for free. They are effectively a{" "}
-        <span className="font-medium text-foreground">wager-loss</span> — the open
-        collects ≈ $0 but the user keeps the card, so the full card value is a pure
-        house cost (
+      <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
+        Each tile is a real reward pack — art, card pool, and measured EV. Drag the
+        slider to model richer or cheaper daily tiers (
         <span className="font-medium text-rose-600 dark:text-rose-400">
           {formatCurrency(baseline.dailyPacksCost)}
         </span>{" "}
-        this window, gross cards out). Each row below is a real pack defaulting to
-        its <span className="font-medium text-foreground">measured EV per open</span>{" "}
-        — scale a pack&apos;s EV (richer/cheaper cards) and the cost follows{" "}
-        <span className="font-medium text-foreground">EV × opens</span>.
+        gross this window).
       </p>
 
       {rows.length === 0 ? (
-        <EmptyLever note="No reward-pack opens in this window." />
+        <EmptyLever note="No reward packs in the catalog." />
       ) : (
-        <div className="space-y-4">
-          {rows.map((p) => {
-            const plannedEv = Math.max(
-              0,
-              levers.dailyPackEvUsd[p.packId] ?? p.measuredEvUsd,
-            );
-            const plannedPackCost = plannedEv * p.opens * freq;
-            return (
-              <PackDesignCard
-                key={p.packId}
-                packId={p.packId}
-                name={p.name}
-                slug={p.slug}
-                imageUrl={p.imageUrl}
-                cardPreviews={p.cardPreviews}
-                badge="Daily"
-                meta={
-                  <>
-                    {p.opens.toLocaleString()} opens · {p.claimers.toLocaleString()}{" "}
-                    claimers
-                  </>
-                }
-                evLabel={evLabel(plannedEv)}
-                costLabel={`${formatCompactUsd(plannedPackCost)} planned`}
-              >
-                <LeverSlider
-                  label="EV per open"
-                  valueLabel={evLabel(plannedEv)}
-                  value={plannedEv}
-                  onValueChange={(usd) => onChangeEv(p.packId, usd)}
-                  min={0}
-                  max={Math.max(0.5, p.measuredEvUsd * 4)}
-                  step={0.0001}
-                  baselineMarker={p.measuredEvUsd}
-                  baselineLabel={`measured EV ${evLabel(p.measuredEvUsd)} / open · ${p.claimers.toLocaleString()} claimers`}
-                  preciseInput={{ unit: "usd", decimals: 4 }}
-                />
-              </PackDesignCard>
-            );
-          })}
-
-          <div className="border-t pt-3">
-            <LeverSlider
-              label="Grant frequency"
-              valueLabel={multLabel(levers.dailyPacksFrequencyMult)}
-              value={levers.dailyPacksFrequencyMult * 100}
-              onValueChange={onChangeFreq}
-              min={0}
-              max={300}
-              step={0.1}
-              baselineMarker={100}
-              baselineLabel="How often packs are granted. Scales every pack's cost together. More frequent ⇒ more cost."
-              preciseInput={{ unit: "multiplier" }}
-            />
+        <>
+          <div className="mb-4 flex flex-col gap-3 rounded-xl border bg-muted/25 p-3 sm:flex-row sm:items-end sm:justify-between">
+            <div className="min-w-0 flex-1 sm:max-w-md">
+              <LeverSlider
+                label="Grant frequency (all packs)"
+                valueLabel={multLabel(levers.dailyPacksFrequencyMult)}
+                value={levers.dailyPacksFrequencyMult * 100}
+                onValueChange={onChangeFreq}
+                min={0}
+                max={300}
+                step={0.1}
+                baselineMarker={100}
+                baselineLabel="Scales every pack's cost together"
+                preciseInput={{ unit: "multiplier" }}
+              />
+            </div>
+            <div className="shrink-0 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Planned total
+              </p>
+              <p className="text-lg font-bold tabular-nums text-rose-600 dark:text-rose-400">
+                {formatCompactUsd(plannedTotal)}
+              </p>
+            </div>
           </div>
 
-          <PanelRow
-            label="Planned daily-pack cost"
-            value={
-              <span className="text-rose-600 dark:text-rose-400">
-                {formatCompactUsd(plannedTotal)}
-              </span>
-            }
-          />
-        </div>
+          <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+            {rows.map((p) => {
+              const plannedEv = Math.max(
+                0,
+                levers.dailyPackEvUsd[p.packId] ?? p.measuredEvUsd,
+              );
+              const plannedPackCost = plannedEv * p.opens * freq;
+              return (
+                <DailyPackTunerCard
+                  key={p.packId}
+                  packId={p.packId}
+                  name={p.name}
+                  slug={p.slug}
+                  imageUrl={p.imageUrl}
+                  cardPreviews={p.cardPreviews}
+                  opens={p.opens}
+                  claimers={p.claimers}
+                  measuredEvUsd={p.measuredEvUsd}
+                  plannedEvUsd={plannedEv}
+                  plannedPackCost={
+                    p.opens > 0 ? formatCompactUsd(plannedPackCost) : "—"
+                  }
+                  formatEv={evLabel}
+                  inactive={p.opens <= 0}
+                >
+                  <LeverSlider
+                    label="EV per open (odds / value)"
+                    valueLabel={evLabel(plannedEv)}
+                    value={plannedEv}
+                    onValueChange={(usd) => onChangeEv(p.packId, usd)}
+                    min={0}
+                    max={Math.max(0.5, p.measuredEvUsd * 4)}
+                    step={0.0001}
+                    baselineMarker={p.measuredEvUsd}
+                    baselineLabel={`Measured ${evLabel(p.measuredEvUsd)}`}
+                    preciseInput={{ unit: "usd", decimals: 4 }}
+                  />
+                </DailyPackTunerCard>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {/* 30-day XP-unlock — DISPLAY-ONLY (backend-enforced, not tunable here). */}
@@ -1251,6 +1256,49 @@ function SignupPanel({
  * data shows — if it isn't a clean set of three packs, it says so rather than
  * fabricating one.
  */
+function RewardPackCatalogCollapsible({
+  catalog,
+}: {
+  catalog: SystemEdgeBaseline["rewardPackCatalog"];
+}) {
+  const [open, setOpen] = React.useState(false);
+  if (catalog.length === 0) return null;
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger
+        render={
+          <button
+            type="button"
+            className="flex w-full items-center justify-between rounded-xl border bg-muted/20 px-4 py-3 text-left text-sm font-medium transition-colors hover:bg-muted/35"
+          >
+            <span className="flex items-center gap-2">
+              <Boxes className="size-4 text-pink-500" />
+              All reward packs in catalog
+              <Badge variant="secondary" className="h-5 text-[10px]">
+                {catalog.length}
+              </Badge>
+            </span>
+            <ChevronDown
+              className={cn(
+                "size-4 text-muted-foreground transition-transform",
+                open && "rotate-180",
+              )}
+            />
+          </button>
+        }
+      />
+      <CollapsibleContent className="pt-3">
+        <p className="mb-3 text-[11px] text-muted-foreground">
+          Reference gallery — packs with no opens this window still appear here.
+          Click to edit odds and art in pack admin.
+        </p>
+        <RewardPackCatalogGrid packs={catalog} compact />
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function WelcomePacksReadout({ baseline }: { baseline: SystemEdgeBaseline }) {
   const packs = baseline.welcomePacks;
 

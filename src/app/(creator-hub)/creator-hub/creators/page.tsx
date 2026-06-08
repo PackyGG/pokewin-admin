@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { Users, TrendingUp, UserX } from "lucide-react";
+import { Coins, TrendingUp, UserX, Zap } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import {
@@ -37,20 +37,29 @@ export default async function CreatorHubRosterPage({
 
   const params = parseRosterSearchParams(await searchParams);
   const isPast = params.tab === "past";
+  const isMultiplier = params.tab === "multiplier";
   const windowLabel = DASHBOARD_PERIOD_LABELS[params.period];
+
+  const heroIcon = isPast ? UserX : isMultiplier ? Zap : Coins;
+  const heroTitle = isPast
+    ? "Past Creators"
+    : isMultiplier
+      ? "Multiplier Creators"
+      : "Fill Creators";
+  const heroSubtitle = isPast
+    ? "Canceled / role-removed ex-creators — historical roster."
+    : isMultiplier
+      ? "Creators on multiplier deals — search, rank, and drill in."
+      : "Creators on fill (weekly) deals — search, rank, and drill in.";
 
   return (
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={isPast ? UserX : Users}
+          icon={heroIcon}
           accent="pink"
-          title={isPast ? "Past Creators" : "Creators"}
-          subtitle={
-            isPast
-              ? "Canceled / role-removed ex-creators — historical roster."
-              : "Your full creator roster — search, rank, and drill in."
-          }
+          title={heroTitle}
+          subtitle={heroSubtitle}
           action={isPast ? undefined : <AddCreatorDialogV2 />}
         />
       </PageHero>
@@ -79,7 +88,7 @@ export default async function CreatorHubRosterPage({
                 key={
                   isPast
                     ? `past-${params.sortBy}`
-                    : `${params.sortBy}-${params.period}`
+                    : `${params.tab}-${params.sortBy}-${params.period}`
                 }
                 fallback={<RosterSkeleton />}
               >
@@ -113,7 +122,7 @@ async function RosterSection({
   const isPast = tab === "past";
   const { creators, rosterUnavailable } = isPast
     ? await listRosterExCreators(sortBy)
-    : await listRosterCreators(period, sortBy);
+    : await listRosterCreators(period, sortBy, tab);
 
   if (rosterUnavailable) {
     return <RosterError />;

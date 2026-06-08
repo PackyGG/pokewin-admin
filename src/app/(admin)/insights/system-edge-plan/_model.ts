@@ -137,6 +137,8 @@ export type RewardPackCatalogItem = PackVisualFields & {
   slug: string;
   active: boolean;
   cardsPerOpen: number;
+  /** Theoretical EV per open from the live card pool (weight × price). */
+  theoreticalEvUsd: number;
 };
 
 /**
@@ -590,6 +592,11 @@ export function defaultLevers(baseline: SystemEdgeBaseline): PlannedLevers {
   const dailyPackEvUsd: Record<string, number> = {};
   for (const p of baseline.dailyPackRows) {
     dailyPackEvUsd[p.packId] = Math.max(0, p.measuredEvUsd);
+  }
+  for (const p of baseline.rewardPackCatalog) {
+    if (dailyPackEvUsd[p.packId] == null) {
+      dailyPackEvUsd[p.packId] = Math.max(0, p.theoreticalEvUsd);
+    }
   }
 
   return {

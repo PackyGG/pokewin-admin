@@ -2,27 +2,29 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { UserX, Users } from "lucide-react";
+import { Coins, UserX, Zap } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 const TABS = [
-  { value: "active", label: "Active", Icon: Users },
-  // Canceled / ex-creators — DB-sourced (see admin list-ex-creators.ts).
+  { value: "fill", label: "Fill Creators", Icon: Coins },
+  { value: "multiplier", label: "Multiplier Creators", Icon: Zap },
   { value: "past", label: "Past Creators", Icon: UserX },
 ] as const;
 
 /**
- * URL-driven Active / Past tab switcher for `/creator-hub/creators`.
- * `active` is the default and carries no `?tab` param.
+ * URL-driven Fill / Multiplier / Past tab switcher for `/creator-hub/creators`.
+ * Mirrors `/creators` on the admin dashboard. `fill` is the default and carries
+ * no `?tab` param.
  *
- * Switching tabs drops `q`, `sortBy`, and `period` (different pools +
- * defaults) but preserves grid/list `view`.
+ * Switching tabs drops `q`, `sortBy`, and `period` (different pools + defaults)
+ * but preserves grid/list `view`.
  */
 export function RosterTabSwitch() {
   const searchParams = useSearchParams();
   const raw = searchParams.get("tab");
-  const current = raw === "past" ? "past" : "active";
+  const current =
+    raw === "multiplier" ? "multiplier" : raw === "past" ? "past" : "fill";
 
   const viewParam = searchParams.get("view");
   const viewSuffix = viewParam === "list" ? "view=list" : "";
@@ -31,16 +33,16 @@ export function RosterTabSwitch() {
     <div
       role="tablist"
       aria-label="Creator roster"
-      className="inline-flex rounded-lg border border-border/60 bg-muted/30 p-0.5"
+      className="inline-flex flex-wrap gap-0.5 rounded-lg border border-border/60 bg-muted/30 p-0.5"
     >
       {TABS.map(({ value, label, Icon }) => {
         const active = current === value;
         const baseHref =
-          value === "active"
+          value === "fill"
             ? "/creator-hub/creators"
             : `/creator-hub/creators?tab=${value}`;
         const href = viewSuffix
-          ? value === "active"
+          ? value === "fill"
             ? `/creator-hub/creators?${viewSuffix}`
             : `${baseHref}&${viewSuffix}`
           : baseHref;
@@ -53,14 +55,17 @@ export function RosterTabSwitch() {
             replace
             scroll={false}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors sm:px-3",
               active
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            <Icon className="size-3.5" />
-            {label}
+            <Icon className="size-3.5 shrink-0" />
+            <span className="hidden sm:inline">{label}</span>
+            <span className="sm:hidden">
+              {value === "fill" ? "Fill" : value === "multiplier" ? "Mult." : "Past"}
+            </span>
           </Link>
         );
       })}

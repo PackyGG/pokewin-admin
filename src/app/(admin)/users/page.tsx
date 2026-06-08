@@ -25,6 +25,7 @@ import { formatNumber } from "@/lib/utils/format";
 import { ExportUsersButton } from "./export-dialog";
 import { ExportAllUsersButton } from "./export-all-users-button";
 import { canExportAllUsers } from "@/lib/users-export/motha-gate";
+import { canCurrentAdminIncludeExcludedInSearch } from "@/lib/excluded-users/search-gate";
 import { SortByNetHoldingsButton } from "./sort-net-holdings-button";
 import { SortByUserNetWorthButton } from "./sort-user-net-worth-button";
 import {
@@ -95,6 +96,8 @@ export default async function UsersPage({
   // and is the real gate. Distinct from the capability-gated filtered
   // ExportUsersButton dialog, which any admin can use.
   const canExportAll = await canExportAllUsers(session.userId);
+  const includeExcludedInSearch =
+    await canCurrentAdminIncludeExcludedInSearch(session.userId);
 
   // `getDistinctUserCountries()` used to be eager-fetched here for the
   // Export dialog's country filter. It scanned every user row to
@@ -140,6 +143,7 @@ export default async function UsersPage({
           // URL `?match=contains` → slower interior-substring search;
           // anything else (the default) → fast index-backed prefix match.
           searchMode: params.match === "contains" ? "substring" : "prefix",
+          includeExcludedInSearch,
         }),
       EMPTY_LIST,
       "users.list",

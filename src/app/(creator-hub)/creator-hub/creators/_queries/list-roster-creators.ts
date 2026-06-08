@@ -20,9 +20,11 @@ import {
 } from "../../../../(admin)/creators/_queries/all-creators-net-pnl";
 import { getAllCreatorsLifetimePnl } from "../../../../(admin)/creators/_queries/all-creators-lifetime-pnl";
 import { getDealValueByUser, type CreatorDealValue } from "./deal-value-by-user";
+import { getMultiplierCreatorIds } from "../../../../(admin)/creators/_queries/multiplier-creator-count";
+import type { CreatorsTab } from "../../../../(admin)/creators/_lib/search-params";
 
 import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
-import type { RosterSortMode } from "../_lib/roster-params";
+import type { RosterActiveTab, RosterSortMode } from "../_lib/roster-params";
 
 /**
  * Creator Hub roster — the full enriched + sorted creator list for
@@ -80,6 +82,8 @@ export type RosterCreator = {
   dealValue: CreatorDealValue | null;
   /** True on the Past tab — role-removed / canceled ex-creators. */
   isPastCreator?: boolean;
+  /** Fill vs multiplier program (active tabs only). */
+  dealProgram?: "fill" | "multiplier";
 };
 
 export type RosterResult = {
@@ -178,9 +182,21 @@ export function sortRoster(
   return sorted;
 }
 
+async function filterRosterByTab(
+  roster: CreatorListItem[],
+  tab: RosterActiveTab,
+): Promise<CreatorListItem[]> {
+  if (tab === "multiplier") {
+    const ids = await getMultiplierCreatorIds();
+    return ids ? roster.filter((c) => ids.has(c.id)) : [];
+  }
+  return roster.filter((c) => c.total_deals_count > 0);
+}
+
 export async function listRosterCreators(
   period: DashboardPeriod,
   sortBy: RosterSortMode,
+  tab: RosterActiveTab = "fill",
 ): Promise<RosterResult> {
   // 1) The roster walk is the backbone — if it fails, the page renders the
   //    "backend unavailable" card. Everything else degrades to empty.
@@ -192,14 +208,15 @@ export async function listRosterCreators(
     return { creators: [], rosterUnavailable: true };
   }
 
-  const ids = roster.map((c) => c.id);
+  const filtered = await filterRosterByTab(roster, tab);
+  const ids = filtered.map((c) => c.id);
 
   // 2) Enrichment passes — each independent + best-effort so one failure
   //    leaves its column empty rather than blanking the roster. The PnL +
   //    deal-value sorts need their map present BEFORE sorting, so they're
   //    awaited here (not streamed) — but they're cached/batched single
   //    passes, not per-creator fan-outs.
-  const activeScheduledDeals = roster
+  const activeScheduledDeals = filtered
     .filter(
       (c) =>
         c.current_deal != null &&
@@ -231,7 +248,7 @@ export async function listRosterCreators(
         );
         return null;
       }),
-      getAllCreatorsLifetimePnl(undefined).catch((err) => {
+      getAllCreatorsLifetimePnl(tab as CreatorsTab).catch((err) => {
         console.error(
           "[creator-hub roster] lifetime PnL fetch failed (PnL col '—'):",
           err,
@@ -255,7 +272,7 @@ export async function listRosterCreators(
   );
 
   // 3) Build serializable rows.
-  const rows: RosterCreator[] = roster.map((c) => {
+  const rows: RosterCreator[] = filtered.map((c) => {
     const cw = codeWager.get(c.id);
     const ggrRow = ggrByUser.get(c.id);
     return {
@@ -277,6 +294,7 @@ export async function listRosterCreators(
       windowedGgrUsd: ggrRow ? ggrRow.ggr : null,
       lifetimePnlUsd: pnlByUser.has(c.id) ? pnlByUser.get(c.id)! : null,
       dealValue: dealValues.get(c.id) ?? null,
+      dealProgram: tab,
     };
   });
 

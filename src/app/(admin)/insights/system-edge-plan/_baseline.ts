@@ -442,12 +442,29 @@ async function getRewardPackCatalog(): Promise<RewardPackCatalogItem[]> {
     image_url: string | null;
     active: boolean;
     cards_per_open: number;
+    theoretical_ev: string;
   };
   const rows = await db.$queryRawUnsafe<Row[]>(
-    `SELECT id::text, name, slug, image_url, active, cards_per_open
-     FROM packs
-     WHERE pack_type = 'reward'
-     ORDER BY name`,
+    `SELECT
+       p.id::text,
+       p.name,
+       p.slug,
+       p.image_url,
+       p.active,
+       p.cards_per_open,
+       COALESCE(
+         (
+           SELECT (SUM(pc.weight::numeric * c.price::numeric) / NULLIF(SUM(pc.weight::numeric), 0))
+                  * p.cards_per_open
+           FROM pack_cards pc
+           JOIN cards c ON c.id = pc.card_id
+           WHERE pc.pack_id = p.id
+         ),
+         0
+       )::text AS theoretical_ev
+     FROM packs p
+     WHERE p.pack_type = 'reward'
+     ORDER BY p.name`,
   );
   const visuals = await fetchPackVisuals(rows.map((r) => r.id));
   return rows.map((r) => {
@@ -458,6 +475,7 @@ async function getRewardPackCatalog(): Promise<RewardPackCatalogItem[]> {
       slug: r.slug,
       active: r.active,
       cardsPerOpen: Number(r.cards_per_open),
+      theoreticalEvUsd: toNumber(r.theoretical_ev),
       imageUrl: v?.imageUrl ?? r.image_url,
       cardPreviews: v?.cardPreviews ?? [],
     };
@@ -939,7 +957,7 @@ export async function getSystemEdgeBaseline(
     () => buildBaseline(period),
     // v6: reward pack catalog + pack art/card previews on daily + welcome rows;
     // other + motha cost multipliers in the planner model.
-    ["system-edge-plan-baseline-v6", period],
+    ["system-edge-plan-baseline-v7", period],
     { revalidate: cacheTtlForInsightsPeriod(period) },
   );
   const { data } = await safeQuery(

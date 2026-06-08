@@ -811,6 +811,11 @@ export async function getUsers(params: {
    * this — they always route to their exact-match fast path.
    */
   searchMode?: UserSearchMode;
+  /**
+   * When true AND a search term is present, excluded (blacklisted) users
+   * are included in results. Only set after `canCurrentAdminIncludeExcludedInSearch`.
+   */
+  includeExcludedInSearch?: boolean;
 }): Promise<PaginatedResult<UserListItem>> {
   const db = await getDb();
   const {
@@ -822,15 +827,21 @@ export async function getUsers(params: {
     sortBy = "created_at",
     sortOrder = "desc",
     searchMode = "prefix",
+    includeExcludedInSearch = false,
   } = params;
 
-  const excludedUserIds = await getExcludedUserIds();
+  const searchTerm = search?.trim();
+  const isAnySearch = !!searchTerm;
+
+  const excludedUserIds =
+    includeExcludedInSearch && isAnySearch
+      ? []
+      : await getExcludedUserIds();
 
   const where: Prisma.UserWhereInput = {};
 
   // Trim so stray leading/trailing whitespace (easy to paste in by
   // accident) doesn't turn a valid handle into a miss.
-  const searchTerm = search?.trim();
 
   // ── Search fast paths ──────────────────────────────────────────────
   // The legacy code path ORed 4× ILIKE '%term%' across username /
@@ -867,7 +878,6 @@ export async function getUsers(params: {
   const isDiscordId = /^\d{17,20}$/.test(searchTerm ?? "");
   const isFreeFormTextSearch =
     !!searchTerm && !isExactId && !isEmailLike && !isDiscordId;
-  const isAnySearch = !!searchTerm;
   // Free-form / exact-match SEARCH must not run the computed-sort ranking
   // scan — that was the main source of 15s timeouts on ?search=…. Role /
   // status toolbar filters are safe: computeRankedUserIds is filter-first

@@ -91,13 +91,18 @@ export const ROSTER_PERIODS: readonly DashboardPeriod[] = [
 export const ROSTER_DEFAULT_PERIOD: DashboardPeriod = "7d";
 
 /**
- * Roster population tab — active creators (live backend roster) vs past /
- * ex-creators (DB-sourced via `list-ex-creators` patterns). Default `active`
- * carries no `?tab` param.
+ * Roster population tab — mirrors `/creators` deal programs:
+ *   • fill       — creators with at least one fill (weekly) deal.
+ *   • multiplier — creators with at least one multiplier deal.
+ *   • past       — canceled / ex-creators (DB-sourced).
+ * Default `fill` carries no `?tab` param. Legacy `?tab=active` maps to fill.
  */
-export const RosterTab = z.enum(["active", "past"]);
+export const RosterTab = z.enum(["fill", "multiplier", "past"]);
 export type RosterTab = z.infer<typeof RosterTab>;
-export const ROSTER_DEFAULT_TAB: RosterTab = "active";
+export const ROSTER_DEFAULT_TAB: RosterTab = "fill";
+
+/** Active roster tabs (not past/ex-creators). */
+export type RosterActiveTab = Exclude<RosterTab, "past">;
 
 /**
  * Resolve a raw `?period=` value to a roster window. Unknown / unsupported
@@ -119,13 +124,14 @@ export function resolveRosterPeriod(
 
 const RosterSearchParamsSchema = z.object({
   /**
-   * Active vs past/ex-creator roster. `active` is the default (omitted from
-   * the URL). Past creators are DB-sourced — see `list-roster-ex-creators`.
+   * Fill / Multiplier / Past roster tab. `fill` is the default (omitted from
+   * the URL). Legacy `?tab=active` resolves to `fill`.
    */
   tab: z
     .string()
     .optional()
     .transform((v) => {
+      if (v === "active") return ROSTER_DEFAULT_TAB;
       const parsed = RosterTab.safeParse(v);
       return parsed.success ? parsed.data : ROSTER_DEFAULT_TAB;
     }),
