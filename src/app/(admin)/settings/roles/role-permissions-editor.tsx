@@ -37,7 +37,7 @@ const ROLE_TAB_LABELS: Record<(typeof ROLES)[number], string> = {
 
 const ROLE_DESCRIPTIONS: Record<string, string> = {
   support: "Customer support — typically needs Users, Chat, Transactions",
-  marketing: "Marketing team — typically needs Promo Codes, Gift Cards, Creators",
+  marketing: "Marketing team — typically needs Promo Codes, Creators",
   creator: "Content creators — typically only needs My Profile",
   pack_creator:
     "Pack creator employee — Packs, Cards, and Sets. Demo (inactive) packs are always editable; grant 'Edit Live Packs' if you want them to be able to change card pool / price / house edge on packs that are already live in production. Card + set tools (create/edit/bulk-assign) let them build the catalog the packs draw from; the destructive set ops (Seed Initial Sets, Force-Absorb Cards, Delete Set) are individual toggles — leave them off unless this person is trusted to run catalog-wide bulk moves.",

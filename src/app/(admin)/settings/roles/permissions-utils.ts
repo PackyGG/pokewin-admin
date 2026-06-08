@@ -166,7 +166,7 @@ export const CAPABILITIES: CapabilityDef[] = [
   {
     key: "__can_set_house_account",
     label: "Set Ads House Account",
-    description: "Configure the real user account used for /creators/ads codes",
+    description: "Configure the real user account used for house ad tracking codes",
     group: "Ads",
   },
   {

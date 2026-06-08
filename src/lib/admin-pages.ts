@@ -96,25 +96,14 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Rewards", label: "Rain", key: "/rain" },
   { group: "Rewards", label: "Leaderboards", key: "/rewards/leaderboards" },
   { group: "Rewards", label: "Level Up", key: "/rewards/level-up" },
-  { group: "Rewards", label: "Affiliate Settings", key: "/creators/settings" },
-  { group: "Rewards", label: "Settings", key: "/rewards/settings" },
-  // Marketing — campaign tools + acquisition surfaces. Mirrors the
-  // sidebar's Marketing group so an admin who can grant items in
-  // the role editor sees them under the same banner the user clicks
-  // through in the sidebar. Analytics stays grouped here as a
-  // permission key (admins can still grant /creators/analytics) but
-  // Vouchers was removed from nav and the role editor — the route
-  // (/vouchers) remains reachable by URL but is no longer surfaced or
-  // grantable as a separate permission. Affiliate codes list (/creators/codes)
-  // was removed — bookmarks redirect to /creators.
-  { group: "Marketing", label: "Ads", key: "/creators/ads" },
-  { group: "Marketing", label: "Analytics", key: "/creators/analytics" },
-  // Promo Codes was moved to the Rewards group (mirrors the sidebar).
-  { group: "Marketing", label: "Gift Cards", key: "/gift-cards" },
   // Giveaway log — driven by `admin_giveaway_actions` rows that the
   // adjust-balance flow writes when the reason is tagged "Giveaway".
-  // Same permission default as the rest of Marketing.
-  { group: "Marketing", label: "Giveaway", key: "/marketing/giveaway" },
+  { group: "Rewards", label: "Giveaway", key: "/marketing/giveaway" },
+  { group: "Rewards", label: "Affiliate Settings", key: "/creators/settings" },
+  { group: "Rewards", label: "Settings", key: "/rewards/settings" },
+  // Creator analytics — palette-only; no sidebar link. Ads and gift cards
+  // were removed; bookmarks redirect to /creators and /rewards.
+  { group: "Navigation", label: "Creator Analytics", key: "/creators/analytics" },
   // Creator leaderboards / changelog / socials review live in Creator Hub;
   // removed from the admin sidebar. Routes remain for bookmarks; grant via
   // /creators or admin role.

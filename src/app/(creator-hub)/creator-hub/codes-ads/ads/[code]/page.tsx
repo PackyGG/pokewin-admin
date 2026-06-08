@@ -1,13 +1,8 @@
 import { redirect, RedirectType } from "next/navigation";
 
 /**
- * Legacy hub ad-detail bookmark → admin marketing ad detail.
+ * Legacy hub ad-detail bookmark — ads admin page removed; roster on /creators.
  */
-export default async function CreatorHubAdDetailRedirect({
-  params,
-}: {
-  params: Promise<{ code: string }>;
-}) {
-  const { code } = await params;
-  redirect(`/creators/ads/${encodeURIComponent(code)}`, RedirectType.replace);
+export default async function CreatorHubAdDetailRedirect() {
+  redirect("/creators", RedirectType.replace);
 }

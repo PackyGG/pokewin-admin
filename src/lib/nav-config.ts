@@ -33,7 +33,6 @@
 export type NavGroupKey =
   | "Overview"
   | "Insights"
-  | "Marketing"
   | "Employees"
   | "Content"
   | "Transactions"
@@ -100,7 +99,6 @@ export type NavEntry = {
 export const NAV_GROUP_META: NavGroupMeta[] = [
   { label: "Overview" },
   { label: "Insights" },
-  { label: "Marketing" },
   { label: "Employees" },
   { label: "Content" },
   { label: "Transactions" },
@@ -404,25 +402,10 @@ export const NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
 
-  // ── Marketing ──────────────────────────────────────────────────────────
   {
-    id: "nav.creators.ads",
-    group: "Marketing",
-    label: "Ads",
-    href: "/creators/ads",
-    pageKey: "/creators/ads",
-    icon: "Megaphone",
-    description: "Campaign / house codes",
-    keywords: ["campaign", "house"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Creator Analytics — palette-only. The sidebar dropped this link in the
-    // nav split, but the route + ADMIN_PAGES key (/creators/analytics, grouped
-    // under Marketing) and the palette command are both retained.
+    // Creator Analytics — palette-only (no sidebar link).
     id: "nav.creators.analytics",
-    group: "Marketing",
+    group: "Overview",
     label: "Creator Analytics",
     href: "/creators/analytics",
     pageKey: "/creators/analytics",
@@ -430,27 +413,6 @@ export const NAV_ENTRIES: NavEntry[] = [
     description: "Creator performance",
     inSidebar: false,
     inPalette: true,
-  },
-  {
-    id: "nav.gift-cards",
-    group: "Marketing",
-    label: "Gift Cards",
-    href: "/gift-cards",
-    pageKey: "/gift-cards",
-    icon: "Gift",
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Giveaway — sidebar-only.
-    id: "nav.marketing.giveaway",
-    group: "Marketing",
-    label: "Giveaway",
-    href: "/marketing/giveaway",
-    pageKey: "/marketing/giveaway",
-    icon: "Gift",
-    inSidebar: true,
-    inPalette: false,
   },
 
   // ── Employees ──────────────────────────────────────────────────────────
@@ -680,6 +642,16 @@ export const NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    id: "nav.rewards.giveaway",
+    group: "Rewards",
+    label: "Giveaway",
+    href: "/marketing/giveaway",
+    pageKey: "/marketing/giveaway",
+    icon: "Gift",
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
     // Affiliate tier + commission config (/creators/settings).
     id: "nav.creators.settings",
     group: "Rewards",
@@ -891,10 +863,8 @@ const PALETTE_ORDER: string[] = [
   "nav.deposits",
   "nav.withdrawals",
   "nav.creators",
-  "nav.creators.ads",
   "nav.creators.analytics",
   "nav.promo",
-  "nav.gift-cards",
   "nav.packs",
   "nav.cards",
   "nav.battles",

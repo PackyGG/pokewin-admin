@@ -192,16 +192,6 @@ export const ACTION_COMMANDS: ActionCommand[] = [
   },
   {
     kind: "action",
-    id: "action.new-ad-code",
-    label: "New ad code",
-    description: "Create a campaign tracking code",
-    icon: Plus,
-    run: { type: "navigate", href: "/creators/ads" },
-    pageKey: "/creators/ads",
-    keywords: ["create", "campaign"],
-  },
-  {
-    kind: "action",
     id: "action.new-admin",
     label: "Create admin user",
     description: "Open the admin-users page",
