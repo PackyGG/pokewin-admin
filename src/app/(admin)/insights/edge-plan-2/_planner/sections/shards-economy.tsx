@@ -68,6 +68,8 @@ export function ShardsEconomySection({
             min={0}
             max={500}
             step={1}
+            baselineMarker={100}
+            baselineLabel="1× = baseline intensity"
             preciseInput={{ unit: "multiplier" }}
           />
           <LeverSlider
@@ -83,6 +85,7 @@ export function ShardsEconomySection({
             min={0}
             max={500}
             step={1}
+            baselineMarker={100}
             preciseInput={{ unit: "multiplier" }}
           />
           <LeverSlider
@@ -98,6 +101,7 @@ export function ShardsEconomySection({
             min={0}
             max={100}
             step={1}
+            baselineMarker={100}
           />
           <LeverSlider
             label="Upgrader earn weight"
@@ -112,6 +116,12 @@ export function ShardsEconomySection({
             min={0}
             max={100}
             step={1}
+            baselineMarker={100}
+            disabled={
+              !baseline.gameTypes.some(
+                (g) => g.type === "upgrader" && g.dataAvailable,
+              )
+            }
           />
         </div>
         <div className="mt-3 border-t pt-3">

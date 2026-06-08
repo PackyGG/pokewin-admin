@@ -25,6 +25,7 @@ import {
   PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
   PLANNED_UPGRADER_EDGE_DEFAULT,
   GAME_TYPE_IDS,
+  REMOVE_WAGER_REQ_COST_UPLIFT,
 } from "../system-edge-plan/_model";
 
 export {
@@ -35,6 +36,7 @@ export {
   GAME_TYPE_IDS,
   gameTypeLabel,
   computeNetEdgeScenarios,
+  REMOVE_WAGER_REQ_COST_UPLIFT,
   type GameTypeId,
   type PackCardPreview,
   type DailyPackLeverRow,
@@ -74,6 +76,10 @@ export type EdgePlanV2Baseline = SystemEdgeBaseline & {
   balanceWithdrawalShare: number;
   /** Estimated total withdrawal USD in window (for balance-withdrawal modeling). */
   estimatedWithdrawalVolumeUsd: number;
+  /** Where withdrawal volume was sourced. */
+  withdrawalVolumeSource: "ledger" | "estimate";
+  /** Where balance-withdrawal share was sourced. */
+  balanceWithdrawalShareSource: "ledger" | "estimate";
   /** True when headline metrics were recovered or planning defaults were used. */
   baselineSparse?: boolean;
 };
@@ -103,6 +109,7 @@ export type PlannedLeversV2 = Omit<
 };
 
 export type EdgePlanV2Projection = EdgePlanProjection & {
+  shardsIssuancePlanned: number;
   shardsRedemptionPlanned: number;
   withdrawalFrictionAdjUsd: number;
 };
@@ -119,6 +126,52 @@ function toV1Levers(planned: PlannedLeversV2): PlannedLevers {
     rafflePrizePoolMult: 1,
     raffleFrequencyMult: 1,
     raffleTicketCostMult: 1,
+  };
+}
+
+/** Wager-weighted blend of pack/battle vs upgrader weights (0..1 each). */
+function wagerTypeBlend(
+  baseline: EdgePlanV2Baseline,
+  packBattleWeight: number,
+  upgraderWeight: number,
+): number {
+  const packs = baseline.gameTypes.find((g) => g.type === "packs")?.wager ?? 0;
+  const battles = baseline.gameTypes.find((g) => g.type === "battles")?.wager ?? 0;
+  const upg = baseline.gameTypes.find((g) => g.type === "upgrader")?.wager ?? 0;
+  const pb = packs + battles;
+  const total = pb + upg;
+  if (total <= 0) return (packBattleWeight + upgraderWeight) / 2;
+  return (pb * packBattleWeight + upg * upgraderWeight) / total;
+}
+
+function computeShardsIssuance(
+  baseline: EdgePlanV2Baseline,
+  planned: PlannedLeversV2,
+): { current: number; planned: number } {
+  const baseRate = Math.max(0.001, baseline.shardsPerDollarWager);
+  const currentBlend = wagerTypeBlend(baseline, 1, 1);
+  const plannedBlend = wagerTypeBlend(
+    baseline,
+    planned.shardPackBattleWeight,
+    planned.shardUpgraderWeight,
+  );
+  const earnIntensity =
+    (planned.shardsPerDollarWager / baseRate) *
+    Math.max(0, planned.shardEarnMult) *
+    plannedBlend;
+  const blendRatio =
+    currentBlend > 0 ? plannedBlend / currentBlend : plannedBlend;
+
+  const anchor =
+    baseline.shardsRedemptionCost > 0
+      ? baseline.shardsRedemptionCost * 0.5
+      : baseline.wager * baseRate * currentBlend * 0.01;
+
+  if (anchor <= 0) return { current: 0, planned: 0 };
+
+  return {
+    current: anchor,
+    planned: anchor * (planned.shardsPerDollarWager / baseRate) * planned.shardEarnMult * blendRatio,
   };
 }
 
@@ -157,7 +210,15 @@ function computeWithdrawalAdjustment(
   if (volume <= 0) return 0;
   const baseBreak = breakageFactor(1);
   const plannedBreak = breakageFactor(planned.withdrawalWagerReqMult);
-  return volume * (baseBreak - plannedBreak) * 0.25;
+  const baseWeight = wagerTypeBlend(baseline, 1, 1);
+  const plannedWeight = wagerTypeBlend(
+    baseline,
+    planned.withdrawalPackBattleWeight,
+    planned.withdrawalUpgraderWeight,
+  );
+  const weightScale =
+    baseWeight > 0 ? plannedWeight / baseWeight : Math.max(0, plannedWeight);
+  return volume * (baseBreak - plannedBreak) * 0.25 * weightScale;
 }
 
 export function defaultLeversV2(baseline: EdgePlanV2Baseline): PlannedLeversV2 {
@@ -320,20 +381,33 @@ export function projectEdgePlanV2(
   planned: PlannedLeversV2,
 ): EdgePlanV2Projection {
   const core = projectEdgePlan(toV1Baseline(baseline), toV1Levers(planned));
-  const shards = computeShardsRedemption(baseline, planned);
+  const issuance = computeShardsIssuance(baseline, planned);
+  const redemption = computeShardsRedemption(baseline, planned);
   const withdrawalFrictionAdjUsd = computeWithdrawalAdjustment(baseline, planned);
+
+  const shardsCurrent = issuance.current + redemption.current;
+  const shardsPlanned = issuance.planned + redemption.planned;
 
   const levers: LeverProjection[] = core.levers
     .filter((l) => l.key !== "raffles")
     .concat([
       {
+        key: "shards-earn",
+        label: "Shard earn (issuance liability)",
+        currentCost: issuance.current,
+        plannedCost: issuance.planned,
+        deltaCost: issuance.planned - issuance.current,
+        dataAvailable:
+          issuance.current > 0 || baseline.wager > 0 || baseline.shardsRedemptionCost > 0,
+      },
+      {
         key: "shards",
         label: "Shard shop redemptions",
-        currentCost: shards.current,
-        plannedCost: shards.planned,
-        deltaCost: shards.planned - shards.current,
+        currentCost: redemption.current,
+        plannedCost: redemption.planned,
+        deltaCost: redemption.planned - redemption.current,
         dataAvailable:
-          shards.current > 0 || baseline.shardShopRows.length > 0,
+          redemption.current > 0 || baseline.shardShopRows.length > 0,
       },
       {
         key: "withdrawals",
@@ -348,11 +422,11 @@ export function projectEdgePlanV2(
   const rewardCostDelta =
     core.plannedRewardCost -
     core.currentRewardCost +
-    (shards.planned - shards.current) -
+    (shardsPlanned - shardsCurrent) -
     withdrawalFrictionAdjUsd;
 
   const plannedNgr =
-    core.plannedNgr - (shards.planned - shards.current) + withdrawalFrictionAdjUsd;
+    core.plannedNgr - (shardsPlanned - shardsCurrent) + withdrawalFrictionAdjUsd;
   const profitDelta = plannedNgr - core.currentNgr;
   const monthlyProfitDelta =
     baseline.periodDays > 0 ? (profitDelta / baseline.periodDays) * 30 : profitDelta;
@@ -362,15 +436,15 @@ export function projectEdgePlanV2(
   return {
     ...core,
     levers,
-    plannedRewardCost:
-      core.plannedRewardCost + (shards.planned - shards.current),
-    currentRewardCost: core.currentRewardCost + shards.current,
+    plannedRewardCost: core.plannedRewardCost + (shardsPlanned - shardsCurrent),
+    currentRewardCost: core.currentRewardCost + shardsCurrent,
     rewardCostDelta,
     plannedNgr,
     profitDelta,
     monthlyProfitDelta,
     annualProfitDelta,
-    shardsRedemptionPlanned: shards.planned,
+    shardsIssuancePlanned: issuance.planned,
+    shardsRedemptionPlanned: redemption.planned,
     withdrawalFrictionAdjUsd,
   };
 }

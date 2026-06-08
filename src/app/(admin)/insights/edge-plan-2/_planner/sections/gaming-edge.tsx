@@ -3,8 +3,11 @@
 import * as React from "react";
 import { Gauge } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { StatPanel } from "@/components/modern-panels";
+import { formatCompactUsd } from "@/lib/utils/format";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
+import { effectiveTypeEdge } from "../../../system-edge-plan/_model";
 import { formatPct } from "../../../edge-calc/math";
 import {
   clamp,
@@ -32,12 +35,15 @@ export function GamingEdgeSection({
   );
   const upgrader = baseline.gameTypes.find((g) => g.type === "upgrader");
   const pbEdge = levers.edges.packs ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT;
+  const packsRow = baseline.gameTypes.find((g) => g.type === "packs");
+  const pbMeasured = packsRow ? effectiveTypeEdge(packsRow) : 0;
+  const upgMeasured = upgrader ? effectiveTypeEdge(upgrader) : 0;
 
   return (
     <StatPanel title="House edge" icon={Gauge} accent="emerald">
       <p className="mb-4 text-xs text-muted-foreground">
-        Packs & battles share one edge lever; upgrader is separate. Sliders open on
-        planning defaults with measured edge shown as reference.
+        Sliders open on planning defaults; measured edge ticks show the real 30d
+        reference.
       </p>
       <div className="grid gap-6 xl:grid-cols-2">
         <div className="space-y-2">
@@ -49,12 +55,14 @@ export function GamingEdgeSection({
             min={0}
             max={30}
             step={0.01}
+            baselineMarker={pbMeasured * 100}
+            baselineLabel={`measured ${formatPct(pbMeasured)}`}
             preciseInput={{ unit: "percent", decimals: 2 }}
           />
           {packsBattles.map((g) => (
             <p key={g.type} className="text-[11px] text-muted-foreground">
               {g.type}: measured {g.edge != null ? formatPct(g.edge) : "—"} · wager{" "}
-              {g.wager.toLocaleString()}
+              {formatCompactUsd(g.wager)} · GGR {formatCompactUsd(g.ggr)}
             </p>
           ))}
         </div>
@@ -67,9 +75,26 @@ export function GamingEdgeSection({
             min={0}
             max={30}
             step={0.01}
+            baselineMarker={upgrader?.dataAvailable ? upgMeasured * 100 : undefined}
+            baselineLabel={
+              upgrader?.dataAvailable ? `measured ${formatPct(upgMeasured)}` : undefined
+            }
             disabled={!upgrader?.dataAvailable}
             preciseInput={{ unit: "percent", decimals: 2 }}
           />
+          {upgrader && (
+            <div className="flex items-center gap-2">
+              {!upgrader.dataAvailable && (
+                <Badge variant="outline" className="text-[10px]">
+                  no data
+                </Badge>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                wager {formatCompactUsd(upgrader.wager)} · GGR{" "}
+                {formatCompactUsd(upgrader.ggr)}
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </StatPanel>

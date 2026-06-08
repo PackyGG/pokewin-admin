@@ -110,6 +110,24 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
             {formatSignedUsd(projection.monthlyProfitDelta)}/mo ·{" "}
             {formatSignedUsd(projection.annualProfitDelta)}/yr extrapolated
           </p>
+          <div className="mt-3 flex flex-wrap gap-4 text-sm">
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Current NGR
+              </p>
+              <p className="font-semibold tabular-nums">
+                {formatCompactUsd(projection.currentNgr)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Planned NGR
+              </p>
+              <p className={`font-semibold tabular-nums ${profitTone}`}>
+                {formatCompactUsd(projection.plannedNgr)}
+              </p>
+            </div>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => setLevers(defaults)}>

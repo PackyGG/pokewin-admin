@@ -1,6 +1,13 @@
 "use client";
 
-import { Gem, Banknote, Sparkles } from "lucide-react";
+import {
+  Banknote,
+  Gem,
+  Gift,
+  Sparkles,
+  Ticket,
+  Zap,
+} from "lucide-react";
 
 import { StatPanel } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
@@ -14,15 +21,33 @@ const IDEAS = [
   },
   {
     icon: Banknote,
-    title: "Live withdrawal split",
-    blurb: "Replace estimated balance-withdrawal share with ledger-derived split.",
-    tag: "Withdrawals",
+    title: "Elastic wager volume",
+    blurb: "Model second-order volume when shard earn or house edge changes.",
+    tag: "Model",
   },
   {
     icon: Sparkles,
-    title: "Elastic wager volume",
-    blurb: "Model second-order volume effects when shard earn rate changes.",
-    tag: "Model",
+    title: "Security config mirror",
+    blurb: "Read-only ticks from /security wager-req + leaderboard weights.",
+    tag: "Withdrawals",
+  },
+  {
+    icon: Gift,
+    title: "Promo cap & gift cards",
+    blurb: "Dedicated levers for promo-code budgets and gift-card issuance.",
+    tag: "Rewards",
+  },
+  {
+    icon: Ticket,
+    title: "Login streak rewards",
+    blurb: "Model retention streak payouts as a separate cost bucket.",
+    tag: "Rewards",
+  },
+  {
+    icon: Zap,
+    title: "Config export / compare",
+    blurb: "Side-by-side diff of two saved configs with delta table.",
+    tag: "UX",
   },
 ] as const;
 

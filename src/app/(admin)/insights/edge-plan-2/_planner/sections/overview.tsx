@@ -1,6 +1,6 @@
 "use client";
 
-import { Layers, ShieldAlert, Wallet, TrendingDown } from "lucide-react";
+import { Layers, Wallet } from "lucide-react";
 
 import { StatPanel, PanelRow } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
@@ -8,6 +8,11 @@ import { formatPct, formatSignedUsd } from "../../../edge-calc/math";
 import { cn } from "@/lib/utils";
 import type { EdgePlanV2Projection } from "../../_model-v2";
 import type { NetEdgeScenario } from "../../../system-edge-plan/_model";
+import {
+  LeverBreakdownPanel,
+  NetEdgeByScenarioPanel,
+  RewardCostComparisonChart,
+} from "../components/overview-charts";
 
 export function OverviewSection({
   projection,
@@ -33,7 +38,14 @@ export function OverviewSection({
                 key={g.type}
                 className="rounded-lg border bg-background/40 px-3 py-2.5 space-y-1"
               >
-                <div className="text-sm font-medium">{g.label}</div>
+                <div className="text-sm font-medium">
+                  {g.label}
+                  {!g.dataAvailable && (
+                    <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
+                      (no data)
+                    </span>
+                  )}
+                </div>
                 <div className="text-[11px] text-muted-foreground">
                   {formatPct(g.currentEdge)} → {formatPct(g.plannedEdge)} edge
                 </div>
@@ -62,63 +74,17 @@ export function OverviewSection({
         </div>
       </StatPanel>
 
-      <StatPanel title="Net edge by scenario" icon={ShieldAlert} accent="amber">
-        {netEdgeScenarios.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No scenarios — set planned edge above.</p>
-        ) : (
-          <div className="space-y-1">
-            {netEdgeScenarios.map((s) => (
-              <PanelRow
-                key={s.key}
-                label={s.label}
-                value={
-                  <span
-                    className={cn(
-                      "font-semibold tabular-nums",
-                      s.netEdge < 0
-                        ? "text-rose-600 dark:text-rose-400"
-                        : s.netEdge < 0.02
-                          ? "text-amber-600 dark:text-amber-400"
-                          : "text-emerald-600 dark:text-emerald-400",
-                    )}
-                  >
-                    {formatPct(s.netEdge)}
-                  </span>
-                }
-              />
-            ))}
-          </div>
-        )}
-      </StatPanel>
-
-      <StatPanel title="Reward cost delta by lever" icon={TrendingDown} accent="purple">
-        <div className="space-y-0.5">
-          {projection.levers.map((l) => {
-            const saving = -l.deltaCost;
-            const tone =
-              l.deltaCost === 0
-                ? "text-muted-foreground"
-                : saving > 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400";
-            return (
-              <PanelRow
-                key={l.key}
-                label={l.label}
-                value={
-                  <span className={cn("tabular-nums font-medium", tone)}>
-                    {l.deltaCost === 0 ? "—" : formatSignedUsd(-l.deltaCost)}
-                  </span>
-                }
-              />
-            );
-          })}
-        </div>
-      </StatPanel>
+      <NetEdgeByScenarioPanel scenarios={netEdgeScenarios} />
+      <RewardCostComparisonChart projection={projection} />
+      <LeverBreakdownPanel projection={projection} />
 
       <StatPanel title="Reward cost summary" icon={Wallet} accent="rose">
         <PanelRow label="Current reward cost" value={formatCurrency(projection.currentRewardCost)} />
         <PanelRow label="Planned reward cost" value={formatCurrency(projection.plannedRewardCost)} />
+        <PanelRow
+          label="Shard earn (planned)"
+          value={formatCurrency(projection.shardsIssuancePlanned)}
+        />
         <PanelRow
           label="Shard shop (planned)"
           value={formatCurrency(projection.shardsRedemptionPlanned)}

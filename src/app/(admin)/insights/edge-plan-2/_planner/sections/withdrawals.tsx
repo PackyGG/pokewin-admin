@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Banknote } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { StatPanel, PanelRow } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
@@ -21,13 +22,22 @@ export function WithdrawalsSection({
   return (
     <StatPanel title="Balance withdrawals & wager rules" icon={Banknote} accent="cyan">
       <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
-        Models the shift from item-only crypto withdrawals to balance cash-out. Wager
-        requirement and per-game weights are what-if sliders — they do not write live
-        Security config.
+        Models balance cash-out vs inventory withdrawals. Wager requirement and
+        per-game weights are what-if sliders — they do not write live Security
+        config.
       </p>
+      <div className="mb-4 flex flex-wrap gap-2">
+        <Badge variant="outline" className="text-[10px]">
+          Volume: {baseline.withdrawalVolumeSource === "ledger" ? "30d ledger" : "estimated"}
+        </Badge>
+        <Badge variant="outline" className="text-[10px]">
+          Balance share:{" "}
+          {baseline.balanceWithdrawalShareSource === "ledger" ? "30d ledger" : "estimated"}
+        </Badge>
+      </div>
       <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
         <PanelRow
-          label="Est. withdrawal volume"
+          label="Withdrawal volume (30d)"
           value={formatCurrency(baseline.estimatedWithdrawalVolumeUsd)}
         />
         <LeverSlider
@@ -44,6 +54,11 @@ export function WithdrawalsSection({
           max={100}
           step={1}
           baselineMarker={baseline.balanceWithdrawalShare * 100}
+          baselineLabel={
+            baseline.balanceWithdrawalShareSource === "ledger"
+              ? "observed 30d split"
+              : "planning default"
+          }
         />
         <LeverSlider
           label="Wager requirement mult."
@@ -58,6 +73,8 @@ export function WithdrawalsSection({
           min={0}
           max={500}
           step={1}
+          baselineMarker={100}
+          baselineLabel="1× = current breakage baseline"
           preciseInput={{ unit: "multiplier" }}
         />
         <LeverSlider
@@ -73,6 +90,8 @@ export function WithdrawalsSection({
           min={0}
           max={100}
           step={1}
+          baselineMarker={100}
+          baselineLabel="100% = full weight"
         />
         <LeverSlider
           label="Upgrader wager weight"
@@ -87,6 +106,13 @@ export function WithdrawalsSection({
           min={0}
           max={100}
           step={1}
+          baselineMarker={100}
+          baselineLabel="100% = full weight"
+          disabled={
+            !baseline.gameTypes.some(
+              (g) => g.type === "upgrader" && g.dataAvailable,
+            )
+          }
         />
       </div>
     </StatPanel>

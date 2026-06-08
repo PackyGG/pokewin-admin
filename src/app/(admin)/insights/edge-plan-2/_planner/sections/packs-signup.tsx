@@ -1,11 +1,21 @@
 "use client";
 
 import * as React from "react";
-import { Boxes, UserPlus } from "lucide-react";
+import { Boxes, ChevronDown, UserPlus } from "lucide-react";
 
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Button } from "@/components/ui/button";
 import { StatPanel, PanelRow } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
+import {
+  RewardPackCatalogGrid,
+  WelcomePackGrid,
+} from "../../../system-edge-plan/_pack-visual";
 import { PackFirstTunerCard } from "../../_pack-visual-v2";
 import type { DailyPackLeverRow } from "../../_model-v2";
 import {
@@ -13,6 +23,7 @@ import {
   type PlannedLeversV2,
 } from "../../_model-v2";
 import { formatEvUsd, multLabel } from "../utils";
+import { EmptyLever } from "../components/empty-lever";
 
 export function PacksSignupSection({
   baseline,
@@ -49,6 +60,11 @@ export function PacksSignupSection({
     const ev = Math.max(0, levers.dailyPackEvUsd[p.packId] ?? p.measuredEvUsd);
     return s + ev * p.opens;
   }, 0) * freq;
+
+  const amortizedPerSignup =
+    baseline.signupSignups > 0
+      ? (levers.signupGrantUsd * baseline.signupClaimants) / baseline.signupSignups
+      : null;
 
   return (
     <div className="space-y-4">
@@ -114,8 +130,9 @@ export function PacksSignupSection({
                     }
                     min={0}
                     max={Math.max(50, plannedEv * 3, p.measuredEvUsd * 3, 5)}
-                    step={0.01}
-                    preciseInput={{ unit: "usd", decimals: 2 }}
+                    step={0.0001}
+                    baselineMarker={p.measuredEvUsd}
+                    preciseInput={{ unit: "usd", decimals: 4 }}
                   />
                 }
                 footerStats={
@@ -140,25 +157,85 @@ export function PacksSignupSection({
           value={formatCurrency(baseline.signupPacksCost)}
         />
         <PanelRow label="Claimants" value={baseline.signupClaimants.toLocaleString()} />
-        <LeverSlider
-          label="Avg grant per claimant"
-          valueLabel={formatCurrency(levers.signupGrantUsd)}
-          value={levers.signupGrantUsd}
-          onValueChange={(usd) =>
-            setLevers((s) => ({ ...s, signupGrantUsd: Math.max(0, usd) }))
-          }
-          min={0}
-          max={Math.max(50, (baseline.signupAvgGrant ?? 5) * 3)}
-          step={0.01}
-          preciseInput={{ unit: "usd", decimals: 2 }}
-        />
-        {baseline.welcomePacks.length > 0 && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            {baseline.welcomePacks.length} welcome pack reference(s) in baseline — card
-            EV is display context only; cost lever is cash grant above.
+        <PanelRow label="Signups" value={baseline.signupSignups.toLocaleString()} />
+        {baseline.signupClaimants <= 0 ? (
+          <EmptyLever note="No signup-bonus claims in this window." />
+        ) : (
+          <>
+            <LeverSlider
+              label="Avg grant per claimant"
+              valueLabel={formatCurrency(levers.signupGrantUsd)}
+              value={levers.signupGrantUsd}
+              onValueChange={(usd) =>
+                setLevers((s) => ({ ...s, signupGrantUsd: Math.max(0, usd) }))
+              }
+              min={0}
+              max={Math.max(50, (baseline.signupAvgGrant ?? 5) * 3)}
+              step={0.01}
+              baselineMarker={baseline.signupAvgGrant ?? 0}
+              baselineLabel={
+                baseline.signupAvgGrant != null
+                  ? `real avg ${formatCurrency(baseline.signupAvgGrant)}`
+                  : undefined
+              }
+              preciseInput={{ unit: "usd", decimals: 2 }}
+            />
+            {amortizedPerSignup != null && (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Bridge: {formatCurrency(levers.signupGrantUsd)} ×{" "}
+                {baseline.signupClaimants} claimants ÷ {baseline.signupSignups}{" "}
+                signups ≈ {formatCurrency(amortizedPerSignup)} amortized per signup
+              </p>
+            )}
+          </>
+        )}
+        {baseline.welcomePacks.length > 0 ? (
+          <div className="mt-3 space-y-2">
+            <p className="text-[11px] text-muted-foreground">
+              Welcome / one-time card packs (theoretical EV — separate from cash
+              grant above).
+            </p>
+            <WelcomePackGrid
+              packs={baseline.welcomePacks.map((w) => ({
+                packId: w.packId,
+                packName: w.packName,
+                packSlug: w.packSlug,
+                rewardName: w.rewardName,
+                rewardSlug: w.rewardSlug,
+                imageUrl: w.imageUrl,
+                cardPreviews: w.cardPreviews,
+                theoreticalEvUsd: w.theoreticalEvUsd,
+                cardsPerOpen: w.cardsPerOpen,
+              }))}
+            />
+          </div>
+        ) : (
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            No welcome pack EV in baseline — signup cost is the cash grant lever
+            above.
           </p>
         )}
       </StatPanel>
+
+      {baseline.rewardPackCatalog.length > 0 && (
+        <Collapsible>
+          <CollapsibleTrigger
+            render={
+              <Button variant="outline" size="sm" className="gap-1.5">
+                Reward pack catalog
+                <ChevronDown className="size-3.5" />
+              </Button>
+            }
+          />
+          <CollapsibleContent className="mt-3">
+            <p className="mb-3 text-[11px] text-muted-foreground">
+              Reference gallery — packs with no opens still appear for shard-shop
+              planning context.
+            </p>
+            <RewardPackCatalogGrid packs={baseline.rewardPackCatalog} compact />
+          </CollapsibleContent>
+        </Collapsible>
+      )}
     </div>
   );
 }
