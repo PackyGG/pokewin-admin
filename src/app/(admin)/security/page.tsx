@@ -1,4 +1,4 @@
-import { Lock, Banknote, Trophy } from "lucide-react";
+import { Lock, Banknote, Trophy, Percent } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getSiteConfig } from "@/lib/queries/security";
 import { SecurityContent } from "./security-content";
@@ -9,6 +9,8 @@ import { WAGER_REQUIREMENT_SITE_CONFIG_KEYS } from "./wager-requirement-keys";
 import { WagerRequirementCard } from "./wager-requirement-card";
 import { LEADERBOARD_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./leaderboard-wager-weights-keys";
 import { LeaderboardWagerWeightsCard } from "./leaderboard-wager-weights-card";
+import { RAKEBACK_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./rakeback-wager-weights-keys";
+import { RakebackWagerWeightsCard } from "./rakeback-wager-weights-card";
 import {
   getWagerRequirementDefaults,
   type WagerRequirementDefaults,
@@ -17,6 +19,10 @@ import {
   getLeaderboardWagerWeights,
   type LeaderboardWagerWeights,
 } from "@/lib/backend-api/leaderboard-wager-weights";
+import {
+  getRakebackWagerWeights,
+  type RakebackWagerWeights,
+} from "@/lib/backend-api/rakeback-wager-weights";
 
 export const metadata = { title: "Security" };
 
@@ -34,6 +40,7 @@ export default async function SecurityPage() {
     ...RAIN_CONFIG_SITE_CONFIG_KEYS,
     ...WAGER_REQUIREMENT_SITE_CONFIG_KEYS,
     ...LEADERBOARD_WAGER_WEIGHT_SITE_CONFIG_KEYS,
+    ...RAKEBACK_WAGER_WEIGHT_SITE_CONFIG_KEYS,
   ]);
   const config = allConfig.filter((row) => !movedKeys.has(row.key));
   const hasMovedKeys = allConfig.some((row) =>
@@ -60,6 +67,15 @@ export default async function SecurityPage() {
     leaderboardWeights = null;
   }
 
+  // Same non-critical pattern for the rakeback wager weights — the backend
+  // branch may not be deployed yet.
+  let rakebackWeights: RakebackWagerWeights | null = null;
+  try {
+    rakebackWeights = await getRakebackWagerWeights();
+  } catch {
+    rakebackWeights = null;
+  }
+
   return (
     <div className="space-y-6">
       <PageHero>
@@ -81,6 +97,13 @@ export default async function SecurityPage() {
         <div className="space-y-3">
           <SectionHeading icon={Trophy} title="Leaderboard Wager Weights" />
           <LeaderboardWagerWeightsCard initial={leaderboardWeights} />
+        </div>
+      </FadeIn>
+
+      <FadeIn>
+        <div className="space-y-3">
+          <SectionHeading icon={Percent} title="Rakeback Wager Weights" />
+          <RakebackWagerWeightsCard initial={rakebackWeights} />
         </div>
       </FadeIn>
 
