@@ -2,7 +2,6 @@ import { test, expect } from "@playwright/test";
 import { loadEnvFiles } from "../helpers/env";
 import {
   mintCreatorHubSession,
-  readSampleAdCode,
   readSampleCreatorId,
   SESSION_COOKIE_NAME,
 } from "../responsive/mint-session";
@@ -26,7 +25,6 @@ const HUB_ROUTES = [
   "/creator-hub/leaderboards",
   "/creator-hub/creator-check",
   "/creator-hub/acquisition",
-  "/creator-hub/codes-ads",
   "/creator-hub/socials-review",
   "/creator-hub/profitable-algo",
   "/creator-hub/changelog",
@@ -125,12 +123,9 @@ test.describe("Creator Hub routes (minted session)", () => {
     await context.close();
   });
 
-  test("ads tab + hub ad detail render when a house code exists", async ({
+  test("legacy codes-ads bookmarks redirect to admin marketing", async ({
     browser,
   }) => {
-    const adCode = await readSampleAdCode();
-    test.skip(!adCode, "No house ad code in MAIN DB — skip ads detail route");
-
     const { cookieValue } = await mintCreatorHubSession();
     const context = await browser.newContext();
     await context.addCookies([
@@ -145,35 +140,15 @@ test.describe("Creator Hub routes (minted session)", () => {
     ]);
     const page = await context.newPage();
 
-    const adsListUrl = "/creator-hub/codes-ads?tab=ads";
-    const listResponse = await page.goto(adsListUrl, {
+    await page.goto("/creator-hub/codes-ads?tab=ads", {
       waitUntil: "domcontentloaded",
     });
-    expect(listResponse?.status()).toBeLessThan(500);
-    await expect(page.getByText(/Creator Hub/i).first()).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(page.getByText(/Campaign Codes/i).first()).toBeVisible({
-      timeout: 15_000,
-    });
+    await page.waitForURL(/\/creators\/ads/, { timeout: 8_000 });
 
-    const detailUrl = `/creator-hub/codes-ads/ads/${encodeURIComponent(adCode!)}`;
-    const detailResponse = await page.goto(detailUrl, {
+    await page.goto("/creator-hub/codes-ads?tab=codes", {
       waitUntil: "domcontentloaded",
     });
-    expect(detailResponse?.status()).toBeLessThan(500);
-    expect(page.url(), "detail should stay on hub route").toMatch(
-      /\/creator-hub\/codes-ads\/ads\//,
-    );
-    expect(page.url(), "detail should not redirect to legacy admin").not.toMatch(
-      /\/creators\/ads\//,
-    );
-    await expect(page.getByText(adCode!).first()).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(page.getByText(/Wager Source/i).first()).toBeVisible({
-      timeout: 15_000,
-    });
+    await page.waitForURL(/\/creators\/codes/, { timeout: 8_000 });
 
     await context.close();
   });
