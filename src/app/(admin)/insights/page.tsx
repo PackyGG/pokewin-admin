@@ -9,6 +9,7 @@ import {
   Gift,
   LineChart,
   SlidersHorizontal,
+  Sparkles,
   Gauge,
   ArrowRight,
   Activity,
@@ -297,6 +298,13 @@ const QUICK_LINKS: ReadonlyArray<QuickLink> = [
     description: "Tune every lever — projected profit + delta vs live",
     icon: SlidersHorizontal,
     accent: "purple",
+  },
+  {
+    href: "/insights/edge-plan-2",
+    label: "Edge Plan 2.0",
+    description: "Shards economy, balance withdrawals, full-width planner",
+    icon: Sparkles,
+    accent: "cyan",
   },
 ];
 

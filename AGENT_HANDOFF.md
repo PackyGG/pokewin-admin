@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** see `git log -1` · **Updated:** 2026-06-08 · **Active focus:** System Edge Plan overview layout — stacked sections, compact GGR tiles, chart sizing fixes
+- **HEAD:** see `git log -1` · **Updated:** 2026-06-07 · **Active focus:** Edge Plan 2.0 — new `/insights/edge-plan-2` page (v1 untouched)
 - **Note (2026-06-06):** local checkout was on branch `dev` (even with `origin/main`) with **no `node_modules` / `.env`**; ran `npm install` + `prisma generate` (both clients) to gate.
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
@@ -19,6 +19,7 @@
 ## ✅ Shipped (recent — on `main`)
 
 **Dashboard + leaderboards P&L surfaces (2026-06-08):**
+- **Edge Plan 2.0** — NEW `/insights/edge-plan-2` (v1 `/insights/system-edge-plan` untouched): full-width planner shell, shards economy (raffle-proxy baseline), balance-withdrawal + wager-req what-ifs, pack-first tuners, presets in `edge-plan-2:presets:v1` localStorage; e2e `e2e/tests/edge-plan-2.spec.ts`
 - **System Edge Plan overview layout** — overview sections stack full-width (no 2-col height mismatch); GGR by game type uses compact 3-tile row; reward/net-edge charts get dynamic height, wider Y-axis labels, tighter bar sizing
 - **Creator Hub leaderboard detail + freeze** — `/creator-hub/leaderboards/[id]` with shared `LeaderboardStandingsPanel` + `FreezeClaimCell`; hub list/creator cards link here; `freezeClaim`/`unfreezeClaim` accept Creator Hub access and revalidate hub paths
 - **System Edge Plan GGR panel layout** — overview 2-col grid uses `items-start` so GGR by game type card doesn’t stretch empty space to match Net edge by scenario chart height

@@ -56,6 +56,8 @@ import {
   Scale,
   History,
   SlidersHorizontal,
+  Sparkles,
+  Gem,
   Compass,
   ArrowRight,
   type LucideIcon,
@@ -135,6 +137,8 @@ const ICONS: Record<string, LucideIcon> = {
   Scale,
   History,
   SlidersHorizontal,
+  Sparkles,
+  Gem,
   Compass,
   ArrowRight,
 };

@@ -368,6 +368,28 @@ export const NAV_ENTRIES: NavEntry[] = [
     // analytical surfaces are absent from the command palette today).
     inPalette: false,
   },
+  {
+    id: "nav.insights.edge-plan-2",
+    group: "Insights",
+    label: "Edge Plan 2.0",
+    href: "/insights/edge-plan-2",
+    pageKey: "/insights/edge-plan-2",
+    icon: "Sparkles",
+    description: "Post-raffle economics planner — shards, balance withdrawals, full-width command center",
+    keywords: [
+      "edge",
+      "plan",
+      "2.0",
+      "shards",
+      "withdrawal",
+      "wager",
+      "levers",
+      "profit",
+    ],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
 
   {
     // Creator Analytics — palette-only (no sidebar link).

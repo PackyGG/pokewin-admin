@@ -73,6 +73,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // profit impact + delta vs the current real config. Read-only (no live
   // data writes). Own permission key so it can be granted independently.
   { group: "Insights", label: "System Edge Plan", key: "/insights/system-edge-plan" },
+  { group: "Insights", label: "Edge Plan 2.0", key: "/insights/edge-plan-2" },
   // Transactions
   // Standalone /transactions overview removed — admins land on a
   // specific sub-ledger instead. Each sub-page carries its own
