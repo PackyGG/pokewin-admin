@@ -45,6 +45,8 @@ export function CreateRewardButton({ defaultType }: { defaultType?: "one_time" |
   const [type, setType] = useState<"one_time" | "daily" | "balance">(defaultType ?? "one_time");
   const [levelRequired, setLevelRequired] = useState("");
   const [cashAmount, setCashAmount] = useState("");
+  // Daily reward re-unlock threshold, entered as a percent (1 = 1%). Empty = 1% default.
+  const [dailyUnlockPct, setDailyUnlockPct] = useState("");
   const [packs, setPacks] = useState<PackEntry[]>([]);
 
   function addPack() {
@@ -71,6 +73,7 @@ export function CreateRewardButton({ defaultType }: { defaultType?: "one_time" |
     setType(defaultType ?? "one_time");
     setLevelRequired("");
     setCashAmount("");
+    setDailyUnlockPct("");
     setPacks([]);
   }
 
@@ -95,6 +98,10 @@ export function CreateRewardButton({ defaultType }: { defaultType?: "one_time" |
           levelRequired: levelRequired ? parseInt(levelRequired, 10) : undefined,
           packIds: validPacks.map((p) => p.id),
           cashAmount: cashAmount ? parseFloat(cashAmount) : undefined,
+          dailyUnlockPercentage:
+            type === "daily" && dailyUnlockPct
+              ? parseFloat(dailyUnlockPct) / 100
+              : undefined,
         });
         toast.success("Reward created");
         setOpen(false);
@@ -147,6 +154,25 @@ export function CreateRewardButton({ defaultType }: { defaultType?: "one_time" |
             <Label>Cash Amount (optional)</Label>
             <Input type="number" value={cashAmount} onChange={(e) => setCashAmount(e.target.value)} placeholder="0.00" min={0} step="0.01" />
           </div>
+
+          {type === "daily" && (
+            <div className="space-y-2">
+              <Label>Re-unlock Threshold (%)</Label>
+              <Input
+                type="number"
+                value={dailyUnlockPct}
+                onChange={(e) => setDailyUnlockPct(e.target.value)}
+                placeholder="1"
+                min={0}
+                step="0.01"
+              />
+              <p className="text-xs text-muted-foreground">
+                Percent of the level&apos;s wager requirement a user must re-earn to
+                re-open this pack after its 30-day period ends. Leave blank for the
+                default (1%).
+              </p>
+            </div>
+          )}
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">
