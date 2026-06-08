@@ -13,15 +13,21 @@
  * panel never writes them directly — it goes through backendApi.put().
  *
  * Keys (managed by the backend's PUT /admin/wager-requirement/default):
- *  - withdrawal_wager_requirement_bps        deposit-based requirement
- *  - withdrawal_bonus_wager_requirement_bps  bonus-winnings requirement
- *  - wager_weight_packs_bps                  pack wager weight
+ *  - withdrawal_wager_requirement_bps           deposit-based requirement
+ *  - withdrawal_bonus_wager_requirement_bps     general bonus-winnings requirement
+ *  - withdrawal_affiliate_wager_requirement_bps affiliate-claims requirement
+ *  - withdrawal_rakeback_wager_requirement_bps  rakeback requirement
+ *  - withdrawal_tips_wager_requirement_bps      tips requirement
+ *  - wager_weight_packs_bps                     pack wager weight
  *  - wager_weight_battles_bps                battle wager weight
  *  - wager_weight_upgrader_bps               upgrader wager weight
  */
 export const WAGER_REQUIREMENT_SITE_CONFIG_KEYS: readonly string[] = [
   "withdrawal_wager_requirement_bps",
   "withdrawal_bonus_wager_requirement_bps",
+  "withdrawal_affiliate_wager_requirement_bps",
+  "withdrawal_rakeback_wager_requirement_bps",
+  "withdrawal_tips_wager_requirement_bps",
   "wager_weight_packs_bps",
   "wager_weight_battles_bps",
   "wager_weight_upgrader_bps",

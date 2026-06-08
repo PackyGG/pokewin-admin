@@ -58,9 +58,39 @@ const FIELDS: {
     label: "Bonus-winnings requirement",
     help: (
       <>
-        Multiplier on lifetime bonus winnings (rain, tips, rakeback, prizes,
-        affiliate claims, rewards, sponsored battles). Default 1×.{" "}
-        <code>0×</code> disables it.
+        Multiplier on lifetime general bonus winnings (rain, prizes, rewards,
+        sponsored battles). Default 1×. <code>0×</code> disables it. Affiliate
+        claims, rakeback, and tips have their own requirements below.
+      </>
+    ),
+  },
+  {
+    key: "affiliate_wager_requirement_bps",
+    label: "Affiliate-claims requirement",
+    help: (
+      <>
+        Multiplier on lifetime affiliate commission claims a user must wager
+        before any withdrawal. Default 1×. <code>0×</code> disables it.
+      </>
+    ),
+  },
+  {
+    key: "rakeback_wager_requirement_bps",
+    label: "Rakeback requirement",
+    help: (
+      <>
+        Multiplier on lifetime rakeback claims a user must wager before any
+        withdrawal. Default 1×. <code>0×</code> disables it.
+      </>
+    ),
+  },
+  {
+    key: "tips_wager_requirement_bps",
+    label: "Tips requirement",
+    help: (
+      <>
+        Multiplier on lifetime tips received a user must wager before any
+        withdrawal. Default 1×. <code>0×</code> disables it.
       </>
     ),
   },

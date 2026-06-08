@@ -6,11 +6,14 @@ import { backendApi } from "./client";
  * Withdrawal wager-requirement admin API.
  *
  * The game backend gates every withdrawal behind a lifetime wager
- * requirement:
+ * requirement, summed across five independently-configurable buckets:
  *
- *   deposit_bps / 10000 × total_deposited
- * + bonus_bps   / 10000 × total_bonus_won   (rain, tips, rakeback, prizes,
- *                                             rewards, sponsored battle share)
+ *   deposit_bps   / 10000 × total_deposited
+ * + bonus_bps     / 10000 × total_bonus_won      (rain, prizes, rewards,
+ *                                                  sponsored battle share)
+ * + affiliate_bps / 10000 × total_affiliate_won  (affiliate commission claims)
+ * + rakeback_bps  / 10000 × total_rakeback_won   (rakeback claims)
+ * + tips_bps      / 10000 × total_tips_won        (tips received)
  *
  * before any withdrawal is allowed. Every knob is in basis points
  * (10000 bps = 1×). Per-game weights scale how much each wager counts
@@ -29,8 +32,14 @@ import { backendApi } from "./client";
 export type WagerRequirementDefaults = {
   /** Requirement on lifetime deposits, in bps (10000 = 1×, 0 = disabled). */
   wager_requirement_bps: number;
-  /** Requirement on lifetime bonus winnings, in bps (10000 = 1×, 0 = disabled). */
+  /** Requirement on lifetime general bonus winnings (rain, prizes, rewards, sponsored battles), in bps (10000 = 1×, 0 = disabled). */
   bonus_wager_requirement_bps: number;
+  /** Requirement on lifetime affiliate commission claims, in bps (10000 = 1×, 0 = disabled). */
+  affiliate_wager_requirement_bps: number;
+  /** Requirement on lifetime rakeback claims, in bps (10000 = 1×, 0 = disabled). */
+  rakeback_wager_requirement_bps: number;
+  /** Requirement on lifetime tips received, in bps (10000 = 1×, 0 = disabled). */
+  tips_wager_requirement_bps: number;
   /** How much pack wagers count toward the requirement, in bps (10000 = 1×). */
   wager_weight_packs_bps: number;
   /** How much battle wagers count toward the requirement, in bps (10000 = 1×). */
