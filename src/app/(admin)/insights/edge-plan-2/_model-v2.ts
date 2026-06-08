@@ -74,6 +74,8 @@ export type EdgePlanV2Baseline = SystemEdgeBaseline & {
   balanceWithdrawalShare: number;
   /** Estimated total withdrawal USD in window (for balance-withdrawal modeling). */
   estimatedWithdrawalVolumeUsd: number;
+  /** True when headline metrics were recovered or planning defaults were used. */
+  baselineSparse?: boolean;
 };
 
 export type PlannedLeversV2 = Omit<

@@ -5,7 +5,6 @@ import {
   Coins,
   Gauge,
   RotateCcw,
-  Save,
   TrendingDown,
   TrendingUp,
   Wallet,
@@ -13,8 +12,7 @@ import {
 
 import { KpiTile } from "@/components/modern-panels";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
+import { formatCompactUsd } from "@/lib/utils/format";
 import { formatPct, formatSignedUsd } from "../../edge-calc/math";
 import { computeNetEdgeScenarios } from "../../system-edge-plan/_model";
 import {
@@ -24,7 +22,12 @@ import {
   type EdgePlanV2Baseline,
   type PlannedLeversV2,
 } from "../_model-v2";
-import { usePlannerPresetsV2 } from "../_presets-v2";
+import {
+  leversEqualV2,
+  PlannerPresetsV2,
+  usePlannerPresetsV2,
+  type SavedConfigV2,
+} from "../_presets-v2";
 import {
   PlannerV2SectionNav,
   PlannerV2SectionPanel,
@@ -58,7 +61,6 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
   const [levers, setLevers] = React.useState<PlannedLeversV2>(() =>
     defaultLeversV2(baseline),
   );
-  const [presetName, setPresetName] = React.useState("");
 
   const projection = React.useMemo(
     () => projectEdgePlanV2(baseline, levers),
@@ -74,10 +76,28 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
   const gaming = React.useMemo(() => makeGamingSetters(setLevers), []);
   const presets = usePlannerPresetsV2();
 
+  const dirtyVsActive = React.useMemo(() => {
+    const ref = presets.activeConfig
+      ? sanitizeLeversV2(presets.activeConfig.levers)
+      : defaults;
+    return !leversEqualV2(levers, ref);
+  }, [levers, presets.activeConfig, defaults]);
+
+  const handleLoadConfig = React.useCallback((cfg: SavedConfigV2) => {
+    setLevers(sanitizeLeversV2(cfg.levers));
+  }, []);
+
   const profitTone = projection.profitDelta >= 0 ? EMERALD : ROSE;
 
   return (
     <div className="space-y-4">
+      {baseline.baselineSparse && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-200">
+          Some 30d baseline reads were unavailable — wager and reward anchors may
+          be partially estimated. Levers and saved configs still work for what-if
+          planning.
+        </div>
+      )}
       <div className="flex flex-col gap-3 rounded-xl border bg-gradient-to-br from-violet-500/10 via-card to-card p-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -96,38 +116,12 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
             <RotateCcw className="size-3.5" />
             Reset
           </Button>
-          <Input
-            placeholder="Preset name"
-            value={presetName}
-            onChange={(e) => setPresetName(e.target.value)}
-            className="h-8 w-36"
+          <PlannerPresetsV2
+            presets={presets}
+            currentLevers={levers}
+            dirtyVsActive={dirtyVsActive}
+            onLoad={handleLoadConfig}
           />
-          <Button
-            type="button"
-            size="sm"
-            disabled={!presetName.trim()}
-            onClick={() => {
-              presets.save(presetName.trim(), levers);
-              setPresetName("");
-            }}
-          >
-            <Save className="size-3.5" />
-            Save
-          </Button>
-          {presets.configs.slice(0, 4).map((c) => (
-            <Button
-              key={c.id}
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                const loaded = presets.load(c.id);
-                if (loaded) setLevers(sanitizeLeversV2(loaded));
-              }}
-            >
-              {c.name}
-            </Button>
-          ))}
         </div>
       </div>
 

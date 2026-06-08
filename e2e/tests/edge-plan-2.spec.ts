@@ -19,9 +19,12 @@ test.describe("Edge Plan 2.0", () => {
 
     await expect(
       adminPage.getByText(/projected profit delta/i),
+    ).toBeVisible({ timeout: 15_000 });
+
+    await expect(
+      adminPage.getByRole("button", { name: /configs/i }),
     ).toBeVisible();
 
-    // Section nav tabs — at least overview + shards economy.
     await expect(
       adminPage.getByRole("button", { name: /overview/i }).first(),
     ).toBeVisible();
@@ -29,22 +32,17 @@ test.describe("Edge Plan 2.0", () => {
       adminPage.getByRole("button", { name: /shards economy/i }).first(),
     ).toBeVisible();
 
-    // Switch to Shards tab — panel should expose shard economy copy.
     await adminPage.getByRole("button", { name: /shards economy/i }).first().click();
     await expect(
       adminPage.getByText("Shards earn", { exact: true }),
     ).toBeVisible({ timeout: 10_000 });
   });
 
-  test("period query param accepted", async ({ adminPage }) => {
-    const response = await adminPage.goto("/insights/edge-plan-2?period=30d");
-    expect(response?.status()).toBeLessThan(500);
+  test("shows fixed 30d baseline label", async ({ adminPage }) => {
+    await adminPage.goto("/insights/edge-plan-2");
 
     await expect(
-      adminPage.getByRole("heading", { name: /edge plan 2\.0/i }),
-    ).toBeVisible();
-    await expect(
-      adminPage.getByText(/baseline window/i),
+      adminPage.getByText(/last 30 days/i),
     ).toBeVisible();
   });
 });
