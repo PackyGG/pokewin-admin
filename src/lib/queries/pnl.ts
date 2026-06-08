@@ -437,6 +437,191 @@ export async function calculateWindowedPnl(opts: {
 }
 
 /**
+ * House P&L per user over a bounded window `[start, end)` — the same five-term
+ * windowed-delta formula as `calculateWindowedPnl`, batched for many users in
+ * one round-trip per source table. Used by affiliate-leaderboard standings so
+ * each row can show house P&L inside the event window without N×4 queries.
+ *
+ * Users with no qualifying activity in the window are absent from the returned
+ * map (callers should default to 0).
+ */
+export async function calculateUsersBoundedWindowedPnlBatch(
+  userIds: string[],
+  start: Date,
+  end: Date,
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (userIds.length === 0) return result;
+
+  return withTiming("pnl.usersBoundedWindowedBatch", async () => {
+    const db = await getDb();
+    const statsExcluded = statsExcludedAdjustmentSqlPredicate({
+      typeColumn: "lt.type",
+      metadataColumn: "lt.metadata",
+    });
+
+    type LedgerRow = {
+      user_id: string;
+      deposits: string;
+      manual_wd: string;
+      balance_change: string;
+    };
+    type AmountRow = { user_id: string; amount: string };
+    type InvRow = { user_id: string; obtained: string; ui_disposed: string };
+
+    const [ledger, card, inv, adminInv, vchIssued, vchClaimed, adminVch] =
+      await Promise.all([
+      db.$queryRawUnsafe<LedgerRow[]>(
+        `SELECT lt.user_id,
+           COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
+           COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
+                              AND lt.balance_after < lt.balance_before
+                              AND lt.description ILIKE 'Manual withdrawal:%'
+                             THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd,
+           COALESCE(SUM(CASE WHEN ${statsExcluded} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::text AS balance_change
+         FROM ledger_transactions lt
+         WHERE lt.status = 'completed'
+           AND lt.created_at >= $2
+           AND lt.created_at <  $3
+           AND lt.user_id = ANY($1::text[])
+         GROUP BY lt.user_id`,
+        userIds,
+        start,
+        end,
+      ),
+      db.$queryRawUnsafe<AmountRow[]>(
+        `SELECT cwr.user_id,
+           COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS amount
+         FROM card_withdrawal_requests cwr
+         WHERE cwr.status IN ('completed', 'shipped')
+           AND COALESCE(cwr.shipped_at, cwr.completed_at) >= $2
+           AND COALESCE(cwr.shipped_at, cwr.completed_at) <  $3
+           AND cwr.user_id = ANY($1::text[])
+         GROUP BY cwr.user_id`,
+        userIds,
+        start,
+        end,
+      ),
+      db.$queryRawUnsafe<InvRow[]>(
+        `SELECT ui.user_id,
+           COALESCE(SUM(CASE WHEN ui.obtained_at >= $2 AND ui.obtained_at < $3
+                             THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained,
+           COALESCE(SUM(CASE WHEN (ui.sold_at >= $2 AND ui.sold_at < $3)
+                               OR (ui.exchanged_at >= $2 AND ui.exchanged_at < $3)
+                             THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS ui_disposed
+         FROM user_inventory ui
+         WHERE ui.user_id = ANY($1::text[])
+           AND (
+             (ui.obtained_at >= $2 AND ui.obtained_at < $3)
+             OR (ui.sold_at >= $2 AND ui.sold_at < $3)
+             OR (ui.exchanged_at >= $2 AND ui.exchanged_at < $3)
+           )
+         GROUP BY ui.user_id`,
+        userIds,
+        start,
+        end,
+      ),
+      db.$queryRawUnsafe<AmountRow[]>(
+        `SELECT lt.user_id,
+           COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS amount
+         FROM ledger_transactions lt
+         WHERE lt.status = 'completed'
+           AND lt.created_at >= $2
+           AND lt.created_at <  $3
+           AND lt.type::text = 'admin_balance_adjustment'
+           AND lt.metadata->>'kind' = 'inventory_removal'
+           AND lt.user_id = ANY($1::text[])
+           AND NOT EXISTS (
+             SELECT 1 FROM user_inventory ui2
+             WHERE ui2.id::text = lt.metadata->>'inventory_item_id'
+           )
+         GROUP BY lt.user_id`,
+        userIds,
+        start,
+        end,
+      ),
+      db.$queryRawUnsafe<AmountRow[]>(
+        `SELECT v.user_id,
+           COALESCE(SUM(v.value::numeric), 0)::text AS amount
+         FROM vouchers v
+         WHERE v.user_id = ANY($1::text[])
+           AND v.created_at >= $2
+           AND v.created_at <  $3
+         GROUP BY v.user_id`,
+        userIds,
+        start,
+        end,
+      ),
+      db.$queryRawUnsafe<AmountRow[]>(
+        `SELECT v.user_id,
+           COALESCE(SUM(v.value::numeric), 0)::text AS amount
+         FROM vouchers v
+         WHERE v.user_id = ANY($1::text[])
+           AND v.claimed_at >= $2
+           AND v.claimed_at <  $3
+         GROUP BY v.user_id`,
+        userIds,
+        start,
+        end,
+      ),
+      db.$queryRawUnsafe<AmountRow[]>(
+        `SELECT lt.user_id,
+           COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS amount
+         FROM ledger_transactions lt
+         WHERE lt.status = 'completed'
+           AND lt.created_at >= $2
+           AND lt.created_at <  $3
+           AND lt.type::text = 'admin_balance_adjustment'
+           AND lt.metadata->>'kind' = 'voucher_removal'
+           AND lt.user_id = ANY($1::text[])
+           AND NOT EXISTS (
+             SELECT 1 FROM vouchers v2
+             WHERE v2.id::text = lt.metadata->>'voucher_id'
+           )
+         GROUP BY lt.user_id`,
+        userIds,
+        start,
+        end,
+      ),
+    ]);
+
+    const ledgerByUser = new Map(ledger.map((r) => [r.user_id, r]));
+    const cardByUser = new Map(card.map((r) => [r.user_id, r]));
+    const invByUser = new Map(inv.map((r) => [r.user_id, r]));
+    const adminInvByUser = new Map(adminInv.map((r) => [r.user_id, r]));
+    const vchIssuedByUser = new Map(vchIssued.map((r) => [r.user_id, r]));
+    const vchClaimedByUser = new Map(vchClaimed.map((r) => [r.user_id, r]));
+    const adminVchByUser = new Map(adminVch.map((r) => [r.user_id, r]));
+
+    for (const userId of userIds) {
+      const lt = ledgerByUser.get(userId);
+      const deposits = toNumber(lt?.deposits);
+      const manualWd = toNumber(lt?.manual_wd);
+      const cardWd = toNumber(cardByUser.get(userId)?.amount);
+      const balanceChange = toNumber(lt?.balance_change);
+      const invRow = invByUser.get(userId);
+      const inventoryChange =
+        toNumber(invRow?.obtained) -
+        (toNumber(invRow?.ui_disposed) +
+          toNumber(adminInvByUser.get(userId)?.amount));
+      const voucherChange =
+        toNumber(vchIssuedByUser.get(userId)?.amount) -
+        (toNumber(vchClaimedByUser.get(userId)?.amount) +
+          toNumber(adminVchByUser.get(userId)?.amount));
+      const pnl =
+        deposits -
+        (manualWd + cardWd) -
+        balanceChange -
+        inventoryChange -
+        voucherChange;
+      result.set(userId, pnl);
+    }
+
+    return result;
+  });
+}
+
+/**
  * Compute P&L for many users in a single round-trip per component table
  * — N+1 safe. Returns a Map keyed by userId. Missing users get a zeroed
  * record so callers can `map.get(id) ?? ZERO_PNL` without guards.

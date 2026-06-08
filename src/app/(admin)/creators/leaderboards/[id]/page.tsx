@@ -129,6 +129,10 @@ export default async function AffiliateLeaderboardDetailPage({
         email: creatorById.get(id)?.email ?? null,
     }));
     const currentSponsoredPct = sponsorshipMap.get(id) ?? null;
+    const standingsHousePnlUsd = rankings.reduce(
+        (sum, r) => sum + r.housePnlUsd,
+        0,
+    );
 
     const now = Date.now();
     const startMs = new Date(lb.start_date).getTime();
@@ -237,17 +241,26 @@ export default async function AffiliateLeaderboardDetailPage({
                         <DefRow
                             label="Affiliate codes"
                             value={
-                                lb.affiliate_codes.length > 0 ? (
-                                    <div className="flex gap-1 flex-wrap">
-                                        {lb.affiliate_codes.map((c) => (
-                                            <Badge key={c} variant="outline">
-                                                {c}
-                                            </Badge>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <span className="text-muted-foreground italic">all codes</span>
-                                )
+                                <div className="flex flex-col items-end gap-1.5">
+                                    {lb.affiliate_codes.length > 0 ? (
+                                        <div className="flex gap-1 flex-wrap justify-end">
+                                            {lb.affiliate_codes.map((c) => (
+                                                <Badge key={c} variant="outline">
+                                                    {c}
+                                                </Badge>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <span className="text-muted-foreground italic">all codes</span>
+                                    )}
+                                    {rankings.length > 0 && (
+                                        <HousePnlLabel
+                                            label="House P&L (event window)"
+                                            pnl={standingsHousePnlUsd}
+                                            className="text-xs"
+                                        />
+                                    )}
+                                </div>
                             }
                         />
                         <DefRow label="Starts" value={fmt(lb.start_date)} />
@@ -424,6 +437,7 @@ export default async function AffiliateLeaderboardDetailPage({
                                 <TableHead className="w-16">Place</TableHead>
                                 <TableHead>User</TableHead>
                                 <TableHead className="text-right">Wagered</TableHead>
+                                <TableHead className="text-right">House P&amp;L</TableHead>
                                 <TableHead className="text-right">Prize</TableHead>
                                 <TableHead className="text-right w-36">Claim</TableHead>
                             </TableRow>
@@ -431,7 +445,7 @@ export default async function AffiliateLeaderboardDetailPage({
                         <TableBody>
                             {rankings.length === 0 ? (
                                 <TableRow className="hover:bg-transparent">
-                                    <TableCell colSpan={5} className="p-0">
+                                    <TableCell colSpan={6} className="p-0">
                                         <EmptyState
                                             icon={Trophy}
                                             title={
@@ -509,6 +523,9 @@ export default async function AffiliateLeaderboardDetailPage({
                                                 CLAUDE.md house-POV → emerald. */}
                                             <TableCell className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">
                                                 {formatCurrency(r.totalWageredUsd)}
+                                            </TableCell>
+                                            <TableCell className="text-right tabular-nums">
+                                                <HousePnlValue pnl={r.housePnlUsd} />
                                             </TableCell>
                                             {/* Prize is house outflow → rose. Null when
                                                 this position is below the lowest
@@ -595,5 +612,35 @@ function DefRow({ label, value }: { label: string; value: React.ReactNode }) {
             <span className="text-muted-foreground shrink-0">{label}</span>
             <div className={cn("text-right max-w-[60%]")}>{value}</div>
         </div>
+    );
+}
+
+function housePnlColorClass(pnl: number): string {
+    if (pnl > 0) return "text-emerald-600 dark:text-emerald-400";
+    if (pnl < 0) return "text-rose-600 dark:text-rose-400";
+    return "text-muted-foreground";
+}
+
+function HousePnlValue({ pnl }: { pnl: number }) {
+    return (
+        <span className={cn("font-medium", housePnlColorClass(pnl))}>
+            {pnl === 0 ? "—" : formatCurrency(pnl)}
+        </span>
+    );
+}
+
+function HousePnlLabel({
+    pnl,
+    label,
+    className,
+}: {
+    pnl: number;
+    label: string;
+    className?: string;
+}) {
+    return (
+        <span className={cn("tabular-nums", housePnlColorClass(pnl), className)}>
+            {label}: {pnl === 0 ? "—" : formatCurrency(pnl)}
+        </span>
     );
 }

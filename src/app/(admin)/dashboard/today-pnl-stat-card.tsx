@@ -62,6 +62,9 @@ export function TodayPnlStatCard({
   dayLabel: string;
 }) {
   const isProfit = pnl >= 0;
+  const rawCashPnl = deposits - withdrawals;
+  const rawCashUp = rawCashPnl > 0;
+  const rawCashDown = rawCashPnl < 0;
   // Net change in user holdings (balance + inventory + vouchers). When
   // negative, user liabilities shrank — partially offsets deposits vs
   // withdrawals on the headline P&L figure.
@@ -91,11 +94,14 @@ export function TodayPnlStatCard({
             {dayLabel}
           </span>
         </div>
-        {isProfit ? (
-          <TrendingUp className="size-4 shrink-0 text-emerald-400" />
-        ) : (
-          <TrendingDown className="size-4 shrink-0 text-rose-400" />
-        )}
+        <div className="flex shrink-0 items-center gap-1.5">
+          <RawCashPnlBadge pnl={rawCashPnl} />
+          {isProfit ? (
+            <TrendingUp className="size-4 shrink-0 text-emerald-400" />
+          ) : (
+            <TrendingDown className="size-4 shrink-0 text-rose-400" />
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="text-stat-value truncate">
@@ -132,13 +138,56 @@ export function TodayPnlStatCard({
           />
         </div>
         <p className="text-[10px] leading-snug text-muted-foreground">
-          P&amp;L ≠ deposits − withdrawals. Balance, inventory, and voucher
-          movement also count — open the{" "}
-          <span className="font-medium text-foreground/80">info</span> icon for
-          the full five-term breakdown (balance-sheet movement, not GGR).
+          Full P&amp;L includes balance, inventory, and voucher movement — see
+          the{" "}
+          <span className="font-medium text-foreground/80">info</span> icon.
+          Top-right{" "}
+          <span
+            className={cn(
+              "font-medium",
+              rawCashUp && "text-emerald-600 dark:text-emerald-400",
+              rawCashDown && "text-rose-600 dark:text-rose-400",
+              !rawCashUp && !rawCashDown && "text-foreground/80",
+            )}
+          >
+            Cash P&amp;L
+          </span>{" "}
+          is deposits − withdrawals only (raw crypto cash flow).
         </p>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Top-right badge: raw cash flow today — deposits minus withdrawals only,
+ * with no balance / inventory / voucher terms. House-POV colors match the
+ * headline P&L tile and the Creators Costs affiliate-PnL corner badge.
+ */
+function RawCashPnlBadge({ pnl }: { pnl: number }) {
+  const up = pnl > 0;
+  const down = pnl < 0;
+  const sign = up ? "+" : down ? "−" : "";
+  return (
+    <span
+      title={`Raw cash flow today (since 00:00 UTC): completed deposits minus card + manual withdrawals. No balance, inventory, or voucher movement — the plain crypto in/out figure.`}
+      className={cn(
+        "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums leading-none",
+        up &&
+          "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+        down &&
+          "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
+        !up &&
+          !down &&
+          "border-border/60 bg-background/40 text-muted-foreground",
+      )}
+    >
+      <span className="mr-px text-muted-foreground/80">Cash P&amp;L</span>
+      <span className="ml-1">
+        {sign}
+        <AnimatedNumber value={Math.abs(pnl)} format="currency" />
+      </span>
+    </span>
   );
 }
 
@@ -298,6 +347,9 @@ function TodayPnlInfoPopover({
             GGR or gaming margin — the same formula as the period-P&amp;L card
             and the daily-P&amp;L chart. Real customers only (staff + excluded
             users dropped).{" "}
+            <strong>Cash P&amp;L</strong> (top-right badge) is deposits −
+            withdrawals only — raw crypto cash flow with no balance /
+            inventory / voucher terms.{" "}
             <strong>Includes:</strong> gaming, rakeback, bonuses, card sales,
             fraud/abuse cash removals, admin inventory/voucher removals
             (via sold/claimed stamps).{" "}

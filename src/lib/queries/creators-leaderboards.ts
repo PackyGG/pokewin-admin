@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { calculateUsersBoundedWindowedPnlBatch } from "./pnl";
 import { blacklistNotInClause } from "./_blacklist";
 
 export type LeaderboardRanking = {
@@ -9,6 +10,8 @@ export type LeaderboardRanking = {
   username: string | null;
   email: string | null;
   totalWageredUsd: number;
+  /** House P&L on this user over the leaderboard window [start, end). */
+  housePnlUsd: number;
   // Prize from the leaderboard's prize_tiers matched against this
   // user's position. null when the user is below the lowest tier.
   prizeUsd: number | null;
@@ -161,6 +164,16 @@ export async function getAffiliateLeaderboardRankings(opts: {
     prizeByPosition.set(t.position, toNumber(t.prize_amount_usd));
   }
 
+  const userIds = rows.map((r) => r.user_id);
+  const pnlByUser = await calculateUsersBoundedWindowedPnlBatch(
+    userIds,
+    startDate,
+    endDate,
+  ).catch((err) => {
+    console.error("[leaderboard] windowed PnL batch failed", err);
+    return new Map<string, number>();
+  });
+
   return rows.map((r, i) => {
     const position = i + 1;
     return {
@@ -169,6 +182,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
       username: r.username,
       email: r.email,
       totalWageredUsd: toNumber(r.total_wagered),
+      housePnlUsd: pnlByUser.get(r.user_id) ?? 0,
       prizeUsd: prizeByPosition.get(position) ?? null,
     };
   });
