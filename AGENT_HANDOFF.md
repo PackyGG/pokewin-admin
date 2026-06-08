@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** see `git log -1` · **Updated:** 2026-06-08 · **Active focus:** Creator Hub leaderboard detail with claim freeze parity
+- **HEAD:** see `git log -1` · **Updated:** 2026-06-08 · **Active focus:** System Edge Plan overview layout — stacked sections, compact GGR tiles, chart sizing fixes
 - **Note (2026-06-06):** local checkout was on branch `dev` (even with `origin/main`) with **no `node_modules` / `.env`**; ran `npm install` + `prisma generate` (both clients) to gate.
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
