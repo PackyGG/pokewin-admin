@@ -6,6 +6,32 @@ import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
+/** Cross-request fallback when the admin DB read fails after a prior success. */
+let lastKnownGoodExcludedUserIds: string[] | null = null;
+
+async function loadExcludedUserIdsFromDb(): Promise<string[]> {
+  const rows = await adminDb.excluded_users.findMany({
+    select: { user_id: true },
+  });
+  return rows.map((r) => r.user_id);
+}
+
+/**
+ * Refresh the in-process last-known-good blacklist after a successful
+ * admin mutation (add/remove). Keeps the fail-closed fallback aligned
+ * with the DB the mutation just wrote to.
+ */
+export async function refreshExcludedUserIdsCache(): Promise<void> {
+  try {
+    lastKnownGoodExcludedUserIds = await loadExcludedUserIdsFromDb();
+  } catch (e) {
+    console.error(
+      "[excluded-users] failed to refresh blacklist cache after mutation:",
+      e,
+    );
+  }
+}
+
 /**
  * Cached read of the excluded-users blacklist. Returns the bare list
  * of packy.gg user_ids that should be filtered out of dashboard /
@@ -13,22 +39,34 @@ import { toNumber } from "@/lib/utils/decimal";
  *
  * Cached via React's `cache()` so per-request the admin DB is hit
  * exactly once, regardless of how many call sites consult the list
- * inside a single page render. Failures degrade to an empty list +
- * a console.error — better to show metrics with stale exclusions
- * than to crash every analytics page on an admin DB blip.
+ * inside a single page render.
+ *
+ * Fail-closed: on admin DB error, returns the last successfully loaded
+ * list instead of an empty list (which would inflate P&L / stats). If no
+ * prior successful load exists in this process, throws so metrics are
+ * not rendered without a trustworthy scope.
  */
 export const getExcludedUserIds = cache(async (): Promise<string[]> => {
   try {
-    const rows = await adminDb.excluded_users.findMany({
-      select: { user_id: true },
-    });
-    return rows.map((r) => r.user_id);
+    const ids = await loadExcludedUserIdsFromDb();
+    lastKnownGoodExcludedUserIds = ids;
+    return ids;
   } catch (e) {
+    if (lastKnownGoodExcludedUserIds !== null) {
+      console.error(
+        "[excluded-users] failed to read blacklist — using last-known-good list:",
+        e,
+      );
+      return [...lastKnownGoodExcludedUserIds];
+    }
     console.error(
-      "[excluded-users] failed to read blacklist — falling back to empty list:",
+      "[excluded-users] failed to read blacklist and no cached list exists:",
       e,
     );
-    return [];
+    throw new Error(
+      "Excluded-users blacklist unavailable — metrics cannot be scoped safely.",
+      { cause: e },
+    );
   }
 });
 

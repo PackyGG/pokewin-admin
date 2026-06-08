@@ -56,13 +56,19 @@ async function main() {
 
   const ex = await admin.query("SELECT user_id FROM excluded_users");
   const excluded = ex.rows.map((r) => r.user_id);
+  const escapeId = (id) => `'${id.replace(/'/g, "''")}'`;
   const blacklist =
     excluded.length > 0
-      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      ? `AND u.id NOT IN (${excluded.map(escapeId).join(",")})`
       : "";
   const scope = (col) =>
     `${col} IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
+  const excludedOnlyScope = (col) =>
+    excluded.length > 0
+      ? `${col} IN (${excluded.map(escapeId).join(",")})`
+      : `${col} IN (SELECT id FROM "user" WHERE false)`;
   const userScopeLt = scope("lt.user_id");
+  const excludedUserScopeLt = excludedOnlyScope("lt.user_id");
 
   const [ledger, card, inv, vch] = await Promise.all([
     mainDb.query(
@@ -124,6 +130,79 @@ async function main() {
     deposits - withdrawalsGross - balanceChange - inventoryChange - voucherChange;
   const ok = Math.abs(popoverPnl - pnl) < 0.01;
 
+  // Exclusion leak check: compute today's P&L for excluded users only.
+  // Headline `pnl` must NOT include this activity — if excluded users had
+  // any today volume, `excludedOnlyPnl` is non-zero but absent from headline.
+  let excludedOnlyPnl = 0;
+  let excludedOnlyDeposits = 0;
+  if (excluded.length > 0) {
+    const [exLedger, exCard, exInv, exVch] = await Promise.all([
+      mainDb.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS deposits,
+           COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
+                              AND lt.balance_after < lt.balance_before
+                              AND lt.description ILIKE 'Manual withdrawal:%'
+                             THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS manual_wd,
+           COALESCE(SUM(CASE WHEN ${statsExcluded} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::float8 AS balance_change
+         FROM ledger_transactions lt
+         WHERE lt.status = 'completed' AND lt.created_at >= $1 AND ${excludedUserScopeLt}`,
+        [sinceIso],
+      ),
+      mainDb.query(
+        `SELECT COALESCE(SUM(cwr.total_value_usd::numeric), 0)::float8 AS card_wd
+         FROM card_withdrawal_requests cwr
+         WHERE cwr.status IN ('completed', 'shipped')
+           AND COALESCE(cwr.shipped_at, cwr.completed_at) >= $1
+           AND ${excludedOnlyScope("cwr.user_id")}`,
+        [sinceIso],
+      ),
+      mainDb.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN ui.obtained_at >= $1 THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::float8 AS obtained,
+           (
+             COALESCE(SUM(CASE WHEN (ui.sold_at >= $1 OR ui.exchanged_at >= $1) THEN ui.value_at_obtained::numeric ELSE 0 END), 0)
+             + ${adminInventoryRemovalDisposedSql("$1", excludedUserScopeLt)}
+           )::float8 AS disposed
+         FROM user_inventory ui
+         WHERE (ui.obtained_at >= $1 OR ui.sold_at >= $1 OR ui.exchanged_at >= $1)
+           AND ${excludedOnlyScope("ui.user_id")}`,
+        [sinceIso],
+      ),
+      mainDb.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN v.created_at >= $1 THEN v.value::numeric ELSE 0 END), 0)::float8 AS issued,
+           (
+             COALESCE(SUM(CASE WHEN v.claimed_at >= $1 THEN v.value::numeric ELSE 0 END), 0)
+             + ${adminVoucherRemovalClaimedSql("$1", excludedUserScopeLt)}
+           )::float8 AS claimed
+         FROM vouchers v
+         WHERE (v.created_at >= $1 OR v.claimed_at >= $1)
+           AND ${excludedOnlyScope("v.user_id")}`,
+        [sinceIso],
+      ),
+    ]);
+    excludedOnlyDeposits = exLedger.rows[0].deposits;
+    const exManualWd = exLedger.rows[0].manual_wd;
+    const exCardWd = exCard.rows[0].card_wd;
+    const exBalanceChange = exLedger.rows[0].balance_change;
+    const exInventoryChange = exInv.rows[0].obtained - exInv.rows[0].disposed;
+    const exVoucherChange = exVch.rows[0].issued - exVch.rows[0].claimed;
+    excludedOnlyPnl =
+      excludedOnlyDeposits -
+      (exManualWd + exCardWd) -
+      exBalanceChange -
+      exInventoryChange -
+      exVoucherChange;
+  }
+
+  const exclusionLeakCheck = {
+    excludedOnlyPnl,
+    excludedOnlyDeposits,
+    excludedActivityPresentToday: Math.abs(excludedOnlyPnl) > 0.01,
+    headlineExcludesExcludedUsers: true,
+  };
+
   console.log(
     JSON.stringify(
       {
@@ -141,6 +220,7 @@ async function main() {
         naiveDepositsMinusWithdrawals: deposits - withdrawalsGross,
         popoverFormulaPnl: popoverPnl,
         formulaReconciles: ok,
+        exclusionLeakCheck,
       },
       null,
       2,

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { adminDb } from "@/lib/admin-db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { requireExcludedUsersAccess } from "@/lib/excluded-users/gate";
+import { refreshExcludedUserIdsCache } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 
 // packy.gg user_ids are 32-char alphanumeric strings (better-auth
@@ -94,6 +95,7 @@ export async function addExcludedUser(input: {
     metadata: { reason },
   });
 
+  await refreshExcludedUserIdsCache();
   revalidatePath("/system/excluded-users");
   return { ok: true, inserted: 1 };
 }
@@ -125,6 +127,9 @@ export async function removeExcludedUser(
     });
   }
 
+  if (result.count > 0) {
+    await refreshExcludedUserIdsCache();
+  }
   revalidatePath("/system/excluded-users");
   return { ok: true, deleted: result.count };
 }
