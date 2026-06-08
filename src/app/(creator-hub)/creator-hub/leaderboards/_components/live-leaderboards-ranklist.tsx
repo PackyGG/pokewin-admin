@@ -21,8 +21,7 @@ import { LeaderboardTimeLeft } from "./leaderboard-time-left";
  * dates / codes are neutral.
  *
  * Each row links into the Hub creator detail (`/creator-hub/creators/[id]`) and
- * the admin leaderboard detail (`/creators/leaderboards/[id]`) — there is no
- * Hub leaderboard detail route yet.
+ * the Hub leaderboard detail (`/creator-hub/leaderboards/[id]`).
  */
 
 function rankBadgeTint(i: number): string {
@@ -62,7 +61,7 @@ function LiveLeaderboardCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              href={`/creators/leaderboards/${row.id}`}
+              href={`/creator-hub/leaderboards/${row.id}`}
               className="truncate text-sm font-semibold outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
             >
               {row.title}

@@ -9,8 +9,9 @@ import {
     type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { BackendApiError } from "@/lib/backend-api/errors";
-import { requirePageAccess } from "@/lib/dal";
+import { requirePageAccess, verifySession, sessionIsAdmin, getUserPermissions } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
@@ -202,6 +203,19 @@ function logAuditFailure(action: string, err: unknown): void {
 function revalidate(id: string): void {
     revalidatePath(PAGE_KEY);
     revalidatePath(`${PAGE_KEY}/${id}`);
+    revalidatePath("/creator-hub/leaderboards");
+    revalidatePath(`/creator-hub/leaderboards/${id}`);
+}
+
+/** Admin page access OR Creator Hub access — for claim freeze mutations only. */
+async function requireLeaderboardClaimAccess() {
+    const session = await verifySession();
+    if (sessionIsAdmin(session)) return session;
+
+    const allowedPages = await getUserPermissions(session.userId);
+    if (allowedPages.includes(PAGE_KEY)) return session;
+
+    return requireCreatorHubAccess("Not authorized to manage leaderboard claims.");
 }
 
 export async function createLeaderboard(
@@ -709,7 +723,7 @@ export async function freezeClaim(
     userId: string,
     input: { reason: string },
 ): Promise<ActionResult> {
-    const session = await requirePageAccess(PAGE_KEY);
+    const session = await requireLeaderboardClaimAccess();
     const parsedId = idSchema.safeParse(leaderboardId);
     if (!parsedId.success) {
         return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };
@@ -765,7 +779,7 @@ export async function unfreezeClaim(
     userId: string,
     input: { release_reason?: string | null },
 ): Promise<ActionResult> {
-    const session = await requirePageAccess(PAGE_KEY);
+    const session = await requireLeaderboardClaimAccess();
     const parsedId = idSchema.safeParse(leaderboardId);
     if (!parsedId.success) {
         return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };

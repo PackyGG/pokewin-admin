@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, Crown, Medal, Trophy } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Trophy } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
@@ -32,7 +32,7 @@ import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsor
 
 import { DetailActions } from "../_components/detail-actions";
 import { ManualPaymentPanel } from "../_components/manual-payment-panel";
-import { FreezeClaimCell } from "../_components/freeze-claim-cell";
+import { LeaderboardStandingsPanel } from "../_components/leaderboard-standings-panel";
 import {
     LeaderboardDetailCountdown,
     type LeaderboardCountdownMode,
@@ -410,158 +410,12 @@ export default async function AffiliateLeaderboardDetailPage({
                 );
             })()}
 
-            {/* Standings — live rankings of users tied to this
-                leaderboard's code(s) by wager volume inside the
-                event window. Sorted DESC. Top 3 get a medal icon
-                + emerald/silver-zinc/amber accents; lower
-                positions are plain. Prize $$ comes from the
-                leaderboard's prize_tiers map (null when the row's
-                position has no configured tier). */}
-            <FadeIn>
-                <div className="rounded-lg border">
-                    <div className="border-b px-5 py-3 flex items-center justify-between">
-                        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                            Standings
-                        </h2>
-                        <span className="text-xs text-muted-foreground">
-                            {rankings.length === 0
-                                ? "no wager activity yet"
-                                : rankings.length === 1
-                                  ? "1 user wagered"
-                                  : `${rankings.length} users wagered`}
-                        </span>
-                    </div>
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead className="w-16">Place</TableHead>
-                                <TableHead>User</TableHead>
-                                <TableHead className="text-right">Wagered</TableHead>
-                                <TableHead className="text-right">House P&amp;L</TableHead>
-                                <TableHead className="text-right">Prize</TableHead>
-                                <TableHead className="text-right w-36">Claim</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {rankings.length === 0 ? (
-                                <TableRow className="hover:bg-transparent">
-                                    <TableCell colSpan={6} className="p-0">
-                                        <EmptyState
-                                            icon={Trophy}
-                                            title={
-                                                lb.time_status === "upcoming"
-                                                    ? "Leaderboard hasn't started yet"
-                                                    : "No qualifying wager activity"
-                                            }
-                                            description={
-                                                lb.time_status === "upcoming"
-                                                    ? "Standings populate once the event window opens and users start wagering on the code."
-                                                    : "No users tied to this leaderboard's code(s) wagered inside the event window."
-                                            }
-                                            compact
-                                        />
-                                    </TableCell>
-                                </TableRow>
-                            ) : (
-                                rankings.map((r) => {
-                                    const isMedal = r.position <= 3;
-                                    const PositionIcon =
-                                        r.position === 1
-                                            ? Crown
-                                            : r.position <= 3
-                                              ? Medal
-                                              : null;
-                                    const positionAccent =
-                                        r.position === 1
-                                            ? "text-amber-500"
-                                            : r.position === 2
-                                              ? "text-zinc-400"
-                                              : r.position === 3
-                                                ? "text-orange-500"
-                                                : "text-muted-foreground";
-                                    const frozen = holdByUserId.get(r.userId) ?? null;
-                                    return (
-                                        <TableRow
-                                            key={r.userId}
-                                            className={cn(
-                                                frozen &&
-                                                    "bg-sky-500/[0.07] hover:bg-sky-500/10",
-                                            )}
-                                        >
-                                            <TableCell>
-                                                <div
-                                                    className={cn(
-                                                        "inline-flex items-center gap-1.5 font-semibold tabular-nums",
-                                                        positionAccent,
-                                                    )}
-                                                >
-                                                    {PositionIcon && (
-                                                        <PositionIcon className="size-3.5" />
-                                                    )}
-                                                    #{r.position}
-                                                </div>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Link
-                                                    href={`/users/${r.userId}`}
-                                                    className={cn(
-                                                        "hover:underline",
-                                                        isMedal && "font-semibold",
-                                                    )}
-                                                >
-                                                    {r.username ??
-                                                        r.email ??
-                                                        r.userId.slice(0, 8)}
-                                                </Link>
-                                                {r.email && r.username && (
-                                                    <p className="text-xs text-muted-foreground truncate">
-                                                        {r.email}
-                                                    </p>
-                                                )}
-                                            </TableCell>
-                                            {/* Wager volume — money INTO house treasury per
-                                                CLAUDE.md house-POV → emerald. */}
-                                            <TableCell className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">
-                                                {formatCurrency(r.totalWageredUsd)}
-                                            </TableCell>
-                                            <TableCell className="text-right tabular-nums">
-                                                <HousePnlValue pnl={r.housePnlUsd} />
-                                            </TableCell>
-                                            {/* Prize is house outflow → rose. Null when
-                                                this position is below the lowest
-                                                configured tier. */}
-                                            <TableCell className="text-right tabular-nums">
-                                                {r.prizeUsd != null ? (
-                                                    <span className="font-semibold text-rose-600 dark:text-rose-400">
-                                                        {formatCurrency(r.prizeUsd)}
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-muted-foreground">—</span>
-                                                )}
-                                            </TableCell>
-                                            {/* Freeze / unfreeze this participant's prize
-                                                claim — a wager-abuse hold scoped to this
-                                                leaderboard. Frozen rows show a badge + Unfreeze. */}
-                                            <TableCell className="text-right">
-                                                <FreezeClaimCell
-                                                    leaderboardId={lb.id}
-                                                    userId={r.userId}
-                                                    displayName={
-                                                        r.username ??
-                                                        r.email ??
-                                                        r.userId.slice(0, 8)
-                                                    }
-                                                    hold={frozen}
-                                                />
-                                            </TableCell>
-                                        </TableRow>
-                                    );
-                                })
-                            )}
-                        </TableBody>
-                    </Table>
-                </div>
-            </FadeIn>
+            <LeaderboardStandingsPanel
+                leaderboardId={lb.id}
+                rankings={rankings}
+                holdByUserId={holdByUserId}
+                timeStatus={lb.time_status}
+            />
 
             <FadeIn>
                 <div className="rounded-lg border">
@@ -619,14 +473,6 @@ function housePnlColorClass(pnl: number): string {
     if (pnl > 0) return "text-emerald-600 dark:text-emerald-400";
     if (pnl < 0) return "text-rose-600 dark:text-rose-400";
     return "text-muted-foreground";
-}
-
-function HousePnlValue({ pnl }: { pnl: number }) {
-    return (
-        <span className={cn("font-medium", housePnlColorClass(pnl))}>
-            {pnl === 0 ? "—" : formatCurrency(pnl)}
-        </span>
-    );
 }
 
 function HousePnlLabel({

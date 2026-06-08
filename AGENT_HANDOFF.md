@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** see `git log -1` · **Updated:** 2026-06-08 · **Active focus:** System Edge Plan overview grid — GGR by game type no longer stretches to match neighbor chart height
+- **HEAD:** see `git log -1` · **Updated:** 2026-06-08 · **Active focus:** Creator Hub leaderboard detail with claim freeze parity
 - **Note (2026-06-06):** local checkout was on branch `dev` (even with `origin/main`) with **no `node_modules` / `.env`**; ran `npm install` + `prisma generate` (both clients) to gate.
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
@@ -19,6 +19,7 @@
 ## ✅ Shipped (recent — on `main`)
 
 **Dashboard + leaderboards P&L surfaces (2026-06-08):**
+- **Creator Hub leaderboard detail + freeze** — `/creator-hub/leaderboards/[id]` with shared `LeaderboardStandingsPanel` + `FreezeClaimCell`; hub list/creator cards link here; `freezeClaim`/`unfreezeClaim` accept Creator Hub access and revalidate hub paths
 - **System Edge Plan GGR panel layout** — overview 2-col grid uses `items-start` so GGR by game type card doesn’t stretch empty space to match Net edge by scenario chart height
 - **Excluded-users fail-closed** (`7b6c562b`) — `getExcludedUserIds()` uses last-known-good cache instead of `[]` on admin DB blip; `refreshExcludedUserIdsCache()` after blacklist mutations; `scripts/audit-pnl-today.mjs` exclusion leak check
 - **Affiliate leaderboard detail** — `/creators/leaderboards/[id]` standings add **House P&L** column (bounded window `[start,end)` via `calculateUsersBoundedWindowedPnlBatch` in `pnl.ts`); **House P&L (event window)** aggregate under Affiliate codes in Definition panel
