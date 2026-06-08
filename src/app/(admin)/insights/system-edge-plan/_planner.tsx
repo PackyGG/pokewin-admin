@@ -441,7 +441,7 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
 
       <div className="min-w-0">
           <PlannerSectionPanel id="overview" active={activeSection}>
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid items-start gap-4 md:grid-cols-2">
               <GgrByTypePanel projection={projection} />
               <NetEdgeByScenarioPanel scenarios={netEdgeScenarios} />
               <div className="md:col-span-2">

@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** see `git log -1` · **Updated:** 2026-06-08 · **Active focus:** Retired three Insights sidebar pages (Games, Signup, Balance Adjustments) — thin redirects remain; signup stats live under Rewards → Categories
+- **HEAD:** see `git log -1` · **Updated:** 2026-06-08 · **Active focus:** System Edge Plan overview grid — GGR by game type no longer stretches to match neighbor chart height
 - **Note (2026-06-06):** local checkout was on branch `dev` (even with `origin/main`) with **no `node_modules` / `.env`**; ran `npm install` + `prisma generate` (both clients) to gate.
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
@@ -19,6 +19,7 @@
 ## ✅ Shipped (recent — on `main`)
 
 **Dashboard + leaderboards P&L surfaces (2026-06-08):**
+- **System Edge Plan GGR panel layout** — overview 2-col grid uses `items-start` so GGR by game type card doesn’t stretch empty space to match Net edge by scenario chart height
 - **Excluded-users fail-closed** (`7b6c562b`) — `getExcludedUserIds()` uses last-known-good cache instead of `[]` on admin DB blip; `refreshExcludedUserIdsCache()` after blacklist mutations; `scripts/audit-pnl-today.mjs` exclusion leak check
 - **Affiliate leaderboard detail** — `/creators/leaderboards/[id]` standings add **House P&L** column (bounded window `[start,end)` via `calculateUsersBoundedWindowedPnlBatch` in `pnl.ts`); **House P&L (event window)** aggregate under Affiliate codes in Definition panel
 - **P&L Today Cash P&L badge** — top-right corner on dashboard tile: `deposits − withdrawals` only (raw crypto cash flow); full five-term P&L unchanged
