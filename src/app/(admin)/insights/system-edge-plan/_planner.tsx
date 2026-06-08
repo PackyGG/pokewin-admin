@@ -441,15 +441,11 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
 
       <div className="min-w-0">
           <PlannerSectionPanel id="overview" active={activeSection}>
-            <div className="grid items-start gap-4 md:grid-cols-2">
+            <div className="space-y-4">
               <GgrByTypePanel projection={projection} />
               <NetEdgeByScenarioPanel scenarios={netEdgeScenarios} />
-              <div className="md:col-span-2">
-                <RewardCostComparisonChart projection={projection} />
-              </div>
-              <div className="md:col-span-2">
-                <LeverBreakdownPanel projection={projection} />
-              </div>
+              <RewardCostComparisonChart projection={projection} />
+              <LeverBreakdownPanel projection={projection} />
             </div>
           </PlannerSectionPanel>
 
@@ -1684,7 +1680,7 @@ function GgrByTypePanel({
 }) {
   return (
     <StatPanel title="GGR by game type" icon={Layers} accent="emerald">
-      <div className="space-y-0.5">
+      <div className="grid gap-3 sm:grid-cols-3">
         {projection.gameTypes.map((g) => {
           const up = g.ggrDelta >= 0;
           const tone =
@@ -1694,20 +1690,23 @@ function GgrByTypePanel({
                 ? "text-emerald-600 dark:text-emerald-400"
                 : "text-rose-600 dark:text-rose-400";
           return (
-            <PanelRow
+            <div
               key={g.type}
-              label={`${g.label}${g.dataAvailable ? "" : " (no data)"}`}
-              value={
-                <span className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    {formatPct(g.currentEdge)} → {formatPct(g.plannedEdge)} edge
-                  </span>
-                  <span className={cn("w-20 text-right", tone)}>
-                    {Math.abs(g.ggrDelta) < 0.005 ? "—" : formatSignedUsd(g.ggrDelta)}
-                  </span>
-                </span>
-              }
-            />
+              className="rounded-lg border bg-background/40 px-3 py-2.5 space-y-1"
+            >
+              <div className="text-sm font-medium">
+                {g.label}
+                {!g.dataAvailable && (
+                  <span className="text-muted-foreground font-normal"> (no data)</span>
+                )}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {formatPct(g.currentEdge)} → {formatPct(g.plannedEdge)} edge
+              </div>
+              <div className={cn("text-sm font-semibold tabular-nums", tone)}>
+                {Math.abs(g.ggrDelta) < 0.005 ? "—" : formatSignedUsd(g.ggrDelta)}
+              </div>
+            </div>
           );
         })}
       </div>
@@ -1762,6 +1761,7 @@ function NetEdgeByScenarioPanel({
 
   const anyNegative = scenarios.some((s) => s.netEdge < 0);
   const anyThin = scenarios.some((s) => s.netEdge >= 0 && s.netEdge < THIN_NET_EDGE);
+  const chartHeight = Math.max(260, data.length * 28);
 
   return (
     <StatPanel title="Net edge by scenario" icon={ShieldAlert} accent="amber">
@@ -1788,12 +1788,14 @@ function NetEdgeByScenarioPanel({
           {/* Bar chart — net edge (percentage points) per scenario. */}
           <ChartContainer
             config={netEdgeChartConfig}
-            className="aspect-auto h-[260px] w-full"
+            className="aspect-auto w-full min-w-0"
+            style={{ height: chartHeight }}
           >
             <BarChart
               data={data}
               layout="vertical"
-              margin={{ left: 4, right: 52, top: 4, bottom: 4 }}
+              margin={{ left: 12, right: 56, top: 8, bottom: 8 }}
+              barCategoryGap="18%"
               accessibilityLayer
             >
               <CartesianGrid horizontal={false} />
@@ -1824,6 +1826,7 @@ function NetEdgeByScenarioPanel({
               <Bar
                 dataKey="netPct"
                 radius={[0, 3, 3, 0]}
+                barSize={16}
                 animationDuration={700}
                 animationEasing="ease-out"
               >
@@ -1944,16 +1947,23 @@ function RewardCostComparisonChart({
       planned: l.plannedCost,
     }));
 
+  const chartHeight = Math.max(220, data.length * 56);
+
   return (
     <StatPanel title="Reward cost — current vs planned" icon={Wallet} accent="rose">
       {data.length === 0 ? (
         <EmptyLever note="No realized reward cost in this window to compare." />
       ) : (
-        <ChartContainer config={chartConfig} className="aspect-auto h-[300px] w-full">
+        <ChartContainer
+          config={chartConfig}
+          className="aspect-auto w-full min-w-0"
+          style={{ height: chartHeight }}
+        >
           <BarChart
             data={data}
             layout="vertical"
-            margin={{ left: 4, right: 48, top: 4, bottom: 4 }}
+            margin={{ left: 12, right: 72, top: 8, bottom: 8 }}
+            barCategoryGap="20%"
             accessibilityLayer
           >
             <CartesianGrid horizontal={false} />
@@ -1969,7 +1979,7 @@ function RewardCostComparisonChart({
               dataKey="lever"
               tickLine={false}
               axisLine={false}
-              width={120}
+              width={148}
               tick={{ fontSize: 11 }}
             />
             <ChartTooltip
@@ -1981,12 +1991,14 @@ function RewardCostComparisonChart({
               dataKey="current"
               fill="var(--color-current)"
               radius={[0, 3, 3, 0]}
+              barSize={18}
               animationDuration={700}
               animationEasing="ease-out"
             />
             <Bar
               dataKey="planned"
               radius={[0, 3, 3, 0]}
+              barSize={18}
               animationDuration={700}
               animationEasing="ease-out"
             >

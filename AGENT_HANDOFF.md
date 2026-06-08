@@ -19,6 +19,7 @@
 ## ✅ Shipped (recent — on `main`)
 
 **Dashboard + leaderboards P&L surfaces (2026-06-08):**
+- **System Edge Plan overview layout** — overview sections stack full-width (no 2-col height mismatch); GGR by game type uses compact 3-tile row; reward/net-edge charts get dynamic height, wider Y-axis labels, tighter bar sizing
 - **Creator Hub leaderboard detail + freeze** — `/creator-hub/leaderboards/[id]` with shared `LeaderboardStandingsPanel` + `FreezeClaimCell`; hub list/creator cards link here; `freezeClaim`/`unfreezeClaim` accept Creator Hub access and revalidate hub paths
 - **System Edge Plan GGR panel layout** — overview 2-col grid uses `items-start` so GGR by game type card doesn’t stretch empty space to match Net edge by scenario chart height
 - **Excluded-users fail-closed** (`7b6c562b`) — `getExcludedUserIds()` uses last-known-good cache instead of `[]` on admin DB blip; `refreshExcludedUserIdsCache()` after blacklist mutations; `scripts/audit-pnl-today.mjs` exclusion leak check
