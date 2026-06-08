@@ -33,7 +33,6 @@
 export type NavGroupKey =
   | "Overview"
   | "Insights"
-  | "Creator Marketing"
   | "Marketing"
   | "Employees"
   | "Content"
@@ -102,7 +101,6 @@ export type NavEntry = {
 export const NAV_GROUP_META: NavGroupMeta[] = [
   { label: "Overview" },
   { label: "Insights" },
-  { label: "Creator Marketing" },
   { label: "Marketing" },
   { label: "Employees" },
   { label: "Content" },
@@ -175,6 +173,19 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: "Users",
     description: "Browse end-users",
     keywords: ["players", "accounts", "search"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
+    id: "nav.creators",
+    group: "Overview",
+    label: "Creators",
+    href: "/creators",
+    pageKey: "/creators",
+    icon: "Tv",
+    sidebarIcon: "Tv",
+    description: "Affiliate creator directory",
+    keywords: ["affiliate", "influencer", "creator"],
     inSidebar: true,
     inPalette: true,
   },
@@ -392,61 +403,6 @@ export const NAV_ENTRIES: NavEntry[] = [
     inSidebar: true,
     // Sidebar-only, matching the rest of the Insights group (the per-feature
     // analytical surfaces are absent from the command palette today).
-    inPalette: false,
-  },
-
-  // ── Creator Marketing ──────────────────────────────────────────────────
-  {
-    id: "nav.creators",
-    group: "Creator Marketing",
-    label: "Creators",
-    href: "/creators",
-    pageKey: "/creators",
-    icon: "Users",
-    description: "Affiliate creator directory",
-    keywords: ["affiliate", "influencer"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Creator Leaderboards (affiliate board) — sidebar-only.
-    id: "nav.creators.leaderboards",
-    group: "Creator Marketing",
-    label: "Leaderboards",
-    href: "/creators/leaderboards",
-    pageKey: "/creators/leaderboards",
-    icon: "Trophy",
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
-    // Creator Changelog — time-ordered feed of creator-marketing admin
-    // actions (promote / demote / deal / exclusion) sourced from the
-    // admin audit log. Sidebar-only, like the sibling Leaderboards entry.
-    id: "nav.creators.changelog",
-    group: "Creator Marketing",
-    label: "Changelog",
-    href: "/creators/changelog",
-    pageKey: "/creators/changelog",
-    icon: "History",
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
-    // Socials Review — sidebar-only. NOTE: the sidebar historically gates this
-    // by matching its href "/creators/socials" against allowed_pages, and
-    // "/creators/socials" is NOT a grantable ADMIN_PAGES key — so for
-    // non-admins it is effectively admin-only (never appears in their
-    // allowed_pages). pageKey is set to the same string to reproduce that
-    // exact behavior; do NOT change it to "/creators" or non-admins with
-    // /creators access would suddenly see this item (a visibility change).
-    id: "nav.creators.socials",
-    group: "Creator Marketing",
-    label: "Socials Review",
-    href: "/creators/socials",
-    pageKey: "/creators/socials",
-    icon: "ShieldCheck",
-    inSidebar: true,
     inPalette: false,
   },
 
@@ -983,12 +939,8 @@ export function getPaletteNavEntries(): NavEntry[] {
   );
 }
 
-// The `/system/commands` docs page historically used a different heading for
-// the creator group ("Creators" instead of "Creator Marketing"). Encode that
-// single remap; every other docs heading equals the sidebar group label.
-const DOCS_GROUP_HEADING: Partial<Record<NavGroupKey, string>> = {
-  "Creator Marketing": "Creators",
-};
+// Docs headings equal sidebar group labels.
+const DOCS_GROUP_HEADING: Partial<Record<NavGroupKey, string>> = {};
 
 /** A docs group: a display heading + the palette entries under it. */
 export type DocsNavGroup = { label: string; items: NavEntry[] };

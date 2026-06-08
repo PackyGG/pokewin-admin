@@ -13,6 +13,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // /map was folded into /analytics as a tab — its permission inherits
   // from /analytics. The standalone page no longer exists.
   { group: "Navigation", label: "Users", key: "/users" },
+  { group: "Navigation", label: "Creators", key: "/creators" },
   // Recovery bin for hard-deleted users — 7-day snapshot window. Gated
   // by the same __can_delete_user capability since restoring is the
   // inverse of deleting.
@@ -114,18 +115,9 @@ export const ADMIN_PAGES: AdminPage[] = [
   // adjust-balance flow writes when the reason is tagged "Giveaway".
   // Same permission default as the rest of Marketing.
   { group: "Marketing", label: "Giveaway", key: "/marketing/giveaway" },
-  // Creator Marketing — the "who promotes us" half of the old
-  // Creators group. Mirrors the new sidebar group of the same name
-  // so the role editor lines up with what admins actually navigate
-  // to. Socials Review piggybacks on the `/creators` permission key
-  // (no separate entry) — granting Creators access lets the user
-  // see the socials review page too.
-  { group: "Creator Marketing", label: "Creators", key: "/creators" },
-  { group: "Creator Marketing", label: "Leaderboards", key: "/creators/leaderboards" },
-  // Creator Changelog — read-only feed of creator-marketing admin
-  // actions sourced from the admin audit log. Its own grantable key so
-  // it can be granted independently of the creator directory.
-  { group: "Creator Marketing", label: "Changelog", key: "/creators/changelog" },
+  // Creator leaderboards / changelog / socials review live in Creator Hub;
+  // removed from the admin sidebar. Routes remain for bookmarks; grant via
+  // /creators or admin role.
   // Employees — internal staff workflow (board + shift planning)
   { group: "Employees", label: "Employee Board", key: "/employees" },
   { group: "Employees", label: "Shifts", key: "/shifts" },
