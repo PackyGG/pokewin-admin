@@ -96,6 +96,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Rewards", label: "Rain", key: "/rain" },
   { group: "Rewards", label: "Leaderboards", key: "/rewards/leaderboards" },
   { group: "Rewards", label: "Level Up", key: "/rewards/level-up" },
+  { group: "Rewards", label: "Affiliate Settings", key: "/creators/settings" },
   { group: "Rewards", label: "Settings", key: "/rewards/settings" },
   // Marketing — campaign tools + acquisition surfaces. Mirrors the
   // sidebar's Marketing group so an admin who can grant items in
@@ -108,7 +109,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   // was removed — bookmarks redirect to /creators.
   { group: "Marketing", label: "Ads", key: "/creators/ads" },
   { group: "Marketing", label: "Analytics", key: "/creators/analytics" },
-  { group: "Marketing", label: "Settings", key: "/creators/settings" },
   // Promo Codes was moved to the Rewards group (mirrors the sidebar).
   { group: "Marketing", label: "Gift Cards", key: "/gift-cards" },
   // Giveaway log — driven by `admin_giveaway_actions` rows that the

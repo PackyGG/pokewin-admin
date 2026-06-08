@@ -452,20 +452,6 @@ export const NAV_ENTRIES: NavEntry[] = [
     inSidebar: true,
     inPalette: false,
   },
-  {
-    // Creator Settings — sidebar shows it in the Marketing group labeled
-    // "Settings"; palette labels it "Creator Settings".
-    id: "nav.creators.settings",
-    group: "Marketing",
-    label: "Settings",
-    paletteLabel: "Creator Settings",
-    href: "/creators/settings",
-    pageKey: "/creators/settings",
-    icon: "Settings",
-    description: "Global affiliate config",
-    inSidebar: true,
-    inPalette: true,
-  },
 
   // ── Employees ──────────────────────────────────────────────────────────
   {
@@ -694,6 +680,20 @@ export const NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // Affiliate tier + commission config (/creators/settings).
+    id: "nav.creators.settings",
+    group: "Rewards",
+    label: "Affiliate",
+    paletteLabel: "Creator Settings",
+    href: "/creators/settings",
+    pageKey: "/creators/settings",
+    icon: "Share2",
+    description: "Affiliate level tiers, commission rates, and policies",
+    keywords: ["affiliate", "creator", "commission", "tiers"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // Reward Settings — sidebar group "Rewards" labeled "Settings"; palette
     // labels it "Reward Settings".
     id: "nav.rewards.settings",
@@ -893,7 +893,6 @@ const PALETTE_ORDER: string[] = [
   "nav.creators",
   "nav.creators.ads",
   "nav.creators.analytics",
-  "nav.creators.settings",
   "nav.promo",
   "nav.gift-cards",
   "nav.packs",
@@ -908,6 +907,7 @@ const PALETTE_ORDER: string[] = [
   "nav.rain",
   "nav.rewards.leaderboards",
   "nav.rewards.level-up",
+  "nav.creators.settings",
   "nav.rewards.settings",
   "nav.my-profile",
   "nav.admin-users",
