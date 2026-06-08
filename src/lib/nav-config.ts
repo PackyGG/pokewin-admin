@@ -40,7 +40,6 @@ export type NavGroupKey =
   | "Rewards"
   | "Creator Portal"
   | "Test Tools"
-  | "Security"
   | "System";
 
 export type NavGroupMeta = {
@@ -108,7 +107,6 @@ export const NAV_GROUP_META: NavGroupMeta[] = [
   { label: "Rewards" },
   { label: "Creator Portal", creatorOnly: true },
   { label: "Test Tools", devEnvOnly: true },
-  { label: "Security" },
   { label: "System" },
 ];
 
@@ -734,10 +732,10 @@ export const NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
 
-  // ── Security ───────────────────────────────────────────────────────────
+  // ── System ─────────────────────────────────────────────────────────────
   {
     id: "nav.security",
-    group: "Security",
+    group: "System",
     label: "Security",
     href: "/security",
     pageKey: "/security",
@@ -746,8 +744,6 @@ export const NAV_ENTRIES: NavEntry[] = [
     inSidebar: true,
     inPalette: true,
   },
-
-  // ── System ─────────────────────────────────────────────────────────────
   {
     // Admin panel users. Sidebar icon is ShieldCheck; palette icon is also
     // ShieldCheck. Both labels are "Users".
@@ -914,9 +910,9 @@ const PALETTE_ORDER: string[] = [
   "nav.rewards.level-up",
   "nav.rewards.settings",
   "nav.my-profile",
-  "nav.security",
   "nav.admin-users",
   "nav.settings.roles",
+  "nav.security",
   "nav.bots",
   "nav.settings",
   "nav.audit",

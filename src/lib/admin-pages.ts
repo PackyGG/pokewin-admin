@@ -126,9 +126,8 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Multiplier review queue removed — settlement is automatic at end-stream.
   // Moderation
   { group: "Moderation", label: "Chat", key: "/chat" },
-  // Security
-  { group: "Security", label: "Security", key: "/security" },
   // System
+  { group: "System", label: "Security", key: "/security" },
   { group: "System", label: "Users", key: "/admin-users" },
   { group: "System", label: "Roles", key: "/settings/roles" },
   { group: "System", label: "Bots", key: "/bots" },

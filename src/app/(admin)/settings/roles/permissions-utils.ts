@@ -718,18 +718,18 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Bots",
   },
 
-  // ── Security (site-wide) ────────────────────────────────────────────
+  // ── System (site-wide security capabilities) ──────────────────────────
   {
     key: "__can_upsert_site_config",
     label: "Upsert Site Config",
     description: "Create or update site-wide security / config entries",
-    group: "Security",
+    group: "System",
   },
   {
     key: "__can_delete_site_config",
     label: "Delete Site Config",
     description: "Remove a site-wide security / config entry",
-    group: "Security",
+    group: "System",
   },
 
   // ── Settings (vault locks, country restrictions) ────────────────────
