@@ -1,4 +1,6 @@
 import { getDb } from "@/lib/db";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 
 export type Period = "today" | "7d" | "30d" | "90d" | "all";
 
@@ -49,14 +51,16 @@ export type MapData = {
 };
 
 /**
- * Aggregates real users (staff excluded) by country_code for the map view.
- * Staff = role IN ('admin','creator') per the project-wide analytics convention.
- * Users without country_code are counted separately (not plotted on the map).
+ * Aggregates real users (staff + excluded-users blacklist dropped) by
+ * country_code for the map view. Users without country_code are counted
+ * separately (not plotted on the map).
  */
 export async function getUsersByCountry(period: Period): Promise<MapData> {
   const db = await getDb();
   const dateFilter = periodToDateFilter(period);
-  const staffFilter = `role NOT IN ('admin', 'support')`;
+  const excluded = await getExcludedUserIds();
+  const blacklistFragment = blacklistNotInClause("id", excluded);
+  const userScope = `role NOT IN ('admin', 'support') ${blacklistFragment}`;
 
   // dateFilter above is phrased as "AND created_at >= ...", works for both
   // u.created_at (signups) and lt.created_at (tx) because each query
@@ -84,7 +88,7 @@ export async function getUsersByCountry(period: Period): Promise<MapData> {
           MAX(country) AS country,
           COUNT(*)::text AS user_count
         FROM "user"
-        WHERE ${staffFilter}
+        WHERE ${userScope}
           AND country_code IS NOT NULL
           ${dateFilter}
         GROUP BY country_code
@@ -107,7 +111,7 @@ export async function getUsersByCountry(period: Period): Promise<MapData> {
           COALESCE(SUM(CASE WHEN lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND lt.status = 'completed' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS total_wager
         FROM "user" u
         INNER JOIN ledger_transactions lt ON lt.user_id = u.id
-        WHERE u.${staffFilter}
+        WHERE u.${userScope}
           AND u.country_code IS NOT NULL
           ${txDateFilter}
         GROUP BY u.country_code
@@ -115,13 +119,13 @@ export async function getUsersByCountry(period: Period): Promise<MapData> {
       db.$queryRawUnsafe<Array<{ total: string }>>(`
         SELECT COUNT(*)::text AS total
         FROM "user"
-        WHERE ${staffFilter}
+        WHERE ${userScope}
           ${dateFilter}
       `),
       db.$queryRawUnsafe<Array<{ total: string }>>(`
         SELECT COUNT(*)::text AS total
         FROM "user"
-        WHERE ${staffFilter}
+        WHERE ${userScope}
           AND country_code IS NULL
           ${dateFilter}
       `),

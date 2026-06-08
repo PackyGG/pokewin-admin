@@ -1,5 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { realCustomerIdsSubquery } from "./_blacklist";
 import type { AffiliateAnalyticsData } from "./creators-types";
 
 type Period = "today" | "7d" | "30d" | "90d" | "all";
@@ -22,18 +24,16 @@ function periodToDateFilter(period: Period): string {
 export async function getAffiliateAnalytics(period: Period): Promise<AffiliateAnalyticsData> {
   const db = await getDb();
   const dateFilter = periodToDateFilter(period);
+  const excluded = await getExcludedUserIds();
+  const referredScope = realCustomerIdsSubquery(excluded);
+  const referredFilter = `AND referred_user_id IN ${referredScope}`;
 
   const [signupsAgg, payoutsAgg, usagesAgg, clicksAgg, activeCreators, dailyUsages, dailyClicks] =
     await Promise.all([
-      // Signups = rows with the dedicated `signup` usage_type written
-      // when a new user registers via an affiliate code. Previously
-      // this query counted `deposit` rows under the "signups" label,
-      // which double-counted every deposit and ignored users who
-      // signed up but never deposited.
       db.$queryRawUnsafe<{ count: string }[]>(`
         SELECT COUNT(*)::text AS count
         FROM affiliate_code_usages
-        WHERE usage_type = 'signup' ${dateFilter}
+        WHERE usage_type = 'signup' ${referredFilter} ${dateFilter}
       `),
       db.$queryRawUnsafe<{ total: string }[]>(`
         SELECT COALESCE(SUM(amount_usd::numeric), 0)::text AS total
@@ -45,7 +45,7 @@ export async function getAffiliateAnalytics(period: Period): Promise<AffiliateAn
           COALESCE(SUM(wager_amount_usd::numeric), 0)::text AS wager,
           COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS deposit
         FROM affiliate_code_usages
-        WHERE 1=1 ${dateFilter}
+        WHERE 1=1 ${referredFilter} ${dateFilter}
       `),
       db.$queryRawUnsafe<{ count: string }[]>(`
         SELECT COUNT(*)::text AS count
@@ -67,7 +67,7 @@ export async function getAffiliateAnalytics(period: Period): Promise<AffiliateAn
           COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS deposit,
           COALESCE(SUM(referrer_cut_usd::numeric), 0)::text AS commission
         FROM affiliate_code_usages
-        WHERE 1=1 ${dateFilter}
+        WHERE 1=1 ${referredFilter} ${dateFilter}
         GROUP BY DATE(created_at)
         ORDER BY date
       `),

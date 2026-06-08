@@ -1,5 +1,7 @@
 import { getDb } from "@/lib/db";
 import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 
 /**
  * Creator true LTV analysis. For every creator (user with role='creator'
@@ -23,8 +25,7 @@ import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-c
  * the window. Otherwise a recently-paid creator with old referrals
  * would appear suspiciously unprofitable.
  *
- * Staff exclusion is inherent — only creators are included, and referred
- * users are role-filtered implicitly (creators don't refer admins).
+ * Staff + excluded-users blacklist applied to referred-user cohorts.
  */
 
 export type LtvPeriod = "7d" | "30d" | "90d" | "all";
@@ -70,6 +71,8 @@ export async function getCreatorLtv(period: LtvPeriod): Promise<CreatorLtvData> 
   const days = daysForPeriod(period);
   const periodWhere =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
 
   // One raw query that joins creators → referred users → ledger for both
   // referred-user P&L and creator cost. This is O(creators) rows, one per
@@ -102,6 +105,10 @@ export async function getCreatorLtv(period: LtvPeriod): Promise<CreatorLtvData> 
     refs_distinct AS (
       SELECT creator_id, referred_user_id
       FROM refs
+      WHERE referred_user_id IN (
+        SELECT id FROM "user"
+        WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+      )
       GROUP BY creator_id, referred_user_id
     ),
     ref_counts AS (

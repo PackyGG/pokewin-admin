@@ -25,6 +25,8 @@
 
 import { getDb } from "@/lib/db";
 import { verifySession } from "@/lib/dal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { canCurrentAdminIncludeExcludedInSearch } from "@/lib/excluded-users/search-gate";
 
 export type GlobalUserSearchResult = {
   id: string;
@@ -104,6 +106,12 @@ export async function searchUsersGlobal(
   // marketing, creator) gets a masked form. This is the explicit gate
   // referenced in the M1 audit item.
   const canSeeFullEmail = session.role === "admin";
+  const includeExcluded = await canCurrentAdminIncludeExcludedInSearch(
+    session.userId,
+  );
+  const excludedUserIds = includeExcluded ? [] : await getExcludedUserIds();
+  const excludedFilter =
+    excludedUserIds.length > 0 ? { id: { notIn: excludedUserIds } } : {};
 
   // Normalize & validate the query client-side is untrusted.
   const raw = typeof query === "string" ? query.trim() : "";
@@ -113,6 +121,12 @@ export async function searchUsersGlobal(
 
   // Exact UUID lookup — cheapest match, always wins.
   if (UUID_REGEX.test(cleaned)) {
+    if (
+      excludedUserIds.length > 0 &&
+      excludedUserIds.includes(cleaned)
+    ) {
+      return [];
+    }
     const user = await db.user.findUnique({
       where: { id: cleaned },
       select: {
@@ -136,6 +150,7 @@ export async function searchUsersGlobal(
 
   const users = await db.user.findMany({
     where: {
+      ...excludedFilter,
       OR: [
         { username: { contains: cleaned, mode: "insensitive" } },
         { email: { contains: cleaned, mode: "insensitive" } },

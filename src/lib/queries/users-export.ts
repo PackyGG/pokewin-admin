@@ -5,6 +5,7 @@
 // calling admin has toggled on.
 import { getDb } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 export type ExportDepositFilter = "any" | "has_deposited" | "no_deposit";
 
@@ -75,6 +76,11 @@ export async function exportUsers(
   filters: UserExportFilters,
 ): Promise<ExportedUser[]> {
   const where: Prisma.UserWhereInput = {};
+
+  const excluded = await getExcludedUserIds();
+  if (excluded.length > 0) {
+    where.id = { notIn: excluded };
+  }
 
   // Country filter
   const codes = [...new Set(

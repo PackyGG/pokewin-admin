@@ -42,11 +42,10 @@ export function blacklistNotInClause(column: string, ids: string[]): string {
  * `/system/excluded-users` page).
  *
  * Both exclusions are conceptually the same — "drop these users
- * from dashboard / analytics / PnL aggregates" — so most call sites
- * want the COMBINED filter. The exception is race queries
- * (rakeback, race_claims, race_leaderboard_snapshots): they keep
- * counting blacklisted users so leaderboard positions don't shift
- * when an exclusion lands, per the user's explicit ask.
+ * from dashboard / analytics / PnL aggregates, transaction lists,
+ * and every other admin surface" — so call sites want the COMBINED
+ * filter unless they are explicitly scoped to a single known user
+ * (e.g. /users/[id] detail).
  *
  * The blacklist is small (handful of IDs at most) and cached per
  * request via `cache()` in fetch.ts, so calling these helpers in
@@ -135,7 +134,25 @@ export async function blacklistSqlFragment(
  */
 export async function excludeStaffAndBlacklistedSql(): Promise<string> {
   const ids = await getExcludedUserIds();
+  return excludeStaffAndBlacklistedSqlFromIds(ids);
+}
+
+/**
+ * Same shape as {@link excludeStaffAndBlacklistedSql} when the caller
+ * already resolved the blacklist (e.g. inside an `unstable_cache` fn
+ * that keys on the sorted id list).
+ */
+export function excludeStaffAndBlacklistedSqlFromIds(ids: string[]): string {
   const blacklistTail =
     ids.length > 0 ? ` AND id NOT IN (${escapeBlacklistIds(ids)})` : "";
   return `user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support')${blacklistTail})`;
+}
+
+/**
+ * Inline subquery of real-customer user ids for raw SQL `IN (...)` clauses.
+ * Pass a column name when filtering a non-`user_id` FK (e.g. `referred_user_id`).
+ */
+export function realCustomerIdsSubquery(blacklistIds: string[]): string {
+  const tail = blacklistNotInClause("id", blacklistIds);
+  return `(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${tail})`;
 }

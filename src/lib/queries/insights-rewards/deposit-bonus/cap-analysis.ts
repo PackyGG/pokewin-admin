@@ -202,7 +202,7 @@ async function computeCapAnalysis(
         JOIN "user" u ON u.id = lt.user_id
         WHERE lt.status = 'completed'
           AND lt.type::text = 'deposit_bonus'
-          AND u.role NOT IN ('admin', 'support')
+          AND lt.user_id IN ${userScope}
           AND ABS(lt.amount::numeric) = ${capLiteral}
           ${dateFilter}
         GROUP BY u.id, u.username

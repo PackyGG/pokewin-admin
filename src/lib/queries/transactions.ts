@@ -14,6 +14,11 @@ import {
   resolveUpgraderTargetFromBatch,
 } from "./upgrader-target-batch";
 import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import {
+  excludeStaffAndBlacklisted,
+  excludeStaffAndBlacklistedSqlFromIds,
+} from "./_blacklist";
 
 // Allowlists derived from the generated Prisma enums — used to validate
 // user-supplied filter values before they reach the query (instead of an
@@ -160,6 +165,7 @@ export type TransactionListItem = {
  */
 async function computeDepositTransactions(
   env: DbEnv,
+  blacklistKey: string,
   params: {
     page?: number;
     perPage?: number;
@@ -186,6 +192,8 @@ async function computeDepositTransactions(
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
   const offset = (safePage - 1) * safePerPage;
+  const blacklistIds = blacklistKey ? blacklistKey.split(",") : [];
+  const userScopeFilter = `AND t.${excludeStaffAndBlacklistedSqlFromIds(blacklistIds)}`;
 
   // Bind user-provided values via positional parameters to avoid SQL injection.
   const queryParams: unknown[] = [];
@@ -235,6 +243,7 @@ async function computeDepositTransactions(
   // not a whole-table scan.
   const baseWhere = `
     WHERE t.type::text = 'deposit'
+      ${userScopeFilter}
       ${searchFilter}
       ${statusFilter}
       ${minAmountFilter}
@@ -386,7 +395,7 @@ async function computeDepositTransactions(
  */
 const cachedDepositTransactions = unstable_cache(
   computeDepositTransactions,
-  ["transactions-deposits-list-v1"],
+  ["transactions-deposits-list-v2"],
   { revalidate: 60, tags: ["transactions-deposits-list"] },
 );
 
@@ -404,7 +413,9 @@ export async function getDepositTransactions(params: {
   minAmount?: number;
 }): Promise<PaginatedResult<TransactionListItem>> {
   const env = await readDbEnv();
-  return cachedDepositTransactions(env, params);
+  const excluded = await getExcludedUserIds();
+  const blacklistKey = [...excluded].sort().join(",");
+  return cachedDepositTransactions(env, blacklistKey, params);
 }
 
 /**
@@ -446,6 +457,7 @@ export async function getTransactions(params: {
     sortBy = "recent",
   } = params;
   const db = await getDb();
+  const userScope = await excludeStaffAndBlacklisted();
 
   const where: Prisma.ledger_transactionsWhereInput = {
     // FAKE-BALANCE: hide official_stream adjustments from the transactions
@@ -453,7 +465,10 @@ export async function getTransactions(params: {
     // Placed in AND so it combines safely with the search `OR` below and
     // every other filter, and propagates to the pack_multiplier
     // `filterWhere` (which spreads `...where`).
-    AND: [{ NOT: officialStreamAdjustmentPrismaWhere() }],
+    AND: [
+      { NOT: officialStreamAdjustmentPrismaWhere() },
+      { user: userScope },
+    ],
   };
 
   if (search) {

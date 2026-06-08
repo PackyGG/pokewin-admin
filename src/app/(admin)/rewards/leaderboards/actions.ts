@@ -6,6 +6,8 @@ import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import type { race_type } from "@/generated/prisma/enums";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 
 const VALID_RACE_TYPES = new Set<race_type>(["daily", "weekly", "monthly"]);
 
@@ -428,6 +430,8 @@ export async function endRacePeriodNow(periodId: string) {
   }
 
   const periodStartIso = existing.starts_at.toISOString().slice(0, 10);
+  const excluded = await getExcludedUserIds();
+  const blacklistJoin = blacklistNotInClause("u.id", excluded);
 
   await db.$transaction(async (tx) => {
     // Snapshot generation: aggregate game_sessions over the period range,
@@ -454,6 +458,7 @@ export async function endRacePeriodNow(periodId: string) {
           AND gs.created_at >= $4
           AND gs.created_at < $5
           AND (u.role IS NULL OR u.role NOT IN ('admin', 'creator', 'support'))
+          ${blacklistJoin}
         GROUP BY gs.user_id
       ) w
       ON CONFLICT (user_id, race_type, period_start) DO NOTHING;

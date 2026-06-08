@@ -1,6 +1,10 @@
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import {
+  excludeStaffAndBlacklistedSqlFromIds,
+} from "./_blacklist";
 
 // ─── Lifetime promo-code money stats for the /promo-codes hero strip ──
 //
@@ -54,21 +58,19 @@ export type PromoCodesMoneyStats = {
 };
 
 const cachedPromoCodesMoneyStats = unstable_cache(
-  async (): Promise<PromoCodesMoneyStats> => {
+  async (blacklistKey: string): Promise<PromoCodesMoneyStats> => {
     const db = await getDb();
+    const blacklistIds = blacklistKey ? blacklistKey.split(",") : [];
+    const userScope = excludeStaffAndBlacklistedSqlFromIds(blacklistIds);
 
-    // Two independent single-row aggregates. The ledger sum is the
-    // deleted-inclusive realized cost (no join); the allocation sum is the
-    // current-codes offered budget. Run in parallel — one indexed scan on
-    // ledger_transactions (status, type), one full aggregate on
-    // promo_codes (small table).
     const [claimedRows, allocatedRows] = await Promise.all([
-      db.$queryRaw<{ total: string }[]>`
+      db.$queryRawUnsafe<{ total: string }[]>(`
         SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
         FROM ledger_transactions
         WHERE status = 'completed'
           AND type::text = 'promo_code_redeemed'
-      `,
+          AND ${userScope}
+      `),
       db.$queryRaw<{ total: string }[]>`
         SELECT COALESCE(SUM(value::numeric * max_uses), 0)::text AS total
         FROM promo_codes
@@ -80,7 +82,7 @@ const cachedPromoCodesMoneyStats = unstable_cache(
       allocatedOffered: toNumber(allocatedRows[0]?.total ?? "0"),
     };
   },
-  ["promo-codes-money-stats-v1"],
+  ["promo-codes-money-stats-v2"],
   { revalidate: 300, tags: ["promo-codes-money-stats"] },
 );
 
@@ -90,5 +92,7 @@ const cachedPromoCodesMoneyStats = unstable_cache(
  * (300s). See the module header for the deleted-codes sourcing rationale.
  */
 export async function getPromoCodesMoneyStats(): Promise<PromoCodesMoneyStats> {
-  return cachedPromoCodesMoneyStats();
+  const excluded = await getExcludedUserIds();
+  const blacklistKey = [...excluded].sort().join(",");
+  return cachedPromoCodesMoneyStats(blacklistKey);
 }

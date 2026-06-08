@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { excludeStaffAndBlacklisted } from "./_blacklist";
 import type { PaginatedResult } from "@/lib/types";
 
 export type RakebackConfigItem = {
@@ -249,22 +250,24 @@ export async function getLevelUpRewards(params: {
 
 export async function getRakebackStats(): Promise<RakebackStats> {
   const db = await getDb();
+  const userScope = await excludeStaffAndBlacklisted();
   // Previously this pulled every rakeback_claims row and aggregated in JS —
   // that scales linearly with claim count. Push the aggregation to Postgres
   // and fetch only the two summaries we actually need.
   const [claimedSum, pendingSum, byTypeRows] = await Promise.all([
     db.rakeback_claims.aggregate({
-      where: { claimed_at: { not: null } },
+      where: { claimed_at: { not: null }, user: userScope },
       _sum: { rakeback_amount_usd: true },
       _count: { _all: true },
     }),
     db.rakeback_claims.aggregate({
-      where: { claimed_at: null },
+      where: { claimed_at: null, user: userScope },
       _sum: { rakeback_amount_usd: true },
       _count: { _all: true },
     }),
     db.rakeback_claims.groupBy({
       by: ["rakeback_type"],
+      where: { user: userScope },
       _sum: { rakeback_amount_usd: true },
       _count: { _all: true },
     }),
