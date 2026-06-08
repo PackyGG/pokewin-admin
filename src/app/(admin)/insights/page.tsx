@@ -8,7 +8,6 @@ import {
   Scale,
   Gift,
   LineChart,
-  Joystick,
   SlidersHorizontal,
   Gauge,
   ArrowRight,
@@ -279,25 +278,11 @@ const QUICK_LINKS: ReadonlyArray<QuickLink> = [
     accent: "emerald",
   },
   {
-    href: "/insights/games",
-    label: "Games",
-    description: "Per-pack & per-battle gameplay margin",
-    icon: Joystick,
-    accent: "blue",
-  },
-  {
     href: "/insights/rewards",
     label: "Rewards",
     description: "Cross-category reward spend, ROI, retention, forecast",
     icon: Gift,
     accent: "rose",
-  },
-  {
-    href: "/insights/balance-adjustments",
-    label: "Balance Adjustments",
-    description: "Admin manual credits & debits, by category",
-    icon: Scale,
-    accent: "amber",
   },
   {
     href: "/insights/forecast",

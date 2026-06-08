@@ -4,7 +4,6 @@ import {
   Percent,
   Trophy,
   Users2,
-  UserPlus,
   Ticket,
   Gift,
   type LucideIcon,
@@ -16,7 +15,6 @@ import { ForecastTab as DepositBonusForecastTab } from "../rewards/deposit-bonus
 import { ForecastTab as RakebackForecastTab } from "../rewards/rakeback/_components/forecast-tab";
 import { AffiliateForecastTab } from "../rewards/affiliate/_components/forecast-tab";
 import { ForecastTab as RaceForecastTab } from "../rewards/race/_components/forecast-tab";
-import { ForecastTab as SignupForecastTab } from "../rewards/signup/_components/forecast-tab";
 import { ForecastTab as RaffleForecastTab } from "../rewards/raffle/_components/forecast-tab";
 import { ForecastTab as MothaForecastTab } from "../rewards/motha/_components/forecast-tab";
 
@@ -96,14 +94,6 @@ export const FORECAST_REWARDS: ForecastRewardEntry[] = [
     icon: Trophy,
     accent: "amber",
     component: RaceForecastTab,
-  },
-  {
-    key: "signup",
-    label: "Signup bonus",
-    blurb: "Grant-policy scenarios — flat / deposit-gated / tiered / dynamic-segment.",
-    icon: UserPlus,
-    accent: "rose",
-    component: SignupForecastTab,
   },
   {
     key: "raffle",

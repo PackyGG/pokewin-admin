@@ -22,8 +22,6 @@ const UTF8_BOM = "﻿";
 // Period / filter parsers — reused verbatim from the pages so the export
 // resolves the exact same window / lens / filter set the admin sees.
 import { parseInsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
-import { parseGamesPeriod } from "@/lib/queries/insights-games/_shared";
-import { parseTopUsersFilters } from "@/lib/queries/insights-games/top-users";
 import { parseInsightsPeriod } from "../analytics/types";
 import { parseRakebackRoiLookback } from "../rewards/rakeback/_constants";
 import { parseRakebackTopClaimerScope } from "@/lib/queries/insights-rewards/rakeback/top-claimers";
@@ -33,14 +31,11 @@ import { parseRakebackTopClaimerScope } from "@/lib/queries/insights-rewards/rak
 // route is the single place that knows page → gatherer + page →
 // permission-key.
 import { gatherDepositBonusExportSections } from "../rewards/deposit-bonus/_export";
-import { gatherGamesExportSections } from "../games/_export";
 import { gatherRewardsOverviewExportSections } from "../rewards/_export";
 import { gatherAnalyticsExportSections } from "../analytics/_export";
 import { gatherRaceExportSections } from "../rewards/race/_export";
 import { gatherAffiliateExportSections } from "../rewards/affiliate/_export";
 import { gatherRakebackExportSections } from "../rewards/rakeback/_export";
-import { gatherSignupExportSections } from "../rewards/signup/_export";
-import { gatherBalanceAdjustmentsExportSections } from "../balance-adjustments/_export";
 import { gatherCostBreakdownExportSections } from "../cost-breakdown/_export";
 import {
   gatherGgrExportSections,
@@ -79,18 +74,6 @@ const EXPORTS: Record<string, ExportDescriptor> = {
     gather: (p) =>
       gatherDepositBonusExportSections(
         parseInsightsRewardsPeriod(p.get("period") ?? undefined),
-      ),
-  },
-  games: {
-    permissionKey: "/insights/games",
-    gather: (p) =>
-      gatherGamesExportSections(
-        parseGamesPeriod(p.get("period") ?? undefined),
-        parseTopUsersFilters({
-          game: p.get("game") ?? undefined,
-          minWager: p.get("minWager") ?? undefined,
-          country: p.get("country") ?? undefined,
-        }),
       ),
   },
   rewards: {
@@ -136,20 +119,6 @@ const EXPORTS: Record<string, ExportDescriptor> = {
         parseInsightsRewardsPeriod(p.get("period") ?? undefined),
         parseRakebackRoiLookback(p.get("lookback") ?? undefined),
         parseRakebackTopClaimerScope(p.get("scope") ?? undefined),
-      ),
-  },
-  signup: {
-    permissionKey: "/insights/rewards/signup",
-    gather: (p) =>
-      gatherSignupExportSections(
-        parseInsightsRewardsPeriod(p.get("period") ?? undefined),
-      ),
-  },
-  "balance-adjustments": {
-    permissionKey: "/insights/balance-adjustments",
-    gather: (p) =>
-      gatherBalanceAdjustmentsExportSections(
-        parseInsightsRewardsPeriod(p.get("period") ?? undefined),
       ),
   },
   "cost-breakdown": {

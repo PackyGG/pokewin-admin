@@ -45,8 +45,15 @@ export const ADMIN_PAGES: AdminPage[] = [
   // cards, top-10 contributors). Sits in Insights alongside the other
   // cross-cutting analytical surfaces.
   { group: "Insights", label: "GGR", key: "/ggr" },
-  { group: "Insights", label: "Games", key: "/insights/games" },
   { group: "Insights", label: "Rewards", key: "/insights/rewards" },
+  // Legacy routes — thin redirects; keys retained for bookmark + role grants.
+  { group: "Insights", label: "Games (legacy)", key: "/insights/games" },
+  { group: "Insights", label: "Signup (legacy)", key: "/insights/rewards/signup" },
+  {
+    group: "Insights",
+    label: "Balance Adjustments (legacy)",
+    key: "/insights/balance-adjustments",
+  },
   // Per-reward-type deep-dives. Each is its own grantable permission key
   // so role grants can be managed independently from the parent overview
   // (an admin can be granted just the rakeback or affiliate breakdown
@@ -55,11 +62,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Insights", label: "Rakeback", key: "/insights/rewards/rakeback" },
   { group: "Insights", label: "Race", key: "/insights/rewards/race" },
   { group: "Insights", label: "Affiliate", key: "/insights/rewards/affiliate" },
-  { group: "Insights", label: "Signup", key: "/insights/rewards/signup" },
-  // Balance Adjustments — accountability surface for admin manual
-  // credits/debits to user balances. Sits in Insights alongside the
-  // other analytical reward/finance surfaces.
-  { group: "Insights", label: "Balance Adjustments", key: "/insights/balance-adjustments" },
   // Forecast — unified reward-forecast hub. Hosts a full-depth
   // scenario simulation per reward type (modeled on the deposit-bonus
   // forecast), anchored on real production baselines. Own permission

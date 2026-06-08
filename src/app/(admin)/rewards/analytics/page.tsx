@@ -28,7 +28,7 @@ function insightsTarget(category: string | undefined): string {
     case "affiliate":
       return "/insights/rewards/affiliate";
     case "signup":
-      return "/insights/rewards/signup";
+      return "/insights/rewards?tab=categories";
     case "daily-packs":
       return "/insights/rewards?tab=daily-packs";
     default:

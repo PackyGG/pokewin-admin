@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** see `git log -1` · **Updated:** 2026-06-08 · **Active focus:** Dashboard P&L Today **Cash P&L** badge (deposits − withdrawals only) + affiliate leaderboard detail **House P&L** column / event-window aggregate under codes; prior excluded-users fail-closed hardening on `main`
+- **HEAD:** see `git log -1` · **Updated:** 2026-06-08 · **Active focus:** Retired three Insights sidebar pages (Games, Signup, Balance Adjustments) — thin redirects remain; signup stats live under Rewards → Categories
 - **Note (2026-06-06):** local checkout was on branch `dev` (even with `origin/main`) with **no `node_modules` / `.env`**; ran `npm install` + `prisma generate` (both clients) to gate.
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
@@ -21,7 +21,8 @@
 **Dashboard + leaderboards P&L surfaces (2026-06-08):**
 - **Excluded-users fail-closed** (`7b6c562b`) — `getExcludedUserIds()` uses last-known-good cache instead of `[]` on admin DB blip; `refreshExcludedUserIdsCache()` after blacklist mutations; `scripts/audit-pnl-today.mjs` exclusion leak check
 - **Affiliate leaderboard detail** — `/creators/leaderboards/[id]` standings add **House P&L** column (bounded window `[start,end)` via `calculateUsersBoundedWindowedPnlBatch` in `pnl.ts`); **House P&L (event window)** aggregate under Affiliate codes in Definition panel
-- **P&L Today Cash P&L badge** — top-right corner on dashboard tile: `deposits − withdrawals` only (raw crypto cash flow); full five-term P&L unchanged; info popover + footer explain the split
+- **P&L Today Cash P&L badge** — top-right corner on dashboard tile: `deposits − withdrawals` only (raw crypto cash flow); full five-term P&L unchanged
+- **Insights page retirements** — removed sidebar entries + UI for `/insights/games` (→ `/ggr`), `/insights/rewards/signup` (→ `/insights/rewards?tab=categories`), `/insights/balance-adjustments` (→ `/insights/analytics`); legacy permission keys + CSV export entries trimmed; signup forecast dropped from unified Forecast hub
 
 **Creator Hub (waves 0 → B+C + audit closeout):**
 - Access control — motha + per-role toggles (`admin_settings`, default OFF) · `757e996`
