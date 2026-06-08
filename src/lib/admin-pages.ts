@@ -54,6 +54,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Insights", label: "Rakeback", key: "/insights/rewards/rakeback" },
   { group: "Insights", label: "Race", key: "/insights/rewards/race" },
   { group: "Insights", label: "Affiliate", key: "/insights/rewards/affiliate" },
+  { group: "Insights", label: "Signup", key: "/insights/rewards/signup" },
   // Balance Adjustments — accountability surface for admin manual
   // credits/debits to user balances. Sits in Insights alongside the
   // other analytical reward/finance surfaces.
@@ -100,10 +101,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // the role editor sees them under the same banner the user clicks
   // through in the sidebar. Analytics stays grouped here as a
   // permission key (admins can still grant /creators/analytics) but
-  // its sidebar link was dropped per the nav split. Codes and
-  // Vouchers were removed from both nav and the role editor — the
-  // routes (/creators/codes, /vouchers) remain reachable by URL but
-  // are no longer surfaced or grantable as separate permissions.
+  // Vouchers was removed from nav and the role editor — the route
+  // (/vouchers) remains reachable by URL but is no longer surfaced or
+  // grantable as a separate permission. Affiliate codes list (/creators/codes)
+  // was removed — bookmarks redirect to /creators.
   { group: "Marketing", label: "Ads", key: "/creators/ads" },
   { group: "Marketing", label: "Analytics", key: "/creators/analytics" },
   { group: "Marketing", label: "Settings", key: "/creators/settings" },
@@ -130,9 +131,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Employees", label: "Shifts", key: "/shifts" },
   // Creator Portal
   { group: "Creator Portal", label: "My Profile", key: "/my-profile" },
-  // Multiplier Review hidden from navigation — settlement is now automatic
-  // at end-stream so the queue is always empty for new deals. Page still
-  // exists at /creators/multiplier-review for clearing legacy stuck deals.
+  // Multiplier review queue removed — settlement is automatic at end-stream.
   // Moderation
   { group: "Moderation", label: "Chat", key: "/chat" },
   // Security

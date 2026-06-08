@@ -142,7 +142,7 @@ export async function createMultiplierDeal(
     });
 
     revalidatePath(`/creators/${userId}`);
-    revalidatePath("/creators/multiplier-review");
+    revalidatePath("/creators");
     return deal;
   } catch (err) {
     throw toActionError(err);
@@ -219,7 +219,7 @@ export async function cancelMultiplierDeal(
     });
 
     revalidatePath(`/creators/${userId}`);
-    revalidatePath("/creators/multiplier-review");
+    revalidatePath("/creators");
     return deal;
   } catch (err) {
     throw toActionError(err);
@@ -258,7 +258,7 @@ export async function forceEndMultiplierStream(
     });
 
     revalidatePath(`/creators/${userId}`);
-    revalidatePath("/creators/multiplier-review");
+    revalidatePath("/creators");
     return deal;
   } catch (err) {
     throw toActionError(err);
@@ -307,7 +307,7 @@ export async function approveMultiplierDeal(
     });
 
     revalidatePath(`/creators/${userId}`);
-    revalidatePath("/creators/multiplier-review");
+    revalidatePath("/creators");
     return deal;
   } catch (err) {
     throw toActionError(err);
@@ -345,7 +345,7 @@ export async function rejectMultiplierDeal(
     });
 
     revalidatePath(`/creators/${userId}`);
-    revalidatePath("/creators/multiplier-review");
+    revalidatePath("/creators");
     return deal;
   } catch (err) {
     throw toActionError(err);
@@ -382,7 +382,7 @@ export async function flagMultiplierDeal(
     });
 
     revalidatePath(`/creators/${userId}`);
-    revalidatePath("/creators/multiplier-review");
+    revalidatePath("/creators");
     return deal;
   } catch (err) {
     throw toActionError(err);

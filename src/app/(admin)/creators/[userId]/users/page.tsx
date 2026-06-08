@@ -144,10 +144,10 @@ export default async function CreatorUsersPage({
                 )}
                 {profile.code ? (
                   <Link
-                    href={`/creators/codes/${profile.code}`}
+                    href={`/creators/${userId}`}
                     className="text-xs text-muted-foreground hover:text-foreground hover:underline"
                   >
-                    Full code analytics →
+                    Creator profile →
                   </Link>
                 ) : null}
               </div>

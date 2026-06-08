@@ -1337,7 +1337,7 @@ function OwnedCodeRow({
   const codeHref =
     userRole === "creator"
       ? `/creators/${userId}`
-      : `/creators/codes/${encodeURIComponent(code)}`;
+      : `/users/${userId}`;
   return (
     <Link
       href={codeHref}

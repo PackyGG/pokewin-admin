@@ -1,5 +1,4 @@
-import Link from "next/link";
-import { ExternalLink, Layers } from "lucide-react";
+import { Layers } from "lucide-react";
 import { SectionHeading } from "@/components/modern-panels";
 import { DepositBonusTab } from "@/app/(admin)/rewards/analytics/_components/deposit-bonus-tab";
 import { RakebackTab } from "@/app/(admin)/rewards/analytics/_components/rakeback-tab";
@@ -59,13 +58,6 @@ export async function CategoriesTab({
       <div className="space-y-3">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
           <SectionHeading icon={Layers} title="Per-category deep dive" />
-          <Link
-            href={`/rewards/analytics?period=${categoryPeriod}`}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
-          >
-            Open /rewards/analytics
-            <ExternalLink className="size-3" />
-          </Link>
         </div>
         {showRoundingNote && (
           <div className="rounded-lg border border-dashed border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
@@ -75,7 +67,7 @@ export async function CategoriesTab({
                 {insightsRewardsPeriodLabel(period)}
               </span>
               . The per-category panels below use the closest supported
-              window from /rewards/analytics:{" "}
+              window from the insights rewards rollup:{" "}
               <span className="font-medium">{periodLabel}</span>.
             </span>
           </div>

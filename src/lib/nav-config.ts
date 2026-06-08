@@ -293,7 +293,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     pageKey: "/insights/rewards/deposit-bonus",
     icon: "Coins",
     isNew: true,
-    inSidebar: true,
+    inSidebar: false,
     inPalette: false,
   },
   {
@@ -304,7 +304,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     pageKey: "/insights/rewards/rakeback",
     icon: "Wallet",
     isNew: true,
-    inSidebar: true,
+    inSidebar: false,
     inPalette: false,
   },
   {
@@ -315,7 +315,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     pageKey: "/insights/rewards/race",
     icon: "Flag",
     isNew: true,
-    inSidebar: true,
+    inSidebar: false,
     inPalette: false,
   },
   {
@@ -325,6 +325,17 @@ export const NAV_ENTRIES: NavEntry[] = [
     href: "/insights/rewards/affiliate",
     pageKey: "/insights/rewards/affiliate",
     icon: "Share2",
+    isNew: true,
+    inSidebar: false,
+    inPalette: false,
+  },
+  {
+    id: "nav.insights.rewards.signup",
+    group: "Insights",
+    label: "Signup",
+    href: "/insights/rewards/signup",
+    pageKey: "/insights/rewards/signup",
+    icon: "UserPlus",
     isNew: true,
     inSidebar: true,
     inPalette: false,
@@ -642,14 +653,14 @@ export const NAV_ENTRIES: NavEntry[] = [
 
   // ── Rewards ────────────────────────────────────────────────────────────
   {
-    // Rewards Analytics — sidebar-only.
+    // Legacy per-category stats — redirects to /insights/rewards/*.
     id: "nav.rewards.analytics",
     group: "Rewards",
     label: "Analytics",
     href: "/rewards/analytics",
     pageKey: "/rewards/analytics",
     icon: "BarChart3",
-    inSidebar: true,
+    inSidebar: false,
     inPalette: false,
   },
   {

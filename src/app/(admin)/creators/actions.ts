@@ -559,7 +559,7 @@ export async function toggleCodeActive(userId: string, isActive: boolean) {
   });
 
   revalidatePath(`/creators/${userId}`);
-  revalidatePath("/creators/codes");
+  revalidatePath("/creators");
 }
 
 // --- Webhooks ---

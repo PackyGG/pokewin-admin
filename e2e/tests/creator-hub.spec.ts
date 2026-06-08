@@ -148,7 +148,7 @@ test.describe("Creator Hub routes (minted session)", () => {
     await page.goto("/creator-hub/codes-ads?tab=codes", {
       waitUntil: "domcontentloaded",
     });
-    await page.waitForURL(/\/creators\/codes/, { timeout: 8_000 });
+    await page.waitForURL(/\/creators\/?$/, { timeout: 8_000 });
 
     await context.close();
   });

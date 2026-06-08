@@ -11,7 +11,7 @@ export default async function CreatorHubCodesAdsRedirect({
 }) {
   const params = await searchParams;
   if (params.tab === "codes") {
-    redirect("/creators/codes", RedirectType.replace);
+    redirect("/creators", RedirectType.replace);
   }
   redirect("/creators/ads", RedirectType.replace);
 }
