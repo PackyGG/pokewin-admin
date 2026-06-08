@@ -117,6 +117,28 @@ export type GameTypeBaseline = {
 
 // ─── Daily / free packs (per-pack measured EV — the editable lever) ─────────
 
+/** One card in a pack pool — for visual previews in the planner. */
+export type PackCardPreview = {
+  name: string;
+  imageUrl: string | null;
+  priceUsd: number;
+};
+
+/** Shared pack art + card strip used across daily, welcome, and catalog rows. */
+export type PackVisualFields = {
+  imageUrl: string | null;
+  cardPreviews: PackCardPreview[];
+};
+
+/** Every reward pack in the catalog — gallery context for the packs tab. */
+export type RewardPackCatalogItem = PackVisualFields & {
+  packId: string;
+  name: string;
+  slug: string;
+  active: boolean;
+  cardsPerOpen: number;
+};
+
 /**
  * One real reward pack (`packs.pack_type = 'reward'`) the owner tunes
  * individually. Each row carries the MEASURED average house cost per open
@@ -127,7 +149,7 @@ export type GameTypeBaseline = {
  * collect is ≈ $0 and already flows through `pack_opening` into GGR — netting
  * it would double-count; see `daily-packs.ts`).
  */
-export type DailyPackLeverRow = {
+export type DailyPackLeverRow = PackVisualFields & {
   /** `packs.id`. */
   packId: string;
   /** `packs.name` (e.g. "Daily Tier 1"). */
@@ -159,7 +181,7 @@ export type DailyPackLeverRow = {
  * lever) — surfaced so the owner can see the tiny card-pack EVs that sit behind
  * the welcome grant. House-POV: a card giveaway is a house cost → rose.
  */
-export type WelcomePackInfo = {
+export type WelcomePackInfo = PackVisualFields & {
   /** The `rewards.slug` the pack is referenced from (e.g. "onboarding"). */
   rewardSlug: string;
   /** The `rewards.name` (e.g. "Welcome Reward"). */
@@ -308,6 +330,9 @@ export type SystemEdgeBaseline = {
    * Empty when no reward pack was opened in the window.
    */
   dailyPackRows: DailyPackLeverRow[];
+
+  /** All reward packs (`pack_type = reward`) with art — gallery context. */
+  rewardPackCatalog: RewardPackCatalogItem[];
 
   // ── Real signup-bonus anchors (for the signup lever readout + the bridge) ──
   /**
@@ -483,6 +508,18 @@ export type PlannedLevers = {
   // ── RAIN ──
   /** Rain giveaway cost multiplier (1.0 = current net rain cost). */
   rainCostMult: number;
+
+  // ── OTHER / FOUNDER (remainder + discretionary) ──
+  /**
+   * Scales the “other reward cost” bucket (gift cards, promo codes, waitlist,
+   * manual vouchers + counted adjustments). 1.0 = current realized spend.
+   */
+  otherRewardCostMult: number;
+  /**
+   * Scales motha (founder giveaway account) outflow — creator tips, battle
+   * sponsorship, rain tips funded by motha. 1.0 = current window.
+   */
+  mothaCostMult: number;
 };
 
 /**
@@ -588,6 +625,8 @@ export function defaultLevers(baseline: SystemEdgeBaseline): PlannedLevers {
     signupGrantUsd: baseline.signupAvgGrant ?? 0,
 
     rainCostMult: 1,
+    otherRewardCostMult: 1,
+    mothaCostMult: 1,
   };
 }
 
@@ -625,6 +664,8 @@ function neutralLevers(): PlannedLevers {
     dailyPacksFrequencyMult: 1,
     signupGrantUsd: 0,
     rainCostMult: 1,
+    otherRewardCostMult: 1,
+    mothaCostMult: 1,
   };
 }
 
@@ -707,6 +748,8 @@ export function sanitizeLevers(input: unknown): PlannedLevers {
   base.raffleTicketCostMult = clamp(num(src.raffleTicketCostMult, 1), 0, 5);
   base.dailyPacksFrequencyMult = clamp(num(src.dailyPacksFrequencyMult, 1), 0, 5);
   base.rainCostMult = clamp(num(src.rainCostMult, 1), 0, 5);
+  base.otherRewardCostMult = clamp(num(src.otherRewardCostMult, 1), 0, 5);
+  base.mothaCostMult = clamp(num(src.mothaCostMult, 1), 0, 5);
 
   // Per-pack daily EV (keyed by pack id; non-negative USD). A stale preload
   // entry for a pack not in the current window simply never reaches the
@@ -934,6 +977,11 @@ export function projectEdgePlan(
   // ── Rain (proportional multiplier on the real net rain cost) ──
   const rainPlanned = baseline.rainCost * Math.max(0, planned.rainCostMult);
 
+  const mothaPlanned =
+    baseline.mothaCost * Math.max(0, planned.mothaCostMult);
+  const otherPlanned =
+    baseline.otherRewardCost * Math.max(0, planned.otherRewardCostMult);
+
   const hasUpgrader = baseline.gameTypes.some(
     (g) => g.type === "upgrader" && g.dataAvailable,
   );
@@ -1014,16 +1062,16 @@ export function projectEdgePlan(
       key: "motha",
       label: "Motha giveaways",
       currentCost: baseline.mothaCost,
-      plannedCost: baseline.mothaCost,
-      deltaCost: 0,
+      plannedCost: mothaPlanned,
+      deltaCost: mothaPlanned - baseline.mothaCost,
       dataAvailable: baseline.mothaCost > 0,
     },
     {
       key: "other",
       label: "Other reward cost",
       currentCost: baseline.otherRewardCost,
-      plannedCost: baseline.otherRewardCost,
-      deltaCost: 0,
+      plannedCost: otherPlanned,
+      deltaCost: otherPlanned - baseline.otherRewardCost,
       dataAvailable: baseline.otherRewardCost > 0,
     },
   ];

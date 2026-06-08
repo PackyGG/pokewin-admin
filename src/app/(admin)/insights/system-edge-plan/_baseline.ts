@@ -39,8 +39,11 @@ import type {
   AffiliateTierLever,
   DailyPackLeverRow,
   GameTypeBaseline,
+  PackCardPreview,
+  PackVisualFields,
   RakebackCadenceId,
   RakebackCadenceLever,
+  RewardPackCatalogItem,
   SystemEdgeBaseline,
   WelcomePackInfo,
 } from "./_model";
@@ -368,7 +371,109 @@ async function getWelcomePacks(): Promise<WelcomePackInfo[]> {
     packSlug: r.pack_slug,
     cardsPerOpen: Number(r.cards_per_open),
     theoreticalEvUsd: toNumber(r.ev_per_open),
+    imageUrl: null,
+    cardPreviews: [],
   }));
+}
+
+type PackVisualSqlRow = {
+  pack_id: string;
+  image_url: string | null;
+  card_previews: { name: string; image_url: string | null; price: string }[] | null;
+};
+
+function parseCardPreviews(
+  raw: PackVisualSqlRow["card_previews"],
+): PackCardPreview[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((c) => ({
+    name: c.name,
+    imageUrl: c.image_url,
+    priceUsd: toNumber(c.price),
+  }));
+}
+
+/** Pack art + top weighted cards for planner previews. Read-only. */
+async function fetchPackVisuals(
+  packIds: string[],
+): Promise<Map<string, { imageUrl: string | null; cardPreviews: PackCardPreview[] }>> {
+  const unique = [...new Set(packIds.filter(Boolean))];
+  if (unique.length === 0) return new Map();
+
+  const db = await getDb();
+  const rows = await db.$queryRawUnsafe<PackVisualSqlRow[]>(
+    `SELECT
+       p.id::text AS pack_id,
+       p.image_url,
+       (
+         SELECT COALESCE(json_agg(row_to_json(sub)), '[]'::json)
+         FROM (
+           SELECT c.name, c.image_url, c.price::text AS price
+           FROM pack_cards pc
+           JOIN cards c ON c.id = pc.card_id
+           WHERE pc.pack_id = p.id
+           ORDER BY pc.weight DESC
+           LIMIT 4
+         ) sub
+       ) AS card_previews
+     FROM packs p
+     WHERE p.id = ANY($1::uuid[])`,
+    unique,
+  );
+
+  return new Map(
+    rows.map((r) => [
+      r.pack_id,
+      {
+        imageUrl: r.image_url,
+        cardPreviews: parseCardPreviews(r.card_previews),
+      },
+    ]),
+  );
+}
+
+/** Every reward pack in the catalog — gallery + visual enrichment source. */
+async function getRewardPackCatalog(): Promise<RewardPackCatalogItem[]> {
+  const db = await getDb();
+  type Row = {
+    id: string;
+    name: string;
+    slug: string;
+    image_url: string | null;
+    active: boolean;
+    cards_per_open: number;
+  };
+  const rows = await db.$queryRawUnsafe<Row[]>(
+    `SELECT id::text, name, slug, image_url, active, cards_per_open
+     FROM packs
+     WHERE pack_type = 'reward'
+     ORDER BY name`,
+  );
+  const visuals = await fetchPackVisuals(rows.map((r) => r.id));
+  return rows.map((r) => {
+    const v = visuals.get(r.id);
+    return {
+      packId: r.id,
+      name: r.name,
+      slug: r.slug,
+      active: r.active,
+      cardsPerOpen: Number(r.cards_per_open),
+      imageUrl: v?.imageUrl ?? r.image_url,
+      cardPreviews: v?.cardPreviews ?? [],
+    };
+  });
+}
+
+function enrichWithPackVisuals<T extends { packId: string }>(
+  row: T,
+  visuals: Map<string, { imageUrl: string | null; cardPreviews: PackCardPreview[] }>,
+): T & PackVisualFields {
+  const v = visuals.get(row.packId);
+  return {
+    ...row,
+    imageUrl: v?.imageUrl ?? null,
+    cardPreviews: v?.cardPreviews ?? [],
+  };
 }
 
 /**
@@ -397,6 +502,7 @@ async function buildBaseline(
     signupRes,
     welcomePacksRes,
     mothaRes,
+    rewardCatalogRes,
     rakebackCfgRes,
     affiliateCfgRes,
     affiliateOvRes,
@@ -488,6 +594,12 @@ async function buildBaseline(
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
+      () => getRewardPackCatalog(),
+      [],
+      "system-edge-plan.reward-pack-catalog",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
       () => getRakebackConfigs(),
       [],
       "system-edge-plan.rakeback-config",
@@ -573,19 +685,31 @@ async function buildBaseline(
   // pack's measured EV/open for the editable-EV lever.
   const dailyPacksGiveaway = dailyPacksRes.data;
   const dailyPacksCost = dailyPacksGiveaway?.giveawayPayout ?? 0;
+  const rewardPackCatalog = rewardCatalogRes.data ?? [];
+  const visualByPackId = new Map(
+    rewardPackCatalog.map((p) => [
+      p.packId,
+      { imageUrl: p.imageUrl, cardPreviews: p.cardPreviews },
+    ]),
+  );
   const dailyPackRows: DailyPackLeverRow[] = (dailyPacksGiveaway?.packs ?? [])
     // Only packs actually opened in the window get an editable row (a pack with
     // 0 opens contributes $0 and has no measured EV to scale).
     .filter((p) => p.opens > 0 && p.giveawayPayout > 0)
-    .map((p) => ({
-      packId: p.packId,
-      name: p.name,
-      slug: p.slug,
-      opens: p.opens,
-      claimers: p.claimers,
-      giveawayPayout: p.giveawayPayout,
-      measuredEvUsd: p.opens > 0 ? p.giveawayPayout / p.opens : 0,
-    }))
+    .map((p) =>
+      enrichWithPackVisuals(
+        {
+          packId: p.packId,
+          name: p.name,
+          slug: p.slug,
+          opens: p.opens,
+          claimers: p.claimers,
+          giveawayPayout: p.giveawayPayout,
+          measuredEvUsd: p.opens > 0 ? p.giveawayPayout / p.opens : 0,
+        },
+        visualByPackId,
+      ),
+    )
     // Biggest giveaway first so the dominant pack leads the lever list.
     .sort((a, b) => b.giveawayPayout - a.giveawayPayout);
 
@@ -609,7 +733,9 @@ async function buildBaseline(
       : 0;
 
   // Welcome / one-time reward packs + theoretical EVs (display-only context).
-  const welcomePacks: WelcomePackInfo[] = welcomePacksRes.data ?? [];
+  const welcomePacks: WelcomePackInfo[] = (welcomePacksRes.data ?? []).map((w) =>
+    enrichWithPackVisuals(w, visualByPackId),
+  );
 
   const rainCost = metrics?.rainHouseCost ?? 0;
   const rainWinTotal = metrics?.rainWinTotal ?? 0;
@@ -710,6 +836,7 @@ async function buildBaseline(
     affiliateBlendedRate,
 
     dailyPackRows,
+    rewardPackCatalog,
 
     signupAvgGrant,
     signupClaimants,
@@ -778,6 +905,7 @@ function emptyBaseline(period: InsightsRewardsPeriod): SystemEdgeBaseline {
     affiliateTiers: [],
     affiliateBlendedRate: null,
     dailyPackRows: [],
+    rewardPackCatalog: [],
     signupAvgGrant: null,
     signupClaimants: 0,
     signupSignups: 0,
@@ -809,9 +937,9 @@ export async function getSystemEdgeBaseline(
 ): Promise<SystemEdgeBaseline> {
   const cached = unstable_cache(
     () => buildBaseline(period),
-    // v5: per-pack daily-pack rows (editable EV), signup bridge + welcome-pack
-    // EVs, and concrete rain win/tip anchors added to the baseline shape.
-    ["system-edge-plan-baseline-v5", period],
+    // v6: reward pack catalog + pack art/card previews on daily + welcome rows;
+    // other + motha cost multipliers in the planner model.
+    ["system-edge-plan-baseline-v6", period],
     { revalidate: cacheTtlForInsightsPeriod(period) },
   );
   const { data } = await safeQuery(
