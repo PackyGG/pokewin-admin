@@ -114,6 +114,8 @@ export type RewardItem = {
   type: string;
   levelRequired: number;
   cashAmount: number | null;
+  /** Daily rewards only. Fraction (0.01 = 1%). null = 1% default. */
+  dailyUnlockPercentage: number | null;
   packIds: string[];
   packs: RewardPack[];
   packCount: number;
@@ -179,6 +181,9 @@ export async function getRewards(params: {
       type: r.type,
       levelRequired: r.level_required,
       cashAmount: r.cash_amount ? toNumber(r.cash_amount) : null,
+      dailyUnlockPercentage: r.daily_unlock_percentage
+        ? toNumber(r.daily_unlock_percentage)
+        : null,
       packIds: r.pack_ids,
       packs: r.pack_ids
         .map((id) => packsMap.get(id))
@@ -234,6 +239,9 @@ export async function getLevelUpRewards(params: {
       type: r.type,
       levelRequired: r.level_required,
       cashAmount: r.cash_amount ? toNumber(r.cash_amount) : null,
+      dailyUnlockPercentage: r.daily_unlock_percentage
+        ? toNumber(r.daily_unlock_percentage)
+        : null,
       packIds: r.pack_ids,
       packs: r.pack_ids
         .map((id) => packsMap.get(id))

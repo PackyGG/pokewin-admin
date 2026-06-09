@@ -50,6 +50,12 @@ export function EditRewardButton({ reward }: { reward: RewardItem }) {
   const [cashAmount, setCashAmount] = useState(
     reward.cashAmount != null ? String(reward.cashAmount) : ""
   );
+  // Stored as a fraction (0.01 = 1%); shown to admins as a percent.
+  const [dailyUnlockPct, setDailyUnlockPct] = useState(
+    reward.dailyUnlockPercentage != null
+      ? String(reward.dailyUnlockPercentage * 100)
+      : ""
+  );
   const [packs, setPacks] = useState<PackEntry[]>(
     reward.packs.map((p) => ({ _key: p.id, id: p.id, name: p.name, imageUrl: p.imageUrl, priceUsd: p.priceUsd }))
   );
@@ -78,6 +84,11 @@ export function EditRewardButton({ reward }: { reward: RewardItem }) {
     setType(reward.type as "one_time" | "daily" | "balance");
     setLevelRequired(String(reward.levelRequired));
     setCashAmount(reward.cashAmount != null ? String(reward.cashAmount) : "");
+    setDailyUnlockPct(
+      reward.dailyUnlockPercentage != null
+        ? String(reward.dailyUnlockPercentage * 100)
+        : ""
+    );
     setPacks(reward.packs.map((p) => ({ _key: p.id, id: p.id, name: p.name, imageUrl: p.imageUrl, priceUsd: p.priceUsd })));
   }
 
@@ -102,6 +113,10 @@ export function EditRewardButton({ reward }: { reward: RewardItem }) {
           levelRequired: levelRequired ? parseInt(levelRequired, 10) : undefined,
           packIds: validPacks.map((p) => p.id),
           cashAmount: cashAmount ? parseFloat(cashAmount) : undefined,
+          dailyUnlockPercentage:
+            type === "daily" && dailyUnlockPct
+              ? parseFloat(dailyUnlockPct) / 100
+              : null,
         });
         toast.success("Reward updated");
         setOpen(false);
@@ -159,6 +174,25 @@ export function EditRewardButton({ reward }: { reward: RewardItem }) {
             <Label>Cash Amount (optional)</Label>
             <Input type="number" value={cashAmount} onChange={(e) => setCashAmount(e.target.value)} placeholder="0.00" min={0} step="0.01" />
           </div>
+
+          {type === "daily" && (
+            <div className="space-y-2">
+              <Label>Re-unlock Threshold (%)</Label>
+              <Input
+                type="number"
+                value={dailyUnlockPct}
+                onChange={(e) => setDailyUnlockPct(e.target.value)}
+                placeholder="1"
+                min={0}
+                step="0.01"
+              />
+              <p className="text-xs text-muted-foreground">
+                Percent of the level&apos;s wager requirement a user must re-earn to
+                re-open this pack after its 30-day period ends. Leave blank for the
+                default (1%).
+              </p>
+            </div>
+          )}
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">

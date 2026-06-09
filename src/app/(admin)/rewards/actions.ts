@@ -38,6 +38,8 @@ export async function createReward(data: {
   levelRequired?: number;
   packIds?: string[];
   cashAmount?: number;
+  /** Daily rewards only. Fraction (0.01 = 1%). null/undefined = 1% default. */
+  dailyUnlockPercentage?: number | null;
   metadata?: Record<string, unknown>;
 }) {
   const db = await getDb();
@@ -59,6 +61,8 @@ export async function createReward(data: {
         level_required: data.levelRequired ?? 0,
         pack_ids: data.packIds ?? [],
         cash_amount: data.cashAmount ?? null,
+        daily_unlock_percentage:
+          data.type === "daily" ? data.dailyUnlockPercentage ?? null : null,
         metadata: data.metadata
           ? (data.metadata as Prisma.InputJsonValue)
           : Prisma.JsonNull,
@@ -92,6 +96,8 @@ export async function updateReward(
     levelRequired?: number;
     packIds?: string[];
     cashAmount?: number;
+    /** Daily rewards only. Fraction (0.01 = 1%). null/undefined = 1% default. */
+    dailyUnlockPercentage?: number | null;
     metadata?: Record<string, unknown>;
   }
 ) {
@@ -113,6 +119,8 @@ export async function updateReward(
       level_required: data.levelRequired ?? 0,
       pack_ids: data.packIds ?? [],
       cash_amount: data.cashAmount ?? null,
+      daily_unlock_percentage:
+        data.type === "daily" ? data.dailyUnlockPercentage ?? null : null,
       metadata: data.metadata
         ? (data.metadata as Prisma.InputJsonValue)
         : Prisma.JsonNull,

@@ -760,6 +760,9 @@ model rewards {
   type           reward_type    @default(one_time)
   level_required Int            @default(0)
   cash_amount    Decimal?       @db.Decimal(10, 2)
+  // Daily rewards only: fraction of the level's wagerloss requirement (as XP)
+  // a user must re-earn to re-unlock after the 30-day period. NULL = 1% default.
+  daily_unlock_percentage Decimal? @db.Decimal(6, 4)
   created_at     DateTime       @default(now()) @db.Timestamp(6)
   updated_at     DateTime       @default(now()) @db.Timestamp(6)
   user_rewards   user_rewards[]
