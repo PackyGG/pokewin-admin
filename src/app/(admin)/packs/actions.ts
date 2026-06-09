@@ -117,6 +117,30 @@ export type PackCardInput = {
   order: number;
 };
 
+/**
+ * Resolve the `shard_cost` column value for a pack write.
+ *   - pack_type === 'shard'  → requires an integer >= 1 (throws otherwise).
+ *   - any other pack_type    → always null (a non-shard pack never carries
+ *                              a shard cost, even if one was sent).
+ * Keeps the column a single source of truth so the dedicated /rewards/shards
+ * page, the /packs create/edit flow, and the backend all agree.
+ */
+function normalizeShardCost(
+  packType: string,
+  shardCost: number | null | undefined,
+): number | null {
+  if (packType !== "shard") return null;
+  if (
+    shardCost == null ||
+    !Number.isFinite(shardCost) ||
+    !Number.isInteger(shardCost) ||
+    shardCost < 1
+  ) {
+    throw new Error("Shard packs require a shard cost of at least 1");
+  }
+  return shardCost;
+}
+
 export async function createPack(data: {
   name: string;
   slug: string;
@@ -124,6 +148,9 @@ export async function createPack(data: {
   price: number;
   cardsPerOpen: number;
   packType: string;
+  // Cost in shards to buy & open this pack. Required (>=1) when
+  // packType === 'shard'; forced to null for every other type.
+  shardCost?: number | null;
   imageUrl: string | null;
   tags: pack_tag[];
   difficulty: number | null;
@@ -135,6 +162,11 @@ export async function createPack(data: {
   if (!data.name.trim()) throw new Error("Name is required");
   if (!data.slug.trim()) throw new Error("Slug is required");
   if (data.price <= 0) throw new Error("Price must be greater than 0");
+
+  // Shard packs carry a shard cost (an integer >= 1); every other type
+  // never stores one. Normalize here so the column is the single source
+  // of truth regardless of what the client sent.
+  const shardCost = normalizeShardCost(data.packType, data.shardCost);
 
   await requireCapability(session, "__can_create_pack", "create packs");
 
@@ -148,6 +180,7 @@ export async function createPack(data: {
         price: data.price,
         cards_per_open: data.cardsPerOpen,
         pack_type: data.packType,
+        shard_cost: shardCost,
         tags: data.tags,
         difficulty: data.difficulty,
         active: false,
@@ -191,6 +224,8 @@ export async function updatePack(
     price: number;
     cardsPerOpen: number;
     packType: string;
+    // See createPack: required (>=1) for shard packs, forced null otherwise.
+    shardCost?: number | null;
     imageUrl: string | null;
     tags: pack_tag[];
     difficulty: number | null;
@@ -203,6 +238,8 @@ export async function updatePack(
   if (!data.name.trim()) throw new Error("Name is required");
   if (!data.slug.trim()) throw new Error("Slug is required");
   if (data.price <= 0) throw new Error("Price must be greater than 0");
+
+  const shardCost = normalizeShardCost(data.packType, data.shardCost);
 
   await requireCapability(session, "__can_update_pack", "update packs");
 
@@ -257,6 +294,7 @@ export async function updatePack(
         price: data.price,
         cards_per_open: data.cardsPerOpen,
         pack_type: data.packType,
+        shard_cost: shardCost,
         tags: data.tags,
         difficulty: data.difficulty,
         updated_at: new Date(),

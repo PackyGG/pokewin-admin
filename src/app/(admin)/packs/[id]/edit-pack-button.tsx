@@ -54,6 +54,7 @@ type PackData = {
   priceUsd: number;
   cardsPerOpen: number;
   packType: string;
+  shardCost: number | null;
   tags: pack_tag[];
   difficulty: number | null;
   cards: {
@@ -140,8 +141,20 @@ function ImageDropzone({
 }
 
 
-export function EditPackButton({ pack }: { pack: PackData }) {
-  const [open, setOpen] = useState(false);
+export function EditPackButton({
+  pack,
+  // When true the dialog mounts already open (used by surfaces that
+  // lazy-fetch the pack detail first and then render this editor, e.g.
+  // the /rewards/shards edit flow). `onClosed` lets that parent unmount
+  // the editor once the dialog closes so a fresh open re-fetches detail.
+  defaultOpen = false,
+  onClosed,
+}: {
+  pack: PackData;
+  defaultOpen?: boolean;
+  onClosed?: () => void;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const router = useRouter();
 
   const [name, setName] = useState(pack.name);
@@ -150,6 +163,9 @@ export function EditPackButton({ pack }: { pack: PackData }) {
   const [price, setPrice] = useState(String(pack.priceUsd));
   const [cardsPerOpen, setCardsPerOpen] = useState(String(pack.cardsPerOpen));
   const [packType, setPackType] = useState(pack.packType);
+  const [shardCost, setShardCost] = useState(
+    pack.shardCost != null ? String(pack.shardCost) : "",
+  );
   const [tags, setTags] = useState<pack_tag[]>(pack.tags);
   const [difficulty, setDifficulty] = useState<number>(pack.difficulty ?? 0);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -238,10 +254,21 @@ export function EditPackButton({ pack }: { pack: PackData }) {
     return entries.map((c) => Math.max(1, Math.round(c.odds / 100 * 1_000_000)));
   }
 
+  // Shard packs must carry an integer shard cost >= 1. Client-side guard for
+  // a fast toast; the server action re-validates as the source of truth.
+  const parsedShardCost = parseInt(shardCost, 10);
+  const shardCostValid =
+    packType !== "shard" ||
+    (Number.isInteger(parsedShardCost) && parsedShardCost >= 1);
+
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit() {
     if (saving) return;
+    if (packType === "shard" && !shardCostValid) {
+      toast.error("Shard packs require a shard cost of at least 1");
+      return;
+    }
     setSaving(true);
     try {
       let imageUrl = imagePreview === null ? null : pack.imageUrl;
@@ -258,6 +285,7 @@ export function EditPackButton({ pack }: { pack: PackData }) {
         price: parseFloat(price) || 0,
         cardsPerOpen: parseInt(cardsPerOpen) || 5,
         packType,
+        shardCost: packType === "shard" ? parsedShardCost : null,
         imageUrl,
         tags,
         difficulty: difficulty || null,
@@ -281,11 +309,19 @@ export function EditPackButton({ pack }: { pack: PackData }) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button size="sm" variant="outline" />}>
-        <Pencil className="mr-1 size-3.5" />
-        Edit
-      </DialogTrigger>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) onClosed?.();
+      }}
+    >
+      {!defaultOpen && (
+        <DialogTrigger render={<Button size="sm" variant="outline" />}>
+          <Pencil className="mr-1 size-3.5" />
+          Edit
+        </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Edit Pack</DialogTitle>
@@ -350,10 +386,28 @@ export function EditPackButton({ pack }: { pack: PackData }) {
                     <SelectItem value="custom">Custom</SelectItem>
                     <SelectItem value="promo">Promo</SelectItem>
                     <SelectItem value="reward">Reward</SelectItem>
+                    <SelectItem value="shard">Shard</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
+
+            {packType === "shard" && (
+              <div className="space-y-1.5">
+                <Label>Shard Cost</Label>
+                <Input
+                  type="number"
+                  value={shardCost}
+                  onChange={(e) => setShardCost(e.target.value)}
+                  placeholder="e.g. 100"
+                  min="1"
+                  step="1"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Number of shards required to buy &amp; open this pack.
+                </p>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -456,7 +510,7 @@ export function EditPackButton({ pack }: { pack: PackData }) {
         <DialogFooter>
           <Button
             onClick={handleSubmit}
-            disabled={saving || !name || !price}
+            disabled={saving || !name || !price || !shardCostValid}
             className="w-full sm:w-auto"
           >
             {saving ? "Saving..." : "Save Changes"}

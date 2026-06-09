@@ -123,7 +123,17 @@ function ImageDropzone({
   );
 }
 
-export function CreatePackForm({ onClose }: { onClose: () => void }) {
+export function CreatePackForm({
+  onClose,
+  // When set (e.g. from the dedicated /rewards/shards "Create shard pack"
+  // dialog) the pack type is locked to this value and the type Select is
+  // hidden. Defaults to undefined → the normal editable type Select with
+  // "official" preselected, identical to the original /packs flow.
+  lockedType,
+}: {
+  onClose: () => void;
+  lockedType?: string;
+}) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -134,7 +144,8 @@ export function CreatePackForm({ onClose }: { onClose: () => void }) {
   const [price, setPrice] = useState("");
   const [priceManual, setPriceManual] = useState(false);
   const [cardsPerOpen, setCardsPerOpen] = useState("1");
-  const [packType, setPackType] = useState("official");
+  const [packType, setPackType] = useState(lockedType ?? "official");
+  const [shardCost, setShardCost] = useState("");
   const [tags, setTags] = useState<pack_tag[]>([]);
   const [difficulty, setDifficulty] = useState(0);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -243,7 +254,8 @@ export function CreatePackForm({ onClose }: { onClose: () => void }) {
     setPrice("");
     setPriceManual(false);
     setCardsPerOpen("1");
-    setPackType("official");
+    setPackType(lockedType ?? "official");
+    setShardCost("");
     setTags([]);
     setDifficulty(0);
     setImageFile(null);
@@ -251,9 +263,21 @@ export function CreatePackForm({ onClose }: { onClose: () => void }) {
     setCards([]);
   }
 
+  // Shard packs must carry an integer shard cost >= 1. Validate client-side
+  // for a fast toast; the server action re-validates as the source of truth.
+  const parsedShardCost = parseInt(shardCost, 10);
+  const shardCostValid =
+    packType !== "shard" ||
+    (Number.isInteger(parsedShardCost) && parsedShardCost >= 1);
+
   function handleSubmit() {
     startTransition(async () => {
       try {
+        if (packType === "shard" && !shardCostValid) {
+          toast.error("Shard packs require a shard cost of at least 1");
+          return;
+        }
+
         let imageUrl: string | null = null;
 
         if (imageFile) {
@@ -268,6 +292,7 @@ export function CreatePackForm({ onClose }: { onClose: () => void }) {
           price: parseFloat(price) || 0,
           cardsPerOpen: parseInt(cardsPerOpen) || 5,
           packType,
+          shardCost: packType === "shard" ? parsedShardCost : null,
           imageUrl,
           tags,
           difficulty: difficulty || null,
@@ -320,7 +345,11 @@ export function CreatePackForm({ onClose }: { onClose: () => void }) {
             <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" />
           </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div
+            className={`grid grid-cols-1 gap-4 ${
+              lockedType ? "sm:grid-cols-2" : "sm:grid-cols-3"
+            }`}
+          >
             <div className="space-y-1.5">
               <Label>Price (USD)</Label>
               <Input
@@ -360,21 +389,42 @@ export function CreatePackForm({ onClose }: { onClose: () => void }) {
               <Label>Cards per Open</Label>
               <Input type="number" value={cardsPerOpen} onChange={(e) => setCardsPerOpen(e.target.value)} min="1" />
             </div>
-            <div className="space-y-1.5">
-              <Label>Pack Type</Label>
-              <Select value={packType} onValueChange={(v) => v && setPackType(v)}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="official">Official</SelectItem>
-                  <SelectItem value="custom">Custom</SelectItem>
-                  <SelectItem value="promo">Promo</SelectItem>
-                  <SelectItem value="reward">Reward</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {!lockedType && (
+              <div className="space-y-1.5">
+                <Label>Pack Type</Label>
+                <Select value={packType} onValueChange={(v) => v && setPackType(v)}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="official">Official</SelectItem>
+                    <SelectItem value="custom">Custom</SelectItem>
+                    <SelectItem value="promo">Promo</SelectItem>
+                    <SelectItem value="reward">Reward</SelectItem>
+                    <SelectItem value="shard">Shard</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
+
+          {packType === "shard" && (
+            <div className="space-y-1.5">
+              <Label>Shard Cost</Label>
+              <Input
+                type="number"
+                value={shardCost}
+                onChange={(e) => setShardCost(e.target.value)}
+                placeholder="e.g. 100"
+                min="1"
+                step="1"
+              />
+              <p className="text-xs text-muted-foreground">
+                Number of shards required to buy &amp; open this pack. Shard
+                packs free-roll cards into inventory like reward packs.
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -477,7 +527,7 @@ export function CreatePackForm({ onClose }: { onClose: () => void }) {
       <DialogFooter>
         <Button
           onClick={handleSubmit}
-          disabled={isPending || !name || !price}
+          disabled={isPending || !name || !price || !shardCostValid}
           className="w-full sm:w-auto"
         >
           {isPending ? "Creating..." : "Create Pack"}
