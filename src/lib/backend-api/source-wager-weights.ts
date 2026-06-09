@@ -7,15 +7,18 @@ import { backendApi } from "./client";
  *
  * The game backend lets wager that was FUNDED BY a bonus source (race /
  * leaderboard prizes, rain + reward claims, rakeback, affiliate, tips) count
- * at a different rate toward the WITHDRAWAL requirement and RAKEBACK than
- * deposit-funded wager. All values are basis points (10000 bps = 1× = counts
- * the same as deposit-funded; 0 = that source's wager doesn't count at all).
- * Deposits and organic game winnings are the implicit 100% baseline.
+ * at a different rate toward the WITHDRAWAL requirement, RAKEBACK and RACE
+ * LEADERBOARDS than deposit-funded wager. All values are basis points
+ * (10000 bps = 1× = counts the same as deposit-funded; 0 = that source's
+ * wager doesn't count at all). Deposits and organic game winnings are the
+ * implicit 100% baseline.
  *
- * Composes with the per-game weights. Withdrawal is frozen at wager time;
- * rakeback is applied live at claim (lowering a rakeback weight shrinks
- * rakeback on still-unclaimed periods, never settled claims). Races are not
- * configurable here yet (deferred on the backend).
+ * Composes with the per-game weights. Withdrawal and leaderboard are frozen
+ * at wager time (changes affect future wagers only — race standings never
+ * reshuffle retroactively); rakeback is applied live at claim (lowering a
+ * rakeback weight shrinks rakeback on still-unclaimed periods, never settled
+ * claims). The leaderboard destination covers official races only —
+ * creator/affiliate leaderboard volume uses the per-game weights alone.
  *
  * Source of truth (request/response shapes):
  *   packy-backend/src/routes/v1/admin/source-wager-weights.ts
@@ -39,20 +42,26 @@ export type FundingSourceWeights = {
   tips: number;
 };
 
-/** The full 2×5 matrix returned by GET. */
+/**
+ * The full 3×5 matrix returned by GET. `leaderboard` is optional so the card
+ * degrades per-destination while a backend deploy that only knows
+ * withdrawal + rakeback is still live.
+ */
 export type SourceWagerWeights = {
   withdrawal: FundingSourceWeights;
   rakeback: FundingSourceWeights;
+  leaderboard?: FundingSourceWeights;
 };
 
 /**
- * Partial-update payload for the PUT. At least one value (across either
+ * Partial-update payload for the PUT. At least one value (across any
  * destination) must be present — the backend rejects an empty body. Each
  * value is an int in bps, 0..1_000_000.
  */
 export type UpdateSourceWagerWeightsInput = {
   withdrawal?: Partial<FundingSourceWeights>;
   rakeback?: Partial<FundingSourceWeights>;
+  leaderboard?: Partial<FundingSourceWeights>;
 };
 
 type Success<T> = { success: boolean; data: T };

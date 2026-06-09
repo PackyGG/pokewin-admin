@@ -24,8 +24,9 @@ import type {
 
 /**
  * Funding-source wager-weight editor — how much wager FUNDED BY each bonus
- * source counts toward the withdrawal requirement and rakeback, relative to
- * deposit-funded wager (the implicit 100% baseline).
+ * source counts toward the withdrawal requirement, rakeback and race
+ * leaderboards, relative to deposit-funded wager (the implicit 100%
+ * baseline).
  *
  * Stored on the backend in basis points (10000 bps = 1×), but admins think
  * in multipliers, so the form is in ×-multipliers with a live "= N bps" hint
@@ -35,13 +36,15 @@ import type {
  *
  * `initial === null` means the backend read failed (the source-weights branch
  * isn't deployed yet) — render a muted "awaiting backend deploy" state with no
- * editable inputs rather than crashing /security.
+ * editable inputs rather than crashing /security. A destination missing from
+ * the response (e.g. `leaderboard` against a backend deploy that predates the
+ * race source weights) degrades the same way, but per-destination.
  */
 
 const BPS_PER_X = 10000;
 const MAX_BPS = 1_000_000;
 
-type Destination = "withdrawal" | "rakeback";
+type Destination = "withdrawal" | "rakeback" | "leaderboard";
 type SourceKey = keyof FundingSourceWeights;
 
 const DESTINATIONS: {
@@ -66,6 +69,18 @@ const DESTINATIONS: {
       <>
         How much bonus-funded wager feeds the rakeback base. Applied live at
         claim — changes affect still-unclaimed periods only.
+      </>
+    ),
+  },
+  {
+    key: "leaderboard",
+    title: "Races / leaderboards",
+    help: (
+      <>
+        How much bonus-funded wager counts on official race leaderboards.
+        Frozen at wager time — changes affect future wagers only and never
+        reshuffle existing standings. Creator/affiliate leaderboard volume is
+        unaffected (per-game weights only).
       </>
     ),
   },
@@ -99,10 +114,9 @@ export function SourceWagerWeightsCard({
   const [values, setValues] = useState<Record<string, string>>(() => {
     const seed: Record<string, string> = {};
     for (const d of DESTINATIONS) {
+      const group = initial?.[d.key];
       for (const s of SOURCES) {
-        seed[cellKey(d.key, s.key)] = initial
-          ? bpsToX(initial[d.key][s.key])
-          : "";
+        seed[cellKey(d.key, s.key)] = group ? bpsToX(group[s.key]) : "";
       }
     }
     return seed;
@@ -117,7 +131,7 @@ export function SourceWagerWeightsCard({
           </CardTitle>
           <CardDescription>
             Per-source weights for how much bonus-funded wager counts toward
-            the withdrawal requirement and rakeback.
+            the withdrawal requirement, rakeback and race leaderboards.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -141,6 +155,8 @@ export function SourceWagerWeightsCard({
     const payload: UpdateSourceWagerWeightsInput = {};
 
     for (const d of DESTINATIONS) {
+      const baseline = initial[d.key];
+      if (!baseline) continue; // destination not on this backend deploy
       for (const s of SOURCES) {
         const raw = values[cellKey(d.key, s.key)].trim();
         if (raw === "") continue; // empty → leave unchanged
@@ -152,17 +168,14 @@ export function SourceWagerWeightsCard({
           return;
         }
         const bps = Math.min(MAX_BPS, Math.max(0, Math.round(x * BPS_PER_X)));
-        if (bps !== initial[d.key][s.key]) {
+        if (bps !== baseline[s.key]) {
           const group = (payload[d.key] ??= {});
           group[s.key] = bps;
         }
       }
     }
 
-    if (
-      !payload.withdrawal &&
-      !payload.rakeback
-    ) {
+    if (DESTINATIONS.every((d) => !payload[d.key])) {
       toast.info("No changes to save");
       return;
     }
@@ -186,10 +199,10 @@ export function SourceWagerWeightsCard({
         </CardTitle>
         <CardDescription>
           How much wager funded by each bonus source counts toward the
-          withdrawal requirement and rakeback, relative to deposit-funded
-          wager (the 100% baseline). Values are multipliers (1× = 10000 bps).
-          Composes with the per-game weights. Saving writes through the
-          backend, which validates and refreshes its own cache.
+          withdrawal requirement, rakeback and race leaderboards, relative to
+          deposit-funded wager (the 100% baseline). Values are multipliers
+          (1× = 10000 bps). Composes with the per-game weights. Saving writes
+          through the backend, which validates and refreshes its own cache.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -198,8 +211,9 @@ export function SourceWagerWeightsCard({
           <p className="text-blue-600/80 dark:text-blue-400/80">
             Only bonuses credited after this feature deployed are
             source-weighted (earlier balances count as deposit-equivalent).
-            Withdrawal is frozen at wager time; rakeback is applied live to
-            unclaimed periods. Races are not configurable here yet.
+            Withdrawal and races/leaderboards are frozen at wager time
+            (changes never reshuffle existing race standings); rakeback is
+            applied live to unclaimed periods.
           </p>
         </div>
 
@@ -209,6 +223,15 @@ export function SourceWagerWeightsCard({
               <h4 className="text-sm font-medium">{d.title}</h4>
               <p className="text-[11px] text-muted-foreground">{d.help}</p>
             </div>
+            {!initial[d.key] ? (
+              <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="size-4 shrink-0 mt-0.5" />
+                <p className="text-amber-600/80 dark:text-amber-400/80">
+                  Not on the current backend deploy yet — becomes editable
+                  once the backend ships this destination.
+                </p>
+              </div>
+            ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               {SOURCES.map((s) => {
                 const key = cellKey(d.key, s.key);
@@ -244,6 +267,7 @@ export function SourceWagerWeightsCard({
                 );
               })}
             </div>
+            )}
           </div>
         ))}
 
