@@ -25,6 +25,11 @@ import {
   type DailyGamingMetricPoint,
 } from "@/lib/metrics/queries";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import { getCanonicalMoneyKpis } from "@/lib/queries/house-kpis";
+import {
+  runPeriodWindowQuery,
+  type PeriodWindowRow,
+} from "@/lib/queries/period-window-kpis";
 import { MS_PER_DAY, MS_PER_MINUTE } from "@/lib/utils/time";
 import {
   periodToCutoff,
@@ -111,7 +116,7 @@ export type OverviewDay = {
 // type.
 
 /** Neutral all-zero fallback for the deposits/withdrawals/wager window. */
-const EMPTY_RAW_WINDOW_ROW: RawWindowRow = {
+const EMPTY_RAW_WINDOW_ROW: PeriodWindowRow = {
   deposits: "0",
   deposit_count: "0",
   withdrawals: "0",
@@ -122,7 +127,7 @@ const EMPTY_RAW_WINDOW_ROW: RawWindowRow = {
   active: "0",
 };
 
-const EMPTY_WINDOWS: { current: RawWindowRow; previous: RawWindowRow } = {
+const EMPTY_WINDOWS: { current: PeriodWindowRow; previous: PeriodWindowRow } = {
   current: EMPTY_RAW_WINDOW_ROW,
   previous: EMPTY_RAW_WINDOW_ROW,
 };
@@ -273,6 +278,7 @@ export async function getInsightsOverview(
     { data: daily },
     { data: currentMetrics },
     { data: dailyMetrics },
+    { data: currentMoney },
   ] = await Promise.all([
     safeQuery(
       () =>
@@ -343,6 +349,12 @@ export async function getInsightsOverview(
       "insights-analytics.overview.dailyMetrics",
       REWARD_QUERY_TIMEOUT_MS,
     ),
+    safeQuery(
+      () => getCanonicalMoneyKpis(cutoff),
+      null,
+      "insights-analytics.overview.moneyKpis",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
   ]);
 
   // Daily GGR/NGR keyed by date for both the sparkline merge and the
@@ -380,8 +392,24 @@ export async function getInsightsOverview(
     ? sumGgrNgr(previous.start, previous.end)
     : null;
 
+  const currentWindow = parseWindow(
+    windows.current,
+    currentGgrNgr.ggr,
+    currentGgrNgr.ngr,
+  );
+  if (currentMoney) {
+    currentWindow.deposits = currentMoney.deposits;
+    currentWindow.depositCount = currentMoney.depositCount;
+    currentWindow.withdrawals = currentMoney.withdrawals;
+    currentWindow.wager = currentMoney.wager;
+    currentWindow.wagerOrganic = currentMoney.wagerOrganic;
+    currentWindow.wagerCreatorCoded = currentMoney.wagerCreatorCoded;
+  }
+
+  const wagerByDate = new Map(dailyMetrics.map((p) => [p.date, p.wager]));
+
   return {
-    current: parseWindow(windows.current, currentGgrNgr.ggr, currentGgrNgr.ngr),
+    current: currentWindow,
     previous: previous
       ? parseWindow(
           windows.previous,
@@ -396,7 +424,7 @@ export async function getInsightsOverview(
         date,
         deposits: toNumber(d.deposits),
         withdrawals: toNumber(d.withdrawals),
-        wager: toNumber(d.wager),
+        wager: wagerByDate.get(date) ?? toNumber(d.wager),
         wagerOrganic: toNumber(d.wager_organic),
         wagerCreatorCoded: toNumber(d.wager_creator_coded),
         ggr: m?.ggr ?? 0,
@@ -432,200 +460,8 @@ function sparkSinceForPeriod(period: InsightsPeriod, now: Date): Date {
   return new Date(now.getTime() - days * dayMs);
 }
 
-type RawWindowRow = {
-  deposits: string;
-  deposit_count: string;
-  withdrawals: string;
-  wager: string;
-  wager_organic: string;
-  wager_creator_coded: string;
-  signups: string;
-  active: string;
-};
-
-async function runWindowQuery(args: {
-  currentCutoff: Date;
-  previousStart: Date | null;
-  previousEnd: Date | null;
-  blacklistIdNotIn: string;
-  sessionWindowsCte: string;
-}): Promise<{ current: RawWindowRow; previous: RawWindowRow }> {
-  const db = await getDb();
-  const {
-    currentCutoff,
-    previousStart,
-    previousEnd,
-    blacklistIdNotIn,
-    sessionWindowsCte,
-  } = args;
-
-  // When `previous` is null (lifetime period) we still need a valid
-  // SQL range so the columns don't blow up. Default to (epoch, epoch)
-  // which yields zero rows in those CASEs, then the consumer
-  // discards the `previous` shape entirely.
-  const prevStart = previousStart ?? new Date(0);
-  const prevEnd = previousEnd ?? new Date(0);
-
-  // ── base lower bound (the $0-on-every-window fix) ──────────────────
-  //
-  // The `base` CTE below is the ONLY heavy scan in this query: it joins
-  // `ledger_transactions` to `real_users` and, for every creator row,
-  // evaluates a correlated `EXISTS (… session_windows …)`. Previously its
-  // WHERE was just `status = 'completed'` with NO `created_at` lower bound,
-  // so EVERY render — even a 24h window — scanned the ENTIRE
-  // `ledger_transactions` history (correlated session-window probe per
-  // creator row across all-time) before the outer aggregate finally
-  // restricted by window. On prod-sized data with a populated
-  // `session_windows` CTE that all-time scan blows the per-leg `safeQuery`
-  // 15s timeout, so the WHOLE statement degrades to `EMPTY_WINDOWS` and
-  // ALL eight columns (deposits / withdrawals / wager / organic / coded /
-  // signups / active, current AND previous) render as $0 — on every window,
-  // because the cost is independent of the window width. The canonical
-  // `getWindowMetrics` / `getDailyGamingMetrics` reads (which still return
-  // real GGR/NGR) and the daily series (`cachedDailyOverview`) all bound
-  // their `ledger_transactions` scan with `AND created_at >= since`; this
-  // window query was the one that didn't.
-  //
-  // FIX: bound `base` to the earliest timestamp ANY output column needs —
-  // `min(currentCutoff, prevStart)`. The current-window legs all filter
-  // `created_at >= currentCutoff`; the previous-window legs all filter
-  // `created_at >= prevStart AND < prevEnd` (and `prevStart <= currentCutoff`
-  // always, since the prior window sits immediately before the current one).
-  // So every row dropped by the bound has `created_at < min(cutoff,
-  // prevStart)` and therefore contributes to NO column — the result is
-  // byte-identical (verified head-to-head on a data-rich window) while the
-  // scan shrinks to the window instead of all-time. This is the SAME
-  // `created_at >= since` bound `cachedDailyOverview` and the canonical
-  // metric scans already apply. For lifetime (`previousStart` null →
-  // `prevStart` = epoch, and `currentCutoff` = epoch), the bound is epoch =
-  // a no-op, preserving the all-time lifetime semantics exactly as before.
-  const baseSince = prevStart < currentCutoff ? prevStart : currentCutoff;
-
-  // Canonical WAGER_TYPES set (packs + battles; no phantom upgrader_bet,
-  // no withdrawal_shipping_fee) — the SAME set the headline GGR wager leg
-  // uses, so this displayed wager reconciles with the GGR card.
-  const wagerIn = Prisma.raw(METRICS_WAGER_TYPES_SQL);
-
-  const rows = await db.$queryRaw<
-    {
-      window: "current" | "previous";
-      deposits: string;
-      deposit_count: string;
-      withdrawals: string;
-      wager: string;
-      wager_organic: string;
-      wager_creator_coded: string;
-      signups: string;
-      active: string;
-    }[]
-  >`
-    WITH real_users AS (
-      SELECT u.id, u.role, u.created_at AS signup_at,
-             -- under_creator flags users who joined under an official
-             -- creator code: referred_by points to a user with role
-             -- 'creator'. NULL referred_by (organic signup) is false.
-             -- Replicated from dashboard.ts's organic-wager attribution.
-             EXISTS (
-               SELECT 1 FROM "user" ref
-               WHERE ref.id = u.referred_by AND ref.role = 'creator'
-             ) AS under_creator
-      FROM "user" u
-      WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-    ),
-    ${Prisma.raw(sessionWindowsCte)},
-    base AS (
-      -- Same in_session pattern dashboard.ts uses: a creator wager
-      -- placed while live on a deal/stream is house-funded sponsored
-      -- play, not a real customer bet — dropped from the wager figure
-      -- (NOT in_session) so it matches the GGR card on the dashboard.
-      -- under_creator carries forward whether the wagering user joined
-      -- under an official creator code (drives the organic split).
-      SELECT lt.user_id, lt.type, lt.amount::numeric AS amount, lt.created_at,
-             ru.under_creator,
-             CASE WHEN ru.role = 'creator'
-                  THEN EXISTS (
-                    SELECT 1 FROM session_windows sw
-                    WHERE sw.uid = lt.user_id
-                      AND lt.created_at >= sw.win_start
-                      AND lt.created_at <  sw.win_end
-                  )
-                  ELSE false END AS in_session
-      FROM ledger_transactions lt
-      JOIN real_users ru ON ru.id = lt.user_id
-      -- Lower bound = the earliest timestamp any output column needs
-      -- (min(currentCutoff, prevStart)). Truth-preserving: every dropped
-      -- row predates BOTH windows so it contributes to no column — see the
-      -- baseSince comment above. Without it this CTE scanned all-time and
-      -- the leg timed out to $0 on every window.
-      WHERE lt.status = 'completed' AND lt.created_at >= ${baseSince}
-    ),
-    withdrawals AS (
-      SELECT
-        cwr.total_value_usd::numeric AS amount,
-        COALESCE(cwr.completed_at, cwr.shipped_at) AS effective_at
-      FROM card_withdrawal_requests cwr
-      JOIN real_users ru ON ru.id = cwr.user_id
-      WHERE cwr.status IN ('completed', 'shipped')
-    )
-    SELECT
-      'current'::text AS window,
-      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= ${currentCutoff} THEN amount ELSE 0 END), 0)::text AS deposits,
-      COUNT(CASE WHEN type::text = 'deposit' AND created_at >= ${currentCutoff} THEN 1 END)::text AS deposit_count,
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${currentCutoff} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawals,
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
-      -- Organic wager — customers NOT under a creator code (NOT
-      -- under_creator), excluding creator on-stream play (NOT in_session).
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND NOT under_creator AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
-      -- Creator-coded wager — customers who joined under a creator code.
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND under_creator AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
-      (SELECT COUNT(*)::text FROM real_users WHERE signup_at >= ${currentCutoff}) AS signups,
-      COUNT(DISTINCT CASE WHEN created_at >= ${currentCutoff} THEN user_id END)::text AS active
-    FROM base
-    UNION ALL
-    SELECT
-      'previous'::text AS window,
-      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN amount ELSE 0 END), 0)::text AS deposits,
-      COUNT(CASE WHEN type::text = 'deposit' AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN 1 END)::text AS deposit_count,
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${prevStart} AND effective_at < ${prevEnd} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawals,
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND NOT under_creator AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
-      COALESCE(SUM(CASE WHEN type::text IN ${wagerIn} AND NOT in_session AND under_creator AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
-      (SELECT COUNT(*)::text FROM real_users WHERE signup_at >= ${prevStart} AND signup_at < ${prevEnd}) AS signups,
-      COUNT(DISTINCT CASE WHEN created_at >= ${prevStart} AND created_at < ${prevEnd} THEN user_id END)::text AS active
-    FROM base
-  `;
-
-  const current = rows.find((r) => r.window === "current");
-  const prev = rows.find((r) => r.window === "previous");
-  if (!current || !prev) {
-    throw new Error("insights-analytics: overview window query returned 0 rows");
-  }
-  return {
-    current: {
-      deposits: current.deposits,
-      deposit_count: current.deposit_count,
-      withdrawals: current.withdrawals,
-      wager: current.wager,
-      wager_organic: current.wager_organic,
-      wager_creator_coded: current.wager_creator_coded,
-      signups: current.signups,
-      active: current.active,
-    },
-    previous: {
-      deposits: prev.deposits,
-      deposit_count: prev.deposit_count,
-      withdrawals: prev.withdrawals,
-      wager: prev.wager,
-      wager_organic: prev.wager_organic,
-      wager_creator_coded: prev.wager_creator_coded,
-      signups: prev.signups,
-      active: prev.active,
-    },
-  };
-}
-
 /**
- * Period-keyed `unstable_cache` wrapper around `runWindowQuery` (the
+ * Period-keyed `unstable_cache` wrapper around `runPeriodWindowQuery` (the
  * deposits/withdrawals/wager/organic/signups/active window query). Without
  * this, every cold render re-runs the full `ledger_transactions` +
  * `card_withdrawal_requests` window scan, which on a 30d window on
@@ -652,8 +488,8 @@ const cachedWindowQuery = unstable_cache(
     previousEndIso: string | null,
     blacklistIdNotIn: string,
     sessionWindowsCte: string,
-  ): Promise<{ current: RawWindowRow; previous: RawWindowRow }> => {
-    return runWindowQuery({
+  ): Promise<{ current: PeriodWindowRow; previous: PeriodWindowRow }> => {
+    return runPeriodWindowQuery({
       currentCutoff: new Date(currentCutoffIso),
       previousStart: previousStartIso ? new Date(previousStartIso) : null,
       previousEnd: previousEndIso ? new Date(previousEndIso) : null,
@@ -748,7 +584,7 @@ const cachedDailyMetrics = unstable_cache(
 );
 
 function parseWindow(
-  r: RawWindowRow,
+  r: PeriodWindowRow,
   ggr: number,
   ngr: number,
 ): OverviewWindow {
@@ -802,7 +638,7 @@ const cachedDailyOverview = unstable_cache(
                  WHERE ref.id = u.referred_by AND ref.role = 'creator'
                ) AS under_creator
         FROM "user" u
-        WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        WHERE u.role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
       ),
       ${Prisma.raw(sessionWindowsCte)},
       base AS (

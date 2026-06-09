@@ -2,14 +2,13 @@ import "server-only";
 
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getCanonicalMoneyKpis } from "@/lib/queries/house-kpis";
 import { getWindowMetrics, type MetricWindow } from "@/lib/metrics/queries";
-import { getMetricsScope } from "@/lib/metrics/scope";
-import { WAGER_TYPES_SQL } from "@/lib/metrics/ledger-sets";
 import {
-  WAGER_LEG_FILTER,
   NON_BORROW_PACK_SESSIONS,
   NON_BORROW_BATTLE_SESSIONS,
 } from "@/lib/metrics/gaming-sql";
+import { getMetricsScope } from "@/lib/metrics/scope";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
   daysForInsightsPeriodCapped,
@@ -215,93 +214,6 @@ function mapUpgraderBuckets(
   });
 }
 
-/**
- * Organic customer wager — mirrors dashboard `wager_organic` on the canonical
- * gaming legs (`getMetricsScope` + `WAGER_LEG_FILTER`, NOT under_creator) plus
- * organic upgrader volume (upgrader is not ledger-attributable to creator codes
- * on the dashboard, but Edge Plan 2 includes non-creator-coded upgrader bets).
- */
-async function getOrganicWagerTotals(): Promise<{
-  ledgerOrganicWager: number;
-  upgraderOrganicWager: number;
-  totalOrganicWager: number;
-} | null> {
-  const since = windowFor30d().since;
-  if (!since) return null;
-
-  const { data } = await safeQuery(
-    async () => {
-      const db = await getDb();
-      const scope = await getMetricsScope();
-
-      type LedgerRow = { ledger_organic_wager: string };
-      const ledgerRows = await db.$queryRawUnsafe<LedgerRow[]>(
-        `WITH ${scope.sessionWindowsCte},
-         customer_users AS (
-           SELECT u.id,
-                  EXISTS (
-                    SELECT 1 FROM "user" ref
-                    WHERE ref.id = u.referred_by AND ref.role = 'creator'
-                  ) AS under_creator
-           FROM "user" u
-           WHERE u.id IN ${scope.userScopeSql}
-         )
-         SELECT
-           COALESCE(SUM(
-             CASE
-               WHEN lt.type::text IN ${WAGER_TYPES_SQL} AND NOT cu.under_creator
-               THEN ABS(lt.amount::numeric)
-               ELSE 0
-             END
-           ), 0)::text AS ledger_organic_wager
-         FROM ledger_transactions lt
-         JOIN customer_users cu ON cu.id = lt.user_id
-         WHERE lt.status = 'completed'
-           AND lt.user_id IN ${scope.userScopeSql}
-           AND ${scope.notInCreatorSession("lt.user_id", "lt.created_at")}
-           ${sinceClause("lt.created_at", since)}
-           AND ${WAGER_LEG_FILTER}`,
-      );
-      const ledgerOrganicWager = toNumber(ledgerRows[0]?.ledger_organic_wager);
-
-      let upgraderOrganicWager = 0;
-      const probe = await db.$queryRaw<{ exists: string | null }[]>`
-        SELECT to_regclass('public.upgrader_games')::text AS exists`;
-      if (probe[0]?.exists != null) {
-        type UpgRow = { upgrader_organic_wager: string };
-        const upgRows = await db.$queryRawUnsafe<UpgRow[]>(
-          `WITH customer_users AS (
-             SELECT u.id,
-                    EXISTS (
-                      SELECT 1 FROM "user" ref
-                      WHERE ref.id = u.referred_by AND ref.role = 'creator'
-                    ) AS under_creator
-             FROM "user" u
-             WHERE u.id IN ${scope.userScopeSql}
-           )
-           SELECT
-             COALESCE(SUM(ug.bet_amount::numeric), 0)::text AS upgrader_organic_wager
-           FROM upgrader_games ug
-           JOIN customer_users cu ON cu.id = ug.user_id
-           WHERE NOT cu.under_creator
-             ${sinceClause("ug.created_at", since)}`,
-        );
-        upgraderOrganicWager = toNumber(upgRows[0]?.upgrader_organic_wager);
-      }
-
-      return {
-        ledgerOrganicWager,
-        upgraderOrganicWager,
-        totalOrganicWager: ledgerOrganicWager + upgraderOrganicWager,
-      };
-    },
-    null,
-    "edge-plan-v2.organic-wager",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
-  return data;
-}
-
 async function getBorrowedWagerTotals(): Promise<{
   packWagerBorrowed: number;
   battleWagerBorrowed: number;
@@ -406,6 +318,13 @@ async function getWithdrawalBaselineFromLedger(): Promise<{
 export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
   let v1 = await getSystemEdgeBaseline(EDGE_PLAN_V2_PERIOD);
 
+  const canonicalMoney = await safeQuery(
+    () => getCanonicalMoneyKpis(windowFor30d().since!),
+    null,
+    "edge-plan-v2.canonical-money",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+
   if (v1.wager <= 0) {
     const recovered = await recoverHeadlineMetrics();
     if (recovered) {
@@ -415,6 +334,14 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
 
   if (v1.wager <= 0) {
     v1 = applyPlanningFallback(v1);
+  }
+
+  const money = canonicalMoney.data;
+  const headlineWager = money?.wager ?? v1.wager;
+  if (money && headlineWager > 0 && v1.wager > 0 && Math.abs(v1.wager - headlineWager) > 1) {
+    v1 = applyOrganicWagerScale(v1, headlineWager, v1.wager);
+  } else if (money && headlineWager > 0 && v1.wager <= 0) {
+    v1 = { ...v1, wager: headlineWager };
   }
 
   const shardsStub = getShardsBaselineStub(v1);
@@ -435,12 +362,9 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
   );
   const borrowedWager = await getBorrowedWagerTotals();
 
-  const totalWager = v1.wager;
-  const packsW = v1.gameTypes.find((g) => g.type === "packs")?.wager ?? 0;
-  const battlesW = v1.gameTypes.find((g) => g.type === "battles")?.wager ?? 0;
-  const upgW = v1.gameTypes.find((g) => g.type === "upgrader")?.wager ?? 0;
-  const ledgerOrganicWager = packsW + battlesW;
-  const upgraderOrganicWager = upgW
+  const totalWager = headlineWager > 0 ? headlineWager : v1.wager;
+  const ledgerOrganicWager = money?.wagerOrganic ?? 0;
+  const upgraderOrganicWager = money?.upgraderOrganic ?? 0;
 
   const estimatedWithdrawalVolumeUsd =
     withdrawalLedger?.volumeUsd ?? Math.max(0, v1.wager * 0.08);
