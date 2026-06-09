@@ -208,9 +208,8 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
           }
         />
         <KpiTile
-          label="Wager (real)"
-          value={formatCompactUsd(projection.currentWager)}
-          sub="Held at observed volume"
+          label="Organic wager"
+          value={formatCompactUsd(projection.plannedWager)}`r`n          sub="Borrow + creator-session excluded; held at observed volume"
           icon={Coins}
           accent="blue"
         />

@@ -397,9 +397,9 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
       {/* ── Projection KPI strip ─────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <KpiTile
-          label="Wager (real)"
+          label="Organic wager"
           value={formatCompactUsd(projection.plannedWager)}
-          sub="Held at observed volume"
+          sub="Borrow + creator-session excluded; held at observed volume"
           icon={Banknote}
           accent="blue"
         />

@@ -78,7 +78,8 @@ export function EdgeAfterRewardsPanel({
       <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
         House edge on wager <strong>before</strong> reward spend vs effective margin{" "}
         <strong>after</strong> all modeled levers (rakeback, rain, shards, affiliates,
-        etc.). Percentages are of total wager on the planned config.
+        etc.). Percentages are of <strong>organic wager</strong> on the planned config
+        (excl. borrow &amp; creator-coded referral volume).
       </p>
 
       <div className="grid gap-3 lg:grid-cols-[1fr_auto_1fr] lg:items-stretch">
@@ -118,7 +119,7 @@ export function EdgeAfterRewardsPanel({
           <p className={cn("mt-1 text-3xl font-bold tabular-nums", netClass)}>
             {formatPct(summary.netEdgeAfterRewards)}
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">Net edge left on wager</p>
+          <p className="mt-1 text-xs text-muted-foreground">Net edge left on organic wager</p>
           <p className="mt-2 text-[10px] tabular-nums text-muted-foreground">
             Current config: {formatPct(summary.currentNetEdge)}
             {summary.netEdgeDelta !== 0 && (
@@ -158,7 +159,7 @@ export function EdgeAfterRewardsPanel({
 
       <div className="mt-3 grid gap-2 rounded-lg border bg-background/40 px-3 py-2.5 text-xs sm:grid-cols-3">
         <div>
-          <span className="text-muted-foreground">Before (USD on wager)</span>
+          <span className="text-muted-foreground">Before (USD on organic wager)</span>
           <p className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
             {formatCompactUsd(summary.grossEdge * summary.wager)}
           </p>
@@ -195,7 +196,7 @@ export function EdgeAfterRewardsPanel({
       {summary.leverDrags.length > 0 && (
         <div className="mt-4 space-y-0.5 border-t pt-3">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            What erodes edge (% of wager)
+            What erodes edge (% of organic wager)
           </p>
           {summary.leverDrags.map((l) => (
             <PanelRow

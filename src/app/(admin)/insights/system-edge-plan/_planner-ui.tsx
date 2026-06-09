@@ -110,9 +110,6 @@ export function LeverSlider({
   // Slider-unit bounds expressed in the box's display unit.
   const inMin = unit ? sliderToInput(min, unit) : min;
   const inMax = unit ? sliderToInput(max, unit) : max;
-  const inStep =
-    preciseInput?.inputStep ??
-    (decimals > 0 ? Number((10 ** -decimals).toFixed(decimals)) : 1);
   const unitSuffix = unit === "percent" ? "%" : unit === "multiplier" ? "×" : "$";
 
   // Local text state so the owner can type freely (incl. an intermediate
@@ -127,8 +124,8 @@ export function LeverSlider({
   }, [displayValue, decimals, focused]);
 
   const commit = (raw: string) => {
-    const parsed = Number(raw);
-    if (raw.trim() === "" || !Number.isFinite(parsed)) {
+    const parsed = parseBoxInput(raw);
+    if (parsed == null) {
       // Revert to the canonical value on an empty / invalid entry.
       setText(formatBox(displayValue, decimals));
       return;
@@ -149,12 +146,10 @@ export function LeverSlider({
           {preciseInput && (
             <div className="relative">
               <Input
-                type="number"
+                type="text"
                 inputMode="decimal"
+                autoComplete="off"
                 value={text}
-                min={inMin}
-                max={inMax}
-                step={inStep}
                 disabled={disabled}
                 aria-label={`${label} exact value`}
                 onFocus={() => setFocused(true)}
@@ -171,7 +166,7 @@ export function LeverSlider({
                   }
                 }}
                 className={cn(
-                  "h-6 w-[4.75rem] py-0 pl-2 pr-5 text-right text-xs tabular-nums",
+                  "h-7 min-h-7 w-[4.75rem] overflow-visible py-0 pl-2 pr-5 text-right text-xs leading-none tabular-nums",
                 )}
               />
               <span className="pointer-events-none absolute inset-y-0 right-1.5 flex items-center text-[10px] font-medium text-muted-foreground">
@@ -218,4 +213,15 @@ function formatBox(n: number, decimals: number): string {
   // and "15.00" → "15" read cleanly while still allowing fine entry.
   const fixed = n.toFixed(decimals);
   return fixed.includes(".") ? fixed.replace(/\.?0+$/, "") : fixed;
+}
+
+/** Parse typed box text — accepts comma or period decimals; always period out. */
+function parseBoxInput(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === "" || trimmed === "." || trimmed === ",") return null;
+  // Admin UI uses period decimals; tolerate a single comma as decimal separator.
+  const normalized = trimmed.replace(",", ".");
+  if ((normalized.match(/\./g) ?? []).length > 1) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 }

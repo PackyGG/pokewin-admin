@@ -3,6 +3,13 @@ import "server-only";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getWindowMetrics, type MetricWindow } from "@/lib/metrics/queries";
+import { getMetricsScope } from "@/lib/metrics/scope";
+import { WAGER_TYPES_SQL } from "@/lib/metrics/ledger-sets";
+import {
+  WAGER_LEG_FILTER,
+  NON_BORROW_PACK_SESSIONS,
+  NON_BORROW_BATTLE_SESSIONS,
+} from "@/lib/metrics/gaming-sql";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
   daysForInsightsPeriodCapped,
@@ -26,6 +33,39 @@ const DEFAULT_BALANCE_WITHDRAWAL_SHARE = 0.35;
 function windowFor30d(): MetricWindow {
   const days = daysForInsightsPeriodCapped(EDGE_PLAN_V2_PERIOD);
   return { since: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
+}
+
+function sinceClause(column: string, since: Date | null): string {
+  if (since === null) return "";
+  return `AND ${column} >= '${since.toISOString()}'::timestamptz`;
+}
+
+/**
+ * Scale per-type gaming legs to an organic wager denominator while preserving
+ * measured edge ratios (planning projection at constant organic volume).
+ */
+function applyOrganicWagerScale(
+  baseline: SystemEdgeBaseline,
+  organicWager: number,
+  totalWager: number,
+): SystemEdgeBaseline {
+  if (totalWager <= 0 || organicWager <= 0 || Math.abs(organicWager - totalWager) < 1) {
+    return { ...baseline, wager: organicWager || totalWager };
+  }
+  const scale = organicWager / totalWager;
+  const gameTypes = baseline.gameTypes.map((g) => ({
+    ...g,
+    wager: g.wager * scale,
+    payout: g.payout * scale,
+    ggr: g.ggr * scale,
+  }));
+  return {
+    ...baseline,
+    wager: organicWager,
+    gameTypes,
+    gamingPayout: baseline.gamingPayout * scale,
+    ggr: baseline.ggr * scale,
+  };
 }
 
 function mergeHeadlineMetrics(
@@ -175,6 +215,93 @@ function mapUpgraderBuckets(
   });
 }
 
+/**
+ * Organic customer wager — mirrors dashboard `wager_organic` on the canonical
+ * gaming legs (`getMetricsScope` + `WAGER_LEG_FILTER`, NOT under_creator) plus
+ * organic upgrader volume (upgrader is not ledger-attributable to creator codes
+ * on the dashboard, but Edge Plan 2 includes non-creator-coded upgrader bets).
+ */
+async function getOrganicWagerTotals(): Promise<{
+  ledgerOrganicWager: number;
+  upgraderOrganicWager: number;
+  totalOrganicWager: number;
+} | null> {
+  const since = windowFor30d().since;
+  if (!since) return null;
+
+  const { data } = await safeQuery(
+    async () => {
+      const db = await getDb();
+      const scope = await getMetricsScope();
+
+      type LedgerRow = { ledger_organic_wager: string };
+      const ledgerRows = await db.$queryRawUnsafe<LedgerRow[]>(
+        `WITH ${scope.sessionWindowsCte},
+         customer_users AS (
+           SELECT u.id,
+                  EXISTS (
+                    SELECT 1 FROM "user" ref
+                    WHERE ref.id = u.referred_by AND ref.role = 'creator'
+                  ) AS under_creator
+           FROM "user" u
+           WHERE u.id IN ${scope.userScopeSql}
+         )
+         SELECT
+           COALESCE(SUM(
+             CASE
+               WHEN lt.type::text IN ${WAGER_TYPES_SQL} AND NOT cu.under_creator
+               THEN ABS(lt.amount::numeric)
+               ELSE 0
+             END
+           ), 0)::text AS ledger_organic_wager
+         FROM ledger_transactions lt
+         JOIN customer_users cu ON cu.id = lt.user_id
+         WHERE lt.status = 'completed'
+           AND lt.user_id IN ${scope.userScopeSql}
+           AND ${scope.notInCreatorSession("lt.user_id", "lt.created_at")}
+           ${sinceClause("lt.created_at", since)}
+           AND ${WAGER_LEG_FILTER}`,
+      );
+      const ledgerOrganicWager = toNumber(ledgerRows[0]?.ledger_organic_wager);
+
+      let upgraderOrganicWager = 0;
+      const probe = await db.$queryRaw<{ exists: string | null }[]>`
+        SELECT to_regclass('public.upgrader_games')::text AS exists`;
+      if (probe[0]?.exists != null) {
+        type UpgRow = { upgrader_organic_wager: string };
+        const upgRows = await db.$queryRawUnsafe<UpgRow[]>(
+          `WITH customer_users AS (
+             SELECT u.id,
+                    EXISTS (
+                      SELECT 1 FROM "user" ref
+                      WHERE ref.id = u.referred_by AND ref.role = 'creator'
+                    ) AS under_creator
+             FROM "user" u
+             WHERE u.id IN ${scope.userScopeSql}
+           )
+           SELECT
+             COALESCE(SUM(ug.bet_amount::numeric), 0)::text AS upgrader_organic_wager
+           FROM upgrader_games ug
+           JOIN customer_users cu ON cu.id = ug.user_id
+           WHERE NOT cu.under_creator
+             ${sinceClause("ug.created_at", since)}`,
+        );
+        upgraderOrganicWager = toNumber(upgRows[0]?.upgrader_organic_wager);
+      }
+
+      return {
+        ledgerOrganicWager,
+        upgraderOrganicWager,
+        totalOrganicWager: ledgerOrganicWager + upgraderOrganicWager,
+      };
+    },
+    null,
+    "edge-plan-v2.organic-wager",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  return data;
+}
+
 async function getBorrowedWagerTotals(): Promise<{
   packWagerBorrowed: number;
   battleWagerBorrowed: number;
@@ -185,23 +312,28 @@ async function getBorrowedWagerTotals(): Promise<{
   const { data } = await safeQuery(
     async () => {
       const db = await getDb();
+      const scope = await getMetricsScope();
       const rows = await db.$queryRawUnsafe<
         { pack_wager_borrowed: string; battle_wager_borrowed: string }[]
       >(
-        `SELECT
-           COALESCE(SUM(CASE WHEN lt.type::text = 'pack_opening'
-                             AND lt.description ILIKE '%borrow%'
-                            THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS pack_wager_borrowed,
-           COALESCE(SUM(CASE WHEN lt.type::text = 'battle_entry'
-                             AND lt.description ILIKE '%borrow%'
-                            THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS battle_wager_borrowed
-         FROM ledger_transactions lt
-         WHERE lt.status = 'completed'
-           AND lt.created_at >= $1
-           AND lt.user_id IN (
-             SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support')
-           )`,
-        since,
+        `WITH ${scope.sessionWindowsCte}
+         SELECT
+           COALESCE(SUM(CASE
+             WHEN type::text = 'pack_opening'
+              AND (description ILIKE '%borrow%'
+                   OR (game_session_id IS NOT NULL
+                       AND game_session_id NOT IN ${NON_BORROW_PACK_SESSIONS}))
+             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_borrowed,
+           COALESCE(SUM(CASE
+             WHEN type::text = 'battle_bet'
+              AND (game_session_id IS NULL
+                   OR game_session_id NOT IN ${NON_BORROW_BATTLE_SESSIONS})
+             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_borrowed
+         FROM ledger_transactions
+         WHERE status = 'completed'
+           AND user_id IN ${scope.userScopeSql}
+           AND ${scope.notInCreatorSession("user_id", "created_at")}
+           ${sinceClause("created_at", since)}`,
       );
       return {
         packWagerBorrowed: toNumber(rows[0]?.pack_wager_borrowed),
@@ -301,7 +433,15 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     "edge-plan-v2.upgrader-buckets",
     REWARD_QUERY_TIMEOUT_MS,
   );
-  const borrowedWager = await getBorrowedWagerTotals();
+  const [organicWager, borrowedWager] = await Promise.all([
+    getOrganicWagerTotals(),
+    getBorrowedWagerTotals(),
+  ]);
+
+  const totalWager = v1.wager;
+  if (organicWager != null && organicWager.totalOrganicWager > 0) {
+    v1 = applyOrganicWagerScale(v1, organicWager.totalOrganicWager, totalWager);
+  }
 
   const estimatedWithdrawalVolumeUsd =
     withdrawalLedger?.volumeUsd ?? Math.max(0, v1.wager * 0.08);
@@ -344,6 +484,9 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
 
   return {
     ...v1,
+    totalWager,
+    ledgerOrganicWager: organicWager?.ledgerOrganicWager ?? 0,
+    upgraderOrganicWager: organicWager?.upgraderOrganicWager ?? 0,
     periodLabel: insightsRewardsPeriodLabel(EDGE_PLAN_V2_PERIOD),
     periodDays: Math.max(1, daysForInsightsPeriodCapped(EDGE_PLAN_V2_PERIOD)),
     shardsRedemptionCost,

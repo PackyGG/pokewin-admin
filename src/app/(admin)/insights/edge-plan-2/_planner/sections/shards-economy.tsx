@@ -14,7 +14,15 @@ import {
   type EdgePlanV2Projection,
   type PlannedLeversV2,
 } from "../../_model-v2";
-import { formatEvUsd, multLabel, shardsPerDollarLabel } from "../utils";
+import {
+  formatEvUsd,
+  MAX_WAGER_PER_GEM_USD,
+  MIN_WAGER_PER_GEM_USD,
+  multLabel,
+  shardsPerDollarFromWagerPerGem,
+  wagerPerGemFromShardsPerDollar,
+  wagerPerGemLabel,
+} from "../utils";
 import { leverEdgeDragPct, RewardPanelTitle } from "../components/reward-edge-drag";
 
 export function ShardsEconomySection({
@@ -52,24 +60,32 @@ export function ShardsEconomySection({
             {dataBadge}
           </Badge>
           <span className="text-xs text-muted-foreground">
-            Wager → shards (replaces raffle tickets). Spend shifts to shard shop packs.
+            Set how much wager earns one gem (replaces raffle tickets). Spend shifts to shard shop packs.
           </span>
         </div>
         <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
           <LeverSlider
-            label="Shards per $1 wager"
-            valueLabel={shardsPerDollarLabel(levers.shardsPerDollarWager)}
-            value={levers.shardsPerDollarWager * 100}
+            label="Wager per gem"
+            valueLabel={wagerPerGemLabel(
+              wagerPerGemFromShardsPerDollar(levers.shardsPerDollarWager),
+            )}
+            value={wagerPerGemFromShardsPerDollar(levers.shardsPerDollarWager)}
             onValueChange={(v) =>
               setLevers((s) => ({
                 ...s,
-                shardsPerDollarWager: clamp(v / 100, 0, 10),
+                shardsPerDollarWager: shardsPerDollarFromWagerPerGem(
+                  clamp(v, MIN_WAGER_PER_GEM_USD, MAX_WAGER_PER_GEM_USD),
+                ),
               }))
             }
-            min={0}
-            max={1000}
-            step={1}
-            baselineMarker={baseline.shardsPerDollarWager * 100}
+            min={MIN_WAGER_PER_GEM_USD}
+            max={MAX_WAGER_PER_GEM_USD}
+            step={0.5}
+            baselineMarker={wagerPerGemFromShardsPerDollar(
+              baseline.shardsPerDollarWager,
+            )}
+            baselineLabel="Baseline earn rate"
+            preciseInput={{ unit: "usd", decimals: 2 }}
           />
           <LeverSlider
             label="Earn rate mult."
