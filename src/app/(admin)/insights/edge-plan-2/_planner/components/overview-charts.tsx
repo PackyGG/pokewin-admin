@@ -46,7 +46,7 @@ function netEdgeTextClass(netEdge: number): string {
 function basisLabel(s: NetEdgeScenario): string {
   if (s.bases.includes("deposit-bonus")) return "wager + cost";
   if (s.bases.includes("rakeback")) return "wager-based";
-  if (s.bases.includes("affiliate")) return "% of wager";
+  if (s.bases.includes("affiliate")) return "% of edge";
   return "";
 }
 
@@ -248,8 +248,11 @@ export function NetEdgeByScenarioPanel({
   return (
     <StatPanel title="Net edge by scenario" icon={ShieldAlert} accent="amber">
       <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-        Where the house edge ends up after reward erosion. Affiliate and rakeback
-        erode edge 1:1 with their wager-% rates.
+        Where the house edge ends up after reward erosion. Affiliate tiers pay a{" "}
+        <span className="font-medium text-foreground">% of house edge</span> (effective
+        wager drag = edge share × house edge). Rakeback is a straight{" "}
+        <span className="font-medium text-foreground">% of wager</span>. Deposit bonus
+        uses realized cost ÷ wager.
       </p>
 
       {scenarios.length === 0 ? (

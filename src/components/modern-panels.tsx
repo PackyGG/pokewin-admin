@@ -271,7 +271,7 @@ export function SectionHeading({
   action,
 }: {
   icon: React.ElementType;
-  title: string;
+  title: React.ReactNode;
   action?: React.ReactNode;
 }) {
   // Stack title + action vertically on phones — long action clusters
@@ -285,7 +285,7 @@ export function SectionHeading({
         </div>
         {/* Rendered as <h2> so the page ladder is h1 (PageHero) → h2
             (SectionHeading) → intra-panel divs. Visual styling unchanged. */}
-        <h2 className="truncate text-sm font-semibold tracking-tight sm:text-base">
+        <h2 className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm font-semibold tracking-tight sm:text-base">
           {title}
         </h2>
       </div>
@@ -478,7 +478,7 @@ export function StatPanel({
   action,
   children,
 }: {
-  title: string;
+  title: React.ReactNode;
   icon: React.ElementType;
   accent: AccentColor;
   action?: React.ReactNode;
@@ -519,7 +519,7 @@ export function StatPanel({
                 so this small uppercase label is intra-panel chrome — not
                 another level in the document outline. Visual styling
                 unchanged. */}
-            <div className="truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               {title}
             </div>
           </div>

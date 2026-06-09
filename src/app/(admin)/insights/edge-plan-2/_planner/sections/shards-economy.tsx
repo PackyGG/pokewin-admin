@@ -11,17 +11,21 @@ import { PackFirstTunerCard } from "../../_pack-visual-v2";
 import {
   clamp,
   type EdgePlanV2Baseline,
+  type EdgePlanV2Projection,
   type PlannedLeversV2,
 } from "../../_model-v2";
 import { formatEvUsd, multLabel, shardsPerDollarLabel } from "../utils";
+import { leverEdgeDragPct, RewardPanelTitle } from "../components/reward-edge-drag";
 
 export function ShardsEconomySection({
   baseline,
   levers,
+  projection,
   setLevers,
 }: {
   baseline: EdgePlanV2Baseline;
   levers: PlannedLeversV2;
+  projection: EdgePlanV2Projection;
   setLevers: React.Dispatch<React.SetStateAction<PlannedLeversV2>>;
 }) {
   const dataBadge =
@@ -33,7 +37,16 @@ export function ShardsEconomySection({
 
   return (
     <div className="space-y-4">
-      <StatPanel title="Shards earn" icon={Gem} accent="purple">
+      <StatPanel
+        title={
+          <RewardPanelTitle
+            label="Shards earn"
+            dragPct={leverEdgeDragPct(projection, "shards-earn")}
+          />
+        }
+        icon={Gem}
+        accent="purple"
+      >
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Badge variant="outline" className="text-[10px]">
             {dataBadge}
@@ -132,7 +145,16 @@ export function ShardsEconomySection({
         </div>
       </StatPanel>
 
-      <StatPanel title="Shard shop packs" icon={Gem} accent="pink">
+      <StatPanel
+        title={
+          <RewardPanelTitle
+            label="Shard shop packs"
+            dragPct={leverEdgeDragPct(projection, "shards")}
+          />
+        }
+        icon={Gem}
+        accent="pink"
+      >
         <p className="mb-4 text-xs text-muted-foreground">
           Plan EV per pack before prod shop packs exist. Pack art above each slider.
         </p>

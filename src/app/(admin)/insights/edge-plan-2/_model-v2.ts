@@ -22,6 +22,9 @@ import {
   defaultLevers,
   projectEdgePlan,
   computeNetEdgeScenarios,
+  plannedBlendedHouseEdge,
+  affiliateEdgeShareToWagerDrag,
+  affiliateWagerDragToEdgeShare,
   clamp,
   PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
   PLANNED_UPGRADER_EDGE_DEFAULT,
@@ -37,6 +40,9 @@ export {
   GAME_TYPE_IDS,
   gameTypeLabel,
   computeNetEdgeScenarios,
+  plannedBlendedHouseEdge,
+  affiliateEdgeShareToWagerDrag,
+  affiliateWagerDragToEdgeShare,
   REMOVE_WAGER_REQ_COST_UPLIFT,
   type GameTypeId,
   type PackCardPreview,
@@ -468,6 +474,14 @@ function toV1Levers(planned: PlannedLeversV2, baseline: EdgePlanV2Baseline): Pla
     raffleFrequencyMult: 1,
     raffleTicketCostMult: 1,
   };
+}
+
+/** Planned blended house edge for v2 levers (wraps v1 helper). */
+export function plannedBlendedHouseEdgeV2(
+  baseline: EdgePlanV2Baseline,
+  levers: PlannedLeversV2,
+): number {
+  return plannedBlendedHouseEdge(baseline, toV1Levers(levers, baseline));
 }
 
 /** Wager-weighted blend of pack/battle vs upgrader weights (0..1 each). */

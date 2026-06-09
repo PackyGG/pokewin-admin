@@ -211,7 +211,10 @@ export type AffiliateTierLever = {
   level: number;
   /** Display label (e.g. "Level 5"). */
   label: string;
-  /** CURRENT commission rate (decimal fraction, e.g. 0.05 = 5%). The real rate. */
+  /**
+   * CURRENT commission share of referred house edge / GGR (decimal fraction,
+   * e.g. 0.10 = 10% of edge → 1.05% of wager at a 10.5% house edge).
+   */
   currentRate: number;
   /** Cumulative referred-wager threshold to reach this tier (USD). */
   threshold: number;
@@ -318,9 +321,10 @@ export type SystemEdgeBaseline = {
   /** Real affiliate tiers from `affiliate_level_configs`. */
   affiliateTiers: AffiliateTierLever[];
   /**
-   * Blended affiliate commission rate over the window = total commission ÷
-   * referred wager, when both are known; else null. Informational note only
-   * (the per-tier rates drive the projection).
+   * Realized affiliate commission as a fraction of referred WAGER over the
+   * window (= total commission ÷ downstream wager). This is the effective
+   * wager drag; tier ladder rates are shares of edge — divide by house edge to
+   * get the blended edge share. Null when wager is unknown.
    */
   affiliateBlendedRate: number | null;
 
@@ -1122,35 +1126,50 @@ export function projectEdgePlan(
 // ─── Net edge by scenario (reward erosion of the planned edge) ───────────────
 
 /**
- * ── THE AFFILIATE / REWARD BASIS (verified against the live code, NOT guessed) ──
+ * Affiliate ladder rates (`affiliate_level_configs.commission_rate`) are a **share
+ * of referred house edge / GGR**, not a straight % of wager. Effective wager drag:
  *
- * Affiliate commission is a **% of referred WAGER**, the SAME base the house edge
- * is measured on (GGR = edge × wager). Verified from three independent sources:
- *   • `getAffiliateOverview`: `commissionPctOfWager = totalCommissionPaid /
- *     downstreamWager` — commission expressed as a fraction of referred wager.
- *   • the affiliate forecast `constants.ts`: `BASELINE_BLENDED_RATE` /
- *     `BASELINE_TIER_RATE` are documented "($ per $1 of referred wager)".
- *   • `affiliate_level_configs.commission_rate` is `Decimal(5,4)` — a per-$ rate.
+ *     wager_drag = edge_share × house_edge
  *
- * Because BOTH the edge and the commission are fractions OF THE SAME WAGER, a
- * tier paying `c` commission erodes a FULL `c` of edge on the wager it touches:
+ * e.g. tier 8 at 10% of edge with a 10.5% house edge → 1.05% of referred wager.
  *
- *     net_edge = planned_edge − commission_rate            (per $1 of wager)
+ * Rakeback is different: `rakeback_config.percentage` is a per-$ rebate of wager,
+ * so the planned blended rakeback rate erodes edge 1:1 on wager.
  *
- * e.g. at the planned 10.99% packs&battles edge, a tier-8 10% commission leaves
- * net 10.99% − 10% = 0.99% (NOT ~9.89% — that would be the answer if commission
- * were a % of NGR, which it is NOT here). Rakeback is the same: `rakeback_config.
- * percentage` is a per-$ rebate of wager (`rakeback_claims.wagered_amount_usd ×
- * percentage`), so the planned blended rakeback rate erodes edge 1:1 too.
- *
- * Deposit bonus is NOT a clean per-wager rate (it is a match on deposits, capped,
- * with breakage), so we express its erosion as the realized deposit-bonus cost as
- * a fraction of wager (cost ÷ wager) at the planned config — the honest
- * wager-normalized drag, clearly labeled as a realized-cost basis, not a rate.
- *
- * This is a PLANNING upper-bound per profile: it assumes 100% of the wager on
- * that profile carries the named reward(s). Clearly labeled in the UI.
+ * Deposit bonus uses realized cost ÷ wager at the planned config.
  */
+
+/** Planned blended house edge (Σ planned GGR ÷ Σ wager) for affiliate drag math. */
+export function plannedBlendedHouseEdge(
+  baseline: SystemEdgeBaseline,
+  planned: PlannedLevers,
+): number {
+  const wager = baseline.wager;
+  if (wager <= 0) return 0;
+  let ggr = 0;
+  for (const g of baseline.gameTypes) {
+    const edge = clamp(planned.edges[g.type] ?? effectiveTypeEdge(g), 0, 1);
+    ggr += edge * g.wager;
+  }
+  return ggr / wager;
+}
+
+/** Convert an affiliate tier rate (share of edge) to effective wager drag. */
+export function affiliateEdgeShareToWagerDrag(
+  edgeShare: number,
+  houseEdge: number,
+): number {
+  return Math.max(0, edgeShare) * Math.max(0, houseEdge);
+}
+
+/** Realized wager drag → implied edge share at a given house edge. */
+export function affiliateWagerDragToEdgeShare(
+  wagerDrag: number,
+  houseEdge: number,
+): number {
+  const edge = Math.max(0, houseEdge);
+  return edge > 0 ? Math.max(0, wagerDrag) / edge : 0;
+}
 
 /** What basis a scenario's erosion is expressed on (labeled in the UI). */
 export type EdgeErosionBasis = "affiliate" | "rakeback" | "deposit-bonus" | "none";
@@ -1235,24 +1254,17 @@ export function plannedDepositBonusEdgeDrag(
  * deposit-bonus levers).
  *
  * Rows:
- *   (a) Base / no rewards   — the planned packs&battles edge (gross).
- *   (b) one per affiliate tier — net = grossEdge − tier.plannedRate (commission
- *       is % of wager → full per-$ erosion).
+ *   (a) Base / no rewards   — planned blended house edge (gross).
+ *   (b) one per affiliate tier — net = grossEdge − (tier edge share × grossEdge).
  *   (c) combined worst-cases — top tier + planned rakeback; + deposit bonus.
  *
- * `grossEdge` = the planned packs&battles edge (the combined lever's value, taken
- * from `edges.packs` which the UI keeps == `edges.battles`).
+ * `grossEdge` = planned blended house edge (Σ planned GGR ÷ Σ wager).
  */
 export function computeNetEdgeScenarios(
   baseline: SystemEdgeBaseline,
   planned: PlannedLevers,
 ): NetEdgeScenario[] {
-  // The combined packs&battles planned edge (the UI keeps packs == battles).
-  const grossEdge = clamp(
-    planned.edges.packs ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
-    0,
-    1,
-  );
+  const grossEdge = plannedBlendedHouseEdge(baseline, planned);
 
   const rows: NetEdgeScenario[] = [];
 
@@ -1260,7 +1272,7 @@ export function computeNetEdgeScenarios(
   rows.push({
     key: "base",
     label: "Base — no rewards",
-    note: "The planned Packs & Battles house edge, before any reward erosion.",
+    note: "Planned blended house edge before any reward erosion.",
     erosion: 0,
     grossEdge,
     netEdge: grossEdge,
@@ -1268,18 +1280,18 @@ export function computeNetEdgeScenarios(
     isBase: true,
   });
 
-  // (b) One row per affiliate tier — commission is a % of wager, so the tier's
-  //     planned commission rate erodes that many points of edge 1:1.
+  // (b) One row per affiliate tier — ladder rate is a share of edge, not wager.
   const tiers = [...baseline.affiliateTiers].sort((a, b) => a.level - b.level);
   for (const t of tiers) {
-    const rate = Math.max(0, planned.affiliateRates[t.level] ?? t.currentRate);
+    const edgeShare = Math.max(0, planned.affiliateRates[t.level] ?? t.currentRate);
+    const wagerDrag = affiliateEdgeShareToWagerDrag(edgeShare, grossEdge);
     rows.push({
       key: `affiliate-${t.level}`,
       label: `Affiliate ${t.label.toLowerCase().startsWith("level") ? t.label : `tier ${t.level}`}`,
-      note: `${formatRatePct(rate)} commission on referred wager → erodes ${formatRatePct(rate)} of edge.`,
-      erosion: rate,
+      note: `${formatRatePct(edgeShare)} of house edge → ${formatRatePct(wagerDrag)} of referred wager.`,
+      erosion: wagerDrag,
       grossEdge,
-      netEdge: grossEdge - rate,
+      netEdge: grossEdge - wagerDrag,
       bases: ["affiliate"],
       isBase: false,
     });
@@ -1288,18 +1300,19 @@ export function computeNetEdgeScenarios(
   // (c) Combined worst-cases.
   const topTier =
     tiers.length > 0 ? tiers[tiers.length - 1] : null;
-  const topRate = topTier
+  const topEdgeShare = topTier
     ? Math.max(0, planned.affiliateRates[topTier.level] ?? topTier.currentRate)
     : 0;
+  const topWagerDrag = affiliateEdgeShareToWagerDrag(topEdgeShare, grossEdge);
   const rakebackRate = plannedBlendedRakebackRate(baseline, planned);
   const depDrag = plannedDepositBonusEdgeDrag(baseline, planned);
 
-  if (topTier && (rakebackRate > 0 || topRate > 0)) {
-    const erosion = topRate + rakebackRate;
+  if (topTier && (rakebackRate > 0 || topEdgeShare > 0)) {
+    const erosion = topWagerDrag + rakebackRate;
     rows.push({
       key: "combo-top-rakeback",
       label: `Top tier + rakeback`,
-      note: `Top affiliate tier (${formatRatePct(topRate)}) + planned blended rakeback (${formatRatePct(rakebackRate)}), both % of wager.`,
+      note: `Top affiliate tier (${formatRatePct(topEdgeShare)} of edge → ${formatRatePct(topWagerDrag)} of wager) + planned blended rakeback (${formatRatePct(rakebackRate)} of wager).`,
       erosion,
       grossEdge,
       netEdge: grossEdge - erosion,
@@ -1308,8 +1321,8 @@ export function computeNetEdgeScenarios(
     });
   }
 
-  if (topTier && (rakebackRate > 0 || depDrag > 0 || topRate > 0)) {
-    const erosion = topRate + rakebackRate + depDrag;
+  if (topTier && (rakebackRate > 0 || depDrag > 0 || topEdgeShare > 0)) {
+    const erosion = topWagerDrag + rakebackRate + depDrag;
     rows.push({
       key: "combo-top-rakeback-deposit",
       label: `Top tier + rakeback + deposit bonus`,
@@ -1409,12 +1422,11 @@ function cadenceWeight(
 }
 
 /**
- * Affiliate projection. The realized commission cost scales with the planned
- * blended commission rate vs the current blended rate, where the blend is the
- * simple average of the per-tier rates (the planner exposes per-tier rates; the
- * real per-affiliate wager mix per tier is not separable from the rollup, so an
- * even tier blend is the honest proportional scaler). Removing the 1× wager
- * requirement widens the commission base by a labeled uplift.
+ * Affiliate projection. Tier ladder rates are shares of referred edge; the
+ * realized commission cost scales with the planned blended edge-share vs the
+ * current blend (simple average of per-tier rates — the real per-affiliate tier
+ * mix is not separable from the rollup). Removing the 1× wager requirement
+ * widens the commission base by a labeled uplift.
  */
 function projectAffiliate(
   baseline: SystemEdgeBaseline,

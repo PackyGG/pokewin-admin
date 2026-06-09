@@ -18,6 +18,9 @@ import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
 import {
   REMOVE_WAGER_REQ_COST_UPLIFT,
   clamp,
+  plannedBlendedHouseEdgeV2,
+  affiliateEdgeShareToWagerDrag,
+  affiliateWagerDragToEdgeShare,
   type EdgePlanV2Baseline,
   type PlannedLeversV2,
 } from "../../_model-v2";
@@ -25,18 +28,41 @@ import { multLabel } from "../utils";
 import { EmptyLever, formatPercentInt } from "../components/empty-lever";
 import { FounderOtherRewardsPanel } from "../components/founder-other-rewards-panel";
 import { RakebackWagerControls } from "../components/rakeback-wager-controls";
+import {
+  leverEdgeDragPct,
+  RewardPanelTitle,
+} from "../components/reward-edge-drag";
+import type { EdgePlanV2Projection } from "../../_model-v2";
 
 export function RewardsCoreSection({
   baseline,
   levers,
+  projection,
   setLevers,
 }: {
   baseline: EdgePlanV2Baseline;
   levers: PlannedLeversV2;
+  projection: EdgePlanV2Projection;
   setLevers: React.Dispatch<React.SetStateAction<PlannedLeversV2>>;
 }) {
   const setMult = (key: keyof PlannedLeversV2) => (pct: number) =>
     setLevers((s) => ({ ...s, [key]: clamp(pct / 100, 0, 5) }));
+
+  const plannedHouseEdge = React.useMemo(
+    () => plannedBlendedHouseEdgeV2(baseline, levers),
+    [baseline, levers],
+  );
+
+  const realizedAffiliateEdgeShare = React.useMemo(() => {
+    if (baseline.affiliateBlendedRate == null) return null;
+    const edge =
+      plannedHouseEdge > 0
+        ? plannedHouseEdge
+        : baseline.houseEdge ?? 0;
+    return edge > 0
+      ? affiliateWagerDragToEdgeShare(baseline.affiliateBlendedRate, edge)
+      : null;
+  }, [baseline.affiliateBlendedRate, baseline.houseEdge, plannedHouseEdge]);
 
   const matchPct = 100 * levers.depositBonusMatchMult;
   const capUsd = baseline.depositBonusCapUsd * levers.depositBonusCapMult;
@@ -44,7 +70,11 @@ export function RewardsCoreSection({
   return (
     <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
       <div className="xl:col-span-2 2xl:col-span-3">
-      <StatPanel title="Rakeback" icon={Wallet} accent="rose">
+      <StatPanel
+        title={<RewardPanelTitle label="Rakeback" dragPct={leverEdgeDragPct(projection, "rakeback")} />}
+        icon={Wallet}
+        accent="rose"
+      >
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           Realized rakeback this window:{" "}
           <span className="font-medium text-rose-600 dark:text-rose-400">
@@ -134,7 +164,16 @@ export function RewardsCoreSection({
       </StatPanel>
       </div>
 
-      <StatPanel title="Deposit bonus" icon={Coins} accent="amber">
+      <StatPanel
+        title={
+          <RewardPanelTitle
+            label="Deposit bonus"
+            dragPct={leverEdgeDragPct(projection, "deposit-bonus")}
+          />
+        }
+        icon={Coins}
+        accent="amber"
+      >
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           Real config: {formatPercentInt(100)} match, cap{" "}
           {formatCurrency(baseline.depositBonusCapUsd)} per{" "}
@@ -196,7 +235,11 @@ export function RewardsCoreSection({
         )}
       </StatPanel>
 
-      <StatPanel title="Races" icon={Trophy} accent="rose">
+      <StatPanel
+        title={<RewardPanelTitle label="Races" dragPct={leverEdgeDragPct(projection, "races")} />}
+        icon={Trophy}
+        accent="rose"
+      >
         <PanelRow label="Real race prize cost" value={formatCurrency(baseline.raceCost)} />
         {baseline.raceCost <= 0 ? (
           <EmptyLever note="No race prize cost in this window." />
@@ -212,33 +255,58 @@ export function RewardsCoreSection({
       <FounderOtherRewardsPanel
         baseline={baseline}
         levers={levers}
+        projection={projection}
         setLevers={setLevers}
       />
 
       <div className="lg:col-span-2">
-        <StatPanel title="Affiliate commission" icon={Share2} accent="rose">
+        <StatPanel
+          title={
+            <RewardPanelTitle
+              label="Affiliate commission"
+              dragPct={leverEdgeDragPct(projection, "affiliate")}
+            />
+          }
+          icon={Share2}
+          accent="rose"
+        >
           <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-            Real affiliate cost:{" "}
+            Tier rates are a{" "}
+            <span className="font-medium text-foreground">% of referred house edge</span>,
+            not straight % of wager — effective wager drag = edge share × house edge
+            (e.g. 10% of edge at {formatPct(plannedHouseEdge)} blended edge ={" "}
+            {formatPct(affiliateEdgeShareToWagerDrag(0.1, plannedHouseEdge))} of
+            wager). Real affiliate cost:{" "}
             <span className="font-medium text-rose-600 dark:text-rose-400">
               {formatCurrency(baseline.affiliateCost)}
             </span>
             {baseline.affiliateBlendedRate != null && (
               <>
                 {" "}
-                · blended rate {formatPct(baseline.affiliateBlendedRate)}
+                · {formatPct(baseline.affiliateBlendedRate)} of wager realized
+                {realizedAffiliateEdgeShare != null && (
+                  <> ({formatPct(realizedAffiliateEdgeShare)} of edge blended)</>
+                )}
               </>
             )}
+            .
           </p>
           {baseline.affiliateTiers.length === 0 ? (
             <EmptyLever note="No affiliate tiers configured." />
           ) : (
             <>
-              {baseline.affiliateTiers.map((t) => (
+              {baseline.affiliateTiers.map((t) => {
+                const edgeShare = levers.affiliateRates[t.level] ?? t.currentRate;
+                const wagerDrag = affiliateEdgeShareToWagerDrag(
+                  edgeShare,
+                  plannedHouseEdge,
+                );
+                return (
                 <LeverSlider
                   key={t.level}
                   label={t.label}
-                  valueLabel={formatPct(levers.affiliateRates[t.level] ?? t.currentRate)}
-                  value={(levers.affiliateRates[t.level] ?? t.currentRate) * 100}
+                  valueLabel={`${formatPct(edgeShare)} of edge (= ${formatPct(wagerDrag)} wager)`}
+                  value={edgeShare * 100}
                   onValueChange={(pct) =>
                     setLevers((s) => ({
                       ...s,
@@ -252,10 +320,11 @@ export function RewardsCoreSection({
                   max={100}
                   step={0.01}
                   baselineMarker={t.currentRate * 100}
-                  baselineLabel={`current ${formatPct(t.currentRate)}`}
+                  baselineLabel={`current ${formatPct(t.currentRate)} of edge`}
                   preciseInput={{ unit: "percent", decimals: 2 }}
                 />
-              ))}
+              );
+              })}
               <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border bg-muted/20 px-3 py-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5 text-sm font-medium">

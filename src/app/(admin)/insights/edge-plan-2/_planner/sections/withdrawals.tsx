@@ -7,20 +7,32 @@ import { Badge } from "@/components/ui/badge";
 import { StatPanel, PanelRow } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
-import { clamp, type EdgePlanV2Baseline, type PlannedLeversV2 } from "../../_model-v2";
+import { clamp, type EdgePlanV2Baseline, type EdgePlanV2Projection, type PlannedLeversV2 } from "../../_model-v2";
 import { multLabel } from "../utils";
+import { leverEdgeDragPct, RewardPanelTitle } from "../components/reward-edge-drag";
 
 export function WithdrawalsSection({
   baseline,
   levers,
+  projection,
   setLevers,
 }: {
   baseline: EdgePlanV2Baseline;
   levers: PlannedLeversV2;
+  projection: EdgePlanV2Projection;
   setLevers: React.Dispatch<React.SetStateAction<PlannedLeversV2>>;
 }) {
   return (
-    <StatPanel title="Balance withdrawals & wager rules" icon={Banknote} accent="cyan">
+    <StatPanel
+      title={
+        <RewardPanelTitle
+          label="Balance withdrawals & wager rules"
+          dragPct={leverEdgeDragPct(projection, "withdrawals")}
+        />
+      }
+      icon={Banknote}
+      accent="cyan"
+    >
       <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
         Models balance cash-out vs inventory withdrawals. Wager requirement and
         per-game weights are what-if sliders — they do not write live Security

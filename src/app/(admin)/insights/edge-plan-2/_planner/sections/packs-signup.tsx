@@ -20,18 +20,22 @@ import { PackFirstTunerCard } from "../../_pack-visual-v2";
 import type { DailyPackLeverRow } from "../../_model-v2";
 import {
   type EdgePlanV2Baseline,
+  type EdgePlanV2Projection,
   type PlannedLeversV2,
 } from "../../_model-v2";
 import { formatEvUsd, multLabel } from "../utils";
 import { EmptyLever } from "../components/empty-lever";
+import { leverEdgeDragPct, RewardPanelTitle } from "../components/reward-edge-drag";
 
 export function PacksSignupSection({
   baseline,
   levers,
+  projection,
   setLevers,
 }: {
   baseline: EdgePlanV2Baseline;
   levers: PlannedLeversV2;
+  projection: EdgePlanV2Projection;
   setLevers: React.Dispatch<React.SetStateAction<PlannedLeversV2>>;
 }) {
   const rows = React.useMemo(() => {
@@ -68,7 +72,16 @@ export function PacksSignupSection({
 
   return (
     <div className="space-y-4">
-      <StatPanel title="Daily / free packs" icon={Boxes} accent="pink">
+      <StatPanel
+        title={
+          <RewardPanelTitle
+            label="Daily / free packs"
+            dragPct={leverEdgeDragPct(projection, "daily-packs")}
+          />
+        }
+        icon={Boxes}
+        accent="pink"
+      >
         <div className="mb-4 flex flex-col gap-3 rounded-xl border bg-muted/25 p-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0 flex-1 lg:max-w-md">
             <LeverSlider
@@ -151,7 +164,16 @@ export function PacksSignupSection({
         </div>
       </StatPanel>
 
-      <StatPanel title="Signup balance reward" icon={UserPlus} accent="rose">
+      <StatPanel
+        title={
+          <RewardPanelTitle
+            label="Signup balance reward"
+            dragPct={leverEdgeDragPct(projection, "signup-packs")}
+          />
+        }
+        icon={UserPlus}
+        accent="rose"
+      >
         <PanelRow
           label="Realized cost (window)"
           value={formatCurrency(baseline.signupPacksCost)}

@@ -819,8 +819,8 @@ async function buildBaseline(
     }))
     .sort((a, b) => a.level - b.level);
 
-  // Real blended affiliate rate = total commission ÷ referred wager (when both
-  // known). Informational only — the per-tier rates drive the projection.
+  // Realized affiliate drag on wager (= total commission ÷ referred wager).
+  // Tier ladder rates are shares of edge; divide by house edge for edge share.
   const ov = affiliateOvRes.data;
   const affiliateBlendedRate =
     ov != null && ov.downstreamWager > 0

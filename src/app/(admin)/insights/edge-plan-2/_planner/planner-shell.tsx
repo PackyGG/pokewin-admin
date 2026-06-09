@@ -22,6 +22,7 @@ import {
   sanitizeLeversV2,
   computeEdgeAfterRewards,
   type EdgePlanV2Baseline,
+  type EdgePlanV2Projection,
   type PlannedLeversV2,
 } from "../_model-v2";
 import {
@@ -261,16 +262,36 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
         />
       </PlannerV2SectionPanel>
       <PlannerV2SectionPanel id="rewards" active={activeSection}>
-        <RewardsCoreSection baseline={baseline} levers={levers} setLevers={setLevers} />
+        <RewardsCoreSection
+          baseline={baseline}
+          levers={levers}
+          projection={projection}
+          setLevers={setLevers}
+        />
       </PlannerV2SectionPanel>
       <PlannerV2SectionPanel id="shards" active={activeSection}>
-        <ShardsEconomySection baseline={baseline} levers={levers} setLevers={setLevers} />
+        <ShardsEconomySection
+          baseline={baseline}
+          levers={levers}
+          projection={projection}
+          setLevers={setLevers}
+        />
       </PlannerV2SectionPanel>
       <PlannerV2SectionPanel id="withdrawals" active={activeSection}>
-        <WithdrawalsSection baseline={baseline} levers={levers} setLevers={setLevers} />
+        <WithdrawalsSection
+          baseline={baseline}
+          levers={levers}
+          projection={projection}
+          setLevers={setLevers}
+        />
       </PlannerV2SectionPanel>
       <PlannerV2SectionPanel id="packs" active={activeSection}>
-        <PacksSignupSection baseline={baseline} levers={levers} setLevers={setLevers} />
+        <PacksSignupSection
+          baseline={baseline}
+          levers={levers}
+          projection={projection}
+          setLevers={setLevers}
+        />
       </PlannerV2SectionPanel>
       <PlannerV2SectionPanel id="ideas" active={activeSection}>
         <IdeasSection />

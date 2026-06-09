@@ -6,15 +6,23 @@ import { StatPanel, PanelRow, SectionHeading } from "@/components/modern-panels"
 import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
 import { clamp, type EdgePlanV2Baseline, type PlannedLeversV2 } from "../../_model-v2";
+import type { EdgePlanV2Projection } from "../../_model-v2";
 import { EmptyLever } from "./empty-lever";
+import {
+  combinedLeverEdgeDragPct,
+  leverEdgeDragPct,
+  RewardPanelTitle,
+} from "./reward-edge-drag";
 
 export function FounderOtherRewardsPanel({
   baseline,
   levers,
+  projection,
   setLevers,
 }: {
   baseline: EdgePlanV2Baseline;
   levers: PlannedLeversV2;
+  projection: EdgePlanV2Projection;
   setLevers: React.Dispatch<React.SetStateAction<PlannedLeversV2>>;
 }) {
   const setMult = (key: "rainCostMult" | "otherRewardCostMult" | "mothaCostMult") =>
@@ -35,7 +43,16 @@ export function FounderOtherRewardsPanel({
   const hasAnything = hasRainData || hasMotha || hasOther;
 
   return (
-    <StatPanel title="Rain, founder & other rewards" icon={Gift} accent="amber">
+    <StatPanel
+      title={
+        <RewardPanelTitle
+          label="Rain, founder & other rewards"
+          dragPct={combinedLeverEdgeDragPct(projection, ["rain", "motha", "other"])}
+        />
+      }
+      icon={Gift}
+      accent="amber"
+    >
       <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
         Channels outside rakeback / affiliate / races — rain net slice, motha
         founder giveaways, and residual reward spend (gift cards, promos, vouchers).
@@ -83,7 +100,15 @@ export function FounderOtherRewardsPanel({
           <div className="space-y-4">
             {hasRainData && (
               <div className="space-y-2 rounded-lg border bg-muted/15 p-3">
-                <SectionHeading icon={CloudRain} title="Rain" />
+                <SectionHeading
+                  icon={CloudRain}
+                  title={
+                    <RewardPanelTitle
+                      label="Rain"
+                      dragPct={leverEdgeDragPct(projection, "rain")}
+                    />
+                  }
+                />
                 {baseline.rainWinTotal > 0 && (
                   <div className="grid gap-0.5 text-sm">
                     <PanelRow
@@ -135,7 +160,15 @@ export function FounderOtherRewardsPanel({
 
             {(hasMotha || baseline.mothaBreakdown) && (
               <div className="space-y-2 rounded-lg border bg-muted/15 p-3">
-                <SectionHeading icon={Gift} title="Motha founder giveaways" />
+                <SectionHeading
+                  icon={Gift}
+                  title={
+                    <RewardPanelTitle
+                      label="Motha founder giveaways"
+                      dragPct={leverEdgeDragPct(projection, "motha")}
+                    />
+                  }
+                />
                 {baseline.mothaBreakdown && (
                   <div className="grid gap-0.5 text-sm">
                     <PanelRow
@@ -178,7 +211,15 @@ export function FounderOtherRewardsPanel({
             )}
 
             <div className="space-y-2 rounded-lg border bg-muted/15 p-3">
-              <SectionHeading icon={Gift} title="Other reward spend" />
+              <SectionHeading
+                icon={Gift}
+                title={
+                  <RewardPanelTitle
+                    label="Other reward spend"
+                    dragPct={leverEdgeDragPct(projection, "other")}
+                  />
+                }
+              />
               <p className="text-[11px] leading-relaxed text-muted-foreground">
                 gift_card · promo_code · waitlist · manual vouchers · balance
                 adjustments not itemized elsewhere.
