@@ -442,9 +442,9 @@ export type PlannedLevers = {
   affiliateRates: Record<number, number>;
   /**
    * Remove the 1× wager requirement on affiliate commission. Per the discovery
-   * the requirement is IMPLICIT (commission vests on referred wager); removing
-   * it widens the commission base, modeled as a cost uplift. Default false
-   * (keep the requirement = current behavior). Clearly labeled what-if.
+   * the requirement is IMPLICIT (screens ~35% of low-quality referred edge before
+   * commission accrues); removing it widens the eligible referred-edge base.
+   * Default false (keep the screen = current behavior). Clearly labeled what-if.
    */
   removeAffiliateWagerReq: boolean;
 
@@ -529,13 +529,27 @@ export type PlannedLevers = {
 };
 
 /**
- * Effect of removing the 1× wager requirement on the affiliate commission base.
- * Per the discovery, the requirement implicitly filters churned / no-wager
- * referrals out of the commission base; removing it widens the base. Modeled as
- * a proportional uplift to the affiliate cost. Conservative single-point
- * assumption (NOT a fabricated rate) — clearly labeled in the UI as a what-if.
+ * Fraction of referred house-edge volume screened OUT by the implicit 1× wager
+ * requirement before commission accrues — matches the affiliate-forecast
+ * `qualityScreen: 0.35` what-if (churned / no-wager referrals).
  */
-export const REMOVE_WAGER_REQ_COST_UPLIFT = 0.15 as const;
+export const AFFILIATE_WAGER_REQ_QUALITY_SCREEN = 0.35 as const;
+
+/**
+ * Affiliate commission cost multiplier when the 1× wager screen is REMOVED.
+ * Tier rates are unchanged; more referred GGR becomes commissionable:
+ *   mult = 1 ÷ (1 − screen) ≈ 1.54 (+54% commission cost vs screened base).
+ */
+export const REMOVE_WAGER_REQ_COMMISSION_BASE_MULT =
+  1 / (1 - AFFILIATE_WAGER_REQ_QUALITY_SCREEN);
+
+/** Extra affiliate commission cost (fraction) when the screen is removed — for UI. */
+export function removeWagerReqCommissionUplift(): number {
+  return REMOVE_WAGER_REQ_COMMISSION_BASE_MULT - 1;
+}
+
+/** @deprecated Use `removeWagerReqCommissionUplift()` — kept for preset compat. */
+export const REMOVE_WAGER_REQ_COST_UPLIFT = removeWagerReqCommissionUplift();
 
 /**
  * How strongly raising the deposit-bonus CAP adds cost. Most claims sit below
@@ -791,6 +805,41 @@ export function effectiveTypeEdge(g: GameTypeBaseline): number {
 }
 
 /**
+ * Blended packs + battles house edge (Σ GGR ÷ Σ wager). Packs and battles share
+ * one house edge in production; per-type splits can be noisy when sample gates
+ * fail or payout attribution is thin on one leg.
+ */
+export function blendedPackBattleEdge(baseline: SystemEdgeBaseline): number {
+  const types = baseline.gameTypes.filter(
+    (g) => g.type === "packs" || g.type === "battles",
+  );
+  const wager = types.reduce((s, g) => s + g.wager, 0);
+  const ggr = types.reduce((s, g) => s + g.ggr, 0);
+  if (wager > 0) return clamp(ggr / wager, 0, 1);
+  return effectiveBaselineEdge(baseline);
+}
+
+/**
+ * Current edge for projection / overview display. Packs & battles use the blended
+ * PB edge (shared house edge); upgrader uses its measured edge when reliable,
+ * else the headline blended edge.
+ */
+export function effectiveProjectionTypeEdge(
+  g: GameTypeBaseline,
+  baseline: SystemEdgeBaseline,
+): number {
+  if (g.type === "packs" || g.type === "battles") {
+    return blendedPackBattleEdge(baseline);
+  }
+  const raw =
+    g.edge != null ? g.edge : g.wager > 0 ? g.ggr / g.wager : null;
+  if (raw != null && Number.isFinite(raw) && raw > 0) {
+    return clamp(raw, 0, 1);
+  }
+  return effectiveBaselineEdge(baseline);
+}
+
+/**
  * The blended baseline edge across all types (real GGR / real wager). Used for
  * the headline "current edge" readout. Clamped 0..1.
  */
@@ -898,7 +947,7 @@ export function projectEdgePlan(
 ): EdgePlanProjection {
   // ── Per-type GGR ──
   const gameTypes: GameTypeProjection[] = baseline.gameTypes.map((g) => {
-    const currentEdge = effectiveTypeEdge(g);
+    const currentEdge = effectiveProjectionTypeEdge(g, baseline);
     const plannedEdge = clamp(planned.edges[g.type] ?? currentEdge, 0, 1);
     const currentGgr = currentEdge * g.wager;
     const plannedGgr = plannedEdge * g.wager;
@@ -1426,7 +1475,8 @@ function cadenceWeight(
  * realized commission cost scales with the planned blended edge-share vs the
  * current blend (simple average of per-tier rates — the real per-affiliate tier
  * mix is not separable from the rollup). Removing the 1× wager requirement
- * widens the commission base by a labeled uplift.
+ * widens the eligible referred-edge base (same 35% quality screen as the
+ * affiliate forecast).
  */
 function projectAffiliate(
   baseline: SystemEdgeBaseline,
@@ -1444,13 +1494,13 @@ function projectAffiliate(
   );
   const rateRatio = currentBlend > 0 ? plannedBlend / currentBlend : 1;
 
-  const reqUplift = planned.removeAffiliateWagerReq
-    ? 1 + REMOVE_WAGER_REQ_COST_UPLIFT
+  const reqMult = planned.removeAffiliateWagerReq
+    ? REMOVE_WAGER_REQ_COMMISSION_BASE_MULT
     : 1;
 
   return {
     current,
-    planned: Math.max(0, current * rateRatio * reqUplift),
+    planned: Math.max(0, current * rateRatio * reqMult),
   };
 }
 

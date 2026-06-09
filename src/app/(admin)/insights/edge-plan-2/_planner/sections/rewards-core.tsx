@@ -16,7 +16,7 @@ import { formatCurrency } from "@/lib/utils/format";
 import { formatPct } from "../../../edge-calc/math";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
 import {
-  REMOVE_WAGER_REQ_COST_UPLIFT,
+  removeWagerReqCommissionUplift,
   clamp,
   plannedBlendedHouseEdgeV2,
   affiliateEdgeShareToWagerDrag,
@@ -332,8 +332,10 @@ export function RewardsCoreSection({
                     Remove 1× wager requirement
                   </div>
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
-                    What-if only — models +{formatPct(REMOVE_WAGER_REQ_COST_UPLIFT)} cost
-                    uplift when enabled.
+                    What-if only — removes the 35% referred-edge quality screen;
+                    tier rates unchanged, ~+
+                    {formatPct(removeWagerReqCommissionUplift())} affiliate
+                    commission cost (more referred GGR becomes payable).
                   </p>
                 </div>
                 <Switch

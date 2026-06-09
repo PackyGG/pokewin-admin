@@ -7,7 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { StatPanel } from "@/components/modern-panels";
 import { formatCompactUsd } from "@/lib/utils/format";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
-import { effectiveTypeEdge } from "../../../system-edge-plan/_model";
+import {
+  blendedPackBattleEdge,
+  effectiveProjectionTypeEdge,
+} from "../../../system-edge-plan/_model";
 import { formatPct } from "../../../edge-calc/math";
 import {
   clamp,
@@ -35,9 +38,10 @@ export function GamingEdgeSection({
   );
   const upgrader = baseline.gameTypes.find((g) => g.type === "upgrader");
   const pbEdge = levers.edges.packs ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT;
-  const packsRow = baseline.gameTypes.find((g) => g.type === "packs");
-  const pbMeasured = packsRow ? effectiveTypeEdge(packsRow) : 0;
-  const upgMeasured = upgrader ? effectiveTypeEdge(upgrader) : 0;
+  const pbMeasured = blendedPackBattleEdge(baseline);
+  const upgMeasured = upgrader
+    ? effectiveProjectionTypeEdge(upgrader, baseline)
+    : 0;
 
   return (
     <StatPanel title="House edge" icon={Gauge} accent="emerald">

@@ -67,12 +67,13 @@ import {
   computeNetEdgeScenarios,
   defaultLevers,
   defaultPlannedEdge,
-  effectiveTypeEdge,
+  effectiveProjectionTypeEdge,
+  blendedPackBattleEdge,
   gameTypeLabel,
   projectEdgePlan,
   sanitizeLevers,
   PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
-  REMOVE_WAGER_REQ_COST_UPLIFT,
+  removeWagerReqCommissionUplift,
   type DailyPackLeverRow,
   type GameTypeId,
   type NetEdgeScenario,
@@ -724,13 +725,14 @@ export function SystemEdgePlanner({ baseline }: { baseline: SystemEdgeBaseline }
                   Remove 1× wager requirement
                 </div>
                 <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-                  Commission currently vests on referred wager (the 1× requirement
-                  is implicit — not a stored toggle). Removing it widens the base —
-                  modeled as a{" "}
+                  Tier rates are a % of referred house edge (not wager). The
+                  implicit 1× requirement screens ~35% of low-quality referred
+                  edge before commission accrues. Removing it widens the eligible
+                  base — modeled as ~{" "}
                   <span className="font-medium text-amber-600 dark:text-amber-400">
-                    +{formatPct(REMOVE_WAGER_REQ_COST_UPLIFT)}
+                    +{formatPct(removeWagerReqCommissionUplift())}
                   </span>{" "}
-                  cost uplift (what-if).
+                  affiliate commission cost at unchanged tier rates (what-if).
                 </p>
               </div>
               <Switch
@@ -875,9 +877,8 @@ function PacksBattlesEdgeControl({
   const packs = baseline.gameTypes.find((g) => g.type === "packs");
   const battles = baseline.gameTypes.find((g) => g.type === "battles");
   const combinedWager = (packs?.wager ?? 0) + (battles?.wager ?? 0);
-  const combinedGgr = (packs?.ggr ?? 0) + (battles?.ggr ?? 0);
-  // Measured blended edge across packs + battles (GGR / wager), for reference.
-  const measuredEdge = combinedWager > 0 ? combinedGgr / combinedWager : null;
+  const measuredEdge =
+    combinedWager > 0 ? blendedPackBattleEdge(baseline) : null;
   const dataAvailable = combinedWager > 0;
 
   // Planned combined GGR = the per-type planned GGR of packs + battles.
@@ -943,7 +944,9 @@ function UpgraderEdgeControl({
 }) {
   const upg = baseline.gameTypes.find((g) => g.type === "upgrader");
   const meta = GAME_TYPE_META.upgrader;
-  const measuredEdge = upg ? effectiveTypeEdge(upg) : null;
+  const measuredEdge = upg
+    ? effectiveProjectionTypeEdge(upg, baseline)
+    : null;
   const dataAvailable = upg?.dataAvailable ?? false;
   const typeGgr = projection.gameTypes.find((g) => g.type === "upgrader");
   const planDefault = defaultPlannedEdge("upgrader");

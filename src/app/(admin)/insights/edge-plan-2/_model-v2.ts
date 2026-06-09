@@ -29,7 +29,9 @@ import {
   PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
   PLANNED_UPGRADER_EDGE_DEFAULT,
   GAME_TYPE_IDS,
-  REMOVE_WAGER_REQ_COST_UPLIFT,
+  removeWagerReqCommissionUplift,
+  blendedPackBattleEdge,
+  effectiveProjectionTypeEdge,
 } from "../system-edge-plan/_model";
 
 export {
@@ -43,7 +45,9 @@ export {
   plannedBlendedHouseEdge,
   affiliateEdgeShareToWagerDrag,
   affiliateWagerDragToEdgeShare,
-  REMOVE_WAGER_REQ_COST_UPLIFT,
+  removeWagerReqCommissionUplift,
+  blendedPackBattleEdge,
+  effectiveProjectionTypeEdge,
   type GameTypeId,
   type PackCardPreview,
   type DailyPackLeverRow,
@@ -125,9 +129,15 @@ export type ShardShopPackRow = {
 };
 
 export type EdgePlanV2Baseline = SystemEdgeBaseline & {
+  /** Canonical headline wager before organic denominator override (30d). */
+  totalWager: number;
+  /** Pack/battle organic ledger wager (excl. borrow & creator-coded). */
+  ledgerOrganicWager: number;
+  /** Upgrader wager from users not under a creator code. */
+  upgraderOrganicWager: number;
   /** Reconstructed prize cost used as shards redemption proxy (was raffles). */
   shardsRedemptionCost: number;
-  /** Estimated shards earned per $1 wager (planning default). */
+  /** Internal earn rate: shards per $1 wager (UI shows inverse as wager per gem). */
   shardsPerDollarWager: number;
   shardsDataSource: ShardsDataSource;
   shardShopRows: ShardShopPackRow[];
@@ -165,7 +175,7 @@ export type PlannedLeversV2 = Omit<
   PlannedLevers,
   "rafflePrizePoolMult" | "raffleFrequencyMult" | "raffleTicketCostMult"
 > & {
-  /** Shards earned per $1 wager at baseline (absolute, not mult). */
+  /** Internal earn rate: shards per $1 wager (UI: wager per gem). */
   shardsPerDollarWager: number;
   /** Scales shard earn rate vs baseline. */
   shardEarnMult: number;
@@ -754,7 +764,21 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
     }
   }
 
-  base.shardsPerDollarWager = clamp(num(src.shardsPerDollarWager, DEFAULT_SHARDS_PER_DOLLAR), 0, 10);
+  if (src.wagerPerGemUsd != null) {
+    const wpg = num(src.wagerPerGemUsd, 1 / DEFAULT_SHARDS_PER_DOLLAR);
+    base.shardsPerDollarWager =
+      !Number.isFinite(wpg) || wpg >= 1000
+        ? 0
+        : wpg <= 0.1
+          ? 10
+          : clamp(1 / wpg, 0, 10);
+  } else {
+    base.shardsPerDollarWager = clamp(
+      num(src.shardsPerDollarWager, DEFAULT_SHARDS_PER_DOLLAR),
+      0,
+      10,
+    );
+  }
   base.shardEarnMult = clamp(num(src.shardEarnMult, 1), 0, 5);
   base.shardPackBattleWeight = clamp(num(src.shardPackBattleWeight, 1), 0, 1);
   base.shardUpgraderWeight = clamp(num(src.shardUpgraderWeight, 1), 0, 1);
