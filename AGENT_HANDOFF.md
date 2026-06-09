@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** see `git log -1` · **Updated:** 2026-06-07 · **Active focus:** Edge Plan 2.0 — new `/insights/edge-plan-2` page (v1 untouched)
+- **HEAD:** `47aa0aca` · **Updated:** 2026-06-10 · **Active focus:** Edge Plan 2.0 full rework SHIPPED (UI + logic + numbers); owner reviewing live for follow-up changes
 - **Note (2026-06-06):** local checkout was on branch `dev` (even with `origin/main`) with **no `node_modules` / `.env`**; ran `npm install` + `prisma generate` (both clients) to gate.
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
@@ -17,6 +17,16 @@
 ---
 
 ## ✅ Shipped (recent — on `main`)
+
+**Edge Plan 2.0 — full rework (2026-06-10, `47aa0aca`):** UI + logic + numbers, scoped to `/insights/edge-plan-2` only (v1 `system-edge-plan` reused unchanged). _Supersedes the "shards economy (raffle-proxy)" Edge Plan 2.0 bullet below._
+- **Shards economy REMOVED** entirely (model + baseline + UI). **Raffles RESTORED** on real reconstructed prize cost (`getRaffleForecastBaseline().totalPrizeCost`; v1 raffle levers `rafflePrizePool/Frequency/TicketCostMult` reused).
+- **Real affiliate split** via `getAffiliateOverview` (`affiliateCommissionCost` from `affiliate_claim` + `affiliateLeaderboardCost` from `affiliate_leaderboard_prize`), replacing the hardcoded 12% guess. `splitAffiliateCostBundle` kept as null-query fallback.
+- **Dropped two unfounded constants** (confirmed no data source): withdrawal-friction ×0.25 adjustment + reward-wager recycling (0.55 cap / 2.5× turnover). Projection now rests only on real numbers; withdrawals section is real-data display only. Owner can supply real figures to re-add.
+- **Color-token bug fixed**: `_planner/utils.ts` `EMERALD`/`ROSE` were Tailwind class strings fed into CSS/Recharts color slots → silent no-color. New `_planner/colors.ts` = `CHART_COLOR` (rgb values) vs `TEXT_TONE` (classes) + `netEdgeChartColor`/`netEdgeTextTone`/`houseAccent`.
+- **UI restructured**: hero + single gross→net edge waterfall, lever-rail + active-group workspace + analysis zone, progressive-disclosure lever groups (`hero-summary`/`lever-rail`/`lever-group`/`raffles` new). Ideas/Future-levers section removed. Edge defaults unchanged (packs/battles 10.99%, upgrader 10%, battles no separate edge).
+- **Responsive**: fixed 11 gating overflows at 320–390px — root cause was 10 grids missing a base `grid-cols-1` (auto-column grew to widest child, defeating `truncate`) + a non-wrapping Battles badge. New dev fixture `responsive-fixture/edge-plan-2` + WAVE0 sweep entry; `RESPONSIVE_EXPECT_CLEAN=1` PASS.
+- **Verify gap (honest)**: the responsive sweep renders only the *active* lever group (active-only render) — Rewards/Raffles/Withdrawals/Packs got the same systematic grid fix but were NOT each re-rendered. Recommend a logged-in click-through of those tabs. Built via Workflow; its tsc-only verify-agent passed but MISSED these layout bugs — only the rendered sweep caught them (see memory `render-verify-not-workflow-verdict`).
+- **Build-tree note**: pushed scoped (`git add` edge-plan-2 paths only) over an entangled tree — owner's pre-existing v1 blended-edge + KPI-unification work (`system-edge-plan/_model.ts`/`_baseline.ts`, `cost-breakdown/page.tsx`, `insights/page.tsx`, `dashboard.ts`, `insights-analytics/cost-breakdown.ts`) was left uncommitted for the owner. Remote PRs #52/#53 (`/rewards/shards` admin, source-wager-weights) rebased cleanly (no edge-plan-2 overlap).
 
 **Dashboard + leaderboards P&L surfaces (2026-06-08):**
 - **Edge Plan 2.0** — NEW `/insights/edge-plan-2` (v1 `/insights/system-edge-plan` untouched): full-width planner shell, shards economy (raffle-proxy baseline), balance-withdrawal + wager-req what-ifs, pack-first tuners, presets in `edge-plan-2:presets:v1` localStorage; e2e `e2e/tests/edge-plan-2.spec.ts`
