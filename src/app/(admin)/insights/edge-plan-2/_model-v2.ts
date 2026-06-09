@@ -25,6 +25,7 @@ import {
   projectEdgePlan,
   computeNetEdgeScenarios,
   plannedBlendedHouseEdge,
+  plannedMarginBearingHouseEdge,
   affiliateEdgeShareToWagerDrag,
   affiliateWagerDragToEdgeShare,
   clamp,
@@ -37,9 +38,14 @@ import {
   measuredPacksEdge,
   blendedPackBattleEdge,
   blendedGamingEdge,
+  marginBearingBlendedGamingEdge,
   observedBlendedGamingEdge,
+  observedMarginBearingGamingEdge,
+  computeBlendedEdgeBreakdown,
   effectiveProjectionTypeEdge,
   defaultPlannedEdge,
+  type BlendedEdgeBreakdown,
+  type BlendedEdgeLine,
 } from "../system-edge-plan/_model";
 
 export {
@@ -52,14 +58,20 @@ export {
   gameTypeLabel,
   computeNetEdgeScenarios,
   plannedBlendedHouseEdge,
+  plannedMarginBearingHouseEdge,
   affiliateEdgeShareToWagerDrag,
   affiliateWagerDragToEdgeShare,
   removeWagerReqCommissionUplift,
   measuredPacksEdge,
   blendedPackBattleEdge,
   blendedGamingEdge,
+  marginBearingBlendedGamingEdge,
   observedBlendedGamingEdge,
+  observedMarginBearingGamingEdge,
+  computeBlendedEdgeBreakdown,
   effectiveProjectionTypeEdge,
+  type BlendedEdgeBreakdown,
+  type BlendedEdgeLine,
   type GameTypeId,
   type PackCardPreview,
   type DailyPackLeverRow,
@@ -143,9 +155,9 @@ export type ShardShopPackRow = {
 export type EdgePlanV2Baseline = SystemEdgeBaseline & {
   /** Canonical headline wager before organic denominator override (30d). */
   totalWager: number;
-  /** Pack/battle organic ledger wager (borrow + creator-session excluded). */
+  /** Ledger organic stake (no creator code; on-stream excluded; borrow incl.). */
   ledgerOrganicWager: number;
-  /** Upgrader wager (same organic scope as v1 baseline legs). */
+  /** Upgrader stake from non-creator-coded users. */
   upgraderOrganicWager: number;
   /** Reconstructed prize cost used as shards redemption proxy (was raffles). */
   shardsRedemptionCost: number;
@@ -566,6 +578,22 @@ export function plannedBlendedHouseEdgeV2(
   levers: PlannedLeversV2,
 ): number {
   return plannedBlendedHouseEdge(baseline, toV1Levers(levers, baseline));
+}
+
+/** Planned margin-bearing blend (packs + upgrader wager only). */
+export function plannedMarginBearingHouseEdgeV2(
+  baseline: EdgePlanV2Baseline,
+  levers: PlannedLeversV2,
+): number {
+  return plannedMarginBearingHouseEdge(baseline, toV1Levers(levers, baseline));
+}
+
+/** Full breakdown for blended-edge UI (all-wager vs margin-bearing). */
+export function computeBlendedEdgeBreakdownV2(
+  baseline: EdgePlanV2Baseline,
+  levers: PlannedLeversV2,
+): BlendedEdgeBreakdown {
+  return computeBlendedEdgeBreakdown(baseline, toV1Levers(levers, baseline).edges);
 }
 
 /** Wager-weighted blend of pack/battle vs upgrader weights (0..1 each). */

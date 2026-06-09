@@ -309,7 +309,7 @@ export function RewardsCoreSection({
             <span className="font-medium text-foreground">% of referred house edge</span>,
             not straight % of wager — worst-case planning drag (top tier only) = edge
             share × house edge (e.g. {formatPct(topTierEdgeShare)} of edge at{" "}
-            {formatPct(plannedHouseEdge)} blended edge ={" "}
+            {formatPct(plannedHouseEdge)} all-wager blended edge ={" "}
             <span className="font-medium text-foreground">
               {formatPct(worstCaseAffiliateDrag)} of wager
             </span>

@@ -21,6 +21,7 @@ import {
   projectEdgePlanV2,
   sanitizeLeversV2,
   computeEdgeAfterRewards,
+  computeBlendedEdgeBreakdownV2,
   resolveScenarioWagerUsd,
   type EdgePlanV2Baseline,
   type EdgePlanV2Projection,
@@ -89,6 +90,11 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
       scenarioWagerUsd,
     });
   }, [projection, baseline, levers, wagerScenario]);
+
+  const blendBreakdown = React.useMemo(
+    () => computeBlendedEdgeBreakdownV2(baseline, levers),
+    [baseline, levers],
+  );
 
   const defaults = React.useMemo(() => defaultLeversV2(baseline), [baseline]);
   const gaming = React.useMemo(() => makeGamingSetters(setLevers), []);
@@ -200,7 +206,7 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
         <KpiTile
           label="Before rewards"
           value={formatPct(edgeAfterRewards.grossEdge)}
-          sub={`was ${formatPct(edgeAfterRewards.currentGrossEdge)}`}
+          sub={`all wager · ${formatPct(blendBreakdown.marginBearingBlendedEdge)} packs+upg`}
           icon={TrendingUp}
           accent="emerald"
         />
@@ -220,14 +226,14 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
         <KpiTile
           label="Organic wager"
           value={formatCompactUsd(projection.plannedWager)}
-          sub="Borrow + creator-session excluded; held at observed volume"
+          sub="No creator code · borrow incl. · observed volume"
           icon={Coins}
           accent="blue"
         />
         <KpiTile
           label="Planned GGR"
           value={formatCompactUsd(projection.plannedGgr)}
-          sub={`${formatPct(projection.plannedEdge)} blended edge`}
+          sub={`${formatPct(blendBreakdown.allWagerBlendedEdge)} all wager · ${formatPct(blendBreakdown.marginBearingBlendedEdge)} packs+upg`}
           icon={TrendingUp}
           accent="emerald"
         />

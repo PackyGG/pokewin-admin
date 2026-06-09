@@ -14,9 +14,11 @@ import {
   PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
   PLANNED_BATTLES_EDGE_DEFAULT,
   defaultPlannedEdge,
+  computeBlendedEdgeBreakdownV2,
   type EdgePlanV2Baseline,
   type PlannedLeversV2,
 } from "../../_model-v2";
+import { BlendedEdgeBreakdownPanel } from "../components/overview-charts";
 
 type Props = {
   baseline: EdgePlanV2Baseline;
@@ -35,14 +37,21 @@ export function GamingEdgeSection({
   const battles = baseline.gameTypes.find((g) => g.type === "battles");
   const upgrader = baseline.gameTypes.find((g) => g.type === "upgrader");
   const packsEdge = levers.edges.packs ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT;
+  const upgraderEdge = levers.edges.upgrader ?? defaultPlannedEdge("upgrader");
   const packsPlannedGgr = packs ? packsEdge * packs.wager : 0;
+  const upgraderPlannedGgr = upgrader ? upgraderEdge * upgrader.wager : 0;
   const upgMeasured = upgrader
     ? effectiveProjectionTypeEdge(upgrader, baseline)
     : 0;
+  const blendBreakdown = React.useMemo(
+    () => computeBlendedEdgeBreakdownV2(baseline, levers),
+    [baseline, levers],
+  );
 
   return (
     <StatPanel title="House edge" icon={Gauge} accent="emerald">
-      <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
+      <BlendedEdgeBreakdownPanel breakdown={blendBreakdown} />
+      <p className="mb-4 mt-4 text-xs leading-relaxed text-muted-foreground">
         House edge is on <strong>pack opens</strong> (10.99% planning default) — including
         pack opens inside battles. Battles are a game mode, not a separate margin layer;
         battle wager counts toward volume but adds <strong>0</strong> incremental GGR in
@@ -116,8 +125,11 @@ export function GamingEdgeSection({
                 </Badge>
               )}
               <p className="text-[11px] text-muted-foreground">
-                wager {formatCompactUsd(upgrader.wager)} · GGR{" "}
-                {formatCompactUsd(upgrader.ggr)}
+                {formatPct(upgraderEdge)} edge · wager {formatCompactUsd(upgrader.wager)}{" "}
+                · planned GGR {formatCompactUsd(upgraderPlannedGgr)}
+                {upgrader.dataAvailable && (
+                  <> · observed GGR {formatCompactUsd(upgrader.ggr)}</>
+                )}
               </p>
             </div>
           )}

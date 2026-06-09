@@ -29,6 +29,7 @@ import {
   type EdgePlanV2Projection,
   type EdgeAfterRewardsSummary,
   type WagerScenarioState,
+  type BlendedEdgeBreakdown,
 } from "../../_model-v2";
 import { EMERALD, ROSE } from "../utils";
 import { EmptyLever } from "./empty-lever";
@@ -68,6 +69,102 @@ const rewardCostChartConfig = {
 function formatWagerMultLabel(mult: number): string {
   const s = mult % 1 === 0 ? mult.toFixed(0) : mult.toFixed(1).replace(/\.0$/, "");
   return `${s}×`;
+}
+
+export function BlendedEdgeBreakdownPanel({
+  breakdown,
+  compact = false,
+}: {
+  breakdown: BlendedEdgeBreakdown;
+  compact?: boolean;
+}) {
+  const battles = breakdown.lines.find((l) => l.type === "battles");
+  const dilutionPts = breakdown.battlesDilutionPoints * 100;
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border bg-background/40",
+        compact ? "px-3 py-2.5" : "px-4 py-3",
+      )}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Blended house edge
+        </p>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-right">
+          <span className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+            {formatPct(breakdown.allWagerBlendedEdge)}
+          </span>
+          <span className="text-[11px] text-muted-foreground">
+            on all wager ({formatCompactUsd(breakdown.allWager)})
+          </span>
+        </div>
+      </div>
+
+      <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+        Planned GGR {formatCompactUsd(breakdown.plannedGgr)} ÷ total customer wager.
+        Battles add volume at <strong>0%</strong> planning margin — they dilute this
+        headline. Upgrader is included in the blend when it has wager.
+      </p>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-2">
+          <p className="text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+            All customer wager
+          </p>
+          <p className="text-xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+            {formatPct(breakdown.allWagerBlendedEdge)}
+          </p>
+          <p className="text-[10px] text-muted-foreground">
+            GGR ÷ packs + battles + upgrader
+          </p>
+        </div>
+        <div className="rounded-md border border-cyan-500/20 bg-cyan-500/5 px-2.5 py-2">
+          <p className="text-[10px] font-medium text-cyan-700 dark:text-cyan-300">
+            Margin-bearing wager
+          </p>
+          <p className="text-xl font-bold tabular-nums text-cyan-600 dark:text-cyan-400">
+            {formatPct(breakdown.marginBearingBlendedEdge)}
+          </p>
+          <p className="text-[10px] text-muted-foreground">
+            GGR ÷ packs + upgrader ({formatCompactUsd(breakdown.marginBearingWager)})
+          </p>
+        </div>
+      </div>
+
+      {!compact && (
+        <div className="mt-3 space-y-1 border-t pt-2">
+          {breakdown.lines.map((line) => (
+            <div
+              key={line.type}
+              className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 text-[11px]"
+            >
+              <span className="text-muted-foreground">
+                {line.label}
+                {line.type === "battles" && (
+                  <span className="ml-1 text-[10px]">· 0% margin · dilutes blend</span>
+                )}
+              </span>
+              <span className="tabular-nums text-foreground">
+                {formatPct(line.edge)} × {formatCompactUsd(line.wager)} ={" "}
+                {formatCompactUsd(line.plannedGgr)} GGR
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {battles && battles.wager > 0 && dilutionPts > 0.05 && (
+        <p className="mt-2 text-[10px] leading-relaxed text-amber-600 dark:text-amber-400">
+          Battle wager {formatCompactUsd(battles.wager)} at 0% planning edge pulls the
+          all-wager blend down by ~{dilutionPts.toFixed(1)} pts vs the{" "}
+          {formatPct(breakdown.marginBearingBlendedEdge)} packs+upgrader read — not a
+          simple average of the sliders.
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function EdgeAfterRewardsPanel({
@@ -144,7 +241,10 @@ export function EdgeAfterRewardsPanel({
             {formatPct(summary.grossEdge)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Blended gross house edge
+            Blended gross edge on all wager
+          </p>
+          <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+            Volume-weighted; battle wager at 0% dilutes vs packs+upgrader blend
           </p>
           <p className="mt-2 text-[10px] tabular-nums text-muted-foreground">
             Current config: {formatPct(summary.currentGrossEdge)}
