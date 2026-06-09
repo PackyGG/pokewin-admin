@@ -2,8 +2,10 @@
  * Edge Plan 2.0 — projection model.
  *
  * Wraps the v1 pure projection engine (read-only import) and layers:
- *   • Shards economy (replaces raffles)
- *   • Balance-withdrawal + wager-requirement what-ifs
+ *   • Raffle levers (reused from v1 on real reconstructed raffle prize cost)
+ *   • A real affiliate commission / leaderboard split
+ *   • Balance-withdrawal + wager-requirement DISPLAY context (no fabricated
+ *     projection — every number is real production data or it is dropped)
  *
  * Shared projection engine for Edge Plan 2.0. The v1 route was removed;
  * core types and math live here for reuse.
@@ -15,37 +17,23 @@ import {
   type EdgePlanProjection,
   type GameTypeProjection,
   type LeverProjection,
-  type RewardPackCatalogItem,
-  type DailyPackLeverRow,
-  type PackCardPreview,
-  type GameTypeId,
   type RakebackCadenceId,
   type RakebackCadenceLever,
   defaultLevers,
   projectEdgePlan,
-  computeNetEdgeScenarios,
   plannedBlendedHouseEdge,
   plannedMarginBearingHouseEdge,
   affiliateEdgeShareToWagerDrag,
-  affiliateWagerDragToEdgeShare,
   clamp,
   PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
   PLANNED_BATTLES_EDGE_DEFAULT,
   PLANNED_UPGRADER_EDGE_DEFAULT,
   GAME_TYPE_IDS,
-  removeWagerReqCommissionUplift,
   REMOVE_WAGER_REQ_COMMISSION_BASE_MULT,
-  measuredPacksEdge,
-  blendedPackBattleEdge,
-  blendedGamingEdge,
-  marginBearingBlendedGamingEdge,
   observedBlendedGamingEdge,
-  observedMarginBearingGamingEdge,
   computeBlendedEdgeBreakdown,
-  effectiveProjectionTypeEdge,
   defaultPlannedEdge,
   type BlendedEdgeBreakdown,
-  type BlendedEdgeLine,
 } from "../system-edge-plan/_model";
 
 export {
@@ -79,13 +67,7 @@ export {
   type EdgePlanProjection,
 } from "../system-edge-plan/_model";
 
-function breakageFactor(wagerReqMult: number): number {
-  return clamp(1 / Math.max(0.25, wagerReqMult), 0.2, 1);
-}
-
-export type ShardsDataSource = "raffle_proxy" | "manual" | "backend";
-
-/** Reward channels that can fund wager recycled into rakeback accrual. */
+/** Labeled enumeration of house-funded reward channels (display/grouping). */
 export type RewardWagerSourceId =
   | "race"
   | "leaderboard"
@@ -95,7 +77,6 @@ export type RewardWagerSourceId =
   | "affiliate"
   | "depositBonus"
   | "motha"
-  | "shards"
   | "borrowed"
   | "other";
 
@@ -108,7 +89,6 @@ export const REWARD_WAGER_SOURCE_IDS: RewardWagerSourceId[] = [
   "affiliate",
   "depositBonus",
   "motha",
-  "shards",
   "borrowed",
   "other",
 ];
@@ -122,7 +102,6 @@ export const REWARD_WAGER_SOURCE_LABELS: Record<RewardWagerSourceId, string> = {
   affiliate: "Affiliate commission",
   depositBonus: "Deposit bonus",
   motha: "Motha founder giveaways",
-  shards: "Shard shop",
   borrowed: "Borrow-play (packs + battles)",
   other: "Other rewards",
 };
@@ -135,23 +114,6 @@ export type UpgraderRakebackBucket = {
   winRate: number;
 };
 
-export type RewardWagerShareBreakdown = Record<RewardWagerSourceId, number>;
-
-/** One shard-shop pack the owner can plan EV for before prod packs exist. */
-export type ShardShopPackRow = {
-  packId: string;
-  name: string;
-  slug: string;
-  imageUrl: string | null;
-  cardPreviews: PackCardPreview[];
-  /** Planned shard price (planning default until backend ships). */
-  shardPrice: number;
-  /** Baseline redemptions in the window (0 when not live). */
-  redemptionsBaseline: number;
-  /** Measured / theoretical EV per redemption (USD house cost). */
-  measuredEvUsd: number;
-};
-
 export type EdgePlanV2Baseline = SystemEdgeBaseline & {
   /** Canonical headline wager before organic denominator override (30d). */
   totalWager: number;
@@ -159,13 +121,24 @@ export type EdgePlanV2Baseline = SystemEdgeBaseline & {
   ledgerOrganicWager: number;
   /** Upgrader stake from non-creator-coded users. */
   upgraderOrganicWager: number;
-  /** Reconstructed prize cost used as shards redemption proxy (was raffles). */
-  shardsRedemptionCost: number;
-  /** Internal earn rate: shards per $1 wager (UI shows inverse as wager per gem). */
-  shardsPerDollarWager: number;
-  shardsDataSource: ShardsDataSource;
-  shardShopRows: ShardShopPackRow[];
-  /** Share of withdrawal volume exiting as balance (0..1). Planning default. */
+  /**
+   * Real affiliate COMMISSION cost over the window (Σ|affiliate_claim|), from
+   * `getAffiliateOverview().totalCommissionPaid`. The commission leg only — the
+   * leaderboard prize leg is tracked separately. Falls back to the bundled
+   * `affiliateCost` when the affiliate overview query is null.
+   */
+  affiliateCommissionCost: number;
+  /**
+   * Real affiliate LEADERBOARD prize cost over the window
+   * (Σ|affiliate_leaderboard_prize|), from
+   * `getAffiliateOverview().leaderboardPrizePaid`. A SEPARATE canonical affiliate
+   * reward leg that the commission figure does not include. 0 when the query is
+   * null (the bundled total is then treated as all commission).
+   */
+  affiliateLeaderboardCost: number;
+  /** Where the affiliate commission/leaderboard split was sourced. */
+  affiliateSplitSource: "overview" | "fallback";
+  /** Share of withdrawal volume exiting as balance (0..1). Real ledger split. */
   balanceWithdrawalShare: number;
   /** Estimated total withdrawal USD in window (for balance-withdrawal modeling). */
   estimatedWithdrawalVolumeUsd: number;
@@ -189,32 +162,17 @@ export type EdgePlanV2Baseline = SystemEdgeBaseline & {
     totalWager: number;
     winRate: number;
   } | null;
-  /** Estimated share of total wager originating from each reward channel. */
-  rewardWagerShare: RewardWagerShareBreakdown;
+  /** Real borrow-play stake (packs / battles) over the window — display context. */
   packWagerBorrowed: number;
   battleWagerBorrowed: number;
 };
 
-export type PlannedLeversV2 = Omit<
-  PlannedLevers,
-  "rafflePrizePoolMult" | "raffleFrequencyMult" | "raffleTicketCostMult"
-> & {
-  /** Internal earn rate: shards per $1 wager (UI: wager per gem). */
-  shardsPerDollarWager: number;
-  /** Scales shard earn rate vs baseline. */
-  shardEarnMult: number;
-  /** Game-type weights for shard earn (0..1). */
-  shardPackBattleWeight: number;
-  shardUpgraderWeight: number;
-  /** Scales shard-shop redemptions / spend intensity. */
-  shardRedemptionMult: number;
-  /** Planned EV per shard-shop pack open (USD). */
-  shardShopPackEvUsd: Record<string, number>;
-  /** Share of withdrawals as balance (0..1). */
+export type PlannedLeversV2 = PlannedLevers & {
+  /** Share of withdrawals as balance (0..1) — UI what-if knob (no $ projection). */
   balanceWithdrawalShare: number;
-  /** Wager requirement multiplier (breakage model). */
+  /** Wager requirement multiplier — UI what-if knob (no $ projection). */
   withdrawalWagerReqMult: number;
-  /** Withdrawal wager weights (0..1). */
+  /** Withdrawal wager weights (0..1) — UI what-if knobs (no $ projection). */
   withdrawalPackBattleWeight: number;
   withdrawalUpgraderWeight: number;
   /** Per-game-type rakeback accrual weight (0..1). */
@@ -224,29 +182,28 @@ export type PlannedLeversV2 = Omit<
   rakebackUpgraderMinMultiplier: number;
   /** Cap winning upgrader bet amount that accrues rakeback (0..1). */
   rakebackUpgraderMaxWinPct: number;
-  /** How much wager from each reward source counts toward rakeback (0..1). */
-  rakebackRewardWagerWeights: RewardWagerShareBreakdown;
 };
 
-export type EdgePlanV2Projection = EdgePlanProjection & {
-  shardsIssuancePlanned: number;
-  shardsRedemptionPlanned: number;
-  withdrawalFrictionAdjUsd: number;
-};
+export type EdgePlanV2Projection = EdgePlanProjection;
 
-const DEFAULT_SHARDS_PER_DOLLAR = 0.1;
-/** Planning turnover: $1 reward spend → ~$X wager before exit. */
-const REWARD_WAGER_TURNOVER = 2.5;
-const LEADERBOARD_AFFILIATE_COST_SHARE = 0.12;
-
-/** Split bundled affiliate rollup into commission vs leaderboard prize pool. */
+/**
+ * Default split of the bundled affiliate rollup into commission vs leaderboard
+ * prize pool. This is ONLY the null-query fallback used when the real affiliate
+ * overview (`getAffiliateOverview` → `totalCommissionPaid` + `leaderboardPrizePaid`)
+ * could not be read. The real split is threaded through the baseline instead
+ * (see `affiliateCommissionCost` / `affiliateLeaderboardCost` on the baseline).
+ *
+ * When the bundled total is the only thing available, assume it is entirely
+ * commission (the canonical `affiliateCost` already sums both legs, and the
+ * leaderboard leg is frequently $0), so the fallback neither fabricates a
+ * leaderboard figure nor drops commission.
+ */
 export function splitAffiliateCostBundle(totalCost: number): {
   commission: number;
   leaderboard: number;
 } {
   const total = Math.max(0, totalCost);
-  const leaderboard = total * LEADERBOARD_AFFILIATE_COST_SHARE;
-  return { commission: total - leaderboard, leaderboard };
+  return { commission: total, leaderboard: 0 };
 }
 
 /** Top affiliate tier edge share (worst-case single-tier planning). */
@@ -278,7 +235,7 @@ function projectAffiliateCommissionV2(
   baseline: EdgePlanV2Baseline,
   planned: PlannedLeversV2,
 ): { current: number; planned: number } {
-  const { commission: current } = splitAffiliateCostBundle(baseline.affiliateCost);
+  const current = Math.max(0, baseline.affiliateCommissionCost);
   if (current <= 0) return { current: 0, planned: 0 };
 
   const tiers = baseline.affiliateTiers;
@@ -299,12 +256,6 @@ function projectAffiliateCommissionV2(
     current,
     planned: Math.max(0, current * rateRatio * reqMult),
   };
-}
-
-export function defaultRakebackRewardWagerWeights(): RewardWagerShareBreakdown {
-  return Object.fromEntries(
-    REWARD_WAGER_SOURCE_IDS.map((id) => [id, 1]),
-  ) as RewardWagerShareBreakdown;
 }
 
 function cadenceWeight(
@@ -390,55 +341,6 @@ function gameTypeRakebackWeightFactor(
   );
 }
 
-function rewardWagerRecyclingFactor(
-  baseline: EdgePlanV2Baseline,
-  planned: PlannedLeversV2,
-): number {
-  const totalWager = baseline.wager;
-  if (totalWager <= 0) return 1;
-
-  const borrowedWager = Math.max(
-    0,
-    baseline.packWagerBorrowed + baseline.battleWagerBorrowed,
-  );
-  const borrowedShare = clamp(borrowedWager / totalWager, 0, 1);
-
-  let recycledShare = 0;
-  for (const id of REWARD_WAGER_SOURCE_IDS) {
-    if (id === "borrowed") continue;
-    recycledShare += baseline.rewardWagerShare[id] ?? 0;
-  }
-  recycledShare = clamp(recycledShare, 0, Math.max(0, 1 - borrowedShare));
-
-  let depositShare = 1 - borrowedShare - recycledShare;
-  if (depositShare < 0) {
-    const scale = 1 / (borrowedShare + recycledShare);
-    depositShare = 0;
-    recycledShare *= scale;
-  }
-
-  let weightedRecycled = 0;
-  for (const id of REWARD_WAGER_SOURCE_IDS) {
-    if (id === "borrowed") continue;
-    const share = baseline.rewardWagerShare[id] ?? 0;
-    if (share <= 0) continue;
-    weightedRecycled +=
-      share * clamp(planned.rakebackRewardWagerWeights[id] ?? 1, 0, 1);
-  }
-
-  const borrowedWeight = clamp(
-    planned.rakebackRewardWagerWeights.borrowed ?? 1,
-    0,
-    1,
-  );
-
-  return (
-    depositShare +
-    borrowedShare * borrowedWeight +
-    weightedRecycled
-  );
-}
-
 function projectRakebackV2(
   baseline: EdgePlanV2Baseline,
   planned: PlannedLeversV2,
@@ -460,8 +362,10 @@ function projectRakebackV2(
   );
   const rateRatio = currentBlend > 0 ? plannedBlend / currentBlend : 1;
 
+  // Direct rakeback cost: real config × real wager × real game-type / upgrader
+  // weighting. The fabricated reward-wager recycling uplift (2.5× turnover /
+  // 0.55 cap) was removed — rakeback now scales only on grounded inputs.
   const gameWeight = gameTypeRakebackWeightFactor(baseline, planned);
-  const rewardFactor = rewardWagerRecyclingFactor(baseline, planned);
 
   const adoption = clamp(planned.rakebackInstantAdoption, 0, 1);
   const payoutPct = clamp(planned.rakebackInstantPayoutPct, 0, 1);
@@ -469,7 +373,7 @@ function projectRakebackV2(
 
   return {
     current,
-    planned: Math.max(0, current * rateRatio * gameWeight * rewardFactor * instantFactor),
+    planned: Math.max(0, current * rateRatio * gameWeight * instantFactor),
   };
 }
 
@@ -479,96 +383,35 @@ export function rakebackEffectiveWagerMult(
   planned: PlannedLeversV2,
 ): {
   gameWeight: number;
-  rewardRecycling: number;
   upgraderEligibleShare: number;
   combined: number;
 } {
   const gameWeight = gameTypeRakebackWeightFactor(baseline, planned);
-  const rewardRecycling = rewardWagerRecyclingFactor(baseline, planned);
   const upgraderEligibleShare = upgraderMinMultiplierEligibleShare(
     baseline.upgraderRakebackAnchor,
     planned.rakebackUpgraderMinMultiplier,
   );
   return {
     gameWeight,
-    rewardRecycling,
     upgraderEligibleShare,
-    combined: gameWeight * rewardRecycling,
+    combined: gameWeight,
   };
 }
 
-export function estimateRewardWagerShares(
-  baseline: Pick<
-    EdgePlanV2Baseline,
-    | "wager"
-    | "raceCost"
-    | "affiliateCost"
-    | "rainCost"
-    | "rakebackCost"
-    | "dailyPacksCost"
-    | "depositBonusCost"
-    | "mothaCost"
-    | "shardsRedemptionCost"
-    | "otherRewardCost"
-    | "signupPacksCost"
-    | "packWagerBorrowed"
-    | "battleWagerBorrowed"
-  >,
-): RewardWagerShareBreakdown {
-  const shares = defaultRakebackRewardWagerWeights();
-  const totalWager = baseline.wager;
-  if (totalWager <= 0) return shares;
-
-  const borrowedWager = Math.max(
-    0,
-    baseline.packWagerBorrowed + baseline.battleWagerBorrowed,
-  );
-  shares.borrowed = clamp(borrowedWager / totalWager, 0, 0.5);
-
-  const leaderboardCost = baseline.affiliateCost * LEADERBOARD_AFFILIATE_COST_SHARE;
-  const affiliateCommissionCost = baseline.affiliateCost - leaderboardCost;
-
-  const costBySource: Record<Exclude<RewardWagerSourceId, "borrowed">, number> = {
-    race: baseline.raceCost,
-    leaderboard: leaderboardCost,
-    rain: baseline.rainCost,
-    rakeback: baseline.rakebackCost,
-    dailyPacks: baseline.dailyPacksCost,
-    affiliate: affiliateCommissionCost,
-    depositBonus: baseline.depositBonusCost,
-    motha: baseline.mothaCost,
-    shards: baseline.shardsRedemptionCost,
-    other: baseline.otherRewardCost + baseline.signupPacksCost,
-  };
-
-  const recycledWagerCap = Math.max(0, 1 - shares.borrowed) * 0.55;
-  const totalRewardCost = Object.values(costBySource).reduce((s, v) => s + Math.max(0, v), 0);
-  const recycledWagerUsd = Math.min(
-    totalWager * recycledWagerCap,
-    totalRewardCost * REWARD_WAGER_TURNOVER,
-  );
-
-  if (totalRewardCost > 0 && recycledWagerUsd > 0) {
-    for (const id of REWARD_WAGER_SOURCE_IDS) {
-      if (id === "borrowed") continue;
-      shares[id] = (costBySource[id] / totalRewardCost) * (recycledWagerUsd / totalWager);
-    }
-  }
-
-  return shares;
-}
-
+/**
+ * Strip the v2-only fields so the v1 engine receives a clean `SystemEdgeBaseline`.
+ * Raffle cost flows through UNCHANGED now — it is the real reconstructed raffle
+ * prize cost from `getRaffleForecastBaseline().totalPrizeCost` (no longer a shard
+ * proxy), so the v1 raffle lever projects the real cost.
+ */
 function toV1Baseline(baseline: EdgePlanV2Baseline): SystemEdgeBaseline {
-  return { ...baseline, raffleCost: 0 };
+  return baseline;
 }
 
 function toV1Levers(planned: PlannedLeversV2, baseline: EdgePlanV2Baseline): PlannedLevers {
   return {
     ...planned,
     rakebackPackBattleWeight: blendedPackBattleRakebackWeight(baseline, planned),
-    rafflePrizePoolMult: 1,
-    raffleFrequencyMult: 1,
-    raffleTicketCostMult: 1,
   };
 }
 
@@ -596,121 +439,11 @@ export function computeBlendedEdgeBreakdownV2(
   return computeBlendedEdgeBreakdown(baseline, toV1Levers(levers, baseline).edges);
 }
 
-/** Wager-weighted blend of pack/battle vs upgrader weights (0..1 each). */
-function wagerTypeBlend(
-  baseline: EdgePlanV2Baseline,
-  packBattleWeight: number,
-  upgraderWeight: number,
-): number {
-  const packs = baseline.gameTypes.find((g) => g.type === "packs")?.wager ?? 0;
-  const battles = baseline.gameTypes.find((g) => g.type === "battles")?.wager ?? 0;
-  const upg = baseline.gameTypes.find((g) => g.type === "upgrader")?.wager ?? 0;
-  const pb = packs + battles;
-  const total = pb + upg;
-  if (total <= 0) return (packBattleWeight + upgraderWeight) / 2;
-  return (pb * packBattleWeight + upg * upgraderWeight) / total;
-}
-
-function computeShardsIssuance(
-  baseline: EdgePlanV2Baseline,
-  planned: PlannedLeversV2,
-): { current: number; planned: number } {
-  const baseRate = Math.max(0.001, baseline.shardsPerDollarWager);
-  const currentBlend = wagerTypeBlend(baseline, 1, 1);
-  const plannedBlend = wagerTypeBlend(
-    baseline,
-    planned.shardPackBattleWeight,
-    planned.shardUpgraderWeight,
-  );
-  const earnIntensity =
-    (planned.shardsPerDollarWager / baseRate) *
-    Math.max(0, planned.shardEarnMult) *
-    plannedBlend;
-  const blendRatio =
-    currentBlend > 0 ? plannedBlend / currentBlend : plannedBlend;
-
-  const anchor =
-    baseline.shardsRedemptionCost > 0
-      ? baseline.shardsRedemptionCost * 0.5
-      : baseline.wager * baseRate * currentBlend * 0.01;
-
-  if (anchor <= 0) return { current: 0, planned: 0 };
-
-  return {
-    current: anchor,
-    planned: anchor * (planned.shardsPerDollarWager / baseRate) * planned.shardEarnMult * blendRatio,
-  };
-}
-
-function computeShardsRedemption(
-  baseline: EdgePlanV2Baseline,
-  planned: PlannedLeversV2,
-): { current: number; planned: number } {
-  const hasRows = baseline.shardShopRows.length > 0;
-  const currentFromRows = baseline.shardShopRows.reduce(
-    (s, p) => s + p.measuredEvUsd * p.redemptionsBaseline,
-    0,
-  );
-  const current = hasRows ? currentFromRows : baseline.shardsRedemptionCost;
-
-  const redemptionMult = Math.max(0, planned.shardRedemptionMult);
-  const plannedFromRows = hasRows
-    ? baseline.shardShopRows.reduce((s, p) => {
-        const ev = Math.max(
-          0,
-          planned.shardShopPackEvUsd[p.packId] ?? p.measuredEvUsd,
-        );
-        return s + ev * p.redemptionsBaseline;
-      }, 0) * redemptionMult
-    : baseline.shardsRedemptionCost * redemptionMult;
-
-  return { current, planned: plannedFromRows };
-}
-
-/** Modeled reduction in effective withdrawal outflow from wager req breakage. */
-function computeWithdrawalAdjustment(
-  baseline: EdgePlanV2Baseline,
-  planned: PlannedLeversV2,
-): number {
-  const volume =
-    baseline.estimatedWithdrawalVolumeUsd * planned.balanceWithdrawalShare;
-  if (volume <= 0) return 0;
-  const baseBreak = breakageFactor(1);
-  const plannedBreak = breakageFactor(planned.withdrawalWagerReqMult);
-  const baseWeight = wagerTypeBlend(baseline, 1, 1);
-  const plannedWeight = wagerTypeBlend(
-    baseline,
-    planned.withdrawalPackBattleWeight,
-    planned.withdrawalUpgraderWeight,
-  );
-  const weightScale =
-    baseWeight > 0 ? plannedWeight / baseWeight : Math.max(0, plannedWeight);
-  return volume * (baseBreak - plannedBreak) * 0.25 * weightScale;
-}
-
 export function defaultLeversV2(baseline: EdgePlanV2Baseline): PlannedLeversV2 {
   const v1 = defaultLevers(baseline);
-  const shardShopPackEvUsd: Record<string, number> = {};
-  for (const p of baseline.shardShopRows) {
-    shardShopPackEvUsd[p.packId] = Math.max(0, p.measuredEvUsd);
-  }
-  for (const p of baseline.rewardPackCatalog) {
-    if (shardShopPackEvUsd[p.packId] == null) {
-      shardShopPackEvUsd[p.packId] = Math.max(0, p.theoreticalEvUsd);
-    }
-  }
-
-  const { rafflePrizePoolMult: _a, raffleFrequencyMult: _b, raffleTicketCostMult: _c, ...rest } =
-    v1;
 
   return {
-    ...rest,
-    shardsPerDollarWager: baseline.shardsPerDollarWager,
-    shardEarnMult: 1,
-    shardPackBattleWeight: 1,
-    shardUpgraderWeight: 1,
-    shardRedemptionMult: 1,
-    shardShopPackEvUsd,
+    ...v1,
     balanceWithdrawalShare: baseline.balanceWithdrawalShare,
     withdrawalWagerReqMult: 1,
     withdrawalPackBattleWeight: 1,
@@ -719,22 +452,7 @@ export function defaultLeversV2(baseline: EdgePlanV2Baseline): PlannedLeversV2 {
     rakebackBattlesWeight: 1,
     rakebackUpgraderMinMultiplier: 1,
     rakebackUpgraderMaxWinPct: 1,
-    rakebackRewardWagerWeights: defaultRakebackRewardWagerWeights(),
   };
-}
-
-function sanitizeRewardWagerWeights(
-  input: unknown,
-  fallback: RewardWagerShareBreakdown,
-): RewardWagerShareBreakdown {
-  const out = { ...fallback };
-  if (input == null || typeof input !== "object") return out;
-  const src = input as Record<string, unknown>;
-  for (const id of REWARD_WAGER_SOURCE_IDS) {
-    const n = Number(src[id]);
-    if (Number.isFinite(n)) out[id] = clamp(n, 0, 1);
-  }
-  return out;
 }
 
 function neutralLeversV2(): PlannedLeversV2 {
@@ -758,18 +476,15 @@ function neutralLeversV2(): PlannedLeversV2 {
     racePrizePoolMult: 1,
     raceFrequencyMult: 1,
     raceEntryCostMult: 1,
+    rafflePrizePoolMult: 1,
+    raffleFrequencyMult: 1,
+    raffleTicketCostMult: 1,
     dailyPackEvUsd: {},
     dailyPacksFrequencyMult: 1,
     signupGrantUsd: 0,
     rainCostMult: 1,
     otherRewardCostMult: 1,
     mothaCostMult: 1,
-    shardsPerDollarWager: DEFAULT_SHARDS_PER_DOLLAR,
-    shardEarnMult: 1,
-    shardPackBattleWeight: 1,
-    shardUpgraderWeight: 1,
-    shardRedemptionMult: 1,
-    shardShopPackEvUsd: {},
     balanceWithdrawalShare: 0,
     withdrawalWagerReqMult: 1,
     withdrawalPackBattleWeight: 1,
@@ -778,7 +493,6 @@ function neutralLeversV2(): PlannedLeversV2 {
     rakebackBattlesWeight: 1,
     rakebackUpgraderMinMultiplier: 1,
     rakebackUpgraderMaxWinPct: 1,
-    rakebackRewardWagerWeights: defaultRakebackRewardWagerWeights(),
   };
 }
 
@@ -831,10 +545,6 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
   );
   base.rakebackInstantPayoutPct = clamp(num(src.rakebackInstantPayoutPct, 1), 0, 1);
   base.rakebackInstantAdoption = clamp(num(src.rakebackInstantAdoption, 0), 0, 1);
-  base.rakebackRewardWagerWeights = sanitizeRewardWagerWeights(
-    src.rakebackRewardWagerWeights,
-    base.rakebackRewardWagerWeights,
-  );
 
   if (src.affiliateRates != null && typeof src.affiliateRates === "object") {
     const a = src.affiliateRates as Record<string, unknown>;
@@ -853,6 +563,9 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
   base.racePrizePoolMult = clamp(num(src.racePrizePoolMult, 1), 0, 5);
   base.raceFrequencyMult = clamp(num(src.raceFrequencyMult, 1), 0, 5);
   base.raceEntryCostMult = clamp(num(src.raceEntryCostMult, 1), 0, 5);
+  base.rafflePrizePoolMult = clamp(num(src.rafflePrizePoolMult, 1), 0, 5);
+  base.raffleFrequencyMult = clamp(num(src.raffleFrequencyMult, 1), 0, 5);
+  base.raffleTicketCostMult = clamp(num(src.raffleTicketCostMult, 1), 0, 5);
   base.dailyPacksFrequencyMult = clamp(num(src.dailyPacksFrequencyMult, 1), 0, 5);
   base.rainCostMult = clamp(num(src.rainCostMult, 1), 0, 5);
   base.otherRewardCostMult = clamp(num(src.otherRewardCostMult, 1), 0, 5);
@@ -867,25 +580,6 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
     }
   }
 
-  if (src.wagerPerGemUsd != null) {
-    const wpg = num(src.wagerPerGemUsd, 1 / DEFAULT_SHARDS_PER_DOLLAR);
-    base.shardsPerDollarWager =
-      !Number.isFinite(wpg) || wpg >= 1000
-        ? 0
-        : wpg <= 0.1
-          ? 10
-          : clamp(1 / wpg, 0, 10);
-  } else {
-    base.shardsPerDollarWager = clamp(
-      num(src.shardsPerDollarWager, DEFAULT_SHARDS_PER_DOLLAR),
-      0,
-      10,
-    );
-  }
-  base.shardEarnMult = clamp(num(src.shardEarnMult, 1), 0, 5);
-  base.shardPackBattleWeight = clamp(num(src.shardPackBattleWeight, 1), 0, 1);
-  base.shardUpgraderWeight = clamp(num(src.shardUpgraderWeight, 1), 0, 1);
-  base.shardRedemptionMult = clamp(num(src.shardRedemptionMult, 1), 0, 5);
   base.balanceWithdrawalShare = clamp(num(src.balanceWithdrawalShare, 0), 0, 1);
   base.withdrawalWagerReqMult = clamp(num(src.withdrawalWagerReqMult, 1), 0, 5);
   base.withdrawalPackBattleWeight = clamp(
@@ -894,14 +588,6 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
     1,
   );
   base.withdrawalUpgraderWeight = clamp(num(src.withdrawalUpgraderWeight, 1), 0, 1);
-
-  if (src.shardShopPackEvUsd != null && typeof src.shardShopPackEvUsd === "object") {
-    const s = src.shardShopPackEvUsd as Record<string, unknown>;
-    for (const [packId, v] of Object.entries(s)) {
-      if (typeof packId !== "string" || !packId) continue;
-      base.shardShopPackEvUsd[packId] = Math.max(0, num(v, 0));
-    }
-  }
 
   return base;
 }
@@ -969,20 +655,15 @@ export function projectEdgePlanV2(
   const rakebackDelta =
     coreRakeback != null ? rakeback.planned - coreRakeback.plannedCost : 0;
 
-  const issuance = computeShardsIssuance(baseline, planned);
-  const redemption = computeShardsRedemption(baseline, planned);
-  const withdrawalFrictionAdjUsd = computeWithdrawalAdjustment(baseline, planned);
-
-  const shardsCurrent = issuance.current + redemption.current;
-  const shardsPlanned = issuance.planned + redemption.planned;
-
+  // Real affiliate split (commission vs leaderboard) — sourced from
+  // getAffiliateOverview via the baseline. The v1 `core` carries the BUNDLED
+  // affiliate cost; here we replace its commission leg with the real
+  // commission figure (scaled by the rate levers) and surface the leaderboard
+  // prize leg as its own held-fixed line.
   const affiliateCommission = projectAffiliateCommissionV2(baseline, planned);
-  const { leaderboard: affiliateLeaderboardCurrent } = splitAffiliateCostBundle(
-    baseline.affiliateCost,
-  );
+  const affiliateLeaderboardCurrent = Math.max(0, baseline.affiliateLeaderboardCost);
 
   const levers: LeverProjection[] = core.levers
-    .filter((l) => l.key !== "raffles")
     .map((l) => {
       if (l.key === "rakeback") {
         return {
@@ -1002,8 +683,8 @@ export function projectEdgePlanV2(
       }
       return l;
     })
-    .concat([
-      ...(affiliateLeaderboardCurrent > 0
+    .concat(
+      affiliateLeaderboardCurrent > 0
         ? [
             {
               key: "leaderboard",
@@ -1014,55 +695,25 @@ export function projectEdgePlanV2(
               dataAvailable: true,
             } satisfies LeverProjection,
           ]
-        : []),
-      {
-        key: "shards-earn",
-        label: "Shard earn (issuance liability)",
-        currentCost: issuance.current,
-        plannedCost: issuance.planned,
-        deltaCost: issuance.planned - issuance.current,
-        dataAvailable:
-          issuance.current > 0 || baseline.wager > 0 || baseline.shardsRedemptionCost > 0,
-      },
-      {
-        key: "shards",
-        label: "Shard shop redemptions",
-        currentCost: redemption.current,
-        plannedCost: redemption.planned,
-        deltaCost: redemption.planned - redemption.current,
-        dataAvailable:
-          redemption.current > 0 || baseline.shardShopRows.length > 0,
-      },
-      {
-        key: "withdrawals",
-        label: "Withdrawal wager friction (adj.)",
-        currentCost: 0,
-        plannedCost: -withdrawalFrictionAdjUsd,
-        deltaCost: -withdrawalFrictionAdjUsd,
-        dataAvailable: baseline.estimatedWithdrawalVolumeUsd > 0,
-      },
-    ]);
+        : [],
+    );
 
+  // Reconcile `core`'s BUNDLED affiliate planned cost to the v2 split total
+  // (commission planned + held-fixed leaderboard). The current side already
+  // matches: the real commission + leaderboard sum back to the bundled
+  // `affiliateCost` that `core.currentRewardCost` counted.
   const coreAffiliate = core.levers.find((l) => l.key === "affiliate");
   const affiliatePlannedTotal =
     affiliateCommission.planned + affiliateLeaderboardCurrent;
   const affiliateAdjustment =
     coreAffiliate != null ? affiliatePlannedTotal - coreAffiliate.plannedCost : 0;
 
-  const rewardCostDelta =
-    core.plannedRewardCost -
-    core.currentRewardCost +
-    rakebackDelta +
-    (shardsPlanned - shardsCurrent) +
-    affiliateAdjustment -
-    withdrawalFrictionAdjUsd;
+  const plannedRewardCost =
+    core.plannedRewardCost + rakebackDelta + affiliateAdjustment;
+  const currentRewardCost = core.currentRewardCost;
+  const rewardCostDelta = plannedRewardCost - currentRewardCost;
 
-  const plannedNgr =
-    core.plannedNgr -
-    rakebackDelta -
-    (shardsPlanned - shardsCurrent) +
-    withdrawalFrictionAdjUsd -
-    affiliateAdjustment;
+  const plannedNgr = core.plannedNgr - rakebackDelta - affiliateAdjustment;
   const profitDelta = plannedNgr - core.currentNgr;
   const monthlyProfitDelta =
     baseline.periodDays > 0 ? (profitDelta / baseline.periodDays) * 30 : profitDelta;
@@ -1073,20 +724,13 @@ export function projectEdgePlanV2(
     ...core,
     ...planningGgr,
     levers,
-    plannedRewardCost:
-      core.plannedRewardCost +
-      rakebackDelta +
-      (shardsPlanned - shardsCurrent) +
-      affiliateAdjustment,
-    currentRewardCost: core.currentRewardCost + shardsCurrent,
+    plannedRewardCost,
+    currentRewardCost,
     rewardCostDelta,
     plannedNgr,
     profitDelta,
     monthlyProfitDelta,
     annualProfitDelta,
-    shardsIssuancePlanned: issuance.planned,
-    shardsRedemptionPlanned: redemption.planned,
-    withdrawalFrictionAdjUsd,
   };
 }
 
@@ -1095,7 +739,7 @@ export type EdgeAfterRewardsLeverDrag = {
   key: string;
   label: string;
   plannedCostUsd: number;
-  /** Positive = erodes edge; negative = adds back (e.g. withdrawal friction). */
+  /** Positive = erodes edge (reward drag on the planned config). */
   dragPct: number;
   /** Optional planning note (e.g. affiliate worst-case vs realized spend). */
   dragNote?: string;
@@ -1132,20 +776,24 @@ export type WagerScenarioState = {
   presetMult: number;
 };
 
-export const WAGER_SCENARIO_PRESET_MULTS = [1, 2, 3, 4, 5] as const;
+export const WAGER_SCENARIO_PRESET_MULTS = [1, 1.5, 2, 3, 4, 5] as const;
 
 export function resolveScenarioWagerUsd(
   baseWager: number,
   scenario: WagerScenarioState,
 ): number {
-  return Math.max(0, baseWager * scenario.presetMult);
+  const wager = Number.isFinite(baseWager) ? Math.max(0, baseWager) : 0;
+  const mult =
+    Number.isFinite(scenario.presetMult) && scenario.presetMult > 0
+      ? scenario.presetMult
+      : 1;
+  return wager * mult;
 }
 
 /** Reward levers whose planned $ cost scales with wager at constant rates. */
 const WAGER_PROPORTIONAL_LEVER_KEYS = new Set([
   "rakeback",
   "affiliate",
-  "shards-earn",
 ]);
 
 function scenarioLeverCostUsd(
@@ -1182,10 +830,16 @@ export function computeEdgeAfterRewards(
   projection: EdgePlanV2Projection,
   ctx?: EdgeAfterRewardsContext,
 ): EdgeAfterRewardsSummary {
-  const baseWager = Math.max(0, projection.plannedWager || projection.currentWager);
+  const baseWager = Math.max(
+    0,
+    projection.plannedWager ?? projection.currentWager ?? 0,
+  );
+  const scenarioOverride = ctx?.scenarioWagerUsd;
   const scenarioWager =
-    ctx?.scenarioWagerUsd != null && ctx.scenarioWagerUsd > 0
-      ? ctx.scenarioWagerUsd
+    scenarioOverride != null &&
+    Number.isFinite(scenarioOverride) &&
+    scenarioOverride > 0
+      ? scenarioOverride
       : baseWager;
   const wagerScenarioMult = baseWager > 0 ? scenarioWager / baseWager : 1;
 
@@ -1235,7 +889,7 @@ export function computeEdgeAfterRewards(
       );
       const realizedDrag =
         scenarioWager > 0 ? scenarioCost / scenarioWager : 0;
-      if (l.key === "affiliate" && ctx) {
+      if (l.key === "affiliate" && ctx?.baseline && ctx?.levers) {
         const edgeShare = topAffiliateTierEdgeShare(ctx.baseline, ctx.levers);
         const worstCaseDrag = affiliateWorstCaseEdgeDrag(ctx.baseline, ctx.levers);
         return {

@@ -58,7 +58,7 @@ export function GamingEdgeSection({
         projection. Sliders set the edge you plan around; GGR is edge × observed wager
         volume.
       </p>
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <div className="space-y-4">
           <div className="space-y-2">
             <LeverSlider
@@ -80,7 +80,7 @@ export function GamingEdgeSection({
           </div>
 
           <div className="rounded-lg border border-dashed bg-background/40 px-3 py-2.5">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Swords className="size-3.5 text-muted-foreground" />
               <span className="text-sm font-medium">Battles</span>
               <Badge variant="outline" className="text-[10px]">

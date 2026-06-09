@@ -24,6 +24,7 @@ import {
   type PlannedLeversV2,
 } from "../../_model-v2";
 import { formatEvUsd, multLabel } from "../utils";
+import { TEXT_TONE } from "../colors";
 import { EmptyLever } from "../components/empty-lever";
 import { leverEdgeDragPct, RewardPanelTitle } from "../components/reward-edge-drag";
 
@@ -105,12 +106,12 @@ export function PacksSignupSection({
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Planned total
             </p>
-            <p className="text-lg font-bold tabular-nums text-rose-600 dark:text-rose-400">
+            <p className={`text-lg font-bold tabular-nums ${TEXT_TONE.rose}`}>
               {formatCurrency(plannedTotal)}
             </p>
           </div>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {rows.map((p) => {
             const plannedEv =
               levers.dailyPackEvUsd[p.packId] ?? p.measuredEvUsd;
@@ -153,7 +154,7 @@ export function PacksSignupSection({
                     <span>
                       {p.opens.toLocaleString()} opens · {p.claimers} claimers
                     </span>
-                    <span className="font-semibold text-rose-600 dark:text-rose-400">
+                    <span className={`font-semibold ${TEXT_TONE.rose}`}>
                       {packCost}
                     </span>
                   </div>
@@ -251,8 +252,8 @@ export function PacksSignupSection({
           />
           <CollapsibleContent className="mt-3">
             <p className="mb-3 text-[11px] text-muted-foreground">
-              Reference gallery — packs with no opens still appear for shard-shop
-              planning context.
+              Reference gallery — all configured reward packs, including those
+              with no opens this window.
             </p>
             <RewardPackCatalogGrid packs={baseline.rewardPackCatalog} compact />
           </CollapsibleContent>

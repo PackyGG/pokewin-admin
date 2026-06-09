@@ -35,16 +35,28 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-import { sanitizeLeversV2, type PlannedLeversV2 } from "./_model-v2";
+import {
+  sanitizeLeversV2,
+  type PlannedLeversV2,
+  type WagerScenarioState,
+} from "./_model-v2";
 
 const STORAGE_KEY = "edge-plan-2:presets:v1";
 const STORAGE_VERSION = 1 as const;
 const MAX_NAME_LEN = 60;
 
+const DEFAULT_WAGER_SCENARIO: WagerScenarioState = { presetMult: 1 };
+
 export type SavedConfigV2 = {
   id: string;
   name: string;
   levers: PlannedLeversV2;
+  /**
+   * Optional wager what-if scenario captured alongside the levers.
+   * Additive + backward-compatible: old presets without it default to
+   * {@link DEFAULT_WAGER_SCENARIO} on load.
+   */
+  wagerScenario: WagerScenarioState;
   createdAt: number;
   updatedAt: number;
 };
@@ -99,6 +111,7 @@ function readStore(): PresetStore {
       id: cr.id,
       name: normalizeName(cr.name),
       levers: sanitizeLeversV2(cr.levers),
+      wagerScenario: sanitizeWagerScenario(cr.wagerScenario),
       createdAt: toFiniteTimestamp(cr.createdAt),
       updatedAt: toFiniteTimestamp(cr.updatedAt),
     });
@@ -126,6 +139,19 @@ function toFiniteTimestamp(v: unknown): number {
   return Number.isFinite(n) && n > 0 ? n : Date.now();
 }
 
+/**
+ * Backward-compatible parse for the optional wager scenario. Old presets (no
+ * `wagerScenario` key) and malformed values both fall back to the neutral
+ * `{ presetMult: 1 }`. Mirrors the clamping in `resolveScenarioWagerUsd`.
+ */
+function sanitizeWagerScenario(v: unknown): WagerScenarioState {
+  if (v == null || typeof v !== "object") return { ...DEFAULT_WAGER_SCENARIO };
+  const mult = Number((v as Record<string, unknown>).presetMult);
+  return {
+    presetMult: Number.isFinite(mult) && mult > 0 ? mult : 1,
+  };
+}
+
 function normalizeName(name: string): string {
   return name.trim().slice(0, MAX_NAME_LEN);
 }
@@ -147,8 +173,16 @@ export type PlannerPresetsV2Api = {
   activeId: string | null;
   activeConfig: SavedConfigV2 | null;
   ready: boolean;
-  save: (name: string, levers: PlannedLeversV2) => SavedConfigV2;
-  update: (id: string, levers: PlannedLeversV2) => void;
+  save: (
+    name: string,
+    levers: PlannedLeversV2,
+    wagerScenario: WagerScenarioState,
+  ) => SavedConfigV2;
+  update: (
+    id: string,
+    levers: PlannedLeversV2,
+    wagerScenario: WagerScenarioState,
+  ) => void;
   rename: (id: string, name: string) => void;
   duplicate: (id: string) => SavedConfigV2 | null;
   remove: (id: string) => void;
@@ -170,12 +204,17 @@ export function usePlannerPresetsV2(): PlannerPresetsV2Api {
   }, []);
 
   const save = React.useCallback(
-    (name: string, levers: PlannedLeversV2): SavedConfigV2 => {
+    (
+      name: string,
+      levers: PlannedLeversV2,
+      wagerScenario: WagerScenarioState,
+    ): SavedConfigV2 => {
       const now = Date.now();
       const cfg: SavedConfigV2 = {
         id: newId(),
         name: normalizeName(name),
         levers: sanitizeLeversV2(levers),
+        wagerScenario: sanitizeWagerScenario(wagerScenario),
         createdAt: now,
         updatedAt: now,
       };
@@ -190,12 +229,17 @@ export function usePlannerPresetsV2(): PlannerPresetsV2Api {
   );
 
   const update = React.useCallback(
-    (id: string, levers: PlannedLeversV2) => {
+    (id: string, levers: PlannedLeversV2, wagerScenario: WagerScenarioState) => {
       persist({
         ...store,
         configs: store.configs.map((c) =>
           c.id === id
-            ? { ...c, levers: sanitizeLeversV2(levers), updatedAt: Date.now() }
+            ? {
+                ...c,
+                levers: sanitizeLeversV2(levers),
+                wagerScenario: sanitizeWagerScenario(wagerScenario),
+                updatedAt: Date.now(),
+              }
             : c,
         ),
       });
@@ -226,6 +270,7 @@ export function usePlannerPresetsV2(): PlannerPresetsV2Api {
         id: newId(),
         name: normalizeName(`${src.name} copy`),
         levers: sanitizeLeversV2(src.levers),
+        wagerScenario: sanitizeWagerScenario(src.wagerScenario),
         createdAt: now,
         updatedAt: now,
       };
@@ -284,11 +329,19 @@ export function usePlannerPresetsV2(): PlannerPresetsV2Api {
 export function PlannerPresetsV2({
   presets,
   currentLevers,
+  currentWagerScenario = DEFAULT_WAGER_SCENARIO,
   dirtyVsActive,
   onLoad,
 }: {
   presets: PlannerPresetsV2Api;
   currentLevers: PlannedLeversV2;
+  /**
+   * Current wager what-if scenario, persisted alongside the levers on
+   * save/update. Optional for backward-compat; defaults to the neutral
+   * `{ presetMult: 1 }`. The shell restores it from the loaded config via
+   * `onLoad`.
+   */
+  currentWagerScenario?: WagerScenarioState;
   dirtyVsActive: boolean;
   onLoad: (config: SavedConfigV2) => void;
 }) {
@@ -309,17 +362,17 @@ export function PlannerPresetsV2({
 
   const handleSave = React.useCallback(
     (name: string) => {
-      const cfg = save(name, currentLevers);
+      const cfg = save(name, currentLevers, currentWagerScenario);
       toast.success(`Saved config “${cfg.name}”`);
     },
-    [save, currentLevers],
+    [save, currentLevers, currentWagerScenario],
   );
 
   const handleUpdate = React.useCallback(() => {
     if (!activeConfig) return;
-    update(activeConfig.id, currentLevers);
+    update(activeConfig.id, currentLevers, currentWagerScenario);
     toast.success(`Updated “${activeConfig.name}”`);
-  }, [activeConfig, update, currentLevers]);
+  }, [activeConfig, update, currentLevers, currentWagerScenario]);
 
   const hasConfigs = configs.length > 0;
 

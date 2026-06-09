@@ -1,15 +1,12 @@
 "use client";
 
-import { Percent, RefreshCw, Target } from "lucide-react";
+import { Percent, Target } from "lucide-react";
 
 import { PanelRow, SectionHeading } from "@/components/modern-panels";
 import { formatCompactUsd } from "@/lib/utils/format";
 import { formatPct } from "../../../edge-calc/math";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
 import {
-  REWARD_WAGER_SOURCE_IDS,
-  REWARD_WAGER_SOURCE_LABELS,
-  type RewardWagerSourceId,
   rakebackEffectiveWagerMult,
   upgraderMinMultiplierEligibleShare,
   clamp,
@@ -36,20 +33,6 @@ export function RakebackWagerControls({
     levers.rakebackUpgraderMinMultiplier,
   );
 
-  const setRewardWeight = (id: RewardWagerSourceId) => (pct: number) =>
-    setLevers((s) => ({
-      ...s,
-      rakebackRewardWagerWeights: {
-        ...s.rakebackRewardWagerWeights,
-        [id]: clamp(pct / 100, 0, 1),
-      },
-    }));
-
-  const recycledShare = REWARD_WAGER_SOURCE_IDS.reduce(
-    (sum, id) => sum + (baseline.rewardWagerShare[id] ?? 0),
-    0,
-  );
-
   return (
     <>
       <div className="mt-4 space-y-3 border-t pt-3">
@@ -63,7 +46,7 @@ export function RakebackWagerControls({
           <span className="font-semibold tabular-nums text-foreground">
             {(effective.combined * 100).toFixed(1)}%
           </span>{" "}
-          of raw wager (game weights × reward recycling).
+          of raw wager (volume-weighted game weights × upgrader eligibility).
         </div>
         <LeverSlider
           label="Packs wager → rakeback"
@@ -173,40 +156,6 @@ export function RakebackWagerControls({
           disabled={disabled || !upgrader?.dataAvailable}
           preciseInput={{ unit: "percent" }}
         />
-      </div>
-
-      <div className="mt-4 space-y-3 border-t pt-3">
-        <SectionHeading icon={RefreshCw} title="Reward-sourced wager recycling" />
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          When balance came from rewards (race, rain, rakeback, etc.), how much
-          of that wager earns rakeback again. 0% blocks double-dip; 100% is full
-          recycle. Shares are estimated from 30d reward spend + borrow-play
-          volume (~{(recycledShare * 100).toFixed(0)}% of wager modeled as
-          reward-originated).
-        </p>
-        {REWARD_WAGER_SOURCE_IDS.map((id) => {
-          const share = baseline.rewardWagerShare[id] ?? 0;
-          return (
-            <LeverSlider
-              key={id}
-              label={`${REWARD_WAGER_SOURCE_LABELS[id]} wager → rakeback`}
-              valueLabel={formatPct(levers.rakebackRewardWagerWeights[id] ?? 1)}
-              value={(levers.rakebackRewardWagerWeights[id] ?? 1) * 100}
-              onValueChange={setRewardWeight(id)}
-              min={0}
-              max={100}
-              step={0.1}
-              baselineMarker={100}
-              baselineLabel={
-                share > 0
-                  ? `~${(share * 100).toFixed(1)}% of ${formatCompactUsd(baseline.wager)} wager`
-                  : "no modeled volume this window"
-              }
-              disabled={disabled}
-              preciseInput={{ unit: "percent" }}
-            />
-          );
-        })}
       </div>
     </>
   );

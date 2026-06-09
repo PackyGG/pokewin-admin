@@ -18,15 +18,15 @@ import {
 import type { GameTypeBaseline, SystemEdgeBaseline } from "../system-edge-plan/_model";
 import { getSystemEdgeBaseline } from "../system-edge-plan/_baseline";
 import { getMothaGiveawayOverview } from "@/lib/queries/insights-rewards/motha/overview";
+import { getAffiliateOverview } from "@/lib/queries/insights-rewards/affiliate/overview";
 
-import type { EdgePlanV2Baseline, ShardShopPackRow, ShardsDataSource, UpgraderRakebackBucket } from "./_model-v2";
-import { estimateRewardWagerShares } from "./_model-v2";
+import type { EdgePlanV2Baseline, UpgraderRakebackBucket } from "./_model-v2";
+import { splitAffiliateCostBundle } from "./_model-v2";
 import { getUpgraderProfitability } from "@/lib/queries/insights-games/upgrader";
 
 /** Edge Plan 2.0 always anchors on the last 30 days of production data. */
 export const EDGE_PLAN_V2_PERIOD: InsightsRewardsPeriod = "30d";
 
-const DEFAULT_SHARDS_PER_DOLLAR = 0.1;
 const DEFAULT_BALANCE_WITHDRAWAL_SHARE = 0.35;
 
 function windowFor30d(): MetricWindow {
@@ -156,26 +156,6 @@ async function recoverHeadlineMetrics(): Promise<{
     houseEdge: data.houseEdge,
     bets: data.bets,
   };
-}
-
-/** Derive shard earn rate proxy from historical raffle cost ÷ wager. */
-function getShardsBaselineStub(v1: SystemEdgeBaseline): {
-  shardsPerDollarWager: number;
-  shardsDataSource: ShardsDataSource;
-} {
-  if (v1.raffleCost > 0 && v1.wager > 0) {
-    const estimate = clampShardsRate((v1.raffleCost / v1.wager) * 2);
-    return { shardsPerDollarWager: estimate, shardsDataSource: "raffle_proxy" };
-  }
-  return {
-    shardsPerDollarWager: DEFAULT_SHARDS_PER_DOLLAR,
-    shardsDataSource: "manual",
-  };
-}
-
-function clampShardsRate(n: number): number {
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_SHARDS_PER_DOLLAR;
-  return Math.min(10, Math.max(0.01, n));
 }
 
 function parseBucketMultiplierBounds(label: string): {
@@ -344,10 +324,17 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     v1 = { ...v1, wager: headlineWager };
   }
 
-  const shardsStub = getShardsBaselineStub(v1);
-  const shardsRedemptionCost = v1.raffleCost;
-
   const withdrawalLedger = await getWithdrawalBaselineFromLedger();
+  // Real affiliate commission / leaderboard split (read-only) — replaces the
+  // hardcoded 12% guess. `totalCommissionPaid` (affiliate_claim) and
+  // `leaderboardPrizePaid` (affiliate_leaderboard_prize) sum back to the
+  // canonical bundled `affiliateCost` the v1 baseline already counts.
+  const affiliateOverview = await safeQuery(
+    () => getAffiliateOverview(EDGE_PLAN_V2_PERIOD),
+    null,
+    "edge-plan-v2.affiliate-split",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
   const mothaOverview = await safeQuery(
     () => getMothaGiveawayOverview(EDGE_PLAN_V2_PERIOD),
     null,
@@ -371,16 +358,20 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
   const balanceWithdrawalShare =
     withdrawalLedger?.balanceShare ?? DEFAULT_BALANCE_WITHDRAWAL_SHARE;
 
-  const shardShopRows: ShardShopPackRow[] = v1.rewardPackCatalog.map((p) => ({
-    packId: p.packId,
-    name: p.name,
-    slug: p.slug,
-    imageUrl: p.imageUrl,
-    cardPreviews: p.cardPreviews,
-    shardPrice: 100,
-    redemptionsBaseline: 0,
-    measuredEvUsd: p.theoreticalEvUsd,
-  }));
+  // Split the bundled affiliate cost into its real commission + leaderboard
+  // legs. Prefer the real overview read; when it is null, fall back to the
+  // null-query split (treats the bundle as all commission — no fabricated
+  // leaderboard figure). Both legs sum to the canonical `v1.affiliateCost`.
+  const affiliateData = affiliateOverview.data;
+  const affiliateCommissionCost = affiliateData
+    ? affiliateData.totalCommissionPaid
+    : splitAffiliateCostBundle(v1.affiliateCost).commission;
+  const affiliateLeaderboardCost = affiliateData
+    ? affiliateData.leaderboardPrizePaid
+    : splitAffiliateCostBundle(v1.affiliateCost).leaderboard;
+  const affiliateSplitSource: "overview" | "fallback" = affiliateData
+    ? "overview"
+    : "fallback";
 
   const baselineSparse =
     v1.gameTypes.every((g) => !g.dataAvailable) ||
@@ -389,22 +380,6 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
   const packWagerBorrowed = borrowedWager?.packWagerBorrowed ?? 0;
   const battleWagerBorrowed = borrowedWager?.battleWagerBorrowed ?? 0;
 
-  const partialForShares = {
-    wager: v1.wager,
-    raceCost: v1.raceCost,
-    affiliateCost: v1.affiliateCost,
-    rainCost: v1.rainCost,
-    rakebackCost: v1.rakebackCost,
-    dailyPacksCost: v1.dailyPacksCost,
-    depositBonusCost: v1.depositBonusCost,
-    mothaCost: v1.mothaCost,
-    shardsRedemptionCost,
-    otherRewardCost: v1.otherRewardCost,
-    signupPacksCost: v1.signupPacksCost,
-    packWagerBorrowed,
-    battleWagerBorrowed,
-  };
-
   return {
     ...v1,
     totalWager,
@@ -412,10 +387,9 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     upgraderOrganicWager,
     periodLabel: insightsRewardsPeriodLabel(EDGE_PLAN_V2_PERIOD),
     periodDays: Math.max(1, daysForInsightsPeriodCapped(EDGE_PLAN_V2_PERIOD)),
-    shardsRedemptionCost,
-    shardsPerDollarWager: shardsStub.shardsPerDollarWager,
-    shardsDataSource: shardsStub.shardsDataSource,
-    shardShopRows,
+    affiliateCommissionCost,
+    affiliateLeaderboardCost,
+    affiliateSplitSource,
     balanceWithdrawalShare,
     estimatedWithdrawalVolumeUsd,
     withdrawalVolumeSource: withdrawalLedger ? "ledger" : "estimate",
@@ -440,7 +414,6 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
               : 0,
         }
       : null,
-    rewardWagerShare: estimateRewardWagerShares(partialForShares),
     packWagerBorrowed,
     battleWagerBorrowed,
   };

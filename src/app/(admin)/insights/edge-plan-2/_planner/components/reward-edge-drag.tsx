@@ -7,9 +7,10 @@ import {
   type EdgeAfterRewardsContext,
   type EdgePlanV2Projection,
 } from "../../_model-v2";
+import { TEXT_TONE } from "../colors";
 
 function plannerWager(projection: EdgePlanV2Projection): number {
-  return Math.max(0, projection.plannedWager || projection.currentWager);
+  return Math.max(0, projection.plannedWager ?? projection.currentWager ?? 0);
 }
 
 /** Planned reward cost as a fraction of total wager (edge eroded). */
@@ -50,8 +51,8 @@ export function EdgeDragBadge({ dragPct }: { dragPct: number }) {
       className={cn(
         "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums normal-case tracking-normal",
         erodes
-          ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
-          : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+          ? cn("bg-rose-500/15", TEXT_TONE.rose)
+          : cn("bg-emerald-500/15", TEXT_TONE.emerald),
       )}
     >
       {erodes ? `−${formatPct(dragPct)} edge` : `+${formatPct(Math.abs(dragPct))} edge`}

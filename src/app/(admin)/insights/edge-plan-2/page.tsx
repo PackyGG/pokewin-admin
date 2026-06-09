@@ -21,7 +21,7 @@ export default async function EdgePlanV2Page() {
           icon={Sparkles}
           accent="purple"
           title="Edge Plan 2.0"
-          subtitle="Post-raffle economics — shards earn/spend, balance withdrawals, wager rules. Full-width command center on real production data."
+          subtitle="Real-data house-edge planner — gross→net edge after rewards (rakeback, affiliate, raffles, deposit bonus, races, packs). Full-width command center on real production data."
         />
       </PageHero>
 

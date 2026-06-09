@@ -86,6 +86,23 @@ export const WAVE0_ROUTES: AuditRoute[] = [
     path: "/responsive-fixture/users-detail",
     priority: true,
   },
+  // Edge Plan 2.0 rework — measured via the dev-only rendering fixture at
+  // /responsive-fixture/edge-plan-2 (NOT the live /insights/edge-plan-2
+  // route) for the same reason as users-detail: the live planner builds its
+  // baseline from a stack of read-only MAIN-game-DB aggregates that degrade
+  // to an empty/sparse state on a main DB behind the current Prisma schema
+  // (the local copy is the frozen DEV snapshot — see CLAUDE.md "Stale local
+  // dev DB"), so the reworked hero, lever rail, charts, and restored Raffle
+  // section never render and there is nothing for the detector to measure.
+  // The fixture renders the EXACT production <EdgePlanV2Planner> with a
+  // type-correct EdgePlanV2Baseline tuned to a negative net edge (rose/amber
+  // color paths), a non-zero raffleCost (restored Raffle section), and a
+  // real affiliate split. See src/app/responsive-fixture/edge-plan-2/page.tsx.
+  {
+    key: "edge-plan-2",
+    path: "/responsive-fixture/edge-plan-2",
+    priority: true,
+  },
 ];
 
 /** Creator Hub routes for the minted-session responsive sweep. */

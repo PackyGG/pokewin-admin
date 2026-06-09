@@ -7,6 +7,7 @@ import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
 import { clamp, type EdgePlanV2Baseline, type PlannedLeversV2 } from "../../_model-v2";
 import type { EdgePlanV2Projection } from "../../_model-v2";
+import { TEXT_TONE } from "../colors";
 import { EmptyLever } from "./empty-lever";
 import {
   combinedLeverEdgeDragPct,
@@ -81,9 +82,7 @@ export function FounderOtherRewardsPanel({
                 </p>
                 <p
                   className={`text-sm font-semibold tabular-nums ${
-                    tile.emphasis
-                      ? "text-rose-600 dark:text-rose-400"
-                      : "text-foreground"
+                    tile.emphasis ? TEXT_TONE.rose : "text-foreground"
                   }`}
                 >
                   {formatCompactUsd(tile.value)}
@@ -114,7 +113,7 @@ export function FounderOtherRewardsPanel({
                     <PanelRow
                       label="Wins paid (gross)"
                       value={
-                        <span className="text-rose-600 dark:text-rose-400">
+                        <span className={TEXT_TONE.rose}>
                           {formatCompactUsd(baseline.rainWinTotal)}
                         </span>
                       }
@@ -122,7 +121,7 @@ export function FounderOtherRewardsPanel({
                     <PanelRow
                       label="− Tips (user + founder)"
                       value={
-                        <span className="text-emerald-600 dark:text-emerald-400">
+                        <span className={TEXT_TONE.emerald}>
                           {formatCompactUsd(baseline.rainTipTotal)}
                         </span>
                       }
@@ -130,7 +129,7 @@ export function FounderOtherRewardsPanel({
                     <PanelRow
                       label="= Net house slice"
                       value={
-                        <span className="font-semibold text-rose-600 dark:text-rose-400">
+                        <span className={`font-semibold ${TEXT_TONE.rose}`}>
                           {formatCompactUsd(baseline.rainCost)}
                         </span>
                       }
@@ -229,7 +228,7 @@ export function FounderOtherRewardsPanel({
                   <PanelRow
                     label="Realized (window)"
                     value={
-                      <span className="font-semibold text-rose-600 dark:text-rose-400">
+                      <span className={`font-semibold ${TEXT_TONE.rose}`}>
                         {formatCurrency(baseline.otherRewardCost)}
                       </span>
                     }

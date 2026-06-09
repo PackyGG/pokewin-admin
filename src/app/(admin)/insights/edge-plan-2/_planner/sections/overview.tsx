@@ -6,54 +6,43 @@ import { StatPanel, PanelRow } from "@/components/modern-panels";
 import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 import { formatPct, formatSignedUsd } from "../../../edge-calc/math";
 import { cn } from "@/lib/utils";
-import {
-  computeEdgeAfterRewards,
-  resolveScenarioWagerUsd,
-  type EdgePlanV2Baseline,
-  type EdgePlanV2Projection,
-  type PlannedLeversV2,
-  type WagerScenarioState,
-} from "../../_model-v2";
+import type { EdgePlanV2Projection } from "../../_model-v2";
 import type { NetEdgeScenario } from "../../../system-edge-plan/_model";
+import { TEXT_TONE } from "../colors";
 import {
   LeverBreakdownPanel,
   NetEdgeByScenarioPanel,
   RewardCostComparisonChart,
-  EdgeAfterRewardsPanel,
 } from "../components/overview-charts";
 
-export function OverviewSection({
+/**
+ * Bottom Analysis zone for the Edge Plan 2.0 planner.
+ *
+ * Always-on context that reflects the live planned config: GGR by game type,
+ * the net-edge-by-scenario + reward-cost-comparison + cost-delta charts, and a
+ * reward-cost summary. The gross→net edge waterfall lives in the hero now
+ * (`EdgeAfterRewardsPanel` was merged there), so this zone is purely the
+ * supporting analytics. House-POV finance colors via `../colors`.
+ */
+export function AnalysisZone({
   projection,
   netEdgeScenarios,
-  baseline,
-  levers,
-  wagerScenario,
-  onWagerScenarioChange,
 }: {
   projection: EdgePlanV2Projection;
   netEdgeScenarios: NetEdgeScenario[];
-  baseline: EdgePlanV2Baseline;
-  levers: PlannedLeversV2;
-  wagerScenario: WagerScenarioState;
-  onWagerScenarioChange: (next: WagerScenarioState) => void;
 }) {
-  const baseWager = Math.max(0, projection.plannedWager || projection.currentWager);
-  const scenarioWagerUsd = resolveScenarioWagerUsd(baseWager, wagerScenario);
-  const edgeAfterRewards = computeEdgeAfterRewards(projection, {
-    baseline,
-    levers,
-    scenarioWagerUsd,
-  });
+  // Reward-cost summary lines: every realized/planned reward leg the model
+  // projects (rakeback + affiliate commission/leaderboard + deposit bonus +
+  // races + raffles + daily packs + signup + rain + motha + other). The raffle
+  // line is restored here in place of the removed shard rows.
+  const summaryLines = projection.levers.filter(
+    (l) => l.currentCost > 0 || l.plannedCost > 0,
+  );
 
   return (
     <div className="space-y-4">
-      <EdgeAfterRewardsPanel
-        summary={edgeAfterRewards}
-        wagerScenario={wagerScenario}
-        onWagerScenarioChange={onWagerScenarioChange}
-      />
       <StatPanel title="GGR by game type" icon={Layers} accent="emerald">
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {projection.gameTypes
             .filter((g) => g.type !== "battles")
             .map((g) => (
@@ -107,9 +96,7 @@ export function OverviewSection({
               value={
                 <span
                   className={cn(
-                    projection.ggrDelta >= 0
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-rose-600 dark:text-rose-400",
+                    projection.ggrDelta >= 0 ? TEXT_TONE.emerald : TEXT_TONE.rose,
                   )}
                 >
                   {formatSignedUsd(projection.ggrDelta)}
@@ -125,16 +112,31 @@ export function OverviewSection({
       <LeverBreakdownPanel projection={projection} />
 
       <StatPanel title="Reward cost summary" icon={Wallet} accent="rose">
-        <PanelRow label="Current reward cost" value={formatCurrency(projection.currentRewardCost)} />
-        <PanelRow label="Planned reward cost" value={formatCurrency(projection.plannedRewardCost)} />
         <PanelRow
-          label="Shard earn (planned)"
-          value={formatCurrency(projection.shardsIssuancePlanned)}
+          label="Current reward cost"
+          value={formatCurrency(projection.currentRewardCost)}
         />
         <PanelRow
-          label="Shard shop (planned)"
-          value={formatCurrency(projection.shardsRedemptionPlanned)}
+          label="Planned reward cost"
+          value={
+            <span className={TEXT_TONE.rose}>
+              {formatCurrency(projection.plannedRewardCost)}
+            </span>
+          }
         />
+        <div className="mt-2 space-y-1 border-t pt-2">
+          {summaryLines.map((l) => (
+            <PanelRow
+              key={l.key}
+              label={l.label}
+              value={
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {formatCompactUsd(l.currentCost)} → {formatCompactUsd(l.plannedCost)}
+                </span>
+              }
+            />
+          ))}
+        </div>
       </StatPanel>
     </div>
   );

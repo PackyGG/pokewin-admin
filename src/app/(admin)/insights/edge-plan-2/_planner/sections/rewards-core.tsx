@@ -23,12 +23,13 @@ import {
   affiliateEdgeShareToWagerDrag,
   affiliateWagerDragToEdgeShare,
   affiliateWorstCaseEdgeDrag,
-  splitAffiliateCostBundle,
   topAffiliateTierEdgeShare,
   type EdgePlanV2Baseline,
   type PlannedLeversV2,
 } from "../../_model-v2";
 import { multLabel } from "../utils";
+import { TEXT_TONE } from "../colors";
+import { LeverGroup } from "../lever-group";
 import { EmptyLever, formatPercentInt } from "../components/empty-lever";
 import { FounderOtherRewardsPanel } from "../components/founder-other-rewards-panel";
 import { RakebackWagerControls } from "../components/rakeback-wager-controls";
@@ -92,110 +93,115 @@ export function RewardsCoreSection({
     [baseline, levers],
   );
 
-  const { commission: affiliateCommissionCost, leaderboard: affiliateLeaderboardCost } =
-    React.useMemo(
-      () => splitAffiliateCostBundle(baseline.affiliateCost),
-      [baseline.affiliateCost],
-    );
+  // Real affiliate split — sourced from getAffiliateOverview via the baseline
+  // (commission = Σ|affiliate_claim|, leaderboard = Σ|affiliate_leaderboard_prize|).
+  // Falls back to the bundled affiliateCost-as-commission only when the overview
+  // query was null (affiliateSplitSource === "fallback").
+  const affiliateCommissionCost = Math.max(0, baseline.affiliateCommissionCost);
+  const affiliateLeaderboardCost = Math.max(0, baseline.affiliateLeaderboardCost);
 
   const matchPct = 100 * levers.depositBonusMatchMult;
   const capUsd = baseline.depositBonusCapUsd * levers.depositBonusCapMult;
 
   return (
-    <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
       <div className="xl:col-span-2 2xl:col-span-3">
-      <StatPanel
+      <LeverGroup
         title={<RewardPanelTitle label="Rakeback" dragPct={leverEdgeDragPct(projection, "rakeback")} />}
         icon={Wallet}
         accent="rose"
+        headline={{
+          label: "Realized this window",
+          value: formatCurrency(baseline.rakebackCost),
+          tone: "rose",
+        }}
+        intro="Direct rakeback cost = real config × real wager × game-type / upgrader weighting. Cadence rates below are the primary lever; accrual weighting and instant-claim what-ifs are under Advanced."
+        advanced={
+          baseline.rakebackCadences.length === 0 ? undefined : (
+            <>
+              <RakebackWagerControls
+                baseline={baseline}
+                levers={levers}
+                setLevers={setLevers}
+              />
+
+              <div className="mt-4 space-y-3 border-t pt-3">
+                <SectionHeading icon={Zap} title="Instant claim" />
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  Planning what-if — instant payout % and adoption share trim realized
+                  rakeback cost.
+                </p>
+                <LeverSlider
+                  label="Instant payout %"
+                  valueLabel={formatPct(levers.rakebackInstantPayoutPct)}
+                  value={levers.rakebackInstantPayoutPct * 100}
+                  onValueChange={(pct) =>
+                    setLevers((s) => ({
+                      ...s,
+                      rakebackInstantPayoutPct: clamp(pct / 100, 0, 1),
+                    }))
+                  }
+                  min={0}
+                  max={100}
+                  step={0.1}
+                  baselineMarker={100}
+                  baselineLabel="100% = full accrual"
+                  disabled={baseline.rakebackCost <= 0}
+                  preciseInput={{ unit: "percent" }}
+                />
+                <LeverSlider
+                  label="Instant adoption"
+                  valueLabel={formatPct(levers.rakebackInstantAdoption)}
+                  value={levers.rakebackInstantAdoption * 100}
+                  onValueChange={(pct) =>
+                    setLevers((s) => ({
+                      ...s,
+                      rakebackInstantAdoption: clamp(pct / 100, 0, 1),
+                    }))
+                  }
+                  min={0}
+                  max={100}
+                  step={0.1}
+                  baselineMarker={0}
+                  baselineLabel="0% = nobody takes it"
+                  disabled={baseline.rakebackCost <= 0}
+                  preciseInput={{ unit: "percent" }}
+                />
+              </div>
+            </>
+          )
+        }
+        advancedLabel="Accrual weighting & instant claim"
       >
-        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-          Realized rakeback this window:{" "}
-          <span className="font-medium text-rose-600 dark:text-rose-400">
-            {formatCurrency(baseline.rakebackCost)}
-          </span>
-        </p>
         {baseline.rakebackCadences.length === 0 ? (
           <EmptyLever note="No rakeback cadences configured." />
         ) : (
-          <>
-            {baseline.rakebackCadences.map((c) => (
-              <LeverSlider
-                key={c.cadence}
-                label={`${c.label}${c.enabled ? "" : " (disabled)"}`}
-                valueLabel={formatPct(levers.rakebackRates[c.cadence] ?? c.currentRate)}
-                value={(levers.rakebackRates[c.cadence] ?? c.currentRate) * 100}
-                onValueChange={(pct) =>
-                  setLevers((s) => ({
-                    ...s,
-                    rakebackRates: {
-                      ...s.rakebackRates,
-                      [c.cadence]: clamp(pct / 100, 0, 1),
-                    },
-                  }))
-                }
-                min={0}
-                max={Math.max(2, c.currentRate * 100 * 3)}
-                step={0.001}
-                baselineMarker={c.currentRate * 100}
-                baselineLabel={`current ${formatPct(c.currentRate)}`}
-                disabled={!c.enabled}
-                preciseInput={{ unit: "percent", decimals: 3 }}
-              />
-            ))}
-
-            <RakebackWagerControls
-              baseline={baseline}
-              levers={levers}
-              setLevers={setLevers}
+          baseline.rakebackCadences.map((c) => (
+            <LeverSlider
+              key={c.cadence}
+              label={`${c.label}${c.enabled ? "" : " (disabled)"}`}
+              valueLabel={formatPct(levers.rakebackRates[c.cadence] ?? c.currentRate)}
+              value={(levers.rakebackRates[c.cadence] ?? c.currentRate) * 100}
+              onValueChange={(pct) =>
+                setLevers((s) => ({
+                  ...s,
+                  rakebackRates: {
+                    ...s.rakebackRates,
+                    [c.cadence]: clamp(pct / 100, 0, 1),
+                  },
+                }))
+              }
+              min={0}
+              max={Math.max(2, c.currentRate * 100 * 3)}
+              step={0.001}
+              baselineMarker={c.currentRate * 100}
+              baselineLabel={`current ${formatPct(c.currentRate)}`}
+              disabled={!c.enabled}
+              preciseInput={{ unit: "percent", decimals: 3 }}
             />
-
-            <div className="mt-4 space-y-3 border-t pt-3">
-              <SectionHeading icon={Zap} title="Instant claim" />
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
-                Planning what-if — instant payout % and adoption share trim realized
-                rakeback cost.
-              </p>
-              <LeverSlider
-                label="Instant payout %"
-                valueLabel={formatPct(levers.rakebackInstantPayoutPct)}
-                value={levers.rakebackInstantPayoutPct * 100}
-                onValueChange={(pct) =>
-                  setLevers((s) => ({
-                    ...s,
-                    rakebackInstantPayoutPct: clamp(pct / 100, 0, 1),
-                  }))
-                }
-                min={0}
-                max={100}
-                step={0.1}
-                baselineMarker={100}
-                baselineLabel="100% = full accrual"
-                disabled={baseline.rakebackCost <= 0}
-                preciseInput={{ unit: "percent" }}
-              />
-              <LeverSlider
-                label="Instant adoption"
-                valueLabel={formatPct(levers.rakebackInstantAdoption)}
-                value={levers.rakebackInstantAdoption * 100}
-                onValueChange={(pct) =>
-                  setLevers((s) => ({
-                    ...s,
-                    rakebackInstantAdoption: clamp(pct / 100, 0, 1),
-                  }))
-                }
-                min={0}
-                max={100}
-                step={0.1}
-                baselineMarker={0}
-                baselineLabel="0% = nobody takes it"
-                disabled={baseline.rakebackCost <= 0}
-                preciseInput={{ unit: "percent" }}
-              />
-            </div>
-          </>
+          ))
         )}
-      </StatPanel>
+      </LeverGroup>
       </div>
 
       <StatPanel
@@ -212,7 +218,7 @@ export function RewardsCoreSection({
           Real config: {formatPercentInt(100)} match, cap{" "}
           {formatCurrency(baseline.depositBonusCapUsd)} per{" "}
           {baseline.depositBonusWindowHours}h. Realized spend:{" "}
-          <span className="font-medium text-rose-600 dark:text-rose-400">
+          <span className={`font-medium ${TEXT_TONE.rose}`}>
             {formatCurrency(baseline.depositBonusCost)}
           </span>
         </p>
@@ -314,7 +320,7 @@ export function RewardsCoreSection({
               {formatPct(worstCaseAffiliateDrag)} of wager
             </span>
             ). Realized commission spend:{" "}
-            <span className="font-medium text-rose-600 dark:text-rose-400">
+            <span className={`font-medium ${TEXT_TONE.rose}`}>
               {formatCurrency(affiliateCommissionCost)}
             </span>
             {affiliateLeaderboardCost > 0 && (
@@ -332,7 +338,13 @@ export function RewardsCoreSection({
                 )}
               </>
             )}
-            .
+            .{" "}
+            <span className="text-[11px] text-muted-foreground/80">
+              Commission / leaderboard split{" "}
+              {baseline.affiliateSplitSource === "overview"
+                ? "from the affiliate overview (real ledger legs)."
+                : "estimated — affiliate overview unavailable, bundled total shown as commission."}
+            </span>
           </p>
           {baseline.affiliateTiers.length === 0 ? (
             <EmptyLever note="No affiliate tiers configured." />
