@@ -68,7 +68,6 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
   );
   const [wagerScenario, setWagerScenario] = React.useState<WagerScenarioState>({
     presetMult: 1,
-    customWagerUsd: null,
   });
 
   const projection = React.useMemo(

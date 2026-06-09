@@ -17,7 +17,6 @@ import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 import { formatPct, formatSignedUsd } from "../../../edge-calc/math";
 import { StatPanel, PanelRow } from "@/components/modern-panels";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   type ChartConfig,
   ChartContainer,
@@ -67,7 +66,6 @@ const rewardCostChartConfig = {
 } satisfies ChartConfig;
 
 function formatWagerMultLabel(mult: number): string {
-  if (Math.abs(mult - 1) < 0.001) return "Observed";
   const s = mult % 1 === 0 ? mult.toFixed(0) : mult.toFixed(1).replace(/\.0$/, "");
   return `${s}×`;
 }
@@ -90,7 +88,7 @@ export function EdgeAfterRewardsPanel({
     0.001,
   );
   const scenarioActive = Math.abs(summary.wagerScenarioMult - 1) > 0.001;
-  const customActive = wagerScenario.customWagerUsd != null;
+  const wagerMultLabel = formatWagerMultLabel(summary.wagerScenarioMult);
 
   return (
     <StatPanel title="Edge before & after rewards" icon={Percent} accent="cyan">
@@ -106,15 +104,13 @@ export function EdgeAfterRewardsPanel({
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Model on organic wager
           </p>
-          <p className="text-[10px] tabular-nums text-muted-foreground">
-            Observed baseline: {formatCompactUsd(summary.baseWager)}
+          <p className="text-xs font-medium tabular-nums text-foreground">
+            {wagerMultLabel} · {formatCompactUsd(summary.wager)}
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {WAGER_SCENARIO_PRESET_MULTS.map((mult) => {
-            const active =
-              !customActive &&
-              Math.abs(wagerScenario.presetMult - mult) < 0.001;
+            const active = Math.abs(wagerScenario.presetMult - mult) < 0.001;
             return (
               <Button
                 key={mult}
@@ -122,55 +118,12 @@ export function EdgeAfterRewardsPanel({
                 size="sm"
                 variant={active ? "default" : "outline"}
                 className="h-7 px-2.5 text-xs"
-                onClick={() =>
-                  onWagerScenarioChange({
-                    presetMult: mult,
-                    customWagerUsd: null,
-                  })
-                }
+                onClick={() => onWagerScenarioChange({ presetMult: mult })}
               >
                 {formatWagerMultLabel(mult)}
               </Button>
             );
           })}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="text-xs text-muted-foreground" htmlFor="wager-scenario-usd">
-            Wager scenario
-          </label>
-          <Input
-            id="wager-scenario-usd"
-            type="number"
-            min={0}
-            step={10000}
-            placeholder={formatCompactUsd(summary.baseWager)}
-            className="h-8 w-36 tabular-nums"
-            value={customActive ? wagerScenario.customWagerUsd ?? "" : ""}
-            onChange={(e) => {
-              const raw = e.target.value.trim();
-              if (!raw) {
-                onWagerScenarioChange({
-                  ...wagerScenario,
-                  customWagerUsd: null,
-                });
-                return;
-              }
-              const parsed = Number.parseFloat(raw);
-              if (!Number.isFinite(parsed) || parsed <= 0) return;
-              onWagerScenarioChange({
-                ...wagerScenario,
-                customWagerUsd: parsed,
-              });
-            }}
-          />
-          <span className="text-xs tabular-nums text-muted-foreground">
-            → {formatCompactUsd(summary.wager)}
-            {scenarioActive && (
-              <span className="ml-1 text-cyan-600 dark:text-cyan-400">
-                ({formatWagerMultLabel(summary.wagerScenarioMult)})
-              </span>
-            )}
-          </span>
         </div>
         {scenarioActive && (
           <p className="text-[10px] leading-relaxed text-amber-600 dark:text-amber-400">
@@ -220,7 +173,7 @@ export function EdgeAfterRewardsPanel({
             {formatPct(summary.netEdgeAfterRewards)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Net edge left on {scenarioActive ? "scenario" : "organic"} wager
+            Net edge left on {wagerMultLabel} wager
           </p>
           <p className="mt-2 text-[10px] tabular-nums text-muted-foreground">
             Current config: {formatPct(summary.currentNetEdge)}
@@ -262,7 +215,7 @@ export function EdgeAfterRewardsPanel({
       <div className="mt-3 grid gap-2 rounded-lg border bg-background/40 px-3 py-2.5 text-xs sm:grid-cols-3">
         <div>
           <span className="text-muted-foreground">
-            Before (USD on {scenarioActive ? "scenario" : "organic"} wager)
+            Before (USD on {wagerMultLabel} wager)
           </span>
           <p className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
             {formatCompactUsd(summary.grossEdge * summary.wager)}
@@ -300,7 +253,7 @@ export function EdgeAfterRewardsPanel({
       {summary.leverDrags.length > 0 && (
         <div className="mt-4 space-y-0.5 border-t pt-3">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            What erodes edge (% of {scenarioActive ? "scenario" : "organic"} wager)
+            What erodes edge (% of {wagerMultLabel} wager)
           </p>
           {summary.leverDrags.map((l) => (
             <div key={l.key}>

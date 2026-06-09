@@ -5,7 +5,8 @@
  *   • Shards economy (replaces raffles)
  *   • Balance-withdrawal + wager-requirement what-ifs
  *
- * v1 `/insights/system-edge-plan` is never modified.
+ * Shared projection engine for Edge Plan 2.0. The v1 route was removed;
+ * core types and math live here for reuse.
  */
 
 import {
@@ -35,8 +36,8 @@ import {
   measuredPacksEdge,
   blendedPackBattleEdge,
   blendedGamingEdge,
+  observedBlendedGamingEdge,
   effectiveProjectionTypeEdge,
-  effectiveBaselineEdge,
 } from "../system-edge-plan/_model";
 
 export {
@@ -55,6 +56,7 @@ export {
   measuredPacksEdge,
   blendedPackBattleEdge,
   blendedGamingEdge,
+  observedBlendedGamingEdge,
   effectiveProjectionTypeEdge,
   type GameTypeId,
   type PackCardPreview,
@@ -1042,21 +1044,16 @@ export type EdgeAfterRewardsSummary = {
 
 /** UI state for the edge-after-rewards wager scenario control. */
 export type WagerScenarioState = {
-  /** When set, overrides preset multiplier with an absolute USD wager. */
-  customWagerUsd: number | null;
-  /** Multiplier on observed organic wager (1 = observed). */
+  /** Multiplier on baseline organic wager (1 = baseline). */
   presetMult: number;
 };
 
-export const WAGER_SCENARIO_PRESET_MULTS = [0.5, 1, 1.5, 2] as const;
+export const WAGER_SCENARIO_PRESET_MULTS = [1, 1.5, 2, 3, 4, 5] as const;
 
 export function resolveScenarioWagerUsd(
   baseWager: number,
   scenario: WagerScenarioState,
 ): number {
-  if (scenario.customWagerUsd != null && scenario.customWagerUsd > 0) {
-    return scenario.customWagerUsd;
-  }
   return Math.max(0, baseWager * scenario.presetMult);
 }
 
@@ -1084,9 +1081,8 @@ function resolveObservedCurrentGrossEdge(
   projection: EdgePlanV2Projection,
   baseline?: EdgePlanV2Baseline,
 ): number {
+  if (baseline) return observedBlendedGamingEdge(baseline);
   if (projection.currentEdge > 0.00001) return projection.currentEdge;
-  const headline = baseline ? effectiveBaselineEdge(baseline) : 0;
-  if (headline > 0.00001) return headline;
   const baseWager = Math.max(0, projection.plannedWager || projection.currentWager);
   return baseWager > 0 ? projection.currentGgr / baseWager : 0;
 }
@@ -1109,7 +1105,10 @@ export function computeEdgeAfterRewards(
       : baseWager;
   const wagerScenarioMult = baseWager > 0 ? scenarioWager / baseWager : 1;
 
-  const grossEdge = projection.plannedEdge;
+  const grossEdge =
+    ctx?.baseline && ctx?.levers
+      ? plannedBlendedHouseEdgeV2(ctx.baseline, ctx.levers)
+      : projection.plannedEdge;
   const currentGrossEdge = resolveObservedCurrentGrossEdge(
     projection,
     ctx?.baseline,
