@@ -8,9 +8,11 @@ import { formatPct, formatSignedUsd } from "../../../edge-calc/math";
 import { cn } from "@/lib/utils";
 import {
   computeEdgeAfterRewards,
+  resolveScenarioWagerUsd,
   type EdgePlanV2Baseline,
   type EdgePlanV2Projection,
   type PlannedLeversV2,
+  type WagerScenarioState,
 } from "../../_model-v2";
 import type { NetEdgeScenario } from "../../../system-edge-plan/_model";
 import {
@@ -25,17 +27,31 @@ export function OverviewSection({
   netEdgeScenarios,
   baseline,
   levers,
+  wagerScenario,
+  onWagerScenarioChange,
 }: {
   projection: EdgePlanV2Projection;
   netEdgeScenarios: NetEdgeScenario[];
   baseline: EdgePlanV2Baseline;
   levers: PlannedLeversV2;
+  wagerScenario: WagerScenarioState;
+  onWagerScenarioChange: (next: WagerScenarioState) => void;
 }) {
-  const edgeAfterRewards = computeEdgeAfterRewards(projection, { baseline, levers });
+  const baseWager = Math.max(0, projection.plannedWager || projection.currentWager);
+  const scenarioWagerUsd = resolveScenarioWagerUsd(baseWager, wagerScenario);
+  const edgeAfterRewards = computeEdgeAfterRewards(projection, {
+    baseline,
+    levers,
+    scenarioWagerUsd,
+  });
 
   return (
     <div className="space-y-4">
-      <EdgeAfterRewardsPanel summary={edgeAfterRewards} />
+      <EdgeAfterRewardsPanel
+        summary={edgeAfterRewards}
+        wagerScenario={wagerScenario}
+        onWagerScenarioChange={onWagerScenarioChange}
+      />
       <StatPanel title="GGR by game type" icon={Layers} accent="emerald">
         <div className="grid gap-3 sm:grid-cols-3">
           {projection.gameTypes.map((g) => {

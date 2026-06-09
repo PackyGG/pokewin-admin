@@ -21,9 +21,11 @@ import {
   projectEdgePlanV2,
   sanitizeLeversV2,
   computeEdgeAfterRewards,
+  resolveScenarioWagerUsd,
   type EdgePlanV2Baseline,
   type EdgePlanV2Projection,
   type PlannedLeversV2,
+  type WagerScenarioState,
 } from "../_model-v2";
 import {
   leversEqualV2,
@@ -64,6 +66,10 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
   const [levers, setLevers] = React.useState<PlannedLeversV2>(() =>
     defaultLeversV2(baseline),
   );
+  const [wagerScenario, setWagerScenario] = React.useState<WagerScenarioState>({
+    presetMult: 1,
+    customWagerUsd: null,
+  });
 
   const projection = React.useMemo(
     () => projectEdgePlanV2(baseline, levers),
@@ -75,10 +81,15 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
     [baseline, levers],
   );
 
-  const edgeAfterRewards = React.useMemo(
-    () => computeEdgeAfterRewards(projection, { baseline, levers }),
-    [projection, baseline, levers],
-  );
+  const edgeAfterRewards = React.useMemo(() => {
+    const baseWager = Math.max(0, projection.plannedWager || projection.currentWager);
+    const scenarioWagerUsd = resolveScenarioWagerUsd(baseWager, wagerScenario);
+    return computeEdgeAfterRewards(projection, {
+      baseline,
+      levers,
+      scenarioWagerUsd,
+    });
+  }, [projection, baseline, levers, wagerScenario]);
 
   const defaults = React.useMemo(() => defaultLeversV2(baseline), [baseline]);
   const gaming = React.useMemo(() => makeGamingSetters(setLevers), []);
@@ -256,6 +267,8 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
           netEdgeScenarios={netEdgeScenarios}
           baseline={baseline}
           levers={levers}
+          wagerScenario={wagerScenario}
+          onWagerScenarioChange={setWagerScenario}
         />
       </PlannerV2SectionPanel>
       <PlannerV2SectionPanel id="gaming" active={activeSection}>

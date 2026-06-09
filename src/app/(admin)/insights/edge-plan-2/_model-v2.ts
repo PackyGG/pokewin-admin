@@ -36,6 +36,7 @@ import {
   blendedPackBattleEdge,
   blendedGamingEdge,
   effectiveProjectionTypeEdge,
+  effectiveBaselineEdge,
 } from "../system-edge-plan/_model";
 
 export {
@@ -1017,11 +1018,18 @@ export type EdgeAfterRewardsLeverDrag = {
 export type EdgeAfterRewardsContext = {
   baseline: EdgePlanV2Baseline;
   levers: PlannedLeversV2;
+  /** Override organic wager for what-if drag dilution (null = baseline organic). */
+  scenarioWagerUsd?: number | null;
 };
 
 /** Gross → reward drag → net edge remaining on the planned config. */
 export type EdgeAfterRewardsSummary = {
+  /** Scenario wager used for planned drag / net edge (USD). */
   wager: number;
+  /** Observed organic wager baseline (USD). */
+  baseWager: number;
+  /** scenarioWager ÷ baseWager (1 = observed volume). */
+  wagerScenarioMult: number;
   grossEdge: number;
   plannedRewardDrag: number;
   netEdgeAfterRewards: number;
@@ -1031,6 +1039,57 @@ export type EdgeAfterRewardsSummary = {
   netEdgeDelta: number;
   leverDrags: EdgeAfterRewardsLeverDrag[];
 };
+
+/** UI state for the edge-after-rewards wager scenario control. */
+export type WagerScenarioState = {
+  /** When set, overrides preset multiplier with an absolute USD wager. */
+  customWagerUsd: number | null;
+  /** Multiplier on observed organic wager (1 = observed). */
+  presetMult: number;
+};
+
+export const WAGER_SCENARIO_PRESET_MULTS = [0.5, 1, 1.5, 2] as const;
+
+export function resolveScenarioWagerUsd(
+  baseWager: number,
+  scenario: WagerScenarioState,
+): number {
+  if (scenario.customWagerUsd != null && scenario.customWagerUsd > 0) {
+    return scenario.customWagerUsd;
+  }
+  return Math.max(0, baseWager * scenario.presetMult);
+}
+
+/** Reward levers whose planned $ cost scales with wager at constant rates. */
+const WAGER_PROPORTIONAL_LEVER_KEYS = new Set([
+  "rakeback",
+  "affiliate",
+  "shards-earn",
+]);
+
+function scenarioLeverCostUsd(
+  leverKey: string,
+  plannedCostUsd: number,
+  baseWager: number,
+  scenarioWager: number,
+): number {
+  if (baseWager <= 0 || scenarioWager <= 0) return plannedCostUsd;
+  if (WAGER_PROPORTIONAL_LEVER_KEYS.has(leverKey)) {
+    return plannedCostUsd * (scenarioWager / baseWager);
+  }
+  return plannedCostUsd;
+}
+
+function resolveObservedCurrentGrossEdge(
+  projection: EdgePlanV2Projection,
+  baseline?: EdgePlanV2Baseline,
+): number {
+  if (projection.currentEdge > 0.00001) return projection.currentEdge;
+  const headline = baseline ? effectiveBaselineEdge(baseline) : 0;
+  if (headline > 0.00001) return headline;
+  const baseWager = Math.max(0, projection.plannedWager || projection.currentWager);
+  return baseWager > 0 ? projection.currentGgr / baseWager : 0;
+}
 
 function formatDragRatePct(rate: number): string {
   if (!Number.isFinite(rate)) return "—";
@@ -1043,30 +1102,66 @@ export function computeEdgeAfterRewards(
   projection: EdgePlanV2Projection,
   ctx?: EdgeAfterRewardsContext,
 ): EdgeAfterRewardsSummary {
-  const wager = Math.max(0, projection.plannedWager || projection.currentWager);
+  const baseWager = Math.max(0, projection.plannedWager || projection.currentWager);
+  const scenarioWager =
+    ctx?.scenarioWagerUsd != null && ctx.scenarioWagerUsd > 0
+      ? ctx.scenarioWagerUsd
+      : baseWager;
+  const wagerScenarioMult = baseWager > 0 ? scenarioWager / baseWager : 1;
+
   const grossEdge = projection.plannedEdge;
-  const currentGrossEdge = projection.currentEdge;
+  const currentGrossEdge = resolveObservedCurrentGrossEdge(
+    projection,
+    ctx?.baseline,
+  );
+
+  let scenarioPlannedRewardCost = 0;
+  for (const l of projection.levers) {
+    if (Math.abs(l.plannedCost) <= 0.005) continue;
+    scenarioPlannedRewardCost += scenarioLeverCostUsd(
+      l.key,
+      l.plannedCost,
+      baseWager,
+      scenarioWager,
+    );
+  }
+
+  const scenarioPlannedGgr = grossEdge * scenarioWager;
   const plannedRewardDrag =
-    wager > 0 ? Math.max(0, projection.plannedRewardCost / wager) : 0;
+    scenarioWager > 0 ? Math.max(0, scenarioPlannedRewardCost / scenarioWager) : 0;
+  const netEdgeAfterRewards =
+    scenarioWager > 0
+      ? (scenarioPlannedGgr - scenarioPlannedRewardCost) / scenarioWager
+      : 0;
+
+  const currentGgr = currentGrossEdge * baseWager;
+  const currentRewardCost = projection.currentRewardCost;
   const currentRewardDrag =
-    wager > 0 ? Math.max(0, projection.currentRewardCost / wager) : 0;
-  const netEdgeAfterRewards = wager > 0 ? projection.plannedNgr / wager : 0;
-  const currentNetEdge = wager > 0 ? projection.currentNgr / wager : 0;
+    baseWager > 0 ? Math.max(0, currentRewardCost / baseWager) : 0;
+  const currentNetEdge =
+    baseWager > 0 ? (currentGgr - currentRewardCost) / baseWager : 0;
 
   const leverDrags: EdgeAfterRewardsLeverDrag[] = projection.levers
     .filter((l) => Math.abs(l.plannedCost) > 0.005)
     .map((l) => {
-      const realizedDrag = wager > 0 ? l.plannedCost / wager : 0;
+      const scenarioCost = scenarioLeverCostUsd(
+        l.key,
+        l.plannedCost,
+        baseWager,
+        scenarioWager,
+      );
+      const realizedDrag =
+        scenarioWager > 0 ? scenarioCost / scenarioWager : 0;
       if (l.key === "affiliate" && ctx) {
         const edgeShare = topAffiliateTierEdgeShare(ctx.baseline, ctx.levers);
         const worstCaseDrag = affiliateWorstCaseEdgeDrag(ctx.baseline, ctx.levers);
         return {
           key: l.key,
           label: l.label,
-          plannedCostUsd: l.plannedCost,
+          plannedCostUsd: scenarioCost,
           dragPct: worstCaseDrag,
           dragNote:
-            wager > 0
+            scenarioWager > 0
               ? `Top tier ${formatDragRatePct(edgeShare)} of edge (planning); realized spend ${formatDragRatePct(realizedDrag)} of wager`
               : undefined,
         };
@@ -1074,14 +1169,16 @@ export function computeEdgeAfterRewards(
       return {
         key: l.key,
         label: l.label,
-        plannedCostUsd: l.plannedCost,
+        plannedCostUsd: scenarioCost,
         dragPct: realizedDrag,
       };
     })
     .sort((a, b) => b.dragPct - a.dragPct);
 
   return {
-    wager,
+    wager: scenarioWager,
+    baseWager,
+    wagerScenarioMult,
     grossEdge,
     plannedRewardDrag,
     netEdgeAfterRewards,
