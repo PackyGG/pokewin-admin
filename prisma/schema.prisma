@@ -488,6 +488,8 @@ model packs {
   image_url         String?
   active            Boolean          @default(true)
   pack_type         String           @default("official")
+  // Cost in shards to buy & open this pack. Only set for pack_type='shard'.
+  shard_cost        Int?
   cards_per_open    Int              @default(5)
   difficulty        Float?           @db.Real
   tags              pack_tag[]

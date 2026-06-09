@@ -33,13 +33,14 @@ import { MS_PER_DAY } from "@/lib/utils/time";
  * collide with the daily/reward filter or invent a relationship that
  * doesn't exist in the data.
  */
-export type PackCategoryFilter = "pct1" | "pct5" | "pct10" | "reward";
+export type PackCategoryFilter = "pct1" | "pct5" | "pct10" | "reward" | "shard";
 
 const PACK_CATEGORY_FILTERS: readonly PackCategoryFilter[] = [
   "pct1",
   "pct5",
   "pct10",
   "reward",
+  "shard",
 ] as const;
 
 /** Whitelist + coerce a raw `?tag=` param to a known category, else undefined. */
@@ -68,6 +69,8 @@ function buildPackCategoryWhere(
       return { tags: { has: pack_tag.pct10 } };
     case "reward":
       return { pack_type: "reward" };
+    case "shard":
+      return { pack_type: "shard" };
   }
 }
 
@@ -194,11 +197,19 @@ export async function getPacks(params: {
   if (active === "active") where.active = true;
   else if (active === "inactive") where.active = false;
 
-  // Category filter (1% / 5% / 10% tag, or daily/reward pack type). Combines
-  // with status + search + pool + sort — Object.assign merges the fragment's
-  // top-level keys (`tags` or `pack_type`) onto the where without clobbering
-  // the others.
+  // Category filter (1% / 5% / 10% tag, daily/reward, or shard pack type).
+  // Combines with status + search + pool + sort — Object.assign merges the
+  // fragment's top-level keys (`tags` or `pack_type`) onto the where without
+  // clobbering the others.
+  //
+  // When NO category is selected, shard packs are excluded from the default
+  // list. Shard packs are managed on the dedicated /rewards/shards surface
+  // (and via the explicit "Shard packs" category filter here); keeping them
+  // out of the default /packs list and any official dropdowns avoids mixing
+  // a shard-currency pack into the cash pack catalog. The "shard" filter is
+  // the explicit opt-in to see only shard packs.
   if (tag) Object.assign(where, buildPackCategoryWhere(tag));
+  else where.pack_type = { not: "shard" };
 
   // Scope to the Pokemon / OnePiece pool via the card→set linkage.
   const onePieceSetIds = await cachedOnePieceSetIds();
@@ -466,6 +477,7 @@ export async function getPackDetail(id: string) {
       actual_house_edge: true,
       active: true,
       pack_type: true,
+      shard_cost: true,
       tags: true,
       difficulty: true,
       pack_cards: {
@@ -510,6 +522,7 @@ export async function getPackDetail(id: string) {
     actualHouseEdge: toNumber(pack.actual_house_edge),
     active: pack.active,
     packType: pack.pack_type,
+    shardCost: pack.shard_cost,
     tags: pack.tags,
     difficulty: pack.difficulty,
     cards: pack.pack_cards.map((pc) => ({
@@ -526,6 +539,100 @@ export async function getPackDetail(id: string) {
       animation: pc.animation,
       order: pc.order,
     })),
+  };
+}
+
+// ─── Shard packs (pack_type = 'shard') ─────────────────────────────────
+//
+// Shard packs are bought & opened with "shards" (a wager-earned currency),
+// not USD. They free-roll cards into inventory like a reward pack. The
+// dedicated /rewards/shards management surface lists them here, keyed off
+// `pack_type = 'shard'` + the `shard_cost` column. Intentionally a small,
+// purpose-built read (no cash economics — revenue / RTP / house edge are
+// USD concepts that don't apply to a shard-currency pack).
+
+export type ShardPackListItem = {
+  id: string;
+  name: string;
+  slug: string;
+  imageUrl: string | null;
+  /** Cost in shards to buy & open. Null only if a row is mis-seeded. */
+  shardCost: number | null;
+  cardsPerOpen: number;
+  active: boolean;
+  /** Number of distinct cards in the pack's free-roll pool. */
+  cardCount: number;
+};
+
+export type ShardPacksResult = {
+  packs: ShardPackListItem[];
+  /** Total shard packs (== packs.length; no pagination on this surface). */
+  total: number;
+  /** Active shard packs. */
+  activeCount: number;
+  /** Sum of card-pool sizes across all shard packs. */
+  totalCards: number;
+  /** Mean shard cost across packs that have one set (0 when none). */
+  avgShardCost: number;
+};
+
+export async function getShardPacks(): Promise<ShardPacksResult> {
+  const db = await getDb();
+
+  // Narrow select (defense-in-depth, same as getPacks/getPackDetail) so a
+  // migration-lagged live game DB can't crash this with P2022 on an
+  // unrelated newly-added column.
+  const rows = await db.packs.findMany({
+    where: { pack_type: "shard" },
+    orderBy: { created_at: "desc" },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      image_url: true,
+      shard_cost: true,
+      cards_per_open: true,
+      active: true,
+    },
+  });
+
+  const ids = rows.map((p) => p.id);
+  const cardCounts =
+    ids.length > 0
+      ? await db.pack_cards.groupBy({
+          by: ["pack_id"],
+          where: { pack_id: { in: ids } },
+          _count: { _all: true },
+        })
+      : [];
+  const countByPack = new Map(cardCounts.map((c) => [c.pack_id, c._count._all]));
+
+  const packs: ShardPackListItem[] = rows.map((p) => ({
+    id: p.id,
+    name: p.name,
+    slug: p.slug,
+    imageUrl: p.image_url,
+    shardCost: p.shard_cost,
+    cardsPerOpen: p.cards_per_open,
+    active: p.active,
+    cardCount: countByPack.get(p.id) ?? 0,
+  }));
+
+  const totalCards = packs.reduce((sum, p) => sum + p.cardCount, 0);
+  const costed = packs.filter((p) => p.shardCost != null);
+  const avgShardCost =
+    costed.length > 0
+      ? Math.round(
+          costed.reduce((sum, p) => sum + (p.shardCost ?? 0), 0) / costed.length,
+        )
+      : 0;
+
+  return {
+    packs,
+    total: packs.length,
+    activeCount: packs.filter((p) => p.active).length,
+    totalCards,
+    avgShardCost,
   };
 }
 

@@ -603,6 +603,20 @@ export const NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // Shard packs — packs bought & opened with shards (a wager-earned
+    // currency). Free-roll cards into inventory like reward packs.
+    id: "nav.rewards.shards",
+    group: "Rewards",
+    label: "Shard Packs",
+    href: "/rewards/shards",
+    pageKey: "/rewards/shards",
+    icon: "Gem",
+    description: "Packs players buy & open with shards",
+    keywords: ["shard", "shards", "pack", "currency", "wager", "free-roll"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     id: "nav.rewards.giveaway",
     group: "Rewards",
     label: "Giveaway",
@@ -838,6 +852,7 @@ const PALETTE_ORDER: string[] = [
   "nav.rain",
   "nav.rewards.leaderboards",
   "nav.rewards.level-up",
+  "nav.rewards.shards",
   "nav.creators.settings",
   "nav.rewards.settings",
   "nav.my-profile",
