@@ -855,3 +855,61 @@ export function projectEdgePlanV2(
     withdrawalFrictionAdjUsd,
   };
 }
+
+/** Per-reward lever drag as a fraction of total wager (for edge waterfall UI). */
+export type EdgeAfterRewardsLeverDrag = {
+  key: string;
+  label: string;
+  plannedCostUsd: number;
+  /** Positive = erodes edge; negative = adds back (e.g. withdrawal friction). */
+  dragPct: number;
+};
+
+/** Gross → reward drag → net edge remaining on the planned config. */
+export type EdgeAfterRewardsSummary = {
+  wager: number;
+  grossEdge: number;
+  plannedRewardDrag: number;
+  netEdgeAfterRewards: number;
+  currentGrossEdge: number;
+  currentRewardDrag: number;
+  currentNetEdge: number;
+  netEdgeDelta: number;
+  leverDrags: EdgeAfterRewardsLeverDrag[];
+};
+
+export function computeEdgeAfterRewards(
+  projection: EdgePlanV2Projection,
+): EdgeAfterRewardsSummary {
+  const wager = Math.max(0, projection.plannedWager || projection.currentWager);
+  const grossEdge = projection.plannedEdge;
+  const currentGrossEdge = projection.currentEdge;
+  const plannedRewardDrag =
+    wager > 0 ? Math.max(0, projection.plannedRewardCost / wager) : 0;
+  const currentRewardDrag =
+    wager > 0 ? Math.max(0, projection.currentRewardCost / wager) : 0;
+  const netEdgeAfterRewards = wager > 0 ? projection.plannedNgr / wager : 0;
+  const currentNetEdge = wager > 0 ? projection.currentNgr / wager : 0;
+
+  const leverDrags: EdgeAfterRewardsLeverDrag[] = projection.levers
+    .filter((l) => Math.abs(l.plannedCost) > 0.005)
+    .map((l) => ({
+      key: l.key,
+      label: l.label,
+      plannedCostUsd: l.plannedCost,
+      dragPct: wager > 0 ? l.plannedCost / wager : 0,
+    }))
+    .sort((a, b) => b.dragPct - a.dragPct);
+
+  return {
+    wager,
+    grossEdge,
+    plannedRewardDrag,
+    netEdgeAfterRewards,
+    currentGrossEdge,
+    currentRewardDrag,
+    currentNetEdge,
+    netEdgeDelta: netEdgeAfterRewards - currentNetEdge,
+    leverDrags,
+  };
+}

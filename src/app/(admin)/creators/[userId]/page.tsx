@@ -280,7 +280,10 @@ export default async function CreatorDetailPage({
             Only needs userId (its own getCreatorPnl ledger scan), so it
             streams in its OWN boundary in parallel with everything above. ── */}
         <Suspense fallback={<CreatorPnlSkeleton />}>
-          <CreatorPnlPanel userId={userId} />
+          <CreatorPnlPanel
+            userId={userId}
+            profileResultPromise={profileResultPromise}
+          />
         </Suspense>
 
         {/* 6 ── Everything else (below the PnL boxes):

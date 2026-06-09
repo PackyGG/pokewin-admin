@@ -6,6 +6,7 @@ import {
   Percent,
   Activity,
   ListOrdered,
+  Wallet,
 } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
@@ -22,40 +23,39 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import {
   getLiveLeaderboards,
   parseLiveLeaderboardRank,
+  parseLiveLeaderboardView,
   type LiveLeaderboardRank,
+  type LiveLeaderboardView,
 } from "./_queries/live-leaderboards";
 import { LiveLeaderboardsRanklist } from "./_components/live-leaderboards-ranklist";
 
 export const metadata = { title: "Live Leaderboards · Creator Hub" };
 
-/**
- * Creator Hub — Live Leaderboards ranklist.
- *
- * A ranked list of every CURRENTLY-RUNNING creator affiliate leaderboard, live
- * across all creators, with the soon-to-start boards as context underneath.
- * Built on the existing data layer (the approved-leaderboard backend walk + the
- * admin-side sponsored-% / house-share map + MAIN username hydration) — no new
- * MAIN schema, no duplicated cost logic.
- *
- * House-POV (STRICT): a leaderboard's prize pool is money the house pays out to
- * players, so the headline figure per board is the HOUSE COST (= pool × house
- * share %) → rose. The full pool is neutral context; active/upcoming counts are
- * operational.
- *
- * ACCESS: `canAccessCreatorHub` (the Hub layout enforces it; this page adds
- * the explicit gate too).
- *
- * ACTIVE-TIMEFRAME-ONLY / LAZY: the ranklist body is wrapped in a Suspense
- * boundary keyed on the rank metric. The underlying backend walk is cached
- * (60s) and ranking is an in-memory sort of that one cached read, so switching
- * the rank metric never re-hits the backend (no API spam).
- */
-
-const RANK_CHIPS = [
-  { value: "house_cost", label: "House cost" },
-  { value: "prize_pool", label: "Prize pool" },
-  { value: "ending_soon", label: "Ending soon" },
+const VIEW_CHIPS = [
+  { value: "active", label: "Live" },
+  { value: "upcoming", label: "Upcoming" },
+  { value: "ended", label: "Ended" },
+  { value: "all", label: "All" },
 ] as const;
+
+const SORT_CHIPS = [
+  { value: "house_cost", label: "House cost ↓" },
+  { value: "house_cost_asc", label: "House cost ↑" },
+  { value: "prize_pool", label: "Prize ↓" },
+  { value: "prize_pool_asc", label: "Prize ↑" },
+  { value: "wager", label: "Wager ↓" },
+  { value: "wager_asc", label: "Wager ↑" },
+  { value: "ending_soon", label: "Ending soon" },
+  { value: "starting_soon", label: "Starting soon" },
+  { value: "recently_ended", label: "Recently ended" },
+] as const;
+
+const VIEW_SUBTITLES: Record<LiveLeaderboardView, string> = {
+  active: "Creator leaderboards running right now",
+  upcoming: "Approved boards scheduled to start",
+  ended: "Completed creator affiliate leaderboards",
+  all: "Every approved creator leaderboard — all lifecycle stages",
+};
 
 export default async function CreatorHubLeaderboardsPage({
   searchParams,
@@ -64,7 +64,9 @@ export default async function CreatorHubLeaderboardsPage({
 }) {
   await requireCreatorHubPageAccess();
 
-  const rank = parseLiveLeaderboardRank((await searchParams).rank);
+  const sp = await searchParams;
+  const rank = parseLiveLeaderboardRank(sp.rank);
+  const view = parseLiveLeaderboardView(sp.view);
 
   return (
     <div className="space-y-6">
@@ -73,87 +75,97 @@ export default async function CreatorHubLeaderboardsPage({
           icon={Trophy}
           accent="amber"
           title="Live Leaderboards"
-          subtitle="Every creator leaderboard running right now — ranked by house cost"
+          subtitle={VIEW_SUBTITLES[view]}
         />
       </PageHero>
 
-      {/* The KPI strip + ranklist both depend on the same cached read, so the
-          whole data block streams behind ONE Suspense boundary keyed on the
-          rank metric (lazy; only the active view loads). */}
-      <Suspense key={rank} fallback={<RanklistSkeleton />}>
-        <LiveLeaderboardsSection rank={rank} />
+      <Suspense key={`${view}:${rank}`} fallback={<RanklistSkeleton />}>
+        <LiveLeaderboardsSection rank={rank} view={view} />
       </Suspense>
     </div>
   );
 }
 
-// ─── Data-bearing section (streamed via Suspense) ───────────────────
-
 async function LiveLeaderboardsSection({
   rank,
+  view,
 }: {
   rank: LiveLeaderboardRank;
+  view: LiveLeaderboardView;
 }) {
-  const data = await getLiveLeaderboards(rank);
+  const data = await getLiveLeaderboards(rank, view);
+
+  const liveSub =
+    view === "active"
+      ? data.upcomingCount > 0
+        ? `${formatNumber(data.upcomingCount)} upcoming · ${formatNumber(data.endedCount)} ended`
+        : `${formatNumber(data.endedCount)} ended`
+      : view === "all"
+        ? `${formatNumber(data.activeCount)} live · ${formatNumber(data.upcomingCount)} upcoming · ${formatNumber(data.endedCount)} ended`
+        : `${formatNumber(data.rows.length)} in this view`;
 
   return (
     <FadeIn className="space-y-6">
-      {/* KPI strip — house-POV: house cost + house share are rose (what we
-          pay), the full active prize pool is neutral context, the live count
-          is operational/emerald. */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <KpiTile
           label="Live Now"
           value={formatNumber(data.activeCount)}
-          sub={
-            data.upcomingCount > 0
-              ? `${formatNumber(data.upcomingCount)} upcoming`
-              : "boards running"
-          }
+          sub={liveSub}
           icon={Activity}
           accent="emerald"
         />
         <KpiTile
-          label="Active House Cost"
-          value={formatCurrency(data.activeHouseCostUsd)}
+          label="View House Cost"
+          value={formatCurrency(data.viewHouseCostUsd)}
           sub="Σ pool × house share"
           icon={Coins}
           accent="rose"
         />
         <KpiTile
-          label="Active Prize Pools"
-          value={formatCurrency(data.activePrizeUsd)}
+          label="View Prize Pools"
+          value={formatCurrency(data.viewPrizeUsd)}
           sub="full pools, net of refunds"
           icon={Layers}
           accent="blue"
         />
         <KpiTile
+          label="View Wager"
+          value={formatCurrency(data.viewWagerUsd)}
+          sub="code-scoped window total"
+          icon={Wallet}
+          accent="emerald"
+        />
+        <KpiTile
           label="Blended House Share"
-          value={`${data.activeHouseSharePct.toFixed(1)}%`}
+          value={`${data.viewHouseSharePct.toFixed(1)}%`}
           sub="prize-weighted — the % we pay"
           icon={Percent}
           accent="rose"
         />
       </div>
 
-      {/* Ranklist — header + rank-metric chips + the ranked rows. */}
       <div className="space-y-3">
-        <SectionHeading
-          icon={ListOrdered}
-          title="Ranked boards"
-          action={
-            <PeriodChips
-              items={RANK_CHIPS}
-              current={rank}
-              paramKey="rank"
-              defaultValue="house_cost"
-              ariaNoun="ranking"
-            />
-          }
-        />
+        <SectionHeading icon={ListOrdered} title="Ranked boards" />
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
+          <PeriodChips
+            items={VIEW_CHIPS}
+            current={view}
+            paramKey="view"
+            defaultValue="active"
+            ariaNoun="filter"
+          />
+          <PeriodChips
+            items={SORT_CHIPS}
+            current={rank}
+            paramKey="rank"
+            defaultValue="house_cost"
+            ariaNoun="sort"
+            className="xl:max-w-[720px]"
+          />
+        </div>
         <LiveLeaderboardsRanklist
-          active={data.active}
-          upcoming={data.upcoming}
+          rows={data.rows}
+          view={view}
           backendUnavailable={data.backendUnavailable}
         />
       </div>
@@ -161,13 +173,11 @@ async function LiveLeaderboardsSection({
   );
 }
 
-// ─── Skeleton ───────────────────────────────────────────────────────
-
 function RanklistSkeleton() {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
           <Skeleton key={i} className="h-[88px] rounded-xl" />
         ))}
       </div>

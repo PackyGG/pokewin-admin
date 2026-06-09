@@ -2,11 +2,12 @@ import { Coins, Info, LineChart, TrendingDown, TrendingUp } from "lucide-react";
 
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { SectionHeading, StatPanel, PanelRow } from "@/components/modern-panels";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
 import { getCreatorPnlCached } from "./_queries/_pnl-cache";
 import { CreatorPnlUsersPopover } from "./_components/creator-pnl-users-popover";
+import type { getCreatorDetailCached } from "@/lib/queries/creators";
 
 const DISPLAYED_PERIODS: Array<{
   key: "24h" | "3d" | "7d" | "14d" | "30d";
@@ -19,6 +20,14 @@ const DISPLAYED_PERIODS: Array<{
   { key: "14d", label: "2w", sub: "Last 2 weeks" },
   { key: "30d", label: "1m", sub: "Last month" },
 ];
+
+const PNL_TO_FTD_PERIOD: Record<(typeof DISPLAYED_PERIODS)[number]["key"], string> = {
+  "24h": "1d",
+  "3d": "3d",
+  "7d": "7d",
+  "14d": "14d",
+  "30d": "30d",
+};
 
 /**
  * Per-creator House P&L panel for /creators/[userId]. Renders the
@@ -48,7 +57,16 @@ const DISPLAYED_PERIODS: Array<{
  *                       physically shipped out
  *   pnl < 0 (rose)    — physical cards out exceeded cash deposited
  */
-export async function CreatorPnlPanel({ userId }: { userId: string }) {
+export async function CreatorPnlPanel({
+  userId,
+  profileResultPromise,
+}: {
+  userId: string;
+  profileResultPromise?: Promise<{
+    data: Awaited<ReturnType<typeof getCreatorDetailCached>> | null;
+    error: string | null;
+  }>;
+}) {
   // Degrade gracefully instead of throwing the whole creators segment into
   // its error boundary when the ledger scan fails or times out. Every other
   // heavy section on this page already fails soft (the deal-cost panel
@@ -66,11 +84,16 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
   // off before it can finish — a slow first load that then caches is fine;
   // "always times out" is not. Subsequent loads resolve from the warm entry
   // near-instantly.
-  const { data } = await safeQueryOrNull(
-    () => getCreatorPnlCached(userId),
-    "creators.detail.pnl",
-    60_000,
-  );
+  const [{ data }, profileResult] = await Promise.all([
+    safeQueryOrNull(
+      () => getCreatorPnlCached(userId),
+      "creators.detail.pnl",
+      60_000,
+    ),
+    profileResultPromise ?? Promise.resolve({ data: null, error: null }),
+  ]);
+  const ftdByPeriod = profileResult.data?.ftdByPeriod ?? {};
+  const lifetimeFtds = ftdByPeriod.all ?? 0;
 
   if (!data) {
     return (
@@ -179,7 +202,7 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
             creator economics.
           </span>
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-y-0.5 sm:grid-cols-3 sm:gap-x-6">
+        <div className="mt-4 grid grid-cols-1 gap-y-0.5 sm:grid-cols-2 lg:grid-cols-4 sm:gap-x-6">
           <PanelRow
             label="Deposits"
             value={
@@ -191,6 +214,13 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
               data.lifetime.totalDeposits > 0
                 ? "text-emerald-600 dark:text-emerald-400"
                 : ""
+            }
+          />
+          <PanelRow
+            label="FTDs"
+            value={lifetimeFtds === 0 ? "—" : formatNumber(lifetimeFtds)}
+            valueClassName={
+              lifetimeFtds > 0 ? "text-purple-600 dark:text-purple-400" : ""
             }
           />
           <PanelRow
@@ -225,6 +255,7 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
           const deposits = row?.deposits ?? 0;
           const wagered = row?.wagered ?? 0;
           const cardWithdrawals = row?.cardWithdrawals ?? 0;
+          const ftds = ftdByPeriod[PNL_TO_FTD_PERIOD[key]] ?? 0;
           const isWin = pnl > 0;
           const isLoss = pnl < 0;
           const accent: "emerald" | "rose" | "blue" = isWin
@@ -272,6 +303,13 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
                   }
                 />
                 <PanelRow
+                  label="FTDs"
+                  value={ftds === 0 ? "—" : formatNumber(ftds)}
+                  valueClassName={
+                    ftds > 0 ? "text-purple-600 dark:text-purple-400" : ""
+                  }
+                />
+                <PanelRow
                   label="Wagered"
                   value={wagered === 0 ? "—" : formatCurrency(wagered)}
                   valueClassName="text-muted-foreground"
@@ -297,7 +335,9 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
 
       <p className="text-[11px] text-muted-foreground">
         House P&amp;L = deposits − card withdrawals. Wagered shown for
-        volume context, not in the formula. Attribution is event-level
+        volume context, not in the formula. FTDs = distinct referred users
+        with a deposit under this creator&apos;s code in the window (same
+        source as the funnel table). Attribution is event-level
         from <code className="font-mono">affiliate_code_usages</code>:
         each event carries the code that was active at the time. Card
         withdrawals are matched via{" "}

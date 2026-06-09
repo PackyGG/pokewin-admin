@@ -7,11 +7,13 @@ import { formatCurrency } from "@/lib/utils/format";
 import { formatPct, formatSignedUsd } from "../../../edge-calc/math";
 import { cn } from "@/lib/utils";
 import type { EdgePlanV2Projection } from "../../_model-v2";
+import { computeEdgeAfterRewards } from "../../_model-v2";
 import type { NetEdgeScenario } from "../../../system-edge-plan/_model";
 import {
   LeverBreakdownPanel,
   NetEdgeByScenarioPanel,
   RewardCostComparisonChart,
+  EdgeAfterRewardsPanel,
 } from "../components/overview-charts";
 
 export function OverviewSection({
@@ -21,8 +23,11 @@ export function OverviewSection({
   projection: EdgePlanV2Projection;
   netEdgeScenarios: NetEdgeScenario[];
 }) {
+  const edgeAfterRewards = computeEdgeAfterRewards(projection);
+
   return (
     <div className="space-y-4">
+      <EdgeAfterRewardsPanel summary={edgeAfterRewards} />
       <StatPanel title="GGR by game type" icon={Layers} accent="emerald">
         <div className="grid gap-3 sm:grid-cols-3">
           {projection.gameTypes.map((g) => {

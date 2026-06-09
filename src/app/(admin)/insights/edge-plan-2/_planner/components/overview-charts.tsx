@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ShieldAlert, TrendingDown, Wallet } from "lucide-react";
+import { ShieldAlert, TrendingDown, Wallet, Percent } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
@@ -23,7 +23,7 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import type { NetEdgeScenario } from "../../../system-edge-plan/_model";
-import type { EdgePlanV2Projection } from "../../_model-v2";
+import type { EdgePlanV2Projection, EdgeAfterRewardsSummary } from "../../_model-v2";
 import { EMERALD, ROSE } from "../utils";
 import { EmptyLever } from "./empty-lever";
 
@@ -58,6 +58,177 @@ const rewardCostChartConfig = {
   current: { label: "Current", color: "#64748b" },
   planned: { label: "Planned", color: ROSE },
 } satisfies ChartConfig;
+
+export function EdgeAfterRewardsPanel({
+  summary,
+}: {
+  summary: EdgeAfterRewardsSummary;
+}) {
+  const netClass = netEdgeTextClass(summary.netEdgeAfterRewards);
+  const beforeMax = Math.max(
+    summary.grossEdge,
+    summary.currentGrossEdge,
+    summary.netEdgeAfterRewards,
+    summary.currentNetEdge,
+    0.001,
+  );
+
+  return (
+    <StatPanel title="Edge before & after rewards" icon={Percent} accent="cyan">
+      <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
+        House edge on wager <strong>before</strong> reward spend vs effective margin{" "}
+        <strong>after</strong> all modeled levers (rakeback, rain, shards, affiliates,
+        etc.). Percentages are of total wager on the planned config.
+      </p>
+
+      <div className="grid gap-3 lg:grid-cols-[1fr_auto_1fr] lg:items-stretch">
+        <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+            Before rewards
+          </p>
+          <p className="mt-1 text-3xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+            {formatPct(summary.grossEdge)}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Blended gross house edge
+          </p>
+          <p className="mt-2 text-[10px] tabular-nums text-muted-foreground">
+            Current config: {formatPct(summary.currentGrossEdge)}
+          </p>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted/60">
+            <div
+              className="h-full rounded-full bg-emerald-500"
+              style={{ width: `${Math.min(100, (summary.grossEdge / beforeMax) * 100)}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col items-center justify-center gap-1 px-1 py-2 lg:py-0">
+          <span className="hidden text-2xl text-muted-foreground lg:inline">→</span>
+          <span className="rounded-full border bg-background px-2.5 py-1 text-center text-[10px] font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+            −{formatPct(summary.plannedRewardDrag)}
+          </span>
+          <span className="text-[10px] text-muted-foreground">reward drag</span>
+        </div>
+
+        <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/5 px-4 py-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-300">
+            After rewards
+          </p>
+          <p className={cn("mt-1 text-3xl font-bold tabular-nums", netClass)}>
+            {formatPct(summary.netEdgeAfterRewards)}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">Net edge left on wager</p>
+          <p className="mt-2 text-[10px] tabular-nums text-muted-foreground">
+            Current config: {formatPct(summary.currentNetEdge)}
+            {summary.netEdgeDelta !== 0 && (
+              <>
+                {" "}
+                ·{" "}
+                <span
+                  className={
+                    summary.netEdgeDelta >= 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-rose-600 dark:text-rose-400"
+                  }
+                >
+                  {summary.netEdgeDelta >= 0 ? "+" : ""}
+                  {formatPct(summary.netEdgeDelta)} vs current
+                </span>
+              </>
+            )}
+          </p>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted/60">
+            <div
+              className={cn(
+                "h-full rounded-full",
+                summary.netEdgeAfterRewards < 0
+                  ? "bg-rose-500"
+                  : summary.netEdgeAfterRewards < THIN_NET_EDGE
+                    ? "bg-amber-500"
+                    : "bg-emerald-500",
+              )}
+              style={{
+                width: `${Math.min(100, Math.max(0, (summary.netEdgeAfterRewards / beforeMax) * 100))}%`,
+              }}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-2 rounded-lg border bg-background/40 px-3 py-2.5 text-xs sm:grid-cols-3">
+        <div>
+          <span className="text-muted-foreground">Before (USD on wager)</span>
+          <p className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+            {formatCompactUsd(summary.grossEdge * summary.wager)}
+          </p>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Reward spend</span>
+          <p className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+            −{formatCompactUsd(summary.plannedRewardDrag * summary.wager)}
+          </p>
+        </div>
+        <div>
+          <span className="text-muted-foreground">After (planned NGR)</span>
+          <p className={cn("font-semibold tabular-nums", netClass)}>
+            {formatCompactUsd(summary.netEdgeAfterRewards * summary.wager)}
+          </p>
+        </div>
+      </div>
+
+      {summary.netEdgeAfterRewards < 0 && (
+        <p className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] leading-relaxed text-rose-600 dark:text-rose-400">
+          Planned rewards exceed gross edge — the house loses money on every dollar
+          wagered at this config ({formatPct(summary.netEdgeAfterRewards)} after
+          rewards).
+        </p>
+      )}
+      {summary.netEdgeAfterRewards >= 0 &&
+        summary.netEdgeAfterRewards < THIN_NET_EDGE && (
+          <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
+            Thin margin — less than {formatPct(THIN_NET_EDGE)} edge left after
+            rewards.
+          </p>
+        )}
+
+      {summary.leverDrags.length > 0 && (
+        <div className="mt-4 space-y-0.5 border-t pt-3">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            What erodes edge (% of wager)
+          </p>
+          {summary.leverDrags.map((l) => (
+            <PanelRow
+              key={l.key}
+              label={l.label}
+              value={
+                <span className="flex items-center gap-2 tabular-nums">
+                  <span className="text-xs text-muted-foreground">
+                    {formatCompactUsd(l.plannedCostUsd)}
+                  </span>
+                  <span
+                    className={cn(
+                      "w-16 text-right font-semibold",
+                      l.dragPct > 0
+                        ? "text-rose-600 dark:text-rose-400"
+                        : l.dragPct < 0
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-muted-foreground",
+                    )}
+                  >
+                    {l.dragPct === 0
+                      ? "—"
+                      : `${l.dragPct > 0 ? "−" : "+"}${formatPct(Math.abs(l.dragPct))}`}
+                  </span>
+                </span>
+              }
+            />
+          ))}
+        </div>
+      )}
+    </StatPanel>
+  );
+}
 
 export function NetEdgeByScenarioPanel({
   scenarios,

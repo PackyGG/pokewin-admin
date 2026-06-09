@@ -12,6 +12,10 @@ import { getDb } from "@/lib/db";
 // relative path crosses the route-group boundary to the canonical query
 // module that /creators/leaderboards + leaderboard-cost.ts already use.
 import { getLeaderboardSponsorshipMap } from "../../../../(admin)/creators/_queries/leaderboard-sponsorship";
+import {
+  getCreatorLeaderboardWagerMap,
+  type LeaderboardWagerInput,
+} from "../../../../(admin)/creators/[userId]/_queries/leaderboard-wager-by-board";
 
 /**
  * Live Leaderboards ranklist — data layer.
@@ -54,13 +58,46 @@ const FETCH_CAP = 500;
 /** Run-window bucket for a board, relative to NOW. */
 export type BoardLifecycle = "active" | "upcoming" | "ended";
 
-/** How to rank the live ranklist. */
-export type LiveLeaderboardRank = "house_cost" | "prize_pool" | "ending_soon";
+/** Which lifecycle slice the ranklist shows. */
+export type LiveLeaderboardView = "active" | "upcoming" | "ended" | "all";
+
+export const LIVE_LB_VIEWS: readonly LiveLeaderboardView[] = [
+  "active",
+  "upcoming",
+  "ended",
+  "all",
+] as const;
+
+export function parseLiveLeaderboardView(
+  raw: string | undefined,
+): LiveLeaderboardView {
+  return (LIVE_LB_VIEWS as readonly string[]).includes(raw ?? "")
+    ? (raw as LiveLeaderboardView)
+    : "active";
+}
+
+/** How to rank the visible ranklist. */
+export type LiveLeaderboardRank =
+  | "house_cost"
+  | "house_cost_asc"
+  | "prize_pool"
+  | "prize_pool_asc"
+  | "wager"
+  | "wager_asc"
+  | "ending_soon"
+  | "starting_soon"
+  | "recently_ended";
 
 export const LIVE_LB_RANKS: readonly LiveLeaderboardRank[] = [
   "house_cost",
+  "house_cost_asc",
   "prize_pool",
+  "prize_pool_asc",
+  "wager",
+  "wager_asc",
   "ending_soon",
+  "starting_soon",
+  "recently_ended",
 ] as const;
 
 export function parseLiveLeaderboardRank(
@@ -81,8 +118,12 @@ export type LiveLeaderboardRow = {
   affiliateCodes: string[];
   /** Primary owner's user id — the creator who funds the board. */
   creatorUserId: string;
+  /** Co-creators whose codes also count toward this board. */
+  coCreatorUserIds: string[];
   /** Resolved owner username (MAIN read), or null when unresolved. */
   creatorUsername: string | null;
+  /** Total wager in the board window (affiliate_code_usages, same as detail). */
+  wagerUsd: number;
   /** Full prize pool, net of refunds (100%, no weighting). */
   prizeUsd: number;
   /** Admin-set house share % (0–100); 100 when un-annotated. */
@@ -103,25 +144,23 @@ export type LiveLeaderboardRow = {
   msUntilEdge: number;
 };
 
-/** Headline figures over the ACTIVE boards (rose house-POV cost). */
+/** Headline figures + ranked rows for the requested view. */
 export type LiveLeaderboardsResult = {
-  /** Active boards, ranked per the requested metric. */
-  active: LiveLeaderboardRow[];
-  /** Upcoming boards (start in the future), soonest-first — context list. */
-  upcoming: LiveLeaderboardRow[];
-  /** Count of active boards. */
+  /** Boards for the current view, ranked per `rank`. */
+  rows: LiveLeaderboardRow[];
+  view: LiveLeaderboardView;
+  rank: LiveLeaderboardRank;
   activeCount: number;
-  /** Count of upcoming boards. */
   upcomingCount: number;
-  /** Σ net prize pool across the active boards (100%, un-weighted). */
-  activePrizeUsd: number;
-  /** Σ house cost across the active boards (rose). */
-  activeHouseCostUsd: number;
-  /**
-   * Blended house share across the active boards:
-   * activeHouseCostUsd / activePrizeUsd × 100. 0 when no active prize.
-   */
-  activeHouseSharePct: number;
+  endedCount: number;
+  /** Σ net prize pool across rows in the current view. */
+  viewPrizeUsd: number;
+  /** Σ house cost across rows in the current view (rose). */
+  viewHouseCostUsd: number;
+  /** Prize-weighted house share across the current view. */
+  viewHouseSharePct: number;
+  /** Σ wager across rows in the current view. */
+  viewWagerUsd: number;
   /** True when the backend leaderboard walk failed (UI shows an error state). */
   backendUnavailable: boolean;
   /** Request-time snapshot clock (ms epoch) the buckets/edges were computed against. */
@@ -170,7 +209,7 @@ export async function fetchAllApprovedLeaderboards(): Promise<LeaderboardAdminRo
  */
 const getLiveLeaderboardsBase = unstable_cache(
   async (): Promise<{
-    rows: Omit<LiveLeaderboardRow, "creatorUsername">[];
+    rows: LiveLeaderboardBaseRow[];
     backendUnavailable: boolean;
     snapshotMs: number;
   }> => {
@@ -200,7 +239,7 @@ const getLiveLeaderboardsBase = unstable_cache(
       sponsorship = new Map();
     }
 
-    const rows: Omit<LiveLeaderboardRow, "creatorUsername">[] = [];
+    const rows: Omit<LiveLeaderboardRow, "creatorUsername" | "wagerUsd">[] = [];
     for (const lb of all) {
       const prize = Number(lb.total_prize_usd) || 0;
       const refund = Number(lb.refund_amount_usd) || 0;
@@ -238,6 +277,7 @@ const getLiveLeaderboardsBase = unstable_cache(
         title: lb.title,
         affiliateCodes: lb.affiliate_codes ?? [],
         creatorUserId: lb.creator_user_id,
+        coCreatorUserIds: lb.co_creator_user_ids ?? [],
         prizeUsd: net,
         housePct: pct,
         houseCostUsd: houseCost,
@@ -249,27 +289,74 @@ const getLiveLeaderboardsBase = unstable_cache(
     }
     return { rows, backendUnavailable: false, snapshotMs };
   },
-  ["creator-hub:live-leaderboards:base:v1"],
+  ["creator-hub:live-leaderboards:base:v2"],
   { revalidate: 60, tags: ["creator-hub-live-leaderboards"] },
 );
 
-/** Apply the requested ranking to a set of ACTIVE rows (copy, never mutate). */
-function rankActive(
+type LiveLeaderboardBaseRow = Omit<
+  LiveLeaderboardRow,
+  "creatorUsername" | "wagerUsd"
+>;
+
+function filterByView(
+  rows: LiveLeaderboardBaseRow[],
+  view: LiveLeaderboardView,
+): LiveLeaderboardBaseRow[] {
+  if (view === "all") return rows;
+  return rows.filter((r) => r.lifecycle === view);
+}
+
+/** Apply the requested ranking (copy, never mutate). */
+function rankRows(
   rows: LiveLeaderboardRow[],
   rank: LiveLeaderboardRank,
+  view: LiveLeaderboardView,
 ): LiveLeaderboardRow[] {
   const sorted = [...rows];
   switch (rank) {
+    case "prize_pool_asc":
+      sorted.sort((a, b) => a.prizeUsd - b.prizeUsd);
+      break;
     case "prize_pool":
       sorted.sort((a, b) => b.prizeUsd - a.prizeUsd);
       break;
+    case "house_cost_asc":
+      sorted.sort((a, b) => a.houseCostUsd - b.houseCostUsd);
+      break;
+    case "wager":
+      sorted.sort((a, b) => b.wagerUsd - a.wagerUsd);
+      break;
+    case "wager_asc":
+      sorted.sort((a, b) => a.wagerUsd - b.wagerUsd);
+      break;
+    case "starting_soon":
+      sorted.sort((a, b) => a.msUntilEdge - b.msUntilEdge);
+      break;
+    case "recently_ended":
+      sorted.sort((a, b) => b.msUntilEdge - a.msUntilEdge);
+      break;
     case "ending_soon":
-      // Soonest to end first. Already-elapsed edges (≤0) sink to the bottom.
-      sorted.sort((a, b) => {
-        const av = a.msUntilEdge <= 0 ? Number.POSITIVE_INFINITY : a.msUntilEdge;
-        const bv = b.msUntilEdge <= 0 ? Number.POSITIVE_INFINITY : b.msUntilEdge;
-        return av - bv;
-      });
+      if (view === "upcoming" || view === "all") {
+        sorted.sort((a, b) => {
+          if (a.lifecycle === "upcoming" && b.lifecycle !== "upcoming") return -1;
+          if (b.lifecycle === "upcoming" && a.lifecycle !== "upcoming") return 1;
+          if (a.lifecycle === "active" && b.lifecycle !== "active") return -1;
+          if (b.lifecycle === "active" && a.lifecycle !== "active") return 1;
+          const av =
+            a.msUntilEdge <= 0 ? Number.POSITIVE_INFINITY : a.msUntilEdge;
+          const bv =
+            b.msUntilEdge <= 0 ? Number.POSITIVE_INFINITY : b.msUntilEdge;
+          return av - bv;
+        });
+      } else {
+        sorted.sort((a, b) => {
+          const av =
+            a.msUntilEdge <= 0 ? Number.POSITIVE_INFINITY : a.msUntilEdge;
+          const bv =
+            b.msUntilEdge <= 0 ? Number.POSITIVE_INFINITY : b.msUntilEdge;
+          return av - bv;
+        });
+      }
       break;
     case "house_cost":
     default:
@@ -277,6 +364,26 @@ function rankActive(
       break;
   }
   return sorted;
+}
+
+async function attachWagerTotals(
+  rows: LiveLeaderboardBaseRow[],
+): Promise<Map<string, number>> {
+  if (rows.length === 0) return new Map();
+  const inputs: LeaderboardWagerInput[] = rows.map((r) => ({
+    id: r.id,
+    creatorUserId: r.creatorUserId,
+    coCreatorUserIds: r.coCreatorUserIds,
+    affiliateCodes: r.affiliateCodes,
+    startDate: new Date(r.startIso),
+    endDate: new Date(r.endIso),
+  }));
+  try {
+    return await getCreatorLeaderboardWagerMap(inputs);
+  } catch (e) {
+    console.error("[live-leaderboards] wager map failed (showing 0):", e);
+    return new Map();
+  }
 }
 
 /**
@@ -289,15 +396,19 @@ function rankActive(
  */
 export async function getLiveLeaderboards(
   rank: LiveLeaderboardRank = "house_cost",
+  view: LiveLeaderboardView = "active",
 ): Promise<LiveLeaderboardsResult> {
   const base = await getLiveLeaderboardsBase();
 
-  // Hydrate creator usernames (MAIN, READ-ONLY) for the boards we'll show —
-  // active + upcoming only (ended boards aren't rendered). Same lookup the
-  // /creators/leaderboards table does. Best-effort: a MAIN blip leaves the
-  // username null and the row still renders by id.
-  const shown = base.rows.filter((r) => r.lifecycle !== "ended");
-  const creatorIds = [...new Set(shown.map((r) => r.creatorUserId))];
+  const activeCount = base.rows.filter((r) => r.lifecycle === "active").length;
+  const upcomingCount = base.rows.filter((r) => r.lifecycle === "upcoming").length;
+  const endedCount = base.rows.filter((r) => r.lifecycle === "ended").length;
+
+  const viewFilteredBase = filterByView(base.rows, view);
+
+  const creatorIds = [
+    ...new Set(viewFilteredBase.map((r) => r.creatorUserId)),
+  ];
   let creatorMap = new Map<string, string | null>();
   if (creatorIds.length > 0) {
     try {
@@ -315,29 +426,33 @@ export async function getLiveLeaderboards(
     }
   }
 
-  const withNames: LiveLeaderboardRow[] = shown.map((r) => ({
+  const wagerMap = await attachWagerTotals(viewFilteredBase);
+
+  const hydrated: LiveLeaderboardRow[] = viewFilteredBase.map((r) => ({
     ...r,
     creatorUsername: creatorMap.get(r.creatorUserId) ?? null,
+    wagerUsd: wagerMap.get(r.id) ?? 0,
   }));
 
-  const activeRows = withNames.filter((r) => r.lifecycle === "active");
-  const upcomingRows = withNames
-    .filter((r) => r.lifecycle === "upcoming")
-    .sort((a, b) => a.msUntilEdge - b.msUntilEdge);
+  const rows = rankRows(hydrated, rank, view);
 
-  const activePrizeUsd = activeRows.reduce((s, r) => s + r.prizeUsd, 0);
-  const activeHouseCostUsd = activeRows.reduce((s, r) => s + r.houseCostUsd, 0);
-  const activeHouseSharePct =
-    activePrizeUsd > 0 ? (activeHouseCostUsd / activePrizeUsd) * 100 : 0;
+  const viewPrizeUsd = rows.reduce((s, r) => s + r.prizeUsd, 0);
+  const viewHouseCostUsd = rows.reduce((s, r) => s + r.houseCostUsd, 0);
+  const viewWagerUsd = rows.reduce((s, r) => s + r.wagerUsd, 0);
+  const viewHouseSharePct =
+    viewPrizeUsd > 0 ? (viewHouseCostUsd / viewPrizeUsd) * 100 : 0;
 
   return {
-    active: rankActive(activeRows, rank),
-    upcoming: upcomingRows,
-    activeCount: activeRows.length,
-    upcomingCount: upcomingRows.length,
-    activePrizeUsd,
-    activeHouseCostUsd,
-    activeHouseSharePct,
+    rows,
+    view,
+    rank,
+    activeCount,
+    upcomingCount,
+    endedCount,
+    viewPrizeUsd,
+    viewHouseCostUsd,
+    viewHouseSharePct,
+    viewWagerUsd,
     backendUnavailable: base.backendUnavailable,
     snapshotMs: base.snapshotMs,
   };

@@ -14,8 +14,8 @@ import {
   OverviewKpiStripSkeleton,
 } from "./overview-kpi-strip";
 import { CreatorNetPanel } from "./creator-net-panel";
+import { CreatorPnlPanel } from "../../../../../(admin)/creators/[userId]/creator-pnl-panel";
 import {
-  WindowedPnlTiles,
   WindowedPnlTilesSkeleton,
 } from "./windowed-pnl-tiles";
 import {
@@ -37,7 +37,7 @@ import { LeaderboardsCard } from "./leaderboards-card";
  *   2. Deal | Affiliate Leaderboards — 50/50 row, stacks on narrow screens.
  *   3. Performance section:
  *      • Creator Net (P&L) box with (i) hover + breakdown.
- *      • Small windowed PnL tiles (1d / 3d / 7d / 2w / 1m).
+ *      • Affiliates PnL (lifetime + windowed tiles — same panel as /creators/[id]).
  *      • Activity chart (wager / deposits / GGR time-series).
  *
  * LAZY / never-preload: every heavy region streams in its OWN keyed Suspense
@@ -87,9 +87,13 @@ export function OverviewTab({
           <CreatorNetPanel userId={userId} />
         </Suspense>
 
-        {/* Small windowed PnL tiles (1d / 3d / 7d / 2w / 1m). */}
+        {/* Affiliates PnL — full parity with /creators/[id] (lifetime wager,
+            FTDs, deposits, card WD, windowed tiles). */}
         <Suspense fallback={<WindowedPnlTilesSkeleton />}>
-          <WindowedPnlTiles userId={userId} />
+          <CreatorPnlPanel
+            userId={userId}
+            profileResultPromise={profilePromise}
+          />
         </Suspense>
 
         {/* Activity chart — bucketed wager / deposits / GGR for the active

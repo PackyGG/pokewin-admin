@@ -11,6 +11,7 @@ import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
 import { getCreatorLeaderboardCost } from "../../../../../(admin)/creators/[userId]/_queries/leaderboard-cost-by-creator";
+import { getCreatorLeaderboardWagerMap } from "../../../../../(admin)/creators/[userId]/_queries/leaderboard-wager-by-board";
 import { CreateLeaderboardDialog } from "./create-leaderboard-dialog";
 
 /**
@@ -41,6 +42,9 @@ type LeaderboardRow = {
   approval_status: ApprovalStatus;
   cancelled_at: string | null;
   time_status: TimeStatus;
+  affiliate_codes: string[];
+  co_creator_user_ids: string[];
+  creator_user_id: string;
 };
 
 type ListResponse = {
@@ -126,6 +130,23 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
   const rows: LeaderboardRow[] = listResult.response.data.leaderboards ?? [];
   const total = listResult.response.data.total ?? 0;
 
+  const wagerMap = await getCreatorLeaderboardWagerMap(
+    rows.map((r) => ({
+      id: r.id,
+      creatorUserId: r.creator_user_id,
+      coCreatorUserIds: r.co_creator_user_ids ?? [],
+      affiliateCodes: r.affiliate_codes ?? [],
+      startDate: new Date(r.start_date),
+      endDate: new Date(r.end_date),
+    })),
+  ).catch((e) => {
+    console.error(
+      "[creator-hub.creators.leaderboards] wager map failed (chip omitted):",
+      e,
+    );
+    return new Map<string, number>();
+  });
+
   return (
     <div className="space-y-3">
       {heading}
@@ -152,7 +173,9 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
             />
           ) : (
             <div className="space-y-2">
-              {rows.map((r) => (
+              {rows.map((r) => {
+                const wagered = wagerMap.get(r.id);
+                return (
                 <Link
                   key={r.id}
                   href={`/creator-hub/leaderboards/${r.id}`}
@@ -163,6 +186,11 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                       <span className="truncate text-sm font-medium">
                         {r.title}
                       </span>
+                      {wagered != null && wagered > 0 && (
+                        <span className="shrink-0 text-xs tabular-nums text-emerald-600 dark:text-emerald-400">
+                          · {formatCurrency(wagered)} wagered
+                        </span>
+                      )}
                       {r.is_sponsored && (
                         <Badge variant="outline" className="text-[10px]">
                           sponsored
@@ -194,7 +222,8 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                     </Badge>
                   </div>
                 </Link>
-              ))}
+                );
+              })}
             </div>
           )}
 

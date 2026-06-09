@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   Coins,
   Gauge,
+  Percent,
   RotateCcw,
   TrendingDown,
   TrendingUp,
@@ -19,6 +20,7 @@ import {
   defaultLeversV2,
   projectEdgePlanV2,
   sanitizeLeversV2,
+  computeEdgeAfterRewards,
   type EdgePlanV2Baseline,
   type PlannedLeversV2,
 } from "../_model-v2";
@@ -72,6 +74,11 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
     [baseline, levers],
   );
 
+  const edgeAfterRewards = React.useMemo(
+    () => computeEdgeAfterRewards(projection),
+    [projection],
+  );
+
   const defaults = React.useMemo(() => defaultLeversV2(baseline), [baseline]);
   const gaming = React.useMemo(() => makeGamingSetters(setLevers), []);
   const presets = usePlannerPresetsV2();
@@ -88,6 +95,12 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
   }, []);
 
   const profitTone = projection.profitDelta >= 0 ? EMERALD : ROSE;
+  const netEdgeTone =
+    edgeAfterRewards.netEdgeAfterRewards < 0
+      ? ROSE
+      : edgeAfterRewards.netEdgeAfterRewards < 0.02
+        ? "#f59e0b"
+        : EMERALD;
 
   return (
     <div className="space-y-4">
@@ -127,6 +140,35 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
                 {formatCompactUsd(projection.plannedNgr)}
               </p>
             </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Edge before rewards
+              </p>
+              <p className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                {formatPct(edgeAfterRewards.grossEdge)}
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                was {formatPct(edgeAfterRewards.currentGrossEdge)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Edge after rewards
+              </p>
+              <p className="font-semibold tabular-nums" style={{ color: netEdgeTone }}>
+                {formatPct(edgeAfterRewards.netEdgeAfterRewards)}
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                was {formatPct(edgeAfterRewards.currentNetEdge)}
+                {edgeAfterRewards.netEdgeDelta !== 0 && (
+                  <>
+                    {" "}
+                    · {edgeAfterRewards.netEdgeDelta >= 0 ? "+" : ""}
+                    {formatPct(edgeAfterRewards.netEdgeDelta)}
+                  </>
+                )}
+              </p>
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -143,7 +185,27 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-7">
+        <KpiTile
+          label="Before rewards"
+          value={formatPct(edgeAfterRewards.grossEdge)}
+          sub={`was ${formatPct(edgeAfterRewards.currentGrossEdge)}`}
+          icon={TrendingUp}
+          accent="emerald"
+        />
+        <KpiTile
+          label="After rewards"
+          value={formatPct(edgeAfterRewards.netEdgeAfterRewards)}
+          sub={`−${formatPct(edgeAfterRewards.plannedRewardDrag)} drag`}
+          icon={Percent}
+          accent={
+            edgeAfterRewards.netEdgeAfterRewards < 0
+              ? "rose"
+              : edgeAfterRewards.netEdgeAfterRewards < 0.02
+                ? "amber"
+                : "cyan"
+          }
+        />
         <KpiTile
           label="Wager (real)"
           value={formatCompactUsd(projection.currentWager)}

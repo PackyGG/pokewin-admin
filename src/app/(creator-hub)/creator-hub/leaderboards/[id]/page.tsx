@@ -14,9 +14,10 @@ import { BackendApiError } from "@/lib/backend-api/errors";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { Badge } from "@/components/ui/badge";
-import { formatDate } from "@/lib/utils/format";
+import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { getAffiliateLeaderboardRankings } from "@/lib/queries/creators";
+import { getCreatorLeaderboardWagerMap } from "../../../../(admin)/creators/[userId]/_queries/leaderboard-wager-by-board";
 
 import { LeaderboardStandingsPanel } from "../../../../(admin)/creators/leaderboards/_components/leaderboard-standings-panel";
 
@@ -57,7 +58,7 @@ export default async function CreatorHubLeaderboardDetailPage({
     }
 
     const db = await getDb();
-    const [creator, rankings, claimHolds] = await Promise.all([
+    const [creator, rankings, claimHolds, wagerMap] = await Promise.all([
         db.user
             .findUnique({
                 where: { id: lb.creator_user_id },
@@ -83,11 +84,27 @@ export default async function CreatorHubLeaderboardDetailPage({
             console.error("[creator-hub.leaderboard] claim holds query failed", err);
             return [] as Awaited<ReturnType<typeof affiliateLeaderboardsApi.listClaimHolds>>;
         }),
+        getCreatorLeaderboardWagerMap([
+            {
+                id: lb.id,
+                creatorUserId: lb.creator_user_id,
+                coCreatorUserIds: lb.co_creator_user_ids ?? [],
+                affiliateCodes: lb.affiliate_codes ?? [],
+                startDate: new Date(lb.start_date),
+                endDate: new Date(lb.end_date),
+            },
+        ]).catch((err) => {
+            console.error("[creator-hub.leaderboard] wager map failed", err);
+            return new Map<string, number>();
+        }),
     ]);
 
     const holdByUserId = new Map(claimHolds.map((h) => [h.user_id, h]));
     const creatorLabel =
         creator?.username ?? creator?.email ?? lb.creator_user_id.slice(0, 8);
+    const totalWagerUsd =
+        wagerMap.get(lb.id) ??
+        rankings.reduce((sum, r) => sum + r.totalWageredUsd, 0);
 
     return (
         <div className="space-y-6">
@@ -149,6 +166,18 @@ export default async function CreatorHubLeaderboardDetailPage({
                             <span className="tabular-nums font-semibold">
                                 ${lb.total_prize_usd}
                             </span>
+                        }
+                    />
+                    <SummaryRow
+                        label="Total wager"
+                        value={
+                            totalWagerUsd > 0 ? (
+                                <span className="tabular-nums font-semibold text-emerald-600 dark:text-emerald-400">
+                                    {formatCurrency(totalWagerUsd)}
+                                </span>
+                            ) : (
+                                <span className="text-muted-foreground italic">—</span>
+                            )
                         }
                     />
                     <SummaryRow
