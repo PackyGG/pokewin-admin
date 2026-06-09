@@ -79,7 +79,9 @@ Die volle Mechanik (Scope, Hotspots, Commit-Disziplin, Honest-Reporting) steht w
 
 ---
 
-## ⚙️ Workflows / Multi-Agent-Orchestrierung — STRIKTE PFLICHT (User-Regel, 2026-06-05, verschärft)
+## ⚙️ Workflows / Multi-Agent-Orchestrierung — STRIKTE PFLICHT (User-Regel, 2026-06-05, verschärft · 2026-06-10 bekräftigt)
+
+**Bekräftigt 2026-06-10 (User, explizit: „use multiple agents and workflow in future! strict rule"):** Diese Regel gilt **ausnahmslos** und **auch für Exploration, Planung und Audit** — nicht nur für Implementation. Keine langen Inline-Recherchen oder Inline-Edits, wenn parallele Agents (Explore/Plan) bzw. ein `Workflow` die Arbeit breiter, paralleler und verifiziert abdecken können. Default für **jede** nicht-triviale Aufgabe = **Workflow + Fan-out paralleler Agents + adversariale Verify-Phase**, dann erst Synthese/Push. Inline nur für die unten genannten engen Ausnahmen.
 
 **STRIKTE User-Regel (höchste Priorität, NICHT optional):** Beginne **jede** nicht-triviale Aufgabe **mit einem Workflow** (`Workflow`-Tool, deterministische Multi-Agent-Orchestrierung). Workflows sind der **Default-Arbeitsmodus**, nicht die Ausnahme. **Mehrere Tasks → mehrere Workflows gleichzeitig** (im Zweifel ein eigener Workflow pro Task), und nutze **so viele Agents wie möglich** pro Workflow (Fan-out → Verify → Synthese), um das **bestmögliche Ergebnis** zu liefern — nicht nur das schnellste. **Keine Obergrenze** für parallel laufende Workflows oder Agents. Inline-Arbeit oder ein einzelner Background-Agent ist nur noch für die eng definierten Ausnahmen erlaubt (reine Codebasis-Frage ohne Edit, **ein einziger** trivialer 1-File-Fix, Live-Troubleshooting mit Log-Snippets, oder explizites „inline machen" des Users). In allen anderen Fällen gilt ausnahmslos: **Workflow zuerst.**
 
