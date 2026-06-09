@@ -131,9 +131,9 @@ export type ShardShopPackRow = {
 export type EdgePlanV2Baseline = SystemEdgeBaseline & {
   /** Canonical headline wager before organic denominator override (30d). */
   totalWager: number;
-  /** Pack/battle organic ledger wager (excl. borrow & creator-coded). */
+  /** Pack/battle organic ledger wager (borrow + creator-session excluded). */
   ledgerOrganicWager: number;
-  /** Upgrader wager from users not under a creator code. */
+  /** Upgrader wager (same organic scope as v1 baseline legs). */
   upgraderOrganicWager: number;
   /** Reconstructed prize cost used as shards redemption proxy (was raffles). */
   shardsRedemptionCost: number;

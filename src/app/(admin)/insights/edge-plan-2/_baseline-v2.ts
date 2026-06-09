@@ -433,15 +433,14 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     "edge-plan-v2.upgrader-buckets",
     REWARD_QUERY_TIMEOUT_MS,
   );
-  const [organicWager, borrowedWager] = await Promise.all([
-    getOrganicWagerTotals(),
-    getBorrowedWagerTotals(),
-  ]);
+  const borrowedWager = await getBorrowedWagerTotals();
 
   const totalWager = v1.wager;
-  if (organicWager != null && organicWager.totalOrganicWager > 0) {
-    v1 = applyOrganicWagerScale(v1, organicWager.totalOrganicWager, totalWager);
-  }
+  const packsW = v1.gameTypes.find((g) => g.type === "packs")?.wager ?? 0;
+  const battlesW = v1.gameTypes.find((g) => g.type === "battles")?.wager ?? 0;
+  const upgW = v1.gameTypes.find((g) => g.type === "upgrader")?.wager ?? 0;
+  const ledgerOrganicWager = packsW + battlesW;
+  const upgraderOrganicWager = upgW
 
   const estimatedWithdrawalVolumeUsd =
     withdrawalLedger?.volumeUsd ?? Math.max(0, v1.wager * 0.08);
@@ -485,8 +484,8 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
   return {
     ...v1,
     totalWager,
-    ledgerOrganicWager: organicWager?.ledgerOrganicWager ?? 0,
-    upgraderOrganicWager: organicWager?.upgraderOrganicWager ?? 0,
+    ledgerOrganicWager,
+    upgraderOrganicWager,
     periodLabel: insightsRewardsPeriodLabel(EDGE_PLAN_V2_PERIOD),
     periodDays: Math.max(1, daysForInsightsPeriodCapped(EDGE_PLAN_V2_PERIOD)),
     shardsRedemptionCost,
