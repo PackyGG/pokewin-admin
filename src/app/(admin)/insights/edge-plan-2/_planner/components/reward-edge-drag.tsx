@@ -2,7 +2,11 @@
 
 import { cn } from "@/lib/utils";
 import { formatPct } from "../../../edge-calc/math";
-import type { EdgePlanV2Projection } from "../../_model-v2";
+import {
+  affiliateWorstCaseEdgeDrag,
+  type EdgeAfterRewardsContext,
+  type EdgePlanV2Projection,
+} from "../../_model-v2";
 
 function plannerWager(projection: EdgePlanV2Projection): number {
   return Math.max(0, projection.plannedWager || projection.currentWager);
@@ -12,7 +16,11 @@ function plannerWager(projection: EdgePlanV2Projection): number {
 export function leverEdgeDragPct(
   projection: EdgePlanV2Projection,
   leverKey: string,
+  ctx?: EdgeAfterRewardsContext,
 ): number {
+  if (leverKey === "affiliate" && ctx) {
+    return affiliateWorstCaseEdgeDrag(ctx.baseline, ctx.levers);
+  }
   const wager = plannerWager(projection);
   if (wager <= 0) return 0;
   const lever = projection.levers.find((l) => l.key === leverKey);

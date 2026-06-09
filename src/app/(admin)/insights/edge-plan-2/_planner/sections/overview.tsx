@@ -6,8 +6,12 @@ import { StatPanel, PanelRow } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
 import { formatPct, formatSignedUsd } from "../../../edge-calc/math";
 import { cn } from "@/lib/utils";
-import type { EdgePlanV2Projection } from "../../_model-v2";
-import { computeEdgeAfterRewards } from "../../_model-v2";
+import {
+  computeEdgeAfterRewards,
+  type EdgePlanV2Baseline,
+  type EdgePlanV2Projection,
+  type PlannedLeversV2,
+} from "../../_model-v2";
 import type { NetEdgeScenario } from "../../../system-edge-plan/_model";
 import {
   LeverBreakdownPanel,
@@ -19,11 +23,15 @@ import {
 export function OverviewSection({
   projection,
   netEdgeScenarios,
+  baseline,
+  levers,
 }: {
   projection: EdgePlanV2Projection;
   netEdgeScenarios: NetEdgeScenario[];
+  baseline: EdgePlanV2Baseline;
+  levers: PlannedLeversV2;
 }) {
-  const edgeAfterRewards = computeEdgeAfterRewards(projection);
+  const edgeAfterRewards = computeEdgeAfterRewards(projection, { baseline, levers });
 
   return (
     <div className="space-y-4">

@@ -76,8 +76,8 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
   );
 
   const edgeAfterRewards = React.useMemo(
-    () => computeEdgeAfterRewards(projection),
-    [projection],
+    () => computeEdgeAfterRewards(projection, { baseline, levers }),
+    [projection, baseline, levers],
   );
 
   const defaults = React.useMemo(() => defaultLeversV2(baseline), [baseline]);
@@ -251,7 +251,12 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
       />
 
       <PlannerV2SectionPanel id="overview" active={activeSection}>
-        <OverviewSection projection={projection} netEdgeScenarios={netEdgeScenarios} />
+        <OverviewSection
+          projection={projection}
+          netEdgeScenarios={netEdgeScenarios}
+          baseline={baseline}
+          levers={levers}
+        />
       </PlannerV2SectionPanel>
       <PlannerV2SectionPanel id="gaming" active={activeSection}>
         <GamingEdgeSection

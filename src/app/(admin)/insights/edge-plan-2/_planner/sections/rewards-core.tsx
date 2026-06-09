@@ -21,6 +21,9 @@ import {
   plannedBlendedHouseEdgeV2,
   affiliateEdgeShareToWagerDrag,
   affiliateWagerDragToEdgeShare,
+  affiliateWorstCaseEdgeDrag,
+  splitAffiliateCostBundle,
+  topAffiliateTierEdgeShare,
   type EdgePlanV2Baseline,
   type PlannedLeversV2,
 } from "../../_model-v2";
@@ -63,6 +66,33 @@ export function RewardsCoreSection({
       ? affiliateWagerDragToEdgeShare(baseline.affiliateBlendedRate, edge)
       : null;
   }, [baseline.affiliateBlendedRate, baseline.houseEdge, plannedHouseEdge]);
+
+  const affiliateDragCtx = React.useMemo(
+    () => ({ baseline, levers }),
+    [baseline, levers],
+  );
+
+  const worstCaseAffiliateDrag = React.useMemo(
+    () => affiliateWorstCaseEdgeDrag(baseline, levers),
+    [baseline, levers],
+  );
+
+  const realizedAffiliateDrag = React.useMemo(() => {
+    const wager = Math.max(0, projection.plannedWager || projection.currentWager);
+    const lever = projection.levers.find((l) => l.key === "affiliate");
+    return wager > 0 && lever ? lever.plannedCost / wager : 0;
+  }, [projection]);
+
+  const topTierEdgeShare = React.useMemo(
+    () => topAffiliateTierEdgeShare(baseline, levers),
+    [baseline, levers],
+  );
+
+  const { commission: affiliateCommissionCost, leaderboard: affiliateLeaderboardCost } =
+    React.useMemo(
+      () => splitAffiliateCostBundle(baseline.affiliateCost),
+      [baseline.affiliateCost],
+    );
 
   const matchPct = 100 * levers.depositBonusMatchMult;
   const capUsd = baseline.depositBonusCapUsd * levers.depositBonusCapMult;
@@ -264,7 +294,7 @@ export function RewardsCoreSection({
           title={
             <RewardPanelTitle
               label="Affiliate commission"
-              dragPct={leverEdgeDragPct(projection, "affiliate")}
+              dragPct={leverEdgeDragPct(projection, "affiliate", affiliateDragCtx)}
             />
           }
           icon={Share2}
@@ -273,17 +303,26 @@ export function RewardsCoreSection({
           <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
             Tier rates are a{" "}
             <span className="font-medium text-foreground">% of referred house edge</span>,
-            not straight % of wager — effective wager drag = edge share × house edge
-            (e.g. 10% of edge at {formatPct(plannedHouseEdge)} blended edge ={" "}
-            {formatPct(affiliateEdgeShareToWagerDrag(0.1, plannedHouseEdge))} of
-            wager). Real affiliate cost:{" "}
-            <span className="font-medium text-rose-600 dark:text-rose-400">
-              {formatCurrency(baseline.affiliateCost)}
+            not straight % of wager — worst-case planning drag (top tier only) = edge
+            share × house edge (e.g. {formatPct(topTierEdgeShare)} of edge at{" "}
+            {formatPct(plannedHouseEdge)} blended edge ={" "}
+            <span className="font-medium text-foreground">
+              {formatPct(worstCaseAffiliateDrag)} of wager
             </span>
+            ). Realized commission spend:{" "}
+            <span className="font-medium text-rose-600 dark:text-rose-400">
+              {formatCurrency(affiliateCommissionCost)}
+            </span>
+            {affiliateLeaderboardCost > 0 && (
+              <>
+                {" "}
+                (+ {formatCurrency(affiliateLeaderboardCost)} leaderboard prizes)
+              </>
+            )}
             {baseline.affiliateBlendedRate != null && (
               <>
                 {" "}
-                · {formatPct(baseline.affiliateBlendedRate)} of wager realized
+                · {formatPct(realizedAffiliateDrag)} of wager realized
                 {realizedAffiliateEdgeShare != null && (
                   <> ({formatPct(realizedAffiliateEdgeShare)} of edge blended)</>
                 )}

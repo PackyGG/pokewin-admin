@@ -199,31 +199,37 @@ export function EdgeAfterRewardsPanel({
             What erodes edge (% of organic wager)
           </p>
           {summary.leverDrags.map((l) => (
-            <PanelRow
-              key={l.key}
-              label={l.label}
-              value={
-                <span className="flex items-center gap-2 tabular-nums">
-                  <span className="text-xs text-muted-foreground">
-                    {formatCompactUsd(l.plannedCostUsd)}
+            <div key={l.key}>
+              <PanelRow
+                label={l.label}
+                value={
+                  <span className="flex items-center gap-2 tabular-nums">
+                    <span className="text-xs text-muted-foreground">
+                      {formatCompactUsd(l.plannedCostUsd)}
+                    </span>
+                    <span
+                      className={cn(
+                        "w-16 text-right font-semibold",
+                        l.dragPct > 0
+                          ? "text-rose-600 dark:text-rose-400"
+                          : l.dragPct < 0
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-muted-foreground",
+                      )}
+                    >
+                      {l.dragPct === 0
+                        ? "—"
+                        : `${l.dragPct > 0 ? "−" : "+"}${formatPct(Math.abs(l.dragPct))}`}
+                    </span>
                   </span>
-                  <span
-                    className={cn(
-                      "w-16 text-right font-semibold",
-                      l.dragPct > 0
-                        ? "text-rose-600 dark:text-rose-400"
-                        : l.dragPct < 0
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-muted-foreground",
-                    )}
-                  >
-                    {l.dragPct === 0
-                      ? "—"
-                      : `${l.dragPct > 0 ? "−" : "+"}${formatPct(Math.abs(l.dragPct))}`}
-                  </span>
-                </span>
-              }
-            />
+                }
+              />
+              {l.dragNote ? (
+                <p className="pb-1 pl-0 text-[10px] leading-snug text-muted-foreground">
+                  {l.dragNote}
+                </p>
+              ) : null}
+            </div>
           ))}
         </div>
       )}

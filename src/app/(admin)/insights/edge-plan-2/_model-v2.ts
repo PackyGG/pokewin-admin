@@ -30,6 +30,7 @@ import {
   PLANNED_UPGRADER_EDGE_DEFAULT,
   GAME_TYPE_IDS,
   removeWagerReqCommissionUplift,
+  REMOVE_WAGER_REQ_COMMISSION_BASE_MULT,
   blendedPackBattleEdge,
   effectiveProjectionTypeEdge,
 } from "../system-edge-plan/_model";
@@ -214,6 +215,68 @@ const DEFAULT_SHARDS_PER_DOLLAR = 0.1;
 /** Planning turnover: $1 reward spend → ~$X wager before exit. */
 const REWARD_WAGER_TURNOVER = 2.5;
 const LEADERBOARD_AFFILIATE_COST_SHARE = 0.12;
+
+/** Split bundled affiliate rollup into commission vs leaderboard prize pool. */
+export function splitAffiliateCostBundle(totalCost: number): {
+  commission: number;
+  leaderboard: number;
+} {
+  const total = Math.max(0, totalCost);
+  const leaderboard = total * LEADERBOARD_AFFILIATE_COST_SHARE;
+  return { commission: total - leaderboard, leaderboard };
+}
+
+/** Top affiliate tier edge share (worst-case single-tier planning). */
+export function topAffiliateTierEdgeShare(
+  baseline: Pick<SystemEdgeBaseline, "affiliateTiers">,
+  levers: Pick<PlannedLeversV2, "affiliateRates">,
+): number {
+  const tiers = [...baseline.affiliateTiers].sort((a, b) => a.level - b.level);
+  const top = tiers[tiers.length - 1];
+  if (!top) return 0;
+  return Math.max(0, levers.affiliateRates[top.level] ?? top.currentRate);
+}
+
+/**
+ * Worst-case affiliate edge erosion for planning: top tier edge share × planned
+ * blended house edge (each affiliate has one tier — not realized cost ÷ wager).
+ */
+export function affiliateWorstCaseEdgeDrag(
+  baseline: EdgePlanV2Baseline,
+  levers: PlannedLeversV2,
+): number {
+  const houseEdge = plannedBlendedHouseEdgeV2(baseline, levers);
+  const edgeShare = topAffiliateTierEdgeShare(baseline, levers);
+  return affiliateEdgeShareToWagerDrag(edgeShare, houseEdge);
+}
+
+/** Commission-only affiliate projection (excludes leaderboard prizes). */
+function projectAffiliateCommissionV2(
+  baseline: EdgePlanV2Baseline,
+  planned: PlannedLeversV2,
+): { current: number; planned: number } {
+  const { commission: current } = splitAffiliateCostBundle(baseline.affiliateCost);
+  if (current <= 0) return { current: 0, planned: 0 };
+
+  const tiers = baseline.affiliateTiers;
+  if (tiers.length === 0) return { current, planned: current };
+
+  const mean = (xs: number[]) =>
+    xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
+  const currentBlend = mean(tiers.map((t) => t.currentRate));
+  const plannedBlend = mean(
+    tiers.map((t) => Math.max(0, planned.affiliateRates[t.level] ?? t.currentRate)),
+  );
+  const rateRatio = currentBlend > 0 ? plannedBlend / currentBlend : 1;
+  const reqMult = planned.removeAffiliateWagerReq
+    ? REMOVE_WAGER_REQ_COMMISSION_BASE_MULT
+    : 1;
+
+  return {
+    current,
+    planned: Math.max(0, current * rateRatio * reqMult),
+  };
+}
 
 export function defaultRakebackRewardWagerWeights(): RewardWagerShareBreakdown {
   return Object.fromEntries(
@@ -820,18 +883,45 @@ export function projectEdgePlanV2(
   const shardsCurrent = issuance.current + redemption.current;
   const shardsPlanned = issuance.planned + redemption.planned;
 
+  const affiliateCommission = projectAffiliateCommissionV2(baseline, planned);
+  const { leaderboard: affiliateLeaderboardCurrent } = splitAffiliateCostBundle(
+    baseline.affiliateCost,
+  );
+
   const levers: LeverProjection[] = core.levers
     .filter((l) => l.key !== "raffles")
-    .map((l) =>
-      l.key === "rakeback"
-        ? {
-            ...l,
-            plannedCost: rakeback.planned,
-            deltaCost: rakeback.planned - rakeback.current,
-          }
-        : l,
-    )
+    .map((l) => {
+      if (l.key === "rakeback") {
+        return {
+          ...l,
+          plannedCost: rakeback.planned,
+          deltaCost: rakeback.planned - rakeback.current,
+        };
+      }
+      if (l.key === "affiliate") {
+        return {
+          ...l,
+          label: "Affiliate commission",
+          currentCost: affiliateCommission.current,
+          plannedCost: affiliateCommission.planned,
+          deltaCost: affiliateCommission.planned - affiliateCommission.current,
+        };
+      }
+      return l;
+    })
     .concat([
+      ...(affiliateLeaderboardCurrent > 0
+        ? [
+            {
+              key: "leaderboard",
+              label: "Affiliate leaderboard prizes",
+              currentCost: affiliateLeaderboardCurrent,
+              plannedCost: affiliateLeaderboardCurrent,
+              deltaCost: 0,
+              dataAvailable: true,
+            } satisfies LeverProjection,
+          ]
+        : []),
       {
         key: "shards-earn",
         label: "Shard earn (issuance liability)",
@@ -860,18 +950,26 @@ export function projectEdgePlanV2(
       },
     ]);
 
+  const coreAffiliate = core.levers.find((l) => l.key === "affiliate");
+  const affiliatePlannedTotal =
+    affiliateCommission.planned + affiliateLeaderboardCurrent;
+  const affiliateAdjustment =
+    coreAffiliate != null ? affiliatePlannedTotal - coreAffiliate.plannedCost : 0;
+
   const rewardCostDelta =
     core.plannedRewardCost -
     core.currentRewardCost +
     rakebackDelta +
-    (shardsPlanned - shardsCurrent) -
+    (shardsPlanned - shardsCurrent) +
+    affiliateAdjustment -
     withdrawalFrictionAdjUsd;
 
   const plannedNgr =
     core.plannedNgr -
     rakebackDelta -
     (shardsPlanned - shardsCurrent) +
-    withdrawalFrictionAdjUsd;
+    withdrawalFrictionAdjUsd -
+    affiliateAdjustment;
   const profitDelta = plannedNgr - core.currentNgr;
   const monthlyProfitDelta =
     baseline.periodDays > 0 ? (profitDelta / baseline.periodDays) * 30 : profitDelta;
@@ -881,7 +979,11 @@ export function projectEdgePlanV2(
   return {
     ...core,
     levers,
-    plannedRewardCost: core.plannedRewardCost + rakebackDelta + (shardsPlanned - shardsCurrent),
+    plannedRewardCost:
+      core.plannedRewardCost +
+      rakebackDelta +
+      (shardsPlanned - shardsCurrent) +
+      affiliateAdjustment,
     currentRewardCost: core.currentRewardCost + shardsCurrent,
     rewardCostDelta,
     plannedNgr,
@@ -901,6 +1003,13 @@ export type EdgeAfterRewardsLeverDrag = {
   plannedCostUsd: number;
   /** Positive = erodes edge; negative = adds back (e.g. withdrawal friction). */
   dragPct: number;
+  /** Optional planning note (e.g. affiliate worst-case vs realized spend). */
+  dragNote?: string;
+};
+
+export type EdgeAfterRewardsContext = {
+  baseline: EdgePlanV2Baseline;
+  levers: PlannedLeversV2;
 };
 
 /** Gross → reward drag → net edge remaining on the planned config. */
@@ -916,8 +1025,16 @@ export type EdgeAfterRewardsSummary = {
   leverDrags: EdgeAfterRewardsLeverDrag[];
 };
 
+function formatDragRatePct(rate: number): string {
+  if (!Number.isFinite(rate)) return "—";
+  const v = rate * 100;
+  const s = v.toFixed(2).replace(/\.?0+$/, "");
+  return `${s}%`;
+}
+
 export function computeEdgeAfterRewards(
   projection: EdgePlanV2Projection,
+  ctx?: EdgeAfterRewardsContext,
 ): EdgeAfterRewardsSummary {
   const wager = Math.max(0, projection.plannedWager || projection.currentWager);
   const grossEdge = projection.plannedEdge;
@@ -931,12 +1048,29 @@ export function computeEdgeAfterRewards(
 
   const leverDrags: EdgeAfterRewardsLeverDrag[] = projection.levers
     .filter((l) => Math.abs(l.plannedCost) > 0.005)
-    .map((l) => ({
-      key: l.key,
-      label: l.label,
-      plannedCostUsd: l.plannedCost,
-      dragPct: wager > 0 ? l.plannedCost / wager : 0,
-    }))
+    .map((l) => {
+      const realizedDrag = wager > 0 ? l.plannedCost / wager : 0;
+      if (l.key === "affiliate" && ctx) {
+        const edgeShare = topAffiliateTierEdgeShare(ctx.baseline, ctx.levers);
+        const worstCaseDrag = affiliateWorstCaseEdgeDrag(ctx.baseline, ctx.levers);
+        return {
+          key: l.key,
+          label: l.label,
+          plannedCostUsd: l.plannedCost,
+          dragPct: worstCaseDrag,
+          dragNote:
+            wager > 0
+              ? `Top tier ${formatDragRatePct(edgeShare)} of edge (planning); realized spend ${formatDragRatePct(realizedDrag)} of wager`
+              : undefined,
+        };
+      }
+      return {
+        key: l.key,
+        label: l.label,
+        plannedCostUsd: l.plannedCost,
+        dragPct: realizedDrag,
+      };
+    })
     .sort((a, b) => b.dragPct - a.dragPct);
 
   return {
