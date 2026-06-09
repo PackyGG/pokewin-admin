@@ -2,10 +2,7 @@
 
 import * as React from "react";
 import {
-  CloudRain,
   Coins,
-  Gift,
-  Percent,
   Share2,
   ShieldCheck,
   Trophy,
@@ -15,7 +12,7 @@ import {
 
 import { StatPanel, PanelRow, SectionHeading } from "@/components/modern-panels";
 import { Switch } from "@/components/ui/switch";
-import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
+import { formatCurrency } from "@/lib/utils/format";
 import { formatPct } from "../../../edge-calc/math";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
 import {
@@ -26,6 +23,8 @@ import {
 } from "../../_model-v2";
 import { multLabel } from "../utils";
 import { EmptyLever, formatPercentInt } from "../components/empty-lever";
+import { FounderOtherRewardsPanel } from "../components/founder-other-rewards-panel";
+import { RakebackWagerControls } from "../components/rakeback-wager-controls";
 
 export function RewardsCoreSection({
   baseline,
@@ -44,6 +43,7 @@ export function RewardsCoreSection({
 
   return (
     <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+      <div className="xl:col-span-2 2xl:col-span-3">
       <StatPanel title="Rakeback" icon={Wallet} accent="rose">
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           Realized rakeback this window:{" "}
@@ -80,50 +80,11 @@ export function RewardsCoreSection({
               />
             ))}
 
-            <div className="mt-4 space-y-3 border-t pt-3">
-              <SectionHeading icon={Percent} title="Wager weighting" />
-              <LeverSlider
-                label="Packs + battles wager → rakeback"
-                valueLabel={formatPct(levers.rakebackPackBattleWeight)}
-                value={levers.rakebackPackBattleWeight * 100}
-                onValueChange={(pct) =>
-                  setLevers((s) => ({
-                    ...s,
-                    rakebackPackBattleWeight: clamp(pct / 100, 0, 1),
-                  }))
-                }
-                min={0}
-                max={100}
-                step={0.1}
-                baselineMarker={100}
-                baselineLabel="current 100%"
-                disabled={baseline.rakebackCost <= 0}
-                preciseInput={{ unit: "percent" }}
-              />
-              <LeverSlider
-                label="Upgrader wager → rakeback"
-                valueLabel={formatPct(levers.rakebackUpgraderWeight)}
-                value={levers.rakebackUpgraderWeight * 100}
-                onValueChange={(pct) =>
-                  setLevers((s) => ({
-                    ...s,
-                    rakebackUpgraderWeight: clamp(pct / 100, 0, 1),
-                  }))
-                }
-                min={0}
-                max={100}
-                step={0.1}
-                baselineMarker={100}
-                baselineLabel="current 100%"
-                disabled={
-                  baseline.rakebackCost <= 0 ||
-                  !baseline.gameTypes.some(
-                    (g) => g.type === "upgrader" && g.dataAvailable,
-                  )
-                }
-                preciseInput={{ unit: "percent" }}
-              />
-            </div>
+            <RakebackWagerControls
+              baseline={baseline}
+              levers={levers}
+              setLevers={setLevers}
+            />
 
             <div className="mt-4 space-y-3 border-t pt-3">
               <SectionHeading icon={Zap} title="Instant claim" />
@@ -171,6 +132,7 @@ export function RewardsCoreSection({
           </>
         )}
       </StatPanel>
+      </div>
 
       <StatPanel title="Deposit bonus" icon={Coins} accent="amber">
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
@@ -247,60 +209,11 @@ export function RewardsCoreSection({
         )}
       </StatPanel>
 
-      <StatPanel title="Rain" icon={CloudRain} accent="cyan">
-        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-          Net house slice = max(0, rain wins − tips).
-        </p>
-        {baseline.rainWinTotal > 0 && (
-          <div className="mb-3 space-y-0.5">
-            <PanelRow
-              label="Rain wins paid (gross)"
-              value={
-                <span className="text-rose-600 dark:text-rose-400">
-                  {formatCompactUsd(baseline.rainWinTotal)}
-                </span>
-              }
-            />
-            <PanelRow
-              label="− User / founder tips"
-              value={
-                <span className="text-emerald-600 dark:text-emerald-400">
-                  {formatCompactUsd(baseline.rainTipTotal)}
-                </span>
-              }
-            />
-            <PanelRow
-              label="= Net house slice"
-              value={
-                <span className="font-semibold text-rose-600 dark:text-rose-400">
-                  {formatCompactUsd(baseline.rainCost)}
-                </span>
-              }
-            />
-          </div>
-        )}
-        {baseline.rainCost <= 0 ? (
-          <EmptyLever
-            note={
-              baseline.rainWinTotal > 0
-                ? "Tips fully covered rain wins this window."
-                : "No net rain cost in this window."
-            }
-          />
-        ) : (
-          <LeverSlider
-            label={`Net rain cost (real ${formatCompactUsd(baseline.rainCost)})`}
-            valueLabel={formatCompactUsd(baseline.rainCost * Math.max(0, levers.rainCostMult))}
-            value={levers.rainCostMult * 100}
-            onValueChange={setMult("rainCostMult")}
-            min={0}
-            max={300}
-            step={0.1}
-            baselineMarker={100}
-            preciseInput={{ unit: "multiplier" }}
-          />
-        )}
-      </StatPanel>
+      <FounderOtherRewardsPanel
+        baseline={baseline}
+        levers={levers}
+        setLevers={setLevers}
+      />
 
       <div className="lg:col-span-2">
         <StatPanel title="Affiliate commission" icon={Share2} accent="rose">
@@ -365,47 +278,6 @@ export function RewardsCoreSection({
           )}
         </StatPanel>
       </div>
-
-      <StatPanel title="Other & founder rewards" icon={Gift} accent="amber">
-        {!baseline.otherRewardCost && !baseline.mothaCost ? (
-          <EmptyLever note="No other reward cost or motha giveaways in this window." />
-        ) : (
-          <>
-            <p className="mb-3 text-xs text-muted-foreground">
-              Gift cards, promo codes, waitlist prizes, manual vouchers, and motha
-              founder giveaways.
-            </p>
-            {baseline.otherRewardCost > 0 && (
-              <LeverSlider
-                label={`Other reward spend (real ${formatCompactUsd(baseline.otherRewardCost)})`}
-                valueLabel={formatCompactUsd(
-                  baseline.otherRewardCost * levers.otherRewardCostMult,
-                )}
-                value={levers.otherRewardCostMult * 100}
-                onValueChange={setMult("otherRewardCostMult")}
-                min={0}
-                max={300}
-                step={0.1}
-                baselineMarker={100}
-                preciseInput={{ unit: "multiplier" }}
-              />
-            )}
-            {baseline.mothaCost > 0 && (
-              <LeverSlider
-                label={`Motha giveaways (real ${formatCompactUsd(baseline.mothaCost)})`}
-                valueLabel={formatCompactUsd(baseline.mothaCost * levers.mothaCostMult)}
-                value={levers.mothaCostMult * 100}
-                onValueChange={setMult("mothaCostMult")}
-                min={0}
-                max={300}
-                step={0.1}
-                baselineMarker={100}
-                preciseInput={{ unit: "multiplier" }}
-              />
-            )}
-          </>
-        )}
-      </StatPanel>
     </div>
   );
 }

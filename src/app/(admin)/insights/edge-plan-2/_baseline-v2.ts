@@ -11,8 +11,11 @@ import {
 } from "@/lib/queries/insights-rewards/_period";
 import type { GameTypeBaseline, SystemEdgeBaseline } from "../system-edge-plan/_model";
 import { getSystemEdgeBaseline } from "../system-edge-plan/_baseline";
+import { getMothaGiveawayOverview } from "@/lib/queries/insights-rewards/motha/overview";
 
-import type { EdgePlanV2Baseline, ShardShopPackRow, ShardsDataSource } from "./_model-v2";
+import type { EdgePlanV2Baseline, ShardShopPackRow, ShardsDataSource, UpgraderRakebackBucket } from "./_model-v2";
+import { estimateRewardWagerShares } from "./_model-v2";
+import { getUpgraderProfitability } from "@/lib/queries/insights-games/upgrader";
 
 /** Edge Plan 2.0 always anchors on the last 30 days of production data. */
 export const EDGE_PLAN_V2_PERIOD: InsightsRewardsPeriod = "30d";
@@ -136,6 +139,82 @@ function clampShardsRate(n: number): number {
   return Math.min(10, Math.max(0.01, n));
 }
 
+function parseBucketMultiplierBounds(label: string): {
+  minMultiplier: number;
+  maxMultiplier: number | null;
+} {
+  const cleaned = label.replace(/×/g, "").trim();
+  if (cleaned.startsWith("<")) {
+    return { minMultiplier: 0, maxMultiplier: Number.parseFloat(cleaned.slice(1)) || 2 };
+  }
+  if (cleaned.endsWith("+")) {
+    return { minMultiplier: Number.parseFloat(cleaned.slice(0, -1)) || 100, maxMultiplier: null };
+  }
+  const parts = cleaned.split(/[–-]/);
+  if (parts.length >= 2) {
+    return {
+      minMultiplier: Number.parseFloat(parts[0]) || 0,
+      maxMultiplier: Number.parseFloat(parts[1]) || null,
+    };
+  }
+  return { minMultiplier: 0, maxMultiplier: null };
+}
+
+function mapUpgraderBuckets(
+  rows: Awaited<ReturnType<typeof getUpgraderProfitability>>["buckets"],
+): UpgraderRakebackBucket[] {
+  return rows.map((b) => {
+    const bounds = parseBucketMultiplierBounds(b.label);
+    return {
+      label: b.label,
+      minMultiplier: bounds.minMultiplier,
+      maxMultiplier: bounds.maxMultiplier,
+      wager: b.totalWager,
+      winRate: b.bets > 0 ? b.hitRatePct / 100 : 0,
+    };
+  });
+}
+
+async function getBorrowedWagerTotals(): Promise<{
+  packWagerBorrowed: number;
+  battleWagerBorrowed: number;
+} | null> {
+  const since = windowFor30d().since;
+  if (!since) return null;
+
+  const { data } = await safeQuery(
+    async () => {
+      const db = await getDb();
+      const rows = await db.$queryRawUnsafe<
+        { pack_wager_borrowed: string; battle_wager_borrowed: string }[]
+      >(
+        `SELECT
+           COALESCE(SUM(CASE WHEN lt.type::text = 'pack_opening'
+                             AND lt.description ILIKE '%borrow%'
+                            THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS pack_wager_borrowed,
+           COALESCE(SUM(CASE WHEN lt.type::text = 'battle_entry'
+                             AND lt.description ILIKE '%borrow%'
+                            THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS battle_wager_borrowed
+         FROM ledger_transactions lt
+         WHERE lt.status = 'completed'
+           AND lt.created_at >= $1
+           AND lt.user_id IN (
+             SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support')
+           )`,
+        since,
+      );
+      return {
+        packWagerBorrowed: toNumber(rows[0]?.pack_wager_borrowed),
+        battleWagerBorrowed: toNumber(rows[0]?.battle_wager_borrowed),
+      };
+    },
+    null,
+    "edge-plan-v2.borrowed-wager",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  return data;
+}
+
 /**
  * Read balance vs card/inventory withdrawal split from the ledger for the 30d
  * window. Returns null when the query fails or volume is zero.
@@ -210,6 +289,20 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
   const shardsRedemptionCost = v1.raffleCost;
 
   const withdrawalLedger = await getWithdrawalBaselineFromLedger();
+  const mothaOverview = await safeQuery(
+    () => getMothaGiveawayOverview(EDGE_PLAN_V2_PERIOD),
+    null,
+    "edge-plan-v2.motha-breakdown",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const upgraderData = await safeQuery(
+    () => getUpgraderProfitability("30d"),
+    null,
+    "edge-plan-v2.upgrader-buckets",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const borrowedWager = await getBorrowedWagerTotals();
+
   const estimatedWithdrawalVolumeUsd =
     withdrawalLedger?.volumeUsd ?? Math.max(0, v1.wager * 0.08);
   const balanceWithdrawalShare =
@@ -230,6 +323,25 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     v1.gameTypes.every((g) => !g.dataAvailable) ||
     v1.rakebackCost + v1.affiliateCost + v1.dailyPacksCost === 0;
 
+  const packWagerBorrowed = borrowedWager?.packWagerBorrowed ?? 0;
+  const battleWagerBorrowed = borrowedWager?.battleWagerBorrowed ?? 0;
+
+  const partialForShares = {
+    wager: v1.wager,
+    raceCost: v1.raceCost,
+    affiliateCost: v1.affiliateCost,
+    rainCost: v1.rainCost,
+    rakebackCost: v1.rakebackCost,
+    dailyPacksCost: v1.dailyPacksCost,
+    depositBonusCost: v1.depositBonusCost,
+    mothaCost: v1.mothaCost,
+    shardsRedemptionCost,
+    otherRewardCost: v1.otherRewardCost,
+    signupPacksCost: v1.signupPacksCost,
+    packWagerBorrowed,
+    battleWagerBorrowed,
+  };
+
   return {
     ...v1,
     periodLabel: insightsRewardsPeriodLabel(EDGE_PLAN_V2_PERIOD),
@@ -243,5 +355,27 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     withdrawalVolumeSource: withdrawalLedger ? "ledger" : "estimate",
     balanceWithdrawalShareSource: withdrawalLedger ? "ledger" : "estimate",
     baselineSparse,
+    mothaBreakdown: mothaOverview.data
+      ? {
+          tips: mothaOverview.data.byChannel.tips,
+          rain: mothaOverview.data.byChannel.rain,
+          sponsorship: mothaOverview.data.byChannel.sponsorship,
+          eventCount: mothaOverview.data.count,
+          activeDays: mothaOverview.data.uniqueClaimants,
+        }
+      : null,
+    upgraderRakebackAnchor: upgraderData.data
+      ? {
+          buckets: mapUpgraderBuckets(upgraderData.data.buckets),
+          totalWager: upgraderData.data.totals.wager,
+          winRate:
+            upgraderData.data.totals.bets > 0
+              ? upgraderData.data.totals.wins / upgraderData.data.totals.bets
+              : 0,
+        }
+      : null,
+    rewardWagerShare: estimateRewardWagerShares(partialForShares),
+    packWagerBorrowed,
+    battleWagerBorrowed,
   };
 }

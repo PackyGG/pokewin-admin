@@ -18,6 +18,7 @@ import {
   type PackCardPreview,
   type GameTypeId,
   type RakebackCadenceId,
+  type RakebackCadenceLever,
   defaultLevers,
   projectEdgePlan,
   computeNetEdgeScenarios,
@@ -49,6 +50,58 @@ function breakageFactor(wagerReqMult: number): number {
 }
 
 export type ShardsDataSource = "raffle_proxy" | "manual" | "backend";
+
+/** Reward channels that can fund wager recycled into rakeback accrual. */
+export type RewardWagerSourceId =
+  | "race"
+  | "leaderboard"
+  | "rain"
+  | "rakeback"
+  | "dailyPacks"
+  | "affiliate"
+  | "depositBonus"
+  | "motha"
+  | "shards"
+  | "borrowed"
+  | "other";
+
+export const REWARD_WAGER_SOURCE_IDS: RewardWagerSourceId[] = [
+  "race",
+  "leaderboard",
+  "rain",
+  "rakeback",
+  "dailyPacks",
+  "affiliate",
+  "depositBonus",
+  "motha",
+  "shards",
+  "borrowed",
+  "other",
+];
+
+export const REWARD_WAGER_SOURCE_LABELS: Record<RewardWagerSourceId, string> = {
+  race: "Race prizes",
+  leaderboard: "Leaderboard prizes",
+  rain: "Rain",
+  rakeback: "Rakeback claims",
+  dailyPacks: "Daily / free packs",
+  affiliate: "Affiliate commission",
+  depositBonus: "Deposit bonus",
+  motha: "Motha founder giveaways",
+  shards: "Shard shop",
+  borrowed: "Borrow-play (packs + battles)",
+  other: "Other rewards",
+};
+
+export type UpgraderRakebackBucket = {
+  label: string;
+  minMultiplier: number;
+  maxMultiplier: number | null;
+  wager: number;
+  winRate: number;
+};
+
+export type RewardWagerShareBreakdown = Record<RewardWagerSourceId, number>;
 
 /** One shard-shop pack the owner can plan EV for before prod packs exist. */
 export type ShardShopPackRow = {
@@ -82,6 +135,24 @@ export type EdgePlanV2Baseline = SystemEdgeBaseline & {
   balanceWithdrawalShareSource: "ledger" | "estimate";
   /** True when headline metrics were recovered or planning defaults were used. */
   baselineSparse?: boolean;
+  /** Per-channel motha founder giveaway split (30d window). */
+  mothaBreakdown: {
+    tips: number;
+    rain: number;
+    sponsorship: number;
+    eventCount: number;
+    activeDays: number;
+  } | null;
+  /** Upgrader target-multiplier buckets for min-bet eligibility modeling. */
+  upgraderRakebackAnchor: {
+    buckets: UpgraderRakebackBucket[];
+    totalWager: number;
+    winRate: number;
+  } | null;
+  /** Estimated share of total wager originating from each reward channel. */
+  rewardWagerShare: RewardWagerShareBreakdown;
+  packWagerBorrowed: number;
+  battleWagerBorrowed: number;
 };
 
 export type PlannedLeversV2 = Omit<
@@ -106,6 +177,15 @@ export type PlannedLeversV2 = Omit<
   /** Withdrawal wager weights (0..1). */
   withdrawalPackBattleWeight: number;
   withdrawalUpgraderWeight: number;
+  /** Per-game-type rakeback accrual weight (0..1). */
+  rakebackPacksWeight: number;
+  rakebackBattlesWeight: number;
+  /** Only upgrader bets at or above this target multiplier count (1.0 = all). */
+  rakebackUpgraderMinMultiplier: number;
+  /** Cap winning upgrader bet amount that accrues rakeback (0..1). */
+  rakebackUpgraderMaxWinPct: number;
+  /** How much wager from each reward source counts toward rakeback (0..1). */
+  rakebackRewardWagerWeights: RewardWagerShareBreakdown;
 };
 
 export type EdgePlanV2Projection = EdgePlanProjection & {
@@ -115,14 +195,275 @@ export type EdgePlanV2Projection = EdgePlanProjection & {
 };
 
 const DEFAULT_SHARDS_PER_DOLLAR = 0.1;
+/** Planning turnover: $1 reward spend → ~$X wager before exit. */
+const REWARD_WAGER_TURNOVER = 2.5;
+const LEADERBOARD_AFFILIATE_COST_SHARE = 0.12;
+
+export function defaultRakebackRewardWagerWeights(): RewardWagerShareBreakdown {
+  return Object.fromEntries(
+    REWARD_WAGER_SOURCE_IDS.map((id) => [id, 1]),
+  ) as RewardWagerShareBreakdown;
+}
+
+function cadenceWeight(
+  cadence: RakebackCadenceLever,
+  all: RakebackCadenceLever[],
+): number {
+  const enabled = all.filter((c) => c.enabled);
+  if (enabled.length === 0) return cadence.enabled ? 1 : 0;
+  return cadence.enabled ? 1 / enabled.length : 0;
+}
+
+function blendedPackBattleRakebackWeight(
+  baseline: EdgePlanV2Baseline,
+  planned: PlannedLeversV2,
+): number {
+  const packs = baseline.gameTypes.find((g) => g.type === "packs")?.wager ?? 0;
+  const battles = baseline.gameTypes.find((g) => g.type === "battles")?.wager ?? 0;
+  const pb = packs + battles;
+  if (pb <= 0) {
+    return (planned.rakebackPacksWeight + planned.rakebackBattlesWeight) / 2;
+  }
+  return (
+    (packs * planned.rakebackPacksWeight + battles * planned.rakebackBattlesWeight) /
+    pb
+  );
+}
+
+/** Share of upgrader wager eligible at a minimum target multiplier. */
+export function upgraderMinMultiplierEligibleShare(
+  anchor: EdgePlanV2Baseline["upgraderRakebackAnchor"],
+  minMultiplier: number,
+): number {
+  if (!anchor || anchor.totalWager <= 0) return 1;
+  const min = Math.max(1, minMultiplier);
+  if (min <= 1) return 1;
+
+  let eligible = 0;
+  for (const b of anchor.buckets) {
+    const lo = b.minMultiplier;
+    const hi = b.maxMultiplier;
+    if (hi != null && min >= hi) continue;
+    if (min <= lo) {
+      eligible += b.wager;
+      continue;
+    }
+    if (hi == null) {
+      eligible += b.wager;
+      continue;
+    }
+    const span = hi - lo;
+    if (span > 0) {
+      eligible += b.wager * ((hi - min) / span);
+    }
+  }
+  return clamp(eligible / anchor.totalWager, 0, 1);
+}
+
+function gameTypeRakebackWeightFactor(
+  baseline: EdgePlanV2Baseline,
+  planned: PlannedLeversV2,
+): number {
+  const packs = baseline.gameTypes.find((g) => g.type === "packs")?.wager ?? 0;
+  const battles = baseline.gameTypes.find((g) => g.type === "battles")?.wager ?? 0;
+  const upg = baseline.gameTypes.find((g) => g.type === "upgrader")?.wager ?? 0;
+  const total = packs + battles + upg;
+  if (total <= 0) return 1;
+
+  const minMultShare = upgraderMinMultiplierEligibleShare(
+    baseline.upgraderRakebackAnchor,
+    planned.rakebackUpgraderMinMultiplier,
+  );
+  const winRate = baseline.upgraderRakebackAnchor?.winRate ?? 0;
+  const maxWinPct = clamp(planned.rakebackUpgraderMaxWinPct, 0, 1);
+  const winCapFactor = 1 - winRate + winRate * maxWinPct;
+  const upgFactor =
+    clamp(planned.rakebackUpgraderWeight, 0, 1) * minMultShare * winCapFactor;
+
+  return (
+    (packs * clamp(planned.rakebackPacksWeight, 0, 1) +
+      battles * clamp(planned.rakebackBattlesWeight, 0, 1) +
+      upg * upgFactor) /
+    total
+  );
+}
+
+function rewardWagerRecyclingFactor(
+  baseline: EdgePlanV2Baseline,
+  planned: PlannedLeversV2,
+): number {
+  const totalWager = baseline.wager;
+  if (totalWager <= 0) return 1;
+
+  const borrowedWager = Math.max(
+    0,
+    baseline.packWagerBorrowed + baseline.battleWagerBorrowed,
+  );
+  const borrowedShare = clamp(borrowedWager / totalWager, 0, 1);
+
+  let recycledShare = 0;
+  for (const id of REWARD_WAGER_SOURCE_IDS) {
+    if (id === "borrowed") continue;
+    recycledShare += baseline.rewardWagerShare[id] ?? 0;
+  }
+  recycledShare = clamp(recycledShare, 0, Math.max(0, 1 - borrowedShare));
+
+  let depositShare = 1 - borrowedShare - recycledShare;
+  if (depositShare < 0) {
+    const scale = 1 / (borrowedShare + recycledShare);
+    depositShare = 0;
+    recycledShare *= scale;
+  }
+
+  let weightedRecycled = 0;
+  for (const id of REWARD_WAGER_SOURCE_IDS) {
+    if (id === "borrowed") continue;
+    const share = baseline.rewardWagerShare[id] ?? 0;
+    if (share <= 0) continue;
+    weightedRecycled +=
+      share * clamp(planned.rakebackRewardWagerWeights[id] ?? 1, 0, 1);
+  }
+
+  const borrowedWeight = clamp(
+    planned.rakebackRewardWagerWeights.borrowed ?? 1,
+    0,
+    1,
+  );
+
+  return (
+    depositShare +
+    borrowedShare * borrowedWeight +
+    weightedRecycled
+  );
+}
+
+function projectRakebackV2(
+  baseline: EdgePlanV2Baseline,
+  planned: PlannedLeversV2,
+): { current: number; planned: number } {
+  const current = baseline.rakebackCost;
+  if (current <= 0) return { current: 0, planned: 0 };
+
+  const cadences = baseline.rakebackCadences;
+  const currentBlend = cadences.reduce(
+    (s, c) => s + c.currentRate * cadenceWeight(c, cadences),
+    0,
+  );
+  const plannedBlend = cadences.reduce(
+    (s, c) =>
+      s +
+      Math.max(0, planned.rakebackRates[c.cadence] ?? c.currentRate) *
+        cadenceWeight(c, cadences),
+    0,
+  );
+  const rateRatio = currentBlend > 0 ? plannedBlend / currentBlend : 1;
+
+  const gameWeight = gameTypeRakebackWeightFactor(baseline, planned);
+  const rewardFactor = rewardWagerRecyclingFactor(baseline, planned);
+
+  const adoption = clamp(planned.rakebackInstantAdoption, 0, 1);
+  const payoutPct = clamp(planned.rakebackInstantPayoutPct, 0, 1);
+  const instantFactor = 1 - adoption + adoption * payoutPct;
+
+  return {
+    current,
+    planned: Math.max(0, current * rateRatio * gameWeight * rewardFactor * instantFactor),
+  };
+}
+
+/** Effective rakeback wager multiplier for UI readouts (1.0 = full accrual). */
+export function rakebackEffectiveWagerMult(
+  baseline: EdgePlanV2Baseline,
+  planned: PlannedLeversV2,
+): {
+  gameWeight: number;
+  rewardRecycling: number;
+  upgraderEligibleShare: number;
+  combined: number;
+} {
+  const gameWeight = gameTypeRakebackWeightFactor(baseline, planned);
+  const rewardRecycling = rewardWagerRecyclingFactor(baseline, planned);
+  const upgraderEligibleShare = upgraderMinMultiplierEligibleShare(
+    baseline.upgraderRakebackAnchor,
+    planned.rakebackUpgraderMinMultiplier,
+  );
+  return {
+    gameWeight,
+    rewardRecycling,
+    upgraderEligibleShare,
+    combined: gameWeight * rewardRecycling,
+  };
+}
+
+export function estimateRewardWagerShares(
+  baseline: Pick<
+    EdgePlanV2Baseline,
+    | "wager"
+    | "raceCost"
+    | "affiliateCost"
+    | "rainCost"
+    | "rakebackCost"
+    | "dailyPacksCost"
+    | "depositBonusCost"
+    | "mothaCost"
+    | "shardsRedemptionCost"
+    | "otherRewardCost"
+    | "signupPacksCost"
+    | "packWagerBorrowed"
+    | "battleWagerBorrowed"
+  >,
+): RewardWagerShareBreakdown {
+  const shares = defaultRakebackRewardWagerWeights();
+  const totalWager = baseline.wager;
+  if (totalWager <= 0) return shares;
+
+  const borrowedWager = Math.max(
+    0,
+    baseline.packWagerBorrowed + baseline.battleWagerBorrowed,
+  );
+  shares.borrowed = clamp(borrowedWager / totalWager, 0, 0.5);
+
+  const leaderboardCost = baseline.affiliateCost * LEADERBOARD_AFFILIATE_COST_SHARE;
+  const affiliateCommissionCost = baseline.affiliateCost - leaderboardCost;
+
+  const costBySource: Record<Exclude<RewardWagerSourceId, "borrowed">, number> = {
+    race: baseline.raceCost,
+    leaderboard: leaderboardCost,
+    rain: baseline.rainCost,
+    rakeback: baseline.rakebackCost,
+    dailyPacks: baseline.dailyPacksCost,
+    affiliate: affiliateCommissionCost,
+    depositBonus: baseline.depositBonusCost,
+    motha: baseline.mothaCost,
+    shards: baseline.shardsRedemptionCost,
+    other: baseline.otherRewardCost + baseline.signupPacksCost,
+  };
+
+  const recycledWagerCap = Math.max(0, 1 - shares.borrowed) * 0.55;
+  const totalRewardCost = Object.values(costBySource).reduce((s, v) => s + Math.max(0, v), 0);
+  const recycledWagerUsd = Math.min(
+    totalWager * recycledWagerCap,
+    totalRewardCost * REWARD_WAGER_TURNOVER,
+  );
+
+  if (totalRewardCost > 0 && recycledWagerUsd > 0) {
+    for (const id of REWARD_WAGER_SOURCE_IDS) {
+      if (id === "borrowed") continue;
+      shares[id] = (costBySource[id] / totalRewardCost) * (recycledWagerUsd / totalWager);
+    }
+  }
+
+  return shares;
+}
 
 function toV1Baseline(baseline: EdgePlanV2Baseline): SystemEdgeBaseline {
   return { ...baseline, raffleCost: 0 };
 }
 
-function toV1Levers(planned: PlannedLeversV2): PlannedLevers {
+function toV1Levers(planned: PlannedLeversV2, baseline: EdgePlanV2Baseline): PlannedLevers {
   return {
     ...planned,
+    rakebackPackBattleWeight: blendedPackBattleRakebackWeight(baseline, planned),
     rafflePrizePoolMult: 1,
     raffleFrequencyMult: 1,
     raffleTicketCostMult: 1,
@@ -248,7 +589,26 @@ export function defaultLeversV2(baseline: EdgePlanV2Baseline): PlannedLeversV2 {
     withdrawalWagerReqMult: 1,
     withdrawalPackBattleWeight: 1,
     withdrawalUpgraderWeight: 1,
+    rakebackPacksWeight: 1,
+    rakebackBattlesWeight: 1,
+    rakebackUpgraderMinMultiplier: 1,
+    rakebackUpgraderMaxWinPct: 1,
+    rakebackRewardWagerWeights: defaultRakebackRewardWagerWeights(),
   };
+}
+
+function sanitizeRewardWagerWeights(
+  input: unknown,
+  fallback: RewardWagerShareBreakdown,
+): RewardWagerShareBreakdown {
+  const out = { ...fallback };
+  if (input == null || typeof input !== "object") return out;
+  const src = input as Record<string, unknown>;
+  for (const id of REWARD_WAGER_SOURCE_IDS) {
+    const n = Number(src[id]);
+    if (Number.isFinite(n)) out[id] = clamp(n, 0, 1);
+  }
+  return out;
 }
 
 function neutralLeversV2(): PlannedLeversV2 {
@@ -288,6 +648,11 @@ function neutralLeversV2(): PlannedLeversV2 {
     withdrawalWagerReqMult: 1,
     withdrawalPackBattleWeight: 1,
     withdrawalUpgraderWeight: 1,
+    rakebackPacksWeight: 1,
+    rakebackBattlesWeight: 1,
+    rakebackUpgraderMinMultiplier: 1,
+    rakebackUpgraderMaxWinPct: 1,
+    rakebackRewardWagerWeights: defaultRakebackRewardWagerWeights(),
   };
 }
 
@@ -317,8 +682,32 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
 
   base.rakebackPackBattleWeight = clamp(num(src.rakebackPackBattleWeight, 1), 0, 1);
   base.rakebackUpgraderWeight = clamp(num(src.rakebackUpgraderWeight, 1), 0, 1);
+  base.rakebackPacksWeight = clamp(
+    num(src.rakebackPacksWeight, base.rakebackPacksWeight),
+    0,
+    1,
+  );
+  base.rakebackBattlesWeight = clamp(
+    num(src.rakebackBattlesWeight, base.rakebackBattlesWeight),
+    0,
+    1,
+  );
+  base.rakebackUpgraderMinMultiplier = clamp(
+    num(src.rakebackUpgraderMinMultiplier, 1),
+    1,
+    10,
+  );
+  base.rakebackUpgraderMaxWinPct = clamp(
+    num(src.rakebackUpgraderMaxWinPct, 1),
+    0,
+    1,
+  );
   base.rakebackInstantPayoutPct = clamp(num(src.rakebackInstantPayoutPct, 1), 0, 1);
   base.rakebackInstantAdoption = clamp(num(src.rakebackInstantAdoption, 0), 0, 1);
+  base.rakebackRewardWagerWeights = sanitizeRewardWagerWeights(
+    src.rakebackRewardWagerWeights,
+    base.rakebackRewardWagerWeights,
+  );
 
   if (src.affiliateRates != null && typeof src.affiliateRates === "object") {
     const a = src.affiliateRates as Record<string, unknown>;
@@ -380,7 +769,12 @@ export function projectEdgePlanV2(
   baseline: EdgePlanV2Baseline,
   planned: PlannedLeversV2,
 ): EdgePlanV2Projection {
-  const core = projectEdgePlan(toV1Baseline(baseline), toV1Levers(planned));
+  const core = projectEdgePlan(toV1Baseline(baseline), toV1Levers(planned, baseline));
+  const rakeback = projectRakebackV2(baseline, planned);
+  const coreRakeback = core.levers.find((l) => l.key === "rakeback");
+  const rakebackDelta =
+    coreRakeback != null ? rakeback.planned - coreRakeback.plannedCost : 0;
+
   const issuance = computeShardsIssuance(baseline, planned);
   const redemption = computeShardsRedemption(baseline, planned);
   const withdrawalFrictionAdjUsd = computeWithdrawalAdjustment(baseline, planned);
@@ -390,6 +784,15 @@ export function projectEdgePlanV2(
 
   const levers: LeverProjection[] = core.levers
     .filter((l) => l.key !== "raffles")
+    .map((l) =>
+      l.key === "rakeback"
+        ? {
+            ...l,
+            plannedCost: rakeback.planned,
+            deltaCost: rakeback.planned - rakeback.current,
+          }
+        : l,
+    )
     .concat([
       {
         key: "shards-earn",
@@ -422,11 +825,15 @@ export function projectEdgePlanV2(
   const rewardCostDelta =
     core.plannedRewardCost -
     core.currentRewardCost +
+    rakebackDelta +
     (shardsPlanned - shardsCurrent) -
     withdrawalFrictionAdjUsd;
 
   const plannedNgr =
-    core.plannedNgr - (shardsPlanned - shardsCurrent) + withdrawalFrictionAdjUsd;
+    core.plannedNgr -
+    rakebackDelta -
+    (shardsPlanned - shardsCurrent) +
+    withdrawalFrictionAdjUsd;
   const profitDelta = plannedNgr - core.currentNgr;
   const monthlyProfitDelta =
     baseline.periodDays > 0 ? (profitDelta / baseline.periodDays) * 30 : profitDelta;
@@ -436,7 +843,7 @@ export function projectEdgePlanV2(
   return {
     ...core,
     levers,
-    plannedRewardCost: core.plannedRewardCost + (shardsPlanned - shardsCurrent),
+    plannedRewardCost: core.plannedRewardCost + rakebackDelta + (shardsPlanned - shardsCurrent),
     currentRewardCost: core.currentRewardCost + shardsCurrent,
     rewardCostDelta,
     plannedNgr,
