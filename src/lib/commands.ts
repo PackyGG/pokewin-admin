@@ -63,6 +63,7 @@ import {
   getDocsNavGroups,
   type NavEntry,
 } from "@/lib/nav-config";
+import { pageAccessGranted } from "@/lib/admin-pages";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -272,10 +273,9 @@ export function filterCommandsForUser<T extends PaletteCommand>(
   allowedPages: readonly string[],
 ): T[] {
   if (role === "admin") return commands;
-  const allowed = new Set(allowedPages);
   return commands.filter((c) => {
     const key = c.kind === "nav" ? c.pageKey : c.pageKey;
-    return !key || allowed.has(key);
+    return !key || pageAccessGranted([...allowedPages], key);
   });
 }
 

@@ -10,6 +10,7 @@ import {
 } from "./admin-roles";
 import { readAdminUserWithRoles } from "./admin-user-roles";
 import type { AdminRole } from "./admin-roles";
+import { pageAccessGranted } from "./admin-pages";
 
 export { getDefaultRoute };
 export type { AdminRole };
@@ -138,7 +139,7 @@ export async function requirePageAccess(pageKey: string): Promise<SessionPayload
   if (sessionIsAdmin(session)) return session;
 
   const allowedPages = await getUserPermissions(session.userId);
-  if (!allowedPages.includes(pageKey)) {
+  if (!pageAccessGranted(allowedPages, pageKey)) {
     redirect(getDefaultRouteForRoles(sessionRoles(session), allowedPages));
   }
   return session;

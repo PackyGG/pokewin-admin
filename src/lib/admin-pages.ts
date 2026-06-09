@@ -67,12 +67,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   // forecast), anchored on real production baselines. Own permission
   // key so it can be granted independently of the per-reward deep-dives.
   { group: "Insights", label: "Forecast", key: "/insights/forecast" },
-  // System Edge Plan — unified reward-system PLANNING page. Tune every
-  // lever (pack edge / upgrader-rakeback weight / affiliate % per tier /
-  // deposit bonus / raffle / rakeback cadences) and see the projected
-  // profit impact + delta vs the current real config. Read-only (no live
-  // data writes). Own permission key so it can be granted independently.
-  { group: "Insights", label: "System Edge Plan", key: "/insights/system-edge-plan" },
   { group: "Insights", label: "Edge Plan 2.0", key: "/insights/edge-plan-2" },
   // Transactions
   // Standalone /transactions overview removed — admins land on a
@@ -134,3 +128,17 @@ export const ADMIN_PAGES: AdminPage[] = [
 ];
 
 export const ALL_PAGE_KEYS = ADMIN_PAGES.map((p) => p.key);
+
+/** Retired routes whose DB permission keys still grant the replacement page. */
+export const PAGE_ACCESS_ALIASES: Record<string, readonly string[]> = {
+  "/insights/edge-plan-2": ["/insights/system-edge-plan"],
+};
+
+export function pageAccessGranted(
+  allowedPages: string[],
+  pageKey: string,
+): boolean {
+  if (allowedPages.includes(pageKey)) return true;
+  const aliases = PAGE_ACCESS_ALIASES[pageKey];
+  return aliases?.some((legacy) => allowedPages.includes(legacy)) ?? false;
+}

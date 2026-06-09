@@ -3,7 +3,7 @@
 import { Layers, Wallet } from "lucide-react";
 
 import { StatPanel, PanelRow } from "@/components/modern-panels";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 import { formatPct, formatSignedUsd } from "../../../edge-calc/math";
 import { cn } from "@/lib/utils";
 import {
@@ -54,7 +54,9 @@ export function OverviewSection({
       />
       <StatPanel title="GGR by game type" icon={Layers} accent="emerald">
         <div className="grid gap-3 sm:grid-cols-3">
-          {projection.gameTypes.map((g) => {
+          {projection.gameTypes
+            .filter((g) => g.type !== "battles")
+            .map((g) => {
             const up = g.ggrDelta >= 0;
             const tone =
               Math.abs(g.ggrDelta) < 0.005
@@ -76,15 +78,7 @@ export function OverviewSection({
                   )}
                 </div>
                 <div className="text-[11px] text-muted-foreground">
-                  {g.type === "battles" ? (
-                    <>
-                      {formatPct(g.plannedEdge)} edge · 50/50 pack mode
-                    </>
-                  ) : (
-                    <>
-                      {formatPct(g.currentEdge)} → {formatPct(g.plannedEdge)} edge
-                    </>
-                  )}
+                  {formatPct(g.currentEdge)} → {formatPct(g.plannedEdge)} edge
                 </div>
                 <div className={cn("text-sm font-semibold tabular-nums", tone)}>
                   {Math.abs(g.ggrDelta) < 0.005 ? "—" : formatSignedUsd(g.ggrDelta)}
@@ -92,6 +86,24 @@ export function OverviewSection({
               </div>
             );
           })}
+          {(() => {
+            const battles = projection.gameTypes.find((g) => g.type === "battles");
+            if (!battles) return null;
+            return (
+              <div className="rounded-lg border border-dashed bg-background/40 px-3 py-2.5 space-y-1">
+                <div className="text-sm font-medium">
+                  {battles.label}
+                  <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
+                    Edge via packs · no separate battle margin
+                  </span>
+                </div>
+                <div className="text-[11px] leading-relaxed text-muted-foreground">
+                  wager {formatCompactUsd(battles.wager)} · pack opens in battles use packs
+                  edge — not an extra layer on battle wager
+                </div>
+              </div>
+            );
+          })()}
         </div>
         <div className="mt-3 border-t pt-3">
           <PanelRow

@@ -45,10 +45,12 @@ export function GamingEdgeSection({
 
   return (
     <StatPanel title="House edge" icon={Gauge} accent="emerald">
-      <p className="mb-4 text-xs text-muted-foreground">
-        Packs carry the house edge; battles are a 50/50 pack mode with no separate
-        edge lever. Sliders open on planning defaults; measured ticks show the real
-        30d reference.
+      <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
+        House edge is on <strong>pack opens</strong> (10.99% planning default) — including
+        pack opens inside battles. Battles are a game mode, not a separate margin layer;
+        battle wager counts toward volume but adds <strong>0</strong> incremental GGR in
+        projection. Sliders open on planning defaults; measured ticks show the real 30d
+        reference.
       </p>
       <div className="grid gap-6 xl:grid-cols-2">
         <div className="space-y-4">
@@ -78,17 +80,18 @@ export function GamingEdgeSection({
               <Swords className="size-3.5 text-muted-foreground" />
               <span className="text-sm font-medium">Battles</span>
               <Badge variant="outline" className="text-[10px]">
-                uses pack edge · 50/50 mode
+                Edge via packs · no separate battle margin
               </Badge>
             </div>
             <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-              No separate house edge — battles borrow pack economics. Planning edge
-              locked at {formatPct(PLANNED_BATTLES_EDGE_DEFAULT)}.
+              Pack opens in battles use the packs edge above — not an extra{" "}
+              {formatPct(PLANNED_PACKS_BATTLES_EDGE_DEFAULT)} on battle wager. Planning
+              edge locked at {formatPct(PLANNED_BATTLES_EDGE_DEFAULT)}.
             </p>
             {battles && (
               <p className="mt-1 text-[11px] text-muted-foreground">
-                wager {formatCompactUsd(battles.wager)} · GGR{" "}
-                {formatCompactUsd(battles.ggr)}
+                wager {formatCompactUsd(battles.wager)} · observed GGR{" "}
+                {formatCompactUsd(battles.ggr)} (ledger; not stacked in projection)
               </p>
             )}
           </div>

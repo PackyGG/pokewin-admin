@@ -8,7 +8,6 @@ import {
   Scale,
   Gift,
   LineChart,
-  SlidersHorizontal,
   Sparkles,
   Gauge,
   ArrowRight,
@@ -290,13 +289,6 @@ const QUICK_LINKS: ReadonlyArray<QuickLink> = [
     label: "Forecast",
     description: "Model reward programs before shipping a change",
     icon: Gauge,
-    accent: "purple",
-  },
-  {
-    href: "/insights/system-edge-plan",
-    label: "System Edge Plan",
-    description: "Tune every lever — projected profit + delta vs live",
-    icon: SlidersHorizontal,
     accent: "purple",
   },
   {

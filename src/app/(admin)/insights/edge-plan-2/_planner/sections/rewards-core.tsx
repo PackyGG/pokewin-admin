@@ -19,6 +19,7 @@ import {
   removeWagerReqCommissionUplift,
   clamp,
   plannedBlendedHouseEdgeV2,
+  observedBlendedGamingEdge,
   affiliateEdgeShareToWagerDrag,
   affiliateWagerDragToEdgeShare,
   affiliateWorstCaseEdgeDrag,
@@ -56,16 +57,19 @@ export function RewardsCoreSection({
     [baseline, levers],
   );
 
+  const observedHouseEdge = React.useMemo(
+    () => observedBlendedGamingEdge(baseline),
+    [baseline],
+  );
+
   const realizedAffiliateEdgeShare = React.useMemo(() => {
     if (baseline.affiliateBlendedRate == null) return null;
     const edge =
-      plannedHouseEdge > 0
-        ? plannedHouseEdge
-        : baseline.houseEdge ?? 0;
+      plannedHouseEdge > 0 ? plannedHouseEdge : observedHouseEdge;
     return edge > 0
       ? affiliateWagerDragToEdgeShare(baseline.affiliateBlendedRate, edge)
       : null;
-  }, [baseline.affiliateBlendedRate, baseline.houseEdge, plannedHouseEdge]);
+  }, [baseline.affiliateBlendedRate, observedHouseEdge, plannedHouseEdge]);
 
   const affiliateDragCtx = React.useMemo(
     () => ({ baseline, levers }),

@@ -81,6 +81,7 @@ import {
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { getDefaultRoute } from "@/lib/admin-roles";
+import { pageAccessGranted } from "@/lib/admin-pages";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { getSidebarFooterItems, getSidebarGroups } from "@/lib/nav-config";
 import { LinkPending } from "@/components/ux";
@@ -285,7 +286,7 @@ export function AppSidebar({
         ) {
           return false;
         }
-        return isAdmin || allowedPages.includes(item.href);
+        return isAdmin || pageAccessGranted(allowedPages, item.href);
       }),
     [isAdmin, allowedPages, username],
   );
@@ -309,7 +310,7 @@ export function AppSidebar({
           ) {
             return false;
           }
-          return isAdmin || allowedPages.includes(item.href);
+          return isAdmin || pageAccessGranted(allowedPages, item.href);
         }),
       })),
   [isAdmin, allowedPages, username, dbEnv]);

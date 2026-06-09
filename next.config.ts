@@ -40,6 +40,13 @@ const nextConfig: NextConfig = {
         destination: "/rewards/leaderboards",
         permanent: true,
       },
+      {
+        // System Edge Plan v1 was replaced by Edge Plan 2.0. Keep bookmarks
+        // and role presets that still reference the old route working.
+        source: "/insights/system-edge-plan",
+        destination: "/insights/edge-plan-2",
+        permanent: true,
+      },
     ];
   },
 };
