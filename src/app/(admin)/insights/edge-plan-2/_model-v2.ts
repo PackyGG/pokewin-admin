@@ -27,17 +27,21 @@ import {
   affiliateWagerDragToEdgeShare,
   clamp,
   PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
+  PLANNED_BATTLES_EDGE_DEFAULT,
   PLANNED_UPGRADER_EDGE_DEFAULT,
   GAME_TYPE_IDS,
   removeWagerReqCommissionUplift,
   REMOVE_WAGER_REQ_COMMISSION_BASE_MULT,
+  measuredPacksEdge,
   blendedPackBattleEdge,
+  blendedGamingEdge,
   effectiveProjectionTypeEdge,
 } from "../system-edge-plan/_model";
 
 export {
   clamp,
   PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
+  PLANNED_BATTLES_EDGE_DEFAULT,
   PLANNED_UPGRADER_EDGE_DEFAULT,
   defaultPlannedEdge,
   GAME_TYPE_IDS,
@@ -47,7 +51,9 @@ export {
   affiliateEdgeShareToWagerDrag,
   affiliateWagerDragToEdgeShare,
   removeWagerReqCommissionUplift,
+  measuredPacksEdge,
   blendedPackBattleEdge,
+  blendedGamingEdge,
   effectiveProjectionTypeEdge,
   type GameTypeId,
   type PackCardPreview,
@@ -702,7 +708,7 @@ function neutralLeversV2(): PlannedLeversV2 {
   return {
     edges: {
       packs: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
-      battles: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
+      battles: PLANNED_BATTLES_EDGE_DEFAULT,
       upgrader: PLANNED_UPGRADER_EDGE_DEFAULT,
     },
     rakebackRates: { daily: 0, weekly: 0, monthly: 0 },
@@ -758,6 +764,7 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
     for (const t of GAME_TYPE_IDS) {
       base.edges[t] = clamp(num(e[t], base.edges[t]), 0, 1);
     }
+    base.edges.battles = PLANNED_BATTLES_EDGE_DEFAULT;
   }
 
   if (src.rakebackRates != null && typeof src.rakebackRates === "object") {

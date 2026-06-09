@@ -262,7 +262,7 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
         <GamingEdgeSection
           baseline={baseline}
           levers={levers}
-          setPacksBattlesEdge={gaming.setPacksBattlesEdge}
+          setPacksEdge={gaming.setPacksEdge}
           setUpgraderEdge={gaming.setUpgraderEdge}
         />
       </PlannerV2SectionPanel>

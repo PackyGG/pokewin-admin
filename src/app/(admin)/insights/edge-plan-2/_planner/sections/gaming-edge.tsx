@@ -1,20 +1,21 @@
 "use client";
 
 import * as React from "react";
-import { Gauge } from "lucide-react";
+import { Gauge, Swords } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { StatPanel } from "@/components/modern-panels";
 import { formatCompactUsd } from "@/lib/utils/format";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
 import {
-  blendedPackBattleEdge,
+  measuredPacksEdge,
   effectiveProjectionTypeEdge,
 } from "../../../system-edge-plan/_model";
 import { formatPct } from "../../../edge-calc/math";
 import {
   clamp,
   PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
+  PLANNED_BATTLES_EDGE_DEFAULT,
   defaultPlannedEdge,
   type EdgePlanV2Baseline,
   type PlannedLeversV2,
@@ -23,22 +24,21 @@ import {
 type Props = {
   baseline: EdgePlanV2Baseline;
   levers: PlannedLeversV2;
-  setPacksBattlesEdge: (pct: number) => void;
+  setPacksEdge: (pct: number) => void;
   setUpgraderEdge: (pct: number) => void;
 };
 
 export function GamingEdgeSection({
   baseline,
   levers,
-  setPacksBattlesEdge,
+  setPacksEdge,
   setUpgraderEdge,
 }: Props) {
-  const packsBattles = baseline.gameTypes.filter(
-    (g) => g.type === "packs" || g.type === "battles",
-  );
+  const packs = baseline.gameTypes.find((g) => g.type === "packs");
+  const battles = baseline.gameTypes.find((g) => g.type === "battles");
   const upgrader = baseline.gameTypes.find((g) => g.type === "upgrader");
-  const pbEdge = levers.edges.packs ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT;
-  const pbMeasured = blendedPackBattleEdge(baseline);
+  const packsEdge = levers.edges.packs ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT;
+  const packsMeasured = measuredPacksEdge(baseline);
   const upgMeasured = upgrader
     ? effectiveProjectionTypeEdge(upgrader, baseline)
     : 0;
@@ -46,30 +46,54 @@ export function GamingEdgeSection({
   return (
     <StatPanel title="House edge" icon={Gauge} accent="emerald">
       <p className="mb-4 text-xs text-muted-foreground">
-        Sliders open on planning defaults; measured edge ticks show the real 30d
-        reference.
+        Packs carry the house edge; battles are a 50/50 pack mode with no separate
+        edge lever. Sliders open on planning defaults; measured ticks show the real
+        30d reference.
       </p>
       <div className="grid gap-6 xl:grid-cols-2">
-        <div className="space-y-2">
-          <LeverSlider
-            label="Packs & battles edge"
-            valueLabel={formatPct(pbEdge)}
-            value={pbEdge * 100}
-            onValueChange={setPacksBattlesEdge}
-            min={0}
-            max={30}
-            step={0.01}
-            baselineMarker={pbMeasured * 100}
-            baselineLabel={`measured ${formatPct(pbMeasured)}`}
-            preciseInput={{ unit: "percent", decimals: 2 }}
-          />
-          {packsBattles.map((g) => (
-            <p key={g.type} className="text-[11px] text-muted-foreground">
-              {g.type}: measured {g.edge != null ? formatPct(g.edge) : "—"} · wager{" "}
-              {formatCompactUsd(g.wager)} · GGR {formatCompactUsd(g.ggr)}
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <LeverSlider
+              label="Packs edge"
+              valueLabel={formatPct(packsEdge)}
+              value={packsEdge * 100}
+              onValueChange={setPacksEdge}
+              min={0}
+              max={30}
+              step={0.01}
+              baselineMarker={packsMeasured * 100}
+              baselineLabel={`measured ${formatPct(packsMeasured)}`}
+              preciseInput={{ unit: "percent", decimals: 2 }}
+            />
+            {packs && (
+              <p className="text-[11px] text-muted-foreground">
+                packs: measured {packs.edge != null ? formatPct(packs.edge) : "—"} ·
+                wager {formatCompactUsd(packs.wager)} · GGR {formatCompactUsd(packs.ggr)}
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-dashed bg-background/40 px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <Swords className="size-3.5 text-muted-foreground" />
+              <span className="text-sm font-medium">Battles</span>
+              <Badge variant="outline" className="text-[10px]">
+                uses pack edge · 50/50 mode
+              </Badge>
+            </div>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+              No separate house edge — battles borrow pack economics. Planning edge
+              locked at {formatPct(PLANNED_BATTLES_EDGE_DEFAULT)}.
             </p>
-          ))}
+            {battles && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                wager {formatCompactUsd(battles.wager)} · GGR{" "}
+                {formatCompactUsd(battles.ggr)}
+              </p>
+            )}
+          </div>
         </div>
+
         <div className="space-y-2">
           <LeverSlider
             label="Upgrader edge"
@@ -109,10 +133,13 @@ export function makeGamingSetters(
   setLevers: React.Dispatch<React.SetStateAction<PlannedLeversV2>>,
 ) {
   return {
-    setPacksBattlesEdge: (pct: number) =>
+    setPacksEdge: (pct: number) =>
       setLevers((s) => {
         const v = clamp(pct / 100, 0, 1);
-        return { ...s, edges: { ...s.edges, packs: v, battles: v } };
+        return {
+          ...s,
+          edges: { ...s.edges, packs: v, battles: PLANNED_BATTLES_EDGE_DEFAULT },
+        };
       }),
     setUpgraderEdge: (pct: number) =>
       setLevers((s) => ({

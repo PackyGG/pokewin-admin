@@ -77,17 +77,19 @@ export function gameTypeLabel(t: GameTypeId): string {
  * to each control so the gap to reality stays visible, but the slider starts on
  * the planning default.
  *
- *   • Packs + battles SHARE one house edge (one combined lever) → 10.99%.
+ *   • Packs carry the house edge → 10.99%.
+ *   • Battles are a 50/50 pack mode — no separate house edge (0% in planning).
  *   • Upgrader is its own separate edge → 10%.
  */
 export const PLANNED_PACKS_BATTLES_EDGE_DEFAULT = 0.1099 as const;
+export const PLANNED_BATTLES_EDGE_DEFAULT = 0 as const;
 export const PLANNED_UPGRADER_EDGE_DEFAULT = 0.1 as const;
 
 /** The owner-chosen default planned edge for a given game type. */
 export function defaultPlannedEdge(type: GameTypeId): number {
-  return type === "upgrader"
-    ? PLANNED_UPGRADER_EDGE_DEFAULT
-    : PLANNED_PACKS_BATTLES_EDGE_DEFAULT;
+  if (type === "upgrader") return PLANNED_UPGRADER_EDGE_DEFAULT;
+  if (type === "battles") return PLANNED_BATTLES_EDGE_DEFAULT;
+  return PLANNED_PACKS_BATTLES_EDGE_DEFAULT;
 }
 
 /** One game type's REAL gaming anchors over the window (house POV). */
@@ -571,7 +573,7 @@ export const DEPOSIT_BONUS_CAP_COST_EXPONENT = 0.45 as const;
 /**
  * Seed the planner's lever state from the baseline.
  *
- * EDGE seeds from the OWNER-CHOSEN PLANNING DEFAULTS (packs & battles 10.99%,
+ * EDGE seeds from the OWNER-CHOSEN PLANNING DEFAULTS (packs 10.99%, battles 0%,
  * upgrader 10%) — NOT the measured edge. The measured edge stays visible as a
  * muted reference on each control, but the slider opens on the planning target.
  * Upgrader keeps its planning default even when it has no data in the window
@@ -583,7 +585,7 @@ export const DEPOSIT_BONUS_CAP_COST_EXPONENT = 0.45 as const;
 export function defaultLevers(baseline: SystemEdgeBaseline): PlannedLevers {
   const edges: Record<GameTypeId, number> = {
     packs: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
-    battles: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
+    battles: PLANNED_BATTLES_EDGE_DEFAULT,
     upgrader: PLANNED_UPGRADER_EDGE_DEFAULT,
   };
   // Honor every type present in the baseline with its planning default (keeps
@@ -657,7 +659,7 @@ export function defaultLevers(baseline: SystemEdgeBaseline): PlannedLevers {
 
 /**
  * Neutral lever defaults (every multiplier 1.0, no rate, no toggles). EDGE falls
- * back to the owner-chosen planning defaults (packs & battles 10.99%, upgrader
+ * back to the owner-chosen planning defaults (packs 10.99%, battles 0%, upgrader
  * 10%) so a preset payload missing an edge key resolves to the planning target,
  * not 0.
  */
@@ -665,7 +667,7 @@ function neutralLevers(): PlannedLevers {
   return {
     edges: {
       packs: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
-      battles: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
+      battles: PLANNED_BATTLES_EDGE_DEFAULT,
       upgrader: PLANNED_UPGRADER_EDGE_DEFAULT,
     },
     rakebackRates: { daily: 0, weekly: 0, monthly: 0 },
@@ -717,6 +719,7 @@ export function sanitizeLevers(input: unknown): PlannedLevers {
     for (const t of GAME_TYPE_IDS) {
       base.edges[t] = clamp(num(e[t], base.edges[t]), 0, 1);
     }
+    base.edges.battles = PLANNED_BATTLES_EDGE_DEFAULT;
   }
 
   // Rakeback per-cadence rates (0..1).
@@ -805,31 +808,58 @@ export function effectiveTypeEdge(g: GameTypeBaseline): number {
 }
 
 /**
- * Blended packs + battles house edge (Σ GGR ÷ Σ wager). Packs and battles share
- * one house edge in production; per-type splits can be noisy when sample gates
- * fail or payout attribution is thin on one leg.
+ * Measured packs-only house edge (Σ packs GGR ÷ Σ packs wager). Battles are a
+ * 50/50 pack mode and do not carry a separate house edge in planning.
  */
+export function measuredPacksEdge(baseline: SystemEdgeBaseline): number {
+  const packs = baseline.gameTypes.find((g) => g.type === "packs");
+  if (!packs) return effectiveBaselineEdge(baseline);
+  const raw =
+    packs.edge != null
+      ? packs.edge
+      : packs.wager > 0
+        ? packs.ggr / packs.wager
+        : 0;
+  return clamp(raw, 0, 1);
+}
+
+/** @deprecated Use measuredPacksEdge — battles have no separate house edge. */
 export function blendedPackBattleEdge(baseline: SystemEdgeBaseline): number {
-  const types = baseline.gameTypes.filter(
-    (g) => g.type === "packs" || g.type === "battles",
-  );
-  const wager = types.reduce((s, g) => s + g.wager, 0);
-  const ggr = types.reduce((s, g) => s + g.ggr, 0);
-  if (wager > 0) return clamp(ggr / wager, 0, 1);
-  return effectiveBaselineEdge(baseline);
+  return measuredPacksEdge(baseline);
 }
 
 /**
- * Current edge for projection / overview display. Packs & battles use the blended
- * PB edge (shared house edge); upgrader uses its measured edge when reliable,
- * else the headline blended edge.
+ * Wager-weighted blended edge for affiliate / headline math:
+ * (packs_edge×packs_wager + upgrader_edge×upgrader_wager) ÷ total_wager,
+ * with battles at 0% edge.
+ */
+export function blendedGamingEdge(
+  baseline: SystemEdgeBaseline,
+  edges: Record<GameTypeId, number>,
+): number {
+  const wager = baseline.wager;
+  if (wager <= 0) return 0;
+  let ggr = 0;
+  for (const g of baseline.gameTypes) {
+    const edge = clamp(edges[g.type] ?? defaultPlannedEdge(g.type), 0, 1);
+    ggr += edge * g.wager;
+  }
+  return ggr / wager;
+}
+
+/**
+ * Current edge for projection / overview display. Packs use measured packs edge;
+ * battles are 0% (50/50 mode); upgrader uses its measured edge when reliable.
  */
 export function effectiveProjectionTypeEdge(
   g: GameTypeBaseline,
   baseline: SystemEdgeBaseline,
 ): number {
-  if (g.type === "packs" || g.type === "battles") {
-    return blendedPackBattleEdge(baseline);
+  if (g.type === "battles") {
+    return PLANNED_BATTLES_EDGE_DEFAULT;
+  }
+  if (g.type === "packs") {
+    return measuredPacksEdge(baseline);
   }
   const raw =
     g.edge != null ? g.edge : g.wager > 0 ? g.ggr / g.wager : null;
@@ -948,7 +978,10 @@ export function projectEdgePlan(
   // ── Per-type GGR ──
   const gameTypes: GameTypeProjection[] = baseline.gameTypes.map((g) => {
     const currentEdge = effectiveProjectionTypeEdge(g, baseline);
-    const plannedEdge = clamp(planned.edges[g.type] ?? currentEdge, 0, 1);
+    const plannedEdge =
+      g.type === "battles"
+        ? PLANNED_BATTLES_EDGE_DEFAULT
+        : clamp(planned.edges[g.type] ?? currentEdge, 0, 1);
     const currentGgr = currentEdge * g.wager;
     const plannedGgr = plannedEdge * g.wager;
     return {
@@ -1193,14 +1226,10 @@ export function plannedBlendedHouseEdge(
   baseline: SystemEdgeBaseline,
   planned: PlannedLevers,
 ): number {
-  const wager = baseline.wager;
-  if (wager <= 0) return 0;
-  let ggr = 0;
-  for (const g of baseline.gameTypes) {
-    const edge = clamp(planned.edges[g.type] ?? effectiveTypeEdge(g), 0, 1);
-    ggr += edge * g.wager;
-  }
-  return ggr / wager;
+  return blendedGamingEdge(baseline, {
+    ...planned.edges,
+    battles: PLANNED_BATTLES_EDGE_DEFAULT,
+  });
 }
 
 /** Convert an affiliate tier rate (share of edge) to effective wager drag. */
@@ -1236,7 +1265,7 @@ export type NetEdgeScenario = {
    * (summed across its components). Subtracted from the gross planned edge.
    */
   erosion: number;
-  /** The gross planned packs&battles edge before erosion (0..1). */
+  /** The gross planned blended house edge before erosion (0..1). */
   grossEdge: number;
   /** netEdge = grossEdge − erosion (can be negative). */
   netEdge: number;

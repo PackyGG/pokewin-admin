@@ -60,7 +60,15 @@ export function OverviewSection({
                   )}
                 </div>
                 <div className="text-[11px] text-muted-foreground">
-                  {formatPct(g.currentEdge)} → {formatPct(g.plannedEdge)} edge
+                  {g.type === "battles" ? (
+                    <>
+                      {formatPct(g.plannedEdge)} edge · 50/50 pack mode
+                    </>
+                  ) : (
+                    <>
+                      {formatPct(g.currentEdge)} → {formatPct(g.plannedEdge)} edge
+                    </>
+                  )}
                 </div>
                 <div className={cn("text-sm font-semibold tabular-nums", tone)}>
                   {Math.abs(g.ggrDelta) < 0.005 ? "—" : formatSignedUsd(g.ggrDelta)}
