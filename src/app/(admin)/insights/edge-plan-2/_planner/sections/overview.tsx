@@ -56,15 +56,7 @@ export function OverviewSection({
         <div className="grid gap-3 sm:grid-cols-3">
           {projection.gameTypes
             .filter((g) => g.type !== "battles")
-            .map((g) => {
-            const up = g.ggrDelta >= 0;
-            const tone =
-              Math.abs(g.ggrDelta) < 0.005
-                ? "text-muted-foreground"
-                : up
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400";
-            return (
+            .map((g) => (
               <div
                 key={g.type}
                 className="rounded-lg border bg-background/40 px-3 py-2.5 space-y-1"
@@ -78,14 +70,13 @@ export function OverviewSection({
                   )}
                 </div>
                 <div className="text-[11px] text-muted-foreground">
-                  {formatPct(g.currentEdge)} → {formatPct(g.plannedEdge)} edge
+                  {formatPct(g.plannedEdge)} edge · wager {formatCompactUsd(g.wager)}
                 </div>
-                <div className={cn("text-sm font-semibold tabular-nums", tone)}>
-                  {Math.abs(g.ggrDelta) < 0.005 ? "—" : formatSignedUsd(g.ggrDelta)}
+                <div className="text-sm font-semibold tabular-nums text-foreground">
+                  {formatCurrency(g.plannedGgr)} GGR
                 </div>
               </div>
-            );
-          })}
+            ))}
           {(() => {
             const battles = projection.gameTypes.find((g) => g.type === "battles");
             if (!battles) return null;
@@ -105,21 +96,27 @@ export function OverviewSection({
             );
           })()}
         </div>
-        <div className="mt-3 border-t pt-3">
+        <div className="mt-3 border-t pt-3 space-y-2">
           <PanelRow
-            label="Total GGR change"
-            value={
-              <span
-                className={cn(
-                  projection.ggrDelta >= 0
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-rose-600 dark:text-rose-400",
-                )}
-              >
-                {formatSignedUsd(projection.ggrDelta)}
-              </span>
-            }
+            label="Total planned GGR"
+            value={formatCurrency(projection.plannedGgr)}
           />
+          {Math.abs(projection.ggrDelta) >= 0.005 && (
+            <PanelRow
+              label="GGR vs planning defaults"
+              value={
+                <span
+                  className={cn(
+                    projection.ggrDelta >= 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-rose-600 dark:text-rose-400",
+                  )}
+                >
+                  {formatSignedUsd(projection.ggrDelta)}
+                </span>
+              }
+            />
+          )}
         </div>
       </StatPanel>
 

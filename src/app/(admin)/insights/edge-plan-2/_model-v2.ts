@@ -13,6 +13,7 @@ import {
   type SystemEdgeBaseline,
   type PlannedLevers,
   type EdgePlanProjection,
+  type GameTypeProjection,
   type LeverProjection,
   type RewardPackCatalogItem,
   type DailyPackLeverRow,
@@ -38,6 +39,7 @@ import {
   blendedGamingEdge,
   observedBlendedGamingEdge,
   effectiveProjectionTypeEdge,
+  defaultPlannedEdge,
 } from "../system-edge-plan/_model";
 
 export {
@@ -876,11 +878,64 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
   return base;
 }
 
+/**
+ * Edge Plan 2 planning UI: per-type GGR is planned edge × wager only.
+ * Deltas compare the active sliders to planning defaults — not measured edge.
+ */
+function applyPlanningGameProjections(
+  baseline: EdgePlanV2Baseline,
+  planned: PlannedLeversV2,
+  core: EdgePlanProjection,
+): Pick<EdgePlanProjection, "gameTypes" | "ggrDelta"> {
+  const defaults = defaultLeversV2(baseline);
+  const refEdge = plannedBlendedHouseEdgeV2(baseline, defaults);
+  const refGgr = refEdge * baseline.wager;
+
+  const gameTypes: GameTypeProjection[] = core.gameTypes.map((g) => {
+    if (g.type === "battles") {
+      return {
+        ...g,
+        currentEdge: PLANNED_BATTLES_EDGE_DEFAULT,
+        plannedEdge: PLANNED_BATTLES_EDGE_DEFAULT,
+        currentGgr: 0,
+        plannedGgr: 0,
+        ggrDelta: 0,
+      };
+    }
+    const plannedEdge = clamp(
+      planned.edges[g.type] ?? defaultPlannedEdge(g.type),
+      0,
+      1,
+    );
+    const plannedGgrType = plannedEdge * g.wager;
+    const defaultEdge = clamp(
+      defaults.edges[g.type] ?? defaultPlannedEdge(g.type),
+      0,
+      1,
+    );
+    const referenceGgr = defaultEdge * g.wager;
+    return {
+      ...g,
+      currentEdge: plannedEdge,
+      currentGgr: plannedGgrType,
+      plannedEdge,
+      plannedGgr: plannedGgrType,
+      ggrDelta: plannedGgrType - referenceGgr,
+    };
+  });
+
+  return {
+    gameTypes,
+    ggrDelta: core.plannedGgr - refGgr,
+  };
+}
+
 export function projectEdgePlanV2(
   baseline: EdgePlanV2Baseline,
   planned: PlannedLeversV2,
 ): EdgePlanV2Projection {
   const core = projectEdgePlan(toV1Baseline(baseline), toV1Levers(planned, baseline));
+  const planningGgr = applyPlanningGameProjections(baseline, planned, core);
   const rakeback = projectRakebackV2(baseline, planned);
   const coreRakeback = core.levers.find((l) => l.key === "rakeback");
   const rakebackDelta =
@@ -988,6 +1043,7 @@ export function projectEdgePlanV2(
 
   return {
     ...core,
+    ...planningGgr,
     levers,
     plannedRewardCost:
       core.plannedRewardCost +
@@ -1048,7 +1104,7 @@ export type WagerScenarioState = {
   presetMult: number;
 };
 
-export const WAGER_SCENARIO_PRESET_MULTS = [1, 1.5, 2, 3, 4, 5] as const;
+export const WAGER_SCENARIO_PRESET_MULTS = [1, 2, 3, 4, 5] as const;
 
 export function resolveScenarioWagerUsd(
   baseWager: number,

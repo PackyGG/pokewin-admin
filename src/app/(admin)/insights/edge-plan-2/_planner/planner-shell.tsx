@@ -248,7 +248,7 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
         <KpiTile
           label="GGR delta"
           value={formatSignedUsd(projection.ggrDelta)}
-          sub="From edge changes"
+          sub="vs planning defaults"
           icon={TrendingDown}
           accent={projection.ggrDelta >= 0 ? "emerald" : "rose"}
         />

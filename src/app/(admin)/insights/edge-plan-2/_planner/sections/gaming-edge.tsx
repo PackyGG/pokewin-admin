@@ -7,10 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { StatPanel } from "@/components/modern-panels";
 import { formatCompactUsd } from "@/lib/utils/format";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
-import {
-  measuredPacksEdge,
-  effectiveProjectionTypeEdge,
-} from "../../../system-edge-plan/_model";
+import { effectiveProjectionTypeEdge } from "../../../system-edge-plan/_model";
 import { formatPct } from "../../../edge-calc/math";
 import {
   clamp,
@@ -38,7 +35,7 @@ export function GamingEdgeSection({
   const battles = baseline.gameTypes.find((g) => g.type === "battles");
   const upgrader = baseline.gameTypes.find((g) => g.type === "upgrader");
   const packsEdge = levers.edges.packs ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT;
-  const packsMeasured = measuredPacksEdge(baseline);
+  const packsPlannedGgr = packs ? packsEdge * packs.wager : 0;
   const upgMeasured = upgrader
     ? effectiveProjectionTypeEdge(upgrader, baseline)
     : 0;
@@ -49,8 +46,8 @@ export function GamingEdgeSection({
         House edge is on <strong>pack opens</strong> (10.99% planning default) — including
         pack opens inside battles. Battles are a game mode, not a separate margin layer;
         battle wager counts toward volume but adds <strong>0</strong> incremental GGR in
-        projection. Sliders open on planning defaults; measured ticks show the real 30d
-        reference.
+        projection. Sliders set the edge you plan around; GGR is edge × observed wager
+        volume.
       </p>
       <div className="grid gap-6 xl:grid-cols-2">
         <div className="space-y-4">
@@ -63,14 +60,12 @@ export function GamingEdgeSection({
               min={0}
               max={30}
               step={0.01}
-              baselineMarker={packsMeasured * 100}
-              baselineLabel={`measured ${formatPct(packsMeasured)}`}
               preciseInput={{ unit: "percent", decimals: 2 }}
             />
             {packs && (
               <p className="text-[11px] text-muted-foreground">
-                packs: measured {packs.edge != null ? formatPct(packs.edge) : "—"} ·
-                wager {formatCompactUsd(packs.wager)} · GGR {formatCompactUsd(packs.ggr)}
+                {formatPct(packsEdge)} edge · wager {formatCompactUsd(packs.wager)} · GGR{" "}
+                {formatCompactUsd(packsPlannedGgr)}
               </p>
             )}
           </div>
