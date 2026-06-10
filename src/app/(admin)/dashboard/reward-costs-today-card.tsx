@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Info, Gift, CloudRain } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -10,6 +11,7 @@ import {
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { RaceWinClaimants } from "./reward-cost-race-claimants";
 
 /**
  * "Reward Costs (today)" dashboard tile — what the house SPENT on rewards
@@ -192,7 +194,11 @@ function RewardCostsInfoPopover({
               label={l.label}
               amount={l.amount}
               isRain={l.key === "rain"}
-            />
+            >
+              {l.key === "race" && l.amount > 0 && (
+                <RaceWinClaimants raceTotal={l.amount} />
+              )}
+            </RewardCostRow>
           ))}
         </ul>
 
@@ -222,39 +228,44 @@ function RewardCostRow({
   label,
   amount,
   isRain,
+  children,
 }: {
   label: string;
   amount: number;
   isRain: boolean;
+  children?: ReactNode;
 }) {
   const Icon = isRain ? CloudRain : Gift;
   return (
-    <li className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/40">
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
-          <Icon className="size-3" />
-        </span>
-        <span className="min-w-0">
-          <span className="block truncate font-medium text-foreground/90">
-            {label}
+    <li className="rounded px-1 py-0.5 text-[11px] hover:bg-muted/40">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
+            <Icon className="size-3" />
           </span>
-          {isRain && (
-            <span className="block truncate text-[10px] text-muted-foreground">
-              Flat $2 per hour
+          <span className="min-w-0">
+            <span className="block truncate font-medium text-foreground/90">
+              {label}
             </span>
-          )}
+            {isRain && (
+              <span className="block truncate text-[10px] text-muted-foreground">
+                Flat $2 per hour
+              </span>
+            )}
+          </span>
         </span>
-      </span>
-      <span
-        className={cn(
-          "shrink-0 font-semibold tabular-nums",
-          amount > 0
-            ? "text-rose-600 dark:text-rose-400"
-            : "text-muted-foreground",
-        )}
-      >
-        −{formatCurrency(amount)}
-      </span>
+        <span
+          className={cn(
+            "shrink-0 font-semibold tabular-nums",
+            amount > 0
+              ? "text-rose-600 dark:text-rose-400"
+              : "text-muted-foreground",
+          )}
+        >
+          −{formatCurrency(amount)}
+        </span>
+      </div>
+      {children}
     </li>
   );
 }

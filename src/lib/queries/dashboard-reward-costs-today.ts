@@ -533,3 +533,79 @@ export async function getRewardCostsToday(): Promise<RewardCostsToday> {
     };
   });
 }
+
+// ─── Race win claimant drilldown (lazy, click-to-load) ───────────────────
+
+/** One race-prize payout credited today (one ledger row). */
+export type RaceWinClaimRow = {
+  userId: string;
+  username: string | null;
+  /** Prize amount for this claim (ABS ledger amount). */
+  amount: number;
+  /** daily | weekly | monthly when present on the ledger metadata. */
+  raceType: string | null;
+  claimedAtIso: string;
+};
+
+export type RaceWinClaimantsBreakdown = {
+  /** Individual claims today, largest amount first. */
+  claims: RaceWinClaimRow[];
+  /** Σ claim amounts — reconciles to the card's "Race wins" line. */
+  totalAmount: number;
+  /** ISO window start (today 00:00 UTC). */
+  dayStartIso: string;
+};
+
+/**
+ * Per-claimant breakdown for the Reward Costs card's "Race wins" line.
+ * Uses the SAME canonical metrics scope + today window as the cached
+ * `race_prize` aggregate on the card. Lazy — not called on initial render.
+ */
+export async function getRaceWinClaimants(): Promise<RaceWinClaimantsBreakdown> {
+  return withTiming("dashboard.rewardCostsToday.raceClaimants", async () => {
+    const now = new Date();
+    const since = utcStartOfDay(now);
+    const sinceIso = since.toISOString();
+    const sinceSql = `'${sinceIso}'::timestamptz`;
+
+    const db = await getDb();
+    const scope = await getMetricsScope();
+
+    type Row = {
+      user_id: string;
+      username: string | null;
+      amount: string;
+      race_type: string | null;
+      claimed_at: Date;
+    };
+    const rows = await db.$queryRawUnsafe<Row[]>(
+      `WITH ${scope.sessionWindowsCte}
+       SELECT
+         lt.user_id,
+         u.username,
+         ABS(lt.amount::numeric)::text AS amount,
+         lt.metadata->>'race_type' AS race_type,
+         lt.created_at AS claimed_at
+       FROM ledger_transactions lt
+       JOIN "user" u ON u.id = lt.user_id
+       WHERE lt.status = 'completed'
+         AND lt.type::text = 'race_prize'
+         AND lt.user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("user_id", "created_at")}
+         AND lt.created_at >= ${sinceSql}
+       ORDER BY ABS(lt.amount::numeric) DESC, lt.created_at DESC`,
+    );
+
+    const claims: RaceWinClaimRow[] = rows.map((r) => ({
+      userId: r.user_id,
+      username: r.username,
+      amount: toNumber(r.amount),
+      raceType: r.race_type,
+      claimedAtIso: new Date(r.claimed_at).toISOString(),
+    }));
+
+    const totalAmount = claims.reduce((sum, c) => sum + c.amount, 0);
+
+    return { claims, totalAmount, dayStartIso: sinceIso };
+  });
+}
