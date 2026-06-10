@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
+import type { race_type } from "@/generated/prisma/enums";
 
 export type RacePrizeTier = {
   id: string;
@@ -37,12 +38,25 @@ export type RaceClaimItem = {
   claimedAt: string;
 };
 
+export type RaceClaimHoldInfo = {
+  id: string;
+  reason: string;
+  createdBy: string;
+  createdAt: string;
+};
+
 export type RaceLeaderboardEntry = {
   id: string;
   userId: string;
   username: string | null;
   position: number;
   wageredUsd: number;
+  // Per-user claim review state for the selected period. `hold` is the active
+  // (un-released) hold blocking this user's claim, if any. `claimedAt` is set
+  // once the prize has been paid out — a claimed prize can no longer be frozen.
+  // Both are null in the all-time ("all") view, which has no single period.
+  hold: RaceClaimHoldInfo | null;
+  claimedAt: string | null;
 };
 
 export async function getRacePrizeTiers() {
@@ -103,6 +117,42 @@ export async function getRaceClaims(params: {
   };
 }
 
+export type RaceLeaderboardPeriod = {
+  periodStart: string;
+  participants: number;
+};
+
+/**
+ * The actual leaderboards that exist for a race type, taken straight from
+ * race_leaderboard_snapshots (one group per period_start). This is what the
+ * Standings period selector is populated from — instead of guessing a calendar
+ * date that may not line up with any real period (monthly races run on custom
+ * cadences, so a "1st of the month" guess shows nothing). Most-recent first.
+ */
+export async function getRaceLeaderboardPeriods(params: {
+  raceType: string;
+  limit?: number;
+}): Promise<RaceLeaderboardPeriod[]> {
+  const db = await getDb();
+  const { raceType, limit = 120 } = params;
+
+  // All-time has no single period — nothing to select.
+  if (!raceType || raceType === "all") return [];
+
+  const groups = await db.race_leaderboard_snapshots.groupBy({
+    by: ["period_start"],
+    where: { race_type: raceType as race_type },
+    _count: { _all: true },
+    orderBy: { period_start: "desc" },
+    take: limit,
+  });
+
+  return groups.map((g) => ({
+    periodStart: g.period_start.toISOString().slice(0, 10),
+    participants: g._count._all,
+  }));
+}
+
 export async function getRaceLeaderboard(params: {
   raceType?: string;
   periodStart?: string;
@@ -146,6 +196,45 @@ export async function getRaceLeaderboard(params: {
     db.race_leaderboard_snapshots.count({ where }),
   ]);
 
+  // Overlay per-user claim review state (active holds + paid claims) for the
+  // selected period so the leaderboard doubles as the fraud-review surface.
+  // Only the rows on this page are looked up — one round-trip each.
+  const userIds = entries.map((e) => e.user_id);
+  const periodDate = periodStart ? new Date(periodStart) : null;
+  const holdByUser = new Map<string, RaceClaimHoldInfo>();
+  const claimedAtByUser = new Map<string, string>();
+  if (periodDate && userIds.length > 0) {
+    const [holds, claims] = await Promise.all([
+      db.race_claim_holds.findMany({
+        where: {
+          race_type: raceType as race_type,
+          race_period_start: periodDate,
+          released_at: null,
+          user_id: { in: userIds },
+        },
+      }),
+      db.race_claims.findMany({
+        where: {
+          race_type: raceType as race_type,
+          race_period_start: periodDate,
+          user_id: { in: userIds },
+        },
+        select: { user_id: true, claimed_at: true },
+      }),
+    ]);
+    for (const h of holds) {
+      holdByUser.set(h.user_id, {
+        id: h.id,
+        reason: h.reason,
+        createdBy: h.created_by,
+        createdAt: h.created_at.toISOString(),
+      });
+    }
+    for (const c of claims) {
+      claimedAtByUser.set(c.user_id, c.claimed_at.toISOString());
+    }
+  }
+
   return {
     data: entries.map((e) => ({
       id: e.id,
@@ -153,6 +242,8 @@ export async function getRaceLeaderboard(params: {
       username: e.user?.username ?? null,
       position: e.position,
       wageredUsd: toNumber(e.wagered_usd),
+      hold: holdByUser.get(e.user_id) ?? null,
+      claimedAt: claimedAtByUser.get(e.user_id) ?? null,
     })),
     total,
     page,
@@ -256,6 +347,10 @@ async function getAllTimeLeaderboard(params: {
       username: r.username,
       position: offset + i + 1,
       wageredUsd: r.total_wagered,
+      // All-time view spans every period, so per-period claim review state
+      // (holds/claims) doesn't apply.
+      hold: null,
+      claimedAt: null,
     })),
     total,
     page,

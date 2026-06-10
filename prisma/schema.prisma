@@ -648,6 +648,30 @@ model race_prize_tiers {
   @@unique([race_type, position], map: "race_prize_tiers_race_type_position_unique")
 }
 
+// Per-user claim freeze for official races (backend migration 0128). Distinct
+// from race_periods.claims_frozen (which locks ALL winners of a period): a hold
+// here blocks a SINGLE user from claiming a SINGLE period's prize while a
+// wager-abuse review is open. released_at IS NULL == active hold; releasing
+// keeps the row for the audit trail. The backend owns the partial unique index
+// (one active hold per user/type/period) — not expressible in Prisma, and the
+// admin app never migrates this DB, so it is intentionally omitted here.
+model race_claim_holds {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id           String
+  race_type         race_type
+  race_period_start DateTime  @db.Date
+  reason            String
+  created_by        String
+  released_at       DateTime? @db.Timestamp(6)
+  released_by       String?
+  release_reason    String?
+  created_at        DateTime  @default(now()) @db.Timestamp(6)
+  updated_at        DateTime  @default(now()) @db.Timestamp(6)
+  user              User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "race_claim_holds_user_id_user_id_fk")
+
+  @@index([race_type, race_period_start], map: "race_claim_holds_period_idx")
+}
+
 model raffle_entries {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   raffle_id    String   @db.Uuid
@@ -912,6 +936,7 @@ model User {
   pack_favorites                                                        pack_favorites[]
   pinned_chat_messages                                                  pinned_chat_messages[]
   promo_code_redemptions                                                promo_code_redemptions[]
+  race_claim_holds                                                      race_claim_holds[]
   race_claims                                                           race_claims[]
   race_leaderboard_snapshots                                            race_leaderboard_snapshots[]
   raffle_entries                                                        raffle_entries[]

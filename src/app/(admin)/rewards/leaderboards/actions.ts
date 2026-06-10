@@ -563,3 +563,165 @@ export async function setRacePeriodClaimsFrozen(
 
   revalidatePath("/rewards/leaderboards");
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Per-user claim holds (fraud review)
+//
+// A hold freezes a SINGLE user's claim for a SINGLE period while a wager-abuse
+// review is open — distinct from the period-wide claims_frozen kill-switch.
+// Mirrors the backend's freezeUserClaim/unfreezeUserClaim (race.service.ts):
+// at most one active hold per (user, race_type, period), a reason is required,
+// and an already-claimed prize cannot be frozen (it needs a clawback instead).
+// released_at IS NULL == active hold; releasing keeps the row for the audit
+// trail. periodStart is the snapshot's period_start ('YYYY-MM-DD', UTC date).
+// ──────────────────────────────────────────────────────────────────────────
+
+function parsePeriodStart(periodStart: string): Date {
+  const d = new Date(periodStart);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error("Invalid period start date");
+  }
+  return d;
+}
+
+export async function freezeUserRaceClaim(params: {
+  userId: string;
+  raceType: string;
+  periodStart: string;
+  reason: string;
+}) {
+  const db = await getDb();
+  const session = await requireAdmin();
+
+  const { userId, raceType, periodStart, reason } = params;
+
+  if (!VALID_RACE_TYPES.has(raceType as race_type)) {
+    throw new Error("Invalid race type (must be daily, weekly, or monthly)");
+  }
+  if (!reason || reason.trim().length === 0) {
+    throw new Error("A reason is required to freeze a claim");
+  }
+  if (reason.length > 500) {
+    throw new Error("Reason must be 500 characters or fewer");
+  }
+
+  await requireCapability(
+    session,
+    "__can_manage_race_periods",
+    "manage race periods",
+  );
+
+  const periodDate = parsePeriodStart(periodStart);
+
+  // Can't freeze a prize that's already been paid out — that needs a clawback,
+  // not a hold. Mirrors the backend's RACE_ALREADY_CLAIMED guard.
+  const existingClaim = await db.race_claims.findFirst({
+    where: {
+      user_id: userId,
+      race_type: raceType as race_type,
+      race_period_start: periodDate,
+    },
+    select: { id: true },
+  });
+  if (existingClaim) {
+    throw new Error(
+      "Prize already claimed — freezing cannot block a paid prize",
+    );
+  }
+
+  const alreadyHeld = await db.race_claim_holds.findFirst({
+    where: {
+      user_id: userId,
+      race_type: raceType as race_type,
+      race_period_start: periodDate,
+      released_at: null,
+    },
+    select: { id: true },
+  });
+  if (alreadyHeld) {
+    throw new Error("This claim is already frozen");
+  }
+
+  await db.race_claim_holds.create({
+    data: {
+      user_id: userId,
+      race_type: raceType as race_type,
+      race_period_start: periodDate,
+      reason: reason.trim(),
+      created_by: session.userId,
+    },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "race_claim_frozen",
+    targetUserId: userId,
+    metadata: {
+      race_type: raceType,
+      race_period_start: periodStart,
+      reason: reason.trim(),
+    },
+  });
+
+  revalidatePath("/rewards/leaderboards");
+}
+
+export async function unfreezeUserRaceClaim(params: {
+  userId: string;
+  raceType: string;
+  periodStart: string;
+  releaseReason?: string | null;
+}) {
+  const db = await getDb();
+  const session = await requireAdmin();
+
+  const { userId, raceType, periodStart, releaseReason } = params;
+
+  if (!VALID_RACE_TYPES.has(raceType as race_type)) {
+    throw new Error("Invalid race type (must be daily, weekly, or monthly)");
+  }
+  if (releaseReason && releaseReason.length > 500) {
+    throw new Error("Release reason must be 500 characters or fewer");
+  }
+
+  await requireCapability(
+    session,
+    "__can_manage_race_periods",
+    "manage race periods",
+  );
+
+  const periodDate = parsePeriodStart(periodStart);
+
+  // Release the active hold only. updateMany keeps this race-safe: if no active
+  // hold matches (already released elsewhere), count is 0 and we surface a
+  // clean error instead of silently succeeding. Mirrors releaseClaimHold.
+  const { count } = await db.race_claim_holds.updateMany({
+    where: {
+      user_id: userId,
+      race_type: raceType as race_type,
+      race_period_start: periodDate,
+      released_at: null,
+    },
+    data: {
+      released_at: new Date(),
+      released_by: session.userId,
+      release_reason: releaseReason?.trim() || null,
+    },
+  });
+  if (count === 0) {
+    throw new Error("No active claim hold to release");
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "race_claim_unfrozen",
+    targetUserId: userId,
+    metadata: {
+      race_type: raceType,
+      race_period_start: periodStart,
+      release_reason: releaseReason?.trim() || null,
+    },
+  });
+
+  revalidatePath("/rewards/leaderboards");
+}

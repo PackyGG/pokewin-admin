@@ -4,6 +4,7 @@ import { Trophy } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import {
   getRaceLeaderboard,
+  getRaceLeaderboardPeriods,
   getRacePrizeTiers,
   getRaceClaims,
   getRacePeriodsOverview,
@@ -15,7 +16,7 @@ import {
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
-import { PeriodPicker } from "./period-picker";
+import { PeriodSelect } from "./period-select";
 import { RaceTiersTable } from "./race-tiers-table";
 import { StandingsTable } from "./standings-table";
 import { HistoryTable } from "./history-table";
@@ -43,24 +44,6 @@ const TABS = [
 type TabValue = (typeof TABS)[number]["value"];
 
 const RACE_TYPE_FILTERS = ["all", "monthly", "weekly", "daily"] as const;
-
-function getDefaultPeriodStart(raceType: string): string {
-  const now = new Date();
-  if (raceType === "weekly") {
-    const day = now.getDay();
-    const diff = day === 0 ? 6 : day - 1;
-    now.setDate(now.getDate() - diff);
-  } else if (raceType === "monthly") {
-    // Calendar month start (UTC) is the most useful default for monthly
-    // even though admin-created monthly races may not align to month #1.
-    return new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-    )
-      .toISOString()
-      .slice(0, 10);
-  }
-  return now.toISOString().slice(0, 10);
-}
 
 export default async function LeaderboardsPage({
   searchParams,
@@ -153,10 +136,21 @@ async function StandingsTab({
   const perPage = Number(params.perPage) || 20;
   const search = params.search;
 
+  // The selectable leaderboards come straight from the DB (the periods that
+  // actually have snapshot rows for this race type) — no calendar guessing.
+  // The effective period is the one in the URL when it's a real leaderboard,
+  // otherwise the most recent one that exists.
+  const periods =
+    raceType === "all"
+      ? []
+      : await getRaceLeaderboardPeriods({ raceType });
   const effectivePeriod =
     raceType === "all"
       ? undefined
-      : params.periodStart || getDefaultPeriodStart(raceType);
+      : params.periodStart &&
+          periods.some((p) => p.periodStart === params.periodStart)
+        ? params.periodStart
+        : periods[0]?.periodStart;
   const result = await getRaceLeaderboard({
     raceType,
     periodStart: effectivePeriod,
@@ -172,11 +166,9 @@ async function StandingsTab({
           {RACE_TYPE_FILTERS.map((type) => (
             <Link
               key={type}
-              href={`/rewards/leaderboards?tab=standings&raceType=${type}${
-                type !== "all" && effectivePeriod
-                  ? `&periodStart=${effectivePeriod}`
-                  : ""
-              }`}
+              // Don't carry periodStart across race types — periods differ per
+              // type, so the target type defaults to its own latest leaderboard.
+              href={`/rewards/leaderboards?tab=standings&raceType=${type}`}
               className={cn(
                 "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors capitalize",
                 raceType === type
@@ -189,15 +181,23 @@ async function StandingsTab({
             </Link>
           ))}
         </div>
-        {raceType !== "all" && effectivePeriod && (
-          <PeriodPicker raceType={raceType} periodStart={effectivePeriod} />
+        {raceType !== "all" && (
+          <PeriodSelect
+            raceType={raceType}
+            periodStart={effectivePeriod}
+            periods={periods}
+          />
         )}
       </div>
       <Suspense>
         <DataTableToolbar searchPlaceholder="Search by username, email, or ID..." />
       </Suspense>
       <FadeIn>
-        <StandingsTable data={result.data} />
+        <StandingsTable
+          data={result.data}
+          raceType={raceType}
+          periodStart={effectivePeriod}
+        />
       </FadeIn>
       <DataTablePagination
         page={result.page}
