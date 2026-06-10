@@ -10,7 +10,7 @@ import {
 } from "@/lib/fraud/score";
 import { calculateUsersPnlBatch, type UserPnl } from "./pnl";
 import { isUserId, isUuid } from "@/lib/utils/ids";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
 import { escapeBlacklistIds } from "./_blacklist";
 
 // Allowlist from the generated Prisma user_role enum — validate the
@@ -833,10 +833,10 @@ export async function getUsers(params: {
   const searchTerm = search?.trim();
   const isAnySearch = !!searchTerm;
 
-  const excludedUserIds =
-    includeExcludedInSearch && isAnySearch
-      ? []
-      : await getExcludedUserIds();
+  const excludedUserIds = await getExcludedUserIdsForAdminSearch({
+    includeAllBlacklisted: includeExcludedInSearch,
+    isSearching: isAnySearch,
+  });
 
   const where: Prisma.UserWhereInput = {};
 

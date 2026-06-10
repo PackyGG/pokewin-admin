@@ -25,8 +25,9 @@
 
 import { getDb } from "@/lib/db";
 import { verifySession } from "@/lib/dal";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { canCurrentAdminIncludeExcludedInSearch } from "@/lib/excluded-users/search-gate";
+import { filterExcludedIdsForSearch } from "@/lib/excluded-users/search-visible-override";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 export type GlobalUserSearchResult = {
   id: string;
@@ -109,7 +110,9 @@ export async function searchUsersGlobal(
   const includeExcluded = await canCurrentAdminIncludeExcludedInSearch(
     session.userId,
   );
-  const excludedUserIds = includeExcluded ? [] : await getExcludedUserIds();
+  const excludedUserIds = includeExcluded
+    ? []
+    : filterExcludedIdsForSearch(await getExcludedUserIds());
   const excludedFilter =
     excludedUserIds.length > 0 ? { id: { notIn: excludedUserIds } } : {};
 
