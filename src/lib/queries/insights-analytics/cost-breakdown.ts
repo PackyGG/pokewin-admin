@@ -3,6 +3,7 @@ import "server-only";
 import { getDb } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
+import { MS_PER_DAY } from "@/lib/utils/time";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -26,6 +27,7 @@ import {
   type BalanceAdjustmentCategory,
 } from "@/lib/balance-adjustment-categories";
 import { getMetricsScope } from "@/lib/metrics/scope";
+import { getCanonicalMoneyKpis } from "@/lib/queries/house-kpis";
 
 /**
  * Cost Breakdown — the full wager → P&L leakage waterfall, built on the
@@ -174,8 +176,15 @@ export type CostBreakdown = {
   periodLabel: string;
   cutoffIso: string;
 
-  /** Total wager for the window (customer wager — canonical scope). */
+  /** GGR-canonical wager for the window (borrow + reward-pack excluded). */
   totalWager: number;
+  /**
+   * Organic customer stake — dashboard `wager_organic` + organic upgrader.
+   * No creator-code users; on-stream sponsored play excluded; borrow INCLUDED.
+   */
+  organicCustomerStake: number;
+  organicLedgerStake: number;
+  organicUpgraderStake: number;
   /** Gaming payouts paid back to users (inventory-delta + battle_refund). */
   gamingPayouts: number;
   /** Total reward / marketing payouts (canonical reward cost incl. net rain). */
@@ -679,11 +688,25 @@ export async function getCostBreakdown(
   period: InsightsPeriod,
   periodLabel: string,
   contributorLimit = 10,
+  lifetimeLookbackDays?: number,
 ): Promise<CostBreakdown> {
-  const cutoff = periodToCutoff(period, new Date());
-  // Canonical window: all-time → no lower bound; otherwise the cutoff.
+  const now = new Date();
+  // Lifetime ("all") normally has NO lower bound. When a caller passes
+  // `lifetimeLookbackDays` (the /insights hub does, = 365), bound the
+  // lifetime window to `now − N days` so the heavy canonical reads
+  // (getWindowMetrics / getDailyGamingMetrics / calculateWindowedPnl /
+  // getBridgeTerms) never run an unbounded full-history scan — the same 365d
+  // cap /ggr and insights-analytics/overview.ts apply. Finite periods are
+  // unaffected, and callers that omit the param keep the unbounded behaviour
+  // (so /insights/cost-breakdown is unchanged).
+  const cutoff =
+    period === "all" && lifetimeLookbackDays != null
+      ? new Date(now.getTime() - lifetimeLookbackDays * MS_PER_DAY)
+      : periodToCutoff(period, now);
+  // Canonical window: unbounded lifetime only when NOT capped; otherwise the
+  // cutoff (a finite period, or the capped lifetime lookback).
   const window: MetricWindow = {
-    since: period === "all" ? null : cutoff,
+    since: period === "all" && lifetimeLookbackDays == null ? null : cutoff,
   };
 
   const [excluded, creatorIds] = await Promise.all([
@@ -697,6 +720,7 @@ export async function getCostBreakdown(
 
   const [
     metrics,
+    organicStake,
     windowedPnl,
     bridge,
     dailyMetrics,
@@ -705,6 +729,7 @@ export async function getCostBreakdown(
     statsExcludedAdjSum,
   ] = await Promise.all([
     getWindowMetrics({ window }),
+    period === "all" ? Promise.resolve(null) : getCanonicalMoneyKpis(cutoff),
     calculateWindowedPnl({ since: cutoff, excludeUserIds: dropUserIds }),
     getBridgeTerms(cutoff, dropUserIds),
     getDailyGamingMetrics(window),
@@ -944,8 +969,8 @@ export async function getCostBreakdown(
   // ── Subtotal / base / result lines ───────────────────────────────
   const baseLine: CostLine = {
     key: "wager",
-    label: "Total wager",
-    why: "What customers staked across packs and battles (creator on-stream sponsored play and borrow-mode plays excluded). The top of the funnel.",
+    label: "GGR wager (borrow-corrected)",
+    why: "GGR-canonical customer stake: pack/battle/upgrader wager with borrow-mode and reward-pack opens excluded (matches /ggr and dashboard GGR). Distinct from organic customer stake on the Insights hub, which includes borrow volume and excludes only creator-code users.",
     amount: totalWager,
     signedAmount: totalWager,
     kind: "base",
@@ -1059,6 +1084,9 @@ export async function getCostBreakdown(
     periodLabel,
     cutoffIso: cutoff.toISOString(),
     totalWager,
+    organicCustomerStake: organicStake?.organicCustomerStake ?? 0,
+    organicLedgerStake: organicStake?.wagerOrganic ?? 0,
+    organicUpgraderStake: organicStake?.upgraderOrganic ?? 0,
     gamingPayouts,
     rewardPayouts,
     ggr,

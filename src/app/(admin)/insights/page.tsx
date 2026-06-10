@@ -26,12 +26,14 @@ import { safeQuery } from "@/lib/errors/safe-query";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import {
-  parseInsightsPeriod,
   INSIGHTS_PERIOD_LABELS,
   type InsightsPeriod,
 } from "./analytics/types";
-import { CostBreakdownPeriodFilter } from "./cost-breakdown/period-filter";
 import { getCostBreakdown } from "@/lib/queries/insights-analytics/cost-breakdown";
+import {
+  getInsightsHubWager,
+  INSIGHTS_HUB_WAGER_LOOKBACK_DAYS,
+} from "@/lib/queries/insights-analytics/hub-wager";
 
 export const metadata = { title: "Insights" };
 
@@ -41,9 +43,11 @@ export const metadata = { title: "Insights" };
  *
  *   1. "How is the business doing right now?" — a 6-tile headline KPI
  *      strip (wager → GGR → reward cost → NGR → realized P&L → cost%
- *      of GGR) for the active period, all sourced from the SAME
- *      `getCostBreakdown` helper Cost Breakdown / Dashboard already
- *      use (no new math, no drift).
+ *      of GGR) for the LIFETIME window. GGR → cost% come from the SAME
+ *      `getCostBreakdown` helper Cost Breakdown / Dashboard use (no new
+ *      math, no drift); the headline Wager is the rule-correct customer
+ *      stake from `getInsightsHubWager` (borrow-net real amount,
+ *      creator-sessions excluded, sponsored battles + upgrader included).
  *
  *   2. "Where do I drill in next?" — a quick-link grid of every
  *      sub-area (Cost Breakdown, Analytics, GGR, Games, Rewards,
@@ -55,42 +59,32 @@ export const metadata = { title: "Insights" };
  * negative → rose (we owe). Reward cost is always rose (we paid out).
  * Cost% of GGR is informational (cyan) — it's a ratio, not a flow.
  *
- * Active-timeframe-only: the KPI strip is the only data fetch the page
- * runs, wrapped in `<Suspense key={period}>` so swapping `?period=`
- * scopes a fresh fetch and never preloads other windows. The quick-link
- * grid is static markup. Total query work per render = ONE call to
- * `getCostBreakdown`, which is exactly what /insights/cost-breakdown
- * already runs.
+ * Lifetime-only: no period selector. The KPI strip is the only data
+ * fetch the page runs — two parallel reads (`getCostBreakdown` for the
+ * margin tiles + `getInsightsHubWager` for the headline wager), both
+ * bounded to a 365d lifetime so the heavy scans stay tractable. The
+ * quick-link grid is static markup.
  */
-export default async function InsightsHubPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | undefined>>;
-}) {
+export default async function InsightsHubPage() {
   await requirePageAccess("/insights");
-  const params = await searchParams;
-  const period = parseInsightsPeriod(params.period);
-  const periodLabel = INSIGHTS_PERIOD_LABELS[period];
+  // Lifetime-only hub — no period selector. The headline margin + wager are
+  // always the lifetime view (365d-capped so the heavy scans stay tractable).
+  const period: InsightsPeriod = "all";
+  const periodLabel = INSIGHTS_PERIOD_LABELS[period]; // "Lifetime"
 
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <PageHeroIdentity
-            icon={Compass}
-            accent="cyan"
-            title="Insights"
-            subtitle="Headline platform margin + the entry point to every analytical surface"
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <CostBreakdownPeriodFilter />
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Compass}
+          accent="cyan"
+          title="Insights"
+          subtitle="Headline platform margin + the entry point to every analytical surface"
+        />
       </PageHero>
 
-      {/* KPI strip — the only data fetch on the page. Suspense keyed on
-          `period` so swapping the chip mounts a fresh fetch (and unmounts
-          the previous one) — no other windows preload. */}
+      {/* KPI strip — the only data fetch on the page. Lifetime-only, so the
+          Suspense key is constant. */}
       <section className="space-y-3">
         <SectionHeading
           icon={Activity}
@@ -114,14 +108,16 @@ export default async function InsightsHubPage({
 // ─── Headline KPI strip ─────────────────────────────────────────────
 
 /**
- * The 6 headline numbers, sourced from the canonical
+ * The 6 headline numbers. GGR → cost% come from the canonical
  * `getCostBreakdown(period, …)` helper — the SAME helper
- * `/insights/cost-breakdown` calls. This keeps the hub reconciled with
- * Cost Breakdown / Dashboard / GGR by construction (one source of
- * truth, no parallel math).
+ * `/insights/cost-breakdown` calls — so they reconcile with Cost
+ * Breakdown / Dashboard / GGR by construction (no parallel math). The
+ * headline Wager comes from `getInsightsHubWager` — the rule-correct
+ * customer stake (borrow-net real amount, creator-sessions excluded,
+ * sponsored battles + upgrader included), lifetime.
  *
  * Color rules (house-POV, strict):
- *   • Total wager      — base / informational (blue)
+ *   • Wager            — base / informational (blue); total customer stake
  *   • GGR              — emerald when ≥ 0, rose when < 0 (house keeps / owes)
  *   • Reward cost      — always rose (every reward dollar is a house outflow)
  *   • NGR              — emerald when ≥ 0, rose when < 0
@@ -135,11 +131,17 @@ async function HeadlineKpiStrip({
   period: InsightsPeriod;
   periodLabel: string;
 }) {
-  const { data, error } = await safeQuery(
-    () => getCostBreakdown(period, periodLabel, 0),
-    null,
-    "insights.hub.kpi",
-  );
+  const [{ data, error }, { data: wager }] = await Promise.all([
+    safeQuery(
+      () => getCostBreakdown(period, periodLabel, 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS),
+      null,
+      "insights.hub.kpi",
+    ),
+    // Headline wager — total customer stake (borrow-net, creator-sessions
+    // excluded, sponsored + upgrader included), lifetime. Its own leg so a
+    // wager-read failure degrades only this tile, not the whole strip.
+    safeQuery(() => getInsightsHubWager(), 0, "insights.hub.wager"),
+  ]);
 
   if (error || !data) {
     return (
@@ -168,11 +170,11 @@ async function HeadlineKpiStrip({
     <FadeIn>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
         <KpiTile
-          label="Total wager"
+          label="Wager"
           icon={Coins}
           accent="blue"
-          value={formatCurrency(data.totalWager)}
-          sub={`${periodLabel} · customer stake`}
+          value={formatCurrency(wager ?? 0)}
+          sub={`${periodLabel} · real customers`}
         />
         <KpiTile
           label="GGR"
