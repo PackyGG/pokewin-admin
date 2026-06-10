@@ -24,9 +24,9 @@ import type {
 
 /**
  * Funding-source wager-weight editor — how much wager FUNDED BY each bonus
- * source counts toward the withdrawal requirement, rakeback and race
- * leaderboards, relative to deposit-funded wager (the implicit 100%
- * baseline).
+ * source counts toward the withdrawal requirement, rakeback, race
+ * leaderboards and shard earning, relative to deposit-funded wager (the
+ * implicit 100% baseline).
  *
  * Stored on the backend in basis points (10000 bps = 1×), but admins think
  * in multipliers, so the form is in ×-multipliers with a live "= N bps" hint
@@ -44,7 +44,7 @@ import type {
 const BPS_PER_X = 10000;
 const MAX_BPS = 1_000_000;
 
-type Destination = "withdrawal" | "rakeback" | "leaderboard";
+type Destination = "withdrawal" | "rakeback" | "leaderboard" | "shards";
 type SourceKey = keyof FundingSourceWeights;
 
 const DESTINATIONS: {
@@ -81,6 +81,17 @@ const DESTINATIONS: {
         Frozen at wager time — changes affect future wagers only and never
         reshuffle existing standings. Creator/affiliate leaderboard volume is
         unaffected (per-game weights only).
+      </>
+    ),
+  },
+  {
+    key: "shards",
+    title: "Shard earning",
+    help: (
+      <>
+        How much bonus-funded wager counts toward earning shards. Frozen at
+        wager time — changes affect future wagers only and never re-touch
+        shards already earned. Composes with the per-game shard weights.
       </>
     ),
   },
@@ -131,7 +142,8 @@ export function SourceWagerWeightsCard({
           </CardTitle>
           <CardDescription>
             Per-source weights for how much bonus-funded wager counts toward
-            the withdrawal requirement, rakeback and race leaderboards.
+            the withdrawal requirement, rakeback, race leaderboards and shard
+            earning.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -199,10 +211,11 @@ export function SourceWagerWeightsCard({
         </CardTitle>
         <CardDescription>
           How much wager funded by each bonus source counts toward the
-          withdrawal requirement, rakeback and race leaderboards, relative to
-          deposit-funded wager (the 100% baseline). Values are multipliers
-          (1× = 10000 bps). Composes with the per-game weights. Saving writes
-          through the backend, which validates and refreshes its own cache.
+          withdrawal requirement, rakeback, race leaderboards and shard
+          earning, relative to deposit-funded wager (the 100% baseline).
+          Values are multipliers (1× = 10000 bps). Composes with the per-game
+          weights. Saving writes through the backend, which validates and
+          refreshes its own cache.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">

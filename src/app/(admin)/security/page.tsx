@@ -1,4 +1,4 @@
-import { Lock, Banknote, Trophy, Percent, Coins } from "lucide-react";
+import { Lock, Banknote, Trophy, Percent, Coins, Gem } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getSiteConfig } from "@/lib/queries/security";
 import { SecurityContent } from "./security-content";
@@ -13,6 +13,8 @@ import { RAKEBACK_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./rakeback-wager-weights
 import { RakebackWagerWeightsCard } from "./rakeback-wager-weights-card";
 import { SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./source-wager-weights-keys";
 import { SourceWagerWeightsCard } from "./source-wager-weights-card";
+import { SHARD_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./shard-wager-weights-keys";
+import { ShardWagerWeightsCard } from "./shard-wager-weights-card";
 import {
   getWagerRequirementDefaults,
   type WagerRequirementDefaults,
@@ -29,6 +31,10 @@ import {
   getSourceWagerWeights,
   type SourceWagerWeights,
 } from "@/lib/backend-api/source-wager-weights";
+import {
+  getShardWagerWeights,
+  type ShardWagerWeights,
+} from "@/lib/backend-api/shard-wager-weights";
 
 export const metadata = { title: "Security" };
 
@@ -48,6 +54,7 @@ export default async function SecurityPage() {
     ...LEADERBOARD_WAGER_WEIGHT_SITE_CONFIG_KEYS,
     ...RAKEBACK_WAGER_WEIGHT_SITE_CONFIG_KEYS,
     ...SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS,
+    ...SHARD_WAGER_WEIGHT_SITE_CONFIG_KEYS,
   ]);
   const config = allConfig.filter((row) => !movedKeys.has(row.key));
   const hasMovedKeys = allConfig.some((row) =>
@@ -92,6 +99,15 @@ export default async function SecurityPage() {
     sourceWeights = null;
   }
 
+  // Same non-critical pattern for the per-game shard wager weights — the
+  // backend branch may not be deployed yet.
+  let shardWeights: ShardWagerWeights | null = null;
+  try {
+    shardWeights = await getShardWagerWeights();
+  } catch {
+    shardWeights = null;
+  }
+
   return (
     <div className="space-y-6">
       <PageHero>
@@ -120,6 +136,13 @@ export default async function SecurityPage() {
         <div className="space-y-3">
           <SectionHeading icon={Percent} title="Rakeback Wager Weights" />
           <RakebackWagerWeightsCard initial={rakebackWeights} />
+        </div>
+      </FadeIn>
+
+      <FadeIn>
+        <div className="space-y-3">
+          <SectionHeading icon={Gem} title="Shard Wager Weights" />
+          <ShardWagerWeightsCard initial={shardWeights} />
         </div>
       </FadeIn>
 

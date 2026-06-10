@@ -71,7 +71,15 @@
 
 ## 🟡 In-flight
 
-_None — Creator Hub plan closed. Pick up deferred items below when owner prioritizes._
+**Shard wager-weights admin UI (2026-06-10, LOCAL/uncommitted) — PARTIAL:** two `/security` cards added to expose the already-shipped backend shard knobs (backend on `packy-backend`: per-game `shard-wager-weights.ts` route + `shards` as the 4th `source-wager-weights.ts` destination, both already wired into all four wager callers).
+- **NEW per-game "Shard Wager Weights" card** (Gem icon, placed before Funding-Source): `shard-wager-weights-card.tsx` + `-actions.ts` (requirePageAccess+requireAdmin, audit `shard_wager_weights_updated`, backend PUT) + `-keys.ts` (`shard_wager_weight_{packs,battles,upgrader}_bps`) + `src/lib/backend-api/shard-wager-weights.ts` (GET/PUT `/admin/shard-wager-weights`). Mirrors the leaderboard-weights card exactly.
+- **Funding-Source card extended** with a 4th `shards` destination (withdrawal/rakeback/leaderboard/**shards**): added to lib types (`shards?` optional → graceful per-destination degrade), card `DESTINATIONS`, action Zod schema + refine, and the `movedKeys` filter.
+- **⚠️ Backend key-naming finding (NOT changed):** the funding-source `shards` keys persisted to `site_config` are PLURAL `shards_source_weight_*` (PUT/GET build the key from the `'shards'` destination string). The `DEFAULTS` map in `packy-backend` `site-config.service.ts` has SINGULAR `shard_source_weight_*` entries → **dead** (never read; harmless, all = 10000 via the hardcoded fallback). Admin `movedKeys` uses the live PLURAL keys. Backend could drop the dead singular DEFAULTS entries; no functional impact.
+- **Env finding:** `prisma generate` / `npm run build` need **Node ≥22** here (Prisma 7.5.0 WASM needs `externref`; Node 16 → `CompileError`, Node 20.18 → `ERR_REQUIRE_ESM`). Built green on `v22.14.0`.
+- **Verify:** `tsc --noEmit` exit 0 · `lint` clean · `npm run build` exit 0 (Node 22). **NO live logged-in click-through** (no backend API env here → cards render the degraded "awaiting backend deploy" state). Recommend a logged-in pass on a deploy where the backend shard routes are reachable.
+- **NOT committed/pushed:** this `PackyGG/pokewin-admin` checkout is loose, untracked files (surrounding git remote is unrelated). Deploy via the real pokewin-admin repo.
+
+_Creator Hub plan closed. Pick up deferred items below when owner prioritizes._
 
 ---
 
