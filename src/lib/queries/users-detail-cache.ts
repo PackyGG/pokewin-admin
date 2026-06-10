@@ -49,9 +49,13 @@ const REVALIDATE_SECONDS = 60;
 // single underlying query. The cached callbacks always run against prod
 // (see module doc), so the cache key needs no env dimension.
 
+// v1 → v2: getUserDetail's fail-fast legs were drift-proofed (battle-limits
+// + signup-usage .catch(() => null); wager breakdown via the LIVE enum
+// filter). Pre-fix v1 entries can hold the rejected/zeroed shapes — a fresh
+// namespace guarantees the fixed code path's output isn't shadowed.
 const cachedUserDetail = unstable_cache(
   (userId: string) => getUserDetail(userId),
-  ["users-detail-aggregate-v1"],
+  ["users-detail-aggregate-v2"],
   { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
 );
 
@@ -70,9 +74,14 @@ const cachedUserDetail = unstable_cache(
 //     −$18k tiles become "—"), so a fresh namespace guarantees the new code
 //     path's output isn't shadowed by a pre-fix v2 entry. The `users-detail`
 //     cache-bust tag (70be8d3) is retained so a wipe still revalidates live.
+//   • v5 → v6: getUserPnlBreakdown's by-type rows query went enum-drift-proof
+//     (`type IN (...)` → `type::text IN (...)`). On prod the old query threw
+//     22P02 (live enum lacks the upgrader members) and the breakdown degraded
+//     to all-zeros — bump so the fixed query's real numbers replace any
+//     zeroed v5 entries immediately instead of stale-while-revalidate.
 const cachedUserPnlBreakdown = unstable_cache(
   (userId: string): Promise<PnlBreakdown> => getUserPnlBreakdown(userId),
-  ["users-detail-pnl-v5"],
+  ["users-detail-pnl-v6"],
   { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
 );
 

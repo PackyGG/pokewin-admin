@@ -1,16 +1,9 @@
 import { getDb } from "@/lib/db";
 import { affiliate_usage_type } from "@/generated/prisma/enums";
 import { toNumber } from "@/lib/utils/decimal";
-import { filterLedgerTxTypes } from "./_ledger-tx-types";
+import { filterLedgerTxTypesLive } from "./_ledger-tx-types";
 import { calculateUserPnl } from "./pnl";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
-
-const USER_WAGER_BREAKDOWN_TYPES = filterLedgerTxTypes([
-  "pack_opening",
-  "battle_bet",
-  "battle_sponsorship",
-  "upgrader_bet",
-]);
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 
@@ -324,16 +317,32 @@ export async function getUserDetail(id: string) {
   // cuts the worst-case latency roughly in half on hot user-detail loads.
   let wagerBreakdown: { type: string; _sum: { amount: unknown } }[] = [];
 
-  const wagerBreakdownPromise = db.ledger_transactions
-    .groupBy({
-      by: ["type"],
-      where: {
-        user_id: id,
-        type: { in: USER_WAGER_BREAKDOWN_TYPES },
-        status: "completed",
-      },
-      _sum: { amount: true },
-    })
+  // Wager-breakdown groupBy — the requested type list is intersected against
+  // the LIVE prod enum at call time (filterLedgerTxTypesLive), NOT just the
+  // generated Prisma enum. The generated client is AHEAD of prod for the
+  // unlaunched upgrader feature: passing `upgrader_bet` into a Prisma
+  // `type: { in: [...] }` made Postgres throw `22P02 invalid input value for
+  // enum`, which the .catch below silently swallowed → packs/battles-wagered
+  // tiles rendered 0 on every prod profile. The live probe is 5-min
+  // unstable_cache'd, so steady-state adds no extra round trip. (Prisma
+  // `in: []` on an empty live list is valid and returns no rows.)
+  const wagerBreakdownPromise = filterLedgerTxTypesLive([
+    "pack_opening",
+    "battle_bet",
+    "battle_sponsorship",
+    "upgrader_bet",
+  ])
+    .then((types) =>
+      db.ledger_transactions.groupBy({
+        by: ["type"],
+        where: {
+          user_id: id,
+          type: { in: types },
+          status: "completed",
+        },
+        _sum: { amount: true },
+      }),
+    )
     .catch((e) => {
       console.error("[getUserDetail] wager breakdown query failed:", e);
       return [] as { type: string; _sum: { amount: unknown } }[];
@@ -381,7 +390,12 @@ export async function getUserDetail(id: string) {
     db.balances.findUnique({ where: { user_id: id } }),
     db.user_statistics.findUnique({ where: { user_id: id } }),
     db.user_feature_locks.findUnique({ where: { user_id: id } }),
-    db.user_battle_limits.findUnique({ where: { user_id: id } }),
+    // The user_battle_limits table is ABSENT in live prod (P2021). A missing
+    // table means no per-user override row can exist, so `null` is the TRUE
+    // answer (site_config defaults apply) — not a degraded value. Without
+    // this .catch the rejection took down the WHOLE 19-promise aggregate and
+    // the entire body band rendered the amber error instead of the page.
+    db.user_battle_limits.findUnique({ where: { user_id: id } }).catch(() => null),
     db.user_inventory.count({ where: { user_id: id, sold_at: null, exchanged_at: null } }),
     db.affiliate_accounts.findUnique({
       where: { user_id: id },
@@ -476,14 +490,22 @@ export async function getUserDetail(id: string) {
       }),
       // Historical signup-time code — preferred, since it preserves the
       // exact string even if the owner later rotated their code.
-      db.affiliate_code_usages.findFirst({
-        where: {
-          referred_user_id: user.id,
-          usage_type: affiliate_usage_type.signup,
-        },
-        orderBy: { created_at: "desc" },
-        select: { code: true },
-      }),
+      // The LIVE prod affiliate_usage_type enum is {deposit,wager} only —
+      // `signup` exists just in the generated client, so this filter throws
+      // 22P02 on prod. Zero rows could carry the missing member anyway, so
+      // null is the TRUE result; the fallback chain below (user.affiliate_code
+      // → latestUsage → referrer) absorbs it. No live-probe infra for this
+      // enum — a single .catch is the house rule for one-off enum reads.
+      db.affiliate_code_usages
+        .findFirst({
+          where: {
+            referred_user_id: user.id,
+            usage_type: affiliate_usage_type.signup,
+          },
+          orderBy: { created_at: "desc" },
+          select: { code: true },
+        })
+        .catch(() => null),
       // Most recent usage row of ANY type. The admin "set referrer"
       // path writes a non-signup usage row, so this surfaces the code
       // when there's no signup row — without it the code shows as

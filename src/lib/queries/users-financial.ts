@@ -76,7 +76,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
              ), 0)::text AS net
       FROM ledger_transactions
       WHERE user_id = ${userId} AND status = 'completed'
-        AND type IN (
+        AND type::text IN (
           'pack_opening','battle_bet','battle_sponsorship','battle_refund',
           'upgrader_bet','upgrader_payout',
           'card_sale','reward_card_sale','card_exchange',
