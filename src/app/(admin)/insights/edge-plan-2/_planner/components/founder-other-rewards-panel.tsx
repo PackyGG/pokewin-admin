@@ -9,6 +9,7 @@ import { clamp, type EdgePlanV2Baseline, type PlannedLeversV2 } from "../../_mod
 import type { EdgePlanV2Projection } from "../../_model-v2";
 import { TEXT_TONE } from "../colors";
 import { EmptyLever } from "./empty-lever";
+import { LeverHint } from "./lever-hint";
 import {
   combinedLeverEdgeDragPct,
   leverEdgeDragPct,
@@ -60,11 +61,8 @@ export function FounderOtherRewardsPanel({
       </p>
 
       <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
-        x multipliers on real spend. Rain = the net house cost of rain after
-        user/founder tips. Motha = the founder giveaway budget (creator tips +
-        rain tips + sponsorships). Other = miscellaneous rewards (gift cards,
-        promo codes, vouchers, balance adjustments). 2x doubles that line&apos;s
-        cost.
+        ×multipliers on real spend (1× = today, 2× doubles that line). See the
+        line under each lever for what it scales.
       </p>
 
       {hasAnything ? (
@@ -145,18 +143,20 @@ export function FounderOtherRewardsPanel({
                   </div>
                 )}
                 {baseline.rainCost > 0 ? (
-                  <LeverSlider
-                    label="Rain intensity"
-                    valueLabel={formatCompactUsd(rainPlanned)}
-                    value={levers.rainCostMult * 100}
-                    onValueChange={setMult("rainCostMult")}
-                    min={0}
-                    max={300}
-                    step={0.1}
-                    baselineMarker={100}
-                    baselineLabel="Scales net house slice ($ × frequency proxy)"
-                    preciseInput={{ unit: "multiplier" }}
-                  />
+                  <LeverHint hint="Scales the net house cost of rain (wins paid minus user + founder tips).">
+                    <LeverSlider
+                      label="Rain intensity"
+                      valueLabel={formatCompactUsd(rainPlanned)}
+                      value={levers.rainCostMult * 100}
+                      onValueChange={setMult("rainCostMult")}
+                      min={0}
+                      max={300}
+                      step={0.1}
+                      baselineMarker={100}
+                      baselineLabel="Scales net house slice ($ × frequency proxy)"
+                      preciseInput={{ unit: "multiplier" }}
+                    />
+                  </LeverHint>
                 ) : (
                   <p className="text-[11px] text-muted-foreground">
                     Tips fully covered rain wins — no net house cost to scale.
@@ -197,18 +197,20 @@ export function FounderOtherRewardsPanel({
                   </div>
                 )}
                 {hasMotha ? (
-                  <LeverSlider
-                    label={`Motha budget (real ${formatCompactUsd(baseline.mothaCost)})`}
-                    valueLabel={formatCompactUsd(mothaPlanned)}
-                    value={levers.mothaCostMult * 100}
-                    onValueChange={setMult("mothaCostMult")}
-                    min={0}
-                    max={300}
-                    step={0.1}
-                    baselineMarker={100}
-                    baselineLabel="creator_tip · rain_tips · battle_sponsorship"
-                    preciseInput={{ unit: "multiplier" }}
-                  />
+                  <LeverHint hint="Scales the founder giveaway budget — creator tips, rain tips and battle sponsorships.">
+                    <LeverSlider
+                      label={`Motha budget (real ${formatCompactUsd(baseline.mothaCost)})`}
+                      valueLabel={formatCompactUsd(mothaPlanned)}
+                      value={levers.mothaCostMult * 100}
+                      onValueChange={setMult("mothaCostMult")}
+                      min={0}
+                      max={300}
+                      step={0.1}
+                      baselineMarker={100}
+                      baselineLabel="creator_tip · rain_tips · battle_sponsorship"
+                      preciseInput={{ unit: "multiplier" }}
+                    />
+                  </LeverHint>
                 ) : (
                   <p className="text-[11px] text-muted-foreground">
                     No motha outflow this window — channel split shown for context.
@@ -241,17 +243,19 @@ export function FounderOtherRewardsPanel({
                       </span>
                     }
                   />
-                  <LeverSlider
-                    label="Other spend mult."
-                    valueLabel={formatCompactUsd(otherPlanned)}
-                    value={levers.otherRewardCostMult * 100}
-                    onValueChange={setMult("otherRewardCostMult")}
-                    min={0}
-                    max={300}
-                    step={0.1}
-                    baselineMarker={100}
-                    preciseInput={{ unit: "multiplier" }}
-                  />
+                  <LeverHint hint="Scales misc reward spend — gift cards, promo codes, vouchers and balance adjustments.">
+                    <LeverSlider
+                      label="Other spend mult."
+                      valueLabel={formatCompactUsd(otherPlanned)}
+                      value={levers.otherRewardCostMult * 100}
+                      onValueChange={setMult("otherRewardCostMult")}
+                      min={0}
+                      max={300}
+                      step={0.1}
+                      baselineMarker={100}
+                      preciseInput={{ unit: "multiplier" }}
+                    />
+                  </LeverHint>
                 </>
               ) : (
                 <EmptyLever note="No other reward spend in this window." />

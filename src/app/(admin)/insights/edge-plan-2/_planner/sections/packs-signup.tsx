@@ -26,6 +26,7 @@ import {
 import { formatEvUsd, multLabel } from "../utils";
 import { TEXT_TONE } from "../colors";
 import { EmptyLever } from "../components/empty-lever";
+import { LeverHint } from "../components/lever-hint";
 import { leverEdgeDragPct, RewardPanelTitle } from "../components/reward-edge-drag";
 
 export function PacksSignupSection({
@@ -90,22 +91,24 @@ export function PacksSignupSection({
         </p>
         <div className="mb-4 flex flex-col gap-3 rounded-xl border bg-muted/25 p-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0 flex-1 lg:max-w-md">
-            <LeverSlider
-              label="Grant frequency (all packs)"
-              valueLabel={multLabel(levers.dailyPacksFrequencyMult)}
-              value={levers.dailyPacksFrequencyMult * 100}
-              onValueChange={(v) =>
-                setLevers((s) => ({
-                  ...s,
-                  dailyPacksFrequencyMult: Math.max(0, v / 100),
-                }))
-              }
-              min={0}
-              max={300}
-              step={0.1}
-              baselineMarker={100}
-              preciseInput={{ unit: "multiplier" }}
-            />
+            <LeverHint hint="How often free packs are handed out across all packs. Scales the total daily-pack cost.">
+              <LeverSlider
+                label="Grant frequency (all packs)"
+                valueLabel={multLabel(levers.dailyPacksFrequencyMult)}
+                value={levers.dailyPacksFrequencyMult * 100}
+                onValueChange={(v) =>
+                  setLevers((s) => ({
+                    ...s,
+                    dailyPacksFrequencyMult: Math.max(0, v / 100),
+                  }))
+                }
+                min={0}
+                max={300}
+                step={0.1}
+                baselineMarker={100}
+                preciseInput={{ unit: "multiplier" }}
+              />
+            </LeverHint>
           </div>
           <div className="shrink-0 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-right">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -134,25 +137,27 @@ export function PacksSignupSection({
                 badge="Daily pack"
                 inactive={p.opens === 0}
                 slider={
-                  <LeverSlider
-                    label="Planned EV / open"
-                    valueLabel={formatEvUsd(plannedEv)}
-                    value={plannedEv}
-                    onValueChange={(usd) =>
-                      setLevers((s) => ({
-                        ...s,
-                        dailyPackEvUsd: {
-                          ...s.dailyPackEvUsd,
-                          [p.packId]: Math.max(0, usd),
-                        },
-                      }))
-                    }
-                    min={0}
-                    max={Math.max(50, plannedEv * 3, p.measuredEvUsd * 3, 5)}
-                    step={0.0001}
-                    baselineMarker={p.measuredEvUsd}
-                    preciseInput={{ unit: "usd", decimals: 4 }}
-                  />
+                  <LeverHint hint="Avg house cost of one open of this pack. Tick marks today's measured EV.">
+                    <LeverSlider
+                      label="Planned EV / open"
+                      valueLabel={formatEvUsd(plannedEv)}
+                      value={plannedEv}
+                      onValueChange={(usd) =>
+                        setLevers((s) => ({
+                          ...s,
+                          dailyPackEvUsd: {
+                            ...s.dailyPackEvUsd,
+                            [p.packId]: Math.max(0, usd),
+                          },
+                        }))
+                      }
+                      min={0}
+                      max={Math.max(50, plannedEv * 3, p.measuredEvUsd * 3, 5)}
+                      step={0.0001}
+                      baselineMarker={p.measuredEvUsd}
+                      preciseInput={{ unit: "usd", decimals: 4 }}
+                    />
+                  </LeverHint>
                 }
                 footerStats={
                   <div className="flex justify-between text-[11px] tabular-nums">
@@ -180,10 +185,6 @@ export function PacksSignupSection({
         icon={UserPlus}
         accent="rose"
       >
-        <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
-          Signup grant = the one-time balance reward each new player gets when
-          they claim.
-        </p>
         <PanelRow
           label="Realized cost (window)"
           value={formatCurrency(baseline.signupPacksCost)}
@@ -194,24 +195,26 @@ export function PacksSignupSection({
           <EmptyLever note="No signup-bonus claims in this window." />
         ) : (
           <>
-            <LeverSlider
-              label="Avg grant per claimant"
-              valueLabel={formatCurrency(levers.signupGrantUsd)}
-              value={levers.signupGrantUsd}
-              onValueChange={(usd) =>
-                setLevers((s) => ({ ...s, signupGrantUsd: Math.max(0, usd) }))
-              }
-              min={0}
-              max={Math.max(50, (baseline.signupAvgGrant ?? 5) * 3)}
-              step={0.01}
-              baselineMarker={baseline.signupAvgGrant ?? 0}
-              baselineLabel={
-                baseline.signupAvgGrant != null
-                  ? `real avg ${formatCurrency(baseline.signupAvgGrant)}`
-                  : undefined
-              }
-              preciseInput={{ unit: "usd", decimals: 2 }}
-            />
+            <LeverHint hint="One-time balance reward each new player gets when they claim, per claimant.">
+              <LeverSlider
+                label="Avg grant per claimant"
+                valueLabel={formatCurrency(levers.signupGrantUsd)}
+                value={levers.signupGrantUsd}
+                onValueChange={(usd) =>
+                  setLevers((s) => ({ ...s, signupGrantUsd: Math.max(0, usd) }))
+                }
+                min={0}
+                max={Math.max(50, (baseline.signupAvgGrant ?? 5) * 3)}
+                step={0.01}
+                baselineMarker={baseline.signupAvgGrant ?? 0}
+                baselineLabel={
+                  baseline.signupAvgGrant != null
+                    ? `real avg ${formatCurrency(baseline.signupAvgGrant)}`
+                    : undefined
+                }
+                preciseInput={{ unit: "usd", decimals: 2 }}
+              />
+            </LeverHint>
             {amortizedPerSignup != null && (
               <p className="mt-2 text-[11px] text-muted-foreground">
                 Bridge: {formatCurrency(levers.signupGrantUsd)} ×{" "}

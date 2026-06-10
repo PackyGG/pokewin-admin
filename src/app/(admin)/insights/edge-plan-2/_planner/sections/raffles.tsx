@@ -15,6 +15,7 @@ import {
 import { multLabel } from "../utils";
 import { TEXT_TONE } from "../colors";
 import { EmptyLever } from "../components/empty-lever";
+import { LeverHint } from "../components/lever-hint";
 import {
   leverEdgeDragPct,
   RewardPanelTitle,
@@ -88,48 +89,53 @@ export function RafflesSection({
       ) : (
         <>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            x multipliers on the current real raffle program. Prize pool = total
-            prize money (scales cost linearly). Frequency = how often raffles are
-            drawn — 2x = twice as many draws, roughly 2x the cost. Ticket cost =
-            how hard tickets are to earn (raising it slightly deters farming, so a
-            touch less cost).
+            ×multipliers on the current real raffle program (1× = today). See the
+            line under each lever for what it does.
           </p>
-          <LeverSlider
-            label="Prize pool"
-            valueLabel={multLabel(levers.rafflePrizePoolMult)}
-            value={levers.rafflePrizePoolMult * 100}
-            onValueChange={setMult("rafflePrizePoolMult")}
-            min={0}
-            max={300}
-            step={1}
-            baselineMarker={100}
-            baselineLabel="1× = current reconstructed pool"
-            preciseInput={{ unit: "multiplier" }}
-          />
-          <LeverSlider
-            label="Frequency"
-            valueLabel={multLabel(levers.raffleFrequencyMult)}
-            value={levers.raffleFrequencyMult * 100}
-            onValueChange={setMult("raffleFrequencyMult")}
-            min={0}
-            max={300}
-            step={1}
-            baselineMarker={100}
-            baselineLabel="1× = current draw cadence"
-            preciseInput={{ unit: "multiplier" }}
-          />
-          <LeverSlider
-            label="Ticket cost"
-            valueLabel={multLabel(levers.raffleTicketCostMult)}
-            value={levers.raffleTicketCostMult * 100}
-            onValueChange={setMult("raffleTicketCostMult")}
-            min={0}
-            max={300}
-            step={1}
-            baselineMarker={100}
-            baselineLabel="1× = current ticket rate (higher = harder entry)"
-            preciseInput={{ unit: "multiplier" }}
-          />
+          <div className="space-y-3">
+            <LeverHint hint="Total prize money in the raffle pool. Cost scales straight with it.">
+              <LeverSlider
+                label="Prize pool"
+                valueLabel={multLabel(levers.rafflePrizePoolMult)}
+                value={levers.rafflePrizePoolMult * 100}
+                onValueChange={setMult("rafflePrizePoolMult")}
+                min={0}
+                max={300}
+                step={1}
+                baselineMarker={100}
+                baselineLabel="1× = current reconstructed pool"
+                preciseInput={{ unit: "multiplier" }}
+              />
+            </LeverHint>
+            <LeverHint hint="How often raffles are drawn. 2× ≈ twice as many draws ≈ 2× the cost.">
+              <LeverSlider
+                label="Frequency"
+                valueLabel={multLabel(levers.raffleFrequencyMult)}
+                value={levers.raffleFrequencyMult * 100}
+                onValueChange={setMult("raffleFrequencyMult")}
+                min={0}
+                max={300}
+                step={1}
+                baselineMarker={100}
+                baselineLabel="1× = current draw cadence"
+                preciseInput={{ unit: "multiplier" }}
+              />
+            </LeverHint>
+            <LeverHint hint="How hard tickets are to earn. Higher = fewer tickets earned, slightly less cost.">
+              <LeverSlider
+                label="Ticket cost"
+                valueLabel={multLabel(levers.raffleTicketCostMult)}
+                value={levers.raffleTicketCostMult * 100}
+                onValueChange={setMult("raffleTicketCostMult")}
+                min={0}
+                max={300}
+                step={1}
+                baselineMarker={100}
+                baselineLabel="1× = current ticket rate (higher = harder entry)"
+                preciseInput={{ unit: "multiplier" }}
+              />
+            </LeverHint>
+          </div>
         </>
       )}
     </StatPanel>

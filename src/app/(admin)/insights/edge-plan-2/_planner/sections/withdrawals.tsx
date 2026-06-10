@@ -14,6 +14,7 @@ import {
   type PlannedLeversV2,
 } from "../../_model-v2";
 import { multLabel } from "../utils";
+import { LeverHint } from "../components/lever-hint";
 
 /**
  * WithdrawalsSection — real-data display, no fabricated projection.
@@ -50,12 +51,6 @@ export function WithdrawalsSection({
         wager-requirement setting lives in Security. The volume + split shown are
         real 30-day ledger data.
       </p>
-      <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
-        Real 30d withdrawal volume and the balance-vs-inventory split, shown as
-        display context. Wager requirement and per-game weights are what-if
-        sliders — they do not write live Security config and carry no $
-        projection (the speculative friction adjustment was removed).
-      </p>
       <div className="mb-4 flex flex-wrap gap-2">
         <Badge variant="outline" className="text-[10px]">
           Volume: {baseline.withdrawalVolumeSource === "ledger" ? "30d ledger" : "estimated"}
@@ -70,80 +65,88 @@ export function WithdrawalsSection({
           label="Withdrawal volume (30d)"
           value={formatCurrency(baseline.estimatedWithdrawalVolumeUsd)}
         />
-        <LeverSlider
-          label="Balance withdrawal share"
-          valueLabel={`${(levers.balanceWithdrawalShare * 100).toFixed(0)}%`}
-          value={levers.balanceWithdrawalShare * 100}
-          onValueChange={(v) =>
-            setLevers((s) => ({
-              ...s,
-              balanceWithdrawalShare: clamp(v / 100, 0, 1),
-            }))
-          }
-          min={0}
-          max={100}
-          step={1}
-          baselineMarker={baseline.balanceWithdrawalShare * 100}
-          baselineLabel={
-            baseline.balanceWithdrawalShareSource === "ledger"
-              ? "observed 30d split"
-              : "planning default"
-          }
-        />
-        <LeverSlider
-          label="Wager requirement mult."
-          valueLabel={multLabel(levers.withdrawalWagerReqMult)}
-          value={levers.withdrawalWagerReqMult * 100}
-          onValueChange={(v) =>
-            setLevers((s) => ({
-              ...s,
-              withdrawalWagerReqMult: clamp(v / 100, 0, 5),
-            }))
-          }
-          min={0}
-          max={500}
-          step={1}
-          baselineMarker={100}
-          baselineLabel="1× = current wager-requirement baseline"
-          preciseInput={{ unit: "multiplier" }}
-        />
-        <LeverSlider
-          label="Packs+battles wager weight"
-          valueLabel={`${(levers.withdrawalPackBattleWeight * 100).toFixed(0)}%`}
-          value={levers.withdrawalPackBattleWeight * 100}
-          onValueChange={(v) =>
-            setLevers((s) => ({
-              ...s,
-              withdrawalPackBattleWeight: clamp(v / 100, 0, 1),
-            }))
-          }
-          min={0}
-          max={100}
-          step={1}
-          baselineMarker={100}
-          baselineLabel="100% = full weight"
-        />
-        <LeverSlider
-          label="Upgrader wager weight"
-          valueLabel={`${(levers.withdrawalUpgraderWeight * 100).toFixed(0)}%`}
-          value={levers.withdrawalUpgraderWeight * 100}
-          onValueChange={(v) =>
-            setLevers((s) => ({
-              ...s,
-              withdrawalUpgraderWeight: clamp(v / 100, 0, 1),
-            }))
-          }
-          min={0}
-          max={100}
-          step={1}
-          baselineMarker={100}
-          baselineLabel="100% = full weight"
-          disabled={
-            !baseline.gameTypes.some(
-              (g) => g.type === "upgrader" && g.dataAvailable,
-            )
-          }
-        />
+        <LeverHint hint="Share of withdrawals drawn from cash balance vs cashed-out inventory. Ticks today's observed split.">
+          <LeverSlider
+            label="Balance withdrawal share"
+            valueLabel={`${(levers.balanceWithdrawalShare * 100).toFixed(0)}%`}
+            value={levers.balanceWithdrawalShare * 100}
+            onValueChange={(v) =>
+              setLevers((s) => ({
+                ...s,
+                balanceWithdrawalShare: clamp(v / 100, 0, 1),
+              }))
+            }
+            min={0}
+            max={100}
+            step={1}
+            baselineMarker={baseline.balanceWithdrawalShare * 100}
+            baselineLabel={
+              baseline.balanceWithdrawalShareSource === "ledger"
+                ? "observed 30d split"
+                : "planning default"
+            }
+          />
+        </LeverHint>
+        <LeverHint hint="How much must be wagered before a withdrawal unlocks. 1× = today's rule (what-if only, no live change).">
+          <LeverSlider
+            label="Wager requirement mult."
+            valueLabel={multLabel(levers.withdrawalWagerReqMult)}
+            value={levers.withdrawalWagerReqMult * 100}
+            onValueChange={(v) =>
+              setLevers((s) => ({
+                ...s,
+                withdrawalWagerReqMult: clamp(v / 100, 0, 5),
+              }))
+            }
+            min={0}
+            max={500}
+            step={1}
+            baselineMarker={100}
+            baselineLabel="1× = current wager-requirement baseline"
+            preciseInput={{ unit: "multiplier" }}
+          />
+        </LeverHint>
+        <LeverHint hint="How much pack + battle wager counts toward the unlock requirement. 100% = all of it.">
+          <LeverSlider
+            label="Packs+battles wager weight"
+            valueLabel={`${(levers.withdrawalPackBattleWeight * 100).toFixed(0)}%`}
+            value={levers.withdrawalPackBattleWeight * 100}
+            onValueChange={(v) =>
+              setLevers((s) => ({
+                ...s,
+                withdrawalPackBattleWeight: clamp(v / 100, 0, 1),
+              }))
+            }
+            min={0}
+            max={100}
+            step={1}
+            baselineMarker={100}
+            baselineLabel="100% = full weight"
+          />
+        </LeverHint>
+        <LeverHint hint="How much upgrader wager counts toward the unlock requirement. 100% = all of it.">
+          <LeverSlider
+            label="Upgrader wager weight"
+            valueLabel={`${(levers.withdrawalUpgraderWeight * 100).toFixed(0)}%`}
+            value={levers.withdrawalUpgraderWeight * 100}
+            onValueChange={(v) =>
+              setLevers((s) => ({
+                ...s,
+                withdrawalUpgraderWeight: clamp(v / 100, 0, 1),
+              }))
+            }
+            min={0}
+            max={100}
+            step={1}
+            baselineMarker={100}
+            baselineLabel="100% = full weight"
+            disabled={
+              !baseline.gameTypes.some(
+                (g) => g.type === "upgrader" && g.dataAvailable,
+              )
+            }
+          />
+        </LeverHint>
       </div>
     </StatPanel>
   );

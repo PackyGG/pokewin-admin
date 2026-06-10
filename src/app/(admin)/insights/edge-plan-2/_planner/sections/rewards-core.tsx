@@ -32,6 +32,7 @@ import {
 import { multLabel } from "../utils";
 import { TEXT_TONE } from "../colors";
 import { LeverGroup } from "../lever-group";
+import { LeverHint } from "../components/lever-hint";
 import { EmptyLever, formatPercentInt } from "../components/empty-lever";
 import { FounderOtherRewardsPanel } from "../components/founder-other-rewards-panel";
 import { RakebackWagerControls } from "../components/rakeback-wager-controls";
@@ -217,13 +218,8 @@ export function RewardsCoreSection({
         accent="amber"
       >
         <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
-          Each lever is a ×multiplier on the real current setting (1× = today, 2×
-          = double). Match % = how much of a deposit is matched as bonus. Cap $ =
-          the max bonus per deposit (total cost rises less than linearly — big
-          deposits don&apos;t all hit the cap). Min deposit gate = the minimum
-          deposit to qualify (raising it filters out small claimers, lowering
-          cost). Wager requirement = how much must be wagered before the bonus can
-          be withdrawn (higher = more bonuses expire unused = lower real cost).
+          Each lever is a ×multiplier on today&apos;s real setting — 1× = today, 2×
+          = double. See the line under each one for what it does.
         </p>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           Real config: {formatPercentInt(100)} match, cap{" "}
@@ -237,51 +233,59 @@ export function RewardsCoreSection({
           <EmptyLever note="No deposit-bonus spend in this window." />
         ) : (
           <div className="space-y-3">
-            <LeverSlider
-              label="Match %"
-              valueLabel={formatPercentInt(matchPct)}
-              value={levers.depositBonusMatchMult * 100}
-              onValueChange={setMult("depositBonusMatchMult")}
-              min={0}
-              max={300}
-              step={0.1}
-              baselineMarker={100}
-              preciseInput={{ unit: "multiplier" }}
-            />
-            <LeverSlider
-              label="Cap $"
-              valueLabel={formatCurrency(capUsd)}
-              value={levers.depositBonusCapMult * 100}
-              onValueChange={setMult("depositBonusCapMult")}
-              min={0}
-              max={300}
-              step={0.1}
-              baselineMarker={100}
-              baselineLabel={`Real cap ${formatCurrency(baseline.depositBonusCapUsd)}`}
-              preciseInput={{ unit: "multiplier" }}
-            />
-            <LeverSlider
-              label="Min deposit gate"
-              valueLabel={multLabel(levers.depositBonusMinDepositMult)}
-              value={levers.depositBonusMinDepositMult * 100}
-              onValueChange={setMult("depositBonusMinDepositMult")}
-              min={0}
-              max={300}
-              step={0.1}
-              baselineMarker={100}
-              preciseInput={{ unit: "multiplier" }}
-            />
-            <LeverSlider
-              label="Wager requirement"
-              valueLabel={multLabel(levers.depositBonusWagerReqMult)}
-              value={levers.depositBonusWagerReqMult * 100}
-              onValueChange={setMult("depositBonusWagerReqMult")}
-              min={0}
-              max={300}
-              step={0.1}
-              baselineMarker={100}
-              preciseInput={{ unit: "multiplier" }}
-            />
+            <LeverHint hint="Share of each deposit paid back as bonus. 1× = today's 100% match; 2× matches double.">
+              <LeverSlider
+                label="Match %"
+                valueLabel={formatPercentInt(matchPct)}
+                value={levers.depositBonusMatchMult * 100}
+                onValueChange={setMult("depositBonusMatchMult")}
+                min={0}
+                max={300}
+                step={0.1}
+                baselineMarker={100}
+                preciseInput={{ unit: "multiplier" }}
+              />
+            </LeverHint>
+            <LeverHint hint="Biggest bonus a single deposit can earn. Raising it only adds cost on large deposits that hit the cap.">
+              <LeverSlider
+                label="Cap $"
+                valueLabel={formatCurrency(capUsd)}
+                value={levers.depositBonusCapMult * 100}
+                onValueChange={setMult("depositBonusCapMult")}
+                min={0}
+                max={300}
+                step={0.1}
+                baselineMarker={100}
+                baselineLabel={`Real cap ${formatCurrency(baseline.depositBonusCapUsd)}`}
+                preciseInput={{ unit: "multiplier" }}
+              />
+            </LeverHint>
+            <LeverHint hint="Smallest deposit that qualifies for the bonus. Higher gate filters out small claimers → less cost.">
+              <LeverSlider
+                label="Min deposit gate"
+                valueLabel={multLabel(levers.depositBonusMinDepositMult)}
+                value={levers.depositBonusMinDepositMult * 100}
+                onValueChange={setMult("depositBonusMinDepositMult")}
+                min={0}
+                max={300}
+                step={0.1}
+                baselineMarker={100}
+                preciseInput={{ unit: "multiplier" }}
+              />
+            </LeverHint>
+            <LeverHint hint="How much must be wagered before the bonus unlocks. Higher = more bonuses expire unused → lower real cost.">
+              <LeverSlider
+                label="Wager requirement"
+                valueLabel={multLabel(levers.depositBonusWagerReqMult)}
+                value={levers.depositBonusWagerReqMult * 100}
+                onValueChange={setMult("depositBonusWagerReqMult")}
+                min={0}
+                max={300}
+                step={0.1}
+                baselineMarker={100}
+                preciseInput={{ unit: "multiplier" }}
+              />
+            </LeverHint>
           </div>
         )}
         <div className="mt-4 space-y-3 border-t pt-3">
@@ -304,64 +308,72 @@ export function RewardsCoreSection({
           </p>
           {levers.depositBonusHourlyEnabled && (
             <>
-              <LeverSlider
-                label="Amount per grant"
-                valueLabel={formatCurrency(levers.depositBonusHourlyAmountUsd)}
-                value={levers.depositBonusHourlyAmountUsd}
-                onValueChange={(v) =>
-                  setLevers((s) => ({
-                    ...s,
-                    depositBonusHourlyAmountUsd: Math.max(0, v),
-                  }))
-                }
-                min={0}
-                max={500}
-                step={1}
-                preciseInput={{ unit: "usd" }}
-              />
-              <LeverSlider
-                label="Every"
-                valueLabel={`${Math.round(levers.depositBonusHourlyIntervalHours)}h`}
-                value={levers.depositBonusHourlyIntervalHours}
-                onValueChange={(v) =>
-                  setLevers((s) => ({
-                    ...s,
-                    depositBonusHourlyIntervalHours: clamp(v, 1, 720),
-                  }))
-                }
-                min={1}
-                max={168}
-                step={1}
-              />
-              <LeverSlider
-                label="Participating users"
-                valueLabel={formatNumber(levers.depositBonusHourlyUsers)}
-                value={levers.depositBonusHourlyUsers}
-                onValueChange={(v) =>
-                  setLevers((s) => ({
-                    ...s,
-                    depositBonusHourlyUsers: Math.max(0, Math.round(v)),
-                  }))
-                }
-                min={0}
-                max={5000}
-                step={10}
-              />
-              <LeverSlider
-                label="Utilization"
-                valueLabel={formatPct(levers.depositBonusHourlyUtilizationPct)}
-                value={levers.depositBonusHourlyUtilizationPct * 100}
-                onValueChange={(v) =>
-                  setLevers((s) => ({
-                    ...s,
-                    depositBonusHourlyUtilizationPct: clamp(v / 100, 0, 1),
-                  }))
-                }
-                min={0}
-                max={100}
-                step={1}
-                preciseInput={{ unit: "percent" }}
-              />
+              <LeverHint hint="Dollars each user receives per claim (e.g. $25).">
+                <LeverSlider
+                  label="Amount per grant"
+                  valueLabel={formatCurrency(levers.depositBonusHourlyAmountUsd)}
+                  value={levers.depositBonusHourlyAmountUsd}
+                  onValueChange={(v) =>
+                    setLevers((s) => ({
+                      ...s,
+                      depositBonusHourlyAmountUsd: Math.max(0, v),
+                    }))
+                  }
+                  min={0}
+                  max={500}
+                  step={1}
+                  preciseInput={{ unit: "usd" }}
+                />
+              </LeverHint>
+              <LeverHint hint="Hours between claims. $25 every 6h = 4 grants per user per day.">
+                <LeverSlider
+                  label="Every"
+                  valueLabel={`${Math.round(levers.depositBonusHourlyIntervalHours)}h`}
+                  value={levers.depositBonusHourlyIntervalHours}
+                  onValueChange={(v) =>
+                    setLevers((s) => ({
+                      ...s,
+                      depositBonusHourlyIntervalHours: clamp(v, 1, 720),
+                    }))
+                  }
+                  min={1}
+                  max={168}
+                  step={1}
+                />
+              </LeverHint>
+              <LeverHint hint="How many users claim it. Total cost scales straight with this count.">
+                <LeverSlider
+                  label="Participating users"
+                  valueLabel={formatNumber(levers.depositBonusHourlyUsers)}
+                  value={levers.depositBonusHourlyUsers}
+                  onValueChange={(v) =>
+                    setLevers((s) => ({
+                      ...s,
+                      depositBonusHourlyUsers: Math.max(0, Math.round(v)),
+                    }))
+                  }
+                  min={0}
+                  max={5000}
+                  step={10}
+                />
+              </LeverHint>
+              <LeverHint hint="Share of available grants actually claimed. 60% = users skip ~4 in 10.">
+                <LeverSlider
+                  label="Utilization"
+                  valueLabel={formatPct(levers.depositBonusHourlyUtilizationPct)}
+                  value={levers.depositBonusHourlyUtilizationPct * 100}
+                  onValueChange={(v) =>
+                    setLevers((s) => ({
+                      ...s,
+                      depositBonusHourlyUtilizationPct: clamp(v / 100, 0, 1),
+                    }))
+                  }
+                  min={0}
+                  max={100}
+                  step={1}
+                  preciseInput={{ unit: "percent" }}
+                />
+              </LeverHint>
               <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2 text-sm">
                 <span className="text-muted-foreground">
                   Planned cost ({baseline.periodLabel})
@@ -381,21 +393,24 @@ export function RewardsCoreSection({
         accent="rose"
       >
         <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
-          ×multipliers on the current real race program. Prize pool = total prize
-          money (scales cost linearly). Frequency = how often races run — 2× =
-          twice as many races, roughly 2× the total prize cost. Entry cost = the
-          ticket price to enter (raising it slightly deters farming, so a touch
-          less cost).
+          ×multipliers on the current real race program (1× = today). See the line
+          under each lever for what it does.
         </p>
         <PanelRow label="Real race prize cost" value={formatCurrency(baseline.raceCost)} />
         {baseline.raceCost <= 0 ? (
           <EmptyLever note="No race prize cost in this window." />
         ) : (
-          <>
-            <LeverSlider label="Prize pool" valueLabel={multLabel(levers.racePrizePoolMult)} value={levers.racePrizePoolMult * 100} onValueChange={setMult("racePrizePoolMult")} min={0} max={300} step={1} baselineMarker={100} preciseInput={{ unit: "multiplier" }} />
-            <LeverSlider label="Frequency" valueLabel={multLabel(levers.raceFrequencyMult)} value={levers.raceFrequencyMult * 100} onValueChange={setMult("raceFrequencyMult")} min={0} max={300} step={1} baselineMarker={100} preciseInput={{ unit: "multiplier" }} />
-            <LeverSlider label="Entry cost" valueLabel={multLabel(levers.raceEntryCostMult)} value={levers.raceEntryCostMult * 100} onValueChange={setMult("raceEntryCostMult")} min={0} max={300} step={1} baselineMarker={100} preciseInput={{ unit: "multiplier" }} />
-          </>
+          <div className="space-y-3">
+            <LeverHint hint="Total prize money paid out. Cost scales straight with it.">
+              <LeverSlider label="Prize pool" valueLabel={multLabel(levers.racePrizePoolMult)} value={levers.racePrizePoolMult * 100} onValueChange={setMult("racePrizePoolMult")} min={0} max={300} step={1} baselineMarker={100} preciseInput={{ unit: "multiplier" }} />
+            </LeverHint>
+            <LeverHint hint="How often races run. 2× ≈ twice as many races ≈ 2× the total prize cost.">
+              <LeverSlider label="Frequency" valueLabel={multLabel(levers.raceFrequencyMult)} value={levers.raceFrequencyMult * 100} onValueChange={setMult("raceFrequencyMult")} min={0} max={300} step={1} baselineMarker={100} preciseInput={{ unit: "multiplier" }} />
+            </LeverHint>
+            <LeverHint hint="Ticket price to enter a race. Higher slightly deters farming → a touch less cost.">
+              <LeverSlider label="Entry cost" valueLabel={multLabel(levers.raceEntryCostMult)} value={levers.raceEntryCostMult * 100} onValueChange={setMult("raceEntryCostMult")} min={0} max={300} step={1} baselineMarker={100} preciseInput={{ unit: "multiplier" }} />
+            </LeverHint>
+          </div>
         )}
       </StatPanel>
 
