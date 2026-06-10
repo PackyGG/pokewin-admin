@@ -41,9 +41,21 @@ type Standing = {
   userId: string;
   username: string | null;
   wageredUsd: number;
+  prizeAmountUsd: number | null;
   hold: HoldInfo | null;
   claimedAt: string | null;
 };
+
+function PrizeCell({ amount }: { amount: number | null }) {
+  if (amount == null) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="tabular-nums text-rose-600 dark:text-rose-400">
+      {formatCurrency(amount)}
+    </span>
+  );
+}
 
 const POSITION_COLORS: Record<number, string> = {
   1: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
@@ -92,6 +104,7 @@ export function StandingsTable({
   // Holds are per (user, period). The all-time view has no single period, so
   // claim review is disabled there.
   const reviewable = raceType !== "all" && !!periodStart;
+  const showPrizes = raceType !== "all";
 
   // Freeze dialog state — a single shared dialog targeting one row at a time.
   const [freezeTarget, setFreezeTarget] = useState<Standing | null>(null);
@@ -183,7 +196,7 @@ export function StandingsTable({
     );
   }
 
-  const colCount = reviewable ? 5 : 3;
+  const colCount = (showPrizes ? 1 : 0) + (reviewable ? 5 : 3);
 
   return (
     <>
@@ -234,8 +247,12 @@ export function StandingsTable({
                       </div>
                     )}
                   </div>
-                  <div className="shrink-0 text-right">
-                    {/* Wager total ‒ neutral here (it's just a counter, not a P&L). */}
+                  <div className="shrink-0 text-right space-y-0.5">
+                    {showPrizes && (
+                      <div className="text-sm font-medium">
+                        <PrizeCell amount={s.prizeAmountUsd} />
+                      </div>
+                    )}
                     <div className="text-sm font-medium tabular-nums">
                       {formatCurrency(s.wageredUsd)}
                     </div>
@@ -258,6 +275,7 @@ export function StandingsTable({
               <TableHead>Position</TableHead>
               <TableHead>User</TableHead>
               <TableHead>Wagered</TableHead>
+              {showPrizes && <TableHead>Prize</TableHead>}
               {reviewable && <TableHead>Claim</TableHead>}
               {reviewable && <TableHead className="w-[120px]" />}
             </TableRow>
@@ -277,6 +295,11 @@ export function StandingsTable({
                   </Link>
                 </TableCell>
                 <TableCell>{formatCurrency(e.wageredUsd)}</TableCell>
+                {showPrizes && (
+                  <TableCell>
+                    <PrizeCell amount={e.prizeAmountUsd} />
+                  </TableCell>
+                )}
                 {reviewable && (
                   <TableCell>
                     <StatusBadge s={e} />

@@ -11,7 +11,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import type { LeaderboardRanking } from "@/lib/queries/creators-leaderboards";
 import type { ClaimHold, TimeStatus } from "@/lib/backend-api/affiliate-leaderboards";
@@ -56,13 +56,14 @@ export function LeaderboardStandingsPanel({
                             <TableHead className="text-right">Wagered</TableHead>
                             <TableHead className="text-right">House P&amp;L</TableHead>
                             <TableHead className="text-right">Prize</TableHead>
+                            <TableHead>Place reached</TableHead>
                             <TableHead className="text-right w-36">Claim</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {rankings.length === 0 ? (
                             <TableRow className="hover:bg-transparent">
-                                <TableCell colSpan={6} className="p-0">
+                                <TableCell colSpan={7} className="p-0">
                                     <EmptyState
                                         icon={Trophy}
                                         title={
@@ -151,6 +152,11 @@ export function LeaderboardStandingsPanel({
                                                 <span className="text-muted-foreground">—</span>
                                             )}
                                         </TableCell>
+                                        <TableCell>
+                                            <PositionReachedCell
+                                                reachedAt={r.positionReachedAt}
+                                            />
+                                        </TableCell>
                                         <TableCell className="text-right">
                                             <FreezeClaimCell
                                                 leaderboardId={leaderboardId}
@@ -185,5 +191,19 @@ function HousePnlValue({ pnl }: { pnl: number }) {
         <span className={cn("font-medium", housePnlColorClass(pnl))}>
             {pnl === 0 ? "—" : formatCurrency(pnl)}
         </span>
+    );
+}
+
+function PositionReachedCell({ reachedAt }: { reachedAt: string | null }) {
+    if (!reachedAt) {
+        return <span className="text-muted-foreground">—</span>;
+    }
+    return (
+        <div className="min-w-[9rem]">
+            <p className="text-sm tabular-nums">{formatDateTime(reachedAt)}</p>
+            <p className="text-xs text-muted-foreground">
+                {formatRelative(reachedAt)}
+            </p>
+        </div>
     );
 }

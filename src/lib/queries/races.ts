@@ -51,6 +51,8 @@ export type RaceLeaderboardEntry = {
   username: string | null;
   position: number;
   wageredUsd: number;
+  /** Projected prize from race_prize_tiers; null when no tier for this position. */
+  prizeAmountUsd: number | null;
   // Per-user claim review state for the selected period. `hold` is the active
   // (un-released) hold blocking this user's claim, if any. `claimedAt` is set
   // once the prize has been paid out — a claimed prize can no longer be frozen.
@@ -183,7 +185,7 @@ export async function getRaceLeaderboard(params: {
     };
   }
 
-  const [entries, total] = await Promise.all([
+  const [entries, total, tiers] = await Promise.all([
     db.race_leaderboard_snapshots.findMany({
       where,
       orderBy: { position: "asc" },
@@ -194,7 +196,15 @@ export async function getRaceLeaderboard(params: {
       },
     }),
     db.race_leaderboard_snapshots.count({ where }),
+    db.race_prize_tiers.findMany({
+      where: { race_type: raceType as race_type },
+      select: { position: true, prize_amount_usd: true },
+    }),
   ]);
+
+  const tierByPosition = new Map(
+    tiers.map((t) => [t.position, toNumber(t.prize_amount_usd)] as const),
+  );
 
   // Overlay per-user claim review state (active holds + paid claims) for the
   // selected period so the leaderboard doubles as the fraud-review surface.
@@ -242,6 +252,7 @@ export async function getRaceLeaderboard(params: {
       username: e.user?.username ?? null,
       position: e.position,
       wageredUsd: toNumber(e.wagered_usd),
+      prizeAmountUsd: tierByPosition.get(e.position) ?? null,
       hold: holdByUser.get(e.user_id) ?? null,
       claimedAt: claimedAtByUser.get(e.user_id) ?? null,
     })),
@@ -347,6 +358,7 @@ async function getAllTimeLeaderboard(params: {
       username: r.username,
       position: offset + i + 1,
       wageredUsd: r.total_wagered,
+      prizeAmountUsd: null,
       // All-time view spans every period, so per-period claim review state
       // (holds/claims) doesn't apply.
       hold: null,

@@ -15,6 +15,8 @@ export type LeaderboardRanking = {
   // Prize from the leaderboard's prize_tiers matched against this
   // user's position. null when the user is below the lowest tier.
   prizeUsd: number | null;
+  /** When the user first crossed into their current place (UTC). */
+  positionReachedAt: string | null;
 };
 
 /**
@@ -165,25 +167,142 @@ export async function getAffiliateLeaderboardRankings(opts: {
   }
 
   const userIds = rows.map((r) => r.user_id);
-  const pnlByUser = await calculateUsersBoundedWindowedPnlBatch(
-    userIds,
-    startDate,
-    endDate,
-  ).catch((err) => {
-    console.error("[leaderboard] windowed PnL batch failed", err);
-    return new Map<string, number>();
-  });
+  const totals = rows.map((r) => toNumber(r.total_wagered));
+  const thresholds = rows.map((_, i) =>
+    i + 1 < rows.length ? totals[i + 1]! : 0,
+  );
+
+  const [pnlByUser, reachedAtByUser] = await Promise.all([
+    calculateUsersBoundedWindowedPnlBatch(userIds, startDate, endDate).catch(
+      (err) => {
+        console.error("[leaderboard] windowed PnL batch failed", err);
+        return new Map<string, number>();
+      },
+    ),
+    getPositionReachedAtBatch(db, {
+      userIds,
+      thresholds,
+      totals,
+      upperCodes,
+      startDate,
+      endDate,
+      codeFallback,
+      participatingCreatorIds,
+    }).catch((err) => {
+      console.error("[leaderboard] position reached-at batch failed", err);
+      return new Map<string, Date>();
+    }),
+  ]);
 
   return rows.map((r, i) => {
     const position = i + 1;
+    const reached = reachedAtByUser.get(r.user_id);
     return {
       position,
       userId: r.user_id,
       username: r.username,
       email: r.email,
-      totalWageredUsd: toNumber(r.total_wagered),
+      totalWageredUsd: totals[i]!,
       housePnlUsd: pnlByUser.get(r.user_id) ?? 0,
       prizeUsd: prizeByPosition.get(position) ?? null,
+      positionReachedAt: reached ? reached.toISOString() : null,
     };
   });
+}
+
+type PositionReachedParams = {
+  userIds: string[];
+  thresholds: number[];
+  totals: number[];
+  upperCodes: string[];
+  startDate: Date;
+  endDate: Date;
+  codeFallback: boolean;
+  participatingCreatorIds: string[];
+};
+
+async function getPositionReachedAtBatch(
+  db: Awaited<ReturnType<typeof getDb>>,
+  params: PositionReachedParams,
+): Promise<Map<string, Date>> {
+  const {
+    userIds,
+    thresholds,
+    totals,
+    upperCodes,
+    startDate,
+    endDate,
+    codeFallback,
+    participatingCreatorIds,
+  } = params;
+
+  if (userIds.length === 0) return new Map();
+
+  const whereExtra = codeFallback
+    ? `AND acu.affiliate_user_id = ANY($7::text[])`
+    : ``;
+  const sqlParams: unknown[] = codeFallback
+    ? [
+        userIds,
+        thresholds,
+        totals,
+        upperCodes,
+        startDate,
+        endDate,
+        participatingCreatorIds,
+      ]
+    : [userIds, thresholds, totals, upperCodes, startDate, endDate];
+
+  const query = `
+    WITH params AS (
+      SELECT *
+      FROM UNNEST($1::text[], $2::numeric[], $3::numeric[])
+        AS p(user_id, threshold, total_wager)
+    ),
+    events AS (
+      SELECT
+        acu.referred_user_id AS user_id,
+        acu.created_at,
+        SUM(acu.wager_amount_usd::numeric) OVER (
+          PARTITION BY acu.referred_user_id
+          ORDER BY acu.created_at ASC, acu.id ASC
+          ROWS UNBOUNDED PRECEDING
+        ) AS running_total
+      FROM affiliate_code_usages acu
+      WHERE acu.usage_type::text = 'wager'
+        AND UPPER(acu.code) = ANY($4::text[])
+        AND acu.created_at >= $5
+        AND acu.created_at < $6
+        AND acu.referred_user_id = ANY($1::text[])
+        ${whereExtra}
+    ),
+    joined AS (
+      SELECT
+        p.user_id,
+        e.created_at,
+        e.running_total,
+        p.threshold,
+        p.total_wager
+      FROM params p
+      JOIN events e ON e.user_id = p.user_id
+    )
+    SELECT
+      user_id,
+      COALESCE(
+        MIN(created_at) FILTER (WHERE running_total > threshold),
+        MIN(created_at) FILTER (WHERE running_total >= total_wager)
+      ) AS reached_at
+    FROM joined
+    GROUP BY user_id
+  `;
+
+  const reachedRows = await db.$queryRawUnsafe<
+    { user_id: string; reached_at: Date | null }[]
+  >(query, ...sqlParams);
+
+  const map = new Map<string, Date>();
+  for (const row of reachedRows) {
+    if (row.reached_at) map.set(row.user_id, row.reached_at);
+  }
+  return map;
 }
