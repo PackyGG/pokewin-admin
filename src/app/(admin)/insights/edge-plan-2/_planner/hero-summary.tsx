@@ -175,11 +175,11 @@ export function EdgePlanV2HeroSummary({
                 {formatPct(edgeAfterRewards.grossEdge)}
               </p>
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Blended gross edge on all wager
+                Blended gross edge · packs + upgrader
               </p>
               <p className="mt-2 text-[10px] tabular-nums text-muted-foreground">
-                was {formatPct(edgeAfterRewards.currentGrossEdge)} ·{" "}
-                {formatPct(blendBreakdown.marginBearingBlendedEdge)} packs+upg
+                was {formatPct(edgeAfterRewards.currentGrossEdge)} (default) ·{" "}
+                {formatPct(blendBreakdown.allWagerBlendedEdge)} on all wager
               </p>
             </div>
 

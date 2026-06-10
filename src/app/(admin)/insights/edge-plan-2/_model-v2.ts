@@ -30,7 +30,7 @@ import {
   PLANNED_UPGRADER_EDGE_DEFAULT,
   GAME_TYPE_IDS,
   REMOVE_WAGER_REQ_COMMISSION_BASE_MULT,
-  observedBlendedGamingEdge,
+  marginBearingWager,
   computeBlendedEdgeBreakdown,
   defaultPlannedEdge,
   type BlendedEdgeBreakdown,
@@ -225,7 +225,7 @@ export function affiliateWorstCaseEdgeDrag(
   baseline: EdgePlanV2Baseline,
   levers: PlannedLeversV2,
 ): number {
-  const houseEdge = plannedBlendedHouseEdgeV2(baseline, levers);
+  const houseEdge = plannedMarginBearingHouseEdgeV2(baseline, levers);
   const edgeShare = topAffiliateTierEdgeShare(baseline, levers);
   return affiliateEdgeShareToWagerDrag(edgeShare, houseEdge);
 }
@@ -809,16 +809,6 @@ function scenarioLeverCostUsd(
   return plannedCostUsd;
 }
 
-function resolveObservedCurrentGrossEdge(
-  projection: EdgePlanV2Projection,
-  baseline?: EdgePlanV2Baseline,
-): number {
-  if (baseline) return observedBlendedGamingEdge(baseline);
-  if (projection.currentEdge > 0.00001) return projection.currentEdge;
-  const baseWager = Math.max(0, projection.plannedWager || projection.currentWager);
-  return baseWager > 0 ? projection.currentGgr / baseWager : 0;
-}
-
 function formatDragRatePct(rate: number): string {
   if (!Number.isFinite(rate)) return "—";
   const v = rate * 100;
@@ -843,14 +833,30 @@ export function computeEdgeAfterRewards(
       : baseWager;
   const wagerScenarioMult = baseWager > 0 ? scenarioWager / baseWager : 1;
 
+  // Margin-bearing wager (packs + upgrader only — battles produce 0 GGR and
+  // must not dilute the headline edge). The whole waterfall runs on this basis
+  // so gross − drag = net stays consistent. Uses the explicit margin-bearing
+  // helpers, which are margin-bearing on prod (HEAD) regardless of the v1
+  // "exclude battles from headline" refactor.
+  const marginWager = ctx?.baseline
+    ? Math.max(0, marginBearingWager(ctx.baseline))
+    : baseWager;
+  const scenarioMarginWager = marginWager * wagerScenarioMult;
+
   const grossEdge =
     ctx?.baseline && ctx?.levers
-      ? plannedBlendedHouseEdgeV2(ctx.baseline, ctx.levers)
+      ? plannedMarginBearingHouseEdgeV2(ctx.baseline, ctx.levers)
       : projection.plannedEdge;
-  const currentGrossEdge = resolveObservedCurrentGrossEdge(
-    projection,
-    ctx?.baseline,
-  );
+  // "was" reference = the margin-bearing edge at the DEFAULT lever config
+  // (planned-vs-planned), NOT the observed/measured edge (which mixes bases and
+  // runs higher than the planning default).
+  const currentGrossEdge = ctx?.baseline
+    ? plannedMarginBearingHouseEdgeV2(ctx.baseline, defaultLeversV2(ctx.baseline))
+    : projection.currentEdge > 0.00001
+      ? projection.currentEdge
+      : baseWager > 0
+        ? projection.currentGgr / baseWager
+        : 0;
 
   let scenarioPlannedRewardCost = 0;
   for (const l of projection.levers) {
@@ -863,20 +869,22 @@ export function computeEdgeAfterRewards(
     );
   }
 
-  const scenarioPlannedGgr = grossEdge * scenarioWager;
+  const scenarioPlannedGgr = grossEdge * scenarioMarginWager;
   const plannedRewardDrag =
-    scenarioWager > 0 ? Math.max(0, scenarioPlannedRewardCost / scenarioWager) : 0;
+    scenarioMarginWager > 0
+      ? Math.max(0, scenarioPlannedRewardCost / scenarioMarginWager)
+      : 0;
   const netEdgeAfterRewards =
-    scenarioWager > 0
-      ? (scenarioPlannedGgr - scenarioPlannedRewardCost) / scenarioWager
+    scenarioMarginWager > 0
+      ? (scenarioPlannedGgr - scenarioPlannedRewardCost) / scenarioMarginWager
       : 0;
 
-  const currentGgr = currentGrossEdge * baseWager;
+  const currentGgr = currentGrossEdge * marginWager;
   const currentRewardCost = projection.currentRewardCost;
   const currentRewardDrag =
-    baseWager > 0 ? Math.max(0, currentRewardCost / baseWager) : 0;
+    marginWager > 0 ? Math.max(0, currentRewardCost / marginWager) : 0;
   const currentNetEdge =
-    baseWager > 0 ? (currentGgr - currentRewardCost) / baseWager : 0;
+    marginWager > 0 ? (currentGgr - currentRewardCost) / marginWager : 0;
 
   const leverDrags: EdgeAfterRewardsLeverDrag[] = projection.levers
     .filter((l) => Math.abs(l.plannedCost) > 0.005)
@@ -888,7 +896,7 @@ export function computeEdgeAfterRewards(
         scenarioWager,
       );
       const realizedDrag =
-        scenarioWager > 0 ? scenarioCost / scenarioWager : 0;
+        scenarioMarginWager > 0 ? scenarioCost / scenarioMarginWager : 0;
       if (l.key === "affiliate" && ctx?.baseline && ctx?.levers) {
         const edgeShare = topAffiliateTierEdgeShare(ctx.baseline, ctx.levers);
         const worstCaseDrag = affiliateWorstCaseEdgeDrag(ctx.baseline, ctx.levers);
