@@ -29,7 +29,7 @@ import type { KpiWindowPayload } from "./kpi-window-data";
 /**
  * Window-independent SNAPSHOT tile values — lifetime / fixed-window figures
  * that do NOT change with the today/24h toggle (Total Users, FTDs 24h,
- * Depositors, Avg Deposit, Deposits/Hour, Avg RTP). Computed once on the
+ * Depositors, Avg Deposit, Deposits/Hour, Avg RTP, Avg P&L 7d). Computed once on the
  * server from the eager "today" stats and rendered without a toggle (an
  * honest UI — no toggle on a box whose number can't move).
  */
@@ -46,6 +46,10 @@ export type KpiSnapshotValues = {
   depositsPerHour24h: number;
   depositsPerHour7d: number;
   avgRtp: number;
+  /** Rolling 7d total realized house P&L. */
+  totalPnl7d: number;
+  /** totalPnl7d ÷ 7 — average per day in the window. */
+  avgDailyPnl7d: number;
 };
 
 const PANEL_TINT = {
@@ -55,6 +59,7 @@ const PANEL_TINT = {
   pink: "bg-pink-500/10",
   blue: "bg-blue-500/10",
   amber: "bg-amber-500/10",
+  rose: "bg-rose-500/10",
 } as const;
 
 type PanelTint = keyof typeof PANEL_TINT;
@@ -66,6 +71,7 @@ const ICON_TINT: Record<PanelTint, string> = {
   pink: "text-pink-400",
   blue: "text-blue-400",
   amber: "text-amber-400",
+  rose: "text-rose-400",
 };
 
 /**
@@ -301,7 +307,7 @@ function StaticWindowLabel({ label }: { label: string }) {
  * Renders the period-bound KPI boxes (GGR, Wager [Total + Organic in one
  * merged box], Deposits, Withdrawals) with a per-box today/24h toggle, plus
  * the window-independent snapshot boxes (Total Users, FTDs 24h, Depositors,
- * Avg Deposit, Deposits/Hour, Avg RTP) reskinned onto the same panel design.
+ * Avg Deposit, Deposits/Hour, Avg RTP, Avg P&L 7d) reskinned onto the same panel design.
  *
  * The "today" payload is rendered eagerly (the active default window). The
  * rolling 24h payload is fetched LAZILY (one server action) the first time
@@ -519,7 +525,7 @@ export function DashboardKpiSection({
       {/* Snapshot boxes — lifetime / fixed-window figures that do NOT vary
           by the today/24h selection, so they carry a static window label
           (not a toggle). Reskinned onto the same panel design. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
         <KpiPanel
           title="Total Users"
           tint="blue"
@@ -602,6 +608,38 @@ export function DashboardKpiSection({
         >
           <PlainHero value={snapshot.avgRtp} format="percent" />
         </KpiPanel>
+
+        {(() => {
+          const isProfit = snapshot.avgDailyPnl7d >= 0;
+          return (
+            <KpiPanel
+              title="Avg P&L"
+              tint={isProfit ? "emerald" : "rose"}
+              icon={isProfit ? TrendingUp : TrendingDown}
+              headerRight={<StaticWindowLabel label="7d" />}
+              footer={
+                <p className="text-stat-label">
+                  {formatCurrency(snapshot.totalPnl7d)} total · rolling 7d
+                </p>
+              }
+            >
+              <div
+                className={cn(
+                  "text-stat-value truncate tabular-nums",
+                  isProfit
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-rose-600 dark:text-rose-400",
+                )}
+              >
+                {isProfit ? "+" : "−"}
+                <AnimatedNumber
+                  value={Math.abs(snapshot.avgDailyPnl7d)}
+                  format="currency"
+                />
+              </div>
+            </KpiPanel>
+          );
+        })()}
       </div>
     </div>
   );

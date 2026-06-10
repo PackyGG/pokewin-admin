@@ -7,6 +7,8 @@ import {
   resolveUpgraderTargetFromBatch,
 } from "./upgrader-target-batch";
 import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
+import { getMothaAdjustmentLedgerTxIdsForUser } from "@/lib/queries/users-motha-adjustments";
+import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import type { ledger_transaction_type } from "@/generated/prisma/enums";
 
 /** Ledger types that pull in pack/battle/upgrader enrichment (expensive). */
@@ -196,6 +198,32 @@ export async function getUserTransactions(
     };
   }
   where.user_id = canonicalUserId;
+
+  // One profile shows only motha's balance adjustments — hide every other
+  // admin's admin_balance_adjustment rows across financial + adjustment feeds.
+  if (isMothaOnlyAdjustmentsProfile(canonicalUserId)) {
+    const mothaLedgerIds = await getMothaAdjustmentLedgerTxIdsForUser(
+      canonicalUserId,
+    );
+    const mothaScope: Prisma.ledger_transactionsWhereInput =
+      mothaLedgerIds.length > 0
+        ? {
+            OR: [
+              { type: { not: "admin_balance_adjustment" } },
+              {
+                type: "admin_balance_adjustment",
+                id: { in: mothaLedgerIds },
+              },
+            ],
+          }
+        : { type: { not: "admin_balance_adjustment" } };
+    const existingAnd = where.AND
+      ? Array.isArray(where.AND)
+        ? where.AND
+        : [where.AND]
+      : [];
+    where.AND = [...existingAnd, mothaScope];
+  }
 
   if (isFinancialOnlyFilter(filters)) {
     return getUserFinancialTransactionsLight(db, where, page, perPage);

@@ -92,6 +92,7 @@ import type {
   TipEntry,
   LeaderboardWinEntry,
 } from "./user-tabs-types";
+import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import type { UserRewards } from "@/lib/queries/users";
 import {
   SectionHeading,
@@ -247,9 +248,15 @@ function AdminAdjustmentsStreamed({
 }) {
   const adjustmentsTx = use(adjustmentsTxPromise);
   if (adjustmentsTx.total <= 0) return null;
+  const mothaOnly = isMothaOnlyAdjustmentsProfile(userId);
   return (
     <>
       <SectionHeading icon={Coins} title="Admin balance adjustments" />
+      {mothaOnly ? (
+        <p className="text-xs text-muted-foreground -mt-2 mb-1">
+          Motha adjustments only — other admins&apos; balance changes are hidden on this profile.
+        </p>
+      ) : null}
       <CategoryTransactionsTable
         title="Admin balance adjustments"
         userId={userId}

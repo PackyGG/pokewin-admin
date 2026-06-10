@@ -8,6 +8,7 @@ import {
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
 import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
+import { getAvgPnl7d } from "@/lib/queries/dashboard-avg-pnl-7d";
 import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today";
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
@@ -139,7 +140,7 @@ export default async function DashboardPage() {
       {/* KPI boxes — period-bound (GGR, Wager [Total + Organic merged into
           one box], Deposits, Withdrawals) with a per-box today/24h toggle,
           plus the window-independent snapshot boxes (Total Users, FTDs,
-          Depositors, Avg Deposit, Deposits/Hour, Avg RTP). DEFAULTS to
+          Depositors, Avg Deposit, Deposits/Hour, Avg RTP, Avg P&L 7d). DEFAULTS to
           "today" (loaded eagerly here); the rolling 24h window is fetched
           lazily on the first toggle inside the client section
           (active-timeframe-only).
@@ -152,7 +153,7 @@ export default async function DashboardPage() {
         fallback={
           <>
             <SkeletonKpiStrip count={4} />
-            <SkeletonKpiStrip count={6} />
+            <SkeletonKpiStrip count={7} />
           </>
         }
       >
@@ -292,12 +293,17 @@ async function DashboardLoadTime() {
  * change them) — no extra query.
  */
 async function DashboardKpiBoxes() {
-  const [payloadResult, statsResult] = await Promise.all([
+  const [payloadResult, statsResult, avgPnl7dResult] = await Promise.all([
     // Period-bound box values + GGR legs for the eager "today" window.
     safeQuery(() => buildKpiWindowPayload("today"), null, "dashboard.kpiToday"),
     // Snapshot (lifetime / fixed-window) figures — read off the same cached
     // today aggregate so no second roundtrip is added.
     safeQuery(() => getDashboardKpiStats("today"), null, "dashboard.kpiSnapshot"),
+    safeQuery(
+      () => getAvgPnl7d(),
+      { totalPnl7d: 0, avgDailyPnl: 0 },
+      "dashboard.avgPnl7d",
+    ),
   ]);
   if (
     payloadResult.error ||
@@ -315,6 +321,7 @@ async function DashboardKpiBoxes() {
   }
   const today = payloadResult.data;
   const stats = statsResult.data;
+  const avgPnl7d = avgPnl7dResult.data ?? { totalPnl7d: 0, avgDailyPnl: 0 };
 
   // Snapshot (lifetime / fixed-window) figures — the window toggle doesn't
   // change them, so they read the same for today and 24h. Deposits/Hour is a
@@ -338,6 +345,8 @@ async function DashboardKpiBoxes() {
       stats.financials.totalWagered > 0
         ? (stats.financials.totalWon / stats.financials.totalWagered) * 100
         : 0,
+    totalPnl7d: avgPnl7d.totalPnl7d,
+    avgDailyPnl7d: avgPnl7d.avgDailyPnl,
   };
 
   return <DashboardKpiSection today={today} snapshot={snapshot} />;
