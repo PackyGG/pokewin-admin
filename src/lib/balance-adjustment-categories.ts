@@ -17,8 +17,13 @@
  *     COUNTED categories into the reward-cost / NGR side via the canonical
  *     `metadata->>'adjustment_category'` predicate built here.
  *
- * Client-safe: pure value module, no DB / `server-only` import, so the
- * dialog component can import the labels + required-input flags directly.
+ * Client-safe: no DB / `server-only` import, so the dialog component can
+ * import the labels + required-input flags directly. The ONLY import is the
+ * generated Prisma client's `browser` entry — the engine-free, explicitly
+ * browser-safe namespace (needed for the `Prisma.AnyNull` JSON-null sentinel
+ * in the null-safe Prisma filters below). Its sentinel is the SAME
+ * `@prisma/client-runtime-utils` instance the server runtime validates
+ * against, so the filters built here work in server queries unchanged.
  *
  * ─── Counting model (house POV, per CLAUDE.md) ──────────────────────
  *
@@ -49,6 +54,8 @@
  * (`metadata->>'origin' = 'manual'` → reward cost) — a query-layer split,
  * never a whole-type bucket move.
  */
+
+import { Prisma } from "@/generated/prisma/browser";
 
 /**
  * The canonical category keys, in dropdown order. These exact strings are
@@ -419,6 +426,15 @@ export const STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS = [
  * SIGNED `SUM(amount)` so a debit clawback reverses a prior credit. Pass an
  * alias (e.g. `lt.type` / `lt.metadata`) for aliased call sites; both default
  * to the unaliased `type` / `metadata` columns.
+ *
+ * NULL-SAFE under negation (3VL guard): rows with NO `adjustment_category`
+ * (NULL `metadata`, missing key, or JSON null — i.e. every legacy
+ * uncategorized adjustment; 93/93 prod rows as of 2026-06-10) make the bare
+ * equality SQL NULL, so a caller's `NOT (...)` ALSO evaluated NULL and
+ * silently DROPPED those rows from every exclusion-style feed. The explicit
+ * `IS NOT NULL` conjunct forces the predicate to FALSE (not NULL) for
+ * uncategorized rows, so `NOT (...)` keeps them. Positive (match-IN) use is
+ * unchanged — a row equal to the key always has a non-NULL category.
  */
 export function officialStreamAdjustmentSqlPredicate(opts?: {
   typeColumn?: string;
@@ -427,13 +443,18 @@ export function officialStreamAdjustmentSqlPredicate(opts?: {
   const typeCol = opts?.typeColumn ?? "type";
   const metaCol = opts?.metadataColumn ?? "metadata";
   const key = `'${OFFICIAL_STREAM_ADJUSTMENT_CATEGORY.replace(/'/g, "''")}'`;
-  return `${typeCol}::text = 'admin_balance_adjustment' AND ${metaCol}->>'adjustment_category' = ${key}`;
+  return `${typeCol}::text = 'admin_balance_adjustment' AND ${metaCol}->>'adjustment_category' IS NOT NULL AND ${metaCol}->>'adjustment_category' = ${key}`;
 }
 
 /**
  * SQL predicate matching ONLY `remove_locked_balance` `admin_balance_adjustment`
  * rows. Used to net locked-balance removals out of onSiteBalance / P&L (signed
  * `SUM(amount)` — amounts are negative debits from locked_balance).
+ *
+ * Carries the same `IS NOT NULL` 3VL guard as
+ * {@link officialStreamAdjustmentSqlPredicate} so a negated call site never
+ * silently drops uncategorized (NULL-category) adjustments. Today's call
+ * sites are positive-only, where the guard is a no-op.
  */
 export function removeLockedBalanceAdjustmentSqlPredicate(opts?: {
   typeColumn?: string;
@@ -442,13 +463,22 @@ export function removeLockedBalanceAdjustmentSqlPredicate(opts?: {
   const typeCol = opts?.typeColumn ?? "type";
   const metaCol = opts?.metadataColumn ?? "metadata";
   const key = `'${REMOVE_LOCKED_BALANCE_ADJUSTMENT_CATEGORY.replace(/'/g, "''")}'`;
-  return `${typeCol}::text = 'admin_balance_adjustment' AND ${metaCol}->>'adjustment_category' = ${key}`;
+  return `${typeCol}::text = 'admin_balance_adjustment' AND ${metaCol}->>'adjustment_category' IS NOT NULL AND ${metaCol}->>'adjustment_category' = ${key}`;
 }
 
 /**
  * SQL predicate matching ANY stats-excluded `admin_balance_adjustment` row
  * (`official_stream` or `remove_locked_balance`). Single source of truth for
  * insights filters and residual-adjustment carve-outs.
+ *
+ * NULL-SAFE under negation (same 3VL guard as
+ * {@link officialStreamAdjustmentSqlPredicate}): the negated call sites —
+ * `notOfficialStreamFilter` (`AND NOT (...)`, every insights
+ * balance-adjustment surface) and the `AND NOT (...)` balance-delta CASEs in
+ * `pnl.ts` / `users-windowed-pnl.ts` — previously dropped every
+ * uncategorized (NULL-category) adjustment because `NULL IN (...)` is NULL
+ * and `NOT (NULL)` is NULL. The `IS NOT NULL` conjunct makes the predicate
+ * FALSE for those rows, so negation keeps them; positive use is unchanged.
  */
 export function statsExcludedAdjustmentSqlPredicate(opts?: {
   typeColumn?: string;
@@ -459,22 +489,31 @@ export function statsExcludedAdjustmentSqlPredicate(opts?: {
   const list = STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS.map(
     (k) => `'${k.replace(/'/g, "''")}'`,
   ).join(",");
-  return `${typeCol}::text = 'admin_balance_adjustment' AND ${metaCol}->>'adjustment_category' IN (${list})`;
+  return `${typeCol}::text = 'admin_balance_adjustment' AND ${metaCol}->>'adjustment_category' IS NOT NULL AND ${metaCol}->>'adjustment_category' IN (${list})`;
 }
 
 /**
- * Prisma JSON-filter for `remove_locked_balance` ledger rows.
+ * Prisma JSON-filter for `remove_locked_balance` ledger rows. Same null-safe
+ * shape as {@link officialStreamAdjustmentPrismaWhere} (see there for the
+ * 3VL rationale); today's call sites are positive-only, where the guard is a
+ * no-op.
  */
-export function removeLockedBalanceAdjustmentPrismaWhere(): {
-  type: "admin_balance_adjustment";
-  metadata: { path: string[]; equals: string };
-} {
+export function removeLockedBalanceAdjustmentPrismaWhere(): Prisma.ledger_transactionsWhereInput {
   return {
     type: "admin_balance_adjustment",
-    metadata: {
-      path: ["adjustment_category"],
-      equals: REMOVE_LOCKED_BALANCE_ADJUSTMENT_CATEGORY,
-    },
+    AND: [
+      {
+        NOT: {
+          metadata: { path: ["adjustment_category"], equals: Prisma.AnyNull },
+        },
+      },
+      {
+        metadata: {
+          path: ["adjustment_category"],
+          equals: REMOVE_LOCKED_BALANCE_ADJUSTMENT_CATEGORY,
+        },
+      },
+    ],
   };
 }
 
@@ -485,19 +524,43 @@ export function removeLockedBalanceAdjustmentPrismaWhere(): {
  * fake-balance rows IN (e.g. a dedicated official_stream net aggregate) — or,
  * negated via Prisma's `NOT`, to EXCLUDE them.
  *
- * Shape matches Prisma's JSON path filter on the `Json` `metadata` column
- * (string equals at the `adjustment_category` path). Returned as an object so
- * callers can spread it into a larger `where` or wrap it in `{ NOT: ... }`.
+ * NULL-SAFE under `{ NOT: ... }` (3VL guard): the previous bare
+ * `metadata.path.equals` shape compiled to
+ * `NOT (type = 'admin_balance_adjustment' AND metadata#>>'{adjustment_category}' = 'official_stream')`,
+ * and for rows WITHOUT a category (NULL metadata / missing key / JSON null —
+ * every legacy uncategorized adjustment, 93/93 prod rows as of 2026-06-10)
+ * the inner equality is SQL NULL, so `NOT (NULL)` is NULL and the row was
+ * silently DROPPED from every feed that excludes official_stream
+ * (getUserTransactions → owner adjustments block / Finances / Recent
+ * Activity, global transactions, users-audit, dashboard-live, insights
+ * audit-trail). The explicit `NOT (category IS NULL)` conjunct (Prisma:
+ * `NOT { equals: Prisma.AnyNull }`, which compiles null-aware to
+ * `NOT (path = 'null' OR path IS NULL)`) forces the whole conjunction to
+ * FALSE — not NULL — for uncategorized rows, so the caller's `NOT` keeps
+ * them. Only rows whose category IS NOT NULL and equals `official_stream`
+ * are excluded; positive (match-IN) use is unchanged. Verified against prod
+ * 2026-06-11: the prior shape dropped 3/3 of the reference profile's
+ * adjustments, this shape keeps all of them and still excludes
+ * official_stream rows (VALUES-table 3VL matrix).
+ *
+ * Returned as a `ledger_transactionsWhereInput` so callers can spread it
+ * into a larger `where` or wrap it in `{ NOT: ... }`.
  */
-export function officialStreamAdjustmentPrismaWhere(): {
-  type: "admin_balance_adjustment";
-  metadata: { path: string[]; equals: string };
-} {
+export function officialStreamAdjustmentPrismaWhere(): Prisma.ledger_transactionsWhereInput {
   return {
     type: "admin_balance_adjustment",
-    metadata: {
-      path: ["adjustment_category"],
-      equals: OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
-    },
+    AND: [
+      {
+        NOT: {
+          metadata: { path: ["adjustment_category"], equals: Prisma.AnyNull },
+        },
+      },
+      {
+        metadata: {
+          path: ["adjustment_category"],
+          equals: OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
+        },
+      },
+    ],
   };
 }
