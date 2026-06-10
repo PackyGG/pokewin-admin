@@ -296,7 +296,7 @@ const QUICK_LINKS: ReadonlyArray<QuickLink> = [
   {
     href: "/insights/edge-plan-2",
     label: "Edge Plan 2.0",
-    description: "Shards economy, balance withdrawals, full-width planner",
+    description: "Real-data house-edge planner — gross→net after rewards & raffles",
     icon: Sparkles,
     accent: "cyan",
   },
