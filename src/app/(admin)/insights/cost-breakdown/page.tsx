@@ -431,17 +431,17 @@ function SummaryFlow({
       <SummaryGroup step={1} title="Incoming value">
         <div className="grid gap-3">
           <SummaryTile
-            label="Total wager"
-            value={formatCurrency(data.totalWager)}
-            sub={`${periodLabel} · customer stake`}
+            label="Organic wager"
+            value={formatCurrency(data.organicCustomerStake)}
+            sub={`${periodLabel} · no creator code`}
             icon={Coins}
             tone="base"
             info={
               <MetricInfoPopover
                 tone="base"
-                label="What total wager means"
-                title="Total wager"
-                blurb="What customers staked across packs and battles in this window. Creator on-stream sponsored play and borrow-mode plays are excluded. This is the top of the funnel — every other number below is carved out of it."
+                label="What organic wager means"
+                title="Organic wager"
+                blurb="Customer stake from users who did not join under a creator code (on-stream sponsored play excluded). Matches the dashboard organic wager + organic upgrader. Borrow-funded play is included — distinct from the GGR waterfall base below, which excludes borrow."
               />
             }
           />

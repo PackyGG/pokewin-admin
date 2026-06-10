@@ -856,9 +856,10 @@ function plannedTypeGgr(
 }
 
 /**
- * Wager-weighted blended edge on **all customer wager** (affiliate drag, GGR ÷ wager):
+ * Wager-weighted blend on **all customer wager** (GGR ÷ total_wager):
  * (packs_edge×packs_wager + upgrader_edge×upgrader_wager) ÷ total_wager.
- * Battles contribute volume at 0% edge — they dilute this headline.
+ * Battles contribute volume at 0% edge — dilutes vs margin-bearing headline.
+ * Secondary metric only; do not use for blended house-edge headline.
  */
 export function blendedGamingEdge(
   baseline: SystemEdgeBaseline,
@@ -892,11 +893,18 @@ export function marginBearingBlendedGamingEdge(
 }
 
 /**
- * Observed blended house edge on all wager for headline / "current config" reads:
- * (packs_measured×packs_wager + upgrader_measured×upgrader_wager) ÷ total_wager.
- * Battles wager is in the denominator only — never in the numerator.
+ * Observed blended house edge for headline / "current config" reads:
+ * (packs_measured×packs_wager + upgrader_measured×upgrader_wager) ÷ (packs_wager + upgrader_wager).
+ * Battles excluded — margin is already in packs edge.
  */
 export function observedBlendedGamingEdge(
+  baseline: SystemEdgeBaseline,
+): number {
+  return observedMarginBearingGamingEdge(baseline);
+}
+
+/** Observed GGR ÷ all customer wager (battles dilute). Secondary volume context only. */
+export function observedAllWagerBlendedGamingEdge(
   baseline: SystemEdgeBaseline,
 ): number {
   const wager = baseline.wager;
@@ -938,9 +946,9 @@ export type BlendedEdgeBreakdown = {
   allWager: number;
   marginBearingWager: number;
   plannedGgr: number;
-  /** planned GGR ÷ all customer wager (battles dilute). */
+  /** planned GGR ÷ all customer wager (battles dilute — secondary, not headline). */
   allWagerBlendedEdge: number;
-  /** planned GGR ÷ (packs + upgrader wager). */
+  /** planned GGR ÷ (packs + upgrader wager) — primary blended house edge. */
   marginBearingBlendedEdge: number;
   /** margin-bearing − all-wager, in percentage points (positive = battles dilute). */
   battlesDilutionPoints: number;
@@ -1002,7 +1010,8 @@ export function effectiveProjectionTypeEdge(
 
 /**
  * Raw empirical GGR ÷ wager across all types (includes battles settlement GGR).
- * Do NOT use for blended headline / affiliate edge — use `observedBlendedGamingEdge`.
+ * Do NOT use for blended headline / affiliate edge — use `observedBlendedGamingEdge`
+ * or `observedMarginBearingGamingEdge`.
  */
 export function effectiveBaselineEdge(baseline: SystemEdgeBaseline): number {
   const raw =
@@ -1137,8 +1146,8 @@ export function projectEdgePlan(
   const wager = baseline.wager;
   const currentEdge = observedBlendedGamingEdge(baseline);
   const plannedEdge = plannedBlendedHouseEdge(baseline, planned);
-  const currentGgr = currentEdge * wager;
-  const plannedGgr = plannedEdge * wager;
+  const currentGgr = gameTypes.reduce((s, g) => s + g.currentGgr, 0);
+  const plannedGgr = gameTypes.reduce((s, g) => s + g.plannedGgr, 0);
 
   // ── Rakeback (per-cadence blend × per-type weighting × instant discount) ──
   const rakeback = projectRakeback(baseline, planned);
@@ -1358,20 +1367,31 @@ export function projectEdgePlan(
  * Deposit bonus uses realized cost ÷ wager at the planned config.
  */
 
-/** Planned blended house edge on all wager (Σ planned GGR ÷ Σ wager) for affiliate drag. */
+/**
+ * Planned blended house edge (headline): margin-bearing wager only
+ * (packs_edge×packs_wager + upgrader_edge×upgrader_wager) ÷ (packs_wager + upgrader_wager).
+ */
 export function plannedBlendedHouseEdge(
+  baseline: SystemEdgeBaseline,
+  planned: PlannedLevers,
+): number {
+  return marginBearingBlendedGamingEdge(baseline, planned.edges);
+}
+
+/** Planned GGR ÷ all customer wager (battles dilute). Secondary volume context only. */
+export function plannedAllWagerBlendedHouseEdge(
   baseline: SystemEdgeBaseline,
   planned: PlannedLevers,
 ): number {
   return blendedGamingEdge(baseline, planned.edges);
 }
 
-/** Planned blend on margin-bearing wager only (packs + upgrader). */
+/** @deprecated Alias — use `plannedBlendedHouseEdge` (now margin-bearing). */
 export function plannedMarginBearingHouseEdge(
   baseline: SystemEdgeBaseline,
   planned: PlannedLevers,
 ): number {
-  return marginBearingBlendedGamingEdge(baseline, planned.edges);
+  return plannedBlendedHouseEdge(baseline, planned);
 }
 
 /** Convert an affiliate tier rate (share of edge) to effective wager drag. */
@@ -1478,7 +1498,7 @@ export function plannedDepositBonusEdgeDrag(
  *   (b) one per affiliate tier — net = grossEdge − (tier edge share × grossEdge).
  *   (c) combined worst-cases — top tier + planned rakeback; + deposit bonus.
  *
- * `grossEdge` = planned blended house edge (Σ planned GGR ÷ Σ wager).
+ * `grossEdge` = planned blended house edge on margin-bearing wager (packs + upgrader).
  */
 export function computeNetEdgeScenarios(
   baseline: SystemEdgeBaseline,

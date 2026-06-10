@@ -300,7 +300,7 @@ const cachedKpiWindowMetrics = unstable_cache(
  * (it is a FEE, not a stake) — so this tile and the canonical GGR wager
  * leg now agree on the fee (closes M3).
  */
-function getPeriodAggregates(
+export function getPeriodAggregates(
   db: PrismaClient,
   // Single rolling cutoff for the selected period. `new Date(0)` for
   // the "all" period.

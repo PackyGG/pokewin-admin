@@ -683,7 +683,17 @@ async function buildBaseline(
     ];
   }
 
-  const wager = gameTypes.reduce((s, g) => s + g.wager, 0);
+  const legsWager = gameTypes.reduce((s, g) => s + g.wager, 0);
+  const wager = metrics?.wager ?? legsWager;
+  if (metrics?.wager && legsWager > 0 && Math.abs(metrics.wager - legsWager) > 1) {
+    const scale = metrics.wager / legsWager;
+    gameTypes = gameTypes.map((g) => ({
+      ...g,
+      wager: g.wager * scale,
+      payout: g.payout * scale,
+      ggr: g.ggr * scale,
+    }));
+  }
   const gamingPayout = gameTypes.reduce((s, g) => s + g.payout, 0);
   const ggr = wager - gamingPayout;
   const bets = gameTypes.reduce((s, g) => s + g.bets, 0);
