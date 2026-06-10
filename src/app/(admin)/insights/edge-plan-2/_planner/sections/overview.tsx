@@ -50,11 +50,6 @@ export function AnalysisZone({
             >
               <div className="text-sm font-medium">
                 {g.label}
-                {g.type === "battles" && (
-                  <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
-                    settlement margin
-                  </span>
-                )}
                 {!g.dataAvailable && (
                   <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
                     (no data)
@@ -62,10 +57,14 @@ export function AnalysisZone({
                 )}
               </div>
               <div className="text-[11px] text-muted-foreground">
-                {formatPct(g.plannedEdge)}{" "}
-                {g.type === "battles" ? "margin" : "edge"} · wager{" "}
-                {formatCompactUsd(g.wager)}
+                {formatPct(g.plannedEdge)} edge · wager {formatCompactUsd(g.wager)}
               </div>
+              {g.label === "Packs & battles" && (
+                <div className="text-[10px] leading-snug text-muted-foreground/80">
+                  Edge on pack opens, blended over pack + battle wager. Battle
+                  stakes carry no separate edge — GGR is via the packs opened.
+                </div>
+              )}
               <div className="text-sm font-semibold tabular-nums text-foreground">
                 {formatCurrency(g.plannedGgr)} GGR
               </div>

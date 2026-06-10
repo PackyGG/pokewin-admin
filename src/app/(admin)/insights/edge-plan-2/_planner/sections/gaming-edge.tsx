@@ -53,11 +53,11 @@ export function GamingEdgeSection({
       <BlendedEdgeBreakdownPanel breakdown={blendBreakdown} />
       <p className="mb-4 mt-4 text-xs leading-relaxed text-muted-foreground">
         House edge is on <strong>pack opens</strong> — including pack opens inside
-        battles, which are already counted under Packs. Battle bets also carry a real{" "}
-        <strong>settlement margin</strong>, now counted separately (it doesn&apos;t move
-        with the packs edge). The edge sliders default to your{" "}
-        <strong>real measured edge</strong>, so the page opens at today — dial them to
-        plan a different edge. GGR is edge × wager volume.
+        battles, which are already counted under Packs. Battle bets carry{" "}
+        <strong>no separate edge</strong>: their GGR is realized via those packs, so
+        battles are merged into the Packs line. The edge sliders default to the{" "}
+        <strong>planning targets</strong> (packs + battles 10.99%, upgrader 10%) — dial
+        them to plan a different edge. GGR is edge × wager volume.
       </p>
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <div className="space-y-4">
@@ -85,18 +85,17 @@ export function GamingEdgeSection({
               <Swords className="size-3.5 text-muted-foreground" />
               <span className="text-sm font-medium">Battles</span>
               <Badge variant="outline" className="text-[10px]">
-                Settlement margin counted
+                Merged into Packs
               </Badge>
             </div>
             <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-              Pack opens inside battles use the packs edge above (already counted in
-              Packs). The battle bets have their own real settlement margin, now
-              counted — independent of the packs edge.
+              Pack opens inside battles use the packs edge above and are already
+              counted under Packs. Battle entry stakes carry no separate edge — there
+              is no battle-only margin to set; GGR is realized via the packs opened.
             </p>
             {battles && (
               <p className="mt-1 text-[11px] text-muted-foreground">
-                wager {formatCompactUsd(battles.wager)} · settlement GGR{" "}
-                {formatCompactUsd(battles.ggr)} (counted)
+                wager {formatCompactUsd(battles.wager)} · GGR realized via packs
               </p>
             )}
           </div>

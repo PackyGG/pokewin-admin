@@ -451,18 +451,20 @@ export function computeBlendedEdgeBreakdownV2(
 
 export function defaultLeversV2(baseline: EdgePlanV2Baseline): PlannedLeversV2 {
   const v1 = defaultLevers(baseline);
-  // Seed the edge sliders to the REAL measured edge so the page opens at
-  // "today" (profit delta ≈ $0); the 10.99%/10% planning targets become
-  // what-ifs you dial in. Falls back to the planning defaults if no data.
-  const packsBase = baseline.gameTypes.find((g) => g.type === "packs");
-  const upgBase = baseline.gameTypes.find((g) => g.type === "upgrader");
-
+  // Seed the edge sliders to the PLANNING targets (packs+battles 10.99%,
+  // upgrader 10%), NOT the per-type "measured" edge. The measured per-type
+  // edges are accounting artifacts — the pack-opens-in-battles wager is booked
+  // to Packs while the battle item payout is booked to Battles, so packs.edge
+  // reads inflated and battles.edge reads deeply negative; only their SUM is
+  // meaningful. Seeding sliders from those artifacts opened the page at a fake
+  // ~20% packs edge and a noisy ~0% upgrader edge. The planning constants are
+  // the correct, stable defaults.
   return {
     ...v1,
     edges: {
-      packs: clamp(packsBase?.edge ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT, 0, 1),
+      packs: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
       battles: PLANNED_BATTLES_EDGE_DEFAULT,
-      upgrader: clamp(upgBase?.edge ?? PLANNED_UPGRADER_EDGE_DEFAULT, 0, 1),
+      upgrader: PLANNED_UPGRADER_EDGE_DEFAULT,
     },
     balanceWithdrawalShare: baseline.balanceWithdrawalShare,
     withdrawalWagerReqMult: 1,
@@ -652,26 +654,10 @@ function applyPlanningGameProjections(
   core: EdgePlanProjection,
 ): Pick<EdgePlanProjection, "gameTypes" | "ggrDelta"> {
   const defaults = defaultLeversV2(baseline);
-  const refEdge = plannedBlendedHouseEdgeV2(baseline, defaults);
-  const refGgr = refEdge * baseline.wager;
 
-  const gameTypes: GameTypeProjection[] = core.gameTypes.map((g) => {
-    if (g.type === "battles") {
-      // Real battle settlement margin (bet − payout) from the ledger — counted
-      // now, independent of the packs edge (battle bets are not pack opens, so
-      // moving the packs edge does not move this).
-      const b = baseline.gameTypes.find((t) => t.type === "battles");
-      const realGgr = b?.ggr ?? 0;
-      const battleEdge = b && b.wager > 0 ? realGgr / b.wager : 0;
-      return {
-        ...g,
-        currentEdge: battleEdge,
-        plannedEdge: battleEdge,
-        currentGgr: realGgr,
-        plannedGgr: realGgr,
-        ggrDelta: 0,
-      };
-    }
+  // Per-type planned projection: planned edge × wager, delta vs the default
+  // edge. Used for upgrader directly; packs feeds the merged row below.
+  const projectType = (g: GameTypeProjection): GameTypeProjection => {
     const plannedEdge = clamp(
       planned.edges[g.type] ?? defaultPlannedEdge(g.type),
       0,
@@ -692,11 +678,45 @@ function applyPlanningGameProjections(
       plannedGgr: plannedGgrType,
       ggrDelta: plannedGgrType - referenceGgr,
     };
-  });
+  };
 
+  const packsCore = core.gameTypes.find((g) => g.type === "packs");
+  const battlesCore = core.gameTypes.find((g) => g.type === "battles");
+
+  // Merge Packs + Battles into ONE row. The house edge is on pack opens
+  // (battle bets fund pack opens that are already counted under Packs), so
+  // battles carry NO separate edge — their GGR is realized via packs. Showing
+  // them split produced a meaningless inflated-packs / negative-battles pair
+  // (only the sum reconciles). Combined wager = pack-open + battle-stake wager;
+  // planned GGR = packs planned edge × packs wager; the displayed edge is that
+  // GGR blended over the combined wager.
+  const gameTypes: GameTypeProjection[] = [];
+  if (packsCore) {
+    const packsProj = projectType(packsCore);
+    const battlesWager = battlesCore?.wager ?? 0;
+    const combinedWager = packsProj.wager + battlesWager;
+    const blendedEdge =
+      combinedWager > 0 ? packsProj.plannedGgr / combinedWager : packsProj.plannedEdge;
+    gameTypes.push({
+      ...packsProj,
+      label: battlesWager > 0 ? "Packs & battles" : packsProj.label,
+      wager: combinedWager,
+      currentEdge: blendedEdge,
+      plannedEdge: blendedEdge,
+      dataAvailable: packsProj.dataAvailable || (battlesCore?.dataAvailable ?? false),
+    });
+  }
+  for (const g of core.gameTypes) {
+    if (g.type === "packs" || g.type === "battles") continue;
+    gameTypes.push(projectType(g));
+  }
+
+  // Total GGR vs planning defaults = sum of the per-type deltas (each is
+  // plannedEdge×wager − defaultEdge×wager on the SAME wager base), so it is
+  // exactly $0 at the default mount state and reflects real edge changes after.
   return {
     gameTypes,
-    ggrDelta: core.plannedGgr - refGgr,
+    ggrDelta: gameTypes.reduce((s, g) => s + g.ggrDelta, 0),
   };
 }
 
@@ -727,14 +747,7 @@ export function projectEdgePlanV2(
 ): EdgePlanV2Projection {
   const core = projectEdgePlan(toV1Baseline(baseline), toV1Levers(planned, baseline));
   const planningGgr = applyPlanningGameProjections(baseline, planned, core);
-  // Real battle settlement GGR — v1 `core` excludes it (battles forced to 0);
-  // add it to the headline GGR/NGR totals consistently (cancels in the delta).
-  const battlesBase = baseline.gameTypes.find((g) => g.type === "battles");
-  const battlesGgr = battlesBase?.ggr ?? 0;
   const rakeback = projectRakebackV2(baseline, planned);
-  const coreRakeback = core.levers.find((l) => l.key === "rakeback");
-  const rakebackDelta =
-    coreRakeback != null ? rakeback.planned - coreRakeback.plannedCost : 0;
 
   // Real affiliate split (commission vs leaderboard) — sourced from
   // getAffiliateOverview via the baseline. The v1 `core` carries the BUNDLED
@@ -789,27 +802,25 @@ export function projectEdgePlanV2(
         : [],
     );
 
-  // Reconcile `core`'s BUNDLED affiliate planned cost to the v2 split total
-  // (commission planned + held-fixed leaderboard). The current side already
-  // matches: the real commission + leaderboard sum back to the bundled
-  // `affiliateCost` that `core.currentRewardCost` counted.
-  const coreAffiliate = core.levers.find((l) => l.key === "affiliate");
-  const affiliatePlannedTotal =
-    affiliateCommission.planned + affiliateLeaderboardCurrent;
-  const affiliateAdjustment =
-    coreAffiliate != null ? affiliatePlannedTotal - coreAffiliate.plannedCost : 0;
+  // The planner baseline is the DEFAULT plan, not the noisy measured reality:
+  // every projected number compares your active levers to the default-lever
+  // config, so the profit delta is exactly $0 at the default mount state and
+  // then reflects ONLY the changes you make ("the edge is what I enter; how
+  // much is left after my changes"). Both sides reconcile by construction:
+  //   profitDelta = ggrDelta − rewardCostDelta
+  // where each is a sum of per-unit (planned − default) deltas that vanish at
+  // the default. Anchoring to measured reality instead re-introduced the
+  // phantom default delta (planning edge ≠ artifact measured edge).
+  const ggrDelta = planningGgr.ggrDelta; // Σ per-type (plannedEdge − defaultEdge) × wager
+  const rewardCostDelta = levers.reduce((s, l) => s + l.deltaCost, 0);
 
-  const plannedRewardCost =
-    core.plannedRewardCost +
-    rakebackDelta +
-    affiliateAdjustment +
-    depositBonusHourlyCost;
-  const currentRewardCost = core.currentRewardCost;
-  const rewardCostDelta = plannedRewardCost - currentRewardCost;
-
-  const plannedNgr =
-    core.plannedNgr - rakebackDelta - affiliateAdjustment - depositBonusHourlyCost;
-  const profitDelta = plannedNgr - core.currentNgr;
+  const plannedGgr = core.plannedGgr;
+  const currentGgr = plannedGgr - ggrDelta; // GGR at the default plan
+  const currentRewardCost = core.currentRewardCost; // real anchored reward cost
+  const plannedRewardCost = currentRewardCost + rewardCostDelta;
+  const plannedNgr = plannedGgr - plannedRewardCost;
+  const currentNgr = currentGgr - currentRewardCost;
+  const profitDelta = ggrDelta - rewardCostDelta; // = plannedNgr − currentNgr; $0 at default
   const monthlyProfitDelta =
     baseline.periodDays > 0 ? (profitDelta / baseline.periodDays) * 30 : profitDelta;
   const annualProfitDelta =
@@ -819,13 +830,13 @@ export function projectEdgePlanV2(
     ...core,
     ...planningGgr,
     levers,
+    plannedGgr,
+    currentGgr,
     plannedRewardCost,
     currentRewardCost,
     rewardCostDelta,
-    plannedGgr: core.plannedGgr + battlesGgr,
-    currentGgr: core.currentGgr + battlesGgr,
-    plannedNgr: plannedNgr + battlesGgr,
-    currentNgr: core.currentNgr + battlesGgr,
+    plannedNgr,
+    currentNgr,
     profitDelta,
     monthlyProfitDelta,
     annualProfitDelta,

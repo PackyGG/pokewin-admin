@@ -48,31 +48,38 @@ const PERIOD_DAYS = 30;
 // planning. Sized so the planning-default GGR (packs + upgrader only) is
 // ~$161,880 — deliberately BELOW the ~$247k reward total so the net edge after
 // rewards is negative (rose path). Three game types, all real-shaped.
+// These mirror the REAL prod accounting artifact the owner hit: the
+// pack-opens-inside-battles WAGER is booked to Packs while the battle ITEM
+// payout is booked to Battles, so packs.edge reads inflated (+20%) and
+// battles.edge reads deeply negative (−61%) — only their SUM reconciles. The
+// rework MERGES packs + battles into one row driven by the PLANNING edge
+// (10.99%), not these per-type artifact edges, so the fixture proves the merge
+// renders a sensible positive combined row despite this garbage input.
 const GAME_TYPES: GameTypeBaseline[] = [
   {
     type: "packs",
-    wager: 1_200_000,
-    payout: 1_038_000,
-    ggr: 162_000, // 1,200,000 × 0.135 — measured edge ABOVE the 10.99% planning target
-    edge: 0.135,
+    wager: 1_311_000,
+    payout: 1_042_255,
+    ggr: 268_745, // inflated artifact edge ≈ 20.5% (wager incl. battle opens, payout excl. battle items)
+    edge: 0.205,
     bets: 84_000,
     dataAvailable: true,
   },
   {
     type: "battles",
-    wager: 800_000,
-    payout: 760_000,
-    ggr: 40_000,
-    edge: 0.05,
+    wager: 600_100,
+    payout: 968_248,
+    ggr: -368_148, // deflated artifact ≈ −61% (battle item payout booked here, wager booked to Packs)
+    edge: -0.613,
     bets: 21_000,
     dataAvailable: true,
   },
   {
     type: "upgrader",
-    wager: 300_000,
-    payout: 270_000,
-    ggr: 30_000, // 300,000 × 0.10
-    edge: 0.1,
+    wager: 578_000,
+    payout: 578_000,
+    ggr: 0, // near break-even window → measured edge ~0%; planning default 10% drives the row
+    edge: 0,
     bets: 12_500,
     dataAvailable: true,
   },
