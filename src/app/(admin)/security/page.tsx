@@ -1,4 +1,12 @@
-import { Lock, Banknote, Trophy, Percent, Coins, Gem } from "lucide-react";
+import {
+  Lock,
+  Banknote,
+  Trophy,
+  Percent,
+  Coins,
+  Gem,
+  Hourglass,
+} from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getSiteConfig } from "@/lib/queries/security";
 import { SecurityContent } from "./security-content";
@@ -15,6 +23,8 @@ import { SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./source-wager-weights-key
 import { SourceWagerWeightsCard } from "./source-wager-weights-card";
 import { SHARD_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./shard-wager-weights-keys";
 import { ShardWagerWeightsCard } from "./shard-wager-weights-card";
+import { REWARD_EXPIRY_SITE_CONFIG_KEYS } from "./reward-expiry-keys";
+import { RewardExpiryCard } from "./reward-expiry-card";
 import {
   getWagerRequirementDefaults,
   type WagerRequirementDefaults,
@@ -35,6 +45,10 @@ import {
   getShardWagerWeights,
   type ShardWagerWeights,
 } from "@/lib/backend-api/shard-wager-weights";
+import {
+  getRewardExpiry,
+  type RewardExpiry,
+} from "@/lib/backend-api/reward-expiry";
 
 export const metadata = { title: "Security" };
 
@@ -55,6 +69,7 @@ export default async function SecurityPage() {
     ...RAKEBACK_WAGER_WEIGHT_SITE_CONFIG_KEYS,
     ...SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS,
     ...SHARD_WAGER_WEIGHT_SITE_CONFIG_KEYS,
+    ...REWARD_EXPIRY_SITE_CONFIG_KEYS,
   ]);
   const config = allConfig.filter((row) => !movedKeys.has(row.key));
   const hasMovedKeys = allConfig.some((row) =>
@@ -108,6 +123,15 @@ export default async function SecurityPage() {
     shardWeights = null;
   }
 
+  // Same non-critical pattern for the reward claim windows — the backend
+  // branch may not be deployed yet.
+  let rewardExpiry: RewardExpiry | null = null;
+  try {
+    rewardExpiry = await getRewardExpiry();
+  } catch {
+    rewardExpiry = null;
+  }
+
   return (
     <div className="space-y-6">
       <PageHero>
@@ -150,6 +174,13 @@ export default async function SecurityPage() {
         <div className="space-y-3">
           <SectionHeading icon={Coins} title="Funding-Source Wager Weights" />
           <SourceWagerWeightsCard initial={sourceWeights} />
+        </div>
+      </FadeIn>
+
+      <FadeIn>
+        <div className="space-y-3">
+          <SectionHeading icon={Hourglass} title="Reward Expiry" />
+          <RewardExpiryCard initial={rewardExpiry} />
         </div>
       </FadeIn>
 
