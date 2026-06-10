@@ -1,7 +1,11 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { Prisma } from "@/generated/prisma/client";
-import { filterLedgerTxTypes, LEDGER_TX_TYPES } from "./_ledger-tx-types";
+import {
+  filterLedgerTxTypes,
+  filterLedgerTxTypesLive,
+  isLiveLedgerTxType,
+} from "./_ledger-tx-types";
 import {
   fetchUpgraderTargetByLedgerTxIds,
   resolveUpgraderTargetFromBatch,
@@ -162,10 +166,21 @@ export async function getUserTransactions(
     NOT: officialStreamAdjustmentPrismaWhere(),
   };
 
-  if (filters?.type && filters.type !== "all" && LEDGER_TX_TYPES.has(filters.type)) {
-    where.type = filters.type as ledger_transaction_type;
+  // IMPORTANT: filter the requested type(s) against the LIVE enum, not just
+  // the generated Prisma enum. The schema/generated client is AHEAD of prod
+  // for the un-launched upgrader feature (`upgrader_bet` / `upgrader_payout`
+  // exist in the generated enum but NOT in the prod `ledger_transaction_type`
+  // enum). Passing such a member into `type: { in: [...] }` makes Postgres
+  // throw `22P02 invalid input value for enum`, which took the WHOLE query
+  // (and thus the user-detail Gaming tab — its GAMING_TYPES list includes the
+  // upgrader members) down to an error/empty. Intersecting with the live enum
+  // drops the not-yet-migrated members and self-heals once prod migrates.
+  if (filters?.type && filters.type !== "all") {
+    if (await isLiveLedgerTxType(filters.type)) {
+      where.type = filters.type as ledger_transaction_type;
+    }
   } else if (filters?.types && filters.types.length > 0) {
-    const validTypes = filterLedgerTxTypes(filters.types);
+    const validTypes = await filterLedgerTxTypesLive(filters.types);
     if (validTypes.length > 0) where.type = { in: validTypes };
   }
   if (filters?.status && filters.status !== "all") {
