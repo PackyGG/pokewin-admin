@@ -83,6 +83,11 @@ export function PacksSignupSection({
         icon={Boxes}
         accent="pink"
       >
+        <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+          Daily / free packs. Grant frequency = how often packs are handed out
+          (scales the total daily-pack cost). Planned EV per open = the average
+          house cost of one pack open — set it richer or leaner per pack.
+        </p>
         <div className="mb-4 flex flex-col gap-3 rounded-xl border bg-muted/25 p-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0 flex-1 lg:max-w-md">
             <LeverSlider
@@ -175,6 +180,10 @@ export function PacksSignupSection({
         icon={UserPlus}
         accent="rose"
       >
+        <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+          Signup grant = the one-time balance reward each new player gets when
+          they claim.
+        </p>
         <PanelRow
           label="Realized cost (window)"
           value={formatCurrency(baseline.signupPacksCost)}

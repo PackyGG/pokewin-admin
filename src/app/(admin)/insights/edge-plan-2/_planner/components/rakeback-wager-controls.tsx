@@ -35,6 +35,14 @@ export function RakebackWagerControls({
 
   return (
     <>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        Rakeback returns a % of wager to players. The cadence rates (daily /
+        weekly / monthly) set that %. The game weights set how much of each
+        game&apos;s wager earns rakeback (100% = all of it counts). Advanced:
+        upgrader eligibility means only bets aiming for a high-enough multiplier
+        earn rakeback, and instant payout is a smaller immediate payout some
+        users take instead of the full accrual — which lowers the cost.
+      </p>
       <div className="mt-4 space-y-3 border-t pt-3">
         <SectionHeading icon={Percent} title="Wager → rakeback weight" />
         <p className="text-[11px] leading-relaxed text-muted-foreground">

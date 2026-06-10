@@ -43,6 +43,13 @@ export function WithdrawalsSection({
       icon={Banknote}
       accent="cyan"
     >
+      <p className="mb-4 text-[11px] leading-relaxed text-muted-foreground">
+        Planning knobs only — these model withdrawal behavior (balance vs
+        inventory split, wager-to-unlock requirement, per-game weights) for
+        context. They do NOT change any projected cost here; the real withdrawal
+        wager-requirement setting lives in Security. The volume + split shown are
+        real 30-day ledger data.
+      </p>
       <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
         Real 30d withdrawal volume and the balance-vs-inventory split, shown as
         display context. Wager requirement and per-game weights are what-if

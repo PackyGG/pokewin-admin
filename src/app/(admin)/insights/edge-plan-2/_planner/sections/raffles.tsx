@@ -87,6 +87,13 @@ export function RafflesSection({
         <EmptyLever note="No reconstructed raffle prize cost in this window." />
       ) : (
         <>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            x multipliers on the current real raffle program. Prize pool = total
+            prize money (scales cost linearly). Frequency = how often raffles are
+            drawn — 2x = twice as many draws, roughly 2x the cost. Ticket cost =
+            how hard tickets are to earn (raising it slightly deters farming, so a
+            touch less cost).
+          </p>
           <LeverSlider
             label="Prize pool"
             valueLabel={multLabel(levers.rafflePrizePoolMult)}

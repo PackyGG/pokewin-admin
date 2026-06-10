@@ -59,6 +59,14 @@ export function FounderOtherRewardsPanel({
         founder giveaways, and residual reward spend (gift cards, promos, vouchers).
       </p>
 
+      <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+        x multipliers on real spend. Rain = the net house cost of rain after
+        user/founder tips. Motha = the founder giveaway budget (creator tips +
+        rain tips + sponsorships). Other = miscellaneous rewards (gift cards,
+        promo codes, vouchers, balance adjustments). 2x doubles that line&apos;s
+        cost.
+      </p>
+
       {hasAnything ? (
         <>
           <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">

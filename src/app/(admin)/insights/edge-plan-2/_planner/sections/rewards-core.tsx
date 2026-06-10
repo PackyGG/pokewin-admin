@@ -214,6 +214,15 @@ export function RewardsCoreSection({
         icon={Coins}
         accent="amber"
       >
+        <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+          Each lever is a ×multiplier on the real current setting (1× = today, 2×
+          = double). Match % = how much of a deposit is matched as bonus. Cap $ =
+          the max bonus per deposit (total cost rises less than linearly — big
+          deposits don&apos;t all hit the cap). Min deposit gate = the minimum
+          deposit to qualify (raising it filters out small claimers, lowering
+          cost). Wager requirement = how much must be wagered before the bonus can
+          be withdrawn (higher = more bonuses expire unused = lower real cost).
+        </p>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           Real config: {formatPercentInt(100)} match, cap{" "}
           {formatCurrency(baseline.depositBonusCapUsd)} per{" "}
@@ -280,6 +289,13 @@ export function RewardsCoreSection({
         icon={Trophy}
         accent="rose"
       >
+        <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+          ×multipliers on the current real race program. Prize pool = total prize
+          money (scales cost linearly). Frequency = how often races run — 2× =
+          twice as many races, roughly 2× the total prize cost. Entry cost = the
+          ticket price to enter (raising it slightly deters farming, so a touch
+          less cost).
+        </p>
         <PanelRow label="Real race prize cost" value={formatCurrency(baseline.raceCost)} />
         {baseline.raceCost <= 0 ? (
           <EmptyLever note="No race prize cost in this window." />
@@ -310,6 +326,12 @@ export function RewardsCoreSection({
           icon={Share2}
           accent="rose"
         >
+          <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+            Affiliate commission is paid as a % of the house edge on referred
+            players&apos; play (not their wager). The Remove-wager-requirement
+            toggle drops a payout-quality screen — turning it on pays more
+            affiliates (about +15% cost).
+          </p>
           <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
             Tier rates are a{" "}
             <span className="font-medium text-foreground">% of referred house edge</span>,
