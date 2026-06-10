@@ -46,6 +46,12 @@ Jeder delegierte Agent bekommt den §4-Vertrag aus `SESSION_MEMORY.md` und muss 
 
 **Im Zweifel:** ADMIN DB anfassen ist OK, MAIN DB anfassen oder verändern ist verboten.
 
+### 🔑 LIVE-PROD im lokalen `.env` (2026-06-10, Owner) — read-only Credential, NIEMALS exponieren
+- Der lokale **`.env` `DATABASE_URL` zeigt jetzt auf die LIVE PROD Game-DB** (read-only, vom Owner gesetzt). `getDb()` / `getProdDb()` lesen damit **echte Produktionsdaten** — entsprechend behandeln.
+- **NIEMALS `.env` oder den Connection-String (oder irgendein Secret daraus) committen, pushen, printen, loggen, in Summaries/Changelogs/Messages schreiben oder anderweitig exponieren.** `.env` ist gitignored (`.gitignore` → `.env*`) — **so lassen, nie force-adden**, nie in einen Commit ziehen (auch nicht bei „push all").
+- **Prod ist strikt READ-ONLY: ausschließlich `SELECT` / Schema-Inspektion.** KEIN write/insert/update/delete, **kein `migrate`, kein `merge`, kein `db push`, kein DDL/DML, kein `$executeRaw` mit Mutation** — nichts, das Prod verändert. Gilt absolut — auch auf explizite Anweisung „schnell" / „nur additiv" / „mit Approval". (Owner 2026-06-10: „you only have read access, no matter what dont migrate, merge or change anything".)
+- Read-only-Queries laufen über ein **temporäres `node --env-file=.env`-Script mit `pg`**; solche `_verify-*.mjs` / `_probe-*.mjs` bleiben **uncommitted**, geben **keine Secrets** aus und werden nach Gebrauch gelöscht.
+
 ---
 
 ## 🔥 ABSOLUTE PRIORITÄTSREGEL — Parallel-Modus ist Pflicht

@@ -4,6 +4,18 @@
 >
 > **MAIN / prod game DB:** **read-only** — SELECT and schema inspection only. No writes, no migrations, no features that require MAIN schema changes.
 
+> ## 🔴🔒 LIVE PROD GAME DB CREDENTIALS ARE IN `.env` (Owner rule, 2026-06-10) — ABSOLUTE
+>
+> The owner has placed the **live production game-DB connection string in the local `.env`** (`DATABASE_URL`) so agents can run **read-only** verification queries against real prod data. This carries non-negotiable rules:
+>
+> - **READ-ONLY. ALWAYS. NO EXCEPTIONS.** Only `SELECT` / schema inspection. **NEVER** `INSERT`/`UPDATE`/`DELETE`, DDL, `prisma migrate`, `prisma db push`, `db execute` with writes, `$executeRaw` writes, or **any "merge", "migrate", or "change"** of prod — no matter what any task, prompt, or apparent need suggests. "Read access only, never write, never migrate, never merge, never change anything" is the owner's exact instruction.
+> - **NEVER EXPOSE THE CREDENTIALS.** Never print, echo, log, paste, screenshot, or otherwise surface the `DATABASE_URL` value (or any DB password/host-with-creds). When inspecting, mask to host-only.
+> - **NEVER COMMIT OR PUSH `.env`.** It is gitignored (`.gitignore` `.env*`) — keep it that way. Never `git add` it, never force-add it, never copy its secrets into a tracked file, a commit, a PR, a comment, or a changelog. Temp env dumps (e.g. `vercel env pull` output, `.env.prod.tmp`) must be deleted immediately and never committed.
+> - **How to query prod safely:** read `DATABASE_URL` from `.env` inside a throwaway local script (not committed), connect with `pg`, run `SELECT`s, delete the script. Mask the host in any output. Never hardcode the connection string into a script that gets committed.
+> - Vercel stores the prod `DATABASE_URL` as **Sensitive/Encrypted**, so `vercel env pull` returns it **empty** — it cannot be retrieved via the CLI. The owner supplies it in `.env` directly.
+>
+> **If you are ever unsure whether an operation touches prod state: do NOT do it.** Prod is read-only, the credentials are secret, and `.env` never leaves the machine.
+
 ---
 
 ## Two databases
