@@ -107,10 +107,6 @@ export const InventoryGrid = React.memo(function InventoryGrid({
   const [priceMax, setPriceMax] = useState("");
   const [page, setPage] = useState(1);
 
-  useEffect(() => {
-    setInventory(initialInventory);
-  }, [initialInventory]);
-
   const { data, totalPages, total } = inventory;
 
   const hasFilters =
@@ -119,6 +115,24 @@ export const InventoryGrid = React.memo(function InventoryGrid({
     search !== "" ||
     priceMin !== "" ||
     priceMax !== "";
+
+  // The parent /users/[id] page re-renders every 60s via AutoRefresh and
+  // hands a fresh `initialInventory`. Re-seed ONLY when the admin hasn't
+  // touched filters/sort/search/pagination — the old unguarded
+  // `setInventory(initialInventory)` snapped every filter + page back to
+  // defaults on each tick, yanking the admin's view mid-investigation
+  // (the "filters snap back every 60s" bug). Exact guard pattern from
+  // CategoryTransactionsTable; page size here is fixed at 24 so no
+  // perPage-respecting refetch branch is needed.
+  useEffect(() => {
+    if (hasFilters || page !== 1) return;
+    setInventory(initialInventory);
+    setLoadError(initialLoadError ?? null);
+    // Depend ONLY on `initialInventory` — re-seed on a NEW server payload,
+    // not when the admin toggles a filter back (those run their own
+    // explicit load(...) calls).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialInventory]);
 
   const load = async (overrides: Record<string, unknown> = {}) => {
     const p = (overrides.page as number) ?? page;
@@ -515,6 +529,21 @@ export const DisposedCardsTable = React.memo(function DisposedCardsTable({
     sort !== "newest" ||
     search !== "" ||
     statusFilter !== "disposed";
+
+  // Same guarded AutoRefresh re-seed as InventoryGrid. This table
+  // previously had NO re-seed at all, so after the first 60s tick it was
+  // permanently stale (new disposals never appeared without a manual
+  // status/filter toggle). Pristine view (default status tab, no filters,
+  // page 1) → adopt the fresh server payload; any admin-driven state →
+  // leave it alone.
+  useEffect(() => {
+    if (hasFilters || page !== 1) return;
+    setInventory(initialInventory);
+    setLoadError(initialLoadError ?? null);
+    // Depend ONLY on `initialInventory` — re-seed on a NEW server payload,
+    // not on local filter toggles (those run their own load(...) calls).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialInventory]);
 
   const load = async (overrides: Record<string, unknown> = {}) => {
     const p = (overrides.page as number) ?? page;
