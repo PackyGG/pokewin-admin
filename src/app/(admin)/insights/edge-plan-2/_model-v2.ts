@@ -182,6 +182,16 @@ export type PlannedLeversV2 = PlannedLevers & {
   rakebackUpgraderMinMultiplier: number;
   /** Cap winning upgrader bet amount that accrues rakeback (0..1). */
   rakebackUpgraderMaxWinPct: number;
+  /**
+   * Time-based ("hourly") deposit bonus: a fixed $ grant a user can claim every
+   * N hours. A NEW planned bonus (not in the baseline) — adds planned cost only.
+   * Cost = amount × (windowHours ÷ interval) × users × utilization.
+   */
+  depositBonusHourlyEnabled: boolean;
+  depositBonusHourlyAmountUsd: number;
+  depositBonusHourlyIntervalHours: number;
+  depositBonusHourlyUsers: number;
+  depositBonusHourlyUtilizationPct: number;
 };
 
 export type EdgePlanV2Projection = EdgePlanProjection;
@@ -441,9 +451,19 @@ export function computeBlendedEdgeBreakdownV2(
 
 export function defaultLeversV2(baseline: EdgePlanV2Baseline): PlannedLeversV2 {
   const v1 = defaultLevers(baseline);
+  // Seed the edge sliders to the REAL measured edge so the page opens at
+  // "today" (profit delta ≈ $0); the 10.99%/10% planning targets become
+  // what-ifs you dial in. Falls back to the planning defaults if no data.
+  const packsBase = baseline.gameTypes.find((g) => g.type === "packs");
+  const upgBase = baseline.gameTypes.find((g) => g.type === "upgrader");
 
   return {
     ...v1,
+    edges: {
+      packs: clamp(packsBase?.edge ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT, 0, 1),
+      battles: PLANNED_BATTLES_EDGE_DEFAULT,
+      upgrader: clamp(upgBase?.edge ?? PLANNED_UPGRADER_EDGE_DEFAULT, 0, 1),
+    },
     balanceWithdrawalShare: baseline.balanceWithdrawalShare,
     withdrawalWagerReqMult: 1,
     withdrawalPackBattleWeight: 1,
@@ -452,6 +472,11 @@ export function defaultLeversV2(baseline: EdgePlanV2Baseline): PlannedLeversV2 {
     rakebackBattlesWeight: 1,
     rakebackUpgraderMinMultiplier: 1,
     rakebackUpgraderMaxWinPct: 1,
+    depositBonusHourlyEnabled: false,
+    depositBonusHourlyAmountUsd: 25,
+    depositBonusHourlyIntervalHours: 6,
+    depositBonusHourlyUsers: 100,
+    depositBonusHourlyUtilizationPct: 1,
   };
 }
 
@@ -493,6 +518,11 @@ function neutralLeversV2(): PlannedLeversV2 {
     rakebackBattlesWeight: 1,
     rakebackUpgraderMinMultiplier: 1,
     rakebackUpgraderMaxWinPct: 1,
+    depositBonusHourlyEnabled: false,
+    depositBonusHourlyAmountUsd: 25,
+    depositBonusHourlyIntervalHours: 6,
+    depositBonusHourlyUsers: 100,
+    depositBonusHourlyUtilizationPct: 1,
   };
 }
 
@@ -589,6 +619,26 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
   );
   base.withdrawalUpgraderWeight = clamp(num(src.withdrawalUpgraderWeight, 1), 0, 1);
 
+  base.depositBonusHourlyEnabled = src.depositBonusHourlyEnabled === true;
+  base.depositBonusHourlyAmountUsd = Math.max(
+    0,
+    num(src.depositBonusHourlyAmountUsd, 25),
+  );
+  base.depositBonusHourlyIntervalHours = clamp(
+    num(src.depositBonusHourlyIntervalHours, 6),
+    1,
+    720,
+  );
+  base.depositBonusHourlyUsers = Math.max(
+    0,
+    Math.round(num(src.depositBonusHourlyUsers, 100)),
+  );
+  base.depositBonusHourlyUtilizationPct = clamp(
+    num(src.depositBonusHourlyUtilizationPct, 1),
+    0,
+    1,
+  );
+
   return base;
 }
 
@@ -607,12 +657,18 @@ function applyPlanningGameProjections(
 
   const gameTypes: GameTypeProjection[] = core.gameTypes.map((g) => {
     if (g.type === "battles") {
+      // Real battle settlement margin (bet − payout) from the ledger — counted
+      // now, independent of the packs edge (battle bets are not pack opens, so
+      // moving the packs edge does not move this).
+      const b = baseline.gameTypes.find((t) => t.type === "battles");
+      const realGgr = b?.ggr ?? 0;
+      const battleEdge = b && b.wager > 0 ? realGgr / b.wager : 0;
       return {
         ...g,
-        currentEdge: PLANNED_BATTLES_EDGE_DEFAULT,
-        plannedEdge: PLANNED_BATTLES_EDGE_DEFAULT,
-        currentGgr: 0,
-        plannedGgr: 0,
+        currentEdge: battleEdge,
+        plannedEdge: battleEdge,
+        currentGgr: realGgr,
+        plannedGgr: realGgr,
         ggrDelta: 0,
       };
     }
@@ -644,12 +700,37 @@ function applyPlanningGameProjections(
   };
 }
 
+/**
+ * Planned cost of the time-based ("hourly") per-user deposit bonus over the
+ * baseline window. A NEW bonus, so it has no current/baseline cost — it adds
+ * planned cost only. Cost = amount × (windowHours ÷ interval) × users × util.
+ */
+export function depositBonusHourlyCostV2(
+  baseline: EdgePlanV2Baseline,
+  levers: PlannedLeversV2,
+): number {
+  if (!levers.depositBonusHourlyEnabled) return 0;
+  const windowHours = Math.max(1, baseline.periodDays) * 24;
+  const interval = Math.max(1, levers.depositBonusHourlyIntervalHours);
+  const grantsPerUser = windowHours / interval;
+  return (
+    Math.max(0, levers.depositBonusHourlyAmountUsd) *
+    grantsPerUser *
+    Math.max(0, levers.depositBonusHourlyUsers) *
+    clamp(levers.depositBonusHourlyUtilizationPct, 0, 1)
+  );
+}
+
 export function projectEdgePlanV2(
   baseline: EdgePlanV2Baseline,
   planned: PlannedLeversV2,
 ): EdgePlanV2Projection {
   const core = projectEdgePlan(toV1Baseline(baseline), toV1Levers(planned, baseline));
   const planningGgr = applyPlanningGameProjections(baseline, planned, core);
+  // Real battle settlement GGR — v1 `core` excludes it (battles forced to 0);
+  // add it to the headline GGR/NGR totals consistently (cancels in the delta).
+  const battlesBase = baseline.gameTypes.find((g) => g.type === "battles");
+  const battlesGgr = battlesBase?.ggr ?? 0;
   const rakeback = projectRakebackV2(baseline, planned);
   const coreRakeback = core.levers.find((l) => l.key === "rakeback");
   const rakebackDelta =
@@ -662,6 +743,9 @@ export function projectEdgePlanV2(
   // prize leg as its own held-fixed line.
   const affiliateCommission = projectAffiliateCommissionV2(baseline, planned);
   const affiliateLeaderboardCurrent = Math.max(0, baseline.affiliateLeaderboardCost);
+
+  // Time-based deposit bonus — a NEW planned cost (no current/baseline leg).
+  const depositBonusHourlyCost = depositBonusHourlyCostV2(baseline, planned);
 
   const levers: LeverProjection[] = core.levers
     .map((l) => {
@@ -679,6 +763,13 @@ export function projectEdgePlanV2(
           currentCost: affiliateCommission.current,
           plannedCost: affiliateCommission.planned,
           deltaCost: affiliateCommission.planned - affiliateCommission.current,
+        };
+      }
+      if (l.key === "deposit-bonus" && depositBonusHourlyCost > 0) {
+        return {
+          ...l,
+          plannedCost: l.plannedCost + depositBonusHourlyCost,
+          deltaCost: l.deltaCost + depositBonusHourlyCost,
         };
       }
       return l;
@@ -709,11 +800,15 @@ export function projectEdgePlanV2(
     coreAffiliate != null ? affiliatePlannedTotal - coreAffiliate.plannedCost : 0;
 
   const plannedRewardCost =
-    core.plannedRewardCost + rakebackDelta + affiliateAdjustment;
+    core.plannedRewardCost +
+    rakebackDelta +
+    affiliateAdjustment +
+    depositBonusHourlyCost;
   const currentRewardCost = core.currentRewardCost;
   const rewardCostDelta = plannedRewardCost - currentRewardCost;
 
-  const plannedNgr = core.plannedNgr - rakebackDelta - affiliateAdjustment;
+  const plannedNgr =
+    core.plannedNgr - rakebackDelta - affiliateAdjustment - depositBonusHourlyCost;
   const profitDelta = plannedNgr - core.currentNgr;
   const monthlyProfitDelta =
     baseline.periodDays > 0 ? (profitDelta / baseline.periodDays) * 30 : profitDelta;
@@ -727,7 +822,10 @@ export function projectEdgePlanV2(
     plannedRewardCost,
     currentRewardCost,
     rewardCostDelta,
-    plannedNgr,
+    plannedGgr: core.plannedGgr + battlesGgr,
+    currentGgr: core.currentGgr + battlesGgr,
+    plannedNgr: plannedNgr + battlesGgr,
+    currentNgr: core.currentNgr + battlesGgr,
     profitDelta,
     monthlyProfitDelta,
     annualProfitDelta,

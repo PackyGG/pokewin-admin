@@ -52,11 +52,12 @@ export function GamingEdgeSection({
     <StatPanel title="House edge" icon={Gauge} accent="emerald">
       <BlendedEdgeBreakdownPanel breakdown={blendBreakdown} />
       <p className="mb-4 mt-4 text-xs leading-relaxed text-muted-foreground">
-        House edge is on <strong>pack opens</strong> (10.99% planning default) — including
-        pack opens inside battles. Battles are a game mode, not a separate margin layer;
-        battle wager counts toward volume but adds <strong>0</strong> incremental GGR in
-        projection. Sliders set the edge you plan around; GGR is edge × observed wager
-        volume.
+        House edge is on <strong>pack opens</strong> — including pack opens inside
+        battles, which are already counted under Packs. Battle bets also carry a real{" "}
+        <strong>settlement margin</strong>, now counted separately (it doesn&apos;t move
+        with the packs edge). The edge sliders default to your{" "}
+        <strong>real measured edge</strong>, so the page opens at today — dial them to
+        plan a different edge. GGR is edge × wager volume.
       </p>
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <div className="space-y-4">
@@ -79,23 +80,23 @@ export function GamingEdgeSection({
             )}
           </div>
 
-          <div className="rounded-lg border border-dashed bg-background/40 px-3 py-2.5">
+          <div className="rounded-lg border bg-background/40 px-3 py-2.5">
             <div className="flex flex-wrap items-center gap-2">
               <Swords className="size-3.5 text-muted-foreground" />
               <span className="text-sm font-medium">Battles</span>
               <Badge variant="outline" className="text-[10px]">
-                Edge via packs · no separate battle margin
+                Settlement margin counted
               </Badge>
             </div>
             <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-              Pack opens in battles use the packs edge above — not an extra{" "}
-              {formatPct(PLANNED_PACKS_BATTLES_EDGE_DEFAULT)} on battle wager. Planning
-              edge locked at {formatPct(PLANNED_BATTLES_EDGE_DEFAULT)}.
+              Pack opens inside battles use the packs edge above (already counted in
+              Packs). The battle bets have their own real settlement margin, now
+              counted — independent of the packs edge.
             </p>
             {battles && (
               <p className="mt-1 text-[11px] text-muted-foreground">
-                wager {formatCompactUsd(battles.wager)} · observed GGR{" "}
-                {formatCompactUsd(battles.ggr)} (ledger; not stacked in projection)
+                wager {formatCompactUsd(battles.wager)} · settlement GGR{" "}
+                {formatCompactUsd(battles.ggr)} (counted)
               </p>
             )}
           </div>

@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  Clock,
   Coins,
   Share2,
   ShieldCheck,
@@ -12,7 +13,7 @@ import {
 
 import { StatPanel, PanelRow, SectionHeading } from "@/components/modern-panels";
 import { Switch } from "@/components/ui/switch";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { formatPct } from "../../../edge-calc/math";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
 import {
@@ -24,6 +25,7 @@ import {
   affiliateWagerDragToEdgeShare,
   affiliateWorstCaseEdgeDrag,
   topAffiliateTierEdgeShare,
+  depositBonusHourlyCostV2,
   type EdgePlanV2Baseline,
   type PlannedLeversV2,
 } from "../../_model-v2";
@@ -282,6 +284,95 @@ export function RewardsCoreSection({
             />
           </div>
         )}
+        <div className="mt-4 space-y-3 border-t pt-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 text-sm font-medium">
+              <Clock className="size-3.5 text-muted-foreground" />
+              Time-based bonus (per user)
+            </div>
+            <Switch
+              checked={levers.depositBonusHourlyEnabled}
+              onCheckedChange={(v) =>
+                setLevers((s) => ({ ...s, depositBonusHourlyEnabled: v }))
+              }
+            />
+          </div>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            A fixed grant each user can claim on a clock (e.g. $25 every 6h). Cost
+            = amount × (window ÷ interval) × users × utilization — a NEW planned
+            cost on top of the match bonus above.
+          </p>
+          {levers.depositBonusHourlyEnabled && (
+            <>
+              <LeverSlider
+                label="Amount per grant"
+                valueLabel={formatCurrency(levers.depositBonusHourlyAmountUsd)}
+                value={levers.depositBonusHourlyAmountUsd}
+                onValueChange={(v) =>
+                  setLevers((s) => ({
+                    ...s,
+                    depositBonusHourlyAmountUsd: Math.max(0, v),
+                  }))
+                }
+                min={0}
+                max={500}
+                step={1}
+                preciseInput={{ unit: "usd" }}
+              />
+              <LeverSlider
+                label="Every"
+                valueLabel={`${Math.round(levers.depositBonusHourlyIntervalHours)}h`}
+                value={levers.depositBonusHourlyIntervalHours}
+                onValueChange={(v) =>
+                  setLevers((s) => ({
+                    ...s,
+                    depositBonusHourlyIntervalHours: clamp(v, 1, 720),
+                  }))
+                }
+                min={1}
+                max={168}
+                step={1}
+              />
+              <LeverSlider
+                label="Participating users"
+                valueLabel={formatNumber(levers.depositBonusHourlyUsers)}
+                value={levers.depositBonusHourlyUsers}
+                onValueChange={(v) =>
+                  setLevers((s) => ({
+                    ...s,
+                    depositBonusHourlyUsers: Math.max(0, Math.round(v)),
+                  }))
+                }
+                min={0}
+                max={5000}
+                step={10}
+              />
+              <LeverSlider
+                label="Utilization"
+                valueLabel={formatPct(levers.depositBonusHourlyUtilizationPct)}
+                value={levers.depositBonusHourlyUtilizationPct * 100}
+                onValueChange={(v) =>
+                  setLevers((s) => ({
+                    ...s,
+                    depositBonusHourlyUtilizationPct: clamp(v / 100, 0, 1),
+                  }))
+                }
+                min={0}
+                max={100}
+                step={1}
+                preciseInput={{ unit: "percent" }}
+              />
+              <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2 text-sm">
+                <span className="text-muted-foreground">
+                  Planned cost ({baseline.periodLabel})
+                </span>
+                <span className={`font-semibold tabular-nums ${TEXT_TONE.rose}`}>
+                  {formatCurrency(depositBonusHourlyCostV2(baseline, levers))}
+                </span>
+              </div>
+            </>
+          )}
+        </div>
       </StatPanel>
 
       <StatPanel

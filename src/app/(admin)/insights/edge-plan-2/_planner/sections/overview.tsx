@@ -43,47 +43,34 @@ export function AnalysisZone({
     <div className="space-y-4">
       <StatPanel title="GGR by game type" icon={Layers} accent="emerald">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {projection.gameTypes
-            .filter((g) => g.type !== "battles")
-            .map((g) => (
-              <div
-                key={g.type}
-                className="rounded-lg border bg-background/40 px-3 py-2.5 space-y-1"
-              >
-                <div className="text-sm font-medium">
-                  {g.label}
-                  {!g.dataAvailable && (
-                    <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
-                      (no data)
-                    </span>
-                  )}
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  {formatPct(g.plannedEdge)} edge · wager {formatCompactUsd(g.wager)}
-                </div>
-                <div className="text-sm font-semibold tabular-nums text-foreground">
-                  {formatCurrency(g.plannedGgr)} GGR
-                </div>
-              </div>
-            ))}
-          {(() => {
-            const battles = projection.gameTypes.find((g) => g.type === "battles");
-            if (!battles) return null;
-            return (
-              <div className="rounded-lg border border-dashed bg-background/40 px-3 py-2.5 space-y-1">
-                <div className="text-sm font-medium">
-                  {battles.label}
+          {projection.gameTypes.map((g) => (
+            <div
+              key={g.type}
+              className="rounded-lg border bg-background/40 px-3 py-2.5 space-y-1"
+            >
+              <div className="text-sm font-medium">
+                {g.label}
+                {g.type === "battles" && (
                   <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
-                    Edge via packs · no separate battle margin
+                    settlement margin
                   </span>
-                </div>
-                <div className="text-[11px] leading-relaxed text-muted-foreground">
-                  wager {formatCompactUsd(battles.wager)} · pack opens in battles use packs
-                  edge — not an extra layer on battle wager
-                </div>
+                )}
+                {!g.dataAvailable && (
+                  <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
+                    (no data)
+                  </span>
+                )}
               </div>
-            );
-          })()}
+              <div className="text-[11px] text-muted-foreground">
+                {formatPct(g.plannedEdge)}{" "}
+                {g.type === "battles" ? "margin" : "edge"} · wager{" "}
+                {formatCompactUsd(g.wager)}
+              </div>
+              <div className="text-sm font-semibold tabular-nums text-foreground">
+                {formatCurrency(g.plannedGgr)} GGR
+              </div>
+            </div>
+          ))}
         </div>
         <div className="mt-3 border-t pt-3 space-y-2">
           <PanelRow

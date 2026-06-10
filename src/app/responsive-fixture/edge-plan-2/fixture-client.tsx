@@ -52,9 +52,9 @@ const GAME_TYPES: GameTypeBaseline[] = [
   {
     type: "packs",
     wager: 1_200_000,
-    payout: 1_068_120,
-    ggr: 131_880, // 1,200,000 × 0.1099
-    edge: 0.1099,
+    payout: 1_038_000,
+    ggr: 162_000, // 1,200,000 × 0.135 — measured edge ABOVE the 10.99% planning target
+    edge: 0.135,
     bets: 84_000,
     dataAvailable: true,
   },
