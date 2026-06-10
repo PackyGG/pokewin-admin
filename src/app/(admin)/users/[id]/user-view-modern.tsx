@@ -153,6 +153,7 @@ export function UserViewModern({
   sharedIpsPromise,
   sharedFingerprintsPromise,
   wagerRequirement,
+  viewerIsAdjustmentOwner,
   initialTab,
 }: {
   data: UserDetail;
@@ -181,6 +182,11 @@ export function UserViewModern({
   // Per-user withdrawal wager-requirement override (backend API). null when
   // the backend branch isn't deployed yet — the Account-tab card degrades.
   wagerRequirement: UserWagerRequirement | null;
+  // True only for the owner `motha`. Defence-in-depth UI flag: when false the
+  // Finances type-filter dropdown drops the "admin balance adjustment" option
+  // so a non-owner never even sees the category label. The real boundary is
+  // server-side (getUserTransactions returns no adjustment rows for non-owners).
+  viewerIsAdjustmentOwner: boolean;
   // Initial tab seeded from the ?tab= URL param so deep-links (e.g.
   // the hero risk badges that linked to ?tab=trust, or external
   // bookmarks) still land on the correct tab. After mount the tab
@@ -547,6 +553,7 @@ export function UserViewModern({
             adjustmentsTxPromise={adjustmentsTxPromise}
             pnlBreakdown={pnlBreakdown}
             isAdmin={isAdmin}
+            viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
           />
         )}
 
@@ -555,6 +562,7 @@ export function UserViewModern({
             data={data}
             financialTxPromise={financialTxPromise}
             isAdmin={isAdmin}
+            viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
           />
         )}
 

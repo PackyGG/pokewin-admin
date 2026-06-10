@@ -255,6 +255,7 @@ export function UserDetailFixtureClient() {
       wagerRequirement={null}
       sharedIpsPromise={sharedIps}
       sharedFingerprintsPromise={sharedFps}
+      viewerIsAdjustmentOwner
       initialTab="overview"
     />
   );

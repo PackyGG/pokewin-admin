@@ -9,6 +9,8 @@ import {
 import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
 import { getMothaAdjustmentLedgerTxIdsForUser } from "@/lib/queries/users-motha-adjustments";
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
+import { isAdjustmentVisibilityOwner } from "@/lib/users/owner-adjustments-visibility";
+import { verifySession } from "@/lib/dal";
 import type { ledger_transaction_type } from "@/generated/prisma/enums";
 
 /** Ledger types that pull in pack/battle/upgrader enrichment (expensive). */
@@ -199,9 +201,48 @@ export async function getUserTransactions(
   }
   where.user_id = canonicalUserId;
 
-  // One profile shows only motha's balance adjustments — hide every other
-  // admin's admin_balance_adjustment rows across financial + adjustment feeds.
-  if (isMothaOnlyAdjustmentsProfile(canonicalUserId)) {
+  // ── OWNER-ONLY ADMIN-ADJUSTMENT VISIBILITY (security) ───────────────
+  //
+  // No admin except the owner `motha` may see ANY admin balance adjustment
+  // on a user. Enforced HERE at the single query chokepoint so the rows are
+  // never sent to the client for a non-owner viewer — across EVERY surface
+  // that reads this function: the dedicated adjustments block, the Deposits
+  // & Withdrawals feed (admin_balance_adjustment is one of FINANCIAL_TYPES),
+  // the Recent Activity timeline, the transaction-detail modal (renders only
+  // rows already in the table), and the paginated/filtered re-fetch via the
+  // fetchUserTransactions server action.
+  //
+  // The viewer is resolved from the authenticated session (verifySession is
+  // cache()'d → free within a request); isAdjustmentVisibilityOwner reads the
+  // ADMIN DB read-only and fails closed. A non-owner gets a hard
+  // `type != 'admin_balance_adjustment'` exclusion ANDed into the where, so
+  // both the rows and the `count` (page totals) omit adjustments entirely —
+  // a non-owner can't even infer one exists via a count or an empty page.
+  let viewerIsOwner = false;
+  try {
+    const session = await verifySession();
+    viewerIsOwner = await isAdjustmentVisibilityOwner(session.userId);
+  } catch {
+    // No resolvable session → fail closed (hide adjustments). This path is
+    // not expected: every caller runs inside an authenticated admin request.
+    viewerIsOwner = false;
+  }
+  if (!viewerIsOwner) {
+    const hideAdjustments: Prisma.ledger_transactionsWhereInput = {
+      type: { not: "admin_balance_adjustment" },
+    };
+    const existingAnd = where.AND
+      ? Array.isArray(where.AND)
+        ? where.AND
+        : [where.AND]
+      : [];
+    where.AND = [...existingAnd, hideAdjustments];
+  } else if (isMothaOnlyAdjustmentsProfile(canonicalUserId)) {
+    // Owner viewer: the legacy per-profile carve-out still applies on the
+    // one designated profile — show ONLY motha-made adjustments, hide other
+    // admins' admin_balance_adjustment rows across financial + adjustment
+    // feeds. (For a non-owner viewer the broader gate above already hid all
+    // adjustments, so this branch is owner-only.)
     const mothaLedgerIds = await getMothaAdjustmentLedgerTxIdsForUser(
       canonicalUserId,
     );

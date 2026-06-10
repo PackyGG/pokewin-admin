@@ -19,6 +19,7 @@ import { getUserCreatorHistory } from "@/lib/queries/user-role-history";
 import { requirePageAccess, getUserPermissions } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { canEditBalanceAdjustments } from "@/lib/balance-adjustment-edit/motha-gate";
+import { isAdjustmentVisibilityOwner } from "@/lib/users/owner-adjustments-visibility";
 import { ensureSupportBaseline } from "@/lib/support-baseline";
 import { UserTagsPanel } from "./user-tags-panel";
 import { AutoRefresh } from "../../dashboard/auto-refresh";
@@ -547,6 +548,17 @@ async function UserDetailBody({
 
   const mothaCanEditAdjustments = await canEditBalanceAdjustments(sessionUserId);
 
+  // Owner-only adjustment visibility: only the owner `motha` may see admin
+  // balance adjustments. The authoritative gate is server-side in
+  // getUserTransactions (the adjustment rows are simply never returned for a
+  // non-owner viewer). This flag is threaded into the view purely for
+  // defence-in-depth UI hygiene — it hides the "admin balance adjustment"
+  // option in the Finances type-filter dropdown so a non-owner isn't even
+  // shown the category label (the dedicated adjustments block + recent
+  // activity already self-hide because the server returns zero such rows).
+  const viewerIsAdjustmentOwner =
+    await isAdjustmentVisibilityOwner(sessionUserId);
+
   const capabilities =
     sessionRole === "admin"
       ? {
@@ -597,6 +609,7 @@ async function UserDetailBody({
       sharedIpsPromise={sharedIpsPromise}
       sharedFingerprintsPromise={sharedFingerprintsPromise}
       wagerRequirement={wagerRequirement}
+      viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
       initialTab={initialTab}
     />
   );

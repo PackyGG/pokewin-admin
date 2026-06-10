@@ -30,6 +30,8 @@ import {
   getSharedIpUsers,
   getSharedFingerprintUsers,
 } from "@/lib/fraud/shared-identity";
+import { verifySession } from "@/lib/dal";
+import { isAdjustmentVisibilityOwner } from "@/lib/users/owner-adjustments-visibility";
 import {
   OverviewTab,
   FinancesTab,
@@ -83,7 +85,8 @@ export async function OverviewTabContent({
 }: {
   data: UserDetail;
 }) {
-  const [gamingTx, financialTx, adjustmentsTx, pnlBreakdown] =
+  const session = await verifySession();
+  const [gamingTx, financialTx, adjustmentsTx, pnlBreakdown, viewerIsAdjustmentOwner] =
     await Promise.all([
       getUserTransactions(data.user.id, 1, 10, { types: GAMING_TYPES }),
       getUserTransactions(data.user.id, 1, 10, { types: FINANCIAL_TYPES }),
@@ -91,6 +94,7 @@ export async function OverviewTabContent({
         types: ADJUSTMENT_TYPES,
       }),
       getUserPnlBreakdown(data.user.id),
+      isAdjustmentVisibilityOwner(session.userId),
     ]);
   return (
     <OverviewTab
@@ -100,6 +104,7 @@ export async function OverviewTabContent({
       adjustmentsTxPromise={Promise.resolve(adjustmentsTx)}
       pnlBreakdown={pnlBreakdown}
       isAdmin={data.sessionRole === "admin"}
+      viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
     />
   );
 }
@@ -122,14 +127,17 @@ export async function GamingTabContent({ data }: { data: UserDetail }) {
 // ───────────────────────────────────────────────────────────────────
 
 export async function FinancesTabContent({ data }: { data: UserDetail }) {
-  const financialTx = await getUserTransactions(data.user.id, 1, 10, {
-    types: FINANCIAL_TYPES,
-  });
+  const session = await verifySession();
+  const [financialTx, viewerIsAdjustmentOwner] = await Promise.all([
+    getUserTransactions(data.user.id, 1, 10, { types: FINANCIAL_TYPES }),
+    isAdjustmentVisibilityOwner(session.userId),
+  ]);
   return (
     <FinancesTab
       data={data}
       financialTxPromise={Promise.resolve(financialTx)}
       isAdmin={data.sessionRole === "admin"}
+      viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
     />
   );
 }

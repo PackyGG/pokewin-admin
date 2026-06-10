@@ -113,6 +113,7 @@ export function OverviewTab({
   adjustmentsTxPromise,
   pnlBreakdown,
   isAdmin,
+  viewerIsAdjustmentOwner,
 }: {
   data: UserDetail;
   gamingTxPromise: Promise<PaginatedTransactions>;
@@ -128,6 +129,10 @@ export function OverviewTab({
   adjustmentsTxPromise: Promise<PaginatedTransactions>;
   pnlBreakdown: PnlBreakdown;
   isAdmin: boolean;
+  // Owner-only flag (motha). Hides the dedicated adjustments block + the
+  // adjustment filter option for non-owners. The server already strips the
+  // rows for non-owners; this is defence-in-depth UI hygiene only.
+  viewerIsAdjustmentOwner: boolean;
 }) {
   const { user, balances, statistics, counts, capabilities } = data;
 
@@ -166,21 +171,27 @@ export function OverviewTab({
           financialTxPromise={financialTxPromise}
           isAdmin={isAdmin}
           canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
+          viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
         />
       </Suspense>
 
-      {/* Admin balance adjustments — streamed; section hidden when empty.
-          Admin inventory removals/sales are written as admin_balance_adjustment
+      {/* Admin balance adjustments — OWNER ONLY (motha). Non-owner admins
+          never see this block: the server already returns zero adjustment
+          rows for them (so the block would self-hide anyway), but we also
+          gate the render here so the section heading can't flash. Admin
+          inventory removals/sales are written as admin_balance_adjustment
           rows ("Inventory removed: …"), so they surface HERE and in the
           Deposits & Withdrawals box above — like any other balance adjustment. */}
-      <Suspense fallback={null}>
-        <AdminAdjustmentsStreamed
-          userId={user.id}
-          adjustmentsTxPromise={adjustmentsTxPromise}
-          isAdmin={isAdmin}
-          canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
-        />
-      </Suspense>
+      {viewerIsAdjustmentOwner && (
+        <Suspense fallback={null}>
+          <AdminAdjustmentsStreamed
+            userId={user.id}
+            adjustmentsTxPromise={adjustmentsTxPromise}
+            isAdmin={isAdmin}
+            canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
+          />
+        </Suspense>
+      )}
 
       {/* Sponsored / free battles the user joined with no ledger row — these
           are otherwise invisible in gaming history. Self-fetching; hidden
@@ -208,25 +219,39 @@ export function OverviewTab({
   );
 }
 
+// For a non-owner viewer the "admin balance adjustment" type must not even
+// appear as a filter option in the Deposits & Withdrawals dropdown — the
+// server already returns zero such rows, so dropping the label here just
+// avoids surfacing the category name. The owner sees the full list.
+const FINANCIAL_TX_TYPES_NO_ADJUSTMENTS = FINANCIAL_TX_TYPES.filter(
+  (t) => t !== "admin_balance_adjustment",
+);
+
 function DepositsWithdrawalsStreamed({
   userId,
   cardWithdrawals,
   financialTxPromise,
   isAdmin,
   canEditBalanceAdjustments,
+  viewerIsAdjustmentOwner,
 }: {
   userId: string;
   cardWithdrawals: UserDetail["cardWithdrawals"];
   financialTxPromise: Promise<PaginatedTransactions>;
   isAdmin: boolean;
   canEditBalanceAdjustments: boolean;
+  viewerIsAdjustmentOwner: boolean;
 }) {
   const financialTx = use(financialTxPromise);
   return (
     <CategoryTransactionsTable
       title="Deposits & Withdrawals"
       userId={userId}
-      types={FINANCIAL_TX_TYPES}
+      types={
+        viewerIsAdjustmentOwner
+          ? FINANCIAL_TX_TYPES
+          : FINANCIAL_TX_TYPES_NO_ADJUSTMENTS
+      }
       initialTx={financialTx}
       cardWithdrawals={cardWithdrawals}
       isAdmin={isAdmin}
@@ -515,10 +540,12 @@ export function FinancesTab({
   data,
   financialTxPromise,
   isAdmin,
+  viewerIsAdjustmentOwner,
 }: {
   data: UserDetail;
   financialTxPromise: Promise<PaginatedTransactions>;
   isAdmin: boolean;
+  viewerIsAdjustmentOwner: boolean;
 }) {
   const { user, capabilities } = data;
   return (
@@ -531,6 +558,7 @@ export function FinancesTab({
           financialTxPromise={financialTxPromise}
           isAdmin={isAdmin}
           canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
+          viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
         />
       </Suspense>
     </div>
