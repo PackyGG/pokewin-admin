@@ -51,7 +51,7 @@ export default function DashboardLoading() {
           snapshot boxes (Total Users · FTDs · Depositors · Avg Deposit ·
           Deposits/Hour · Avg RTP · Avg P&L 7d). */}
       <SkeletonKpiStrip count={4} />
-      <SkeletonKpiStrip count={7} />
+      <SkeletonKpiStrip count={8} />
 
       {/* Today-since-00:00 tiles — P&L · Reward · Creators · Chat. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">

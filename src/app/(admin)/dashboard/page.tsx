@@ -9,6 +9,7 @@ import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
 import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
 import { getAvgPnl7d } from "@/lib/queries/dashboard-avg-pnl-7d";
+import { getRealizedPnlSnapshot } from "@/lib/queries/_realized-pnl";
 import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today";
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
@@ -153,7 +154,7 @@ export default async function DashboardPage() {
         fallback={
           <>
             <SkeletonKpiStrip count={4} />
-            <SkeletonKpiStrip count={7} />
+            <SkeletonKpiStrip count={8} />
           </>
         }
       >
@@ -293,7 +294,8 @@ async function DashboardLoadTime() {
  * change them) — no extra query.
  */
 async function DashboardKpiBoxes() {
-  const [payloadResult, statsResult, avgPnl7dResult] = await Promise.all([
+  const [payloadResult, statsResult, avgPnl7dResult, lifetimePnlResult] =
+    await Promise.all([
     // Period-bound box values + GGR legs for the eager "today" window.
     safeQuery(() => buildKpiWindowPayload("today"), null, "dashboard.kpiToday"),
     // Snapshot (lifetime / fixed-window) figures — read off the same cached
@@ -303,6 +305,19 @@ async function DashboardKpiBoxes() {
       () => getAvgPnl7d(),
       { totalPnl7d: 0, avgDailyPnl: 0 },
       "dashboard.avgPnl7d",
+    ),
+    safeQuery(
+      () => getRealizedPnlSnapshot(),
+      {
+        pnl: 0,
+        totalDeposited: 0,
+        totalWithdrawn: 0,
+        userBalance: 0,
+        inventory: 0,
+        vouchers: 0,
+        unclaimedRakeback: 0,
+      },
+      "dashboard.lifetimePnl",
     ),
   ]);
   if (
@@ -322,6 +337,7 @@ async function DashboardKpiBoxes() {
   const today = payloadResult.data;
   const stats = statsResult.data;
   const avgPnl7d = avgPnl7dResult.data ?? { totalPnl7d: 0, avgDailyPnl: 0 };
+  const lifetimePnl = lifetimePnlResult.data?.pnl ?? 0;
 
   // Snapshot (lifetime / fixed-window) figures — the window toggle doesn't
   // change them, so they read the same for today and 24h. Deposits/Hour is a
@@ -347,6 +363,7 @@ async function DashboardKpiBoxes() {
         : 0,
     totalPnl7d: avgPnl7d.totalPnl7d,
     avgDailyPnl7d: avgPnl7d.avgDailyPnl,
+    totalPnlLifetime: lifetimePnl,
   };
 
   return <DashboardKpiSection today={today} snapshot={snapshot} />;

@@ -50,6 +50,8 @@ export type KpiSnapshotValues = {
   totalPnl7d: number;
   /** totalPnl7d ÷ 7 — average per day in the window. */
   avgDailyPnl7d: number;
+  /** Lifetime realized house P&L (balance-sheet snapshot). */
+  totalPnlLifetime: number;
 };
 
 const PANEL_TINT = {
@@ -525,7 +527,7 @@ export function DashboardKpiSection({
       {/* Snapshot boxes — lifetime / fixed-window figures that do NOT vary
           by the today/24h selection, so they carry a static window label
           (not a toggle). Reskinned onto the same panel design. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8">
         <KpiPanel
           title="Total Users"
           tint="blue"
@@ -619,24 +621,30 @@ export function DashboardKpiSection({
               headerRight={<StaticWindowLabel label="7d" />}
               footer={
                 <p className="text-stat-label">
-                  {formatCurrency(snapshot.totalPnl7d)} total · rolling 7d
+                  per day · {formatCurrency(snapshot.totalPnl7d)} rolling 7d
                 </p>
               }
             >
-              <div
-                className={cn(
-                  "text-stat-value truncate tabular-nums",
-                  isProfit
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-rose-600 dark:text-rose-400",
-                )}
-              >
-                {isProfit ? "+" : "−"}
-                <AnimatedNumber
-                  value={Math.abs(snapshot.avgDailyPnl7d)}
-                  format="currency"
-                />
-              </div>
+              <SignedHero value={snapshot.avgDailyPnl7d} />
+            </KpiPanel>
+          );
+        })()}
+
+        {(() => {
+          const isProfit = snapshot.totalPnlLifetime >= 0;
+          return (
+            <KpiPanel
+              title="Total P&L"
+              tint={isProfit ? "emerald" : "rose"}
+              icon={isProfit ? TrendingUp : TrendingDown}
+              headerRight={<StaticWindowLabel label="lifetime" />}
+              footer={
+                <p className="text-stat-label">
+                  Balance-sheet snapshot · incl. unclaimed rakeback
+                </p>
+              }
+            >
+              <SignedHero value={snapshot.totalPnlLifetime} />
             </KpiPanel>
           );
         })()}
