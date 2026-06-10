@@ -624,6 +624,13 @@ model race_periods {
   auto_renew Boolean  @default(true)
   // 'active' | 'ended'
   status     String   @default("active")
+  // Global claim kill-switch (backend migration 0127). When true, NO winner
+  // can claim their prize for this period. Monthly periods are frozen on
+  // rollover so a fraud review can run before any payout; an admin lifts the
+  // freeze (unfreeze) to open claims for every winner at once.
+  claims_frozen      Boolean   @default(false)
+  claims_unfrozen_at DateTime? @db.Timestamp(6)
+  claims_unfrozen_by String?
   created_at DateTime @default(now()) @db.Timestamp(6)
   updated_at DateTime @default(now()) @db.Timestamp(6)
 

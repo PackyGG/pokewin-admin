@@ -68,6 +68,8 @@ const EVENT_TYPES = [
   { label: "Race Started", value: "race_period_started" },
   { label: "Race Ended", value: "race_period_ended" },
   { label: "Race Auto-renew Toggled", value: "race_period_auto_renew_toggled" },
+  { label: "Race Claims Frozen", value: "race_period_claims_frozen" },
+  { label: "Race Claims Opened", value: "race_period_claims_opened" },
   { label: "Country Restriction Updated", value: "country_restriction_updated" },
   { label: "Admin Note Added", value: "admin_note_created" },
   { label: "Admin Note Deleted", value: "admin_note_deleted" },

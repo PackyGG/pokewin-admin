@@ -489,3 +489,77 @@ export async function endRacePeriodNow(periodId: string) {
 
   revalidatePath("/rewards/leaderboards");
 }
+
+/**
+ * Freeze or open claims for an ended race period — the global claim
+ * kill-switch (backend migration 0127). While claims_frozen is true NO
+ * winner can claim their prize (the backend rejects every claim with
+ * RACE_CLAIMS_FROZEN). Monthly periods are frozen automatically on rollover
+ * so a fraud review can run; opening (frozen=false) is the single action
+ * that releases payouts for every winner at once and records who/when.
+ *
+ * Only meaningful on ended periods: an active race has no claimable prizes
+ * yet, so we reject freezing one to avoid a confusing no-op state.
+ */
+export async function setRacePeriodClaimsFrozen(
+  periodId: string,
+  frozen: boolean,
+) {
+  const db = await getDb();
+  const session = await requireAdmin();
+
+  await requireCapability(
+    session,
+    "__can_manage_race_periods",
+    "manage race periods",
+  );
+
+  const existing = await db.race_periods.findUnique({
+    where: { id: periodId },
+    select: {
+      id: true,
+      race_type: true,
+      status: true,
+      claims_frozen: true,
+    },
+  });
+  if (!existing) {
+    throw new Error("Race period not found");
+  }
+  if (existing.status !== "ended") {
+    throw new Error("Claims can only be frozen or opened on ended periods");
+  }
+  if (existing.claims_frozen === frozen) {
+    throw new Error(
+      frozen ? "Claims are already frozen" : "Claims are already open",
+    );
+  }
+
+  await db.race_periods.update({
+    where: { id: periodId },
+    data: frozen
+      ? // Re-freezing after an open: clear the prior unfreeze audit fields so
+        // they only ever reflect the most recent open.
+        { claims_frozen: true, claims_unfrozen_at: null, claims_unfrozen_by: null }
+      : // Opening: stamp who released payouts and when, matching the backend's
+        // setClaimsFrozen contract on the period row.
+        {
+          claims_frozen: false,
+          claims_unfrozen_at: new Date(),
+          claims_unfrozen_by: session.userId,
+        },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: frozen
+      ? "race_period_claims_frozen"
+      : "race_period_claims_opened",
+    metadata: {
+      period_id: periodId,
+      race_type: existing.race_type,
+    },
+  });
+
+  revalidatePath("/rewards/leaderboards");
+}

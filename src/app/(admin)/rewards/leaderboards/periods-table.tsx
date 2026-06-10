@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { History, Plus, Power, RefreshCw } from "lucide-react";
+import { History, Lock, LockOpen, Plus, Power, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,7 @@ import {
   startRacePeriod,
   toggleRacePeriodAutoRenew,
   endRacePeriodNow,
+  setRacePeriodClaimsFrozen,
 } from "./actions";
 
 type RacePeriod = {
@@ -31,6 +32,9 @@ type RacePeriod = {
   endsAt: string;
   autoRenew: boolean;
   status: string;
+  claimsFrozen: boolean;
+  claimsUnfrozenAt: string | null;
+  claimsUnfrozenBy: string | null;
 };
 
 type RaceType = "daily" | "weekly" | "monthly";
@@ -54,11 +58,17 @@ function PeriodRow({
   isPending,
   onToggleAutoRenew,
   onEndNow,
+  onSetClaimsFrozen,
 }: {
   period: RacePeriod;
   isPending: boolean;
   onToggleAutoRenew: (id: string) => void;
   onEndNow: (id: string, raceType: string) => void;
+  onSetClaimsFrozen: (
+    id: string,
+    raceType: string,
+    frozen: boolean,
+  ) => void;
 }) {
   const isActive = period.status === "active";
   return (
@@ -102,7 +112,29 @@ function PeriodRow({
         )}
       </TableCell>
       <TableCell>
-        {isActive && (
+        {isActive ? (
+          // Claims only matter once a period has ended and prizes exist.
+          <span className="text-xs text-muted-foreground">—</span>
+        ) : period.claimsFrozen ? (
+          <Badge
+            variant="outline"
+            className="gap-1 border-amber-500/40 text-amber-600 dark:text-amber-400"
+          >
+            <Lock className="size-3" />
+            Frozen
+          </Badge>
+        ) : (
+          <Badge
+            variant="outline"
+            className="gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+          >
+            <LockOpen className="size-3" />
+            Open
+          </Badge>
+        )}
+      </TableCell>
+      <TableCell>
+        {isActive ? (
           <Button
             size="sm"
             variant="ghost"
@@ -112,6 +144,30 @@ function PeriodRow({
           >
             <Power className="mr-1 size-3" />
             End now
+          </Button>
+        ) : period.claimsFrozen ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={isPending}
+            onClick={() =>
+              onSetClaimsFrozen(period.id, period.raceType, false)
+            }
+            className="text-muted-foreground hover:text-emerald-600"
+          >
+            <LockOpen className="mr-1 size-3" />
+            Open claims
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={isPending}
+            onClick={() => onSetClaimsFrozen(period.id, period.raceType, true)}
+            className="text-muted-foreground hover:text-amber-600"
+          >
+            <Lock className="mr-1 size-3" />
+            Freeze
           </Button>
         )}
       </TableCell>
@@ -221,6 +277,30 @@ export function PeriodsTable({
     });
   }
 
+  function handleSetClaimsFrozen(
+    id: string,
+    raceType: string,
+    frozen: boolean,
+  ) {
+    const message = frozen
+      ? `Freeze claims for this ${raceType} period? No winner will be able to claim their prize until you open claims again.`
+      : `Open claims for this ${raceType} period? This releases payouts for EVERY winner at once and cannot be undone for prizes that get claimed.`;
+    if (!confirm(message)) {
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await setRacePeriodClaimsFrozen(id, frozen);
+        toast.success(frozen ? "Claims frozen" : "Claims opened");
+        router.refresh();
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Failed to update claims",
+        );
+      }
+    });
+  }
+
   const activeByType = new Map(active.map((p) => [p.raceType, p]));
 
   return (
@@ -238,6 +318,7 @@ export function PeriodsTable({
                 <TableHead>Starts</TableHead>
                 <TableHead>Ends</TableHead>
                 <TableHead>Auto-renew</TableHead>
+                <TableHead>Claims</TableHead>
                 <TableHead className="w-[180px]" />
               </TableRow>
             </TableHeader>
@@ -252,6 +333,7 @@ export function PeriodsTable({
                       isPending={isPending}
                       onToggleAutoRenew={handleToggleAutoRenew}
                       onEndNow={handleEndNow}
+                      onSetClaimsFrozen={handleSetClaimsFrozen}
                     />
                   );
                 }
@@ -263,7 +345,7 @@ export function PeriodsTable({
                       </Badge>
                     </TableCell>
                     <TableCell
-                      colSpan={4}
+                      colSpan={5}
                       className="text-muted-foreground text-xs"
                     >
                       No active period.
@@ -370,7 +452,13 @@ export function PeriodsTable({
       </div>
 
       <div>
-        <h3 className="mb-2 text-sm font-medium">Recently ended</h3>
+        <h3 className="text-sm font-medium">Recently ended</h3>
+        <p className="mb-2 text-xs text-muted-foreground">
+          Monthly periods are frozen on rollover so a fraud review can run
+          before payouts. Use <span className="font-medium">Open claims</span>{" "}
+          to release prizes for every winner at once; until then no winner can
+          claim.
+        </p>
         <div className="rounded-md border">
           <Table>
             <TableHeader>
@@ -380,13 +468,14 @@ export function PeriodsTable({
                 <TableHead>Started</TableHead>
                 <TableHead>Ended</TableHead>
                 <TableHead>Auto-renew</TableHead>
+                <TableHead>Claims</TableHead>
                 <TableHead className="w-[180px]" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {recent.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={6} className="p-0">
+                  <TableCell colSpan={7} className="p-0">
                     <EmptyState
                       icon={History}
                       title="No ended periods yet"
@@ -403,6 +492,7 @@ export function PeriodsTable({
                     isPending={isPending}
                     onToggleAutoRenew={handleToggleAutoRenew}
                     onEndNow={handleEndNow}
+                    onSetClaimsFrozen={handleSetClaimsFrozen}
                   />
                 ))
               )}

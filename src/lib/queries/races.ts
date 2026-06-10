@@ -16,6 +16,12 @@ export type RacePeriod = {
   endsAt: string;
   autoRenew: boolean;
   status: string;
+  // Global claim kill-switch. Only meaningful for ended periods: while
+  // claimsFrozen is true no winner can claim. unfrozenAt/By record who
+  // opened claims (lifted the freeze) and when.
+  claimsFrozen: boolean;
+  claimsUnfrozenAt: string | null;
+  claimsUnfrozenBy: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -187,6 +193,9 @@ export async function getRacePeriodsOverview(params?: {
     endsAt: p.ends_at.toISOString(),
     autoRenew: p.auto_renew,
     status: p.status,
+    claimsFrozen: p.claims_frozen,
+    claimsUnfrozenAt: p.claims_unfrozen_at?.toISOString() ?? null,
+    claimsUnfrozenBy: p.claims_unfrozen_by,
     createdAt: p.created_at.toISOString(),
     updatedAt: p.updated_at.toISOString(),
   });
