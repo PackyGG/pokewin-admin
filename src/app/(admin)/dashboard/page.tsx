@@ -11,6 +11,7 @@ import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
 import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today";
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
+import { getChatMessagesToday } from "@/lib/queries/dashboard-chat-messages-today";
 import { requirePageAccess } from "@/lib/dal";
 import { formatRelative } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
@@ -24,6 +25,7 @@ import { buildKpiWindowPayload } from "./kpi-window-data";
 import { TodayPnlStatCard } from "./today-pnl-stat-card";
 import { RewardCostsTodayCard } from "./reward-costs-today-card";
 import { CreatorCostsTodayCard } from "./creator-costs-today-card";
+import { ChatMessagesTodayCard } from "./chat-messages-today-card";
 import { AutoRefresh } from "./auto-refresh";
 import {
   WagerChart,
@@ -106,18 +108,12 @@ export default async function DashboardPage() {
         />
       </PageHero>
 
-      {/* FIRST 3 BOXES — P&L Today + Reward Costs + Creators Costs, in that
-          order, at the top. All three are house figures for the CURRENT
+      {/* TODAY BOXES — P&L Today + Reward Costs + Creators Costs + Chat
+          Messages, in that order, at the top. All four use the CURRENT
           CALENDAR DAY since 00:00 UTC (NOT a rolling past-24h window) and
-          share the same UTC-midnight boundary, so they reconcile with each
-          other AND with the "today" default on the KPI boxes below. Each
-          streams behind its OWN Suspense + safeQuery so its today-window
-          scan never blocks the KPI section and degrades to a tile fallback
-          if it's slow. These are inherently today-only (P&L Today is named
-          for it), so they carry no today/24h toggle — the toggle lives on
-          the period-bound KPI boxes below. Full-width-on-mobile, 2-up at sm,
-          3-up at lg+. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+          share the same UTC-midnight boundary. Each streams behind its OWN
+          Suspense + safeQuery. Full-width on mobile, 2-up at sm, 4-up at xl. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
         <Suspense
           fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
         >
@@ -132,6 +128,11 @@ export default async function DashboardPage() {
           fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
         >
           <DashboardCreatorCostsToday />
+        </Suspense>
+        <Suspense
+          fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
+        >
+          <DashboardChatMessagesToday />
         </Suspense>
       </div>
 
@@ -498,6 +499,37 @@ async function DashboardCreatorCostsToday() {
       // Aggregate house P&L on affiliate-referred players for the same "today"
       // window — null when the scan failed/degraded (badge then omitted).
       affiliateReferredPnl={pnlResult.data?.pnl ?? null}
+    />
+  );
+}
+
+/**
+ * Chat Messages Today tile — on-site chat volume for the current calendar
+ * day since 00:00 UTC. Standalone query (getChatMessagesToday, 60s cache +
+ * UTC day key), streamed in its own Suspense.
+ */
+async function DashboardChatMessagesToday() {
+  const { data, error } = await safeQuery(
+    () => getChatMessagesToday(),
+    null,
+    "dashboard.chatMessagesToday",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Chat Messages"
+        hint="The today-window chat scan timed out — refresh to retry."
+        size="compact"
+      />
+    );
+  }
+  const dayLabel = data.dayStartIso.slice(0, 10);
+  return (
+    <ChatMessagesTodayCard
+      messageCount={data.messageCount}
+      uniqueChatters={data.uniqueChatters}
+      deletedCount={data.deletedCount}
+      dayLabel={dayLabel}
     />
   );
 }

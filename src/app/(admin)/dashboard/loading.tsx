@@ -18,8 +18,8 @@ import { DASHBOARD_PERIODS } from "@/lib/queries/dashboard-period";
  *     (currently 9: 1h/3h/6h/12h/24h/3d/7d/30d/all), sourced from the same
  *     constant the real selector renders so the chip count never drifts.
  *   • Primary KPI strip (6 tiles) + secondary KPI strip (6 tiles).
- *   • Today-since-00:00 tiles — 3-up at lg+, matches the 3-tile row in
- *     page.tsx (P&L Today + Reward Costs + Creators Costs).
+ *   • Today-since-00:00 tiles — 4-up at xl, matches P&L / Reward / Creators /
+ *     Chat Messages row in page.tsx.
  *   • Upgrader Stats panel + Wager Attribution chart (paired 50/50, min-h-400).
  *   • Trends section: two 3-up chart rows.
  *
@@ -53,12 +53,9 @@ export default function DashboardLoading() {
       <SkeletonKpiStrip count={4} />
       <SkeletonKpiStrip count={6} />
 
-      {/* Today-since-00:00 tiles — P&L Today + Reward Costs + Creators Costs.
-          Matches the 3-tile lg:grid-cols-3 row in page.tsx so the skeleton
-          shape doesn't pop when the row streams in. Each Suspense fallback
-          in page.tsx is a h-[148px] rounded-xl block, so the per-tile shape
-          here matches exactly. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+      {/* Today-since-00:00 tiles — P&L · Reward · Creators · Chat. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
+        <Skeleton className="h-[148px] w-full rounded-xl" />
         <Skeleton className="h-[148px] w-full rounded-xl" />
         <Skeleton className="h-[148px] w-full rounded-xl" />
         <Skeleton className="h-[148px] w-full rounded-xl" />
