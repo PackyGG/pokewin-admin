@@ -136,6 +136,15 @@ export const CategoryTransactionsTable = React.memo(
     // local table state so new gaming/financial events show up without
     // a manual reload. Filters/pagination keep their state — the
     // admin's view isn't yanked back to defaults mid-investigation.
+    //
+    // CRITICAL: the server always hands `initialTx` at the DEFAULT page
+    // size (10). If the admin switched the rows-per-page selector to a
+    // larger size, blindly re-seeding with `initialTx` would snap the
+    // table back to 10 rows (the selector still reading "20"/"50") — the
+    // reported "I picked 20 but only 10 show" bug. So we only direct-seed
+    // when the chosen page size still matches the server default; if the
+    // admin enlarged it, we re-fetch page 1 at THEIR size instead, which
+    // both respects their choice and still surfaces new events.
     const filtersUnchanged =
       typeFilter === "all" &&
       statusFilter === "all" &&
@@ -143,12 +152,20 @@ export const CategoryTransactionsTable = React.memo(
       !dateTo &&
       txData.page === 1;
     useEffect(() => {
-      if (filtersUnchanged) {
+      if (!filtersUnchanged) return;
+      if (currentPerPage === initialTx.perPage) {
+        // Default page size → the fresh server payload already matches the
+        // admin's view; seed it directly (no extra round-trip).
         setTxData(initialTx);
+      } else {
+        // Admin enlarged the page size → re-fetch page 1 at their size so
+        // the refresh keeps the larger view instead of reverting to 10.
+        load(1);
       }
-      // We deliberately do NOT depend on filtersUnchanged itself —
-      // we only want to re-seed when the server hands us a NEW
-      // initialTx, not when the admin toggles a filter back to "all".
+      // We deliberately depend ONLY on `initialTx` — we re-seed when the
+      // server hands us a NEW payload, NOT when the admin toggles a filter
+      // back to "all" or changes the page size (those have their own
+      // explicit `load(...)` calls).
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [initialTx]);
 

@@ -2913,6 +2913,15 @@ export async function adjustXp(data: {
   revalidatePath(`/users/${parsed.userId}`);
 }
 
+// The rows-per-page values the transactions table's selector offers. The
+// server clamps the requested `perPage` to this set so a client can't drive
+// an unbounded `take` (a hand-crafted call asking for 1e6 rows would scan +
+// serialize the user's whole ledger). 100 is the largest real option, so it
+// doubles as the cap.
+const TX_PER_PAGE_OPTIONS = [10, 20, 50, 100] as const;
+const TX_PER_PAGE_DEFAULT = 10;
+const TX_PER_PAGE_MAX = Math.max(...TX_PER_PAGE_OPTIONS);
+
 export async function fetchUserTransactions(
   userId: string,
   page: number,
@@ -2920,7 +2929,24 @@ export async function fetchUserTransactions(
   filters?: { type?: string; types?: string[]; status?: string; dateFrom?: string; dateTo?: string }
 ) {
   await requirePageAccess("/users");
-  return getUserTransactions(userId, page, perPage, filters);
+  // Sanitize pagination args at the action boundary (never trust the client):
+  //  - page  → integer ≥ 1 (a bad value lands on page 1, not past the end).
+  //  - perPage → one of the real selector options; anything else (incl. an
+  //    unbounded huge value) falls back to the default 10. This keeps the
+  //    server `take` bounded by TX_PER_PAGE_MAX.
+  const safePage =
+    Number.isFinite(page) && page >= 1 ? Math.floor(page) : 1;
+  const safePerPage = (TX_PER_PAGE_OPTIONS as readonly number[]).includes(
+    perPage,
+  )
+    ? perPage
+    : Math.min(
+        TX_PER_PAGE_MAX,
+        Number.isFinite(perPage) && perPage >= 1
+          ? Math.floor(perPage)
+          : TX_PER_PAGE_DEFAULT,
+      );
+  return getUserTransactions(userId, safePage, safePerPage, filters);
 }
 
 export async function fetchProvablyFairResults(
