@@ -53,6 +53,7 @@ import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
 import { SectionHeading } from "./user-view-modern-panels";
 import { refreshRiskScoreAction } from "./trust-actions";
+import { BandError } from "./band-error";
 
 // ---------------------------------------------------------------------------
 // TRUST TAB (root)
@@ -61,34 +62,71 @@ import { refreshRiskScoreAction } from "./trust-actions";
 export function TrustTab({
   userId,
   breakdown,
+  breakdownError = null,
   sharedIps,
+  sharedIpsError = null,
   sharedFingerprints,
+  sharedFingerprintsError = null,
 }: {
   userId: string;
   breakdown: RiskScoreBreakdown;
+  /**
+   * Per-leg load errors (safeQuery `error` strings, or null on success).
+   * When set, the corresponding section renders a VISIBLE amber error
+   * instead of a misleading clean state — a failed risk scan must never
+   * read as "low risk", and a failed shared-IP fan-out must never read as
+   * "no other accounts share an IP with this user". The raw message is
+   * never echoed (safeQuery SECURITY note) — presence alone flips the UI.
+   */
+  breakdownError?: string | null;
   sharedIps: SharedIdentityUser[];
+  sharedIpsError?: string | null;
   sharedFingerprints: SharedIdentityUser[];
+  sharedFingerprintsError?: string | null;
 }) {
   return (
     <div className="space-y-6">
-      <ScoreHero userId={userId} breakdown={breakdown} />
+      {breakdownError ? (
+        <BandError
+          title="Couldn't load the trust assessment"
+          hint="The risk-score scan failed or timed out — this is a load failure, not a clean low-risk profile. Retry re-runs it."
+        />
+      ) : (
+        <>
+          <ScoreHero userId={userId} breakdown={breakdown} />
 
-      <SectionHeading icon={Activity} title="Signal breakdown" />
-      <SignalBreakdown signals={breakdown.signals} />
+          <SectionHeading icon={Activity} title="Signal breakdown" />
+          <SignalBreakdown signals={breakdown.signals} />
+        </>
+      )}
 
       <SectionHeading icon={Link2} title="Shared IPs" />
-      <SharedIdentityTable
-        users={sharedIps}
-        identityLabel="IPs"
-        emptyLabel="No other accounts share an IP with this user."
-      />
+      {sharedIpsError ? (
+        <BandError
+          title="Couldn't load shared IPs"
+          hint="The shared-identity lookup failed — this is a load failure, not 'no shared IPs'."
+        />
+      ) : (
+        <SharedIdentityTable
+          users={sharedIps}
+          identityLabel="IPs"
+          emptyLabel="No other accounts share an IP with this user."
+        />
+      )}
 
       <SectionHeading icon={Fingerprint} title="Shared device fingerprints" />
-      <SharedIdentityTable
-        users={sharedFingerprints}
-        identityLabel="Fingerprints"
-        emptyLabel="No other accounts share a device fingerprint with this user."
-      />
+      {sharedFingerprintsError ? (
+        <BandError
+          title="Couldn't load shared fingerprints"
+          hint="The shared-identity lookup failed — this is a load failure, not 'no shared devices'."
+        />
+      ) : (
+        <SharedIdentityTable
+          users={sharedFingerprints}
+          identityLabel="Fingerprints"
+          emptyLabel="No other accounts share a device fingerprint with this user."
+        />
+      )}
     </div>
   );
 }

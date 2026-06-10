@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/empty-state";
+import { InlineError } from "@/components/entity-surface/inline-error";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import {
   deleteUserVoucher,
@@ -61,17 +62,23 @@ export function UserVouchersPanel({
 }) {
   const [vouchers, setVouchers] = useState<UserVoucherRow[] | null>(null);
   const [loading, setLoading] = useState(true);
+  // "Fetch failed" is NOT the same as "no vouchers" — the old
+  // `.catch(() => setVouchers([]))` self-hid the panel on every failure, so
+  // a broken feed looked identical to a voucher-less user. Failures now
+  // render a visible compact error with a retry.
+  const [failed, setFailed] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<UserVoucherRow | null>(null);
 
   function load() {
     let cancelled = false;
     setLoading(true);
+    setFailed(false);
     getUserVouchers(userId)
       .then((rows) => {
         if (!cancelled) setVouchers(rows);
       })
       .catch(() => {
-        if (!cancelled) setVouchers([]);
+        if (!cancelled) setFailed(true);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -89,7 +96,29 @@ export function UserVouchersPanel({
 
   // Hide the section entirely when there's nothing to show (and we're done
   // loading) — keeps the Inventory tab clean for the common no-voucher case.
-  if (!loading && (!vouchers || vouchers.length === 0)) return null;
+  // Self-hide applies ONLY to a confirmed-empty success, never to a failure.
+  if (!loading && !failed && (!vouchers || vouchers.length === 0)) return null;
+
+  if (!loading && failed) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <Ticket className="size-4" />
+            Vouchers
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <InlineError
+            compact
+            title="Couldn't load vouchers"
+            hint="This is a load failure, not an empty list."
+            onRetry={() => load()}
+          />
+        </CardContent>
+      </Card>
+    );
+  }
 
   const total = (vouchers ?? []).reduce((a, v) => a + v.value, 0);
 

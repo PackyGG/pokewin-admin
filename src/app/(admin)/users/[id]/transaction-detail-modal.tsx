@@ -66,18 +66,25 @@ export function TransactionDetailModal({
     null,
   );
   const [loadingSession, setLoadingSession] = useState(false);
+  // A rejected getGameSessionDetails used to be UNHANDLED (then/finally
+  // with no catch) — surface it as an inline row instead, distinguishable
+  // from the legitimate "Game session not found" null result.
+  const [sessionError, setSessionError] = useState(false);
 
   useEffect(() => {
     if (!transaction?.gameSessionId) {
       setGameSession(null);
+      setSessionError(false);
       return;
     }
     setLoadingSession(true);
     setGameSession(null);
+    setSessionError(false);
     // Pass the URL's userId through so the server can verify ownership
     // before returning provably_fair_results (server-seed leak guard).
     getGameSessionDetails(transaction.gameSessionId, userId)
       .then((data) => setGameSession(data))
+      .catch(() => setSessionError(true))
       .finally(() => setLoadingSession(false));
   }, [transaction?.id, transaction?.gameSessionId, userId]);
 
@@ -389,6 +396,13 @@ export function TransactionDetailModal({
               {loadingSession ? (
                 <p className="text-sm text-muted-foreground text-center py-4">
                   Loading game details...
+                </p>
+              ) : sessionError ? (
+                // Load FAILURE — distinct from the "not found" null below so
+                // a transient query error never reads as a missing session.
+                <p className="text-sm text-amber-600 dark:text-amber-400 text-center py-2">
+                  Couldn&apos;t load session details — close and reopen to
+                  retry.
                 </p>
               ) : gameSession ? (
                 <>

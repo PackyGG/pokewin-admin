@@ -52,6 +52,7 @@ import {
 } from "@/lib/utils/ledger-direction";
 import { BorrowBadge } from "@/components/borrow-badge";
 import { EmptyState } from "@/components/empty-state";
+import { InlineError } from "@/components/entity-surface/inline-error";
 import { battleUrl } from "@/lib/utils/main-site";
 import { fetchUserTransactions } from "./actions";
 import type {
@@ -96,6 +97,7 @@ export const CategoryTransactionsTable = React.memo(
     userId,
     types,
     initialTx,
+    initialLoadError = null,
     showCardsValue = false,
     cardWithdrawals,
     isAdmin = false,
@@ -105,6 +107,15 @@ export const CategoryTransactionsTable = React.memo(
     userId: string;
     types: readonly string[];
     initialTx: PaginatedTransactions;
+    /**
+     * Error string from the server-side safeQuery that produced
+     * `initialTx` (null on success). When set, `initialTx` is the empty
+     * fallback page — so the table body shows a VISIBLE InlineError
+     * instead of the misleading "No transactions" empty state (error ≠
+     * empty, always distinguishable). Cleared by any successful client
+     * `load()` or by a recovered server re-seed.
+     */
+    initialLoadError?: string | null;
     showCardsValue?: boolean;
     cardWithdrawals?: UserDetail["cardWithdrawals"];
     /**
@@ -119,6 +130,9 @@ export const CategoryTransactionsTable = React.memo(
     canEditBalanceAdjustments?: boolean;
   }) {
     const [txData, setTxData] = useState(initialTx);
+    const [loadError, setLoadError] = useState<string | null>(
+      initialLoadError ?? null,
+    );
     const [typeFilter, setTypeFilter] = useState("all");
     const [statusFilter, setStatusFilter] = useState("all");
     const [dateFrom, setDateFrom] = useState("");
@@ -155,8 +169,11 @@ export const CategoryTransactionsTable = React.memo(
       if (!filtersUnchanged) return;
       if (currentPerPage === initialTx.perPage) {
         // Default page size → the fresh server payload already matches the
-        // admin's view; seed it directly (no extra round-trip).
+        // admin's view; seed it directly (no extra round-trip). The error
+        // flag tracks the payload: a recovered refresh clears it, a still-
+        // degraded one re-raises it.
         setTxData(initialTx);
+        setLoadError(initialLoadError ?? null);
       } else {
         // Admin enlarged the page size → re-fetch page 1 at their size so
         // the refresh keeps the larger view instead of reverting to 10.
@@ -201,13 +218,22 @@ export const CategoryTransactionsTable = React.memo(
       const pp = newPerPage ?? currentPerPage;
       if (newPerPage) setCurrentPerPage(newPerPage);
       startTransition(async () => {
-        const result = await fetchUserTransactions(
-          userId,
-          newPage,
-          pp,
-          buildFilters(filterOverrides),
-        );
-        setTxData(result);
+        try {
+          const result = await fetchUserTransactions(
+            userId,
+            newPage,
+            pp,
+            buildFilters(filterOverrides),
+          );
+          setTxData(result);
+          setLoadError(null);
+        } catch {
+          // A rejected await inside startTransition escalates to the
+          // segment error boundary and replaces the WHOLE page with
+          // error.tsx — exactly the failure mode this remake kills. Keep
+          // the previous rows on screen and surface a toast instead.
+          toast.error("Couldn't load transactions — try again");
+        }
       });
     }
 
@@ -779,12 +805,25 @@ export const CategoryTransactionsTable = React.memo(
                     colSpan={showCardsValue ? 12 : 9}
                     className="p-0"
                   >
-                    <EmptyState
-                      icon={Receipt}
-                      title="No transactions"
-                      description="Nothing matches the current filters."
-                      compact
-                    />
+                    {loadError ? (
+                      // The seeded page came from a FAILED/timed-out query —
+                      // showing the normal empty state here would disguise a
+                      // broken feed as a quiet account. Visible error + retry
+                      // (router.refresh re-runs the server query; a recovered
+                      // payload re-seeds and clears the flag).
+                      <InlineError
+                        compact
+                        title="Couldn't load transactions"
+                        hint="This is a load failure, not an empty history — retry to re-run the query."
+                      />
+                    ) : (
+                      <EmptyState
+                        icon={Receipt}
+                        title="No transactions"
+                        description="Nothing matches the current filters."
+                        compact
+                      />
+                    )}
                   </TableCell>
                 </TableRow>
               )}

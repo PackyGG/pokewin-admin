@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import {
   getUserTransactions,
   getUserInventory,
@@ -30,11 +30,13 @@ import {
 import { UserViewModern } from "./user-view-modern";
 import { coerceTab } from "./user-tabs-types";
 import type { TabKey } from "./user-tabs-types";
-import { safeQuery, safeQueryOrNull } from "@/lib/errors/safe-query";
 import {
-  getUserWagerRequirement,
-  type UserWagerRequirement,
-} from "@/lib/backend-api/wager-requirements";
+  safeQuery,
+  safeQueryOrNull,
+  type SafeQueryResult,
+} from "@/lib/errors/safe-query";
+import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
+import { InlineError } from "@/components/entity-surface/inline-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   KpiStripSkeleton,
@@ -116,10 +118,12 @@ export default async function UserDetailPage({
   const session = await requirePageAccess("/users");
   const { id } = await params;
   const sp = await searchParams;
-  // Active tab is URL-driven (?tab=<key>) so deep-links from elsewhere
-  // (hero risk badges, future bookmarks) still resolve correctly.
-  // The shell hydrates this into client state on mount so subsequent
-  // tab clicks are instant — see UserViewModern.
+  // Active tab is URL-driven (?tab=<key>): the URL is the source of truth
+  // for WHICH tab's queries get kicked in UserDetailBody (Active-Timeframe-
+  // Only — hidden tabs are never preloaded). Tab clicks in the client shell
+  // flip the pill instantly AND router.replace the new ?tab=, so this
+  // server component re-renders and kicks exactly the new tab's reads.
+  // Deep-links and back/forward resolve correctly by construction.
   const initialTab = coerceTab(sp.tab);
 
   // ── CRITICAL PATH — keep it tiny so first paint is instant ─────────
@@ -264,16 +268,12 @@ async function UserDetailBody({
   initialTab: TabKey;
 }) {
   // Empty paginated-transaction shape used as the safeQuery fallback for
-  // the gaming + financial tx fetches below. Same shape
+  // the gaming / financial / adjustments tx fetches below. Same shape
   // `getUserTransactions` already returns for users with zero matching
-  // ledger rows, so the downstream CategoryTransactionsTable +
-  // RecentActivityTimeline render a normal empty-state instead of
-  // crashing on undefined access. When an upstream DB hiccup (e.g. a
-  // transient join failure on the upgrader_games / battle_participants
-  // relations) would otherwise blank the whole user-detail page — the
-  // Gaming tab in particular was reportedly unclickable because a thrown
-  // promise here propagated up to the segment error boundary and
-  // replaced the tab bar with the error page.
+  // ledger rows. NOTE (reliability remake): the fallback now travels WITH
+  // its `error` string inside a SafeQueryResult — the tables render a
+  // visible InlineError instead of mistaking the fallback for a genuinely
+  // empty history.
   const EMPTY_TX_PAGE = {
     data: [],
     total: 0,
@@ -335,76 +335,207 @@ async function UserDetailBody({
     wager7d: 0,
     wager14d: 0,
   };
+  // Neutral risk shape used ONLY as the safeQuery fallback carrier — the
+  // hero/Trust tab branch on the result's `error` BEFORE reading it, so a
+  // failed scan renders an amber "Risk —" pill / band error, never this
+  // shape as a false "low risk" all-clear.
+  const EMPTY_RISK = {
+    score: 0,
+    tier: "low" as const,
+    signals: [],
+    topReasons: [],
+    suggestions: [],
+    timeline: [],
+    sharedIpCount: 0,
+    sharedFingerprintCount: 0,
+    sharedBannedCount: 0,
+    sharedLockedCount: 0,
+    computedAt: Date.now(),
+    computeDurationMs: 0,
+  };
 
-  // ── CRITICAL BODY GROUP ────────────────────────────────────────────
+  type UserTxPage = Awaited<ReturnType<typeof getUserTransactions>>;
+
+  // ── KICKED, NOT AWAITED — full-result band promises ────────────────
   //
-  // Everything the identity hero + the default Overview tab need to paint:
-  // the heavy detail aggregate, the P&L breakdown, owned inventory, the
-  // gaming + financial tx pages, notes, rewards, creator history, and the
-  // risk score (the hero badges read riskBreakdown.score / .tier /
-  // .sharedIpCount, so it MUST resolve before first paint). This group
-  // gates the body Suspense.
+  // Every band promise below resolves to a WHOLE SafeQueryResult
+  // ({ data, error }) — nothing unwraps `.then(r => r.data)` anymore, so
+  // the client bands can distinguish real data / genuine empty / VISIBLE
+  // error (the silent-empty failure mode this remake kills). safeQuery
+  // never rejects, so the `use()` sites need no client error boundaries.
   //
-  // The three NON-CRITICAL reads — disposed inventory, shared-IP users and
-  // shared-fingerprint users — are NOT awaited here. They only feed the
-  // Inventory tab's "Sold & Exchanged" table and the Trust tab, neither of
-  // which renders until the operator clicks that tab. Awaiting them in this
-  // Promise.all used to make the WHOLE body (including Overview) wait on
-  // their network/identity fan-out. They're kicked off below as their own
-  // in-flight promises and streamed into those tabs behind a second,
-  // non-blocking Suspense — same queries, same args, same return shapes,
-  // just no longer on the first-paint critical path. See UserViewModern.
+  // Active-Timeframe-Only: each promise is kicked ONLY when the active
+  // (?tab=) tab needs it — `null` means "not kicked"; the band renders its
+  // skeleton and the URL-driven tab switch re-renders this server
+  // component with the new tab, which kicks it. A deep-link to
+  // ?tab=account therefore never pays the gaming worth-sweep, and a 60s
+  // AutoRefresh tick re-runs only the visible tab's bounded reads.
+
+  // Owner gate — kicked FIRST so the adjustments kick below can chain on
+  // it without waiting for the heavy body gate. Fail-closed false; also
+  // awaited in the body gate (same promise instance, no double read).
+  const viewerIsOwnerPromise = safeQuery(
+    () => isAdjustmentVisibilityOwner(sessionUserId),
+    false,
+    "users.detail.mothaGate",
+  );
+
+  // Always kicked (tab-independent): the P&L breakdown feeds the hero-
+  // adjacent Overview panels AND the Account tab's windowed strips; the
+  // risk scan feeds the hero badge + Trust tab. Both 60s-cached
+  // cross-request, both timeout-bounded.
+  const pnlResultPromise = safeQuery(
+    () => getUserPnlBreakdownCached(id),
+    EMPTY_PNL,
+    "users.detail.pnl",
+    USER_DETAIL_QUERY_TIMEOUT_MS,
+  );
+  const riskResultPromise = safeQuery(
+    () => getRiskScoreCached(id),
+    EMPTY_RISK,
+    "users.detail.riskScore",
+    USER_DETAIL_QUERY_TIMEOUT_MS,
+  );
+
+  const wantsGamingTx = initialTab === "overview" || initialTab === "gaming";
+  const wantsFinancialTx =
+    initialTab === "overview" || initialTab === "finances";
+
+  const gamingTxPromise = wantsGamingTx
+    ? safeQuery(
+        () => getUserTransactions(id, 1, 10, { types: GAMING_TYPES }),
+        EMPTY_TX_PAGE,
+        "users.detail.gamingTx",
+        USER_DETAIL_QUERY_TIMEOUT_MS,
+      )
+    : null;
+  const financialTxPromise = wantsFinancialTx
+    ? safeQuery(
+        () => getUserTransactions(id, 1, 10, { types: FINANCIAL_TYPES }),
+        EMPTY_TX_PAGE,
+        "users.detail.financialTx",
+        USER_DETAIL_QUERY_TIMEOUT_MS,
+      )
+    : null;
+  // Adjustments: Overview-only. Kicked only when the viewer is the owner
+  // `motha` — a non-owner gets a resolved empty page instead of a wasted
+  // round trip (the server returns zero adjustment rows for them anyway;
+  // the fail-closed gate inside getUserTransactions remains the security
+  // authority, this skip is purely a perf nicety). Chained on the owner
+  // probe (fast admin-DB read), NOT on the heavy body gate.
+  const adjustmentsTxPromise: Promise<SafeQueryResult<UserTxPage>> | null =
+    initialTab === "overview"
+      ? viewerIsOwnerPromise.then((ownerRes) =>
+          ownerRes.data
+            ? safeQuery(
+                () =>
+                  getUserTransactions(id, 1, ADJ_LIMIT, {
+                    types: ADJUSTMENT_TYPES,
+                  }),
+                EMPTY_TX_PAGE,
+                "users.detail.adjustmentsTx",
+                USER_DETAIL_QUERY_TIMEOUT_MS,
+              )
+            : { data: EMPTY_TX_PAGE, error: null },
+        )
+      : null;
+
+  // Inventory tab: owned grid page + disposed "Sold & Exchanged" page.
+  // The hero's inventory/voucher VALUES come from `balances` inside the
+  // detail aggregate (userPnl components), so gating these on the tab
+  // costs the hero nothing.
+  const inventoryPromise =
+    initialTab === "inventory"
+      ? safeQuery(
+          () => getUserInventory(id, 1, 24, { status: "owned" }),
+          EMPTY_INVENTORY_PAGE,
+          "users.detail.inventory",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        )
+      : null;
+  const disposedInventoryPromise =
+    initialTab === "inventory"
+      ? safeQuery(
+          () => getUserInventory(id, 1, 24, { status: "disposed" }),
+          EMPTY_INVENTORY_PAGE,
+          "users.detail.disposedInventory",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        )
+      : null;
+
+  // Rewards tab: one_time reward count + rakeback claimable/claimed.
+  const rewardsPromise =
+    initialTab === "rewards"
+      ? safeQuery(
+          () => getUserRewards(id),
+          {
+            openOneTimeCount: 0,
+            rakebackClaimableUsd: 0,
+            rakebackClaimedUsd: 0,
+          },
+          "users.detail.rewards",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        )
+      : null;
+
+  // Account tab: admin notes (admin-DB, cheap) + the backend-API
+  // wager-requirement override. The latter keeps its own catch→null
+  // wrapper (null → the card's muted "awaiting backend deploy" state) —
+  // just kicked instead of serially awaited.
+  const notesPromise =
+    initialTab === "account"
+      ? safeQuery(() => getNotesForUser(id), [], "users.detail.notes")
+      : null;
+  const wagerRequirementPromise =
+    initialTab === "account"
+      ? getUserWagerRequirement(id).catch(() => null)
+      : null;
+
+  // Trust tab: shared-identity fan-outs. Previously these rode only the
+  // 30s statement_timeout — now they get the same explicit per-query
+  // wall-clock bound as every other band read.
+  const sharedIpsPromise =
+    initialTab === "trust"
+      ? safeQuery(
+          () => getSharedIpUsers(id),
+          [],
+          "users.detail.sharedIps",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        )
+      : null;
+  const sharedFingerprintsPromise =
+    initialTab === "trust"
+      ? safeQuery(
+          () => getSharedFingerprintUsers(id),
+          [],
+          "users.detail.sharedFingerprints",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        )
+      : null;
+
+  // ── AWAITED BODY GATE ──────────────────────────────────────────────
+  //
+  // Only what EVERYTHING in UserViewModern needs before any band can
+  // render: the detail aggregate (the page's spine — identity, balances,
+  // capabilities), the cheap admin-DB creator history (hero wasCreator
+  // badge), and the two motha gate flags (previously a serial tail of
+  // UNWRAPPED awaits at the end of this function — the last reads that
+  // could still throw the whole body to the segment error boundary; now
+  // parallel + fail-closed false).
   const [
     detailResult,
-    inventoryResult,
-    pnlResult,
-    notesResult,
-    rewardsResult,
     creatorHistoryResult,
-    riskResult,
+    mothaCanEditResult,
+    viewerIsOwnerResult,
   ] = await Promise.all([
     // getUserDetail is THE heavy aggregate (~19 Main-DB round-trips + the
-    // canonical calculateUserPnl helper). Previously it ran un-wrapped in
-    // the page's Promise.all, so any failure/timeout in it crashed the
-    // whole page. Now it's timeout-bounded and null-on-failure → the body
-    // renders a compact degraded banner (the header already painted).
-    // Cached cross-request (60s) so the AutoRefresh tick + "Try again"
-    // resolve from the warmed entry instead of re-paying the full scan.
+    // canonical calculateUserPnl helper). Timeout-bounded and
+    // null-on-failure → the body renders a visible full-band error (the
+    // header already painted). Cached cross-request (60s) so the
+    // AutoRefresh tick + retry resolve from the warmed entry.
     safeQueryOrNull(
       () => getUserDetailCached(id),
       "users.detail.detail",
-      USER_DETAIL_QUERY_TIMEOUT_MS,
-    ),
-    // Owned inventory page (critical — backs the Inventory tab's current
-    // grid + drives the hero inventory value). Was un-wrapped before, so a
-    // slow user_inventory scan blanked the page. Degrade to an empty page.
-    safeQuery(
-      () => getUserInventory(id, 1, 24, { status: "owned" }),
-      EMPTY_INVENTORY_PAGE,
-      "users.detail.inventory",
-      USER_DETAIL_QUERY_TIMEOUT_MS,
-    ),
-    // Platform-P&L breakdown — multiple ledger aggregates + the 5-window
-    // rolling-P&L scan (the heaviest read on the page on an unindexed DB).
-    // Un-wrapped before; degrade to the all-zero shape. Cached
-    // cross-request (60s) so refresh/retry skip the rescan.
-    safeQuery(
-      () => getUserPnlBreakdownCached(id),
-      EMPTY_PNL,
-      "users.detail.pnl",
-      USER_DETAIL_QUERY_TIMEOUT_MS,
-    ),
-    // Admin notes (admin-DB). Cheap, but wrap it so an admin-DB hiccup
-    // doesn't blank the page — the Account tab renders its empty notes
-    // state instead.
-    safeQuery(() => getNotesForUser(id), [], "users.detail.notes"),
-    // Rewards summary (one_time reward count + rakeback claimable/claimed).
-    // Un-wrapped before; degrade to the zeroed summary so the Rewards tab
-    // renders its empty state.
-    safeQuery(
-      () => getUserRewards(id),
-      { openOneTimeCount: 0, rakebackClaimableUsd: 0, rakebackClaimedUsd: 0 },
-      "users.detail.rewards",
       USER_DETAIL_QUERY_TIMEOUT_MS,
     ),
     // Creator history already self-degrades inside the query (its own
@@ -416,125 +547,45 @@ async function UserDetailBody({
       { everCreatorByAudit: false, creatorSince: null },
       "users.detail.creatorHistory",
     ),
-    // Fraud / trust assessment for the hero badges + Trust tab.
-    // Heavy cross-table aggregate + network/timeline fan-out. Failure →
-    // the hero falls back to the same neutral "low / 0 / no signals"
-    // shape the query itself emits for unknown users, so the risk
-    // badge renders unobtrusively instead of blanking the whole view.
-    // Cached cross-request (60s) on top of the score module's own
-    // in-process memo so a cold function instance / "Try again" skips
-    // the rescan.
+    // Motha-only edit affordance — fail-closed false on any admin-DB
+    // hiccup (an error can only HIDE the edit affordance, never grant it).
     safeQuery(
-      () => getRiskScoreCached(id),
-      {
-        score: 0,
-        tier: "low" as const,
-        signals: [],
-        topReasons: [],
-        suggestions: [],
-        timeline: [],
-        sharedIpCount: 0,
-        sharedFingerprintCount: 0,
-        sharedBannedCount: 0,
-        sharedLockedCount: 0,
-        computedAt: Date.now(),
-        computeDurationMs: 0,
-      },
-      "users.detail.riskScore",
-      USER_DETAIL_QUERY_TIMEOUT_MS,
+      () => canEditBalanceAdjustments(sessionUserId),
+      false,
+      "users.detail.mothaGate",
     ),
+    viewerIsOwnerPromise,
   ]);
-
-  // ── NON-CRITICAL STREAMED GROUP ────────────────────────────────────
-  //
-  // Kicked off here but deliberately NOT awaited — gaming + financial tx
-  // (plus the dedicated adjustments page) and the tab-gated disposed
-  // inventory + Trust shared-identity reads. Each promise resolves to the
-  // SAME bare data shape the critical reads used to produce (safeQuery
-  // result unwrapped via `.data`). UserViewModern `use()`s them inside
-  // Suspense boundaries scoped to the sections/tabs that need them so the
-  // hero + balance panels paint without waiting on ledger enrichment.
-  const gamingTxPromise = safeQuery(
-    () => getUserTransactions(id, 1, 10, { types: GAMING_TYPES }),
-    EMPTY_TX_PAGE,
-    "users.detail.gamingTx",
-    USER_DETAIL_QUERY_TIMEOUT_MS,
-  ).then((r) => r.data);
-  const financialTxPromise = safeQuery(
-    () => getUserTransactions(id, 1, 10, { types: FINANCIAL_TYPES }),
-    EMPTY_TX_PAGE,
-    "users.detail.financialTx",
-    USER_DETAIL_QUERY_TIMEOUT_MS,
-  ).then((r) => r.data);
-  const adjustmentsTxPromise = safeQuery(
-    () => getUserTransactions(id, 1, ADJ_LIMIT, { types: ADJUSTMENT_TYPES }),
-    EMPTY_TX_PAGE,
-    "users.detail.adjustmentsTx",
-    USER_DETAIL_QUERY_TIMEOUT_MS,
-  ).then((r) => r.data);
-  const disposedInventoryPromise = safeQuery(
-    () => getUserInventory(id, 1, 24, { status: "disposed" }),
-    EMPTY_INVENTORY_PAGE,
-    "users.detail.disposedInventory",
-    USER_DETAIL_QUERY_TIMEOUT_MS,
-  ).then((r) => r.data);
-  // Fingerprints / shared-IP tables may be absent in fresh/dev
-  // environments — degrade gracefully to an empty list rather than
-  // crashing the user detail page.
-  const sharedIpsPromise = safeQuery(
-    () => getSharedIpUsers(id),
-    [],
-    "users.detail.sharedIps",
-  ).then((r) => r.data);
-  const sharedFingerprintsPromise = safeQuery(
-    () => getSharedFingerprintUsers(id),
-    [],
-    "users.detail.sharedFingerprints",
-  ).then((r) => r.data);
-
-  // Per-user withdrawal wager-requirement override (backend API, NOT the
-  // MAIN DB). Read NON-critically in its own try/catch — deliberately kept
-  // OUT of the heavy getUserDetailCached aggregate above so a backend
-  // outage / undeployed branch can never block or crash the user-detail
-  // body. null → the Account-tab card shows its muted "awaiting backend
-  // deploy" state.
-  let wagerRequirement: UserWagerRequirement | null = null;
-  try {
-    wagerRequirement = await getUserWagerRequirement(id);
-  } catch {
-    wagerRequirement = null;
-  }
 
   const data = detailResult.data;
 
   // getUserDetail returns null only for a truly unknown user — but the
   // header already resolved via getUserHeader, so a null here means the
-  // aggregate read failed/timed out. Surface a compact degraded state for
-  // this band rather than 404-ing the whole (already-rendered) page.
+  // aggregate read failed/timed out. ACCEPTED LIMITATION (stated per the
+  // remake plan): a null detail cannot partially render — everything in
+  // UserViewModern hangs off `data.user` — so this stays a full-band
+  // visible error with retry. After the Phase-1 query fixes this branch
+  // is reachable only on a transient timeout/outage, not on every load.
   if (!data) {
+    const timedOut =
+      detailResult.error?.startsWith("Query exceeded") ?? false;
     return (
-      <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
-        <AlertTriangle className="size-4 mt-0.5 text-amber-500 shrink-0" />
-        <div>
-          <div className="font-medium text-amber-500">
-            User details are taking too long to load
-          </div>
-          <div className="mt-0.5 text-muted-foreground">
-            The balances, P&amp;L, and activity for this user timed out or
-            failed against the main DB. Refresh to retry — the header above
-            is unaffected.
-          </div>
-        </div>
-      </div>
+      <InlineError
+        title={
+          timedOut
+            ? "User details are taking too long to load"
+            : "User details failed to load"
+        }
+        hint={
+          timedOut
+            ? "The balances, P&L and activity aggregate exceeded its time budget against the main DB. The header above is unaffected — retry to re-run it."
+            : "The balances, P&L and activity aggregate failed against the main DB. The header above is unaffected — retry to re-run it."
+        }
+      />
     );
   }
 
   const creatorHistory = creatorHistoryResult.data;
-  const riskBreakdown = riskResult.data;
-  const inventory = inventoryResult.data;
-  const pnlBreakdown = pnlResult.data;
-  const notes = notesResult.data;
-  const rewards = rewardsResult.data;
 
   // "Ever a creator?" = currently creator, OR an audit role-change to
   // creator exists, OR they own affiliate codes (created only for
@@ -546,7 +597,7 @@ async function UserDetailBody({
     data.user.ownedCodes.length > 0;
   const wasCreator = everCreator && data.user.role !== "creator";
 
-  const mothaCanEditAdjustments = await canEditBalanceAdjustments(sessionUserId);
+  const mothaCanEditAdjustments = mothaCanEditResult.data;
 
   // Owner-only adjustment visibility: only the owner `motha` may see admin
   // balance adjustments. The authoritative gate is server-side in
@@ -556,8 +607,7 @@ async function UserDetailBody({
   // option in the Finances type-filter dropdown so a non-owner isn't even
   // shown the category label (the dedicated adjustments block + recent
   // activity already self-hide because the server returns zero such rows).
-  const viewerIsAdjustmentOwner =
-    await isAdjustmentVisibilityOwner(sessionUserId);
+  const viewerIsAdjustmentOwner = viewerIsOwnerResult.data;
 
   const capabilities =
     sessionRole === "admin"
@@ -597,18 +647,18 @@ async function UserDetailBody({
   return (
     <UserViewModern
       data={detailWithSession}
+      pnlResultPromise={pnlResultPromise}
+      riskResultPromise={riskResultPromise}
       gamingTxPromise={gamingTxPromise}
       financialTxPromise={financialTxPromise}
       adjustmentsTxPromise={adjustmentsTxPromise}
-      rewards={rewards}
-      notes={notes}
-      pnlBreakdown={pnlBreakdown}
-      inventory={inventory}
+      rewardsPromise={rewardsPromise}
+      notesPromise={notesPromise}
+      inventoryPromise={inventoryPromise}
       disposedInventoryPromise={disposedInventoryPromise}
-      riskBreakdown={riskBreakdown}
       sharedIpsPromise={sharedIpsPromise}
       sharedFingerprintsPromise={sharedFingerprintsPromise}
-      wagerRequirement={wagerRequirement}
+      wagerRequirementPromise={wagerRequirementPromise}
       viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
       initialTab={initialTab}
     />

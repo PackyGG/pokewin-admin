@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Loader2, Swords } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { InlineError } from "@/components/entity-surface/inline-error";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import {
   getUserJoinedSponsoredBattles,
@@ -26,16 +27,22 @@ const RESULT_STYLES: Record<JoinedBattleRow["result"], string> = {
 export function JoinedBattlesPanel({ userId }: { userId: string }) {
   const [battles, setBattles] = useState<JoinedBattleRow[] | null>(null);
   const [loading, setLoading] = useState(true);
+  // Distinguish "fetch failed" from "genuinely no sponsored battles". The
+  // old `.catch(() => setBattles([]))` made every failure look like the
+  // empty case and the panel silently self-hid — an admin could never tell
+  // a broken feed from a user who simply joined none.
+  const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     let cancelled = false;
     setLoading(true);
+    setFailed(false);
     getUserJoinedSponsoredBattles(userId)
       .then((rows) => {
         if (!cancelled) setBattles(rows);
       })
       .catch(() => {
-        if (!cancelled) setBattles([]);
+        if (!cancelled) setFailed(true);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -45,7 +52,32 @@ export function JoinedBattlesPanel({ userId }: { userId: string }) {
     };
   }, [userId]);
 
-  if (!loading && (!battles || battles.length === 0)) return null;
+  useEffect(() => load(), [load]);
+
+  // Self-hide ONLY on a confirmed-empty success — a failure renders a
+  // visible compact error instead of vanishing.
+  if (!loading && !failed && (!battles || battles.length === 0)) return null;
+
+  if (!loading && failed) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <Swords className="size-4" />
+            Sponsored / free battles joined
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <InlineError
+            compact
+            title="Couldn't load sponsored battles"
+            hint="This is a load failure, not an empty list."
+            onRetry={load}
+          />
+        </CardContent>
+      </Card>
+    );
+  }
 
   const totalWinnings = (battles ?? []).reduce((a, b) => a + b.winnings, 0);
 

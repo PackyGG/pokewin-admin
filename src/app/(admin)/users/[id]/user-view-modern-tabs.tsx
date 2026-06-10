@@ -56,7 +56,8 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
-import { SkeletonTable } from "@/components/ux";
+import { InlineError } from "@/components/entity-surface/inline-error";
+import { SkeletonCard, SkeletonTable } from "@/components/ux";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { RelativeTime } from "@/components/relative-time";
@@ -94,6 +95,8 @@ import type {
 } from "./user-tabs-types";
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import type { UserRewards } from "@/lib/queries/users";
+import type { SafeQueryResult } from "@/lib/errors/safe-query";
+import { BandError } from "./band-error";
 import {
   SectionHeading,
   ModernBalancePanel,
@@ -101,6 +104,25 @@ import {
   ModernActivityPanel,
   ModernMetricTile,
 } from "./user-view-modern-panels";
+
+// ---------------------------------------------------------------------------
+// Streamed-band contract (reliability remake)
+// ---------------------------------------------------------------------------
+// Every ledger-backed band on this view receives its data as a
+// `Promise<SafeQueryResult<T>> | null` instead of a pre-unwrapped value:
+//
+//   • `null`            → the band's query was NOT kicked for the active
+//                         tab (Active-Timeframe-Only) — render the skeleton;
+//                         the URL-driven tab switch re-renders the server
+//                         component which kicks it.
+//   • promise resolves  → ALWAYS (safeQuery never rejects). `r.error`
+//                         null → real data (or a genuine empty state);
+//                         `r.error` set → the band renders a VISIBLE amber
+//                         error (InlineError / BandError), never a silent
+//                         empty that masquerades as "no data".
+//
+// Because the promises never reject, the `use()` sites need no client
+// error boundaries — Suspense alone covers the pending state.
 
 // ───────────────────────────────────────────────────────────────────
 //  OVERVIEW TAB
@@ -111,13 +133,13 @@ export function OverviewTab({
   gamingTxPromise,
   financialTxPromise,
   adjustmentsTxPromise,
-  pnlBreakdown,
+  pnlResultPromise,
   isAdmin,
   viewerIsAdjustmentOwner,
 }: {
   data: UserDetail;
-  gamingTxPromise: Promise<PaginatedTransactions>;
-  financialTxPromise: Promise<PaginatedTransactions>;
+  gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
+  financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Dedicated, UNCAPPED admin_balance_adjustment fetch (separate from the
   // shared 10-row `financialTx` page, which lumps adjustments together with
   // deposits/withdrawals/claims and can push an older adjustment off page 1
@@ -125,16 +147,21 @@ export function OverviewTab({
   // adjustment reaches the Recent Activity timeline + the dedicated block
   // below, no matter how much newer financial activity sits in front of it.
   // Same query path, so the official_stream fake-balance NOT-filter still
-  // applies automatically.
-  adjustmentsTxPromise: Promise<PaginatedTransactions>;
-  pnlBreakdown: PnlBreakdown;
+  // applies automatically. For a non-owner viewer the server hands a
+  // resolved empty page (the kick is skipped; the server-side gate in
+  // getUserTransactions stays the authority).
+  adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
+  // Platform-P&L breakdown — feeds the Balance panel's pnl7d (Lossback
+  // autofill) + the Platform P&L panel with its rolling ladder. Always
+  // kicked by the server (hero risk/pnl are tab-independent).
+  pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
   isAdmin: boolean;
   // Owner-only flag (motha). Hides the dedicated adjustments block + the
   // adjustment filter option for non-owners. The server already strips the
   // rows for non-owners; this is defence-in-depth UI hygiene only.
   viewerIsAdjustmentOwner: boolean;
 }) {
-  const { user, balances, statistics, counts, capabilities } = data;
+  const { user, statistics, counts, capabilities } = data;
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -142,19 +169,24 @@ export function OverviewTab({
           rounded-2xl, subtle colored corner glow, color-accented icon
           chip + hero number + breakdown rows below. items-start so each
           panel keeps its natural height instead of stretching to match the
-          tallest column (the panels carry different row counts). */}
+          tallest column (the panels carry different row counts). The
+          Balance + Platform-P&L panels are pnl-fed, so they stream as one
+          Suspense cluster on pnlResultPromise; the Activity panel reads
+          only the resolved detail aggregate and paints immediately. */}
       <div className="grid items-start gap-3 sm:gap-4 grid-cols-1 md:grid-cols-3">
-        <ModernBalancePanel
-          balances={balances}
-          userId={user.id}
-          pnl7d={pnlBreakdown.pnl7d}
-          canAdjustBalance={capabilities.canAdjustBalance}
-          canRecordManualWithdrawal={capabilities.canRecordManualWithdrawal}
-        />
-        <ModernPnlPanel balances={balances} pnlBreakdown={pnlBreakdown} />
+        <Suspense
+          fallback={
+            <>
+              <SkeletonCard lines={6} />
+              <SkeletonCard lines={8} />
+            </>
+          }
+        >
+          <PnlFedPanelsStreamed data={data} pnlResultPromise={pnlResultPromise} />
+        </Suspense>
         <ModernActivityPanel
           statistics={statistics}
-          balances={balances}
+          balances={data.balances}
           inventoryCount={data.inventoryCount}
           avgDeposit={counts.avgDeposit}
           userId={user.id}
@@ -164,16 +196,20 @@ export function OverviewTab({
 
       {/* Deposits & Withdrawals — streamed so balance panels paint first. */}
       <SectionHeading icon={ArrowDownToLine} title="Deposits & Withdrawals" />
-      <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
-        <DepositsWithdrawalsStreamed
-          userId={user.id}
-          cardWithdrawals={data.cardWithdrawals}
-          financialTxPromise={financialTxPromise}
-          isAdmin={isAdmin}
-          canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
-          viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
-        />
-      </Suspense>
+      {financialTxPromise ? (
+        <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
+          <DepositsWithdrawalsStreamed
+            userId={user.id}
+            cardWithdrawals={data.cardWithdrawals}
+            financialTxPromise={financialTxPromise}
+            isAdmin={isAdmin}
+            canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
+            viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
+          />
+        </Suspense>
+      ) : (
+        <SkeletonTable rows={5} columns={6} />
+      )}
 
       {/* Admin balance adjustments — OWNER ONLY (motha). Non-owner admins
           never see this block: the server already returns zero adjustment
@@ -182,7 +218,7 @@ export function OverviewTab({
           inventory removals/sales are written as admin_balance_adjustment
           rows ("Inventory removed: …"), so they surface HERE and in the
           Deposits & Withdrawals box above — like any other balance adjustment. */}
-      {viewerIsAdjustmentOwner && (
+      {viewerIsAdjustmentOwner && adjustmentsTxPromise && (
         <Suspense fallback={null}>
           <AdminAdjustmentsStreamed
             userId={user.id}
@@ -208,14 +244,53 @@ export function OverviewTab({
           adjustments). Streamed so the heaviest gaming enrichment never
           blocks the panels above. */}
       <SectionHeading icon={Activity} title="Recent Activity" />
-      <Suspense fallback={<SkeletonTable rows={5} columns={4} />}>
-        <RecentActivityStreamed
-          gamingTxPromise={gamingTxPromise}
-          financialTxPromise={financialTxPromise}
-          adjustmentsTxPromise={adjustmentsTxPromise}
-        />
-      </Suspense>
+      {gamingTxPromise && financialTxPromise && adjustmentsTxPromise ? (
+        <Suspense fallback={<SkeletonTable rows={5} columns={4} />}>
+          <RecentActivityStreamed
+            gamingTxPromise={gamingTxPromise}
+            financialTxPromise={financialTxPromise}
+            adjustmentsTxPromise={adjustmentsTxPromise}
+          />
+        </Suspense>
+      ) : (
+        <SkeletonTable rows={5} columns={4} />
+      )}
     </div>
+  );
+}
+
+// Balance + Platform-P&L panels — both fed by the P&L breakdown (pnl7d
+// Lossback autofill / rolling ladder), so they `use()` the SafeQueryResult
+// together. On a failed breakdown the Balance panel still renders its real
+// balances (pnl7d simply doesn't autofill) while the Platform-P&L slot shows
+// a VISIBLE band error instead of all-zero panels masquerading as "flat P&L".
+function PnlFedPanelsStreamed({
+  data,
+  pnlResultPromise,
+}: {
+  data: UserDetail;
+  pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
+}) {
+  const r = use(pnlResultPromise);
+  const { user, balances, capabilities } = data;
+  return (
+    <>
+      <ModernBalancePanel
+        balances={balances}
+        userId={user.id}
+        pnl7d={r.error ? undefined : r.data.pnl7d}
+        canAdjustBalance={capabilities.canAdjustBalance}
+        canRecordManualWithdrawal={capabilities.canRecordManualWithdrawal}
+      />
+      {r.error ? (
+        <BandError
+          title="Couldn't load Platform P&L"
+          hint="The P&L breakdown failed or timed out — this is a load failure, not a flat P&L. Retry re-runs it."
+        />
+      ) : (
+        <ModernPnlPanel balances={balances} pnlBreakdown={r.data} />
+      )}
+    </>
   );
 }
 
@@ -237,12 +312,12 @@ function DepositsWithdrawalsStreamed({
 }: {
   userId: string;
   cardWithdrawals: UserDetail["cardWithdrawals"];
-  financialTxPromise: Promise<PaginatedTransactions>;
+  financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
   isAdmin: boolean;
   canEditBalanceAdjustments: boolean;
   viewerIsAdjustmentOwner: boolean;
 }) {
-  const financialTx = use(financialTxPromise);
+  const r = use(financialTxPromise);
   return (
     <CategoryTransactionsTable
       title="Deposits & Withdrawals"
@@ -252,7 +327,8 @@ function DepositsWithdrawalsStreamed({
           ? FINANCIAL_TX_TYPES
           : FINANCIAL_TX_TYPES_NO_ADJUSTMENTS
       }
-      initialTx={financialTx}
+      initialTx={r.data}
+      initialLoadError={r.error}
       cardWithdrawals={cardWithdrawals}
       isAdmin={isAdmin}
       canEditBalanceAdjustments={canEditBalanceAdjustments}
@@ -267,11 +343,28 @@ function AdminAdjustmentsStreamed({
   canEditBalanceAdjustments,
 }: {
   userId: string;
-  adjustmentsTxPromise: Promise<PaginatedTransactions>;
+  adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
   isAdmin: boolean;
   canEditBalanceAdjustments: boolean;
 }) {
-  const adjustmentsTx = use(adjustmentsTxPromise);
+  const r = use(adjustmentsTxPromise);
+  // Load failure → a VISIBLE compact error card. The owner must be able to
+  // tell "no adjustments exist" (genuine empty → block self-hides below)
+  // from "the adjustments query failed" — silently self-hiding on failure
+  // would hide real adjustments behind a transient error.
+  if (r.error) {
+    return (
+      <>
+        <SectionHeading icon={Coins} title="Admin balance adjustments" />
+        <InlineError
+          compact
+          title="Couldn't load admin balance adjustments"
+          hint="This is a load failure, not an empty history — retry to re-run the query."
+        />
+      </>
+    );
+  }
+  const adjustmentsTx = r.data;
   if (adjustmentsTx.total <= 0) return null;
   const mothaOnly = isMothaOnlyAdjustmentsProfile(userId);
   return (
@@ -299,18 +392,30 @@ function RecentActivityStreamed({
   financialTxPromise,
   adjustmentsTxPromise,
 }: {
-  gamingTxPromise: Promise<PaginatedTransactions>;
-  financialTxPromise: Promise<PaginatedTransactions>;
-  adjustmentsTxPromise: Promise<PaginatedTransactions>;
+  gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
+  financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
+  adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
 }) {
   const gamingTx = use(gamingTxPromise);
   const financialTx = use(financialTxPromise);
   const adjustmentsTx = use(adjustmentsTxPromise);
+  // The timeline merges three feeds — if any leg failed, a partial merge
+  // would silently misrepresent the user's recent history (e.g. "only
+  // deposits, no gaming") — surface the failure instead.
+  if (gamingTx.error || financialTx.error || adjustmentsTx.error) {
+    return (
+      <InlineError
+        compact
+        title="Couldn't load recent activity"
+        hint="One of the underlying feeds failed or timed out — retry to re-run them."
+      />
+    );
+  }
   return (
     <RecentActivityTimeline
-      gamingTx={gamingTx.data.slice(0, 5)}
-      financialTx={financialTx.data.slice(0, 5)}
-      adjustmentsTx={adjustmentsTx.data}
+      gamingTx={gamingTx.data.data.slice(0, 5)}
+      financialTx={financialTx.data.data.slice(0, 5)}
+      adjustmentsTx={adjustmentsTx.data.data}
     />
   );
 }
@@ -523,13 +628,41 @@ function TipPanel({
 //  REWARDS TAB
 // ───────────────────────────────────────────────────────────────────
 
-export function RewardsTab({ rewards }: { rewards: UserRewards }) {
+export function RewardsTab({
+  rewardsPromise,
+}: {
+  rewardsPromise: Promise<SafeQueryResult<UserRewards>> | null;
+}) {
   return (
     <div className="space-y-6">
       <SectionHeading icon={Gift} title="Rewards" />
-      <RewardsCard rewards={rewards} />
+      {rewardsPromise ? (
+        <Suspense fallback={<SkeletonCard lines={4} />}>
+          <RewardsStreamed rewardsPromise={rewardsPromise} />
+        </Suspense>
+      ) : (
+        <SkeletonCard lines={4} />
+      )}
     </div>
   );
+}
+
+function RewardsStreamed({
+  rewardsPromise,
+}: {
+  rewardsPromise: Promise<SafeQueryResult<UserRewards>>;
+}) {
+  const r = use(rewardsPromise);
+  if (r.error) {
+    return (
+      <InlineError
+        compact
+        title="Couldn't load rewards"
+        hint="This is a load failure, not an empty rewards history — retry to re-run the query."
+      />
+    );
+  }
+  return <RewardsCard rewards={r.data} />;
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -543,7 +676,7 @@ export function FinancesTab({
   viewerIsAdjustmentOwner,
 }: {
   data: UserDetail;
-  financialTxPromise: Promise<PaginatedTransactions>;
+  financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   isAdmin: boolean;
   viewerIsAdjustmentOwner: boolean;
 }) {
@@ -551,16 +684,20 @@ export function FinancesTab({
   return (
     <div className="space-y-6">
       <SectionHeading icon={ArrowDownToLine} title="Deposits & Withdrawals" />
-      <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
-        <DepositsWithdrawalsStreamed
-          userId={user.id}
-          cardWithdrawals={data.cardWithdrawals}
-          financialTxPromise={financialTxPromise}
-          isAdmin={isAdmin}
-          canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
-          viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
-        />
-      </Suspense>
+      {financialTxPromise ? (
+        <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
+          <DepositsWithdrawalsStreamed
+            userId={user.id}
+            cardWithdrawals={data.cardWithdrawals}
+            financialTxPromise={financialTxPromise}
+            isAdmin={isAdmin}
+            canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
+            viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
+          />
+        </Suspense>
+      ) : (
+        <SkeletonTable rows={5} columns={6} />
+      )}
     </div>
   );
 }
@@ -574,7 +711,7 @@ export function GamingTab({
   gamingTxPromise,
 }: {
   data: UserDetail;
-  gamingTxPromise: Promise<PaginatedTransactions>;
+  gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
 }) {
   const { user } = data;
   // sessionRole drives the password-aware Watch button + password-reveal
@@ -586,13 +723,17 @@ export function GamingTab({
   return (
     <div className="space-y-6">
       <SectionHeading icon={Swords} title="Gaming Transactions" />
-      <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
-        <GamingTransactionsStreamed
-          userId={user.id}
-          gamingTxPromise={gamingTxPromise}
-          isAdmin={isAdmin}
-        />
-      </Suspense>
+      {gamingTxPromise ? (
+        <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
+          <GamingTransactionsStreamed
+            userId={user.id}
+            gamingTxPromise={gamingTxPromise}
+            isAdmin={isAdmin}
+          />
+        </Suspense>
+      ) : (
+        <SkeletonTable rows={5} columns={6} />
+      )}
 
       {/* Sponsored / free battles joined — these have no battle_bet ledger
           row so they never appear in the Gaming Transactions table above.
@@ -608,16 +749,17 @@ function GamingTransactionsStreamed({
   isAdmin,
 }: {
   userId: string;
-  gamingTxPromise: Promise<PaginatedTransactions>;
+  gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
   isAdmin: boolean;
 }) {
-  const gamingTx = use(gamingTxPromise);
+  const r = use(gamingTxPromise);
   return (
     <CategoryTransactionsTable
       title="Gaming"
       userId={userId}
       types={GAMING_TX_TYPES}
-      initialTx={gamingTx}
+      initialTx={r.data}
+      initialLoadError={r.error}
       showCardsValue
       isAdmin={isAdmin}
     />
@@ -630,59 +772,90 @@ function GamingTransactionsStreamed({
 
 export function InventoryTab({
   data,
-  inventory,
+  inventoryPromise,
   disposedInventoryPromise,
 }: {
   data: UserDetail;
-  inventory: PaginatedInventory;
-  // Disposed inventory is non-critical (it backs only the "Sold &
-  // Exchanged" table below) so page.tsx streams it in as an in-flight
-  // promise. The OWNED grid above renders immediately from the eager
-  // `inventory` prop; only the disposed table waits behind a scoped
-  // Suspense, so opening this tab never blocks on the disposed read.
-  disposedInventoryPromise: Promise<PaginatedInventory>;
+  // Both inventory pages are tab-gated reads (kicked only when ?tab=
+  // inventory is active — Active-Timeframe-Only). The hero's inventory /
+  // voucher VALUES come from `balances` inside the detail aggregate, so
+  // moving the owned page out of the body gate costs the hero nothing.
+  inventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
+  disposedInventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
 }) {
-  const { user, balances } = data;
+  const { user } = data;
   return (
     <div className="space-y-6">
       <SectionHeading icon={Gem} title="Current Inventory" />
-      <InventoryGrid
-        userId={user.id}
-        initialInventory={inventory}
-        inventoryValue={balances?.inventoryValue ?? 0}
-        vouchersValue={balances?.vouchersValue ?? 0}
-        statusFilter="owned"
-        canDeleteInventory={data.capabilities.canAdjustBalance}
-      />
+      {inventoryPromise ? (
+        <Suspense fallback={<SkeletonTable rows={4} columns={6} />}>
+          <OwnedInventoryStreamed data={data} inventoryPromise={inventoryPromise} />
+        </Suspense>
+      ) : (
+        <SkeletonTable rows={4} columns={6} />
+      )}
       <UserVouchersPanel
         userId={user.id}
         canRemove={data.capabilities.canAdjustBalance}
       />
       <SectionHeading icon={Trophy} title="Sold & Exchanged" />
-      <Suspense fallback={<SkeletonTable rows={5} columns={5} />}>
-        <DisposedCardsStreamed
-          userId={user.id}
-          disposedInventoryPromise={disposedInventoryPromise}
-        />
-      </Suspense>
+      {disposedInventoryPromise ? (
+        <Suspense fallback={<SkeletonTable rows={5} columns={5} />}>
+          <DisposedCardsStreamed
+            userId={user.id}
+            disposedInventoryPromise={disposedInventoryPromise}
+          />
+        </Suspense>
+      ) : (
+        <SkeletonTable rows={5} columns={5} />
+      )}
     </div>
   );
 }
 
-// Thin wrapper that `use()`s the streamed disposed-inventory promise and
-// renders the unchanged <DisposedCardsTable> with the resolved page. Keeps
-// DisposedCardsTable's own prop shape (a resolved PaginatedInventory)
-// intact — only the await point moved off the critical path.
+// `use()`s the streamed owned-inventory result and renders the unchanged
+// <InventoryGrid> with the resolved page + its load error (error ≠ empty —
+// the grid shows an InlineError instead of "No items in inventory" when the
+// seeding query failed).
+function OwnedInventoryStreamed({
+  data,
+  inventoryPromise,
+}: {
+  data: UserDetail;
+  inventoryPromise: Promise<SafeQueryResult<PaginatedInventory>>;
+}) {
+  const r = use(inventoryPromise);
+  const { user, balances } = data;
+  return (
+    <InventoryGrid
+      userId={user.id}
+      initialInventory={r.data}
+      initialLoadError={r.error}
+      inventoryValue={balances?.inventoryValue ?? 0}
+      vouchersValue={balances?.vouchersValue ?? 0}
+      statusFilter="owned"
+      canDeleteInventory={data.capabilities.canAdjustBalance}
+    />
+  );
+}
+
+// Thin wrapper that `use()`s the streamed disposed-inventory result and
+// renders the unchanged <DisposedCardsTable> with the resolved page + its
+// load error — only the await point moved off the critical path.
 function DisposedCardsStreamed({
   userId,
   disposedInventoryPromise,
 }: {
   userId: string;
-  disposedInventoryPromise: Promise<PaginatedInventory>;
+  disposedInventoryPromise: Promise<SafeQueryResult<PaginatedInventory>>;
 }) {
-  const disposedInventory = use(disposedInventoryPromise);
+  const r = use(disposedInventoryPromise);
   return (
-    <DisposedCardsTable userId={userId} initialInventory={disposedInventory} />
+    <DisposedCardsTable
+      userId={userId}
+      initialInventory={r.data}
+      initialLoadError={r.error}
+    />
   );
 }
 
@@ -1397,36 +1570,41 @@ function OwnedCodeRow({
 
 export function AccountTab({
   data,
-  notes,
-  pnlBreakdown,
-  wagerRequirement,
+  notesPromise,
+  pnlResultPromise,
+  wagerRequirementPromise,
 }: {
   data: UserDetail;
-  notes: AdminNote[];
-  pnlBreakdown: PnlBreakdown;
-  wagerRequirement: UserWagerRequirement | null;
+  notesPromise: Promise<SafeQueryResult<AdminNote[]>> | null;
+  pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
+  // Backend-API read (NOT the MAIN DB). Resolves to null when the backend
+  // branch isn't deployed / the read failed — the card renders its muted
+  // "awaiting backend deploy" state for null, exactly as before; only the
+  // await point moved off the body gate's serial tail.
+  wagerRequirementPromise: Promise<UserWagerRequirement | null> | null;
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
   return (
     <div className="space-y-6">
       <SectionHeading icon={Dices} title="Wagering Stats" />
       <WageringStatsCard balances={balances} />
-      {/* Windowed P&L strip — five rolling windows (12h / 24h / 3d /
-          7d / 14d) sitting directly under the wagering stats so
-          admins reading the Account tab can see how this user has
-          been performing for the house across short-to-mid-term
-          horizons without leaving the tab. Same windowed formula
-          as the Rolling P&L block on the Overview tab — both pull
-          from the same getUserPnlBreakdown call so the numbers stay
-          consistent across tabs. House POV per CLAUDE.md: positive
-          P&L (user lost net) → emerald, negative (user gained net)
-          → rose. */}
-      <SectionHeading icon={TrendingUp} title="Windowed P&L" />
-      <WindowedPnlStrip pnlBreakdown={pnlBreakdown} />
-      <SectionHeading icon={Banknote} title="Windowed Deposits" />
-      <WindowedDepositsStrip pnlBreakdown={pnlBreakdown} />
-      <SectionHeading icon={Coins} title="Windowed Wager" />
-      <WindowedWagerStrip pnlBreakdown={pnlBreakdown} />
+      {/* Windowed P&L / Deposits / Wager strips — all three are fed by the
+          same getUserPnlBreakdown call as the Overview tab's Rolling P&L
+          ladder, so they stream as one cluster on pnlResultPromise (and the
+          numbers can never drift between tabs). On failure: one VISIBLE
+          band error, never five neutral $0.00 tiles. House POV per
+          CLAUDE.md: positive P&L (user lost net) → emerald, negative (user
+          gained net) → rose. */}
+      <Suspense
+        fallback={
+          <>
+            <SectionHeading icon={TrendingUp} title="Windowed P&L" />
+            <SkeletonCard lines={3} />
+          </>
+        }
+      >
+        <WindowedStripsStreamed pnlResultPromise={pnlResultPromise} />
+      </Suspense>
       <SectionHeading icon={ShieldCheck} title="Account Details" />
       <Card>
         <CardContent className="pt-6">
@@ -1451,11 +1629,17 @@ export function AccountTab({
         canManage={data.sessionRole === "admin"}
       />
       <SectionHeading icon={Banknote} title="Withdrawal Wager Requirement" />
-      <UserWagerRequirementCard
-        userId={user.id}
-        data={wagerRequirement}
-        canManage={data.sessionRole === "admin"}
-      />
+      {wagerRequirementPromise ? (
+        <Suspense fallback={<SkeletonCard lines={3} />}>
+          <WagerRequirementStreamed
+            userId={user.id}
+            wagerRequirementPromise={wagerRequirementPromise}
+            canManage={data.sessionRole === "admin"}
+          />
+        </Suspense>
+      ) : (
+        <SkeletonCard lines={3} />
+      )}
       <SectionHeading icon={ShieldCheck} title="Moderation" />
       <Card>
         <CardContent className="pt-6 space-y-4">
@@ -1463,9 +1647,88 @@ export function AccountTab({
         </CardContent>
       </Card>
       <SectionHeading icon={FileText} title="Admin Notes" />
-      <NotesSection userId={user.id} notes={notes} />
+      {notesPromise ? (
+        <Suspense fallback={<SkeletonCard lines={3} />}>
+          <NotesStreamed userId={user.id} notesPromise={notesPromise} />
+        </Suspense>
+      ) : (
+        <SkeletonCard lines={3} />
+      )}
     </div>
   );
+}
+
+// The three windowed strips (P&L / Deposits / Wager) share one P&L
+// breakdown — `use()`d once here so a failed breakdown renders ONE visible
+// band error instead of fifteen neutral "$0.00" tiles (a silent failure an
+// admin would read as "quiet user").
+function WindowedStripsStreamed({
+  pnlResultPromise,
+}: {
+  pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
+}) {
+  const r = use(pnlResultPromise);
+  if (r.error) {
+    return (
+      <>
+        <SectionHeading icon={TrendingUp} title="Windowed P&L" />
+        <BandError
+          title="Couldn't load windowed P&L / deposits / wager"
+          hint="The P&L breakdown failed or timed out — this is a load failure, not a quiet account. Retry re-runs it."
+        />
+      </>
+    );
+  }
+  const pnlBreakdown = r.data;
+  return (
+    <>
+      <SectionHeading icon={TrendingUp} title="Windowed P&L" />
+      <WindowedPnlStrip pnlBreakdown={pnlBreakdown} />
+      <SectionHeading icon={Banknote} title="Windowed Deposits" />
+      <WindowedDepositsStrip pnlBreakdown={pnlBreakdown} />
+      <SectionHeading icon={Coins} title="Windowed Wager" />
+      <WindowedWagerStrip pnlBreakdown={pnlBreakdown} />
+    </>
+  );
+}
+
+function WagerRequirementStreamed({
+  userId,
+  wagerRequirementPromise,
+  canManage,
+}: {
+  userId: string;
+  wagerRequirementPromise: Promise<UserWagerRequirement | null>;
+  canManage: boolean;
+}) {
+  const wagerRequirement = use(wagerRequirementPromise);
+  return (
+    <UserWagerRequirementCard
+      userId={userId}
+      data={wagerRequirement}
+      canManage={canManage}
+    />
+  );
+}
+
+function NotesStreamed({
+  userId,
+  notesPromise,
+}: {
+  userId: string;
+  notesPromise: Promise<SafeQueryResult<AdminNote[]>>;
+}) {
+  const r = use(notesPromise);
+  if (r.error) {
+    return (
+      <InlineError
+        compact
+        title="Couldn't load admin notes"
+        hint="This is a load failure (admin DB), not an empty notes list — retry to re-run the query."
+      />
+    );
+  }
+  return <NotesSection userId={userId} notes={r.data} />;
 }
 
 // Wagering stats — moved out of the hero KPI strip to keep the hero

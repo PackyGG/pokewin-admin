@@ -27,6 +27,13 @@ import type {
 import type { UserRewards } from "@/lib/queries/users";
 import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 import type { RiskScoreBreakdown } from "@/lib/fraud/score-types";
+import type { SafeQueryResult } from "@/lib/errors/safe-query";
+
+/** Wrap a fixture value in the resolved success shape the page's
+ *  SafeQueryResult band promises carry (reliability remake). */
+function ok<T>(data: T): Promise<SafeQueryResult<T>> {
+  return Promise.resolve({ data, error: null });
+}
 
 const EMPTY_TX: PaginatedTransactions = {
   data: [],
@@ -233,28 +240,26 @@ const DATA: UserDetail = {
 };
 
 export function UserDetailFixtureClient() {
-  // The tab-gated reads are passed as already-resolved promises — the hero
-  // + Overview tab (what the audit measures) never await them, but the
-  // component signature requires them.
-  const disposed = Promise.resolve(EMPTY_INVENTORY);
-  const sharedIps = Promise.resolve<SharedIdentityUser[]>([]);
-  const sharedFps = Promise.resolve<SharedIdentityUser[]>([]);
-
+  // Every band input is passed as an already-resolved SafeQueryResult
+  // promise (the page's streamed-band contract) — the hero + Overview tab
+  // (what the audit measures) render synchronously from them. Tab-gated
+  // bands the fixture doesn't exercise still get resolved values so any
+  // tab click renders without a server round-trip.
   return (
     <UserViewModern
       data={DATA}
-      gamingTxPromise={Promise.resolve(EMPTY_TX)}
-      financialTxPromise={Promise.resolve(EMPTY_TX)}
-      adjustmentsTxPromise={Promise.resolve(EMPTY_TX)}
-      rewards={REWARDS}
-      notes={NOTES}
-      pnlBreakdown={PNL}
-      inventory={EMPTY_INVENTORY}
-      disposedInventoryPromise={disposed}
-      riskBreakdown={RISK}
-      wagerRequirement={null}
-      sharedIpsPromise={sharedIps}
-      sharedFingerprintsPromise={sharedFps}
+      pnlResultPromise={ok(PNL)}
+      riskResultPromise={ok<RiskScoreBreakdown>(RISK)}
+      gamingTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
+      financialTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
+      adjustmentsTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
+      rewardsPromise={ok<UserRewards>(REWARDS)}
+      notesPromise={ok<AdminNote[]>(NOTES)}
+      inventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}
+      disposedInventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}
+      sharedIpsPromise={ok<SharedIdentityUser[]>([])}
+      sharedFingerprintsPromise={ok<SharedIdentityUser[]>([])}
+      wagerRequirementPromise={Promise.resolve(null)}
       viewerIsAdjustmentOwner
       initialTab="overview"
     />

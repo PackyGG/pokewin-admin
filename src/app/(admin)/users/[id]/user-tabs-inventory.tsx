@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { toast } from "sonner";
 import {
   ChevronLeft,
   ChevronRight,
@@ -28,6 +29,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { CardImage } from "@/components/card-image";
 import { EmptyState } from "@/components/empty-state";
+import { InlineError } from "@/components/entity-surface/inline-error";
 import { fetchInventory } from "./actions";
 import { InventoryItemDeleteDialog } from "./inventory-item-delete-dialog";
 import { InventoryBulkDeleteDialog } from "./inventory-bulk-delete-dialog";
@@ -50,6 +52,7 @@ const INVENTORY_RARITY_COLORS: Record<string, string> = {
 export const InventoryGrid = React.memo(function InventoryGrid({
   userId,
   initialInventory,
+  initialLoadError = null,
   inventoryValue,
   vouchersValue = 0,
   statusFilter = "owned",
@@ -57,6 +60,13 @@ export const InventoryGrid = React.memo(function InventoryGrid({
 }: {
   userId: string;
   initialInventory: PaginatedInventory;
+  /**
+   * Error string from the server-side safeQuery that produced
+   * `initialInventory` (null on success). When set, the seeded page is the
+   * empty fallback — render a VISIBLE error instead of "No items in
+   * inventory" so a failed scan can't masquerade as an empty stash.
+   */
+  initialLoadError?: string | null;
   inventoryValue: number;
   /** Unclaimed voucher value the user is holding. Shown next to the
    *  card value so "Current Inventory" reflects all held value — a
@@ -67,6 +77,9 @@ export const InventoryGrid = React.memo(function InventoryGrid({
   canDeleteInventory?: boolean;
 }) {
   const [inventory, setInventory] = useState(initialInventory);
+  const [loadError, setLoadError] = useState<string | null>(
+    initialLoadError ?? null,
+  );
   const [loading, setLoading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
   // Multi-select for bulk removal. Holds inventory-item ids + their values
@@ -133,6 +146,12 @@ export const InventoryGrid = React.memo(function InventoryGrid({
     try {
       const result = await fetchInventory(userId, p, 24, filters);
       setInventory(result);
+      setLoadError(null);
+    } catch {
+      // Don't let a rejected fetch bubble out of the handler — keep the
+      // previous grid on screen and surface a toast (a thrown action here
+      // used to escalate to the segment error boundary = whole page gone).
+      toast.error("Couldn't load inventory — try again");
     } finally {
       setLoading(false);
     }
@@ -411,6 +430,14 @@ export const InventoryGrid = React.memo(function InventoryGrid({
             <>
               {data.length > 0 ? (
                 <div className={gridClass}>{data.map(renderCard)}</div>
+              ) : loadError ? (
+                // Failed/timed-out inventory query — visible error, never
+                // the "No items" empty state (error ≠ empty).
+                <InlineError
+                  compact
+                  title="Couldn't load inventory"
+                  hint="This is a load failure, not an empty inventory — retry to re-run the query."
+                />
               ) : (
                 <EmptyState
                   icon={Gem}
@@ -462,11 +489,17 @@ export const InventoryGrid = React.memo(function InventoryGrid({
 export const DisposedCardsTable = React.memo(function DisposedCardsTable({
   userId,
   initialInventory,
+  initialLoadError = null,
 }: {
   userId: string;
   initialInventory: PaginatedInventory;
+  /** Same contract as InventoryGrid.initialLoadError — error ≠ empty. */
+  initialLoadError?: string | null;
 }) {
   const [inventory, setInventory] = useState(initialInventory);
+  const [loadError, setLoadError] = useState<string | null>(
+    initialLoadError ?? null,
+  );
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"disposed" | "sold" | "exchanged">("disposed");
   const [rarity, setRarity] = useState("all");
@@ -501,6 +534,11 @@ export const DisposedCardsTable = React.memo(function DisposedCardsTable({
     try {
       const result = await fetchInventory(userId, p, 24, filters);
       setInventory(result);
+      setLoadError(null);
+    } catch {
+      // Keep previous rows + toast — same no-page-nuke contract as
+      // InventoryGrid / CategoryTransactionsTable.
+      toast.error("Couldn't load sold & exchanged cards — try again");
     } finally {
       setLoading(false);
     }
@@ -687,6 +725,12 @@ export const DisposedCardsTable = React.memo(function DisposedCardsTable({
               );
             })}
           </div>
+        ) : loadError ? (
+          <InlineError
+            compact
+            title="Couldn't load sold & exchanged cards"
+            hint="This is a load failure, not an empty history — retry to re-run the query."
+          />
         ) : (
           <EmptyState
             icon={Package}

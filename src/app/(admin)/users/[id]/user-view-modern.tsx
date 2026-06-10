@@ -20,8 +20,17 @@
  */
 
 import * as React from "react";
-import { useMemo, useState, useEffect, use, Suspense } from "react";
+import {
+  useCallback,
+  useMemo,
+  useState,
+  useEffect,
+  useTransition,
+  use,
+  Suspense,
+} from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Wallet,
   TrendingUp,
@@ -61,6 +70,8 @@ import type { UserRewards } from "@/lib/queries/users";
 import type { PaginatedInventory } from "./user-tabs-types";
 import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
+import type { SafeQueryResult } from "@/lib/errors/safe-query";
+import { ErrorPill } from "./band-error";
 import { TILE_COLORS } from "./user-view-modern-panels";
 import {
   OverviewTab,
@@ -141,63 +152,105 @@ const TABS: TabDef[] = [
 
 export function UserViewModern({
   data,
+  pnlResultPromise,
+  riskResultPromise,
   gamingTxPromise,
   financialTxPromise,
   adjustmentsTxPromise,
-  rewards,
-  notes,
-  pnlBreakdown,
-  inventory,
+  rewardsPromise,
+  notesPromise,
+  inventoryPromise,
   disposedInventoryPromise,
-  riskBreakdown,
   sharedIpsPromise,
   sharedFingerprintsPromise,
-  wagerRequirement,
+  wagerRequirementPromise,
   viewerIsAdjustmentOwner,
   initialTab,
 }: {
   data: UserDetail;
-  // Gaming + financial ledger pages streamed in as in-flight promises from
-  // page.tsx so the hero + balance panels paint without blocking on ledger
-  // enrichment (battles, inventory sweep, upgrader joins). Each is `use()`d
-  // inside a Suspense scoped to the section/tab that needs it.
-  gamingTxPromise: Promise<PaginatedTransactions>;
-  financialTxPromise: Promise<PaginatedTransactions>;
-  // Dedicated uncapped admin_balance_adjustment page (see page.tsx ADJ_LIMIT)
-  // so the Overview tab can surface every adjustment without the shared
-  // financial page hiding older ones behind newer activity.
-  adjustmentsTxPromise: Promise<PaginatedTransactions>;
-  rewards: UserRewards;
-  notes: AdminNote[];
-  pnlBreakdown: PnlBreakdown;
-  inventory: PaginatedInventory;
-  // Tab-gated, non-critical reads streamed in as in-flight promises from
-  // page.tsx. Each is `use()`d inside a Suspense scoped to just the tab
-  // that needs it (disposed inventory → Inventory tab; shared IPs/
-  // fingerprints → Trust tab).
-  disposedInventoryPromise: Promise<PaginatedInventory>;
-  riskBreakdown: RiskScoreBreakdown;
-  sharedIpsPromise: Promise<SharedIdentityUser[]>;
-  sharedFingerprintsPromise: Promise<SharedIdentityUser[]>;
-  // Per-user withdrawal wager-requirement override (backend API). null when
-  // the backend branch isn't deployed yet — the Account-tab card degrades.
-  wagerRequirement: UserWagerRequirement | null;
+  // ── Streamed-band contract (reliability remake) ──────────────────────
+  // Every band promise resolves to a WHOLE SafeQueryResult ({ data, error })
+  // — nothing is unwrapped server-side anymore, so each band can render
+  // data, an explicit empty state, or a VISIBLE error (never a silent
+  // empty). `null` = the query was not kicked for the active tab
+  // (Active-Timeframe-Only); the band shows its skeleton and the URL-driven
+  // tab switch re-renders the server component which kicks it. The
+  // promises never reject (safeQuery), so no client error boundaries are
+  // needed around the `use()` sites.
+  //
+  // Always kicked (tab-independent — they feed the hero + cross-tab P&L):
+  pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
+  riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
+  // Overview + Gaming:
+  gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
+  // Overview + Finances:
+  financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
+  // Overview, owner only — dedicated uncapped admin_balance_adjustment page
+  // (see page.tsx ADJ_LIMIT) so the Overview tab can surface every
+  // adjustment without the shared financial page hiding older ones behind
+  // newer activity. Non-owners receive a resolved empty page (the server
+  // gate in getUserTransactions stays the authority).
+  adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
+  // Rewards tab:
+  rewardsPromise: Promise<SafeQueryResult<UserRewards>> | null;
+  // Account tab:
+  notesPromise: Promise<SafeQueryResult<AdminNote[]>> | null;
+  // Inventory tab:
+  inventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
+  disposedInventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
+  // Trust tab:
+  sharedIpsPromise: Promise<SafeQueryResult<SharedIdentityUser[]>> | null;
+  sharedFingerprintsPromise: Promise<SafeQueryResult<SharedIdentityUser[]>> | null;
+  // Account tab — per-user withdrawal wager-requirement override (backend
+  // API, NOT the MAIN DB; plain nullable value, its own catch→null wrapper
+  // in page.tsx). null resolution = the card's muted degraded state.
+  wagerRequirementPromise: Promise<UserWagerRequirement | null> | null;
   // True only for the owner `motha`. Defence-in-depth UI flag: when false the
   // Finances type-filter dropdown drops the "admin balance adjustment" option
   // so a non-owner never even sees the category label. The real boundary is
   // server-side (getUserTransactions returns no adjustment rows for non-owners).
   viewerIsAdjustmentOwner: boolean;
-  // Initial tab seeded from the ?tab= URL param so deep-links (e.g.
-  // the hero risk badges that linked to ?tab=trust, or external
-  // bookmarks) still land on the correct tab. After mount the tab
-  // state is client-side so subsequent switches are instant — no
-  // server round-trip, no refetch.
+  // Tab seeded from the ?tab= URL param. Tab clicks update BOTH the local
+  // state (instant pill switch) and the URL (router.replace inside a
+  // transition) — the server re-render against the new ?tab= kicks exactly
+  // that tab's queries. Deep-links and back/forward stay correct because
+  // this prop re-syncs the pill on every new server payload.
   initialTab: TabKey;
 }) {
   const { user, balances, counts, capabilities } = data;
   const isAdmin = data.sessionRole === "admin";
   const canChangeUserRoles = capabilities.canChangeUserRoles;
+  const router = useRouter();
+  const pathname = usePathname();
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
+  // Transition for the URL write so the optimistic pill switch is never
+  // blocked by the server round-trip (React keeps the previous content
+  // visible while the new tab's band streams in — boundaries aren't
+  // re-keyed, so there's no fallback flash on refresh).
+  const [, startTabTransition] = useTransition();
+
+  // Keep the pill in sync with the URL on every new server payload —
+  // back/forward navigation and external deep-links change ?tab= without a
+  // click, and the kicked band promises follow the URL. Without this sync
+  // the visible tab could point at bands whose queries were never kicked
+  // (permanent skeletons). After an optimistic click this is a no-op (the
+  // payload's initialTab matches what was already set).
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
+  const handleTabChange = useCallback(
+    (k: TabKey) => {
+      setActiveTab(k); // instant optimistic pill switch
+      startTabTransition(() => {
+        // URL is the source of truth for which tab's queries get kicked —
+        // the server re-render against ?tab=k streams that tab's bands.
+        // `scroll: false` keeps the operator's scroll position.
+        router.replace(`${pathname}?tab=${k}`, { scroll: false });
+      });
+    },
+    [pathname, router],
+  );
 
   const visibleTabs = useMemo(
     () => TABS.filter((t) => !t.show || t.show(data)),
@@ -403,44 +456,20 @@ export function UserViewModern({
                       {user.affiliateCode}
                     </Badge>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("trust")}
-                    className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
-                    aria-label={`Risk score ${riskBreakdown.score} of 100 — ${tierLabel(riskBreakdown.tier)}. Open Trust tab.`}
+                  {/* Risk badges — their own streamed island so the heavy
+                      fraud scan never blocks the identity hero. On a failed
+                      scan the pill reads "Risk —" (unavailable) — NEVER a
+                      neutral "Risk 0" false all-clear. */}
+                  <Suspense
+                    fallback={
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                    }
                   >
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "text-[10px] py-0 h-5 cursor-pointer",
-                        RISK_TIER_COLORS[riskBreakdown.tier],
-                      )}
-                    >
-                      <ShieldAlert className="mr-0.5 size-2.5" />
-                      Risk {riskBreakdown.score}
-                    </Badge>
-                  </button>
-                  {riskBreakdown.sharedIpCount >= 2 && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("trust")}
-                      className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
-                      aria-label={`Shared IP with ${riskBreakdown.sharedIpCount} other accounts. Open Trust tab.`}
-                    >
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "text-[10px] py-0 h-5 cursor-pointer",
-                          riskBreakdown.sharedIpCount >= 5
-                            ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
-                            : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-                        )}
-                      >
-                        <Link2 className="mr-0.5 size-2.5" />
-                        {riskBreakdown.sharedIpCount} shared IP
-                      </Badge>
-                    </button>
-                  )}
+                    <HeroRiskBadges
+                      riskResultPromise={riskResultPromise}
+                      onOpenTrust={() => handleTabChange("trust")}
+                    />
+                  </Suspense>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-muted-foreground">
                   <span className="inline-flex items-center gap-0.5">
@@ -536,14 +565,17 @@ export function UserViewModern({
       <ScrollableTabBar
         visibleTabs={visibleTabs}
         activeTab={activeTab}
-        onChange={setActiveTab}
+        onChange={handleTabChange}
       />
 
       {/* ── TAB CONTENT ──────────────────────────────────────────────
-          Tab switches are instant client-side toggles. Ledger-backed
-          sections stream in behind scoped Suspense boundaries so the hero
-          and balance panels never wait on gaming enrichment. FadeIn keyed
-          on the active tab matches the analytics-tab crossfade behaviour. */}
+          Tab switches flip the pill instantly (optimistic state) AND write
+          ?tab= to the URL inside a transition — the server re-render kicks
+          exactly the new tab's queries and streams them in. Until that
+          payload arrives a band whose promise is still null renders its
+          skeleton. FadeIn is keyed on the active tab ONLY (never on data /
+          refresh counters) so AutoRefresh re-streams stay flash-free and
+          mounted dialogs survive. */}
       <FadeIn key={activeTab} speed="fast">
         {activeTab === "overview" && (
           <OverviewTab
@@ -551,7 +583,7 @@ export function UserViewModern({
             gamingTxPromise={gamingTxPromise}
             financialTxPromise={financialTxPromise}
             adjustmentsTxPromise={adjustmentsTxPromise}
-            pnlBreakdown={pnlBreakdown}
+            pnlResultPromise={pnlResultPromise}
             isAdmin={isAdmin}
             viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
           />
@@ -566,35 +598,40 @@ export function UserViewModern({
           />
         )}
 
-        {activeTab === "rewards" && <RewardsTab rewards={rewards} />}
+        {activeTab === "rewards" && (
+          <RewardsTab rewardsPromise={rewardsPromise} />
+        )}
 
         {activeTab === "gaming" && (
           <GamingTab data={data} gamingTxPromise={gamingTxPromise} />
         )}
 
         {activeTab === "inventory" && (
-          // Owned inventory (critical `inventory` prop) paints immediately;
-          // InventoryTab streams ONLY its disposed "Sold & Exchanged" table
-          // behind an inner Suspense scoped to disposedInventoryPromise.
           <InventoryTab
             data={data}
-            inventory={inventory}
+            inventoryPromise={inventoryPromise}
             disposedInventoryPromise={disposedInventoryPromise}
           />
         )}
 
         {activeTab === "trust" && (
-          // The whole Trust tab depends on the shared-identity fan-out, so
-          // it streams as a unit behind its own Suspense; the risk score
-          // itself is already resolved (critical — the hero badges read it).
-          <Suspense fallback={<TrustTabFallback />}>
-            <TrustTabStreamed
-              userId={user.id}
-              breakdown={riskBreakdown}
-              sharedIpsPromise={sharedIpsPromise}
-              sharedFingerprintsPromise={sharedFingerprintsPromise}
-            />
-          </Suspense>
+          // The whole Trust tab depends on the shared-identity fan-out +
+          // the risk scan; all three legs travel as SafeQueryResults so a
+          // failed leg renders a visible band error inside the tab. Null
+          // promises (tab not yet kicked) → fallback skeleton until the
+          // URL-driven re-render streams them.
+          (sharedIpsPromise && sharedFingerprintsPromise ? (
+            <Suspense fallback={<TrustTabFallback />}>
+              <TrustTabStreamed
+                userId={user.id}
+                riskResultPromise={riskResultPromise}
+                sharedIpsPromise={sharedIpsPromise}
+                sharedFingerprintsPromise={sharedFingerprintsPromise}
+              />
+            </Suspense>
+          ) : (
+            <TrustTabFallback />
+          ))
         )}
 
         {activeTab === "affiliate" && <AffiliateTab data={data} />}
@@ -602,13 +639,85 @@ export function UserViewModern({
         {activeTab === "account" && (
           <AccountTab
             data={data}
-            notes={notes}
-            pnlBreakdown={pnlBreakdown}
-            wagerRequirement={wagerRequirement}
+            notesPromise={notesPromise}
+            pnlResultPromise={pnlResultPromise}
+            wagerRequirementPromise={wagerRequirementPromise}
           />
         )}
       </FadeIn>
     </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  HERO RISK BADGES — streamed island
+//
+//  `use()`s the always-kicked risk SafeQueryResult so the identity hero
+//  paints without waiting on the fraud scan. Three states:
+//    pending  → pill skeleton (Suspense fallback at the call site),
+//    error    → amber "Risk —" pill (unavailable ≠ low risk),
+//    success  → the same risk + shared-IP badges as before, both opening
+//               the Trust tab via the URL-driven tab switch.
+// ───────────────────────────────────────────────────────────────────
+
+function HeroRiskBadges({
+  riskResultPromise,
+  onOpenTrust,
+}: {
+  riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
+  onOpenTrust: () => void;
+}) {
+  const r = use(riskResultPromise);
+  if (r.error) {
+    return (
+      <ErrorPill
+        label="Risk —"
+        title="Risk score unavailable — the fraud scan failed or timed out. This is a load failure, not a low-risk signal."
+      />
+    );
+  }
+  const riskBreakdown = r.data;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onOpenTrust}
+        className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
+        aria-label={`Risk score ${riskBreakdown.score} of 100 — ${tierLabel(riskBreakdown.tier)}. Open Trust tab.`}
+      >
+        <Badge
+          variant="outline"
+          className={cn(
+            "text-[10px] py-0 h-5 cursor-pointer",
+            RISK_TIER_COLORS[riskBreakdown.tier],
+          )}
+        >
+          <ShieldAlert className="mr-0.5 size-2.5" />
+          Risk {riskBreakdown.score}
+        </Badge>
+      </button>
+      {riskBreakdown.sharedIpCount >= 2 && (
+        <button
+          type="button"
+          onClick={onOpenTrust}
+          className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
+          aria-label={`Shared IP with ${riskBreakdown.sharedIpCount} other accounts. Open Trust tab.`}
+        >
+          <Badge
+            variant="outline"
+            className={cn(
+              "text-[10px] py-0 h-5 cursor-pointer",
+              riskBreakdown.sharedIpCount >= 5
+                ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+            )}
+          >
+            <Link2 className="mr-0.5 size-2.5" />
+            {riskBreakdown.sharedIpCount} shared IP
+          </Badge>
+        </button>
+      )}
+    </>
   );
 }
 
@@ -716,32 +825,36 @@ function ScrollableTabBar({
 //  TRUST TAB — streamed wrapper + fallback
 //
 //  The Trust tab's shared-IP / shared-fingerprint lists come from a
-//  network/identity fan-out that page.tsx now kicks off OFF the critical
-//  path (see UserDetailBody). This thin client wrapper `use()`s those
-//  in-flight promises and renders the unchanged <TrustTab> with the
-//  resolved arrays, so the heavy read no longer blocks the hero / Overview.
+//  tab-gated fan-out (kicked only when ?tab=trust is active) and the risk
+//  scan is the always-kicked hero read. All three travel as WHOLE
+//  SafeQueryResults — TrustTab renders a visible per-leg error instead of
+//  "no shared accounts" / a neutral low-risk hero when a leg failed.
 //  Only mounted when the Trust tab is active, inside a <Suspense>.
 // ───────────────────────────────────────────────────────────────────
 
 function TrustTabStreamed({
   userId,
-  breakdown,
+  riskResultPromise,
   sharedIpsPromise,
   sharedFingerprintsPromise,
 }: {
   userId: string;
-  breakdown: RiskScoreBreakdown;
-  sharedIpsPromise: Promise<SharedIdentityUser[]>;
-  sharedFingerprintsPromise: Promise<SharedIdentityUser[]>;
+  riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
+  sharedIpsPromise: Promise<SafeQueryResult<SharedIdentityUser[]>>;
+  sharedFingerprintsPromise: Promise<SafeQueryResult<SharedIdentityUser[]>>;
 }) {
-  const sharedIps = use(sharedIpsPromise);
-  const sharedFingerprints = use(sharedFingerprintsPromise);
+  const riskResult = use(riskResultPromise);
+  const ipsResult = use(sharedIpsPromise);
+  const fpsResult = use(sharedFingerprintsPromise);
   return (
     <TrustTab
       userId={userId}
-      breakdown={breakdown}
-      sharedIps={sharedIps}
-      sharedFingerprints={sharedFingerprints}
+      breakdown={riskResult.data}
+      breakdownError={riskResult.error}
+      sharedIps={ipsResult.data}
+      sharedIpsError={ipsResult.error}
+      sharedFingerprints={fpsResult.data}
+      sharedFingerprintsError={fpsResult.error}
     />
   );
 }
