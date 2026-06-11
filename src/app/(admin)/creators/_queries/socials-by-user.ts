@@ -1,5 +1,7 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import { adminDb } from "@/lib/admin-db";
 import { resolveLinkedHandle } from "@/lib/creator-hub";
 import {
@@ -193,12 +195,49 @@ export async function getRosterSocialsByUser(
 /**
  * Merged linked socials for one creator — same admin-first + backend-fallback
  * union roster cards use ({@link getRosterSocialsByUser}).
+ *
+ * NOTE this walks the WHOLE backend approval roster (200/page) to extract
+ * one user — fine batched for the roster grid, expensive per-render for a
+ * single creator. Single-creator surfaces (creator banner header-socials,
+ * hub Creator tab metadata) should use
+ * {@link getCreatorLinkedSocialsCached} so repeat renders serve the warmed
+ * entry instead of re-walking the roster.
  */
 export async function getCreatorLinkedSocials(
   userId: string,
 ): Promise<CreatorSocialSummary[]> {
   const map = await getRosterSocialsByUser([userId]);
   return map.get(userId) ?? [];
+}
+
+/**
+ * Cache tag for the single-creator linked-socials entries. Flushed by the
+ * Creator-Hub social-edit / refetch actions after they write
+ * `creator_socials`, so an edit shows up immediately instead of waiting
+ * out the TTL (`revalidatePath` alone does NOT bust `unstable_cache`).
+ * Static tag per the repo convention — social writes are rare and the
+ * cache is tiny, so flushing every user's entry on one edit is fine.
+ */
+export const CREATOR_LINKED_SOCIALS_CACHE_TAG = "creator-linked-socials";
+
+// 180s TTL — matches the sibling `_cost-cache.ts` reasoning: a stable,
+// rarely-changing per-creator read that was being re-paid (admin-DB rows +
+// the full backend roster walk) on EVERY banner / metadata render,
+// including each `?activityPeriod=` / tab switch. The userId argument is
+// folded into the cache key by `unstable_cache`. ADMIN client + backend
+// API only inside — no `getDb()` / cookies, so caching is env-safe.
+const cachedCreatorLinkedSocials = unstable_cache(
+  (userId: string): Promise<CreatorSocialSummary[]> =>
+    getCreatorLinkedSocials(userId),
+  ["creator-linked-socials-v1"],
+  { revalidate: 180, tags: [CREATOR_LINKED_SOCIALS_CACHE_TAG] },
+);
+
+/** Cached {@link getCreatorLinkedSocials} for single-creator surfaces. */
+export async function getCreatorLinkedSocialsCached(
+  userId: string,
+): Promise<CreatorSocialSummary[]> {
+  return cachedCreatorLinkedSocials(userId);
 }
 
 /**

@@ -1,10 +1,11 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 
 import { adminDb } from "@/lib/admin-db";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { CREATOR_LINKED_SOCIALS_CACHE_TAG } from "../../../../../(admin)/creators/_queries/socials-by-user";
 import {
   clearDiscordChannelUrl,
   clearRewardPageUrl,
@@ -55,6 +56,10 @@ function revalidateCreator(userId: string) {
   // surfaces during the cut-over period.
   revalidatePath(`/creator-hub/creators/${userId}`);
   revalidatePath(`/creators/${userId}`);
+  // The banner / metadata socials read through an `unstable_cache` entry
+  // (`getCreatorLinkedSocialsCached`) which `revalidatePath` does NOT bust
+  // — flush its tag so the edit is visible immediately, not after the TTL.
+  revalidateTag(CREATOR_LINKED_SOCIALS_CACHE_TAG);
 }
 
 /**

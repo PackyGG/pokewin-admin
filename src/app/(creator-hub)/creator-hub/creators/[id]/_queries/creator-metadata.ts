@@ -5,7 +5,7 @@ import { adminDb } from "@/lib/admin-db";
 import type { CreatorSocialPlatform } from "@/lib/backend-api";
 import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
 import {
-  getCreatorLinkedSocials,
+  getCreatorLinkedSocialsCached,
   isLinkedSocialUsername,
 } from "../../../../../(admin)/creators/_queries/socials-by-user";
 
@@ -175,13 +175,15 @@ export async function getCreatorMetadata(
       gaps.push("Social stats (admin DB) unavailable");
       return [] as never[];
     }),
-    getCreatorLinkedSocials(userId).catch((err: unknown) => {
+    // Cached (180s, tag-flushed on social edits) — the uncached helper
+    // re-walked the entire backend roster per tab render.
+    getCreatorLinkedSocialsCached(userId).catch((err: unknown) => {
       console.error(
         "[creator-hub.creators.metadata] linked-socials roster read failed:",
         err,
       );
       gaps.push("Backend socials unavailable");
-      return [] as Awaited<ReturnType<typeof getCreatorLinkedSocials>>;
+      return [] as Awaited<ReturnType<typeof getCreatorLinkedSocialsCached>>;
     }),
     getCreatorSocialUrls(userId).catch((err: unknown) => {
       console.error(

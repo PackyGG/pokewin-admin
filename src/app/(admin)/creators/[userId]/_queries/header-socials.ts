@@ -3,7 +3,7 @@ import "server-only";
 import { adminDb } from "@/lib/admin-db";
 import type { CreatorSocialPlatform } from "@/lib/backend-api";
 import {
-  getCreatorLinkedSocials,
+  getCreatorLinkedSocialsCached,
   isLinkedSocialUsername,
 } from "../../_queries/socials-by-user";
 
@@ -19,9 +19,13 @@ export type HeaderSocial = {
 
 /**
  * Linked social chips for the creator header — same merged source as roster
- * cards ({@link getCreatorLinkedSocials}: admin DB wins per platform,
- * backend approved queue is the fallback). Admin-DB rows enrich follower
- * counts when present; backend-only links render with null stats.
+ * cards (admin DB wins per platform, backend approved queue is the
+ * fallback). Admin-DB rows enrich follower counts when present;
+ * backend-only links render with null stats.
+ *
+ * Uses {@link getCreatorLinkedSocialsCached} (180s TTL, tag-flushed on
+ * social edits) — the uncached helper re-walked the ENTIRE backend
+ * approval roster on every banner render to extract this one user.
  *
  * Best-effort by the caller (wrapped so a failure renders "No socials
  * linked" rather than crashing the hero).
@@ -42,7 +46,7 @@ export async function getCreatorHeaderSocials(
         last_fetched_at: true,
       },
     }),
-    getCreatorLinkedSocials(userId),
+    getCreatorLinkedSocialsCached(userId),
   ]);
 
   const adminByChip = new Map<
