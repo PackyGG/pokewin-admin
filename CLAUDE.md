@@ -35,11 +35,12 @@ Diese Datei (`CLAUDE.md`) ist die **bindende Regel-Quelle**. Zu Sessionbeginn mi
 
 **Im Zweifel:** ADMIN DB anfassen ist OK, MAIN DB anfassen oder verändern ist verboten.
 
-### 🔑 LIVE-PROD im lokalen `.env` (2026-06-10, Owner) — read-only Credential, NIEMALS exponieren
-- Der lokale **`.env` `DATABASE_URL` zeigt jetzt auf die LIVE PROD Game-DB** (read-only, vom Owner gesetzt). `getDb()` / `getProdDb()` lesen damit **echte Produktionsdaten** — entsprechend behandeln.
+### 🔑 LIVE-PROD im lokalen `.env` (2026-06-10, Owner; **NEUE Prod-DB 2026-06-11**) — read-only Credential, NIEMALS exponieren
+- Der lokale **`.env` `DATABASE_URL` zeigt auf die LIVE PROD Game-DB** (read-only, vom Owner gesetzt). **2026-06-11: Der Owner hat auf eine NEUE Prod-DB umgestellt — dieselbe Regel gilt unverändert und verschärft.** `getDb()` / `getProdDb()` lesen damit **echte Produktionsdaten** — entsprechend behandeln.
+- **STRIKTE REGEL FÜR ALLE AGENTS UND ALLE MODELLE (Owner, 2026-06-11): READ ONLY — „no changes, no pushes, no nothing beside read".** Ausschließlich `SELECT` / Schema-Inspektion. KEIN write/insert/update/delete, **kein `prisma migrate`, kein `merge`, kein `prisma db push`, kein DDL/DML, kein `$executeRaw` mit Mutation**, keine „auto changes" — **nichts, das die Prod-DB verändert**. Gilt absolut und ausnahmslos — auch auf explizite Anweisung „schnell" / „nur additiv" / „mit Approval", und in **jedem** Workflow-/Background-/Sub-Agent. (Owner 2026-06-10: „you only have read access, no matter what dont migrate, merge or change anything". Owner 2026-06-11: „strict md rule for all agents and models, read only! no changes no pushes no nothing beside read".)
 - **NIEMALS `.env` oder den Connection-String (oder irgendein Secret daraus) committen, pushen, printen, loggen, in Summaries/Changelogs/Messages schreiben oder anderweitig exponieren.** `.env` ist gitignored (`.gitignore` → `.env*`) — **so lassen, nie force-adden**, nie in einen Commit ziehen (auch nicht bei „push all").
-- **Prod ist strikt READ-ONLY: ausschließlich `SELECT` / Schema-Inspektion.** KEIN write/insert/update/delete, **kein `migrate`, kein `merge`, kein `db push`, kein DDL/DML, kein `$executeRaw` mit Mutation** — nichts, das Prod verändert. Gilt absolut — auch auf explizite Anweisung „schnell" / „nur additiv" / „mit Approval". (Owner 2026-06-10: „you only have read access, no matter what dont migrate, merge or change anything".)
 - Read-only-Queries laufen über ein **temporäres `node --env-file=.env`-Script mit `pg`**; solche `_verify-*.mjs` / `_probe-*.mjs` bleiben **uncommitted**, geben **keine Secrets** aus und werden nach Gebrauch gelöscht.
+- **Drift-Hinweis nach DB-Wechsel:** Schema-/Enum-Fakten, die gegen die alte Prod-DB verifiziert wurden (Enum-Member, fehlende Tabellen, Indizes, Row-Counts), gelten auf der neuen DB als **unverifiziert** — vor Verwendung neu proben (read-only). Die Runtime-Drift-Guards (`filterLedgerTxTypesLive`, 5-min-Cache) adaptieren automatisch.
 
 ---
 
