@@ -82,6 +82,15 @@ export async function exportUsers(
     where.id = { notIn: excluded };
   }
 
+  // OR-groups that must be ANDed together. The country-exclude filter and
+  // the no-deposit filter are EACH a 2-leg OR; the old code wrote both
+  // straight onto `where.OR`, so combining them collapsed
+  // (country AND no-deposit) into one flat 4-leg OR — a user matching
+  // EITHER condition leaked into the export (e.g. a depositing user from
+  // a non-excluded country passed because the country legs matched).
+  // Collect each group here and AND them at the end instead.
+  const orGroups: Prisma.UserWhereInput[][] = [];
+
   // Country filter
   const codes = [...new Set(
     filters.countryCodes
@@ -94,15 +103,17 @@ export async function exportUsers(
     // A user with a null country_code would match `notIn` in SQL via
     // Prisma — but we ALSO explicitly include those (no country data =
     // not one of the excluded) so the filter does what the admin expects.
-    where.OR = [
+    orGroups.push([
       { country_code: null },
       { country_code: { notIn: codes } },
-    ];
+    ]);
   }
 
-  // Staff exclusion
+  // Staff exclusion — mirrors the canonical CUSTOMER_EXCLUDED_ROLES
+  // (src/lib/metrics/scope.ts: admin/support/creator). `support` was
+  // previously missing here, so marketing exports emailed support staff.
   if (filters.excludeStaff) {
-    where.role = { notIn: ["admin", "creator"] };
+    where.role = { notIn: ["admin", "support", "creator"] };
   }
 
   // Email requirement
@@ -118,13 +129,16 @@ export async function exportUsers(
   } else if (filters.deposit === "no_deposit") {
     // Users with no deposits — either no balances row or
     // total_deposited = 0. Prisma's `is` + null combinator handles
-    // the missing-row case via `none`; we express it via an OR.
-    where.OR = [
-      ...(where.OR ?? []),
+    // the missing-row case; we express it via an OR group.
+    orGroups.push([
       { balances: { is: null } },
       { balances: { is: { total_deposited: { equals: 0 } } } },
-    ];
+    ]);
   }
+
+  if (orGroups.length === 1) where.OR = orGroups[0];
+  else if (orGroups.length > 1)
+    where.AND = orGroups.map((g) => ({ OR: g }));
 
   const db = await getDb();
   const rows = await db.user.findMany({
