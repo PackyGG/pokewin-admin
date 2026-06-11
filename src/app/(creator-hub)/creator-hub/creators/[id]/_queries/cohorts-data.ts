@@ -81,6 +81,21 @@ const SIGNUP_LOOKBACK_DAYS = 365;
 // on the creator detail page.
 const CHURN_WINDOW_DAYS = 30;
 
+// Cold-scan statement timeout. The MAIN pool pins a GLOBAL 30s
+// statement_timeout (db.ts) — a bare $queryRawUnsafe gets killed AT THE DB
+// at 30s on every attempt, so a cohort needing longer never completed, the
+// cache never warmed, and the tab banded forever. Raising the budget via
+// `SET LOCAL` inside one interactive transaction (LOCAL = reverts on
+// commit, never leaks to other pool users) lets the at-most-once-per-TTL
+// populating scan finish and warm the cache. Same solved pattern as
+// `risk-data.ts` / `creators-pnl.ts` (55s; the outer safeQueryOrNull in
+// `cohorts-ltv-tab.tsx` already waits 60s, which stays > this budget).
+const COLD_SCAN_STATEMENT_TIMEOUT_MS = 55_000;
+const COHORTS_TX_OPTIONS = {
+  timeout: COLD_SCAN_STATEMENT_TIMEOUT_MS + 5_000,
+  maxWait: 10_000,
+} as const;
+
 /** One signup-month cohort row (house-POV figures resolved). */
 export type CohortRow = {
   /** ISO month key, e.g. "2026-03". */
@@ -258,7 +273,15 @@ async function queryCohorts(creatorUserId: string): Promise<CohortsData> {
   // box. Best-effort: a failed/slow scan degrades net to null, the cohort
   // table still renders.
   const [rows, pnl] = await Promise.all([
-    db.$queryRawUnsafe<CohortQueryRow[]>(sql, creatorUserId),
+    // Raised per-statement budget for the cold scan — see
+    // COLD_SCAN_STATEMENT_TIMEOUT_MS above. SET LOCAL scopes the raise to
+    // this transaction only.
+    db.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        `SET LOCAL statement_timeout = ${COLD_SCAN_STATEMENT_TIMEOUT_MS}`,
+      );
+      return tx.$queryRawUnsafe<CohortQueryRow[]>(sql, creatorUserId);
+    }, COHORTS_TX_OPTIONS),
     getCreatorPnlCached(creatorUserId).catch((e) => {
       console.error(
         "[creator-hub.creators.cohorts] lifetime net P&L failed (net null):",
