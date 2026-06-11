@@ -211,21 +211,36 @@ function revalidate(id: string): void {
     revalidateTag("creator-leaderboards");
 }
 
-/** Admin page access OR Creator Hub access — for claim freeze mutations only. */
-async function requireLeaderboardClaimAccess() {
+/**
+ * Admin page access OR Creator Hub access — for the mutations reachable
+ * from BOTH the admin pages and the hub dialogs (claim freeze/unfreeze +
+ * leaderboard create). `requirePageAccess` REDIRECTS on denial, which
+ * ejected a hub-toggle-only creator_manager out of the hub mid-dialog;
+ * this throws instead so the dialog surfaces a toast. Fail-closed: admin
+ * → page permission → `requireCreatorHubAccess` (throws on denial).
+ */
+async function requireLeaderboardActionAccess(
+    unauthorizedMessage = "Not authorized to manage leaderboard claims.",
+) {
     const session = await verifySession();
     if (sessionIsAdmin(session)) return session;
 
     const allowedPages = await getUserPermissions(session.userId);
     if (allowedPages.includes(PAGE_KEY)) return session;
 
-    return requireCreatorHubAccess("Not authorized to manage leaderboard claims.");
+    return requireCreatorHubAccess(unauthorizedMessage);
 }
 
 export async function createLeaderboard(
     input: z.infer<typeof createSchema>,
 ): Promise<ActionResult<{ id: string }>> {
-    const session = await requirePageAccess(PAGE_KEY);
+    // Hub-aware gate (freezeClaim precedent): the hub's Create Leaderboard
+    // dialog calls this action, and the previous requirePageAccess redirect
+    // ejected hub-only managers mid-dialog. Broadens NOTHING for non-hub
+    // users; owner motha and page-permission holders pass exactly as before.
+    const session = await requireLeaderboardActionAccess(
+        "Not authorized to create leaderboards.",
+    );
     const parsed = createSchema.safeParse(input);
     if (!parsed.success) {
         return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -731,7 +746,7 @@ export async function freezeClaim(
     userId: string,
     input: { reason: string },
 ): Promise<ActionResult> {
-    const session = await requireLeaderboardClaimAccess();
+    const session = await requireLeaderboardActionAccess();
     const parsedId = idSchema.safeParse(leaderboardId);
     if (!parsedId.success) {
         return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };
@@ -787,7 +802,7 @@ export async function unfreezeClaim(
     userId: string,
     input: { release_reason?: string | null },
 ): Promise<ActionResult> {
-    const session = await requireLeaderboardClaimAccess();
+    const session = await requireLeaderboardActionAccess();
     const parsedId = idSchema.safeParse(leaderboardId);
     if (!parsedId.success) {
         return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };

@@ -9,8 +9,14 @@ import {
   type CreateDealInput,
   type UpdateDealInput,
 } from "@/lib/backend-api";
-import { requirePageAccess } from "@/lib/dal";
+import {
+  requirePageAccess,
+  verifySession,
+  sessionIsAdmin,
+  getUserPermissions,
+} from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 /**
@@ -113,11 +119,32 @@ const CreateDealSchema = z.object({
   terms: z.record(z.string(), z.unknown()).nullable().optional(),
 }) satisfies z.ZodType<CreateDealInput>;
 
+/**
+ * Admin page access OR Creator Hub access — for the deal-create mutation,
+ * which is reachable from BOTH the admin page and the hub's New Deal
+ * dialog. `requirePageAccess` REDIRECTS on denial, which ejected a
+ * hub-toggle-only creator_manager out of the hub mid-dialog; this throws
+ * instead so the dialog surfaces a toast. Same shape as the
+ * freezeClaim/unfreezeClaim precedent in leaderboards/actions.ts.
+ * Fail-closed: admin → /creators page permission → requireCreatorHubAccess
+ * (throws on denial). The `__can_create_creator_deal` capability check
+ * below still applies unchanged to every non-admin.
+ */
+async function requireCreatorsPageOrHubAccess() {
+  const session = await verifySession();
+  if (sessionIsAdmin(session)) return session;
+
+  const allowedPages = await getUserPermissions(session.userId);
+  if (allowedPages.includes("/creators")) return session;
+
+  return requireCreatorHubAccess("Not authorized to manage creator deals.");
+}
+
 export async function createCreatorDeal(
   userId: string,
   input: CreateDealInput,
 ) {
-  const session = await requirePageAccess("/creators");
+  const session = await requireCreatorsPageOrHubAccess();
   const parsed = CreateDealSchema.parse(input);
   await requireCapability(session, "__can_create_creator_deal", "create creator deals");
 

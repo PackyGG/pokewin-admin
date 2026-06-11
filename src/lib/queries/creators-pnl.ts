@@ -128,16 +128,20 @@ const USERS_PER_PERIOD_CAP = 50;
 // per deposit row in the `attr_dep` CTE, not six times across the call).
 // Its access pattern is `referred_user_id = ? AND created_at <range>
 // ORDER BY created_at DESC LIMIT 1`. The form is already SARGABLE — the
-// bottleneck is the MISSING composite index. Prod has:
-//   • idx_acu_referred_user_code_usage  (referred_user_id, code, usage_type)
-//   • idx_acu_affiliate_user_created_at (affiliate_user_id, created_at DESC)
-// Neither serves a `created_at` range + DESC sort keyed on
-// `referred_user_id`, so today Postgres reads every acu row for that user
-// and sorts in memory per deposit. The index that turns this into a single
+// bottleneck is the MISSING index. VERIFIED against live prod 2026-06-11:
+// `affiliate_code_usages` carries ONLY its primary key — NO secondary
+// indexes at all (the two acu indexes declared in prisma/schema.prisma,
+// idx_acu_referred_user_code_usage and idx_acu_affiliate_user_created_at,
+// do NOT exist on prod; an earlier revision of this comment wrongly
+// claimed they did). Every acu predicate in this module therefore
+// seq-scans today. The index that turns the coverage probe into a single
 // backward index seek (stop at the first row) is:
 //   CREATE INDEX CONCURRENTLY idx_acu_referred_user_created_at
 //     ON affiliate_code_usages (referred_user_id, created_at DESC);
-// (Added to prisma/recommended-indexes.sql §5 — apply on prod, owner task.)
+// (In prisma/recommended-indexes.sql §5 — applying it on prod, plus the
+// two schema-declared acu indexes above, is an OWNER task: prod DDL is
+// forbidden for agents. This is the dominant unlock for the ~5s cold
+// creator-PnL transaction.)
 const COVERING_CREATOR_SQL = `(
   SELECT acu_c.affiliate_user_id
     FROM affiliate_code_usages acu_c
