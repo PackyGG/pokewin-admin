@@ -335,10 +335,14 @@ export async function computeRiskScore(
  * single batch query. This is much cheaper than running computeRiskScore
  * per user (which would be N * ~10 queries). See BATCH_SQL below.
  *
- * Expected runtime: ~40-80ms for 50 users on a warm DB. Uses index lookups
- * on user_id for every subselect; no full-table scans. If this ever creeps
- * over 500ms it's a sign the fingerprints / ledger_transactions tables
- * need an index review.
+ * Expected runtime: ~40-130ms for a 20–200-row page on prod (measured
+ * 2026-06-11). Every BATCH_SQL subjoin is bounded to the page's ids via
+ * `user_id IN (SELECT user_id FROM ids)` — but note prod currently has
+ * PK-only indexes (prisma/recommended-indexes.sql unapplied), so "index
+ * lookups per subselect" is aspirational until those land. The real
+ * safety nets are the DB-level 30s statement_timeout (src/lib/db.ts) and
+ * the catch-wrapper at the users-list call site, which degrades a failed
+ * risk batch to badge-less rows instead of blanking the list.
  */
 export async function computeRiskScoresForList(
   userIds: readonly string[],
@@ -1677,6 +1681,7 @@ LEFT JOIN (
          COALESCE(SUM(value_at_obtained::numeric), 0) AS inv_value
   FROM user_inventory
   WHERE sold_at IS NULL AND exchanged_at IS NULL
+    AND user_id IN (SELECT user_id FROM ids)
   GROUP BY user_id
 ) inv ON inv.user_id = u.id
 
@@ -1685,6 +1690,7 @@ LEFT JOIN (
          COALESCE(SUM(total_value_usd::numeric), 0) AS wd_value
   FROM card_withdrawal_requests
   WHERE status IN ('completed','shipped')
+    AND user_id IN (SELECT user_id FROM ids)
   GROUP BY user_id
 ) cw ON cw.user_id = u.id
 
