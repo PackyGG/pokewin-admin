@@ -20,6 +20,7 @@ import {
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { TodayNetHoldingsHoldersChip } from "./today-net-holdings-holders";
 
 /**
  * "P&L Today" dashboard tile — house P&L for the CURRENT CALENDAR DAY
@@ -123,9 +124,8 @@ export function TodayPnlStatCard({
             value={withdrawals}
             tone="rose"
           />
-          <TodayComponentChip
-            label="Net holdings Δ"
-            value={Math.abs(netHoldingsChange)}
+          <TodayNetHoldingsHoldersChip
+            netHoldingsChange={netHoldingsChange}
             tone={netHoldingsPnlContribution >= 0 ? "emerald" : "rose"}
             hint={
               netHoldingsChange === 0
