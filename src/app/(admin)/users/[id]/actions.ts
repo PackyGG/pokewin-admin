@@ -1546,6 +1546,10 @@ export async function updateUserIdentity(
 
   revalidatePath(`/users/${userId}`);
   revalidatePath("/users");
+  // revalidatePath does NOT drop unstable_cache entries — flush the
+  // /users list caches so the renamed identity shows there immediately.
+  revalidateTag("users-list");
+  revalidateTag("users-list-stats");
   return { success: true };
 }
 

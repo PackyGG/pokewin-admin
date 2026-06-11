@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
@@ -182,6 +182,10 @@ export async function restoreDeletedUser(
   revalidatePath("/users");
   revalidatePath("/users/deleted");
   revalidatePath(`/users/${snapshotId}`);
+  // revalidatePath does NOT drop unstable_cache entries — flush the
+  // /users list + KPI caches so the restored user reappears immediately.
+  revalidateTag("users-list");
+  revalidateTag("users-list-stats");
 }
 
 // ---------------------------------------------------------------------------

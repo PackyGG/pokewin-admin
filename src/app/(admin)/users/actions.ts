@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess, requireAdmin } from "@/lib/dal";
@@ -103,6 +103,11 @@ export async function banUser(
   revalidatePath("/users");
   revalidatePath(`/users/${userId}`);
   revalidatePath("/chat");
+  // revalidatePath does NOT drop unstable_cache entries — without the tag
+  // flush, the /users ranking/ids caches (≤300s TTL) and the KPI strip
+  // (60s) keep serving the pre-mutation state after a ban.
+  revalidateTag("users-list");
+  revalidateTag("users-list-stats");
   return ok({ userId });
 }
 
@@ -131,6 +136,9 @@ export async function unbanUser(userId: string) {
 
   revalidatePath("/users");
   revalidatePath(`/users/${userId}`);
+  // Tag flush — see banUser; unstable_cache ignores revalidatePath.
+  revalidateTag("users-list");
+  revalidateTag("users-list-stats");
 }
 
 /**
@@ -190,6 +198,9 @@ export async function lockUser(
 
   revalidatePath("/users");
   revalidatePath(`/users/${userId}`);
+  // Tag flush — see banUser; unstable_cache ignores revalidatePath.
+  revalidateTag("users-list");
+  revalidateTag("users-list-stats");
   return ok({ userId });
 }
 
@@ -219,6 +230,9 @@ export async function unlockUser(userId: string) {
 
   revalidatePath("/users");
   revalidatePath(`/users/${userId}`);
+  // Tag flush — see banUser; unstable_cache ignores revalidatePath.
+  revalidateTag("users-list");
+  revalidateTag("users-list-stats");
 }
 
 /**
@@ -354,4 +368,8 @@ export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
 
   revalidatePath("/users");
   revalidatePath("/users/deleted");
+  // Tag flush — see banUser; deleting users changes both the cached
+  // ranking ids and the global KPI counts.
+  revalidateTag("users-list");
+  revalidateTag("users-list-stats");
 }
