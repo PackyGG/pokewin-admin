@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 
 import {
@@ -205,6 +205,10 @@ function revalidate(id: string): void {
     revalidatePath(`${PAGE_KEY}/${id}`);
     revalidatePath("/creator-hub/leaderboards");
     revalidatePath(`/creator-hub/leaderboards/${id}`);
+    // The hub creator-detail "Affiliate Leaderboards" card reads through an
+    // unstable_cache entry (120s TTL) which revalidatePath does NOT bust —
+    // flush its tag so approvals/cancellations/etc. show immediately.
+    revalidateTag("creator-leaderboards");
 }
 
 /** Admin page access OR Creator Hub access — for claim freeze mutations only. */
@@ -250,6 +254,10 @@ export async function createLeaderboard(
 
     revalidatePath(PAGE_KEY);
     revalidatePath(`/creators/${parsed.data.creator_user_id}`);
+    revalidatePath(`/creator-hub/creators/${parsed.data.creator_user_id}`);
+    // Tag flush — the hub creator-detail leaderboards card is
+    // unstable_cache'd (120s); a freshly-created board must show at once.
+    revalidateTag("creator-leaderboards");
     return { success: true, data: { id: created.id } };
 }
 

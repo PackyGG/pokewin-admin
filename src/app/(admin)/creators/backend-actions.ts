@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 
 import {
@@ -140,6 +140,11 @@ export async function createCreatorDeal(
     });
 
     revalidatePath(`/creators/${userId}`);
+    revalidatePath(`/creator-hub/creators/${userId}`);
+    // The hub Overview deal card reads through an `unstable_cache` entry
+    // (60s TTL) which `revalidatePath` does NOT bust — flush its tag so a
+    // freshly-created deal appears immediately.
+    revalidateTag("creator-deal");
     return deal;
   } catch (err) {
     throw toActionError(err);
@@ -198,6 +203,10 @@ export async function updateCreatorDeal(
     });
 
     revalidatePath(`/creators/${userId}`);
+    revalidatePath(`/creator-hub/creators/${userId}`);
+    // Same stale-cache class as createCreatorDeal — the hub deal card's
+    // unstable_cache entry must not serve pre-update terms for its TTL.
+    revalidateTag("creator-deal");
     return deal;
   } catch (err) {
     throw toActionError(err);
@@ -228,6 +237,10 @@ export async function terminateCreatorDeal(
     });
 
     revalidatePath(`/creators/${userId}`);
+    revalidatePath(`/creator-hub/creators/${userId}`);
+    // Same stale-cache class as createCreatorDeal — a terminated deal must
+    // not keep rendering "active" on the hub deal card for the TTL.
+    revalidateTag("creator-deal");
     return deal;
   } catch (err) {
     throw toActionError(err);

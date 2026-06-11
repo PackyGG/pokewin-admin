@@ -9,8 +9,10 @@ import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
-// Reuse the EXISTING backend deal read from the (admin) creators group.
-import { getCreatorDealData } from "../../../../../(admin)/creators/[userId]/_queries/get-creator-deal-data";
+// Cached wrapper over the EXISTING backend deal read (60s TTL, tag-flushed
+// on deal creation) — the uncached read re-fired 3 backend GETs on every
+// Overview re-render, including each `?activityPeriod=` switch.
+import { getDealCardDataCached } from "../_queries/deal-card-data";
 import type { CreatorDealResponse } from "@/lib/backend-api";
 import { NewDealDialog } from "./new-deal-dialog";
 
@@ -75,14 +77,7 @@ export async function DealCard({ userId }: { userId: string }) {
   );
 
   const { data, error } = await safeQueryOrNull(
-    () =>
-      getCreatorDealData(userId, {
-        dealsPage: 1,
-        dealsPerPage: 25,
-        sessionsPage: 1,
-        sessionsPerPage: 1,
-        pendingStatus: "pending",
-      }),
+    () => getDealCardDataCached(userId),
     "creator-hub.creators.dealData",
     20_000,
   );

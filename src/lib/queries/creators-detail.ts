@@ -1,6 +1,5 @@
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -150,12 +149,15 @@ export async function getCreatorDetail(userId: string) {
 
   // First wave — every query that only depends on userId. signupCounts +
   // ftdStats use raw SQL so each batches multiple period buckets into a
-  // single round-trip. socials trims to the columns HeaderSocials renders
-  // (the table also stores access tokens, JSON stat blobs, etc. that we
-  // don't need on this page). realAffiliateAgg re-derives the wager
+  // single round-trip. realAffiliateAgg re-derives the wager
   // volume + commission with staff (admin/support) excluded — the stored
   // affiliate_accounts.total_* counters include staff and previously
   // inflated the KPI tile.
+  //
+  // (A `creator_socials` ADMIN-DB leg used to ride in this wave — dropped:
+  // the returned `socials` field had ZERO consumers (both the admin page
+  // and the hub banner read socials via `getCreatorHeaderSocials`), so it
+  // only serialized an extra ADMIN read inside this MAIN-budgeted wave.)
   //
   // NOTE: `user.affiliate_code` is NOT this creator's own code — it's the
   // referral cookie they are carrying from another creator who referred
@@ -173,7 +175,6 @@ export async function getCreatorDetail(userId: string) {
   // is unchanged — this only bounds how long WE wait.
   const [
     allCodes,
-    socials,
     signupCounts,
     realAffiliateAgg,
     ftdStats,
@@ -187,23 +188,6 @@ export async function getCreatorDetail(userId: string) {
       `SELECT code FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at ASC`,
       userId,
     ),
-    // Only the fields HeaderSocials renders + last_fetched_at, which is
-    // declared `lastFetchedAt: string | null` (required) on the consumer's
-    // SocialLike type. Skipping access_token, refresh_token, stats_json
-    // (potentially large JSON), and the various avg_views/engagement
-    // columns the chip never displays.
-    adminDb.creator_socials.findMany({
-      where: { target_user_id: userId },
-      orderBy: { platform: "asc" },
-      select: {
-        id: true,
-        platform: true,
-        username: true,
-        follower_count: true,
-        subscriber_count: true,
-        last_fetched_at: true,
-      },
-    }),
     // Single batched query replaces 4 separate user.count() round-trips
     // (total + 24h + 7d + 30d). Same index scan, fewer plans + a single
     // network round-trip. Preserves the exact return semantics of the
@@ -533,14 +517,6 @@ export async function getCreatorDetail(userId: string) {
       pending: pendingSignups,
     },
     ftdByPeriod,
-    socials: socials.map((s) => ({
-      id: s.id,
-      platform: s.platform,
-      username: s.username,
-      followerCount: s.follower_count,
-      subscriberCount: s.subscriber_count,
-      lastFetchedAt: s.last_fetched_at?.toISOString() ?? null,
-    })),
   };
 }
 
