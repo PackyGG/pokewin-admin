@@ -291,12 +291,18 @@ async function resolveCohort(
   if (codes.length === 0) return { codes: [], userIds: [] };
 
   const cohortRows = await db.$queryRawUnsafe<{ referred_user_id: string }[]>(
+    // NOTE the space before ${blacklistAnd}: blacklistNotInClause returns
+    // "AND <col> NOT IN (…)" with NO leading space. Concatenated directly
+    // onto the $2 placeholder it produced `$2AND …` → Postgres 42601
+    // "trailing junk after parameter" — which hard-failed the WHOLE alts
+    // scan (permanent band) whenever the excluded-users blacklist was
+    // non-empty, i.e. always on prod.
     `SELECT DISTINCT acu.referred_user_id
        FROM affiliate_code_usages acu
        JOIN "user" u ON u.id = acu.referred_user_id
       WHERE UPPER(acu.code) = ANY($1::text[])
         AND u.role NOT IN ('admin', 'support', 'creator')
-        AND acu.referred_user_id <> $2${blacklistAnd}`,
+        AND acu.referred_user_id <> $2 ${blacklistAnd}`,
     codes,
     creatorUserId,
   );
