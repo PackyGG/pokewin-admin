@@ -344,6 +344,18 @@ export async function calculateWindowedPnl(opts: {
       userId
         ? `${col} = $2`
         : `${col} IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist}${populationAnd})`;
+    // Upgrader correction scope. For the GLOBAL cohort the upgrader leg
+    // drops `creator` WHOLESALE (3 roles) to match the canonical upgrader
+    // reader (`upgraderMetrics` / `cachedDailyUpgrader`) — creator upgrader
+    // plays are house-funded and must not enter customer P&L. For a single
+    // user the scope is just the id (a creator's own detail page then
+    // includes their own upgrader, consistent with the other single-user
+    // ledger terms). The `populationScopeSql` sub-population narrowing also
+    // applies here so the affiliate-referred-players box stays consistent.
+    const upgraderScope = (col: string) =>
+      userId
+        ? `${col} = $2`
+        : `${col} IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklist}${populationAnd})`;
     const params: unknown[] = userId ? [since, userId] : [since];
     const statsExcluded = statsExcludedAdjustmentSqlPredicate({
       typeColumn: "lt.type",
@@ -351,12 +363,22 @@ export async function calculateWindowedPnl(opts: {
     });
     const userScopeLt = scope("lt.user_id");
 
+    // Probe once whether this DB carries upgrader_games (pre-upgrader
+    // snapshot returns NULL, not an error). A bare `FROM upgrader_games`
+    // would throw 42P01 at parse time even behind a `to_regclass` WHERE,
+    // so the read is GATED on this probe — same approach as the canonical
+    // upgraderMetrics / cachedDailyUpgrader readers.
+    const upgProbe = await db.$queryRaw<{ exists: string | null }[]>`
+      SELECT to_regclass('public.upgrader_games')::text AS exists`;
+    const hasUpgrader = upgProbe[0]?.exists != null;
+
     type LedgerRow = { deposits: string; manual_wd: string; balance_change: string };
     type CardRow = { card_wd: string };
     type InvRow = { obtained: string; disposed: string };
     type VchRow = { issued: string; claimed: string };
+    type UpgRow = { won: string };
 
-    const [ledger, card, inv, vch] = await Promise.all([
+    const [ledger, card, inv, vch, upg] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
@@ -401,23 +423,41 @@ export async function calculateWindowedPnl(opts: {
            AND ${scope("v.user_id")}`,
         ...params,
       ),
+      // Upgrader WIN-CREDIT correction (prod-confirmed 2026-06-11). The
+      // ledger carries ONLY the upgrader_bet DEBIT; the win credit is
+      // written off-ledger into upgrader_games.won_amount (0
+      // upgrader_payout ledger rows on prod), so `balance_change` above
+      // MISSES every upgrader win credit. Sum the window-bucketed
+      // won_amount and fold it into balanceChange below so the windowed
+      // P&L behaves as if the credit were on the ledger. Gated on the
+      // probe so a pre-upgrader DB skips it (→ 0) instead of throwing
+      // 42P01. Sourced exactly like the canonical upgraderMetrics /
+      // cachedDailyUpgrader readers.
+      hasUpgrader
+        ? db.$queryRawUnsafe<UpgRow[]>(
+            `SELECT COALESCE(SUM(ug.won_amount::numeric), 0)::text AS won
+             FROM upgrader_games ug
+             WHERE ug.created_at >= $1
+               AND ${upgraderScope("ug.user_id")}`,
+            ...params,
+          )
+        : Promise.resolve([{ won: "0" }] as UpgRow[]),
     ]);
 
     const deposits = toNumber(ledger[0]?.deposits);
     const manualWd = toNumber(ledger[0]?.manual_wd);
     const cardWd = toNumber(card[0]?.card_wd);
     const withdrawalsGross = Math.abs(manualWd) + cardWd;
-    const balanceChange = toNumber(ledger[0]?.balance_change);
+    // Upgrader win credit is off-ledger (upgrader_games.won_amount), so the
+    // ledger balance-delta under-counts the user-balance movement by exactly
+    // this amount. Add it back so balanceChange reflects the full movement —
+    // equivalently it subtracts the upgrader win from house P&L (a user win
+    // is a house loss). See UPGRADER_IN_LEDGER in metrics/ledger-sets.ts.
+    const upgraderWon = toNumber(upg[0]?.won);
+    const balanceChange = toNumber(ledger[0]?.balance_change) + upgraderWon;
     const inventoryChange =
       toNumber(inv[0]?.obtained) - toNumber(inv[0]?.disposed);
     const voucherChange = toNumber(vch[0]?.issued) - toNumber(vch[0]?.claimed);
-    // Upgrader payouts are fully captured by `balanceChange` — the
-    // ledger carries both upgrader_bet (debit) and upgrader_payout
-    // (credit) rows, so no separate `upgrader_games` correction is
-    // needed here. A prior trailing term was based on a stale
-    // assumption that the backend never wrote upgrader_payout rows;
-    // that double-subtracted every upgrader win and inflated the
-    // surfaced house loss.
     const pnl =
       deposits -
       (manualWd + cardWd) -
@@ -459,6 +499,12 @@ export async function calculateUsersBoundedWindowedPnlBatch(
       typeColumn: "lt.type",
       metadataColumn: "lt.metadata",
     });
+    // Gate the upgrader_games read on a table-existence probe (a bare
+    // `FROM upgrader_games` throws 42P01 at parse on a pre-upgrader DB even
+    // behind a to_regclass WHERE). Same pattern as the canonical readers.
+    const upgProbe = await db.$queryRaw<{ exists: string | null }[]>`
+      SELECT to_regclass('public.upgrader_games')::text AS exists`;
+    const hasUpgrader = upgProbe[0]?.exists != null;
 
     type LedgerRow = {
       user_id: string;
@@ -469,8 +515,16 @@ export async function calculateUsersBoundedWindowedPnlBatch(
     type AmountRow = { user_id: string; amount: string };
     type InvRow = { user_id: string; obtained: string; ui_disposed: string };
 
-    const [ledger, card, inv, adminInv, vchIssued, vchClaimed, adminVch] =
-      await Promise.all([
+    const [
+      ledger,
+      card,
+      inv,
+      adminInv,
+      vchIssued,
+      vchClaimed,
+      adminVch,
+      upgWon,
+    ] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT lt.user_id,
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
@@ -583,6 +637,27 @@ export async function calculateUsersBoundedWindowedPnlBatch(
         start,
         end,
       ),
+      // Upgrader WIN-CREDIT correction (prod-confirmed 2026-06-11): the win
+      // credit is off-ledger in upgrader_games.won_amount (0 upgrader_payout
+      // ledger rows), so `balance_change` under-counts it. Bucket
+      // won_amount into [start,end) per user and fold into balanceChange
+      // below. The passed id list IS the scope here (the caller already
+      // resolved which users), so no role subquery is needed — mirrors the
+      // other per-id batch legs. Gated on the probe for a pre-upgrader DB.
+      hasUpgrader
+        ? db.$queryRawUnsafe<AmountRow[]>(
+            `SELECT ug.user_id,
+               COALESCE(SUM(ug.won_amount::numeric), 0)::text AS amount
+             FROM upgrader_games ug
+             WHERE ug.created_at >= $2
+               AND ug.created_at <  $3
+               AND ug.user_id = ANY($1::text[])
+             GROUP BY ug.user_id`,
+            userIds,
+            start,
+            end,
+          )
+        : Promise.resolve([] as AmountRow[]),
     ]);
 
     const ledgerByUser = new Map(ledger.map((r) => [r.user_id, r]));
@@ -592,13 +667,18 @@ export async function calculateUsersBoundedWindowedPnlBatch(
     const vchIssuedByUser = new Map(vchIssued.map((r) => [r.user_id, r]));
     const vchClaimedByUser = new Map(vchClaimed.map((r) => [r.user_id, r]));
     const adminVchByUser = new Map(adminVch.map((r) => [r.user_id, r]));
+    const upgWonByUser = new Map(upgWon.map((r) => [r.user_id, r]));
 
     for (const userId of userIds) {
       const lt = ledgerByUser.get(userId);
       const deposits = toNumber(lt?.deposits);
       const manualWd = toNumber(lt?.manual_wd);
       const cardWd = toNumber(cardByUser.get(userId)?.amount);
-      const balanceChange = toNumber(lt?.balance_change);
+      // Fold the off-ledger upgrader win credit into balanceChange (a user
+      // win = a house loss); see calculateWindowedPnl for the rationale.
+      const balanceChange =
+        toNumber(lt?.balance_change) +
+        toNumber(upgWonByUser.get(userId)?.amount);
       const invRow = invByUser.get(userId);
       const inventoryChange =
         toNumber(invRow?.obtained) -
@@ -797,11 +877,21 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
     const excluded = await getExcludedUserIds();
     const blacklist = blacklistNotInClause("u.id", excluded);
     const usersScope = `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
+    // Upgrader leg drops `creator` WHOLESALE (3 roles) to match the canonical
+    // upgrader reader (upgraderMetrics / cachedDailyUpgrader) — creator
+    // upgrader plays are house-funded and must not enter customer P&L.
+    const upgUsersScope = `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklist})`;
     const statsExcluded = statsExcludedAdjustmentSqlPredicate({
       typeColumn: "lt.type",
       metadataColumn: "lt.metadata",
     });
     const ledgerUserScope = `lt.user_id IN ${usersScope}`;
+
+    // Gate the upgrader_games read on a table-existence probe (bare
+    // `FROM upgrader_games` throws 42P01 at parse on a pre-upgrader DB).
+    const upgProbe = await db.$queryRaw<{ exists: string | null }[]>`
+      SELECT to_regclass('public.upgrader_games')::text AS exists`;
+    const hasUpgrader = upgProbe[0]?.exists != null;
 
     type LedgerRow = {
       d: Date;
@@ -812,8 +902,9 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
     type CardRow = { d: Date; card_wd: number };
     type InvRow = { d: Date; obtained: number; disposed: number };
     type VchRow = { d: Date; issued: number; claimed: number };
+    type UpgRow = { d: Date; upg_won: number };
 
-    const [ledger, card, inv, vch] = await Promise.all([
+    const [ledger, card, inv, vch, upg] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT DATE(lt.created_at) AS d,
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS deposits,
@@ -938,6 +1029,23 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
          ) x
          GROUP BY d`,
       ),
+      // Per-day upgrader WIN CREDIT from upgrader_games.won_amount
+      // (prod-confirmed 2026-06-11: the win credit is off-ledger — 0
+      // upgrader_payout ledger rows — so the per-day ledger balance_change
+      // misses it). Bucketed by created_at like the canonical
+      // cachedDailyUpgrader / getDailyGamingMetrics readers; wholesale-
+      // creator-drop scope to match them. Gated on the probe → empty (0)
+      // on a pre-upgrader DB instead of throwing 42P01.
+      hasUpgrader
+        ? db.$queryRawUnsafe<UpgRow[]>(
+            `SELECT DATE(ug.created_at) AS d,
+               COALESCE(SUM(ug.won_amount::numeric), 0)::float8 AS upg_won
+             FROM upgrader_games ug
+             WHERE ug.created_at >= NOW() - INTERVAL '30 days'
+               AND ug.user_id IN ${upgUsersScope}
+             GROUP BY DATE(ug.created_at)`,
+          )
+        : Promise.resolve([] as UpgRow[]),
     ]);
 
     type Acc = {
@@ -947,6 +1055,7 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
       balanceChange: number;
       inventoryChange: number;
       voucherChange: number;
+      upgraderWon: number;
     };
     const byDay = new Map<string, Acc>();
     const dayKey = (d: Date) => new Date(d).toISOString().slice(0, 10);
@@ -960,6 +1069,7 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
           balanceChange: 0,
           inventoryChange: 0,
           voucherChange: 0,
+          upgraderWon: 0,
         };
         byDay.set(k, a);
       }
@@ -977,17 +1087,21 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
       acc(dayKey(r.d)).inventoryChange += r.obtained - r.disposed;
     for (const r of vch)
       acc(dayKey(r.d)).voucherChange += r.issued - r.claimed;
+    // Fold the off-ledger upgrader win credit into the day's balanceChange
+    // so it enters the pnl formula AND the surfaced balanceChange hover
+    // field consistently (a user win = a house loss).
+    for (const r of upg) acc(dayKey(r.d)).balanceChange += r.upg_won;
 
     return [...byDay.entries()]
       .map(([date, a]) => ({
         date,
         // Exact per-day form of the windowed formula (manualWd carries its
         // stored sign here so the daily values sum to the windowed total).
-        // Upgrader is fully covered by balanceChange (the ledger carries
-        // both upgrader_bet debits and upgrader_payout credits); a prior
-        // trailing upgraderWon term was based on a stale assumption that
-        // the backend skipped upgrader_payout rows, which double-counted
-        // every upgrader payout and produced ~$100k phantom loss bars.
+        // Upgrader: the ledger carries ONLY the upgrader_bet DEBIT — the
+        // win credit is off-ledger in upgrader_games.won_amount (prod-
+        // confirmed 2026-06-11: 0 upgrader_payout ledger rows). It was
+        // folded into a.balanceChange above (per-day, created_at-bucketed),
+        // so it is captured here exactly once.
         pnl:
           a.deposits -
           (a.manualWd + a.cardWd) -
@@ -1083,6 +1197,11 @@ const PAYOUT_CATEGORY_TYPES = {
     "battle_excess_to_voucher",
     "exchange_excess_to_voucher",
   ],
+  // `upgrader_payout` is never written to the ledger on prod (the win
+  // credit is off-ledger in upgrader_games.won_amount), so this would
+  // always sum to 0 — buildRow OVERRIDES upgraderPayouts with the real
+  // upgrader_games.won_amount instead. Kept as a (zero-yielding) member
+  // so the PnlBreakdownRow shape stays complete.
   upgraderPayouts: ["upgrader_payout"],
 } as const;
 
@@ -1100,7 +1219,16 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
     const blacklist = blacklistNotInClause("u.id", excluded);
     // Real-user scope used identically in every query below.
     const scope = `user_id IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
+    // Upgrader leg drops `creator` WHOLESALE (3 roles) to match the canonical
+    // upgrader reader (upgraderMetrics / cachedDailyUpgrader).
+    const upgScope = `ug.user_id IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklist})`;
     const statsExcluded = statsExcludedAdjustmentSqlPredicate();
+
+    // Gate the upgrader_games read on a table-existence probe (bare
+    // `FROM upgrader_games` throws 42P01 at parse on a pre-upgrader DB).
+    const upgProbe = await db.$queryRaw<{ exists: string | null }[]>`
+      SELECT to_regclass('public.upgrader_games')::text AS exists`;
+    const hasUpgrader = upgProbe[0]?.exists != null;
 
     type LedgerRow = {
       type: string;
@@ -1117,13 +1245,16 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
       iss_h24: string; iss_d3: string; iss_d7: string;
       clm_h24: string; clm_d3: string; clm_d7: string;
     };
+    type UpgRow = {
+      won_h24: string; won_d3: string; won_d7: string;
+    };
 
     // cr_* = credits (positive balance deltas only — "money out to users").
     // dl_* = signed balance delta (used to compute the formula's balanceΔ).
     // mwd_* = manual-withdrawal admin adjustments (subset of
     //         admin_balance_adjustment); only non-zero on the
     //         admin_balance_adjustment row in the grouped result.
-    const [ledger, cardWd, inv, vch, adminInvRem, adminVchRem] = await Promise.all([
+    const [ledger, cardWd, inv, vch, adminInvRem, adminVchRem, upg] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT type,
            COALESCE(SUM(CASE WHEN created_at >= $1 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_h24,
@@ -1211,6 +1342,24 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
            )`,
         h24, d3, d7,
       ),
+      // Upgrader WIN CREDIT per window from upgrader_games.won_amount
+      // (prod-confirmed 2026-06-11: off-ledger — 0 upgrader_payout ledger
+      // rows). Bucketed by created_at across the 3 windows; wholesale-
+      // creator-drop scope to match the canonical reader. Folded into
+      // balanceDelta in buildRow so the corrected total matches the other
+      // windowed forms. Gated on the probe → 0 on a pre-upgrader DB.
+      hasUpgrader
+        ? db.$queryRawUnsafe<UpgRow[]>(
+            `SELECT
+               COALESCE(SUM(CASE WHEN ug.created_at >= $1 THEN ug.won_amount::numeric ELSE 0 END), 0)::text AS won_h24,
+               COALESCE(SUM(CASE WHEN ug.created_at >= $2 THEN ug.won_amount::numeric ELSE 0 END), 0)::text AS won_d3,
+               COALESCE(SUM(CASE WHEN ug.created_at >= $3 THEN ug.won_amount::numeric ELSE 0 END), 0)::text AS won_d7
+             FROM upgrader_games ug
+             WHERE ug.created_at >= $3
+               AND ${upgScope}`,
+            h24, d3, d7,
+          )
+        : Promise.resolve([{ won_h24: "0", won_d3: "0", won_d7: "0" }] as UpgRow[]),
     ]);
 
     // Build per-window aggregates.
@@ -1224,10 +1373,11 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
       disKey: "dis_h24" | "dis_d3" | "dis_d7";
       issKey: "iss_h24" | "iss_d3" | "iss_d7";
       clmKey: "clm_h24" | "clm_d3" | "clm_d7";
+      wonKey: "won_h24" | "won_d3" | "won_d7";
     }> = [
-      { key: "h24", crKey: "cr_h24", dlKey: "dl_h24", mwdKey: "mwd_h24", cwdKey: "cwd_h24", obtKey: "obt_h24", disKey: "dis_h24", issKey: "iss_h24", clmKey: "clm_h24" },
-      { key: "d3",  crKey: "cr_d3",  dlKey: "dl_d3",  mwdKey: "mwd_d3",  cwdKey: "cwd_d3",  obtKey: "obt_d3",  disKey: "dis_d3",  issKey: "iss_d3",  clmKey: "clm_d3"  },
-      { key: "d7",  crKey: "cr_d7",  dlKey: "dl_d7",  mwdKey: "mwd_d7",  cwdKey: "cwd_d7",  obtKey: "obt_d7",  disKey: "dis_d7",  issKey: "iss_d7",  clmKey: "clm_d7"  },
+      { key: "h24", crKey: "cr_h24", dlKey: "dl_h24", mwdKey: "mwd_h24", cwdKey: "cwd_h24", obtKey: "obt_h24", disKey: "dis_h24", issKey: "iss_h24", clmKey: "clm_h24", wonKey: "won_h24" },
+      { key: "d3",  crKey: "cr_d3",  dlKey: "dl_d3",  mwdKey: "mwd_d3",  cwdKey: "cwd_d3",  obtKey: "obt_d3",  disKey: "dis_d3",  issKey: "iss_d3",  clmKey: "clm_d3",  wonKey: "won_d3"  },
+      { key: "d7",  crKey: "cr_d7",  dlKey: "dl_d7",  mwdKey: "mwd_d7",  cwdKey: "cwd_d7",  obtKey: "obt_d7",  disKey: "dis_d7",  issKey: "iss_d7",  clmKey: "clm_d7",  wonKey: "won_d7"  },
     ];
 
     function buildRow(w: (typeof windows)[number]): PnlBreakdownRow {
@@ -1254,14 +1404,15 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
         toNumber(vch[0]?.[w.issKey]) -
         toNumber(vch[0]?.[w.clmKey]) -
         toNumber(adminVchRem[0]?.[w.clmKey]);
-      // Upgrader is fully captured by balanceDelta: upgrader_bet
-      // (debit) and upgrader_payout (credit) both flow through the
-      // ledger now (since Upgrader shipped on packy.gg, see commit
-      // 696b716 which added upgrader_payout to the canonical PAYOUT
-      // type set). A prior `upgraderWon` term sourced from
-      // upgrader_games.won_amount was double-subtracting every payout
-      // and producing a -$150k+ phantom drag on the headline GGR / P&L
-      // cards.
+      // Upgrader WIN-CREDIT correction (prod-confirmed 2026-06-11). The
+      // ledger carries ONLY the upgrader_bet DEBIT — the win credit is
+      // off-ledger in upgrader_games.won_amount (0 upgrader_payout ledger
+      // rows). So the ledger `balanceDelta` MISSES every upgrader win
+      // credit. Add it back here (a user win is a house loss) so the total
+      // matches the other windowed forms; it sits INSIDE balanceDelta so
+      // the "payout rows are subsets of balanceΔ" invariant holds.
+      const upgraderWon = toNumber(upg[0]?.[w.wonKey]);
+      balanceDelta += upgraderWon;
       const total =
         deposits -
         withdrawals -
@@ -1269,9 +1420,7 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
         inventoryDelta -
         voucherDelta;
 
-      // Payout categories (sum credits across the types each one
-      // covers). `upgraderPayouts` reads off the `upgrader_payout`
-      // ledger credits like every other category.
+      // Payout categories (sum credits across the types each one covers).
       const payouts = {} as Record<PayoutCategoryKey, number>;
       for (const [cat, types] of Object.entries(PAYOUT_CATEGORY_TYPES) as [
         PayoutCategoryKey,
@@ -1281,6 +1430,12 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
         for (const t of types) s += creditByType.get(t) ?? 0;
         payouts[cat] = s;
       }
+      // `upgraderPayouts` is the informational upgrader payout row. The
+      // `upgrader_payout` LEDGER credit it used to read is always 0 on
+      // prod (the win is off-ledger), so source it from the real
+      // upgrader_games.won_amount instead — and it is a subset of the now-
+      // corrected balanceDelta (the win credit was folded in above).
+      payouts.upgraderPayouts = upgraderWon;
 
       return {
         deposits,
