@@ -202,26 +202,39 @@ export function CreateChallengeButton() {
 
             {kind === "card" && (
               <div className="space-y-2">
-                <Label className="text-xs">Pack</Label>
+                <Label className="text-xs">Pack (active)</Label>
                 <ItemPicker
                   type="pack"
                   value={pack}
-                  onSelect={(item: SearchItem) =>
+                  onSelect={(item: SearchItem) => {
                     setPack({
                       id: item.id,
                       name: item.name,
                       imageUrl: item.imageUrl,
                       priceUsd: item.priceUsd,
-                    })
-                  }
+                    });
+                    // the card pool is per-pack — drop a card picked from the
+                    // previous pack so we never submit a card not in this pack.
+                    setCard(null);
+                  }}
                 />
               </div>
             )}
 
             <div className="space-y-2">
-              <Label className="text-xs">Card</Label>
+              <Label className="text-xs">
+                {kind === "upgrader"
+                  ? "Card (upgrader pool)"
+                  : kind === "card"
+                    ? "Card (from pack)"
+                    : "Card"}
+              </Label>
               <ItemPicker
                 type="card"
+                upgraderPoolOnly={kind === "upgrader"}
+                packId={kind === "card" ? pack?.id : undefined}
+                disabled={kind === "card" && !pack}
+                placeholder={kind === "card" && !pack ? "Select a pack first" : undefined}
                 value={card}
                 onSelect={(item: SearchItem) =>
                   setCard({

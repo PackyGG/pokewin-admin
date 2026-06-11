@@ -29,10 +29,22 @@ export function ItemPicker({
   type,
   value,
   onSelect,
+  upgraderPoolOnly = false,
+  packId,
+  disabled = false,
+  placeholder,
 }: {
   type: "pack" | "card";
   value: { id: string; name?: string; imageUrl?: string | null; priceUsd?: number } | null;
   onSelect: (item: SearchItem) => void;
+  /** Card picker only: restrict results to the upgrader output pool. */
+  upgraderPoolOnly?: boolean;
+  /** Card picker only: restrict results to the cards inside this pack's pool. */
+  packId?: string;
+  /** Disable the trigger (e.g. a card picker before its pack is chosen). */
+  disabled?: boolean;
+  /** Override the trigger's empty-state label. */
+  placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -42,16 +54,21 @@ export function ItemPicker({
   useEffect(() => {
     if (!open) return;
     startTransition(async () => {
-      const results = await searchItems(query, type);
+      const results = await searchItems(query, type, { upgraderPoolOnly, packId });
       setItems(results);
     });
-  }, [open, query, type]);
+  }, [open, query, type, upgraderPoolOnly, packId]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
+        disabled={disabled}
         render={
-          <Button variant="outline" className="h-9 w-full justify-between text-left font-normal" />
+          <Button
+            variant="outline"
+            disabled={disabled}
+            className="h-9 w-full justify-between text-left font-normal"
+          />
         }
       >
         {value?.name ? (
@@ -68,7 +85,7 @@ export function ItemPicker({
             )}
           </span>
         ) : (
-          <span className="text-muted-foreground">Select {type}...</span>
+          <span className="text-muted-foreground">{placeholder ?? `Select ${type}...`}</span>
         )}
         <ChevronsUpDown className="ml-1 size-3 shrink-0 opacity-50" />
       </PopoverTrigger>
