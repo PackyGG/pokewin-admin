@@ -9,6 +9,7 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   challengesApi,
+  upgraderApi,
   BackendApiError,
   type Challenge,
   type ChallengeStatus,
@@ -38,10 +39,47 @@ export type SearchItem = {
 export async function searchItems(
   query: string,
   type: "pack" | "card",
+  opts: {
+    // Upgrader-hit target card → restrict to the enabled upgrader output pool.
+    // A play never lands on a card outside it, so a challenge on any other
+    // card would be unwinnable. Sources from the backend admin API.
+    upgraderPoolOnly?: boolean;
+    // Card-hit target card → restrict to the cards inside this pack's pool.
+    // The card must be pullable from the chosen pack, else it's unwinnable.
+    packId?: string;
+  } = {},
 ): Promise<SearchItem[]> {
   const db = await getDb();
   await requirePageAccess("/challenges");
   const isUuid = UUID_RE.test(query);
+
+  // Upgrader target card → restrict to the enabled upgrader output pool.
+  if (type === "card" && opts.upgraderPoolOnly) {
+    let outputs;
+    try {
+      outputs = await upgraderApi.listOutputs();
+    } catch {
+      return [];
+    }
+    const q = query.trim().toLowerCase();
+    return outputs
+      .filter((o) => o.enabled)
+      .filter((o) =>
+        !q
+          ? true
+          : o.name.toLowerCase().includes(q) ||
+            (isUuid && o.card_id.toLowerCase() === q),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 20)
+      .map((o) => ({
+        id: o.card_id,
+        type: "card" as const,
+        name: o.name,
+        imageUrl: o.image_url,
+        priceUsd: o.price,
+      }));
+  }
 
   if (type === "pack") {
     const or: Record<string, unknown>[] = [];
@@ -50,8 +88,11 @@ export async function searchItems(
       or.push({ slug: { contains: query, mode: "insensitive" } });
       if (isUuid) or.push({ id: query });
     }
+    // Only active packs can be a challenge target.
+    const where: Record<string, unknown> = { active: true };
+    if (or.length > 0) where.OR = or;
     const packs = await db.packs.findMany({
-      where: or.length > 0 ? { OR: or } : undefined,
+      where,
       select: { id: true, name: true, image_url: true, price: true },
       orderBy: { name: "asc" },
       take: 20,
@@ -65,13 +106,17 @@ export async function searchItems(
     }));
   }
 
+  // Card-hit target card → scope to the chosen pack's pool (pack_cards).
   const or: Record<string, unknown>[] = [];
   if (query) {
     or.push({ name: { contains: query, mode: "insensitive" } });
     if (isUuid) or.push({ id: query });
   }
+  const where: Record<string, unknown> = {};
+  if (opts.packId) where.pack_cards = { some: { pack_id: opts.packId } };
+  if (or.length > 0) where.OR = or;
   const cards = await db.cards.findMany({
-    where: or.length > 0 ? { OR: or } : undefined,
+    where: Object.keys(where).length > 0 ? where : undefined,
     select: { id: true, name: true, image_url: true, price: true },
     orderBy: { name: "asc" },
     take: 20,
