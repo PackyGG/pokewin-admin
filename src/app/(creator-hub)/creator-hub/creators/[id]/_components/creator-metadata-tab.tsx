@@ -6,6 +6,7 @@ import {
   Globe,
   Hash,
   IdCard,
+  Info,
   Link2,
   Mail,
   ShieldCheck,
@@ -20,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FadeIn } from "@/components/fade-in";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { formatDate, formatRelative } from "@/lib/utils/format";
 
 // Reuse the existing masked-email client component from the (admin) creators
@@ -60,7 +62,32 @@ export function CreatorMetadataTab({ userId }: { userId: string }) {
 }
 
 async function CreatorMetadataTabContent({ userId }: { userId: string }) {
-  const meta = await getCreatorMetadata(userId);
+  // The query's best-effort legs degrade to gap labels internally; this
+  // wrapper catches what remains (the MAIN identity reads) so a DB blip
+  // renders a VISIBLE band instead of throwing the tab into the route
+  // error boundary.
+  const { data: meta, error } = await safeQueryOrNull(
+    () => getCreatorMetadata(userId),
+    "creator-hub.creators.metadata",
+    15_000,
+  );
+
+  if (error) {
+    return (
+      <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+        <Info className="mt-0.5 size-4 shrink-0 text-amber-500" />
+        <div>
+          <div className="font-medium text-amber-500">
+            Creator metadata couldn&apos;t load
+          </div>
+          <div className="mt-0.5 text-muted-foreground">
+            The identity / codes lookup failed or timed out. Refresh to
+            retry — the rest of the page is unaffected.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!meta) {
     return (
@@ -79,6 +106,22 @@ async function CreatorMetadataTabContent({ userId }: { userId: string }) {
 
   return (
     <FadeIn className="space-y-5 sm:space-y-6">
+      {/* Visible gap chips — one per best-effort leg that failed this load,
+          so a degraded section is never mistaken for "no data". */}
+      {meta.gaps.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-dashed border-amber-500/30 bg-amber-500/5 px-3 py-2">
+          <Info className="size-3.5 shrink-0 text-amber-500" />
+          <span className="text-[11px] text-muted-foreground">
+            Partial load — refresh to retry:
+          </span>
+          {meta.gaps.map((gap) => (
+            <Badge key={gap} variant="outline" className="text-[10px]">
+              {gap}
+            </Badge>
+          ))}
+        </div>
+      )}
+
       {/* ── Identity + account metadata ───────────────────────────────── */}
       <div className="space-y-3">
         <SectionHeading icon={IdCard} title="Creator details" />

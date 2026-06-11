@@ -82,6 +82,14 @@ export type CreatorMetadata = {
   rewardPageUrl: string | null;
   // Who onboarded them (admin audit)
   onboardedBy: OnboardedBy | null;
+  /**
+   * Human-readable labels for every best-effort leg that FAILED this load
+   * (ADMIN-DB socials, backend socials roster, social URLs, onboarding
+   * audit). The tab renders these as visible gap chips so a degraded
+   * section is never indistinguishable from "no data" — per the
+   * no-silent-empty rule. Empty when every leg loaded.
+   */
+  gaps: string[];
 };
 
 /**
@@ -137,6 +145,15 @@ export async function getCreatorMetadata(
   }
 
   // ── ADMIN: socials + the onboarding audit event, in parallel.
+  //
+  // Every leg here is BEST-EFFORT (mirrors `alt-accounts-data.ts`): an
+  // ADMIN-DB or backend blip used to throw straight through the tab —
+  // now it degrades THAT leg to empty/null and records a human-readable
+  // gap label the tab renders as a visible chip. The MAIN identity reads
+  // above stay raw on purpose: without them the tab is meaningless, and
+  // the tab component's own `safeQueryOrNull` wrapper turns that into a
+  // visible band instead of a crash.
+  const gaps: string[] = [];
   const [adminSocials, mergedSocials, socialUrls, madeCreatorEvent] =
     await Promise.all([
     adminDb.creator_socials.findMany({
@@ -150,12 +167,30 @@ export async function getCreatorMetadata(
         subscriber_count: true,
         last_fetched_at: true,
       },
+    }).catch((err: unknown) => {
+      console.error(
+        "[creator-hub.creators.metadata] admin-DB socials read failed:",
+        err,
+      );
+      gaps.push("Social stats (admin DB) unavailable");
+      return [] as never[];
     }),
-    getCreatorLinkedSocials(userId),
-    getCreatorSocialUrls(userId).catch(() => ({
-      discordChannelUrl: null,
-      rewardPageUrl: null,
-    })),
+    getCreatorLinkedSocials(userId).catch((err: unknown) => {
+      console.error(
+        "[creator-hub.creators.metadata] linked-socials roster read failed:",
+        err,
+      );
+      gaps.push("Backend socials unavailable");
+      return [] as Awaited<ReturnType<typeof getCreatorLinkedSocials>>;
+    }),
+    getCreatorSocialUrls(userId).catch((err: unknown) => {
+      console.error(
+        "[creator-hub.creators.metadata] social URLs read failed:",
+        err,
+      );
+      gaps.push("Discord / reward-page links unavailable");
+      return { discordChannelUrl: null, rewardPageUrl: null };
+    }),
     // The earliest `user_made_creator` event for this target = the initial
     // onboarding. Joined to the acting admin so we can name the manager.
     // `admin_user` is a nullable relation (the actor may have been deleted),
@@ -170,6 +205,13 @@ export async function getCreatorMetadata(
           select: { username: true, display_username: true, role: true },
         },
       },
+    }).catch((err: unknown) => {
+      console.error(
+        "[creator-hub.creators.metadata] onboarding audit read failed:",
+        err,
+      );
+      gaps.push("Onboarding record unavailable");
+      return null;
     }),
   ]);
 
@@ -243,5 +285,6 @@ export async function getCreatorMetadata(
     discordChannelUrl: socialUrls.discordChannelUrl,
     rewardPageUrl: socialUrls.rewardPageUrl,
     onboardedBy,
+    gaps,
   };
 }

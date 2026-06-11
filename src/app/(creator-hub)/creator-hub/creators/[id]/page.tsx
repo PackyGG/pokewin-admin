@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { getCreatorHeader } from "@/lib/queries/creators";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 
 import { CreatorBanner } from "./_components/creator-banner";
 import { CreatorTabBar } from "./_components/creator-tab-bar";
@@ -90,13 +91,25 @@ export default async function CreatorHubCreatorDetailPage({
   const tab = parseTab(sp.tab);
 
   // Cheap header on the critical path (username / image / email / primary
-  // code). A truly unknown user 404s; everything heavy streams below.
-  const header = await getCreatorHeader(id);
-  if (!header) notFound();
+  // code) — the ONLY blocking await (2 indexed lookups, 5s-bounded).
+  //
+  // De-fanged (was a raw await): a transient MAIN blip is NOT the same as a
+  // missing user, but it used to escape this await and throw the whole page
+  // into the error boundary. Now only a CONFIRMED unknown id 404s
+  // (`!header && !headerError`); a failed/timed-out lookup renders the
+  // degraded banner (user id + amber band) and still mounts the tab bar +
+  // active tab — every tab only needs `userId`, and RiskTab already handles
+  // an empty `code`. One failing leg never blanks the page.
+  const { data: header, error: headerError } = await safeQueryOrNull(
+    () => getCreatorHeader(id),
+    "creator-hub.creators.header",
+    5_000,
+  );
+  if (!header && !headerError) notFound();
 
   return (
     <div className="space-y-5 sm:space-y-6">
-      <CreatorBanner header={header} />
+      <CreatorBanner header={header} userId={id} />
       <CreatorTabBar />
 
       {/* Only the active tab mounts — keyed on `tab` so switching forces a
@@ -113,7 +126,7 @@ export default async function CreatorHubCreatorDetailPage({
         {tab === "sessions" && <SessionsTab userId={id} />}
         {tab === "kick" && <KickTab userId={id} />}
         {tab === "twitter" && <TwitterTab userId={id} />}
-        {tab === "risk" && <RiskTab userId={id} code={header.code} />}
+        {tab === "risk" && <RiskTab userId={id} code={header?.code ?? ""} />}
         {tab === "forecast" && <ForecastTab userId={id} />}
         {tab === "cohorts" && <CohortsLtvTab userId={id} />}
         {tab === "alts" && <AltAccountsTab userId={id} />}
