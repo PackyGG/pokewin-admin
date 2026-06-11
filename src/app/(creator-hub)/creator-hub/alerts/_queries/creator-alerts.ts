@@ -3,13 +3,16 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { creatorsApi, type CreatorListItem } from "@/lib/backend-api";
-import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
+import {
+  affiliateLeaderboardsApi,
+  type LeaderboardAdminRow,
+} from "@/lib/backend-api/affiliate-leaderboards";
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
 import { getDealCapInfoByUser } from "../../../../(admin)/creators/_queries/deal-cap-by-user";
 import { getAllCreatorsLifetimePnl } from "../../../../(admin)/creators/_queries/all-creators-lifetime-pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
+import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { Prisma } from "@/generated/prisma/client";
 import type { Prisma as AdminPrisma } from "@/generated/admin-prisma/client";
 
@@ -94,6 +97,11 @@ const SEVERITY_RANK: Record<CreatorAlertSeverity, number> = {
 
 const PAGE_SIZE = 100;
 const FETCH_CAP = 500;
+// Hard upper bound on the leaderboard pagination walk so a wrong `total`
+// can't spin an unbounded loop. 50 pages × 100 = 5,000 leaderboards, far
+// above the live pool. The backend rejects `limit > 200` with HTTP 422,
+// so we page in PAGE_SIZE (100) chunks — same shape as creators-stats.ts.
+const MAX_PAGES = 50;
 
 // ─── Schema self-heal (idempotent) ───────────────────────────────────
 
@@ -184,7 +192,7 @@ async function deriveBigFtdAlerts(): Promise<DerivedAlertCandidate[]> {
   const alerts: DerivedAlertCandidate[] = [];
   try {
     const excluded = await getExcludedUserIds();
-    const blacklistIdNotIn = escapeBlacklistIds(excluded);
+    const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
     const db = await getDb();
     const rows = await db.$queryRaw<
       {
@@ -340,14 +348,22 @@ const deriveAlertCandidates = unstable_cache(
       });
     }
 
-    // Leaderboards ending
+    // Leaderboards ending. The backend caps `limit` at 200 (HTTP 422
+    // otherwise), so page through in PAGE_SIZE (100) chunks — same walk
+    // shape as creators-stats.ts: increment offset by the page size, stop
+    // when a page comes back short/empty or when MAX_PAGES is hit.
     try {
-      const lbPage = await affiliateLeaderboardsApi.list({
-        status: "approved",
-        offset: 0,
-        limit: FETCH_CAP,
-      });
-      for (const lb of lbPage.leaderboards) {
+      const leaderboards: LeaderboardAdminRow[] = [];
+      for (let p = 0; p < MAX_PAGES; p++) {
+        const lbPage = await affiliateLeaderboardsApi.list({
+          status: "approved",
+          offset: p * PAGE_SIZE,
+          limit: PAGE_SIZE,
+        });
+        leaderboards.push(...lbPage.leaderboards);
+        if (lbPage.leaderboards.length < PAGE_SIZE) break;
+      }
+      for (const lb of leaderboards) {
         if (lb.cancelled_at || lb.time_status === "ended") continue;
         const severity = lbEndingSeverity(daysUntil(lb.end_date, nowMs));
         if (!severity) continue;
