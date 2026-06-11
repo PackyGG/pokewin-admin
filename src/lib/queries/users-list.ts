@@ -6,12 +6,18 @@ import { Prisma } from "@/generated/prisma/client";
 import { user_role } from "@/generated/prisma/enums";
 import {
   computeRiskScoresForList,
+  type RiskScoreLite,
   type RiskTier,
 } from "@/lib/fraud/score";
+import {
+  officialStreamAdjustmentSqlPredicate,
+  removeLockedBalanceAdjustmentSqlPredicate,
+} from "@/lib/balance-adjustment-categories";
 import { calculateUsersPnlBatch, type UserPnl } from "./pnl";
 import { isUserId, isUuid } from "@/lib/utils/ids";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
 import { escapeBlacklistIds } from "./_blacklist";
+import { logError } from "@/lib/errors/logger";
 
 // Allowlist from the generated Prisma user_role enum — validate the
 // role filter before it reaches either the Prisma where or the raw-SQL
@@ -92,47 +98,38 @@ type RankedUserIdsInput = UserListFilterInput & {
   perPage: number;
 };
 
-/** Precomputed per-user financials from the ranking scan — avoids a second PnL batch. */
-type RankedUserMetrics = {
-  availableBalance: number;
-  lockedBalance: number;
-  inventoryValue: number;
-  unclaimedVouchers: number;
-  totalDeposited: number;
-  totalWithdrawn: number;
-  pnl: number;
-  netHoldings: number;
-};
-
 type RankedUserIdsResult = {
   ids: string[];
   total: number;
-  metricsById: Map<string, RankedUserMetrics>;
 };
+
+/** Satellite-aggregate CTE keys a computed sort can request. */
+type AggregateKey = "inv" | "cw" | "vc" | "dc" | "osrl";
 
 /**
  * Which satellite aggregates each computed sort needs (balances always joined).
  *
- * PnL / netHoldings deliberately omit the `os` ledger CTE (official_stream +
- * remove_locked_balance netting). That CTE scans every completed
- * admin_balance_adjustment row for the whole filtered cohort and was the
- * dominant cost of the global "Top losers / Top winners / Net holdings"
- * ranking — cold-cache runs routinely blew the 45s page timeout. Ranking
- * uses the lighter balance + inventory + voucher approximation; the visible
- * page is hydrated with `calculateUsersPnlBatch` for accurate per-row PnL /
- * net holdings (including ledger carve-outs).
+ * PnL / netHoldings include the `osrl` ledger CTE — the SIGNED net of
+ * `official_stream` (fake balance, hidden everywhere) +
+ * `remove_locked_balance` adjustments, via the canonical null-safe
+ * predicates in `src/lib/balance-adjustment-categories.ts`. An earlier
+ * iteration dropped this carve-out from the ORDER BY in the belief the
+ * scan was the dominant cost — prod truth (2026-06-11: 761 users, ~93
+ * adjustment rows) is that the filter-first CTE runs in ~11 ms, and
+ * omitting it let a streamer with fake balance rank as a top whale.
+ * With it, the ranking ORDER BY and the `calculateUsersPnlBatch` display
+ * hydration use the same formula; residual display-vs-order drift is only
+ * cache staleness (≤300s global / 30s filtered TTL below).
  */
-const SORT_AGGREGATE_KEYS = {
-  pnl: ["inv", "cw", "vc"] as const,
-  netHoldings: ["inv", "vc"] as const,
-  totalWithdrawn: ["cw"] as const,
-  inventoryValue: ["inv"] as const,
-  depositCount: ["dc"] as const,
+const SORT_AGGREGATE_KEYS: Record<string, readonly AggregateKey[]> = {
+  pnl: ["inv", "cw", "vc", "osrl"],
+  netHoldings: ["inv", "vc", "osrl"],
+  totalWithdrawn: ["cw"],
+  inventoryValue: ["inv"],
+  depositCount: ["dc"],
 };
 
-function buildAggregateCtes(
-  needs: readonly ("inv" | "cw" | "vc" | "dc")[],
-): string {
+function buildAggregateCtes(needs: readonly AggregateKey[]): string {
   const parts: string[] = [];
   if (needs.includes("inv")) {
     parts.push(`
@@ -181,17 +178,43 @@ function buildAggregateCtes(
          GROUP BY lt.user_id
       )`);
   }
+  if (needs.includes("osrl")) {
+    // SIGNED net of official_stream (fake balance) + remove_locked_balance
+    // adjustments per user — the same carve-out calculateUsersPnlBatch
+    // applies to onSiteBalance, so ORDER BY matches the displayed values.
+    // Predicates come from the canonical null-safe (3VL-guarded) helpers in
+    // balance-adjustment-categories.ts — NEVER inline/fork the JSON
+    // metadata match. Filter-first (INNER JOIN filtered) keeps the scan
+    // bounded to the active cohort.
+    parts.push(`
+      osrl AS (
+        SELECT lt.user_id,
+               COALESCE(SUM(lt.amount::numeric), 0) AS osrl_net
+          FROM ledger_transactions lt
+         INNER JOIN filtered f ON f.id = lt.user_id
+         WHERE lt.status = 'completed'::ledger_transaction_status
+           AND ((${officialStreamAdjustmentSqlPredicate({
+             typeColumn: "lt.type",
+             metadataColumn: "lt.metadata",
+           })})
+             OR (${removeLockedBalanceAdjustmentSqlPredicate({
+               typeColumn: "lt.type",
+               metadataColumn: "lt.metadata",
+             })}))
+         GROUP BY lt.user_id
+      )`);
+  }
   return parts.length ? `,\n${parts.join(",\n")}` : "";
 }
 
-function buildRankingJoins(
-  needs: readonly ("inv" | "cw" | "vc" | "dc")[],
-): string {
+function buildRankingJoins(needs: readonly AggregateKey[]): string {
   const joins: string[] = ["LEFT JOIN balances b ON b.user_id = f.id"];
   if (needs.includes("inv")) joins.push("LEFT JOIN inv ON inv.user_id = f.id");
   if (needs.includes("cw")) joins.push("LEFT JOIN cw ON cw.user_id = f.id");
   if (needs.includes("vc")) joins.push("LEFT JOIN vc ON vc.user_id = f.id");
   if (needs.includes("dc")) joins.push("LEFT JOIN dc ON dc.user_id = f.id");
+  if (needs.includes("osrl"))
+    joins.push("LEFT JOIN osrl ON osrl.user_id = f.id");
   return joins.join("\n      ");
 }
 
@@ -205,96 +228,54 @@ function buildRankingOrderExpr(sortBy: string): string {
   if (sortBy === "depositCount") {
     return `COALESCE(dc.deposit_count, 0)`;
   }
+  // netHoldings / pnl both net out the official_stream +
+  // remove_locked_balance ledger carve-out (osrl) so the ORDER BY uses the
+  // same on-site-balance formula the hydrated display values use. (Display
+  // additionally clamps available at 0 per row; the unclamped key orders
+  // identically for all realistic rows and stays a single SQL expression.)
   if (sortBy === "netHoldings") {
     return `COALESCE(b.available_balance::numeric, 0)
             + COALESCE(b.locked_balance::numeric, 0)
             + COALESCE(inv.inv_value, 0)
-            + COALESCE(vc.voucher_value, 0)`;
+            + COALESCE(vc.voucher_value, 0)
+            - COALESCE(osrl.osrl_net, 0)`;
   }
-  // pnl — house-perspective sort key (asc = top losers / house gain).
-  // Approximate: omits official_stream / remove_locked_balance ledger
-  // netting; accurate values come from calculateUsersPnlBatch on hydrate.
+  // pnl — user-perspective sort key (asc = biggest user losers = house
+  // gain; the toolbar "Top losers" button sends asc).
   return `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
           + COALESCE(b.available_balance::numeric, 0)
           + COALESCE(b.locked_balance::numeric, 0)
           + COALESCE(inv.inv_value, 0)
           + COALESCE(vc.voucher_value, 0)
-          - COALESCE(b.total_deposited::numeric, 0)`;
+          - COALESCE(b.total_deposited::numeric, 0)
+          - COALESCE(osrl.osrl_net, 0)`;
 }
 
-/** Shared SELECT columns for hydration — computed once in the ranking scan. */
-function metricSelectForSort(
-  sortBy: string,
-  needs: readonly ("inv" | "cw" | "vc" | "dc")[],
-): string {
-  const cols = [
-    "COALESCE(b.available_balance::numeric, 0) AS av",
-    "COALESCE(b.locked_balance::numeric, 0) AS lk",
-    "COALESCE(b.total_deposited::numeric, 0) AS dep",
-  ];
-  cols.push(
-    needs.includes("cw")
-      ? "COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0) AS wd"
-      : "COALESCE(b.total_withdrawn::numeric, 0) AS wd",
-  );
-  cols.push(
-    needs.includes("inv")
-      ? "COALESCE(inv.inv_value, 0) AS inv_val"
-      : "0::numeric AS inv_val",
-  );
-  cols.push(
-    needs.includes("vc")
-      ? "COALESCE(vc.voucher_value, 0) AS vch_val"
-      : "0::numeric AS vch_val",
-  );
-  cols.push("0::numeric AS os_net");
-  return cols.join(",\n    ");
-}
-
-function rowToRankedMetrics(row: {
-  av: string | number | null;
-  lk: string | number | null;
-  dep: string | number | null;
-  wd: string | number | null;
-  inv_val: string | number | null;
-  vch_val: string | number | null;
-  os_net: string | number | null;
-}): RankedUserMetrics {
-  const lockedBalance = toNumber(row.lk);
-  const osNet = toNumber(row.os_net);
-  const onSiteBalance =
-    toNumber(row.av) + lockedBalance - osNet;
-  const availableBalance = Math.max(0, onSiteBalance - lockedBalance);
-  const inventoryValue = toNumber(row.inv_val);
-  const unclaimedVouchers = toNumber(row.vch_val);
-  const totalDeposited = toNumber(row.dep);
-  const totalWithdrawn = toNumber(row.wd);
-  const housePnl =
-    totalDeposited -
-    totalWithdrawn -
-    onSiteBalance -
-    inventoryValue -
-    unclaimedVouchers;
-  return {
-    availableBalance,
-    lockedBalance,
-    inventoryValue,
-    unclaimedVouchers,
-    totalDeposited,
-    totalWithdrawn,
-    pnl: -housePnl,
-    netHoldings:
-      availableBalance + lockedBalance + inventoryValue + unclaimedVouchers,
-  };
-}
+/** A WHERE clause + the positional bind values it references ($1, $2, …). */
+type UserListWhereClause = {
+  sql: string;
+  params: unknown[];
+};
 
 /**
  * Shared WHERE builder for every raw-SQL user-list path (ranking scan AND
  * the column-sort search fast path). Free-form text uses `LOWER(col) LIKE`
  * — NOT Prisma ILIKE — so Postgres can use the recommended lower(col)
  * text_pattern_ops / pg_trgm indexes.
+ *
+ * The search TERM is bound as a SQL parameter ($1/$2), never interpolated
+ * — categorical injection safety on top of the Zod length clamp. LIKE
+ * wildcards in the pasted term are escaped in JS (`\` escape char +
+ * `ESCAPE '\'`) so a literal `%` / `_` matches literally and the prefix
+ * semantics stay honest. Role/status remain enum-allowlisted literals;
+ * blacklist ids stay adminDB-sourced + escaped via escapeBlacklistIds.
+ *
+ * Both statements of each caller (page slice + COUNT) embed the SAME
+ * clause, so they pass the SAME params array.
  */
-function buildUserListWhereClause(input: UserListFilterInput): string {
+function buildUserListWhereClause(
+  input: UserListFilterInput,
+): UserListWhereClause {
   const {
     searchTerm,
     isExactId,
@@ -305,40 +286,46 @@ function buildUserListWhereClause(input: UserListFilterInput): string {
     status,
   } = input;
   const whereSql: string[] = [];
+  const params: unknown[] = [];
   if (searchTerm) {
-    const safe = searchTerm.replace(/'/g, "''");
     if (isExactId) {
+      params.push(searchTerm);
       // Primary-key lookup — exact match first, then case-insensitive fallback
       // for pasted ids with different casing (nanoid ids are mixed-case).
-      whereSql.push(`(u.id = '${safe}' OR LOWER(u.id) = LOWER('${safe}'))`);
+      whereSql.push(`(u.id = $1 OR LOWER(u.id) = LOWER($1))`);
     } else if (isEmailLike) {
-      whereSql.push(`LOWER(u.email) = LOWER('${safe}')`);
+      params.push(searchTerm);
+      whereSql.push(`LOWER(u.email) = LOWER($1)`);
     } else if (isDiscordId) {
+      params.push(searchTerm);
       whereSql.push(
-        `EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = '${safe}')`,
+        `EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = $1)`,
       );
     } else {
-      const lower = `LOWER('${safe}')`;
+      // Pattern computed in JS: lowercase (SQL side compares LOWER(col)),
+      // then escape `\` / `%` / `_` so pasted wildcards match literally.
+      const lowered = searchTerm.toLowerCase();
+      const escaped = lowered.replace(/[\\%_]/g, "\\$&");
       const pattern =
-        searchMode === "substring"
-          ? `'%' || ${lower} || '%'`
-          : `${lower} || '%'`;
+        searchMode === "substring" ? `%${escaped}%` : `${escaped}%`;
+      params.push(pattern); // $1 — LIKE pattern
+      params.push(lowered); // $2 — raw lowered term (exact-id leg)
       // UNION per column so Postgres can index-range each leg instead of
       // OR-ing four ILIKE predicates (which often devolves to a seq scan).
       whereSql.push(
         `u.id IN (
           SELECT id FROM (
-            SELECT id FROM "user" WHERE LOWER(username) LIKE ${pattern}
+            SELECT id FROM "user" WHERE LOWER(username) LIKE $1 ESCAPE '\\'
             UNION
-            SELECT id FROM "user" WHERE LOWER(display_username) LIKE ${pattern}
+            SELECT id FROM "user" WHERE LOWER(display_username) LIKE $1 ESCAPE '\\'
             UNION
-            SELECT id FROM "user" WHERE LOWER(name) LIKE ${pattern}
+            SELECT id FROM "user" WHERE LOWER(name) LIKE $1 ESCAPE '\\'
             UNION
-            SELECT id FROM "user" WHERE LOWER(email) LIKE ${pattern}
+            SELECT id FROM "user" WHERE LOWER(email) LIKE $1 ESCAPE '\\'
             UNION
-            SELECT id FROM "user" WHERE LOWER(id) LIKE ${pattern}
+            SELECT id FROM "user" WHERE LOWER(id) LIKE $1 ESCAPE '\\'
             UNION
-            SELECT id FROM "user" WHERE LOWER(id) = ${lower}
+            SELECT id FROM "user" WHERE LOWER(id) = $2
           ) matched
         )`,
       );
@@ -356,7 +343,10 @@ function buildUserListWhereClause(input: UserListFilterInput): string {
       `u.id NOT IN (${escapeBlacklistIds(input.excludedUserIds)})`,
     );
   }
-  return whereSql.length ? `WHERE ${whereSql.join(" AND ")}` : "";
+  return {
+    sql: whereSql.length ? `WHERE ${whereSql.join(" AND ")}` : "",
+    params,
+  };
 }
 
 function buildUserListColumnOrderSql(
@@ -428,18 +418,28 @@ async function fetchColumnSortUserIds(
     ? "LEFT JOIN balances b ON b.user_id = u.id"
     : "";
 
+  // COUNT(*) stays EXACT — measured 0.2–2.7 ms at prod size (761 users,
+  // 2026-06-11). If `user` ever grows past ~500k rows, switch the
+  // UNFILTERED total to a `pg_class.reltuples` estimate; filtered counts
+  // stay exact.
   const [orderedRows, totalCount] = await Promise.all([
-    db.$queryRawUnsafe<{ id: string }[]>(`
+    db.$queryRawUnsafe<{ id: string }[]>(
+      `
       SELECT u.id
       FROM "user" u
       ${balanceJoin}
-      ${whereClause}
+      ${whereClause.sql}
       ${orderSql}
       LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
-    `),
-    db.$queryRawUnsafe<{ c: string }[]>(`
-      SELECT COUNT(*)::text AS c FROM "user" u ${whereClause}
-    `),
+    `,
+      ...whereClause.params,
+    ),
+    db.$queryRawUnsafe<{ c: string }[]>(
+      `
+      SELECT COUNT(*)::text AS c FROM "user" u ${whereClause.sql}
+    `,
+      ...whereClause.params,
+    ),
   ]);
 
   return {
@@ -450,20 +450,21 @@ async function fetchColumnSortUserIds(
 
 const cachedFilteredColumnSortUserIds = unstable_cache(
   fetchColumnSortUserIds,
-  ["users-column-sort-filtered-v2"],
+  ["users-column-sort-filtered-v3"],
   { revalidate: 30, tags: ["users-list"] },
 );
 
 /**
  * The expensive half of the computed-sort path: a global ORDER BY over the
  * whole `user` table joined to per-user inventory / card-withdrawal /
- * voucher (and optionally deposit-count) aggregate subqueries, returning
- * just the ordered slice of user IDs + the total row count for the active
- * filter. The main DB lacks the supporting indexes for these expressions,
- * so on a prod-sized table this scan is the heaviest query on the page and
- * was the source of the "/users timed out" failure — especially the
- * "Top winners / Top losers" global PnL ranking, which orders every user
- * by lifetime P&L before paginating.
+ * voucher / ledger-carve-out (and optionally deposit-count) aggregate
+ * subqueries, returning just the ordered slice of user IDs + the total row
+ * count for the active filter. Prod currently has NO supporting indexes
+ * for these expressions (prisma/recommended-indexes.sql is unapplied), so
+ * this is the heaviest query on the page — though at today's prod size
+ * (761 users, 2026-06-11) it measures ~11 ms; the 30s DB
+ * statement_timeout + the page-level safeQuery wall clock are the real
+ * safety nets, not query cost.
  *
  * Kept separate from the row hydration (findMany + PnL batch + risk
  * scores) on purpose: the ranking depends ONLY on the serializable
@@ -471,7 +472,10 @@ const cachedFilteredColumnSortUserIds = unstable_cache(
  * the hydration reads LIVE per-row values that must stay fresh. See
  * cachedRankedUserIds below.
  *
- * Returns `{ ids, total }`; ids is already in display order.
+ * Returns `{ ids, total }`; ids is already in display order. Selects
+ * `f.id` ONLY — per-row financials are hydrated truthfully by
+ * calculateUsersPnlBatch in hydrateUserListPage (one path, no precomputed
+ * metric forks).
  */
 async function computeRankedUserIds(
   input: RankedUserIdsInput,
@@ -480,53 +484,40 @@ async function computeRankedUserIds(
   const db = await getDb();
   const orderSql = order === "asc" ? "ASC" : "DESC";
   const whereClause = buildUserListWhereClause(filter);
-  const aggregateKeys =
-    SORT_AGGREGATE_KEYS[sortBy as keyof typeof SORT_AGGREGATE_KEYS] ?? [];
+  const aggregateKeys = SORT_AGGREGATE_KEYS[sortBy] ?? [];
   const aggregateCtes = buildAggregateCtes(aggregateKeys);
   const rankingJoins = buildRankingJoins(aggregateKeys);
   const orderExpr = buildRankingOrderExpr(sortBy);
-  const metricSelect = metricSelectForSort(sortBy, aggregateKeys);
 
-  type RankedRow = {
-    id: string;
-    av: string | null;
-    lk: string | null;
-    dep: string | null;
-    wd: string | null;
-    inv_val: string | null;
-    vch_val: string | null;
-    os_net: string | null;
-  };
-
+  // COUNT(*) stays EXACT — see fetchColumnSortUserIds for the upgrade path
+  // (switch the unfiltered total to a reltuples estimate past ~500k rows).
   const [orderedRows, totalCount] = await Promise.all([
-    db.$queryRawUnsafe<RankedRow[]>(`
+    db.$queryRawUnsafe<{ id: string }[]>(
+      `
       WITH filtered AS (
         SELECT u.id
           FROM "user" u
-          ${whereClause}
+          ${whereClause.sql}
       )${aggregateCtes}
-      SELECT f.id,
-             ${metricSelect}
+      SELECT f.id
         FROM filtered f
         ${rankingJoins}
        ORDER BY (${orderExpr}) ${orderSql} NULLS LAST, f.id ${orderSql}
        LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
-    `),
-    db.$queryRawUnsafe<{ c: string }[]>(`
-      SELECT COUNT(*)::text AS c FROM "user" u ${whereClause}
-    `),
+    `,
+      ...whereClause.params,
+    ),
+    db.$queryRawUnsafe<{ c: string }[]>(
+      `
+      SELECT COUNT(*)::text AS c FROM "user" u ${whereClause.sql}
+    `,
+      ...whereClause.params,
+    ),
   ]);
 
-  const metricsById = new Map<string, RankedUserMetrics>();
-  const ids = orderedRows.map((r) => {
-    metricsById.set(r.id, rowToRankedMetrics(r));
-    return r.id;
-  });
-
   return {
-    ids,
+    ids: orderedRows.map((r) => r.id),
     total: Number(totalCount[0]?.c ?? 0),
-    metricsById,
   };
 }
 
@@ -575,13 +566,13 @@ async function computeRankedUserIds(
  */
 const cachedGlobalRankedUserIds = unstable_cache(
   computeRankedUserIds,
-  ["users-ranked-ids-global-v5"],
+  ["users-ranked-ids-global-v6"],
   { revalidate: 300, tags: ["users-list"] },
 );
 
 const cachedFilteredRankedUserIds = unstable_cache(
   computeRankedUserIds,
-  ["users-ranked-ids-filtered-v5"],
+  ["users-ranked-ids-filtered-v6"],
   { revalidate: 30, tags: ["users-list"] },
 );
 
@@ -659,46 +650,41 @@ const USER_LIST_SELECT = {
 
 type UserListRow = Prisma.UserGetPayload<{ select: typeof USER_LIST_SELECT }>;
 
+/**
+ * Hydrate the page slice with live per-row financials + risk badges.
+ *
+ * ONE truthful path — the old 4-mode variant (skipPnlBatch /
+ * skipListRisk / precomputedMetrics / rankedSortBy) rendered $0.00
+ * P&L/Inventory/Net on exact-match searches and on the computed-sort
+ * pages whenever its mode routing skipped the batch. Now every render:
+ *
+ *  • `calculateUsersPnlBatch` (6 parallel PK-IN queries, canonical
+ *    null-safe official_stream / remove_locked carve-outs) — a failure
+ *    THROWS so the page-level safeQuery shows the visible failure band.
+ *    Money columns are the page's core content; silently falling back to
+ *    the balances row would render numbers that are confidently wrong.
+ *  • deposit-count groupBy (Prisma enum literal — drift-safe).
+ *  • `computeRiskScoresForList` — advisory badge only, so its failure is
+ *    CAUGHT, logged, and degraded to empty (a missing badge must never
+ *    blank the whole list — the user_battle_limits lesson class). It now
+ *    runs on EVERY path including search: a "low" badge on a searched
+ *    fraudster is the same lying-zero class as $0 P&L.
+ */
 async function hydrateUserListPage(
   users: UserListRow[],
   total: number,
   page: number,
   perPage: number,
-  opts: {
-    skipListRisk?: boolean;
-    skipPnlBatch?: boolean;
-    /** Which computed sort produced `precomputedMetrics`. */
-    rankedSortBy?: string;
-    /** Financials already computed by the ranking scan (pnl / netHoldings sorts). */
-    precomputedMetrics?: Map<string, RankedUserMetrics>;
-  } = {},
 ): Promise<PaginatedResult<UserListItem>> {
   const db = await getDb();
   const userIds = users.map((u) => u.id);
-  const precomputed = opts.precomputedMetrics;
-  const empty = {
-    deposits: [] as Array<{ user_id: string; _count: { _all: number } }>,
-  };
-  const skipListRisk = opts.skipListRisk ?? false;
-  const emptyRisk = new Map<
-    string,
-    {
-      score: number;
-      tier: RiskTier;
-      sharedIpCount: number;
-      sharedFingerprintCount: number;
-    }
-  >();
-
-  const needsPnlBatch =
-    !opts.skipPnlBatch &&
-    userIds.some((id) => !precomputed?.has(id));
+  const emptyDeposits: Array<{ user_id: string; _count: { _all: number } }> =
+    [];
+  const emptyRisk = new Map<string, RiskScoreLite>();
 
   const [pnlByUserId, depositCountRows, riskScoresMap] = await Promise.all([
-    needsPnlBatch
-      ? calculateUsersPnlBatch(
-          userIds.filter((id) => !precomputed?.has(id)),
-        )
+    userIds.length > 0
+      ? calculateUsersPnlBatch(userIds)
       : Promise.resolve(new Map<string, UserPnl>()),
     userIds.length > 0
       ? db.ledger_transactions.groupBy({
@@ -710,9 +696,16 @@ async function hydrateUserListPage(
           },
           _count: { _all: true },
         })
-      : Promise.resolve(empty.deposits),
-    userIds.length > 0 && !skipListRisk
-      ? computeRiskScoresForList(userIds)
+      : Promise.resolve(emptyDeposits),
+    userIds.length > 0
+      ? computeRiskScoresForList(userIds).catch((err) => {
+          logError(
+            "users.list.risk",
+            "risk batch degraded — rendering rows without risk badges",
+            err,
+          );
+          return emptyRisk;
+        })
       : Promise.resolve(emptyRisk),
   ]);
 
@@ -722,47 +715,25 @@ async function hydrateUserListPage(
 
   return {
     data: users.map((u) => {
-      const ranked = precomputed?.get(u.id);
-      const rankedSort = opts.rankedSortBy;
-      const useRankedHoldings =
-        ranked &&
-        (rankedSort === "pnl" || rankedSort === "netHoldings");
-      const useRankedPnl = ranked && rankedSort === "pnl";
-      const lockedBalance =
-        useRankedHoldings
-          ? ranked.lockedBalance
-          : toNumber(u.balances?.locked_balance);
+      const lockedBalance = toNumber(u.balances?.locked_balance);
       const totalWagered = toNumber(u.balances?.total_wagered);
-      const userPnl = useRankedPnl ? null : pnlByUserId.get(u.id);
-      const availableBalance =
-        useRankedHoldings
-          ? ranked.availableBalance
-          : userPnl
-            ? Math.max(0, userPnl.onSiteBalance - lockedBalance)
-            : toNumber(u.balances?.available_balance);
-      const totalDeposited =
-        useRankedPnl
-          ? ranked.totalDeposited
-          : userPnl?.deposits ??
-            toNumber(u.balances?.total_deposited);
-      const totalWithdrawn =
-        useRankedPnl
-          ? ranked.totalWithdrawn
-          : userPnl?.withdrawals ??
-            toNumber(u.balances?.total_withdrawn);
-      const inventoryValue =
-        useRankedHoldings
-          ? ranked.inventoryValue
-          : userPnl?.inventoryValue ?? 0;
-      const unclaimedVouchers =
-        useRankedHoldings
-          ? ranked.unclaimedVouchers
-          : userPnl?.unclaimedVouchers ?? 0;
-      const pnl = useRankedPnl ? ranked.pnl : userPnl ? -userPnl.pnl : 0;
+      // The batch writes a record for EVERY requested id (zeroed when the
+      // user has no rows), so `get` only misses if the id wasn't in
+      // userIds — structurally impossible here. The guard is TS narrowing,
+      // not a silent data fallback: a failed batch THROWS above.
+      const userPnl = pnlByUserId.get(u.id);
+      const availableBalance = userPnl
+        ? Math.max(0, userPnl.onSiteBalance - lockedBalance)
+        : 0;
+      const totalDeposited = userPnl?.deposits ?? 0;
+      const totalWithdrawn = userPnl?.withdrawals ?? 0;
+      const inventoryValue = userPnl?.inventoryValue ?? 0;
+      const unclaimedVouchers = userPnl?.unclaimedVouchers ?? 0;
+      // House formula → user-perspective sign for the column (positive =
+      // user in profit = rose per house-POV color rules).
+      const pnl = userPnl ? -userPnl.pnl : 0;
       const netHoldings =
-        useRankedHoldings
-          ? ranked.netHoldings
-          : availableBalance + lockedBalance + inventoryValue + unclaimedVouchers;
+        availableBalance + lockedBalance + inventoryValue + unclaimedVouchers;
       const risk = riskScoresMap.get(u.id);
       return {
         id: u.id,
@@ -847,8 +818,10 @@ export async function getUsers(params: {
   // The legacy code path ORed 4× ILIKE '%term%' across username /
   // display_username / name / email. ILIKE with a LEADING % can't use
   // ANY btree, so every keystroke triggered a full sequential scan of
-  // the `user` table. On a ~7,800-row (and growing) prod table that's
-  // the slow search admins were hitting.
+  // the `user` table. (Prod is 761 rows as of 2026-06-11 — small enough
+  // that the scan itself is cheap today; the shape routing below is
+  // about staying index-backed as the table grows, once the recommended
+  // indexes are applied.)
   //
   // Two-tier fix:
   //   1. SHAPE FAST PATHS (unchanged) — route to an equality lookup
@@ -887,7 +860,6 @@ export async function getUsers(params: {
   // which fell back to created_at on the server while the client re-sorted
   // only the current page slice by netHoldings.
   const skipHeavyRanking = isAnySearch;
-  const skipListRiskForFilter = isAnySearch;
   const filterInput: UserListFilterInput = {
     searchTerm,
     isExactId,
@@ -929,22 +901,20 @@ export async function getUsers(params: {
 
     const exactWhereFiltered = withExcludedUsers(exactWhere, excludedUserIds);
 
-    const exactUsers = await db.user.findMany({
-      where: exactWhereFiltered,
-      select: USER_LIST_SELECT,
-      orderBy: { created_at: "desc" },
-      take: perPage,
-      skip: (page - 1) * perPage,
-    });
-    const exactTotal = await db.user.count({ where: exactWhereFiltered });
+    const [exactUsers, exactTotal] = await Promise.all([
+      db.user.findMany({
+        where: exactWhereFiltered,
+        select: USER_LIST_SELECT,
+        orderBy: { created_at: "desc" },
+        take: perPage,
+        skip: (page - 1) * perPage,
+      }),
+      db.user.count({ where: exactWhereFiltered }),
+    ]);
 
-    return hydrateUserListPage(
-      exactUsers,
-      exactTotal,
-      page,
-      perPage,
-      { skipListRisk: true, skipPnlBatch: true },
-    );
+    // Full truthful hydration — the old `skipPnlBatch: true` here is what
+    // rendered $0.00 P&L / Inventory / Net for every exact-match search.
+    return hydrateUserListPage(exactUsers, exactTotal, page, perPage);
   }
 
   if (searchTerm) {
@@ -1037,7 +1007,7 @@ export async function getUsers(params: {
     // this (sort / filter / page) tuple with a long TTL. Page row
     // HYDRATION stays here and stays UNCACHED so balances / PnL / risk
     // are always live; only the slow ordering is served from cache.
-    const { ids, total: totalCount, metricsById } = await cachedRankedUserIds({
+    const { ids, total: totalCount } = await cachedRankedUserIds({
       ...filterInput,
       sortBy,
       order,
@@ -1057,16 +1027,12 @@ export async function getUsers(params: {
       .filter((u): u is (typeof unordered)[number] => Boolean(u));
     total = totalCount;
 
-    // netHoldings: keep ranking-scan metrics so the Net column matches the
-    // SQL ORDER BY (client must not re-sort this page — see sort-context).
-    // pnl: ranking key is approximate; hydrate via PnL batch for display
-    // but preserve the server row order.
-    return hydrateUserListPage(users, total, page, perPage, {
-      precomputedMetrics:
-        sortBy === "pnl" ? undefined : metricsById,
-      rankedSortBy: sortBy === "pnl" ? undefined : sortBy,
-      skipListRisk: true,
-    });
+    // Server row order is preserved (ids → findMany → reorder map above);
+    // hydration fills live financials via the PnL batch. The ORDER BY and
+    // the displayed values share one formula (osrl carve-out in both), so
+    // the only residual display-vs-order drift is ranking-cache staleness
+    // (≤300s global / 30s filtered TTL).
+    return hydrateUserListPage(users, total, page, perPage);
   } else {
     // Build a compound orderBy so every Prisma-path sort gets a
     // deterministic tie-breaker (id ASC). Without it, many users with
@@ -1155,9 +1121,7 @@ export async function getUsers(params: {
     }
   }
 
-  return hydrateUserListPage(users, total, page, perPage, {
-    skipListRisk: skipListRiskForFilter,
-  });
+  return hydrateUserListPage(users, total, page, perPage);
 }
 
 // ─── Global KPI stats for the /users page hero strip ──────────────────
