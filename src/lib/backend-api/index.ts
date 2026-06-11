@@ -41,3 +41,17 @@ export type {
   UpdateUpgraderOutputBody,
   AddUpgraderOutputsResult,
 } from "./upgrader";
+export { challengesApi } from "./challenges";
+export type {
+  ChallengeGameType,
+  ChallengeType,
+  ChallengeStatus,
+  ChallengeRequirementKind,
+  ChallengePercentOp,
+  ChallengeRequirement,
+  Challenge,
+  ChallengeWithRequirements,
+  CreateChallengeRequirementInput,
+  CreateChallengeInput,
+  UpdateChallengeInput,
+} from "./challenges";

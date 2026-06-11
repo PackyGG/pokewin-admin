@@ -570,6 +570,24 @@ export const NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // Challenges — game challenge directory (card-hit / upgrader-hit). All
+    // challenge data lives in the MAIN game DB and is read/written via the
+    // backend admin API; this admin panel never touches it via Prisma. Icon
+    // string `Target` MUST be registered in the ICONS map in
+    // `src/components/app-sidebar.tsx`.
+    id: "nav.challenges",
+    group: "Rewards",
+    label: "Challenges",
+    href: "/challenges",
+    pageKey: "/challenges",
+    icon: "Target",
+    description: "Game challenges — card-hit & upgrader-hit prizes",
+    keywords: ["challenge", "challenges", "quest", "objective", "prize"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     id: "nav.rain",
     group: "Rewards",
     label: "Rain",
@@ -849,6 +867,7 @@ const PALETTE_ORDER: string[] = [
   "nav.rewards",
   "nav.rewards.rakeback",
   "nav.rewards.raffles",
+  "nav.challenges",
   "nav.rain",
   "nav.rewards.leaderboards",
   "nav.rewards.level-up",

@@ -415,6 +415,26 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Raffles",
   },
 
+  // ── Challenges ──────────────────────────────────────────────────────
+  {
+    key: "__can_create_challenge",
+    label: "Create Challenge",
+    description: "Create a new game challenge (card-hit or upgrader-hit)",
+    group: "Challenges",
+  },
+  {
+    key: "__can_update_challenge",
+    label: "Update Challenge",
+    description: "Edit a challenge's prize, claim cap, or status",
+    group: "Challenges",
+  },
+  {
+    key: "__can_archive_challenge",
+    label: "Archive Challenge",
+    description: "Archive (soft-delete) a challenge",
+    group: "Challenges",
+  },
+
   // ── Race Leaderboards ───────────────────────────────────────────────
   {
     key: "__can_upsert_race_prize_tier",
