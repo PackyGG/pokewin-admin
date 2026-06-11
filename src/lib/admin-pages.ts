@@ -90,6 +90,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // editor mirrors the sidebar grouping. Permission key is unchanged.
   { group: "Rewards", label: "Promo Codes", key: "/promo-codes" },
   { group: "Rewards", label: "Raffles", key: "/rewards/raffles" },
+  { group: "Rewards", label: "Challenges", key: "/challenges" },
   { group: "Rewards", label: "Rain", key: "/rain" },
   { group: "Rewards", label: "Leaderboards", key: "/rewards/leaderboards" },
   { group: "Rewards", label: "Level Up", key: "/rewards/level-up" },
