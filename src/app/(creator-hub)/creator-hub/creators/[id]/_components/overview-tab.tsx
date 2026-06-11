@@ -54,10 +54,18 @@ export function OverviewTab({
   activityPeriod: CreatorActivityPeriod;
 }) {
   // KPI strip aggregate — kicked off once for the top strip only.
+  //
+  // Budget contract: `getCreatorDetail` runs TWO SERIAL inner waves, each
+  // bounded by withTimeout(REWARD_QUERY_TIMEOUT_MS = 15s) — worst-case
+  // ~30s before ITS OWN timeout fires. An outer 15s here used to cut a
+  // cold-but-succeeding run off halfway and band the strip even though
+  // the query would have completed (and warmed the cache). 32s > 15s+15s
+  // keeps the outer wrapper the LAST resort, not the first to fire. The
+  // warm path resolves in milliseconds either way.
   const profilePromise = safeQueryOrNull(
     () => getCreatorDetailCached(userId),
     "creator-hub.creators.profile",
-    15_000,
+    32_000,
   );
 
   return (

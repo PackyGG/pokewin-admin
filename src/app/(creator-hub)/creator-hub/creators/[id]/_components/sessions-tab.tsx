@@ -1,6 +1,9 @@
+import Link from "next/link";
 import {
   Activity,
   BarChart3,
+  ChevronLeft,
+  ChevronRight,
   Gift,
   Info,
   Radio,
@@ -13,9 +16,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { FadeIn } from "@/components/fade-in";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 
 import {
   getCreatorSessionsData,
+  SESSIONS_PAGE_SIZE,
   type CreatorSessionRow,
 } from "../_queries/sessions-data";
 import { SessionsTable } from "./sessions-table";
@@ -44,9 +49,18 @@ import { SessionsTable } from "./sessions-table";
  * VOD/notes sidecar lives in the ADMIN DB (writable). No schema migration runs;
  * the read path self-heals a missing substrate table (see the query module).
  */
-export async function SessionsTab({ userId }: { userId: string }) {
+export async function SessionsTab({
+  userId,
+  page = 1,
+}: {
+  userId: string;
+  /** 1-based page from `?sessionsPage=` (clamped by the page). The backend
+   *  read offsets by `SESSIONS_PAGE_SIZE`; the page's Suspense key includes
+   *  this value so paging remounts the boundary with the skeleton. */
+  page?: number;
+}) {
   const { data } = await safeQueryOrNull(
-    () => getCreatorSessionsData(userId),
+    () => getCreatorSessionsData(userId, page),
     "creator-hub.creators.sessions",
     20_000,
   );
@@ -72,6 +86,36 @@ export async function SessionsTab({ userId }: { userId: string }) {
   }
 
   if (data.rows.length === 0) {
+    // Distinguish "no sessions at all" from a hand-typed / stale page
+    // beyond the real last page — the latter gets a clean way back instead
+    // of looking like the creator never streamed.
+    if (page > 1) {
+      return (
+        <FadeIn className="space-y-5 sm:space-y-6">
+          <SessionsHeading total={data.total} />
+          <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed py-12 text-center">
+            <div className="flex size-10 items-center justify-center rounded-full bg-muted">
+              <Info className="size-4 text-muted-foreground" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-semibold">Nothing on page {page}</p>
+              <p className="max-w-sm text-xs text-muted-foreground">
+                This creator has {formatNumber(data.total)} session
+                {data.total === 1 ? "" : "s"} — page {page} is out of range.
+              </p>
+            </div>
+            <Link
+              replace
+              prefetch={false}
+              href="?tab=sessions"
+              className="text-xs font-medium text-foreground underline-offset-4 hover:underline"
+            >
+              Back to page 1
+            </Link>
+          </div>
+        </FadeIn>
+      );
+    }
     return (
       <FadeIn className="space-y-5 sm:space-y-6">
         <SessionsHeading />
@@ -81,6 +125,7 @@ export async function SessionsTab({ userId }: { userId: string }) {
   }
 
   const summary = summarize(data.rows);
+  const totalPages = Math.max(1, Math.ceil(data.total / SESSIONS_PAGE_SIZE));
 
   return (
     <FadeIn className="space-y-5 sm:space-y-6">
@@ -151,7 +196,78 @@ export async function SessionsTab({ userId }: { userId: string }) {
         </div>
         <SessionsTable rows={data.rows} />
       </Card>
+
+      {/* Server-side pager — URL-driven (`?sessionsPage=`), zero client
+          state (no clobber risk): each Link replaces the URL, the page's
+          Suspense key includes the page, so navigation remounts the
+          boundary with the skeleton and fetches ONLY that page. */}
+      {totalPages > 1 && (
+        <SessionsPager page={page} totalPages={totalPages} />
+      )}
     </FadeIn>
+  );
+}
+
+/** Prev / Next + "Page X of Y" — `<Link replace prefetch={false}>` like the
+ *  tab bar; a disabled edge renders a muted non-link span. */
+function SessionsPager({
+  page,
+  totalPages,
+}: {
+  page: number;
+  totalPages: number;
+}) {
+  // Page 1 keeps a canonical URL (param cleared) — same convention as the
+  // period chips' default value.
+  const hrefFor = (n: number) =>
+    n <= 1 ? "?tab=sessions" : `?tab=sessions&sessionsPage=${n}`;
+  const linkClass =
+    "inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-muted/50";
+  const disabledClass =
+    "inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs font-medium text-muted-foreground/50 cursor-not-allowed";
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      {page > 1 ? (
+        <Link
+          replace
+          prefetch={false}
+          href={hrefFor(page - 1)}
+          className={linkClass}
+          aria-label="Previous sessions page"
+        >
+          <ChevronLeft className="size-3.5" />
+          Prev
+        </Link>
+      ) : (
+        <span className={disabledClass} aria-disabled>
+          <ChevronLeft className="size-3.5" />
+          Prev
+        </span>
+      )}
+
+      <span className="text-[11px] tabular-nums text-muted-foreground">
+        Page {formatNumber(page)} of {formatNumber(totalPages)}
+      </span>
+
+      {page < totalPages ? (
+        <Link
+          replace
+          prefetch={false}
+          href={hrefFor(page + 1)}
+          className={cn(linkClass)}
+          aria-label="Next sessions page"
+        >
+          Next
+          <ChevronRight className="size-3.5" />
+        </Link>
+      ) : (
+        <span className={disabledClass} aria-disabled>
+          Next
+          <ChevronRight className="size-3.5" />
+        </span>
+      )}
+    </div>
   );
 }
 

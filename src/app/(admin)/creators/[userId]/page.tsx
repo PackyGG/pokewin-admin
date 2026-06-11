@@ -115,11 +115,13 @@ export default async function CreatorDetailPage({
   const profileResultPromise = safeQueryOrNull(
     () => getCreatorDetailCached(userId),
     "creators.detail.profile",
-    // 15s (was 20s) so the KPI strip degrades to its "analytics taking too
-    // long" banner faster when the heavy aggregate stalls, rather than
-    // holding the skeleton for a full 20s. The deal/multiplier bands below
-    // keep their own 20s budget — they're independent Suspense boundaries.
-    15_000,
+    // Budget contract: getCreatorDetail runs TWO SERIAL inner waves, each
+    // bounded by withTimeout(15s) — worst-case ~30s before its own timeout
+    // fires. The previous 15s outer budget cut a cold-but-succeeding run
+    // off halfway and banded the strip even though the query would have
+    // completed (and warmed the cache). 32s > 15s+15s keeps this wrapper
+    // the LAST resort; the warm path resolves in milliseconds either way.
+    32_000,
   );
 
   // Per-creator 3-day momentum (Item F, 2026-06-05) — the SAME query the

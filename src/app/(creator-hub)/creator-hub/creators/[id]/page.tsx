@@ -50,6 +50,22 @@ function parseTab(value: string | undefined): NavTab {
     : "overview";
 }
 
+// Hard cap on `?sessionsPage=` so a hand-typed URL can never drive an
+// unbounded backend offset (200 pages × 50/page = 10k sessions — far above
+// any real creator). Out-of-range INTEGER pages clamp here; a page beyond
+// the creator's real last page renders the tab's clean "out of range"
+// state with a back-to-page-1 link.
+const SESSIONS_PAGE_CAP = 200;
+
+/** Parse `?sessionsPage=` — integer ≥ 1, default 1, capped. */
+function parseSessionsPage(value: string | undefined): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  const i = Math.floor(n);
+  if (i < 1) return 1;
+  return Math.min(i, SESSIONS_PAGE_CAP);
+}
+
 /**
  * Creator Hub — creator detail page (`creators/[id]`).
  *
@@ -89,6 +105,9 @@ export default async function CreatorHubCreatorDetailPage({
   // Coerce to a navigable tab (unknown / "Soon" / missing → Overview), so a
   // stale URL never mounts a tab that isn't wired this wave.
   const tab = parseTab(sp.tab);
+  // Sessions pagination is URL-driven (`?sessionsPage=`) — server-side and
+  // bounded, only meaningful on the sessions tab (other tabs ignore it).
+  const sessionsPage = tab === "sessions" ? parseSessionsPage(sp.sessionsPage) : 1;
 
   // Cheap header on the critical path (username / image / email / primary
   // code) — the ONLY blocking await (2 indexed lookups, 5s-bounded).
@@ -112,10 +131,14 @@ export default async function CreatorHubCreatorDetailPage({
       <CreatorBanner header={header} userId={id} />
       <CreatorTabBar />
 
-      {/* Only the active tab mounts — keyed on `tab` so switching forces a
-          fresh boundary (and the fallback shows) instead of reusing the prior
-          tab's tree. No other tab's data is fetched. */}
-      <Suspense key={tab} fallback={<RiskTabSkeleton />}>
+      {/* Only the active tab mounts — keyed on `tab` (and, for sessions, the
+          page) so switching tabs OR paging forces a fresh boundary (the
+          fallback shows) instead of reusing the prior tree. No other tab's
+          data is fetched. */}
+      <Suspense
+        key={`${tab}:${tab === "sessions" ? sessionsPage : ""}`}
+        fallback={<RiskTabSkeleton />}
+      >
         {tab === "overview" && (
           <OverviewTab
             userId={id}
@@ -123,7 +146,7 @@ export default async function CreatorHubCreatorDetailPage({
           />
         )}
         {tab === "creator" && <CreatorMetadataTab userId={id} />}
-        {tab === "sessions" && <SessionsTab userId={id} />}
+        {tab === "sessions" && <SessionsTab userId={id} page={sessionsPage} />}
         {tab === "kick" && <KickTab userId={id} />}
         {tab === "twitter" && <TwitterTab userId={id} />}
         {tab === "risk" && <RiskTab userId={id} code={header?.code ?? ""} />}
