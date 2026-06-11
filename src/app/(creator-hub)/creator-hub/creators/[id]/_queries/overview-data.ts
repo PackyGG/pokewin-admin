@@ -12,7 +12,11 @@ import { getCreatorLeaderboardCost } from "../../../../../(admin)/creators/[user
 import { getCreatorMultiplierCost } from "../../../../../(admin)/creators/[userId]/_queries/multiplier-cost-by-creator";
 import { getCreatorFillConversionCost } from "../../../../../(admin)/creators/[userId]/_queries/fill-conversion-cost-by-creator";
 import { getCreatorTipsSponsorCost } from "../../../../../(admin)/creators/[userId]/_queries/tips-sponsor-cost-by-creator";
-import { safeQuery } from "@/lib/errors/safe-query";
+import {
+  safeQuery,
+  safeQueryOrNull,
+  type SafeQueryFailureKind,
+} from "@/lib/errors/safe-query";
 
 /**
  * Creator Hub — `creators/[id]` Overview tab data.
@@ -65,6 +69,13 @@ export type CreatorNetData = {
    * house cost is a LOWER bound and the net an UPPER bound.
    */
   partial: boolean;
+  /**
+   * Why the revenue leg degraded when `affiliatesMadeUsUsd` is null:
+   * "timeout" (the 60s budget fired — merely slow, likely warms the cache)
+   * vs "error" (the P&L scan threw). Drives truthful panel copy; null when
+   * the revenue loaded.
+   */
+  revenueKind: SafeQueryFailureKind | null;
 };
 
 /**
@@ -77,7 +88,7 @@ export type CreatorNetData = {
 export async function getCreatorNetData(
   creatorUserId: string,
 ): Promise<CreatorNetData> {
-  const [leaderboard, multiplier, fillConversion, tipsSponsorResult, pnl] =
+  const [leaderboard, multiplier, fillConversion, tipsSponsorResult, pnlResult] =
     await Promise.all([
       getCreatorLeaderboardCost(creatorUserId).catch((e) => {
         console.error(
@@ -105,14 +116,17 @@ export async function getCreatorNetData(
         { costUsd: 0, eventCount: 0 },
         "creator-hub.creators.tipsSponsorCost",
       ),
-      getCreatorPnlCached(creatorUserId).catch((e) => {
-        console.error(
-          "[creator-hub.creators.net] affiliate P&L failed (revenue null):",
-          e,
-        );
-        return null;
-      }),
+      // 60s budget = the cold P&L scan's own SET LOCAL budget, so a slow
+      // populating run completes + warms the cache rather than getting cut
+      // off; `kind` discriminates a genuine timeout from a hard throw so
+      // the panel copy stays truthful.
+      safeQueryOrNull(
+        () => getCreatorPnlCached(creatorUserId),
+        "creator-hub.creators.netRevenue",
+        60_000,
+      ),
     ]);
+  const pnl = pnlResult.data;
 
   const leaderboardCostUsd = leaderboard?.costUsd ?? 0;
   const fillPayoutUsd = fillConversion?.payoutUsd ?? 0;
@@ -145,6 +159,7 @@ export async function getCreatorNetData(
     leaderboardGrossUsd: leaderboard?.grossPrizeUsd ?? 0,
     leaderboardRefundedUsd: leaderboard?.refundedUsd ?? 0,
     partial,
+    revenueKind: pnl ? null : (pnlResult.kind ?? "error"),
   };
 }
 

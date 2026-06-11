@@ -119,7 +119,11 @@ export default async function CreatorHubCreatorDetailPage({
   // degraded banner (user id + amber band) and still mounts the tab bar +
   // active tab — every tab only needs `userId`, and RiskTab already handles
   // an empty `code`. One failing leg never blanks the page.
-  const { data: header, error: headerError } = await safeQueryOrNull(
+  const {
+    data: header,
+    error: headerError,
+    kind: headerFailureKind,
+  } = await safeQueryOrNull(
     () => getCreatorHeader(id),
     "creator-hub.creators.header",
     5_000,
@@ -128,7 +132,11 @@ export default async function CreatorHubCreatorDetailPage({
 
   return (
     <div className="space-y-5 sm:space-y-6">
-      <CreatorBanner header={header} userId={id} />
+      <CreatorBanner
+        header={header}
+        userId={id}
+        headerFailureKind={headerFailureKind ?? null}
+      />
       <CreatorTabBar />
 
       {/* Only the active tab mounts — keyed on `tab` (and, for sessions, the

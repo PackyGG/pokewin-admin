@@ -57,9 +57,26 @@ import { logError } from "./logger";
  * fill picks up the warmed result. Use {@link withTimeout} directly when
  * you want the race without the surrounding `safeQuery` catch.
  */
+/**
+ * Discriminates WHY a wrapped query degraded:
+ *   • "timeout" — the `timeoutMs` race fired (the query was merely SLOW;
+ *     it may still complete on its own connection and warm a cache).
+ *   • "error"   — the query THREW (a hard failure: bad SQL, missing
+ *     table/enum label, connection error, …).
+ *
+ * Band UIs use this to render truthful copy: "taking too long — refresh
+ * to retry" for a timeout vs "failed to load" for a hard error. Before
+ * this existed, hard 22P02 failures were misattributed on-screen as
+ * "metrics taking too long".
+ */
+export type SafeQueryFailureKind = "timeout" | "error";
+
+// `kind` is OPTIONAL on the type (purely additive — fixtures/tests that
+// hand-construct results stay valid) but ALWAYS set by `safeQuery` /
+// `safeQueryOrNull`, so live call sites can rely on it.
 export type SafeQueryResult<T> =
-  | { data: T; error: null }
-  | { data: T; error: string };
+  | { data: T; error: null; kind?: null }
+  | { data: T; error: string; kind?: SafeQueryFailureKind };
 
 /**
  * Default statement-timeout (ms) for the heaviest reward-insights queries
@@ -117,15 +134,15 @@ export async function safeQuery<T>(
   try {
     const data =
       timeoutMs != null ? await withTimeout(fn, timeoutMs) : await fn();
-    return { data, error: null };
+    return { data, error: null, kind: null };
   } catch (err) {
     if (isQueryTimeoutError(err)) {
       logError(context, "safeQuery timed out", err);
-      return { data: fallback, error: err.message };
+      return { data: fallback, error: err.message, kind: "timeout" };
     }
     logError(context, "safeQuery caught", err);
     const message = err instanceof Error ? err.message : "Unknown query error";
-    return { data: fallback, error: message };
+    return { data: fallback, error: message, kind: "error" };
   }
 }
 
@@ -140,18 +157,22 @@ export async function safeQueryOrNull<T>(
   fn: () => Promise<T>,
   context: string,
   timeoutMs?: number,
-): Promise<{ data: T | null; error: string | null }> {
+): Promise<{
+  data: T | null;
+  error: string | null;
+  kind?: SafeQueryFailureKind | null;
+}> {
   try {
     const data =
       timeoutMs != null ? await withTimeout(fn, timeoutMs) : await fn();
-    return { data, error: null };
+    return { data, error: null, kind: null };
   } catch (err) {
     if (isQueryTimeoutError(err)) {
       logError(context, "safeQueryOrNull timed out", err);
-      return { data: null, error: err.message };
+      return { data: null, error: err.message, kind: "timeout" };
     }
     logError(context, "safeQueryOrNull caught", err);
     const message = err instanceof Error ? err.message : "Unknown query error";
-    return { data: null, error: message };
+    return { data: null, error: message, kind: "error" };
   }
 }

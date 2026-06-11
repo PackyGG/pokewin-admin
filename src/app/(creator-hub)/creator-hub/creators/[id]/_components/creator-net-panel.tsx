@@ -70,8 +70,14 @@ export async function CreatorNetPanel({ userId }: { userId: string }) {
     !showMultiplierPayout &&
     !showMultiplierFill;
 
+  // Truthful failure wording: a timed-out P&L scan ("taking too long",
+  // likely completes + warms the cache on its own) is NOT the same as a
+  // thrown one ("failed").
+  const revenueTimedOut = net.revenueKind === "timeout";
   const heroTitle = !revenueLoaded
-    ? "Net unavailable — the affiliate P&L couldn't be loaded. Net = affiliates made us − house cost; the cost breakdown below is still shown."
+    ? revenueTimedOut
+      ? "Net unavailable — the affiliate P&L is taking too long (timed out). Refresh to retry; the cost breakdown below is still shown."
+      : "Net unavailable — the affiliate P&L failed to load. Net = affiliates made us − house cost; the cost breakdown below is still shown."
     : net.partial
       ? "Partial — a cost source failed to load, so the house cost is a lower bound and this net is an upper bound."
       : "Affiliates made us − house cost. Positive (emerald) = this creator was profitable for the house; negative (rose) = he cost more than his affiliates earned.";
@@ -103,7 +109,9 @@ export async function CreatorNetPanel({ userId }: { userId: string }) {
           <br />
           <span className="text-[10px]">
             {!revenueLoaded
-              ? "Net unavailable — affiliate P&L couldn't be loaded (cost breakdown still shown)"
+              ? revenueTimedOut
+                ? "Net unavailable — affiliate P&L timed out, refresh to retry (cost breakdown still shown)"
+                : "Net unavailable — affiliate P&L failed to load (cost breakdown still shown)"
               : net.partial
                 ? "Partial — a cost source failed to load (net is an upper bound)"
                 : "House-POV — emerald = profitable for the house, rose = he cost more than he earned"}
@@ -237,8 +245,12 @@ export async function CreatorNetPanel({ userId }: { userId: string }) {
           tips/sponsor, and — for multiplier deals — multiplier payouts + net
           multiplier fill. Excludes affiliate commission.
           {!revenueLoaded && (
-            <> The affiliate-P&amp;L figure couldn&apos;t be loaded right now,
-            so the net is unavailable; the cost breakdown is still shown.</>
+            <>
+              {" "}
+              {revenueTimedOut
+                ? "The affiliate-P&L scan timed out (it may have completed in the background and warmed the cache — refresh to retry), so the net is unavailable; the cost breakdown is still shown."
+                : "The affiliate-P&L figure failed to load right now, so the net is unavailable; the cost breakdown is still shown."}
+            </>
           )}
           {revenueLoaded && net.partial && (
             <> A cost source failed to load, so the house cost is a lower bound

@@ -28,20 +28,32 @@ type CreatorDetail = Awaited<ReturnType<typeof getCreatorDetailCached>>;
  * Driven by the existing `getCreatorDetail` aggregate (cached) — every
  * figure maps to a real field on that result; nothing fabricated. Renders a
  * compact degraded banner if the aggregate failed/timed out (the banner +
- * tab bar already painted, so we never 404 the whole page).
+ * tab bar already painted, so we never 404 the whole page). `failureKind`
+ * keeps the band copy TRUTHFUL: a hard failure says "failed", only a real
+ * timeout says "taking too long" (a 22P02 used to masquerade as slow).
  */
-export function OverviewKpiStrip({ profile }: { profile: CreatorDetail | null }) {
+export function OverviewKpiStrip({
+  profile,
+  failureKind = null,
+}: {
+  profile: CreatorDetail | null;
+  failureKind?: "timeout" | "error" | null;
+}) {
   if (!profile) {
+    const timedOut = failureKind === "timeout";
     return (
       <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
         <Info className="size-4 mt-0.5 text-amber-500 shrink-0" />
         <div>
           <div className="font-medium text-amber-500">
-            Creator metrics are taking too long to load
+            {timedOut
+              ? "Creator metrics are taking too long to load"
+              : "Creator metrics failed to load"}
           </div>
           <div className="mt-0.5 text-muted-foreground">
-            The acquisition + wager aggregate timed out. Refresh to retry — the
-            rest of the page is unaffected.
+            {timedOut
+              ? "The acquisition + wager aggregate timed out. Refresh to retry — the rest of the page is unaffected."
+              : "The acquisition + wager aggregate failed — its data is unavailable right now. Refresh to retry; the rest of the page is unaffected."}
           </div>
         </div>
       </div>

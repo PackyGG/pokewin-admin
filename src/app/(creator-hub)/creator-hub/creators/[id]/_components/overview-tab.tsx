@@ -124,6 +124,7 @@ type CreatorProfile = Awaited<ReturnType<typeof getCreatorDetailCached>>;
 type ProfilePromise = Promise<{
   data: CreatorProfile | null;
   error: string | null;
+  kind?: "timeout" | "error" | null;
 }>;
 
 async function KpiStripSlot({
@@ -131,8 +132,10 @@ async function KpiStripSlot({
 }: {
   profilePromise: ProfilePromise;
 }) {
-  const { data } = await profilePromise;
-  return <OverviewKpiStrip profile={data} />;
+  const { data, kind } = await profilePromise;
+  // Truthful band copy: a hard failure (e.g. an enum-drift 22P02) must not
+  // masquerade as "taking too long".
+  return <OverviewKpiStrip profile={data} failureKind={kind ?? null} />;
 }
 
 async function ActivitySlot({

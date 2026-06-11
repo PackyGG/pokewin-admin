@@ -54,11 +54,16 @@ export type CreatorBannerHeader = {
 export function CreatorBanner({
   header,
   userId,
+  headerFailureKind = null,
 }: {
   header: CreatorBannerHeader | null;
   userId: string;
+  /** Why the header lookup degraded (null when `header` is present) —
+   *  keeps the amber band copy truthful (timed out vs failed). */
+  headerFailureKind?: "timeout" | "error" | null;
 }) {
   if (!header) {
+    const timedOut = headerFailureKind === "timeout";
     return (
       <PageHero>
         <div className="flex items-start gap-2.5 sm:gap-3 flex-wrap">
@@ -92,7 +97,9 @@ export function CreatorBanner({
                   Identity couldn&apos;t load
                 </span>
                 <span className="ml-1.5 text-muted-foreground">
-                  The header lookup failed or timed out — refresh to retry.
+                  {timedOut
+                    ? "The header lookup timed out — refresh to retry."
+                    : "The header lookup failed — refresh to retry."}{" "}
                   The tabs below still work.
                 </span>
               </div>

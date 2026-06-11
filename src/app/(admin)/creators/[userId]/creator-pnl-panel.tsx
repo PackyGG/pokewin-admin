@@ -84,7 +84,7 @@ export async function CreatorPnlPanel({
   // off before it can finish — a slow first load that then caches is fine;
   // "always times out" is not. Subsequent loads resolve from the warm entry
   // near-instantly.
-  const [{ data }, profileResult] = await Promise.all([
+  const [{ data, kind }, profileResult] = await Promise.all([
     safeQueryOrNull(
       () => getCreatorPnlCached(userId),
       "creators.detail.pnl",
@@ -96,6 +96,8 @@ export async function CreatorPnlPanel({
   const lifetimeFtds = ftdByPeriod.all ?? 0;
 
   if (!data) {
+    // Truthful band copy — a hard failure must not masquerade as "slow".
+    const timedOut = kind === "timeout";
     return (
       <div className="space-y-3">
         <SectionHeading icon={LineChart} title="Affiliates PnL" />
@@ -103,11 +105,14 @@ export async function CreatorPnlPanel({
           <Info className="size-4 mt-0.5 text-amber-500 shrink-0" />
           <div>
             <div className="font-medium text-amber-500">
-              Affiliate P&amp;L is taking too long to load
+              {timedOut
+                ? "Affiliate P&L is taking too long to load"
+                : "Affiliate P&L failed to load"}
             </div>
             <div className="mt-0.5 text-muted-foreground">
-              The per-window deposit / card-withdrawal scan timed out or
-              failed. Refresh to retry — the rest of the page is unaffected.
+              {timedOut
+                ? "The per-window deposit / card-withdrawal scan timed out. Refresh to retry — the rest of the page is unaffected."
+                : "The per-window deposit / card-withdrawal scan failed — its data is unavailable right now. Refresh to retry; the rest of the page is unaffected."}
             </div>
           </div>
         </div>

@@ -75,22 +75,28 @@ export function AltAccountsTab({ userId }: { userId: string }) {
 async function AltAccountsContent({ userId }: { userId: string }) {
   // The whole clustering scan is multi-query but each sub-query is a single
   // grouped round-trip; 20s budget mirrors the creator-detail heavy reads.
-  const { data, error } = await safeQueryOrNull(
+  const { data, kind } = await safeQueryOrNull(
     () => getAltAccountsData(userId),
     "creator-hub.alt-accounts",
     20_000,
   );
 
   if (!data) {
+    // Truthful band copy — a hard failure must not masquerade as "slow".
+    const timedOut = kind === "timeout";
     return (
       <NoticeBanner
         tone="amber"
         icon={Info}
-        title="Alt-account scan is taking too long to load"
+        title={
+          timedOut
+            ? "Alt-account scan is taking too long to load"
+            : "Alt-account scan failed to load"
+        }
         body={
-          error
+          timedOut
             ? "The cohort correlation scan timed out. Refresh to retry — the rest of the page is unaffected."
-            : "The scan returned no result. Refresh to retry."
+            : "The cohort correlation scan failed — its data is unavailable right now. Refresh to retry; the rest of the page is unaffected."
         }
       />
     );

@@ -59,13 +59,15 @@ export async function SessionsTab({
    *  this value so paging remounts the boundary with the skeleton. */
   page?: number;
 }) {
-  const { data } = await safeQueryOrNull(
+  const { data, kind } = await safeQueryOrNull(
     () => getCreatorSessionsData(userId, page),
     "creator-hub.creators.sessions",
     20_000,
   );
 
   if (!data) {
+    // Truthful band copy — a hard failure must not masquerade as "slow".
+    const timedOut = kind === "timeout";
     return (
       <FadeIn className="space-y-5">
         <SessionsHeading />
@@ -73,11 +75,14 @@ export async function SessionsTab({
           <Info className="mt-0.5 size-4 shrink-0 text-amber-500" />
           <div>
             <div className="font-medium text-amber-500">
-              Sessions are taking too long to load
+              {timedOut
+                ? "Sessions are taking too long to load"
+                : "Sessions failed to load"}
             </div>
             <div className="mt-0.5 text-muted-foreground">
-              The session list timed out. Refresh to retry — the rest of the
-              page is unaffected.
+              {timedOut
+                ? "The session list timed out. Refresh to retry — the rest of the page is unaffected."
+                : "The session list failed to load — the backend may be unreachable. Refresh to retry; the rest of the page is unaffected."}
             </div>
           </div>
         </div>

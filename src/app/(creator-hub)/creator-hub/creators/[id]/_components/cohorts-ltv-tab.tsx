@@ -57,23 +57,28 @@ async function CohortsLtvContent({ userId }: { userId: string }) {
   // 60s budget so the cold cohort scan (correlated per-user sub-selects over
   // the referred pool) completes + warms the cache rather than getting cut
   // off early — same budget the windowed-P&L tiles use.
-  const { data } = await safeQueryOrNull(
+  const { data, kind } = await safeQueryOrNull(
     () => getCohortsData(userId),
     "creator-hub.creators.cohorts",
     60_000,
   );
 
   if (!data) {
+    // Truthful band copy — a hard failure must not masquerade as "slow".
+    const timedOut = kind === "timeout";
     return (
       <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
         <Info className="mt-0.5 size-4 shrink-0 text-amber-500" />
         <div>
           <div className="font-medium text-amber-500">
-            Cohorts are taking too long to load
+            {timedOut
+              ? "Cohorts are taking too long to load"
+              : "Cohorts failed to load"}
           </div>
           <div className="mt-0.5 text-muted-foreground">
-            The referred-player cohort scan timed out. Refresh to retry — the
-            rest of the page is unaffected.
+            {timedOut
+              ? "The referred-player cohort scan timed out. Refresh to retry — the rest of the page is unaffected."
+              : "The referred-player cohort scan failed — its data is unavailable right now. Refresh to retry; the rest of the page is unaffected."}
           </div>
         </div>
       </div>

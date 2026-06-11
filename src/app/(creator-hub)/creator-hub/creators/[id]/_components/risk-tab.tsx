@@ -64,13 +64,15 @@ export async function RiskTab({
 }) {
   // 60s budget — the cold scan mirrors the creator-PnL scan's cost and warms
   // a 5-min cache; a slow first load completes rather than getting cut off.
-  const { data } = await safeQueryOrNull(
+  const { data, kind } = await safeQueryOrNull(
     () => getRiskData(userId),
     "creator-hub.creators.risk",
     60_000,
   );
 
   if (!data) {
+    // Truthful band copy — a hard failure must not masquerade as "slow".
+    const timedOut = kind === "timeout";
     return (
       <FadeIn className="space-y-5">
         <RiskHeading />
@@ -78,12 +80,14 @@ export async function RiskTab({
           <Info className="mt-0.5 size-4 shrink-0 text-amber-500" />
           <div>
             <div className="font-medium text-amber-500">
-              Risk scan is taking too long to load
+              {timedOut
+                ? "Risk scan is taking too long to load"
+                : "Risk scan failed to load"}
             </div>
             <div className="mt-0.5 text-muted-foreground">
-              The expected-vs-actual P&amp;L scan over this creator&apos;s
-              referred users timed out. Refresh to retry — the rest of the page
-              is unaffected.
+              {timedOut
+                ? "The expected-vs-actual P&L scan over this creator's referred users timed out. Refresh to retry — the rest of the page is unaffected."
+                : "The expected-vs-actual P&L scan over this creator's referred users failed — its data is unavailable right now. Refresh to retry; the rest of the page is unaffected."}
             </div>
           </div>
         </div>
