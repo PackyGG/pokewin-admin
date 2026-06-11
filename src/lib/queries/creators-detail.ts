@@ -285,7 +285,15 @@ export async function getCreatorDetail(userId: string) {
        JOIN "user" u ON u.id = acu.referred_user_id
        LEFT JOIN game_sessions gs ON gs.id = acu.game_session_id
        WHERE acu.affiliate_user_id = $1
-         AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+         -- Customer scope ALIGNED with the canonical CUSTOMER_EXCLUDED_ROLES
+         -- (src/lib/metrics/scope.ts: admin/support/creator) and with
+         -- getCreatorPnl + momentum, which already drop 'creator'. Before,
+         -- this aggregate kept creator-role referred accounts in, so the
+         -- KPI "Wager Volume" could disagree with the P&L panel's
+         -- "Wagered" for the same creator. NOTE: displayed wager /
+         -- commission / FTD / active KPIs can SHIFT (down) for creators
+         -- with creator-role accounts wagering under their code.
+         AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
          -- Lifetime cap: bound this otherwise-unbounded rollup (wager /
          -- commission / FTD / active) to a 365-day lookback so it never
          -- seq-scans the full affiliate_code_usages history. The 24h / 7d
