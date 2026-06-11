@@ -71,7 +71,9 @@ export async function getWithdrawnFromConvertedByDeal(
         FROM vouchers v
         JOIN card_withdrawal_requests wr ON v.id = ANY(wr.voucher_ids)
         WHERE v.user_id = ANY($1::text[])
-          AND v.origin = 'creator_fill_conversion'
+          -- ::text — prod's voucher_origin enum lacks this label; a bare
+          -- enum comparison 22P02s the statement (ffa61b5c class).
+          AND v.origin::text = 'creator_fill_conversion'
           AND v.metadata->>'deal_id' = ANY($2::text[])
           AND wr.status IN ('pending', 'processing', 'shipped', 'completed')
         ORDER BY v.id, CASE wr.status

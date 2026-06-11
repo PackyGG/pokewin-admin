@@ -54,7 +54,9 @@ export async function getWithdrawnFromConvertedTotal(): Promise<WithdrawnFromCon
         wr.status AS best_status
       FROM vouchers v
       JOIN card_withdrawal_requests wr ON v.id = ANY(wr.voucher_ids)
-      WHERE v.origin = 'creator_fill_conversion'
+      -- ::text — prod's voucher_origin enum lacks this label; a bare enum
+      -- comparison 22P02s the statement (ffa61b5c class). ::text → $0.
+      WHERE v.origin::text = 'creator_fill_conversion'
         AND wr.status IN ('pending', 'processing', 'shipped', 'completed')
       ORDER BY v.id, CASE wr.status
         WHEN 'completed' THEN 1

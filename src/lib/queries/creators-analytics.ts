@@ -30,10 +30,15 @@ export async function getAffiliateAnalytics(period: Period): Promise<AffiliateAn
 
   const [signupsAgg, payoutsAgg, usagesAgg, clicksAgg, activeCreators, dailyUsages, dailyClicks] =
     await Promise.all([
+      // usage_type compared via ::text (NOT the bare enum): live prod's
+      // usage_type enum has no 'signup' label, and a bare comparison
+      // against an unknown label throws 22P02 at parse time (ffa61b5c
+      // class) — taking the whole analytics page down. ::text compares
+      // false instead, so a missing label just counts 0.
       db.$queryRawUnsafe<{ count: string }[]>(`
         SELECT COUNT(*)::text AS count
         FROM affiliate_code_usages
-        WHERE usage_type = 'signup' ${referredFilter} ${dateFilter}
+        WHERE usage_type::text = 'signup' ${referredFilter} ${dateFilter}
       `),
       db.$queryRawUnsafe<{ total: string }[]>(`
         SELECT COALESCE(SUM(amount_usd::numeric), 0)::text AS total
@@ -62,7 +67,7 @@ export async function getAffiliateAnalytics(period: Period): Promise<AffiliateAn
       >(`
         SELECT
           DATE(created_at) AS date,
-          COUNT(CASE WHEN usage_type = 'signup' THEN 1 END)::text AS signups,
+          COUNT(CASE WHEN usage_type::text = 'signup' THEN 1 END)::text AS signups,
           COALESCE(SUM(wager_amount_usd::numeric), 0)::text AS wager,
           COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS deposit,
           COALESCE(SUM(referrer_cut_usd::numeric), 0)::text AS commission

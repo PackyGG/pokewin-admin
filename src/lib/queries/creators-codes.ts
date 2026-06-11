@@ -241,12 +241,12 @@ export async function getCodeAnalytics(code: string) {
                 COALESCE(SUM(acu.deposit_amount_usd::numeric), 0)::text AS total_deposits,
                 COALESCE(SUM(acu.wager_amount_usd::numeric),   0)::text AS total_wagers,
                 COALESCE(SUM(acu.referrer_cut_usd::numeric),   0)::text AS total_commission,
-                BOOL_OR(acu.usage_type = 'signup') AS has_signup,
+                BOOL_OR(acu.usage_type::text = 'signup') AS has_signup,
                 EXISTS (
                   SELECT 1 FROM affiliate_code_usages other
                   WHERE other.referred_user_id = acu.referred_user_id
                     AND UPPER(other.code) <> $1
-                    AND other.usage_type IN ('deposit', 'wager')
+                    AND other.usage_type::text IN ('deposit', 'wager')
                 ) AS active_elsewhere,
                 COUNT(*)::text AS event_count,
                 COALESCE((
@@ -307,9 +307,14 @@ export async function getCodeAnalytics(code: string) {
         total_wagers: string;
         total_commission: string;
       }[]>(
+        // usage_type compared via ::text (NOT the bare enum): live prod's
+        // usage_type enum is BEHIND the generated client (no 'signup'
+        // label), and a bare comparison against an unknown label throws
+        // 22P02 at parse time (ffa61b5c class). ::text compares false
+        // instead, so a missing label just counts 0.
         `SELECT
-           COUNT(*) FILTER (WHERE usage_type = 'signup')::text                           AS total_signups,
-           COUNT(DISTINCT referred_user_id) FILTER (WHERE usage_type IN ('deposit', 'wager'))::text AS active_referrals,
+           COUNT(*) FILTER (WHERE usage_type::text = 'signup')::text                           AS total_signups,
+           COUNT(DISTINCT referred_user_id) FILTER (WHERE usage_type::text IN ('deposit', 'wager'))::text AS active_referrals,
            COALESCE(SUM(deposit_amount_usd::numeric), 0)::text                            AS total_deposits,
            COALESCE(SUM(wager_amount_usd::numeric), 0)::text                              AS total_wagers,
            COALESCE(SUM(referrer_cut_usd::numeric), 0)::text                              AS total_commission
@@ -369,7 +374,7 @@ export async function getCodeAnalytics(code: string) {
       >(`
         SELECT
           DATE(created_at) AS date,
-          COUNT(*) FILTER (WHERE usage_type = 'signup')::text AS referrals,
+          COUNT(*) FILTER (WHERE usage_type::text = 'signup')::text AS referrals,
           COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS deposit_volume,
           COALESCE(SUM(wager_amount_usd::numeric), 0)::text AS wager_volume,
           COALESCE(SUM(referrer_cut_usd::numeric), 0)::text AS commission
@@ -419,7 +424,7 @@ export async function getCodeAnalytics(code: string) {
           FROM affiliate_code_usages acu
           JOIN "user" u ON u.id = acu.referred_user_id
           WHERE UPPER(acu.code) = $2
-            AND acu.usage_type = 'signup'
+            AND acu.usage_type::text = 'signup'
             AND u.country IS NOT NULL AND u.country <> '' AND u.country <> 'unknown'
           GROUP BY u.country
         )
@@ -465,7 +470,7 @@ export async function getCodeAnalytics(code: string) {
                  COUNT(DISTINCT referred_user_id)::int AS n
           FROM affiliate_code_usages
           WHERE UPPER(code) = $2
-            AND usage_type = 'signup'
+            AND usage_type::text = 'signup'
             AND created_at >= NOW() - INTERVAL '24 hours'
           GROUP BY 1
         )
@@ -506,7 +511,7 @@ export async function getCodeAnalytics(code: string) {
                  COUNT(DISTINCT referred_user_id)::int AS n
           FROM affiliate_code_usages
           WHERE UPPER(code) = $2
-            AND usage_type = 'signup'
+            AND usage_type::text = 'signup'
             AND created_at >= NOW() - INTERVAL '7 days'
           GROUP BY 1
         )

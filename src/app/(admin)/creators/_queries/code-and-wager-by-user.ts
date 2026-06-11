@@ -132,7 +132,7 @@ export async function getCodeAndWagerByUser(
              ON b.user_id = acu.referred_user_id
             AND b.total_deposited > 0
           WHERE acu.affiliate_user_id = ANY($1::text[])
-            AND acu.usage_type = 'deposit'
+            AND acu.usage_type::text = 'deposit'
           GROUP BY acu.affiliate_user_id`,
         userIds,
       ),

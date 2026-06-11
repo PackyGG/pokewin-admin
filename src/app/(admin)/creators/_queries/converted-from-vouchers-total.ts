@@ -36,10 +36,16 @@ import { getDb } from "@/lib/db";
 export async function getConvertedFromVouchersTotal(): Promise<number> {
   const db = await getDb();
 
+  // `origin` compared via ::text (NOT the bare enum): the generated Prisma
+  // `voucher_origin` enum is AHEAD of live prod, which does not yet carry
+  // the 'creator_fill_conversion' label — a bare enum comparison against an
+  // unknown label throws 22P02 at parse time (the ffa61b5c failure class)
+  // and broke the /creators "Converted" KPI. ::text compares false instead,
+  // so the tile shows an honest $0 until prod gains the label.
   const rows = await db.$queryRaw<{ converted: string | null }[]>`
     SELECT COALESCE(SUM(v.value::numeric), 0)::text AS converted
     FROM vouchers v
-    WHERE v.origin = 'creator_fill_conversion'
+    WHERE v.origin::text = 'creator_fill_conversion'
   `;
 
   return Number(rows[0]?.converted ?? 0) || 0;

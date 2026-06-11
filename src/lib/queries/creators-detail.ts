@@ -264,7 +264,7 @@ export async function getCreatorDetail(userId: string) {
          COALESCE(SUM(acu.wager_amount_usd::numeric),   0)::text AS wager_volume,
          COALESCE(SUM(acu.referrer_cut_usd::numeric),   0)::text AS commission,
          COUNT(DISTINCT acu.referred_user_id) FILTER (
-           WHERE acu.usage_type = 'deposit'
+           WHERE acu.usage_type::text = 'deposit'
              AND EXISTS (
                SELECT 1 FROM balances b
                WHERE b.user_id = acu.referred_user_id
@@ -272,11 +272,11 @@ export async function getCreatorDetail(userId: string) {
              )
          )::text AS ftd_count,
          COUNT(DISTINCT acu.referred_user_id) FILTER (
-           WHERE acu.usage_type IN ('deposit', 'wager')
+           WHERE acu.usage_type::text IN ('deposit', 'wager')
              AND acu.created_at >= NOW() - INTERVAL '7 days'
          )::text AS active_7d,
          COUNT(DISTINCT acu.referred_user_id) FILTER (
-           WHERE acu.usage_type IN ('deposit', 'wager')
+           WHERE acu.usage_type::text IN ('deposit', 'wager')
              AND acu.created_at >= NOW() - INTERVAL '1 day'
          )::text AS active_24h,
          -- Per-game-type slice of the wager_volume above. Sourced via
@@ -287,9 +287,16 @@ export async function getCreatorDetail(userId: string) {
          -- SUM-CASE values therefore add up to wager_volume exactly,
          -- which lets the UI render them as a verifiable breakdown
          -- under the Wager Volume number.
-         COALESCE(SUM(CASE WHEN gs.game_type = 'pack'     THEN acu.wager_amount_usd::numeric ELSE 0 END), 0)::text AS pack_wager,
-         COALESCE(SUM(CASE WHEN gs.game_type = 'battle'   THEN acu.wager_amount_usd::numeric ELSE 0 END), 0)::text AS battle_wager,
-         COALESCE(SUM(CASE WHEN gs.game_type = 'upgrader' THEN acu.wager_amount_usd::numeric ELSE 0 END), 0)::text AS upgrader_wager
+         -- game_type/usage_type compared via ::text (NOT the bare enum):
+         -- the generated Prisma enum is AHEAD of live prod (e.g. prod
+         -- game_type = {pack, battle} with NO 'upgrader' label), and a bare
+         -- comparison against a label the DB doesn't know throws 22P02 at
+         -- PARSE time — killing this whole statement (the ffa61b5c failure
+         -- class). ::text compares false instead, so a missing label just
+         -- contributes $0.
+         COALESCE(SUM(CASE WHEN gs.game_type::text = 'pack'     THEN acu.wager_amount_usd::numeric ELSE 0 END), 0)::text AS pack_wager,
+         COALESCE(SUM(CASE WHEN gs.game_type::text = 'battle'   THEN acu.wager_amount_usd::numeric ELSE 0 END), 0)::text AS battle_wager,
+         COALESCE(SUM(CASE WHEN gs.game_type::text = 'upgrader' THEN acu.wager_amount_usd::numeric ELSE 0 END), 0)::text AS upgrader_wager
        FROM affiliate_code_usages acu
        JOIN "user" u ON u.id = acu.referred_user_id
        LEFT JOIN game_sessions gs ON gs.id = acu.game_session_id
@@ -314,7 +321,7 @@ export async function getCreatorDetail(userId: string) {
         JOIN balances b ON b.user_id = acu.referred_user_id AND b.total_deposited > 0
         CROSS JOIN (VALUES ('1d'), ('3d'), ('7d'), ('14d'), ('30d'), ('all')) AS p(period)
         WHERE acu.affiliate_user_id = $1
-          AND acu.usage_type = 'deposit'
+          AND acu.usage_type::text = 'deposit'
           -- Lifetime cap: the 'all' branch was unbounded (full
           -- affiliate_code_usages × balances scan). Bound it to a 365-day
           -- lookback (CREATOR_DETAIL_LIFETIME_LOOKBACK_DAYS) so the CROSS

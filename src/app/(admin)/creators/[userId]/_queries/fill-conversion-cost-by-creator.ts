@@ -71,13 +71,20 @@ async function computeCreatorFillConversionCost(
 
     type Row = { payout: string | null; voucher_count: string | null };
 
+    // `origin` compared via ::text (NOT the bare enum): the generated
+    // Prisma `voucher_origin` enum is AHEAD of live prod, which does not
+    // yet carry the 'creator_fill_conversion' label — a bare enum
+    // comparison against an unknown label throws 22P02 at parse time
+    // (the ffa61b5c failure class) and permanently flagged the cost
+    // panels "Partial". ::text compares false instead, so the Σ is an
+    // honest $0 until prod gains the label.
     const rows = await db.$queryRawUnsafe<Row[]>(
       `SELECT
           COALESCE(SUM(v.value::numeric), 0)::text AS payout,
           COUNT(*)::text AS voucher_count
         FROM vouchers v
         WHERE v.user_id = $1
-          AND v.origin = 'creator_fill_conversion'`,
+          AND v.origin::text = 'creator_fill_conversion'`,
       creatorUserId,
     );
 
