@@ -85,6 +85,8 @@ export type NavCommand = {
   pageKey: string;
   /** Keywords for fuzzy matching (e.g. aliases). */
   keywords?: string[];
+  /** Username allowlist — even admins must match (e.g. Insights, Salaries). */
+  usernameAllowlist?: string[];
 };
 
 /**
@@ -165,6 +167,7 @@ function navEntryToCommand(e: NavEntry): NavCommand {
     href: e.href,
     pageKey: e.pageKey,
     keywords: e.keywords,
+    usernameAllowlist: e.usernameAllowlist,
   };
 }
 
@@ -271,9 +274,21 @@ export function filterCommandsForUser<T extends PaletteCommand>(
   commands: T[],
   role: string,
   allowedPages: readonly string[],
+  username?: string,
 ): T[] {
-  if (role === "admin") return commands;
   return commands.filter((c) => {
+    if (
+      c.kind === "nav" &&
+      c.usernameAllowlist &&
+      !c.usernameAllowlist.some(
+        (u) => u.toLowerCase() === (username ?? "").toLowerCase(),
+      )
+    ) {
+      return false;
+    }
+
+    if (role === "admin") return true;
+
     const key = c.kind === "nav" ? c.pageKey : c.pageKey;
     return !key || pageAccessGranted([...allowedPages], key);
   });

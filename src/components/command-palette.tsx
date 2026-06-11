@@ -84,9 +84,11 @@ function initials(source: string | null): string {
 export function CommandPalette({
   role,
   allowedPages,
+  username,
 }: {
   role: string;
   allowedPages: string[];
+  username: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -99,12 +101,12 @@ export function CommandPalette({
   // Filter commands against the user's allowed_pages. Admins see every
   // entry; non-admins only see items whose `pageKey` they have access to.
   const visibleNav = useMemo(
-    () => filterCommandsForUser(NAV_COMMANDS, role, allowedPages),
-    [role, allowedPages],
+    () => filterCommandsForUser(NAV_COMMANDS, role, allowedPages, username),
+    [role, allowedPages, username],
   );
   const visibleActions = useMemo(
-    () => filterCommandsForUser(ACTION_COMMANDS, role, allowedPages),
-    [role, allowedPages],
+    () => filterCommandsForUser(ACTION_COMMANDS, role, allowedPages, username),
+    [role, allowedPages, username],
   );
 
   // ── Global hotkey: CMD/CTRL + K ────────────────────────────────────

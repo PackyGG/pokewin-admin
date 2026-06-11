@@ -118,7 +118,10 @@ export const NAV_GROUP_META: NavGroupMeta[] = [
 // sidebar's.
 // ---------------------------------------------------------------------------
 
-export const NAV_ENTRIES: NavEntry[] = [
+/** Motha-only — applied to every entry in the Insights sidebar group. */
+const INSIGHTS_USERNAME_ALLOWLIST = ["motha"] as const;
+
+const RAW_NAV_ENTRIES: NavEntry[] = [
   // ── Overview ──────────────────────────────────────────────────────────
   {
     id: "nav.dashboard",
@@ -790,6 +793,16 @@ export const NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
 ];
+
+export const NAV_ENTRIES: NavEntry[] = RAW_NAV_ENTRIES.map((entry) =>
+  entry.group === "Insights"
+    ? {
+        ...entry,
+        usernameAllowlist:
+          entry.usernameAllowlist ?? [...INSIGHTS_USERNAME_ALLOWLIST],
+      }
+    : entry,
+);
 
 // ---------------------------------------------------------------------------
 // Derived views

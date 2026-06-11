@@ -294,7 +294,11 @@ export default async function AdminLayout({
             {children}
           </div>
         </SidebarInset>
-        <CommandPalette role={session.role} allowedPages={allowedPages} />
+        <CommandPalette
+          role={session.role}
+          allowedPages={allowedPages}
+          username={session.username}
+        />
         {/* Right-edge docked widgets — three slots, top → bottom:
               • LiveMoneyChat       (top)    deposits + withdrawals feed
               • DockedRecentActivity (middle) signups + wagers + payouts feed
