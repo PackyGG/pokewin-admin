@@ -72,11 +72,24 @@ function initialsFor(name: string | null, email: string | null): string {
  * Timestamp cell — wrapped as a component so we can call the
  * `useFormatDateTime` hook and get the admin's preferred zone/format.
  * TanStack column definitions themselves can't use hooks directly.
+ *
+ * suppressHydrationWarning: on a FIRST-EVER visit (no `admin_tz` cookie
+ * yet) SSR formats in UTC while the client's TimezoneProvider mount
+ * effect adopts the detected browser zone — by the time the streamed
+ * table leg hydrates, the client text differs from the server HTML and
+ * React throws hydration error #418 (verified in a real browser,
+ * 2026-06-11; the cookie-present steady state matches exactly). This is
+ * React's documented timestamp case for the flag: keep the server text,
+ * let the post-mount re-render correct it. One element, one text node —
+ * no other mismatch is masked.
  */
 function RegisteredCell({ value }: { value: string }) {
   const fmt = useFormatDateTime();
   return (
-    <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+    <span
+      suppressHydrationWarning
+      className="whitespace-nowrap text-xs tabular-nums text-muted-foreground"
+    >
       {fmt(value)}
     </span>
   );
