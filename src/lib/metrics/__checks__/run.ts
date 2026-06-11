@@ -117,13 +117,26 @@ const ALL_ENUM_TYPES: LedgerTransactionType[] = [
   "affiliate_leaderboard_creation",
   "affiliate_leaderboard_refund",
   "affiliate_leaderboard_prize",
+  // Creator-multiplier deal + creator-leaderboard legs (prod enum, profiled
+  // read-only 2026-06-11). All RESIDUAL — see ledger-sets.ts RESIDUAL_TYPES.
+  "creator_multiplier_deposit_lock",
+  "creator_multiplier_deposit_topup",
+  "creator_multiplier_platform_credit",
+  "creator_multiplier_spend_wager",
+  "creator_multiplier_spend_tip",
+  "creator_multiplier_spend_battle",
+  "creator_multiplier_refund",
+  "creator_multiplier_settlement_payout",
+  "creator_multiplier_settlement_deposit_return",
+  "creator_multiplier_forfeiture",
+  "creator_lb_deposit",
   "upgrader_bet",
   "upgrader_payout",
 ];
 
 console.log("\n[metrics checks] partition: every enum type in exactly one set");
 
-check("enum has 42 members", ALL_ENUM_TYPES.length === 42);
+check("enum has 53 members", ALL_ENUM_TYPES.length === 53);
 
 // Build the union of all assigned types and assert disjoint + complete.
 const allSets = Object.values(LEDGER_SET_MEMBERS) as readonly (readonly string[])[];
@@ -151,8 +164,8 @@ check(
   [...assigned].every((t) => (ALL_ENUM_TYPES as string[]).includes(t)),
 );
 check(
-  "union of sets covers exactly the 42 enum members",
-  assigned.size === 42,
+  "union of sets covers exactly the 53 enum members",
+  assigned.size === 53,
 );
 
 // classifyLedgerType round-trips every enum member to a non-null bucket.
@@ -250,6 +263,9 @@ check("rain_win is a REWARD (mixed-funding handled in NGR hook)", classifyLedger
 check("rain_tip is RESIDUAL (funding leg, a transfer)", classifyLedgerType("rain_tip") === "RESIDUAL");
 check("deposit / card_withdrawal are RESIDUAL (balance sheet)", classifyLedgerType("deposit") === "RESIDUAL" && classifyLedgerType("card_withdrawal") === "RESIDUAL");
 check("all creator_fill_* are RESIDUAL", ["creator_fill_activation", "creator_fill_spend_tip", "creator_fill_spend_battle", "creator_fill_refund", "creator_fill_conversion", "creator_fill_forfeiture", "creator_deal_fill_grant"].every((t) => classifyLedgerType(t) === "RESIDUAL"));
+// Prod enum 2026-06-11: the 11 creator-multiplier / creator-leaderboard legs
+// are all RESIDUAL (escrow/transfer/settlement; none a wager/payout/reward).
+check("all creator_multiplier_* + creator_lb_deposit are RESIDUAL", ["creator_multiplier_deposit_lock", "creator_multiplier_deposit_topup", "creator_multiplier_platform_credit", "creator_multiplier_spend_wager", "creator_multiplier_spend_tip", "creator_multiplier_spend_battle", "creator_multiplier_refund", "creator_multiplier_settlement_payout", "creator_multiplier_settlement_deposit_return", "creator_multiplier_forfeiture", "creator_lb_deposit"].every((t) => classifyLedgerType(t) === "RESIDUAL"));
 check("upgrader_bet / upgrader_payout are isolated in UPGRADER (default)", UPGRADER_LEDGER_TYPES.length === 2 && classifyLedgerType("upgrader_bet") === "UPGRADER" && classifyLedgerType("upgrader_payout") === "UPGRADER");
 check("UPGRADER_IN_LEDGER defaults to false (prod-confirm pending)", UPGRADER_IN_LEDGER === false);
 

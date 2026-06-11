@@ -44,9 +44,13 @@
  * ─── ENUM SOURCE ────────────────────────────────────────────────────
  *
  * The full enum is `prisma/schema.prisma` `enum ledger_transaction_type`
- * (lines 1221-1264) — 42 members. The stale worktree snapshot only
- * exposes 33 of them; this file is built against the SCHEMA, not the
- * snapshot. The compile-time exhaustiveness check at the bottom
+ * — 53 members (the original 42 + 11 creator-multiplier / creator-
+ * leaderboard legs profiled on prod 2026-06-11). This file is a
+ * hand-maintained literal union built against the SCHEMA, not the
+ * generated client, so a new prod enum member can be classified here
+ * (via the `::text`-cast string membership the SQL helpers use) without
+ * the generated Prisma enum having to contain it yet. The compile-time
+ * exhaustiveness check at the bottom
  * (`_EXHAUSTIVE`) fails the build if any enum member is added to the
  * schema-derived `LedgerTransactionType` union without being assigned to
  * exactly one set here — so a future migration that adds an enum member
@@ -102,6 +106,21 @@ export type LedgerTransactionType =
   | "affiliate_leaderboard_creation"
   | "affiliate_leaderboard_refund"
   | "affiliate_leaderboard_prize"
+  // Creator-multiplier deal + creator-leaderboard balance-sheet / escrow /
+  // settlement legs (prod enum, confirmed 2026-06-11). All RESIDUAL — the
+  // same family as `creator_fill_*` / `affiliate_leaderboard_*`. See
+  // RESIDUAL_TYPES for the per-member reasoning.
+  | "creator_multiplier_deposit_lock"
+  | "creator_multiplier_deposit_topup"
+  | "creator_multiplier_platform_credit"
+  | "creator_multiplier_spend_wager"
+  | "creator_multiplier_spend_tip"
+  | "creator_multiplier_spend_battle"
+  | "creator_multiplier_refund"
+  | "creator_multiplier_settlement_payout"
+  | "creator_multiplier_settlement_deposit_return"
+  | "creator_multiplier_forfeiture"
+  | "creator_lb_deposit"
   | "upgrader_bet"
   | "upgrader_payout";
 
@@ -315,6 +334,25 @@ export const REWARD_PAYOUT_TYPES = [
  *  • `creator_deal_fill_grant` / `creator_fill_*` — creator-deal fill
  *    balance lifecycle (grant / activate / spend / refund / convert /
  *    forfeit); house-funded promo balances, excluded from customer GGR.
+ *  • `creator_multiplier_*` / `creator_lb_deposit` — creator-MULTIPLIER
+ *    deal + creator-leaderboard balance-sheet / escrow / settlement legs
+ *    (prod enum, profiled read-only 2026-06-11). Same family as
+ *    `creator_fill_*` / `affiliate_leaderboard_*`: borrow-economy escrow,
+ *    transfers, virtual top-ups and settlement legs — NONE is a customer
+ *    wager, a gaming payout, or a house reward giveaway, so all are
+ *    RESIDUAL (excluded from GGR/NGR). 10 of the 11 have a NET
+ *    available-balance delta of ~$0 (lock/credit/refund/settlement legs
+ *    offset), so they do not even move the windowed-P&L `balanceChange`;
+ *    `creator_multiplier_deposit_lock` is a deposit→escrow lock (a
+ *    transfer), the classic RESIDUAL case. Their realized house subsidy
+ *    surfaces only at settlement (the payout voucher = an inventory item
+ *    already captured by the voucher/inventory P&L snapshot, and the
+ *    forfeiture haircut), exactly like the `creator_fill_*` netFill
+ *    economics — never via this type bucket. Two members are flagged to
+ *    the owner for a possible future standalone cost line (NOT a bucket
+ *    change): `creator_multiplier_platform_credit` (the house's virtual
+ *    funding boost) and `creator_multiplier_settlement_payout` (the
+ *    settled voucher payout, already in the voucher P&L snapshot).
  */
 export const RESIDUAL_TYPES = [
   "deposit",
@@ -334,36 +372,57 @@ export const RESIDUAL_TYPES = [
   "creator_fill_refund",
   "creator_fill_conversion",
   "creator_fill_forfeiture",
+  // Creator-multiplier deal + creator-leaderboard balance-sheet / escrow /
+  // settlement legs (prod enum, confirmed 2026-06-11). Same family as the
+  // creator_fill_* / affiliate_leaderboard_* legs above — escrow / transfer
+  // / virtual-credit / settlement, none a customer wager / gaming payout /
+  // house reward giveaway. Net balance delta ≈ $0 (offsetting legs). See the
+  // doc block above for the two owner-flagged members.
+  "creator_multiplier_deposit_lock",
+  "creator_multiplier_deposit_topup",
+  "creator_multiplier_platform_credit",
+  "creator_multiplier_spend_wager",
+  "creator_multiplier_spend_tip",
+  "creator_multiplier_spend_battle",
+  "creator_multiplier_refund",
+  "creator_multiplier_settlement_payout",
+  "creator_multiplier_settlement_deposit_return",
+  "creator_multiplier_forfeiture",
+  "creator_lb_deposit",
 ] as const satisfies readonly LedgerTransactionType[];
 
 // ─── UPGRADER (ISOLATED — prod-confirm pending) ──────────────────────
 
 /**
- * UPGRADER_IN_LEDGER — the single switch for the upgrader source-of-truth
- * contradiction.
+ * UPGRADER_IN_LEDGER — the single switch for the upgrader source of truth.
  *
- * The owner states upgrader lives ONLY in `upgrader_games` and that prod
- * does NOT write `upgrader_bet` / `upgrader_payout` rows to the ledger.
- * But current `dashboard.ts` / `pnl.ts` assume the ledger DOES carry
- * them. This is an UNRESOLVED contradiction pending one prod query:
+ * PROD-CONFIRMED (read-only, 2026-06-11): upgrader lives ONLY in
+ * `upgrader_games`; prod does NOT write its WIN credit to the ledger. The
+ * one query that resolved the old contradiction:
  *
  *   SELECT count(*) FROM ledger_transactions WHERE type = 'upgrader_payout';
+ *   -- → 0 rows  (while upgrader_bet → 72,822 rows, upgrader_games present)
  *
- * Until that returns > 0 in prod, `upgrader_bet` / `upgrader_payout` are
- * kept OUT of WAGER_TYPES / GAMING_PAYOUT_TYPES. Upgrader metrics are
- * instead computed from `upgrader_games` (see `queries.ts`
- * `upgraderMetricsQuery`, modelled on the verified
- * `dashboard-upgrader.ts`).
+ * So the ledger carries ONLY the `upgrader_bet` DEBIT; there is NO
+ * `upgrader_payout` credit row at all. `upgrader_bet` / `upgrader_payout`
+ * therefore stay OUT of WAGER_TYPES / GAMING_PAYOUT_TYPES, and upgrader
+ * metrics are computed from `upgrader_games` (`queries.ts` `upgraderMetrics`
+ * / `dashboard.ts` `cachedDailyUpgrader`, both `to_regclass`-guarded).
  *
- * To flip: set this to `true` AND add `upgrader_bet` to
- * `WAGER_TYPES_WITH_UPGRADER` / `upgrader_payout` to
- * `GAMING_PAYOUT_TYPES_WITH_UPGRADER` consumers (already wired below), and
- * switch upgrader surfaces from `upgrader_games` to the ledger. Do NOT
- * flip without the prod count above confirming the rows exist.
+ * CONSEQUENCE for windowed/daily P&L (see `pnl.ts`): because the win credit
+ * is off-ledger, a `balanceChange = SUM(balance_after − balance_before)`
+ * over the ledger MISSES every upgrader win credit. `pnl.ts` corrects for
+ * that by adding the `upgrader_games.won_amount` window/day-bucketed credit
+ * back into `balanceChange` (see `calculateWindowedPnl` / `getDailyPnl` /
+ * `getPnlBreakdownWindows` / `users-windowed-pnl.ts`). This flag stays
+ * `false` regardless — that correction is a balance-movement fix, NOT a
+ * ledger-type reclassification.
  *
- * The snapshot lacks `upgrader_games`, so the upgrader query cannot be
- * run here — it is built from schema + the existing `dashboard-upgrader.ts`
- * code and documented as prod-only.
+ * To flip (only if prod ever STARTS writing `upgrader_payout` ledger rows):
+ * set this to `true`, move upgrader onto the ledger type sets via the
+ * `*_WITH_UPGRADER` unions below, AND drop the `pnl.ts` upgrader_games
+ * correction (it would then double-count). Do NOT flip without the prod
+ * count above returning > 0.
  */
 export const UPGRADER_IN_LEDGER = false as const;
 
@@ -439,7 +498,7 @@ export const RESIDUAL_TYPES_SQL = ledgerTypesToSqlList(RESIDUAL_TYPES);
  *  • `classifyLedgerType` for a single-lookup bucket of any type.
  *
  * UPGRADER_LEDGER_TYPES is its own bucket here so the partition is a true
- * disjoint cover of all 42 members while upgrader is isolated.
+ * disjoint cover of all 53 members while upgrader is isolated.
  */
 export const LEDGER_SET_MEMBERS = {
   WAGER: WAGER_TYPES,
