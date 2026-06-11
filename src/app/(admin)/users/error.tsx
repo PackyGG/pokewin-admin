@@ -61,7 +61,14 @@ export default function UsersError({
           <RotateCw className="size-4" />
           Try again
         </Button>
-        <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
+        <Button
+          variant="outline"
+          size="sm"
+          // <Link> renders an <a> — Base UI's Button defaults
+          // nativeButton:true and console.errors for non-<button> tags.
+          nativeButton={false}
+          render={<Link href="/dashboard" />}
+        >
           <ArrowLeft className="size-4" />
           Back to dashboard
         </Button>

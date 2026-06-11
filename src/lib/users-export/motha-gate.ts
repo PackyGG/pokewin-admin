@@ -65,6 +65,19 @@ export async function canExportAllUsers(userId: string): Promise<boolean> {
   return Boolean(user?.is_active && isAllowed(user.username));
 }
 
+/**
+ * Pure username predicate for callers that already hold the live
+ * `admin_users` row (e.g. the consolidated /users page-gate read, which
+ * fetches the row ONCE for several render flags instead of issuing a
+ * separate lookup per gate). Purely cosmetic, same as
+ * {@link canExportAllUsers} — the throwing {@link requireUsersExportAdmin}
+ * stays the real security boundary on the export action. Callers must
+ * still AND this with `is_active` themselves.
+ */
+export function isUsersExportAdminUsername(username: string): boolean {
+  return isAllowed(username);
+}
+
 function isAllowed(username: string): boolean {
   const lower = username.toLowerCase();
   return ALLOWED_USERNAMES.some((u) => u === lower);

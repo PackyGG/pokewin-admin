@@ -95,10 +95,23 @@ function useSelection() {
 
 // ── Main export ───────────────────────────────────────────────────────
 
-export function UsersDataTable({ data }: { data: UserRow[] }) {
+/**
+ * `degraded` = the server list query failed/timed out and the page passed
+ * an EMPTY fallback slice. The empty states must say so — rendering the
+ * normal "No users found — try adjusting your search" copy for a failure
+ * tells the admin a lie ("there are zero matches") when the truth is
+ * "the query never answered".
+ */
+export function UsersDataTable({
+  data,
+  degraded = false,
+}: {
+  data: UserRow[];
+  degraded?: boolean;
+}) {
   return (
     <UsersSortProvider initialRows={data}>
-      {(rows) => <Inner rows={rows} />}
+      {(rows) => <Inner rows={rows} degraded={degraded} />}
     </UsersSortProvider>
   );
 }
@@ -291,10 +304,14 @@ function UserMobileCard({
 
 // ── Table ─────────────────────────────────────────────────────────────
 
-function Inner({ rows }: { rows: UserRow[] }) {
+function Inner({ rows, degraded }: { rows: UserRow[]; degraded: boolean }) {
   const router = useRouter();
   const sel = useSelection();
   const [bulkOpen, setBulkOpen] = React.useState(false);
+  const emptyTitle = degraded ? "Couldn't load users" : "No users found";
+  const emptyDescription = degraded
+    ? "The query failed or timed out — this is not an empty result. Refresh to retry."
+    : "Try adjusting your search or filters.";
 
   const table = useReactTable({
     data: rows,
@@ -340,8 +357,8 @@ function Inner({ rows }: { rows: UserRow[] }) {
           <div className="rounded-xl border">
             <EmptyState
               icon={Users}
-              title="No users found"
-              description="Try adjusting your search or filters."
+              title={emptyTitle}
+              description={emptyDescription}
               compact
             />
           </div>
@@ -433,8 +450,8 @@ function Inner({ rows }: { rows: UserRow[] }) {
                   <TableCell colSpan={columns.length + 1} className="p-0">
                     <EmptyState
                       icon={Users}
-                      title="No users found"
-                      description="Try adjusting your search or filters."
+                      title={emptyTitle}
+                      description={emptyDescription}
                       compact
                     />
                   </TableCell>
