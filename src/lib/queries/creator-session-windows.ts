@@ -24,6 +24,14 @@ const EMPTY_CTE =
   "SELECT NULL::text, NULL::timestamptz, NULL::timestamptz WHERE false)";
 
 let cache: { at: number; sql: string } | null = null;
+// Single-flight guard: the in-progress build, if one is running. Without
+// it, every concurrent caller on a cold instance (the dashboard/GGR/edge-
+// plan pages fire 15+ scope-dependent legs in parallel) kicks off its OWN
+// per-creator backend fan-out — measured on one cold render: 263× HTTP 429
+// + 451× 8s fetch timeouts, ~9s of stall burned out of every leg's budget.
+// `cache` is only written AFTER `buildCte()` resolves, so the TTL check
+// alone cannot dedupe concurrent misses; this promise does.
+let inflight: Promise<string> | null = null;
 
 /**
  * SQL fragment — a `session_windows(uid, win_start, win_end)` CTE listing
@@ -35,23 +43,33 @@ let cache: { at: number; sql: string } | null = null;
  * Returns a ready-to-inject CTE definition (use via `Prisma.raw`). A
  * still-live session (no `ended_at`) is treated as running until "now".
  *
- * Cross-request cached for 5 minutes. Best-effort: any backend failure
- * yields the empty-relation CTE, so the dashboard still renders and the
- * wager exclusion is simply a no-op until the backend recovers.
+ * Cross-request cached for 5 minutes, and SINGLE-FLIGHT: concurrent
+ * callers during a cache miss all await the one in-progress build instead
+ * of each launching their own backend fan-out. Best-effort: any backend
+ * failure yields the empty-relation CTE, so the dashboard still renders
+ * and the wager exclusion is simply a no-op until the backend recovers.
  */
 export async function getCreatorSessionWindowsCte(): Promise<string> {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.sql;
-  let sql = EMPTY_CTE;
-  try {
-    sql = await buildCte();
-  } catch (e) {
-    console.error(
-      "[creator-session-windows] build failed (wager exclusion off):",
-      e,
-    );
-  }
-  cache = { at: Date.now(), sql };
-  return sql;
+  if (inflight) return inflight;
+  inflight = (async () => {
+    try {
+      let sql = EMPTY_CTE;
+      try {
+        sql = await buildCte();
+      } catch (e) {
+        console.error(
+          "[creator-session-windows] build failed (wager exclusion off):",
+          e,
+        );
+      }
+      cache = { at: Date.now(), sql };
+      return sql;
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
 }
 
 async function buildCte(): Promise<string> {

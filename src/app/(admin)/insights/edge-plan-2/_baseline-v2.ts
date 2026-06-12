@@ -80,17 +80,18 @@ async function boundedScan<T>(sql: string): Promise<T[]> {
       return tx.$queryRawUnsafe<T[]>(sql);
     },
     {
-      // All 8 bounded scans fire inside ONE Promise.all (assembly below),
-      // so on a cache-miss rebuild they queue behind each other (and the
-      // non-tx legs) for pool connections. Prisma's interactive-transaction
-      // defaults — maxWait 2s, timeout 5s — then fail two ways under that
-      // concurrent load (observed on the dev server 2026-06-12): "Unable to
-      // start a transaction in the given time" while waiting for a slot,
-      // and a client-side kill BEFORE the 8s server-side statement_timeout
-      // this scan is budgeted for. Raise both so the server-side
-      // statement_timeout stays the real per-scan budget; the caller's
-      // safeQuery (15s) still bounds the whole leg and degrades it to its
-      // fallback instead of failing the page.
+      // The bounded scans fire inside the wave Promise.alls (assembly
+      // below), so on a cache-miss rebuild they still queue against their
+      // wave-mates (and other in-flight pages) for pool connections.
+      // Prisma's interactive-transaction defaults — maxWait 2s, timeout 5s
+      // — then fail two ways under that concurrent load (observed on the
+      // dev server 2026-06-12): "Unable to start a transaction in the
+      // given time" while waiting for a slot, and a client-side kill
+      // BEFORE the 8s server-side statement_timeout this scan is budgeted
+      // for. Raise both so the server-side statement_timeout stays the
+      // real per-scan budget; the caller's safeQuery (15s) still bounds
+      // the whole leg and degrades it to its fallback instead of failing
+      // the page.
       maxWait: 10_000,
       timeout: SCAN_STATEMENT_TIMEOUT_MS + 4_000,
     },
@@ -586,30 +587,33 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
   const since = window.since!;
   const periodDays = Math.max(1, daysForInsightsPeriodCapped(EDGE_PLAN_V2_PERIOD));
 
-  // ONE Promise.all across every leg (the v1 baseline + all v2 reads —
-  // the previously-serial awaits included). Each leg is safeQuery-wrapped
-  // so a failure degrades only its own block.
-  const [
-    v1Res,
-    canonicalRes,
-    withdrawalRes,
-    affCommissionRes,
-    affLeaderboardRes,
-    mothaOvRes,
-    borrowedRes,
-    giftCardRes,
-    promoCodeRes,
-    depositsByAssetRes,
-    adjustmentsRes,
-    rainAnchorRes,
-    depositHistRes,
-    timeBonusRes,
-    levelStatsRes,
-    dailyRewardCfgRes,
-    everyTimeRes,
-    liveRafflesRes,
-    ledgerMaxRes,
-  ] = await Promise.all([
+  // Warm the canonical scope ONCE, OUTSIDE any leg's 15s budget. On a cold
+  // instance the creator-session-windows build (a per-creator backend
+  // fan-out) costs ~9s; without this warm-up every scope-dependent leg
+  // below paid that stall INSIDE its own safeQuery budget, leaving the two
+  // longest legs (v1 baseline + canonical) ~4s of real headroom — the
+  // owner-reported cold-render banners. After this single resolve, every
+  // inner getMetricsScope() call hits the 5-min cache. Best-effort: a
+  // failure here is swallowed — each leg still resolves (and degrades) its
+  // own scope exactly as before.
+  try {
+    await getMetricsScope();
+  } catch {
+    /* legs degrade individually via their own safeQuery wrappers */
+  }
+
+  // The 19 legs run in SEQUENTIAL WAVES of Promise.all (identical legs,
+  // wrappers and fallbacks — only the grouping changed). One flat 19-leg
+  // Promise.all queued ~50 statements onto the max:5 pg pool at once,
+  // inflating each leg by up to +2.6s locally (worse cross-region) and
+  // pushing the longest legs past their 15s budgets. Wave 1 gives the two
+  // heaviest legs (v1 baseline — itself 16 inner legs — and canonical)
+  // the pool nearly to themselves; later waves batch the cheap bounded
+  // scans. Each leg is still safeQuery-wrapped so a failure degrades only
+  // its own block.
+
+  // Wave 1 — the heavyweights + the freshness stamp.
+  const [v1Res, canonicalRes, withdrawalRes, ledgerMaxRes] = await Promise.all([
     safeQuery(
       () => getSystemEdgeBaseline(EDGE_PLAN_V2_PERIOD),
       null,
@@ -628,6 +632,23 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
       "edge-plan-v2.withdrawal-split",
       REWARD_QUERY_TIMEOUT_MS,
     ),
+    safeQuery(
+      () => scanLedgerMaxCreatedAt(),
+      null,
+      "edge-plan-v2.ledger-freshness",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ]);
+
+  // Wave 2 — canonical-scope ledger legs.
+  const [
+    affCommissionRes,
+    affLeaderboardRes,
+    mothaOvRes,
+    borrowedRes,
+    giftCardRes,
+    promoCodeRes,
+  ] = await Promise.all([
     safeQuery(
       () => sumLedgerTypes({ types: ["affiliate_claim"], window }),
       null,
@@ -664,6 +685,16 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
       "edge-plan-v2.promo-codes",
       REWARD_QUERY_TIMEOUT_MS,
     ),
+  ]);
+
+  // Wave 3 — bounded ledger scans.
+  const [
+    depositsByAssetRes,
+    adjustmentsRes,
+    depositHistRes,
+    timeBonusRes,
+    everyTimeRes,
+  ] = await Promise.all([
     safeQuery(
       () => scanDepositsByAsset(since),
       [] as DepositAssetVolume[],
@@ -674,12 +705,6 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
       () => scanAdjustmentBreakdown(since),
       null,
       "edge-plan-v2.adjustments",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => scanRainAnchor(since, periodDays),
-      null,
-      "edge-plan-v2.rain-anchor",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
@@ -695,36 +720,41 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
-      () => scanLevelStats(),
-      null,
-      "edge-plan-v2.level-stats",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => scanDailyRewardConfigs(),
-      [] as Awaited<ReturnType<typeof scanDailyRewardConfigs>>,
-      "edge-plan-v2.daily-reward-configs",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
       () => scanEveryTimeClaimers(since, periodDays),
       null,
       "edge-plan-v2.every-time-claimers",
       REWARD_QUERY_TIMEOUT_MS,
     ),
-    safeQuery(
-      () => scanLiveRaffles(),
-      [] as LiveRaffleInfo[],
-      "edge-plan-v2.live-raffles",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => scanLedgerMaxCreatedAt(),
-      null,
-      "edge-plan-v2.ledger-freshness",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
   ]);
+
+  // Wave 4 — small-table scans + live raffles.
+  const [rainAnchorRes, levelStatsRes, dailyRewardCfgRes, liveRafflesRes] =
+    await Promise.all([
+      safeQuery(
+        () => scanRainAnchor(since, periodDays),
+        null,
+        "edge-plan-v2.rain-anchor",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => scanLevelStats(),
+        null,
+        "edge-plan-v2.level-stats",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => scanDailyRewardConfigs(),
+        [] as Awaited<ReturnType<typeof scanDailyRewardConfigs>>,
+        "edge-plan-v2.daily-reward-configs",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => scanLiveRaffles(),
+        [] as LiveRaffleInfo[],
+        "edge-plan-v2.live-raffles",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+    ]);
 
   // The v1 baseline anchors per-type legs + the per-lever ledger costs on
   // the SAME canonical scope as /ggr + dashboard. NO rescaling of any kind:
@@ -975,16 +1005,50 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
 }
 
 /**
- * Public entry — the cached v2 baseline. `unstable_cache` (60s) so lever
- * interaction never refires the scans; every read inside is safeQuery-
- * bounded so the page degrades per-block instead of collapsing.
+ * Marker error carrying a degraded (canonical-null) baseline OUT of the
+ * `unstable_cache` wrapper without caching it: `unstable_cache` stores
+ * resolved values but never thrown results, so throwing is the only way to
+ * say "serve this render, do NOT poison the shared cache entry with it".
+ * Before this guard, one cold-start degraded build was cached and served
+ * to every visitor until the next revalidation — which, on a low-traffic
+ * page, was usually ANOTHER cold instance, making the degradation banners
+ * quasi-permanent on prod.
+ */
+type DegradedBaselineCarrier = Error & { baseline?: EdgePlanV2Baseline };
+
+/**
+ * Public entry — the cached v2 baseline. `unstable_cache` (300s, SWR) so
+ * lever interaction never refires the scans; every read inside is
+ * safeQuery-bounded so the page degrades per-block instead of collapsing.
+ * A degraded baseline (canonical === null) is NEVER cached — it is served
+ * uncached for that render only, so the next visit retries a full build.
+ * Key bumped -v1 → -v2 to abandon any already-poisoned prod entry.
  */
 const cachedBaseline = unstable_cache(
-  () => buildEdgePlanV2Baseline(),
-  ["edge-plan-v2-baseline-overhaul-v1"],
-  { revalidate: 60, tags: ["insights-analytics", "edge-plan-2"] },
+  async () => {
+    const b = await buildEdgePlanV2Baseline();
+    if (b.canonical === null) {
+      throw Object.assign(
+        new Error("edge-plan-v2: degraded baseline (not cached)"),
+        { baseline: b },
+      ) satisfies DegradedBaselineCarrier;
+    }
+    return b;
+  },
+  ["edge-plan-v2-baseline-overhaul-v2"],
+  { revalidate: 300, tags: ["insights-analytics", "edge-plan-2"] },
 );
 
 export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
-  return cachedBaseline();
+  try {
+    return await cachedBaseline();
+  } catch (err) {
+    // Degraded build escaped the cache layer via the marker error — serve
+    // it (banners visible) without caching it.
+    const degraded = (err as DegradedBaselineCarrier).baseline;
+    if (degraded) return degraded;
+    // Anything else came from the cache machinery itself — fall back to a
+    // direct uncached build (its legs all self-degrade, so this resolves).
+    return buildEdgePlanV2Baseline();
+  }
 }
