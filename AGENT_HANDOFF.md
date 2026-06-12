@@ -8,7 +8,25 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `47aa0aca` · **Updated:** 2026-06-10 · **Active focus:** Edge Plan 2.0 full rework SHIPPED (UI + logic + numbers); owner reviewing live for follow-up changes
+- **HEAD:** `origin/main @ 231884f9+` · **Updated:** 2026-06-12 · **Active focus:** multiple parallel sessions + 2 automated workflows — READ THE COORDINATION SECTION BELOW BEFORE EDITING ANYTHING.
+
+---
+
+## 🚦 ACTIVE COORDINATION (2026-06-12) — read before touching files
+
+**Multiple agents are working this repo in parallel RIGHT NOW. `main` = prod and is receiving pushes from isolated worktrees. Always `git pull --rebase` before pushing. Keep your file scope tight and listed here.**
+
+**Workflow A — Edge Plan 2.0 overhaul (running, worktree `_wt-edge-plan2-overhaul`).** OWNS (do not touch): `src/app/(admin)/insights/edge-plan-2/**`, `src/app/(admin)/insights/system-edge-plan/**`, `src/lib/queries/insights-rewards/raffle/**`, `src/app/responsive-fixture/edge-plan-2/**`, `e2e/tests/edge-plan-2.spec.ts`, `scripts/probe-edge-plan-recon.ts`.
+
+**Workflow B — app-wide perf/reliability audit (running, worktree `_wt-app-audit`).** Audits everything read-only; implements ONLY behavior-preserving fixes (queries/errors/loading mechanics) in (admin) hub + shared non-hotspot infra. Its ship step STOPS on any out-of-scope rebase conflict. It will NOT edit: hotspots (sidebar, dal, middleware, layouts, permissions, nav-config, admin-pages, schemas), frozen files (below), or in-flight files (above). It MAY touch (creator-hub) and skeleton/pending-state files — if you are editing those, push your work first; it rebases before pushing.
+
+**Owner's parallel sessions (live):** "Rendered more hooks on Creator Hub" → owns the (creator-hub) component hook fix. "First-visit TZ hydration app-wide" → owns `src/components/timezone-provider.tsx`, `src/app/(admin)/layout.tsx`, and any `suppressHydrationWarning` sweep (root-cause = TimezoneProvider first-visit re-render racing late-hydrating streamed legs; per-page suppress is a patch, provider/layout is the right layer). UI-performance chat → owns visual loading-UX (skeleton quality, pending states). Don't duplicate each other's class of change.
+
+**FROZEN (recent verified fixes / money math — report findings, never edit):** `src/lib/queries/users-transactions.ts` (owner-only adjustments gate), `src/lib/balance-adjustment-categories.ts` (null-safe 3VL predicates), `src/lib/queries/_ledger-tx-types.ts` (live prod-enum filter), `src/lib/queries/pnl.ts` + `users-windowed-pnl.ts` (**NEVER add `upgrader_games.won_amount` into ledger balance-delta P&L** — upgrader wins are inventory items, already counted via inventoryChange; commit `ea5e97b8` did it and broke Daily P&L → reverted `231884f9`), `src/lib/users/owner-adjustments-visibility.ts`, `src/lib/creator-hub-access.ts`, `src/lib/queries/dashboard.ts` (pending owner-side commit).
+
+**DB (2026-06-11, CLAUDE.md):** NEW live prod game DB in `.env` — strictly READ-ONLY for everyone (no DDL by anyone, ever; indexes are dead ends — perf is won in code). Old-DB facts (enums/tables/indexes) are unverified on the new DB; re-probe before relying.
+
+**Recently shipped (don't re-audit deeply):** `/users` list + `/users/[id]` remakes, `/creator-hub/creators/[id]` remake, gaming-tab enum fix, page-size fix, 3VL adjustment fix, P&L revert. All verified on live prod data.
 - **Note (2026-06-06):** local checkout was on branch `dev` (even with `origin/main`) with **no `node_modules` / `.env`**; ran `npm install` + `prisma generate` (both clients) to gate.
 - **Cloud VM dev env:** merged **PR #48** — `AGENTS.md` § Cursor Cloud specific instructions on `main`; update script `npm install`. Local VM: Postgres 16 + `.env.local`; lint/tsc/build + Playwright auth PASS.
 - **Deploy:** `main` → Vercel prod `pokewin-admin.vercel.app`
