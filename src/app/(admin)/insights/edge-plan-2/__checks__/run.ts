@@ -614,24 +614,38 @@ check("shards: 0.3000%-of-wager identity at spec defaults (weights 1/1/1, $20, $
   );
 });
 
-check("shards: case table has 10 rows, value === shards × EV, owner-pinned endpoints", () => {
-  assert(SHARD_CASES.length === 10, `expected 10 shard cases, got ${SHARD_CASES.length}`);
-  const first = SHARD_CASES[0];
-  const last = SHARD_CASES[SHARD_CASES.length - 1];
-  assert(first.name === "Starter Kit" && first.shards === 2, "first case must be Starter Kit @ 2 shards");
-  assert(last.name === "Eternal Fortune" && last.shards === 10_000, "last case must be Eternal Fortune @ 10,000 shards");
-  approx(shardCaseValueUsd(first, SHARDS_DEFAULT_EV_PER_SHARD_USD), 0.12, 1e-9, "Starter Kit value");
-  approx(shardCaseValueUsd(last, SHARDS_DEFAULT_EV_PER_SHARD_USD), 600, 1e-9, "Eternal Fortune value");
+check("shards: case table is EXACTLY the owner's 10 rows (names, shards, derived $)", () => {
+  // Owner spec 2026-06-12 — names + shard counts pinned verbatim; the $
+  // column is DERIVED (shards × $0.06), never stored.
+  const OWNER_ROWS: { name: string; shards: number; usd: number }[] = [
+    { name: "Starter Kit", shards: 2, usd: 0.12 },
+    { name: "Training Ground", shards: 5, usd: 0.3 },
+    { name: "Sharp Choice", shards: 10, usd: 0.6 },
+    { name: "Elite Loadout", shards: 25, usd: 1.5 },
+    { name: "Cash Flow", shards: 50, usd: 3 },
+    { name: "Treasure Trove", shards: 100, usd: 6 },
+    { name: "Imperial Vault", shards: 250, usd: 15 },
+    { name: "Endless Gold", shards: 1_000, usd: 60 },
+    { name: "Full House", shards: 5_000, usd: 300 },
+    { name: "Eternal Fortune", shards: 10_000, usd: 600 },
+  ];
+  assert(SHARD_CASES.length === OWNER_ROWS.length, `expected ${OWNER_ROWS.length} shard cases, got ${SHARD_CASES.length}`);
   let prevShards = 0;
-  for (const c of SHARD_CASES) {
-    assert(c.shards > prevShards, `case ladder must be ascending (broke at ${c.name})`);
-    prevShards = c.shards;
-    approx(
-      shardCaseValueUsd(c, SHARDS_DEFAULT_EV_PER_SHARD_USD),
-      c.shards * 0.06,
-      1e-9,
-      `case value identity (${c.name})`,
+  for (let i = 0; i < OWNER_ROWS.length; i++) {
+    const want = OWNER_ROWS[i];
+    const got = SHARD_CASES[i];
+    assert(
+      got.name === want.name && got.shards === want.shards,
+      `row ${i + 1} must be "${want.name}" @ ${want.shards} shards, got "${got.name}" @ ${got.shards}`,
     );
+    approx(
+      shardCaseValueUsd(got, SHARDS_DEFAULT_EV_PER_SHARD_USD),
+      want.usd,
+      1e-9,
+      `derived $ (${want.name})`,
+    );
+    assert(got.shards > prevShards, `case ladder must be ascending (broke at ${got.name})`);
+    prevShards = got.shards;
   }
 });
 
@@ -1062,6 +1076,315 @@ check("withdrawals: deposit $100 → $100 @ 100%, $200 @ 50%, never @ 0%", () =>
   approx(withdrawalRequiredWagerUsd(100, 0.5) ?? Number.NaN, 200, 1e-12, "50% weight");
   assert(withdrawalRequiredWagerUsd(100, 0) === null, "0% weight never unlocks");
   approx(withdrawalRequiredWagerUsd(250, 0.25) ?? Number.NaN, 1_000, 1e-12, "25% weight");
+});
+
+// ─── 14. Owner-trusted recon identities (rework 2026-06-12) ─────────────────
+
+check("recon: 30d identities + live-prod pins (wager $2.78M, P&L +$46.7K, on-site $64.9K = 2.33%)", () => {
+  const r = makeRecon().d30;
+  // Identities (buildOwnerWindowRecon is pure — these hold for ANY input).
+  approx(r.rewardPayouts, r.ggr - r.ngr, 1e-9, "rewardPayouts === ggr − ngr");
+  approx(
+    r.onSiteRewardCost,
+    Math.max(0, r.rewardPayouts - r.creatorLeaderboardCost),
+    1e-9,
+    "onSite === rewardPayouts − creator leaderboard",
+  );
+  assert(r.onSiteDragPct != null && r.dragWithCreatorPct != null, "drag pcts must resolve");
+  approx(r.onSiteDragPct, r.onSiteRewardCost / r.wager, 1e-12, "onSiteDragPct identity");
+  approx(r.dragWithCreatorPct, r.rewardPayouts / r.wager, 1e-12, "withCreator identity");
+  // Live-prod pins (recon probe 2026-06-12) — the numbers the page shows.
+  approx(r.wager, 2_780_670.55, 0.005, "hub wager 30d");
+  approx(r.realizedPnl, 46_714.78, 0.005, "realized P&L 30d");
+  approx(r.rewardPayouts, 126_265.36, 0.005, "canonical reward cost 30d");
+  approx(r.creatorLeaderboardCost, 61_346, 0.005, "creator leaderboard 30d");
+  approx(r.onSiteRewardCost, 64_919.36, 0.005, "on-site reward cost 30d");
+  approx(r.onSiteDragPct * 100, 2.33, 0.005, "on-site drag ≈ 2.33% of hub wager");
+  approx(r.dragWithCreatorPct * 100, 4.54, 0.005, "with-creator drag ≈ 4.54% (transparency)");
+  // Programs exclude the creator-attributed leaderboard line, sorted desc.
+  assert(
+    r.programs.every((p) => p.key !== LEADERBOARD_REWARD_LINE_KEY),
+    "programs must EXCLUDE the leaderboard line",
+  );
+  for (let i = 1; i < r.programs.length; i++) {
+    assert(r.programs[i - 1].amountUsd >= r.programs[i].amountUsd, "programs sorted by spend desc");
+  }
+  for (const p of r.programs) {
+    assert(p.edgeReductionPp != null, `program ${p.key} must carry an edge reduction`);
+    approx(p.edgeReductionPp, (p.amountUsd / r.wager) * 100, 1e-9, `edge reduction pp (${p.key})`);
+  }
+});
+
+check("recon: lifetime row pins the /insights hub numbers (wager $3,211,825.42 · P&L +$120,729.44)", () => {
+  const r = makeRecon().lifetime;
+  approx(r.wager, 3_211_825.42, 0.005, "hub wager lifetime (365d-capped)");
+  approx(r.realizedPnl, 120_729.44, 0.005, "realized P&L lifetime");
+  approx(r.rewardPayouts, 131_684.74, 0.005, "canonical reward cost 365d");
+  approx(r.onSiteRewardCost, 70_338.74, 0.005, "on-site reward cost 365d");
+  assert(r.onSiteDragPct != null, "lifetime drag must resolve");
+  approx(r.onSiteDragPct * 100, 2.19, 0.005, "lifetime on-site drag ≈ 2.19%");
+  assert(r.label.includes("365"), "lifetime label must be LOUD about the 365d cap");
+});
+
+check("drag recompose: NO leaderboard lever row; reward totals + drag exclude creator prizes", () => {
+  const p = project({});
+  assert(
+    p.levers.every((l) => l.key !== "leaderboard"),
+    "the leaderboard lever row must be GONE (creator cost, not reward drag)",
+  );
+  approx(
+    p.creatorLeaderboardCostUsd,
+    baseline.affiliateLeaderboardCost,
+    1e-9,
+    "creator leaderboard passthrough (footnote line)",
+  );
+  // The reward-cost total is exactly the Σ of the remaining rows — the
+  // creator prizes are in NONE of them.
+  const sumCurrent = p.levers.reduce((s, l) => s + l.currentCost, 0);
+  approx(p.currentRewardCost, sumCurrent, 1e-6, "currentRewardCost === Σ lever rows");
+
+  const drag = computeOwnerDragSummary(baseline, p);
+  approx(drag.hubWagerUsd, baseline.recon.d30.wager, 1e-9, "drag denominator = hub wager");
+  approx(drag.measuredOnSiteCostUsd, baseline.recon.d30.onSiteRewardCost, 1e-9, "measured on-site cost");
+  approx(drag.creatorLeaderboardCostUsd, baseline.recon.d30.creatorLeaderboardCost, 1e-9, "creator footnote $");
+  assert(drag.plannedDragPct != null && drag.currentDragPct != null, "drags resolve");
+  approx(drag.plannedDragPct, drag.currentDragPct, 1e-12, "defaults: planned drag === current drag");
+  approx(
+    drag.plannedDragPct,
+    p.plannedRewardCost / baseline.recon.d30.wager,
+    1e-12,
+    "planned drag = planner reward rows ÷ hub wager",
+  );
+});
+
+// ─── 15. Lever anchors (degraded-baseline liveness) ─────────────────────────
+
+check("anchors: measured legs win; degraded legs fall back to secondary sources (flagged)", () => {
+  const healthy = resolveLeverAnchorsV2(baseline);
+  assert(
+    !healthy.rakeback.estimated &&
+      !healthy.affiliateCommission.estimated &&
+      !healthy.depositBonus.estimated &&
+      !healthy.raffles.estimated &&
+      !healthy.rain.estimated,
+    "healthy baseline → every anchor measured",
+  );
+  approx(healthy.rakeback.anchorUsd, baseline.rakebackCost, 1e-9, "measured rakeback anchor");
+  approx(healthy.raffles.anchorUsd, baseline.raffleCost, 1e-9, "measured raffle anchor");
+
+  const degraded = makeDegradedAnchorsBaseline();
+  const a = resolveLeverAnchorsV2(degraded);
+  const proxy = wagerProxyV2(degraded);
+  approx(proxy, degraded.wager, 1e-9, "wager proxy = v1 canonical wager when present");
+  assert(
+    a.rakeback.estimated && a.affiliateCommission.estimated && a.depositBonus.estimated && a.raffles.estimated && a.rain.estimated,
+    "degraded baseline → every anchor flagged estimated",
+  );
+  // Fallback chain values: blended cadence rate × proxy / blended affiliate
+  // rate × proxy / time-bonus Σ / live-raffle prize value / rain pool Σ.
+  approx(a.rakeback.anchorUsd, ((0.0025 + 0.005) / 2) * proxy, 1e-6, "rakeback fallback anchor");
+  approx(a.affiliateCommission.anchorUsd, 0.0085 * proxy, 1e-6, "affiliate fallback anchor");
+  approx(a.depositBonus.anchorUsd, 68_300, 1e-9, "deposit-bonus fallback anchor (time-bonus Σ)");
+  approx(a.raffles.anchorUsd, 4_800, 1e-9, "raffle fallback anchor (live prize value)");
+  approx(a.rain.anchorUsd, 15_000, 1e-9, "rain fallback anchor (pool Σ)");
+
+  // wagerProxy falls back to the hub 30d wager when even v1 wager is 0.
+  const noV1 = { ...degraded, wager: 0 };
+  approx(wagerProxyV2(noV1), degraded.recon.d30.wager, 1e-9, "proxy falls back to hub wager");
+});
+
+check("anchors: default levers still project $0 delta on the degraded-anchors baseline", () => {
+  const degraded = makeDegradedAnchorsBaseline();
+  const p = projectEdgePlanV2(degraded, defaultLeversV2(degraded));
+  approx(p.profitDelta, 0, CENT, "profitDelta $0 at defaults (degraded anchors)");
+  for (const l of p.levers) {
+    approx(l.deltaCost, 0, CENT, `lever "${l.key}" deltaCost at defaults (degraded anchors)`);
+  }
+  profitIdentity(p, "defaults (degraded anchors)");
+});
+
+// ─── 16. Per-lever reactivity contract (healthy AND degraded fixture) ───────
+//
+// THE owner bug: levers that do nothing. For EVERY lever, a non-default
+// value must change its own row's plannedCost AND move the profit delta —
+// on the healthy fixture and on the degraded-anchors fixture (the exact
+// state the owner was driving when "the P&L does not move").
+
+type Perturbation = {
+  name: string;
+  /** The lever row that must move (null = revenue / gaming-edge channels). */
+  leverKey: string | null;
+  overrides: (b: EdgePlanV2Baseline) => Partial<PlannedLeversV2>;
+};
+
+const PERTURBATIONS: Perturbation[] = [
+  {
+    name: "rakeback cadence rate",
+    leverKey: "rakeback",
+    overrides: (b) => ({
+      rakebackRates: { ...defaultLeversV2(b).rakebackRates, daily: 0.01 },
+    }),
+  },
+  {
+    name: "rakeback game weighting",
+    leverKey: "rakeback",
+    overrides: () => ({ rakebackUpgraderWeight: 0.25 }),
+  },
+  {
+    name: "rakeback instant claim",
+    leverKey: "rakeback",
+    overrides: () => ({ rakebackInstantAdoption: 0.5, rakebackInstantPayoutPct: 0.5 }),
+  },
+  {
+    name: "affiliate tier rate",
+    leverKey: "affiliate",
+    overrides: (b) => ({
+      affiliateRates: { ...defaultLeversV2(b).affiliateRates, 1: 0.2 },
+    }),
+  },
+  {
+    name: "affiliate wager-req toggle",
+    leverKey: "affiliate",
+    overrides: () => ({ affiliateWagerReqEnabled: false }),
+  },
+  {
+    name: "deposit-bonus cap",
+    leverKey: "deposit-bonus",
+    overrides: () => ({ depositBonusCapMult: 0.5 }),
+  },
+  {
+    name: "deposit-bonus min-deposit $ gate",
+    leverKey: "deposit-bonus",
+    overrides: () => ({ depositBonusMinDepositUsd: 50 }),
+  },
+  {
+    name: "deposit-bonus time split",
+    leverKey: "deposit-bonus",
+    overrides: () => ({
+      depositBonusHourlyEnabled: true,
+      depositBonusHourlyAmountUsd: 25,
+      depositBonusHourlyIntervalHours: 6,
+    }),
+  },
+  {
+    name: "race monthly $",
+    leverKey: "races",
+    overrides: () => ({ raceMonthlyBudgetUsd: 1_234 }),
+  },
+  {
+    name: "raffle keep %",
+    leverKey: "raffles",
+    overrides: () => ({ raffleKeepPct: 0.5 }),
+  },
+  {
+    name: "rain per-event $",
+    leverKey: "rain",
+    overrides: (b) => ({ rainPerEventUsd: (b.rainAnchor?.avgPoolUsd ?? 100) * 2 }),
+  },
+  {
+    name: "rain cadence",
+    leverKey: "rain",
+    overrides: (b) => ({ rainDurationHours: (b.rainAnchor?.avgIntervalHours ?? 6) * 2 }),
+  },
+  {
+    name: "motha monthly $",
+    leverKey: "motha",
+    overrides: () => ({ mothaMonthlyBudgetUsd: 0 }),
+  },
+  {
+    name: "gift cards monthly $",
+    leverKey: "gift-cards",
+    overrides: () => ({ giftCardsMonthlyUsd: 9_999 }),
+  },
+  {
+    name: "promo codes monthly $",
+    leverKey: "promo-codes",
+    overrides: () => ({ promoCodesMonthlyUsd: 0 }),
+  },
+  {
+    name: "counted adjustments monthly $",
+    leverKey: "adjustments",
+    overrides: () => ({ adjustmentsMonthlyRecurringUsd: 0 }),
+  },
+  {
+    name: "daily pack EV",
+    leverKey: "daily-packs",
+    overrides: (b) => ({
+      dailyPackEvUsd: { ...defaultLeversV2(b).dailyPackEvUsd, "chk-daily-1": 2.5 },
+    }),
+  },
+  {
+    name: "daily pack frequency",
+    leverKey: "daily-packs",
+    overrides: () => ({ dailyPacksFrequencyMult: 2 }),
+  },
+  {
+    name: "signup grant $",
+    leverKey: "signup-packs",
+    overrides: (b) => ({ signupGrantUsd: (b.signupAvgGrant ?? 0) + 2 }),
+  },
+  {
+    name: "shards toggle",
+    leverKey: "shards",
+    overrides: () => ({ shardsEnabled: true }),
+  },
+  {
+    name: "credit matrix cell",
+    leverKey: "credit-matrix",
+    overrides: () => ({ matrixCells: { [matrixCellKey("race_prize", "races")]: 0 } }),
+  },
+  {
+    name: "deposit fee (revenue channel)",
+    leverKey: null,
+    overrides: () => ({ depositFeePct: 0.02 }),
+  },
+  {
+    name: "packs edge slider (ggrDelta)",
+    leverKey: null,
+    overrides: (b) => ({
+      edges: { ...defaultLeversV2(b).edges, packs: defaultLeversV2(b).edges.packs + 0.02 },
+    }),
+  },
+  {
+    name: "upgrader edge slider (ggrDelta)",
+    leverKey: null,
+    overrides: (b) => ({
+      edges: { ...defaultLeversV2(b).edges, upgrader: Math.max(0, defaultLeversV2(b).edges.upgrader - 0.03) },
+    }),
+  },
+];
+
+function assertReactive(b: EdgePlanV2Baseline, fixtureName: string): void {
+  const base = projectEdgePlanV2(b, defaultLeversV2(b));
+  for (const pert of PERTURBATIONS) {
+    const p = projectEdgePlanV2(b, { ...defaultLeversV2(b), ...pert.overrides(b) });
+    assert(
+      Math.abs(p.profitDelta - base.profitDelta) > CENT,
+      `[${fixtureName}] "${pert.name}" must move the profit delta (got ${p.profitDelta} vs ${base.profitDelta})`,
+    );
+    if (pert.leverKey != null) {
+      const before = base.levers.find((l) => l.key === pert.leverKey);
+      const after = p.levers.find((l) => l.key === pert.leverKey);
+      assert(before != null && after != null, `[${fixtureName}] lever row "${pert.leverKey}" missing`);
+      assert(
+        Math.abs(after.plannedCost - before.plannedCost) > CENT,
+        `[${fixtureName}] "${pert.name}" must move its own row's plannedCost`,
+      );
+    } else if (pert.name.startsWith("deposit fee")) {
+      assert(p.revenueDelta > 0, `[${fixtureName}] deposit fee must move revenueDelta`);
+    } else {
+      assert(Math.abs(p.ggrDelta) > CENT, `[${fixtureName}] edge slider must move ggrDelta`);
+    }
+    profitIdentity(p, `${fixtureName}: ${pert.name}`);
+  }
+}
+
+check("reactivity: EVERY lever moves its row + profit delta on the HEALTHY fixture", () => {
+  assertReactive(makeBaseline(), "healthy");
+});
+
+check("reactivity: EVERY lever stays LIVE on the DEGRADED-ANCHORS fixture (the owner's bug)", () => {
+  assertReactive(makeDegradedAnchorsBaseline(), "degraded-anchors");
 });
 
 // ─── Summary ─────────────────────────────────────────────────────────────────
