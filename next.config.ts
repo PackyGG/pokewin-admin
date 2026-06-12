@@ -109,6 +109,13 @@ const nextConfig: NextConfig = {
         permanent: true,
       },
       {
+        // Legacy gift-cards list — removed from the dashboard; /rewards
+        // gates access itself.
+        source: "/gift-cards",
+        destination: "/rewards",
+        permanent: true,
+      },
+      {
         // The withdrawals list was consolidated into the unified
         // Transactions page. Next forwards incoming query params that the
         // destination doesn't use, so deep-links like
