@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import {
   User,
   Users,
@@ -44,8 +45,18 @@ export default async function MyProfilePage() {
 
   if (!data) redirect("/login");
 
-  // Refresh stale social stats in the background (non-blocking)
-  refreshStaleSocials(data.userId).catch(() => {});
+  // Refresh stale social stats once the response has streamed — after()
+  // keeps the work off the render path (non-blocking, same as the previous
+  // floating promise) but the runtime now keeps the function alive until
+  // the callback settles instead of racing a detached promise against
+  // function freeze. Failures are logged (never secrets) instead of
+  // silently swallowed. Same pattern as the webhook dispatch in
+  // src/app/(admin)/creators/actions.ts.
+  after(() => {
+    refreshStaleSocials(data.userId).catch((err) => {
+      console.error("[my-profile] refreshStaleSocials failed:", err);
+    });
+  });
 
   return (
     <div className="space-y-6">

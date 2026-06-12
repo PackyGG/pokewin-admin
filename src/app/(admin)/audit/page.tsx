@@ -1,11 +1,23 @@
 import { Suspense } from "react";
-import { ScrollText } from "lucide-react";
+import { AlertTriangle, ScrollText } from "lucide-react";
 import { getAuditEvents, getDistinctEventTypeCount } from "@/lib/queries/audit";
 import { requirePageAccess } from "@/lib/dal";
+import {
+  safeQuery,
+  safeQueryOrNull,
+  REWARD_QUERY_TIMEOUT_MS,
+  type SafeQueryResult,
+} from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { AuditActivityTable } from "./audit-activity-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { ToolbarSkeleton } from "@/components/loading-skeletons";
+import {
+  KpiStripSkeleton,
+  PaginationSkeleton,
+  TableSkeleton,
+  ToolbarSkeleton,
+} from "@/components/loading-skeletons";
 import {
   PageHero,
   PageHeroIdentity,
@@ -81,6 +93,8 @@ const EVENT_TYPES = [
   { label: "Creator Webhook Deleted", value: "creator_webhook_deleted" },
 ];
 
+type AuditListResult = Awaited<ReturnType<typeof getAuditEvents>>;
+
 export default async function AuditPage({
   searchParams,
 }: {
@@ -91,15 +105,50 @@ export default async function AuditPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const [result, distinctEventTypes] = await Promise.all([
-    getAuditEvents({
-      page,
-      perPage,
-      search: params.search,
-      eventType: params.eventType,
-    }),
-    getDistinctEventTypeCount(),
-  ]);
+  // Empty shape getAuditEvents would return for zero rows — the safeQuery
+  // fallback, so the table + pagination still paint (degraded) when the
+  // query fails or times out.
+  const EMPTY_LIST: AuditListResult = {
+    data: [],
+    total: 0,
+    page,
+    perPage,
+    totalPages: 0,
+  };
+
+  // Start both reads NOW (unawaited) and share the promises across the two
+  // Suspense legs below: the KPI strip and the table consume the SAME
+  // getAuditEvents round-trip (no duplicate query), while the hero, section
+  // heading and toolbar flush immediately instead of blocking the whole
+  // route on the reads (house lazy-leg pattern, see /users). safeQuery
+  // never rejects, so the promises are safe to hold unawaited.
+  const eventsPromise = safeQuery(
+    () =>
+      getAuditEvents({
+        page,
+        perPage,
+        search: params.search,
+        eventType: params.eventType,
+      }),
+    EMPTY_LIST,
+    "audit.list",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const typeCountPromise = safeQueryOrNull(
+    () => getDistinctEventTypeCount(),
+    "audit.typeCount",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+
+  // Key the streamed legs on every query input so an in-segment navigation
+  // (page click, filter change, search commit) re-shows the skeletons while
+  // the new slice streams instead of pinning stale rows.
+  const sectionKey = [
+    page,
+    perPage,
+    params.search ?? "",
+    params.eventType ?? "",
+  ].join("|");
 
   return (
     <div className="space-y-6">
@@ -111,26 +160,15 @@ export default async function AuditPage({
         />
       </PageHero>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <KpiTile
-          label="Total Events"
-          value={formatNumber(result.total)}
-          icon={ScrollText}
-          accent="blue"
+      <Suspense
+        key={`kpi-${sectionKey}`}
+        fallback={<KpiStripSkeleton count={3} />}
+      >
+        <AuditKpiStrip
+          eventsPromise={eventsPromise}
+          typeCountPromise={typeCountPromise}
         />
-        <KpiTile
-          label="On Page"
-          value={formatNumber(result.data.length)}
-          icon={ScrollText}
-          accent="purple"
-        />
-        <KpiTile
-          label="Event Types"
-          value={formatNumber(distinctEventTypes)}
-          icon={ScrollText}
-          accent="cyan"
-        />
-      </div>
+      </Suspense>
 
       <div className="space-y-3">
         <SectionHeading icon={ScrollText} title="Event Stream" />
@@ -147,15 +185,123 @@ export default async function AuditPage({
               ]}
             />
           </Suspense>
-          <AuditActivityTable data={result.data} />
-          <DataTablePagination
-            page={result.page}
-            totalPages={result.totalPages}
-            total={result.total}
-            perPage={result.perPage}
-          />
+          <Suspense
+            key={sectionKey}
+            fallback={
+              <>
+                <TableSkeleton rows={Math.min(perPage, 15)} columns={6} />
+                <PaginationSkeleton />
+              </>
+            }
+          >
+            <AuditTableSection eventsPromise={eventsPromise} />
+          </Suspense>
         </FadeIn>
       </div>
     </div>
+  );
+}
+
+/**
+ * KPI leg — consumes the shared list read + the distinct-type count, each
+ * already wrapped in safeQuery. A failed read degrades only its own tile(s)
+ * to TileErrorFallback while the rest of the strip renders real data.
+ */
+async function AuditKpiStrip({
+  eventsPromise,
+  typeCountPromise,
+}: {
+  eventsPromise: Promise<SafeQueryResult<AuditListResult>>;
+  typeCountPromise: Promise<{ data: number | null; error: string | null }>;
+}) {
+  const [eventsResult, typeCountResult] = await Promise.all([
+    eventsPromise,
+    typeCountPromise,
+  ]);
+  const result = eventsResult.data;
+  const eventsFailed = eventsResult.error !== null;
+  const distinctEventTypes = typeCountResult.data;
+
+  return (
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      {eventsFailed ? (
+        <>
+          <TileErrorFallback label="Total Events" />
+          <TileErrorFallback label="On Page" />
+        </>
+      ) : (
+        <>
+          <KpiTile
+            label="Total Events"
+            value={formatNumber(result.total)}
+            icon={ScrollText}
+            accent="blue"
+          />
+          <KpiTile
+            label="On Page"
+            value={formatNumber(result.data.length)}
+            icon={ScrollText}
+            accent="purple"
+          />
+        </>
+      )}
+      {distinctEventTypes === null ? (
+        <TileErrorFallback label="Event Types" />
+      ) : (
+        <KpiTile
+          label="Event Types"
+          value={formatNumber(distinctEventTypes)}
+          icon={ScrollText}
+          accent="cyan"
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Table leg — consumes the shared list read; a failed/hung query degrades
+ * to an empty table + a VISIBLE amber band while the pagination still
+ * paints (mirrors UsersTableSection on /users). Never echoes the raw error
+ * string (see safe-query.ts SECURITY note).
+ */
+async function AuditTableSection({
+  eventsPromise,
+}: {
+  eventsPromise: Promise<SafeQueryResult<AuditListResult>>;
+}) {
+  const listResult = await eventsPromise;
+  const result = listResult.data;
+  const listFailed = listResult.error !== null;
+
+  return (
+    <>
+      {listFailed && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+        >
+          <AlertTriangle
+            aria-hidden
+            className="mt-0.5 size-4 shrink-0 text-amber-500"
+          />
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Couldn&apos;t load the audit log — the query timed out or failed.
+            This is a{" "}
+            <span className="font-medium">query error, not an empty log</span>
+            . Refresh to retry, or narrow the search / event-type filter.
+          </p>
+        </div>
+      )}
+      <AuditActivityTable data={result.data} />
+      <DataTablePagination
+        page={result.page}
+        totalPages={result.totalPages}
+        total={result.total}
+        perPage={result.perPage}
+        degraded={listFailed}
+      />
+    </>
   );
 }

@@ -1,11 +1,12 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Package } from "lucide-react";
+import { AlertTriangle, Package } from "lucide-react";
 import {
   getTransactions,
   type TransactionSortMode,
 } from "@/lib/queries/transactions";
 import { requirePageAccess } from "@/lib/dal";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TransactionsDataTable } from "../data-table";
 import { columns as packColumns } from "./columns";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -154,16 +155,57 @@ async function PackTxTableSection({
   sortBy: TransactionSortMode;
   search: string | undefined;
 }) {
-  const result = await getTransactions({
+  // Empty shape getTransactions returns for zero rows — the safeQuery
+  // fallback, so the table + pagination still paint (degraded) on failure.
+  const EMPTY_LIST: Awaited<ReturnType<typeof getTransactions>> = {
+    data: [],
+    total: 0,
     page,
     perPage,
-    search,
-    types: TYPES,
-    status: tab === "all" ? undefined : tab,
-    sortBy,
-  });
+    totalPages: 0,
+  };
+
+  // safeQuery (house 15s wall-clock bound) degrades a failed/hung list
+  // query to an empty table + a VISIBLE amber band — hero, tabs, toolbar
+  // and pagination keep rendering so the admin can clear filters or retry.
+  // Identical to the bare await on the happy path.
+  const listResult = await safeQuery(
+    () =>
+      getTransactions({
+        page,
+        perPage,
+        search,
+        types: TYPES,
+        status: tab === "all" ? undefined : tab,
+        sortBy,
+      }),
+    EMPTY_LIST,
+    "transactions.packs.list",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const result = listResult.data;
+  const listFailed = listResult.error !== null;
+
   return (
     <>
+      {listFailed && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+        >
+          <AlertTriangle
+            aria-hidden
+            className="mt-0.5 size-4 shrink-0 text-amber-500"
+          />
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Couldn&apos;t load pack transactions — the query timed out or
+            failed. This is a{" "}
+            <span className="font-medium">query error, not zero results</span>
+            . Refresh to retry, or clear the search and sort.
+          </p>
+        </div>
+      )}
       <FadeIn>
         <TransactionsDataTable data={result.data} columns={packColumns} />
       </FadeIn>
@@ -173,6 +215,7 @@ async function PackTxTableSection({
           totalPages={result.totalPages}
           total={result.total}
           perPage={result.perPage}
+          degraded={listFailed}
         />
       </FadeIn>
     </>
