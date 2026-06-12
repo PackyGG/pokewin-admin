@@ -78,9 +78,11 @@ export async function getHubDashboardOverview(
     cohortResult,
     costResult,
   ] = await Promise.all([
-    getCreatorsGlobalStats().then(
-      (value) => ({ status: "fulfilled" as const, value }),
-      (reason) => ({ status: "rejected" as const, reason }),
+    safeQuery(
+      () => getCreatorsGlobalStats(),
+      null,
+      "creator-hub.globalStats",
+      HUB_OVERVIEW_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getAllCreatorsNetGgr(period),
@@ -110,14 +112,13 @@ export async function getHubDashboardOverview(
     ),
   ]);
 
-  const stats =
-    statsResult.status === "fulfilled" ? statsResult.value : null;
+  const stats = statsResult.error == null ? statsResult.data : null;
   const ggr = netGgrResult.error == null ? netGgrResult.data : null;
 
-  if (statsResult.status === "rejected") {
+  if (statsResult.error) {
     console.error(
       "[creator-hub] global stats failed (totals render '—'):",
-      statsResult.reason,
+      statsResult.error,
     );
   }
   if (netGgrResult.error) {
@@ -161,7 +162,7 @@ export async function getHubDashboardOverview(
     dailySignupsFtds: cohort
       ? cohort.dailySignupsFtds
       : EMPTY_COHORT.dailySignupsFtds,
-    rosterUnavailable: statsResult.status === "rejected",
+    rosterUnavailable: statsResult.error != null,
     cohortUnavailable: cohortResult.error != null,
   };
 }
