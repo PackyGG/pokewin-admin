@@ -464,14 +464,14 @@ function SummaryFlow({
               >
                 <ul className="space-y-0.5">
                   <InfoRow
-                    icon={Coins}
+                    iconNode={<Coins className="size-3" />}
                     label="Total wager"
                     amount={data.totalWager}
                     sign="+"
                     tone="base"
                   />
                   <InfoRow
-                    icon={ArrowDownToLine}
+                    iconNode={<ArrowDownToLine className="size-3" />}
                     label="Gameplay winnings paid back"
                     sub="inventory value + battle refunds"
                     amount={data.gamingPayouts}
@@ -553,14 +553,14 @@ function SummaryFlow({
               >
                 <ul className="space-y-0.5">
                   <InfoRow
-                    icon={Package}
+                    iconNode={<Package className="size-3" />}
                     label="Inventory still held"
                     sub="cards won & kept (obtained − sold)"
                     amount={data.inventoryDelta}
                     tone="held"
                   />
                   <InfoRow
-                    icon={Ticket}
+                    iconNode={<Ticket className="size-3" />}
                     label="Unclaimed voucher liability"
                     sub="issued − claimed"
                     amount={data.voucherDelta}
@@ -637,35 +637,35 @@ function SummaryFlow({
               >
                 <ul className="space-y-0.5">
                   <InfoRow
-                    icon={Scale}
+                    iconNode={<Scale className="size-3" />}
                     label="NGR (net gaming margin)"
                     amount={data.ngr}
                     sign={ngrPos ? "+" : "−"}
                     tone={ngrPos ? "keep" : "cost"}
                   />
                   <InfoRow
-                    icon={Package}
+                    iconNode={<Package className="size-3" />}
                     label="Inventory still held"
                     amount={data.inventoryDelta}
                     sign="−"
                     tone="held"
                   />
                   <InfoRow
-                    icon={ArrowUpFromLine}
+                    iconNode={<ArrowUpFromLine className="size-3" />}
                     label="Cards shipped"
                     amount={data.cardWithdrawals}
                     sign="−"
                     tone="cost"
                   />
                   <InfoRow
-                    icon={Ticket}
+                    iconNode={<Ticket className="size-3" />}
                     label="Unclaimed vouchers"
                     amount={data.voucherDelta}
                     sign="−"
                     tone="held"
                   />
                   <InfoRow
-                    icon={Wallet}
+                    iconNode={<Wallet className="size-3" />}
                     label="Residual ledger flows (net)"
                     sub="deposits in, transfers, adjustments"
                     amount={Math.abs(data.residualNamedTotal + data.residual)}

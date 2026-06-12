@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Info, type LucideIcon } from "lucide-react";
+import { Info } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -125,16 +125,24 @@ export function MetricInfoPopover({
  * and a tone-coloured amount on the right. `sign` is the leading glyph so
  * a shrinking liability can show "+" on an emerald amount even when the
  * raw delta is negative.
+ *
+ * `iconNode` is a PRE-RENDERED icon element (e.g. `<Coins className=
+ * "size-3" />`), not a component function — the server page renders the
+ * lucide icon itself and passes the node, mirroring WaterfallRow's
+ * `iconNode` pattern. Passing the bare LucideIcon function here would put
+ * a function prop on a "use client" component ("Functions cannot be
+ * passed directly to Client Components"). The tone-tinted chip wrapper
+ * stays in here so callers only supply the glyph.
  */
 export function InfoRow({
-  icon: Icon,
+  iconNode,
   label,
   sub,
   amount,
   sign = "",
   tone = "muted",
 }: {
-  icon?: LucideIcon;
+  iconNode?: React.ReactNode;
   label: React.ReactNode;
   sub?: React.ReactNode;
   amount: number;
@@ -145,14 +153,14 @@ export function InfoRow({
   return (
     <li className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/40">
       <span className="flex min-w-0 items-center gap-1.5">
-        {Icon && (
+        {iconNode && (
           <span
             className={cn(
               "flex size-5 shrink-0 items-center justify-center rounded",
               t.chip,
             )}
           >
-            <Icon className="size-3" />
+            {iconNode}
           </span>
         )}
         <span className="min-w-0">
