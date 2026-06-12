@@ -172,6 +172,63 @@ export type CostBreakdownContributor = {
   net: number;
 };
 
+// ─── Per-program reward spend (the /insights hub "Reward spend" box) ─
+//
+// The owner's program enum — one row per reward program he steers, in his
+// dropdown order. Rows are derived ENTIRELY from sums this assembly already
+// fetches (the per-type reward sums + net rain + the counted-adjustment
+// total): ZERO additional queries, ZERO change to the KPI math above.
+//
+// Three programs (raffles / daily packs / motha) give away ITEMS or fund
+// pools — they are NOT ledger reward lines in this canonical model, so
+// their `amountUsd` is null (never a fabricated $0) with a note pointing
+// at Edge Plan 2.0, which measures them from their own sources (30d).
+//
+// Affiliate LEADERBOARD prizes are CREATOR costs per the house model —
+// they are the block's footnote figure, never a program row.
+
+export type RewardProgramSpendKey =
+  | "rakeback"
+  | "affiliate_commission"
+  | "deposit_bonus"
+  | "races"
+  | "raffles"
+  | "rain"
+  | "daily_packs"
+  | "signup"
+  | "motha"
+  | "gift_cards"
+  | "promo_codes"
+  | "other";
+
+export type RewardProgramSpend = {
+  key: RewardProgramSpendKey;
+  label: string;
+  /**
+   * Window $ spent on the program. Null = the program's cost is an item /
+   * pool giveaway that this ledger model does not itemize (see `note`) —
+   * deliberately NOT a fabricated $0.
+   */
+  amountUsd: number | null;
+  /** One-line plain-words explanation of the row. */
+  note: string;
+};
+
+export type RewardProgramSpendBlock = {
+  /** Program rows in the owner's dropdown order (incl. the trailing "other"). */
+  programs: RewardProgramSpend[];
+  /** Σ of the itemized (non-null) program rows, incl. "other". */
+  itemizedTotalUsd: number;
+  /**
+   * Total ON-SITE reward spend for the window — canonical reward cost
+   * (GGR − NGR) minus the creator-attributed affiliate leaderboard prizes.
+   * Equals `itemizedTotalUsd` by construction ("other" absorbs the rest).
+   */
+  onSiteRewardCostUsd: number;
+  /** Affiliate leaderboard prizes — CREATOR cost (footnote, not a program row). */
+  creatorLeaderboardUsd: number;
+};
+
 export type CostBreakdown = {
   periodLabel: string;
   cutoffIso: string;
@@ -230,6 +287,12 @@ export type CostBreakdown = {
 
   /** The single biggest leak (rankedCosts[0]), or null when there are none. */
   biggestLeak: CostLine | null;
+
+  /**
+   * Per-program reward spend for the window (the /insights hub "Reward
+   * spend" box) — derived from the sums above, zero extra queries.
+   */
+  programSpend: RewardProgramSpendBlock;
 
   margin: CostMarginHealth;
 
@@ -1057,6 +1120,103 @@ export async function getCostBreakdown(
     .filter((l) => l.amount > 0)
     .sort((a, b) => b.amount - a.amount);
 
+  // ── Per-program reward spend block (hub "Reward spend" box) ──────
+  // Derived ENTIRELY from sums already fetched above (per-type reward
+  // sums, net rain, counted adjustments) — no additional queries and no
+  // change to any figure computed before this point. Leaderboard prizes
+  // are the creator footnote; "other" absorbs waitlist prizes + counted
+  // adjustment credits + any reward-type drift so the block reconciles
+  // with the canonical reward cost (GGR − NGR) by construction.
+  const programTypeSum = (type: string): number =>
+    rewardSums.find((r) => r.type === type)?.total ?? 0;
+  const creatorLeaderboardUsd = programTypeSum("affiliate_leaderboard_prize");
+  const onSiteRewardCostUsd = Math.max(0, rewardPayouts - creatorLeaderboardUsd);
+
+  const programRows: RewardProgramSpend[] = [
+    {
+      key: "rakeback",
+      label: "Rakeback",
+      amountUsd: programTypeSum("rakeback_claim"),
+      note: "Share of wager volume returned to users when they claim rakeback.",
+    },
+    {
+      key: "affiliate_commission",
+      label: "Affiliate commission",
+      amountUsd: programTypeSum("affiliate_claim"),
+      note: "Commission creators claim on their referred users' play. (Leaderboard prizes are creator costs — footnote below, not this row.)",
+    },
+    {
+      key: "deposit_bonus",
+      label: "Deposit bonus",
+      amountUsd: programTypeSum("deposit_bonus"),
+      note: "Bonus balance credited on deposits — pure marketing cost.",
+    },
+    {
+      key: "races",
+      label: "Races",
+      amountUsd: programTypeSum("race_prize"),
+      note: "Wager-race prizes paid to top finishers.",
+    },
+    {
+      key: "raffles",
+      label: "Raffles",
+      amountUsd: null,
+      note: "Raffle prizes are ITEM giveaways (packs/cards), not a ledger reward line in this lifetime model — measured from the raffles table in Edge Plan 2.0 (30d).",
+    },
+    {
+      key: "rain",
+      label: "Rain",
+      amountUsd: netRainCost,
+      note: "The house-funded slice of rain pools — max(0, rain wins − tips in).",
+    },
+    {
+      key: "daily_packs",
+      label: "Daily / free packs",
+      amountUsd: null,
+      note: "Daily-pack giveaways are ITEM costs (cards out at ~$0 wager), not a ledger reward line here — measured per pack in Edge Plan 2.0 (30d).",
+    },
+    {
+      key: "signup",
+      label: "Signup balance reward",
+      amountUsd: programTypeSum("balance_reward_claim"),
+      note: "Balance rewards claimed (signup grants + daily/weekly balance rewards) — the same ledger leg the Edge Plan signup lever anchors on.",
+    },
+    {
+      key: "motha",
+      label: "Motha giveaways",
+      amountUsd: null,
+      note: "Motha founder giveaways flow through tips / rain funding / sponsorships (residual legs, not reward lines) — measured in Edge Plan 2.0 (30d).",
+    },
+    {
+      key: "gift_cards",
+      label: "Gift cards",
+      amountUsd: programTypeSum("gift_card_redeemed"),
+      note: "Gift cards redeemed for balance.",
+    },
+    {
+      key: "promo_codes",
+      label: "Promo codes",
+      amountUsd: programTypeSum("promo_code_redeemed"),
+      note: "Promo codes redeemed for balance.",
+    },
+  ];
+  const namedProgramTotal = programRows.reduce(
+    (s, p) => s + (p.amountUsd ?? 0),
+    0,
+  );
+  programRows.push({
+    key: "other",
+    label: "Other rewards",
+    amountUsd: Math.max(0, onSiteRewardCostUsd - namedProgramTotal),
+    note: "Waitlist prizes + counted balance-adjustment credits (giveaway / bonus / reload / lossback / deposit-problem) + remaining reward ledger types.",
+  });
+  const programSpend: RewardProgramSpendBlock = {
+    programs: programRows,
+    itemizedTotalUsd: programRows.reduce((s, p) => s + (p.amountUsd ?? 0), 0),
+    onSiteRewardCostUsd,
+    creatorLeaderboardUsd,
+  };
+
   // RTP = gaming payouts / wager (the user's own winnings back). House
   // edge = GGR / wager.
   const margin: CostMarginHealth = {
@@ -1101,6 +1261,7 @@ export async function getCostBreakdown(
     lines,
     rankedCosts,
     biggestLeak: rankedCosts[0] ?? null,
+    programSpend,
     margin,
     trend,
     contributors,

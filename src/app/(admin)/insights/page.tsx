@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, cache } from "react";
 import Link from "next/link";
 import {
   Compass,
@@ -34,8 +34,22 @@ import {
   getInsightsHubWager,
   INSIGHTS_HUB_WAGER_LOOKBACK_DAYS,
 } from "@/lib/queries/insights-analytics/hub-wager";
+import { RewardSpendPanel, type RewardSpendRow } from "./reward-spend-panel";
 
 export const metadata = { title: "Insights" };
+
+// ─── Per-render fetch dedupe ────────────────────────────────────────
+//
+// The headline KPI strip AND the additive "Reward spend" box both read
+// the page's ONE `getCostBreakdown` call — `cache()` memoizes the
+// promise per render, so adding the spend box never refetches the heavy
+// canonical legs (and a failure degrades both sections to their own
+// fallbacks). Same args as before; the KPI math is untouched.
+const getHubCostBreakdown = cache(
+  (period: InsightsPeriod, periodLabel: string) =>
+    getCostBreakdown(period, periodLabel, 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS),
+);
+const getHubWager = cache(() => getInsightsHubWager());
 
 /**
  * /insights — the Insights hub. Lands admins on a single page that
@@ -95,6 +109,19 @@ export default async function InsightsHubPage() {
         </Suspense>
       </section>
 
+      {/* Reward spend box (ADDITIVE) — per-program $ spent + the edge
+          reduction next to it, vs the hub wager. Shares the KPI strip's
+          getCostBreakdown call via the per-render cache() wrapper. */}
+      <section className="space-y-3">
+        <SectionHeading
+          icon={Gift}
+          title={`Reward spend · ${periodLabel}`}
+        />
+        <Suspense fallback={<RewardSpendSkeleton />}>
+          <RewardSpendSection period={period} periodLabel={periodLabel} />
+        </Suspense>
+      </section>
+
       <section className="space-y-3">
         <SectionHeading icon={Compass} title="Drill in" />
         <FadeIn>
@@ -132,15 +159,18 @@ async function HeadlineKpiStrip({
   periodLabel: string;
 }) {
   const [{ data, error }, { data: wager }] = await Promise.all([
+    // Same call as before (identical args) — now routed through the
+    // per-render `cache()` wrapper so the Reward-spend box shares this
+    // ONE fetch instead of refetching the heavy legs.
     safeQuery(
-      () => getCostBreakdown(period, periodLabel, 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS),
+      () => getHubCostBreakdown(period, periodLabel),
       null,
       "insights.hub.kpi",
     ),
     // Headline wager — total customer stake (borrow-net, creator-sessions
     // excluded, sponsored + upgrader included), lifetime. Its own leg so a
     // wager-read failure degrades only this tile, not the whole strip.
-    safeQuery(() => getInsightsHubWager(), 0, "insights.hub.wager"),
+    safeQuery(() => getHubWager(), 0, "insights.hub.wager"),
   ]);
 
   if (error || !data) {
@@ -239,6 +269,83 @@ function HeadlineKpiSkeleton() {
       ))}
     </div>
   );
+}
+
+// ─── Reward spend box (additive) ────────────────────────────────────
+
+/**
+ * Per-program reward spend + edge reduction (the owner's dropdown box).
+ *
+ * Data: the SAME `getCostBreakdown` call the headline strip awaits (the
+ * per-render `cache()` wrapper above — no second raw fetch) provides the
+ * derived `programSpend` block; the hub wager (same cached helper as the
+ * Wager tile) is the edge-reduction denominator:
+ *
+ *   edge reduction = program $ spent ÷ hub wager, in percentage points.
+ *
+ * Lifetime basis like the rest of the hub, window labeled LOUDLY on the
+ * panel. Affiliate leaderboard prizes are CREATOR costs per the house
+ * model — they sit in the footnote, never in the rows. Raffles / daily
+ * packs / motha are item-cost programs the lifetime ledger model does not
+ * itemize — rendered honestly with a pointer at Edge Plan 2.0 (which
+ * mirrors this box from its live projection).
+ */
+async function RewardSpendSection({
+  period,
+  periodLabel,
+}: {
+  period: InsightsPeriod;
+  periodLabel: string;
+}) {
+  const [{ data, error }, { data: wager }] = await Promise.all([
+    safeQuery(
+      () => getHubCostBreakdown(period, periodLabel),
+      null,
+      "insights.hub.reward-spend",
+    ),
+    safeQuery(() => getHubWager(), 0, "insights.hub.reward-spend.wager"),
+  ]);
+
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Reward spend"
+        hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
+
+  const hubWager = wager ?? 0;
+  const pp = (amountUsd: number | null): number | null =>
+    amountUsd != null && hubWager > 0 ? (amountUsd / hubWager) * 100 : null;
+
+  const spend = data.programSpend;
+  const rows: RewardSpendRow[] = spend.programs.map((p) => ({
+    key: p.key,
+    label: p.label,
+    amountUsd: p.amountUsd,
+    edgeReductionPp: pp(p.amountUsd),
+    note: p.note,
+  }));
+
+  return (
+    <FadeIn>
+      <RewardSpendPanel
+        title="Reward spend"
+        windowLabel={periodLabel}
+        rows={rows}
+        totalUsd={spend.onSiteRewardCostUsd}
+        totalPp={pp(spend.onSiteRewardCostUsd)}
+        totalLabel="on-site reward spend · edge reduction = spend ÷ hub wager"
+        footnote={`Creator costs not in this box: affiliate leaderboard prizes ${formatCurrency(spend.creatorLeaderboardUsd)} (attributed to Creators per the house model). Raffles, daily packs and motha give away items/pool funding — measured live in Edge Plan 2.0, which mirrors this box per planned lever.`}
+      />
+    </FadeIn>
+  );
+}
+
+function RewardSpendSkeleton() {
+  return <div className="h-[260px] animate-pulse rounded-xl border bg-card" />;
 }
 
 // ─── Quick-link grid ────────────────────────────────────────────────

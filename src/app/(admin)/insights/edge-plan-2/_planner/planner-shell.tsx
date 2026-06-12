@@ -36,6 +36,7 @@ import {
 } from "../_presets-v2";
 import { TEXT_TONE } from "./colors";
 import { EdgePlanV2HeroSummary } from "./hero-summary";
+import { RewardSpendMirror } from "./reward-spend-mirror";
 import {
   LEVER_GROUPS,
   LeverRail,
@@ -186,6 +187,10 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
         onWagerScenarioChange={setWagerScenario}
         actions={heroActions}
       />
+
+      {/* ── Reward-spend mirror (compact) — planned $ + drag per program,
+             live with every lever; mirrors the /insights hub spend box ── */}
+      <RewardSpendMirror baseline={baseline} projection={projection} />
 
       {/* ── Measured 30d strip (Bug-B contract: REAL getWindowMetrics block,
              clearly separated from the planning numbers) + freshness stamp ── */}
