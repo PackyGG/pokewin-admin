@@ -1,7 +1,11 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { Swords } from "lucide-react";
-import { getBattles, type BattleSortMode } from "@/lib/queries/battles";
+import {
+  getBattles,
+  type BattleListItem,
+  type BattleSortMode,
+} from "@/lib/queries/battles";
 import { requirePageAccess } from "@/lib/dal";
 import { BattlesDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -15,6 +19,9 @@ import { cn } from "@/lib/utils";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPendingShell } from "@/components/ux";
+import { InlineError } from "@/components/entity-surface";
+import { loadPrimary } from "@/lib/entity-surface/loader";
+import type { PaginatedResult } from "@/lib/types";
 
 export const metadata = { title: "Battles" };
 
@@ -30,6 +37,18 @@ const STATUS_TABS = [
 // junk into the query layer (where it would fall through to "recent"
 // anyway, but better to reject explicitly at the boundary).
 const SORT_MODES: BattleSortMode[] = ["recent", "bet", "hit"];
+
+// Typed empty page handed to `loadPrimary` as the fallback when the
+// battles query fails or times out — keeps the `result.page` /
+// `totalPages` reads type-safe on the degraded path (mirrors
+// EMPTY_PACKS in /packs).
+const EMPTY_BATTLES: PaginatedResult<BattleListItem> = {
+  data: [],
+  total: 0,
+  page: 1,
+  perPage: 20,
+  totalPages: 0,
+};
 
 export default async function BattlesPage({
   searchParams,
@@ -175,15 +194,24 @@ async function BattlesTableSection({
   sortBy: BattleSortMode;
   since: "24h" | undefined;
 }) {
-  const result = await getBattles({
-    page,
-    perPage,
-    status,
-    mode,
-    search,
-    sortBy,
-    since,
-  });
+  // Wrapped in `loadPrimary` (safeQuery + timeout) so a slow or failed
+  // battles query degrades to an inline error in place — never a page
+  // crash via the route error boundary. Mirrors the hardened /packs
+  // list call-site.
+  const { data: result, error } = await loadPrimary(
+    () => getBattles({ page, perPage, status, mode, search, sortBy, since }),
+    EMPTY_BATTLES,
+    "battles.list",
+  );
+
+  if (error) {
+    return (
+      <InlineError
+        title="Couldn't load the battles list"
+        hint="The list query timed out or failed. Retry, or narrow the filters."
+      />
+    );
+  }
 
   return (
     <>

@@ -6,6 +6,7 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { FilterBarSkeleton } from "@/components/entity-surface";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { loadPrimary } from "@/lib/entity-surface/loader";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { SetsContent } from "./sets-content";
 import { SetsFilterBar } from "./sets-filter-bar";
 import { SetsTableSkeleton } from "./_skeletons";
@@ -83,7 +84,14 @@ export default async function SetsPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const [series, stats] = await Promise.all([getSeriesList(), getSetsStats()]);
+  // Both frame queries are safeQuery-wrapped so a failing aggregate degrades
+  // only its own section — the KPI strip collapses to a TileErrorFallback and
+  // the filter bar falls back to empty series options — instead of crashing
+  // the whole page to the route error boundary (mirrors /cards).
+  const [{ data: series }, { data: stats }] = await Promise.all([
+    safeQuery(() => getSeriesList(), [] as string[], "sets.series"),
+    safeQuery(() => getSetsStats(), null, "sets.stats"),
+  ]);
 
   const suspenseKey = `${page}|${perPage}|${params.search ?? ""}|${params.series ?? ""}|${params.sortBy ?? ""}|${params.sortOrder ?? ""}`;
 
@@ -109,26 +117,37 @@ export default async function SetsPage({
         />
       </PageHero>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        <KpiTile
-          label="Total Sets"
-          value={formatNumber(stats.total)}
-          icon={Library}
-          accent="blue"
+      {/* When the stats aggregate query failed (safeQuery returned null) the
+          strip collapses to a single TileErrorFallback row instead of crashing
+          the page; the filter bar + list below are unaffected. (Mirrors
+          /cards.) */}
+      {stats ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+          <KpiTile
+            label="Total Sets"
+            value={formatNumber(stats.total)}
+            icon={Library}
+            accent="blue"
+          />
+          <KpiTile
+            label="Series"
+            value={formatNumber(stats.totalSeries)}
+            icon={FolderTree}
+            accent="cyan"
+          />
+          <KpiTile
+            label="Total Cards"
+            value={formatNumber(stats.totalCards)}
+            icon={Layers}
+            accent="purple"
+          />
+        </div>
+      ) : (
+        <TileErrorFallback
+          label="Catalog stats"
+          hint="The aggregate stats query failed. The sets list below is unaffected — refresh to retry."
         />
-        <KpiTile
-          label="Series"
-          value={formatNumber(stats.totalSeries)}
-          icon={FolderTree}
-          accent="cyan"
-        />
-        <KpiTile
-          label="Total Cards"
-          value={formatNumber(stats.totalCards)}
-          icon={Layers}
-          accent="purple"
-        />
-      </div>
+      )}
 
       <div className="space-y-3">
         <SectionHeading icon={Library} title="All Sets" />

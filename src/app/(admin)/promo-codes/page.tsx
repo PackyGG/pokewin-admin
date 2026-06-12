@@ -30,6 +30,7 @@ import {
   KpiTile,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 export const metadata = { title: "Promo Codes" };
 
@@ -47,12 +48,17 @@ export default async function PromoCodesPage({
   // <Suspense> so a filter / page change shows a table skeleton instead
   // of blocking the page on the previous render.
   //
-  // Money stats are lifetime aggregates (no timeframe). Wrapped in
-  // safeQuery so a slow / failing aggregate degrades the two money tiles
-  // to "—" instead of crashing the page; the count tiles + table still
-  // render.
-  const [stats, { data: money }] = await Promise.all([
-    getPromoCodesListStats(),
+  // Money stats are lifetime aggregates (no timeframe). Both stats reads
+  // are wrapped in safeQuery so a slow / failing aggregate degrades its
+  // own tiles — the count strip collapses to a TileErrorFallback row, the
+  // two money tiles fall back to "—" — instead of crashing the page; the
+  // table still renders.
+  const [{ data: stats }, { data: money }] = await Promise.all([
+    safeQuery(
+      () => getPromoCodesListStats(),
+      null as Awaited<ReturnType<typeof getPromoCodesListStats>> | null,
+      "promoCodes.listStats",
+    ),
     safeQuery(
       () => getPromoCodesMoneyStats(),
       null as Awaited<ReturnType<typeof getPromoCodesMoneyStats>> | null,
@@ -71,32 +77,39 @@ export default async function PromoCodesPage({
         />
       </PageHero>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiTile
-          label="Total Codes"
-          value={String(stats.totalCodes)}
-          icon={Ticket}
-          accent="blue"
+      {stats ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <KpiTile
+            label="Total Codes"
+            value={String(stats.totalCodes)}
+            icon={Ticket}
+            accent="blue"
+          />
+          <KpiTile
+            label="Active"
+            value={String(stats.activeCount)}
+            icon={CheckCircle2}
+            accent="emerald"
+          />
+          <KpiTile
+            label="Expired"
+            value={String(stats.expiredCount)}
+            icon={Clock}
+            accent="rose"
+          />
+          <KpiTile
+            label="Redemptions"
+            value={String(stats.totalRedemptions)}
+            icon={Users}
+            accent="purple"
+          />
+        </div>
+      ) : (
+        <TileErrorFallback
+          label="Code stats"
+          hint="The aggregate stats query failed. The code list below is unaffected — refresh to retry."
         />
-        <KpiTile
-          label="Active"
-          value={String(stats.activeCount)}
-          icon={CheckCircle2}
-          accent="emerald"
-        />
-        <KpiTile
-          label="Expired"
-          value={String(stats.expiredCount)}
-          icon={Clock}
-          accent="rose"
-        />
-        <KpiTile
-          label="Redemptions"
-          value={String(stats.totalRedemptions)}
-          icon={Users}
-          accent="purple"
-        />
-      </div>
+      )}
 
       {/* Lifetime promo-code money strip. House-POV: promo value handed to
           users is a house COST → rose headline. "Given out / claimed" is

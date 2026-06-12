@@ -26,6 +26,8 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPending } from "@/components/ux";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
+import { safeQuery } from "@/lib/errors/safe-query";
 
 export const metadata = { title: "Vouchers" };
 
@@ -44,9 +46,17 @@ export default async function VouchersPage({
   // voucher LIST itself is fetched inside a keyed <Suspense> below so a
   // tab/filter change shows a table skeleton instead of blocking the
   // whole page on the previous content.
-  const [creators, stats] = await Promise.all([
-    getVoucherCreators(),
-    getVouchersListStats(),
+  // Each is safeQuery-wrapped so a failing query degrades only its own
+  // section — the KPI strip collapses to a TileErrorFallback and the
+  // Created-By filter falls back to the System-only option — instead of
+  // crashing the whole page to the route error boundary (mirrors /cards).
+  const [{ data: creators }, { data: stats }] = await Promise.all([
+    safeQuery(
+      () => getVoucherCreators(),
+      [] as Awaited<ReturnType<typeof getVoucherCreators>>,
+      "vouchers.creators",
+    ),
+    safeQuery(() => getVouchersListStats(), null, "vouchers.stats"),
   ]);
 
   const createdByOptions = [
@@ -68,32 +78,39 @@ export default async function VouchersPage({
           counts/totals always render. Vouchers are unspent credits the
           house owes users, so the unclaimed value is the active
           liability and reads rose per CLAUDE.md house-POV. */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiTile
-          label="Unclaimed Total"
-          value={String(stats.unclaimedCount)}
-          icon={Clock}
-          accent="amber"
+      {stats ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <KpiTile
+            label="Unclaimed Total"
+            value={String(stats.unclaimedCount)}
+            icon={Clock}
+            accent="amber"
+          />
+          <KpiTile
+            label="Unclaimed Value"
+            value={formatCurrency(stats.unclaimedTotalValue)}
+            icon={Coins}
+            accent="rose"
+          />
+          <KpiTile
+            label="Claimed Total"
+            value={String(stats.claimedCount)}
+            icon={CheckCircle2}
+            accent="purple"
+          />
+          <KpiTile
+            label="Claimed Value"
+            value={formatCurrency(stats.claimedTotalValue)}
+            icon={Ticket}
+            accent="blue"
+          />
+        </div>
+      ) : (
+        <TileErrorFallback
+          label="Voucher stats"
+          hint="The aggregate stats query failed. The voucher list below is unaffected — refresh to retry."
         />
-        <KpiTile
-          label="Unclaimed Value"
-          value={formatCurrency(stats.unclaimedTotalValue)}
-          icon={Coins}
-          accent="rose"
-        />
-        <KpiTile
-          label="Claimed Total"
-          value={String(stats.claimedCount)}
-          icon={CheckCircle2}
-          accent="purple"
-        />
-        <KpiTile
-          label="Claimed Value"
-          value={formatCurrency(stats.claimedTotalValue)}
-          icon={Ticket}
-          accent="blue"
-        />
-      </div>
+      )}
 
       <div className="space-y-3">
         <SectionHeading icon={Ticket} title="Voucher List" />

@@ -1,7 +1,7 @@
 import { ArrowDownToLine, ArrowUpFromLine, Coins, TrendingUp } from "lucide-react";
 import { getTopbarHouseKpis, TOPBAR_HOUSE_PERIOD } from "@/lib/queries/house-kpis";
 import { DASHBOARD_PERIOD_LABELS } from "@/lib/queries/dashboard-period";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { formatCompactUsd } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +34,7 @@ export async function TopbarHouseStats() {
       organicCustomerStake: 0,
     },
     "topbar.houseStats",
+    REWARD_QUERY_TIMEOUT_MS,
   );
 
   const failed = error !== null;
