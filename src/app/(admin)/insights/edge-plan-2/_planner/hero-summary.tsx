@@ -333,8 +333,8 @@ export function EdgePlanV2HeroSummary({
           value={formatCompactUsd(scenario.wager)}
           sub={
             scenarioActive
-              ? `at ${wagerMultLabel} wager · borrow excluded — headline wager is the owner strip above`
-              : "Planning base · borrow excluded — headline wager is the owner strip above"
+              ? `at ${wagerMultLabel} wager · borrow excluded — owner strip above is lifetime (its 30d row is this window)`
+              : "Planning base · borrow excluded — owner strip above is lifetime (its 30d row is this window)"
           }
           icon={Coins}
           accent="blue"

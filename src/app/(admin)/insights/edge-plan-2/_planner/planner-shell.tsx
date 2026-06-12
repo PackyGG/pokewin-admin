@@ -184,7 +184,7 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
         </div>
       )}
 
-      {/* ── Owner-anchored headline (30d, hub helpers) + lifetime recon ───── */}
+      {/* ── Owner-anchored headline (LIFETIME, hub helpers) + 30d recon ───── */}
       <OwnerAnchorStrip baseline={baseline} projection={projection} />
 
       {/* ── Hero: profit delta + single edge waterfall + KPI strip —
@@ -404,19 +404,29 @@ function MeasuredStat({
 }
 
 /**
- * Owner-anchored headline strip + the mandatory lifetime reconciliation
- * row. Every figure comes from `baseline.recon` — the EXACT cached helpers
- * the /insights hub renders (`getInsightsHubWager*` + `getCostBreakdown`),
- * each band carrying a LOUD window chip so scopes are never mixed silently.
- * The reward drag here is the OWNER model: on-site reward spend ÷ hub
- * wager — creator-attributed leaderboard prizes live in the footnote, not
- * the drag.
+ * Owner-anchored headline strip + the mandatory reconciliation row.
  *
- * The lifetime reconciliation row additionally carries the DASHBOARD-
- * matching "Total P&L — balance-sheet snapshot · incl. unclaimed rakeback"
+ * HEADLINE = LIFETIME (365d-capped) — owner request 2026-06-12 ("pls make
+ * the top data thing for all time data not 30d days!"): the three big
+ * figures (wager / realized P&L / on-site reward spend + drag) read from
+ * `baseline.recon.lifetime` — the EXACT cached helpers the /insights hub
+ * renders (`getInsightsHubWager` + `getCostBreakdown("all", 365d-cap)`).
+ * The Last-30-days figures moved DOWN into the reconciliation row (same
+ * helpers, 30d window, same in-plain-words one-liners relabeled). The
+ * PLANNER below (levers, projections, measured strip, scenario chips)
+ * still plans on the 30d window — so the 30d row is loudly tagged as the
+ * planner window and carries the 30d-based planner-drag note
+ * (`computeOwnerDragSummary`). Windows are never mixed silently: the
+ * headline drag reads "of lifetime wager", the 30d drag "of 30d wager".
+ * The reward drag is the OWNER model in both windows: on-site reward
+ * spend ÷ hub wager — creator-attributed leaderboard prizes live in the
+ * (lifetime) footnote, not the drag.
+ *
+ * The reconciliation area also keeps the DASHBOARD-matching "Total P&L —
+ * balance-sheet snapshot · incl. unclaimed rakeback"
  * (`baseline.ownerTotalPnl`, read-only `getRealizedPnlSnapshot`) next to
- * the hub's windowed Realized P&L — two different formulas, both labeled
- * with their own one-liner (no invented bridge math).
+ * the headline's lifetime Realized P&L — two different formulas, both
+ * labeled with their own one-liner (no invented bridge math).
  */
 function OwnerAnchorStrip({
   baseline,
@@ -428,10 +438,11 @@ function OwnerAnchorStrip({
   const d30 = baseline.recon.d30;
   const lifetime = baseline.recon.lifetime;
   const totalPnl = baseline.ownerTotalPnl ?? null;
+  // 30d-based by design — the planner plans on the 30d window.
   const drag = computeOwnerDragSummary(baseline, projection);
-  const pnlTone = d30.realizedPnl >= 0 ? TEXT_TONE.emerald : TEXT_TONE.rose;
   const lifePnlTone =
     lifetime.realizedPnl >= 0 ? TEXT_TONE.emerald : TEXT_TONE.rose;
+  const d30PnlTone = d30.realizedPnl >= 0 ? TEXT_TONE.emerald : TEXT_TONE.rose;
   const totalPnlTone =
     totalPnl != null && totalPnl.pnl >= 0 ? TEXT_TONE.emerald : TEXT_TONE.rose;
   const plannedDragMoved =
@@ -446,8 +457,8 @@ function OwnerAnchorStrip({
           <Landmark className="size-3.5" aria-hidden />
           Owner-trusted headline — same helpers as the /insights hub
         </p>
-        <span className="rounded-full border bg-background px-2 py-0.5 text-[10px] font-semibold text-foreground">
-          {d30.label}
+        <span className="rounded-full border border-foreground/30 bg-background px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-foreground">
+          {lifetime.label}
         </span>
       </div>
 
@@ -457,23 +468,24 @@ function OwnerAnchorStrip({
             Wager · real customers
           </p>
           <p className="truncate text-lg font-bold tabular-nums">
-            {formatCurrency(d30.wager)}
+            {formatCurrency(lifetime.wager)}
           </p>
           <p className="text-[10px] leading-snug text-muted-foreground">
             In plain words: how much customers bet (real cash after borrow,
-            upgrader included).
+            upgrader included) — all time, 365d-capped.
           </p>
         </div>
         <div className="min-w-0">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
             Realized P&amp;L
           </p>
-          <p className={cn("truncate text-lg font-bold tabular-nums", pnlTone)}>
-            {d30.realizedPnl >= 0 ? "+" : "−"}
-            {formatCurrency(Math.abs(d30.realizedPnl))}
+          <p className={cn("truncate text-lg font-bold tabular-nums", lifePnlTone)}>
+            {lifetime.realizedPnl >= 0 ? "+" : "−"}
+            {formatCurrency(Math.abs(lifetime.realizedPnl))}
           </p>
           <p className="text-[10px] leading-snug text-muted-foreground">
-            In plain words: what the house actually banked this window.
+            In plain words: what the house actually banked over the lifetime
+            window.
           </p>
         </div>
         <div className="min-w-0">
@@ -481,71 +493,110 @@ function OwnerAnchorStrip({
             On-site reward spend
           </p>
           <p className={cn("truncate text-lg font-bold tabular-nums", TEXT_TONE.rose)}>
-            {formatCurrency(d30.onSiteRewardCost)}
-            {d30.onSiteDragPct != null && (
+            {formatCurrency(lifetime.onSiteRewardCost)}
+            {lifetime.onSiteDragPct != null && (
               <span className="ml-1.5 text-xs font-semibold">
-                = {formatPct(d30.onSiteDragPct)} of wager
+                = {formatPct(lifetime.onSiteDragPct)} of lifetime wager
               </span>
             )}
           </p>
           <p className="text-[10px] leading-snug text-muted-foreground">
-            In plain words: how much of the edge the rewards eat
-            {plannedDragMoved && drag.plannedDragPct != null && (
-              <>
-                {" "}
-                · planner rows (incl. pack/signup item costs):{" "}
-                {formatPct(drag.plannedDragPct)}
-              </>
-            )}
-            .
+            In plain words: how much of the edge the rewards eat — lifetime;
+            the planner drag below stays 30d-based.
           </p>
         </div>
       </div>
 
-      {/* Creator-costs footnote — leaderboard prizes are NOT in the drag. */}
+      {/* Creator-costs footnote (lifetime) — leaderboard prizes NOT in the drag. */}
       <p className="mt-2 border-t pt-2 text-[10px] leading-snug text-muted-foreground">
-        Creator costs not in this drag: affiliate leaderboard prizes{" "}
+        Creator costs not in this drag (lifetime): affiliate leaderboard
+        prizes{" "}
         <span className="font-medium text-foreground tabular-nums">
-          {formatCurrency(d30.creatorLeaderboardCost)}
+          {formatCurrency(lifetime.creatorLeaderboardCost)}
         </span>{" "}
         (attributed to Creators per the house model
-        {d30.dragWithCreatorPct != null && (
-          <> — drag incl. creator would read {formatPct(d30.dragWithCreatorPct)}</>
+        {lifetime.dragWithCreatorPct != null && (
+          <>
+            {" "}
+            — lifetime drag incl. creator would read{" "}
+            {formatPct(lifetime.dragWithCreatorPct)}
+          </>
         )}
         ).
       </p>
 
-      {/* Mandatory lifetime reconciliation row — equals the /insights hub,
-          PLUS the dashboard-matching owner "Total P&L" next to it. The two
-          P&L figures are DIFFERENT formulas (window + population + the
-          unclaimed-rakeback term) — both are shown with their formula
-          one-liners; no invented bridge math. */}
+      {/* Mandatory reconciliation row — the Last-30-days figures (moved down
+          from the old headline; same helpers, same one-liners relabeled),
+          loudly tagged as the PLANNER window, PLUS the dashboard-matching
+          owner "Total P&L" next to it. The two lifetime P&L figures are
+          DIFFERENT formulas (window + population + the unclaimed-rakeback
+          term) — both are shown with their formula one-liners; no invented
+          bridge math. */}
       <div className="mt-2 space-y-1.5 rounded-lg border bg-background/60 px-3 py-2">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full border bg-background px-2 py-0.5 text-[10px] font-semibold text-foreground">
-            {lifetime.label}
+            {d30.label}
           </span>
-          <span className="text-xs tabular-nums">
-            Wager{" "}
-            <span className="font-semibold">{formatCurrency(lifetime.wager)}</span>
-          </span>
-          <span className="text-xs tabular-nums">
-            Realized P&amp;L{" "}
-            <span className={cn("font-semibold", lifePnlTone)}>
-              {lifetime.realizedPnl >= 0 ? "+" : "−"}
-              {formatCurrency(Math.abs(lifetime.realizedPnl))}
-            </span>{" "}
-            <span className="text-[10px] text-muted-foreground">
-              (/insights hub label — windowed: deposits − withdrawals −
-              Δholdings inside the {lifetime.label} window, creators
-              excluded)
-            </span>
-          </span>
-          <span className="text-[10px] text-muted-foreground">
-            — identical to the /insights hub by construction (same cached
-            helpers).
+          <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+            Planner window — the levers, projections and scenario chips below
+            plan on this 30d window
           </span>
         </div>
+        <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-3">
+          <div className="min-w-0">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Wager · real customers
+            </p>
+            <p className="truncate text-sm font-bold tabular-nums">
+              {formatCurrency(d30.wager)}
+            </p>
+            <p className="text-[10px] leading-snug text-muted-foreground">
+              In plain words: how much customers bet (real cash after borrow,
+              upgrader included) — last 30 days.
+            </p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Realized P&amp;L
+            </p>
+            <p className={cn("truncate text-sm font-bold tabular-nums", d30PnlTone)}>
+              {d30.realizedPnl >= 0 ? "+" : "−"}
+              {formatCurrency(Math.abs(d30.realizedPnl))}
+            </p>
+            <p className="text-[10px] leading-snug text-muted-foreground">
+              In plain words: what the house actually banked in the last 30
+              days.
+            </p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              On-site reward spend
+            </p>
+            <p className={cn("truncate text-sm font-bold tabular-nums", TEXT_TONE.rose)}>
+              {formatCurrency(d30.onSiteRewardCost)}
+              {d30.onSiteDragPct != null && (
+                <span className="ml-1.5 text-xs font-semibold">
+                  = {formatPct(d30.onSiteDragPct)} of 30d wager
+                </span>
+              )}
+            </p>
+            <p className="text-[10px] leading-snug text-muted-foreground">
+              In plain words: how much of the edge the rewards eat — 30d
+              {plannedDragMoved && drag.plannedDragPct != null && (
+                <>
+                  {" "}
+                  · planner rows (incl. pack/signup item costs):{" "}
+                  {formatPct(drag.plannedDragPct)}
+                </>
+              )}
+              .
+            </p>
+          </div>
+        </div>
+        <p className="text-[10px] leading-snug text-muted-foreground">
+          — identical to the /insights hub by construction (same cached
+          helpers).
+        </p>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t pt-1.5">
           <span className="rounded-full border bg-background px-2 py-0.5 text-[10px] font-semibold text-foreground">
             Lifetime
@@ -569,13 +620,13 @@ function OwnerAnchorStrip({
           </span>
         </div>
         <p className="text-[10px] leading-snug text-muted-foreground">
-          Why they differ: the two P&amp;L figures are different formulas —
-          Total P&amp;L is the all-time balance sheet incl. the
+          Why they differ: the two lifetime P&amp;L figures are different
+          formulas — Total P&amp;L is the all-time balance sheet incl. the
           unclaimed-rakeback liability (creators count as customers), the
-          hub Realized P&amp;L covers only the {lifetime.label} window with
-          creators excluded. The gap is real, not a bug; it is not cleanly
-          decomposable from these two helpers alone, so both are shown with
-          their own formula.
+          headline Realized P&amp;L covers only the {lifetime.label} window
+          with creators excluded. The gap is real, not a bug; it is not
+          cleanly decomposable from these two helpers alone, so both are
+          shown with their own formula.
         </p>
       </div>
     </div>

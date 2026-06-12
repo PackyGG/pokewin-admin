@@ -1099,9 +1099,10 @@ check("withdrawals: deposit $100 → $100 @ 100%, $200 @ 50%, never @ 0%", () =>
   approx(withdrawalRequiredWagerUsd(250, 0.25) ?? Number.NaN, 1_000, 1e-12, "25% weight");
 });
 
-// ─── 14. Owner-trusted recon identities (rework 2026-06-12) ─────────────────
+// ─── 14. Owner-trusted recon identities (rework 2026-06-12; headline swap ────
+//        2026-06-12: HEADLINE = lifetime, 30d = recon row + planner window) ──
 
-check("recon: 30d identities + live-prod pins (wager $2.78M, P&L +$46.7K, on-site $64.9K = 2.33%)", () => {
+check("recon: 30d ROW identities + live-prod pins (wager $2.78M, P&L +$46.7K, on-site $64.9K = 2.33%) — the planner window", () => {
   const r = makeRecon().d30;
   // Identities (buildOwnerWindowRecon is pure — these hold for ANY input).
   approx(r.rewardPayouts, r.ggr - r.ngr, 1e-9, "rewardPayouts === ggr − ngr");
@@ -1136,15 +1137,19 @@ check("recon: 30d identities + live-prod pins (wager $2.78M, P&L +$46.7K, on-sit
   }
 });
 
-check("recon: lifetime row pins the /insights hub numbers (wager $3,211,825.42 · P&L +$120,729.44)", () => {
+check("recon: lifetime HEADLINE pins the /insights hub numbers (wager $3,211,825.42 · P&L +$120,729.44)", () => {
   const r = makeRecon().lifetime;
   approx(r.wager, 3_211_825.42, 0.005, "hub wager lifetime (365d-capped)");
   approx(r.realizedPnl, 120_729.44, 0.005, "realized P&L lifetime");
   approx(r.rewardPayouts, 131_684.74, 0.005, "canonical reward cost 365d");
   approx(r.onSiteRewardCost, 70_338.74, 0.005, "on-site reward cost 365d");
   assert(r.onSiteDragPct != null, "lifetime drag must resolve");
-  approx(r.onSiteDragPct * 100, 2.19, 0.005, "lifetime on-site drag ≈ 2.19%");
+  approx(r.onSiteDragPct * 100, 2.19, 0.005, "lifetime on-site drag ≈ 2.19% (the HEADLINE drag — of lifetime wager)");
   assert(r.label.includes("365"), "lifetime label must be LOUD about the 365d cap");
+  // Headline creator-costs footnote is the LIFETIME split (headline swap).
+  approx(r.creatorLeaderboardCost, 61_346, 0.005, "creator leaderboard lifetime (headline footnote $)");
+  assert(r.dragWithCreatorPct != null, "lifetime with-creator drag must resolve");
+  approx(r.dragWithCreatorPct * 100, 4.1, 0.005, "lifetime drag incl. creator ≈ 4.10% (headline footnote %)");
 });
 
 check("drag recompose: NO leaderboard lever row; reward totals + drag exclude creator prizes", () => {
@@ -1165,6 +1170,12 @@ check("drag recompose: NO leaderboard lever row; reward totals + drag exclude cr
   approx(p.currentRewardCost, sumCurrent, 1e-6, "currentRewardCost === Σ lever rows");
 
   const drag = computeOwnerDragSummary(baseline, p);
+  // The headline strip swap (lifetime headline) is DISPLAY-ONLY: the
+  // planner-drag summary must STAY anchored to the 30d planner window.
+  assert(
+    drag.windowLabel === baseline.recon.d30.label,
+    "planner drag summary must stay on the 30d planner window (headline swap is display-only)",
+  );
   approx(drag.hubWagerUsd, baseline.recon.d30.wager, 1e-9, "drag denominator = hub wager");
   approx(drag.measuredOnSiteCostUsd, baseline.recon.d30.onSiteRewardCost, 1e-9, "measured on-site cost");
   approx(drag.creatorLeaderboardCostUsd, baseline.recon.d30.creatorLeaderboardCost, 1e-9, "creator footnote $");
