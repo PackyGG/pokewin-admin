@@ -368,9 +368,11 @@ test.describe("Edge Plan 2.0 — planner contract (fixture)", () => {
       adminPage.getByText("wager $100.00").first(),
     ).toBeVisible();
 
-    // Drag the upgrader weight to 50% (ArrowLeft on the Radix slider thumb —
-    // step 1, from 100). The LeverSlider root carries the aria-label; the
-    // keyboard target is the thumb (role=slider) inside the labeled control.
+    // Drive the upgrader weight to 50% via the KEYBOARD (ArrowLeft — step 1,
+    // from 100). The base-ui slider thumb intercepts pointer events over the
+    // element that carries role=slider, so a pointer click on it times out —
+    // focus() reaches it without dispatching any pointer event, and
+    // locator.press() targets the slider element directly.
     const upgraderControl = adminPage
       .locator("div.space-y-1\\.5")
       .filter({
@@ -378,11 +380,11 @@ test.describe("Edge Plan 2.0 — planner contract (fixture)", () => {
       })
       .first();
     const thumb = upgraderControl.getByRole("slider").first();
-    await thumb.click(); // focus the thumb
+    await thumb.focus();
     for (let i = 0; i < 60; i++) {
       const now = await thumb.getAttribute("aria-valuenow");
       if (now === "50") break;
-      await adminPage.keyboard.press("ArrowLeft");
+      await thumb.press("ArrowLeft");
     }
     await expect(thumb).toHaveAttribute("aria-valuenow", "50");
 
