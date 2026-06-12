@@ -8,6 +8,36 @@ import { pack_tag } from "@/generated/prisma/enums";
 import { MS_PER_DAY } from "@/lib/utils/time";
 
 /**
+ * Reads pack `shard_cost` values schema-defensively. The shard-packs
+ * migration (the `shard_cost` column) is on dev but NOT prod, and the same
+ * Prisma client serves both — so a typed `select: { shard_cost: true }` would
+ * throw P2022 on prod. Read it via raw SQL instead and treat a missing column
+ * as "no shard cost" (null). Intersection-schema + raw pattern: the divergent
+ * column never enters the typed client, and this lights up on prod
+ * automatically once the column lands there.
+ */
+async function fetchShardCosts(
+  db: Awaited<ReturnType<typeof getDb>>,
+  ids: string[],
+): Promise<Map<string, number | null>> {
+  if (ids.length === 0) return new Map();
+  try {
+    const rows = await db.$queryRawUnsafe<
+      Array<{ id: string; shard_cost: number | null }>
+    >(`SELECT id, shard_cost FROM packs WHERE id = ANY($1::uuid[])`, ids);
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        r.shard_cost === null ? null : Number(r.shard_cost),
+      ]),
+    );
+  } catch {
+    // shard_cost column absent on this DB (e.g. prod) — no shard costs.
+    return new Map();
+  }
+}
+
+/**
  * Category filter for the /packs list.
  *
  * The values map onto the TWO structured `packs` columns that carry a
@@ -477,7 +507,6 @@ export async function getPackDetail(id: string) {
       actual_house_edge: true,
       active: true,
       pack_type: true,
-      shard_cost: true,
       tags: true,
       difficulty: true,
       pack_cards: {
@@ -505,6 +534,10 @@ export async function getPackDetail(id: string) {
 
   if (!pack) return null;
 
+  // shard_cost lives only on the dev schema — read it via raw SQL (null on
+  // a DB without the column) so this detail query works on both DBs.
+  const shardCost = (await fetchShardCosts(db, [pack.id])).get(pack.id) ?? null;
+
   const totalWeight = pack.pack_cards.reduce((sum, pc) => sum + pc.weight, 0);
 
   return {
@@ -522,7 +555,7 @@ export async function getPackDetail(id: string) {
     actualHouseEdge: toNumber(pack.actual_house_edge),
     active: pack.active,
     packType: pack.pack_type,
-    shardCost: pack.shard_cost,
+    shardCost,
     tags: pack.tags,
     difficulty: pack.difficulty,
     cards: pack.pack_cards.map((pc) => ({
@@ -590,13 +623,14 @@ export async function getShardPacks(): Promise<ShardPacksResult> {
       name: true,
       slug: true,
       image_url: true,
-      shard_cost: true,
       cards_per_open: true,
       active: true,
     },
   });
 
   const ids = rows.map((p) => p.id);
+  // shard_cost is dev-only — read it via raw SQL keyed by pack id.
+  const shardCostById = await fetchShardCosts(db, ids);
   const cardCounts =
     ids.length > 0
       ? await db.pack_cards.groupBy({
@@ -612,7 +646,7 @@ export async function getShardPacks(): Promise<ShardPacksResult> {
     name: p.name,
     slug: p.slug,
     imageUrl: p.image_url,
-    shardCost: p.shard_cost,
+    shardCost: shardCostById.get(p.id) ?? null,
     cardsPerOpen: p.cards_per_open,
     active: p.active,
     cardCount: countByPack.get(p.id) ?? 0,

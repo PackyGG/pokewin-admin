@@ -43,6 +43,7 @@ const TAG_LABELS: Record<pack_tag, string> = {
   pct5: "%5",
   pct10: "%10",
   fifty50: "50/50",
+  onepiece: "One Piece",
 };
 
 type PackData = {

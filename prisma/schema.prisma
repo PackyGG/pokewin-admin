@@ -304,6 +304,12 @@ model cards {
   pack_cards            pack_cards[]
   upgrader_games        upgrader_games[]
   upgrader_output_cards upgrader_output_cards?
+  // Card-set catalog relation (set_id -> sets.id). Virtual relation: the
+  // `sets` table + `set_id` column exist on BOTH dev and prod, so this is a
+  // safe common-schema navigation field (no DB FK constraint required — it
+  // joins on the columns). Added by hand because introspection didn't carry
+  // a formal FK; keep it in sync if the FK is later materialised.
+  sets                  sets?                  @relation(fields: [set_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([card_number], map: "idx_cards_card_number")
   @@index([type], map: "idx_cards_type")
@@ -836,6 +842,9 @@ model sets {
   tcgplayer_id Int       @unique(map: "sets_tcgplayer_id_unique")
   created_at   DateTime  @default(now()) @db.Timestamp(6)
   updated_at   DateTime  @default(now()) @db.Timestamp(6)
+  // Back-relation for cards.sets (see cards model). Enables `_count` of a
+  // set's cards and the set-name join used by the cards list.
+  cards        cards[]
 }
 
 model shipping_addresses {

@@ -19,6 +19,32 @@ import { getCards, getRarities, getSets } from "@/lib/queries/cards";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
 import type { pack_tag } from "@/generated/prisma/enums";
 
+/**
+ * Persists a pack's `shard_cost` via raw SQL. The column is on the dev schema
+ * only (not prod), and the shared Prisma client can't type a column that's
+ * absent on one DB — so writing it through `packs.create/update` data would
+ * be a type error AND would P2022 on prod. Done as a separate post-commit
+ * UPDATE (never inside the caller's transaction, so a missing column can't
+ * poison it) and swallowed when the column is absent. Intersection-schema +
+ * raw pattern, matching the read side in queries/packs.ts.
+ */
+async function writeShardCost(
+  db: Awaited<ReturnType<typeof getDb>>,
+  packId: string,
+  shardCost: number | null,
+): Promise<void> {
+  try {
+    await db.$executeRawUnsafe(
+      `UPDATE packs SET shard_cost = $1 WHERE id = $2`,
+      shardCost,
+      packId,
+    );
+  } catch {
+    // shard_cost column absent on this DB (e.g. prod) — shard packs aren't
+    // supported here, so there's nothing to persist.
+  }
+}
+
 export type CardPickerItem = {
   id: string;
   name: string;
@@ -180,7 +206,6 @@ export async function createPack(data: {
         price: data.price,
         cards_per_open: data.cardsPerOpen,
         pack_type: data.packType,
-        shard_cost: shardCost,
         tags: data.tags,
         difficulty: data.difficulty,
         active: false,
@@ -202,6 +227,11 @@ export async function createPack(data: {
 
     return pack;
   });
+
+  // shard_cost is dev-only — persist it outside the transaction (no-op on a
+  // DB without the column). Shard packs are a dev feature, so this only
+  // matters where the column exists.
+  await writeShardCost(db, pack.id, shardCost);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -294,7 +324,6 @@ export async function updatePack(
         price: data.price,
         cards_per_open: data.cardsPerOpen,
         pack_type: data.packType,
-        shard_cost: shardCost,
         tags: data.tags,
         difficulty: data.difficulty,
         updated_at: new Date(),
@@ -316,6 +345,11 @@ export async function updatePack(
       });
     }
   });
+
+  // shard_cost is dev-only — persist it outside the transaction (no-op on a
+  // DB without the column). Writing null clears it when a pack is no longer
+  // a shard pack.
+  await writeShardCost(db, id, shardCost);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
