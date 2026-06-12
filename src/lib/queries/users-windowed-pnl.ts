@@ -44,12 +44,6 @@ export async function getUserWindowedPnlMulti(
   return withTiming("pnl.userWindowedMulti", async () => {
     const db = await getDb();
 
-    // Gate the upgrader_games read on a table-existence probe (a bare
-    // `FROM upgrader_games` throws 42P01 at parse on a pre-upgrader DB).
-    const upgProbe = await db.$queryRaw<{ exists: string | null }[]>`
-      SELECT to_regclass('public.upgrader_games')::text AS exists`;
-    const hasUpgrader = upgProbe[0]?.exists != null;
-
     // Deepest cutoff (earliest `since`) drives the outer WHERE per
     // table. Each per-window CASE compares against its own `since`
     // bind. Rows older than the deepest cutoff are out entirely.
@@ -139,20 +133,13 @@ export async function getUserWindowedPnlMulti(
           `COALESCE(SUM(CASE WHEN v.claimed_at >= ${wParam(i)} THEN v.value::numeric ELSE 0 END), 0)::text AS claimed_${i}`,
       )
       .join(", ");
-    // Per-window upgrader WIN CREDIT (off-ledger; upgrader_games.won_amount).
-    const upgWonCase = windows
-      .map(
-        (_, i) =>
-          `COALESCE(SUM(CASE WHEN ug.created_at >= ${wParam(i)} THEN ug.won_amount::numeric ELSE 0 END), 0)::text AS upg_won_${i}`,
-      )
-      .join(", ");
 
     type LedgerRow = Record<string, string>;
     type CardRow = Record<string, string>;
     type InvRow = Record<string, string>;
     type VchRow = Record<string, string>;
 
-    const [ledger, card, inv, vch, adminInvRem, adminVchRem, upgRem] = await Promise.all([
+    const [ledger, card, inv, vch, adminInvRem, adminVchRem] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT ${ledgerDepositCase}, ${ledgerManualWdCase}, ${ledgerBalanceChangeCase}
          FROM ledger_transactions lt
@@ -209,19 +196,6 @@ export async function getUserWindowedPnlMulti(
            )`,
         ...params,
       ),
-      // Per-window upgrader WIN CREDIT from upgrader_games.won_amount
-      // (prod-confirmed 2026-06-11: off-ledger — 0 upgrader_payout ledger
-      // rows). Single-user (lt.user_id = $1 ⇒ ug.user_id = $1), outer bound
-      // = deepest cutoff $2 like the other tables. Folded into balanceChange
-      // below. Gated on the probe → empty (0) on a pre-upgrader DB.
-      hasUpgrader
-        ? db.$queryRawUnsafe<Record<string, string>[]>(
-            `SELECT ${upgWonCase}
-             FROM upgrader_games ug
-             WHERE ug.created_at >= $2 AND ug.user_id = $1`,
-            ...params,
-          )
-        : Promise.resolve([] as Record<string, string>[]),
     ]);
 
     const lRow = ledger[0];
@@ -230,18 +204,12 @@ export async function getUserWindowedPnlMulti(
     const vRow = vch[0];
     const adminInvRow = adminInvRem[0];
     const adminVchRow = adminVchRem[0];
-    const upgRow = upgRem[0];
 
     for (let i = 0; i < windows.length; i++) {
       const w = windows[i];
       const deposits = toNumber(lRow?.[`deposits_${i}`]);
       const manualWd = toNumber(lRow?.[`manual_wd_${i}`]);
-      // Upgrader win credit is off-ledger (upgrader_games.won_amount), so
-      // the ledger balance-delta under-counts the user-balance movement by
-      // it. Fold it into balanceChange (a user win = a house loss).
-      const balanceChange =
-        toNumber(lRow?.[`balance_change_${i}`]) +
-        toNumber(upgRow?.[`upg_won_${i}`]);
+      const balanceChange = toNumber(lRow?.[`balance_change_${i}`]);
       const cardWd = toNumber(cRow?.[`card_wd_${i}`]);
       const obtained = toNumber(iRow?.[`obtained_${i}`]);
       const disposed =
@@ -255,11 +223,12 @@ export async function getUserWindowedPnlMulti(
       const withdrawals = manualWd + cardWd;
       const inventoryChange = obtained - disposed;
       const voucherChange = issued - claimed;
-      // Upgrader: the ledger carries ONLY the upgrader_bet DEBIT — the win
-      // credit is off-ledger in upgrader_games.won_amount (prod-confirmed
-      // 2026-06-11: 0 upgrader_payout ledger rows). It was folded into
-      // balanceChange above (per-window, created_at-bucketed), so the
-      // rolling P&L ladder captures it exactly once.
+      // Upgrader is fully captured by balanceChange: both
+      // upgrader_bet (debit) and upgrader_payout (credit) flow through
+      // the ledger. A prior trailing upgraderWon term was based on a
+      // stale assumption that the backend skipped upgrader_payout
+      // rows; it double-subtracted every upgrader payout and inflated
+      // the surfaced house loss in the rolling P&L ladder.
       const pnl =
         deposits -
         withdrawals -
