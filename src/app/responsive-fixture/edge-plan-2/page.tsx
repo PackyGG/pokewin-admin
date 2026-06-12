@@ -18,17 +18,22 @@ import { EdgePlanV2FixtureClient } from "./fixture-client";
  * is nothing for the detector to measure.
  *
  * This route renders the ACTUAL <EdgePlanV2Planner> (the exact client shell
- * that carries the rework's hero, lever workspace, charts, and Raffle
- * section) with a static, representative `EdgePlanV2Baseline`, so the harness
- * can prove it catches the real component's layout across 320→1536 widths
- * independently of the main-DB schema. It is NOT a reimplementation — it
- * imports and renders the production component with the production type.
+ * that carries the v2.1 overhaul's hero, seven lever workspaces, charts,
+ * shards and crediting-matrix sections) with a static, representative
+ * `EdgePlanV2Baseline`, so the harness can prove it catches the real
+ * component's layout across 320→1536 widths independently of the main-DB
+ * schema. It is NOT a reimplementation — it imports and renders the
+ * production component with the production type.
  *
- * The fixture is deliberately tuned to exercise the color-token + restored
- * sections the rework introduces (see fixture-client.tsx):
+ * The fixture is deliberately tuned to exercise every overhaul section at
+ * the default ($0-delta) mount (see fixture-client.tsx):
  *   • a NEGATIVE net-edge-after-rewards scenario (reward cost > GGR) so the
- *     rose / amber net-edge paths render,
- *   • a NON-ZERO `raffleCost` so the restored Raffle lever section shows,
+ *     rose / amber net-edge paths render, plus a NEGATIVE measured
+ *     (`canonical`) 30d block for the "Measured 30d" strip,
+ *   • deterministic deposit-fee chip volumes (USDT exempt by default),
+ *     raffle keep-slider cost, rain anchor, adjustment categories incl. the
+ *     NULL "Not itemized" bucket, deposit-size + time-bonus histograms,
+ *     daily-pack level gates/usage, and all 7 crediting-matrix sources,
  *   • a realistic affiliate commission / leaderboard split.
  *
  * Safety
