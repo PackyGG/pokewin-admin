@@ -32,6 +32,12 @@
  *       `removeAffiliateWagerReq` inverted), clamps, exact key set.
  *   12. Grand identity: plannedNgr − currentNgr === profitDelta ===
  *       ggrDelta − rewardCostDelta + revenueDelta, including revenue + matrix.
+ *   17. Page-wide wager scenario (owner: "1,2,3,4,5× don't work"):
+ *       m=1 is the EXACT identity (verbatim base projection); at any m the
+ *       proportional rows (rakeback / affiliate / shards) scale × m on both
+ *       sides, fixed-window $ budgets and deposit-fee revenue stay flat,
+ *       GGR scales × m, the profit identity holds, and the default-lever
+ *       state stays exactly $0 at EVERY preset multiplier.
  *
  * Exit code 0 = every check passed; 1 = at least one failure (printed).
  */
@@ -65,6 +71,9 @@ import {
   PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
   PLANNED_BATTLES_EDGE_DEFAULT,
   PLANNED_UPGRADER_EDGE_DEFAULT,
+  applyWagerScenarioV2,
+  formatWagerMultLabel,
+  WAGER_SCENARIO_PRESET_MULTS,
 } from "../_model-v2";
 
 import {
@@ -408,6 +417,17 @@ function makeBaseline(): EdgePlanV2Baseline {
     ],
 
     recon: makeRecon(),
+    // The owner's trusted dashboard tile (+$44,925.74) — components chosen
+    // so the balance-sheet formula reconciles exactly (pinned below).
+    ownerTotalPnl: {
+      pnl: 44_925.74,
+      totalDeposited: 1_950_000,
+      totalWithdrawn: 1_520_000,
+      userBalance: 210_000,
+      inventory: 140_000,
+      vouchers: 18_000,
+      unclaimedRakeback: 17_074.26,
+    },
     degradedBlocks: [],
   };
 }
@@ -428,6 +448,7 @@ function makeSparseBaseline(): EdgePlanV2Baseline {
     dailyPackLevels: [],
     dailyPackUsage: [],
     rewardSourceVolumes: [],
+    ownerTotalPnl: null,
     degradedBlocks: [
       "deposits-by-asset",
       "rain-anchor",
@@ -1385,6 +1406,176 @@ check("reactivity: EVERY lever moves its row + profit delta on the HEALTHY fixtu
 
 check("reactivity: EVERY lever stays LIVE on the DEGRADED-ANCHORS fixture (the owner's bug)", () => {
   assertReactive(makeDegradedAnchorsBaseline(), "degraded-anchors");
+});
+
+// ─── 17. Page-wide wager scenario (owner: "wager amounts 1,2,3,4,5x dont work") ──
+
+/**
+ * A deliberately NON-default lever state so the scenario has real $ moving
+ * on every channel: a raised weekly rakeback rate (proportional), shards ON
+ * (proportional), a deposit fee (flat revenue) and a raised race budget
+ * (fixed-window $).
+ */
+function scenarioCustomLevers(b: EdgePlanV2Baseline): PlannedLeversV2 {
+  const d = defaultLeversV2(b);
+  return {
+    ...d,
+    rakebackRates: { ...d.rakebackRates, weekly: d.rakebackRates.weekly + 0.01 },
+    shardsEnabled: true,
+    depositFeePct: 0.02,
+    raceMonthlyBudgetUsd: 30_000,
+  };
+}
+
+check("scenario: m=1 is the EXACT identity (verbatim base projection)", () => {
+  const p = projectEdgePlanV2(baseline, scenarioCustomLevers(baseline));
+  const v = applyWagerScenarioV2(baseline, p, { presetMult: 1 });
+  assert(v.active === false, "m=1 must not flag the scenario active");
+  assert(v.mult === 1, "m=1 resolved mult");
+  assert(v.profitDelta === p.profitDelta, "profitDelta identity");
+  assert(v.plannedGgr === p.plannedGgr, "plannedGgr identity");
+  assert(v.currentGgr === p.currentGgr, "currentGgr identity");
+  assert(v.ggrDelta === p.ggrDelta, "ggrDelta identity");
+  assert(v.plannedRewardCost === p.plannedRewardCost, "plannedRewardCost identity");
+  assert(v.currentRewardCost === p.currentRewardCost, "currentRewardCost identity");
+  assert(v.rewardCostDelta === p.rewardCostDelta, "rewardCostDelta identity");
+  assert(v.plannedNgr === p.plannedNgr, "plannedNgr identity");
+  assert(v.currentNgr === p.currentNgr, "currentNgr identity");
+  assert(v.revenueDelta === p.revenueDelta, "revenueDelta identity");
+  assert(v.monthlyProfitDelta === p.monthlyProfitDelta, "monthly identity");
+  assert(v.annualProfitDelta === p.annualProfitDelta, "annual identity");
+  assert(v.wager === p.plannedWager, "wager identity");
+  assert(v.hubWager === baseline.recon.d30.wager, "hub wager identity");
+  assert(v.levers.length === p.levers.length, "lever row count identity");
+  for (const row of v.levers) {
+    const base = p.levers.find((l) => l.key === row.key);
+    assert(base != null, `base row "${row.key}" present`);
+    assert(row.plannedCost === base.plannedCost, `row "${row.key}" plannedCost identity`);
+    assert(row.currentCost === base.currentCost, `row "${row.key}" currentCost identity`);
+    assert(row.deltaCost === base.deltaCost, `row "${row.key}" deltaCost identity`);
+  }
+});
+
+check("scenario: proportional rows × m, fixed budgets flat, revenue flat, GGR × m, identity — at EVERY preset", () => {
+  const p = projectEdgePlanV2(baseline, scenarioCustomLevers(baseline));
+  const basePlannedRevenue = p.revenueLevers.reduce((s, r) => s + r.plannedUsd, 0);
+  for (const m of WAGER_SCENARIO_PRESET_MULTS) {
+    const v = applyWagerScenarioV2(baseline, p, { presetMult: m });
+    assert(v.mult === m, `${m}×: resolved mult`);
+    assert(v.active === (m !== 1), `${m}×: active flag`);
+
+    // The proportional set is EXACTLY the waterfall's footnote set.
+    const propKeys = v.levers
+      .filter((r) => r.scalesWithWager)
+      .map((r) => r.key)
+      .sort();
+    assert(
+      JSON.stringify(propKeys) === JSON.stringify(["affiliate", "rakeback", "shards"]),
+      `${m}×: proportional set must be rakeback/affiliate/shards, got ${propKeys.join(",")}`,
+    );
+
+    for (const row of v.levers) {
+      const base = p.levers.find((l) => l.key === row.key);
+      assert(base != null, `${m}×: base row "${row.key}" present`);
+      if (row.scalesWithWager) {
+        assert(
+          row.plannedCost === base.plannedCost * m,
+          `${m}×: proportional row "${row.key}" plannedCost must scale × m exactly`,
+        );
+        assert(
+          row.currentCost === base.currentCost * m,
+          `${m}×: proportional row "${row.key}" currentCost must scale × m exactly`,
+        );
+      } else {
+        assert(
+          row.plannedCost === base.plannedCost,
+          `${m}×: fixed row "${row.key}" plannedCost must hold flat`,
+        );
+        assert(
+          row.currentCost === base.currentCost,
+          `${m}×: fixed row "${row.key}" currentCost must hold flat`,
+        );
+      }
+      assert(row.baseCurrentCost === base.currentCost, `${m}×: row "${row.key}" baseCurrentCost`);
+      assert(row.basePlannedCost === base.plannedCost, `${m}×: row "${row.key}" basePlannedCost`);
+    }
+
+    // Deposit-fee revenue is flat (deposits ≠ wager).
+    assert(v.plannedRevenue === basePlannedRevenue, `${m}×: revenue must stay flat`);
+    assert(v.revenueDelta === p.revenueDelta, `${m}×: revenueDelta must stay flat`);
+    assert(v.plannedRevenue > 0, `${m}×: the 2% fee must be live in this state`);
+
+    // GGR linear in wager; wagers scale × m exactly.
+    assert(v.plannedGgr === p.plannedGgr * m, `${m}×: plannedGgr must scale × m`);
+    assert(v.currentGgr === p.currentGgr * m, `${m}×: currentGgr must scale × m`);
+    assert(v.wager === Math.max(0, p.plannedWager) * m, `${m}×: planning wager × m`);
+    assert(v.hubWager === baseline.recon.d30.wager * m, `${m}×: hub wager × m`);
+
+    // Σ rows = the headline reward cost (the mirror's by-construction total).
+    const sumPlanned = v.levers.reduce((s, l) => s + l.plannedCost, 0);
+    approx(v.plannedRewardCost, sumPlanned, CENT, `${m}×: Σ rows ≈ plannedRewardCost`);
+
+    // Grand identity at the scenario.
+    const scale = Math.max(1, Math.abs(v.plannedNgr), Math.abs(v.currentNgr));
+    approx(
+      v.plannedNgr - v.currentNgr,
+      v.profitDelta,
+      1e-6 * scale,
+      `${m}×: plannedNgr − currentNgr === profitDelta`,
+    );
+    approx(
+      v.profitDelta,
+      v.ggrDelta - v.rewardCostDelta + v.revenueDelta,
+      1e-6 * scale,
+      `${m}×: profitDelta === ggrDelta − rewardCostDelta + revenueDelta`,
+    );
+  }
+});
+
+check("scenario: default levers stay EXACTLY $0 at every preset m", () => {
+  const p = projectEdgePlanV2(baseline, defaultLeversV2(baseline));
+  for (const m of WAGER_SCENARIO_PRESET_MULTS) {
+    const v = applyWagerScenarioV2(baseline, p, { presetMult: m });
+    approx(v.profitDelta, 0, CENT, `profitDelta at default levers, ${m}×`);
+    approx(v.rewardCostDelta, 0, CENT * Math.max(1, m), `rewardCostDelta at default levers, ${m}×`);
+  }
+});
+
+check("scenario: invalid multiplier state resolves to the 1× identity", () => {
+  const p = projectEdgePlanV2(baseline, scenarioCustomLevers(baseline));
+  for (const bad of [0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const v = applyWagerScenarioV2(baseline, p, { presetMult: bad });
+    assert(v.mult === 1 && v.active === false, `presetMult ${bad} must resolve to 1×`);
+    assert(v.profitDelta === p.profitDelta, `presetMult ${bad}: identity profitDelta`);
+  }
+});
+
+check("scenario: formatWagerMultLabel renders the chip labels", () => {
+  assert(formatWagerMultLabel(1) === "1×", "1");
+  assert(formatWagerMultLabel(1.5) === "1.5×", "1.5");
+  assert(formatWagerMultLabel(2) === "2×", "2");
+  assert(formatWagerMultLabel(5) === "5×", "5");
+  assert(formatWagerMultLabel(0) === "1×", "0 falls back");
+  assert(formatWagerMultLabel(Number.NaN) === "1×", "NaN falls back");
+});
+
+// ─── 18. Owner Total P&L fixture (dashboard tile reconciliation) ─────────────
+
+check("owner total P&L: balance-sheet formula reconciles to the dashboard +$44,925.74", () => {
+  const t = baseline.ownerTotalPnl;
+  assert(t != null, "fixture carries the snapshot");
+  approx(
+    t.totalDeposited -
+      t.totalWithdrawn -
+      t.userBalance -
+      t.inventory -
+      t.vouchers -
+      t.unclaimedRakeback,
+    t.pnl,
+    CENT,
+    "pnl = deposits − withdrawals − onSiteBalance − inventory − vouchers − unclaimedRakeback",
+  );
+  approx(t.pnl, 44_925.74, CENT, "the owner's trusted dashboard figure");
 });
 
 // ─── Summary ─────────────────────────────────────────────────────────────────

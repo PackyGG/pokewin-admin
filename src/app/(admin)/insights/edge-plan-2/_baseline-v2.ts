@@ -38,6 +38,7 @@ import {
   getInsightsHubWager30d,
   INSIGHTS_HUB_WAGER_LOOKBACK_DAYS,
 } from "@/lib/queries/insights-analytics/hub-wager";
+import { getRealizedPnlSnapshot } from "@/lib/queries/_realized-pnl";
 import type { SystemEdgeBaseline } from "../system-edge-plan/_model";
 import { getSystemEdgeBaseline } from "../system-edge-plan/_baseline";
 import { getMothaGiveawayOverview } from "@/lib/queries/insights-rewards/motha/overview";
@@ -94,6 +95,13 @@ import type { RewardSourceVolume } from "./_credit-matrix-v2";
  *     served for 60s. Non-critical legs degrade per-block into
  *     `degradedBlocks` (rendered as visible error bands, never silent
  *     zeros).
+ *   • SERVE-BUT-DON'T-CACHE: some degraded builds are still renderable but
+ *     must not be stored for the TTL — (a) the dashboard-matching owner
+ *     Total P&L leg failed, or (b) the build is sparse AND the canonical
+ *     reward cost reads zero (overwhelmingly a degraded read, not a real
+ *     $0-reward month). Those throw `EdgePlanDoNotCacheError` CARRYING the
+ *     finished baseline: `unstable_cache` drops the rejected build, the
+ *     caller unwraps the carrier and serves it this render only.
  */
 
 /** Edge Plan 2.0 always anchors on the last 30 days of production data. */
@@ -110,6 +118,23 @@ class EdgePlanCriticalError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "EdgePlanCriticalError";
+  }
+}
+
+/**
+ * SERVE-BUT-DON'T-CACHE carrier: the build finished and is renderable, but
+ * must not be stored for the 60s TTL. `unstable_cache` never stores a
+ * rejected build, so throwing this (with the finished baseline attached)
+ * skips the cache; `getEdgePlanV2Baseline` unwraps it and serves the
+ * baseline for THIS render only — the next render re-runs the build.
+ */
+class EdgePlanDoNotCacheError extends Error {
+  constructor(
+    readonly baseline: EdgePlanV2Baseline,
+    readonly reasonNote: string,
+  ) {
+    super(`edge-plan-v2 baseline served uncached: ${reasonNote}`);
+    this.name = "EdgePlanDoNotCacheError";
   }
 }
 
@@ -669,22 +694,32 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     );
   }
 
-  // ── Wave 1 (v1 lever anchors CRITICAL + canonical affiliate split legs).
-  const [v1, affCommissionRes, affLeaderboardRes] = await Promise.all([
-    getSystemEdgeBaseline(EDGE_PLAN_V2_PERIOD),
-    safeQuery(
-      () => sumLedgerTypes({ types: ["affiliate_claim"], window }),
-      null,
-      "edge-plan-v2.affiliate-commission",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => sumLedgerTypes({ types: ["affiliate_leaderboard_prize"], window }),
-      null,
-      "edge-plan-v2.affiliate-leaderboard",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-  ]);
+  // ── Wave 1 (v1 lever anchors CRITICAL + canonical affiliate split legs
+  // + the dashboard-matching owner Total P&L, ≤4 concurrent).
+  const [v1, affCommissionRes, affLeaderboardRes, ownerTotalPnlRes] =
+    await Promise.all([
+      getSystemEdgeBaseline(EDGE_PLAN_V2_PERIOD),
+      safeQuery(
+        () => sumLedgerTypes({ types: ["affiliate_claim"], window }),
+        null,
+        "edge-plan-v2.affiliate-commission",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => sumLedgerTypes({ types: ["affiliate_leaderboard_prize"], window }),
+        null,
+        "edge-plan-v2.affiliate-leaderboard",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      // The owner's trusted dashboard "Total P&L" tile — READ-ONLY consume
+      // of the shared snapshot (own 300s unstable_cache, usually warm).
+      safeQuery(
+        () => getRealizedPnlSnapshot(),
+        null,
+        "edge-plan-v2.owner-total-pnl",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+    ]);
   // getSystemEdgeBaseline degrades to a ZEROED fallback instead of throwing;
   // a zero-wager v1 next to a non-zero hub wager can only mean the v1 legs
   // failed — that baseline would deaden every lever anchor, so it is
@@ -850,6 +885,11 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     ? "ledger"
     : "fallback";
 
+  // Dashboard-matching owner Total P&L (balance-sheet snapshot). A failed
+  // leg degrades to null AND marks the build serve-but-don't-cache below —
+  // the owner's headline reconciliation row must not show a cached gap.
+  const ownerTotalPnl = note("owner-total-pnl", ownerTotalPnlRes);
+
   const withdrawalLedger = note("withdrawal-split", withdrawalRes);
   const estimatedWithdrawalVolumeUsd =
     withdrawalLedger?.volumeUsd ?? Math.max(0, v1.wager * 0.08);
@@ -975,7 +1015,7 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     },
   ].filter((s) => s.amountUsd > 0);
 
-  return {
+  const baseline: EdgePlanV2Baseline = {
     ...(v1 satisfies SystemEdgeBaseline),
     totalWager: canonical.wager,
     // Organic splits retired from the headline path; kept for display
@@ -1021,8 +1061,36 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     rewardSourceVolumes,
 
     recon,
+    ownerTotalPnl,
     degradedBlocks: degraded,
   };
+
+  // ── SERVE-BUT-DON'T-CACHE guards ──
+  // (a) The owner Total P&L leg failed: the reconciliation row would render
+  //     an honest "unavailable" — fine for one render, wrong to cache.
+  if (ownerTotalPnl == null) {
+    throw new EdgePlanDoNotCacheError(
+      baseline,
+      "the dashboard Total P&L leg degraded",
+    );
+  }
+  // (b) Sparse build AND the canonical reward cost reads zero-or-missing:
+  //     on this platform a $0 canonical reward cost next to failed legs is
+  //     overwhelmingly a degraded read, not a real zero-reward month.
+  //     TRADEOFF (documented, deliberate): a LEGIT zero-reward platform
+  //     that also has a degraded non-critical leg would forgo the 60s cache
+  //     and rebuild every render — correctness over cache.
+  if (
+    degraded.length > 0 &&
+    (canonical == null || canonical.rewardCost <= 0)
+  ) {
+    throw new EdgePlanDoNotCacheError(
+      baseline,
+      "sparse build with a zero/missing canonical reward cost",
+    );
+  }
+
+  return baseline;
 }
 
 /**
@@ -1045,6 +1113,17 @@ export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2BaselineResult>
   try {
     return { ok: true, baseline: await cachedBaseline() };
   } catch (err) {
+    // SERVE-BUT-DON'T-CACHE: the rejected build skipped `unstable_cache`,
+    // but the carrier holds a finished, renderable baseline — serve it for
+    // this render only (the next render re-runs the build).
+    if (err instanceof EdgePlanDoNotCacheError) {
+      logError(
+        "edge-plan-v2.baseline",
+        `baseline served uncached: ${err.reasonNote}`,
+        err,
+      );
+      return { ok: true, baseline: err.baseline };
+    }
     logError("edge-plan-v2.baseline", "critical baseline build failed", err);
     // Only OUR OWN critical messages are surfaced; raw driver errors stay in
     // the server logs (safe-query SECURITY note).

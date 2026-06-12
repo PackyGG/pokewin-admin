@@ -18,24 +18,17 @@ import { formatCompactUsd } from "@/lib/utils/format";
 import { formatPct, formatSignedUsd } from "../../edge-calc/math";
 import {
   WAGER_SCENARIO_PRESET_MULTS,
+  formatWagerMultLabel,
   type BlendedEdgeBreakdown,
   type EdgeAfterRewardsSummary,
-  type EdgePlanV2Projection,
   type WagerScenarioState,
+  type WagerScenarioView,
 } from "../_model-v2";
 import {
   TEXT_TONE,
   houseAccent,
   netEdgeTextTone,
 } from "./colors";
-
-/** "1×" / "1.5×" / "3×" label for a wager-scenario multiplier. */
-function formatWagerMultLabel(mult: number): string {
-  if (!Number.isFinite(mult) || mult <= 0) return "1×";
-  const s =
-    mult % 1 === 0 ? mult.toFixed(0) : mult.toFixed(1).replace(/\.0$/, "");
-  return `${s}×`;
-}
 
 /**
  * Hero summary for the Edge Plan 2.0 planner.
@@ -49,6 +42,15 @@ function formatWagerMultLabel(mult: number): string {
  *   3. A trimmed 6-tile KpiTile strip (string-typed values — no AnimatedNumber
  *      inside tiles, since KpiTile.value is `string`).
  *
+ * SCENARIO-AWARE (owner fix 2026-06-12): every $ figure here reads from the
+ * `scenario` view (`applyWagerScenarioV2`) so the 1×–5× wager chips move the
+ * WHOLE hero — profit delta, NGR context and the KPI strip — not just the
+ * edge waterfall. At 1× the view is the exact base projection (identity);
+ * at any other multiplier every affected figure is LOUDLY labeled
+ * "at N× wager" (amber), per the page-wide scenario semantics: rakeback /
+ * affiliate / shards scale $ with wager, fixed-window $ budgets and
+ * deposit-fee revenue stay flat.
+ *
  * All props are plain serializable data + an `actions` node (the reset +
  * presets cluster, composed by the shell) + the wager-scenario state/handler
  * for the pills next to the waterfall. House-POV finance colors: house edge /
@@ -57,7 +59,7 @@ function formatWagerMultLabel(mult: number): string {
  * decorative panel glows in modern-panels.
  */
 export function EdgePlanV2HeroSummary({
-  projection,
+  scenario,
   edgeAfterRewards,
   blendBreakdown,
   rawMathEdge,
@@ -65,7 +67,8 @@ export function EdgePlanV2HeroSummary({
   onWagerScenarioChange,
   actions,
 }: {
-  projection: EdgePlanV2Projection;
+  /** The whole planning view at the active wager multiplier (1× = base projection). */
+  scenario: WagerScenarioView;
   edgeAfterRewards: EdgeAfterRewardsSummary;
   blendBreakdown: BlendedEdgeBreakdown;
   /**
@@ -79,7 +82,7 @@ export function EdgePlanV2HeroSummary({
   /** Reset + presets cluster, rendered in the profit panel's action slot. */
   actions?: React.ReactNode;
 }) {
-  const profitAccent = houseAccent(projection.profitDelta);
+  const profitAccent = houseAccent(scenario.profitDelta);
   const profitTextTone =
     profitAccent === "emerald" ? TEXT_TONE.emerald : TEXT_TONE.rose;
   const netTextTone = netEdgeTextTone(edgeAfterRewards.netEdgeAfterRewards);
@@ -88,8 +91,10 @@ export function EdgePlanV2HeroSummary({
     Number.isFinite(wagerScenario.presetMult) && wagerScenario.presetMult > 0
       ? wagerScenario.presetMult
       : 1;
-  const scenarioActive = Math.abs(edgeAfterRewards.wagerScenarioMult - 1) > 0.001;
-  const wagerMultLabel = formatWagerMultLabel(edgeAfterRewards.wagerScenarioMult);
+  const scenarioActive = scenario.active;
+  const wagerMultLabel = scenario.multLabel;
+  /** "· at 2× wager" suffix for scenario-affected tile sublabels. */
+  const atSuffix = scenarioActive ? ` · at ${wagerMultLabel} wager` : "";
 
   return (
     <div className="space-y-4">
@@ -101,6 +106,11 @@ export function EdgePlanV2HeroSummary({
           accent={profitAccent}
           action={actions}
         >
+          {scenarioActive && (
+            <p className="mb-1.5 inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+              At {wagerMultLabel} wager — scenario
+            </p>
+          )}
           <p
             className={cn(
               "text-3xl font-bold leading-tight tracking-tight tabular-nums sm:text-4xl",
@@ -108,31 +118,35 @@ export function EdgePlanV2HeroSummary({
             )}
           >
             <AnimatedNumber
-              value={projection.profitDelta}
+              value={scenario.profitDelta}
               format="currency"
               duration={700}
             />
           </p>
           <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
             In plain words: how much more (or less) the house keeps if this
-            plan goes live, vs today&apos;s settings.
+            plan goes live, vs today&apos;s settings
+            {scenarioActive
+              ? ` — both sides at the ${wagerMultLabel} wager scenario.`
+              : "."}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {formatSignedUsd(projection.monthlyProfitDelta)}/mo ·{" "}
-            {formatSignedUsd(projection.annualProfitDelta)}/yr extrapolated
+            {formatSignedUsd(scenario.monthlyProfitDelta)}/mo ·{" "}
+            {formatSignedUsd(scenario.annualProfitDelta)}/yr extrapolated
+            {atSuffix}
           </p>
           <div className="mt-3 grid grid-cols-2 gap-3 border-t pt-3">
             <div className="min-w-0">
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                Current NGR
+                Current NGR{scenarioActive ? ` · at ${wagerMultLabel}` : ""}
               </p>
               <p className="truncate font-semibold tabular-nums">
-                {formatCompactUsd(projection.currentNgr)}
+                {formatCompactUsd(scenario.currentNgr)}
               </p>
             </div>
             <div className="min-w-0">
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                Planned NGR
+                Planned NGR{scenarioActive ? ` · at ${wagerMultLabel}` : ""}
               </p>
               <p
                 className={cn(
@@ -140,7 +154,7 @@ export function EdgePlanV2HeroSummary({
                   profitTextTone,
                 )}
               >
-                {formatCompactUsd(projection.plannedNgr)}
+                {formatCompactUsd(scenario.plannedNgr)}
               </p>
             </div>
           </div>
@@ -220,7 +234,9 @@ export function EdgePlanV2HeroSummary({
               >
                 −{formatPct(edgeAfterRewards.plannedRewardDrag)}
               </span>
-              <span className="text-[10px] text-muted-foreground">reward drag</span>
+              <span className="text-[10px] text-muted-foreground">
+                reward drag{scenarioActive ? ` at ${wagerMultLabel}` : ""}
+              </span>
             </div>
 
             {/* After rewards — net edge (emerald / amber / rose). */}
@@ -263,10 +279,13 @@ export function EdgePlanV2HeroSummary({
 
           {scenarioActive && (
             <p className="mt-3 text-[10px] leading-relaxed text-amber-600 dark:text-amber-400">
-              Fixed-window rewards (deposit bonus, races, raffles, daily packs,
-              signup, rain, motha) hold planned $ for the window — their drag
-              dilutes at higher wager. Rakeback and affiliate commission scale $
-              with wager; affiliate worst-case tier drag stays % of edge.
+              Scenario semantics (page-wide): fixed-window rewards (deposit
+              bonus, races, raffles, daily packs, signup, rain, motha, gift
+              cards, promo codes) hold planned $ for the window — their drag
+              dilutes at higher wager. Rakeback, affiliate commission and
+              shards scale $ with wager; deposit-fee revenue stays flat
+              (deposits ≠ wager). Affiliate worst-case tier drag stays % of
+              edge.
             </p>
           )}
         </StatPanel>
@@ -274,6 +293,14 @@ export function EdgePlanV2HeroSummary({
 
       {/* ── Trimmed 6-tile KPI strip (string values only) ──────────── */}
       <div className="space-y-2">
+        {scenarioActive && (
+          <p className="text-[10px] font-semibold leading-snug text-amber-600 dark:text-amber-400">
+            Scenario active: every tile marked &quot;at {wagerMultLabel}{" "}
+            wager&quot; assumes customers bet {wagerMultLabel} the window
+            volume — proportional rewards scale with it, fixed-window $
+            budgets and deposit-fee revenue stay flat.
+          </p>
+        )}
         <p className="text-[10px] leading-snug text-muted-foreground">
           In plain words: Wager = how much customers bet · GGR = bets minus
           what players won back · NGR = GGR minus what we give away · Edge =
@@ -291,7 +318,7 @@ export function EdgePlanV2HeroSummary({
         <KpiTile
           label="After rewards"
           value={formatPct(edgeAfterRewards.netEdgeAfterRewards)}
-          sub={`−${formatPct(edgeAfterRewards.plannedRewardDrag)} drag`}
+          sub={`−${formatPct(edgeAfterRewards.plannedRewardDrag)} drag${atSuffix}`}
           icon={Percent}
           accent={
             edgeAfterRewards.netEdgeAfterRewards < 0
@@ -303,31 +330,35 @@ export function EdgePlanV2HeroSummary({
         />
         <KpiTile
           label="Wager (30d, GGR model)"
-          value={formatCompactUsd(projection.plannedWager)}
-          sub="Planning base · borrow excluded — headline wager is the owner strip above"
+          value={formatCompactUsd(scenario.wager)}
+          sub={
+            scenarioActive
+              ? `at ${wagerMultLabel} wager · borrow excluded — headline wager is the owner strip above`
+              : "Planning base · borrow excluded — headline wager is the owner strip above"
+          }
           icon={Coins}
           accent="blue"
         />
         <KpiTile
           label="Planned GGR"
-          value={formatCompactUsd(projection.plannedGgr)}
-          sub={`${formatPct(blendBreakdown.allWagerBlendedEdge)} all wager`}
+          value={formatCompactUsd(scenario.plannedGgr)}
+          sub={`${formatPct(blendBreakdown.allWagerBlendedEdge)} all wager${atSuffix}`}
           icon={TrendingUp}
           accent="emerald"
         />
         <KpiTile
           label="Reward cost"
-          value={formatCompactUsd(projection.plannedRewardCost)}
-          sub={formatSignedUsd(projection.rewardCostDelta)}
+          value={formatCompactUsd(scenario.plannedRewardCost)}
+          sub={`${formatSignedUsd(scenario.rewardCostDelta)}${atSuffix}`}
           icon={Wallet}
           accent="rose"
         />
         <KpiTile
           label="Planned NGR"
-          value={formatCompactUsd(projection.plannedNgr)}
-          sub={`${formatSignedUsd(projection.profitDelta)} vs current`}
-          icon={projection.profitDelta >= 0 ? Gauge : TrendingDown}
-          accent={houseAccent(projection.profitDelta) === "emerald" ? "cyan" : "rose"}
+          value={formatCompactUsd(scenario.plannedNgr)}
+          sub={`${formatSignedUsd(scenario.profitDelta)} vs current${atSuffix}`}
+          icon={scenario.profitDelta >= 0 ? Gauge : TrendingDown}
+          accent={houseAccent(scenario.profitDelta) === "emerald" ? "cyan" : "rose"}
         />
         </div>
       </div>

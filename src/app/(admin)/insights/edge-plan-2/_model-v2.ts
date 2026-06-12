@@ -11,7 +11,8 @@
  *   • the reward-source crediting matrix (NEW — `_credit-matrix-v2.ts`,
  *     a cost REDUCTION lever row),
  *   • a measured-vs-planning split: `baseline.canonical` carries the REAL
- *     `getWindowMetrics` 30d block (the "Measured 30d" strip) while the
+ *     measured 30d block (the same `getCostBreakdown` read the /insights
+ *     cost-breakdown page renders — the "Measured 30d" strip) while the
  *     planning numbers stay a separate, clearly-labeled what-if.
  *
  * INVARIANT (the __checks__ assert it): at `defaultLeversV2(baseline)` the
@@ -187,9 +188,11 @@ export const REWARD_WAGER_SOURCE_LABELS: Record<RewardWagerSourceId, string> = {
 // ─── Baseline block types (assembled in _baseline-v2.ts) ────────────────────
 
 /**
- * The REAL measured 30d block from `getWindowMetrics` — the same source as
- * /ggr + the dashboard. Rendered as the clearly-labeled "Measured 30d"
- * strip; planning numbers stay separate. Null only when the read failed.
+ * The REAL measured 30d block — sourced from the SAME `getCostBreakdown`
+ * read the /insights cost-breakdown page renders (see `_baseline-v2.ts`;
+ * no separate getWindowMetrics refetch). Rendered as the clearly-labeled
+ * "Measured 30d" strip; planning numbers stay separate. Null only when the
+ * read failed.
  */
 export type CanonicalMeasuredBlock = {
   wager: number;
@@ -409,6 +412,32 @@ export type OwnerReconBlock = {
 };
 
 /**
+ * The DASHBOARD-matching lifetime "Total P&L" — a plain-serializable copy
+ * of `RealizedPnlSnapshot` (`src/lib/queries/_realized-pnl.ts`, consumed
+ * READ-ONLY by `_baseline-v2.ts`). This is the owner's trusted dashboard
+ * tile: all-time balance sheet, staff excluded but creators INCLUDED,
+ * minus the unclaimed-rakeback liability:
+ *
+ *   pnl = deposits − withdrawals − onSiteBalance − inventory − vouchers
+ *         − unclaimedRakeback
+ *
+ * It is a DIFFERENT formula from the hub's windowed Realized P&L
+ * (`getCostBreakdown.pnl` = `calculateWindowedPnl` inside the 365d-capped
+ * window, creators excluded) — the two legitimately differ; the recon row
+ * shows BOTH with their formula one-liners instead of inventing a bridge.
+ * Declared locally so the pure-model __checks__ never import server code.
+ */
+export type OwnerTotalPnlSnapshot = {
+  pnl: number;
+  totalDeposited: number;
+  totalWithdrawn: number;
+  userBalance: number;
+  inventory: number;
+  vouchers: number;
+  unclaimedRakeback: number;
+};
+
+/**
  * PURE assembly of one owner-trusted recon window. Identities the
  * __checks__ pin:
  *   • rewardPayouts === ggr − ngr (canonical),
@@ -456,7 +485,7 @@ export function buildOwnerWindowRecon(
 }
 
 export type EdgePlanV2Baseline = SystemEdgeBaseline & {
-  /** Canonical headline wager (30d) — getWindowMetrics, incl. upgrader. */
+  /** Canonical headline wager (30d) — measured `getCostBreakdown` wager, incl. upgrader. */
   totalWager: number;
   /** Ledger organic stake (no creator code; on-stream excluded; borrow incl.). */
   ledgerOrganicWager: number;
@@ -494,7 +523,7 @@ export type EdgePlanV2Baseline = SystemEdgeBaseline & {
   battleWagerBorrowed: number;
 
   // ── v2.1 overhaul blocks ──
-  /** REAL measured 30d block (getWindowMetrics) — the "Measured 30d" strip. */
+  /** REAL measured 30d block (same `getCostBreakdown` read as /insights cost-breakdown) — the "Measured 30d" strip. */
   canonical: CanonicalMeasuredBlock | null;
   /** MAX(ledger created_at), bounded read — the "Data through X" stamp. */
   ledgerMaxCreatedAt: string | null;
@@ -533,6 +562,14 @@ export type EdgePlanV2Baseline = SystemEdgeBaseline & {
    * so a served baseline always carries it.
    */
   recon: OwnerReconBlock;
+  /**
+   * The dashboard-matching lifetime Total P&L (balance-sheet snapshot,
+   * incl. unclaimed rakeback) — `getRealizedPnlSnapshot()` consumed
+   * read-only. Optional so existing fixtures stay valid; null/undefined =
+   * the leg degraded this build (rendered as an honest "unavailable",
+   * and the build is NOT cached — do-not-cache-failures).
+   */
+  ownerTotalPnl?: OwnerTotalPnlSnapshot | null;
   /**
    * Names of NON-critical legs that degraded this build (safeQuery
    * fallbacks). Empty = fully healthy. The page renders these as visible
@@ -2279,5 +2316,193 @@ export function computeEdgeAfterRewards(
     currentNetEdge,
     netEdgeDelta: netEdgeAfterRewards - currentNetEdge,
     leverDrags,
+  };
+}
+
+// ─── Page-wide wager scenario (owner fix 2026-06-12) ─────────────────────────
+//
+// THE defect the owner hit ("wager amounts 1,2,3,4,5x dont work"): the 1×–5×
+// chips only fed `computeEdgeAfterRewards` (the edge waterfall), so the
+// profit-delta hero, the KPI strip and the reward-spend mirror sat frozen at
+// 1× no matter which chip was active. `applyWagerScenarioV2` derives ONE
+// scenario view of the whole projection so every planning $ figure moves
+// with the chips, under EXACTLY the waterfall's footnote semantics:
+//
+//   • wager-proportional levers (rakeback, affiliate commission, shards —
+//     `WAGER_PROPORTIONAL_LEVER_KEYS`, the same set the waterfall scales)
+//     scale × m on BOTH the current and the planned side,
+//   • fixed-window $ budgets (deposit bonus, races, raffles, daily packs,
+//     signup, rain, motha, gift cards, promo codes, adjustments, matrix
+//     savings) hold their window $ flat — their drag dilutes at higher m,
+//   • deposit-fee revenue stays flat (deposits ≠ wager — the fee footnote),
+//   • GGR scales × m exactly (GGR = edge × wager, linear in wager),
+//   • the CURRENT side scales by the same rules, so the scenario profit
+//     delta isolates the PLAN's effect at the assumed volume instead of
+//     drowning it in pure growth.
+//
+// At m = 1 the function returns the base projection's numbers UNCHANGED
+// (verbatim copies — the exact-identity contract the __checks__ pin).
+
+/** "1×" / "1.5×" / "3×" label for a wager-scenario multiplier. */
+export function formatWagerMultLabel(mult: number): string {
+  if (!Number.isFinite(mult) || mult <= 0) return "1×";
+  const s =
+    mult % 1 === 0 ? mult.toFixed(0) : mult.toFixed(1).replace(/\.0$/, "");
+  return `${s}×`;
+}
+
+/** One lever row under the scenario, with its base (1×) $ kept alongside. */
+export type ScenarioLeverRow = LeverProjection & {
+  /** True = this lever's $ scales with the wager multiplier. */
+  scalesWithWager: boolean;
+  /** The unscaled (1×) measured/current $ — for honest "was …" labels. */
+  baseCurrentCost: number;
+  /** The unscaled (1×) planned $. */
+  basePlannedCost: number;
+};
+
+/** The whole planning view at the active wager-scenario multiplier. */
+export type WagerScenarioView = {
+  /** Resolved multiplier (≥ 0; 1 when the chip state is invalid). */
+  mult: number;
+  /** True when mult ≠ 1 — gates every "at N× wager" label. */
+  active: boolean;
+  /** "2×"-style label for the loud chips. */
+  multLabel: string;
+  /** Planning (GGR-model) wager × m. */
+  wager: number;
+  /** Hub (recon 30d) wager × m — the drag denominator at the scenario. */
+  hubWager: number;
+  ggrDelta: number;
+  plannedGgr: number;
+  currentGgr: number;
+  plannedRewardCost: number;
+  currentRewardCost: number;
+  rewardCostDelta: number;
+  /** Deposit-fee revenue — flat across scenarios by design. */
+  plannedRevenue: number;
+  revenueDelta: number;
+  plannedNgr: number;
+  currentNgr: number;
+  profitDelta: number;
+  monthlyProfitDelta: number;
+  annualProfitDelta: number;
+  levers: ScenarioLeverRow[];
+};
+
+/**
+ * Derive the scenario view of a projection. PURE. At `mult === 1` every
+ * field is the base projection's value verbatim (exact identity); at any
+ * other m the scaling rules in the section comment above apply, the profit
+ * delta is dust-clamped through the same `clampDustToZero` as the base
+ * projection, and the default-lever state stays exactly $0 at EVERY m
+ * (planned ≡ current per lever, so scaling both sides cancels).
+ */
+export function applyWagerScenarioV2(
+  baseline: Pick<EdgePlanV2Baseline, "recon" | "periodDays">,
+  projection: EdgePlanV2Projection,
+  scenario: WagerScenarioState,
+): WagerScenarioView {
+  const mult =
+    Number.isFinite(scenario.presetMult) && scenario.presetMult > 0
+      ? scenario.presetMult
+      : 1;
+  const baseHubWager = Math.max(0, baseline.recon.d30.wager);
+  const baseWager = Math.max(0, projection.plannedWager);
+
+  if (mult === 1) {
+    // EXACT identity — verbatim copies of the base projection, no
+    // arithmetic that could leave float residue.
+    return {
+      mult: 1,
+      active: false,
+      multLabel: formatWagerMultLabel(1),
+      wager: baseWager,
+      hubWager: baseHubWager,
+      ggrDelta: projection.ggrDelta,
+      plannedGgr: projection.plannedGgr,
+      currentGgr: projection.currentGgr,
+      plannedRewardCost: projection.plannedRewardCost,
+      currentRewardCost: projection.currentRewardCost,
+      rewardCostDelta: projection.rewardCostDelta,
+      plannedRevenue: projection.revenueLevers.reduce(
+        (s, r) => s + r.plannedUsd,
+        0,
+      ),
+      revenueDelta: projection.revenueDelta,
+      plannedNgr: projection.plannedNgr,
+      currentNgr: projection.currentNgr,
+      profitDelta: projection.profitDelta,
+      monthlyProfitDelta: projection.monthlyProfitDelta,
+      annualProfitDelta: projection.annualProfitDelta,
+      levers: projection.levers.map((l) => ({
+        ...l,
+        scalesWithWager: WAGER_PROPORTIONAL_LEVER_KEYS.has(l.key),
+        baseCurrentCost: l.currentCost,
+        basePlannedCost: l.plannedCost,
+      })),
+    };
+  }
+
+  const levers: ScenarioLeverRow[] = projection.levers.map((l) => {
+    const scalesWithWager = WAGER_PROPORTIONAL_LEVER_KEYS.has(l.key);
+    const currentCost = scalesWithWager ? l.currentCost * mult : l.currentCost;
+    const plannedCost = scalesWithWager ? l.plannedCost * mult : l.plannedCost;
+    return {
+      ...l,
+      currentCost,
+      plannedCost,
+      deltaCost: plannedCost - currentCost,
+      scalesWithWager,
+      baseCurrentCost: l.currentCost,
+      basePlannedCost: l.plannedCost,
+    };
+  });
+
+  const plannedRewardCost = levers.reduce((s, l) => s + l.plannedCost, 0);
+  const currentRewardCost = levers.reduce((s, l) => s + l.currentCost, 0);
+  const rewardCostDelta = plannedRewardCost - currentRewardCost;
+
+  // Revenue (deposit fee) is flat across scenarios — deposits ≠ wager.
+  const plannedRevenue = projection.revenueLevers.reduce(
+    (s, r) => s + r.plannedUsd,
+    0,
+  );
+  const currentRevenue = projection.revenueLevers.reduce(
+    (s, r) => s + r.currentUsd,
+    0,
+  );
+  const revenueDelta = projection.revenueDelta;
+
+  // GGR is linear in wager → both sides scale × m exactly.
+  const plannedGgr = projection.plannedGgr * mult;
+  const currentGgr = projection.currentGgr * mult;
+  const ggrDelta = projection.ggrDelta * mult;
+
+  const plannedNgr = plannedGgr - plannedRewardCost + plannedRevenue;
+  const currentNgr = currentGgr - currentRewardCost + currentRevenue;
+  const profitDelta = clampDustToZero(ggrDelta - rewardCostDelta + revenueDelta);
+  const days = Math.max(1, baseline.periodDays);
+
+  return {
+    mult,
+    active: true,
+    multLabel: formatWagerMultLabel(mult),
+    wager: baseWager * mult,
+    hubWager: baseHubWager * mult,
+    ggrDelta,
+    plannedGgr,
+    currentGgr,
+    plannedRewardCost,
+    currentRewardCost,
+    rewardCostDelta,
+    plannedRevenue,
+    revenueDelta,
+    plannedNgr,
+    currentNgr,
+    profitDelta,
+    monthlyProfitDelta: (profitDelta / days) * 30,
+    annualProfitDelta: (profitDelta / days) * 365,
+    levers,
   };
 }

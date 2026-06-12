@@ -14,6 +14,7 @@ import {
 } from "@/lib/utils/format";
 import { formatPct } from "../../edge-calc/math";
 import {
+  applyWagerScenarioV2,
   computeNetEdgeScenariosV2,
   computeOwnerDragSummary,
   defaultLeversV2,
@@ -89,6 +90,15 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
       scenarioWagerUsd,
     });
   }, [projection, baseline, levers, wagerScenario]);
+
+  // PAGE-WIDE wager scenario (owner fix: "wager amounts 1,2,3,4,5x dont
+  // work") — ONE view of the whole projection at the active multiplier so
+  // the hero, the KPI strip and the reward-spend mirror all move with the
+  // chips. At 1× this is the exact base projection (identity).
+  const scenario = React.useMemo(
+    () => applyWagerScenarioV2(baseline, projection, wagerScenario),
+    [baseline, projection, wagerScenario],
+  );
 
   const blendBreakdown = React.useMemo(
     () => computeBlendedEdgeBreakdownV2(baseline, levers),
@@ -177,9 +187,10 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
       {/* ── Owner-anchored headline (30d, hub helpers) + lifetime recon ───── */}
       <OwnerAnchorStrip baseline={baseline} projection={projection} />
 
-      {/* ── Hero: profit delta + single edge waterfall + KPI strip ─────────── */}
+      {/* ── Hero: profit delta + single edge waterfall + KPI strip —
+             scenario-aware: the 1×–5× chips move EVERY $ figure here ── */}
       <EdgePlanV2HeroSummary
-        projection={projection}
+        scenario={scenario}
         edgeAfterRewards={edgeAfterRewards}
         blendBreakdown={blendBreakdown}
         rawMathEdge={rawMathEdgeV2(levers)}
@@ -189,10 +200,16 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
       />
 
       {/* ── Reward-spend mirror (compact) — planned $ + drag per program,
-             live with every lever; mirrors the /insights hub spend box ── */}
-      <RewardSpendMirror baseline={baseline} projection={projection} />
+             live with every lever AND the wager-scenario chips; mirrors the
+             /insights hub spend box ── */}
+      <RewardSpendMirror
+        baseline={baseline}
+        scenario={scenario}
+        creatorLeaderboardCostUsd={projection.creatorLeaderboardCostUsd}
+      />
 
-      {/* ── Measured 30d strip (Bug-B contract: REAL getWindowMetrics block,
+      {/* ── Measured 30d strip (Bug-B contract: the REAL measured block from
+             the same getCostBreakdown read as /insights cost-breakdown,
              clearly separated from the planning numbers) + freshness stamp ── */}
       <MeasuredStrip baseline={baseline} />
 
@@ -273,6 +290,13 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
           action={
             <span className="text-[11px] text-muted-foreground">
               Reflects the live planned config
+              {scenario.active && (
+                <span className="text-amber-600 dark:text-amber-400">
+                  {" "}
+                  · at 1× wager — the {scenario.multLabel} scenario applies to
+                  the planning view above
+                </span>
+              )}
             </span>
           }
         />
@@ -286,11 +310,11 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
 }
 
 /**
- * The "Measured 30d" strip — `baseline.canonical` is the REAL
- * `getWindowMetrics` block (same source as /ggr + the dashboard), rendered
- * SEPARATELY from the what-if planning numbers above it, with the
- * `ledgerMaxCreatedAt` data-freshness stamp. House-POV: GGR/NGR ≥ 0 emerald,
- * negative rose; reward cost is house pays → rose.
+ * The "Measured 30d" strip — `baseline.canonical` is the REAL measured
+ * block from the same `getCostBreakdown` read the /insights cost-breakdown
+ * page renders, shown SEPARATELY from the what-if planning numbers above
+ * it, with the `ledgerMaxCreatedAt` data-freshness stamp. House-POV:
+ * GGR/NGR ≥ 0 emerald, negative rose; reward cost is house pays → rose.
  */
 function MeasuredStrip({ baseline }: { baseline: EdgePlanV2Baseline }) {
   const c = baseline.canonical;
@@ -387,6 +411,12 @@ function MeasuredStat({
  * The reward drag here is the OWNER model: on-site reward spend ÷ hub
  * wager — creator-attributed leaderboard prizes live in the footnote, not
  * the drag.
+ *
+ * The lifetime reconciliation row additionally carries the DASHBOARD-
+ * matching "Total P&L — balance-sheet snapshot · incl. unclaimed rakeback"
+ * (`baseline.ownerTotalPnl`, read-only `getRealizedPnlSnapshot`) next to
+ * the hub's windowed Realized P&L — two different formulas, both labeled
+ * with their own one-liner (no invented bridge math).
  */
 function OwnerAnchorStrip({
   baseline,
@@ -397,10 +427,13 @@ function OwnerAnchorStrip({
 }) {
   const d30 = baseline.recon.d30;
   const lifetime = baseline.recon.lifetime;
+  const totalPnl = baseline.ownerTotalPnl ?? null;
   const drag = computeOwnerDragSummary(baseline, projection);
   const pnlTone = d30.realizedPnl >= 0 ? TEXT_TONE.emerald : TEXT_TONE.rose;
   const lifePnlTone =
     lifetime.realizedPnl >= 0 ? TEXT_TONE.emerald : TEXT_TONE.rose;
+  const totalPnlTone =
+    totalPnl != null && totalPnl.pnl >= 0 ? TEXT_TONE.emerald : TEXT_TONE.rose;
   const plannedDragMoved =
     drag.plannedDragPct != null &&
     drag.measuredDragPct != null &&
@@ -482,26 +515,68 @@ function OwnerAnchorStrip({
         ).
       </p>
 
-      {/* Mandatory lifetime reconciliation row — equals the /insights hub. */}
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-background/60 px-3 py-2">
-        <span className="rounded-full border bg-background px-2 py-0.5 text-[10px] font-semibold text-foreground">
-          {lifetime.label}
-        </span>
-        <span className="text-xs tabular-nums">
-          Wager{" "}
-          <span className="font-semibold">{formatCurrency(lifetime.wager)}</span>
-        </span>
-        <span className="text-xs tabular-nums">
-          Realized P&amp;L{" "}
-          <span className={cn("font-semibold", lifePnlTone)}>
-            {lifetime.realizedPnl >= 0 ? "+" : "−"}
-            {formatCurrency(Math.abs(lifetime.realizedPnl))}
+      {/* Mandatory lifetime reconciliation row — equals the /insights hub,
+          PLUS the dashboard-matching owner "Total P&L" next to it. The two
+          P&L figures are DIFFERENT formulas (window + population + the
+          unclaimed-rakeback term) — both are shown with their formula
+          one-liners; no invented bridge math. */}
+      <div className="mt-2 space-y-1.5 rounded-lg border bg-background/60 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="rounded-full border bg-background px-2 py-0.5 text-[10px] font-semibold text-foreground">
+            {lifetime.label}
           </span>
-        </span>
-        <span className="text-[10px] text-muted-foreground">
-          — identical to the /insights hub by construction (same cached
-          helpers).
-        </span>
+          <span className="text-xs tabular-nums">
+            Wager{" "}
+            <span className="font-semibold">{formatCurrency(lifetime.wager)}</span>
+          </span>
+          <span className="text-xs tabular-nums">
+            Realized P&amp;L{" "}
+            <span className={cn("font-semibold", lifePnlTone)}>
+              {lifetime.realizedPnl >= 0 ? "+" : "−"}
+              {formatCurrency(Math.abs(lifetime.realizedPnl))}
+            </span>{" "}
+            <span className="text-[10px] text-muted-foreground">
+              (/insights hub label — windowed: deposits − withdrawals −
+              Δholdings inside the {lifetime.label} window, creators
+              excluded)
+            </span>
+          </span>
+          <span className="text-[10px] text-muted-foreground">
+            — identical to the /insights hub by construction (same cached
+            helpers).
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t pt-1.5">
+          <span className="rounded-full border bg-background px-2 py-0.5 text-[10px] font-semibold text-foreground">
+            Lifetime
+          </span>
+          <span className="text-xs tabular-nums">
+            Total P&amp;L — balance-sheet snapshot · incl. unclaimed rakeback{" "}
+            {totalPnl != null ? (
+              <span className={cn("font-semibold", totalPnlTone)}>
+                {totalPnl.pnl >= 0 ? "+" : "−"}
+                {formatCurrency(Math.abs(totalPnl.pnl))}
+              </span>
+            ) : (
+              <span className="font-semibold text-amber-600 dark:text-amber-400">
+                unavailable this render (not cached — reload to retry)
+              </span>
+            )}{" "}
+            <span className="text-[10px] text-muted-foreground">
+              (dashboard tile — all-time: deposits − withdrawals − player
+              holdings − unclaimed rakeback, creators included)
+            </span>
+          </span>
+        </div>
+        <p className="text-[10px] leading-snug text-muted-foreground">
+          Why they differ: the two P&amp;L figures are different formulas —
+          Total P&amp;L is the all-time balance sheet incl. the
+          unclaimed-rakeback liability (creators count as customers), the
+          hub Realized P&amp;L covers only the {lifetime.label} window with
+          creators excluded. The gap is real, not a bug; it is not cleanly
+          decomposable from these two helpers alone, so both are shown with
+          their own formula.
+        </p>
       </div>
     </div>
   );
