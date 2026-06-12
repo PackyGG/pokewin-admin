@@ -69,6 +69,7 @@ export default function UserDetailError({
         <Button
           variant="outline"
           size="sm"
+          nativeButton={false}
           render={<Link href="/users" />}
         >
           <ArrowLeft className="size-4" />

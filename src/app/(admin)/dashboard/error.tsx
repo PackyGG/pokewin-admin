@@ -62,6 +62,7 @@ export default function DashboardError({
         <Button
           variant="outline"
           size="sm"
+          nativeButton={false}
           render={<Link href="/dashboard" />}
         >
           <LayoutDashboard className="size-4" />

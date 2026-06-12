@@ -33,7 +33,7 @@ export default async function RewardsSettingsPage() {
           icon={Percent}
           title="Rakeback Configuration"
           action={
-            <Button variant="outline" size="sm" render={<Link href="/rewards/rakeback" />}>
+            <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/rewards/rakeback" />}>
               Manage
             </Button>
           }

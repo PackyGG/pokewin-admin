@@ -75,6 +75,7 @@ export default function CreatorHubAcquisitionError({
         <Button
           variant="outline"
           size="sm"
+          nativeButton={false}
           render={<Link href="/creator-hub" />}
         >
           <ArrowLeft className="size-4" />

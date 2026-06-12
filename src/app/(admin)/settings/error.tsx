@@ -69,7 +69,7 @@ export default function SettingsError({
           <RotateCw className="size-4" />
           Try again
         </Button>
-        <Button variant="outline" size="sm" render={<Link href="/dashboard" />}>
+        <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/dashboard" />}>
           <ArrowLeft className="size-4" />
           Back to dashboard
         </Button>

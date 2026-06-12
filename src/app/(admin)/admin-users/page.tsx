@@ -173,6 +173,7 @@ export default async function AdminUsersPage() {
                 <Button
                   variant="outline"
                   size="sm"
+                  nativeButton={false}
                   render={
                     <Link href="/admin-users/balance-limits">
                       <Wallet className="mr-1.5 size-4" />

@@ -52,7 +52,7 @@ export default function ShardPacksError({
           <RotateCw className="size-4" />
           Try again
         </Button>
-        <Button variant="outline" size="sm" render={<Link href="/rewards" />}>
+        <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/rewards" />}>
           <ArrowLeft className="size-4" />
           Back to rewards
         </Button>

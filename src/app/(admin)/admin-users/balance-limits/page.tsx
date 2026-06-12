@@ -134,6 +134,7 @@ export default async function BalanceLimitsOverviewPage() {
               variant="ghost"
               size="icon"
               className="size-9"
+              nativeButton={false}
               render={
                 <Link href="/admin-users" aria-label="Back to admin users">
                   <ArrowLeft className="size-4" />

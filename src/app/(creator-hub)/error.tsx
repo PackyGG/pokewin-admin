@@ -76,7 +76,7 @@ export default function CreatorHubError({
           <RotateCw className="size-4" />
           Try again
         </Button>
-        <Button variant="outline" size="sm" render={<Link href="/creator-hub" />}>
+        <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/creator-hub" />}>
           <ArrowLeft className="size-4" />
           Back to Creator Hub
         </Button>

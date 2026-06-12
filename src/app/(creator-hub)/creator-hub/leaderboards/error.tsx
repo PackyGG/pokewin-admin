@@ -75,6 +75,7 @@ export default function CreatorHubLeaderboardsError({
         <Button
           variant="outline"
           size="sm"
+          nativeButton={false}
           render={<Link href="/creator-hub" />}
         >
           <ArrowLeft className="size-4" />

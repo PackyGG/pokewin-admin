@@ -129,6 +129,7 @@ export function InspectorSheet({
                   variant="outline"
                   size="sm"
                   className="h-8"
+                  nativeButton={false}
                   render={<Link href={fullHref} />}
                 >
                   <ExternalLink className="size-3.5" />

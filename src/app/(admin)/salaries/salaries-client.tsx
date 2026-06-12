@@ -601,6 +601,7 @@ function AddressQrDialog({
                   size="icon"
                   variant="ghost"
                   className="size-7 shrink-0"
+                  nativeButton={false}
                   render={
                     <a
                       href={explorer.addressUrl(employee.ethAddress)}
