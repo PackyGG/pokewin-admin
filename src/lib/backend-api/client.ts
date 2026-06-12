@@ -36,6 +36,53 @@ export type RequestOptions = {
 // above p99 backend latency in practice.
 const DEFAULT_TIMEOUT_MS = 8000;
 
+// Retry policy for transient upstream pushback (429 rate-limit / 503
+// unavailable). Applies to GET ONLY — GETs are idempotent, so replaying
+// them is safe; POST/PUT/PATCH/DELETE are never retried (a replay could
+// double-apply a mutation). Under concurrent live-route load the
+// per-creator backend sessions fan-out gets 429'd; without retries every
+// rate-limited leg degraded immediately.
+const MAX_GET_RETRIES = 2; // retries AFTER the initial attempt (max 3 tries)
+const RETRY_BASE_DELAY_MS = 250; // exponential base: ~250ms, ~500ms (+ jitter)
+const MAX_RETRY_DELAY_MS = 4000; // never sleep longer than this between tries
+
+/**
+ * Parse a Retry-After response header into milliseconds. Supports both
+ * forms from RFC 9110: delay-seconds ("120") and HTTP-date. Returns null
+ * when absent or unparseable.
+ */
+const parseRetryAfterMs = (res: Response): number | null => {
+  const raw = res.headers.get("retry-after");
+  if (!raw) return null;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const dateMs = Date.parse(raw);
+  if (!Number.isNaN(dateMs)) return Math.max(0, dateMs - Date.now());
+  return null;
+};
+
+/**
+ * Abort-aware sleep. Resolves early (never rejects) if the caller's
+ * signal aborts mid-wait — the next fetch attempt then surfaces the
+ * abort through the normal BackendNetworkError path.
+ */
+const sleep = (ms: number, signal?: AbortSignal | null): Promise<void> =>
+  new Promise((resolve) => {
+    if (ms <= 0 || signal?.aborted) {
+      resolve();
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+
 const buildQueryString = (
   query: RequestOptions["query"]
 ): string => {
@@ -116,45 +163,7 @@ export const backendApiRequest = async <T = unknown>(
     ...options.headers,
   };
 
-  // Combine the (default) 8s timeout with an optional caller-supplied
-  // signal. AbortSignal.any() fires as soon as the FIRST of the inputs
-  // aborts — so callers can still cancel on user navigation, while the
-  // timeout still kicks in on a stuck upstream. Pass `signal: null` or
-  // `timeoutMs: 0` to opt out of the default cap.
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const signals: AbortSignal[] = [];
-  if (options.signal) signals.push(options.signal);
-  if (timeoutMs > 0) signals.push(AbortSignal.timeout(timeoutMs));
-  const fetchSignal: AbortSignal | undefined =
-    signals.length === 0
-      ? undefined
-      : signals.length === 1
-        ? signals[0]
-        : AbortSignal.any(signals);
-
-  // Wrap the fetch in try/catch so DNS / TCP / TLS failures throw a
-  // structured BackendNetworkError with the URL + underlying cause
-  // instead of a bare "fetch failed". Without this every caller just
-  // sees the cryptic stock message and ops can't tell whether the
-  // host is wrong, the port is wrong, or TLS is broken.
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method,
-      headers,
-      body:
-        options.body !== undefined ? JSON.stringify(options.body) : undefined,
-      cache: options.cache ?? "no-store",
-      signal: fetchSignal,
-    });
-  } catch (err) {
-    const networkErr = new BackendNetworkError(url, err);
-    // eslint-disable-next-line no-console
-    console.log(
-      `[backend-api] network failure env=${config.env} method=${method} url=${url} code=${networkErr.causeCode ?? "unknown"} cause=${networkErr.causeMessage ?? "(none)"} cfHeaders=${Object.keys(config.cfHeaders).length > 0}`,
-    );
-    throw networkErr;
-  }
 
   // Diagnostic context shared across success/error branches. Includes which
   // env was selected, where the request went, key tail (safe to log; full
@@ -167,7 +176,83 @@ export const backendApiRequest = async <T = unknown>(
     ` cfHeaders=${Object.keys(config.cfHeaders).length > 0}` +
     ` bypassSecret=${bypassSecret ? "set" : "missing"}`;
 
-  if (!res.ok) {
+  // Bounded retry for transient 429/503 on idempotent GETs only.
+  // Mutations (POST/PUT/PATCH/DELETE) get exactly one attempt.
+  const maxRetries = method === "GET" ? MAX_GET_RETRIES : 0;
+
+  for (let attempt = 0; ; attempt++) {
+    // Combine the (default) 8s timeout with an optional caller-supplied
+    // signal. AbortSignal.any() fires as soon as the FIRST of the inputs
+    // aborts — so callers can still cancel on user navigation, while the
+    // timeout still kicks in on a stuck upstream. Pass `signal: null` or
+    // `timeoutMs: 0` to opt out of the default cap. The timeout signal is
+    // created fresh PER ATTEMPT so a retry gets the full budget instead
+    // of inheriting whatever the first attempt + backoff already burned.
+    const signals: AbortSignal[] = [];
+    if (options.signal) signals.push(options.signal);
+    if (timeoutMs > 0) signals.push(AbortSignal.timeout(timeoutMs));
+    const fetchSignal: AbortSignal | undefined =
+      signals.length === 0
+        ? undefined
+        : signals.length === 1
+          ? signals[0]
+          : AbortSignal.any(signals);
+
+    // Wrap the fetch in try/catch so DNS / TCP / TLS failures throw a
+    // structured BackendNetworkError with the URL + underlying cause
+    // instead of a bare "fetch failed". Without this every caller just
+    // sees the cryptic stock message and ops can't tell whether the
+    // host is wrong, the port is wrong, or TLS is broken. Network
+    // failures are NOT retried — only 429/503 responses below are.
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers,
+        body:
+          options.body !== undefined ? JSON.stringify(options.body) : undefined,
+        cache: options.cache ?? "no-store",
+        signal: fetchSignal,
+      });
+    } catch (err) {
+      const networkErr = new BackendNetworkError(url, err);
+      // eslint-disable-next-line no-console
+      console.log(
+        `[backend-api] network failure env=${config.env} method=${method} url=${url} code=${networkErr.causeCode ?? "unknown"} cause=${networkErr.causeMessage ?? "(none)"} cfHeaders=${Object.keys(config.cfHeaders).length > 0}`,
+      );
+      throw networkErr;
+    }
+
+    if (res.ok) {
+      return ((await safeJson(res)) ?? {}) as T;
+    }
+
+    if ((res.status === 429 || res.status === 503) && attempt < maxRetries) {
+      const retryAfterMs = parseRetryAfterMs(res);
+      // Honor Retry-After when present — but if the server asks us to
+      // wait longer than the cap, give up now instead of pinning the
+      // handler (hammering early would just earn another 429 anyway).
+      if (retryAfterMs === null || retryAfterMs <= MAX_RETRY_DELAY_MS) {
+        // Exponential backoff with jitter: ~250–500ms, then ~500–1000ms.
+        // When Retry-After is present, use it plus a little jitter so
+        // concurrent fan-out legs don't all re-fire on the same tick.
+        const expo = RETRY_BASE_DELAY_MS * 2 ** attempt;
+        const delayMs = Math.min(
+          retryAfterMs !== null
+            ? retryAfterMs + Math.random() * RETRY_BASE_DELAY_MS
+            : expo + Math.random() * expo,
+          MAX_RETRY_DELAY_MS,
+        );
+        // Drain the body so the connection can be reused for the retry.
+        await safeJson(res);
+        console.log(
+          `[backend-api] transient ${res.status} — retrying ${ctx} attempt=${attempt + 1}/${maxRetries + 1} delayMs=${Math.round(delayMs)} retryAfter=${retryAfterMs ?? "none"}`,
+        );
+        await sleep(delayMs, options.signal);
+        continue;
+      }
+    }
+
     const payload = ((await safeJson(res)) ?? {}) as BackendErrorPayload;
     const message =
       payload.message ||
@@ -195,8 +280,6 @@ export const backendApiRequest = async <T = unknown>(
     }
     throw new BackendApiError(res.status, message, payload);
   }
-
-  return ((await safeJson(res)) ?? {}) as T;
 };
 
 export const backendApi = {
