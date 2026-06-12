@@ -16,6 +16,51 @@ import crypto from "crypto";
 
 const SCRATCH_USER_PREFIX = "_e2e_";
 
+// ---------------------------------------------------------------------------
+// Prod-guard — the MAIN game DB behind DATABASE_URL can be LIVE PRODUCTION
+// (the owner repointed the local .env at the read-only prod DB on
+// 2026-06-10). Running `npx playwright test` as documented would then issue
+// the sweep's DELETEs against prod. Every MAIN-DB *write* helper below
+// therefore refuses to run unless the target host is local, or the operator
+// explicitly opts in for a scratch/CI database via E2E_ALLOW_MAIN_DB_WRITES=1.
+// Read helpers (getUserBalance / getUserRole) are untouched.
+// ---------------------------------------------------------------------------
+
+const LOCAL_DB_HOSTNAMES = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "[::1]",
+  "host.docker.internal",
+]);
+
+function isLocalMainDb(): boolean {
+  const url = process.env.DATABASE_URL;
+  if (!url) return false;
+  try {
+    return LOCAL_DB_HOSTNAMES.has(new URL(url).hostname);
+  } catch {
+    // Unparseable URL — fail closed; the pool would error anyway.
+    return false;
+  }
+}
+
+/** True when MAIN-DB writes are safe: local host or explicit CI opt-in. */
+export function mainDbWritesAllowed(): boolean {
+  return process.env.E2E_ALLOW_MAIN_DB_WRITES === "1" || isLocalMainDb();
+}
+
+function assertMainDbWritesAllowed(what: string): void {
+  if (mainDbWritesAllowed()) return;
+  throw new Error(
+    `[e2e] REFUSING ${what}: DATABASE_URL points at a non-local host and ` +
+      `E2E_ALLOW_MAIN_DB_WRITES is not set. The main game DB may be LIVE ` +
+      `PRODUCTION (strictly read-only). Point DATABASE_URL at a local/` +
+      `scratch DB, or export E2E_ALLOW_MAIN_DB_WRITES=1 only when the ` +
+      `target is a disposable test database.`,
+  );
+}
+
 let mainPool: pg.Pool | null = null;
 let adminPool: pg.Pool | null = null;
 
@@ -55,6 +100,7 @@ export type ScratchUser = {
 export async function createScratchUser(
   overrides: Partial<Pick<ScratchUser, "email" | "username">> = {},
 ): Promise<ScratchUser> {
+  assertMainDbWritesAllowed("createScratchUser (INSERT into main DB)");
   const id = crypto.randomUUID();
   const suffix = crypto.randomBytes(4).toString("hex");
   const username =
@@ -100,6 +146,7 @@ export async function createScratchUser(
  * match make it impossible to accidentally blast a real user.
  */
 export async function deleteScratchUser(id: string): Promise<void> {
+  assertMainDbWritesAllowed("deleteScratchUser (DELETE on main DB)");
   const pool = getMainPool();
   await pool.query(`DELETE FROM balances WHERE user_id = $1`, [id]);
   await pool.query(
@@ -116,6 +163,16 @@ export async function deleteScratchUser(id: string): Promise<void> {
  * Returns the number of users removed so the caller can log it.
  */
 export async function sweepStaleScratchUsers(): Promise<number> {
+  if (!mainDbWritesAllowed()) {
+    // Soft-skip (warn, don't throw): the sweep runs in global-setup for the
+    // WHOLE suite, and read-only specs must stay runnable against a remote
+    // (possibly prod) DB without it issuing DELETEs there.
+    console.warn(
+      "[e2e] skipping stale-scratch-user sweep: DATABASE_URL is non-local " +
+        "and E2E_ALLOW_MAIN_DB_WRITES is not set (prod-guard).",
+    );
+    return 0;
+  }
   const pool = getMainPool();
   const victimRes = await pool.query<{ id: string }>(
     `SELECT id FROM "user" WHERE username LIKE '${SCRATCH_USER_PREFIX}%'`,
@@ -179,6 +236,7 @@ export async function cleanupE2EAdminRoles(): Promise<number> {
  * matches the E2E prefix. Only used by the ads spec.
  */
 export async function cleanupE2EAdCodes(): Promise<number> {
+  assertMainDbWritesAllowed("cleanupE2EAdCodes (DELETE on main DB)");
   const pool = getMainPool();
   const del = await pool.query(
     `DELETE FROM affiliate_codes WHERE code LIKE '${SCRATCH_USER_PREFIX}%'`,
