@@ -16,9 +16,13 @@ import {
   affiliateEdgeShareToWagerDrag,
   affiliateWagerDragToEdgeShare,
   affiliateWorstCaseEdgeDrag,
+  affiliateGlobalScaleFactorV2,
+  effectiveAffiliateRateV2,
   topAffiliateTierEdgeShare,
+  computeTimeBonusEngineV2,
   depositBonusEligibilityRatio,
   eligibleDepositShare,
+  isLeverIncludedInEdgeV2,
   resolveLeverSeedsV2,
   resolveLeverAnchorsV2,
   timeBonusSplitModel,
@@ -33,9 +37,10 @@ import { EmptyLever } from "../components/empty-lever";
 import { PlannerBudgetInput } from "../components/usd-budget-input";
 import { RakebackWagerControls } from "../components/rakeback-wager-controls";
 import {
-  leverEdgeDragPct,
-  RewardPanelTitle,
-} from "../components/reward-edge-drag";
+  EdgeInclusionToggle,
+  InclusionAwareRewardTitle,
+} from "../components/edge-inclusion-toggle";
+import { leverEdgeDragPct } from "../components/reward-edge-drag";
 
 /**
  * RewardsCoreSection — rakeback · deposit bonus · affiliate (v2.1 overhaul).
@@ -52,6 +57,19 @@ import {
  *   • Grounded time-based bonus: the split-vs-lump model runs on the REAL
  *     per-user-day bonus histogram (`timeBonusAnchor`) — "N% of user-days
  *     hit the cap" + "$X/mo saved by splitting" readouts.
+ *
+ * The final eight (2026-06-12), surfaced in this section:
+ *   • #8 — the time-based bonus block HEADLINES the deposit-bonus FORECAST
+ *     ENGINE projection (`computeTimeBonusEngineV2`, same engine + same
+ *     live-derived assumptions + same real-cost anchor as
+ *     /insights/forecast?reward=deposit-bonus); the mechanical user-day-cap
+ *     model stays only as a clearly-labeled secondary floor.
+ *   • #9 — GLOBAL affiliate scale %: one input scaling ALL tier rates
+ *     multiplicatively with the per-level sliders; each level row shows its
+ *     effective rate live ("3.00% → 1.50%").
+ *   • #14 — edge-inclusion toggles ("counts toward edge") in the title rows
+ *     of rakeback / deposit bonus / affiliate. (The races box lives in the
+ *     Giveaways & budgets section — its toggle is wired there.)
  */
 export function RewardsCoreSection({
   baseline,
@@ -139,18 +157,42 @@ export function RewardsCoreSection({
     baseline.depositBonusCost;
   const capUsd = baseline.depositBonusCapUsd * levers.depositBonusCapMult;
 
+  // #8 — the forecast-engine projection for the time-based bonus block.
+  // Null = the `deposit-bonus-forecast` baseline leg degraded (or no real
+  // bonus volume) → render only the labeled mechanical floor, loudly.
+  const engine = React.useMemo(
+    () => computeTimeBonusEngineV2(baseline, levers),
+    [baseline, levers],
+  );
+
+  // #9 — the global affiliate scale factor (1 = neutral, hides the "→" UI).
+  const affiliateScaleFactor = affiliateGlobalScaleFactorV2(levers);
+
+  // #14 — per-program edge-inclusion (ON = today's attribution).
+  const rakebackIncluded = isLeverIncludedInEdgeV2(levers, "rakeback");
+  const depositBonusIncluded = isLeverIncludedInEdgeV2(levers, "deposit-bonus");
+  const affiliateIncluded = isLeverIncludedInEdgeV2(levers, "affiliate");
+
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
       <div className="xl:col-span-2">
         <LeverGroup
           title={
-            <RewardPanelTitle
+            <InclusionAwareRewardTitle
               label="Rakeback"
               dragPct={leverEdgeDragPct(projection, "rakeback")}
+              included={rakebackIncluded}
             />
           }
           icon={Wallet}
           accent="rose"
+          action={
+            <EdgeInclusionToggle
+              leverKey="rakeback"
+              levers={levers}
+              setLevers={setLevers}
+            />
+          }
           headline={{
             label: "Realized this window",
             value: formatCurrency(baseline.rakebackCost),
@@ -260,13 +302,21 @@ export function RewardsCoreSection({
       {/* ── Deposit bonus — cap mult + min-deposit $ gate + time split ────── */}
       <StatPanel
         title={
-          <RewardPanelTitle
+          <InclusionAwareRewardTitle
             label="Deposit bonus"
             dragPct={leverEdgeDragPct(projection, "deposit-bonus")}
+            included={depositBonusIncluded}
           />
         }
         icon={Coins}
         accent="amber"
+        action={
+          <EdgeInclusionToggle
+            leverKey="deposit-bonus"
+            levers={levers}
+            setLevers={setLevers}
+          />
+        }
       >
         <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
           In plain words: bonus money we add on top when players deposit.
@@ -345,14 +395,17 @@ export function RewardsCoreSection({
           </div>
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             Pays the SAME bonus program as $X grants every N hours instead of
-            a lump. Grounded on the real per-user-day bonus distribution
+            a lump. The headline below is the deposit-bonus FORECAST ENGINE
+            projection — the same engine, live-derived assumptions and
+            real-cost anchor as /insights/forecast — with the mechanical
+            user-day-cap model
             {anchor
               ? ` (${formatNumber(anchor.userDays)} user-days · ${formatNumber(
                   anchor.users,
                 )} claimers · claim-rate ${formatPct(anchor.claimRatePerUserDay, 1)} of window days)`
-              : " (no per-user-day anchor in this window)"}
-            : capping a user-day at amount × (24 ÷ interval) can only trim
-            cost — split ≤ lump, never more.
+              : " (no per-user-day anchor in this window)"}{" "}
+            kept as a secondary floor: capping a user-day at amount × (24 ÷
+            interval) can only trim cost — split ≤ lump, never more.
           </p>
           {levers.depositBonusHourlyEnabled && (
             <>
@@ -389,7 +442,79 @@ export function RewardsCoreSection({
                   step={1}
                 />
               </LeverHint>
+
+              {/* #8 HEADLINE — the forecast-engine projection. */}
+              {engine != null ? (
+                <div className="space-y-0.5 rounded-lg border bg-muted/20 px-3 py-2.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Projected net savings
+                    </span>
+                    <span
+                      className={`text-lg font-bold tabular-nums ${
+                        engine.monthlyNetSavingsUsd > 0
+                          ? TEXT_TONE.emerald
+                          : engine.monthlyNetSavingsUsd < 0
+                            ? TEXT_TONE.rose
+                            : "text-muted-foreground"
+                      }`}
+                    >
+                      {formatCurrency(engine.monthlyNetSavingsUsd)} / mo
+                    </span>
+                  </div>
+                  <PanelRow
+                    label="Gross savings (before retention loss)"
+                    value={
+                      <span
+                        className={`tabular-nums ${
+                          engine.monthlyGrossSavingsUsd > 0
+                            ? TEXT_TONE.emerald
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {formatCurrency(engine.monthlyGrossSavingsUsd)} / mo
+                      </span>
+                    }
+                  />
+                  <PanelRow
+                    label={`Bonus cost (${engine.horizonDays}d) · current → split`}
+                    value={
+                      <span className={`tabular-nums ${TEXT_TONE.rose}`}>
+                        {formatCurrency(engine.baselineCostUsd)} →{" "}
+                        {formatCurrency(engine.scenarioCostUsd)}
+                      </span>
+                    }
+                  />
+                  <PanelRow
+                    label="Scenario"
+                    value={
+                      engine.matchedLibraryScenario
+                        ? `${engine.scenarioLabel} (${engine.scenarioId})`
+                        : `${engine.scenarioLabel} (custom)`
+                    }
+                  />
+                  <p className="pt-1 text-[10px] leading-snug text-muted-foreground/80">
+                    Same engine as /insights/forecast?reward=deposit-bonus —
+                    identical assumptions snapshot + real-cost anchor, so this
+                    matches the forecast page&apos;s scenario row by
+                    construction.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[11px] leading-relaxed text-amber-800 dark:text-amber-200">
+                  Forecast-engine headline unavailable — the
+                  deposit-bonus-forecast baseline leg degraded this render (or
+                  carries no real bonus volume). Only the mechanical
+                  user-day-cap floor below is shown; reload to retry the
+                  engine anchor.
+                </div>
+              )}
+
+              {/* #8 SECONDARY FLOOR — the mechanical user-day-cap model. */}
               <div className="space-y-0.5 rounded-lg border bg-muted/20 px-3 py-2">
+                <p className="pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Mechanical user-day-cap floor (secondary)
+                </p>
                 <PanelRow
                   label="Per-user daily cap"
                   value={formatCurrency(split.dailyCapUsd)}
@@ -408,7 +533,7 @@ export function RewardsCoreSection({
                   }
                 />
                 <PanelRow
-                  label="Saved by splitting"
+                  label="Floor saved by splitting"
                   value={
                     <span
                       className={`font-semibold tabular-nums ${
@@ -430,13 +555,21 @@ export function RewardsCoreSection({
       {/* ── Affiliate commission ──────────────────────────────────────────── */}
       <StatPanel
         title={
-          <RewardPanelTitle
+          <InclusionAwareRewardTitle
             label="Affiliate commission"
             dragPct={leverEdgeDragPct(projection, "affiliate", affiliateDragCtx)}
+            included={affiliateIncluded}
           />
         }
         icon={Share2}
         accent="rose"
+        action={
+          <EdgeInclusionToggle
+            leverKey="affiliate"
+            levers={levers}
+            setLevers={setLevers}
+          />
+        }
       >
         <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
           In plain words: what we pay referrers for the players they bring —
@@ -482,17 +615,45 @@ export function RewardsCoreSection({
           <EmptyLever note="No affiliate tiers configured." />
         ) : (
           <>
+            <LeverHint hint="One % that scales ALL tier rates at once — 100% = current rates ($0 delta), 50% halves every level (L1 3.00% → 1.50%), 0% turns the program off. Multiplies the per-level sliders below.">
+              <LeverSlider
+                label="Global affiliate scale"
+                valueLabel={`${formatPct(levers.affiliateGlobalScalePct / 100, 0)} of current rates`}
+                value={levers.affiliateGlobalScalePct}
+                onValueChange={(pct) =>
+                  setLevers((s) => ({
+                    ...s,
+                    affiliateGlobalScalePct: clamp(pct, 0, 200),
+                  }))
+                }
+                min={0}
+                max={200}
+                step={1}
+                baselineMarker={100}
+                baselineLabel="100% = current rates ($0 delta)"
+                preciseInput={{ unit: "percent", decimals: 0 }}
+              />
+            </LeverHint>
             {baseline.affiliateTiers.map((t) => {
               const edgeShare = levers.affiliateRates[t.level] ?? t.currentRate;
+              const effectiveShare = effectiveAffiliateRateV2(
+                levers,
+                t.level,
+                t.currentRate,
+              );
               const wagerDrag = affiliateEdgeShareToWagerDrag(
-                edgeShare,
+                effectiveShare,
                 plannedHouseEdge,
               );
               return (
                 <LeverSlider
                   key={t.level}
                   label={t.label}
-                  valueLabel={`${formatPct(edgeShare)} of edge (= ${formatPct(wagerDrag)} wager)`}
+                  valueLabel={
+                    affiliateScaleFactor === 1
+                      ? `${formatPct(edgeShare)} of edge (= ${formatPct(wagerDrag)} wager)`
+                      : `${formatPct(edgeShare)} → ${formatPct(effectiveShare)} of edge (= ${formatPct(wagerDrag)} wager)`
+                  }
                   value={edgeShare * 100}
                   onValueChange={(pct) =>
                     setLevers((s) => ({
