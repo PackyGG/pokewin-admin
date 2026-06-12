@@ -92,6 +92,9 @@ export function GiveawaysSection({
           icon={Trophy}
           accent="rose"
         >
+          <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+            In plain words: prize money for the wager races we run.
+          </p>
           <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
             One monthly prize budget — seeded from the real 30d run-rate.
             Clear the box to drop back to the run-rate seed.
@@ -129,6 +132,10 @@ export function GiveawaysSection({
           icon={CloudRain}
           accent="cyan"
         >
+          <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+            In plain words: free money we drop into chat for everyone to
+            grab.
+          </p>
           {anchor == null || anchor.count <= 0 ? (
             <EmptyLever note="No completed rains found in the window (or the scan failed) — the rain cost stays at its canonical baseline value." />
           ) : (
@@ -197,6 +204,10 @@ export function GiveawaysSection({
           icon={Crown}
           accent="purple"
         >
+          <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+            In plain words: giveaways funded from the founder&apos;s own
+            account.
+          </p>
           <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
             Founder giveaways (tips · rain · sponsorships) — one monthly
             budget against the real 30d run-rate.
@@ -248,6 +259,10 @@ export function GiveawaysSection({
           icon={Gift}
           accent="amber"
         >
+          <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+            In plain words: gift cards, promo codes, and whatever smaller
+            giveaways are left over.
+          </p>
           <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
             Gift cards and promo codes are itemized from the real ledger legs
             and get their own monthly budgets; whatever&apos;s left of the

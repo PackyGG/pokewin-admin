@@ -103,6 +103,10 @@ export function CreditMatrixSection({
         icon={Grid3x3}
         accent="emerald"
       >
+        <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+          In plain words: should bonus money earn loyalty rewards again?
+          100% = it does (today); dial a cell down to stop the double-dip.
+        </p>
         <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
           Today every re-wagered reward dollar earns the full loyalty stack
           again (shards, XP, rakeback, race points, leaderboard volume) like a
@@ -190,6 +194,10 @@ export function CreditMatrixSection({
       </StatPanel>
 
       <StatPanel title="Projected savings" icon={PiggyBank} accent="emerald">
+        <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+          In plain words: what we save by stopping reward money from earning
+          rewards again.
+        </p>
         <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
           savings(program) = program cost-rate × re-wager assumption ×
           de-credited reward volume. $0 while every cell sits at 100%.

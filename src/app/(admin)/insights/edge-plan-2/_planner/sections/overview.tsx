@@ -42,6 +42,10 @@ export function AnalysisZone({
   return (
     <div className="space-y-4">
       <StatPanel title="GGR by game type" icon={Layers} accent="emerald">
+        <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+          In plain words: GGR = bets minus what players won back — split by
+          game type.
+        </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {projection.gameTypes.map((g) => (
             <div
@@ -98,6 +102,10 @@ export function AnalysisZone({
       <LeverBreakdownPanel projection={projection} />
 
       <StatPanel title="Reward cost summary" icon={Wallet} accent="rose">
+        <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+          In plain words: everything we give away in rewards — today vs this
+          plan, line by line.
+        </p>
         <PanelRow
           label="Current reward cost"
           value={formatCurrency(projection.currentRewardCost)}

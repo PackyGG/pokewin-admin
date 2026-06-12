@@ -102,6 +102,10 @@ export function ShardsSection({
         icon={Gem}
         accent="purple"
       >
+        <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+          In plain words: players mint shards as they bet and spend them in
+          the shard shop — every shard costs the house a few cents.
+        </p>
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="text-sm font-medium">Enable shard program</div>
@@ -239,6 +243,10 @@ export function ShardsSection({
       </StatPanel>
 
       <StatPanel title="Shard shop cases" icon={Package} accent="pink">
+        <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
+          In plain words: what each shard-shop case costs us on average when
+          it&apos;s opened.
+        </p>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           The fixed 10-case shard-shop ladder. Expected house cost per case =
           shards × EV per shard ({formatEvUsd(levers.shardsEvPerShardUsd)}) —

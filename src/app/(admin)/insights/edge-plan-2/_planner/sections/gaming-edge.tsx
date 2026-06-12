@@ -52,6 +52,10 @@ export function GamingEdgeSection({
 
   return (
     <StatPanel title="House edge" icon={Gauge} accent="emerald">
+      <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+        In plain words: Edge = % of every bet we keep — the two sliders below
+        set it for packs and upgrader.
+      </p>
       {/* ── Dual edge readout: raw math vs wager-weighted (both labeled) ── */}
       <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="min-w-0 rounded-lg border bg-background/40 px-3 py-2.5">
@@ -62,8 +66,9 @@ export function GamingEdgeSection({
             {formatPct(rawEdge)}
           </p>
           <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-            Simple mean of the packs &amp; upgrader sliders — no wager
-            weighting ({formatPct(packsEdge)} &amp; {formatPct(upgraderEdge)}).
+            In plain words: simple average of the two sliders, no volumes
+            ({formatPct(packsEdge)} &amp; {formatPct(upgraderEdge)} — no wager
+            weighting).
           </p>
         </div>
         <div className="min-w-0 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2.5">
@@ -74,7 +79,8 @@ export function GamingEdgeSection({
             {formatPct(blendBreakdown.marginBearingBlendedEdge)}
           </p>
           <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-            Weighted by the real 30d packs + upgrader wager mix ·{" "}
+            In plain words: the same edge counted where the money actually
+            goes. Weighted by the real 30d packs + upgrader wager mix ·{" "}
             {formatPct(blendBreakdown.allWagerBlendedEdge)} on all wager.
           </p>
         </div>

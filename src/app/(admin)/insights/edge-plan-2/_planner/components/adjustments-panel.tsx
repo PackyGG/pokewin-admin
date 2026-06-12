@@ -68,6 +68,10 @@ export function AdjustmentsPanel({
       icon={Scale}
       accent="blue"
     >
+      <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+        In plain words: money admins manually added to (or removed from)
+        player balances.
+      </p>
       <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
         Real 30d admin balance adjustments by category (canonical customer
         scope). Only <strong>counted</strong> categories feed GGR/NGR — the

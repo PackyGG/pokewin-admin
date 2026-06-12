@@ -107,6 +107,10 @@ export function PacksSignupSection({
         icon={Boxes}
         accent="pink"
       >
+        <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+          In plain words: free packs we hand out — the cost is what&apos;s
+          inside, times how many get opened, times how often we grant them.
+        </p>
         <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
           Daily / free packs. Grant frequency = how often packs are handed out
           (scales the total daily-pack cost). Planned EV per open = the average
@@ -338,6 +342,10 @@ export function PacksSignupSection({
         icon={UserPlus}
         accent="rose"
       >
+        <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+          In plain words: the welcome money a brand-new player gets for
+          signing up.
+        </p>
         <PanelRow
           label="Realized cost (window)"
           value={formatCurrency(baseline.signupPacksCost)}

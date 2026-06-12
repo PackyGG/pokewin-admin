@@ -156,7 +156,19 @@ export function RewardsCoreSection({
             value: formatCurrency(baseline.rakebackCost),
             tone: "rose",
           }}
-          intro="Direct rakeback cost = real config × real wager × game-type weighting. Cadence rates below are the primary lever; accrual weighting and instant-claim what-ifs are under Advanced."
+          intro={
+            <>
+              <p>
+                In plain words: we hand players back a small slice of every
+                bet they make — this is what that costs us.
+              </p>
+              <p className="mt-1">
+                Direct rakeback cost = real config × real wager × game-type
+                weighting. Cadence rates below are the primary lever; accrual
+                weighting and instant-claim what-ifs are under Advanced.
+              </p>
+            </>
+          }
           advanced={
             baseline.rakebackCadences.length === 0 ? undefined : (
               <>
@@ -256,6 +268,9 @@ export function RewardsCoreSection({
         icon={Coins}
         accent="amber"
       >
+        <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
+          In plain words: bonus money we add on top when players deposit.
+        </p>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           Real config: cap {formatCurrency(baseline.depositBonusCapUsd)} per{" "}
           {baseline.depositBonusWindowHours}h. Realized spend:{" "}
@@ -423,6 +438,10 @@ export function RewardsCoreSection({
         icon={Share2}
         accent="rose"
       >
+        <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
+          In plain words: what we pay referrers for the players they bring —
+          a share of the edge those players lose.
+        </p>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           Tier rates are a{" "}
           <span className="font-medium text-foreground">% of referred house edge</span>,

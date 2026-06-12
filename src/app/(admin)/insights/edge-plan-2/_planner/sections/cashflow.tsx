@@ -54,6 +54,10 @@ export function CashflowSection({
   return (
     <div className="space-y-6">
       <StatPanel title="Deposit fee (revenue)" icon={Coins} accent="emerald">
+        <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+          In plain words: a small cut we take on deposits of selected coins —
+          house income, not a reward cost.
+        </p>
         <p className="mb-4 text-[11px] leading-relaxed text-muted-foreground">
           A fee charged on deposits of the selected coins — a REVENUE channel,
           not a reward cost: it adds to profit as ggrDelta − rewardCostDelta +
@@ -104,6 +108,10 @@ export function CashflowSection({
         icon={Banknote}
         accent="cyan"
       >
+        <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
+          In plain words: how much players must bet before they can withdraw
+          — rules for players, not a house cost.
+        </p>
         <p className="mb-4 text-[11px] leading-relaxed text-muted-foreground">
           Planning knobs only — these model withdrawal behavior (balance vs
           inventory split, per-game wager weights toward the unlock

@@ -78,6 +78,10 @@ export function RaffleKeepPanel({
       icon={Ticket}
       accent="rose"
     >
+      <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
+        In plain words: prizes we give away in ticket raffles — one slider
+        keeps or cuts the whole program.
+      </p>
       <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
         On-site ticket raffles — prizes pay out pack/card items, valued at the
         live price. Real reconstructed prize cost this window:{" "}

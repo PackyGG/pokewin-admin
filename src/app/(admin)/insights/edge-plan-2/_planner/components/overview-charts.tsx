@@ -88,6 +88,10 @@ export function BlendedEdgeBreakdownPanel({
         </div>
       </div>
 
+      <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
+        In plain words: Edge = % of every bet we keep — blended across every
+        game customers play.
+      </p>
       <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
         Planned GGR {formatCompactUsd(breakdown.plannedGgr)} ÷ total customer wager.
         Battles add volume at <strong>0%</strong> planning margin — they dilute this
@@ -176,6 +180,10 @@ export function NetEdgeByScenarioPanel({
 
   return (
     <StatPanel title="Net edge by scenario" icon={ShieldAlert} accent="amber">
+      <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
+        In plain words: the % of every bet we still keep after each type of
+        player collects their rewards.
+      </p>
       <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
         Where the house edge ends up after reward erosion. Affiliate tiers pay a{" "}
         <span className="font-medium text-foreground">% of house edge</span> (effective
@@ -329,6 +337,10 @@ export function RewardCostComparisonChart({
 
   return (
     <StatPanel title="Reward cost — current vs planned" icon={Wallet} accent="rose">
+      <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+        In plain words: what each reward program gives away — today vs your
+        plan.
+      </p>
       {data.length === 0 ? (
         <EmptyLever note="No realized reward cost in this window to compare." />
       ) : (
@@ -414,6 +426,10 @@ export function LeverBreakdownPanel({
 }) {
   return (
     <StatPanel title="Cost delta by lever" icon={TrendingDown} accent="purple">
+      <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+        In plain words: which levers save money (emerald) and which cost more
+        (rose) vs today.
+      </p>
       <div className="space-y-0.5">
         {projection.levers.map((l) => {
           const saving = -l.deltaCost;

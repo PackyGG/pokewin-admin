@@ -113,6 +113,10 @@ export function EdgePlanV2HeroSummary({
               duration={700}
             />
           </p>
+          <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+            In plain words: how much more (or less) the house keeps if this
+            plan goes live, vs today&apos;s settings.
+          </p>
           <p className="mt-1 text-xs text-muted-foreground">
             {formatSignedUsd(projection.monthlyProfitDelta)}/mo ·{" "}
             {formatSignedUsd(projection.annualProfitDelta)}/yr extrapolated
@@ -144,6 +148,11 @@ export function EdgePlanV2HeroSummary({
 
         {/* ── Single gross -> net edge waterfall ───────────────────── */}
         <StatPanel title="Edge before & after rewards" icon={Percent} accent="cyan">
+          <p className="mb-2 text-[11px] leading-snug text-muted-foreground">
+            In plain words: Edge = % of every bet we keep. Reward drag = how
+            much of the edge the rewards eat — left is the edge before
+            rewards, right is what&apos;s left after.
+          </p>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <p className="min-w-0 text-xs text-muted-foreground">
               House edge on wager <strong>before</strong> reward spend, the planned
@@ -192,7 +201,7 @@ export function EdgePlanV2HeroSummary({
                 <p className="mt-1.5 inline-flex items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[10px] tabular-nums text-muted-foreground">
                   Raw math edge {formatPct(rawMathEdge)}
                   <span className="font-normal text-muted-foreground/70">
-                    · simple mean, no weighting
+                    · simple average of the two sliders, no volumes
                   </span>
                 </p>
               )}
@@ -264,7 +273,14 @@ export function EdgePlanV2HeroSummary({
       </div>
 
       {/* ── Trimmed 6-tile KPI strip (string values only) ──────────── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="space-y-2">
+        <p className="text-[10px] leading-snug text-muted-foreground">
+          In plain words: Wager = how much customers bet · GGR = bets minus
+          what players won back · NGR = GGR minus what we give away · Edge =
+          % of every bet we keep · Reward drag = how much of the edge the
+          rewards eat.
+        </p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <KpiTile
           label="Before rewards"
           value={formatPct(edgeAfterRewards.grossEdge)}
@@ -313,6 +329,7 @@ export function EdgePlanV2HeroSummary({
           icon={projection.profitDelta >= 0 ? Gauge : TrendingDown}
           accent={houseAccent(projection.profitDelta) === "emerald" ? "cyan" : "rose"}
         />
+        </div>
       </div>
     </div>
   );
