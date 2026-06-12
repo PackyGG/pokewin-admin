@@ -28,8 +28,12 @@ export type ChallengeRequirement = {
   kind: ChallengeRequirementKind;
   pack_id: string | null;
   card_id: string | null;
+  // legacy upgrader fields (null for new upgrader rows)
   win_percentage: number | null;
   percent_op: ChallengePercentOp | null;
+  // upgrader thresholds (new model): bet >= min_bet_usd AND multiplier >= min_multiplier
+  min_bet_usd: number | null;
+  min_multiplier: number | null;
 };
 
 /** Admin serialization of a challenge row. */
@@ -55,12 +59,13 @@ export type ChallengeWithRequirements = Challenge & {
 
 export type CreateChallengeRequirementInput = {
   kind: ChallengeRequirementKind;
-  // pack_pull REQUIRES pack_id + card_id (no win_percentage / percent_op).
+  // pack_pull REQUIRES pack_id + card_id.
   pack_id?: string;
   card_id?: string;
-  // upgrader REQUIRES card_id + win_percentage + percent_op (no pack_id).
-  win_percentage?: number;
-  percent_op?: ChallengePercentOp;
+  // upgrader is card-agnostic and REQUIRES min_bet_usd + min_multiplier
+  // (a winning play must bet >= min_bet_usd AND hit a multiplier >= min_multiplier).
+  min_bet_usd?: number;
+  min_multiplier?: number;
 };
 
 export type CreateChallengeInput = {
