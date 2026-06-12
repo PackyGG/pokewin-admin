@@ -1468,6 +1468,23 @@ function applyPlanningGameProjections(
 // ─── The v2 projection ───────────────────────────────────────────────────────
 
 /**
+ * Sub-cent magnitude below which a $ delta is floating-point dust, not a
+ * real planning move. The default-mount profitDelta is a sum of ~19 lever
+ * deltas that are each analytically $0 but carry float residue; when that
+ * residue lands negative, `Intl` renders "-$0.00" and the house-POV accent
+ * flips rose — breaking the plan's "$0 at default mount" rendering
+ * contract (verified on the deterministic fixture, 2026-06-12). Anything
+ * under half a cent can never round to a visible cent, so clamping it to
+ * exactly 0 changes no real number.
+ */
+const PROFIT_DELTA_DUST_USD = 0.005;
+
+/** Clamp sub-cent floating-point dust to exactly 0 (see above). */
+function clampDustToZero(usd: number): number {
+  return Math.abs(usd) < PROFIT_DELTA_DUST_USD ? 0 : usd;
+}
+
+/**
  * Run the full current-vs-planned v2 projection. PURE.
  *
  *   profitDelta = ggrDelta − rewardCostDelta + revenueDelta
@@ -1475,7 +1492,9 @@ function applyPlanningGameProjections(
  * Every lever row is either delegated to the v1 engine (rakeback /
  * affiliate / daily packs / signup — with v2 overrides) or computed here
  * from the v2 $ inputs against its real run-rate anchor. At
- * `defaultLeversV2` every row's deltaCost is $0 and revenueDelta is $0.
+ * `defaultLeversV2` every row's deltaCost is $0 and revenueDelta is $0
+ * (profitDelta is dust-clamped so the mount renders exactly $0 emerald,
+ * never a "-$0.00" rose artifact).
  */
 export function projectEdgePlanV2(
   baseline: EdgePlanV2Baseline,
@@ -1717,7 +1736,10 @@ export function projectEdgePlanV2(
   const plannedRevenue = revenueLevers.reduce((s, r) => s + r.plannedUsd, 0);
   const plannedNgr = plannedGgr - plannedRewardCost + plannedRevenue;
   const currentNgr = currentGgr - currentRewardCost + currentRevenue;
-  const profitDelta = ggrDelta - rewardCostDelta + revenueDelta;
+  // Dust-clamped at the source so EVERY consumer (hero AnimatedNumber,
+  // houseAccent, signed sublabels, tile accents) sees exactly 0 — not a
+  // negative sub-cent residue that formats as "-$0.00" with a rose accent.
+  const profitDelta = clampDustToZero(ggrDelta - rewardCostDelta + revenueDelta);
   const monthlyProfitDelta = (profitDelta / days) * 30;
   const annualProfitDelta = (profitDelta / days) * 365;
 

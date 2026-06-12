@@ -72,12 +72,29 @@ function sinceClause(column: string, since: Date | null): string {
 /** Run one ad-hoc scan inside a tx with the bounded statement timeout. */
 async function boundedScan<T>(sql: string): Promise<T[]> {
   const db = await getDb();
-  return db.$transaction(async (tx) => {
-    await tx.$executeRawUnsafe(
-      `SET LOCAL statement_timeout = ${SCAN_STATEMENT_TIMEOUT_MS}`,
-    );
-    return tx.$queryRawUnsafe<T[]>(sql);
-  });
+  return db.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe(
+        `SET LOCAL statement_timeout = ${SCAN_STATEMENT_TIMEOUT_MS}`,
+      );
+      return tx.$queryRawUnsafe<T[]>(sql);
+    },
+    {
+      // All 8 bounded scans fire inside ONE Promise.all (assembly below),
+      // so on a cache-miss rebuild they queue behind each other (and the
+      // non-tx legs) for pool connections. Prisma's interactive-transaction
+      // defaults — maxWait 2s, timeout 5s — then fail two ways under that
+      // concurrent load (observed on the dev server 2026-06-12): "Unable to
+      // start a transaction in the given time" while waiting for a slot,
+      // and a client-side kill BEFORE the 8s server-side statement_timeout
+      // this scan is budgeted for. Raise both so the server-side
+      // statement_timeout stays the real per-scan budget; the caller's
+      // safeQuery (15s) still bounds the whole leg and degrades it to its
+      // fallback instead of failing the page.
+      maxWait: 10_000,
+      timeout: SCAN_STATEMENT_TIMEOUT_MS + 4_000,
+    },
+  );
 }
 
 // ─── Existing v2 legs (unchanged semantics) ──────────────────────────────────
