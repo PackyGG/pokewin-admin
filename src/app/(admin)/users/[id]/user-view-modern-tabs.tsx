@@ -50,6 +50,7 @@ import {
   Dices,
   Percent,
   Award,
+  Flag,
   Waypoints,
   Loader2,
   Coins as CoinsIcon,
@@ -92,6 +93,7 @@ import type {
   PaginatedInventory,
   TipEntry,
   LeaderboardWinEntry,
+  RaceClaimEntry,
 } from "./user-tabs-types";
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import type { UserRewards } from "@/lib/queries/users";
@@ -422,20 +424,26 @@ function RecentActivityStreamed({
 
 // ───────────────────────────────────────────────────────────────────
 //  TIPS & RAIN SECTION (overview) — creator tips received/sent + rain
-//  prizes won + affiliate-leaderboard wins
+//  prizes won + affiliate-leaderboard wins + race prize claims
 // ───────────────────────────────────────────────────────────────────
 
 function TipsSection({ tips }: { tips: UserDetail["tips"] }) {
   return (
-    // 4 panels — wraps to 2-up on md, 4-up on xl so the row stays
-    // readable on laptops while still fitting on phones.
-    <div className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
       <TipPanel kind="received" data={tips.received} />
       <TipPanel kind="sent" data={tips.sent} />
       <TipPanel kind="rain" data={tips.rainPrizes} />
+      <TipPanel kind="race" data={tips.raceClaims} />
       <TipPanel kind="leaderboard" data={tips.leaderboardWins} />
     </div>
   );
+}
+
+function labelForRaceType(raceType: string): string {
+  if (raceType === "daily") return "Daily race";
+  if (raceType === "weekly") return "Weekly race";
+  if (raceType === "monthly") return "Monthly race";
+  return raceType.charAt(0).toUpperCase() + raceType.slice(1) + " race";
 }
 
 // `recent` is widened to the leaderboard variant since `LeaderboardWinEntry`
@@ -445,11 +453,11 @@ function TipPanel({
   kind,
   data,
 }: {
-  kind: "received" | "sent" | "rain" | "leaderboard";
+  kind: "received" | "sent" | "rain" | "race" | "leaderboard";
   data: {
     count: number;
     totalUsd: number;
-    recent: TipEntry[] | LeaderboardWinEntry[];
+    recent: TipEntry[] | LeaderboardWinEntry[] | RaceClaimEntry[];
   };
 }) {
   // House-POV (CLAUDE.md): money the user GAINS (tips received, rain
@@ -469,7 +477,9 @@ function TipPanel({
         ? ArrowUpRight
         : kind === "rain"
           ? Trophy
-          : Award;
+          : kind === "race"
+            ? Flag
+            : Award;
   const label =
     kind === "received"
       ? "Tips Received"
@@ -477,9 +487,17 @@ function TipPanel({
         ? "Tips Sent"
         : kind === "rain"
           ? "Rain Prizes"
-          : "Leaderboard Wins";
+          : kind === "race"
+            ? "Race Claims"
+            : "Leaderboard Wins";
   const unit =
-    kind === "rain" ? "prize" : kind === "leaderboard" ? "win" : "tip";
+    kind === "rain"
+      ? "prize"
+      : kind === "race"
+        ? "claim"
+        : kind === "leaderboard"
+          ? "win"
+          : "tip";
   const emptyText =
     kind === "received"
       ? "No tips received."
@@ -487,7 +505,9 @@ function TipPanel({
         ? "No tips sent."
         : kind === "rain"
           ? "No rain prizes won."
-          : "No leaderboard wins.";
+          : kind === "race"
+            ? "No race prizes claimed."
+            : "No leaderboard wins.";
   const sign = userGained ? "+" : "-";
 
   return (
@@ -532,6 +552,8 @@ function TipPanel({
                 kind === "leaderboard"
                   ? (t as LeaderboardWinEntry)
                   : null;
+              const race =
+                kind === "race" ? (t as RaceClaimEntry) : null;
               const leaderboardHref = lb?.leaderboardId
                 ? `/creators/leaderboards/${lb.leaderboardId}`
                 : null;
@@ -544,6 +566,31 @@ function TipPanel({
                     {kind === "rain" ? (
                       <span className="block truncate text-foreground">
                         Rain prize
+                        <span className="ml-1 text-muted-foreground/70">
+                          · <RelativeTime date={t.createdAt} />
+                        </span>
+                      </span>
+                    ) : kind === "race" ? (
+                      <span className="block">
+                        <span className="block truncate text-foreground">
+                          Race prize
+                          {race?.position != null && (
+                            <span className="ml-1 text-muted-foreground/80">
+                              · #{race.position}
+                            </span>
+                          )}
+                          <span className="ml-1 text-muted-foreground/70">
+                            · <RelativeTime date={t.createdAt} />
+                          </span>
+                        </span>
+                        {race?.raceType ? (
+                          <Link
+                            href="/rewards/leaderboards"
+                            className="mt-0.5 block truncate text-[11px] font-medium text-foreground hover:text-primary hover:underline"
+                          >
+                            {labelForRaceType(race.raceType)}
+                          </Link>
+                        ) : null}
                       </span>
                     ) : kind === "leaderboard" ? (
                       // Stack: top line = static "Leaderboard win"

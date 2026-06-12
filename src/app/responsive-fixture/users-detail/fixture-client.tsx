@@ -219,6 +219,7 @@ const DATA: UserDetail = {
     sent: { count: 0, totalUsd: 0, recent: [] },
     rainPrizes: { count: 0, totalUsd: 0, recent: [] },
     leaderboardWins: { count: 0, totalUsd: 0, recent: [] },
+    raceClaims: { count: 0, totalUsd: 0, recent: [] },
   },
   sessionRole: "admin",
   wasCreator: false,

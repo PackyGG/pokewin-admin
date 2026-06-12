@@ -195,6 +195,12 @@ export type UserDetail = {
       totalUsd: number;
       recent: LeaderboardWinEntry[];
     };
+    /** On-site race prize claims (`race_prize` ledger credits). */
+    raceClaims: {
+      count: number;
+      totalUsd: number;
+      recent: RaceClaimEntry[];
+    };
   };
   sessionRole: string;
   // True when the user isn't a creator now but was one before (audit
@@ -238,6 +244,12 @@ export type TipEntry = {
 export type LeaderboardWinEntry = TipEntry & {
   leaderboardId: string | null;
   leaderboardTitle: string | null;
+  position: number | null;
+};
+
+/** Recent on-site race prize claim — `race_prize` ledger row. */
+export type RaceClaimEntry = TipEntry & {
+  raceType: string | null;
   position: number | null;
 };
 

@@ -21,7 +21,7 @@ const TIP_RECENT_LIMIT = 10;
  * metadata flag we fall back to the balance delta to infer direction.
  */
 async function getUserTips(db: Db, userId: string) {
-  const [rows, rainAgg, rainRecent, leaderboardAgg, leaderboardRecent] =
+  const [rows, rainAgg, rainRecent, leaderboardAgg, leaderboardRecent, raceAgg, raceRecent] =
     await Promise.all([
       db.ledger_transactions.findMany({
         where: { user_id: userId, type: "creator_tip" },
@@ -61,6 +61,23 @@ async function getUserTips(db: Db, userId: string) {
       // fields onto the prize ledger row when the rank settles.
       db.ledger_transactions.findMany({
         where: { user_id: userId, type: "affiliate_leaderboard_prize" },
+        orderBy: { created_at: "desc" },
+        take: TIP_RECENT_LIMIT,
+        select: {
+          id: true,
+          amount: true,
+          created_at: true,
+          metadata: true,
+        },
+      }),
+      // On-site race prize claims (race_prize) — same pattern as rain_win.
+      db.ledger_transactions.aggregate({
+        where: { user_id: userId, type: "race_prize" },
+        _count: { _all: true },
+        _sum: { amount: true },
+      }),
+      db.ledger_transactions.findMany({
+        where: { user_id: userId, type: "race_prize" },
         orderBy: { created_at: "desc" },
         take: TIP_RECENT_LIMIT,
         select: {
@@ -175,7 +192,40 @@ async function getUserTips(db: Db, userId: string) {
       totalUsd: toNumber(leaderboardAgg._sum.amount ?? 0),
       recent: await enrichLeaderboardWins(leaderboardRecent),
     },
+    raceClaims: {
+      count: raceAgg._count._all,
+      totalUsd: toNumber(raceAgg._sum.amount ?? 0),
+      recent: raceRecent.map((r) => {
+        const meta = parseRaceClaimMetadata(r.metadata);
+        return {
+          id: r.id,
+          amountUsd: toNumber(r.amount),
+          counterpartyId: null,
+          counterpartyName: null,
+          createdAt: r.created_at.toISOString(),
+          raceType: meta.raceType,
+          position: meta.position,
+        };
+      }),
+    },
   };
+}
+
+function parseRaceClaimMetadata(metadata: unknown): {
+  raceType: string | null;
+  position: number | null;
+} {
+  const m =
+    metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>)
+      : null;
+  const raceType =
+    m && typeof m.race_type === "string" ? m.race_type : null;
+  const position =
+    m && typeof m.position === "number" && Number.isFinite(m.position)
+      ? m.position
+      : null;
+  return { raceType, position };
 }
 
 /**
