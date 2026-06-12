@@ -84,6 +84,14 @@ export {
 // Recommendations
 export { describeTradeoff, recommend } from "./recommend";
 
+// Edge Plan 2.0 bridge (additive, owner spec #8) — runs THIS engine with the
+// forecast page's assumptions builder for the time-based bonus block.
+export {
+  findSplitCapLibraryScenario,
+  projectSplitCapVsBaseline,
+} from "./edge-plan-projection";
+export type { SplitCapEngineProjection } from "./edge-plan-projection";
+
 // Scenario library
 export {
   BASELINE_SCENARIO_ID,
