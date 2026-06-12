@@ -1,5 +1,6 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
@@ -1266,4 +1267,56 @@ export async function getCostBreakdown(
     trend,
     contributors,
   };
+}
+
+// ─── Topbar 30d money chips (ADDITIVE export — Edge Plan 2.0 spec #13) ───────
+//
+// The admin top-bar pills must equal the Edge Plan 2.0 "Last 30 days" recon
+// row and the /insights cost-breakdown page BY CONSTRUCTION — so this helper
+// runs the IDENTICAL `getCostBreakdown` call shape the edge-plan baseline
+// runs (`("30d", "Last 30 days", 0)` — contributors skipped) and merely
+// projects three already-computed figures out of the waterfall. No new math,
+// no new scope — a pure cached projection of the owner-trusted assembly.
+
+/** The three cost-breakdown figures the top bar renders (30d window). */
+export type CostBreakdownTopbar30d = {
+  /** Canonical 30d GGR — the same `ggr` the edge-plan 30d recon row + /insights cost-breakdown show. */
+  ggr: number;
+  /** Real cash deposited in the window — the waterfall's "Deposits (cash in)" bridge row (`residual:deposit`). */
+  deposits: number;
+  /** Card withdrawals shipped in the window — the waterfall's authoritative "Card withdrawals (shipped)" liability figure. */
+  withdrawals: number;
+};
+
+const cachedCostBreakdownTopbar30d = unstable_cache(
+  async (): Promise<CostBreakdownTopbar30d> => {
+    // EXACT edge-plan-2 baseline call shape (see `_baseline-v2.ts` Wave 0):
+    // period "30d", label "Last 30 days" (= EDGE_PLAN_30D_LABEL), 0
+    // contributors — so every figure below is the same assembly the
+    // edge-plan 30d row renders.
+    const cb = await getCostBreakdown("30d", "Last 30 days", 0);
+    return {
+      ggr: cb.ggr,
+      // Residual bridge rows with a zero total are omitted from `lines`,
+      // so a missing deposit row truthfully means $0 deposited in-window.
+      deposits:
+        cb.lines.find((l) => l.key === "residual:deposit")?.amount ?? 0,
+      withdrawals: cb.cardWithdrawals,
+    };
+  },
+  ["cost-breakdown-topbar-30d-v1"],
+  { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
+);
+
+/**
+ * 30d GGR / deposits / withdrawals for the admin top-bar pills — the
+ * owner-trusted `getCostBreakdown` family on a 5-minute cache (same
+ * revalidate + tags as the previous topbar reader, so the pills stay
+ * cheap on every admin page). A thrown assembly is NOT cached
+ * (`unstable_cache` only stores fulfilled results); the topbar's
+ * `safeQuery` wrapper degrades it to "—" pills and the next render
+ * retries.
+ */
+export async function getCostBreakdownTopbar30d(): Promise<CostBreakdownTopbar30d> {
+  return cachedCostBreakdownTopbar30d();
 }
