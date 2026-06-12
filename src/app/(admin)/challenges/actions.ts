@@ -9,7 +9,6 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   challengesApi,
-  upgraderApi,
   BackendApiError,
   type Challenge,
   type ChallengeStatus,
@@ -40,10 +39,6 @@ export async function searchItems(
   query: string,
   type: "pack" | "card",
   opts: {
-    // Upgrader-hit target card → restrict to the enabled upgrader output pool.
-    // A play never lands on a card outside it, so a challenge on any other
-    // card would be unwinnable. Sources from the backend admin API.
-    upgraderPoolOnly?: boolean;
     // Card-hit target card → restrict to the cards inside this pack's pool.
     // The card must be pullable from the chosen pack, else it's unwinnable.
     packId?: string;
@@ -52,34 +47,6 @@ export async function searchItems(
   const db = await getDb();
   await requirePageAccess("/challenges");
   const isUuid = UUID_RE.test(query);
-
-  // Upgrader target card → restrict to the enabled upgrader output pool.
-  if (type === "card" && opts.upgraderPoolOnly) {
-    let outputs;
-    try {
-      outputs = await upgraderApi.listOutputs();
-    } catch {
-      return [];
-    }
-    const q = query.trim().toLowerCase();
-    return outputs
-      .filter((o) => o.enabled)
-      .filter((o) =>
-        !q
-          ? true
-          : o.name.toLowerCase().includes(q) ||
-            (isUuid && o.card_id.toLowerCase() === q),
-      )
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, 20)
-      .map((o) => ({
-        id: o.card_id,
-        type: "card" as const,
-        name: o.name,
-        imageUrl: o.image_url,
-        priceUsd: o.price,
-      }));
-  }
 
   if (type === "pack") {
     const or: Record<string, unknown>[] = [];
@@ -157,9 +124,22 @@ const createChallengeSchema = z
     // card-hit (pack_pull)
     packId: z.string().regex(UUID_RE, "Select a valid pack").optional(),
     cardId: z.string().regex(UUID_RE, "Select a valid card").optional(),
-    // upgrader-hit
-    winPercentage: z.number().min(0).max(100).optional(),
-    percentOp: z.enum(["lte", "gte", "eq"]).optional(),
+    // upgrader-hit (card-agnostic): bet >= minBetUsd AND multiplier >= minMultiplier.
+    // Exact bounds are enforced by the backend; keep client checks loose.
+    minBetUsd: z
+      .number()
+      .positive("Min bet must be greater than 0")
+      .refine((v) => Math.round(v * 100) / 100 === v, {
+        message: "Min bet can have at most 2 decimal places",
+      })
+      .optional(),
+    minMultiplier: z
+      .number()
+      .positive("Min multiplier must be greater than 0")
+      .refine((v) => Math.round(v * 10000) / 10000 === v, {
+        message: "Min multiplier can have at most 4 decimal places",
+      })
+      .optional(),
   })
   .superRefine((v, ctx) => {
     if (v.kind === "card") {
@@ -170,21 +150,18 @@ const createChallengeSchema = z
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Select a card", path: ["cardId"] });
       }
     } else {
-      if (!v.cardId) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Select a card", path: ["cardId"] });
-      }
-      if (v.winPercentage == null) {
+      if (v.minBetUsd == null) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Win percentage is required",
-          path: ["winPercentage"],
+          message: "Min bet is required",
+          path: ["minBetUsd"],
         });
       }
-      if (!v.percentOp) {
+      if (v.minMultiplier == null) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Select a comparison operator",
-          path: ["percentOp"],
+          message: "Min multiplier is required",
+          path: ["minMultiplier"],
         });
       }
     }
@@ -198,8 +175,8 @@ export type CreateChallengeData = {
   maxClaims: number;
   packId?: string;
   cardId?: string;
-  winPercentage?: number;
-  percentOp?: "lte" | "gte" | "eq";
+  minBetUsd?: number;
+  minMultiplier?: number;
 };
 
 export async function createChallenge(
@@ -242,11 +219,11 @@ export async function createChallenge(
             type: "upgrader",
             prize_amount: parsed.prizeAmount,
             max_claims: parsed.maxClaims,
+            // upgrader is card-agnostic — only the bet + multiplier thresholds.
             requirement: {
               kind: "upgrader",
-              card_id: parsed.cardId,
-              win_percentage: parsed.winPercentage,
-              percent_op: parsed.percentOp,
+              min_bet_usd: parsed.minBetUsd,
+              min_multiplier: parsed.minMultiplier,
             },
           },
     );
