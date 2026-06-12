@@ -11,7 +11,8 @@
  *
  *   1.  Default-zero: profitDelta is exactly $0 at `defaultLeversV2` (also on
  *       a sparse/degraded baseline).
- *   2.  Raw math edge = mean(packs, upgrader) = 10.495% → renders "10.50%".
+ *   2.  Raw math edge = mean(packs, upgrader) = 10.495% → renders EXACTLY
+ *       "10.495%" (3-decimal precision, owner spec #7).
  *   3.  Raffle keep-slider: linear, monotone, exact endpoints.
  *   4.  Deposit fee: revenue = pct × selected volume EXACTLY, USDT* excluded
  *       by default, profitDelta moves by exactly the revenue.
@@ -74,7 +75,39 @@ import {
   applyWagerScenarioV2,
   formatWagerMultLabel,
   WAGER_SCENARIO_PRESET_MULTS,
+  // Spec #7
+  formatRawMathEdgePctV2,
+  // Spec #9
+  affiliateGlobalScaleFactorV2,
+  effectiveAffiliateRateV2,
+  topAffiliateTierEdgeShare,
+  // Spec #11
+  rainPlanV2,
+  // Spec #14
+  EDGE_INCLUSION_KEYS,
+  defaultEdgeInclusionV2,
+  isLeverIncludedInEdgeV2,
+  computeEdgeAfterRewards,
+  // Spec #8
+  computeTimeBonusEngineV2,
+  type DepositBonusForecastAnchor,
+  // Spec #12
+  detectAdjustmentReasonKeyV2,
+  buildNotItemizedDrilldownV2,
+  type NotItemizedRowV2,
 } from "../_model-v2";
+
+// Spec #8 — the forecast-page engine pieces, imported DIRECTLY so the
+// bridge's numbers can be pinned IDENTICAL to a verbatim page-style call.
+import {
+  DEPOSIT_BONUS_FORECAST_CONFIG,
+  BASELINE_SCENARIO_ID,
+  SCENARIO_A_BASELINE,
+  simulateSet as depositBonusSimulateSet,
+  projectSplitCapVsBaseline,
+  findSplitCapLibraryScenario,
+} from "../../rewards/deposit-bonus/_forecast";
+import { SCENARIO_C_SIXH_25 } from "../../rewards/deposit-bonus/_forecast/scenarios";
 
 import {
   SHARD_CASES,
@@ -527,7 +560,7 @@ check("default-zero: holds on a sparse/degraded baseline too", () => {
 
 // ─── 2. Raw math edge ────────────────────────────────────────────────────────
 
-check("raw math edge: mean(10.99%, 10%) = 10.495% → renders as 10.50%", () => {
+check("raw math edge (spec #7): mean(10.99%, 10%) = 10.495% → renders EXACTLY \"10.495%\"", () => {
   const raw = rawMathEdgeV2(defaultLeversV2(baseline));
   approx(
     raw,
@@ -536,8 +569,14 @@ check("raw math edge: mean(10.99%, 10%) = 10.495% → renders as 10.50%", () => 
     "rawMathEdgeV2 at defaults",
   );
   approx(raw, 0.10495, 1e-9, "rawMathEdgeV2 numeric value");
-  const rendered = `${(raw * 100).toFixed(2)}%`;
-  assert(rendered === "10.50%", `2dp render must be "10.50%", got "${rendered}"`);
+  // THE spec-#7 pin: the dedicated raw-edge formatter shows the exact
+  // 3-decimal value at the defaults — never the rounded "10.50%".
+  const rendered = formatRawMathEdgePctV2(raw);
+  assert(rendered === "10.495%", `raw-edge render must be "10.495%", got "${rendered}"`);
+  // 2dp-clean values drop the redundant third decimal (stay visually 2dp).
+  assert(formatRawMathEdgePctV2(0.105) === "10.50%", "10.500 trims to 10.50%");
+  assert(formatRawMathEdgePctV2(0.11) === "11.00%", "11.000 trims to 11.00%");
+  assert(formatRawMathEdgePctV2(Number.NaN) === "—", "non-finite renders an em dash");
   // Battles contribute nothing to the raw mean and stay pinned at 0.
   assert(PLANNED_BATTLES_EDGE_DEFAULT === 0, "battles planning edge must be 0");
 });
@@ -1280,6 +1319,11 @@ const PERTURBATIONS: Perturbation[] = [
     overrides: () => ({ affiliateWagerReqEnabled: false }),
   },
   {
+    name: "affiliate GLOBAL scale (spec #9)",
+    leverKey: "affiliate",
+    overrides: () => ({ affiliateGlobalScalePct: 50 }),
+  },
+  {
     name: "deposit-bonus cap",
     leverKey: "deposit-bonus",
     overrides: () => ({ depositBonusCapMult: 0.5 }),
@@ -1587,6 +1631,364 @@ check("owner total P&L: balance-sheet formula reconciles to the dashboard +$44,9
     "pnl = deposits − withdrawals − onSiteBalance − inventory − vouchers − unclaimedRakeback",
   );
   approx(t.pnl, 44_925.74, CENT, "the owner's trusted dashboard figure");
+});
+
+// ─── 19. Global affiliate scale (owner spec #9) ──────────────────────────────
+
+check("affiliate global scale (spec #9): 100-identity, 50 halves the cost EXACTLY, monotone, composes", () => {
+  const d = defaultLeversV2(baseline);
+  const baseRow = project({}).levers.find((l) => l.key === "affiliate");
+  assert(baseRow != null, "affiliate row missing");
+
+  const at = (pct: number) => {
+    const p = project({ affiliateGlobalScalePct: pct });
+    const row = p.levers.find((l) => l.key === "affiliate");
+    assert(row != null, `affiliate row missing @ ${pct}`);
+    return { p, row };
+  };
+
+  // 100 = exact identity ($0 delta — the default).
+  const id = at(100);
+  assert(id.row.plannedCost === baseRow.plannedCost, "scale 100 must be the EXACT identity");
+  approx(id.row.deltaCost, 0, 1e-9, "scale 100 delta $0");
+
+  // 50 halves the commission cost exactly; 0 turns the program off.
+  const half = at(50);
+  approx(half.row.plannedCost, baseline.affiliateCommissionCost * 0.5, 1e-9, "scale 50 → exactly half the cost");
+  approx(at(0).row.plannedCost, 0, 1e-9, "scale 0 → program off");
+  profitIdentity(half.p, "affiliate scale 50");
+
+  // Monotone in the scale.
+  let prev = -1;
+  for (const pct of [0, 25, 50, 75, 100, 150, 200]) {
+    const c = at(pct).row.plannedCost;
+    assert(c >= prev - 1e-9, `scale must be monotone (broke at ${pct})`);
+    prev = c;
+  }
+
+  // Factor + effective-rate display helper ("3.00% → 1.50%").
+  assert(affiliateGlobalScaleFactorV2({ affiliateGlobalScalePct: 50 }) === 0.5, "factor 50 → 0.5");
+  assert(affiliateGlobalScaleFactorV2({ affiliateGlobalScalePct: Number.NaN }) === 1, "non-finite → neutral 1");
+  approx(
+    effectiveAffiliateRateV2({ affiliateRates: { 1: 0.03 }, affiliateGlobalScalePct: 50 }, 1, 0.03),
+    0.015,
+    1e-12,
+    "L1 3.00% → 1.50% at scale 50",
+  );
+
+  // MULTIPLICATIVE composition: doubling every per-level rate at scale 50
+  // reproduces the default cost exactly.
+  const doubled: Record<number, number> = {};
+  for (const t of baseline.affiliateTiers) doubled[t.level] = t.currentRate * 2;
+  const composed = project({ affiliateGlobalScalePct: 50, affiliateRates: doubled });
+  const composedRow = composed.levers.find((l) => l.key === "affiliate");
+  assert(composedRow != null, "composed affiliate row missing");
+  approx(composedRow.plannedCost, baseline.affiliateCommissionCost, 1e-9, "×2 rates at 50% scale = default cost (composes)");
+
+  // The edge-chip input (top-tier share) scales too.
+  approx(
+    topAffiliateTierEdgeShare(baseline, { ...d, affiliateGlobalScalePct: 50 }),
+    topAffiliateTierEdgeShare(baseline, d) * 0.5,
+    1e-12,
+    "top-tier edge share halves at scale 50",
+  );
+});
+
+// ─── 20. Rain DURATION (owner spec #11) ──────────────────────────────────────
+
+check("rain duration (spec #11): 2h + $10 → 12 rains/day → $3,600/mo; seeds ratio-1; monotone", () => {
+  const d = defaultLeversV2(baseline);
+
+  // Owner example: set 2h → 12 rains a day; monthly = 24/2 × $10 × 30.
+  const plan = rainPlanV2(baseline, { ...d, rainDurationHours: 2, rainPerEventUsd: 10 });
+  approx(plan.rainsPerDay, 12, 1e-12, "24 ÷ 2h = 12 rains a day");
+  approx(plan.monthlyBudgetUsd, (24 / 2) * 10 * 30, 1e-9, "monthly = 12 × $10 × 30 = $3,600");
+
+  // Null seeds = the OBSERVED back-to-back duration → ratio exactly 1 → $0 delta.
+  const anchor = baseline.rainAnchor;
+  assert(anchor != null, "fixture rain anchor missing");
+  const seeded = rainPlanV2(baseline, d);
+  approx(seeded.durationHours, anchor.avgIntervalHours, 1e-9, "seed duration = window hours ÷ rain count");
+  assert(seeded.planVsObservedRatio != null, "ratio resolves with an anchor");
+  approx(seeded.planVsObservedRatio, 1, 1e-9, "ratio 1 at the null seeds");
+  approx(seeded.monthlyBudgetUsd, (24 / anchor.avgIntervalHours) * 30 * anchor.avgPoolUsd, 1e-6, "seeded monthly plan");
+
+  // Window cost: still scales the canonical net rain cost by planned/observed.
+  const cost = (h: number) => {
+    const row = project({ rainDurationHours: h }).levers.find((l) => l.key === "rain");
+    assert(row != null, "rain row missing");
+    return row.plannedCost;
+  };
+  approx(cost(anchor.avgIntervalHours / 2), baseline.rainCost * 2, 1e-6, "half the duration → 2× the window cost");
+  assert(cost(1) > cost(2) && cost(2) > cost(6) && cost(6) > cost(24), "shorter duration → strictly more cost (monotone)");
+});
+
+// ─── 21. Edge-inclusion toggles (owner spec #14) ─────────────────────────────
+
+check("edge inclusion (spec #14): all-on is BYTE-EQUAL; races-off removes exactly its contribution; re-on restores", () => {
+  const d = defaultLeversV2(baseline);
+
+  // All-on identity: explicit all-true map === the default, byte-for-byte.
+  const implicit = projectEdgePlanV2(baseline, d);
+  const explicit = projectEdgePlanV2(baseline, { ...d, edgeInclusion: defaultEdgeInclusionV2() });
+  assert(JSON.stringify(implicit) === JSON.stringify(explicit), "all-on must be byte-equal to the default");
+  assert(implicit.excludedPrograms.length === 0 && implicit.excludedLeverKeys.length === 0, "no exclusions at default");
+  assert(EDGE_INCLUSION_KEYS.length === 13, "13 toggleable program rows");
+  assert(isLeverIncludedInEdgeV2(d, "other") && isLeverIncludedInEdgeV2(d, "credit-matrix"), "non-program rows always included");
+
+  // Non-default $ state so the exclusion moves a real delta.
+  const seeds = resolveLeverSeedsV2(baseline, d);
+  const hot: Partial<PlannedLeversV2> = { raceMonthlyBudgetUsd: seeds.raceMonthlyBudgetUsd * 2 };
+  const on = project(hot);
+  const off = project({ ...hot, edgeInclusion: { ...defaultEdgeInclusionV2(), races: false } });
+  const racesOn = on.levers.find((l) => l.key === "races");
+  const racesOff = off.levers.find((l) => l.key === "races");
+  assert(racesOn != null && racesOff != null, "races rows missing");
+
+  // The $ stays displayed on the row — attribution control, not a $0 budget.
+  assert(racesOff.plannedCost === racesOn.plannedCost, "row $ must keep displaying");
+  assert(racesOff.currentCost === racesOn.currentCost, "row current $ must keep displaying");
+
+  // Totals drop by EXACTLY the row's contribution.
+  approx(on.plannedRewardCost - off.plannedRewardCost, racesOn.plannedCost, 1e-9, "planned total drops by exactly races");
+  approx(on.currentRewardCost - off.currentRewardCost, racesOn.currentCost, 1e-9, "current total drops by exactly races");
+  approx(on.rewardCostDelta - off.rewardCostDelta, racesOn.deltaCost, 1e-9, "reward delta drops by exactly races delta");
+  approx(off.profitDelta, on.profitDelta + racesOn.deltaCost, CENT, "profit excludes the races delta");
+  profitIdentity(off, "races excluded");
+
+  // Footnote payload (the transparency line).
+  assert(off.excludedLeverKeys.length === 1 && off.excludedLeverKeys[0] === "races", "excluded keys");
+  assert(
+    off.excludedPrograms.length === 1 &&
+      off.excludedPrograms[0].key === "races" &&
+      off.excludedPrograms[0].plannedCostUsd === racesOn.plannedCost,
+    "footnote carries the excluded program + $",
+  );
+
+  // Drag excludes it by exactly its contribution (planned drag × hub wager).
+  const dragOn = computeOwnerDragSummary(baseline, on);
+  const dragOff = computeOwnerDragSummary(baseline, off);
+  assert(dragOn.plannedDragPct != null && dragOff.plannedDragPct != null, "drags resolve");
+  approx(
+    (dragOn.plannedDragPct - dragOff.plannedDragPct) * baseline.recon.d30.wager,
+    racesOn.plannedCost,
+    1e-6,
+    "drag reduces by exactly the races contribution",
+  );
+
+  // The after-rewards waterfall drops the row too.
+  const wf = computeEdgeAfterRewards(off, { baseline, levers: { ...d, ...hot, edgeInclusion: { ...defaultEdgeInclusionV2(), races: false } } });
+  assert(wf.leverDrags.every((l) => l.key !== "races"), "waterfall must not carry an excluded row");
+
+  // Re-on restores byte-equal.
+  const restored = project({ ...hot, edgeInclusion: defaultEdgeInclusionV2() });
+  assert(JSON.stringify(restored) === JSON.stringify(on), "re-enabling restores byte-equal");
+});
+
+check("edge inclusion (spec #14): composes with the wager-scenario multipliers", () => {
+  const leverState: PlannedLeversV2 = {
+    ...scenarioCustomLevers(baseline),
+    edgeInclusion: { ...defaultEdgeInclusionV2(), shards: false },
+  };
+  const p = projectEdgePlanV2(baseline, leverState);
+  const shardBase = p.levers.find((l) => l.key === "shards");
+  assert(shardBase != null && shardBase.plannedCost > 0, "shards $ must be live in this state");
+  assert(p.excludedLeverKeys.includes("shards"), "shards excluded");
+
+  for (const m of [1, 2, 5]) {
+    const v = applyWagerScenarioV2(baseline, p, { presetMult: m });
+    const row = v.levers.find((l) => l.key === "shards");
+    assert(row != null, `shards row missing @ ${m}×`);
+    assert(row.includedInEdge === false, `${m}×: excluded flag carried`);
+    // Excluded proportional row still scales for DISPLAY…
+    assert(row.plannedCost === shardBase.plannedCost * (m === 1 ? 1 : m), `${m}×: excluded row $ still scales for display`);
+    // …but the totals exclude it at every multiplier.
+    const includedSum = v.levers.filter((r) => r.includedInEdge).reduce((s, l) => s + l.plannedCost, 0);
+    approx(v.plannedRewardCost, includedSum, CENT, `${m}×: totals = Σ included rows only`);
+    const allSum = v.levers.reduce((s, l) => s + l.plannedCost, 0);
+    assert(allSum - v.plannedRewardCost > 0.01, `${m}×: total really excludes the shard $`);
+    assert(v.excludedLeverKeys.length === 1 && v.excludedLeverKeys[0] === "shards", `${m}×: view carries the exclusion`);
+  }
+});
+
+// ─── 22. Time-bonus = forecast engine (owner spec #8) ────────────────────────
+
+function makeForecastAnchor(): DepositBonusForecastAnchor {
+  return {
+    totalCost: 52_000,
+    uniqueClaimants: 640,
+    periodDays: 30,
+    claimProbability: 0.41,
+    avgBonusUsd: 12.6,
+    empiricalCapUsd: 100,
+    capHitRate: 0.08,
+    blendedRoi: 0.6,
+    avgGgrPerClaimant: 31,
+  };
+}
+
+check("time bonus engine (spec #8): $25/6h maps to C-6h-25 and EQUALS a verbatim forecast-page engine run", () => {
+  const anchor = makeForecastAnchor();
+
+  // The library mapping the owner spec names.
+  const matched = findSplitCapLibraryScenario(25, 6);
+  assert(matched != null && matched.id === SCENARIO_C_SIXH_25.id, "$25/6h must map to C-6h-25");
+
+  const proj = projectSplitCapVsBaseline(anchor, 25, 6);
+  assert(proj.matchedLibraryScenario === true, "library match flagged");
+  assert(proj.scenarioId === "C-6h-25", "scenario id pins the library entry");
+  assert(proj.horizonDays === 30, "default horizon = 30d");
+
+  // IDENTITY: the bridge's numbers equal a direct page-style engine call —
+  // same assumptions builder, same anchor, same scenario set.
+  const assumptions = DEPOSIT_BONUS_FORECAST_CONFIG.defaults(anchor);
+  const direct = depositBonusSimulateSet(
+    [SCENARIO_A_BASELINE, SCENARIO_C_SIXH_25],
+    assumptions,
+    { days: assumptions.windowDays },
+    BASELINE_SCENARIO_ID,
+    anchor.totalCost,
+  );
+  const directRes = direct.find((r) => r.scenarioId === "C-6h-25");
+  const directBase = direct.find((r) => r.scenarioId === BASELINE_SCENARIO_ID);
+  assert(directRes != null && directBase != null, "direct engine run resolves");
+  assert(proj.scenarioCostUsd === directRes.bonusCost, "scenario cost identical to the page engine");
+  assert(proj.grossSavingsUsd === directRes.savingsVsBaseline, "gross savings identical");
+  assert(proj.netSavingsUsd === directRes.netSavingsVsBaseline, "net savings identical");
+  assert(proj.baselineCostUsd === directBase.bonusCost, "baseline cost identical");
+
+  // The anchored baseline reproduces the REAL measured cost (30d ÷ 30d).
+  approx(proj.baselineCostUsd, anchor.totalCost, 1e-6, "anchored baseline = real total cost");
+  // Tightening to $25/6h can only save (engine directional contract).
+  assert(proj.grossSavingsUsd >= 0, "split tightening must not cost more");
+  // 30d horizon → monthly savings = horizon savings.
+  approx(proj.monthlyNetSavingsUsd, proj.netSavingsUsd, 1e-9, "30d horizon → monthly = horizon");
+  approx(proj.monthlyGrossSavingsUsd, proj.grossSavingsUsd, 1e-9, "30d horizon → monthly gross = horizon");
+
+  // The v2 model wrapper threads the block's levers into the SAME call.
+  const viaModel = computeTimeBonusEngineV2(
+    { depositBonusForecastBaseline: anchor },
+    { depositBonusHourlyAmountUsd: 25, depositBonusHourlyIntervalHours: 6 },
+  );
+  assert(viaModel != null, "wrapper resolves with a healthy anchor");
+  assert(
+    viaModel.scenarioCostUsd === proj.scenarioCostUsd &&
+      viaModel.netSavingsUsd === proj.netSavingsUsd &&
+      viaModel.scenarioId === proj.scenarioId,
+    "wrapper output identical to the bridge",
+  );
+
+  // Degraded anchor → null (the UI falls back to the labeled floor line).
+  assert(
+    computeTimeBonusEngineV2(
+      { depositBonusForecastBaseline: null },
+      { depositBonusHourlyAmountUsd: 25, depositBonusHourlyIntervalHours: 6 },
+    ) === null,
+    "null anchor → null (floor-only rendering)",
+  );
+
+  // Non-library inputs synthesize the same split-window shape.
+  const custom = projectSplitCapVsBaseline(anchor, 33, 7);
+  assert(custom.matchedLibraryScenario === false, "33/7h is not a library entry");
+  assert(custom.scenarioId === "edge-plan-split-33-7h", "synthesized id");
+});
+
+// ─── 23. Not-itemized drill-down (owner spec #12, pure half) ─────────────────
+
+check("not-itemized (spec #12): reason keys pin to the probed live row shapes", () => {
+  assert(detectAdjustmentReasonKeyV2("Admin adjustment: Giveaway", null) === "giveaway", "Giveaway");
+  assert(detectAdjustmentReasonKeyV2("Admin adjustment: Bonus", null) === "bonus", "Bonus");
+  assert(detectAdjustmentReasonKeyV2("Admin adjustment: Streamer Pro deal", null) === "streamer pro", "two-word key");
+  assert(detectAdjustmentReasonKeyV2("Admin adjustment: 50% LB SPLIT", null) === "lb split", "leading percent dropped");
+  assert(detectAdjustmentReasonKeyV2("Admin adjustment: LB SPLIT. 50%", null) === "lb split", "trailing punctuation stripped");
+  assert(detectAdjustmentReasonKeyV2("Inventory removed: Mareep ($12.00) — XTR", null) === "inventory removal", "inventory description");
+  assert(detectAdjustmentReasonKeyV2("whatever", "inventory_removal") === "inventory removal", "metadata kind wins");
+  assert(detectAdjustmentReasonKeyV2(null, null) === "no description", "null description");
+  assert(detectAdjustmentReasonKeyV2("Admin adjustment:   ", null) === "no reason", "empty reason");
+});
+
+check("not-itemized (spec #12): every grouping reconciles EXACTLY with the bucket totals", () => {
+  const mk = (
+    id: string,
+    userId: string,
+    iso: string,
+    amountUsd: number,
+    description: string,
+  ): NotItemizedRowV2 => ({
+    ledgerTxId: id,
+    userId,
+    username: userId === "u1" ? "alice" : null,
+    createdAtIso: iso,
+    amountUsd,
+    description,
+    reasonKey: detectAdjustmentReasonKeyV2(description, null),
+    adminUsername: null,
+    adminCategory: null,
+    adminReason: null,
+  });
+  const rows: NotItemizedRowV2[] = [
+    mk("t1", "u1", "2026-06-01T10:00:00.000Z", 100, "Admin adjustment: Giveaway"),
+    mk("t2", "u1", "2026-06-05T10:00:00.000Z", -40, "Admin adjustment: accidentally credited"),
+    mk("t3", "u2", "2026-05-20T10:00:00.000Z", 250, "Admin adjustment: Giveaway"),
+    mk("t4", "u3", "2026-05-02T10:00:00.000Z", -10, "Inventory removed: Mareep ($12.00)"),
+    mk("t5", "u2", "2026-06-11T10:00:00.000Z", 60, "Admin adjustment: Bonus"),
+  ];
+  const d = buildNotItemizedDrilldownV2(rows, { windowLabel: "Last 30 days", truncated: false });
+
+  // Bucket-row totals (the panel's "Not itemized" line).
+  assert(d.totals.count === 5, "count");
+  approx(d.totals.creditsUsd, 410, 1e-9, "credits");
+  approx(d.totals.debitsUsd, 50, 1e-9, "debits");
+  approx(d.totals.netUsd, 360, 1e-9, "net = credits − debits");
+  assert(d.truncated === false && d.windowLabel === "Last 30 days", "metadata");
+
+  // EVERY grouping's Σ reconciles exactly with the totals.
+  const sums = (xs: readonly { count: number; creditsUsd: number; debitsUsd: number }[]) =>
+    xs.reduce(
+      (s, g) => ({ count: s.count + g.count, credits: s.credits + g.creditsUsd, debits: s.debits + g.debitsUsd }),
+      { count: 0, credits: 0, debits: 0 },
+    );
+  for (const [label, group] of [
+    ["byMonth", sums(d.byMonth)],
+    ["byReasonKey", sums(d.byReasonKey)],
+    ["topUsersByNet", sums(d.topUsersByNet)],
+  ] as const) {
+    assert(group.count === 5, `${label} Σ count`);
+    approx(group.credits, 410, 1e-9, `${label} Σ credits`);
+    approx(group.debits, 50, 1e-9, `${label} Σ debits`);
+  }
+
+  // Months newest-first; users sorted by |net|; largest capped + sorted.
+  assert(d.byMonth.length === 2 && d.byMonth[0].month === "2026-06" && d.byMonth[1].month === "2026-05", "months newest first");
+  assert(d.topUsersByNet[0].userId === "u2", "u2 leads by |net| ($310)");
+  approx(d.topUsersByNet[0].netUsd, 310, 1e-9, "u2 net");
+  assert(d.largest.length === 5 && d.largest[0].amountUsd === 250 && d.largest[1].amountUsd === 100, "largest sorted by |amount|");
+  const giveaway = d.byReasonKey.find((g) => g.reasonKey === "giveaway");
+  assert(giveaway != null && giveaway.count === 2, "giveaway reason groups 2 rows");
+  approx(giveaway.creditsUsd, 350, 1e-9, "giveaway credits");
+});
+
+// ─── 24. Sanitizer coverage for the new levers (specs #9/#14) ────────────────
+
+check("sanitizer: affiliateGlobalScalePct clamps 0..200 (default 100); edgeInclusion fills every key", () => {
+  assert(sanitizeLeversV2({}).affiliateGlobalScalePct === 100, "missing → 100");
+  assert(sanitizeLeversV2({ affiliateGlobalScalePct: 500 }).affiliateGlobalScalePct === 200, "clamps to 200");
+  assert(sanitizeLeversV2({ affiliateGlobalScalePct: -3 }).affiliateGlobalScalePct === 0, "clamps to 0");
+  assert(sanitizeLeversV2({ affiliateGlobalScalePct: "junk" }).affiliateGlobalScalePct === 100, "non-finite → 100");
+  assert(sanitizeLeversV2({ affiliateGlobalScalePct: 50 }).affiliateGlobalScalePct === 50, "valid value kept");
+
+  const out = sanitizeLeversV2({ edgeInclusion: { races: false, bogus: false, rakeback: "x", shards: true } });
+  assert(out.edgeInclusion.races === false, "explicit false kept");
+  assert(out.edgeInclusion.rakeback === true, "non-boolean → true");
+  assert(out.edgeInclusion.shards === true, "explicit true kept");
+  assert(!("bogus" in out.edgeInclusion), "unknown program key dropped");
+  for (const k of EDGE_INCLUSION_KEYS) {
+    assert(k in out.edgeInclusion, `inclusion key "${k}" must be filled`);
+  }
+  assert(Object.keys(out.edgeInclusion).length === EDGE_INCLUSION_KEYS.length, "exact inclusion key set");
+  // Defaults: every key true.
+  const def = sanitizeLeversV2(undefined).edgeInclusion;
+  assert(EDGE_INCLUSION_KEYS.every((k) => def[k] === true), "default inclusion all-true");
 });
 
 // ─── Summary ─────────────────────────────────────────────────────────────────

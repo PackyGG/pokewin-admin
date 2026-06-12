@@ -17,7 +17,7 @@ import { test, expect } from "../fixtures/base";
  *      (see src/app/responsive-fixture/edge-plan-2/fixture-client.tsx) that
  *      populates EVERY v2.1 block. Against it we pin the overhaul's plan
  *      verification list:
- *        • raw math edge chip reads 10.50% at the planning defaults,
+ *        • raw math edge chip reads 10.495% at the planning defaults (spec #7),
  *        • raffles = ONE keep-slider; the old ×-multiplier sliders are gone,
  *        • deposit-fee coin chips react (USDT exempt by default) and the fee
  *          math is exact (+$5,500.00 at 2% of the $275k non-USDT volume),
@@ -147,16 +147,17 @@ test.describe("Edge Plan 2.0 — planner contract (fixture)", () => {
     expect(cls).toMatch(NET_EDGE_TONE_CLASS);
   });
 
-  test("raw math edge chip reads 10.50% at the planning defaults", async ({
+  test("raw math edge chip reads 10.495% at the planning defaults", async ({
     adminPage,
   }) => {
     await gotoFixture(adminPage);
     // "House edge" (gaming) is the default workspace — the dual readout is
-    // already on screen: mean(10.99%, 10%) = 10.495% → rendered "10.50%".
+    // already on screen: mean(10.99%, 10%) = 10.495%, rendered at the
+    // spec-#7 3-decimal precision ("10.495%", never the rounded "10.50%").
     await expect(
       adminPage.getByText("Raw math edge", { exact: true }),
     ).toBeVisible({ timeout: 15_000 });
-    await expect(adminPage.getByText("10.50%").first()).toBeVisible();
+    await expect(adminPage.getByText("10.495%").first()).toBeVisible();
     // Both figures stay labeled — the wager-weighted twin is present too.
     await expect(
       adminPage.getByText("Wager-weighted edge", { exact: true }),
