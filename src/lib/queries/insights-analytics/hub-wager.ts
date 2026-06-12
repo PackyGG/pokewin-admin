@@ -50,6 +50,9 @@ import { MS_PER_DAY, MS_PER_MINUTE } from "@/lib/utils/time";
 /** Lifetime lookback cap (days) for the hub wager — matches the 365d cap used across /ggr + insights. */
 export const INSIGHTS_HUB_WAGER_LOOKBACK_DAYS = 365;
 
+/** 30-day window for the Edge Plan 2.0 headline (same math, shorter cutoff). */
+export const INSIGHTS_HUB_WAGER_30D_LOOKBACK_DAYS = 30;
+
 /** "now" floored to the whole minute so the period-keyed cache key is stable for 60s. */
 function bucketedNow(): Date {
   return new Date(Math.floor(Date.now() / MS_PER_MINUTE) * MS_PER_MINUTE);
@@ -89,23 +92,40 @@ const cachedHubWager = unstable_cache(
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );
 
-/**
- * Total customer wager for the Insights hub, lifetime (365d-bounded).
- * House rules baked in — see the module doc above.
- */
-export async function getInsightsHubWager(): Promise<number> {
+/** Shared scope + cache plumbing for any hub-wager lookback. */
+async function hubWagerForLookbackDays(lookbackDays: number): Promise<number> {
   const now = bucketedNow();
-  const cutoff = new Date(
-    now.getTime() - INSIGHTS_HUB_WAGER_LOOKBACK_DAYS * MS_PER_DAY,
-  );
+  const cutoff = new Date(now.getTime() - lookbackDays * MS_PER_DAY);
   const [excluded, sessionWindowsCte] = await Promise.all([
     getExcludedUserIds(),
     getCreatorSessionWindowsCte(),
   ]);
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
+  // `cutoffIso` is an unstable_cache key arg, so the 30d and 365d variants
+  // get DISTINCT cache entries from the same cached function.
   return cachedHubWager(
     cutoff.toISOString(),
     blacklistIdNotIn,
     sessionWindowsCte,
   );
+}
+
+/**
+ * Total customer wager for the Insights hub, lifetime (365d-bounded).
+ * House rules baked in — see the module doc above.
+ */
+export async function getInsightsHubWager(): Promise<number> {
+  return hubWagerForLookbackDays(INSIGHTS_HUB_WAGER_LOOKBACK_DAYS);
+}
+
+/**
+ * The SAME hub-wager math on a 30-day window — the Edge Plan 2.0 headline
+ * anchor ("Wager (30d, real customers)"). Additive export: identical scope
+ * (borrow-net real amounts, creator-sessions excluded, sponsored battles +
+ * upgrader included), identical cached reader, only the cutoff differs —
+ * so the Edge Plan headline reconciles with the /insights hub tile by
+ * construction (same helper, different clearly-labeled window).
+ */
+export async function getInsightsHubWager30d(): Promise<number> {
+  return hubWagerForLookbackDays(INSIGHTS_HUB_WAGER_30D_LOOKBACK_DAYS);
 }
