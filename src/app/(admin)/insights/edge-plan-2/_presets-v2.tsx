@@ -41,8 +41,16 @@ import {
   type WagerScenarioState,
 } from "./_model-v2";
 
-const STORAGE_KEY = "edge-plan-2:presets:v1";
-const STORAGE_VERSION = 1 as const;
+const STORAGE_KEY = "edge-plan-2:presets:v2";
+/**
+ * The legacy v1 store. Read ONCE (lazily) when the v2 key is empty so old
+ * presets migrate through the NEW `sanitizeLeversV2` (which drops the
+ * removed v1 lever fields and inverts `removeAffiliateWagerReq` into
+ * `affiliateWagerReqEnabled`). The v1 key itself is LEFT INTACT — never
+ * deleted, never rewritten.
+ */
+const LEGACY_V1_STORAGE_KEY = "edge-plan-2:presets:v1";
+const STORAGE_VERSION = 2 as const;
 const MAX_NAME_LEN = 60;
 
 const DEFAULT_WAGER_SCENARIO: WagerScenarioState = { presetMult: 1 };
@@ -85,6 +93,12 @@ function readStore(): PresetStore {
   let raw: string | null = null;
   try {
     raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      // Lazy v1 → v2 migration: parse the legacy store through the NEW
+      // sanitizer (it drops removed lever fields + inverts the affiliate
+      // wager-req toggle). The v1 key stays untouched.
+      raw = window.localStorage.getItem(LEGACY_V1_STORAGE_KEY);
+    }
   } catch {
     return EMPTY_STORE;
   }

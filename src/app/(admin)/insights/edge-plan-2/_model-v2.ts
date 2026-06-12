@@ -1,14 +1,24 @@
 /**
- * Edge Plan 2.0 — projection model.
+ * Edge Plan 2.0 — projection model (v2 overhaul, 2026-06-12).
  *
- * Wraps the v1 pure projection engine (read-only import) and layers:
- *   • Raffle levers (reused from v1 on real reconstructed raffle prize cost)
- *   • A real affiliate commission / leaderboard split
- *   • Balance-withdrawal + wager-requirement DISPLAY context (no fabricated
- *     projection — every number is real production data or it is dropped)
+ * Wraps the v1 pure projection engine (read-only import) for the per-type
+ * GGR planning math + the rakeback/affiliate/daily-pack/signup levers, and
+ * REPLACES every multiplier-style reward lever with direct $ inputs seeded
+ * from real 30d run-rates, plus:
+ *   • a `revenueLevers` channel (deposit fee) — profitDelta =
+ *     ggrDelta − rewardCostDelta + revenueDelta,
+ *   • shards (NEW — `_shards-v2.ts` pure math),
+ *   • the reward-source crediting matrix (NEW — `_credit-matrix-v2.ts`,
+ *     a cost REDUCTION lever row),
+ *   • a measured-vs-planning split: `baseline.canonical` carries the REAL
+ *     `getWindowMetrics` 30d block (the "Measured 30d" strip) while the
+ *     planning numbers stay a separate, clearly-labeled what-if.
  *
- * Shared projection engine for Edge Plan 2.0. The v1 route was removed;
- * core types and math live here for reuse.
+ * INVARIANT (the __checks__ assert it): at `defaultLeversV2(baseline)` the
+ * projection's profitDelta is EXACTLY $0 — every $ input seeds from its
+ * real run-rate (or `null` = "resolve to the run-rate"), every toggle
+ * defaults to current behavior, shards default OFF, matrix cells default
+ * 100% credit, deposit fee defaults 0%.
  */
 
 import {
@@ -19,6 +29,7 @@ import {
   type LeverProjection,
   type RakebackCadenceId,
   type RakebackCadenceLever,
+  type GameTypeId,
   defaultLevers,
   projectEdgePlan,
   plannedBlendedHouseEdge,
@@ -30,11 +41,30 @@ import {
   PLANNED_UPGRADER_EDGE_DEFAULT,
   GAME_TYPE_IDS,
   REMOVE_WAGER_REQ_COMMISSION_BASE_MULT,
+  DEPOSIT_BONUS_CAP_COST_EXPONENT,
   marginBearingWager,
   computeBlendedEdgeBreakdown,
   defaultPlannedEdge,
   type BlendedEdgeBreakdown,
 } from "../system-edge-plan/_model";
+
+import {
+  type ShardGameWeights,
+  type ShardLeverConfig,
+  type ShardTypeWager,
+  SHARDS_DEFAULT_WAGER_PER_SHARD_USD,
+  SHARDS_DEFAULT_EV_PER_SHARD_USD,
+  shardCostInWindow,
+} from "./_shards-v2";
+
+import {
+  type CreditMatrixCells,
+  type CreditMatrixProgramRate,
+  type RewardSourceVolume,
+  deriveProgramRates,
+  sanitizeMatrixCells,
+  totalMatrixSavingsUsd,
+} from "./_credit-matrix-v2";
 
 export {
   clamp,
@@ -50,6 +80,7 @@ export {
   affiliateEdgeShareToWagerDrag,
   affiliateWagerDragToEdgeShare,
   removeWagerReqCommissionUplift,
+  REMOVE_WAGER_REQ_COMMISSION_BASE_MULT,
   measuredPacksEdge,
   blendedPackBattleEdge,
   blendedGamingEdge,
@@ -67,7 +98,53 @@ export {
   type EdgePlanProjection,
 } from "../system-edge-plan/_model";
 
-/** Labeled enumeration of house-funded reward channels (display/grouping). */
+// Shard + matrix primitives re-exported for the section builders.
+export {
+  SHARD_CASES,
+  SHARDS_DEFAULT_WAGER_PER_SHARD_USD,
+  SHARDS_DEFAULT_EV_PER_SHARD_USD,
+  SHARDS_TARGET_GIVEBACK,
+  shardCaseValueUsd,
+  shardCostInWindow,
+  shardMonthlyCost,
+  effectiveShardGiveback,
+  shardGivebackVsTarget,
+  weightedShardWager,
+  type ShardCase,
+  type ShardGameWeights,
+  type ShardLeverConfig,
+  type ShardTypeWager,
+} from "./_shards-v2";
+
+export {
+  CREDIT_MATRIX_PROGRAM_IDS,
+  CREDIT_MATRIX_PROGRAM_LABELS,
+  matrixCellKey,
+  getMatrixCell,
+  deriveProgramRates,
+  programSavingsUsd,
+  totalMatrixSavingsUsd,
+  type CreditMatrixCells,
+  type CreditMatrixProgramId,
+  type CreditMatrixProgramRate,
+  type RewardSourceVolume,
+} from "./_credit-matrix-v2";
+
+// ─── XP ↔ USD calibration (probe-pinned 2026-06-12) ─────────────────────────
+
+/**
+ * USD of wager-loss represented by ONE XP point.
+ *
+ * Probe evidence (scripts/probe-edge-plan-recon.ts, live prod): the level-1
+ * threshold sits at exactly 1,000 XP and the owner pins level 1 at "$10
+ * wager-loss" — so XP is wager-loss in CENTS (1 XP = $0.01), i.e. the
+ * owner's "~1:1" holds in cents, and the constant to convert an XP
+ * threshold to a $ wager-loss requirement is 0.01.
+ */
+export const XP_TO_USD = 0.01 as const;
+
+// ─── Reward-source display enumeration (unchanged from v2.0) ────────────────
+
 export type RewardWagerSourceId =
   | "race"
   | "leaderboard"
@@ -106,6 +183,141 @@ export const REWARD_WAGER_SOURCE_LABELS: Record<RewardWagerSourceId, string> = {
   other: "Other rewards",
 };
 
+// ─── Baseline block types (assembled in _baseline-v2.ts) ────────────────────
+
+/**
+ * The REAL measured 30d block from `getWindowMetrics` — the same source as
+ * /ggr + the dashboard. Rendered as the clearly-labeled "Measured 30d"
+ * strip; planning numbers stay separate. Null only when the read failed.
+ */
+export type CanonicalMeasuredBlock = {
+  wager: number;
+  gamingPayout: number;
+  ggr: number;
+  ngr: number;
+  rewardCost: number;
+  houseEdge: number | null;
+  bets: number;
+  rainHouseCost: number;
+};
+
+/** One coin's real 30d deposit volume (deposit-fee lever input). */
+export type DepositAssetVolume = {
+  /** Asset id (ledger `crypto_asset` / `deposit_addresses.asset_id`). */
+  asset: string;
+  count: number;
+  volumeUsd: number;
+};
+
+/** One prize line of a live raffle, valued at the live item price. */
+export type LiveRafflePrizeLine = {
+  type: "pack" | "card";
+  id: string;
+  quantity: number;
+  unitPriceUsd: number;
+};
+
+/** A currently-live (status=active) raffle — context card. */
+export type LiveRaffleInfo = {
+  id: string;
+  title: string | null;
+  totalEntries: number;
+  participantCount: number;
+  /** ISO timestamp or null. */
+  endsAt: string | null;
+  /** Σ prize line value at live prices (shared prize-valuation helper). */
+  prizeValueUsd: number;
+  prizes: LiveRafflePrizeLine[];
+};
+
+/** Real 30d rain cadence/pool anchor from the `rains` table. */
+export type RainAnchor = {
+  /** Completed rains in the window. */
+  count: number;
+  /** Mean pool (USD) per completed rain. */
+  avgPoolUsd: number;
+  /** Mean configured duration (ends_at − starts_at) in hours. */
+  avgDurationHours: number;
+  /** Observed mean hours BETWEEN rains (windowHours ÷ count) — cadence. */
+  avgIntervalHours: number;
+  /** Σ pool USD across completed rains. */
+  totalPoolUsd: number;
+};
+
+/** One adjustment-category row (canonical customer scope, 30d). */
+export type AdjustmentCategoryRow = {
+  /** Canonical category key, or null = the "Not itemized" NULL bucket. */
+  category: string | null;
+  label: string;
+  count: number;
+  creditsUsd: number;
+  debitsUsd: number;
+  /** True when this category is COUNTED in GGR/NGR/cost. */
+  counted: boolean;
+};
+
+/** One deposit-size histogram bucket: deposits with amount < maxUsd. */
+export type DepositSizeBucket = {
+  /** Upper bound (exclusive) in USD; null = the open top bucket. */
+  maxUsd: number | null;
+  count: number;
+};
+
+/** One per-user-day deposit-bonus bucket (time-bonus anchor). */
+export type TimeBonusBucket = {
+  /** Upper bound (exclusive) of the per-user-day bonus $; null = open top. */
+  maxUsd: number | null;
+  userDays: number;
+  totalUsd: number;
+};
+
+/** Real per-user-day deposit-bonus distribution over the window. */
+export type TimeBonusAnchor = {
+  userDays: number;
+  users: number;
+  totalUsd: number;
+  avgPerUserDayUsd: number;
+  maxPerUserDayUsd: number;
+  /** Observed share of window days an active claimer claims (0..1). */
+  claimRatePerUserDay: number;
+  buckets: TimeBonusBucket[];
+};
+
+/** Level/XP gate behind one daily reward pack. */
+export type DailyPackLevelInfo = {
+  packId: string;
+  rewardSlug: string;
+  levelRequired: number;
+  /**
+   * Empirical XP threshold for `levelRequired` (from `user_statistics`
+   * level boundaries, monotone-enforced). Null when no user has reached
+   * that level yet (no empirical boundary).
+   */
+  xpThreshold: number | null;
+  /** xpThreshold × XP_TO_USD — the $ wager-loss required to unlock. */
+  wagerLossRequiredUsd: number | null;
+  /**
+   * Default 30d re-lock fraction (`rewards.daily_unlock_percentage`,
+   * NULL = 1%) — share of the level's wager-loss a user must re-earn after
+   * the 30-day period. A PLAYER requirement, not a house cost.
+   */
+  relockPctDefault: number;
+};
+
+/** Real 30d usage stats for one daily reward pack. */
+export type DailyPackUsageInfo = {
+  packId: string;
+  opens: number;
+  claimers: number;
+  opensPerClaimer: number;
+  /** Customers at/above the pack's required level (eligibility base). */
+  eligibleUsers: number | null;
+  /** claimers ÷ eligibleUsers (0..1), null when eligibility unknown. */
+  claimRateVsEligible: number | null;
+  /** Share of claimers who claimed on ≥90% of window days (0..1). */
+  everyTimeClaimerPct: number | null;
+};
+
 export type UpgraderRakebackBucket = {
   label: string;
   minMultiplier: number;
@@ -115,38 +327,25 @@ export type UpgraderRakebackBucket = {
 };
 
 export type EdgePlanV2Baseline = SystemEdgeBaseline & {
-  /** Canonical headline wager before organic denominator override (30d). */
+  /** Canonical headline wager (30d) — getWindowMetrics, incl. upgrader. */
   totalWager: number;
   /** Ledger organic stake (no creator code; on-stream excluded; borrow incl.). */
   ledgerOrganicWager: number;
   /** Upgrader stake from non-creator-coded users. */
   upgraderOrganicWager: number;
-  /**
-   * Real affiliate COMMISSION cost over the window (Σ|affiliate_claim|), from
-   * `getAffiliateOverview().totalCommissionPaid`. The commission leg only — the
-   * leaderboard prize leg is tracked separately. Falls back to the bundled
-   * `affiliateCost` when the affiliate overview query is null.
-   */
+  /** Real affiliate COMMISSION cost (Σ|affiliate_claim|). */
   affiliateCommissionCost: number;
-  /**
-   * Real affiliate LEADERBOARD prize cost over the window
-   * (Σ|affiliate_leaderboard_prize|), from
-   * `getAffiliateOverview().leaderboardPrizePaid`. A SEPARATE canonical affiliate
-   * reward leg that the commission figure does not include. 0 when the query is
-   * null (the bundled total is then treated as all commission).
-   */
+  /** Real affiliate LEADERBOARD prize cost (Σ|affiliate_leaderboard_prize|). */
   affiliateLeaderboardCost: number;
   /** Where the affiliate commission/leaderboard split was sourced. */
   affiliateSplitSource: "overview" | "fallback";
   /** Share of withdrawal volume exiting as balance (0..1). Real ledger split. */
   balanceWithdrawalShare: number;
-  /** Estimated total withdrawal USD in window (for balance-withdrawal modeling). */
+  /** Estimated total withdrawal USD in window. */
   estimatedWithdrawalVolumeUsd: number;
-  /** Where withdrawal volume was sourced. */
   withdrawalVolumeSource: "ledger" | "estimate";
-  /** Where balance-withdrawal share was sourced. */
   balanceWithdrawalShareSource: "ledger" | "estimate";
-  /** True when headline metrics were recovered or planning defaults were used. */
+  /** True when headline metrics were recovered or planning defaults used. */
   baselineSparse?: boolean;
   /** Per-channel motha founder giveaway split (30d window). */
   mothaBreakdown: {
@@ -156,58 +355,163 @@ export type EdgePlanV2Baseline = SystemEdgeBaseline & {
     eventCount: number;
     activeDays: number;
   } | null;
-  /** Upgrader target-multiplier buckets for min-bet eligibility modeling. */
-  upgraderRakebackAnchor: {
-    buckets: UpgraderRakebackBucket[];
-    totalWager: number;
-    winRate: number;
-  } | null;
-  /** Real borrow-play stake (packs / battles) over the window — display context. */
+  /** Real borrow-play stake (packs / battles) over the window — display. */
   packWagerBorrowed: number;
   battleWagerBorrowed: number;
+
+  // ── v2.1 overhaul blocks ──
+  /** REAL measured 30d block (getWindowMetrics) — the "Measured 30d" strip. */
+  canonical: CanonicalMeasuredBlock | null;
+  /** MAX(ledger created_at), bounded read — the "Data through X" stamp. */
+  ledgerMaxCreatedAt: string | null;
+  /** Real 30d deposit volume per coin (deposit-fee lever chips). */
+  depositsByAsset: DepositAssetVolume[];
+  /** Currently-live raffles, valued via the shared prize-valuation helper. */
+  liveRaffles: LiveRaffleInfo[];
+  /** Real rain cadence/pool anchor (null when the scan failed). */
+  rainAnchor: RainAnchor | null;
+  /** Real Σ |gift_card_redeemed| over the window. */
+  giftCardCost: number;
+  /** Real Σ |promo_code_redeemed| over the window. */
+  promoCodeCost: number;
+  /** Real per-category adjustment breakdown (canonical scope, NULL bucket). */
+  adjustmentBreakdown: AdjustmentCategoryRow[];
+  /** Σ counted-category CREDITS (the reward-cost slice of adjustments). */
+  adjustmentCountedCost: number;
+  /** Real deposit-size histogram (count per bucket). */
+  depositSizeHistogram: DepositSizeBucket[];
+  /** Smallest observed deposit (USD) — the min-deposit input's seed. */
+  depositBonusMinDepositObservedUsd: number | null;
+  /** Real per-user-day deposit-bonus distribution (time-bonus anchor). */
+  timeBonusAnchor: TimeBonusAnchor | null;
+  /** Level/XP gate per daily reward pack. */
+  dailyPackLevels: DailyPackLevelInfo[];
+  /** Real 30d usage stats per daily reward pack. */
+  dailyPackUsage: DailyPackUsageInfo[];
+  /** Measured 30d $ per reward source (credit-matrix rows; no new scans). */
+  rewardSourceVolumes: RewardSourceVolume[];
 };
 
-export type PlannedLeversV2 = PlannedLevers & {
-  /** Share of withdrawals as balance (0..1) — UI what-if knob (no $ projection). */
-  balanceWithdrawalShare: number;
-  /** Wager requirement multiplier — UI what-if knob (no $ projection). */
-  withdrawalWagerReqMult: number;
-  /** Withdrawal wager weights (0..1) — UI what-if knobs (no $ projection). */
-  withdrawalPackBattleWeight: number;
-  withdrawalUpgraderWeight: number;
-  /** Per-game-type rakeback accrual weight (0..1). */
+// ─── The v2 lever state ──────────────────────────────────────────────────────
+
+/**
+ * The planner's mutable state. $-budget fields are `number | null` where
+ * `null` means "resolve to the real run-rate seed" (see
+ * {@link resolveLeverSeedsV2}) — this keeps the default-mount profitDelta at
+ * exactly $0 for ANY baseline and lets presets round-trip without baking a
+ * stale baseline value in.
+ *
+ * REMOVED vs the previous v2 shape (legacy preset keys are dropped by the
+ * sanitizer): raffle pool/frequency/ticket mults, deposit-bonus
+ * match/min-deposit/wager-req mults, race pool/frequency/entry mults,
+ * rainCostMult, mothaCostMult, otherRewardCostMult, withdrawalWagerReqMult,
+ * hourly users/utilization, removeAffiliateWagerReq (inverted into
+ * `affiliateWagerReqEnabled`), rakebackUpgraderMinMultiplier /
+ * rakebackUpgraderMaxWinPct.
+ */
+export type PlannedLeversV2 = {
+  /** Planned house edge per game type (0..1). */
+  edges: Record<GameTypeId, number>;
+
+  // ── Rakeback ──
+  rakebackRates: Record<RakebackCadenceId, number>;
   rakebackPacksWeight: number;
   rakebackBattlesWeight: number;
-  /** Only upgrader bets at or above this target multiplier count (1.0 = all). */
-  rakebackUpgraderMinMultiplier: number;
-  /** Cap winning upgrader bet amount that accrues rakeback (0..1). */
-  rakebackUpgraderMaxWinPct: number;
+  rakebackUpgraderWeight: number;
+  rakebackInstantPayoutPct: number;
+  rakebackInstantAdoption: number;
+
+  // ── Affiliate ──
+  affiliateRates: Record<number, number>;
   /**
-   * Time-based ("hourly") deposit bonus: a fixed $ grant a user can claim every
-   * N hours. A NEW planned bonus (not in the baseline) — adds planned cost only.
-   * Cost = amount × (windowHours ÷ interval) × users × utilization.
+   * Keep the 1× wager requirement on affiliate commission (default true =
+   * current behavior). OFF = instant withdrawal of commission → commission
+   * cost × REMOVE_WAGER_REQ_COMMISSION_BASE_MULT (≈1.54, the v1 breakage
+   * model — NOT a flat "+15%").
    */
+  affiliateWagerReqEnabled: boolean;
+
+  // ── Deposit bonus ──
+  depositBonusCapMult: number;
+  /** Minimum deposit ($) to qualify; null = the observed minimum (seed). */
+  depositBonusMinDepositUsd: number | null;
+  /** Time-based split: pay the bonus as $X grants every N hours. */
   depositBonusHourlyEnabled: boolean;
   depositBonusHourlyAmountUsd: number;
   depositBonusHourlyIntervalHours: number;
-  depositBonusHourlyUsers: number;
-  depositBonusHourlyUtilizationPct: number;
+
+  // ── Deposit fee (REVENUE — not a cost row) ──
+  /** Fee fraction (0..1) charged on selected-coin deposit volume. */
+  depositFeePct: number;
+  /** Selected coin chips; null = default selection (all except USDT*). */
+  depositFeeSelectedAssets: string[] | null;
+
+  // ── Raffles ──
+  /** Keep fraction (0..1) of the real 30d raffle prize cost. 1 = keep all. */
+  raffleKeepPct: number;
+
+  // ── $ budgets (null = run-rate seed) ──
+  raceMonthlyBudgetUsd: number | null;
+  /** Hours BETWEEN rains (cadence input); null = observed spacing. */
+  rainDurationHours: number | null;
+  /** Pool $ per rain event; null = observed average pool. */
+  rainPerEventUsd: number | null;
+  mothaMonthlyBudgetUsd: number | null;
+  giftCardsMonthlyUsd: number | null;
+  promoCodesMonthlyUsd: number | null;
+  adjustmentsMonthlyRecurringUsd: number | null;
+
+  // ── Daily packs ──
+  dailyPackEvUsd: Record<string, number>;
+  dailyPacksFrequencyMult: number;
+  /**
+   * Per-pack 30d re-lock fraction overrides (0..1), keyed by pack id.
+   * Missing key = the pack's real default (`relockPctDefault`, usually 1%).
+   * A PLAYER requirement — affects NO $ in the projection.
+   */
+  dailyPackRelockPct: Record<string, number>;
+
+  // ── Signup ──
+  signupGrantUsd: number;
+
+  // ── Withdrawals (display-only knobs — no $ projection) ──
+  balanceWithdrawalShare: number;
+  withdrawalPackBattleWeight: number;
+  withdrawalUpgraderWeight: number;
+
+  // ── Shards ──
+  shardsEnabled: boolean;
+  shardsWagerPerShardUsd: number;
+  shardsEvPerShardUsd: number;
+  shardsPacksWeight: number;
+  shardsBattlesWeight: number;
+  shardsUpgraderWeight: number;
+
+  // ── Crediting matrix ──
+  /** Share of each reward $ assumed re-wagered (the honest assumption knob). */
+  matrixReWagerRate: number;
+  matrixCells: CreditMatrixCells;
 };
 
-export type EdgePlanV2Projection = EdgePlanProjection;
+/** A revenue lever's current-vs-planned contribution (house income). */
+export type RevenueLeverProjection = {
+  key: string;
+  label: string;
+  currentUsd: number;
+  plannedUsd: number;
+  /** plannedUsd − currentUsd (positive = MORE house revenue = emerald). */
+  deltaUsd: number;
+};
 
-/**
- * Default split of the bundled affiliate rollup into commission vs leaderboard
- * prize pool. This is ONLY the null-query fallback used when the real affiliate
- * overview (`getAffiliateOverview` → `totalCommissionPaid` + `leaderboardPrizePaid`)
- * could not be read. The real split is threaded through the baseline instead
- * (see `affiliateCommissionCost` / `affiliateLeaderboardCost` on the baseline).
- *
- * When the bundled total is the only thing available, assume it is entirely
- * commission (the canonical `affiliateCost` already sums both legs, and the
- * leaderboard leg is frequently $0), so the fallback neither fabricates a
- * leaderboard figure nor drops commission.
- */
+export type EdgePlanV2Projection = EdgePlanProjection & {
+  /** Revenue channel (deposit fee). NOT part of reward cost. */
+  revenueLevers: RevenueLeverProjection[];
+  /** Σ revenue deltas. profitDelta = ggrDelta − rewardCostDelta + revenueDelta. */
+  revenueDelta: number;
+};
+
+// ─── Affiliate split fallback (unchanged) ────────────────────────────────────
+
 export function splitAffiliateCostBundle(totalCost: number): {
   commission: number;
   leaderboard: number;
@@ -227,10 +531,6 @@ export function topAffiliateTierEdgeShare(
   return Math.max(0, levers.affiliateRates[top.level] ?? top.currentRate);
 }
 
-/**
- * Worst-case affiliate edge erosion for planning: top tier edge share × planned
- * blended house edge (each affiliate has one tier — not realized cost ÷ wager).
- */
 export function affiliateWorstCaseEdgeDrag(
   baseline: EdgePlanV2Baseline,
   levers: PlannedLeversV2,
@@ -240,33 +540,382 @@ export function affiliateWorstCaseEdgeDrag(
   return affiliateEdgeShareToWagerDrag(edgeShare, houseEdge);
 }
 
-/** Commission-only affiliate projection (excludes leaderboard prizes). */
-function projectAffiliateCommissionV2(
+// ─── Raw mathematical edge (owner spec #2) ───────────────────────────────────
+
+/**
+ * The RAW MATHEMATICAL edge = simple mean of the packs and upgrader planned
+ * edges (no wager weighting). At the planning defaults (10.99% & 10%) this
+ * is exactly 10.495%. Displayed NEXT TO the wager-weighted real-data edge,
+ * both clearly labeled — never a replacement for it.
+ */
+export function rawMathEdgeV2(
+  levers: Pick<PlannedLeversV2, "edges">,
+): number {
+  const packs = clamp(levers.edges.packs ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT, 0, 1);
+  const upgrader = clamp(levers.edges.upgrader ?? PLANNED_UPGRADER_EDGE_DEFAULT, 0, 1);
+  return (packs + upgrader) / 2;
+}
+
+// ─── Lever seed resolution (null = run-rate) ─────────────────────────────────
+
+/** Concrete (resolved) values for every null-able $ seed on the levers. */
+export type ResolvedLeverSeedsV2 = {
+  depositBonusMinDepositUsd: number;
+  raceMonthlyBudgetUsd: number;
+  rainDurationHours: number;
+  rainPerEventUsd: number;
+  mothaMonthlyBudgetUsd: number;
+  giftCardsMonthlyUsd: number;
+  promoCodesMonthlyUsd: number;
+  adjustmentsMonthlyRecurringUsd: number;
+};
+
+function monthlyRunRate(windowUsd: number, periodDays: number): number {
+  const days = periodDays > 0 ? periodDays : 30;
+  return (Math.max(0, windowUsd) / days) * 30;
+}
+
+function windowFromMonthly(monthlyUsd: number, periodDays: number): number {
+  const days = periodDays > 0 ? periodDays : 30;
+  return (Math.max(0, monthlyUsd) / 30) * days;
+}
+
+/**
+ * Resolve every null-able lever to its REAL run-rate seed. The default
+ * lever state (all nulls) resolves to values that reproduce the baseline
+ * exactly → profitDelta $0 at mount, for any baseline.
+ */
+export function resolveLeverSeedsV2(
   baseline: EdgePlanV2Baseline,
-  planned: PlannedLeversV2,
-): { current: number; planned: number } {
-  const current = Math.max(0, baseline.affiliateCommissionCost);
-  if (current <= 0) return { current: 0, planned: 0 };
+  levers: PlannedLeversV2,
+): ResolvedLeverSeedsV2 {
+  const days = Math.max(1, baseline.periodDays);
+  const anchor = baseline.rainAnchor;
+  const observedIntervalHours =
+    anchor && anchor.count > 0 ? (days * 24) / anchor.count : 1;
+  const observedPerEventUsd = anchor && anchor.count > 0 ? anchor.avgPoolUsd : 0;
 
-  const tiers = baseline.affiliateTiers;
-  if (tiers.length === 0) return { current, planned: current };
-
-  const mean = (xs: number[]) =>
-    xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
-  const currentBlend = mean(tiers.map((t) => t.currentRate));
-  const plannedBlend = mean(
-    tiers.map((t) => Math.max(0, planned.affiliateRates[t.level] ?? t.currentRate)),
-  );
-  const rateRatio = currentBlend > 0 ? plannedBlend / currentBlend : 1;
-  const reqMult = planned.removeAffiliateWagerReq
-    ? REMOVE_WAGER_REQ_COMMISSION_BASE_MULT
-    : 1;
+  const nn = (v: number | null, seed: number): number =>
+    v != null && Number.isFinite(v) && v >= 0 ? v : seed;
 
   return {
-    current,
-    planned: Math.max(0, current * rateRatio * reqMult),
+    depositBonusMinDepositUsd: nn(
+      levers.depositBonusMinDepositUsd,
+      baseline.depositBonusMinDepositObservedUsd ?? 0,
+    ),
+    raceMonthlyBudgetUsd: nn(
+      levers.raceMonthlyBudgetUsd,
+      monthlyRunRate(baseline.raceCost, days),
+    ),
+    rainDurationHours: Math.max(
+      0.05,
+      nn(levers.rainDurationHours, observedIntervalHours),
+    ),
+    rainPerEventUsd: nn(levers.rainPerEventUsd, observedPerEventUsd),
+    mothaMonthlyBudgetUsd: nn(
+      levers.mothaMonthlyBudgetUsd,
+      monthlyRunRate(baseline.mothaCost, days),
+    ),
+    giftCardsMonthlyUsd: nn(
+      levers.giftCardsMonthlyUsd,
+      monthlyRunRate(baseline.giftCardCost, days),
+    ),
+    promoCodesMonthlyUsd: nn(
+      levers.promoCodesMonthlyUsd,
+      monthlyRunRate(baseline.promoCodeCost, days),
+    ),
+    adjustmentsMonthlyRecurringUsd: nn(
+      levers.adjustmentsMonthlyRecurringUsd,
+      monthlyRunRate(baseline.adjustmentCountedCost, days),
+    ),
   };
 }
+
+// ─── Deposit fee (revenue) ───────────────────────────────────────────────────
+
+/** Default coin selection: every asset EXCEPT the USDT family. */
+export function depositFeeDefaultSelectedAssets(
+  baseline: Pick<EdgePlanV2Baseline, "depositsByAsset">,
+): string[] {
+  return baseline.depositsByAsset
+    .filter((a) => !a.asset.toUpperCase().startsWith("USDT"))
+    .map((a) => a.asset);
+}
+
+/** Resolve the active coin selection (null = the USDT-excluding default). */
+export function resolvedDepositFeeAssets(
+  baseline: Pick<EdgePlanV2Baseline, "depositsByAsset">,
+  levers: Pick<PlannedLeversV2, "depositFeeSelectedAssets">,
+): string[] {
+  if (levers.depositFeeSelectedAssets == null) {
+    return depositFeeDefaultSelectedAssets(baseline);
+  }
+  return levers.depositFeeSelectedAssets;
+}
+
+/** Σ selected-coin deposit volume over the window (USD). */
+export function depositFeeSelectedVolumeUsd(
+  baseline: Pick<EdgePlanV2Baseline, "depositsByAsset">,
+  levers: Pick<PlannedLeversV2, "depositFeeSelectedAssets">,
+): number {
+  const selected = new Set(resolvedDepositFeeAssets(baseline, levers));
+  let sum = 0;
+  for (const a of baseline.depositsByAsset) {
+    if (selected.has(a.asset)) sum += Math.max(0, a.volumeUsd);
+  }
+  return sum;
+}
+
+/**
+ * Deposit-fee revenue over the WINDOW = pct × selected coin volume.
+ * Deposits ≠ wager: this deliberately does NOT scale with the wager
+ * scenario multiplier (the UI footnote says so).
+ */
+export function depositFeeRevenueUsd(
+  baseline: Pick<EdgePlanV2Baseline, "depositsByAsset">,
+  levers: Pick<PlannedLeversV2, "depositFeePct" | "depositFeeSelectedAssets">,
+): number {
+  const pct = clamp(levers.depositFeePct, 0, 1);
+  if (pct <= 0) return 0;
+  return pct * depositFeeSelectedVolumeUsd(baseline, levers);
+}
+
+// ─── Deposit-size eligibility (min-deposit $ gate) ───────────────────────────
+
+/**
+ * Share (0..1) of window deposits with amount ≥ `minUsd`, linearly
+ * interpolated inside the histogram bucket that contains the threshold.
+ * 1 when the histogram is empty (no data → no filtering claim).
+ */
+export function eligibleDepositShare(
+  histogram: readonly DepositSizeBucket[],
+  minUsd: number,
+): number {
+  const total = histogram.reduce((s, b) => s + Math.max(0, b.count), 0);
+  if (total <= 0) return 1;
+  const min = Math.max(0, Number.isFinite(minUsd) ? minUsd : 0);
+
+  let eligible = 0;
+  let lo = 0;
+  for (const b of histogram) {
+    const count = Math.max(0, b.count);
+    const hi = b.maxUsd;
+    if (hi == null) {
+      // Open top bucket — everything in it clears any finite threshold ≥ lo;
+      // below lo the whole bucket is eligible anyway.
+      eligible += count;
+    } else if (min <= lo) {
+      eligible += count;
+    } else if (min >= hi) {
+      // none of this bucket
+    } else {
+      const span = hi - lo;
+      eligible += span > 0 ? count * ((hi - min) / span) : 0;
+    }
+    lo = hi ?? lo;
+  }
+  return clamp(eligible / total, 0, 1);
+}
+
+/**
+ * Cost ratio of moving the min-deposit gate from the OBSERVED minimum to
+ * the planned $ value: eligibleShare(planned) ÷ eligibleShare(observed).
+ * 1 at the seed; monotone non-increasing as the gate rises; never > 1
+ * (lowering the gate below the observed minimum cannot create deposits
+ * that never happened).
+ */
+export function depositBonusEligibilityRatio(
+  baseline: Pick<
+    EdgePlanV2Baseline,
+    "depositSizeHistogram" | "depositBonusMinDepositObservedUsd"
+  >,
+  minDepositUsd: number,
+): number {
+  const observed = baseline.depositBonusMinDepositObservedUsd ?? 0;
+  const baseShare = eligibleDepositShare(baseline.depositSizeHistogram, observed);
+  const plannedShare = eligibleDepositShare(
+    baseline.depositSizeHistogram,
+    Math.max(observed, minDepositUsd),
+  );
+  if (baseShare <= 0) return 1;
+  return clamp(plannedShare / baseShare, 0, 1);
+}
+
+// ─── Time-based deposit bonus (split-vs-lump, grounded) ──────────────────────
+
+export type TimeBonusSplitModel = {
+  /** Per-day cap a user can collect under the split = amount × (24 ÷ interval). */
+  dailyCapUsd: number;
+  /** Share (0..1) of observed per-user-day volume that fits under the cap. */
+  cappedShare: number;
+  /** Observed window bonus $ (the lump reference). */
+  lumpWindowUsd: number;
+  /** Window bonus $ under the split cap (≤ lump, monotone in the cap). */
+  splitWindowUsd: number;
+  /** (lump − split) scaled to a 30d month — "$X/mo saved by splitting". */
+  savedMonthlyUsd: number;
+  /** Share (0..1) of user-days at/above the cap — "N% of user-days hit cap". */
+  capHitUserDaysPct: number;
+};
+
+/**
+ * Grounded split-vs-lump model on the REAL per-user-day histogram: capping
+ * each user-day at `amount × (24 ÷ interval)` keeps Σ min(dayTotal, cap).
+ * Bucket-level bound: contribution = min(bucketTotal, bucketUserDays × cap)
+ * — exact for buckets fully under the cap, a tight upper bound otherwise.
+ * Split ≤ lump always; monotone in amount and 1/interval.
+ */
+export function timeBonusSplitModel(
+  anchor: TimeBonusAnchor | null,
+  levers: Pick<
+    PlannedLeversV2,
+    "depositBonusHourlyAmountUsd" | "depositBonusHourlyIntervalHours"
+  >,
+  periodDays: number,
+): TimeBonusSplitModel {
+  const interval = Math.max(1, levers.depositBonusHourlyIntervalHours);
+  const dailyCapUsd =
+    Math.max(0, levers.depositBonusHourlyAmountUsd) * (24 / interval);
+
+  if (!anchor || anchor.totalUsd <= 0 || anchor.userDays <= 0) {
+    return {
+      dailyCapUsd,
+      cappedShare: 1,
+      lumpWindowUsd: anchor?.totalUsd ?? 0,
+      splitWindowUsd: anchor?.totalUsd ?? 0,
+      savedMonthlyUsd: 0,
+      capHitUserDaysPct: 0,
+    };
+  }
+
+  let capped = 0;
+  let capHitDays = 0;
+  let lo = 0;
+  for (const b of anchor.buckets) {
+    const days = Math.max(0, b.userDays);
+    const total = Math.max(0, b.totalUsd);
+    capped += Math.min(total, days * dailyCapUsd);
+    const hi = b.maxUsd;
+    if (hi == null) {
+      if (dailyCapUsd <= lo) capHitDays += days;
+      else if (days > 0 && total / days >= dailyCapUsd) capHitDays += days;
+    } else if (dailyCapUsd <= lo) {
+      capHitDays += days;
+    } else if (dailyCapUsd < hi) {
+      const span = hi - lo;
+      capHitDays += span > 0 ? days * ((hi - dailyCapUsd) / span) : 0;
+    }
+    lo = hi ?? lo;
+  }
+
+  const cappedShare = clamp(capped / anchor.totalUsd, 0, 1);
+  const lumpWindowUsd = anchor.totalUsd;
+  const splitWindowUsd = lumpWindowUsd * cappedShare;
+  const days = Math.max(1, periodDays);
+  return {
+    dailyCapUsd,
+    cappedShare,
+    lumpWindowUsd,
+    splitWindowUsd,
+    savedMonthlyUsd: ((lumpWindowUsd - splitWindowUsd) / days) * 30,
+    capHitUserDaysPct: clamp(capHitDays / anchor.userDays, 0, 1),
+  };
+}
+
+// ─── Withdrawal wager-rule worked example (display-only) ─────────────────────
+
+/**
+ * Required wager ($) in a game mode to clear a deposit's withdrawal
+ * requirement at the mode's weight: deposit ÷ weight. Weight 1 → 1× the
+ * deposit; weight 0.5 → 2×; weight 0 → null (mode never clears it).
+ */
+export function withdrawalRequiredWagerUsd(
+  depositUsd: number,
+  weight: number,
+): number | null {
+  const w = clamp(weight, 0, 1);
+  if (w <= 0) return null;
+  return Math.max(0, depositUsd) / w;
+}
+
+// ─── Shards + matrix bridges ─────────────────────────────────────────────────
+
+/** Per-type window wager from the baseline gameTypes (shard input). */
+export function shardTypeWagerFromBaseline(
+  baseline: Pick<SystemEdgeBaseline, "gameTypes">,
+): ShardTypeWager {
+  const get = (t: GameTypeId): number =>
+    baseline.gameTypes.find((g) => g.type === t)?.wager ?? 0;
+  return { packs: get("packs"), battles: get("battles"), upgrader: get("upgrader") };
+}
+
+/** The shard config implied by the levers. */
+export function shardConfigFromLevers(
+  levers: Pick<
+    PlannedLeversV2,
+    | "shardsEnabled"
+    | "shardsWagerPerShardUsd"
+    | "shardsEvPerShardUsd"
+    | "shardsPacksWeight"
+    | "shardsBattlesWeight"
+    | "shardsUpgraderWeight"
+  >,
+): ShardLeverConfig {
+  const weights: ShardGameWeights = {
+    packs: clamp(levers.shardsPacksWeight, 0, 1),
+    battles: clamp(levers.shardsBattlesWeight, 0, 1),
+    upgrader: clamp(levers.shardsUpgraderWeight, 0, 1),
+  };
+  return {
+    enabled: levers.shardsEnabled === true,
+    wagerPerShardUsd: Math.max(0, levers.shardsWagerPerShardUsd),
+    evPerShardUsd: Math.max(0, levers.shardsEvPerShardUsd),
+    weights,
+  };
+}
+
+/** Planned shard cost over the window (USD; 0 when disabled). */
+export function shardWindowCostV2(
+  baseline: EdgePlanV2Baseline,
+  levers: PlannedLeversV2,
+): number {
+  return shardCostInWindow(
+    shardTypeWagerFromBaseline(baseline),
+    shardConfigFromLevers(levers),
+  );
+}
+
+/** Program cost-rates for the crediting matrix (incl. the planned shard rate). */
+export function matrixProgramRatesV2(
+  baseline: EdgePlanV2Baseline,
+  levers: PlannedLeversV2,
+): CreditMatrixProgramRate[] {
+  const wager = baseline.wager;
+  const shardRate = wager > 0 ? shardWindowCostV2(baseline, levers) / wager : 0;
+  return deriveProgramRates({
+    wager,
+    rakebackCost: baseline.rakebackCost,
+    raceCost: baseline.raceCost,
+    affiliateLeaderboardCost: baseline.affiliateLeaderboardCost,
+    dailyPacksCost: baseline.dailyPacksCost,
+    shardRatePerWagerDollar: shardRate,
+  });
+}
+
+/** Window $ saved by the crediting matrix at the planned cells. */
+export function matrixSavingsWindowUsd(
+  baseline: EdgePlanV2Baseline,
+  levers: PlannedLeversV2,
+): number {
+  return totalMatrixSavingsUsd(
+    matrixProgramRatesV2(baseline, levers),
+    clamp(levers.matrixReWagerRate, 0, 1),
+    baseline.rewardSourceVolumes,
+    levers.matrixCells,
+  );
+}
+
+// ─── Rakeback / affiliate projections (v2) ───────────────────────────────────
 
 function cadenceWeight(
   cadence: RakebackCadenceLever,
@@ -285,42 +934,13 @@ function blendedPackBattleRakebackWeight(
   const battles = baseline.gameTypes.find((g) => g.type === "battles")?.wager ?? 0;
   const pb = packs + battles;
   if (pb <= 0) {
-    return (planned.rakebackPacksWeight + planned.rakebackBattlesWeight) / 2;
+    return (clamp(planned.rakebackPacksWeight, 0, 1) + clamp(planned.rakebackBattlesWeight, 0, 1)) / 2;
   }
   return (
-    (packs * planned.rakebackPacksWeight + battles * planned.rakebackBattlesWeight) /
+    (packs * clamp(planned.rakebackPacksWeight, 0, 1) +
+      battles * clamp(planned.rakebackBattlesWeight, 0, 1)) /
     pb
   );
-}
-
-/** Share of upgrader wager eligible at a minimum target multiplier. */
-export function upgraderMinMultiplierEligibleShare(
-  anchor: EdgePlanV2Baseline["upgraderRakebackAnchor"],
-  minMultiplier: number,
-): number {
-  if (!anchor || anchor.totalWager <= 0) return 1;
-  const min = Math.max(1, minMultiplier);
-  if (min <= 1) return 1;
-
-  let eligible = 0;
-  for (const b of anchor.buckets) {
-    const lo = b.minMultiplier;
-    const hi = b.maxMultiplier;
-    if (hi != null && min >= hi) continue;
-    if (min <= lo) {
-      eligible += b.wager;
-      continue;
-    }
-    if (hi == null) {
-      eligible += b.wager;
-      continue;
-    }
-    const span = hi - lo;
-    if (span > 0) {
-      eligible += b.wager * ((hi - min) / span);
-    }
-  }
-  return clamp(eligible / anchor.totalWager, 0, 1);
 }
 
 function gameTypeRakebackWeightFactor(
@@ -332,21 +952,10 @@ function gameTypeRakebackWeightFactor(
   const upg = baseline.gameTypes.find((g) => g.type === "upgrader")?.wager ?? 0;
   const total = packs + battles + upg;
   if (total <= 0) return 1;
-
-  const minMultShare = upgraderMinMultiplierEligibleShare(
-    baseline.upgraderRakebackAnchor,
-    planned.rakebackUpgraderMinMultiplier,
-  );
-  const winRate = baseline.upgraderRakebackAnchor?.winRate ?? 0;
-  const maxWinPct = clamp(planned.rakebackUpgraderMaxWinPct, 0, 1);
-  const winCapFactor = 1 - winRate + winRate * maxWinPct;
-  const upgFactor =
-    clamp(planned.rakebackUpgraderWeight, 0, 1) * minMultShare * winCapFactor;
-
   return (
     (packs * clamp(planned.rakebackPacksWeight, 0, 1) +
       battles * clamp(planned.rakebackBattlesWeight, 0, 1) +
-      upg * upgFactor) /
+      upg * clamp(planned.rakebackUpgraderWeight, 0, 1)) /
     total
   );
 }
@@ -371,10 +980,6 @@ function projectRakebackV2(
     0,
   );
   const rateRatio = currentBlend > 0 ? plannedBlend / currentBlend : 1;
-
-  // Direct rakeback cost: real config × real wager × real game-type / upgrader
-  // weighting. The fabricated reward-wager recycling uplift (2.5× turnover /
-  // 0.55 cap) was removed — rakeback now scales only on grounded inputs.
   const gameWeight = gameTypeRakebackWeightFactor(baseline, planned);
 
   const adoption = clamp(planned.rakebackInstantAdoption, 0, 1);
@@ -391,37 +996,78 @@ function projectRakebackV2(
 export function rakebackEffectiveWagerMult(
   baseline: EdgePlanV2Baseline,
   planned: PlannedLeversV2,
-): {
-  gameWeight: number;
-  upgraderEligibleShare: number;
-  combined: number;
-} {
+): { gameWeight: number; combined: number } {
   const gameWeight = gameTypeRakebackWeightFactor(baseline, planned);
-  const upgraderEligibleShare = upgraderMinMultiplierEligibleShare(
-    baseline.upgraderRakebackAnchor,
-    planned.rakebackUpgraderMinMultiplier,
-  );
-  return {
-    gameWeight,
-    upgraderEligibleShare,
-    combined: gameWeight,
-  };
+  return { gameWeight, combined: gameWeight };
 }
 
-/**
- * Strip the v2-only fields so the v1 engine receives a clean `SystemEdgeBaseline`.
- * Raffle cost flows through UNCHANGED now — it is the real reconstructed raffle
- * prize cost from `getRaffleForecastBaseline().totalPrizeCost` (no longer a shard
- * proxy), so the v1 raffle lever projects the real cost.
- */
+/** Commission-only affiliate projection (excludes leaderboard prizes). */
+function projectAffiliateCommissionV2(
+  baseline: EdgePlanV2Baseline,
+  planned: PlannedLeversV2,
+): { current: number; planned: number } {
+  const current = Math.max(0, baseline.affiliateCommissionCost);
+  if (current <= 0) return { current: 0, planned: 0 };
+
+  const tiers = baseline.affiliateTiers;
+  const mean = (xs: number[]) =>
+    xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
+  const currentBlend = mean(tiers.map((t) => t.currentRate));
+  const plannedBlend = mean(
+    tiers.map((t) => Math.max(0, planned.affiliateRates[t.level] ?? t.currentRate)),
+  );
+  const rateRatio = tiers.length > 0 && currentBlend > 0 ? plannedBlend / currentBlend : 1;
+  const reqMult = planned.affiliateWagerReqEnabled
+    ? 1
+    : REMOVE_WAGER_REQ_COMMISSION_BASE_MULT;
+
+  return { current, planned: Math.max(0, current * rateRatio * reqMult) };
+}
+
+// ─── v1 bridge ───────────────────────────────────────────────────────────────
+
 function toV1Baseline(baseline: EdgePlanV2Baseline): SystemEdgeBaseline {
   return baseline;
 }
 
-function toV1Levers(planned: PlannedLeversV2, baseline: EdgePlanV2Baseline): PlannedLevers {
+/**
+ * Synthesize a FULL v1 `PlannedLevers` from the v2 state. Every v1 lever
+ * the v2 planner replaced with its own $ model is pinned NEUTRAL (1.0 / off)
+ * — its row is overridden in `projectEdgePlanV2`, so the v1 engine's output
+ * for it is discarded. Only the levers v2 still delegates (edges, rakeback
+ * rates, affiliate rates, daily packs, signup) carry real state.
+ */
+function toV1Levers(
+  planned: PlannedLeversV2,
+  baseline: EdgePlanV2Baseline,
+): PlannedLevers {
+  const v1 = defaultLevers(baseline);
   return {
-    ...planned,
+    ...v1,
+    edges: { ...planned.edges },
+    rakebackRates: { ...planned.rakebackRates },
     rakebackPackBattleWeight: blendedPackBattleRakebackWeight(baseline, planned),
+    rakebackUpgraderWeight: clamp(planned.rakebackUpgraderWeight, 0, 1),
+    rakebackInstantPayoutPct: clamp(planned.rakebackInstantPayoutPct, 0, 1),
+    rakebackInstantAdoption: clamp(planned.rakebackInstantAdoption, 0, 1),
+    affiliateRates: { ...planned.affiliateRates },
+    removeAffiliateWagerReq: planned.affiliateWagerReqEnabled === false,
+    depositBonusMatchMult: 1,
+    depositBonusCapMult: clamp(planned.depositBonusCapMult, 0, 5),
+    depositBonusMinDepositMult: 1,
+    depositBonusWagerReqMult: 1,
+    racePrizePoolMult: 1,
+    raceFrequencyMult: 1,
+    raceEntryCostMult: 1,
+    rafflePrizePoolMult: 1,
+    raffleFrequencyMult: 1,
+    raffleTicketCostMult: 1,
+    dailyPackEvUsd: { ...planned.dailyPackEvUsd },
+    dailyPacksFrequencyMult: clamp(planned.dailyPacksFrequencyMult, 0, 5),
+    signupGrantUsd: Math.max(0, planned.signupGrantUsd),
+    rainCostMult: 1,
+    otherRewardCostMult: 1,
+    mothaCostMult: 1,
   };
 }
 
@@ -449,36 +1095,94 @@ export function computeBlendedEdgeBreakdownV2(
   return computeBlendedEdgeBreakdown(baseline, toV1Levers(levers, baseline).edges);
 }
 
+// ─── Defaults + sanitizer ────────────────────────────────────────────────────
+
 export function defaultLeversV2(baseline: EdgePlanV2Baseline): PlannedLeversV2 {
-  const v1 = defaultLevers(baseline);
-  // Seed the edge sliders to the PLANNING targets (packs+battles 10.99%,
-  // upgrader 10%), NOT the per-type "measured" edge. The measured per-type
-  // edges are accounting artifacts — the pack-opens-in-battles wager is booked
-  // to Packs while the battle item payout is booked to Battles, so packs.edge
-  // reads inflated and battles.edge reads deeply negative; only their SUM is
-  // meaningful. Seeding sliders from those artifacts opened the page at a fake
-  // ~20% packs edge and a noisy ~0% upgrader edge. The planning constants are
-  // the correct, stable defaults.
+  // Edge sliders seed from the PLANNING targets (packs+battles 10.99%,
+  // upgrader 10%), NOT the per-type measured edge (an accounting artifact —
+  // pack-opens-in-battles book wager to Packs and payout to Battles; only
+  // the sum is meaningful).
+  const edges: Record<GameTypeId, number> = {
+    packs: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
+    battles: PLANNED_BATTLES_EDGE_DEFAULT,
+    upgrader: PLANNED_UPGRADER_EDGE_DEFAULT,
+  };
+
+  const rakebackRates: Record<RakebackCadenceId, number> = {
+    daily: 0,
+    weekly: 0,
+    monthly: 0,
+  };
+  for (const c of baseline.rakebackCadences) {
+    rakebackRates[c.cadence] = c.currentRate;
+  }
+
+  const affiliateRates: Record<number, number> = {};
+  for (const t of baseline.affiliateTiers) {
+    affiliateRates[t.level] = t.currentRate;
+  }
+
+  const dailyPackEvUsd: Record<string, number> = {};
+  for (const p of baseline.dailyPackRows) {
+    dailyPackEvUsd[p.packId] = Math.max(0, p.measuredEvUsd);
+  }
+  for (const p of baseline.rewardPackCatalog) {
+    if (dailyPackEvUsd[p.packId] == null) {
+      dailyPackEvUsd[p.packId] = Math.max(0, p.theoreticalEvUsd);
+    }
+  }
+
   return {
-    ...v1,
-    edges: {
-      packs: PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
-      battles: PLANNED_BATTLES_EDGE_DEFAULT,
-      upgrader: PLANNED_UPGRADER_EDGE_DEFAULT,
-    },
-    balanceWithdrawalShare: baseline.balanceWithdrawalShare,
-    withdrawalWagerReqMult: 1,
-    withdrawalPackBattleWeight: 1,
-    withdrawalUpgraderWeight: 1,
+    edges,
+
+    rakebackRates,
     rakebackPacksWeight: 1,
     rakebackBattlesWeight: 1,
-    rakebackUpgraderMinMultiplier: 1,
-    rakebackUpgraderMaxWinPct: 1,
+    rakebackUpgraderWeight: 1,
+    rakebackInstantPayoutPct: 1,
+    rakebackInstantAdoption: 0,
+
+    affiliateRates,
+    affiliateWagerReqEnabled: true,
+
+    depositBonusCapMult: 1,
+    depositBonusMinDepositUsd: null, // = observed minimum (ratio 1)
     depositBonusHourlyEnabled: false,
     depositBonusHourlyAmountUsd: 25,
     depositBonusHourlyIntervalHours: 6,
-    depositBonusHourlyUsers: 100,
-    depositBonusHourlyUtilizationPct: 1,
+
+    depositFeePct: 0,
+    depositFeeSelectedAssets: null, // = all except USDT*
+
+    raffleKeepPct: 1,
+
+    raceMonthlyBudgetUsd: null,
+    rainDurationHours: null,
+    rainPerEventUsd: null,
+    mothaMonthlyBudgetUsd: null,
+    giftCardsMonthlyUsd: null,
+    promoCodesMonthlyUsd: null,
+    adjustmentsMonthlyRecurringUsd: null,
+
+    dailyPackEvUsd,
+    dailyPacksFrequencyMult: 1,
+    dailyPackRelockPct: {},
+
+    signupGrantUsd: baseline.signupAvgGrant ?? 0,
+
+    balanceWithdrawalShare: baseline.balanceWithdrawalShare,
+    withdrawalPackBattleWeight: 1,
+    withdrawalUpgraderWeight: 1,
+
+    shardsEnabled: false,
+    shardsWagerPerShardUsd: SHARDS_DEFAULT_WAGER_PER_SHARD_USD,
+    shardsEvPerShardUsd: SHARDS_DEFAULT_EV_PER_SHARD_USD,
+    shardsPacksWeight: 1,
+    shardsBattlesWeight: 1,
+    shardsUpgraderWeight: 1,
+
+    matrixReWagerRate: 1,
+    matrixCells: {},
   };
 }
 
@@ -490,44 +1194,55 @@ function neutralLeversV2(): PlannedLeversV2 {
       upgrader: PLANNED_UPGRADER_EDGE_DEFAULT,
     },
     rakebackRates: { daily: 0, weekly: 0, monthly: 0 },
-    rakebackPackBattleWeight: 1,
+    rakebackPacksWeight: 1,
+    rakebackBattlesWeight: 1,
     rakebackUpgraderWeight: 1,
     rakebackInstantPayoutPct: 1,
     rakebackInstantAdoption: 0,
     affiliateRates: {},
-    removeAffiliateWagerReq: false,
-    depositBonusMatchMult: 1,
+    affiliateWagerReqEnabled: true,
     depositBonusCapMult: 1,
-    depositBonusMinDepositMult: 1,
-    depositBonusWagerReqMult: 1,
-    racePrizePoolMult: 1,
-    raceFrequencyMult: 1,
-    raceEntryCostMult: 1,
-    rafflePrizePoolMult: 1,
-    raffleFrequencyMult: 1,
-    raffleTicketCostMult: 1,
-    dailyPackEvUsd: {},
-    dailyPacksFrequencyMult: 1,
-    signupGrantUsd: 0,
-    rainCostMult: 1,
-    otherRewardCostMult: 1,
-    mothaCostMult: 1,
-    balanceWithdrawalShare: 0,
-    withdrawalWagerReqMult: 1,
-    withdrawalPackBattleWeight: 1,
-    withdrawalUpgraderWeight: 1,
-    rakebackPacksWeight: 1,
-    rakebackBattlesWeight: 1,
-    rakebackUpgraderMinMultiplier: 1,
-    rakebackUpgraderMaxWinPct: 1,
+    depositBonusMinDepositUsd: null,
     depositBonusHourlyEnabled: false,
     depositBonusHourlyAmountUsd: 25,
     depositBonusHourlyIntervalHours: 6,
-    depositBonusHourlyUsers: 100,
-    depositBonusHourlyUtilizationPct: 1,
+    depositFeePct: 0,
+    depositFeeSelectedAssets: null,
+    raffleKeepPct: 1,
+    raceMonthlyBudgetUsd: null,
+    rainDurationHours: null,
+    rainPerEventUsd: null,
+    mothaMonthlyBudgetUsd: null,
+    giftCardsMonthlyUsd: null,
+    promoCodesMonthlyUsd: null,
+    adjustmentsMonthlyRecurringUsd: null,
+    dailyPackEvUsd: {},
+    dailyPacksFrequencyMult: 1,
+    dailyPackRelockPct: {},
+    signupGrantUsd: 0,
+    balanceWithdrawalShare: 0,
+    withdrawalPackBattleWeight: 1,
+    withdrawalUpgraderWeight: 1,
+    shardsEnabled: false,
+    shardsWagerPerShardUsd: SHARDS_DEFAULT_WAGER_PER_SHARD_USD,
+    shardsEvPerShardUsd: SHARDS_DEFAULT_EV_PER_SHARD_USD,
+    shardsPacksWeight: 1,
+    shardsBattlesWeight: 1,
+    shardsUpgraderWeight: 1,
+    matrixReWagerRate: 1,
+    matrixCells: {},
   };
 }
 
+/**
+ * Coerce arbitrary (persisted / legacy-v1 / hand-edited) input into a
+ * COMPLETE, finite `PlannedLeversV2`. The single trust boundary for the
+ * localStorage preset store — including the LAZY v1→v2 preset migration:
+ *   • removed v1 fields (raffle/race mults, rainCostMult, …) are DROPPED,
+ *   • `removeAffiliateWagerReq: true` is INVERTED into
+ *     `affiliateWagerReqEnabled: false` (when the new key is absent),
+ *   • unknown keys are ignored; non-finite numbers fall back.
+ */
 export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
   const base = neutralLeversV2();
   if (input == null || typeof input !== "object") return base;
@@ -536,6 +1251,11 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
   const num = (v: unknown, fallback: number): number => {
     const n = Number(v);
     return Number.isFinite(n) ? n : fallback;
+  };
+  const nullableUsd = (v: unknown): number | null => {
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : null;
   };
 
   if (src.edges != null && typeof src.edges === "object") {
@@ -552,29 +1272,9 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
       base.rakebackRates[c] = clamp(num(r[c], base.rakebackRates[c]), 0, 1);
     }
   }
-
-  base.rakebackPackBattleWeight = clamp(num(src.rakebackPackBattleWeight, 1), 0, 1);
+  base.rakebackPacksWeight = clamp(num(src.rakebackPacksWeight, 1), 0, 1);
+  base.rakebackBattlesWeight = clamp(num(src.rakebackBattlesWeight, 1), 0, 1);
   base.rakebackUpgraderWeight = clamp(num(src.rakebackUpgraderWeight, 1), 0, 1);
-  base.rakebackPacksWeight = clamp(
-    num(src.rakebackPacksWeight, base.rakebackPacksWeight),
-    0,
-    1,
-  );
-  base.rakebackBattlesWeight = clamp(
-    num(src.rakebackBattlesWeight, base.rakebackBattlesWeight),
-    0,
-    1,
-  );
-  base.rakebackUpgraderMinMultiplier = clamp(
-    num(src.rakebackUpgraderMinMultiplier, 1),
-    1,
-    10,
-  );
-  base.rakebackUpgraderMaxWinPct = clamp(
-    num(src.rakebackUpgraderMaxWinPct, 1),
-    0,
-    1,
-  );
   base.rakebackInstantPayoutPct = clamp(num(src.rakebackInstantPayoutPct, 1), 0, 1);
   base.rakebackInstantAdoption = clamp(num(src.rakebackInstantAdoption, 0), 0, 1);
 
@@ -587,40 +1287,15 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
     }
   }
 
-  base.removeAffiliateWagerReq = src.removeAffiliateWagerReq === true;
-  base.depositBonusMatchMult = clamp(num(src.depositBonusMatchMult, 1), 0, 5);
-  base.depositBonusCapMult = clamp(num(src.depositBonusCapMult, 1), 0, 5);
-  base.depositBonusMinDepositMult = clamp(num(src.depositBonusMinDepositMult, 1), 0, 5);
-  base.depositBonusWagerReqMult = clamp(num(src.depositBonusWagerReqMult, 1), 0, 5);
-  base.racePrizePoolMult = clamp(num(src.racePrizePoolMult, 1), 0, 5);
-  base.raceFrequencyMult = clamp(num(src.raceFrequencyMult, 1), 0, 5);
-  base.raceEntryCostMult = clamp(num(src.raceEntryCostMult, 1), 0, 5);
-  base.rafflePrizePoolMult = clamp(num(src.rafflePrizePoolMult, 1), 0, 5);
-  base.raffleFrequencyMult = clamp(num(src.raffleFrequencyMult, 1), 0, 5);
-  base.raffleTicketCostMult = clamp(num(src.raffleTicketCostMult, 1), 0, 5);
-  base.dailyPacksFrequencyMult = clamp(num(src.dailyPacksFrequencyMult, 1), 0, 5);
-  base.rainCostMult = clamp(num(src.rainCostMult, 1), 0, 5);
-  base.otherRewardCostMult = clamp(num(src.otherRewardCostMult, 1), 0, 5);
-  base.mothaCostMult = clamp(num(src.mothaCostMult, 1), 0, 5);
-  base.signupGrantUsd = Math.max(0, num(src.signupGrantUsd, 0));
-
-  if (src.dailyPackEvUsd != null && typeof src.dailyPackEvUsd === "object") {
-    const d = src.dailyPackEvUsd as Record<string, unknown>;
-    for (const [packId, v] of Object.entries(d)) {
-      if (typeof packId !== "string" || !packId) continue;
-      base.dailyPackEvUsd[packId] = Math.max(0, num(v, 0));
-    }
+  // affiliateWagerReqEnabled — with the legacy-v1 inversion fallback.
+  if (typeof src.affiliateWagerReqEnabled === "boolean") {
+    base.affiliateWagerReqEnabled = src.affiliateWagerReqEnabled;
+  } else if (src.removeAffiliateWagerReq === true) {
+    base.affiliateWagerReqEnabled = false;
   }
 
-  base.balanceWithdrawalShare = clamp(num(src.balanceWithdrawalShare, 0), 0, 1);
-  base.withdrawalWagerReqMult = clamp(num(src.withdrawalWagerReqMult, 1), 0, 5);
-  base.withdrawalPackBattleWeight = clamp(
-    num(src.withdrawalPackBattleWeight, 1),
-    0,
-    1,
-  );
-  base.withdrawalUpgraderWeight = clamp(num(src.withdrawalUpgraderWeight, 1), 0, 1);
-
+  base.depositBonusCapMult = clamp(num(src.depositBonusCapMult, 1), 0, 5);
+  base.depositBonusMinDepositUsd = nullableUsd(src.depositBonusMinDepositUsd);
   base.depositBonusHourlyEnabled = src.depositBonusHourlyEnabled === true;
   base.depositBonusHourlyAmountUsd = Math.max(
     0,
@@ -631,23 +1306,84 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
     1,
     720,
   );
-  base.depositBonusHourlyUsers = Math.max(
-    0,
-    Math.round(num(src.depositBonusHourlyUsers, 100)),
+
+  base.depositFeePct = clamp(num(src.depositFeePct, 0), 0, 1);
+  if (Array.isArray(src.depositFeeSelectedAssets)) {
+    const assets: string[] = [];
+    const seen = new Set<string>();
+    for (const a of src.depositFeeSelectedAssets) {
+      if (typeof a !== "string") continue;
+      const trimmed = a.trim().slice(0, 40);
+      if (trimmed.length === 0 || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      assets.push(trimmed);
+      if (assets.length >= 40) break;
+    }
+    base.depositFeeSelectedAssets = assets;
+  }
+
+  base.raffleKeepPct = clamp(num(src.raffleKeepPct, 1), 0, 1);
+
+  base.raceMonthlyBudgetUsd = nullableUsd(src.raceMonthlyBudgetUsd);
+  base.rainDurationHours =
+    src.rainDurationHours == null
+      ? null
+      : clamp(num(src.rainDurationHours, 1), 0.05, 720);
+  base.rainPerEventUsd = nullableUsd(src.rainPerEventUsd);
+  base.mothaMonthlyBudgetUsd = nullableUsd(src.mothaMonthlyBudgetUsd);
+  base.giftCardsMonthlyUsd = nullableUsd(src.giftCardsMonthlyUsd);
+  base.promoCodesMonthlyUsd = nullableUsd(src.promoCodesMonthlyUsd);
+  base.adjustmentsMonthlyRecurringUsd = nullableUsd(
+    src.adjustmentsMonthlyRecurringUsd,
   );
-  base.depositBonusHourlyUtilizationPct = clamp(
-    num(src.depositBonusHourlyUtilizationPct, 1),
-    0,
-    1,
+
+  if (src.dailyPackEvUsd != null && typeof src.dailyPackEvUsd === "object") {
+    const d = src.dailyPackEvUsd as Record<string, unknown>;
+    for (const [packId, v] of Object.entries(d)) {
+      if (typeof packId !== "string" || packId.length === 0) continue;
+      base.dailyPackEvUsd[packId] = Math.max(0, num(v, 0));
+    }
+  }
+  base.dailyPacksFrequencyMult = clamp(num(src.dailyPacksFrequencyMult, 1), 0, 5);
+  if (src.dailyPackRelockPct != null && typeof src.dailyPackRelockPct === "object") {
+    const d = src.dailyPackRelockPct as Record<string, unknown>;
+    for (const [packId, v] of Object.entries(d)) {
+      if (typeof packId !== "string" || packId.length === 0) continue;
+      const n = Number(v);
+      if (!Number.isFinite(n)) continue;
+      base.dailyPackRelockPct[packId] = clamp(n, 0, 1);
+    }
+  }
+
+  base.signupGrantUsd = Math.max(0, num(src.signupGrantUsd, 0));
+
+  base.balanceWithdrawalShare = clamp(num(src.balanceWithdrawalShare, 0), 0, 1);
+  base.withdrawalPackBattleWeight = clamp(num(src.withdrawalPackBattleWeight, 1), 0, 1);
+  base.withdrawalUpgraderWeight = clamp(num(src.withdrawalUpgraderWeight, 1), 0, 1);
+
+  base.shardsEnabled = src.shardsEnabled === true;
+  base.shardsWagerPerShardUsd = clamp(
+    num(src.shardsWagerPerShardUsd, SHARDS_DEFAULT_WAGER_PER_SHARD_USD),
+    0.01,
+    10_000,
   );
+  base.shardsEvPerShardUsd = clamp(
+    num(src.shardsEvPerShardUsd, SHARDS_DEFAULT_EV_PER_SHARD_USD),
+    0,
+    1_000,
+  );
+  base.shardsPacksWeight = clamp(num(src.shardsPacksWeight, 1), 0, 1);
+  base.shardsBattlesWeight = clamp(num(src.shardsBattlesWeight, 1), 0, 1);
+  base.shardsUpgraderWeight = clamp(num(src.shardsUpgraderWeight, 1), 0, 1);
+
+  base.matrixReWagerRate = clamp(num(src.matrixReWagerRate, 1), 0, 1);
+  base.matrixCells = sanitizeMatrixCells(src.matrixCells);
 
   return base;
 }
 
-/**
- * Edge Plan 2 planning UI: per-type GGR is planned edge × wager only.
- * Deltas compare the active sliders to planning defaults — not measured edge.
- */
+// ─── Planning GGR (planned-vs-default, unchanged math) ───────────────────────
+
 function applyPlanningGameProjections(
   baseline: EdgePlanV2Baseline,
   planned: PlannedLeversV2,
@@ -655,8 +1391,6 @@ function applyPlanningGameProjections(
 ): Pick<EdgePlanProjection, "gameTypes" | "ggrDelta"> {
   const defaults = defaultLeversV2(baseline);
 
-  // Per-type planned projection: planned edge × wager, delta vs the default
-  // edge. Used for upgrader directly; packs feeds the merged row below.
   const projectType = (g: GameTypeProjection): GameTypeProjection => {
     const plannedEdge = clamp(
       planned.edges[g.type] ?? defaultPlannedEdge(g.type),
@@ -683,13 +1417,8 @@ function applyPlanningGameProjections(
   const packsCore = core.gameTypes.find((g) => g.type === "packs");
   const battlesCore = core.gameTypes.find((g) => g.type === "battles");
 
-  // Merge Packs + Battles into ONE row. The house edge is on pack opens
-  // (battle bets fund pack opens that are already counted under Packs), so
-  // battles carry NO separate edge — their GGR is realized via packs. Showing
-  // them split produced a meaningless inflated-packs / negative-battles pair
-  // (only the sum reconciles). Combined wager = pack-open + battle-stake wager;
-  // planned GGR = packs planned edge × packs wager; the displayed edge is that
-  // GGR blended over the combined wager.
+  // Packs + Battles merge into ONE row (the edge is on pack opens; battles
+  // carry no separate edge — only the sum reconciles).
   const gameTypes: GameTypeProjection[] = [];
   if (packsCore) {
     const packsProj = projectType(packsCore);
@@ -711,125 +1440,274 @@ function applyPlanningGameProjections(
     gameTypes.push(projectType(g));
   }
 
-  // Total GGR vs planning defaults = sum of the per-type deltas (each is
-  // plannedEdge×wager − defaultEdge×wager on the SAME wager base), so it is
-  // exactly $0 at the default mount state and reflects real edge changes after.
   return {
     gameTypes,
     ggrDelta: gameTypes.reduce((s, g) => s + g.ggrDelta, 0),
   };
 }
 
-/**
- * Planned cost of the time-based ("hourly") per-user deposit bonus over the
- * baseline window. A NEW bonus, so it has no current/baseline cost — it adds
- * planned cost only. Cost = amount × (windowHours ÷ interval) × users × util.
- */
-export function depositBonusHourlyCostV2(
-  baseline: EdgePlanV2Baseline,
-  levers: PlannedLeversV2,
-): number {
-  if (!levers.depositBonusHourlyEnabled) return 0;
-  const windowHours = Math.max(1, baseline.periodDays) * 24;
-  const interval = Math.max(1, levers.depositBonusHourlyIntervalHours);
-  const grantsPerUser = windowHours / interval;
-  return (
-    Math.max(0, levers.depositBonusHourlyAmountUsd) *
-    grantsPerUser *
-    Math.max(0, levers.depositBonusHourlyUsers) *
-    clamp(levers.depositBonusHourlyUtilizationPct, 0, 1)
-  );
-}
+// ─── The v2 projection ───────────────────────────────────────────────────────
 
+/**
+ * Run the full current-vs-planned v2 projection. PURE.
+ *
+ *   profitDelta = ggrDelta − rewardCostDelta + revenueDelta
+ *
+ * Every lever row is either delegated to the v1 engine (rakeback /
+ * affiliate / daily packs / signup — with v2 overrides) or computed here
+ * from the v2 $ inputs against its real run-rate anchor. At
+ * `defaultLeversV2` every row's deltaCost is $0 and revenueDelta is $0.
+ */
 export function projectEdgePlanV2(
   baseline: EdgePlanV2Baseline,
   planned: PlannedLeversV2,
 ): EdgePlanV2Projection {
+  const days = Math.max(1, baseline.periodDays);
+  const seeds = resolveLeverSeedsV2(baseline, planned);
   const core = projectEdgePlan(toV1Baseline(baseline), toV1Levers(planned, baseline));
   const planningGgr = applyPlanningGameProjections(baseline, planned, core);
-  const rakeback = projectRakebackV2(baseline, planned);
 
-  // Real affiliate split (commission vs leaderboard) — sourced from
-  // getAffiliateOverview via the baseline. The v1 `core` carries the BUNDLED
-  // affiliate cost; here we replace its commission leg with the real
-  // commission figure (scaled by the rate levers) and surface the leaderboard
-  // prize leg as its own held-fixed line.
+  const rakeback = projectRakebackV2(baseline, planned);
   const affiliateCommission = projectAffiliateCommissionV2(baseline, planned);
   const affiliateLeaderboardCurrent = Math.max(0, baseline.affiliateLeaderboardCost);
 
-  // Time-based deposit bonus — a NEW planned cost (no current/baseline leg).
-  const depositBonusHourlyCost = depositBonusHourlyCostV2(baseline, planned);
+  // ── Deposit bonus: cap mult × $-gate eligibility × optional time-split ──
+  const eligibilityRatio = depositBonusEligibilityRatio(
+    baseline,
+    seeds.depositBonusMinDepositUsd,
+  );
+  const split = timeBonusSplitModel(baseline.timeBonusAnchor, planned, days);
+  const splitFactor =
+    planned.depositBonusHourlyEnabled && split.lumpWindowUsd > 0
+      ? split.cappedShare
+      : 1;
+  const depositBonusPlanned =
+    baseline.depositBonusCost *
+    Math.pow(Math.max(0, planned.depositBonusCapMult), DEPOSIT_BONUS_CAP_COST_EXPONENT) *
+    eligibilityRatio *
+    splitFactor;
 
-  const levers: LeverProjection[] = core.levers
-    .map((l) => {
-      if (l.key === "rakeback") {
-        return {
-          ...l,
-          plannedCost: rakeback.planned,
-          deltaCost: rakeback.planned - rakeback.current,
-        };
-      }
-      if (l.key === "affiliate") {
-        return {
-          ...l,
-          label: "Affiliate commission",
-          currentCost: affiliateCommission.current,
-          plannedCost: affiliateCommission.planned,
-          deltaCost: affiliateCommission.planned - affiliateCommission.current,
-        };
-      }
-      if (l.key === "deposit-bonus" && depositBonusHourlyCost > 0) {
-        return {
-          ...l,
-          plannedCost: l.plannedCost + depositBonusHourlyCost,
-          deltaCost: l.deltaCost + depositBonusHourlyCost,
-        };
-      }
-      return l;
-    })
-    .concat(
-      affiliateLeaderboardCurrent > 0
-        ? [
-            {
-              key: "leaderboard",
-              label: "Affiliate leaderboard prizes",
-              currentCost: affiliateLeaderboardCurrent,
-              plannedCost: affiliateLeaderboardCurrent,
-              deltaCost: 0,
-              dataAvailable: true,
-            } satisfies LeverProjection,
-          ]
-        : [],
-    );
+  // ── Races: ONE monthly $ budget against the run-rate ──
+  const racePlanned = windowFromMonthly(seeds.raceMonthlyBudgetUsd, days);
 
-  // The planner baseline is the DEFAULT plan, not the noisy measured reality:
-  // every projected number compares your active levers to the default-lever
-  // config, so the profit delta is exactly $0 at the default mount state and
-  // then reflects ONLY the changes you make ("the edge is what I enter; how
-  // much is left after my changes"). Both sides reconcile by construction:
-  //   profitDelta = ggrDelta − rewardCostDelta
-  // where each is a sum of per-unit (planned − default) deltas that vanish at
-  // the default. Anchoring to measured reality instead re-introduced the
-  // phantom default delta (planning edge ≠ artifact measured edge).
-  const ggrDelta = planningGgr.ggrDelta; // Σ per-type (plannedEdge − defaultEdge) × wager
+  // ── Raffles: keep-fraction of the real reconstructed prize cost ──
+  const rafflePlanned = baseline.raffleCost * clamp(planned.raffleKeepPct, 0, 1);
+
+  // ── Rain: scale the canonical net rain cost by planned/observed pool $ ──
+  const anchor = baseline.rainAnchor;
+  const observedRainUsd = anchor ? anchor.count * anchor.avgPoolUsd : 0;
+  const plannedRainEvents = (days * 24) / Math.max(0.05, seeds.rainDurationHours);
+  const plannedRainUsd = plannedRainEvents * Math.max(0, seeds.rainPerEventUsd);
+  const rainRatio = observedRainUsd > 0 ? plannedRainUsd / observedRainUsd : 1;
+  const rainPlanned = baseline.rainCost * Math.max(0, rainRatio);
+
+  // ── Motha / gift cards / promo codes / adjustments: monthly $ inputs ──
+  const mothaPlanned = windowFromMonthly(seeds.mothaMonthlyBudgetUsd, days);
+  const giftCardsPlanned = windowFromMonthly(seeds.giftCardsMonthlyUsd, days);
+  const promoCodesPlanned = windowFromMonthly(seeds.promoCodesMonthlyUsd, days);
+  const adjustmentsPlanned = windowFromMonthly(
+    seeds.adjustmentsMonthlyRecurringUsd,
+    days,
+  );
+
+  // ── Residual other (read-only): what's left after itemizing the above ──
+  const residualOther = Math.max(
+    0,
+    baseline.otherRewardCost -
+      baseline.giftCardCost -
+      baseline.promoCodeCost -
+      baseline.adjustmentCountedCost,
+  );
+
+  // ── Shards (NEW cost; $0 when disabled) ──
+  const shardsPlanned = shardWindowCostV2(baseline, planned);
+
+  // ── Crediting matrix (cost REDUCTION; $0 at all-100 cells) ──
+  const matrixSavings = matrixSavingsWindowUsd(baseline, planned);
+
+  // Delegated row from the v1 core: daily packs (its default planned sum
+  // reproduces the per-pack anchored current exactly).
+  const dailyPacksRow = core.levers.find((l) => l.key === "daily-packs");
+
+  // Signup: DELTA-anchored — claimants × (grant − defaultGrant) on top of the
+  // real cost — so the default mount is exactly $0 even when the stored avg
+  // grant carries rounding vs totalCost ÷ claimants.
+  const signupDefaultGrant = Math.max(0, baseline.signupAvgGrant ?? 0);
+  const signupDelta =
+    baseline.signupClaimants *
+    (Math.max(0, planned.signupGrantUsd) - signupDefaultGrant);
+  const signupPlanned = Math.max(0, baseline.signupPacksCost + signupDelta);
+
+  const levers: LeverProjection[] = [
+    {
+      key: "rakeback",
+      label: "Rakeback",
+      currentCost: rakeback.current,
+      plannedCost: rakeback.planned,
+      deltaCost: rakeback.planned - rakeback.current,
+      dataAvailable: baseline.rakebackCost > 0,
+    },
+    {
+      key: "affiliate",
+      label: "Affiliate commission",
+      currentCost: affiliateCommission.current,
+      plannedCost: affiliateCommission.planned,
+      deltaCost: affiliateCommission.planned - affiliateCommission.current,
+      dataAvailable: baseline.affiliateCommissionCost > 0,
+    },
+    ...(affiliateLeaderboardCurrent > 0
+      ? [
+          {
+            key: "leaderboard",
+            label: "Affiliate leaderboard prizes",
+            currentCost: affiliateLeaderboardCurrent,
+            plannedCost: affiliateLeaderboardCurrent,
+            deltaCost: 0,
+            dataAvailable: true,
+          } satisfies LeverProjection,
+        ]
+      : []),
+    {
+      key: "deposit-bonus",
+      label: "Deposit bonus",
+      currentCost: baseline.depositBonusCost,
+      plannedCost: depositBonusPlanned,
+      deltaCost: depositBonusPlanned - baseline.depositBonusCost,
+      dataAvailable: baseline.depositBonusCost > 0,
+    },
+    {
+      key: "races",
+      label: "Races",
+      currentCost: baseline.raceCost,
+      plannedCost: racePlanned,
+      deltaCost: racePlanned - baseline.raceCost,
+      dataAvailable: baseline.raceCost > 0,
+    },
+    {
+      key: "raffles",
+      label: "Raffles",
+      currentCost: baseline.raffleCost,
+      plannedCost: rafflePlanned,
+      deltaCost: rafflePlanned - baseline.raffleCost,
+      dataAvailable: baseline.raffleCost > 0,
+    },
+    {
+      key: "daily-packs",
+      label: "Daily / free packs",
+      currentCost: dailyPacksRow?.currentCost ?? baseline.dailyPacksCost,
+      plannedCost: dailyPacksRow?.plannedCost ?? baseline.dailyPacksCost,
+      deltaCost: dailyPacksRow?.deltaCost ?? 0,
+      dataAvailable: dailyPacksRow?.dataAvailable ?? baseline.dailyPacksCost > 0,
+    },
+    {
+      key: "signup-packs",
+      label: "Signup balance reward",
+      currentCost: baseline.signupPacksCost,
+      plannedCost: signupPlanned,
+      deltaCost: signupPlanned - baseline.signupPacksCost,
+      dataAvailable: baseline.signupClaimants > 0,
+    },
+    {
+      key: "rain",
+      label: "Rain",
+      currentCost: baseline.rainCost,
+      plannedCost: rainPlanned,
+      deltaCost: rainPlanned - baseline.rainCost,
+      dataAvailable: baseline.rainCost > 0,
+    },
+    {
+      key: "motha",
+      label: "Motha giveaways",
+      currentCost: baseline.mothaCost,
+      plannedCost: mothaPlanned,
+      deltaCost: mothaPlanned - baseline.mothaCost,
+      dataAvailable: baseline.mothaCost > 0,
+    },
+    {
+      key: "gift-cards",
+      label: "Gift cards",
+      currentCost: baseline.giftCardCost,
+      plannedCost: giftCardsPlanned,
+      deltaCost: giftCardsPlanned - baseline.giftCardCost,
+      dataAvailable: baseline.giftCardCost > 0,
+    },
+    {
+      key: "promo-codes",
+      label: "Promo codes",
+      currentCost: baseline.promoCodeCost,
+      plannedCost: promoCodesPlanned,
+      deltaCost: promoCodesPlanned - baseline.promoCodeCost,
+      dataAvailable: baseline.promoCodeCost > 0,
+    },
+    {
+      key: "adjustments",
+      label: "Balance adjustments (counted)",
+      currentCost: baseline.adjustmentCountedCost,
+      plannedCost: adjustmentsPlanned,
+      deltaCost: adjustmentsPlanned - baseline.adjustmentCountedCost,
+      dataAvailable: baseline.adjustmentCountedCost > 0,
+    },
+    {
+      key: "other",
+      label: "Residual other rewards",
+      currentCost: residualOther,
+      plannedCost: residualOther,
+      deltaCost: 0,
+      dataAvailable: residualOther > 0,
+    },
+    {
+      key: "shards",
+      label: "Shards",
+      currentCost: 0,
+      plannedCost: shardsPlanned,
+      deltaCost: shardsPlanned,
+      dataAvailable: true,
+    },
+    {
+      key: "credit-matrix",
+      label: "Crediting matrix savings",
+      currentCost: 0,
+      plannedCost: -matrixSavings,
+      deltaCost: -matrixSavings,
+      dataAvailable: true,
+    },
+  ];
+
+  // ── Revenue channel (deposit fee) ──
+  const depositFeePlanned = depositFeeRevenueUsd(baseline, planned);
+  const revenueLevers: RevenueLeverProjection[] = [
+    {
+      key: "deposit-fee",
+      label: "Deposit fee revenue",
+      currentUsd: 0,
+      plannedUsd: depositFeePlanned,
+      deltaUsd: depositFeePlanned,
+    },
+  ];
+  const revenueDelta = revenueLevers.reduce((s, r) => s + r.deltaUsd, 0);
+
+  // ── Reconciliation (planned-vs-default, $0 at the default mount) ──
+  const ggrDelta = planningGgr.ggrDelta;
   const rewardCostDelta = levers.reduce((s, l) => s + l.deltaCost, 0);
 
   const plannedGgr = core.plannedGgr;
-  const currentGgr = plannedGgr - ggrDelta; // GGR at the default plan
-  const currentRewardCost = core.currentRewardCost; // real anchored reward cost
+  const currentGgr = plannedGgr - ggrDelta;
+  const currentRewardCost = levers.reduce((s, l) => s + l.currentCost, 0);
   const plannedRewardCost = currentRewardCost + rewardCostDelta;
-  const plannedNgr = plannedGgr - plannedRewardCost;
-  const currentNgr = currentGgr - currentRewardCost;
-  const profitDelta = ggrDelta - rewardCostDelta; // = plannedNgr − currentNgr; $0 at default
-  const monthlyProfitDelta =
-    baseline.periodDays > 0 ? (profitDelta / baseline.periodDays) * 30 : profitDelta;
-  const annualProfitDelta =
-    baseline.periodDays > 0 ? (profitDelta / baseline.periodDays) * 365 : profitDelta;
+  const currentRevenue = revenueLevers.reduce((s, r) => s + r.currentUsd, 0);
+  const plannedRevenue = revenueLevers.reduce((s, r) => s + r.plannedUsd, 0);
+  const plannedNgr = plannedGgr - plannedRewardCost + plannedRevenue;
+  const currentNgr = currentGgr - currentRewardCost + currentRevenue;
+  const profitDelta = ggrDelta - rewardCostDelta + revenueDelta;
+  const monthlyProfitDelta = (profitDelta / days) * 30;
+  const annualProfitDelta = (profitDelta / days) * 365;
 
   return {
     ...core,
     ...planningGgr,
     levers,
+    revenueLevers,
+    revenueDelta,
     plannedGgr,
     currentGgr,
     plannedRewardCost,
@@ -843,31 +1721,26 @@ export function projectEdgePlanV2(
   };
 }
 
-/** Per-reward lever drag as a fraction of total wager (for edge waterfall UI). */
+// ─── Edge-after-rewards waterfall (kept; revenue shown separately) ───────────
+
 export type EdgeAfterRewardsLeverDrag = {
   key: string;
   label: string;
   plannedCostUsd: number;
   /** Positive = erodes edge (reward drag on the planned config). */
   dragPct: number;
-  /** Optional planning note (e.g. affiliate worst-case vs realized spend). */
   dragNote?: string;
 };
 
 export type EdgeAfterRewardsContext = {
   baseline: EdgePlanV2Baseline;
   levers: PlannedLeversV2;
-  /** Override organic wager for what-if drag dilution (null = baseline organic). */
   scenarioWagerUsd?: number | null;
 };
 
-/** Gross → reward drag → net edge remaining on the planned config. */
 export type EdgeAfterRewardsSummary = {
-  /** Scenario wager used for planned drag / net edge (USD). */
   wager: number;
-  /** Observed organic wager baseline (USD). */
   baseWager: number;
-  /** scenarioWager ÷ baseWager (1 = observed volume). */
   wagerScenarioMult: number;
   grossEdge: number;
   plannedRewardDrag: number;
@@ -879,9 +1752,7 @@ export type EdgeAfterRewardsSummary = {
   leverDrags: EdgeAfterRewardsLeverDrag[];
 };
 
-/** UI state for the edge-after-rewards wager scenario control. */
 export type WagerScenarioState = {
-  /** Multiplier on baseline organic wager (1 = baseline). */
   presetMult: number;
 };
 
@@ -900,10 +1771,7 @@ export function resolveScenarioWagerUsd(
 }
 
 /** Reward levers whose planned $ cost scales with wager at constant rates. */
-const WAGER_PROPORTIONAL_LEVER_KEYS = new Set([
-  "rakeback",
-  "affiliate",
-]);
+const WAGER_PROPORTIONAL_LEVER_KEYS = new Set(["rakeback", "affiliate", "shards"]);
 
 function scenarioLeverCostUsd(
   leverKey: string,
@@ -942,11 +1810,6 @@ export function computeEdgeAfterRewards(
       : baseWager;
   const wagerScenarioMult = baseWager > 0 ? scenarioWager / baseWager : 1;
 
-  // Margin-bearing wager (packs + upgrader only — battles produce 0 GGR and
-  // must not dilute the headline edge). The whole waterfall runs on this basis
-  // so gross − drag = net stays consistent. Uses the explicit margin-bearing
-  // helpers, which are margin-bearing on prod (HEAD) regardless of the v1
-  // "exclude battles from headline" refactor.
   const marginWager = ctx?.baseline
     ? Math.max(0, marginBearingWager(ctx.baseline))
     : baseWager;
@@ -956,9 +1819,6 @@ export function computeEdgeAfterRewards(
     ctx?.baseline && ctx?.levers
       ? plannedMarginBearingHouseEdgeV2(ctx.baseline, ctx.levers)
       : projection.plannedEdge;
-  // "was" reference = the margin-bearing edge at the DEFAULT lever config
-  // (planned-vs-planned), NOT the observed/measured edge (which mixes bases and
-  // runs higher than the planning default).
   const currentGrossEdge = ctx?.baseline
     ? plannedMarginBearingHouseEdgeV2(ctx.baseline, defaultLeversV2(ctx.baseline))
     : projection.currentEdge > 0.00001

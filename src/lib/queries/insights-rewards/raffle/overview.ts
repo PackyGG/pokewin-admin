@@ -8,6 +8,11 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "../_period";
+import {
+  parseRafflePrizes,
+  buildRafflePrizeValuator,
+  type RafflePrizeLine,
+} from "./prize-valuation";
 
 /**
  * Baseline rollup for the RAFFLE forecast on /insights/rewards (hub) +
@@ -98,27 +103,8 @@ type RaffleRow = {
   completed_at: Date | null;
 };
 
-/** A single parsed prize line. */
-type RafflePrize = { type: "pack" | "card"; id: string; quantity?: number };
-
-/** Defensive parse of the `prizes` JSON into well-formed prize lines. */
-function parsePrizes(raw: unknown): RafflePrize[] {
-  if (!Array.isArray(raw)) return [];
-  const out: RafflePrize[] = [];
-  for (const p of raw) {
-    if (p == null || typeof p !== "object") continue;
-    const rec = p as Record<string, unknown>;
-    const type = rec.type;
-    const id = rec.id;
-    if ((type !== "pack" && type !== "card") || typeof id !== "string" || id.length === 0) {
-      continue;
-    }
-    const qtyRaw = Number(rec.quantity);
-    const quantity = Number.isFinite(qtyRaw) && qtyRaw > 0 ? Math.floor(qtyRaw) : 1;
-    out.push({ type, id, quantity });
-  }
-  return out;
-}
+// Prize parsing + valuation now live in the shared `./prize-valuation`
+// helper (also consumed by the Edge Plan 2.0 live-raffle context cards).
 
 async function computeRaffleBaseline(
   period: InsightsRewardsPeriod,
@@ -169,29 +155,20 @@ async function computeRaffleBaseline(
 
   // Parse every raffle's prizes once and collect the referenced item ids so we
   // value each distinct pack/card with a single lookup (not per-raffle).
-  const parsedByRaffle = new Map<string, RafflePrize[]>();
-  const packIds = new Set<string>();
-  const cardIds = new Set<string>();
+  const parsedByRaffle = new Map<string, RafflePrizeLine[]>();
+  const allLines: RafflePrizeLine[] = [];
   for (const row of raffleRows) {
-    const prizes = parsePrizes(row.prizes);
+    const prizes = parseRafflePrizes(row.prizes);
     parsedByRaffle.set(row.id, prizes);
-    for (const p of prizes) {
-      if (p.type === "pack") packIds.add(p.id);
-      else cardIds.add(p.id);
-    }
+    allLines.push(...prizes);
   }
 
   const raffleIds = raffleRows.map((r) => r.id);
 
   // Item prices + the entries rollup (distinct participants + points) run in
   // parallel; none depends on the others.
-  const [packRows, cardRows, entryRows] = await Promise.all([
-    packIds.size > 0
-      ? db.packs.findMany({ where: { id: { in: [...packIds] } }, select: { id: true, price: true } })
-      : Promise.resolve([] as Array<{ id: string; price: unknown }>),
-    cardIds.size > 0
-      ? db.cards.findMany({ where: { id: { in: [...cardIds] } }, select: { id: true, price: true } })
-      : Promise.resolve([] as Array<{ id: string; price: unknown }>),
+  const [valuator, entryRows] = await Promise.all([
+    buildRafflePrizeValuator(db, allLines),
     // Distinct participants across the counted raffles + total points spent, so
     // the forecast has the real ticket-rate context. Customer scope is enforced
     // on the entrant too (consistent with the winner scope above).
@@ -207,19 +184,9 @@ async function computeRaffleBaseline(
     `),
   ]);
 
-  const packPrice = new Map(packRows.map((p) => [p.id, toNumber(p.price)]));
-  const cardPrice = new Map(cardRows.map((c) => [c.id, toNumber(c.price)]));
-
   /** Value one raffle's full prize set (Σ price × qty). Unknown items → 0. */
-  const valueRaffle = (raffleId: string): number => {
-    const prizes = parsedByRaffle.get(raffleId) ?? [];
-    let sum = 0;
-    for (const p of prizes) {
-      const unit = p.type === "pack" ? packPrice.get(p.id) ?? 0 : cardPrice.get(p.id) ?? 0;
-      sum += unit * (p.quantity ?? 1);
-    }
-    return sum;
-  };
+  const valueRaffle = (raffleId: string): number =>
+    valuator.valueLines(parsedByRaffle.get(raffleId) ?? []);
 
   let totalPrizeCost = 0;
   let maxRafflePrizeUsd = 0;
