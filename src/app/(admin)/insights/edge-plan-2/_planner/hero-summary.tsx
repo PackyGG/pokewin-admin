@@ -286,9 +286,9 @@ export function EdgePlanV2HeroSummary({
           }
         />
         <KpiTile
-          label="Wager (30d)"
+          label="Wager (30d, GGR model)"
           value={formatCompactUsd(projection.plannedWager)}
-          sub="All games · borrow incl. · observed volume"
+          sub="Planning base · borrow excluded — headline wager is the owner strip above"
           icon={Coins}
           accent="blue"
         />

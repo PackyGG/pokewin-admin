@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { BarChart3, Database, RotateCcw } from "lucide-react";
+import { BarChart3, Database, Landmark, RotateCcw } from "lucide-react";
 
 import { SectionHeading } from "@/components/modern-panels";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
 import { formatPct } from "../../edge-calc/math";
 import {
   computeNetEdgeScenariosV2,
+  computeOwnerDragSummary,
   defaultLeversV2,
   projectEdgePlanV2,
   rawMathEdgeV2,
@@ -23,6 +24,7 @@ import {
   computeBlendedEdgeBreakdownV2,
   resolveScenarioWagerUsd,
   type EdgePlanV2Baseline,
+  type EdgePlanV2Projection,
   type PlannedLeversV2,
   type WagerScenarioState,
 } from "../_model-v2";
@@ -158,13 +160,21 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
 
   return (
     <div className="space-y-4">
-      {baseline.baselineSparse && (
+      {baseline.degradedBlocks.length > 0 && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-200">
-          Some 30d baseline reads were unavailable — wager and reward anchors may
-          be partially estimated. Levers and saved configs still work for what-if
-          planning.
+          <span className="font-semibold">
+            {baseline.degradedBlocks.length} non-critical baseline read
+            {baseline.degradedBlocks.length === 1 ? "" : "s"} failed
+          </span>{" "}
+          ({baseline.degradedBlocks.join(", ")}) — the affected blocks plan
+          from their fallback anchors (labeled estimated). All levers stay
+          live; the headline numbers above are unaffected (owner-trusted
+          stack).
         </div>
       )}
+
+      {/* ── Owner-anchored headline (30d, hub helpers) + lifetime recon ───── */}
+      <OwnerAnchorStrip baseline={baseline} projection={projection} />
 
       {/* ── Hero: profit delta + single edge waterfall + KPI strip ─────────── */}
       <EdgePlanV2HeroSummary
@@ -353,6 +363,133 @@ function MeasuredStat({
       <p className={cn("truncate text-sm font-semibold tabular-nums", tone)}>
         {value}
       </p>
+    </div>
+  );
+}
+
+/**
+ * Owner-anchored headline strip + the mandatory lifetime reconciliation
+ * row. Every figure comes from `baseline.recon` — the EXACT cached helpers
+ * the /insights hub renders (`getInsightsHubWager*` + `getCostBreakdown`),
+ * each band carrying a LOUD window chip so scopes are never mixed silently.
+ * The reward drag here is the OWNER model: on-site reward spend ÷ hub
+ * wager — creator-attributed leaderboard prizes live in the footnote, not
+ * the drag.
+ */
+function OwnerAnchorStrip({
+  baseline,
+  projection,
+}: {
+  baseline: EdgePlanV2Baseline;
+  projection: EdgePlanV2Projection;
+}) {
+  const d30 = baseline.recon.d30;
+  const lifetime = baseline.recon.lifetime;
+  const drag = computeOwnerDragSummary(baseline, projection);
+  const pnlTone = d30.realizedPnl >= 0 ? TEXT_TONE.emerald : TEXT_TONE.rose;
+  const lifePnlTone =
+    lifetime.realizedPnl >= 0 ? TEXT_TONE.emerald : TEXT_TONE.rose;
+  const plannedDragMoved =
+    drag.plannedDragPct != null &&
+    drag.measuredDragPct != null &&
+    Math.abs(drag.plannedDragPct - drag.measuredDragPct) > 0.00005;
+
+  return (
+    <div className="rounded-xl border bg-muted/20 px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <Landmark className="size-3.5" aria-hidden />
+          Owner-trusted headline — same helpers as the /insights hub
+        </p>
+        <span className="rounded-full border bg-background px-2 py-0.5 text-[10px] font-semibold text-foreground">
+          {d30.label}
+        </span>
+      </div>
+
+      <div className="mt-2 grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-3">
+        <div className="min-w-0">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Wager · real customers
+          </p>
+          <p className="truncate text-lg font-bold tabular-nums">
+            {formatCurrency(d30.wager)}
+          </p>
+          <p className="text-[10px] leading-snug text-muted-foreground">
+            In plain words: how much customers bet (real cash after borrow,
+            upgrader included).
+          </p>
+        </div>
+        <div className="min-w-0">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Realized P&amp;L
+          </p>
+          <p className={cn("truncate text-lg font-bold tabular-nums", pnlTone)}>
+            {d30.realizedPnl >= 0 ? "+" : "−"}
+            {formatCurrency(Math.abs(d30.realizedPnl))}
+          </p>
+          <p className="text-[10px] leading-snug text-muted-foreground">
+            In plain words: what the house actually banked this window.
+          </p>
+        </div>
+        <div className="min-w-0">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            On-site reward spend
+          </p>
+          <p className={cn("truncate text-lg font-bold tabular-nums", TEXT_TONE.rose)}>
+            {formatCurrency(d30.onSiteRewardCost)}
+            {d30.onSiteDragPct != null && (
+              <span className="ml-1.5 text-xs font-semibold">
+                = {formatPct(d30.onSiteDragPct)} of wager
+              </span>
+            )}
+          </p>
+          <p className="text-[10px] leading-snug text-muted-foreground">
+            In plain words: how much of the edge the rewards eat
+            {plannedDragMoved && drag.plannedDragPct != null && (
+              <>
+                {" "}
+                · planned config: {formatPct(drag.plannedDragPct)}
+              </>
+            )}
+            .
+          </p>
+        </div>
+      </div>
+
+      {/* Creator-costs footnote — leaderboard prizes are NOT in the drag. */}
+      <p className="mt-2 border-t pt-2 text-[10px] leading-snug text-muted-foreground">
+        Creator costs not in this drag: affiliate leaderboard prizes{" "}
+        <span className="font-medium text-foreground tabular-nums">
+          {formatCurrency(d30.creatorLeaderboardCost)}
+        </span>{" "}
+        (attributed to Creators per the house model
+        {d30.dragWithCreatorPct != null && (
+          <> — drag incl. creator would read {formatPct(d30.dragWithCreatorPct)}</>
+        )}
+        ).
+      </p>
+
+      {/* Mandatory lifetime reconciliation row — equals the /insights hub. */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-background/60 px-3 py-2">
+        <span className="rounded-full border bg-background px-2 py-0.5 text-[10px] font-semibold text-foreground">
+          {lifetime.label}
+        </span>
+        <span className="text-xs tabular-nums">
+          Wager{" "}
+          <span className="font-semibold">{formatCurrency(lifetime.wager)}</span>
+        </span>
+        <span className="text-xs tabular-nums">
+          Realized P&amp;L{" "}
+          <span className={cn("font-semibold", lifePnlTone)}>
+            {lifetime.realizedPnl >= 0 ? "+" : "−"}
+            {formatCurrency(Math.abs(lifetime.realizedPnl))}
+          </span>
+        </span>
+        <span className="text-[10px] text-muted-foreground">
+          — identical to the /insights hub by construction (same cached
+          helpers).
+        </span>
+      </div>
     </div>
   );
 }
