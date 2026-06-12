@@ -160,6 +160,8 @@ export const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
         availableBalance={balances.availableBalance}
         availableBalanceRaw={balances.availableBalanceRaw}
         lockedBalance={balances.lockedBalance}
+        coinsEnabled={balances.coinsEnabled}
+        coinBalance={balances.coinBalance}
         open={adjustOpen}
         onOpenChange={setAdjustOpen}
       />
