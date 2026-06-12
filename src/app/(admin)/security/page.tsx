@@ -7,6 +7,7 @@ import {
   Gem,
   Hourglass,
   Bitcoin,
+  Gauge,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getSiteConfig } from "@/lib/queries/security";
@@ -55,6 +56,11 @@ import {
   type CryptoFees,
 } from "@/lib/backend-api/crypto-fees";
 import { CryptoFeesCard } from "./crypto-fees-card";
+import {
+  getMultiplierWagerWeights,
+  type MultiplierWagerWeights,
+} from "@/lib/backend-api/multiplier-wager-weights";
+import { MultiplierWagerWeightsCard } from "./multiplier-wager-weights-card";
 
 export const metadata = { title: "Security" };
 
@@ -129,6 +135,15 @@ export default async function SecurityPage() {
     shardWeights = null;
   }
 
+  // Same non-critical pattern for the odds-based (bet-multiplier) wager
+  // weights — the backend branch may not be deployed yet.
+  let multiplierWeights: MultiplierWagerWeights | null = null;
+  try {
+    multiplierWeights = await getMultiplierWagerWeights();
+  } catch {
+    multiplierWeights = null;
+  }
+
   // Same non-critical pattern for the reward claim windows — the backend
   // branch may not be deployed yet.
   let rewardExpiry: RewardExpiry | null = null;
@@ -189,6 +204,13 @@ export default async function SecurityPage() {
         <div className="space-y-3">
           <SectionHeading icon={Coins} title="Funding-Source Wager Weights" />
           <SourceWagerWeightsCard initial={sourceWeights} />
+        </div>
+      </FadeIn>
+
+      <FadeIn>
+        <div className="space-y-3">
+          <SectionHeading icon={Gauge} title="Multiplier Wager Weights" />
+          <MultiplierWagerWeightsCard initial={multiplierWeights} />
         </div>
       </FadeIn>
 
