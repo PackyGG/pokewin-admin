@@ -28,11 +28,20 @@ import {
   type EdgePlanV2Projection,
   type PlannedLeversV2,
 } from "../../_model-v2";
+import {
+  computePackCoverage,
+  computePackCoverageAggregate,
+  type PackCoverageInput,
+} from "../../_pack-coverage-v2";
 import { formatPct } from "../../../edge-calc/math";
 import { formatEvUsd, multLabel } from "../utils";
 import { TEXT_TONE } from "../colors";
 import { EmptyLever } from "../components/empty-lever";
 import { LeverHint } from "../components/lever-hint";
+import {
+  PackCoverageBlock,
+  type PackCoverageDisplayRow,
+} from "../components/pack-coverage-block";
 import { leverEdgeDragPct, RewardPanelTitle } from "../components/reward-edge-drag";
 
 export function PacksSignupSection({
@@ -89,6 +98,70 @@ export function PacksSignupSection({
     const ev = Math.max(0, levers.dailyPackEvUsd[p.packId] ?? p.measuredEvUsd);
     return s + ev * p.opens;
   }, 0) * freq;
+  /** Real window $ actually paid out across all daily packs (Σ giveawayPayout). */
+  const measuredTotal = rows.reduce((s, p) => s + p.giveawayPayout, 0);
+
+  // ── Wager-loss vs giveback coverage (shipped pure module, consumed here) ──
+  // LOCAL planning assumption — deliberately NOT a lever / model field: the
+  // share of the re-lock-gated loss that would not happen without the program.
+  const [coverageIncrementality, setCoverageIncrementality] =
+    React.useState(0.25);
+
+  const coverage = React.useMemo(() => {
+    const windowDays = Math.max(1, baseline.periodDays);
+    const global = { incrementality: coverageIncrementality };
+    const entries = rows
+      .filter((p) => p.claimers > 0)
+      .map((p) => {
+        const level = p.level;
+        // Gate exists but has no empirical $ value (no player at that level
+        // yet) → we cannot price the required loss; exclude from totals.
+        // levelRequired <= 0 is a GENUINE no-gate pack: required loss $0.
+        const gateUnpriced =
+          level == null ||
+          (level.levelRequired > 0 && level.wagerLossRequiredUsd == null);
+        const relockDefault = level?.relockPctDefault ?? 0.01;
+        const input: PackCoverageInput = {
+          id: p.packId,
+          levelRequirementUsd: level?.wagerLossRequiredUsd ?? 0,
+          relockPct: levers.dailyPackRelockPct[p.packId] ?? relockDefault,
+          evPerOpenUsd: Math.max(
+            0,
+            levers.dailyPackEvUsd[p.packId] ?? p.measuredEvUsd,
+          ),
+          // Grant frequency scales opens; claimers held constant (same
+          // assumption as the planned-cost line: EV × opens × frequency).
+          opensPerWindow: (p.opens * freq) / p.claimers,
+          claimers: p.claimers,
+          eligibleUsers: p.usage?.eligibleUsers ?? 0,
+          windowDays,
+        };
+        return { name: p.name, gateUnpriced, input };
+      });
+    const aggregate = computePackCoverageAggregate(
+      entries.filter((e) => !e.gateUnpriced).map((e) => e.input),
+      global,
+    );
+    const displayRows: PackCoverageDisplayRow[] = entries.map((e) => ({
+      packId: e.input.id!,
+      name: e.name,
+      gateUnpriced: e.gateUnpriced,
+      result: computePackCoverage(e.input, global),
+    }));
+    return {
+      aggregate,
+      rows: displayRows,
+      byPack: new Map(displayRows.map((r) => [r.packId, r])),
+      windowDays,
+    };
+  }, [
+    rows,
+    levers.dailyPackEvUsd,
+    levers.dailyPackRelockPct,
+    freq,
+    baseline.periodDays,
+    coverageIncrementality,
+  ]);
 
   const amortizedPerSignup =
     baseline.signupSignups > 0
@@ -117,7 +190,8 @@ export function PacksSignupSection({
           house cost of one pack open — set it richer or leaner per pack. The
           level gate and the 30d re-lock are PLAYER requirements (wager-loss to
           unlock / re-earn) — they change no house cost here; only EV × opens ×
-          frequency does.
+          frequency does. What the re-lock lever DOES drive is the coverage
+          panel below: required loss flow vs giveback.
         </p>
         <div className="mb-4 flex flex-col gap-3 rounded-xl border bg-muted/25 p-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0 flex-1 lg:max-w-md">
@@ -140,20 +214,41 @@ export function PacksSignupSection({
               />
             </LeverHint>
           </div>
-          <div className="shrink-0 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-right">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Planned total
-            </p>
-            <p className={`text-lg font-bold tabular-nums ${TEXT_TONE.rose}`}>
-              {formatCurrency(plannedTotal)}
-            </p>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <div className="rounded-lg border bg-muted/30 px-3 py-2 text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Measured (window)
+              </p>
+              <p className="text-lg font-bold tabular-nums">
+                {formatCurrency(measuredTotal)}
+              </p>
+              <p className="text-[9px] text-muted-foreground">
+                real $ paid out
+              </p>
+            </div>
+            <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Planned total
+              </p>
+              <p className={`text-lg font-bold tabular-nums ${TEXT_TONE.rose}`}>
+                {formatCurrency(plannedTotal)}
+              </p>
+              <p className="text-[9px] text-muted-foreground">
+                EV × opens × frequency
+              </p>
+            </div>
           </div>
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {rows.map((p) => {
             const plannedEv =
               levers.dailyPackEvUsd[p.packId] ?? p.measuredEvUsd;
-            const packCost = formatCurrency(plannedEv * p.opens * freq);
+            const plannedCostUsd = plannedEv * p.opens * freq;
+            const packCost = formatCurrency(plannedCostUsd);
+            const costChanged =
+              Math.abs(plannedCostUsd - p.giveawayPayout) > 0.005;
+            const coverageRow = coverage.byPack.get(p.packId);
+            const coverageRatio = coverageRow?.result.coverageRatio ?? null;
             const level = p.level;
             const usage = p.usage;
             const relockDefault = level?.relockPctDefault ?? 0.01;
@@ -287,43 +382,96 @@ export function PacksSignupSection({
                   </>
                 }
                 footerStats={
-                  <div className="grid grid-cols-3 gap-x-2 gap-y-2">
-                    <UsageStat label="Opens" value={p.opens.toLocaleString()} />
-                    <UsageStat
-                      label="Claimers"
-                      value={p.claimers.toLocaleString()}
-                    />
-                    <UsageStat
-                      label="Opens / claimer"
-                      value={p.claimers > 0 ? opensPerClaimer.toFixed(1) : "—"}
-                    />
-                    <UsageStat
-                      label="Claim rate"
-                      value={
-                        usage?.claimRateVsEligible != null
-                          ? formatPct(usage.claimRateVsEligible, 1)
-                          : "—"
-                      }
-                      sub={
-                        usage?.eligibleUsers != null
-                          ? `${usage.eligibleUsers.toLocaleString()} eligible`
-                          : undefined
-                      }
-                    />
-                    <UsageStat
-                      label="Every-time %"
-                      value={
-                        usage?.everyTimeClaimerPct != null
-                          ? formatPct(usage.everyTimeClaimerPct, 1)
-                          : "—"
-                      }
-                      sub="claim ≥90% of days"
-                    />
-                    <UsageStat
-                      label="Planned cost"
-                      value={packCost}
-                      tone={TEXT_TONE.rose}
-                    />
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-x-2 gap-y-2">
+                      <UsageStat label="Opens" value={p.opens.toLocaleString()} />
+                      <UsageStat
+                        label="Claimers"
+                        value={p.claimers.toLocaleString()}
+                      />
+                      <UsageStat
+                        label="Opens / claimer"
+                        value={p.claimers > 0 ? opensPerClaimer.toFixed(1) : "—"}
+                      />
+                      <UsageStat
+                        label="Claim rate"
+                        value={
+                          usage?.claimRateVsEligible != null
+                            ? formatPct(usage.claimRateVsEligible, 1)
+                            : "—"
+                        }
+                        sub={
+                          usage?.eligibleUsers != null
+                            ? `${usage.eligibleUsers.toLocaleString()} eligible`
+                            : undefined
+                        }
+                      />
+                      <UsageStat
+                        label="Every-time %"
+                        value={
+                          usage?.everyTimeClaimerPct != null
+                            ? formatPct(usage.everyTimeClaimerPct, 1)
+                            : "—"
+                        }
+                        sub="claim ≥90% of days"
+                      />
+                      <UsageStat
+                        label="Coverage"
+                        value={
+                          coverageRow == null
+                            ? "—"
+                            : coverageRow.gateUnpriced
+                              ? "n/a"
+                              : coverageRatio == null
+                                ? "n/a"
+                                : `${coverageRatio.toFixed(2)}×`
+                        }
+                        tone={
+                          coverageRow != null &&
+                          !coverageRow.gateUnpriced &&
+                          coverageRatio != null
+                            ? coverageRatio >= 1
+                              ? TEXT_TONE.emerald
+                              : TEXT_TONE.rose
+                            : undefined
+                        }
+                        sub={
+                          coverageRow == null
+                            ? "no claimers"
+                            : coverageRow.gateUnpriced
+                              ? "no $ basis"
+                              : "re-lock flow ÷ giveback"
+                        }
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 rounded-lg border bg-muted/20 px-2.5 py-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Measured cost
+                        </p>
+                        <p className="text-[11px] font-semibold tabular-nums">
+                          {formatCurrency(p.giveawayPayout)}
+                        </p>
+                        <p className="truncate text-[9px] text-muted-foreground">
+                          real window $
+                        </p>
+                      </div>
+                      <div className="min-w-0 text-right">
+                        <p className="truncate text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Planned cost
+                        </p>
+                        <p
+                          className={`text-[11px] font-semibold tabular-nums ${
+                            costChanged ? TEXT_TONE.rose : "text-muted-foreground"
+                          }`}
+                        >
+                          {packCost}
+                        </p>
+                        <p className="truncate text-[9px] text-muted-foreground">
+                          EV × opens × freq
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 }
               />
@@ -331,6 +479,14 @@ export function PacksSignupSection({
           })}
         </div>
       </StatPanel>
+
+      <PackCoverageBlock
+        aggregate={coverage.aggregate}
+        rows={coverage.rows}
+        incrementality={coverageIncrementality}
+        onIncrementalityChange={setCoverageIncrementality}
+        windowDays={coverage.windowDays}
+      />
 
       <StatPanel
         title={
