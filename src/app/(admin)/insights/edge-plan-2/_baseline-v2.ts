@@ -30,6 +30,14 @@ import {
   buildRafflePrizeValuator,
 } from "@/lib/queries/insights-rewards/raffle/prize-valuation";
 import {
+  getRaffleLifetimeHistory,
+  type RaffleLifetimeHistory,
+} from "@/lib/queries/insights-rewards/raffle/lifetime-history";
+import { getDepositBonusOverview } from "@/lib/queries/insights-rewards/deposit-bonus/overview";
+import { getDepositBonusCapHitRate } from "@/lib/queries/insights-rewards/deposit-bonus/cap-analysis";
+import { getDepositBonusROI } from "@/lib/queries/insights-rewards/deposit-bonus/roi";
+import type { ForecastBaseline } from "../_forecast-engine";
+import {
   getCostBreakdown,
   type CostBreakdown,
 } from "@/lib/queries/insights-analytics/cost-breakdown";
@@ -819,26 +827,62 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
       ),
     ]);
 
-  const [everyTimeRes, liveRafflesRes, ledgerMaxRes] = await Promise.all([
-    safeQuery(
-      () => scanEveryTimeClaimers(since, periodDays),
-      null,
-      "edge-plan-v2.every-time-claimers",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => scanLiveRaffles(),
-      null,
-      "edge-plan-v2.live-raffles",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => scanLedgerMaxCreatedAt(),
-      null,
-      "edge-plan-v2.ledger-freshness",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-  ]);
+  const [everyTimeRes, liveRafflesRes, ledgerMaxRes, raffleHistoryRes] =
+    await Promise.all([
+      safeQuery(
+        () => scanEveryTimeClaimers(since, periodDays),
+        null,
+        "edge-plan-v2.every-time-claimers",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => scanLiveRaffles(),
+        null,
+        "edge-plan-v2.live-raffles",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => scanLedgerMaxCreatedAt(),
+        null,
+        "edge-plan-v2.ledger-freshness",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      // Spec #10: every raffle ever run (completed + active) — ONE bounded
+      // read over the tiny raffles table, shared prize valuation, cached.
+      safeQuery(
+        () => getRaffleLifetimeHistory(),
+        null,
+        "edge-plan-v2.raffle-history",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+    ]);
+
+  // ── Wave 6 (non-critical): the deposit-bonus forecast anchor (spec #8) —
+  // the SAME three reads the /insights/forecast hub's deposit-bonus tab
+  // runs (overview + cap-hit + ROI, 30d), so the time-bonus block's engine
+  // run is identical to the forecast page by construction. Cap/ROI legs are
+  // OPTIONAL inside the anchor (nullable fields, same as the forecast tab).
+  const [dbForecastOvRes, dbForecastCapRes, dbForecastRoiRes] =
+    await Promise.all([
+      safeQuery(
+        () => getDepositBonusOverview(EDGE_PLAN_V2_PERIOD),
+        null,
+        "edge-plan-v2.deposit-bonus-forecast-overview",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => getDepositBonusCapHitRate(EDGE_PLAN_V2_PERIOD),
+        null,
+        "edge-plan-v2.deposit-bonus-forecast-cap",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => getDepositBonusROI(EDGE_PLAN_V2_PERIOD),
+        null,
+        "edge-plan-v2.deposit-bonus-forecast-roi",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+    ]);
 
   // ── Owner-trusted recon block (windows LOUD; lifetime ≡ /insights hub) ──
   const recon: OwnerReconBlock = {
@@ -910,6 +954,31 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
   const everyTime = note("every-time-claimers", everyTimeRes);
   const liveRaffles = note("live-raffles", liveRafflesRes) ?? [];
   const ledgerMaxCreatedAt = note("ledger-freshness", ledgerMaxRes);
+  const raffleHistory: RaffleLifetimeHistory | null = note(
+    "raffle-history",
+    raffleHistoryRes,
+  );
+
+  // ── Deposit-bonus forecast anchor (spec #8) — EXACTLY the forecast tab's
+  // construction: usable only when the overview leg succeeded AND there were
+  // real bonus rows; cap/ROI degrade into their nullable fields.
+  const dbForecastOv = note("deposit-bonus-forecast", dbForecastOvRes);
+  const dbForecastCap = dbForecastCapRes.data;
+  const dbForecastRoi = dbForecastRoiRes.data;
+  const depositBonusForecastBaseline: ForecastBaseline | null =
+    dbForecastOv != null && dbForecastOv.count > 0
+      ? {
+          totalCost: dbForecastOv.totalCost,
+          uniqueClaimants: dbForecastOv.uniqueClaimants,
+          periodDays,
+          claimProbability: dbForecastOv.claimProbability,
+          avgBonusUsd: dbForecastOv.avg,
+          empiricalCapUsd: dbForecastOv.max,
+          capHitRate: dbForecastCap?.capHitRate ?? null,
+          blendedRoi: dbForecastRoi?.blendedRoi ?? null,
+          avgGgrPerClaimant: dbForecastRoi?.avgGgrPerClaimant ?? 0,
+        }
+      : null;
 
   // ── Daily-pack level gates + usage ──
   const thresholdFor = (level: number): number | null => {
@@ -1062,6 +1131,8 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
 
     recon,
     ownerTotalPnl,
+    depositBonusForecastBaseline,
+    raffleHistory,
     degradedBlocks: degraded,
   };
 
@@ -1100,7 +1171,9 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
  */
 const cachedBaseline = unstable_cache(
   () => buildEdgePlanV2Baseline(),
-  ["edge-plan-v2-baseline-rework-v1"],
+  // Key bumped (-v2): the baseline gained the deposit-bonus forecast anchor
+  // + raffle history blocks (2026-06-12) — never serve a pre-bump entry.
+  ["edge-plan-v2-baseline-rework-v2"],
   { revalidate: 60, tags: ["insights-analytics", "edge-plan-2"] },
 );
 

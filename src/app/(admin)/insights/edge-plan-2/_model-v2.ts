@@ -68,6 +68,25 @@ import {
   totalMatrixSavingsUsd,
 } from "./_credit-matrix-v2";
 
+// Pure type of the deposit-bonus forecast anchor (the same `ForecastBaseline`
+// the /insights/forecast hub hands its island) — type-only, no server code.
+import type { ForecastBaseline as DepositBonusForecastAnchor } from "../_forecast-engine";
+
+// The deposit-bonus forecast ENGINE bridge (owner spec #8) — pure module
+// (engine + scenario library + the SAME `defaults` assumptions builder the
+// forecast page uses). No React, no DB, no server-only.
+import {
+  projectSplitCapVsBaseline,
+  type SplitCapEngineProjection,
+} from "../rewards/deposit-bonus/_forecast/edge-plan-projection";
+
+// Lifetime raffle history block (owner spec #10) — type-only import; the
+// query itself lives in `@/lib/queries/insights-rewards/raffle/lifetime-history`.
+import type { RaffleLifetimeHistory } from "@/lib/queries/insights-rewards/raffle/lifetime-history";
+
+export type { DepositBonusForecastAnchor, SplitCapEngineProjection };
+export type { RaffleLifetimeHistory };
+
 export {
   clamp,
   PLANNED_PACKS_BATTLES_EDGE_DEFAULT,
@@ -571,6 +590,21 @@ export type EdgePlanV2Baseline = SystemEdgeBaseline & {
    */
   ownerTotalPnl?: OwnerTotalPnlSnapshot | null;
   /**
+   * The deposit-bonus forecast anchor (owner spec #8): the SAME
+   * `ForecastBaseline` shape the /insights/forecast hub builds for
+   * `?reward=deposit-bonus` (overview + cap-hit + ROI queries, 30d), so the
+   * time-bonus block's engine run is identical to the forecast page by
+   * construction. Optional/null = the leg degraded this build (the block
+   * falls back to the mechanical user-day-cap floor, loudly labeled).
+   */
+  depositBonusForecastBaseline?: DepositBonusForecastAnchor | null;
+  /**
+   * Lifetime raffle history (owner spec #10): every raffle ever run
+   * (completed + active) valued via the shared prize-valuation helper.
+   * Optional/null = the leg degraded this build (visible error band).
+   */
+  raffleHistory?: RaffleLifetimeHistory | null;
+  /**
    * Names of NON-critical legs that degraded this build (safeQuery
    * fallbacks). Empty = fully healthy. The page renders these as visible
    * error bands — never as silent zeros.
@@ -610,6 +644,13 @@ export type PlannedLeversV2 = {
   // ── Affiliate ──
   affiliateRates: Record<number, number>;
   /**
+   * GLOBAL affiliate scale (percent, 0..200; default 100 = current rates,
+   * $0 delta). Composes MULTIPLICATIVELY with the per-level rate sliders:
+   * effective level rate = per-level rate × (scale ÷ 100). 50 → every tier
+   * at half rate (L1 3.00% → 1.50%); 0 → the whole program off.
+   */
+  affiliateGlobalScalePct: number;
+  /**
    * Keep the 1× wager requirement on affiliate commission (default true =
    * current behavior). OFF = instant withdrawal of commission → commission
    * cost × REMOVE_WAGER_REQ_COMMISSION_BASE_MULT (≈1.54, the v1 breakage
@@ -638,7 +679,13 @@ export type PlannedLeversV2 = {
 
   // ── $ budgets (null = run-rate seed) ──
   raceMonthlyBudgetUsd: number | null;
-  /** Hours BETWEEN rains (cadence input); null = observed spacing. */
+  /**
+   * RAIN DURATION in hours (owner spec #11): rains run BACK-TO-BACK, so the
+   * duration of one rain IS the spacing to the next — rainsPerDay =
+   * 24 ÷ duration (2h → 12 rains/day). Null = the observed duration
+   * (window hours ÷ completed-rain count, ≈1.76h on live data). Monthly
+   * budget = rainsPerDay × 30 × $ per rain (see {@link rainPlanV2}).
+   */
   rainDurationHours: number | null;
   /** Pool $ per rain event; null = observed average pool. */
   rainPerEventUsd: number | null;
@@ -677,6 +724,75 @@ export type PlannedLeversV2 = {
   /** Share of each reward $ assumed re-wagered (the honest assumption knob). */
   matrixReWagerRate: number;
   matrixCells: CreditMatrixCells;
+
+  // ── Edge-inclusion toggles (owner spec #14) ──
+  /**
+   * Per-program "counts toward edge" switches, keyed by lever ROW key
+   * ({@link EDGE_INCLUSION_KEYS}). Missing key = true (ON = today). OFF =
+   * the program is EXCLUDED from drag / planned-reward-cost /
+   * after-rewards-edge / planned-NGR attribution — its $ stays displayed in
+   * its box and surfaces in the transparency footnote
+   * (`projection.excludedPrograms`). An ATTRIBUTION control, NOT a $0
+   * budget. The sanitizer fills every key explicitly (presets-safe).
+   */
+  edgeInclusion: Record<string, boolean>;
+};
+
+// ─── Edge-inclusion keys (owner spec #14) ────────────────────────────────────
+
+/**
+ * The 13 reward-program lever rows that carry an ON/OFF "counts toward
+ * edge" switch. `other` (residual, read-only) and `credit-matrix` (a cost
+ * REDUCTION row, not a program) are deliberately NOT toggleable.
+ */
+export const EDGE_INCLUSION_KEYS = [
+  "rakeback",
+  "affiliate",
+  "deposit-bonus",
+  "races",
+  "raffles",
+  "rain",
+  "motha",
+  "gift-cards",
+  "promo-codes",
+  "adjustments",
+  "daily-packs",
+  "signup-packs",
+  "shards",
+] as const;
+
+export type EdgeInclusionKey = (typeof EDGE_INCLUSION_KEYS)[number];
+
+const EDGE_INCLUSION_KEY_SET: ReadonlySet<string> = new Set(EDGE_INCLUSION_KEYS);
+
+/** All-true inclusion map — the default = today's attribution. */
+export function defaultEdgeInclusionV2(): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const k of EDGE_INCLUSION_KEYS) out[k] = true;
+  return out;
+}
+
+/**
+ * Whether a lever row counts toward edge/drag attribution. Non-toggleable
+ * rows (`other`, `credit-matrix`) are ALWAYS included; toggleable rows are
+ * included unless explicitly switched off (missing key = ON).
+ */
+export function isLeverIncludedInEdgeV2(
+  levers: Pick<PlannedLeversV2, "edgeInclusion">,
+  leverKey: string,
+): boolean {
+  if (!EDGE_INCLUSION_KEY_SET.has(leverKey)) return true;
+  return levers.edgeInclusion?.[leverKey] !== false;
+}
+
+/** One owner-excluded program for the transparency footnote (spec #14). */
+export type ExcludedProgramV2 = {
+  key: string;
+  label: string;
+  /** The row's measured/current window $ (still real spend — just not attributed). */
+  currentCostUsd: number;
+  /** The row's planned window $. */
+  plannedCostUsd: number;
 };
 
 /** A revenue lever's current-vs-planned contribution (house income). */
@@ -701,6 +817,16 @@ export type EdgePlanV2Projection = EdgePlanProjection & {
    * feeds the small labeled creator-costs footnote line.
    */
   creatorLeaderboardCostUsd: number;
+  /**
+   * Owner-excluded programs (edge-inclusion toggles OFF, spec #14). Their
+   * rows stay in `levers` (the $ keeps displaying) but they are in NONE of
+   * the reward-cost totals / deltas / drag / NGR above. Feeds the
+   * transparency footnote (creator-costs-footnote pattern). Empty at the
+   * all-on default.
+   */
+  excludedPrograms: ExcludedProgramV2[];
+  /** The excluded rows' keys (same order as `excludedPrograms`). */
+  excludedLeverKeys: string[];
 };
 
 // ─── Affiliate split fallback (unchanged) ────────────────────────────────────
@@ -713,15 +839,45 @@ export function splitAffiliateCostBundle(totalCost: number): {
   return { commission: total, leaderboard: 0 };
 }
 
-/** Top affiliate tier edge share (worst-case single-tier planning). */
+// ─── Global affiliate scale (owner spec #9) ──────────────────────────────────
+
+/**
+ * Resolve the global affiliate scale lever to a multiplicative factor
+ * (100 → 1, 50 → 0.5, 0 → 0). Non-finite input (legacy presets without the
+ * key) resolves to the neutral 1.
+ */
+export function affiliateGlobalScaleFactorV2(
+  levers: Pick<PlannedLeversV2, "affiliateGlobalScalePct">,
+): number {
+  const pct = Number(levers.affiliateGlobalScalePct);
+  if (!Number.isFinite(pct)) return 1;
+  return clamp(pct, 0, 200) / 100;
+}
+
+/**
+ * The EFFECTIVE rate one affiliate level pays under the current lever
+ * state: per-level slider rate (falls back to the live rate) × the global
+ * scale factor — the multiplicative composition the per-level rows render
+ * live as "3.00% → 1.50%".
+ */
+export function effectiveAffiliateRateV2(
+  levers: Pick<PlannedLeversV2, "affiliateRates" | "affiliateGlobalScalePct">,
+  level: number,
+  currentRate: number,
+): number {
+  const base = Math.max(0, levers.affiliateRates[level] ?? currentRate);
+  return base * affiliateGlobalScaleFactorV2(levers);
+}
+
+/** Top affiliate tier edge share (worst-case single-tier planning) — global-scale aware. */
 export function topAffiliateTierEdgeShare(
   baseline: Pick<SystemEdgeBaseline, "affiliateTiers">,
-  levers: Pick<PlannedLeversV2, "affiliateRates">,
+  levers: Pick<PlannedLeversV2, "affiliateRates" | "affiliateGlobalScalePct">,
 ): number {
   const tiers = [...baseline.affiliateTiers].sort((a, b) => a.level - b.level);
   const top = tiers[tiers.length - 1];
   if (!top) return 0;
-  return Math.max(0, levers.affiliateRates[top.level] ?? top.currentRate);
+  return Math.max(0, effectiveAffiliateRateV2(levers, top.level, top.currentRate));
 }
 
 export function affiliateWorstCaseEdgeDrag(
@@ -747,6 +903,21 @@ export function rawMathEdgeV2(
   const packs = clamp(levers.edges.packs ?? PLANNED_PACKS_BATTLES_EDGE_DEFAULT, 0, 1);
   const upgrader = clamp(levers.edges.upgrader ?? PLANNED_UPGRADER_EDGE_DEFAULT, 0, 1);
   return (packs + upgrader) / 2;
+}
+
+/**
+ * THE raw-math-edge display formatter (owner spec #7, 2026-06-12): the raw
+ * mathematical edge renders at 3-decimal precision so the defaults read the
+ * EXACT "10.495%" — never the rounded "10.50%". A pure-2dp value drops its
+ * redundant third decimal ("10.500" → "10.50%"), so non-default slider
+ * positions stay visually consistent with the page's 2dp blended edges.
+ * Use ONLY for the raw math edge (hero chip, gaming panel, plain-words
+ * echo); weighted/blended edges keep their 2dp formatter.
+ */
+export function formatRawMathEdgePctV2(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  const s = (value * 100).toFixed(3);
+  return `${s.endsWith("0") ? s.slice(0, -1) : s}%`;
 }
 
 // ─── Lever seed resolution (null = run-rate) ─────────────────────────────────
@@ -784,7 +955,9 @@ export function resolveLeverSeedsV2(
 ): ResolvedLeverSeedsV2 {
   const days = Math.max(1, baseline.periodDays);
   const anchor = baseline.rainAnchor;
-  const observedIntervalHours =
+  // Rains run BACK-TO-BACK (spec #11): the observed DURATION of one rain is
+  // window hours ÷ completed-rain count — the same figure that spaces them.
+  const observedDurationHours =
     anchor && anchor.count > 0 ? (days * 24) / anchor.count : 1;
   const observedPerEventUsd = anchor && anchor.count > 0 ? anchor.avgPoolUsd : 0;
 
@@ -802,7 +975,7 @@ export function resolveLeverSeedsV2(
     ),
     rainDurationHours: Math.max(
       0.05,
-      nn(levers.rainDurationHours, observedIntervalHours),
+      nn(levers.rainDurationHours, observedDurationHours),
     ),
     rainPerEventUsd: nn(levers.rainPerEventUsd, observedPerEventUsd),
     mothaMonthlyBudgetUsd: nn(
@@ -821,6 +994,60 @@ export function resolveLeverSeedsV2(
       levers.adjustmentsMonthlyRecurringUsd,
       monthlyRunRate(baseline.adjustmentCountedCost, days),
     ),
+  };
+}
+
+// ─── Rain duration plan (owner spec #11) ─────────────────────────────────────
+
+/**
+ * The rain plan implied by the duration/pool levers, in OWNER terms. Rains
+ * run back-to-back, so the lever is the DURATION of one rain (not a gap):
+ *
+ *   rainsPerDay      = 24 ÷ durationHours    (2h → 12 rains/day)
+ *   monthlyBudgetUsd = rainsPerDay × 30 × $ per rain
+ *
+ * The projection's window cost still scales the canonical net rain cost by
+ * planned ÷ observed pool volume — this helper is the labeled readout the
+ * UI renders next to the lever ("set 2h → 12 rains a day → $X/mo").
+ */
+export type RainPlanV2 = {
+  /** Resolved rain duration in hours (seed = observed back-to-back duration). */
+  durationHours: number;
+  /** 24 ÷ durationHours. */
+  rainsPerDay: number;
+  /** Resolved pool $ per rain (seed = observed average pool). */
+  perEventUsd: number;
+  /** rainsPerDay × 30 × perEventUsd — the headline monthly plan. */
+  monthlyBudgetUsd: number;
+  /** Planned events × pool over the baseline window. */
+  windowPlannedUsd: number;
+  /** Observed completed-rain pool $ over the window (the anchor). */
+  observedWindowUsd: number;
+  /** windowPlannedUsd ÷ observedWindowUsd — 1 at the null seeds; null when unobserved. */
+  planVsObservedRatio: number | null;
+};
+
+export function rainPlanV2(
+  baseline: EdgePlanV2Baseline,
+  levers: PlannedLeversV2,
+): RainPlanV2 {
+  const days = Math.max(1, baseline.periodDays);
+  const seeds = resolveLeverSeedsV2(baseline, levers);
+  const durationHours = Math.max(0.05, seeds.rainDurationHours);
+  const rainsPerDay = 24 / durationHours;
+  const perEventUsd = Math.max(0, seeds.rainPerEventUsd);
+  const anchor = baseline.rainAnchor;
+  const observedWindowUsd = anchor ? anchor.count * anchor.avgPoolUsd : 0;
+  const windowPlannedUsd = rainsPerDay * days * perEventUsd;
+  return {
+    durationHours,
+    rainsPerDay,
+    perEventUsd,
+    monthlyBudgetUsd: rainsPerDay * 30 * perEventUsd,
+    windowPlannedUsd,
+    observedWindowUsd,
+    planVsObservedRatio:
+      observedWindowUsd > 0 ? windowPlannedUsd / observedWindowUsd : null,
   };
 }
 
@@ -1316,8 +1543,11 @@ function projectAffiliateCommissionV2(
   const mean = (xs: number[]) =>
     xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
   const currentBlend = mean(tiers.map((t) => t.currentRate));
+  // Per-level rates × the GLOBAL scale (spec #9) — multiplicative
+  // composition. At scale 100 the ×1 is exact (no float drift), so the
+  // default-mount $0 and all-on byte-equality contracts hold unchanged.
   const plannedBlend = mean(
-    tiers.map((t) => Math.max(0, planned.affiliateRates[t.level] ?? t.currentRate)),
+    tiers.map((t) => effectiveAffiliateRateV2(planned, t.level, t.currentRate)),
   );
   const rateRatio = tiers.length > 0 && currentBlend > 0 ? plannedBlend / currentBlend : 1;
   const reqMult = planned.affiliateWagerReqEnabled
@@ -1459,6 +1689,7 @@ export function defaultLeversV2(baseline: EdgePlanV2Baseline): PlannedLeversV2 {
     rakebackInstantAdoption: 0,
 
     affiliateRates,
+    affiliateGlobalScalePct: 100,
     affiliateWagerReqEnabled: true,
 
     depositBonusCapMult: 1,
@@ -1499,6 +1730,8 @@ export function defaultLeversV2(baseline: EdgePlanV2Baseline): PlannedLeversV2 {
 
     matrixReWagerRate: 1,
     matrixCells: {},
+
+    edgeInclusion: defaultEdgeInclusionV2(),
   };
 }
 
@@ -1516,6 +1749,7 @@ function neutralLeversV2(): PlannedLeversV2 {
     rakebackInstantPayoutPct: 1,
     rakebackInstantAdoption: 0,
     affiliateRates: {},
+    affiliateGlobalScalePct: 100,
     affiliateWagerReqEnabled: true,
     depositBonusCapMult: 1,
     depositBonusMinDepositUsd: null,
@@ -1547,6 +1781,7 @@ function neutralLeversV2(): PlannedLeversV2 {
     shardsUpgraderWeight: 1,
     matrixReWagerRate: 1,
     matrixCells: {},
+    edgeInclusion: defaultEdgeInclusionV2(),
   };
 }
 
@@ -1609,6 +1844,9 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
   } else if (src.removeAffiliateWagerReq === true) {
     base.affiliateWagerReqEnabled = false;
   }
+
+  // Global affiliate scale (spec #9): 0..200, missing/non-finite → 100.
+  base.affiliateGlobalScalePct = clamp(num(src.affiliateGlobalScalePct, 100), 0, 200);
 
   base.depositBonusCapMult = clamp(num(src.depositBonusCapMult, 1), 0, 5);
   base.depositBonusMinDepositUsd = nullableUsd(src.depositBonusMinDepositUsd);
@@ -1694,6 +1932,15 @@ export function sanitizeLeversV2(input: unknown): PlannedLeversV2 {
 
   base.matrixReWagerRate = clamp(num(src.matrixReWagerRate, 1), 0, 1);
   base.matrixCells = sanitizeMatrixCells(src.matrixCells);
+
+  // Edge-inclusion toggles (spec #14): every known key is filled explicitly
+  // (missing/invalid → true = today's attribution); unknown keys dropped.
+  if (src.edgeInclusion != null && typeof src.edgeInclusion === "object") {
+    const inc = src.edgeInclusion as Record<string, unknown>;
+    for (const k of EDGE_INCLUSION_KEYS) {
+      if (inc[k] === false) base.edgeInclusion[k] = false;
+    }
+  }
 
   return base;
 }
@@ -2039,13 +2286,31 @@ export function projectEdgePlanV2(
   ];
   const revenueDelta = revenueLevers.reduce((s, r) => s + r.deltaUsd, 0);
 
+  // ── Edge-inclusion partition (spec #14) ──
+  // Excluded rows stay in `levers` (their $ keeps displaying) but feed NONE
+  // of the totals below. At the all-on default the filter passes every row
+  // in order, so the output is BYTE-EQUAL to the no-toggle projection (the
+  // __checks__ pin it).
+  const includedLevers = levers.filter((l) =>
+    isLeverIncludedInEdgeV2(planned, l.key),
+  );
+  const excludedLevers = levers.filter(
+    (l) => !isLeverIncludedInEdgeV2(planned, l.key),
+  );
+  const excludedPrograms: ExcludedProgramV2[] = excludedLevers.map((l) => ({
+    key: l.key,
+    label: l.label,
+    currentCostUsd: l.currentCost,
+    plannedCostUsd: l.plannedCost,
+  }));
+
   // ── Reconciliation (planned-vs-default, $0 at the default mount) ──
   const ggrDelta = planningGgr.ggrDelta;
-  const rewardCostDelta = levers.reduce((s, l) => s + l.deltaCost, 0);
+  const rewardCostDelta = includedLevers.reduce((s, l) => s + l.deltaCost, 0);
 
   const plannedGgr = core.plannedGgr;
   const currentGgr = plannedGgr - ggrDelta;
-  const currentRewardCost = levers.reduce((s, l) => s + l.currentCost, 0);
+  const currentRewardCost = includedLevers.reduce((s, l) => s + l.currentCost, 0);
   const plannedRewardCost = currentRewardCost + rewardCostDelta;
   const currentRevenue = revenueLevers.reduce((s, r) => s + r.currentUsd, 0);
   const plannedRevenue = revenueLevers.reduce((s, r) => s + r.plannedUsd, 0);
@@ -2065,6 +2330,8 @@ export function projectEdgePlanV2(
     revenueLevers,
     revenueDelta,
     creatorLeaderboardCostUsd: affiliateLeaderboardCurrent,
+    excludedPrograms,
+    excludedLeverKeys: excludedPrograms.map((p) => p.key),
     plannedGgr,
     currentGgr,
     plannedRewardCost,
@@ -2242,8 +2509,13 @@ export function computeEdgeAfterRewards(
         ? projection.currentGgr / baseWager
         : 0;
 
+  // Owner-excluded programs (spec #14) carry no drag in the waterfall —
+  // attribution control, mirrored exactly from the projection totals.
+  const excludedKeys = new Set(projection.excludedLeverKeys);
+
   let scenarioPlannedRewardCost = 0;
   for (const l of projection.levers) {
+    if (excludedKeys.has(l.key)) continue;
     if (Math.abs(l.plannedCost) <= 0.005) continue;
     scenarioPlannedRewardCost += scenarioLeverCostUsd(
       l.key,
@@ -2271,7 +2543,7 @@ export function computeEdgeAfterRewards(
     marginWager > 0 ? (currentGgr - currentRewardCost) / marginWager : 0;
 
   const leverDrags: EdgeAfterRewardsLeverDrag[] = projection.levers
-    .filter((l) => Math.abs(l.plannedCost) > 0.005)
+    .filter((l) => !excludedKeys.has(l.key) && Math.abs(l.plannedCost) > 0.005)
     .map((l) => {
       const scenarioCost = scenarioLeverCostUsd(
         l.key,
@@ -2359,6 +2631,11 @@ export type ScenarioLeverRow = LeverProjection & {
   baseCurrentCost: number;
   /** The unscaled (1×) planned $. */
   basePlannedCost: number;
+  /**
+   * False = owner-excluded from edge/drag attribution (spec #14): the row's
+   * $ still displays (and scales) but it is in NONE of the view's totals.
+   */
+  includedInEdge: boolean;
 };
 
 /** The whole planning view at the active wager-scenario multiplier. */
@@ -2388,6 +2665,8 @@ export type WagerScenarioView = {
   monthlyProfitDelta: number;
   annualProfitDelta: number;
   levers: ScenarioLeverRow[];
+  /** Owner-excluded row keys (spec #14) — mirrored from the projection. */
+  excludedLeverKeys: string[];
 };
 
 /**
@@ -2409,6 +2688,7 @@ export function applyWagerScenarioV2(
       : 1;
   const baseHubWager = Math.max(0, baseline.recon.d30.wager);
   const baseWager = Math.max(0, projection.plannedWager);
+  const excludedKeys = new Set(projection.excludedLeverKeys);
 
   if (mult === 1) {
     // EXACT identity — verbatim copies of the base projection, no
@@ -2440,7 +2720,9 @@ export function applyWagerScenarioV2(
         scalesWithWager: WAGER_PROPORTIONAL_LEVER_KEYS.has(l.key),
         baseCurrentCost: l.currentCost,
         basePlannedCost: l.plannedCost,
+        includedInEdge: !excludedKeys.has(l.key),
       })),
+      excludedLeverKeys: [...projection.excludedLeverKeys],
     };
   }
 
@@ -2456,11 +2738,15 @@ export function applyWagerScenarioV2(
       scalesWithWager,
       baseCurrentCost: l.currentCost,
       basePlannedCost: l.plannedCost,
+      includedInEdge: !excludedKeys.has(l.key),
     };
   });
 
-  const plannedRewardCost = levers.reduce((s, l) => s + l.plannedCost, 0);
-  const currentRewardCost = levers.reduce((s, l) => s + l.currentCost, 0);
+  // Totals sum ONLY the edge-included rows (spec #14) — composing the
+  // exclusion with the scenario multiplier exactly like the base projection.
+  const includedRows = levers.filter((l) => l.includedInEdge);
+  const plannedRewardCost = includedRows.reduce((s, l) => s + l.plannedCost, 0);
+  const currentRewardCost = includedRows.reduce((s, l) => s + l.currentCost, 0);
   const rewardCostDelta = plannedRewardCost - currentRewardCost;
 
   // Revenue (deposit fee) is flat across scenarios — deposits ≠ wager.
@@ -2504,5 +2790,219 @@ export function applyWagerScenarioV2(
     monthlyProfitDelta: (profitDelta / days) * 30,
     annualProfitDelta: (profitDelta / days) * 365,
     levers,
+    excludedLeverKeys: [...projection.excludedLeverKeys],
+  };
+}
+
+// ─── Time-bonus = forecast engine (owner spec #8) ────────────────────────────
+
+/**
+ * Run the deposit-bonus FORECAST ENGINE for the time-based bonus block:
+ * the block's $X-every-N-hours inputs map to the forecast page's
+ * split-window cap scenario (e.g. $25/6h → the `C-6h-25` library scenario)
+ * and the engine runs with the SAME live-derived assumptions builder
+ * (`DEPOSIT_BONUS_FORECAST_CONFIG.defaults`) + the SAME real-cost anchor
+ * the /insights/forecast hub uses — so the projected savings here equals
+ * the forecast page's number for the same assumptions snapshot, by
+ * construction. The headline is the engine's savings (provenance line:
+ * "same engine as /insights/forecast"); the mechanical user-day-cap figure
+ * ({@link timeBonusSplitModel}) stays only as a clearly-labeled secondary
+ * floor line.
+ *
+ * Returns null when the forecast anchor degraded this build (or has no
+ * real bonus volume) — the UI then renders the floor line alone, loudly.
+ */
+export function computeTimeBonusEngineV2(
+  baseline: Pick<EdgePlanV2Baseline, "depositBonusForecastBaseline">,
+  levers: Pick<
+    PlannedLeversV2,
+    "depositBonusHourlyAmountUsd" | "depositBonusHourlyIntervalHours"
+  >,
+): SplitCapEngineProjection | null {
+  const anchor = baseline.depositBonusForecastBaseline;
+  if (anchor == null || anchor.totalCost <= 0 || anchor.uniqueClaimants <= 0) {
+    return null;
+  }
+  const amountUsd = Math.max(0, levers.depositBonusHourlyAmountUsd);
+  const intervalHours = clamp(levers.depositBonusHourlyIntervalHours, 1, 720);
+  return projectSplitCapVsBaseline(anchor, amountUsd, intervalHours);
+}
+
+// ─── Not-itemized adjustments drill-down (owner spec #12, pure half) ─────────
+
+/**
+ * Detect a coarse "reason key" for a NULL-category adjustment row from what
+ * the legacy rows actually carry (probe-verified 2026-06-12, live prod):
+ *   • `metadata.kind` when present (e.g. "inventory_removal"),
+ *   • else the `description` — "Admin adjustment: <reason>" rows key on the
+ *     reason's first two meaningful words (leading numeric/percent tokens
+ *     dropped, so "50% LB SPLIT" and "LB SPLIT 50%" both key "lb split"),
+ *   • "Inventory removed: …" rows key "inventory removal".
+ * PURE — the __checks__ pin the mappings.
+ */
+export function detectAdjustmentReasonKeyV2(
+  description: string | null,
+  metadataKind: string | null,
+): string {
+  const kind = (metadataKind ?? "").trim().toLowerCase();
+  if (kind.length > 0) return kind.replace(/_/g, " ");
+
+  const desc = (description ?? "").trim();
+  if (desc.length === 0) return "no description";
+  if (desc.toLowerCase().startsWith("inventory removed")) {
+    return "inventory removal";
+  }
+
+  const m = /^admin adjustment:\s*(.*)$/i.exec(desc);
+  const reason = (m ? m[1] : desc).trim();
+  if (reason.length === 0) return "no reason";
+
+  const tokens = reason
+    .toLowerCase()
+    .split(/\s+/)
+    .map((t) => t.replace(/[^\p{L}\p{N}%]/gu, ""))
+    .filter((t) => t.length > 0);
+  while (tokens.length > 1 && /^\d+(?:[.,]\d+)?%?$/.test(tokens[0])) {
+    tokens.shift();
+  }
+  const key = tokens.slice(0, 2).join(" ");
+  return key.length > 0 ? key : "other";
+}
+
+/** One in-window NULL-category adjustment row (serializable, MAIN + ADMIN joined in code). */
+export type NotItemizedRowV2 = {
+  /** MAIN ledger_transactions.id. */
+  ledgerTxId: string;
+  userId: string;
+  /** MAIN username (separate lookup — no cross-DB SQL join). Null when unresolved. */
+  username: string | null;
+  createdAtIso: string;
+  /**
+   * Signed user-balance delta. House-POV rendering: credit (> 0, house
+   * pays the user) → rose; debit (< 0, house takes back) → emerald.
+   */
+  amountUsd: number;
+  description: string | null;
+  /** {@link detectAdjustmentReasonKeyV2} output. */
+  reasonKey: string;
+  /** ADMIN-DB cross-reference (admin_balance_adjustment_meta), when a row exists. */
+  adminUsername: string | null;
+  adminCategory: string | null;
+  adminReason: string | null;
+};
+
+export type NotItemizedTotalsV2 = {
+  count: number;
+  creditsUsd: number;
+  debitsUsd: number;
+  /** creditsUsd − debitsUsd (net $ that left the house uncategorized). */
+  netUsd: number;
+};
+
+export type NotItemizedMonthGroupV2 = NotItemizedTotalsV2 & {
+  /** "YYYY-MM". */
+  month: string;
+};
+
+export type NotItemizedUserGroupV2 = NotItemizedTotalsV2 & {
+  userId: string;
+  username: string | null;
+};
+
+export type NotItemizedReasonGroupV2 = NotItemizedTotalsV2 & {
+  reasonKey: string;
+};
+
+/** The full drill-down payload the expandable NULL-bucket row renders. */
+export type NotItemizedDrilldownV2 = {
+  /** LOUD window label (the planner's 30d window). */
+  windowLabel: string;
+  /** Reconciles EXACTLY with the adjustments panel's "Not itemized" row (same scope + predicate). */
+  totals: NotItemizedTotalsV2;
+  /** Newest month first. */
+  byMonth: NotItemizedMonthGroupV2[];
+  /** Top users by |net|, descending (capped). */
+  topUsersByNet: NotItemizedUserGroupV2[];
+  /** The largest rows by |amount|, descending (capped at 20). */
+  largest: NotItemizedRowV2[];
+  /** Reason-key groups by count, descending. */
+  byReasonKey: NotItemizedReasonGroupV2[];
+  /** True when the bounded fetch hit its row cap (totals then under-count). */
+  truncated: boolean;
+};
+
+const NOT_ITEMIZED_TOP_USERS = 12;
+const NOT_ITEMIZED_LARGEST = 20;
+
+/**
+ * PURE grouping/totals builder over the fetched rows — the __checks__ pin
+ * that every grouping's Σ reconciles exactly with the totals (and therefore
+ * with the adjustments panel's NULL-bucket row, which uses the same scope
+ * and predicate).
+ */
+export function buildNotItemizedDrilldownV2(
+  rows: readonly NotItemizedRowV2[],
+  opts: { windowLabel: string; truncated: boolean },
+): NotItemizedDrilldownV2 {
+  const totals: NotItemizedTotalsV2 = { count: 0, creditsUsd: 0, debitsUsd: 0, netUsd: 0 };
+  const addTo = (t: NotItemizedTotalsV2, amountUsd: number): void => {
+    t.count += 1;
+    if (amountUsd > 0) t.creditsUsd += amountUsd;
+    else t.debitsUsd += Math.abs(amountUsd);
+    t.netUsd = t.creditsUsd - t.debitsUsd;
+  };
+
+  const byMonth = new Map<string, NotItemizedMonthGroupV2>();
+  const byUser = new Map<string, NotItemizedUserGroupV2>();
+  const byReason = new Map<string, NotItemizedReasonGroupV2>();
+
+  for (const row of rows) {
+    addTo(totals, row.amountUsd);
+
+    const month = row.createdAtIso.slice(0, 7);
+    let mg = byMonth.get(month);
+    if (!mg) {
+      mg = { month, count: 0, creditsUsd: 0, debitsUsd: 0, netUsd: 0 };
+      byMonth.set(month, mg);
+    }
+    addTo(mg, row.amountUsd);
+
+    let ug = byUser.get(row.userId);
+    if (!ug) {
+      ug = {
+        userId: row.userId,
+        username: row.username,
+        count: 0,
+        creditsUsd: 0,
+        debitsUsd: 0,
+        netUsd: 0,
+      };
+      byUser.set(row.userId, ug);
+    }
+    if (ug.username == null && row.username != null) ug.username = row.username;
+    addTo(ug, row.amountUsd);
+
+    let rg = byReason.get(row.reasonKey);
+    if (!rg) {
+      rg = { reasonKey: row.reasonKey, count: 0, creditsUsd: 0, debitsUsd: 0, netUsd: 0 };
+      byReason.set(row.reasonKey, rg);
+    }
+    addTo(rg, row.amountUsd);
+  }
+
+  return {
+    windowLabel: opts.windowLabel,
+    totals,
+    byMonth: [...byMonth.values()].sort((a, b) =>
+      a.month < b.month ? 1 : a.month > b.month ? -1 : 0,
+    ),
+    topUsersByNet: [...byUser.values()]
+      .sort((a, b) => Math.abs(b.netUsd) - Math.abs(a.netUsd))
+      .slice(0, NOT_ITEMIZED_TOP_USERS),
+    largest: [...rows]
+      .sort((a, b) => Math.abs(b.amountUsd) - Math.abs(a.amountUsd))
+      .slice(0, NOT_ITEMIZED_LARGEST),
+    byReasonKey: [...byReason.values()].sort((a, b) => b.count - a.count),
+    truncated: opts.truncated,
   };
 }
