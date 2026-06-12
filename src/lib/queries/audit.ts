@@ -52,6 +52,8 @@ export async function getAuditEvents(params: {
 }): Promise<PaginatedResult<AuditListItem>> {
   const db = await getDb();
   const { page = 1, perPage = 20, search, eventType, targetUserId } = params;
+  const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
+  const safePage = Math.max(1, Math.floor(page));
 
   const where: Record<string, unknown> = {};
 
@@ -125,8 +127,8 @@ export async function getAuditEvents(params: {
     adminDb.admin_audit_events.findMany({
       where,
       orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
+      skip: (safePage - 1) * safePerPage,
+      take: safePerPage,
       include: {
         admin_user: { select: { username: true } },
       },
@@ -219,8 +221,8 @@ export async function getAuditEvents(params: {
       };
     }),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }

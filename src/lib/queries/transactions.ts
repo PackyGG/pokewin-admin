@@ -456,6 +456,8 @@ export async function getTransactions(params: {
     maxAmount,
     sortBy = "recent",
   } = params;
+  const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
+  const safePage = Math.max(1, Math.floor(page));
   const db = await getDb();
   const userScope = await excludeStaffAndBlacklisted();
 
@@ -606,16 +608,16 @@ export async function getTransactions(params: {
     const orderedFull = topIds
       .map((id) => byId.get(id))
       .filter((t): t is NonNullable<typeof t> => t != null);
-    const sliceStart = (page - 1) * perPage;
-    transactions = orderedFull.slice(sliceStart, sliceStart + perPage);
+    const sliceStart = (safePage - 1) * safePerPage;
+    transactions = orderedFull.slice(sliceStart, sliceStart + safePerPage);
     total = totalCount;
   } else {
     [transactions, total] = await Promise.all([
       db.ledger_transactions.findMany({
         where,
         orderBy: { created_at: "desc" },
-        skip: (page - 1) * perPage,
-        take: perPage,
+        skip: (safePage - 1) * safePerPage,
+        take: safePerPage,
         select: SELECT,
       }),
       db.ledger_transactions.count({ where }),
@@ -820,9 +822,9 @@ export async function getTransactions(params: {
       };
     }),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 

@@ -64,6 +64,8 @@ export async function getWithdrawals(params: {
   maxValue?: number;
 }): Promise<PaginatedResult<WithdrawalListItem>> {
   const { page = 1, perPage = 20, status, statuses, method, search, minValue, maxValue } = params;
+  const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
+  const safePage = Math.max(1, Math.floor(page));
   const db = await getDb();
 
   const where: Prisma.card_withdrawal_requestsWhereInput = {};
@@ -99,8 +101,8 @@ export async function getWithdrawals(params: {
     db.card_withdrawal_requests.findMany({
       where,
       orderBy: { requested_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
+      skip: (safePage - 1) * safePerPage,
+      take: safePerPage,
       include: {
         user_card_withdrawal_requests_user_idTouser: {
           select: { username: true, email: true, image: true },
@@ -144,9 +146,9 @@ export async function getWithdrawals(params: {
       cryptoAsset: w.crypto_asset,
     })),
     total,
-    page,
-    perPage,
-    totalPages: Math.ceil(total / perPage),
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
   };
 }
 
@@ -160,7 +162,6 @@ export async function getWithdrawalDetail(id: string) {
           id: true,
           username: true,
           email: true,
-          shipping_addresses: true,
         },
       },
       user_card_withdrawal_requests_processed_byTouser: {
@@ -244,7 +245,6 @@ export async function getWithdrawalDetail(id: string) {
     totalValueUsd: toNumber(withdrawal.total_value_usd),
     shippingFeeUsd: toNumber(withdrawal.shipping_fee_usd),
     shippingAddressSnapshot: withdrawal.shipping_address_snapshot,
-    shippingAddress: user.shipping_addresses,
     trackingNumber: withdrawal.tracking_number,
     carrier: withdrawal.carrier,
     cryptoAsset: withdrawal.crypto_asset,
