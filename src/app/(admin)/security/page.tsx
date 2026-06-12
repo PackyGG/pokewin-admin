@@ -6,6 +6,7 @@ import {
   Coins,
   Gem,
   Hourglass,
+  Bitcoin,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getSiteConfig } from "@/lib/queries/security";
@@ -49,6 +50,11 @@ import {
   getRewardExpiry,
   type RewardExpiry,
 } from "@/lib/backend-api/reward-expiry";
+import {
+  getCryptoFees,
+  type CryptoFees,
+} from "@/lib/backend-api/crypto-fees";
+import { CryptoFeesCard } from "./crypto-fees-card";
 
 export const metadata = { title: "Security" };
 
@@ -132,6 +138,15 @@ export default async function SecurityPage() {
     rewardExpiry = null;
   }
 
+  // Same non-critical pattern for the per-coin crypto exchange-rate fees —
+  // the backend branch may not be deployed yet.
+  let cryptoFees: CryptoFees | null = null;
+  try {
+    cryptoFees = await getCryptoFees();
+  } catch {
+    cryptoFees = null;
+  }
+
   return (
     <div className="space-y-6">
       <PageHero>
@@ -181,6 +196,13 @@ export default async function SecurityPage() {
         <div className="space-y-3">
           <SectionHeading icon={Hourglass} title="Reward Expiry" />
           <RewardExpiryCard initial={rewardExpiry} />
+        </div>
+      </FadeIn>
+
+      <FadeIn>
+        <div className="space-y-3">
+          <SectionHeading icon={Bitcoin} title="Crypto Exchange-Rate Fees" />
+          <CryptoFeesCard initial={cryptoFees} />
         </div>
       </FadeIn>
 
