@@ -44,6 +44,7 @@ import {
   DEPOSIT_BONUS_CAP_COST_EXPONENT,
   marginBearingWager,
   computeBlendedEdgeBreakdown,
+  computeNetEdgeScenarios as computeNetEdgeScenariosV1,
   defaultPlannedEdge,
   type BlendedEdgeBreakdown,
 } from "../system-edge-plan/_model";
@@ -337,8 +338,13 @@ export type EdgePlanV2Baseline = SystemEdgeBaseline & {
   affiliateCommissionCost: number;
   /** Real affiliate LEADERBOARD prize cost (Σ|affiliate_leaderboard_prize|). */
   affiliateLeaderboardCost: number;
-  /** Where the affiliate commission/leaderboard split was sourced. */
-  affiliateSplitSource: "overview" | "fallback";
+  /**
+   * Where the affiliate commission/leaderboard split was sourced.
+   * "ledger" = canonical customer-scope `sumLedgerTypes` legs (same scope
+   * as every other reward leg — creators excluded); "fallback" = the reads
+   * failed and the bundled v1 total is shown as commission.
+   */
+  affiliateSplitSource: "ledger" | "fallback";
   /** Share of withdrawal volume exiting as balance (0..1). Real ledger split. */
   balanceWithdrawalShare: number;
   /** Estimated total withdrawal USD in window. */
@@ -1093,6 +1099,19 @@ export function computeBlendedEdgeBreakdownV2(
   levers: PlannedLeversV2,
 ): BlendedEdgeBreakdown {
   return computeBlendedEdgeBreakdown(baseline, toV1Levers(levers, baseline).edges);
+}
+
+/**
+ * Net-edge scenario profiles for the Analysis zone, on the v2 lever state.
+ * Wraps the v1 helper through the same `toV1Levers` bridge the projection
+ * uses (v2-replaced levers pinned neutral — the scenarios profile gross edge
+ * vs reward-erosion archetypes, not the v2 $ budget rows).
+ */
+export function computeNetEdgeScenariosV2(
+  baseline: EdgePlanV2Baseline,
+  levers: PlannedLeversV2,
+): ReturnType<typeof computeNetEdgeScenariosV1> {
+  return computeNetEdgeScenariosV1(baseline, toV1Levers(levers, baseline));
 }
 
 // ─── Defaults + sanitizer ────────────────────────────────────────────────────

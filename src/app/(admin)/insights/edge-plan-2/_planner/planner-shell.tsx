@@ -1,14 +1,23 @@
 "use client";
 
 import * as React from "react";
-import { BarChart3, RotateCcw } from "lucide-react";
+import { BarChart3, Database, RotateCcw } from "lucide-react";
 
 import { SectionHeading } from "@/components/modern-panels";
 import { Button } from "@/components/ui/button";
-import { computeNetEdgeScenarios } from "../../system-edge-plan/_model";
+import { cn } from "@/lib/utils";
 import {
+  formatCompactUsd,
+  formatCurrency,
+  formatDateTime,
+  formatNumber,
+} from "@/lib/utils/format";
+import { formatPct } from "../../edge-calc/math";
+import {
+  computeNetEdgeScenariosV2,
   defaultLeversV2,
   projectEdgePlanV2,
+  rawMathEdgeV2,
   sanitizeLeversV2,
   computeEdgeAfterRewards,
   computeBlendedEdgeBreakdownV2,
@@ -23,8 +32,10 @@ import {
   usePlannerPresetsV2,
   type SavedConfigV2,
 } from "../_presets-v2";
+import { TEXT_TONE } from "./colors";
 import { EdgePlanV2HeroSummary } from "./hero-summary";
 import {
+  LEVER_GROUPS,
   LeverRail,
   leverGroupDragPct,
   type LeverGroupId,
@@ -33,9 +44,11 @@ import { PlannerV2SectionPanel } from "./planner-nav";
 import { AnalysisZone } from "./sections/overview";
 import { GamingEdgeSection, makeGamingSetters } from "./sections/gaming-edge";
 import { RewardsCoreSection } from "./sections/rewards-core";
-import { RafflesSection } from "./sections/raffles";
-import { WithdrawalsSection } from "./sections/withdrawals";
+import { GiveawaysSection } from "./sections/giveaways";
+import { ShardsSection } from "./sections/shards";
 import { PacksSignupSection } from "./sections/packs-signup";
+import { CashflowSection } from "./sections/cashflow";
+import { CreditMatrixSection } from "./sections/credit-matrix";
 
 const DEFAULT_WAGER_SCENARIO: WagerScenarioState = { presetMult: 1 };
 
@@ -54,12 +67,10 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
     [baseline, levers],
   );
 
-  // Raffle cost is real reconstructed prize cost now (no longer a shard proxy),
-  // so the net-edge scenarios run on the baseline + levers UNCHANGED — the
-  // raffle row flows through the projection. PlannedLeversV2 / EdgePlanV2Baseline
-  // extend the v1 shapes, so they are accepted by the v1 scenario helper.
+  // Net-edge scenario profiles (Analysis zone). The v2 lever state no longer
+  // extends the v1 shape, so this goes through the model's own v1 bridge.
   const netEdgeScenarios = React.useMemo(
-    () => computeNetEdgeScenarios(baseline, levers),
+    () => computeNetEdgeScenariosV2(baseline, levers),
     [baseline, levers],
   );
 
@@ -110,17 +121,16 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
   );
 
   // Live edge-drag per workspace for the rail badges (affiliate row needs the
-  // worst-case tier ctx; the rest are plain wager-proportional rows).
-  const dragByGroup = React.useMemo<Record<LeverGroupId, number>>(
-    () => ({
-      gaming: leverGroupDragPct(projection, "gaming", affiliateCtx),
-      rewards: leverGroupDragPct(projection, "rewards", affiliateCtx),
-      raffles: leverGroupDragPct(projection, "raffles", affiliateCtx),
-      withdrawals: leverGroupDragPct(projection, "withdrawals", affiliateCtx),
-      packs: leverGroupDragPct(projection, "packs", affiliateCtx),
-    }),
-    [projection, affiliateCtx],
-  );
+  // worst-case tier ctx; cashflow/matrix surface their revenue/savings as a
+  // negative drag → emerald badge). Built over LEVER_GROUPS so the record
+  // can never miss a group id.
+  const dragByGroup = React.useMemo<Record<LeverGroupId, number>>(() => {
+    const out = {} as Record<LeverGroupId, number>;
+    for (const g of LEVER_GROUPS) {
+      out[g.id] = leverGroupDragPct(projection, g.id, affiliateCtx);
+    }
+    return out;
+  }, [projection, affiliateCtx]);
 
   const heroActions = (
     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -161,10 +171,15 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
         projection={projection}
         edgeAfterRewards={edgeAfterRewards}
         blendBreakdown={blendBreakdown}
+        rawMathEdge={rawMathEdgeV2(levers)}
         wagerScenario={wagerScenario}
         onWagerScenarioChange={setWagerScenario}
         actions={heroActions}
       />
+
+      {/* ── Measured 30d strip (Bug-B contract: REAL getWindowMetrics block,
+             clearly separated from the planning numbers) + freshness stamp ── */}
+      <MeasuredStrip baseline={baseline} />
 
       {/* ── Lever rail + active-group workspace ────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] lg:items-start">
@@ -192,16 +207,16 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
               setLevers={setLevers}
             />
           </PlannerV2SectionPanel>
-          <PlannerV2SectionPanel id="raffles" active={activeGroup}>
-            <RafflesSection
+          <PlannerV2SectionPanel id="giveaways" active={activeGroup}>
+            <GiveawaysSection
               baseline={baseline}
               levers={levers}
               projection={projection}
               setLevers={setLevers}
             />
           </PlannerV2SectionPanel>
-          <PlannerV2SectionPanel id="withdrawals" active={activeGroup}>
-            <WithdrawalsSection
+          <PlannerV2SectionPanel id="shards" active={activeGroup}>
+            <ShardsSection
               baseline={baseline}
               levers={levers}
               projection={projection}
@@ -210,6 +225,22 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
           </PlannerV2SectionPanel>
           <PlannerV2SectionPanel id="packs" active={activeGroup}>
             <PacksSignupSection
+              baseline={baseline}
+              levers={levers}
+              projection={projection}
+              setLevers={setLevers}
+            />
+          </PlannerV2SectionPanel>
+          <PlannerV2SectionPanel id="cashflow" active={activeGroup}>
+            <CashflowSection
+              baseline={baseline}
+              levers={levers}
+              projection={projection}
+              setLevers={setLevers}
+            />
+          </PlannerV2SectionPanel>
+          <PlannerV2SectionPanel id="matrix" active={activeGroup}>
+            <CreditMatrixSection
               baseline={baseline}
               levers={levers}
               projection={projection}
@@ -235,6 +266,93 @@ export function EdgePlanV2Planner({ baseline }: { baseline: EdgePlanV2Baseline }
           netEdgeScenarios={netEdgeScenarios}
         />
       </div>
+    </div>
+  );
+}
+
+/**
+ * The "Measured 30d" strip — `baseline.canonical` is the REAL
+ * `getWindowMetrics` block (same source as /ggr + the dashboard), rendered
+ * SEPARATELY from the what-if planning numbers above it, with the
+ * `ledgerMaxCreatedAt` data-freshness stamp. House-POV: GGR/NGR ≥ 0 emerald,
+ * negative rose; reward cost is house pays → rose.
+ */
+function MeasuredStrip({ baseline }: { baseline: EdgePlanV2Baseline }) {
+  const c = baseline.canonical;
+  const stamp = baseline.ledgerMaxCreatedAt;
+
+  return (
+    <div className="rounded-xl border bg-muted/20 px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <Database className="size-3.5" aria-hidden />
+          Measured 30d — real ledger (same source as /ggr)
+        </p>
+        <p className="text-[10px] text-muted-foreground">
+          {stamp
+            ? `Data through ${formatDateTime(stamp)}`
+            : "Data freshness unavailable"}
+        </p>
+      </div>
+
+      {c == null ? (
+        <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
+          The measured 30d read was unavailable — the planning numbers above
+          stay what-if only and cannot be reconciled this render.
+        </p>
+      ) : (
+        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 lg:grid-cols-6">
+          <MeasuredStat label="Wager" value={formatCompactUsd(c.wager)} />
+          <MeasuredStat
+            label="GGR"
+            value={formatCurrency(c.ggr)}
+            tone={c.ggr >= 0 ? TEXT_TONE.emerald : TEXT_TONE.rose}
+          />
+          <MeasuredStat
+            label="NGR"
+            value={formatCurrency(c.ngr)}
+            tone={c.ngr >= 0 ? TEXT_TONE.emerald : TEXT_TONE.rose}
+          />
+          <MeasuredStat
+            label="Reward cost"
+            value={formatCurrency(c.rewardCost)}
+            tone={TEXT_TONE.rose}
+          />
+          <MeasuredStat
+            label="House edge"
+            value={c.houseEdge != null ? formatPct(c.houseEdge) : "—"}
+            tone={
+              c.houseEdge == null
+                ? undefined
+                : c.houseEdge >= 0
+                  ? TEXT_TONE.emerald
+                  : TEXT_TONE.rose
+            }
+          />
+          <MeasuredStat label="Bets" value={formatNumber(c.bets)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MeasuredStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className={cn("truncate text-sm font-semibold tabular-nums", tone)}>
+        {value}
+      </p>
     </div>
   );
 }

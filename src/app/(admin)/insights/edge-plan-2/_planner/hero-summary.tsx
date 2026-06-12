@@ -60,6 +60,7 @@ export function EdgePlanV2HeroSummary({
   projection,
   edgeAfterRewards,
   blendBreakdown,
+  rawMathEdge,
   wagerScenario,
   onWagerScenarioChange,
   actions,
@@ -67,6 +68,12 @@ export function EdgePlanV2HeroSummary({
   projection: EdgePlanV2Projection;
   edgeAfterRewards: EdgeAfterRewardsSummary;
   blendBreakdown: BlendedEdgeBreakdown;
+  /**
+   * Raw mathematical edge (simple mean of the packs & upgrader planned
+   * edges, no wager weighting — `rawMathEdgeV2`). Shown as a labeled chip
+   * NEXT TO the wager-weighted figure, never replacing it (owner spec #2).
+   */
+  rawMathEdge?: number;
   wagerScenario: WagerScenarioState;
   onWagerScenarioChange: (next: WagerScenarioState) => void;
   /** Reset + presets cluster, rendered in the profit panel's action slot. */
@@ -175,12 +182,20 @@ export function EdgePlanV2HeroSummary({
                 {formatPct(edgeAfterRewards.grossEdge)}
               </p>
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Blended gross edge · packs + upgrader
+                Wager-weighted gross edge · packs + upgrader
               </p>
               <p className="mt-2 text-[10px] tabular-nums text-muted-foreground">
                 was {formatPct(edgeAfterRewards.currentGrossEdge)} (default) ·{" "}
                 {formatPct(blendBreakdown.allWagerBlendedEdge)} on all wager
               </p>
+              {rawMathEdge != null && (
+                <p className="mt-1.5 inline-flex items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[10px] tabular-nums text-muted-foreground">
+                  Raw math edge {formatPct(rawMathEdge)}
+                  <span className="font-normal text-muted-foreground/70">
+                    · simple mean, no weighting
+                  </span>
+                </p>
+              )}
             </div>
 
             {/* Reward drag — house cost (rose, signed minus). */}
@@ -271,9 +286,9 @@ export function EdgePlanV2HeroSummary({
           }
         />
         <KpiTile
-          label="Organic wager"
+          label="Wager (30d)"
           value={formatCompactUsd(projection.plannedWager)}
-          sub="No creator code · borrow incl. · observed volume"
+          sub="All games · borrow incl. · observed volume"
           icon={Coins}
           accent="blue"
         />

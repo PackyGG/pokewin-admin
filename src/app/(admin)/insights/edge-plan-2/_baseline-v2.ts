@@ -27,7 +27,6 @@ import {
 import type { SystemEdgeBaseline } from "../system-edge-plan/_model";
 import { getSystemEdgeBaseline } from "../system-edge-plan/_baseline";
 import { getMothaGiveawayOverview } from "@/lib/queries/insights-rewards/motha/overview";
-import { getAffiliateOverview } from "@/lib/queries/insights-rewards/affiliate/overview";
 
 import type {
   AdjustmentCategoryRow,
@@ -577,7 +576,8 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     v1Res,
     canonicalRes,
     withdrawalRes,
-    affiliateOvRes,
+    affCommissionRes,
+    affLeaderboardRes,
     mothaOvRes,
     borrowedRes,
     giftCardRes,
@@ -612,9 +612,15 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
-      () => getAffiliateOverview(EDGE_PLAN_V2_PERIOD),
+      () => sumLedgerTypes({ types: ["affiliate_claim"], window }),
       null,
-      "edge-plan-v2.affiliate-split",
+      "edge-plan-v2.affiliate-commission",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => sumLedgerTypes({ types: ["affiliate_leaderboard_prize"], window }),
+      null,
+      "edge-plan-v2.affiliate-leaderboard",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
@@ -764,17 +770,26 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
       }
     : null;
 
-  // Affiliate commission / leaderboard split (real overview read; fallback
-  // treats the bundled total as all commission — no fabricated figure).
-  const affiliateData = affiliateOvRes.data;
-  const affiliateCommissionCost = affiliateData
-    ? affiliateData.totalCommissionPaid
+  // Affiliate commission / leaderboard split — CANONICAL customer-scope
+  // ledger legs (sumLedgerTypes — the same scope as every other reward leg;
+  // creators excluded). The previous getAffiliateOverview source sat on the
+  // LEGACY staff-only exclusion (creators included) and over-reported the
+  // split vs the bundled v1 affiliateCost by the creators' claims (recon
+  // verify 2026-06-12: +$5,191.24 commission / +$85.00 leaderboard on live
+  // prod). Fallback treats the bundled total as all commission — no
+  // fabricated figure.
+  const affCommissionLeg = affCommissionRes.data;
+  const affLeaderboardLeg = affLeaderboardRes.data;
+  const haveCanonicalSplit =
+    affCommissionLeg != null && affLeaderboardLeg != null;
+  const affiliateCommissionCost = haveCanonicalSplit
+    ? Math.max(0, affCommissionLeg)
     : splitAffiliateCostBundle(v1.affiliateCost).commission;
-  const affiliateLeaderboardCost = affiliateData
-    ? affiliateData.leaderboardPrizePaid
+  const affiliateLeaderboardCost = haveCanonicalSplit
+    ? Math.max(0, affLeaderboardLeg)
     : splitAffiliateCostBundle(v1.affiliateCost).leaderboard;
-  const affiliateSplitSource: "overview" | "fallback" = affiliateData
-    ? "overview"
+  const affiliateSplitSource: "ledger" | "fallback" = haveCanonicalSplit
+    ? "ledger"
     : "fallback";
 
   const withdrawalLedger = withdrawalRes.data;
