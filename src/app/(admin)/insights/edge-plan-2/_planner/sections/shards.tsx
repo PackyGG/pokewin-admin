@@ -18,6 +18,7 @@ import { formatPct } from "../../../edge-calc/math";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
 import {
   clamp,
+  isLeverIncludedInEdgeV2,
   SHARD_CASES,
   SHARDS_DEFAULT_EV_PER_SHARD_USD,
   SHARDS_DEFAULT_WAGER_PER_SHARD_USD,
@@ -37,10 +38,11 @@ import { TEXT_TONE } from "../colors";
 import { formatEvUsd } from "../utils";
 import { EmptyLever } from "../components/empty-lever";
 import { LeverHint } from "../components/lever-hint";
+import { leverEdgeDragPct } from "../components/reward-edge-drag";
 import {
-  leverEdgeDragPct,
-  RewardPanelTitle,
-} from "../components/reward-edge-drag";
+  EdgeInclusionToggle,
+  InclusionAwareRewardTitle,
+} from "../components/edge-inclusion-toggle";
 
 /**
  * ShardsSection — the NEW shard economy (Edge Plan 2.0 spec, 2026-06-12).
@@ -94,13 +96,21 @@ export function ShardsSection({
     <div className="space-y-4">
       <StatPanel
         title={
-          <RewardPanelTitle
+          <InclusionAwareRewardTitle
             label="Shard program"
             dragPct={leverEdgeDragPct(projection, "shards")}
+            included={isLeverIncludedInEdgeV2(levers, "shards")}
           />
         }
         icon={Gem}
         accent="purple"
+        action={
+          <EdgeInclusionToggle
+            leverKey="shards"
+            levers={levers}
+            setLevers={setLevers}
+          />
+        }
       >
         <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
           In plain words: players mint shards as they bet and spend them in

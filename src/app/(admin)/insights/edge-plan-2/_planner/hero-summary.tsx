@@ -14,10 +14,11 @@ import { KpiTile, StatPanel } from "@/components/modern-panels";
 import { AnimatedNumber } from "@/components/animated-number";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { formatCompactUsd } from "@/lib/utils/format";
+import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 import { formatPct, formatSignedUsd } from "../../edge-calc/math";
 import {
   WAGER_SCENARIO_PRESET_MULTS,
+  formatRawMathEdgePctV2,
   formatWagerMultLabel,
   type BlendedEdgeBreakdown,
   type EdgeAfterRewardsSummary,
@@ -95,6 +96,11 @@ export function EdgePlanV2HeroSummary({
   const wagerMultLabel = scenario.multLabel;
   /** "· at 2× wager" suffix for scenario-affected tile sublabels. */
   const atSuffix = scenarioActive ? ` · at ${wagerMultLabel} wager` : "";
+  // Owner-excluded programs (spec #14, counts-toward-edge OFF) — feeds the
+  // transparency footnote below the KPI strip. Empty at the all-on default,
+  // so the footnote renders nothing and the hero is byte-identical to the
+  // no-toggle layout (the identity contract).
+  const excludedRows = scenario.levers.filter((l) => !l.includedInEdge);
 
   return (
     <div className="space-y-4">
@@ -213,7 +219,8 @@ export function EdgePlanV2HeroSummary({
               </p>
               {rawMathEdge != null && (
                 <p className="mt-1.5 inline-flex items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[10px] tabular-nums text-muted-foreground">
-                  Raw math edge {formatPct(rawMathEdge)}
+                  {/* Spec #7: 3-decimal precision — "10.495%" at defaults. */}
+                  Raw math edge {formatRawMathEdgePctV2(rawMathEdge)}
                   <span className="font-normal text-muted-foreground/70">
                     · simple average of the two sliders, no volumes
                   </span>
@@ -361,6 +368,31 @@ export function EdgePlanV2HeroSummary({
           accent={houseAccent(scenario.profitDelta) === "emerald" ? "cyan" : "rose"}
         />
         </div>
+
+        {/* ── Transparency footnote — owner-excluded programs (spec #14,
+               creator-costs-footnote pattern). Lists every program whose
+               counts-toward-edge toggle is OFF + its planned window $:
+               still real spend (displayed in its box), but in NONE of the
+               drag / reward-cost / after-rewards-edge / planned-NGR figures
+               above. Hidden at the all-on default. ── */}
+        {excludedRows.length > 0 && (
+          <p className="border-t pt-2 text-[10px] leading-snug text-muted-foreground">
+            Owner-excluded from edge attribution (counts-toward-edge OFF):{" "}
+            {excludedRows.map((l, i) => (
+              <React.Fragment key={l.key}>
+                {i > 0 && " · "}
+                <span className="font-medium text-foreground">{l.label}</span>{" "}
+                <span className="tabular-nums">
+                  {formatCurrency(l.plannedCost)}
+                </span>
+              </React.Fragment>
+            ))}{" "}
+            — planned window ${scenarioActive ? ` at ${wagerMultLabel} wager` : ""};
+            still real spend (shown in its box, greyed chip), but in none of
+            the drag / reward-cost / after-rewards-edge / planned-NGR figures
+            above. Attribution control, not a $0 budget.
+          </p>
+        )}
       </div>
     </div>
   );

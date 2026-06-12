@@ -24,6 +24,7 @@ import type {
   DailyPackUsageInfo,
 } from "../../_model-v2";
 import {
+  isLeverIncludedInEdgeV2,
   type EdgePlanV2Baseline,
   type EdgePlanV2Projection,
   type PlannedLeversV2,
@@ -42,7 +43,11 @@ import {
   PackCoverageBlock,
   type PackCoverageDisplayRow,
 } from "../components/pack-coverage-block";
-import { leverEdgeDragPct, RewardPanelTitle } from "../components/reward-edge-drag";
+import { leverEdgeDragPct } from "../components/reward-edge-drag";
+import {
+  EdgeInclusionToggle,
+  InclusionAwareRewardTitle,
+} from "../components/edge-inclusion-toggle";
 
 export function PacksSignupSection({
   baseline,
@@ -172,13 +177,21 @@ export function PacksSignupSection({
     <div className="space-y-4">
       <StatPanel
         title={
-          <RewardPanelTitle
+          <InclusionAwareRewardTitle
             label="Daily / free packs"
             dragPct={leverEdgeDragPct(projection, "daily-packs")}
+            included={isLeverIncludedInEdgeV2(levers, "daily-packs")}
           />
         }
         icon={Boxes}
         accent="pink"
+        action={
+          <EdgeInclusionToggle
+            leverKey="daily-packs"
+            levers={levers}
+            setLevers={setLevers}
+          />
+        }
       >
         <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
           In plain words: free packs we hand out — the cost is what&apos;s
@@ -490,13 +503,21 @@ export function PacksSignupSection({
 
       <StatPanel
         title={
-          <RewardPanelTitle
+          <InclusionAwareRewardTitle
             label="Signup balance reward"
             dragPct={leverEdgeDragPct(projection, "signup-packs")}
+            included={isLeverIncludedInEdgeV2(levers, "signup-packs")}
           />
         }
         icon={UserPlus}
         accent="rose"
+        action={
+          <EdgeInclusionToggle
+            leverKey="signup-packs"
+            levers={levers}
+            setLevers={setLevers}
+          />
+        }
       >
         <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
           In plain words: the welcome money a brand-new player gets for
