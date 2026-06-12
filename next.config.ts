@@ -47,6 +47,67 @@ const nextConfig: NextConfig = {
         destination: "/insights/edge-plan-2",
         permanent: true,
       },
+      // ── Retired-route legacy bookmarks (in-render redirect() → HTTP 308) ──
+      // These routes were Server Components whose only job was an
+      // unconditional in-render `redirect()`. An unconditional `redirect()`
+      // evaluated during the INITIAL load is streamed to the client and
+      // replayed by Next's App Router, which changes the hook count of Next's
+      // internal `<Router>` useMemo on the post-redirect render → "Rendered
+      // more hooks than during the previous render." (plus a cascade of
+      // base-ui `useId` hydration attribute mismatches on the page it lands
+      // on). Resolving them at the HTTP layer (308), before any React renders,
+      // removes the trigger entirely. Same pattern as the retirements above.
+      // NOTE: only routes with a FIXED destination are listed here; retired
+      // routes whose redirect target depends on a query/param/DB lookup
+      // (/insights/rewards/signup, /rewards/analytics, /analytics/pure-pnl,
+      // /creators/codes/:code) keep their in-render redirect — a static config
+      // redirect can't reproduce a dynamic destination.
+      {
+        // Alerts moved to the right-rail dock (`DockedAlerts`).
+        source: "/creator-hub/alerts",
+        destination: "/creator-hub",
+        permanent: true,
+      },
+      {
+        // Codes & Ads marketing surfaces live on the main admin dashboard.
+        source: "/creator-hub/codes-ads",
+        destination: "/creators",
+        permanent: true,
+      },
+      {
+        source: "/creator-hub/codes-ads/ads/:code",
+        destination: "/creators",
+        permanent: true,
+      },
+      {
+        // Legacy games insights — superseded by /ggr.
+        source: "/insights/games",
+        destination: "/ggr",
+        permanent: true,
+      },
+      {
+        // Legacy balance-adjustments insights — removed from the dashboard.
+        source: "/insights/balance-adjustments",
+        destination: "/insights/analytics",
+        permanent: true,
+      },
+      {
+        // Legacy ads list + ad-detail — roster lives on /creators.
+        source: "/creators/ads",
+        destination: "/creators",
+        permanent: true,
+      },
+      {
+        source: "/creators/ads/:code",
+        destination: "/creators",
+        permanent: true,
+      },
+      {
+        // Legacy affiliate-codes list — roster lives on /creators.
+        source: "/creators/codes",
+        destination: "/creators",
+        permanent: true,
+      },
     ];
   },
 };
