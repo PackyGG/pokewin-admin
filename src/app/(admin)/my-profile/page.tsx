@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { after } from "next/server";
 import {
   User,
@@ -14,7 +13,7 @@ import {
   Receipt,
   FileText,
 } from "lucide-react";
-import { requireRole } from "@/lib/dal";
+import { verifySession, sessionHasRole } from "@/lib/dal";
 import { getMyProfileData } from "@/lib/queries/my-profile";
 import { refreshStaleSocials } from "@/lib/queries/creators";
 import { Card, CardContent } from "@/components/ui/card";
@@ -40,10 +39,43 @@ import { DealsTable } from "./deal-detail-dialog";
 export const metadata = { title: "My Profile" };
 
 export default async function MyProfilePage() {
-  const session = await requireRole(["creator"]);
-  const data = await getMyProfileData(session.userId);
+  // NO in-render redirect() on this page — an unconditional redirect during
+  // the initial document load is replayed by the App Router and crashes it
+  // ("Rendered more hooks than during the previous render", see the
+  // retired-route block in next.config.ts). `requireRole(["creator"])`
+  // fired exactly that for every signed-in non-creator (e.g. a plain
+  // admin), and `redirect("/login")` bounced an AUTHED admin to the login
+  // page. Instead, non-creators (and creators without profile data) get an
+  // informative empty state. Non-creators trigger no data calls at all;
+  // creators still only ever read their own data via session.userId.
+  const session = await verifySession();
+  const isCreator = sessionHasRole(session, "creator");
+  const data = isCreator ? await getMyProfileData(session.userId) : null;
 
-  if (!data) redirect("/login");
+  if (!data) {
+    return (
+      <div className="space-y-6">
+        <PageHero>
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-cyan-500/10">
+              <User className="size-5 text-cyan-500" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold leading-tight">My Profile</h1>
+              <p className="text-sm text-muted-foreground">
+                Creator affiliate profile
+              </p>
+            </div>
+          </div>
+        </PageHero>
+        <EmptyState
+          icon={User}
+          title="No creator profile"
+          description="My Profile shows affiliate stats, payouts and deals for creator accounts. This account doesn't have a creator role — creators are managed under /creators."
+        />
+      </div>
+    );
+  }
 
   // Refresh stale social stats once the response has streamed — after()
   // keeps the work off the render path (non-blocking, same as the previous

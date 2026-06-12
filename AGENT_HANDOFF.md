@@ -36,6 +36,11 @@
 
 ## ✅ Shipped (recent — on `main`)
 
+**"More hooks" Router crash — last two routes fixed (2026-06-12):**
+- `/withdrawals` in-render `redirect()` stub deleted → HTTP 308 in `next.config.ts` to `/transactions/deposits?tab=withdrawals` (Next forwards unused incoming query params, so `?status=pending` deep-links keep filters; exact-match source — `/withdrawals/:id` detail route stays live).
+- `/my-profile` no longer in-render-redirects at all: `requireRole(["creator"])` + `redirect("/login")` replaced with `verifySession()` + `sessionHasRole` — non-creators (and creators without profile data) get a PageHero + page-level EmptyState ("No creator profile", zero data calls); creator path incl. `after()` socials refresh unchanged.
+- Verified via Playwright + minted plain-admin session (fresh context per route, `pageerror` listeners): baseline reproduced "Rendered more hooks" on BOTH routes; post-fix 0 pageerrors, redirect + query-forward land correctly, empty state renders. Creator-session render check skipped — no creator-role `admin_users` row in ADMIN DB. tsc/lint/build green.
+
 **Edge Plan 2.0 — full rework (2026-06-10, `47aa0aca`):** UI + logic + numbers, scoped to `/insights/edge-plan-2` only (v1 `system-edge-plan` reused unchanged). _Supersedes the "shards economy (raffle-proxy)" Edge Plan 2.0 bullet below._
 - **Shards economy REMOVED** entirely (model + baseline + UI). **Raffles RESTORED** on real reconstructed prize cost (`getRaffleForecastBaseline().totalPrizeCost`; v1 raffle levers `rafflePrizePool/Frequency/TicketCostMult` reused).
 - **Real affiliate split** via `getAffiliateOverview` (`affiliateCommissionCost` from `affiliate_claim` + `affiliateLeaderboardCost` from `affiliate_leaderboard_prize`), replacing the hardcoded 12% guess. `splitAffiliateCostBundle` kept as null-query fallback.
