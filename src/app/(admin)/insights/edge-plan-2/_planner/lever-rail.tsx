@@ -120,7 +120,9 @@ export const LEVER_GROUPS: LeverGroup[] = [
  */
 export const LEVER_GROUP_DRAG_KEYS: Record<LeverGroupId, string[]> = {
   gaming: [],
-  rewards: ["rakeback", "affiliate", "leaderboard", "deposit-bonus"],
+  // NOTE: no "leaderboard" row anymore — affiliate leaderboard prizes are
+  // CREATOR costs per the house model and left the reward-cost rows.
+  rewards: ["rakeback", "affiliate", "deposit-bonus"],
   giveaways: [
     "races",
     "raffles",

@@ -327,6 +327,134 @@ export type UpgraderRakebackBucket = {
   winRate: number;
 };
 
+// ─── Owner-trusted reconciliation block (rework 2026-06-12) ──────────────────
+//
+// The numbers the OWNER trusts live on the /insights hub: hub wager
+// (`getInsightsHubWager*` — borrow-net real customer stake + upgrader) and
+// the canonical cost-breakdown block (`getCostBreakdown` — GGR / NGR /
+// rewardPayouts / realized P&L). The Edge Plan page anchors its headline on
+// EXACTLY those helpers, per window, windows always LOUD — this block is the
+// serializable carrier. `buildOwnerWindowRecon` is PURE so the __checks__
+// can pin its identities without a DB.
+
+/** The stable cost-breakdown line key of the creator-attributed leaderboard prizes. */
+export const LEADERBOARD_REWARD_LINE_KEY = "reward:affiliate_leaderboard";
+
+/** One reward program's window spend + its edge reduction vs the hub wager. */
+export type OwnerProgramSpend = {
+  /** Stable cost-breakdown line key (e.g. "reward:rakeback"). */
+  key: string;
+  label: string;
+  amountUsd: number;
+  /** spend ÷ hub wager, in percentage points (the program's edge reduction). Null when wager unknown. */
+  edgeReductionPp: number | null;
+};
+
+/** One reward line as fed into the recon builder (from getCostBreakdown.lines). */
+export type OwnerRewardLineInput = {
+  key: string;
+  label: string;
+  amountUsd: number;
+};
+
+export type OwnerWindowReconInput = {
+  windowKey: "30d" | "lifetime365";
+  /** LOUD window label, e.g. "Last 30 days" / "Lifetime (365d-capped)". */
+  label: string;
+  /** Hub-style customer wager (borrow-net real stake, creator-sessions excluded, + upgrader). */
+  hubWagerUsd: number;
+  /** Canonical GGR / NGR from getCostBreakdown (same helper as /insights). */
+  ggr: number;
+  ngr: number;
+  /** Realized windowed P&L (calculateWindowedPnl via getCostBreakdown). */
+  realizedPnl: number;
+  /** Canonical house edge (GGR ÷ canonical wager — accounting view). */
+  houseEdge: number | null;
+  /** The reward cost lines (kind === "reward") from getCostBreakdown. */
+  rewardLines: OwnerRewardLineInput[];
+};
+
+/** One window of owner-trusted numbers, fully reconciled with /insights. */
+export type OwnerWindowRecon = {
+  windowKey: "30d" | "lifetime365";
+  label: string;
+  /** In plain words: how much customers bet (real cash, borrow-net). */
+  wager: number;
+  /** In plain words: what the house actually banked this window. */
+  realizedPnl: number;
+  ggr: number;
+  ngr: number;
+  /** Canonical reward cost (GGR − NGR) — still INCLUDING creator-attributed leaderboard prizes. */
+  rewardPayouts: number;
+  /** Affiliate leaderboard prizes — CREATOR cost per the house model, NOT on-site reward drag. */
+  creatorLeaderboardCost: number;
+  /** rewardPayouts − creatorLeaderboardCost — the on-site reward spend the drag uses. */
+  onSiteRewardCost: number;
+  /** onSiteRewardCost ÷ wager (fraction, 0..). Null when wager unknown. */
+  onSiteDragPct: number | null;
+  /** rewardPayouts ÷ wager — the with-creator transparency figure. */
+  dragWithCreatorPct: number | null;
+  houseEdge: number | null;
+  /** Per-program on-site spend (leaderboard EXCLUDED — it is the creator footnote). */
+  programs: OwnerProgramSpend[];
+};
+
+export type OwnerReconBlock = {
+  /** Last 30 days — the planner's working window. */
+  d30: OwnerWindowRecon;
+  /** Lifetime (365d-capped) — must equal the /insights hub by construction. */
+  lifetime: OwnerWindowRecon;
+  /** ISO timestamp of the baseline build. */
+  asOfIso: string;
+};
+
+/**
+ * PURE assembly of one owner-trusted recon window. Identities the
+ * __checks__ pin:
+ *   • rewardPayouts === ggr − ngr (canonical),
+ *   • onSiteRewardCost === rewardPayouts − creatorLeaderboardCost (≥ 0),
+ *   • onSiteDragPct === onSiteRewardCost ÷ wager,
+ *   • programs exclude the leaderboard line and Σ programs ≈ on-site lines.
+ */
+export function buildOwnerWindowRecon(
+  input: OwnerWindowReconInput,
+): OwnerWindowRecon {
+  const wager = Math.max(0, input.hubWagerUsd);
+  const rewardPayouts = input.ggr - input.ngr;
+  const leaderboardLine = input.rewardLines.find(
+    (l) => l.key === LEADERBOARD_REWARD_LINE_KEY,
+  );
+  const creatorLeaderboardCost = Math.max(0, leaderboardLine?.amountUsd ?? 0);
+  const onSiteRewardCost = Math.max(0, rewardPayouts - creatorLeaderboardCost);
+  const frac = (v: number): number | null => (wager > 0 ? v / wager : null);
+
+  const programs: OwnerProgramSpend[] = input.rewardLines
+    .filter((l) => l.key !== LEADERBOARD_REWARD_LINE_KEY && l.amountUsd > 0)
+    .map((l) => ({
+      key: l.key,
+      label: l.label,
+      amountUsd: l.amountUsd,
+      edgeReductionPp: wager > 0 ? (l.amountUsd / wager) * 100 : null,
+    }))
+    .sort((a, b) => b.amountUsd - a.amountUsd);
+
+  return {
+    windowKey: input.windowKey,
+    label: input.label,
+    wager,
+    realizedPnl: input.realizedPnl,
+    ggr: input.ggr,
+    ngr: input.ngr,
+    rewardPayouts,
+    creatorLeaderboardCost,
+    onSiteRewardCost,
+    onSiteDragPct: frac(onSiteRewardCost),
+    dragWithCreatorPct: frac(rewardPayouts),
+    houseEdge: input.houseEdge,
+    programs,
+  };
+}
+
 export type EdgePlanV2Baseline = SystemEdgeBaseline & {
   /** Canonical headline wager (30d) — getWindowMetrics, incl. upgrader. */
   totalWager: number;
@@ -396,6 +524,21 @@ export type EdgePlanV2Baseline = SystemEdgeBaseline & {
   dailyPackUsage: DailyPackUsageInfo[];
   /** Measured 30d $ per reward source (credit-matrix rows; no new scans). */
   rewardSourceVolumes: RewardSourceVolume[];
+
+  // ── Rework 2026-06-12: owner-trusted anchoring ──
+  /**
+   * The owner-trusted recon block — hub wager + canonical cost-breakdown
+   * per window (30d + lifetime-365). CRITICAL: the baseline build THROWS
+   * (and the failure is never cached) when this could not be assembled,
+   * so a served baseline always carries it.
+   */
+  recon: OwnerReconBlock;
+  /**
+   * Names of NON-critical legs that degraded this build (safeQuery
+   * fallbacks). Empty = fully healthy. The page renders these as visible
+   * error bands — never as silent zeros.
+   */
+  degradedBlocks: string[];
 };
 
 // ─── The v2 lever state ──────────────────────────────────────────────────────
@@ -514,6 +657,13 @@ export type EdgePlanV2Projection = EdgePlanProjection & {
   revenueLevers: RevenueLeverProjection[];
   /** Σ revenue deltas. profitDelta = ggrDelta − rewardCostDelta + revenueDelta. */
   revenueDelta: number;
+  /**
+   * Creator-attributed affiliate leaderboard prizes (window $). Per the
+   * house model these are CREATOR costs, NOT on-site reward drag — the
+   * lever rows / reward cost totals above EXCLUDE them; this passthrough
+   * feeds the small labeled creator-costs footnote line.
+   */
+  creatorLeaderboardCostUsd: number;
 };
 
 // ─── Affiliate split fallback (unchanged) ────────────────────────────────────
@@ -921,6 +1071,93 @@ export function matrixSavingsWindowUsd(
   );
 }
 
+// ─── Lever anchors (reactivity fix, 2026-06-12) ──────────────────────────────
+//
+// THE reactivity defect the owner hit: every multiplicative lever anchored
+// on `baseline.<cost> × multiplier`, so a degraded (cached-zeros) baseline
+// made the whole planner dead — `0 × anything = 0` no matter what he moved.
+// The rebuild removes the `current <= 0 → {0,0}` guards entirely: each
+// multiplicative lever resolves a $ ANCHOR with a fallback chain
+// (measured leg → secondary measured scan → modeled rate × wager proxy),
+// flagged `estimated` when the primary leg was missing so the UI can label
+// it — the lever stays LIVE either way.
+
+/** Wager proxy for modeled anchors: v1 canonical wager, else the hub 30d wager. */
+export function wagerProxyV2(
+  baseline: Pick<EdgePlanV2Baseline, "wager" | "recon">,
+): number {
+  if (baseline.wager > 0) return baseline.wager;
+  return Math.max(0, baseline.recon?.d30.wager ?? 0);
+}
+
+/** One resolved lever anchor. */
+export type LeverAnchorV2 = {
+  /** The $ base the lever's model scales. */
+  anchorUsd: number;
+  /** True when the measured leg was missing and a secondary/modeled source was used. */
+  estimated: boolean;
+};
+
+export type ResolvedLeverAnchorsV2 = {
+  rakeback: LeverAnchorV2;
+  affiliateCommission: LeverAnchorV2;
+  depositBonus: LeverAnchorV2;
+  raffles: LeverAnchorV2;
+  rain: LeverAnchorV2;
+};
+
+/**
+ * Resolve the $ anchor for every multiplicative lever. Fallback chains:
+ *   • rakeback      — measured claims → blended cadence rate × wager proxy
+ *   • affiliate     — measured commission → blended realized rate × wager proxy
+ *   • deposit bonus — measured cost → time-bonus anchor Σ (same ledger type)
+ *   • raffles       — reconstructed prize cost → live-raffle prize value
+ *   • rain          — canonical net rain → completed-rain pool Σ
+ */
+export function resolveLeverAnchorsV2(
+  baseline: EdgePlanV2Baseline,
+): ResolvedLeverAnchorsV2 {
+  const proxy = wagerProxyV2(baseline);
+
+  const measured = (usd: number): LeverAnchorV2 | null =>
+    usd > 0 ? { anchorUsd: usd, estimated: false } : null;
+
+  const rakebackBlend = blendedCadenceRate(
+    baseline.rakebackCadences,
+    (c) => c.currentRate,
+  );
+  return {
+    rakeback:
+      measured(Math.max(0, baseline.rakebackCost)) ?? {
+        anchorUsd: rakebackBlend * proxy,
+        estimated: true,
+      },
+    affiliateCommission:
+      measured(Math.max(0, baseline.affiliateCommissionCost)) ?? {
+        anchorUsd: Math.max(0, baseline.affiliateBlendedRate ?? 0) * proxy,
+        estimated: true,
+      },
+    depositBonus:
+      measured(Math.max(0, baseline.depositBonusCost)) ?? {
+        anchorUsd: Math.max(0, baseline.timeBonusAnchor?.totalUsd ?? 0),
+        estimated: true,
+      },
+    raffles:
+      measured(Math.max(0, baseline.raffleCost)) ?? {
+        anchorUsd: baseline.liveRaffles.reduce(
+          (s, r) => s + Math.max(0, r.prizeValueUsd),
+          0,
+        ),
+        estimated: true,
+      },
+    rain:
+      measured(Math.max(0, baseline.rainCost)) ?? {
+        anchorUsd: Math.max(0, baseline.rainAnchor?.totalPoolUsd ?? 0),
+        estimated: true,
+      },
+  };
+}
+
 // ─── Rakeback / affiliate projections (v2) ───────────────────────────────────
 
 function cadenceWeight(
@@ -930,6 +1167,17 @@ function cadenceWeight(
   const enabled = all.filter((c) => c.enabled);
   if (enabled.length === 0) return cadence.enabled ? 1 : 0;
   return cadence.enabled ? 1 / enabled.length : 0;
+}
+
+/** Blended cadence rate (enabled cadences equally weighted). */
+function blendedCadenceRate(
+  cadences: RakebackCadenceLever[],
+  rateFor: (c: RakebackCadenceLever) => number,
+): number {
+  return cadences.reduce(
+    (s, c) => s + Math.max(0, rateFor(c)) * cadenceWeight(c, cadences),
+    0,
+  );
 }
 
 function blendedPackBattleRakebackWeight(
@@ -969,29 +1217,37 @@ function gameTypeRakebackWeightFactor(
 function projectRakebackV2(
   baseline: EdgePlanV2Baseline,
   planned: PlannedLeversV2,
+  anchor: LeverAnchorV2,
 ): { current: number; planned: number } {
-  const current = baseline.rakebackCost;
-  if (current <= 0) return { current: 0, planned: 0 };
-
+  // REACTIVITY FIX: no `current <= 0 → {0,0}` dead guard. The anchor chain
+  // (measured claims → blended rate × wager proxy) keeps the lever live;
+  // at the default levers planned === current, so the $0-delta mount
+  // invariant holds in every mode.
   const cadences = baseline.rakebackCadences;
-  const currentBlend = cadences.reduce(
-    (s, c) => s + c.currentRate * cadenceWeight(c, cadences),
-    0,
+  const currentBlend = blendedCadenceRate(cadences, (c) => c.currentRate);
+  const plannedBlend = blendedCadenceRate(
+    cadences,
+    (c) => planned.rakebackRates[c.cadence] ?? c.currentRate,
   );
-  const plannedBlend = cadences.reduce(
-    (s, c) =>
-      s +
-      Math.max(0, planned.rakebackRates[c.cadence] ?? c.currentRate) *
-        cadenceWeight(c, cadences),
-    0,
-  );
-  const rateRatio = currentBlend > 0 ? plannedBlend / currentBlend : 1;
   const gameWeight = gameTypeRakebackWeightFactor(baseline, planned);
 
   const adoption = clamp(planned.rakebackInstantAdoption, 0, 1);
   const payoutPct = clamp(planned.rakebackInstantPayoutPct, 0, 1);
   const instantFactor = 1 - adoption + adoption * payoutPct;
 
+  const current = anchor.anchorUsd;
+  if (anchor.estimated) {
+    // Modeled base: anchorUsd = currentBlend × proxy, so re-deriving the
+    // planned $ from the planned blend keeps levers live even from a $0
+    // anchor (raising any cadence rate immediately produces a cost).
+    const proxy = wagerProxyV2(baseline);
+    return {
+      current,
+      planned: Math.max(0, plannedBlend * proxy * gameWeight * instantFactor),
+    };
+  }
+
+  const rateRatio = currentBlend > 0 ? plannedBlend / currentBlend : 1;
   return {
     current,
     planned: Math.max(0, current * rateRatio * gameWeight * instantFactor),
@@ -1011,9 +1267,13 @@ export function rakebackEffectiveWagerMult(
 function projectAffiliateCommissionV2(
   baseline: EdgePlanV2Baseline,
   planned: PlannedLeversV2,
+  anchor: LeverAnchorV2,
 ): { current: number; planned: number } {
-  const current = Math.max(0, baseline.affiliateCommissionCost);
-  if (current <= 0) return { current: 0, planned: 0 };
+  // REACTIVITY FIX: no dead guard. When the measured commission leg is
+  // missing the anchor is the blended realized rate × wager proxy — the
+  // same multiplicative model runs on the virtual anchor, so tier sliders
+  // and the wager-req toggle keep moving $.
+  const current = anchor.anchorUsd;
 
   const tiers = baseline.affiliateTiers;
   const mean = (xs: number[]) =>
@@ -1502,14 +1762,23 @@ export function projectEdgePlanV2(
 ): EdgePlanV2Projection {
   const days = Math.max(1, baseline.periodDays);
   const seeds = resolveLeverSeedsV2(baseline, planned);
+  const anchors = resolveLeverAnchorsV2(baseline);
   const core = projectEdgePlan(toV1Baseline(baseline), toV1Levers(planned, baseline));
   const planningGgr = applyPlanningGameProjections(baseline, planned, core);
 
-  const rakeback = projectRakebackV2(baseline, planned);
-  const affiliateCommission = projectAffiliateCommissionV2(baseline, planned);
+  const rakeback = projectRakebackV2(baseline, planned, anchors.rakeback);
+  const affiliateCommission = projectAffiliateCommissionV2(
+    baseline,
+    planned,
+    anchors.affiliateCommission,
+  );
+  // Creator cost per the house model — surfaced as a footnote passthrough,
+  // NEVER a reward-cost lever row (see the levers array below).
   const affiliateLeaderboardCurrent = Math.max(0, baseline.affiliateLeaderboardCost);
 
   // ── Deposit bonus: cap mult × $-gate eligibility × optional time-split ──
+  // Anchored on the resolved anchor (measured cost → time-bonus Σ) so the
+  // cap / min-$ / split levers stay live on a degraded baseline.
   const eligibilityRatio = depositBonusEligibilityRatio(
     baseline,
     seeds.depositBonusMinDepositUsd,
@@ -1519,8 +1788,9 @@ export function projectEdgePlanV2(
     planned.depositBonusHourlyEnabled && split.lumpWindowUsd > 0
       ? split.cappedShare
       : 1;
+  const depositBonusCurrent = anchors.depositBonus.anchorUsd;
   const depositBonusPlanned =
-    baseline.depositBonusCost *
+    depositBonusCurrent *
     Math.pow(Math.max(0, planned.depositBonusCapMult), DEPOSIT_BONUS_CAP_COST_EXPONENT) *
     eligibilityRatio *
     splitFactor;
@@ -1528,16 +1798,30 @@ export function projectEdgePlanV2(
   // ── Races: ONE monthly $ budget against the run-rate ──
   const racePlanned = windowFromMonthly(seeds.raceMonthlyBudgetUsd, days);
 
-  // ── Raffles: keep-fraction of the real reconstructed prize cost ──
-  const rafflePlanned = baseline.raffleCost * clamp(planned.raffleKeepPct, 0, 1);
+  // ── Raffles: keep-fraction of the anchored prize cost (measured →
+  //    live-raffle prize value when the measured leg degraded) ──
+  const raffleCurrent = anchors.raffles.anchorUsd;
+  const rafflePlanned = raffleCurrent * clamp(planned.raffleKeepPct, 0, 1);
 
-  // ── Rain: scale the canonical net rain cost by planned/observed pool $ ──
+  // ── Rain: scale the anchored rain cost by planned/observed pool $ ──
   const anchor = baseline.rainAnchor;
   const observedRainUsd = anchor ? anchor.count * anchor.avgPoolUsd : 0;
   const plannedRainEvents = (days * 24) / Math.max(0.05, seeds.rainDurationHours);
   const plannedRainUsd = plannedRainEvents * Math.max(0, seeds.rainPerEventUsd);
-  const rainRatio = observedRainUsd > 0 ? plannedRainUsd / observedRainUsd : 1;
-  const rainPlanned = baseline.rainCost * Math.max(0, rainRatio);
+  const rainCurrent = anchors.rain.anchorUsd;
+  // With an observed cadence the planned $ scales the anchor by
+  // planned/observed pool volume (ratio 1 at the null seeds). With NO
+  // observed cadence at all, explicit cadence/pool inputs REPLACE the plan
+  // (events × pool $ IS the planned window cost) so the lever still moves;
+  // at the null defaults the anchor is reproduced → delta $0.
+  const rainExplicit =
+    planned.rainDurationHours != null || planned.rainPerEventUsd != null;
+  const rainPlanned =
+    observedRainUsd > 0
+      ? rainCurrent * Math.max(0, plannedRainUsd / observedRainUsd)
+      : rainExplicit
+        ? plannedRainUsd
+        : rainCurrent;
 
   // ── Motha / gift cards / promo codes / adjustments: monthly $ inputs ──
   const mothaPlanned = windowFromMonthly(seeds.mothaMonthlyBudgetUsd, days);
@@ -1577,13 +1861,18 @@ export function projectEdgePlanV2(
   const signupPlanned = Math.max(0, baseline.signupPacksCost + signupDelta);
 
   const levers: LeverProjection[] = [
+    // NOTE (owner model, 2026-06-12): affiliate LEADERBOARD prizes are
+    // CREATOR costs — they are NOT a lever row and NOT in the reward-cost
+    // totals/drag anymore. They surface only as the
+    // `creatorLeaderboardCostUsd` footnote passthrough.
     {
       key: "rakeback",
       label: "Rakeback",
       currentCost: rakeback.current,
       plannedCost: rakeback.planned,
       deltaCost: rakeback.planned - rakeback.current,
-      dataAvailable: baseline.rakebackCost > 0,
+      dataAvailable:
+        rakeback.current > 0 || baseline.rakebackCadences.length > 0,
     },
     {
       key: "affiliate",
@@ -1591,27 +1880,16 @@ export function projectEdgePlanV2(
       currentCost: affiliateCommission.current,
       plannedCost: affiliateCommission.planned,
       deltaCost: affiliateCommission.planned - affiliateCommission.current,
-      dataAvailable: baseline.affiliateCommissionCost > 0,
+      dataAvailable:
+        affiliateCommission.current > 0 || baseline.affiliateTiers.length > 0,
     },
-    ...(affiliateLeaderboardCurrent > 0
-      ? [
-          {
-            key: "leaderboard",
-            label: "Affiliate leaderboard prizes",
-            currentCost: affiliateLeaderboardCurrent,
-            plannedCost: affiliateLeaderboardCurrent,
-            deltaCost: 0,
-            dataAvailable: true,
-          } satisfies LeverProjection,
-        ]
-      : []),
     {
       key: "deposit-bonus",
       label: "Deposit bonus",
-      currentCost: baseline.depositBonusCost,
+      currentCost: depositBonusCurrent,
       plannedCost: depositBonusPlanned,
-      deltaCost: depositBonusPlanned - baseline.depositBonusCost,
-      dataAvailable: baseline.depositBonusCost > 0,
+      deltaCost: depositBonusPlanned - depositBonusCurrent,
+      dataAvailable: depositBonusCurrent > 0,
     },
     {
       key: "races",
@@ -1624,10 +1902,10 @@ export function projectEdgePlanV2(
     {
       key: "raffles",
       label: "Raffles",
-      currentCost: baseline.raffleCost,
+      currentCost: raffleCurrent,
       plannedCost: rafflePlanned,
-      deltaCost: rafflePlanned - baseline.raffleCost,
-      dataAvailable: baseline.raffleCost > 0,
+      deltaCost: rafflePlanned - raffleCurrent,
+      dataAvailable: raffleCurrent > 0,
     },
     {
       key: "daily-packs",
@@ -1648,10 +1926,10 @@ export function projectEdgePlanV2(
     {
       key: "rain",
       label: "Rain",
-      currentCost: baseline.rainCost,
+      currentCost: rainCurrent,
       plannedCost: rainPlanned,
-      deltaCost: rainPlanned - baseline.rainCost,
-      dataAvailable: baseline.rainCost > 0,
+      deltaCost: rainPlanned - rainCurrent,
+      dataAvailable: rainCurrent > 0 || rainExplicit,
     },
     {
       key: "motha",
@@ -1749,6 +2027,7 @@ export function projectEdgePlanV2(
     levers,
     revenueLevers,
     revenueDelta,
+    creatorLeaderboardCostUsd: affiliateLeaderboardCurrent,
     plannedGgr,
     currentGgr,
     plannedRewardCost,
@@ -1759,6 +2038,64 @@ export function projectEdgePlanV2(
     profitDelta,
     monthlyProfitDelta,
     annualProfitDelta,
+  };
+}
+
+// ─── Owner-model reward drag (headline figure) ───────────────────────────────
+
+/**
+ * The headline reward drag the OWNER's model defines:
+ *
+ *   drag = on-site reward spend ÷ hub wager (real customer stake)
+ *
+ * — NOT reward-cost-incl-leaderboard ÷ margin-bearing wager (the old page's
+ * "−15.97%" had both the numerator and the denominator wrong). The measured
+ * figures come straight from the recon block (getCostBreakdown −
+ * leaderboard leg, ÷ getInsightsHubWager30d); the planned figures divide
+ * the planner's reward-cost rows (which already exclude the
+ * creator-attributed leaderboard prizes) by the SAME hub wager.
+ */
+export type OwnerDragSummary = {
+  windowLabel: string;
+  /** Hub-style 30d customer wager — the drag denominator. */
+  hubWagerUsd: number;
+  /** Σ planner reward rows at the planned levers (on-site only). */
+  plannedOnSiteCostUsd: number;
+  /** Σ planner reward rows at the current anchors (on-site only). */
+  currentOnSiteCostUsd: number;
+  /** Measured on-site reward spend (recon: rewardPayouts − leaderboard). */
+  measuredOnSiteCostUsd: number;
+  /** Creator-attributed leaderboard prizes (the footnote line). */
+  creatorLeaderboardCostUsd: number;
+  /** plannedOnSiteCostUsd ÷ hubWagerUsd (fraction). Null when no wager. */
+  plannedDragPct: number | null;
+  currentDragPct: number | null;
+  /** Measured drag (recon onSiteDragPct). */
+  measuredDragPct: number | null;
+  /** Transparency: measured drag WITH the creator leaderboard included. */
+  dragWithCreatorPct: number | null;
+};
+
+export function computeOwnerDragSummary(
+  baseline: EdgePlanV2Baseline,
+  projection: EdgePlanV2Projection,
+): OwnerDragSummary {
+  const recon = baseline.recon.d30;
+  const wager = Math.max(0, recon.wager);
+  const planned = Math.max(0, projection.plannedRewardCost);
+  const current = Math.max(0, projection.currentRewardCost);
+  const frac = (v: number): number | null => (wager > 0 ? v / wager : null);
+  return {
+    windowLabel: recon.label,
+    hubWagerUsd: wager,
+    plannedOnSiteCostUsd: planned,
+    currentOnSiteCostUsd: current,
+    measuredOnSiteCostUsd: recon.onSiteRewardCost,
+    creatorLeaderboardCostUsd: recon.creatorLeaderboardCost,
+    plannedDragPct: frac(planned),
+    currentDragPct: frac(current),
+    measuredDragPct: recon.onSiteDragPct,
+    dragWithCreatorPct: recon.dragWithCreatorPct,
   };
 }
 

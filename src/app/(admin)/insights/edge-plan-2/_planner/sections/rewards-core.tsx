@@ -20,6 +20,7 @@ import {
   depositBonusEligibilityRatio,
   eligibleDepositShare,
   resolveLeverSeedsV2,
+  resolveLeverAnchorsV2,
   timeBonusSplitModel,
   type EdgePlanV2Baseline,
   type EdgePlanV2Projection,
@@ -107,6 +108,12 @@ export function RewardsCoreSection({
   const affiliateCommissionCost = Math.max(0, baseline.affiliateCommissionCost);
   const affiliateLeaderboardCost = Math.max(0, baseline.affiliateLeaderboardCost);
 
+  // Resolved lever anchors — levers stay LIVE when a measured leg degraded
+  // (the anchor falls back to a secondary measured source, flagged
+  // `estimated`); the old `cost <= 0 → disabled` guards were the visible
+  // half of the dead-planner bug.
+  const anchors = React.useMemo(() => resolveLeverAnchorsV2(baseline), [baseline]);
+
   // ── Deposit bonus: $ gate + grounded time split ──
   const seeds = React.useMemo(
     () => resolveLeverSeedsV2(baseline, levers),
@@ -180,7 +187,7 @@ export function RewardsCoreSection({
                     step={0.1}
                     baselineMarker={100}
                     baselineLabel="100% = full accrual"
-                    disabled={baseline.rakebackCost <= 0}
+                    disabled={anchors.rakeback.anchorUsd <= 0}
                     preciseInput={{ unit: "percent" }}
                   />
                   <LeverSlider
@@ -198,7 +205,7 @@ export function RewardsCoreSection({
                     step={0.1}
                     baselineMarker={0}
                     baselineLabel="0% = nobody takes it"
-                    disabled={baseline.rakebackCost <= 0}
+                    disabled={anchors.rakeback.anchorUsd <= 0}
                     preciseInput={{ unit: "percent" }}
                   />
                 </div>
@@ -261,7 +268,7 @@ export function RewardsCoreSection({
           </span>
           .
         </p>
-        {baseline.depositBonusCost <= 0 ? (
+        {anchors.depositBonus.anchorUsd <= 0 ? (
           <EmptyLever note="No deposit-bonus spend in this window." />
         ) : (
           <div className="space-y-3">

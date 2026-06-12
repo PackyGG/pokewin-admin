@@ -3,13 +3,18 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
-import { getWindowMetrics, sumLedgerTypes, type MetricWindow } from "@/lib/metrics/queries";
+import { sumLedgerTypes, type MetricWindow } from "@/lib/metrics/queries";
 import {
   NON_BORROW_PACK_SESSIONS,
   NON_BORROW_BATTLE_SESSIONS,
 } from "@/lib/metrics/gaming-sql";
 import { getMetricsScope } from "@/lib/metrics/scope";
-import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import {
+  safeQuery,
+  REWARD_QUERY_TIMEOUT_MS,
+  type SafeQueryResult,
+} from "@/lib/errors/safe-query";
+import { logError } from "@/lib/errors/logger";
 import {
   daysForInsightsPeriodCapped,
   insightsRewardsPeriodLabel,
@@ -24,6 +29,15 @@ import {
   parseRafflePrizes,
   buildRafflePrizeValuator,
 } from "@/lib/queries/insights-rewards/raffle/prize-valuation";
+import {
+  getCostBreakdown,
+  type CostBreakdown,
+} from "@/lib/queries/insights-analytics/cost-breakdown";
+import {
+  getInsightsHubWager,
+  getInsightsHubWager30d,
+  INSIGHTS_HUB_WAGER_LOOKBACK_DAYS,
+} from "@/lib/queries/insights-analytics/hub-wager";
 import type { SystemEdgeBaseline } from "../system-edge-plan/_model";
 import { getSystemEdgeBaseline } from "../system-edge-plan/_baseline";
 import { getMothaGiveawayOverview } from "@/lib/queries/insights-rewards/motha/overview";
@@ -37,27 +51,67 @@ import type {
   DepositSizeBucket,
   EdgePlanV2Baseline,
   LiveRaffleInfo,
+  OwnerReconBlock,
+  OwnerWindowRecon,
   RainAnchor,
   TimeBonusAnchor,
   TimeBonusBucket,
 } from "./_model-v2";
-import { splitAffiliateCostBundle, XP_TO_USD } from "./_model-v2";
+import {
+  buildOwnerWindowRecon,
+  splitAffiliateCostBundle,
+  XP_TO_USD,
+} from "./_model-v2";
 import type { RewardSourceVolume } from "./_credit-matrix-v2";
+
+/**
+ * Edge Plan 2.0 baseline — REWORKED onto the owner-trusted stack
+ * (2026-06-12).
+ *
+ * ─── Source of truth ────────────────────────────────────────────────────
+ * The headline numbers come from EXACTLY the helpers the /insights hub
+ * renders (the numbers the owner trusts):
+ *   • `getInsightsHubWager30d` / `getInsightsHubWager` — borrow-net real
+ *     customer stake (creator-sessions excluded, sponsored + upgrader
+ *     included), 30d + lifetime (365d-capped). Cached (300s).
+ *   • `getCostBreakdown("30d" | "all"+365d-cap)` — canonical GGR / NGR /
+ *     reward cost / realized windowed P&L, same scope as
+ *     /insights/cost-breakdown.
+ * The two windows are carried side by side in `baseline.recon`, each with
+ * a LOUD label — scopes are never mixed silently. The lifetime recon row
+ * equals the /insights hub by construction (same cached helpers).
+ *
+ * ─── Reliability contract ───────────────────────────────────────────────
+ *   • Legs run in SEQUENTIAL WAVES of ≤ 4 concurrent reads — never the old
+ *     19-leg Promise.all that starved the max:5 pg pool and produced the
+ *     cached all-zeros baseline the owner saw.
+ *   • Ad-hoc scans are SINGLE statements (no interactive transactions
+ *     pinning pool slots); the pool's server-side statement_timeout (30s,
+ *     db.ts) + the safeQuery 15s wall bound them.
+ *   • DO-NOT-CACHE-FAILURES: the build THROWS when a CRITICAL leg (wave 0
+ *     owner stack + the v1 lever-anchor baseline) failed — `unstable_cache`
+ *     never stores a rejected build, so a degraded result can never be
+ *     served for 60s. Non-critical legs degrade per-block into
+ *     `degradedBlocks` (rendered as visible error bands, never silent
+ *     zeros).
+ */
 
 /** Edge Plan 2.0 always anchors on the last 30 days of production data. */
 export const EDGE_PLAN_V2_PERIOD: InsightsRewardsPeriod = "30d";
 
+/** LOUD window labels — every recon figure carries one. */
+export const EDGE_PLAN_30D_LABEL = "Last 30 days";
+export const EDGE_PLAN_LIFETIME_LABEL = `Lifetime (${INSIGHTS_HUB_WAGER_LOOKBACK_DAYS}d-capped)`;
+
 const DEFAULT_BALANCE_WITHDRAWAL_SHARE = 0.35;
 
-/**
- * Per-statement budget for the ad-hoc baseline scans. The prod ledger has
- * NO secondary indexes (and never will — owner cannot run DDL), so every
- * scan here is a bounded seq scan killed server-side at this budget
- * (pattern: creators-pnl.ts `SET LOCAL statement_timeout`). A timed-out
- * scan degrades its own block to null/empty via `safeQuery` — never the
- * whole page.
- */
-const SCAN_STATEMENT_TIMEOUT_MS = 8_000;
+/** A CRITICAL baseline leg failed — the build throws this and nothing is cached. */
+class EdgePlanCriticalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EdgePlanCriticalError";
+  }
+}
 
 function windowFor30d(): MetricWindow {
   const days = daysForInsightsPeriodCapped(EDGE_PLAN_V2_PERIOD);
@@ -69,36 +123,23 @@ function sinceClause(column: string, since: Date | null): string {
   return `AND ${column} >= '${since.toISOString()}'::timestamptz`;
 }
 
-/** Run one ad-hoc scan inside a tx with the bounded statement timeout. */
-async function boundedScan<T>(sql: string): Promise<T[]> {
+/**
+ * Run one ad-hoc scan as a SINGLE statement on a pooled connection.
+ *
+ * Previously this opened an interactive transaction (`SET LOCAL
+ * statement_timeout` + query) which HELD a pool slot across both round
+ * trips and failed two ways under concurrent load (maxWait/timeout kills
+ * before the server-side budget). The pool now carries a global
+ * server-side `statement_timeout: 30s` (db.ts), so a plain single
+ * statement is already bounded — Postgres kills a runaway scan and frees
+ * the slot — and the caller's safeQuery (15s) bounds the wall-clock wait.
+ */
+async function runScan<T>(sql: string): Promise<T[]> {
   const db = await getDb();
-  return db.$transaction(
-    async (tx) => {
-      await tx.$executeRawUnsafe(
-        `SET LOCAL statement_timeout = ${SCAN_STATEMENT_TIMEOUT_MS}`,
-      );
-      return tx.$queryRawUnsafe<T[]>(sql);
-    },
-    {
-      // The bounded scans fire inside the wave Promise.alls (assembly
-      // below), so on a cache-miss rebuild they still queue against their
-      // wave-mates (and other in-flight pages) for pool connections.
-      // Prisma's interactive-transaction defaults — maxWait 2s, timeout 5s
-      // — then fail two ways under that concurrent load (observed on the
-      // dev server 2026-06-12): "Unable to start a transaction in the
-      // given time" while waiting for a slot, and a client-side kill
-      // BEFORE the 8s server-side statement_timeout this scan is budgeted
-      // for. Raise both so the server-side statement_timeout stays the
-      // real per-scan budget; the caller's safeQuery (15s) still bounds
-      // the whole leg and degrades it to its fallback instead of failing
-      // the page.
-      maxWait: 10_000,
-      timeout: SCAN_STATEMENT_TIMEOUT_MS + 4_000,
-    },
-  );
+  return db.$queryRawUnsafe<T[]>(sql);
 }
 
-// ─── Existing v2 legs (unchanged semantics) ──────────────────────────────────
+// ─── Bespoke legs (unchanged semantics, single-statement scans) ──────────────
 
 async function getBorrowedWagerTotals(): Promise<{
   packWagerBorrowed: number;
@@ -177,11 +218,9 @@ async function getWithdrawalBaselineFromLedger(): Promise<{
   return { volumeUsd, balanceShare: manualUsd / volumeUsd };
 }
 
-// ─── New v2.1 scans (each bounded + safeQuery-wrapped by the caller) ─────────
-
 async function scanDepositsByAsset(since: Date): Promise<DepositAssetVolume[]> {
   const scope = await getMetricsScope();
-  const rows = await boundedScan<{ asset: string; n: string; vol: string }>(
+  const rows = await runScan<{ asset: string; n: string; vol: string }>(
     `WITH ${scope.sessionWindowsCte}
      SELECT COALESCE(NULLIF(TRIM(lt.crypto_asset), ''), da.asset_id, 'unknown') AS asset,
             COUNT(*)::text AS n,
@@ -214,7 +253,7 @@ async function scanAdjustmentBreakdown(since: Date): Promise<{
   countedCost: number;
 }> {
   const scope = await getMetricsScope();
-  const raw = await boundedScan<{
+  const raw = await runScan<{
     category: string | null;
     n: string;
     credits: string;
@@ -264,7 +303,7 @@ async function scanRainAnchor(
   since: Date,
   periodDays: number,
 ): Promise<RainAnchor | null> {
-  const rows = await boundedScan<{
+  const rows = await runScan<{
     n: string;
     avg_hours: string;
     avg_pool: string;
@@ -305,7 +344,7 @@ async function scanDepositSizeHistogram(since: Date): Promise<{
       ? `ELSE ${i}`
       : `WHEN lt.amount::numeric < ${max} THEN ${i}`,
   );
-  const rows = await boundedScan<{ bucket: number; n: string; min_amt: string }>(
+  const rows = await runScan<{ bucket: number; n: string; min_amt: string }>(
     `WITH ${scope.sessionWindowsCte}
      SELECT CASE ${caseLines.slice(0, -1).join(" ")} ${caseLines[caseLines.length - 1]} END AS bucket,
             COUNT(*)::text AS n,
@@ -344,7 +383,7 @@ async function scanTimeBonusAnchor(
   const caseLines = TIME_BONUS_BUCKET_EDGES.map((max, i) =>
     max == null ? `ELSE ${i}` : `WHEN per.amt < ${max} THEN ${i}`,
   );
-  const rows = await boundedScan<{
+  const rows = await runScan<{
     bucket: number;
     user_days: string;
     total: string;
@@ -381,10 +420,8 @@ async function scanTimeBonusAnchor(
 
   const userDays = buckets.reduce((s, b) => s + b.userDays, 0);
   const totalUsd = buckets.reduce((s, b) => s + b.totalUsd, 0);
-  // Distinct users per bucket overlap across buckets — take the MAX as a
-  // floor and the Σ as a cap; the honest distinct-user figure needs its own
-  // pass, so approximate with the largest bucket's distinct count summed
-  // (documented approximation, only used for the claim-rate display).
+  // Distinct users per bucket overlap across buckets — take Σ as a
+  // documented approximation, only used for the claim-rate display.
   const users = rows.reduce((s, r) => s + Number(r.users), 0);
   const maxPerUserDayUsd = rows.reduce(
     (m, r) => Math.max(m, toNumber(r.max_amt)),
@@ -406,15 +443,13 @@ async function scanTimeBonusAnchor(
 /**
  * Level boundaries + per-level customer counts from `user_statistics`
  * (small table, one grouped pass). Thresholds derive as
- * `max(min_xp[L], max_xp[L−1])` with a monotone clamp — robust against the
- * handful of admin-set outlier rows (probe: level 24 min_xp=72k, level 42
- * min_xp=0).
+ * `max(min_xp[L], max_xp[L−1])` with a monotone clamp.
  */
 async function scanLevelStats(): Promise<{
   thresholds: Map<number, number>;
   usersAtOrAbove: Map<number, number>;
 } | null> {
-  const rows = await boundedScan<{
+  const rows = await runScan<{
     level: number;
     users: string;
     min_xp: string;
@@ -468,7 +503,7 @@ async function scanLevelStats(): Promise<{
 async function scanDailyRewardConfigs(): Promise<
   { rewardSlug: string; levelRequired: number; relockPct: number; packIds: string[] }[]
 > {
-  const rows = await boundedScan<{
+  const rows = await runScan<{
     slug: string;
     level_required: number;
     daily_unlock_percentage: string | null;
@@ -491,15 +526,15 @@ async function scanDailyRewardConfigs(): Promise<
 
 /**
  * Per-pack per-user open-day histogram for the "every-time claimer" share —
- * ONE bounded scan over reward-pack game sessions. "Every time" = claimed
- * on ≥90% of window days.
+ * ONE scan over reward-pack game sessions. "Every time" = claimed on ≥90%
+ * of window days.
  */
 async function scanEveryTimeClaimers(
   since: Date,
   periodDays: number,
 ): Promise<Map<string, { claimers: number; everyTime: number }>> {
   const threshold = Math.max(1, Math.floor(periodDays * 0.9));
-  const rows = await boundedScan<{
+  const rows = await runScan<{
     pack_id: string;
     claimers: string;
     every_time: string;
@@ -531,7 +566,7 @@ async function scanEveryTimeClaimers(
 /** Live (status=active) raffles valued via the shared prize-valuation helper. */
 async function scanLiveRaffles(): Promise<LiveRaffleInfo[]> {
   const db = await getDb();
-  const rows = await boundedScan<{
+  const rows = await runScan<{
     id: string;
     name: string | null;
     prizes: unknown;
@@ -571,13 +606,35 @@ async function scanLiveRaffles(): Promise<LiveRaffleInfo[]> {
 
 /** MAX(ledger created_at) within a 7d guard window — the freshness stamp. */
 async function scanLedgerMaxCreatedAt(): Promise<string | null> {
-  const rows = await boundedScan<{ max_created: Date | null }>(
+  const rows = await runScan<{ max_created: Date | null }>(
     `SELECT MAX(created_at) AS max_created
      FROM ledger_transactions
      WHERE created_at >= NOW() - INTERVAL '7 days'`,
   );
   const v = rows[0]?.max_created;
   return v ? v.toISOString() : null;
+}
+
+// ─── Owner-recon assembly (pure mapping over the trusted helpers) ────────────
+
+function reconFromCostBreakdown(
+  windowKey: "30d" | "lifetime365",
+  label: string,
+  hubWagerUsd: number,
+  cb: CostBreakdown,
+): OwnerWindowRecon {
+  return buildOwnerWindowRecon({
+    windowKey,
+    label,
+    hubWagerUsd,
+    ggr: cb.ggr,
+    ngr: cb.ngr,
+    realizedPnl: cb.pnl,
+    houseEdge: cb.margin.houseEdge,
+    rewardLines: cb.lines
+      .filter((l) => l.kind === "reward")
+      .map((l) => ({ key: l.key, label: l.label, amountUsd: l.amount })),
+  });
 }
 
 // ─── Assembly ────────────────────────────────────────────────────────────────
@@ -587,68 +644,34 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
   const since = window.since!;
   const periodDays = Math.max(1, daysForInsightsPeriodCapped(EDGE_PLAN_V2_PERIOD));
 
-  // Warm the canonical scope ONCE, OUTSIDE any leg's 15s budget. On a cold
-  // instance the creator-session-windows build (a per-creator backend
-  // fan-out) costs ~9s; without this warm-up every scope-dependent leg
-  // below paid that stall INSIDE its own safeQuery budget, leaving the two
-  // longest legs (v1 baseline + canonical) ~4s of real headroom — the
-  // owner-reported cold-render banners. After this single resolve, every
-  // inner getMetricsScope() call hits the 5-min cache. Best-effort: a
-  // failure here is swallowed — each leg still resolves (and degrades) its
-  // own scope exactly as before.
-  try {
-    await getMetricsScope();
-  } catch {
-    /* legs degrade individually via their own safeQuery wrappers */
+  const degraded: string[] = [];
+  const note = <T>(name: string, res: SafeQueryResult<T>): T => {
+    if (res.error != null) degraded.push(name);
+    return res.data;
+  };
+
+  // ── Wave 0 (CRITICAL): the owner-trusted stack, ≤2 helpers per sub-wave.
+  // These are the SAME cached helpers the /insights hub renders; failures
+  // THROW (and are never cached) instead of degrading into a zeros planner.
+  const [cb30, hubWager30] = await Promise.all([
+    getCostBreakdown("30d", EDGE_PLAN_30D_LABEL, 0),
+    getInsightsHubWager30d(),
+  ]);
+  const [cbLifetime, hubWagerLifetime] = await Promise.all([
+    // EXACTLY the hub's call shape (period "all", 365d cap) so the lifetime
+    // reconciliation row equals the /insights hub by construction.
+    getCostBreakdown("all", "Lifetime", 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS),
+    getInsightsHubWager(),
+  ]);
+  if (hubWager30 <= 0 || hubWagerLifetime <= 0) {
+    throw new EdgePlanCriticalError(
+      "The owner-trusted hub wager read returned no volume — refusing to render (and cache) a zeros baseline.",
+    );
   }
 
-  // The 19 legs run in SEQUENTIAL WAVES of Promise.all (identical legs,
-  // wrappers and fallbacks — only the grouping changed). One flat 19-leg
-  // Promise.all queued ~50 statements onto the max:5 pg pool at once,
-  // inflating each leg by up to +2.6s locally (worse cross-region) and
-  // pushing the longest legs past their 15s budgets. Wave 1 gives the two
-  // heaviest legs (v1 baseline — itself 16 inner legs — and canonical)
-  // the pool nearly to themselves; later waves batch the cheap bounded
-  // scans. Each leg is still safeQuery-wrapped so a failure degrades only
-  // its own block.
-
-  // Wave 1 — the heavyweights + the freshness stamp.
-  const [v1Res, canonicalRes, withdrawalRes, ledgerMaxRes] = await Promise.all([
-    safeQuery(
-      () => getSystemEdgeBaseline(EDGE_PLAN_V2_PERIOD),
-      null,
-      "edge-plan-v2.v1-baseline",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getWindowMetrics({ window }),
-      null,
-      "edge-plan-v2.canonical",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getWithdrawalBaselineFromLedger(),
-      null,
-      "edge-plan-v2.withdrawal-split",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => scanLedgerMaxCreatedAt(),
-      null,
-      "edge-plan-v2.ledger-freshness",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-  ]);
-
-  // Wave 2 — canonical-scope ledger legs.
-  const [
-    affCommissionRes,
-    affLeaderboardRes,
-    mothaOvRes,
-    borrowedRes,
-    giftCardRes,
-    promoCodeRes,
-  ] = await Promise.all([
+  // ── Wave 1 (v1 lever anchors CRITICAL + canonical affiliate split legs).
+  const [v1, affCommissionRes, affLeaderboardRes] = await Promise.all([
+    getSystemEdgeBaseline(EDGE_PLAN_V2_PERIOD),
     safeQuery(
       () => sumLedgerTypes({ types: ["affiliate_claim"], window }),
       null,
@@ -661,79 +684,90 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
       "edge-plan-v2.affiliate-leaderboard",
       REWARD_QUERY_TIMEOUT_MS,
     ),
-    safeQuery(
-      () => getMothaGiveawayOverview(EDGE_PLAN_V2_PERIOD),
-      null,
-      "edge-plan-v2.motha-breakdown",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getBorrowedWagerTotals(),
-      null,
-      "edge-plan-v2.borrowed-wager",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => sumLedgerTypes({ types: ["gift_card_redeemed"], window }),
-      0,
-      "edge-plan-v2.gift-cards",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => sumLedgerTypes({ types: ["promo_code_redeemed"], window }),
-      0,
-      "edge-plan-v2.promo-codes",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
   ]);
+  // getSystemEdgeBaseline degrades to a ZEROED fallback instead of throwing;
+  // a zero-wager v1 next to a non-zero hub wager can only mean the v1 legs
+  // failed — that baseline would deaden every lever anchor, so it is
+  // CRITICAL here. (Residual gap: v1's own unstable_cache may hold its
+  // degraded entry for up to 60s; we surface the error band rather than
+  // serve dead levers.)
+  if (v1.wager <= 0) {
+    throw new EdgePlanCriticalError(
+      "The per-program lever baseline (system-edge-plan) degraded to zeros — refusing to render (and cache) a dead planner.",
+    );
+  }
 
-  // Wave 3 — bounded ledger scans.
-  const [
-    depositsByAssetRes,
-    adjustmentsRes,
-    depositHistRes,
-    timeBonusRes,
-    everyTimeRes,
-  ] = await Promise.all([
-    safeQuery(
-      () => scanDepositsByAsset(since),
-      [] as DepositAssetVolume[],
-      "edge-plan-v2.deposits-by-asset",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => scanAdjustmentBreakdown(since),
-      null,
-      "edge-plan-v2.adjustments",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => scanDepositSizeHistogram(since),
-      null,
-      "edge-plan-v2.deposit-histogram",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => scanTimeBonusAnchor(since, periodDays),
-      null,
-      "edge-plan-v2.time-bonus-anchor",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => scanEveryTimeClaimers(since, periodDays),
-      null,
-      "edge-plan-v2.every-time-claimers",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-  ]);
-
-  // Wave 4 — small-table scans + live raffles.
-  const [rainAnchorRes, levelStatsRes, dailyRewardCfgRes, liveRafflesRes] =
+  // ── Waves 2–5 (non-critical, ≤4 concurrent each, sequential waves).
+  // A failed leg degrades ONLY its own block and is listed in
+  // `degradedBlocks` for a visible error band — never a silent zero.
+  const [withdrawalRes, mothaOvRes, borrowedRes, giftCardRes] =
     await Promise.all([
+      safeQuery(
+        () => getWithdrawalBaselineFromLedger(),
+        null,
+        "edge-plan-v2.withdrawal-split",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => getMothaGiveawayOverview(EDGE_PLAN_V2_PERIOD),
+        null,
+        "edge-plan-v2.motha-breakdown",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => getBorrowedWagerTotals(),
+        null,
+        "edge-plan-v2.borrowed-wager",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => sumLedgerTypes({ types: ["gift_card_redeemed"], window }),
+        null,
+        "edge-plan-v2.gift-cards",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+    ]);
+
+  const [promoCodeRes, depositsByAssetRes, adjustmentsRes, rainAnchorRes] =
+    await Promise.all([
+      safeQuery(
+        () => sumLedgerTypes({ types: ["promo_code_redeemed"], window }),
+        null,
+        "edge-plan-v2.promo-codes",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => scanDepositsByAsset(since),
+        null,
+        "edge-plan-v2.deposits-by-asset",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => scanAdjustmentBreakdown(since),
+        null,
+        "edge-plan-v2.adjustments",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
       safeQuery(
         () => scanRainAnchor(since, periodDays),
         null,
         "edge-plan-v2.rain-anchor",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+    ]);
+
+  const [depositHistRes, timeBonusRes, levelStatsRes, dailyRewardCfgRes] =
+    await Promise.all([
+      safeQuery(
+        () => scanDepositSizeHistogram(since),
+        null,
+        "edge-plan-v2.deposit-histogram",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => scanTimeBonusAnchor(since, periodDays),
+        null,
+        "edge-plan-v2.time-bonus-anchor",
         REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
@@ -744,89 +778,66 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
       ),
       safeQuery(
         () => scanDailyRewardConfigs(),
-        [] as Awaited<ReturnType<typeof scanDailyRewardConfigs>>,
+        null,
         "edge-plan-v2.daily-reward-configs",
-        REWARD_QUERY_TIMEOUT_MS,
-      ),
-      safeQuery(
-        () => scanLiveRaffles(),
-        [] as LiveRaffleInfo[],
-        "edge-plan-v2.live-raffles",
         REWARD_QUERY_TIMEOUT_MS,
       ),
     ]);
 
-  // The v1 baseline anchors per-type legs + the per-lever ledger costs on
-  // the SAME canonical scope as /ggr + dashboard. NO rescaling of any kind:
-  // the old `applyOrganicWagerScale` (which rescaled every game-type leg to
-  // the topbar's pack/battle ledger wager — a NON-comparable denominator:
-  // borrow-inclusive, upgrader-free) is DELETED. Probe 2026-06-12: that
-  // rescale UP-scaled every leg ×2.16 on the new prod DB and fabricated the
-  // wrong headline NGR. v1 legs ARE the canonical legs; they stay untouched.
-  const v1: SystemEdgeBaseline =
-    v1Res.data ??
-    // Degraded v1 read — extremely unlikely (getSystemEdgeBaseline has its
-    // own outer safeQuery + zeroed fallback), but keep the page alive.
-    ({
-      periodLabel: insightsRewardsPeriodLabel(EDGE_PLAN_V2_PERIOD),
-      periodDays,
-      gameTypes: [],
-      wager: 0,
-      gamingPayout: 0,
-      ggr: 0,
-      houseEdge: null,
-      bets: 0,
-      rakebackCost: 0,
-      affiliateCost: 0,
-      depositBonusCost: 0,
-      raceCost: 0,
-      raffleCost: 0,
-      dailyPacksCost: 0,
-      signupPacksCost: 0,
-      rainCost: 0,
-      mothaCost: 0,
-      otherRewardCost: 0,
-      rakebackCadences: [],
-      affiliateTiers: [],
-      affiliateBlendedRate: null,
-      dailyPackRows: [],
-      rewardPackCatalog: [],
-      signupAvgGrant: null,
-      signupClaimants: 0,
-      signupSignups: 0,
-      signupAvgPerSignup: null,
-      signupConversionPct: 0,
-      welcomePacks: [],
-      depositBonusCapUsd: 100,
-      depositBonusWindowHours: 24,
-      rainWinTotal: 0,
-      rainTipTotal: 0,
-    } satisfies SystemEdgeBaseline);
+  const [everyTimeRes, liveRafflesRes, ledgerMaxRes] = await Promise.all([
+    safeQuery(
+      () => scanEveryTimeClaimers(since, periodDays),
+      null,
+      "edge-plan-v2.every-time-claimers",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => scanLiveRaffles(),
+      null,
+      "edge-plan-v2.live-raffles",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => scanLedgerMaxCreatedAt(),
+      null,
+      "edge-plan-v2.ledger-freshness",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ]);
 
-  const metrics = canonicalRes.data;
-  const canonical: CanonicalMeasuredBlock | null = metrics
-    ? {
-        wager: metrics.wager,
-        gamingPayout: metrics.gamingPayout,
-        ggr: metrics.ggr,
-        ngr: metrics.ngr,
-        rewardCost: metrics.ggr - metrics.ngr,
-        houseEdge: metrics.houseEdge,
-        bets: metrics.bets,
-        rainHouseCost: metrics.rainHouseCost,
-      }
-    : null;
+  // ── Owner-trusted recon block (windows LOUD; lifetime ≡ /insights hub) ──
+  const recon: OwnerReconBlock = {
+    d30: reconFromCostBreakdown("30d", EDGE_PLAN_30D_LABEL, hubWager30, cb30),
+    lifetime: reconFromCostBreakdown(
+      "lifetime365",
+      EDGE_PLAN_LIFETIME_LABEL,
+      hubWagerLifetime,
+      cbLifetime,
+    ),
+    asOfIso: new Date().toISOString(),
+  };
+
+  // ── Measured 30d canonical strip — straight from the SAME getCostBreakdown
+  // the /insights cost-breakdown page renders (no separate getWindowMetrics
+  // refetch). Bets come from the v1 baseline (same canonical scope).
+  const canonical: CanonicalMeasuredBlock = {
+    wager: cb30.totalWager,
+    gamingPayout: cb30.gamingPayouts,
+    ggr: cb30.ggr,
+    ngr: cb30.ngr,
+    rewardCost: cb30.rewardPayouts,
+    houseEdge: cb30.margin.houseEdge,
+    bets: v1.bets,
+    rainHouseCost:
+      cb30.lines.find((l) => l.key === "reward:rain")?.amount ?? 0,
+  };
 
   // Affiliate commission / leaderboard split — CANONICAL customer-scope
-  // ledger legs (sumLedgerTypes — the same scope as every other reward leg;
-  // creators excluded). The previous getAffiliateOverview source sat on the
-  // LEGACY staff-only exclusion (creators included) and over-reported the
-  // split vs the bundled v1 affiliateCost by the creators' claims (recon
-  // verify 2026-06-12: +$5,191.24 commission / +$85.00 leaderboard on live
-  // prod). Fallback treats the bundled total as all commission — no
-  // fabricated figure.
-  const affCommissionLeg = affCommissionRes.data;
-  const affLeaderboardLeg = affLeaderboardRes.data;
+  // ledger legs (same scope as every other reward leg; creators excluded).
+  // Fallback treats the bundled v1 total as all commission — no fabricated
+  // figure.
+  const affCommissionLeg = note("affiliate-commission", affCommissionRes);
+  const affLeaderboardLeg = note("affiliate-leaderboard", affLeaderboardRes);
   const haveCanonicalSplit =
     affCommissionLeg != null && affLeaderboardLeg != null;
   const affiliateCommissionCost = haveCanonicalSplit
@@ -839,21 +850,28 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     ? "ledger"
     : "fallback";
 
-  const withdrawalLedger = withdrawalRes.data;
+  const withdrawalLedger = note("withdrawal-split", withdrawalRes);
   const estimatedWithdrawalVolumeUsd =
     withdrawalLedger?.volumeUsd ?? Math.max(0, v1.wager * 0.08);
   const balanceWithdrawalShare =
     withdrawalLedger?.balanceShare ?? DEFAULT_BALANCE_WITHDRAWAL_SHARE;
 
-  const baselineSparse =
-    v1.gameTypes.every((g) => !g.dataAvailable) ||
-    v1.rakebackCost + v1.affiliateCost + v1.dailyPacksCost === 0;
+  const mothaOv = note("motha-breakdown", mothaOvRes);
+  const borrowed = note("borrowed-wager", borrowedRes);
+  const giftCardCost = note("gift-cards", giftCardRes) ?? 0;
+  const promoCodeCost = note("promo-codes", promoCodeRes) ?? 0;
+  const depositsByAsset = note("deposits-by-asset", depositsByAssetRes) ?? [];
+  const adjustments = note("adjustments", adjustmentsRes);
+  const rainAnchor = note("rain-anchor", rainAnchorRes);
+  const depositHist = note("deposit-histogram", depositHistRes);
+  const timeBonusAnchor = note("time-bonus-anchor", timeBonusRes);
+  const levelStats = note("level-stats", levelStatsRes);
+  const dailyRewardCfgs = note("daily-reward-configs", dailyRewardCfgRes) ?? [];
+  const everyTime = note("every-time-claimers", everyTimeRes);
+  const liveRaffles = note("live-raffles", liveRafflesRes) ?? [];
+  const ledgerMaxCreatedAt = note("ledger-freshness", ledgerMaxRes);
 
   // ── Daily-pack level gates + usage ──
-  const levelStats = levelStatsRes.data;
-  const dailyRewardCfgs = dailyRewardCfgRes.data ?? [];
-  const everyTime = everyTimeRes.data;
-
   const thresholdFor = (level: number): number | null => {
     if (level <= 0) return 0;
     return levelStats?.thresholds.get(level) ?? null;
@@ -958,10 +976,10 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
   ].filter((s) => s.amountUsd > 0);
 
   return {
-    ...v1,
-    totalWager: canonical?.wager ?? v1.wager,
-    // Organic splits retired from the headline path (the rescale is gone);
-    // kept for display context where sections still surface them.
+    ...(v1 satisfies SystemEdgeBaseline),
+    totalWager: canonical.wager,
+    // Organic splits retired from the headline path; kept for display
+    // context where sections still surface them.
     ledgerOrganicWager: 0,
     upgraderOrganicWager: 0,
     periodLabel: insightsRewardsPeriodLabel(EDGE_PLAN_V2_PERIOD),
@@ -973,82 +991,67 @@ async function buildEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
     estimatedWithdrawalVolumeUsd,
     withdrawalVolumeSource: withdrawalLedger ? "ledger" : "estimate",
     balanceWithdrawalShareSource: withdrawalLedger ? "ledger" : "estimate",
-    baselineSparse,
-    mothaBreakdown: mothaOvRes.data
+    baselineSparse: degraded.length > 0,
+    mothaBreakdown: mothaOv
       ? {
-          tips: mothaOvRes.data.byChannel.tips,
-          rain: mothaOvRes.data.byChannel.rain,
-          sponsorship: mothaOvRes.data.byChannel.sponsorship,
-          eventCount: mothaOvRes.data.count,
-          activeDays: mothaOvRes.data.uniqueClaimants,
+          tips: mothaOv.byChannel.tips,
+          rain: mothaOv.byChannel.rain,
+          sponsorship: mothaOv.byChannel.sponsorship,
+          eventCount: mothaOv.count,
+          activeDays: mothaOv.uniqueClaimants,
         }
       : null,
-    packWagerBorrowed: borrowedRes.data?.packWagerBorrowed ?? 0,
-    battleWagerBorrowed: borrowedRes.data?.battleWagerBorrowed ?? 0,
+    packWagerBorrowed: borrowed?.packWagerBorrowed ?? 0,
+    battleWagerBorrowed: borrowed?.battleWagerBorrowed ?? 0,
 
     canonical,
-    ledgerMaxCreatedAt: ledgerMaxRes.data,
-    depositsByAsset: depositsByAssetRes.data ?? [],
-    liveRaffles: liveRafflesRes.data ?? [],
-    rainAnchor: rainAnchorRes.data,
-    giftCardCost: giftCardRes.data ?? 0,
-    promoCodeCost: promoCodeRes.data ?? 0,
-    adjustmentBreakdown: adjustmentsRes.data?.rows ?? [],
-    adjustmentCountedCost: adjustmentsRes.data?.countedCost ?? 0,
-    depositSizeHistogram: depositHistRes.data?.buckets ?? [],
-    depositBonusMinDepositObservedUsd: depositHistRes.data?.observedMinUsd ?? null,
-    timeBonusAnchor: timeBonusRes.data,
+    ledgerMaxCreatedAt,
+    depositsByAsset,
+    liveRaffles,
+    rainAnchor,
+    giftCardCost,
+    promoCodeCost,
+    adjustmentBreakdown: adjustments?.rows ?? [],
+    adjustmentCountedCost: adjustments?.countedCost ?? 0,
+    depositSizeHistogram: depositHist?.buckets ?? [],
+    depositBonusMinDepositObservedUsd: depositHist?.observedMinUsd ?? null,
+    timeBonusAnchor,
     dailyPackLevels,
     dailyPackUsage,
     rewardSourceVolumes,
+
+    recon,
+    degradedBlocks: degraded,
   };
 }
 
 /**
- * Marker error carrying a degraded (canonical-null) baseline OUT of the
- * `unstable_cache` wrapper without caching it: `unstable_cache` stores
- * resolved values but never thrown results, so throwing is the only way to
- * say "serve this render, do NOT poison the shared cache entry with it".
- * Before this guard, one cold-start degraded build was cached and served
- * to every visitor until the next revalidation — which, on a low-traffic
- * page, was usually ANOTHER cold instance, making the degradation banners
- * quasi-permanent on prod.
- */
-type DegradedBaselineCarrier = Error & { baseline?: EdgePlanV2Baseline };
-
-/**
- * Public entry — the cached v2 baseline. `unstable_cache` (300s, SWR) so
- * lever interaction never refires the scans; every read inside is
- * safeQuery-bounded so the page degrades per-block instead of collapsing.
- * A degraded baseline (canonical === null) is NEVER cached — it is served
- * uncached for that render only, so the next visit retries a full build.
- * Key bumped -v1 → -v2 to abandon any already-poisoned prod entry.
+ * Cached entry (60s). `unstable_cache` does NOT store a rejected build, so
+ * the do-not-cache-failures contract holds: a critical failure is re-tried
+ * on the next render instead of being served for the TTL.
  */
 const cachedBaseline = unstable_cache(
-  async () => {
-    const b = await buildEdgePlanV2Baseline();
-    if (b.canonical === null) {
-      throw Object.assign(
-        new Error("edge-plan-v2: degraded baseline (not cached)"),
-        { baseline: b },
-      ) satisfies DegradedBaselineCarrier;
-    }
-    return b;
-  },
-  ["edge-plan-v2-baseline-overhaul-v2"],
-  { revalidate: 300, tags: ["insights-analytics", "edge-plan-2"] },
+  () => buildEdgePlanV2Baseline(),
+  ["edge-plan-v2-baseline-rework-v1"],
+  { revalidate: 60, tags: ["insights-analytics", "edge-plan-2"] },
 );
 
-export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2Baseline> {
+/** Discriminated result so the page renders an explicit error band (with retry) instead of a zeros planner. */
+export type EdgePlanV2BaselineResult =
+  | { ok: true; baseline: EdgePlanV2Baseline }
+  | { ok: false; reason: string };
+
+export async function getEdgePlanV2Baseline(): Promise<EdgePlanV2BaselineResult> {
   try {
-    return await cachedBaseline();
+    return { ok: true, baseline: await cachedBaseline() };
   } catch (err) {
-    // Degraded build escaped the cache layer via the marker error — serve
-    // it (banners visible) without caching it.
-    const degraded = (err as DegradedBaselineCarrier).baseline;
-    if (degraded) return degraded;
-    // Anything else came from the cache machinery itself — fall back to a
-    // direct uncached build (its legs all self-degrade, so this resolves).
-    return buildEdgePlanV2Baseline();
+    logError("edge-plan-v2.baseline", "critical baseline build failed", err);
+    // Only OUR OWN critical messages are surfaced; raw driver errors stay in
+    // the server logs (safe-query SECURITY note).
+    const reason =
+      err instanceof EdgePlanCriticalError
+        ? err.message
+        : "A critical baseline read failed. Nothing was cached — reload to retry.";
+    return { ok: false, reason };
   }
 }

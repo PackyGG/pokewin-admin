@@ -13,6 +13,7 @@ import {
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
 import {
   clamp,
+  resolveLeverAnchorsV2,
   type EdgePlanV2Baseline,
   type EdgePlanV2Projection,
   type LiveRaffleInfo,
@@ -54,10 +55,17 @@ export function RaffleKeepPanel({
 }) {
   const keepPct = clamp(levers.raffleKeepPct, 0, 1);
 
+  // Anchored raffle cost — measured 30d reconstruction, falling back to the
+  // live-raffle prize value when that leg degraded (lever stays LIVE).
+  const raffleAnchor = React.useMemo(
+    () => resolveLeverAnchorsV2(baseline).raffles,
+    [baseline],
+  );
+
   // Planned raffle prize cost from the shared "raffles" lever row.
   const rafflesLever = projection.levers.find((l) => l.key === "raffles");
   const plannedRaffleCost =
-    rafflesLever?.plannedCost ?? baseline.raffleCost * keepPct;
+    rafflesLever?.plannedCost ?? raffleAnchor.anchorUsd * keepPct;
 
   return (
     <StatPanel
@@ -97,7 +105,13 @@ export function RaffleKeepPanel({
         }
       />
 
-      {baseline.raffleCost <= 0 ? (
+      {raffleAnchor.estimated && raffleAnchor.anchorUsd > 0 && (
+        <p className="mb-2 text-[11px] text-amber-600 dark:text-amber-400">
+          Measured raffle-cost leg unavailable — anchoring the keep-slider on
+          the live raffles&apos; prize value instead (estimated).
+        </p>
+      )}
+      {raffleAnchor.anchorUsd <= 0 ? (
         <div className="mt-2">
           <EmptyLever note="No reconstructed raffle prize cost in this window — nothing to scale." />
         </div>

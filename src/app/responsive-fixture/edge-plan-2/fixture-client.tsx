@@ -47,7 +47,10 @@ import type {
   GameTypeBaseline,
   RakebackCadenceLever,
 } from "@/app/(admin)/insights/system-edge-plan/_model";
-import type { EdgePlanV2Baseline } from "@/app/(admin)/insights/edge-plan-2/_model-v2";
+import {
+  buildOwnerWindowRecon,
+  type EdgePlanV2Baseline,
+} from "@/app/(admin)/insights/edge-plan-2/_model-v2";
 
 const PERIOD_DAYS = 30;
 
@@ -431,6 +434,49 @@ const FIXTURE: EdgePlanV2Baseline = {
     { sourceId: "deposit_bonus", label: "Deposit bonus", amountUsd: DEPOSIT_BONUS_COST },
     { sourceId: "motha", label: "Giveaways / tips (motha)", amountUsd: MOTHA_COST },
   ],
+
+  // ── Owner-trusted recon block (rework 2026-06-12) — the live-prod probe
+  // values so the fixture renders the REAL reconciliation shape: 30d hub
+  // wager $2.78M / P&L +$46.7K, lifetime $3.21M / +$120.7K, leaderboard
+  // prizes attributed to CREATOR costs (not on-site drag).
+  recon: {
+    d30: buildOwnerWindowRecon({
+      windowKey: "30d",
+      label: "Last 30 days",
+      hubWagerUsd: 2_780_670.55,
+      ggr: -119_856.44,
+      ngr: -246_121.8,
+      realizedPnl: 46_714.78,
+      houseEdge: -0.1063,
+      rewardLines: [
+        { key: "reward:affiliate_leaderboard", label: "Affiliate leaderboard prizes", amountUsd: 61_346 },
+        { key: "reward:race", label: "Race prizes", amountUsd: 26_592.5 },
+        { key: "reward:deposit_bonus", label: "Deposit bonuses", amountUsd: 17_329.76 },
+        { key: "reward:rakeback", label: "Rakeback claims", amountUsd: 8_741.97 },
+        { key: "reward:rain", label: "Rain prizes (net house cost)", amountUsd: 1_558.4 },
+        { key: "reward:affiliate", label: "Affiliate commissions", amountUsd: 1_093.51 },
+      ],
+    }),
+    lifetime: buildOwnerWindowRecon({
+      windowKey: "lifetime365",
+      label: "Lifetime (365d-capped)",
+      hubWagerUsd: 3_211_825.42,
+      ggr: -72_798.29,
+      ngr: -204_483.03,
+      realizedPnl: 120_729.44,
+      houseEdge: null,
+      rewardLines: [
+        { key: "reward:affiliate_leaderboard", label: "Affiliate leaderboard prizes", amountUsd: 61_346 },
+        { key: "reward:race", label: "Race prizes", amountUsd: 27_582.5 },
+        { key: "reward:deposit_bonus", label: "Deposit bonuses", amountUsd: 19_377.25 },
+        { key: "reward:rakeback", label: "Rakeback claims", amountUsd: 9_637.81 },
+        { key: "reward:rain", label: "Rain prizes (net house cost)", amountUsd: 2_432.11 },
+        { key: "reward:affiliate", label: "Affiliate commissions", amountUsd: 1_165.1 },
+      ],
+    }),
+    asOfIso: "2026-06-12T00:00:00.000Z",
+  },
+  degradedBlocks: [],
 };
 
 export function EdgePlanV2FixtureClient() {

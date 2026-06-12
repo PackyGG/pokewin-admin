@@ -39,10 +39,16 @@
 import {
   type EdgePlanV2Baseline,
   type PlannedLeversV2,
+  type OwnerReconBlock,
   defaultLeversV2,
   sanitizeLeversV2,
   projectEdgePlanV2,
   resolveLeverSeedsV2,
+  resolveLeverAnchorsV2,
+  buildOwnerWindowRecon,
+  computeOwnerDragSummary,
+  wagerProxyV2,
+  LEADERBOARD_REWARD_LINE_KEY,
   rawMathEdgeV2,
   depositFeeDefaultSelectedAssets,
   depositFeeRevenueUsd,
@@ -110,6 +116,52 @@ function approx(actual: number, expected: number, eps: number, what: string): vo
 // ─── Synthetic baseline fixture (deterministic, every block populated) ──────
 
 const PERIOD_DAYS = 30;
+
+/**
+ * Owner-recon fixture — the live-prod probe values from the 2026-06-12 recon
+ * (rounded to the cent) so the recon identities are pinned against the REAL
+ * shape: hub wager $2,780,670.55 / realized P&L +$46,714.78 (30d) and hub
+ * wager $3,211,825.42 / +$120,729.44 (lifetime 365d-capped), with the
+ * $61,346 affiliate-leaderboard line attributed to CREATOR costs.
+ */
+function makeRecon(): OwnerReconBlock {
+  const rewardLines30 = [
+    { key: "reward:affiliate_leaderboard", label: "Affiliate leaderboard prizes", amountUsd: 61_346 },
+    { key: "reward:race", label: "Race prizes", amountUsd: 26_592.5 },
+    { key: "reward:deposit_bonus", label: "Deposit bonuses", amountUsd: 17_329.76 },
+    { key: "reward:rakeback", label: "Rakeback claims", amountUsd: 8_741.97 },
+    { key: "reward:rain", label: "Rain prizes (net house cost)", amountUsd: 1_558.4 },
+    { key: "reward:promo_gift", label: "Promo / gift card redemptions", amountUsd: 1_437.85 },
+    { key: "reward:leaderboard_waitlist", label: "Leaderboard / waitlist / balance rewards", amountUsd: 1_327 },
+    { key: "reward:affiliate", label: "Affiliate commissions", amountUsd: 1_093.51 },
+    { key: "reward:adjustment_bonus", label: "Bonus credits", amountUsd: 6_838.37 },
+  ];
+  return {
+    d30: buildOwnerWindowRecon({
+      windowKey: "30d",
+      label: "Last 30 days",
+      hubWagerUsd: 2_780_670.55,
+      ggr: -119_856.44,
+      ngr: -246_121.8,
+      realizedPnl: 46_714.78,
+      houseEdge: -0.1063,
+      rewardLines: rewardLines30,
+    }),
+    lifetime: buildOwnerWindowRecon({
+      windowKey: "lifetime365",
+      label: "Lifetime (365d-capped)",
+      hubWagerUsd: 3_211_825.42,
+      ggr: -72_798.29,
+      ngr: -204_483.03,
+      realizedPnl: 120_729.44,
+      houseEdge: null,
+      rewardLines: rewardLines30.map((l) =>
+        l.key === "reward:race" ? { ...l, amountUsd: 27_582.5 } : l,
+      ),
+    }),
+    asOfIso: "2026-06-12T00:00:00.000Z",
+  };
+}
 
 function makeBaseline(): EdgePlanV2Baseline {
   const gameTypes = [
@@ -354,6 +406,9 @@ function makeBaseline(): EdgePlanV2Baseline {
       { sourceId: "deposit_bonus", label: "Deposit bonus", amountUsd: 52_000 },
       { sourceId: "motha", label: "Giveaways / tips (motha)", amountUsd: 6_000 },
     ],
+
+    recon: makeRecon(),
+    degradedBlocks: [],
   };
 }
 
@@ -373,6 +428,34 @@ function makeSparseBaseline(): EdgePlanV2Baseline {
     dailyPackLevels: [],
     dailyPackUsage: [],
     rewardSourceVolumes: [],
+    degradedBlocks: [
+      "deposits-by-asset",
+      "rain-anchor",
+      "deposit-histogram",
+      "time-bonus-anchor",
+    ],
+  };
+}
+
+/**
+ * The OWNER's failure mode: the measured per-program cost legs read $0
+ * (the old cached-zeros baseline) while the secondary anchors (cadence
+ * configs, time-bonus scan, rain pools, live raffles, blended rates) are
+ * present. Pre-rework, every multiplicative lever was DEAD here
+ * (`0 × anything = 0`); the reactivity contract asserts each one still
+ * moves the profit delta.
+ */
+function makeDegradedAnchorsBaseline(): EdgePlanV2Baseline {
+  return {
+    ...makeBaseline(),
+    rakebackCost: 0,
+    affiliateCost: 0,
+    affiliateCommissionCost: 0,
+    affiliateLeaderboardCost: 0,
+    depositBonusCost: 0,
+    raffleCost: 0,
+    rainCost: 0,
+    degradedBlocks: ["affiliate-commission", "affiliate-leaderboard"],
   };
 }
 
