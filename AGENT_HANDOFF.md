@@ -8,7 +8,7 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `origin/main @ b75e50d2` · **Updated:** 2026-06-12 · **Active focus:** multiple parallel sessions + 2 automated workflows — READ THE COORDINATION SECTION BELOW BEFORE EDITING ANYTHING.
+- **HEAD:** `origin/main @ d237e8a6` · **Updated:** 2026-06-12 · **Active focus:** multiple parallel sessions + 2 automated workflows — READ THE COORDINATION SECTION BELOW BEFORE EDITING ANYTHING.
 
 ---
 
@@ -37,6 +37,13 @@
 ---
 
 ## ✅ Shipped (recent — on `main`)
+
+**Multiplier (odds-based) wager-weight admin UI (2026-06-12, `d237e8a6`):**
+- `/security` "Multiplier Wager Weights" card (Gauge icon, between Funding-Source and Reward Expiry): per destination — display order Leaderboard, Rakeback, Shards, Withdrawal (leaderboard = owner's main farming concern) — an enable Switch + ordered tier rows reading "Below [max_x] × → counts [weight] %" with live "= N bps" hint, add/remove tier (cap 10). Backend rule: a bet with payout multiplier m gets the FIRST tier (ascending max_x) where m < max_x, else 100%; only upgrader bets carry a player-chosen multiplier (packs/battles unaffected). Defaults: <1.25× → 20%, 1.25–1.50× → 50%, all destinations disabled.
+- 3-layer pattern: `src/lib/backend-api/multiplier-wager-weights.ts` (server-only GET/PUT `/admin/multiplier-wager-weights`; doc points at `packy-backend/src/routes/v1/admin/multiplier-wager-weights.ts`) + `multiplier-wager-weights-shared.ts` (plain module: destination list, tier type, cap, default tiers — value-importable by the client card, crypto-fees-assets precedent) + `multiplier-wager-weights-actions.ts` (requirePageAccess("/security") + requireAdmin, zod mirror: weight_bps int 0..10000, max_x finite >1 ≤100000 strictly ascending, ≤10 tiers, at-least-one-value; audit `multiplier_wager_weights_updated` changed/old/new) + `multiplier-wager-weights-card.tsx` (percent inputs, 50 = 5000 bps; changed-destinations-only PUT; a changed tier list sends the FULL replacement per the wholesale-replace contract; Save disabled while clean; `initial === null` → amber "awaiting backend deploy").
+- NO `-keys.ts` movedKeys filter: backend branch not fetched locally, its site_config key names (if any) unverified — add the filter when the route lands (same call as crypto-fees).
+- Dev fixture `responsive-fixture/multiplier-wager-weights` (REAL card, populated incl. empty-tier destination + degraded). Verified via Playwright against `next dev` + locally-minted session (no `.env` here): 29/29 checks — render both states, section order, dirty-tracking (toggle/edit/add/remove + reverts), bps hint, ascending/>1×/0–100% validation toasts, add-tier disabled at 10, payload intercept confirmed changed-destinations-only with full tier-list replacement, 0 overflow at 375/1280, 0 pageerrors. tsc / lint (0 new) / build exit 0.
+- **Verify gap:** fixture-rendered + build-gated only — no live logged-in click-through and no real backend success path (branch undeployed; prod will show the degraded state, which IS the verified render). Recommend a logged-in pass once the backend ships.
 
 **Crypto deposit/withdrawal exchange-rate fee admin UI (2026-06-12, `a589fa44`):**
 - `src/lib/backend-api/crypto-fees.ts` (server-only GET/PUT `/admin/crypto-fees`, doc points at `packy-backend/src/routes/v1/admin/crypto-fees.ts`) + `crypto-fees-assets.ts` — plain module holding the 11-asset list (`BTC…XRP`); the client card needs the RUNTIME constant, and a value import from the server-only module pulls `"server-only"` into the client bundle and fails `npm run build` (type-only imports are fine — that's why the older cards never hit this).
@@ -154,6 +161,7 @@ _Creator Hub plan closed. Pick up deferred items below when owner prioritizes._
 - **Hub ads e2e** — `readSampleAdCode()` needs `admin_settings.house_affiliate_user_id` + a row in MAIN `affiliate_codes`; local VM has neither → detail e2e skips; ads tab still renders house-setup empty state
 - **Prod Playwright mint** — cookie signed with VM `SESSION_SECRET` must match Vercel env or prod smoke lands on `/login`
 - **Wager-requirement backend dependency** — the 5 default knobs + per-user override are owned by the backend (`packy-backend` branch `axecutioner/sweepstake`, `src/routes/v1/admin/user-wager-requirements.ts`); the panel writes them via `backendApi` (NOT the MAIN DB). Until that branch deploys, both UI surfaces show the muted "awaiting backend deploy" state. New audit event types: `wager_requirement_defaults_updated`, `user_wager_requirement_updated`, `user_wager_requirement_cleared`.
+- **Multiplier wager-weights backend dependency** — same "awaiting backend deploy" pattern (`/admin/multiplier-wager-weights`, backend branch in parallel development, NOT in the local packy-backend checkout). Audit event type: `multiplier_wager_weights_updated`. Runtime constants for the client card live in `src/lib/backend-api/multiplier-wager-weights-shared.ts` (deliberately NOT server-only). PUT semantics: tiers replace the stored list wholesale — never send a partial tier list.
 - **Crypto-fees backend dependency** — same "awaiting backend deploy" pattern (`/admin/crypto-fees`, backend branch in parallel development, NOT in the local packy-backend checkout). Audit event type: `crypto_fees_updated`. The 11-asset constant lives in `src/lib/backend-api/crypto-fees-assets.ts` (deliberately NOT server-only — client card imports it as a value).
 - **Leaderboard wager-weights backend dependency** — same pattern, same backend branch (`src/routes/v1/admin/leaderboard-wager-weights.ts`): 3 knobs `leaderboard_wager_weight_{packs,battles,upgrader}_bps` in MAIN `site_config` (hence the `movedKeys` filter), written ONLY via `backendApi`. Audit event type: `leaderboard_wager_weights_updated`. Card degrades to "awaiting backend deploy" until that branch ships.
 - **Fresh checkout may lack `node_modules` + `.env`** — run `npm install` (NOT `npm ci` — lockfile mismatch) then `prisma generate` for BOTH schemas before tsc/build; without `.env` the minted-session Playwright harness can't run (needs `SESSION_SECRET` + `ADMIN_DATABASE_URL` + `DATABASE_URL`).
