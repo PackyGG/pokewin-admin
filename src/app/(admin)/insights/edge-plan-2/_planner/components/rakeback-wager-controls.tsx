@@ -1,19 +1,26 @@
 "use client";
 
-import { Percent, Target } from "lucide-react";
+import { Percent } from "lucide-react";
 
-import { PanelRow, SectionHeading } from "@/components/modern-panels";
-import { formatCompactUsd } from "@/lib/utils/format";
+import { SectionHeading } from "@/components/modern-panels";
 import { formatPct } from "../../../edge-calc/math";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
 import {
   rakebackEffectiveWagerMult,
-  upgraderMinMultiplierEligibleShare,
   clamp,
   type EdgePlanV2Baseline,
   type PlannedLeversV2,
 } from "../../_model-v2";
 
+/**
+ * Rakeback accrual-weight controls (Advanced cluster of the Rakeback group).
+ *
+ * v2.1 overhaul: the upgrader-eligibility cluster (min target multiplier +
+ * max winning-bet accrual) was REMOVED with its levers
+ * (`rakebackUpgraderMinMultiplier` / `rakebackUpgraderMaxWinPct` no longer
+ * exist on `PlannedLeversV2`). What remains is the per-game accrual
+ * weighting — how much of each game's wager earns rakeback.
+ */
 export function RakebackWagerControls({
   baseline,
   levers,
@@ -28,20 +35,15 @@ export function RakebackWagerControls({
   const packs = baseline.gameTypes.find((g) => g.type === "packs");
   const battles = baseline.gameTypes.find((g) => g.type === "battles");
   const effective = rakebackEffectiveWagerMult(baseline, levers);
-  const upgEligibleAtMin = upgraderMinMultiplierEligibleShare(
-    baseline.upgraderRakebackAnchor,
-    levers.rakebackUpgraderMinMultiplier,
-  );
 
   return (
     <>
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         Rakeback returns a % of wager to players. The cadence rates (daily /
-        weekly / monthly) set that %. The game weights set how much of each
-        game&apos;s wager earns rakeback (100% = all of it counts). Advanced:
-        upgrader eligibility means only bets aiming for a high-enough multiplier
-        earn rakeback, and instant payout is a smaller immediate payout some
-        users take instead of the full accrual — which lowers the cost.
+        weekly / monthly) set that %. The game weights below set how much of
+        each game&apos;s wager earns rakeback (100% = all of it counts).
+        Instant payout is a smaller immediate payout some users take instead
+        of the full accrual — which lowers the cost.
       </p>
       <div className="mt-4 space-y-3 border-t pt-3">
         <SectionHeading icon={Percent} title="Wager → rakeback weight" />
@@ -54,7 +56,7 @@ export function RakebackWagerControls({
           <span className="font-semibold tabular-nums text-foreground">
             {(effective.combined * 100).toFixed(1)}%
           </span>{" "}
-          of raw wager (volume-weighted game weights × upgrader eligibility).
+          of raw wager (volume-weighted game weights).
         </div>
         <LeverSlider
           label="Packs wager → rakeback"
@@ -108,60 +110,6 @@ export function RakebackWagerControls({
           baselineMarker={100}
           baselineLabel="current 100%"
           disabled={disabled || !(upgrader?.dataAvailable && (upgrader.wager ?? 0) > 0)}
-          preciseInput={{ unit: "percent" }}
-        />
-      </div>
-
-      <div className="mt-4 space-y-3 border-t pt-3">
-        <SectionHeading icon={Target} title="Upgrader eligibility" />
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          Filter which upgrader bets count — min target multiplier and cap on
-          winning-bet accrual. Uses 30d multiplier bucket mix when available.
-        </p>
-        {baseline.upgraderRakebackAnchor && (
-          <PanelRow
-            label="Upgrader volume (30d)"
-            value={formatCompactUsd(baseline.upgraderRakebackAnchor.totalWager)}
-          />
-        )}
-        <LeverSlider
-          label="Min target multiplier"
-          valueLabel={`${levers.rakebackUpgraderMinMultiplier.toFixed(2)}×`}
-          value={levers.rakebackUpgraderMinMultiplier * 100}
-          onValueChange={(pct) =>
-            setLevers((s) => ({
-              ...s,
-              rakebackUpgraderMinMultiplier: clamp(pct / 100, 1, 10),
-            }))
-          }
-          min={100}
-          max={1000}
-          step={1}
-          baselineMarker={100}
-          baselineLabel={`${(upgEligibleAtMin * 100).toFixed(0)}% of upg. wager eligible`}
-          disabled={disabled || !upgrader?.dataAvailable}
-          preciseInput={{ unit: "multiplier" }}
-        />
-        <LeverSlider
-          label="Max winning-bet accrual"
-          valueLabel={formatPct(levers.rakebackUpgraderMaxWinPct)}
-          value={levers.rakebackUpgraderMaxWinPct * 100}
-          onValueChange={(pct) =>
-            setLevers((s) => ({
-              ...s,
-              rakebackUpgraderMaxWinPct: clamp(pct / 100, 0, 1),
-            }))
-          }
-          min={0}
-          max={100}
-          step={0.1}
-          baselineMarker={100}
-          baselineLabel={
-            baseline.upgraderRakebackAnchor
-              ? `hit rate ${(baseline.upgraderRakebackAnchor.winRate * 100).toFixed(0)}%`
-              : "100% = full bet on wins"
-          }
-          disabled={disabled || !upgrader?.dataAvailable}
           preciseInput={{ unit: "percent" }}
         />
       </div>

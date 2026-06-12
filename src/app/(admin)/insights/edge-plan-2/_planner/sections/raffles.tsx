@@ -1,20 +1,25 @@
 "use client";
 
 import * as React from "react";
-import { Ticket } from "lucide-react";
+import { Clock3, Ticket, Users } from "lucide-react";
 
 import { StatPanel, PanelRow } from "@/components/modern-panels";
-import { formatCurrency } from "@/lib/utils/format";
+import {
+  formatCompactUsd,
+  formatCurrency,
+  formatDateTime,
+  formatNumber,
+} from "@/lib/utils/format";
 import { LeverSlider } from "../../../system-edge-plan/_planner-ui";
 import {
   clamp,
   type EdgePlanV2Baseline,
   type EdgePlanV2Projection,
+  type LiveRaffleInfo,
   type PlannedLeversV2,
 } from "../../_model-v2";
-import { multLabel } from "../utils";
 import { TEXT_TONE } from "../colors";
-import { EmptyLever } from "../components/empty-lever";
+import { EmptyLever, formatPercentInt } from "../components/empty-lever";
 import { LeverHint } from "../components/lever-hint";
 import {
   leverEdgeDragPct,
@@ -22,18 +27,21 @@ import {
 } from "../components/reward-edge-drag";
 
 /**
- * RafflesSection — on-site ticket raffles, restored in Edge Plan 2.0 on the real
- * reconstructed raffle prize cost (`baseline.raffleCost` =
- * `getRaffleForecastBaseline().totalPrizeCost`). Raffles pay out pack/card ITEMS,
- * so the cost is reconstructed at the live pack/card price — it is a real reward
- * cost, distinct from races.
+ * RaffleKeepPanel — raffles in the 2026-06-12 overhaul: the three ×-multiplier
+ * levers are GONE, replaced by ONE keep-slider (0–100%) that scales the real
+ * 30d reconstructed raffle prize cost (`baseline.raffleCost`, valued at live
+ * pack/card prices). 100% = keep the current program, 0% = raffles off.
+ * The planned $ flows through the projection's "raffles" lever row.
  *
- * Raffle prizes go OUT to users → this is a house cost → House-POV rose. Three
- * multiplier what-if levers (prize pool × draw frequency × ticket-cost) project
- * the real cost through the shared v1 raffle factor; the projected drag flows
- * through the "raffles" lever row.
+ * Below the slider: the currently-live (status=active) raffles as read-only
+ * context cards from `baseline.liveRaffles` — prize value at live prices via
+ * the shared prize-valuation helper. Prizes go OUT to users → house cost →
+ * House-POV rose.
+ *
+ * Consumed by `sections/giveaways.tsx` (the "Giveaways & budgets" workspace);
+ * `RafflesSection` stays exported as a thin alias for any older wiring.
  */
-export function RafflesSection({
+export function RaffleKeepPanel({
   baseline,
   levers,
   projection,
@@ -44,12 +52,12 @@ export function RafflesSection({
   projection: EdgePlanV2Projection;
   setLevers: React.Dispatch<React.SetStateAction<PlannedLeversV2>>;
 }) {
-  const setMult = (key: keyof PlannedLeversV2) => (pct: number) =>
-    setLevers((s) => ({ ...s, [key]: clamp(pct / 100, 0, 5) }));
+  const keepPct = clamp(levers.raffleKeepPct, 0, 1);
 
-  // Projected raffle prize cost (planned), from the shared "raffles" lever row.
+  // Planned raffle prize cost from the shared "raffles" lever row.
   const rafflesLever = projection.levers.find((l) => l.key === "raffles");
-  const plannedRaffleCost = rafflesLever?.plannedCost ?? baseline.raffleCost;
+  const plannedRaffleCost =
+    rafflesLever?.plannedCost ?? baseline.raffleCost * keepPct;
 
   return (
     <StatPanel
@@ -63,81 +71,140 @@ export function RafflesSection({
       accent="rose"
     >
       <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-        On-site ticket raffles — users earn tickets per $X wagered and prizes pay
-        out pack/card items, valued at the live price. Reconstructed prize cost
-        this window:{" "}
+        On-site ticket raffles — prizes pay out pack/card items, valued at the
+        live price. Real reconstructed prize cost this window:{" "}
         <span className={`font-medium ${TEXT_TONE.rose}`}>
           {formatCurrency(baseline.raffleCost)}
         </span>
-        {baseline.raffleCost > 0 && (
-          <>
-            {" "}
-            · planned{" "}
-            <span className={`font-medium ${TEXT_TONE.rose}`}>
-              {formatCurrency(plannedRaffleCost)}
-            </span>
-          </>
-        )}
-        .
+        . One keep-slider scales it: 100% keeps the current program, 0% turns
+        raffles off.
       </p>
+
       <PanelRow
-        label="Real reconstructed raffle prize cost"
-        value={formatCurrency(baseline.raffleCost)}
+        label="Real reconstructed raffle prize cost (window)"
+        value={
+          <span className={`font-semibold ${TEXT_TONE.rose}`}>
+            {formatCurrency(baseline.raffleCost)}
+          </span>
+        }
       />
+      <PanelRow
+        label="Planned raffle prize cost (window)"
+        value={
+          <span className={`font-semibold ${TEXT_TONE.rose}`}>
+            {formatCurrency(plannedRaffleCost)}
+          </span>
+        }
+      />
+
       {baseline.raffleCost <= 0 ? (
-        <EmptyLever note="No reconstructed raffle prize cost in this window." />
+        <div className="mt-2">
+          <EmptyLever note="No reconstructed raffle prize cost in this window — nothing to scale." />
+        </div>
       ) : (
-        <>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            ×multipliers on the current real raffle program (1× = today). See the
-            line under each lever for what it does.
-          </p>
-          <div className="space-y-3">
-            <LeverHint hint="Total prize money in the raffle pool. Cost scales straight with it.">
-              <LeverSlider
-                label="Prize pool"
-                valueLabel={multLabel(levers.rafflePrizePoolMult)}
-                value={levers.rafflePrizePoolMult * 100}
-                onValueChange={setMult("rafflePrizePoolMult")}
-                min={0}
-                max={300}
-                step={1}
-                baselineMarker={100}
-                baselineLabel="1× = current reconstructed pool"
-                preciseInput={{ unit: "multiplier" }}
-              />
-            </LeverHint>
-            <LeverHint hint="How often raffles are drawn. 2× ≈ twice as many draws ≈ 2× the cost.">
-              <LeverSlider
-                label="Frequency"
-                valueLabel={multLabel(levers.raffleFrequencyMult)}
-                value={levers.raffleFrequencyMult * 100}
-                onValueChange={setMult("raffleFrequencyMult")}
-                min={0}
-                max={300}
-                step={1}
-                baselineMarker={100}
-                baselineLabel="1× = current draw cadence"
-                preciseInput={{ unit: "multiplier" }}
-              />
-            </LeverHint>
-            <LeverHint hint="How hard tickets are to earn. Higher = fewer tickets earned, slightly less cost.">
-              <LeverSlider
-                label="Ticket cost"
-                valueLabel={multLabel(levers.raffleTicketCostMult)}
-                value={levers.raffleTicketCostMult * 100}
-                onValueChange={setMult("raffleTicketCostMult")}
-                min={0}
-                max={300}
-                step={1}
-                baselineMarker={100}
-                baselineLabel="1× = current ticket rate (higher = harder entry)"
-                preciseInput={{ unit: "multiplier" }}
-              />
-            </LeverHint>
-          </div>
-        </>
+        <div className="mt-2">
+          <LeverHint hint="Share of the current raffle program you keep. Cost scales straight with it — 50% halves the raffle prize spend, 0% removes it.">
+            <LeverSlider
+              label="Keep raffles at"
+              valueLabel={formatPercentInt(keepPct * 100)}
+              value={keepPct * 100}
+              onValueChange={(pct) =>
+                setLevers((s) => ({
+                  ...s,
+                  raffleKeepPct: clamp(pct / 100, 0, 1),
+                }))
+              }
+              min={0}
+              max={100}
+              step={1}
+              baselineMarker={100}
+              baselineLabel="100% = current program (real 30d reconstructed cost)"
+              preciseInput={{ unit: "percent", decimals: 0 }}
+            />
+          </LeverHint>
+        </div>
       )}
+
+      {/* ── Currently-live raffles (read-only context) ──────────────────── */}
+      <div className="mt-4 border-t pt-3">
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Currently live raffles · {formatNumber(baseline.liveRaffles.length)}
+        </p>
+        {baseline.liveRaffles.length === 0 ? (
+          <p className="text-[11px] text-muted-foreground">
+            No raffle is live right now.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {baseline.liveRaffles.map((raffle) => (
+              <LiveRaffleCard key={raffle.id} raffle={raffle} />
+            ))}
+          </div>
+        )}
+      </div>
     </StatPanel>
   );
 }
+
+const MAX_PRIZE_LINES = 3;
+
+function LiveRaffleCard({ raffle }: { raffle: LiveRaffleInfo }) {
+  const shown = raffle.prizes.slice(0, MAX_PRIZE_LINES);
+  const hidden = raffle.prizes.length - shown.length;
+
+  return (
+    <div className="rounded-lg border bg-background/40 p-3">
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 truncate text-xs font-semibold text-foreground">
+          {raffle.title ?? "Untitled raffle"}
+        </p>
+        <span
+          className={`shrink-0 text-xs font-semibold tabular-nums ${TEXT_TONE.rose}`}
+        >
+          {formatCompactUsd(raffle.prizeValueUsd)}
+        </span>
+      </div>
+
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1">
+          <Ticket className="size-3" aria-hidden />
+          {formatNumber(raffle.totalEntries)} entries
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <Users className="size-3" aria-hidden />
+          {formatNumber(raffle.participantCount)} participants
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <Clock3 className="size-3" aria-hidden />
+          {raffle.endsAt ? `ends ${formatDateTime(raffle.endsAt)}` : "no end set"}
+        </span>
+      </div>
+
+      {shown.length > 0 && (
+        <div className="mt-2 space-y-0.5">
+          {shown.map((line, i) => (
+            <p
+              key={`${line.type}-${line.id}-${i}`}
+              className="flex items-center justify-between gap-2 text-[10px] tabular-nums text-muted-foreground"
+            >
+              <span className="min-w-0 truncate">
+                {formatNumber(line.quantity)}× {line.type}
+              </span>
+              <span className="shrink-0">
+                {formatCurrency(line.unitPriceUsd)} ea
+              </span>
+            </p>
+          ))}
+          {hidden > 0 && (
+            <p className="text-[10px] text-muted-foreground/70">
+              +{hidden} more prize line{hidden === 1 ? "" : "s"}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Back-compat alias — older wiring imported `RafflesSection`. */
+export { RaffleKeepPanel as RafflesSection };

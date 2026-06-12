@@ -15,6 +15,7 @@ import {
   PLANNED_BATTLES_EDGE_DEFAULT,
   defaultPlannedEdge,
   computeBlendedEdgeBreakdownV2,
+  rawMathEdgeV2,
   type EdgePlanV2Baseline,
   type PlannedLeversV2,
 } from "../../_model-v2";
@@ -47,9 +48,38 @@ export function GamingEdgeSection({
     () => computeBlendedEdgeBreakdownV2(baseline, levers),
     [baseline, levers],
   );
+  const rawEdge = rawMathEdgeV2(levers);
 
   return (
     <StatPanel title="House edge" icon={Gauge} accent="emerald">
+      {/* ── Dual edge readout: raw math vs wager-weighted (both labeled) ── */}
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="min-w-0 rounded-lg border bg-background/40 px-3 py-2.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Raw math edge
+          </p>
+          <p className="mt-0.5 text-xl font-bold tabular-nums text-foreground">
+            {formatPct(rawEdge)}
+          </p>
+          <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+            Simple mean of the packs &amp; upgrader sliders — no wager
+            weighting ({formatPct(packsEdge)} &amp; {formatPct(upgraderEdge)}).
+          </p>
+        </div>
+        <div className="min-w-0 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+            Wager-weighted edge
+          </p>
+          <p className="mt-0.5 text-xl font-bold tabular-nums text-foreground">
+            {formatPct(blendBreakdown.marginBearingBlendedEdge)}
+          </p>
+          <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+            Weighted by the real 30d packs + upgrader wager mix ·{" "}
+            {formatPct(blendBreakdown.allWagerBlendedEdge)} on all wager.
+          </p>
+        </div>
+      </div>
+
       <BlendedEdgeBreakdownPanel breakdown={blendBreakdown} />
       <p className="mb-4 mt-4 text-xs leading-relaxed text-muted-foreground">
         House edge is on <strong>pack opens</strong> — including pack opens inside

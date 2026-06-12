@@ -14,9 +14,10 @@ import type { LeverGroupId } from "./lever-rail";
  * heavy workspace (charts, dense slider clusters) never mounts until selected
  * — the active-window-only loading rule for tab/section pages.
  *
- * Shards + Future-levers (Ideas) were removed in the 2.0 rework; Raffles was
- * restored as a real cost workspace. The group set is now Edge · Rewards ·
- * Raffles · Withdrawals · Packs & signup.
+ * v2.1 overhaul group set (7): House edge · Rewards core · Giveaways &
+ * budgets · Shards · Packs & signup · Deposits & withdrawals (cashflow) ·
+ * Crediting matrix. Raffles/races/rain/motha fold into Giveaways; the old
+ * Withdrawals workspace merged into Cashflow alongside the deposit fee.
  */
 export function PlannerV2SectionPanel({
   id,

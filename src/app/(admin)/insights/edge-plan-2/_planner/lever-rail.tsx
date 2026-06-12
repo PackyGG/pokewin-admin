@@ -5,7 +5,9 @@ import {
   Banknote,
   Boxes,
   Gauge,
+  Gem,
   Gift,
+  Grid3x3,
   Ticket,
   type LucideIcon,
 } from "lucide-react";
@@ -22,22 +24,23 @@ import {
 } from "../_model-v2";
 
 /**
- * The five lever workspaces of the Edge Plan 2.0 planner.
+ * The seven lever workspaces of the Edge Plan 2.0 planner (v2.1 overhaul):
+ * gaming · rewards · giveaways & budgets · shards · packs & signup ·
+ * deposits & withdrawals (cashflow) · crediting matrix.
  *
  * This is the single source of truth for the group ids — `planner-shell`
- * (workspace switch) and `planner-nav` (mobile pills) both consume
- * `LEVER_GROUPS` / `LeverGroupId` so the navigation never drifts out of
- * sync with the rail.
- *
- * Shards + Future-levers (Ideas) were removed in the 2.0 rework; Raffles
- * was restored as a real cost workspace.
+ * (workspace switch) and `planner-nav` (active-group panel wrapper) both
+ * consume `LEVER_GROUPS` / `LeverGroupId` so the navigation never drifts
+ * out of sync with the rail.
  */
 export type LeverGroupId =
   | "gaming"
   | "rewards"
-  | "raffles"
-  | "withdrawals"
-  | "packs";
+  | "giveaways"
+  | "shards"
+  | "packs"
+  | "cashflow"
+  | "matrix";
 
 export interface LeverGroup {
   id: LeverGroupId;
@@ -56,44 +59,60 @@ export const LEVER_GROUPS: LeverGroup[] = [
     label: "House edge",
     short: "Edge",
     icon: Gauge,
-    hint: "Packs & upgrader margin",
+    hint: "Packs & upgrader · raw vs weighted",
   },
   {
     id: "rewards",
-    label: "Rewards",
+    label: "Rewards core",
     short: "Rewards",
     icon: Gift,
-    hint: "Rakeback · affiliate · bonuses · races",
+    hint: "Rakeback · affiliate · deposit bonus",
   },
   {
-    id: "raffles",
-    label: "Raffles",
-    short: "Raffles",
+    id: "giveaways",
+    label: "Giveaways & budgets",
+    short: "Giveaways",
     icon: Ticket,
-    hint: "Prize pool · frequency · ticket cost",
+    hint: "Raffles · races · rain · motha · adjustments",
   },
   {
-    id: "withdrawals",
-    label: "Withdrawals",
-    short: "Cash out",
-    icon: Banknote,
-    hint: "Volume · balance split · wager req",
+    id: "shards",
+    label: "Shards",
+    short: "Shards",
+    icon: Gem,
+    hint: "Earn rate · EV per shard · giveback target",
   },
   {
     id: "packs",
     label: "Packs & signup",
     short: "Packs",
     icon: Boxes,
-    hint: "Daily packs · signup · rain · motha",
+    hint: "Daily packs · levels · re-lock · signup",
+  },
+  {
+    id: "cashflow",
+    label: "Deposits & withdrawals",
+    short: "Cashflow",
+    icon: Banknote,
+    hint: "Deposit fee · withdrawal wager rules",
+  },
+  {
+    id: "matrix",
+    label: "Crediting matrix",
+    short: "Matrix",
+    icon: Grid3x3,
+    hint: "Reward-source crediting · savings",
   },
 ];
 
 /**
  * Lever-projection row keys aggregated into each group's live edge-drag
  * badge. `gaming` carries no reward-cost row (it moves the gross edge, not
- * a reward cost) and `withdrawals` has no $ projection after the 2.0
- * rework (the fabricated friction adjustment was removed), so neither
- * shows a drag badge.
+ * a reward cost). `cashflow` is special-cased in {@link leverGroupDragPct}:
+ * its only $ line is the deposit-fee REVENUE channel, surfaced as a
+ * negative drag so the shared badge renders its emerald "+x% edge"
+ * revenue variant. `matrix` folds the `credit-matrix` row, whose planned
+ * cost is ≤ 0 (a cost REDUCTION) — also emerald via sign.
  *
  * The actual key strings are owned by the model (`projectEdgePlanV2`); this
  * map is the rail's view of which rows belong where so the parent can fold
@@ -101,10 +120,21 @@ export const LEVER_GROUPS: LeverGroup[] = [
  */
 export const LEVER_GROUP_DRAG_KEYS: Record<LeverGroupId, string[]> = {
   gaming: [],
-  rewards: ["rakeback", "affiliate", "leaderboard", "deposit-bonus", "races"],
-  raffles: ["raffles"],
-  withdrawals: [],
-  packs: ["daily-packs", "signup-packs", "rain", "motha", "other"],
+  rewards: ["rakeback", "affiliate", "leaderboard", "deposit-bonus"],
+  giveaways: [
+    "races",
+    "raffles",
+    "rain",
+    "motha",
+    "gift-cards",
+    "promo-codes",
+    "adjustments",
+    "other",
+  ],
+  shards: ["shards"],
+  packs: ["daily-packs", "signup-packs"],
+  cashflow: [],
+  matrix: ["credit-matrix"],
 };
 
 /**
@@ -112,12 +142,28 @@ export const LEVER_GROUP_DRAG_KEYS: Record<LeverGroupId, string[]> = {
  * commission row needs the worst-case tier context, so when a group folds
  * in `affiliate` we add its drag via `leverEdgeDragPct(..., ctx)` on top of
  * the remaining keys (which are plain wager-proportional rows).
+ *
+ * `cashflow` has no cost rows — its badge is the deposit-fee REVENUE as a
+ * negative drag (house income per wager $), which the shared badge renders
+ * emerald ("+x% edge").
  */
 export function leverGroupDragPct(
   projection: EdgePlanV2Projection,
   groupId: LeverGroupId,
   ctx?: EdgeAfterRewardsContext,
 ): number {
+  if (groupId === "cashflow") {
+    const wager = Math.max(
+      0,
+      projection.plannedWager ?? projection.currentWager ?? 0,
+    );
+    if (wager <= 0) return 0;
+    const revenue = projection.revenueLevers.reduce(
+      (s, r) => s + Math.max(0, r.plannedUsd),
+      0,
+    );
+    return revenue > 0 ? -(revenue / wager) : 0;
+  }
   const keys = LEVER_GROUP_DRAG_KEYS[groupId];
   if (keys.length === 0) return 0;
   if (keys.includes("affiliate")) {
@@ -223,7 +269,8 @@ function PillItem({
  * - `lg` and up: a vertical rail. The active group reads as a lifted card
  *   (`bg-background shadow-sm`) with its icon tinted violet; each row shows
  *   a live edge-drag badge so the cost impact of every workspace is legible
- *   at a glance without opening it.
+ *   at a glance without opening it. Revenue/savings groups (cashflow,
+ *   matrix) show the emerald "+x% edge" variant instead.
  * - Below `lg`: degrades to a single horizontal scroll-pill row (the same
  *   markup family as `planner-nav.tsx`), since a vertical rail wastes the
  *   full width on a phone.
