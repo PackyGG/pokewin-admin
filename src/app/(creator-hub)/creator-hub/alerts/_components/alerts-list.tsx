@@ -246,7 +246,16 @@ export function AlertsList({
                         Open
                       </Link>
                     )}
-                    <span title={formatDateTime(alert.createdAt)}>
+                    {/* suppressHydrationWarning: on a first-ever visit (no
+                        admin_tz cookie) the tz-dependent `title` is SSR'd in
+                        UTC but the client adopts the browser zone post-mount —
+                        a late-hydrating mismatch. Same class as
+                        users/columns.tsx RegisteredCell; the span wraps only
+                        the time. */}
+                    <span
+                      suppressHydrationWarning
+                      title={formatDateTime(alert.createdAt)}
+                    >
                       {formatRelative(alert.createdAt)}
                     </span>
                   </div>

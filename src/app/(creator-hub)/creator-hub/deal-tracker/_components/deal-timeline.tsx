@@ -136,7 +136,14 @@ export function DealTimeline({
 
       {groups.map((group) => (
         <div key={group.dateLabel} className="space-y-3">
-          <div className="sticky top-0 z-10 -mx-1 bg-background/80 px-1 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur-sm">
+          {/* suppressHydrationWarning: the date label is derived from the
+              tz-aware formatter — first-visit SSR(UTC) vs client browser-TZ can
+              differ. See users/columns.tsx RegisteredCell. Wraps only the
+              label text. */}
+          <div
+            suppressHydrationWarning
+            className="sticky top-0 z-10 -mx-1 bg-background/80 px-1 py-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur-sm"
+          >
             {group.dateLabel}
           </div>
 
@@ -191,7 +198,10 @@ export function DealTimeline({
                           {formatCurrency(event.valueUsd)} house
                         </span>
                       )}
-                      <span className="text-muted-foreground">
+                      <span
+                        suppressHydrationWarning
+                        className="text-muted-foreground"
+                      >
                         {formatDateTime(event.atIso)}
                       </span>
                     </div>

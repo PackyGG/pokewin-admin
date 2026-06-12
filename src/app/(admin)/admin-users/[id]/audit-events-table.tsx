@@ -439,7 +439,10 @@ export function AuditEventsTable({
                   >
                     {EVENT_TYPE_LABELS[e.eventType] ?? e.eventType}
                   </Badge>
-                  <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                  <span
+                    suppressHydrationWarning
+                    className="text-[10px] text-muted-foreground whitespace-nowrap"
+                  >
                     {formatDateTime(e.createdAt)}
                   </span>
                 </div>
@@ -492,7 +495,12 @@ export function AuditEventsTable({
             {auditEvents.data.map((e) => (
               <TableRow key={e.id}>
                 <TableCell className="text-sm whitespace-nowrap">
-                  {formatDateTime(e.createdAt)}
+                  {/* suppressHydrationWarning on the inner span (not the cell):
+                      first-visit SSR(UTC) vs client browser-TZ. See
+                      users/columns.tsx RegisteredCell. */}
+                  <span suppressHydrationWarning>
+                    {formatDateTime(e.createdAt)}
+                  </span>
                 </TableCell>
                 <TableCell>
                   <Badge

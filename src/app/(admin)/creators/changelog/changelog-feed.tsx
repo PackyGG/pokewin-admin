@@ -48,8 +48,16 @@ function EventTime({
   className?: string;
 }) {
   const formatDateTime = useFormatDateTime();
+  // suppressHydrationWarning: the tz-aware absolute time is SSR'd in UTC on a
+  // first-ever visit (no admin_tz cookie) but the client adopts the browser
+  // zone post-mount; a late-hydrating leg then mismatches (React #418). Same
+  // class + fix as users/columns.tsx RegisteredCell. Span wraps only the time.
   return (
-    <span className={className} title={formatRelative(createdAt)}>
+    <span
+      suppressHydrationWarning
+      className={className}
+      title={formatRelative(createdAt)}
+    >
       {formatDateTime(createdAt)}
     </span>
   );
