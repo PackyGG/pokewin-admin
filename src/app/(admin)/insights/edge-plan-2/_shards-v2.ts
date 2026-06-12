@@ -62,12 +62,13 @@ export type ShardLeverConfig = {
 // ─── The fixed shard-case table (display + sanity context) ───────────────────
 
 /**
- * The 10 fixed shard-shop cases. Endpoints are owner-pinned (Starter Kit at
- * 2 shards ⇒ $0.12, Eternal Fortune at 10,000 shards ⇒ $600 at the default
- * $0.06 EV/shard); the intermediate tiers are a planning ladder between them.
+ * The 10 fixed shard-shop cases — EXACTLY the owner's spec rows (2026-06-12):
+ * Starter Kit 2 · Training Ground 5 · Sharp Choice 10 · Elite Loadout 25 ·
+ * Cash Flow 50 · Treasure Trove 100 · Imperial Vault 250 · Endless Gold
+ * 1,000 · Full House 5,000 · Eternal Fortune 10,000.
  * USD values are NEVER stored — always derived as `shards × evPerShardUsd`
- * so the table re-prices live when the EV input moves (the __checks__ assert
- * value === shards × 0.06 at the spec default).
+ * (at the $0.06 default: $0.12 / $0.30 / $0.60 / $1.50 / $3.00 / $6.00 /
+ * $15.00 / $60.00 / $300.00 / $600.00 — the __checks__ pin every row).
  */
 export type ShardCase = {
   /** Display name of the shard-shop case. */
@@ -78,14 +79,14 @@ export type ShardCase = {
 
 export const SHARD_CASES: readonly ShardCase[] = [
   { name: "Starter Kit", shards: 2 },
-  { name: "Pocket Stash", shards: 5 },
-  { name: "Bronze Cache", shards: 10 },
-  { name: "Silver Cache", shards: 25 },
-  { name: "Gold Cache", shards: 50 },
-  { name: "Collector's Trove", shards: 100 },
-  { name: "Vault Box", shards: 500 },
-  { name: "Royal Hoard", shards: 1500 },
-  { name: "Mythic Reserve", shards: 4000 },
+  { name: "Training Ground", shards: 5 },
+  { name: "Sharp Choice", shards: 10 },
+  { name: "Elite Loadout", shards: 25 },
+  { name: "Cash Flow", shards: 50 },
+  { name: "Treasure Trove", shards: 100 },
+  { name: "Imperial Vault", shards: 250 },
+  { name: "Endless Gold", shards: 1000 },
+  { name: "Full House", shards: 5000 },
   { name: "Eternal Fortune", shards: 10000 },
 ] as const;
 
