@@ -296,7 +296,7 @@ function MeasuredStrip({ baseline }: { baseline: EdgePlanV2Baseline }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
           <Database className="size-3.5" aria-hidden />
-          Measured 30d — real ledger (same source as /ggr)
+          Measured 30d — same source as /insights cost-breakdown
         </p>
         <p className="text-[10px] text-muted-foreground">
           {stamp
@@ -342,6 +342,13 @@ function MeasuredStrip({ baseline }: { baseline: EdgePlanV2Baseline }) {
           <MeasuredStat label="Bets" value={formatNumber(c.bets)} />
         </div>
       )}
+      <p className="mt-2 text-[10px] leading-snug text-muted-foreground">
+        In plain words: GGR = bets minus what players won back; NGR = GGR
+        minus what we give away. This wager drops borrow plays while the
+        won-card values stay counted, so the negative GGR here is an
+        accounting view, not cash — the cash headline is the owner strip at
+        the top.
+      </p>
     </div>
   );
 }
@@ -448,7 +455,8 @@ function OwnerAnchorStrip({
             {plannedDragMoved && drag.plannedDragPct != null && (
               <>
                 {" "}
-                · planned config: {formatPct(drag.plannedDragPct)}
+                · planner rows (incl. pack/signup item costs):{" "}
+                {formatPct(drag.plannedDragPct)}
               </>
             )}
             .
