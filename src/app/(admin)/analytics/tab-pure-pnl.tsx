@@ -1,4 +1,6 @@
 import { getPackBattlePurePnl } from "@/lib/queries/pnl";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { PackBattlePurePnl } from "@/components/pack-battle-pure-pnl";
 
@@ -13,7 +15,20 @@ import { PackBattlePurePnl } from "@/components/pack-battle-pure-pnl";
  * windowed PnL queries the Overview needs.
  */
 export async function PurePnlTab() {
-  const data = await getPackBattlePurePnl();
+  const { data, error } = await safeQuery(
+    () => getPackBattlePurePnl(),
+    null,
+    "analytics.purePnl",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Pack & Battle raw P&L"
+        hint="The pure P&L query failed — refresh to retry."
+        size="panel"
+      />
+    );
+  }
   return (
     <div className="space-y-6">
       <FadeIn>

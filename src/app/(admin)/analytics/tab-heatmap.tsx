@@ -1,5 +1,7 @@
 import { Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import {
   getActivityHeatmap,
@@ -27,7 +29,20 @@ export async function HeatmapTab({
           heroPeriod === "all"
         ? heroPeriod
         : "30d";
-  const data = await getActivityHeatmap(period);
+  const { data, error } = await safeQuery(
+    () => getActivityHeatmap(period),
+    null,
+    "analytics.heatmap",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Activity heatmap"
+        hint="The heatmap query failed — refresh to retry."
+        size="panel"
+      />
+    );
+  }
 
   return (
     <FadeIn>

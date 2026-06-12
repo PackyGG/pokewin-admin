@@ -10,6 +10,8 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { CardImage } from "@/components/card-image";
 import { EmptyState } from "@/components/empty-state";
@@ -70,11 +72,30 @@ export async function PacksBattlesTab({
   // visitors count, etc.) purely to consume two of its return fields.
   // Slim variant runs the 6 raws that actually feed those two
   // sections, dropping the rest entirely.
-  const [data, overview, topPacks24h] = await Promise.all([
-    getPackProfitability(period),
-    getPackAndBattleStats(heroPeriod),
-    getTopOpenedPacks24h(10),
-  ]);
+  // Each leg degrades independently via safeQuery — a single failed
+  // scan turns its own section into a panel fallback instead of taking
+  // the whole tab down through the route error boundary.
+  const [profitabilityResult, overviewResult, topPacks24hResult] =
+    await Promise.all([
+      safeQuery(
+        () => getPackProfitability(period),
+        null,
+        "analytics.packs.profitability",
+      ),
+      safeQuery(
+        () => getPackAndBattleStats(heroPeriod),
+        null,
+        "analytics.packs.overview",
+      ),
+      safeQuery(
+        () => getTopOpenedPacks24h(10),
+        null,
+        "analytics.packs.top24h",
+      ),
+    ]);
+  const data = profitabilityResult.data;
+  const overview = overviewResult.data;
+  const topPacks24h = topPacks24hResult.data;
   const sortFn = (a: {
     revenue: number;
     grossMargin: number;
@@ -96,18 +117,34 @@ export async function PacksBattlesTab({
     }
     return b.revenue - a.revenue;
   };
-  const sortedPacks = [...data.packs].sort(sortFn);
-  const sortedBattles = [...data.battles].sort(sortFn);
+  const sortedPacks = data ? [...data.packs].sort(sortFn) : null;
+  const sortedBattles = data ? [...data.battles].sort(sortFn) : null;
 
   return (
     <FadeIn>
       <div className="space-y-4">
-        <TopPacks24hPanel rows={topPacks24h} />
+        {topPacks24hResult.error || !topPacks24h ? (
+          <TileErrorFallback
+            label="Top packs — last 24h"
+            hint="The 24h pack-opens query failed — other sections still rendered. Refresh to retry."
+            size="panel"
+          />
+        ) : (
+          <TopPacks24hPanel rows={topPacks24h} />
+        )}
 
-        <div className="space-y-4">
-          <BattleModesSection stats={overview.battleStats} />
-          <PackPopularitySection stats={overview.packStats} />
-        </div>
+        {overviewResult.error || !overview ? (
+          <TileErrorFallback
+            label="Battle modes & pack popularity"
+            hint="The pack/battle stats query failed — other sections still rendered. Refresh to retry."
+            size="panel"
+          />
+        ) : (
+          <div className="space-y-4">
+            <BattleModesSection stats={overview.battleStats} />
+            <PackPopularitySection stats={overview.packStats} />
+          </div>
+        )}
 
         <div className="flex items-start gap-3 rounded-xl border bg-muted/20 p-4">
           <div className="rounded-md bg-primary/10 p-1.5">
@@ -137,7 +174,15 @@ export async function PacksBattlesTab({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <PacksTable rows={sortedPacks} />
+            {profitabilityResult.error || !sortedPacks ? (
+              <TileErrorFallback
+                label="Pack profitability"
+                hint="The profitability query failed — refresh to retry."
+                size="panel"
+              />
+            ) : (
+              <PacksTable rows={sortedPacks} />
+            )}
           </CardContent>
         </Card>
 
@@ -149,7 +194,15 @@ export async function PacksBattlesTab({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <BattlePacksTable rows={sortedBattles} />
+            {profitabilityResult.error || !sortedBattles ? (
+              <TileErrorFallback
+                label="Battle-pack profitability"
+                hint="The profitability query failed — refresh to retry."
+                size="panel"
+              />
+            ) : (
+              <BattlePacksTable rows={sortedBattles} />
+            )}
           </CardContent>
         </Card>
       </div>

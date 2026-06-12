@@ -7,6 +7,8 @@ import {
 } from "lucide-react";
 import { getUsersByCountry } from "@/lib/queries/map";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { MetricToggle } from "./map/metric-toggle";
@@ -37,7 +39,20 @@ export async function MapTab({
   period: AnalyticsPeriod;
   metric: MapMetric;
 }) {
-  const data = await getUsersByCountry(period);
+  const { data, error } = await safeQuery(
+    () => getUsersByCountry(period),
+    null,
+    "analytics.map",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Geographic distribution"
+        hint="The country breakdown query failed — refresh to retry."
+        size="panel"
+      />
+    );
+  }
   const topCountry = data.byCountry[0];
 
   // Platform-wide aggregates for the KPI strip. We roll up from the

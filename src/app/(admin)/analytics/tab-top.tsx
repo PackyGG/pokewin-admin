@@ -18,6 +18,8 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
@@ -78,6 +80,57 @@ export async function TopPerformersTab({
         ? "all"
         : "30d";
 
+  // Only the ACTIVE board's query runs — inactive boards stay null,
+  // mirroring the conditional JSX below (same one-query-per-render
+  // behavior as before). Each query is wrapped in safeQuery so a
+  // failed leaderboard scan degrades its card to a panel fallback
+  // instead of throwing past the tab boundary.
+  const [depositors, wagerers, losers, winners, creators, countries] =
+    await Promise.all([
+      active === "depositors"
+        ? safeQuery(
+            () => getTopDepositors(leaderboardPeriod),
+            null,
+            "analytics.top.depositors",
+          )
+        : null,
+      active === "wagerers"
+        ? safeQuery(
+            () => getTopWagerers(leaderboardPeriod),
+            null,
+            "analytics.top.wagerers",
+          )
+        : null,
+      active === "losers"
+        ? safeQuery(
+            () => getTopLosers(leaderboardPeriod),
+            null,
+            "analytics.top.losers",
+          )
+        : null,
+      active === "winners"
+        ? safeQuery(
+            () => getTopWinners(leaderboardPeriod),
+            null,
+            "analytics.top.winners",
+          )
+        : null,
+      active === "creators"
+        ? safeQuery(
+            () => getTopCreatorsByVolume(leaderboardPeriod),
+            null,
+            "analytics.top.creators",
+          )
+        : null,
+      active === "countries"
+        ? safeQuery(
+            () => getTopCountries(leaderboardPeriod),
+            null,
+            "analytics.top.countries",
+          )
+        : null,
+    ]);
+
   return (
     <FadeIn>
       <div className="space-y-4">
@@ -106,11 +159,19 @@ export async function TopPerformersTab({
             subtitle="Largest completed deposits in the period"
             icon={DollarSign}
           >
-            <UserLeaderTable
-              rows={await getTopDepositors(leaderboardPeriod)}
-              metricLabel="Deposited"
-              tone="neutral"
-            />
+            {!depositors || depositors.error || !depositors.data ? (
+              <TileErrorFallback
+                label="Top depositors"
+                hint="The leaderboard query failed — refresh to retry."
+                size="panel"
+              />
+            ) : (
+              <UserLeaderTable
+                rows={depositors.data}
+                metricLabel="Deposited"
+                tone="neutral"
+              />
+            )}
           </LeaderCard>
         )}
 
@@ -120,11 +181,19 @@ export async function TopPerformersTab({
             subtitle="Largest borrow-corrected wager (pack + battle + upgrader)"
             icon={Dice5}
           >
-            <UserLeaderTable
-              rows={await getTopWagerers(leaderboardPeriod)}
-              metricLabel="Wagered"
-              tone="neutral"
-            />
+            {!wagerers || wagerers.error || !wagerers.data ? (
+              <TileErrorFallback
+                label="Top wagerers"
+                hint="The leaderboard query failed — refresh to retry."
+                size="panel"
+              />
+            ) : (
+              <UserLeaderTable
+                rows={wagerers.data}
+                metricLabel="Wagered"
+                tone="neutral"
+              />
+            )}
           </LeaderCard>
         )}
 
@@ -134,11 +203,19 @@ export async function TopPerformersTab({
             subtitle="Users we made the most gaming revenue from — positive house P&L"
             icon={TrendingUp}
           >
-            <UserLeaderTable
-              rows={await getTopLosers(leaderboardPeriod)}
-              metricLabel="House P&L"
-              tone="emerald"
-            />
+            {!losers || losers.error || !losers.data ? (
+              <TileErrorFallback
+                label="Top losers"
+                hint="The leaderboard query failed — refresh to retry."
+                size="panel"
+              />
+            ) : (
+              <UserLeaderTable
+                rows={losers.data}
+                metricLabel="House P&L"
+                tone="emerald"
+              />
+            )}
           </LeaderCard>
         )}
 
@@ -148,11 +225,19 @@ export async function TopPerformersTab({
             subtitle="Users who took the most money off the house — negative house P&L"
             icon={TrendingDown}
           >
-            <UserLeaderTable
-              rows={await getTopWinners(leaderboardPeriod)}
-              metricLabel="User net"
-              tone="rose"
-            />
+            {!winners || winners.error || !winners.data ? (
+              <TileErrorFallback
+                label="Top winners"
+                hint="The leaderboard query failed — refresh to retry."
+                size="panel"
+              />
+            ) : (
+              <UserLeaderTable
+                rows={winners.data}
+                metricLabel="User net"
+                tone="rose"
+              />
+            )}
           </LeaderCard>
         )}
 
@@ -162,9 +247,15 @@ export async function TopPerformersTab({
             subtitle="Wager volume driven by referred users + commission paid"
             icon={UserPlus}
           >
-            <CreatorLeaderTable
-              rows={await getTopCreatorsByVolume(leaderboardPeriod)}
-            />
+            {!creators || creators.error || !creators.data ? (
+              <TileErrorFallback
+                label="Top creators"
+                hint="The leaderboard query failed — refresh to retry."
+                size="panel"
+              />
+            ) : (
+              <CreatorLeaderTable rows={creators.data} />
+            )}
           </LeaderCard>
         )}
 
@@ -174,9 +265,15 @@ export async function TopPerformersTab({
             subtitle="GGR aggregated per country (wagers − payouts)"
             icon={Globe}
           >
-            <CountryLeaderTable
-              rows={await getTopCountries(leaderboardPeriod)}
-            />
+            {!countries || countries.error || !countries.data ? (
+              <TileErrorFallback
+                label="Top countries"
+                hint="The leaderboard query failed — refresh to retry."
+                size="panel"
+              />
+            ) : (
+              <CountryLeaderTable rows={countries.data} />
+            )}
           </LeaderCard>
         )}
       </div>

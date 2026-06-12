@@ -2,6 +2,8 @@ import Link from "next/link";
 import { Filter, TrendingDown } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatNumber } from "@/lib/utils/format";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
@@ -38,7 +40,20 @@ export async function FunnelTab({
         ? heroPeriod
         : "30d";
 
-  const data = await getFunnelData(funnelPeriod);
+  const { data, error } = await safeQuery(
+    () => getFunnelData(funnelPeriod),
+    null,
+    "analytics.funnel",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Acquisition funnel"
+        hint="The funnel query failed — refresh to retry."
+        size="panel"
+      />
+    );
+  }
 
   return (
     <FadeIn>

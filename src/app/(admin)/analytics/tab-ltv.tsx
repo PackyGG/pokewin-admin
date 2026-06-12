@@ -10,6 +10,8 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { MetricTile } from "@/components/modern-panels";
 import { EmptyState } from "@/components/empty-state";
@@ -42,7 +44,20 @@ export async function LtvTab({
         ? heroPeriod
         : "30d";
 
-  const data = await getCreatorLtv(ltvPeriod);
+  const { data, error } = await safeQuery(
+    () => getCreatorLtv(ltvPeriod),
+    null,
+    "analytics.ltv",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Creator true LTV"
+        hint="The creator LTV query failed — refresh to retry."
+        size="panel"
+      />
+    );
+  }
 
   return (
     <FadeIn>

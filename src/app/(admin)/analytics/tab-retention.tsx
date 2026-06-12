@@ -1,6 +1,8 @@
 import { Percent, Users, TrendingDown } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatNumber } from "@/lib/utils/format";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { MetricTile } from "@/components/modern-panels";
 import { getRetentionCurve } from "@/lib/queries/analytics-retention";
@@ -17,7 +19,20 @@ export async function RetentionTab({
   period: AnalyticsPeriod;
 }) {
   void _period;
-  const data = await getRetentionCurve();
+  const { data, error } = await safeQuery(
+    () => getRetentionCurve(),
+    null,
+    "analytics.retention",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Retention / churn"
+        hint="The retention query failed — refresh to retry."
+        size="panel"
+      />
+    );
+  }
 
   const kpis = [
     {

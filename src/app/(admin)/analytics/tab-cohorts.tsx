@@ -3,6 +3,8 @@ import {
   getCohortRetention,
   type CohortGranularity,
 } from "@/lib/queries/analytics-cohorts";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { CohortsHeatmap } from "./cohorts-heatmap";
 import type { AnalyticsPeriod } from "./types";
@@ -21,7 +23,20 @@ export async function CohortsTab({
   granularity: CohortGranularity;
 }) {
   void _period;
-  const data = await getCohortRetention(granularity);
+  const { data, error } = await safeQuery(
+    () => getCohortRetention(granularity),
+    null,
+    "analytics.cohorts",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Cohort retention"
+        hint="The cohort query failed — refresh to retry."
+        size="panel"
+      />
+    );
+  }
 
   return (
     <FadeIn>

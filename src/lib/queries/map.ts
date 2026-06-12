@@ -61,6 +61,13 @@ export async function getUsersByCountry(period: Period): Promise<MapData> {
   const excluded = await getExcludedUserIds();
   const blacklistFragment = blacklistNotInClause("id", excluded);
   const userScope = `role NOT IN ('admin', 'support') ${blacklistFragment}`;
+  // Join-scoped variant for the financials query: it joins
+  // ledger_transactions (which also has an `id` column), so the blacklist
+  // column must be alias-qualified. The previous `WHERE u.${userScope}`
+  // only qualified `role` — the fragment's bare `id NOT IN (...)` was
+  // ambiguous (Postgres 42702) and threw whenever the excluded-users
+  // blacklist was non-empty, killing the whole map tab.
+  const userScopeJoined = `u.role NOT IN ('admin', 'support') ${blacklistNotInClause("u.id", excluded)}`;
 
   // dateFilter above is phrased as "AND created_at >= ...", works for both
   // u.created_at (signups) and lt.created_at (tx) because each query
@@ -111,7 +118,7 @@ export async function getUsersByCountry(period: Period): Promise<MapData> {
           COALESCE(SUM(CASE WHEN lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND lt.status = 'completed' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS total_wager
         FROM "user" u
         INNER JOIN ledger_transactions lt ON lt.user_id = u.id
-        WHERE u.${userScope}
+        WHERE ${userScopeJoined}
           AND u.country_code IS NOT NULL
           ${txDateFilter}
         GROUP BY u.country_code

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import {
   DollarSign,
   TrendingUp,
@@ -12,6 +13,9 @@ import {
   getPackBattlePurePnl,
 } from "@/lib/queries/pnl";
 import { formatCurrency } from "@/lib/utils/format";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
+import { Skeleton } from "@/components/ui/skeleton";
 import { StatCard } from "../dashboard/stat-card";
 import { AnalyticsCharts } from "./charts";
 import { FadeIn } from "@/components/fade-in";
@@ -26,14 +30,27 @@ import type { AnalyticsPeriod } from "./types";
  * "Pack & Battle" tab so the overview stays focused on high-level KPIs.
  */
 export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
-  // Fetch the period KPIs, the windowed P&L breakdown, and the
-  // pack/battle pure P&L in parallel — they're independent so they
-  // share the same render barrier.
-  const [data, pnlWindows, packBattlePure] = await Promise.all([
-    getAnalyticsData(period),
-    getPnlBreakdownWindows(),
-    getPackBattlePurePnl(),
-  ]);
+  // Fetch ONLY the period-keyed KPI bundle here. The windowed P&L
+  // breakdown and the pack/battle pure P&L are period-INDEPENDENT
+  // (fixed 24h/3d/7d windows), so each streams behind its own nested
+  // Suspense below — the KPI strip + charts paint as soon as
+  // getAnalyticsData resolves instead of waiting on the slowest of
+  // three queries. safeQuery degrades a failure to a panel fallback
+  // instead of escaping to the route error boundary.
+  const { data, error } = await safeQuery(
+    () => getAnalyticsData(period),
+    null,
+    "analytics.overview",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Analytics overview"
+        hint="The overview metrics query failed — refresh or switch period to retry."
+        size="panel"
+      />
+    );
+  }
 
   const totalWager = data.packWager + data.battleWager + data.upgraderWager;
   const packPct =
@@ -136,22 +153,97 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
         />
       </FadeIn>
 
-      <FadeIn>
-        <PeriodPnlBreakdown data={pnlWindows} />
-      </FadeIn>
+      <Suspense fallback={<PnlPanelSkeleton bodyHeight={560} />}>
+        <OverviewPeriodPnl />
+      </Suspense>
 
       {/* Pack & Battle PURE P&L — raw outcome only, no rewards / no
           upgrader. Separate from PeriodPnlBreakdown which is the full
           house balance-sheet view; this panel isolates gambling
           margin so admins can spot pack/battle edge drift without
           rewards muddying the signal. */}
-      <FadeIn>
-        <PackBattlePurePnl data={packBattlePure} />
-      </FadeIn>
+      <Suspense fallback={<PnlPanelSkeleton bodyHeight={360} />}>
+        <OverviewPackBattlePure />
+      </Suspense>
 
       <FadeIn>
         <AnalyticsCharts data={data.daily} />
       </FadeIn>
+    </div>
+  );
+}
+
+/**
+ * Period-independent windowed P&L breakdown (fixed 24h / 3d / 7d) —
+ * its own async segment behind a nested Suspense so the period-keyed
+ * KPI strip above never waits on it. Renders the exact same
+ * `<FadeIn><PeriodPnlBreakdown /></FadeIn>` output as before; a
+ * failed query degrades to a panel-sized fallback.
+ */
+async function OverviewPeriodPnl() {
+  const { data, error } = await safeQuery(
+    () => getPnlBreakdownWindows(),
+    null,
+    "analytics.overview.pnlWindows",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Period P&L breakdown"
+        hint="The windowed P&L query failed — other sections still rendered. Refresh to retry."
+        size="panel"
+      />
+    );
+  }
+  return (
+    <FadeIn>
+      <PeriodPnlBreakdown data={data} />
+    </FadeIn>
+  );
+}
+
+/**
+ * Period-independent Pack & Battle pure P&L — same nested-Suspense
+ * streaming + safeQuery degradation as OverviewPeriodPnl above.
+ */
+async function OverviewPackBattlePure() {
+  const { data, error } = await safeQuery(
+    () => getPackBattlePurePnl(),
+    null,
+    "analytics.overview.packBattlePure",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Pack & Battle raw P&L"
+        hint="The pure P&L query failed — other sections still rendered. Refresh to retry."
+        size="panel"
+      />
+    );
+  }
+  return (
+    <FadeIn>
+      <PackBattlePurePnl data={data} />
+    </FadeIn>
+  );
+}
+
+/**
+ * Footprint-matched Suspense fallback for the two P&L panels — same
+ * rounded-2xl gradient-card chrome as the real panels (heading line,
+ * description line, table block) so the swap into real content stays
+ * dimension-stable. Inline height mirrors the SkeletonChart pattern
+ * in src/components/ux/skeleton.tsx.
+ */
+function PnlPanelSkeleton({ bodyHeight }: { bodyHeight: number }) {
+  return (
+    <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-4 sm:p-5">
+      <Skeleton className="h-5 w-48 rounded" />
+      <Skeleton className="mt-1.5 h-3 w-full max-w-md rounded" />
+      <Skeleton
+        className="mt-4 w-full rounded-xl"
+        style={{ height: bodyHeight }}
+      />
     </div>
   );
 }
