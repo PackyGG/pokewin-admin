@@ -95,95 +95,97 @@ export default async function NumbersPage() {
         ))}
       </div>
 
-      <section className="max-w-md space-y-4">
-        <SectionHeading icon={Hash} title="Signup method breakdown" />
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">
-              All-time distribution
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {stats.methods
-              .filter((row) => row.count > 0)
-              .map((row) => (
-                <div key={row.key} className="space-y-1.5">
-                  <div className="flex items-center justify-between gap-3 text-sm">
-                    <div className="flex min-w-0 items-center gap-2 font-medium">
-                      {(() => {
-                        const Icon = METHOD_ICONS[row.key];
-                        return (
-                          <Icon className="size-4 shrink-0 text-muted-foreground" />
-                        );
-                      })()}
-                      <span className="truncate">{row.label}</span>
-                    </div>
-                    <span className="shrink-0 tabular-nums text-muted-foreground">
-                      {formatNumber(row.count)} · {formatShare(row.share)}
-                    </span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-muted">
-                    <div
-                      className={cn(
-                        "h-full rounded-full transition-all",
-                        row.key === "email" && "bg-blue-500",
-                        row.key === "discord" && "bg-purple-500",
-                        row.key === "google" && "bg-amber-500",
-                        row.key === "steam" && "bg-cyan-500",
-                        row.key === "unknown" && "bg-orange-500",
-                        row.key === "other" && "bg-pink-500",
-                      )}
-                      style={{ width: `${Math.max(row.share * 100, row.count > 0 ? 2 : 0)}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
-          </CardContent>
-        </Card>
-      </section>
-
-      {tailRows.length > 0 && (
-        <section className="max-w-md space-y-4">
-          <SectionHeading icon={Users} title="Other buckets" />
-          <div className="grid gap-3 md:grid-cols-2">
-            {tailRows.map((row) => (
-              <KpiTile
-                key={row.key}
-                label={row.label}
-                value={formatNumber(row.count)}
-                sub={formatShare(row.share)}
-                icon={METHOD_ICONS[row.key]}
-                accent={METHOD_ACCENTS[row.key]}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {stats.otherBreakdown.length > 0 && (
-        <section className="max-w-md space-y-4">
-          <SectionHeading icon={Hash} title="Other provider IDs" />
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        <section className="space-y-4">
+          <SectionHeading icon={Hash} title="Signup method breakdown" />
           <Card>
-            <CardContent className="pt-6">
-              <div className="divide-y">
-                {stats.otherBreakdown.map((row) => (
-                  <div
-                    key={row.provider}
-                    className="flex items-center justify-between py-3 text-sm"
-                  >
-                    <span className="font-mono">{row.provider}</span>
-                    <span className="tabular-nums text-muted-foreground">
-                      {formatNumber(row.count)}
-                    </span>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">
+                All-time distribution
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {stats.methods
+                .filter((row) => row.count > 0)
+                .map((row) => (
+                  <div key={row.key} className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <div className="flex min-w-0 items-center gap-2 font-medium">
+                        {(() => {
+                          const Icon = METHOD_ICONS[row.key];
+                          return (
+                            <Icon className="size-4 shrink-0 text-muted-foreground" />
+                          );
+                        })()}
+                        <span className="truncate">{row.label}</span>
+                      </div>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">
+                        {formatNumber(row.count)} · {formatShare(row.share)}
+                      </span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className={cn(
+                          "h-full rounded-full transition-all",
+                          row.key === "email" && "bg-blue-500",
+                          row.key === "discord" && "bg-purple-500",
+                          row.key === "google" && "bg-amber-500",
+                          row.key === "steam" && "bg-cyan-500",
+                          row.key === "unknown" && "bg-orange-500",
+                          row.key === "other" && "bg-pink-500",
+                        )}
+                        style={{ width: `${Math.max(row.share * 100, row.count > 0 ? 2 : 0)}%` }}
+                      />
+                    </div>
                   </div>
                 ))}
-              </div>
             </CardContent>
           </Card>
-        </section>
-      )}
 
-      <PackMaxWinsSection stats={packMaxWins} />
+          {tailRows.length > 0 && (
+            <div className="space-y-3">
+              <SectionHeading icon={Users} title="Other buckets" />
+              <div className="grid gap-3 sm:grid-cols-2">
+                {tailRows.map((row) => (
+                  <KpiTile
+                    key={row.key}
+                    label={row.label}
+                    value={formatNumber(row.count)}
+                    sub={formatShare(row.share)}
+                    icon={METHOD_ICONS[row.key]}
+                    accent={METHOD_ACCENTS[row.key]}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {stats.otherBreakdown.length > 0 && (
+            <div className="space-y-3">
+              <SectionHeading icon={Hash} title="Other provider IDs" />
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="divide-y">
+                    {stats.otherBreakdown.map((row) => (
+                      <div
+                        key={row.provider}
+                        className="flex items-center justify-between py-3 text-sm"
+                      >
+                        <span className="font-mono">{row.provider}</span>
+                        <span className="tabular-nums text-muted-foreground">
+                          {formatNumber(row.count)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </section>
+
+        <PackMaxWinsSection stats={packMaxWins} />
+      </div>
     </div>
   );
 }

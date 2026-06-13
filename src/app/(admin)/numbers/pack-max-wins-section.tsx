@@ -1,16 +1,11 @@
-import Link from "next/link";
-import { Package, TrendingUp } from "lucide-react";
-import {
-  SectionHeading,
-  KpiTile,
-} from "@/components/modern-panels";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Package } from "lucide-react";
+import { SectionHeading } from "@/components/modern-panels";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   formatMaxWinMultiplier,
   type PackMaxWinStats,
 } from "@/lib/queries/pack-max-wins";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
 function formatShare(share: number): string {
@@ -29,136 +24,68 @@ const RANGE_BAR_COLORS = [
 ];
 
 export function PackMaxWinsSection({ stats }: { stats: PackMaxWinStats }) {
-  if (stats.totalPacks === 0) {
-    return (
-      <section className="max-w-md space-y-4">
-        <SectionHeading icon={Package} title="Pack max wins" />
-        <Card>
-          <CardContent className="py-8 text-sm text-muted-foreground">
-            No priced packs with cards in the pool yet.
-          </CardContent>
-        </Card>
-      </section>
-    );
-  }
-
-  const packsByRange = new Map<string, typeof stats.packs>();
-  for (const pack of stats.packs) {
-    const list = packsByRange.get(pack.rangeKey) ?? [];
-    list.push(pack);
-    packsByRange.set(pack.rangeKey, list);
-  }
-
   return (
-    <section className="space-y-6">
-      <div className="grid max-w-2xl grid-cols-2 gap-3 md:grid-cols-3">
-        <KpiTile
-          label="Packs analyzed"
-          value={formatNumber(stats.totalPacks)}
-          icon={Package}
-          accent="blue"
-        />
-        {stats.peak && (
-          <KpiTile
-            label="Highest max win"
-            value={formatMaxWinMultiplier(stats.peak.maxWinMultiplier)}
-            sub={stats.peak.name}
-            icon={TrendingUp}
-            accent="amber"
-          />
-        )}
-      </div>
-
-      <div className="max-w-md space-y-4">
-        <SectionHeading icon={Package} title="Pack max wins" />
-        <p className="text-sm text-muted-foreground">
-          Max win = top card value ÷ pack price (e.g. $400 top pull on a $1 pack → 400×).
-          Shard packs excluded.
-        </p>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">
-              Packs by max-win range
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {stats.ranges.map((row, index) => (
-              <div key={row.key} className="space-y-1.5">
-                <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="font-medium">{row.label}</span>
-                  <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {formatNumber(row.packCount)} · {formatShare(row.share)}
+    <section className="space-y-4">
+      <SectionHeading icon={Package} title="Pack max wins" />
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b bg-muted/30 pb-4">
+          <CardTitle className="text-base font-semibold">
+            Packs by max-win range
+          </CardTitle>
+          <CardDescription className="text-sm leading-relaxed">
+            Max win = top card value ÷ pack price (e.g. $400 on a $1 pack → 400×).
+            Shard packs excluded.
+            {stats.totalPacks > 0 && (
+              <>
+                {" "}
+                <span className="text-foreground/80">
+                  {formatNumber(stats.totalPacks)} packs
+                  {stats.peak
+                    ? ` · highest ${formatMaxWinMultiplier(stats.peak.maxWinMultiplier)} (${stats.peak.name})`
+                    : ""}
+                  .
+                </span>
+              </>
+            )}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-5">
+          {stats.totalPacks === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              No priced packs with cards in the pool yet.
+            </p>
+          ) : (
+            <div className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
+              {stats.ranges.map((row, index) => (
+                <div
+                  key={row.key}
+                  className="grid grid-cols-[4.5rem_1fr_auto] items-center gap-x-3 gap-y-2"
+                >
+                  <span className="text-sm font-semibold tabular-nums tracking-tight">
+                    {row.label}
+                  </span>
+                  <div className="h-2.5 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-all",
+                        RANGE_BAR_COLORS[index % RANGE_BAR_COLORS.length],
+                      )}
+                      style={{
+                        width: `${Math.max(row.share * 100, row.packCount > 0 ? 4 : 0)}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="min-w-[5.5rem] text-right text-sm tabular-nums text-muted-foreground">
+                    {formatNumber(row.packCount)}
+                    <span className="mx-1 text-muted-foreground/50">·</span>
+                    {formatShare(row.share)}
                   </span>
                 </div>
-                <div className="h-2 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-all",
-                      RANGE_BAR_COLORS[index % RANGE_BAR_COLORS.length],
-                    )}
-                    style={{
-                      width: `${Math.max(row.share * 100, row.packCount > 0 ? 2 : 0)}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="max-w-3xl space-y-6">
-        {stats.ranges.map((range) => {
-          const packs = packsByRange.get(range.key) ?? [];
-          if (packs.length === 0) return null;
-          return (
-            <div key={range.key} className="space-y-3">
-              <h3 className="text-sm font-semibold tracking-tight">
-                {range.label}
-                <span className="ml-2 font-normal text-muted-foreground">
-                  ({formatNumber(packs.length)} pack{packs.length === 1 ? "" : "s"})
-                </span>
-              </h3>
-              <Card>
-                <CardContent className="divide-y p-0">
-                  {packs.map((pack) => (
-                    <div
-                      key={pack.packId}
-                      className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Link
-                            href={`/packs?inspect=${pack.packId}`}
-                            className="truncate font-medium hover:underline"
-                          >
-                            {pack.name}
-                          </Link>
-                          {!pack.active && (
-                            <Badge variant="secondary" className="text-[10px]">
-                              Inactive
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {formatCurrency(pack.priceUsd)} pack · top pull{" "}
-                          {formatCurrency(pack.topCardUsd)}
-                        </p>
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <p className="text-lg font-bold tabular-nums text-amber-600 dark:text-amber-400">
-                          {formatMaxWinMultiplier(pack.maxWinMultiplier)}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground">max win</p>
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
+              ))}
             </div>
-          );
-        })}
-      </div>
+          )}
+        </CardContent>
+      </Card>
     </section>
   );
 }
