@@ -1207,6 +1207,10 @@ export const getDashboardStats = cache(async (period: DashboardPeriod = DEFAULT_
       metricWindow: periodToMetricWindow(period, new Date()),
       periodLabel: DASHBOARD_PERIOD_LABELS[period],
       windowMetricsKey: period,
+      // Trend charts (signups, FTDs, wagers, …) need padded daily buckets;
+      // without chartPeriod the signups path skips trendSeries and falls back
+      // to sparse cachedDailySignups rows only.
+      chartPeriod: period,
       loadWindowMetrics: (blacklistIdNotIn) =>
         cachedWindowMetricsForPeriod(period, blacklistIdNotIn),
     }),
@@ -1438,7 +1442,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // when the global chip selector drives getDashboardStats).
     withTimingResult("dashboard.trendSeries", () =>
       chartPeriod
-        ? getDashboardTrendSeries(chartPeriod, blacklistIdNotIn)
+        ? getDashboardTrendSeries(chartPeriod, blacklistIdNotIn, dbEnv)
         : Promise.resolve(null as DashboardTrendSeries | null),
     ),
     // Single batched query — computes revenue / withdrawal / wager /

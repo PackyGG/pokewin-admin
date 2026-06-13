@@ -61,6 +61,7 @@ import {
   Compass,
   ArrowRight,
   Target,
+  Hash,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -144,6 +145,7 @@ const ICONS: Record<string, LucideIcon> = {
   Compass,
   ArrowRight,
   Target,
+  Hash,
 };
 
 type NavItem = {

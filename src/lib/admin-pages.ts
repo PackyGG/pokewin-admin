@@ -8,6 +8,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Navigation
   { group: "Navigation", label: "Dashboard", key: "/dashboard" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
+  { group: "Navigation", label: "Numbers", key: "/numbers" },
   { group: "Navigation", label: "Raw P&L", key: "/analytics/pure-pnl" },
   // GGR moved to the Insights group below.
   // /map was folded into /analytics as a tab — its permission inherits

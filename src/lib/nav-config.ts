@@ -148,6 +148,18 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    id: "nav.numbers",
+    group: "Overview",
+    label: "Numbers",
+    href: "/numbers",
+    pageKey: "/numbers",
+    icon: "Hash",
+    description: "Signup method breakdown",
+    keywords: ["signups", "registration", "email", "discord", "google", "steam", "auth"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // Map — palette-only. /map was folded into /analytics as a tab; the
     // palette still surfaces it (routing through the analytics shell) but the
     // sidebar dropped the standalone link. href carries the tab; permission
