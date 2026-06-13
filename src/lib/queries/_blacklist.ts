@@ -68,6 +68,40 @@ export async function excludeStaffAndBlacklisted() {
 }
 
 /**
+ * Roles dropped by the CUSTOMER-analytics scope: staff (admin/support)
+ * PLUS creators. This is the canonical money/analytics population — it
+ * matches `getMetricsScope()` (`CUSTOMER_EXCLUDED_ROLES`) and
+ * `realCustomersScopeSql()`. Creators wager + deposit like normal users,
+ * but their play is house-funded promo activity, NOT real-customer
+ * economics, so it is excluded WHOLESALE from GGR / NGR / P&L / reward
+ * aggregates (canonical decision 2026-06-03).
+ *
+ * Kept LOCAL to this module on purpose — `STAFF_ROLES` in
+ * `_exclude-staff.ts` deliberately means admin+support ONLY, and the
+ * `excludeStaffAndBlacklisted*` helpers above intentionally KEEP creators
+ * for the non-analytics callers that rely on that semantics. The
+ * creator-excluding variants below are additive siblings; they never
+ * change the existing helpers.
+ */
+const STAFF_AND_CREATOR_ROLES = [...STAFF_ROLES, "creator"] as const;
+
+/**
+ * Creator-excluding sibling of {@link excludeStaffAndBlacklisted}: a
+ * Prisma where-fragment for a `user: {…}` relation that drops staff
+ * (admin/support) AND creators AND the blacklist. Use on money/analytics
+ * aggregates where creator play must NOT inflate the figures.
+ *
+ *   where: { user: await excludeStaffCreatorsAndBlacklisted() }
+ */
+export async function excludeStaffCreatorsAndBlacklisted() {
+  const ids = await getExcludedUserIds();
+  return {
+    role: { notIn: [...STAFF_AND_CREATOR_ROLES] },
+    ...(ids.length > 0 ? { id: { notIn: ids } } : {}),
+  };
+}
+
+/**
  * Prisma where-fragment when filtering the User entity directly
  * (no relation hop). Use to replace `role: { notIn: STAFF_ROLES }`
  * with a combined filter that ALSO drops blacklisted ids.
@@ -146,6 +180,38 @@ export function excludeStaffAndBlacklistedSqlFromIds(ids: string[]): string {
   const blacklistTail =
     ids.length > 0 ? ` AND id NOT IN (${escapeBlacklistIds(ids)})` : "";
   return `user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support')${blacklistTail})`;
+}
+
+/**
+ * Creator-excluding sibling of {@link excludeStaffAndBlacklistedSql}.
+ * Same self-contained `user_id IN (...)` shape, but the inner subquery
+ * also drops `'creator'` — the canonical CUSTOMER-analytics population
+ * (matches `realCustomersScopeSql()` / `getMetricsScope()`). Use on
+ * money/analytics aggregates where creator play must NOT inflate figures.
+ *
+ *   Before: `... AND ${await excludeStaffAndBlacklistedSql()}`  (keeps creators)
+ *   After:  `... AND ${await excludeStaffCreatorsAndBlacklistedSql()}`
+ *
+ * Format: `user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support','creator') AND id NOT IN (...))`
+ */
+export async function excludeStaffCreatorsAndBlacklistedSql(): Promise<string> {
+  const ids = await getExcludedUserIds();
+  return excludeStaffCreatorsAndBlacklistedSqlFromIds(ids);
+}
+
+/**
+ * Same shape as {@link excludeStaffCreatorsAndBlacklistedSql} when the
+ * caller already resolved the blacklist (e.g. inside an `unstable_cache`
+ * fn that keys on the sorted id list). Additive sibling of
+ * {@link excludeStaffAndBlacklistedSqlFromIds} — the only difference is
+ * the extra `'creator'` in the excluded-roles list.
+ */
+export function excludeStaffCreatorsAndBlacklistedSqlFromIds(
+  ids: string[],
+): string {
+  const blacklistTail =
+    ids.length > 0 ? ` AND id NOT IN (${escapeBlacklistIds(ids)})` : "";
+  return `user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support','creator')${blacklistTail})`;
 }
 
 /**
