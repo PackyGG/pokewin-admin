@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
+import { readDbEnv } from "@/lib/db-env";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming, withTimingResult } from "@/lib/observability/query-timings";
@@ -1277,6 +1278,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // query batch + post-processing), which is exactly the latency an admin
   // perceives when the streamed KPI strips resolve.
   const t0 = Date.now();
+  const dbEnv = await readDbEnv();
   const db = await getDb();
   // Resolve the combined staff+blacklist filter ONCE per request so
   // every aggregate below applies the same exclusion set. The list is
