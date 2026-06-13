@@ -62,6 +62,7 @@ import {
   ArrowRight,
   Target,
   Hash,
+  Hourglass,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -146,6 +147,7 @@ const ICONS: Record<string, LucideIcon> = {
   ArrowRight,
   Target,
   Hash,
+  Hourglass,
 };
 
 type NavItem = {
