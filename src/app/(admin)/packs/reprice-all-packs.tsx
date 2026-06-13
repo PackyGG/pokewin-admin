@@ -73,9 +73,10 @@ export function RepriceAllPacksButton() {
   const [processed, setProcessed] = React.useState(0);
   const [currentName, setCurrentName] = React.useState("");
   const [tally, setTally] = React.useState({ repriced: 0, skipped: 0, failed: 0 });
-  const [failure, setFailure] = React.useState<{ name: string; message: string } | null>(
-    null,
-  );
+  /** Per-pack failures collected during the run (the real, unmasked reasons). */
+  const [failures, setFailures] = React.useState<{ name: string; message: string }[]>([]);
+  /** Set only when the whole run aborts (auth/token problem). */
+  const [fatalError, setFatalError] = React.useState<string | null>(null);
   const stopRef = React.useRef(false);
 
   const parsedTarget = parseFloat(targetPct);
@@ -159,13 +160,16 @@ export function RepriceAllPacksButton() {
     setProcessed(0);
     setCurrentName("");
     setTally({ repriced: 0, skipped: 0, failed: 0 });
-    setFailure(null);
+    setFailures([]);
+    setFatalError(null);
     setConfirmOpen(false);
     setProgressOpen(true);
     setPhase("running");
 
     let repriced = 0;
     let skipped = 0;
+    let failed = 0;
+    const fails: { name: string; message: string }[] = [];
 
     for (let i = 0; i < rows.length; i++) {
       if (stopRef.current) break;
@@ -173,28 +177,42 @@ export function RepriceAllPacksButton() {
       setCurrentName(row.name);
       try {
         const res = await repricePackToTargetEdge(row.packId, token, runTarget);
-        if (res.status === "repriced") repriced++;
-        else skipped++;
+        if (res.status === "repriced") {
+          repriced++;
+        } else if (res.status === "failed") {
+          // ONE pack failed — record its REAL reason and KEEP GOING so a single
+          // bad pack can't block the rest of the batch.
+          failed++;
+          fails.push({ name: res.name || row.name, message: res.reason || "Write failed" });
+          setFailures([...fails]);
+        } else {
+          skipped++; // unchanged / out-of-scope
+        }
         setProcessed(i + 1);
-        setTally({ repriced, skipped, failed: 0 });
+        setTally({ repriced, skipped, failed });
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Write failed";
-        setProcessed(i + 1);
-        setTally({ repriced, skipped, failed: 1 });
-        setFailure({ name: row.name, message });
+        // A THROWN error means auth / 2FA-token / target — abort the whole run.
+        const message = err instanceof Error ? err.message : "Authorization failed";
+        setProcessed(i);
+        setTally({ repriced, skipped, failed });
+        setFatalError(message);
         setCurrentName("");
         setPhase("done");
-        toast.error(`Stopped at "${row.name}": ${message}`);
+        toast.error(`Run aborted: ${message}`);
         router.refresh();
         return;
       }
     }
 
     setCurrentName("");
-    setTally({ repriced, skipped, failed: 0 });
+    setTally({ repriced, skipped, failed });
     setPhase("done");
     if (stopRef.current) {
-      toast.message(`Stopped — re-priced ${repriced} pack${repriced === 1 ? "" : "s"}.`);
+      toast.message(
+        `Stopped — re-priced ${repriced}${failed ? `, ${failed} failed` : ""}.`,
+      );
+    } else if (failed > 0) {
+      toast.warning(`Re-priced ${repriced} · ${failed} failed — see details.`);
     } else {
       toast.success(
         `Re-priced ${repriced} pack${repriced === 1 ? "" : "s"} to ~${targetPct}%.`,
@@ -217,7 +235,8 @@ export function RepriceAllPacksButton() {
     setProcessed(0);
     setCurrentName("");
     setTally({ repriced: 0, skipped: 0, failed: 0 });
-    setFailure(null);
+    setFailures([]);
+    setFatalError(null);
   }
 
   const isProd = plan?.dbEnv === "prod";
@@ -446,9 +465,11 @@ export function RepriceAllPacksButton() {
             <DialogDescription>
               {phase === "running"
                 ? "Writing one pack at a time. You can stop after the current pack."
-                : failure
-                  ? "The run stopped on an error. Packs processed before it stay re-priced."
-                  : "Done. Packs already on target were left untouched."}
+                : fatalError
+                  ? "The run was aborted. Packs processed before it stay re-priced."
+                  : failures.length > 0
+                    ? "Done — some packs failed and were skipped; the rest were re-priced."
+                    : "Done. Packs already on target were left untouched."}
             </DialogDescription>
           </DialogHeader>
 
@@ -479,9 +500,25 @@ export function RepriceAllPacksButton() {
               <CountTile label="Failed" value={tally.failed} accent={tally.failed ? "rose" : "muted"} />
             </div>
 
-            {failure && (
+            {fatalError && (
               <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
-                <span className="font-medium">{failure.name}:</span> {failure.message}
+                <span className="font-medium">Run aborted:</span> {fatalError}
+              </div>
+            )}
+
+            {failures.length > 0 && (
+              <div className="rounded-lg border border-rose-500/30">
+                <p className="border-b border-rose-500/30 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-rose-600 dark:text-rose-400">
+                  {failures.length} failed
+                </p>
+                <div className="max-h-40 overflow-y-auto">
+                  {failures.map((f, i) => (
+                    <div key={i} className="border-b px-3 py-1.5 text-xs last:border-b-0">
+                      <span className="font-medium">{f.name}:</span>{" "}
+                      <span className="text-muted-foreground">{f.message}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

@@ -819,7 +819,7 @@ export async function authorizeReprice(
 export type RepriceResult = {
   packId: string;
   name: string;
-  status: "repriced" | "unchanged" | "skipped";
+  status: "repriced" | "unchanged" | "skipped" | "failed";
   priceBefore: number;
   priceAfter: number | null;
   edgeBefore: number;
@@ -847,107 +847,146 @@ export async function repricePackToTargetEdge(
   token: string,
   targetEdge?: number,
 ): Promise<RepriceResult> {
-  const db = await getDb();
   const session = await requirePageAccess("/packs");
   if (!isRepriceOwner(session)) {
     throw new Error("The global re-price tool is restricted to the owner.");
   }
   await requireCapability(session, "__can_update_pack", "update packs");
   // 2FA gate: the run must carry a valid token minted by `authorizeReprice`.
+  // Auth/token/target failures stay THROWS — they abort the whole run.
   if (!(await verifyRepriceToken(token, session.userId))) {
     throw new Error("2FA authorization expired or missing — re-confirm to continue.");
   }
   const target = resolveRepriceTarget(targetEdge);
 
-  const [comp] = await getPacksPoolComposition({ packIds: [packId] });
-  if (!comp) throw new Error("Pack not found");
+  // Everything pack-specific is wrapped so ONE pack's failure surfaces its REAL
+  // message — a value returned from a server action is NOT masked the way a
+  // thrown error is in production ("An error occurred in the Server Components
+  // render…") — and the client can keep going through the rest of the batch.
+  let comp: Awaited<ReturnType<typeof getPacksPoolComposition>>[number] | undefined;
+  try {
+    const db = await getDb();
+    [comp] = await getPacksPoolComposition({ packIds: [packId] });
+    if (!comp) {
+      return {
+        packId,
+        name: packId,
+        status: "failed",
+        priceBefore: 0,
+        priceAfter: null,
+        edgeBefore: 0,
+        edgeAfter: null,
+        reason: "Pack not found.",
+      };
+    }
 
-  // Defense-in-depth scope re-check (independent of the dry-run's WHERE):
-  // active official packs only.
-  const skip = (reason: string): RepriceResult => ({
-    packId,
-    name: comp.name,
-    status: "skipped",
-    priceBefore: comp.price,
-    priceAfter: null,
-    edgeBefore: 0,
-    edgeAfter: null,
-    reason,
-  });
-  if (!(REPRICE_INCLUDED_PACK_TYPES as readonly string[]).includes(comp.packType)) {
-    return skip(`Out of scope: only official packs are re-priced (this is '${comp.packType}').`);
-  }
-  if (!comp.active) {
-    return skip("Out of scope: only active packs are re-priced.");
-  }
-  if (!(comp.price > 0)) {
-    return skip("Out of scope: pack has no price.");
-  }
+    // Defense-in-depth scope re-check (independent of the dry-run's WHERE):
+    // active official packs only.
+    const skip = (reason: string): RepriceResult => ({
+      packId,
+      name: comp!.name,
+      status: "skipped",
+      priceBefore: comp!.price,
+      priceAfter: null,
+      edgeBefore: 0,
+      edgeAfter: null,
+      reason,
+    });
+    if (!(REPRICE_INCLUDED_PACK_TYPES as readonly string[]).includes(comp.packType)) {
+      return skip(`Out of scope: only official packs are re-priced (this is '${comp.packType}').`);
+    }
+    if (!comp.active) {
+      return skip("Out of scope: only active packs are re-priced.");
+    }
+    if (!(comp.price > 0)) {
+      return skip("Out of scope: pack has no price.");
+    }
 
-  const plan = planPackReprice({
-    currentPrice: comp.price,
-    cardsPerOpen: comp.cardsPerOpen,
-    totalWeight: comp.totalWeight,
-    weightedPriceSum: comp.weightedPriceSum,
-    targetEdge: target,
-  });
+    const plan = planPackReprice({
+      currentPrice: comp.price,
+      cardsPerOpen: comp.cardsPerOpen,
+      totalWeight: comp.totalWeight,
+      weightedPriceSum: comp.weightedPriceSum,
+      targetEdge: target,
+    });
 
-  if (plan.action !== "reprice" || plan.newPrice === null || plan.newEdge === null) {
+    if (plan.action !== "reprice" || plan.newPrice === null || plan.newEdge === null) {
+      return {
+        packId,
+        name: comp.name,
+        status: plan.action === "unchanged" ? "unchanged" : "skipped",
+        priceBefore: comp.price,
+        priceAfter: plan.newPrice,
+        edgeBefore: plan.currentEdge,
+        edgeAfter: plan.newEdge,
+        reason: plan.reason,
+      };
+    }
+
+    // HARD BACKSTOP — never persist a price whose edge escapes the hard
+    // tolerance of the target. Returned as a `failed` result (not thrown) so the
+    // run continues; unreachable in normal operation (accept ⊂ hard).
+    if (!repriceEdgeWithinHardBand(plan.newEdge, target)) {
+      return {
+        packId,
+        name: comp.name,
+        status: "failed",
+        priceBefore: comp.price,
+        priceAfter: null,
+        edgeBefore: plan.currentEdge,
+        edgeAfter: plan.newEdge,
+        reason: `Refused: resulting edge ${(plan.newEdge * 100).toFixed(2)}% is outside the hard band around ${(target * 100).toFixed(2)}%.`,
+      };
+    }
+
+    // ONLY the price is written (+ updated_at). Card odds (pack_cards) are never
+    // touched — re-pricing moves the sticker price, nothing else.
+    await db.packs.update({
+      where: { id: packId },
+      data: { price: plan.newPrice, updated_at: new Date() },
+    });
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "pack_updated",
+      metadata: {
+        pack_id: packId,
+        name: comp.name,
+        via: "reprice_to_target_edge",
+        target_edge: target,
+        price_before: comp.price,
+        price_after: plan.newPrice,
+        edge_before: plan.currentEdge,
+        edge_after: plan.newEdge,
+      },
+    });
+
+    reloadPacks();
+    revalidatePath("/packs");
+    revalidatePath(`/packs/${packId}`);
+
     return {
       packId,
       name: comp.name,
-      status: plan.action === "unchanged" ? "unchanged" : "skipped",
+      status: "repriced",
       priceBefore: comp.price,
       priceAfter: plan.newPrice,
       edgeBefore: plan.currentEdge,
       edgeAfter: plan.newEdge,
-      reason: plan.reason,
+      reason: "",
+    };
+  } catch (err) {
+    // The REAL cause (DB error, audit write, etc.) — returned as data so prod
+    // doesn't mask it behind the generic digest message.
+    return {
+      packId,
+      name: comp?.name ?? packId,
+      status: "failed",
+      priceBefore: comp?.price ?? 0,
+      priceAfter: null,
+      edgeBefore: 0,
+      edgeAfter: null,
+      reason: err instanceof Error ? err.message : "Write failed.",
     };
   }
-
-  // HARD BACKSTOP — never persist a price whose edge escapes the hard tolerance
-  // of the target. Unreachable in normal operation (accept ⊂ hard); a trip here
-  // means a logic bug: fail closed.
-  if (!repriceEdgeWithinHardBand(plan.newEdge, target)) {
-    throw new Error(
-      `Refusing to write "${comp.name}": resulting edge ${(plan.newEdge * 100).toFixed(2)}% is outside the hard band around ${(target * 100).toFixed(2)}%.`,
-    );
-  }
-
-  // ONLY the price is written (+ updated_at). Card odds (pack_cards) are never
-  // touched — re-pricing moves the sticker price, nothing else.
-  await db.packs.update({
-    where: { id: packId },
-    data: { price: plan.newPrice, updated_at: new Date() },
-  });
-
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "pack_updated",
-    metadata: {
-      pack_id: packId,
-      name: comp.name,
-      via: "reprice_to_target_edge",
-      target_edge: target,
-      price_before: comp.price,
-      price_after: plan.newPrice,
-      edge_before: plan.currentEdge,
-      edge_after: plan.newEdge,
-    },
-  });
-
-  reloadPacks();
-  revalidatePath("/packs");
-  revalidatePath(`/packs/${packId}`);
-
-  return {
-    packId,
-    name: comp.name,
-    status: "repriced",
-    priceBefore: comp.price,
-    priceAfter: plan.newPrice,
-    edgeBefore: plan.currentEdge,
-    edgeAfter: plan.newEdge,
-    reason: "",
-  };
 }
