@@ -2,11 +2,12 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { creatorsApi, type CreatorListItem } from "@/lib/backend-api";
+import { type CreatorListItem } from "@/lib/backend-api";
 import {
   affiliateLeaderboardsApi,
   type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
+import { getCachedCreatorRoster } from "@/lib/cache/creator-backend-cache";
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
 import { getDealCapInfoByUser } from "../../../../(admin)/creators/_queries/deal-cap-by-user";
@@ -95,8 +96,9 @@ const SEVERITY_RANK: Record<CreatorAlertSeverity, number> = {
   info: 2,
 };
 
+// Page size for the leaderboard pagination walk below (the creator roster
+// walk now goes through the shared cached roster `getCachedCreatorRoster`).
 const PAGE_SIZE = 100;
-const FETCH_CAP = 500;
 // Hard upper bound on the leaderboard pagination walk so a wrong `total`
 // can't spin an unbounded loop. 50 pages × 100 = 5,000 leaderboards, far
 // above the live pool. The backend rejects `limit > 200` with HTTP 422,
@@ -143,21 +145,19 @@ function isMissingTableError(err: unknown): boolean {
   return code === "P2021" || code === "42P01";
 }
 
-// ─── Roster walk (reuse roster pattern) ──────────────────────────────
+// ─── Roster walk (shared cached roster) ──────────────────────────────
 
+/**
+ * Walk the full creator roster — delegates to the shared cached roster
+ * (`getCachedCreatorRoster`), the same paged `creatorsApi.list` walk up to the
+ * 500 cap now shared across the creator-hub fan-outs and Upstash-cached when
+ * configured (a pure pass-through to the live walk when dormant). The roster
+ * content/order is the ordered concatenation of the same offset pages, so the
+ * downstream alert derivation is unchanged. Backend errors still propagate to
+ * the caller's existing try/catch (which logs + returns no candidates).
+ */
 async function walkAllCreators(): Promise<CreatorListItem[]> {
-  const firstPage = await creatorsApi.list({ offset: 0, limit: PAGE_SIZE });
-  const all = [...firstPage.data];
-  const pagesNeeded = Math.min(
-    Math.ceil(FETCH_CAP / PAGE_SIZE),
-    Math.ceil(firstPage.total / PAGE_SIZE),
-  );
-  const rest: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    rest.push(creatorsApi.list({ offset: p * PAGE_SIZE, limit: PAGE_SIZE }));
-  }
-  for (const page of await Promise.all(rest)) all.push(...page.data);
-  return all;
+  return getCachedCreatorRoster();
 }
 
 function daysUntil(iso: string, nowMs: number): number {

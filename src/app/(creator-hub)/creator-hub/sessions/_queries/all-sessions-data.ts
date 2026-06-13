@@ -5,11 +5,14 @@ import { unstable_cache } from "next/cache";
 import {
   BackendApiError,
   BackendNetworkError,
-  creatorsApi,
   type CreatorListItem,
   type CreatorSessionResponse,
   type StreamSessionStatus,
 } from "@/lib/backend-api";
+import {
+  getCachedCreatorRoster,
+  getCachedCreatorSessions,
+} from "@/lib/cache/creator-backend-cache";
 
 import { readSessionMetaByIds } from "../../creators/[id]/_queries/sessions-data";
 
@@ -22,13 +25,18 @@ import { readSessionMetaByIds } from "../../creators/[id]/_queries/sessions-data
  * (avatar / username) and the admin-DB VOD/notes sidecar.
  *
  * AGGREGATION (copies the fan-out shape from `tips-sponsors-data.ts`):
- *   1. {@link listAllCreators} pages `creatorsApi.list` up to {@link CREATOR_LIST_CAP}.
+ *   1. {@link listAllCreators} returns the shared, cached creator roster
+ *      (`getCachedCreatorRoster` — the same paged `creatorsApi.list` walk,
+ *      now shared across fan-outs and Upstash-cached when configured; a pure
+ *      pass-through to the live walk when dormant).
  *   2. To respect the backend rate limit (it returns HTTP 429 under load), we
  *      fan out ONLY to creators that can possibly have sessions — a creator is
  *      KEPT when `total_deals_count > 0` OR `active_session_id != null`; the
  *      rest are SKIPPED (no deal ⇒ no session). {@link mapPool} bounds the
  *      concurrency.
- *   3. Each kept creator's sessions are paged via `creatorsApi.listSessions`.
+ *   3. Each kept creator's sessions come from the shared, cached per-creator
+ *      session list (`getCachedCreatorSessions` — the same paged
+ *      `creatorsApi.listSessions` walk).
  *
  * RESILIENCE: each creator's session-paging loop is wrapped in try/catch — a
  * `BackendApiError`/`BackendNetworkError` (e.g. a 429) counts that creator into
@@ -118,9 +126,6 @@ export type AllSessionsPage = {
   metaDegraded: boolean;
 };
 
-const CREATOR_LIST_CAP = 500;
-const SESSIONS_PAGE_LIMIT = 100;
-const MAX_SESSION_PAGES = 100;
 /** Bounded concurrency to stay under the backend's 429 rate limit. */
 const CREATOR_CONCURRENCY = 4;
 /** Hard cap on the merged feed — keep the most recent N, flag `truncated`. */
@@ -150,17 +155,15 @@ function emptyKpis(): AllSessionsKpis {
   };
 }
 
-/** Page the creator roster up to the cap (same loop as tips-sponsors-data). */
+/**
+ * Page the creator roster up to the cap — delegates to the shared cached
+ * roster (`getCachedCreatorRoster`), which runs the identical paged
+ * `creatorsApi.list` walk (same cap/limit) and is Upstash-cached across
+ * fan-outs when configured, or a pure pass-through to the live walk when
+ * dormant. The returned roster is unchanged either way.
+ */
 async function listAllCreators(): Promise<CreatorListItem[]> {
-  const out: CreatorListItem[] = [];
-  let offset = 0;
-  while (out.length < CREATOR_LIST_CAP) {
-    const slice = await creatorsApi.list({ limit: 100, offset });
-    out.push(...slice.data);
-    offset += slice.data.length;
-    if (slice.data.length === 0 || offset >= slice.total) break;
-  }
-  return out;
+  return getCachedCreatorRoster();
 }
 
 /**
@@ -172,22 +175,18 @@ function creatorCanHaveSessions(c: CreatorListItem): boolean {
   return c.total_deals_count > 0 || c.active_session_id != null;
 }
 
-/** Page ALL of one creator's sessions (newest-first as the backend returns). */
+/**
+ * Page ALL of one creator's sessions (newest-first as the backend returns) —
+ * delegates to the shared cached session list (`getCachedCreatorSessions`),
+ * which runs the identical paged `creatorsApi.listSessions` walk (same
+ * limit/page cap) and is Upstash-cached per creator across fan-outs when
+ * configured, or a pure pass-through to the live walk when dormant. The
+ * returned sessions are unchanged either way.
+ */
 async function listAllCreatorSessions(
   userId: string,
 ): Promise<CreatorSessionResponse[]> {
-  const out: CreatorSessionResponse[] = [];
-  let offset = 0;
-  for (let page = 0; page < MAX_SESSION_PAGES; page++) {
-    const slice = await creatorsApi.listSessions(userId, {
-      limit: SESSIONS_PAGE_LIMIT,
-      offset,
-    });
-    out.push(...slice.data);
-    offset += slice.data.length;
-    if (slice.data.length === 0 || offset >= slice.total) break;
-  }
-  return out;
+  return getCachedCreatorSessions(userId);
 }
 
 /** Bounded-concurrency map (same helper as tips-sponsors-data). */
