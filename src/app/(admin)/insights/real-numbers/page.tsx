@@ -49,9 +49,13 @@ import {
   getRealNumbersGameSplit,
   getRewardSpendItemization,
   getRealizedPnlCustomersExclCreators,
+  getCreatorNetCashDetail,
+  getCustomerRecyclingDetail,
   type RealNumbersGameSplit,
   type GameGgrRow,
   type RewardSpendItemization,
+  type CreatorNetCashDetail,
+  type CustomerRecyclingDetail,
 } from "@/lib/queries/insights-analytics/real-numbers";
 import {
   getRealizedPnlSnapshot,
@@ -107,6 +111,8 @@ export default async function RealNumbersPage() {
     { data: snapshot },
     { data: rewardSpend },
     { data: pnlExclCreators },
+    { data: creatorDetail },
+    { data: recycling },
   ] = await Promise.all([
     safeQuery(
       () => getCostBreakdown("all", "Lifetime", 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS),
@@ -121,12 +127,26 @@ export default async function RealNumbersPage() {
       null,
       "insights.realNumbers.rewardSpend",
     ),
-    // Realized P&L on the GGR/NGR customer scope (creators excluded) — the
-    // ONLY new query; powers the creator-net-cash step of the GGR → P&L bridge.
+    // Realized P&L on the GGR/NGR customer scope (creators excluded) — powers
+    // the creator-net-cash step of the GGR → P&L bridge.
     safeQuery(
       () => getRealizedPnlCustomersExclCreators(),
       null,
       "insights.realNumbers.pnlExclCreators",
+    ),
+    // Creator net-cash detail (deposited / withdrew / hold) — the 3 visible
+    // sub-rows under the bridge's "Creator net cash" step.
+    safeQuery(
+      () => getCreatorNetCashDetail(),
+      null,
+      "insights.realNumbers.creatorNetCash",
+    ),
+    // Customer recycling detail (deposits + card sell-backs) — the visible
+    // mechanism behind the bridge's "Card-value & re-wager basis" step.
+    safeQuery(
+      () => getCustomerRecyclingDetail(),
+      null,
+      "insights.realNumbers.customerRecycling",
     ),
   ]);
 
@@ -241,12 +261,17 @@ export default async function RealNumbersPage() {
               <section className="space-y-3">
                 <SectionHeading
                   icon={Scale}
-                  title="GGR → realized P&L — the full bridge"
+                  title="GGR → realized P&L — the full bridge, line by line"
                 />
                 <GgrToPnlBridge
                   cost={cost}
                   snapshot={snapshot}
                   pnlExclCreators={pnlExclCreators.pnl}
+                  wager={wager ?? 0}
+                  split={split}
+                  rewardSpend={rewardSpend}
+                  creatorDetail={creatorDetail}
+                  recycling={recycling}
                 />
               </section>
             )}
@@ -1186,6 +1211,112 @@ function ReconciliationCallout({
 // ─── GGR → realized P&L bridge (the full waterfall) ─────────────────
 
 /**
+ * One indented sub-row inside a bridge step's drill-down. House-POV tones:
+ *   • base  — neutral cash-in / turnover (blue)
+ *   • cost  — money that flowed back / is owed to users (rose)
+ *   • keep  — a positive house margin / result (emerald)
+ *   • muted — a neutral conversion / reconciliation (no P&L sign)
+ *
+ * `sign` is the leading glyph (so a "+" can sit on an emerald amount even when
+ * the raw delta is negative). `pct` is an optional share chip (e.g. % of the
+ * parent step). Server component — plain serializable props, lucide pre-
+ * rendered as `iconNode` (no function props across the RSC boundary).
+ */
+function BridgeSubRow({
+  label,
+  sub,
+  amount,
+  sign,
+  tone,
+  iconNode,
+  pct,
+  pctLabel,
+}: {
+  label: string;
+  sub?: string;
+  amount: number;
+  sign: "+" | "−" | "=";
+  tone: SemanticTone;
+  iconNode: ReactNode;
+  pct?: number | null;
+  pctLabel?: string;
+}) {
+  const t = SEMANTIC_TONES[tone] ?? SEMANTIC_TONES.muted;
+  return (
+    <li className="grid grid-cols-[1fr_auto] items-start gap-2 px-2 py-1.5 sm:gap-3">
+      <span className="flex min-w-0 items-start gap-2">
+        <span
+          className={cn(
+            "mt-px flex size-5 shrink-0 items-center justify-center rounded",
+            t.chip,
+          )}
+        >
+          {iconNode}
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate text-[12px] font-medium text-foreground/90">
+            {label}
+          </span>
+          {sub && (
+            <span className="block text-[10px] leading-snug text-muted-foreground">
+              {sub}
+            </span>
+          )}
+        </span>
+      </span>
+      <span className="flex shrink-0 items-baseline gap-1.5">
+        {pct !== null && pct !== undefined && (
+          <span className="hidden text-[10px] tabular-nums text-muted-foreground sm:inline">
+            {pct.toFixed(pct >= 10 ? 0 : 1)}
+            {pctLabel ?? "%"}
+          </span>
+        )}
+        <span
+          className={cn(
+            "font-mono text-[12px] font-semibold tabular-nums",
+            t.text,
+          )}
+        >
+          {sign === "=" ? "= " : sign}
+          {formatCurrency(Math.abs(amount))}
+        </span>
+      </span>
+    </li>
+  );
+}
+
+/**
+ * The indented drill-down container shown directly beneath a bridge step.
+ * A thin left-border rail + a caption sets it apart as "this step, broken
+ * down". `children` is a <BridgeSubRow> list; `note` is an optional plain-
+ * language footnote (used by the basis line, which is a reconciliation, not a
+ * list of payments).
+ */
+function BridgeSubTable({
+  caption,
+  children,
+  note,
+}: {
+  caption: string;
+  children: ReactNode;
+  note?: ReactNode;
+}) {
+  return (
+    <div className="ml-3 mt-1 border-l-2 border-border/70 pl-2 sm:ml-4 sm:pl-3">
+      <p className="px-2 pb-0.5 pt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+        {caption}
+      </p>
+      <ul className="rounded-lg bg-muted/25 py-0.5">{children}</ul>
+      {note && (
+        <p className="px-2 pb-1 pt-1.5 text-[10px] leading-snug text-muted-foreground">
+          {note}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
  * The owner's ask: a breakdown list ANCHORED AT GGR that ends EXACTLY at
  * realized P&L, tying out to the penny, and HONEST — one line is a
  * reconciliation, NOT a fabricated cost.
@@ -1228,11 +1359,26 @@ function GgrToPnlBridge({
   cost,
   snapshot,
   pnlExclCreators,
+  wager,
+  split,
+  rewardSpend,
+  creatorDetail,
+  recycling,
 }: {
   cost: CostBreakdown;
   snapshot: RealizedPnlSnapshot;
   /** Realized P&L on the GGR/NGR customer scope (creators excluded). */
   pnlExclCreators: number;
+  /** Hub wager (customer turnover) — for the basis re-wager multiple. */
+  wager: number;
+  /** Per-game GGR split — the GGR step's sub-breakdown (null on read fail). */
+  split: RealNumbersGameSplit | null;
+  /** Reward itemization — the reward step's sub-breakdown (null on read fail). */
+  rewardSpend: RewardSpendItemization | null;
+  /** Creator deposited/withdrew/hold — the creator step's sub-breakdown. */
+  creatorDetail: CreatorNetCashDetail | null;
+  /** Customer recycling — the basis step's sub-breakdown (null on read fail). */
+  recycling: CustomerRecyclingDetail | null;
 }) {
   const pnlInclCreators = snapshot.pnl;
 
@@ -1256,7 +1402,224 @@ function GgrToPnlBridge({
   // checkpoint row (the owner asked for exactly four reconciling steps).
   const cashMargin = cost.ngr - creatorEffect;
 
-  // Each row is the SIGNED effect on the running total (House-POV).
+  // ── Sub-breakdown rows per bridge step (visible drill-down) ────────
+  // Each step's sub-table is built from already-fetched page data and
+  // reconciles to that step's headline by construction (GGR split → GGR;
+  // reward itemization → reward cost; creator legs → creator net cash; the
+  // recycling figures explain the basis reconciliation).
+
+  // GGR → by game (reuse getRealNumbersGameSplit; same legs as the table above).
+  const ggrSubRows: ReactNode = split ? (
+    <BridgeSubTable caption="By game — wager → payout = GGR (RTP)">
+      {split.games.map((g) => {
+        const gv = GAME_VISUAL[g.key];
+        const GIcon = gv.icon;
+        const gPos = g.ggr >= 0;
+        return (
+          <BridgeSubRow
+            key={g.key}
+            label={g.label}
+            sub={`${formatCurrency(g.wager)} wager · ${
+              g.rtp !== null ? `${(g.rtp * 100).toFixed(0)}% RTP` : "—"
+            }`}
+            amount={g.ggr}
+            sign={gPos ? "+" : "−"}
+            tone={gPos ? "keep" : "cost"}
+            iconNode={<GIcon className="size-3" />}
+            pct={cost.ggr > 0 ? (g.ggr / cost.ggr) * 100 : null}
+            pctLabel="% GGR"
+          />
+        );
+      })}
+    </BridgeSubTable>
+  ) : null;
+
+  // Reward → itemized categories (reuse getRewardSpendItemization). Show the
+  // top categories inline; roll the long tail into one "+N more" row so the
+  // bridge stays scannable (the full 15-row table lives in the section above).
+  const REWARD_INLINE = 6;
+  const rewardSubRows: ReactNode = rewardSpend ? (
+    <BridgeSubTable caption="Itemized — top reward & bonus categories">
+      {rewardSpend.rows.slice(0, REWARD_INLINE).map((r) => (
+        <BridgeSubRow
+          key={r.key}
+          label={r.label}
+          amount={r.amount}
+          sign="−"
+          tone="cost"
+          iconNode={<Receipt className="size-3" />}
+          pct={
+            rewardSpend.total > 0 ? (r.amount / rewardSpend.total) * 100 : null
+          }
+          pctLabel="% spend"
+        />
+      ))}
+      {rewardSpend.rows.length > REWARD_INLINE &&
+        (() => {
+          const tail = rewardSpend.rows.slice(REWARD_INLINE);
+          const tailSum = tail.reduce((s, r) => s + r.amount, 0);
+          return (
+            <BridgeSubRow
+              label={`+ ${tail.length} more categories`}
+              sub="rakeback, lossback, rain net, gift/promo, …"
+              amount={tailSum}
+              sign="−"
+              tone="cost"
+              iconNode={<Layers className="size-3" />}
+              pct={
+                rewardSpend.total > 0
+                  ? (tailSum / rewardSpend.total) * 100
+                  : null
+              }
+              pctLabel="% spend"
+            />
+          );
+        })()}
+    </BridgeSubTable>
+  ) : null;
+
+  // Creator net cash → the 3 sub-legs (deposited − withdrew − hold). The
+  // creators' own realized P&L = −creatorEffect, so this sub-table IS the
+  // creator step, decomposed. Signs are House-POV: a creator deposit is cash
+  // IN (neutral/blue), a withdrawal is cash OUT (rose), held value is owed
+  // (rose). Their net = deposits − withdrawals − holdings.
+  const creatorSubRows: ReactNode = creatorDetail ? (
+    <BridgeSubTable
+      caption="Creators only — deposited − withdrew − still hold"
+      note={
+        <>
+          Creators deposited {formatCurrency(creatorDetail.deposited)} and
+          withdrew {formatCurrency(creatorDetail.withdrawn)} in real crypto,
+          and still hold {formatCurrency(creatorDetail.holdings)} — a net{" "}
+          {creatorDetail.netCash >= 0 ? "+" : "−"}
+          {formatCurrency(Math.abs(creatorDetail.netCash))} of their own
+          realized P&L. That is exactly the cash this population step moves.
+        </>
+      }
+    >
+      <BridgeSubRow
+        label="Creators deposited"
+        sub="real crypto in (balances.total_deposited)"
+        amount={creatorDetail.deposited}
+        sign="+"
+        tone="base"
+        iconNode={<ArrowDownToLine className="size-3" />}
+      />
+      <BridgeSubRow
+        label="Creators withdrew"
+        sub="real cash + cards out"
+        amount={creatorDetail.withdrawn}
+        sign="−"
+        tone="cost"
+        iconNode={<ArrowUpFromLine className="size-3" />}
+      />
+      <BridgeSubRow
+        label="Creators still hold"
+        sub="balance + inventory + vouchers + rakeback"
+        amount={creatorDetail.holdings}
+        sign="−"
+        tone="cost"
+        iconNode={<PiggyBank className="size-3" />}
+      />
+    </BridgeSubTable>
+  ) : null;
+
+  // Basis → the recycling engine. NOT a list of payments — it shows WHY the
+  // gaming-margin scoreboard sits above the cash scoreboard: customers
+  // deposited far less than they wagered because they recycled won cards back
+  // into balance and re-bet them. House-POV: deposits + wager are neutral
+  // turnover (blue); sell-backs are neutral conversions (muted, never a cost).
+  const reWagerMultiple =
+    recycling && recycling.deposits > 0 ? wager / recycling.deposits : null;
+  const basisSubRows: ReactNode = recycling ? (
+    <BridgeSubTable
+      caption="The recycling engine — why turnover ≫ real cash"
+      note={
+        <>
+          GGR books the house edge on all {formatCurrency(wager)} of turnover,
+          but customers only deposited{" "}
+          {formatCurrency(recycling.deposits)}
+          {reWagerMultiple !== null && (
+            <> — they recycled winnings {reWagerMultiple.toFixed(1)}×</>
+          )}{" "}
+          by selling cards back to balance (
+          {formatCurrency(recycling.cardSellBacks)}) and re-betting. This{" "}
+          {formatCurrency(Math.abs(basis))} is edge counted on recycled
+          turnover, never new cash — a measurement reconciliation, not a
+          discrete cash cost, so it does not split into line items.
+        </>
+      }
+    >
+      <BridgeSubRow
+        label="Customer deposits"
+        sub="all real cash that ever entered"
+        amount={recycling.deposits}
+        sign="+"
+        tone="base"
+        iconNode={<ArrowDownToLine className="size-3" />}
+      />
+      <BridgeSubRow
+        label="Customer total wager"
+        sub={
+          reWagerMultiple !== null
+            ? `${reWagerMultiple.toFixed(2)}× deposits — turnover, not new cash`
+            : "turnover, not new cash"
+        }
+        amount={wager}
+        sign="+"
+        tone="base"
+        iconNode={<Coins className="size-3" />}
+      />
+      <BridgeSubRow
+        label="Card sell-backs to balance"
+        sub="cards sold + exchanged for credit, then re-bet"
+        amount={recycling.cardSellBacks}
+        sign="="
+        tone="muted"
+        iconNode={<Layers className="size-3" />}
+      />
+    </BridgeSubTable>
+  ) : null;
+
+  // Realized P&L → reference the balance-sheet waterfall (the cash terms live
+  // there; this is the same number). A note keeps the bridge honest without
+  // duplicating that whole table.
+  const pnlSubRows: ReactNode = (
+    <BridgeSubTable caption="Cash basis — the balance-sheet waterfall">
+      <BridgeSubRow
+        label="Deposits"
+        sub="real money in"
+        amount={snapshot.totalDeposited}
+        sign="+"
+        tone="base"
+        iconNode={<ArrowDownToLine className="size-3" />}
+      />
+      <BridgeSubRow
+        label="Withdrawals"
+        sub="cash + cards out"
+        amount={snapshot.totalWithdrawn}
+        sign="−"
+        tone="cost"
+        iconNode={<ArrowUpFromLine className="size-3" />}
+      />
+      <BridgeSubRow
+        label="On-site balance + inventory + vouchers + rakeback"
+        sub="value customers still hold (owed)"
+        amount={
+          snapshot.userBalance +
+          snapshot.inventory +
+          snapshot.vouchers +
+          snapshot.unclaimedRakeback
+        }
+        sign="−"
+        tone="cost"
+        iconNode={<PiggyBank className="size-3" />}
+      />
+    </BridgeSubTable>
+  );
+
+  // Each row is the SIGNED effect on the running total (House-POV), plus its
+  // visible sub-breakdown rendered directly beneath it.
   const lines: Array<{
     key: string;
     label: string;
@@ -1267,6 +1630,7 @@ function GgrToPnlBridge({
     emphasis?: "normal" | "subtotal" | "result";
     muted?: boolean;
     info?: ReactNode;
+    subRows?: ReactNode;
   }> = [
     {
       key: "ggr",
@@ -1276,6 +1640,7 @@ function GgrToPnlBridge({
       tone: ggrPos ? "keep" : "cost",
       icon: ggrPos ? TrendingUp : TrendingDown,
       emphasis: "subtotal",
+      subRows: ggrSubRows,
     },
     {
       key: "reward",
@@ -1284,6 +1649,7 @@ function GgrToPnlBridge({
       sign: "−",
       tone: "cost",
       icon: Gift,
+      subRows: rewardSubRows,
     },
     {
       key: "ngr",
@@ -1317,6 +1683,7 @@ function GgrToPnlBridge({
           </p>
         </MetricInfoPopover>
       ),
+      subRows: creatorSubRows,
     },
     {
       key: "basis",
@@ -1331,16 +1698,17 @@ function GgrToPnlBridge({
           tone="muted"
           label="What is the card-value & re-wager basis line?"
           title="Card-value & re-wager basis"
-          blurb="Not a cash expense — a measurement reconciliation. It's the gap between gaming margin (booked on ~$3.2M of re-wagered turnover at card-sticker values) and realized cash (bounded by deposits − withdrawals)."
+          blurb="Not a cash expense — a measurement reconciliation. It's the gap between gaming margin (booked on re-wagered turnover at card-sticker values) and realized cash (bounded by deposits − withdrawals)."
         >
           <p className="text-[11px] leading-snug text-muted-foreground">
-            Customers sold ~$3.05M of cards back and re-bet them, so multi-million
+            Customers sold won cards back and re-bet them, so multi-million
             turnover came from far less real deposited cash. This reconciliation
             line can&apos;t be itemized further — it&apos;s the difference between
             two scoreboards, not a list of payments.
           </p>
         </MetricInfoPopover>
       ),
+      subRows: basisSubRows,
     },
     {
       key: "pnl",
@@ -1350,6 +1718,7 @@ function GgrToPnlBridge({
       tone: pnlPos ? "keep" : "cost",
       icon: pnlPos ? TrendingUp : TrendingDown,
       emphasis: "result",
+      subRows: pnlSubRows,
     },
   ];
 
@@ -1359,9 +1728,10 @@ function GgrToPnlBridge({
     <Card>
       <CardContent className="space-y-0.5 p-3 sm:p-4">
         <p className="px-2 pb-1 text-[11px] leading-snug text-muted-foreground">
-          A single bridge anchored at GGR that ends exactly at realized P&L.
-          Only rewards and creator cash are true costs; the basis line is a
-          measurement reconciliation between the gaming and cash scoreboards.
+          A single bridge anchored at GGR that ends exactly at realized P&L —
+          every step broken into its sub-components below it. Only rewards and
+          creator cash are true costs; the basis line is a measurement
+          reconciliation between the gaming and cash scoreboards.
         </p>
         <WaterfallBand label="Gaming margin" hint="house edge on play" />
         {lines.map((l) => {
@@ -1393,6 +1763,8 @@ function GgrToPnlBridge({
                 iconNode={<Icon className={cn("size-3.5", colors.icon)} />}
                 info={l.info}
               />
+              {/* Visible per-line drill-down, directly beneath the step. */}
+              {l.subRows}
             </div>
           );
         })}

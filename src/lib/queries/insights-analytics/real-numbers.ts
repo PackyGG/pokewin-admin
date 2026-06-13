@@ -8,6 +8,8 @@ import { withTiming } from "@/lib/observability/query-timings";
 import { MS_PER_DAY, MS_PER_MINUTE } from "@/lib/utils/time";
 import { getMetricsScope } from "@/lib/metrics/scope";
 import { upgraderMetrics } from "@/lib/metrics/queries";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 // READ-ONLY import of the canonical house-P&L formula + the fake-balance
 // carve-out predicates. The creators-excluded realized-P&L mirror below uses
 // the EXACT SAME arithmetic the balance-sheet snapshot (`_realized-pnl.ts`)
@@ -770,5 +772,276 @@ export async function getRealizedPnlCustomersExclCreators(): Promise<RealizedPnl
   return withTiming("insights.realNumbers.pnlExclCreators", async () => {
     const scope = await getMetricsScope();
     return cachedPnlCustomersExclCreators(scope.userScopeSql);
+  });
+}
+
+// ─── Creator net-cash detail (the bridge "Creator net cash" sub-breakdown) ──
+//
+// The GGR → realized-P&L bridge's "Creator net cash" step is an EXACT plug:
+//   creatorEffect = pnlCustomersExclCreators − pnlInclCreators
+// (creators are out of GGR/NGR but IN the balance-sheet snapshot). Because the
+// snapshot keeps creators while the GGR/NGR scope drops them, the cash that
+// population difference moves is, by the balance-sheet identity, simply the
+// creators' OWN realized P&L: deposits − withdrawals − holdings. This detail
+// breaks that one step into its three visible sub-rows so the bridge line is
+// auditable, not opaque.
+//
+// It mirrors `_realized-pnl.ts`'s `realizedPnlSnapshotInner` arithmetic
+// LINE-FOR-LINE (deposits = balances.total_deposited; withdrawals =
+// balances.total_withdrawn + card_withdrawal_requests pending/processing/
+// shipped/completed total_value_usd; holdings = available+locked −
+// official_stream − remove_locked + inventory(unsold/unexchanged/unlocked
+// value_at_obtained) + unclaimed vouchers + unclaimed rakeback), via the SAME
+// fake-balance carve-out predicates — the ONLY change is the user population:
+// `role = 'creator'` (NOT the blacklisted) instead of the snapshot's
+// `role NOT IN ('admin','support')`. So `netCash` here equals
+// −creatorEffect by construction (the creators' realized P&L is the negative
+// of the cash they drag out of the snapshot). Read-only against the Main DB.
+
+/** The three sub-components of the bridge's "Creator net cash" step. */
+export type CreatorNetCashDetail = {
+  /** Real crypto/cash creators deposited (balances.total_deposited). */
+  deposited: number;
+  /**
+   * Real cash + cards creators withdrew (balances.total_withdrawn +
+   * card_withdrawal_requests pending/processing/shipped/completed).
+   */
+  withdrawn: number;
+  /**
+   * Value creators still hold = on-site balance (fake-balance carved out) +
+   * inventory + unclaimed vouchers + unclaimed rakeback. A house liability.
+   */
+  holdings: number;
+  /**
+   * Creators' realized P&L = deposited − withdrawn − holdings (House POV:
+   * negative = creators are a net cash COST, like any withdrawing user).
+   * Equals −creatorEffect, so the bridge's creator step ties out by
+   * construction.
+   */
+  netCash: number;
+};
+
+const cachedCreatorNetCashDetail = unstable_cache(
+  async (creatorScopeSql: string): Promise<CreatorNetCashDetail> => {
+    const db = await getDb();
+    // Same per-user balance-sheet aggregates as the snapshot, over the
+    // creator population (`role = 'creator'`, not blacklisted). The scope
+    // subquery is inlined directly as the `user_id IN (...)` set.
+    const rows = await db.$queryRawUnsafe<
+      {
+        deposited: string;
+        balance_withdrawn: string;
+        card_withdrawn: string;
+        available_balance: string;
+        locked_balance: string;
+        inventory: string;
+        vouchers: string;
+        unclaimed_rakeback: string;
+        official_stream_net: string;
+        remove_locked_net: string;
+      }[]
+    >(`
+      SELECT
+        COALESCE((SELECT SUM(total_deposited::numeric)     FROM balances                 WHERE user_id IN ${creatorScopeSql}), 0)::text AS deposited,
+        COALESCE((SELECT SUM(total_withdrawn::numeric)     FROM balances                 WHERE user_id IN ${creatorScopeSql}), 0)::text AS balance_withdrawn,
+        COALESCE((SELECT SUM(total_value_usd::numeric)     FROM card_withdrawal_requests  WHERE status IN ('pending','processing','shipped','completed') AND user_id IN ${creatorScopeSql}), 0)::text AS card_withdrawn,
+        COALESCE((SELECT SUM(available_balance::numeric)   FROM balances                 WHERE user_id IN ${creatorScopeSql}), 0)::text AS available_balance,
+        COALESCE((SELECT SUM(locked_balance::numeric)      FROM balances                 WHERE user_id IN ${creatorScopeSql}), 0)::text AS locked_balance,
+        COALESCE((SELECT SUM(value_at_obtained::numeric)   FROM user_inventory            WHERE sold_at IS NULL AND exchanged_at IS NULL AND withdrawal_locked_at IS NULL AND user_id IN ${creatorScopeSql}), 0)::text AS inventory,
+        COALESCE((SELECT SUM(value::numeric)               FROM vouchers                  WHERE claimed_at IS NULL AND user_id IN ${creatorScopeSql}), 0)::text AS vouchers,
+        COALESCE((SELECT SUM(rakeback_amount_usd::numeric) FROM rakeback_claims           WHERE claimed_at IS NULL AND user_id IN ${creatorScopeSql}), 0)::text AS unclaimed_rakeback,
+        COALESCE((SELECT SUM(amount::numeric) FROM ledger_transactions WHERE status = 'completed' AND ${officialStreamAdjustmentSqlPredicate()} AND user_id IN ${creatorScopeSql}), 0)::text AS official_stream_net,
+        COALESCE((SELECT SUM(amount::numeric) FROM ledger_transactions WHERE status = 'completed' AND ${removeLockedBalanceAdjustmentSqlPredicate()} AND user_id IN ${creatorScopeSql}), 0)::text AS remove_locked_net
+    `);
+
+    const r = rows[0];
+    const deposited = toNumber(r?.deposited);
+    const balanceWithdrawn = toNumber(r?.balance_withdrawn);
+    const cardWithdrawn = toNumber(r?.card_withdrawn);
+    const withdrawn = balanceWithdrawn + cardWithdrawn;
+    const availableBalance = toNumber(r?.available_balance);
+    const lockedBalance = toNumber(r?.locked_balance);
+    const officialStreamNet = toNumber(r?.official_stream_net);
+    const removeLockedNet = toNumber(r?.remove_locked_net);
+    // Fake-balance carve-out — IDENTICAL to the snapshot.
+    const onSiteBalance =
+      availableBalance + lockedBalance - officialStreamNet - removeLockedNet;
+    const inventory = toNumber(r?.inventory);
+    const vouchers = toNumber(r?.vouchers);
+    const unclaimedRakeback = toNumber(r?.unclaimed_rakeback);
+
+    const holdings = onSiteBalance + inventory + vouchers + unclaimedRakeback;
+    // Creators' realized P&L = deposits − withdrawals − holdings (the same
+    // five-term + rakeback identity the snapshot uses, regrouped into the
+    // three visible legs). House POV: negative = creators cost us cash.
+    const netCash = deposited - withdrawn - holdings;
+
+    return { deposited, withdrawn, holdings, netCash };
+  },
+  ["insights-real-numbers-creator-net-cash-v1"],
+  { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
+);
+
+/**
+ * The "Creator net cash" bridge step, broken into its three visible
+ * sub-components (creators deposited / withdrew / still hold). Mirrors the
+ * balance-sheet snapshot's exact arithmetic on the creator population
+ * (`role = 'creator'`, not blacklisted), so `netCash` = −creatorEffect and the
+ * bridge ties out by construction. The blacklist is baked into the cache key
+ * so an exclusion change can't serve a stale value; tagged with the canonical
+ * insights tags. Read-only.
+ */
+export async function getCreatorNetCashDetail(): Promise<CreatorNetCashDetail> {
+  return withTiming("insights.realNumbers.creatorNetCash", async () => {
+    const excluded = await getExcludedUserIds();
+    // Creators only, minus the admin blacklist — the population the snapshot
+    // keeps but the GGR/NGR scope drops. `blacklistNotInClause` escapes the
+    // ids defensively; `u.id` is a hardcoded identifier.
+    const blacklist = blacklistNotInClause("u.id", excluded);
+    const creatorScopeSql = `(SELECT id FROM "user" u WHERE u.role = 'creator' ${blacklist})`;
+    return cachedCreatorNetCashDetail(creatorScopeSql);
+  });
+}
+
+// ─── Customer recycling detail (the bridge "basis" sub-breakdown) ───────
+//
+// The bridge's "Card-value & re-wager basis" step is the ONE line that is a
+// measurement reconciliation, NOT an itemizable cash cost — so its
+// "sub-breakdown" is not a list of payments but the recycling MECHANISM that
+// explains WHY gaming margin (booked on all turnover at card-sticker values)
+// sits far above realized cash (bounded by deposits − withdrawals):
+//
+//   • customer deposits           — the real cash that ever entered (balances
+//                                    .total_deposited, customer scope).
+//   • customer total wager         — total turnover the house booked its edge
+//                                    on (the SAME getInsightsHubWager the page
+//                                    headline shows; borrow-net, sponsored +
+//                                    upgrader in, creator-sessions excluded).
+//   • card sell-backs to balance   — Σ |card_sale| + |reward_card_sale| (cards
+//                                    sold back) + |card_exchange| +
+//                                    |exchange_excess_credit| (exchanged for
+//                                    credit). The recycling engine: customers
+//                                    turn won cards back into balance and re-bet.
+//
+// All on the canonical real-customer scope (role NOT IN admin/support/creator
+// + blacklist), lifetime 365d-capped. These are NEUTRAL ledger conversions
+// (CLAUDE.md: card/voucher exchange is a normal user action, NOT a house cost)
+// — surfaced here ONLY to show the re-wager multiple, never added to any cost.
+// Read-only against the Main DB.
+
+/**
+ * The recycling-engine figures behind the bridge's basis line. The customer
+ * total WAGER is intentionally NOT here — the page already fetches it via
+ * `getInsightsHubWager` (the headline figure) and feeds it straight into the
+ * UI, so this detail only adds the two things the page doesn't already have:
+ * customer deposits and the card sell-backs that feed the re-wager.
+ */
+export type CustomerRecyclingDetail = {
+  /** Real cash customers ever deposited (balances.total_deposited). */
+  deposits: number;
+  /** Σ card sell-backs to balance (sales + exchanges) that get re-bet. */
+  cardSellBacks: number;
+  /** card_sale + reward_card_sale leg (sold back for balance). */
+  cardSaleLeg: number;
+  /** card_exchange + exchange_excess_credit leg (exchanged for credit). */
+  cardExchangeLeg: number;
+  /** ISO cutoff of the lifetime window (now − 365d). */
+  cutoffIso: string;
+  /** The lifetime lookback cap (days) used. */
+  lookbackDays: number;
+};
+
+const cachedCustomerRecycling = unstable_cache(
+  async (
+    cutoffIso: string,
+    userScopeSql: string,
+    sessionWindowsCte: string,
+    notInCreatorSessionLedger: string,
+  ): Promise<{
+    deposits: string;
+    cardSaleLeg: string;
+    cardExchangeLeg: string;
+  }> => {
+    const db = await getDb();
+    const since = `'${cutoffIso}'::timestamptz`;
+
+    const [depRows, sellRows] = await Promise.all([
+      // Lifetime cash deposited — the authoritative `balances.total_deposited`
+      // counter, customer scope (per-user total; no per-row session filter,
+      // exactly like the snapshot's deposit leg).
+      db.$queryRawUnsafe<{ deposits: string }[]>(
+        `SELECT COALESCE(SUM(total_deposited::numeric), 0)::text AS deposits
+         FROM balances WHERE user_id IN ${userScopeSql}`,
+      ),
+      // Card sell-backs to balance — the NEUTRAL inventory↔balance /
+      // voucher↔balance conversions customers re-bet. card_sale +
+      // reward_card_sale (sold back) and card_exchange +
+      // exchange_excess_credit (exchanged for credit), on the canonical
+      // scope + window + creator-session exclusion.
+      db.$queryRawUnsafe<{ card_sale: string; card_exchange: string }[]>(
+        `WITH ${sessionWindowsCte}
+         SELECT
+           COALESCE(SUM(CASE WHEN type::text IN ('card_sale','reward_card_sale')
+             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS card_sale,
+           COALESCE(SUM(CASE WHEN type::text IN ('card_exchange','exchange_excess_credit')
+             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS card_exchange
+         FROM ledger_transactions
+         WHERE status = 'completed'
+           AND type::text IN ('card_sale','reward_card_sale','card_exchange','exchange_excess_credit')
+           AND user_id IN ${userScopeSql}
+           AND ${notInCreatorSessionLedger}
+           AND created_at >= ${since}`,
+      ),
+    ]);
+
+    return {
+      deposits: depRows[0]?.deposits ?? "0",
+      cardSaleLeg: sellRows[0]?.card_sale ?? "0",
+      cardExchangeLeg: sellRows[0]?.card_exchange ?? "0",
+    };
+  },
+  ["insights-real-numbers-customer-recycling-v1"],
+  { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
+);
+
+/**
+ * The recycling-engine detail behind the bridge's "Card-value & re-wager
+ * basis" line: customer deposits + the card sell-backs that feed the re-wager.
+ * The customer total wager (for the re-wager multiple) is the page's
+ * already-fetched `getInsightsHubWager` headline — the UI divides by these
+ * deposits, so this helper stays a pure, parallel-fetchable read and never
+ * re-queries the wager. All sums are on the canonical real-customer scope,
+ * lifetime 365d-capped. The scope inputs are baked into the cache key; tagged
+ * with the canonical insights tags. Read-only against the Main DB.
+ */
+export async function getCustomerRecyclingDetail(): Promise<CustomerRecyclingDetail> {
+  return withTiming("insights.realNumbers.customerRecycling", async () => {
+    const now = bucketedNow();
+    const cutoff = new Date(
+      now.getTime() - INSIGHTS_HUB_WAGER_LOOKBACK_DAYS * MS_PER_DAY,
+    );
+    const cutoffIso = cutoff.toISOString();
+
+    const scope = await getMetricsScope();
+    const legs = await cachedCustomerRecycling(
+      cutoffIso,
+      scope.userScopeSql,
+      scope.sessionWindowsCte,
+      scope.notInCreatorSession("user_id", "created_at"),
+    );
+
+    const deposits = toNumber(legs.deposits);
+    const cardSaleLeg = toNumber(legs.cardSaleLeg);
+    const cardExchangeLeg = toNumber(legs.cardExchangeLeg);
+    const cardSellBacks = cardSaleLeg + cardExchangeLeg;
+
+    return {
+      deposits,
+      cardSellBacks,
+      cardSaleLeg,
+      cardExchangeLeg,
+      cutoffIso,
+      lookbackDays: INSIGHTS_HUB_WAGER_LOOKBACK_DAYS,
+    };
   });
 }
