@@ -21,6 +21,8 @@ import {
   Info,
   Receipt,
   Users,
+  HandCoins,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -51,11 +53,13 @@ import {
   getRealizedPnlCustomersExclCreators,
   getCreatorNetCashDetail,
   getCustomerRecyclingDetail,
+  getCreatorProgramCost,
   type RealNumbersGameSplit,
   type GameGgrRow,
   type RewardSpendItemization,
   type CreatorNetCashDetail,
   type CustomerRecyclingDetail,
+  type CreatorProgramCost,
 } from "@/lib/queries/insights-analytics/real-numbers";
 import {
   getRealizedPnlSnapshot,
@@ -113,6 +117,7 @@ export default async function RealNumbersPage() {
     { data: pnlExclCreators },
     { data: creatorDetail },
     { data: recycling },
+    { data: creatorProgram },
   ] = await Promise.all([
     safeQuery(
       () => getCostBreakdown("all", "Lifetime", 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS),
@@ -147,6 +152,14 @@ export default async function RealNumbersPage() {
       () => getCustomerRecyclingDetail(),
       null,
       "insights.realNumbers.customerRecycling",
+    ),
+    // Creator program cost (gross house-funded: session tips + conversion
+    // vouchers + leaderboard) — informational, kept SEPARATE from the cash
+    // bridge so the bridge still ties out to realized P&L.
+    safeQuery(
+      () => getCreatorProgramCost(),
+      null,
+      "insights.realNumbers.creatorProgramCost",
     ),
   ]);
 
@@ -275,6 +288,25 @@ export default async function RealNumbersPage() {
                 />
               </section>
             )}
+
+            <section className="space-y-3">
+              <SectionHeading
+                icon={Sparkles}
+                title="Creator program cost — what the house actually funds"
+              />
+              {creatorProgram ? (
+                <CreatorProgramCostPanel
+                  program={creatorProgram}
+                  creatorNetCash={creatorDetail?.netCash ?? null}
+                />
+              ) : (
+                <TileErrorFallback
+                  label="Creator program cost"
+                  hint="The creator-program cost breakdown failed to load. The bridge above is unaffected."
+                  size="panel"
+                />
+              )}
+            </section>
 
             <section className="space-y-3">
               <SectionHeading icon={Info} title="Definitions — what each number means" />
@@ -1664,7 +1696,10 @@ function GgrToPnlBridge({
       key: "creator",
       // creatorEffect > 0 ⇒ creators DRAG P&L down (real withdrawals) ⇒ a
       // subtraction; the rare opposite sign is rendered honestly as a "+".
-      label: "Creator net cash",
+      // Labelled "net cash" (not a cost itemization) so it is not misread as
+      // the house's creator-PROGRAM spend — that gross figure is the separate
+      // "Creator program cost" section below.
+      label: "Creator net cash (real crypto withdrawn − deposited)",
       signed: -creatorEffect,
       sign: creatorEffect >= 0 ? "−" : "+",
       tone: "cost",
@@ -1673,8 +1708,8 @@ function GgrToPnlBridge({
         <MetricInfoPopover
           tone="cost"
           label="What is creator net cash?"
-          title="Creator net cash"
-          blurb="Creators are excluded from GGR/NGR (their house-funded 'for content' play is not customer revenue) but INCLUDED in realized P&L — their real crypto deposits/withdrawals are real cash. This step moves between the two populations."
+          title="Creator net cash (real crypto withdrawn − deposited)"
+          blurb="The NET real crypto creators personally moved (deposits − withdrawals − holdings). Creators are excluded from GGR/NGR (their house-funded 'for content' play is not customer revenue) but INCLUDED in realized P&L — their real crypto deposits/withdrawals are real cash. This step moves between the two populations. It is NOT the house's gross creator-program spend — see the Creator program cost section below."
         >
           <p className="text-[11px] leading-snug text-muted-foreground">
             = realized P&L (customers only,{" "}
@@ -1805,6 +1840,233 @@ function GgrToPnlBridge({
           ; the basis line then reconciles the turnover-vs-cash measurement gap
           down to the {formatCurrency(Math.abs(pnlInclCreators))} realized
           balance-sheet P&L.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Creator program cost panel ─────────────────────────────────────
+
+/**
+ * One cost row in the Creator program cost panel. House-POV ROSE for the real
+ * costs; the leaderboard row is the same rose value but visually muted +
+ * footnoted because it is ALREADY inside the reward & bonus cost line (so it is
+ * NOT additional and is excluded from the creator-specific subtotal).
+ */
+function ProgramCostRow({
+  icon: Icon,
+  label,
+  sub,
+  amount,
+  footnote,
+  alreadyCounted = false,
+}: {
+  icon: LucideIcon;
+  label: string;
+  sub: string;
+  amount: number;
+  footnote?: string;
+  alreadyCounted?: boolean;
+}) {
+  return (
+    <li className="grid grid-cols-[1fr_auto] items-start gap-2 border-b border-border/60 px-3 py-3 text-xs last:border-b-0 sm:gap-3 sm:px-4">
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="flex items-center gap-2">
+          <span
+            className={cn(
+              "flex size-6 shrink-0 items-center justify-center rounded-md",
+              alreadyCounted
+                ? "bg-muted text-muted-foreground"
+                : "bg-rose-500/10 text-rose-500",
+            )}
+          >
+            <Icon className="size-3" />
+          </span>
+          <span className="truncate font-medium">{label}</span>
+        </span>
+        <span className="pl-8 text-[10px] leading-snug text-muted-foreground">
+          {sub}
+        </span>
+        {footnote && (
+          <span className="pl-8 text-[10px] font-medium leading-snug text-amber-600 dark:text-amber-400">
+            {footnote}
+          </span>
+        )}
+      </span>
+      <span
+        className={cn(
+          "shrink-0 text-right font-mono font-semibold tabular-nums",
+          alreadyCounted
+            ? "text-muted-foreground"
+            : "text-rose-600 dark:text-rose-400",
+        )}
+      >
+        −{formatCurrency(amount)}
+      </span>
+    </li>
+  );
+}
+
+/**
+ * "Creator program cost — what the house actually funds."
+ *
+ * The GROSS, house-funded creator-program spend, kept DELIBERATELY SEPARATE
+ * from the GGR → P&L cash bridge above. The owner's real creator costs are the
+ * house-funded program (session tips, the session fake-money → voucher
+ * conversions, leaderboard payments) — NOT the bridge's −$52.9k "creator net
+ * cash" (which is the NET real crypto creators personally withdrew, a
+ * balance-sheet effect on realized P&L).
+ *
+ * House-POV: every program cost is money the house GAVE (rose). The fill
+ * context block is blue/muted — it is fake "monopoly money" for content, not a
+ * real cost. Leaderboard payments are shown for completeness but flagged
+ * "already in reward cost" (a REWARD_PAYOUT member) so they are NOT double-
+ * counted into the creator-specific subtotal.
+ *
+ * All values read live from `getCreatorProgramCost()`; `creatorNetCash` is the
+ * bridge's already-fetched creator net-cash figure, surfaced here ONLY in the
+ * reconciliation note so the two views are explicitly tied together.
+ */
+function CreatorProgramCostPanel({
+  program,
+  creatorNetCash,
+}: {
+  program: CreatorProgramCost;
+  /** The bridge's "creator net cash" (creatorDetail.netCash) — for the note. */
+  creatorNetCash: number | null;
+}) {
+  return (
+    <Card>
+      <CardContent className="p-0">
+        {/* Header */}
+        <div className="flex items-start gap-3 border-b bg-muted/30 px-4 py-3 sm:px-5">
+          <div className="shrink-0 rounded-lg border border-rose-500/30 bg-rose-500/10 p-2">
+            <Sparkles className="size-4 text-rose-500" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold sm:text-base">
+              The house-funded creator program — gross spend
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              What it actually costs the house to run creator content. Separate
+              from the cash bridge above — these are GROSS program costs, not the
+              net crypto creators personally withdrew.
+            </p>
+          </div>
+        </div>
+
+        {/* Gross cost rows (House-POV rose). */}
+        <ul>
+          <ProgramCostRow
+            icon={HandCoins}
+            label="Session tips"
+            sub={`Tips creators send users from their fill balance — creator_tip ${formatCurrency(
+              program.creatorTip,
+            )} + creator_fill_spend_tip ${formatCurrency(program.fillSpendTip)}.`}
+            amount={program.sessionTips}
+          />
+          <ProgramCostRow
+            icon={Ticket}
+            label="Session conversion vouchers"
+            sub={`Leftover session "fake" fill balance creators convert into a real payout voucher they keep — ${formatNumber(
+              program.conversionVoucherCount,
+            )} vouchers (origin = creator_fill_conversion).`}
+            amount={program.conversionVouchers}
+          />
+          <ProgramCostRow
+            icon={Trophy}
+            label="Leaderboard payments"
+            sub={`affiliate_leaderboard_prize paid to top affiliates / creators — ${formatNumber(
+              program.leaderboardPrizeCount,
+            )} payouts.`}
+            amount={program.leaderboardPrize}
+            alreadyCounted
+            footnote="Already counted in reward & bonus cost — not additional."
+          />
+          {/* Subtotal: creator-SPECIFIC program cost NOT already in reward. */}
+          <li className="grid grid-cols-[1fr_auto] items-center gap-2 bg-rose-500/[0.05] px-3 py-2.5 text-xs font-semibold sm:gap-3 sm:px-4">
+            <span className="min-w-0">
+              <span className="block">
+                Creator-specific program cost
+              </span>
+              <span className="block text-[10px] font-normal leading-snug text-muted-foreground">
+                Session tips + conversion vouchers — the cost on TOP of the
+                reward line (leaderboard excluded, it&apos;s already in reward).
+              </span>
+            </span>
+            <span className="shrink-0 text-right font-mono tabular-nums text-rose-600 dark:text-rose-400">
+              −{formatCurrency(program.creatorSpecificSubtotal)}
+            </span>
+          </li>
+        </ul>
+
+        {/* Fill context — fake money for content, NOT a cost (blue / muted). */}
+        <div className="space-y-2 border-t bg-blue-500/[0.03] p-4 sm:p-5">
+          <div className="flex items-center gap-2">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-blue-500/10 text-blue-500">
+              <Coins className="size-3.5" />
+            </span>
+            <h4 className="text-[13px] font-semibold tracking-tight">
+              Session fill context — fake balance for content (not a cost)
+            </h4>
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 pl-8 text-[11px] sm:grid-cols-4">
+            <div className="flex flex-col">
+              <span className="font-mono font-semibold tabular-nums text-blue-600 dark:text-blue-400">
+                {formatCurrency(program.fillGrant)}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                Fill granted
+              </span>
+            </div>
+            <div className="flex flex-col">
+              <span className="font-mono font-semibold tabular-nums text-blue-600 dark:text-blue-400">
+                {formatCurrency(program.fillActivation)}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                Fill activated
+              </span>
+            </div>
+            <div className="flex flex-col">
+              <span className="font-mono font-semibold tabular-nums text-blue-600 dark:text-blue-400">
+                {formatCurrency(program.fillForfeiture)}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                Forfeited back ($0 cost)
+              </span>
+            </div>
+            <div className="flex flex-col">
+              <span className="font-mono font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+                {formatCurrency(program.conversionVouchers)}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                → real vouchers (cost)
+              </span>
+            </div>
+          </div>
+          <p className="pl-8 text-[10px] leading-snug text-muted-foreground">
+            Session fill is house-funded &ldquo;fake&rdquo; balance for content —
+            most is forfeited back; only the converted vouchers + tips become
+            real cost.
+          </p>
+        </div>
+
+        {/* Reconciliation note tying back to the bridge. */}
+        <p className="border-t bg-muted/20 px-4 py-3 text-[11px] leading-snug text-muted-foreground sm:px-5">
+          These are GROSS program costs. The bridge&apos;s{" "}
+          <span className="font-medium text-foreground">
+            {creatorNetCash !== null
+              ? `${creatorNetCash >= 0 ? "+" : "−"}${formatCurrency(
+                  Math.abs(creatorNetCash),
+                )}`
+              : "−$52.9k"}{" "}
+            &ldquo;creator net cash&rdquo;
+          </span>{" "}
+          is the NET real crypto creators actually withdrew (after
+          re-wagering / forfeiting / holding) — that&apos;s the piece that hits
+          realized P&L. The two are different views: this section is what the
+          house FUNDS, the bridge line is what creators personally TOOK OUT.
         </p>
       </CardContent>
     </Card>

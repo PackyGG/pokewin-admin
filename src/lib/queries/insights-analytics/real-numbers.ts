@@ -1045,3 +1045,196 @@ export async function getCustomerRecyclingDetail(): Promise<CustomerRecyclingDet
     };
   });
 }
+
+// ─── Creator program cost (what the house actually funds) ───────────────
+//
+// The GGR → P&L bridge's "Creator net cash" step (−$52.9k) is the NET real
+// crypto creators personally withdrew (deposits − withdrawals − holdings) — a
+// balance-sheet effect on REALIZED P&L. That is NOT what the owner thinks of as
+// "creator costs": the owner's real creator costs are the HOUSE-FUNDED program
+// — the gross spend the house puts into running creator content. This helper
+// surfaces those gross figures, kept deliberately SEPARATE from (and never
+// added into) the cash bridge, so the bridge still ties out to realized P&L.
+//
+// The components (all lifetime, ALL users — this is house program spend, NOT
+// customer revenue, so it is NOT on the customer scope; it mirrors the
+// /creators tiles `getTipsSponsorSpend` / `getConvertedFromVouchersTotal`,
+// which are likewise unscoped roster-wide figures):
+//
+//   • Session tips         = Σ|creator_tip| (tips creators send to users from
+//                            their fill balance) + Σ|creator_fill_spend_tip|
+//                            (creator-funded tips spent from the house fill
+//                            pool). Both are house-funded handouts to users.
+//   • Conversion vouchers  = Σ vouchers.value WHERE origin='creator_fill_
+//                            conversion' — the leftover session "fake" fill
+//                            balance creators convert into a real payout
+//                            voucher they keep (the realized program payout).
+//                            Same source the /creators "Converted" KPI uses.
+//   • Leaderboard prizes   = Σ|affiliate_leaderboard_prize| — paid to top
+//                            affiliates/creators. ⚠️ ALREADY counted inside the
+//                            reward & bonus cost line (it is a REWARD_PAYOUT
+//                            member), so it is shown for completeness but
+//                            flagged "not additional" and is NOT in the
+//                            creator-specific subtotal.
+//   • Fill context         = creator_deal_fill_grant + creator_fill_activation
+//                            (house-granted "fake" session balance for content)
+//                            and creator_fill_forfeiture (returned to the
+//                            house, $0 cost). Context only — fill grants are
+//                            monopoly money for content, not a real cost; only
+//                            the converted vouchers + tips become real cost.
+//
+// ─── ENUM-SAFETY (CRITICAL) ─────────────────────────────────────────────
+// Every `creator_*` ledger type and the voucher `origin` are compared via
+// `::text` (NOT the bare enum). The generated Prisma enums are AHEAD of the
+// live prod enum, so a bare comparison against a label prod doesn't yet carry
+// throws 22P02 at PARSE time and takes the whole query down (the documented
+// ffa61b5c / creator-fill failure class). `::text` makes it a plain string
+// compare that matches zero rows when a label is absent — an honest $0, never
+// a crash. Read-only against the Main DB; no bind parameters (fixed literals).
+
+/** The creator-program cost components — gross, House-POV. */
+export type CreatorProgramCost = {
+  /** Σ|creator_tip| — tips creators send users from their fill balance. */
+  creatorTip: number;
+  /** Σ|creator_fill_spend_tip| — creator-funded tips from the house fill pool. */
+  fillSpendTip: number;
+  /** Session tips total = creatorTip + fillSpendTip (a real house cost, rose). */
+  sessionTips: number;
+  /**
+   * Σ vouchers.value WHERE origin='creator_fill_conversion' — leftover session
+   * fill balance converted to a real payout voucher creators keep (rose).
+   */
+  conversionVouchers: number;
+  /** Count of conversion vouchers minted — context for the figure. */
+  conversionVoucherCount: number;
+  /**
+   * Σ|affiliate_leaderboard_prize| — leaderboard payments. ALREADY inside the
+   * reward & bonus cost line, so flagged "not additional" in the UI and NOT
+   * added into the creator-specific subtotal.
+   */
+  leaderboardPrize: number;
+  /** Count of leaderboard-prize ledger rows — context. */
+  leaderboardPrizeCount: number;
+  /**
+   * Creator-SPECIFIC program cost NOT already in the reward line = sessionTips
+   * + conversionVouchers (the additive creator cost on top of reward & bonus).
+   */
+  creatorSpecificSubtotal: number;
+  /** Σ|creator_deal_fill_grant| — house-granted "fake" session balance (context). */
+  fillGrant: number;
+  /** Σ|creator_fill_activation| — activated fill balance for sessions (context). */
+  fillActivation: number;
+  /** Σ|creator_fill_forfeiture| — fill returned to the house, $0 cost (context). */
+  fillForfeiture: number;
+};
+
+const cachedCreatorProgramCost = unstable_cache(
+  async (): Promise<{
+    creatorTip: string;
+    fillSpendTip: string;
+    leaderboardPrize: string;
+    leaderboardPrizeCount: string;
+    fillGrant: string;
+    fillActivation: string;
+    fillForfeiture: string;
+    conversionVouchers: string;
+    conversionVoucherCount: string;
+  }> => {
+    const db = await getDb();
+
+    // One ledger pass for the tip legs, the leaderboard-prize leg, and the
+    // three fill-context legs (all enum-safe via ::text). Lifetime, all users —
+    // house program spend is not customer-scoped.
+    const ledgerRows = await db.$queryRawUnsafe<
+      {
+        creator_tip: string;
+        fill_spend_tip: string;
+        leaderboard_prize: string;
+        leaderboard_prize_count: string;
+        fill_grant: string;
+        fill_activation: string;
+        fill_forfeiture: string;
+      }[]
+    >(`
+      SELECT
+        COALESCE(SUM(CASE WHEN type::text = 'creator_tip'             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS creator_tip,
+        COALESCE(SUM(CASE WHEN type::text = 'creator_fill_spend_tip'  THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS fill_spend_tip,
+        COALESCE(SUM(CASE WHEN type::text = 'affiliate_leaderboard_prize' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS leaderboard_prize,
+        COALESCE(SUM(CASE WHEN type::text = 'affiliate_leaderboard_prize' THEN 1 ELSE 0 END), 0)::text AS leaderboard_prize_count,
+        COALESCE(SUM(CASE WHEN type::text = 'creator_deal_fill_grant' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS fill_grant,
+        COALESCE(SUM(CASE WHEN type::text = 'creator_fill_activation' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS fill_activation,
+        COALESCE(SUM(CASE WHEN type::text = 'creator_fill_forfeiture' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS fill_forfeiture
+      FROM ledger_transactions
+      WHERE status = 'completed'
+        AND type::text IN (
+          'creator_tip', 'creator_fill_spend_tip', 'affiliate_leaderboard_prize',
+          'creator_deal_fill_grant', 'creator_fill_activation', 'creator_fill_forfeiture'
+        )
+    `);
+
+    // Conversion-voucher value + count from the vouchers table — the SAME
+    // origin + value source the /creators "Converted" KPI reads.
+    const voucherRows = await db.$queryRawUnsafe<
+      { conversion_value: string; conversion_count: string }[]
+    >(`
+      SELECT
+        COALESCE(SUM(value::numeric), 0)::text AS conversion_value,
+        COUNT(*)::text AS conversion_count
+      FROM vouchers
+      WHERE origin::text = 'creator_fill_conversion'
+    `);
+
+    const l = ledgerRows[0] ?? {};
+    const v = voucherRows[0] ?? {};
+    return {
+      creatorTip: l.creator_tip ?? "0",
+      fillSpendTip: l.fill_spend_tip ?? "0",
+      leaderboardPrize: l.leaderboard_prize ?? "0",
+      leaderboardPrizeCount: l.leaderboard_prize_count ?? "0",
+      fillGrant: l.fill_grant ?? "0",
+      fillActivation: l.fill_activation ?? "0",
+      fillForfeiture: l.fill_forfeiture ?? "0",
+      conversionVouchers: v.conversion_value ?? "0",
+      conversionVoucherCount: v.conversion_count ?? "0",
+    };
+  },
+  ["insights-real-numbers-creator-program-cost-v1"],
+  { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
+);
+
+/**
+ * Creator program cost — the GROSS, house-funded creator-program spend
+ * (session tips, session conversion vouchers, leaderboard payments) plus the
+ * fake-money fill context. Deliberately SEPARATE from the GGR → P&L cash
+ * bridge: the bridge's "Creator net cash" (−$52.9k) is the NET real crypto
+ * creators withdrew (a realized-P&L balance-sheet effect); these are the GROSS
+ * program costs the house funds. Lifetime, all users (house program spend is
+ * not customer-scoped). Read-only against the Main DB; cached 5 min.
+ */
+export async function getCreatorProgramCost(): Promise<CreatorProgramCost> {
+  return withTiming("insights.realNumbers.creatorProgramCost", async () => {
+    const legs = await cachedCreatorProgramCost();
+
+    const creatorTip = toNumber(legs.creatorTip);
+    const fillSpendTip = toNumber(legs.fillSpendTip);
+    const sessionTips = creatorTip + fillSpendTip;
+    const conversionVouchers = toNumber(legs.conversionVouchers);
+    const leaderboardPrize = toNumber(legs.leaderboardPrize);
+
+    return {
+      creatorTip,
+      fillSpendTip,
+      sessionTips,
+      conversionVouchers,
+      conversionVoucherCount: Number(legs.conversionVoucherCount) || 0,
+      leaderboardPrize,
+      leaderboardPrizeCount: Number(legs.leaderboardPrizeCount) || 0,
+      // Creator-specific cost NOT already in the reward line (leaderboard is in
+      // reward, so it is excluded from this additive subtotal).
+      creatorSpecificSubtotal: sessionTips + conversionVouchers,
+      fillGrant: toNumber(legs.fillGrant),
+      fillActivation: toNumber(legs.fillActivation),
+      fillForfeiture: toNumber(legs.fillForfeiture),
+    };
+  });
+}
