@@ -90,6 +90,125 @@ export function computePackEv(input: {
   };
 }
 
+// ─── Inverse odds from target EV ─────────────────────────────────────
+
+export type ComputeOddsForTargetEvResult =
+  | { odds: number[] }
+  | { error: string };
+
+const TARGET_EV_MIN = 0.001;
+const TARGET_EV_MAX = 5000;
+
+function expectedCardValueForBeta(prices: readonly number[], beta: number): number {
+  const weights = prices.map((p) => Math.pow(p, -beta));
+  const sumW = weights.reduce((a, b) => a + b, 0);
+  if (sumW <= 0) return 0;
+  const weightedSum = weights.reduce((s, w, i) => s + w * prices[i]!, 0);
+  return weightedSum / sumW;
+}
+
+/** Round odds to 4 decimals and nudge the largest bucket so the total is 100%. */
+export function normalizeOddsTo100(rawOdds: readonly number[]): number[] {
+  const rounded = rawOdds.map((o) => Math.round(o * 10000) / 10000);
+  const sum = rounded.reduce((a, b) => a + b, 0);
+  const diff = Math.round((100 - sum) * 10000) / 10000;
+  if (Math.abs(diff) < 0.0001) return rounded;
+
+  let maxIdx = 0;
+  for (let i = 1; i < rounded.length; i++) {
+    if (rounded[i]! > rounded[maxIdx]!) maxIdx = i;
+  }
+  rounded[maxIdx] = Math.round((rounded[maxIdx]! + diff) * 10000) / 10000;
+  return rounded;
+}
+
+/**
+ * Solve for per-card odds (percentages summing to 100) that yield a target
+ * expected payout per open, given fixed card prices and cards-per-open.
+ *
+ * Uses a power-law weight template `w_i = price_i^(-β)` and binary-searches
+ * β so the normalized weights hit the target per-card EV. Feasible targets
+ * lie between min(price) and max(price) per card (× cardsPerOpen per open).
+ */
+export function computeOddsForTargetEv(
+  cards: readonly { priceUsd: number }[],
+  targetEvPerOpen: number,
+  cardsPerOpen: number,
+): ComputeOddsForTargetEvResult {
+  if (cards.length === 0) {
+    return { error: "Add at least one card first." };
+  }
+  if (
+    !Number.isFinite(targetEvPerOpen) ||
+    targetEvPerOpen < TARGET_EV_MIN ||
+    targetEvPerOpen > TARGET_EV_MAX
+  ) {
+    return { error: `Target EV must be between $${TARGET_EV_MIN} and $${TARGET_EV_MAX}.` };
+  }
+  if (!Number.isFinite(cardsPerOpen) || cardsPerOpen < 1) {
+    return { error: "Cards per open must be at least 1." };
+  }
+
+  const prices = cards.map((c) => c.priceUsd);
+  const targetCardValue = targetEvPerOpen / cardsPerOpen;
+  const minP = Math.min(...prices);
+  const maxP = Math.max(...prices);
+  const tol = 1e-4;
+
+  if (targetCardValue < minP - tol || targetCardValue > maxP + tol) {
+    return {
+      error: `Target implies $${targetCardValue.toFixed(4)}/card; pool range is $${minP.toFixed(2)}–$${maxP.toFixed(2)}.`,
+    };
+  }
+
+  if (cards.length === 1) {
+    if (Math.abs(prices[0]! - targetCardValue) > tol) {
+      return { error: "Single-card pool can only match EV equal to that card's price." };
+    }
+    return { odds: [100] };
+  }
+
+  if (minP === maxP) {
+    if (Math.abs(prices[0]! - targetCardValue) > tol) {
+      return {
+        error: `All cards are $${prices[0]!.toFixed(2)}; target must be $${(prices[0]! * cardsPerOpen).toFixed(4)}/open.`,
+      };
+    }
+    const each = 100 / cards.length;
+    return { odds: normalizeOddsTo100(cards.map(() => each)) };
+  }
+
+  const evLo = expectedCardValueForBeta(prices, -20);
+  const evHi = expectedCardValueForBeta(prices, 50);
+
+  if (targetCardValue > evLo + tol) {
+    return {
+      error: `Target exceeds max achievable EV ($${(evLo * cardsPerOpen).toFixed(4)}/open) for this pool.`,
+    };
+  }
+  if (targetCardValue < evHi - tol) {
+    return {
+      error: `Target is below min achievable EV ($${(evHi * cardsPerOpen).toFixed(4)}/open) for this pool.`,
+    };
+  }
+
+  let lo = -20;
+  let hi = 50;
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    const ev = expectedCardValueForBeta(prices, mid);
+    if (ev > targetCardValue) lo = mid;
+    else hi = mid;
+  }
+
+  const beta = (lo + hi) / 2;
+  const weights = prices.map((p) => Math.pow(p, -beta));
+  const sumW = weights.reduce((a, b) => a + b, 0);
+  const rawOdds = weights.map((w) => (w / sumW) * 100);
+
+  return { odds: normalizeOddsTo100(rawOdds) };
+}
+
 // ─── Upgrader EV ──────────────────────────────────────────────────────
 
 export type UpgraderEvBreakdown = {

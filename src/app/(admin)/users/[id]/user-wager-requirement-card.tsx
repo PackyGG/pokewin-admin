@@ -86,18 +86,6 @@ export function UserWagerRequirementCard({
 
   const hasOverride = data.wager_requirement_bps !== null;
 
-  const handleExempt = () => {
-    startTransition(async () => {
-      const result = await setUserWagerRequirementAction({ userId, bps: 0 });
-      if (result.success) {
-        toast.success("User exempted from the wager requirement");
-        router.refresh();
-      } else {
-        toast.error(result.error);
-      }
-    });
-  };
-
   const handleClear = () => {
     startTransition(async () => {
       const result = await clearUserWagerRequirementAction(userId);
@@ -139,14 +127,6 @@ export function UserWagerRequirementCard({
           <div className="flex flex-wrap gap-2 pt-2">
             <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
               {hasOverride ? "Edit override" : "Set custom override"}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleExempt}
-              disabled={isPending || data.wager_requirement_bps === 0}
-            >
-              Exempt user (0×)
             </Button>
             {hasOverride && (
               <Button

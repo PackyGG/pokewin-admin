@@ -11,7 +11,9 @@ export function RewardsOverview({ stats }: { stats: RakebackStats }) {
           label="Total Claimed"
           value={formatCurrency(stats.totalClaimed)}
           icon={CheckCircle2}
-          accent="emerald"
+          // House-POV (CLAUDE.md): claimed rewards are money paid OUT to users
+          // — a house cost / user gain → rose, not emerald.
+          accent="rose"
         />
         <KpiTile
           label="Total Pending"

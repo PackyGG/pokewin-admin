@@ -87,6 +87,9 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Transactions", label: "Upgrader", key: "/transactions/upgrader" },
   // Content
   { group: "Content", label: "Packs", key: "/packs" },
+  // Shard packs — packs bought & opened with shards (a wager-earned
+  // currency). Backed by MAIN `packs` rows with pack_type='shard'.
+  { group: "Content", label: "Shard Packs", key: "/rewards/shards" },
   { group: "Content", label: "Cards", key: "/cards" },
   { group: "Content", label: "Sets", key: "/sets" },
   { group: "Content", label: "Upgrader", key: "/upgrader" },
@@ -102,9 +105,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Rewards", label: "Rain", key: "/rain" },
   { group: "Rewards", label: "Leaderboards", key: "/rewards/leaderboards" },
   { group: "Rewards", label: "Level Up", key: "/rewards/level-up" },
-  // Shard packs — packs bought & opened with shards (a wager-earned
-  // currency). Backed by MAIN `packs` rows with pack_type='shard'.
-  { group: "Rewards", label: "Shard Packs", key: "/rewards/shards" },
   // Giveaway log — driven by `admin_giveaway_actions` rows that the
   // adjust-balance flow writes when the reason is tagged "Giveaway".
   { group: "Rewards", label: "Giveaway", key: "/marketing/giveaway" },

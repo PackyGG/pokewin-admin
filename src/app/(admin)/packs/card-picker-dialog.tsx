@@ -58,9 +58,11 @@ export function CardPickerDialog({
   const [totalPages, setTotalPages] = useState(0);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const requestIdRef = useRef(0);
 
   const fetchCards = useCallback(
     (p: number) => {
+      const reqId = ++requestIdRef.current;
       startTransition(async () => {
         const result = await searchCardsForPicker({
           page: p,
@@ -71,6 +73,7 @@ export function CardPickerDialog({
           minPrice: minPrice || undefined,
           maxPrice: maxPrice || undefined,
         });
+        if (reqId !== requestIdRef.current) return;
         setCards(result.data);
         setTotal(result.total);
         setTotalPages(result.totalPages);

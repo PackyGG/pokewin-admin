@@ -6,6 +6,7 @@ import {
   getUserPermissions,
   requirePageAccess,
 } from "@/lib/dal";
+import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabilities";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
@@ -97,6 +98,10 @@ async function ShardsContent({
 
 export default async function ShardPacksPage() {
   const session = await requirePageAccess("/rewards/shards");
+
+  // Idempotent runtime back-fill: grants existing pack_creator users
+  // /rewards/shards (and pack capabilities) before permission read.
+  await ensurePackCreatorCapabilities();
 
   // Per-capability gating mirrors /packs: real admins always pass; everyone
   // else is gated on the same pack capabilities (the shared pack actions

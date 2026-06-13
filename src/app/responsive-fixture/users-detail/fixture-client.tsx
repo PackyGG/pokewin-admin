@@ -263,6 +263,7 @@ export function UserDetailFixtureClient() {
       sharedIpsPromise={ok<SharedIdentityUser[]>([])}
       sharedFingerprintsPromise={ok<SharedIdentityUser[]>([])}
       wagerRequirementPromise={Promise.resolve(null)}
+      wagerProgressPromise={Promise.resolve(null)}
       viewerIsAdjustmentOwner
       initialTab="overview"
     />

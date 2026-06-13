@@ -28,6 +28,7 @@ import { createPack, getCardPickerFilters } from "./actions";
 import { uploadImageClient } from "@/lib/upload-image-client";
 import { pack_tag } from "@/generated/prisma/enums";
 import { RiskLevelSlider } from "./risk-level-slider";
+import { TargetEvOddsSetter } from "./target-ev-odds-setter";
 
 /**
  * Heavy body of the "Create Pack" dialog, split out of
@@ -135,6 +136,7 @@ export function CreatePackForm({
   onClose: () => void;
   lockedType?: string;
 }) {
+  const isShardMode = lockedType === "shard";
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -215,7 +217,7 @@ export function CreatePackForm({
   const totalOdds = cards.reduce((sum, c) => sum + c.odds, 0);
   const weightedPriceSum = cards.reduce((sum, c) => sum + c.priceUsd * c.odds, 0);
   const packPrice = parseFloat(price) || 0;
-  const cpo = parseInt(cardsPerOpen) || 1;
+  const cpo = isShardMode ? 1 : parseInt(cardsPerOpen) || 1;
 
   // Reuse the exact Edge Calc EV math: E[V_card] = Σ(w·price)/Σ(w),
   // E[Payout] = E[V_card] × cardsPerOpen. Odds (normalized %) are the
@@ -237,11 +239,23 @@ export function CreatePackForm({
   const suggestedPrice = suggestedPriceFromEv(expectedPayout);
 
   useEffect(() => {
-    if (priceManual) return;
+    if (isShardMode || priceManual) return;
     if (suggestedPrice <= 0) return;
     const next = suggestedPrice.toFixed(2);
     setPrice((prev) => (prev === next ? prev : next));
-  }, [suggestedPrice, priceManual]);
+  }, [isShardMode, suggestedPrice, priceManual]);
+
+  function resolveSubmitPrice(): number {
+    const fromState = parseFloat(price);
+    if (fromState > 0) return fromState;
+    const fromEv = suggestedPriceFromEv(expectedPayout);
+    if (fromEv > 0) return fromEv;
+    return 0.01;
+  }
+
+  function applyTargetEvOdds(odds: number[]) {
+    setCards((prev) => prev.map((c, i) => ({ ...c, odds: odds[i] ?? c.odds })));
+  }
 
   function oddsToWeights(entries: CardEntry[]): number[] {
     return entries.map((c) => Math.max(1, Math.round(c.odds / 100 * 1_000_000)));
@@ -286,17 +300,18 @@ export function CreatePackForm({
         }
 
         const weights = oddsToWeights(cards);
+        const submitPrice = isShardMode ? resolveSubmitPrice() : parseFloat(price) || 0;
         await createPack({
           name,
           slug,
-          description,
-          price: parseFloat(price) || 0,
-          cardsPerOpen: parseInt(cardsPerOpen) || 5,
+          description: isShardMode ? "" : description,
+          price: submitPrice,
+          cardsPerOpen: isShardMode ? 1 : parseInt(cardsPerOpen) || 5,
           packType,
           shardCost: packType === "shard" ? parsedShardCost : null,
           imageUrl,
-          tags,
-          difficulty: difficulty || null,
+          tags: isShardMode ? [] : tags,
+          difficulty: isShardMode ? null : difficulty || null,
           cards: cards.map((c, i) => ({
             cardId: c.cardId,
             weight: weights[i],
@@ -341,11 +356,14 @@ export function CreatePackForm({
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label>Description</Label>
-            <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" />
-          </div>
+          {!isShardMode && (
+            <div className="space-y-1.5">
+              <Label>Description</Label>
+              <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" />
+            </div>
+          )}
 
+          {!isShardMode ? (
           <div
             className={`grid grid-cols-1 gap-4 ${
               lockedType ? "sm:grid-cols-2" : "sm:grid-cols-3"
@@ -408,6 +426,7 @@ export function CreatePackForm({
               </div>
             )}
           </div>
+          ) : null}
 
           {packType === "shard" && (
             <div className="space-y-1.5">
@@ -427,6 +446,7 @@ export function CreatePackForm({
             </div>
           )}
 
+          {!isShardMode && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>Tags</Label>
@@ -461,6 +481,7 @@ export function CreatePackForm({
               <RiskLevelSlider value={difficulty} onChange={setDifficulty} />
             </div>
           </div>
+          )}
 
           <div className="space-y-1.5">
             <Label>Image</Label>
@@ -486,6 +507,19 @@ export function CreatePackForm({
             />
           </div>
 
+          {isShardMode && cards.length > 0 && (
+            <TargetEvOddsSetter
+              cards={cards}
+              cardsPerOpen={cpo}
+              onApplyOdds={applyTargetEvOdds}
+              onPriceDerived={(p) => {
+                setPriceManual(true);
+                setPrice(p.toFixed(2));
+              }}
+              disabled={isPending}
+            />
+          )}
+
           {cards.length > 0 && (
             <SortableCardTable
               cards={cards}
@@ -504,6 +538,8 @@ export function CreatePackForm({
               <p className="text-muted-foreground">
                 EV/card: {formatCurrency(evPerCard)} · EV/open: {formatCurrency(expectedPayout)}
               </p>
+              {!isShardMode && (
+                <>
               <span className="text-muted-foreground/40">|</span>
               <p
                 className={
@@ -516,6 +552,8 @@ export function CreatePackForm({
               >
                 RTP: {packPrice > 0 ? ((expectedPayout / packPrice) * 100).toFixed(6) : "0.000000"}% · House edge: {houseEdge.toFixed(6)}%
               </p>
+                </>
+              )}
             </div>
           )}
 
@@ -528,7 +566,12 @@ export function CreatePackForm({
       <DialogFooter>
         <Button
           onClick={handleSubmit}
-          disabled={isPending || !name || !price || !shardCostValid}
+          disabled={
+            isPending ||
+            !name ||
+            !shardCostValid ||
+            (isShardMode ? cards.length === 0 : !price)
+          }
           className="w-full sm:w-auto"
         >
           {isPending ? "Creating..." : "Create Pack"}

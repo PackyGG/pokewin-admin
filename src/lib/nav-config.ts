@@ -458,6 +458,20 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // Shard packs — packs bought & opened with shards (a wager-earned
+    // currency). Free-roll cards into inventory like reward packs.
+    id: "nav.rewards.shards",
+    group: "Content",
+    label: "Shard Packs",
+    href: "/rewards/shards",
+    pageKey: "/rewards/shards",
+    icon: "Gem",
+    description: "Packs players buy & open with shards",
+    keywords: ["shard", "shards", "pack", "currency", "wager", "free-roll"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     id: "nav.cards",
     group: "Content",
     label: "Cards",
@@ -646,20 +660,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     href: "/rewards/level-up",
     pageKey: "/rewards/level-up",
     icon: "TrendingUp",
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Shard packs — packs bought & opened with shards (a wager-earned
-    // currency). Free-roll cards into inventory like reward packs.
-    id: "nav.rewards.shards",
-    group: "Rewards",
-    label: "Shard Packs",
-    href: "/rewards/shards",
-    pageKey: "/rewards/shards",
-    icon: "Gem",
-    description: "Packs players buy & open with shards",
-    keywords: ["shard", "shards", "pack", "currency", "wager", "free-roll"],
     inSidebar: true,
     inPalette: true,
   },
@@ -898,6 +898,7 @@ const PALETTE_ORDER: string[] = [
   "nav.creators.analytics",
   "nav.promo",
   "nav.packs",
+  "nav.rewards.shards",
   "nav.cards",
   "nav.battles",
   "nav.transactions.packs",
@@ -910,7 +911,6 @@ const PALETTE_ORDER: string[] = [
   "nav.rain",
   "nav.rewards.leaderboards",
   "nav.rewards.level-up",
-  "nav.rewards.shards",
   "nav.creators.settings",
   "nav.rewards.settings",
   "nav.my-profile",

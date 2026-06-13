@@ -10,7 +10,7 @@ let ensured = false;
 
 /**
  * The full out-of-the-box permission set for the `pack_creator` role:
- * the four content pages it works on plus every content capability for
+ * the five content pages it works on plus every content capability for
  * packs, cards, sets and the upgrader output pool. This is the single
  * source of truth shared by:
  *
@@ -35,6 +35,7 @@ export const PACK_CREATOR_DEFAULT_PAGES: readonly string[] = [
   // Pages — needed both for the sidebar (built from allowed_pages) and
   // for requirePageAccess on each page to pass.
   "/packs",
+  "/rewards/shards",
   "/cards",
   "/sets",
   "/upgrader",

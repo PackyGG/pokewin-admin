@@ -15,8 +15,17 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { deletePack } from "../actions";
+import { invalidatePackDetailCache } from "../pack-detail-cache";
 
-export function DeletePackButton({ packId, packName }: { packId: string; packName: string }) {
+export function DeletePackButton({
+  packId,
+  packName,
+  onDeleted,
+}: {
+  packId: string;
+  packName: string;
+  onDeleted?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -25,8 +34,11 @@ export function DeletePackButton({ packId, packName }: { packId: string; packNam
     startTransition(async () => {
       try {
         await deletePack(packId);
+        invalidatePackDetailCache(packId);
         toast.success("Pack deleted");
-        router.push("/packs");
+        setOpen(false);
+        onDeleted?.();
+        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to delete pack");
       }
