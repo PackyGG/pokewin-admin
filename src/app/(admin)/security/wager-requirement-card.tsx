@@ -59,18 +59,9 @@ const FIELDS: {
     help: (
       <>
         Multiplier on lifetime general bonus winnings (rain, prizes, rewards,
-        sponsored battles). Default 1×. <code>0×</code> disables it. Affiliate
-        claims, rakeback, and tips have their own requirements below.
-      </>
-    ),
-  },
-  {
-    key: "affiliate_wager_requirement_bps",
-    label: "Affiliate-claims requirement",
-    help: (
-      <>
-        Multiplier on lifetime affiliate commission claims a user must wager
-        before any withdrawal. Default 1×. <code>0×</code> disables it.
+        sponsored battles). Default 1×. <code>0×</code> disables it. Rakeback
+        and tips have their own requirements below; affiliate claims are
+        configured on Creator Settings.
       </>
     ),
   },

@@ -4,8 +4,10 @@ import { getAffiliateLevelConfigs } from "@/lib/queries/creators";
 import { getSiteConfigValues } from "@/lib/queries/site-config";
 import { LevelConfigCard } from "./level-config-card";
 import { AffiliateExpirationCard } from "./affiliate-expiration-card";
+import { AffiliateClaimsWagerRequirementCard } from "./affiliate-claims-wager-requirement-card";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { getWagerRequirementDefaults } from "@/lib/backend-api/wager-requirements";
 
 export const metadata = { title: "Creator Settings" };
 
@@ -27,6 +29,15 @@ export default async function CreatorSettingsPage() {
       ? expirationDays
       : null;
 
+  let affiliateClaimsWagerRequirementBps: number | null = null;
+  try {
+    const wagerDefaults = await getWagerRequirementDefaults();
+    affiliateClaimsWagerRequirementBps =
+      wagerDefaults.affiliate_wager_requirement_bps;
+  } catch {
+    affiliateClaimsWagerRequirementBps = null;
+  }
+
   return (
     <div className="space-y-6">
       <PageHero>
@@ -39,6 +50,10 @@ export default async function CreatorSettingsPage() {
 
       <FadeIn className="space-y-6">
         <AffiliateExpirationCard initialDays={initialDays} />
+
+        <AffiliateClaimsWagerRequirementCard
+          initialBps={affiliateClaimsWagerRequirementBps}
+        />
 
         {configs.length === 0 ? (
           <p className="text-sm text-muted-foreground">

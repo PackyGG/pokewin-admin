@@ -30,7 +30,6 @@ const InputSchema = z
   .object({
     wager_requirement_bps: Bps.optional(),
     bonus_wager_requirement_bps: Bps.optional(),
-    affiliate_wager_requirement_bps: Bps.optional(),
     rakeback_wager_requirement_bps: Bps.optional(),
     tips_wager_requirement_bps: Bps.optional(),
     wager_weight_packs_bps: Bps.optional(),
@@ -92,5 +91,6 @@ export async function updateWagerRequirementDefaultsAction(
   });
 
   revalidatePath("/security");
+  revalidatePath("/creators/settings");
   return { success: true, data: updated };
 }
