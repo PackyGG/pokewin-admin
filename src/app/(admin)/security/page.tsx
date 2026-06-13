@@ -8,6 +8,7 @@ import {
   Hourglass,
   Bitcoin,
   Gauge,
+  Sparkles,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getSiteConfig } from "@/lib/queries/security";
@@ -25,6 +26,8 @@ import { SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./source-wager-weights-key
 import { SourceWagerWeightsCard } from "./source-wager-weights-card";
 import { SHARD_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./shard-wager-weights-keys";
 import { ShardWagerWeightsCard } from "./shard-wager-weights-card";
+import { SHARD_CONFIG_SITE_CONFIG_KEYS } from "./shard-config-keys";
+import { ShardConfigCard } from "./shard-config-card";
 import { REWARD_EXPIRY_SITE_CONFIG_KEYS } from "./reward-expiry-keys";
 import { RewardExpiryCard } from "./reward-expiry-card";
 import {
@@ -47,6 +50,10 @@ import {
   getShardWagerWeights,
   type ShardWagerWeights,
 } from "@/lib/backend-api/shard-wager-weights";
+import {
+  getShardConfig,
+  type ShardConfig,
+} from "@/lib/backend-api/shard-config";
 import {
   getRewardExpiry,
   type RewardExpiry,
@@ -81,6 +88,7 @@ export default async function SecurityPage() {
     ...RAKEBACK_WAGER_WEIGHT_SITE_CONFIG_KEYS,
     ...SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS,
     ...SHARD_WAGER_WEIGHT_SITE_CONFIG_KEYS,
+    ...SHARD_CONFIG_SITE_CONFIG_KEYS,
     ...REWARD_EXPIRY_SITE_CONFIG_KEYS,
   ]);
   const config = allConfig.filter((row) => !movedKeys.has(row.key));
@@ -133,6 +141,15 @@ export default async function SecurityPage() {
     shardWeights = await getShardWagerWeights();
   } catch {
     shardWeights = null;
+  }
+
+  // Same non-critical pattern for the shard earn rate (USD per shard) — the
+  // backend branch may not be deployed yet.
+  let shardConfig: ShardConfig | null = null;
+  try {
+    shardConfig = await getShardConfig();
+  } catch {
+    shardConfig = null;
   }
 
   // Same non-critical pattern for the odds-based (bet-multiplier) wager
@@ -190,6 +207,13 @@ export default async function SecurityPage() {
         <div className="space-y-3">
           <SectionHeading icon={Percent} title="Rakeback Wager Weights" />
           <RakebackWagerWeightsCard initial={rakebackWeights} />
+        </div>
+      </FadeIn>
+
+      <FadeIn>
+        <div className="space-y-3">
+          <SectionHeading icon={Sparkles} title="Shard Earn Rate" />
+          <ShardConfigCard initial={shardConfig} />
         </div>
       </FadeIn>
 
