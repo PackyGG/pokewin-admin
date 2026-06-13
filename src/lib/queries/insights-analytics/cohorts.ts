@@ -53,7 +53,12 @@ const MAX_COHORTS = 16;
 const MAX_PERIODS = 10;
 
 type CohortRawRow = {
-  cohort: Date;
+  // `date_trunc(...)::date` comes back from the driver as a `Date` on a
+  // cache MISS, but `cachedCohortRows` is behind `unstable_cache`, which
+  // JSON-serializes its payload — so on a cache HIT `cohort` is the ISO
+  // string that serialization produced. The aggregation loop below coerces
+  // it to a real `Date` once; the type reflects both shapes so it can't lie.
+  cohort: Date | string;
   size: string;
   period_index: number | null;
   retained: string | null;
@@ -211,11 +216,20 @@ export async function getInsightsCohorts(
   >();
 
   for (const row of rows) {
-    const key = row.cohort.toISOString().slice(0, 10);
+    // Coerce ONCE: `row.cohort` is a `Date` on a cache miss but the ISO
+    // string `unstable_cache`'s JSON serialization produced on a hit. A
+    // plain string has no `.toISOString()` (that was the TypeError). The
+    // bucket value is a `YYYY-MM-DD` date, so `new Date("YYYY-MM-DD")` is
+    // UTC-midnight — `entry.date` carries that real Date through the
+    // `.getTime()` sort, the `Intl…format()` label, and the `.toISOString()`
+    // output below, all from one normalized value.
+    const cohortDate =
+      row.cohort instanceof Date ? row.cohort : new Date(row.cohort);
+    const key = cohortDate.toISOString().slice(0, 10);
     let entry = byCohort.get(key);
     if (!entry) {
       entry = {
-        date: row.cohort,
+        date: cohortDate,
         size: Number(row.size),
         retained: Array(MAX_PERIODS).fill(0),
         wager: Array(MAX_PERIODS).fill(0),
