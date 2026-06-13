@@ -16,7 +16,7 @@ import { Redis } from "@upstash/redis";
  * It MUST be impossible for this module to change behavior or throw to a
  * caller when it is dormant or when Redis misbehaves:
  *
- *   • NO env configured (no UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN)
+ *   • NO env configured (no KV_REST_API_URL/_TOKEN or UPSTASH_REDIS_REST_URL/_TOKEN)
  *     → `getRedis()` returns `null` and `cacheGetOrSet` calls the wrapped
  *       function directly. The caller sees EXACTLY today's behavior: same
  *       data, same order, same pagination, same numbers.
@@ -32,10 +32,11 @@ import { Redis } from "@upstash/redis";
  * SAFETY: this NEVER talks to the prod Redis
  * ─────────────────────────────────────────────────────────────────────────
  * Upstash is a SEPARATE, dedicated instance reached over its REST API. This
- * module only ever constructs a client from UPSTASH_REDIS_REST_URL +
- * UPSTASH_REDIS_REST_TOKEN. It does NOT read the app's `REDIS_URL` / prod
- * Redis connection and performs only cache GET/SET/DEL against the dedicated
- * Upstash instance — never any prod-Redis or prod-DB write. The prod game DB
+ * module only ever constructs a client from the dedicated Upstash REST creds
+ * (KV_REST_API_URL/_TOKEN as injected by the Vercel Upstash integration, or
+ * UPSTASH_REDIS_REST_URL/_TOKEN). It does NOT read the app's `REDIS_URL` /
+ * `KV_URL` (TCP) / prod Redis connection and performs only cache GET/SET/DEL
+ * against the dedicated Upstash instance — never any prod-Redis or prod-DB write. The prod game DB
  * and prod Redis remain strictly off-limits / read-only; nothing here touches
  * them.
  */
@@ -55,8 +56,18 @@ let resolvedClient: Redis | null | undefined;
 export function getRedis(): Redis | null {
   if (resolvedClient !== undefined) return resolvedClient;
 
-  const url = process.env.UPSTASH_REDIS_REST_URL?.trim();
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
+  // The Vercel "Upstash for Redis" Marketplace integration injects the
+  // Vercel-KV REST names (KV_REST_API_URL / KV_REST_API_TOKEN); a native
+  // Upstash setup uses UPSTASH_REDIS_REST_URL / _TOKEN. Accept either — KV
+  // names first, since that's what our Vercel integration provisions. We
+  // deliberately do NOT read REDIS_URL / KV_URL: those are TCP endpoints, while
+  // the @upstash/redis SDK speaks the dedicated REST API via url + token only.
+  const url = (
+    process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL
+  )?.trim();
+  const token = (
+    process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN
+  )?.trim();
 
   if (!url || !token) {
     resolvedClient = null;
