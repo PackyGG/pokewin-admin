@@ -81,6 +81,10 @@ import {
   affiliateGlobalScaleFactorV2,
   effectiveAffiliateRateV2,
   topAffiliateTierEdgeShare,
+  // Specs #15 / #16 — reward edge-chip reactivity
+  affiliateWorstCaseEdgeDrag,
+  affiliateWagerReqFactorV2,
+  REMOVE_WAGER_REQ_COMMISSION_BASE_MULT,
   // Spec #11
   rainPlanV2,
   // Spec #14
@@ -1596,6 +1600,160 @@ check("reactivity: EVERY lever moves its row + profit delta on the HEALTHY fixtu
 
 check("reactivity: EVERY lever stays LIVE on the DEGRADED-ANCHORS fixture (the owner's bug)", () => {
   assertReactive(makeDegradedAnchorsBaseline(), "degraded-anchors");
+});
+
+// ─── 16b. Reward EDGE-CHIP reactivity (owner BUG #15 rakeback + #16 affiliate) ──
+//
+// The reactivity check above pins the lever-ROW $ + profitDelta. These bugs
+// were one layer up: the EDGE CHIP the panel renders next to the title.
+//   • #15 rakeback chip = leverEdgeDragPct(projection,"rakeback") =
+//     plannedCost ÷ plannedWager — must reflect the PLANNED lever-driven cost
+//     (lowering a cadence / raising instant-claim drops it), NOT the frozen
+//     realized "Realized this window" headline (baseline.rakebackCost).
+//   • #16 affiliate chip = affiliateWorstCaseEdgeDrag(baseline,levers) — must
+//     move when "Keep 1× wager requirement" toggles OFF (×1.5385 breakage),
+//     compose with the global scale, and be the EXACT identity when ON.
+// The chip formulas are replicated verbatim here so the harness stays pure
+// (no .tsx / React import); they MUST match `reward-edge-drag.tsx`.
+
+/** rakeback / generic reward chip — plannedCost ÷ planned wager (verbatim). */
+function rakebackChipPct(p: ReturnType<typeof projectEdgePlanV2>): number {
+  const wager = Math.max(0, p.plannedWager ?? p.currentWager ?? 0);
+  if (wager <= 0) return 0;
+  const lever = p.levers.find((l) => l.key === "rakeback");
+  return lever ? lever.plannedCost / wager : 0;
+}
+
+check("chip #15: rakeback edge chip reflects PLANNED, not the realized headline", () => {
+  const d = defaultLeversV2(baseline);
+  const base = projectEdgePlanV2(baseline, d);
+  const baseChip = rakebackChipPct(base);
+  const wager = base.plannedWager;
+  const realizedChip = baseline.rakebackCost / wager;
+
+  // At the default mount the chip equals realized/wager by the $0 invariant.
+  approx(baseChip, realizedChip, 1e-9, "default rakeback chip = realized/wager");
+
+  // Lowering EVERY cadence rate must DROP the chip below the realized anchor.
+  const lowered = projectEdgePlanV2(baseline, {
+    ...d,
+    rakebackRates: {
+      daily: d.rakebackRates.daily / 2,
+      weekly: d.rakebackRates.weekly / 2,
+      monthly: d.rakebackRates.monthly / 2,
+    },
+  });
+  const loweredChip = rakebackChipPct(lowered);
+  assert(
+    loweredChip < baseChip - 1e-9,
+    `lowering cadence must drop the rakeback chip (got ${loweredChip} vs ${baseChip})`,
+  );
+  // The dropped chip must NOT equal the frozen realized readout.
+  assert(
+    Math.abs(loweredChip - realizedChip) > 1e-9,
+    "lowered rakeback chip must differ from realized/wager (chip ≠ realized)",
+  );
+
+  // Raising instant-claim adoption (with a sub-100% payout) must ALSO drop it.
+  const instant = projectEdgePlanV2(baseline, {
+    ...d,
+    rakebackInstantPayoutPct: 0.6,
+    rakebackInstantAdoption: 0.3,
+  });
+  const instantChip = rakebackChipPct(instant);
+  assert(
+    instantChip < baseChip - 1e-9,
+    `raising instant adoption must drop the rakeback chip (got ${instantChip} vs ${baseChip})`,
+  );
+
+  // Instant-claim what-if reduces the PLANNED cost by exactly the instant
+  // factor (1 − adoption + adoption × payout) on top of the rate ratio.
+  const rbBase = base.levers.find((l) => l.key === "rakeback")!;
+  const rbInstant = instant.levers.find((l) => l.key === "rakeback")!;
+  const instantFactor = 1 - 0.3 + 0.3 * 0.6; // 0.88
+  approx(
+    rbInstant.plannedCost,
+    rbBase.plannedCost * instantFactor,
+    CENT,
+    "instant-claim trims planned rakeback by the instant factor",
+  );
+});
+
+check("chip #16: affiliate wager-req toggle moves the edge chip by the breakage factor", () => {
+  const d = defaultLeversV2(baseline);
+  const baseChip = affiliateWorstCaseEdgeDrag(baseline, d);
+  assert(baseChip > 0, "fixture must have a positive affiliate chip");
+
+  // The breakage factor helper: 1 when ON, the v1 constant when OFF.
+  assert(affiliateWagerReqFactorV2({ affiliateWagerReqEnabled: true }) === 1, "factor ON = 1");
+  assert(
+    affiliateWagerReqFactorV2({ affiliateWagerReqEnabled: false }) === REMOVE_WAGER_REQ_COMMISSION_BASE_MULT,
+    "factor OFF = breakage constant",
+  );
+
+  // ON = today = exact identity (the default state).
+  const onChip = affiliateWorstCaseEdgeDrag(baseline, {
+    ...d,
+    affiliateWagerReqEnabled: true,
+  });
+  assert(onChip === baseChip, "wager-req ON is the exact identity");
+
+  // OFF raises the chip by EXACTLY the v1 breakage factor (≈1.5385).
+  const offLevers = { ...d, affiliateWagerReqEnabled: false };
+  const offChip = affiliateWorstCaseEdgeDrag(baseline, offLevers);
+  approx(
+    offChip,
+    baseChip * REMOVE_WAGER_REQ_COMMISSION_BASE_MULT,
+    1e-9,
+    "wager-req OFF raises the affiliate chip ×1.5385",
+  );
+  assert(offChip > baseChip, "wager-req OFF must move the chip (it did nothing before)");
+
+  // profitDelta moves by the affiliate lever delta when the toggle flips.
+  const onProj = projectEdgePlanV2(baseline, d);
+  const offProj = projectEdgePlanV2(baseline, offLevers);
+  assert(
+    Math.abs(offProj.profitDelta - onProj.profitDelta) > CENT,
+    "wager-req OFF must move profitDelta",
+  );
+  const affOn = onProj.levers.find((l) => l.key === "affiliate")!;
+  const affOff = offProj.levers.find((l) => l.key === "affiliate")!;
+  approx(
+    affOff.plannedCost,
+    affOn.currentCost * REMOVE_WAGER_REQ_COMMISSION_BASE_MULT,
+    CENT,
+    "affiliate planned cost OFF = current × 1.5385 (rates unchanged)",
+  );
+
+  // Composition with the #9 global scale: scale 50% THEN wager-req OFF.
+  const scale50 = affiliateWorstCaseEdgeDrag(baseline, {
+    ...d,
+    affiliateGlobalScalePct: 50,
+  });
+  const scale50OffChip = affiliateWorstCaseEdgeDrag(baseline, {
+    ...d,
+    affiliateGlobalScalePct: 50,
+    affiliateWagerReqEnabled: false,
+  });
+  approx(
+    scale50OffChip,
+    scale50 * REMOVE_WAGER_REQ_COMMISSION_BASE_MULT,
+    1e-9,
+    "scale 50% + wager-req OFF = scaled chip × 1.5385 (scale-then-breakage)",
+  );
+  // And the lever $ composes the same way: base × 0.5 × 1.5385.
+  const scale50OffProj = projectEdgePlanV2(baseline, {
+    ...d,
+    affiliateGlobalScalePct: 50,
+    affiliateWagerReqEnabled: false,
+  });
+  const affScaleOff = scale50OffProj.levers.find((l) => l.key === "affiliate")!;
+  approx(
+    affScaleOff.plannedCost,
+    affOn.currentCost * 0.5 * REMOVE_WAGER_REQ_COMMISSION_BASE_MULT,
+    CENT,
+    "affiliate planned: base × 0.5 × 1.5385",
+  );
 });
 
 // ─── 17. Page-wide wager scenario (owner: "wager amounts 1,2,3,4,5x dont work") ──

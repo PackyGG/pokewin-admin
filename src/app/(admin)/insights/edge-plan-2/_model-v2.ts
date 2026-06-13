@@ -880,13 +880,38 @@ export function topAffiliateTierEdgeShare(
   return Math.max(0, effectiveAffiliateRateV2(levers, top.level, top.currentRate));
 }
 
+/**
+ * The wager-requirement breakage factor on affiliate commission (owner spec
+ * #16). ON (default) = 1 (today's behavior, exact identity). OFF = the v1
+ * breakage model `REMOVE_WAGER_REQ_COMMISSION_BASE_MULT` (≈1.5385) — turning
+ * the 1× requirement off makes commission instantly withdrawable, so more
+ * referred GGR becomes payable. This is the SAME factor the projection's
+ * `projectAffiliateCommissionV2` applies to the lever-row $; the chip
+ * (`affiliateWorstCaseEdgeDrag`) must compose it the same way so the edge
+ * chip + profitDelta move together when the toggle flips.
+ */
+export function affiliateWagerReqFactorV2(
+  levers: Pick<PlannedLeversV2, "affiliateWagerReqEnabled">,
+): number {
+  return levers.affiliateWagerReqEnabled
+    ? 1
+    : REMOVE_WAGER_REQ_COMMISSION_BASE_MULT;
+}
+
 export function affiliateWorstCaseEdgeDrag(
   baseline: EdgePlanV2Baseline,
   levers: PlannedLeversV2,
 ): number {
   const houseEdge = plannedMarginBearingHouseEdgeV2(baseline, levers);
   const edgeShare = topAffiliateTierEdgeShare(baseline, levers);
-  return affiliateEdgeShareToWagerDrag(edgeShare, houseEdge);
+  // Compose the wager-requirement breakage factor (spec #16) so toggling
+  // "Keep 1× wager requirement" OFF raises the chip by exactly ×1.5385 — the
+  // SAME factor the lever-row cost / profitDelta use. The global scale is
+  // already folded into `edgeShare` (via `effectiveAffiliateRateV2`), so the
+  // composition order is scale-then-breakage, matching the model's
+  // `rateRatio × reqMult`.
+  const reqFactor = affiliateWagerReqFactorV2(levers);
+  return affiliateEdgeShareToWagerDrag(edgeShare, houseEdge) * reqFactor;
 }
 
 // ─── Raw mathematical edge (owner spec #2) ───────────────────────────────────
