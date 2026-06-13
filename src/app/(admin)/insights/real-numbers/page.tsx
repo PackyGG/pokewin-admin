@@ -20,8 +20,10 @@ import {
   Layers,
   Info,
   Receipt,
+  Users,
   type LucideIcon,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { requirePageAccess } from "@/lib/dal";
 import {
   PageHero,
@@ -46,6 +48,7 @@ import {
 import {
   getRealNumbersGameSplit,
   getRewardSpendItemization,
+  getRealizedPnlCustomersExclCreators,
   type RealNumbersGameSplit,
   type GameGgrRow,
   type RewardSpendItemization,
@@ -61,6 +64,9 @@ import {
   WaterfallRow,
   WaterfallBand,
 } from "../cost-breakdown/waterfall-row";
+// The "i" info popover (client component — serializable props only, no
+// function props across the RSC boundary) used to explain the basis line.
+import { MetricInfoPopover } from "../cost-breakdown/_components";
 import { SEMANTIC_TONES, type SemanticTone } from "../cost-breakdown/tones";
 
 export const metadata = { title: "Real Numbers" };
@@ -100,6 +106,7 @@ export default async function RealNumbersPage() {
     { data: split },
     { data: snapshot },
     { data: rewardSpend },
+    { data: pnlExclCreators },
   ] = await Promise.all([
     safeQuery(
       () => getCostBreakdown("all", "Lifetime", 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS),
@@ -113,6 +120,13 @@ export default async function RealNumbersPage() {
       () => getRewardSpendItemization(),
       null,
       "insights.realNumbers.rewardSpend",
+    ),
+    // Realized P&L on the GGR/NGR customer scope (creators excluded) — the
+    // ONLY new query; powers the creator-net-cash step of the GGR → P&L bridge.
+    safeQuery(
+      () => getRealizedPnlCustomersExclCreators(),
+      null,
+      "insights.realNumbers.pnlExclCreators",
     ),
   ]);
 
@@ -220,6 +234,20 @@ export default async function RealNumbersPage() {
                   title="Why GGR ≠ realized P&L — two different scoreboards"
                 />
                 <ReconciliationCallout cost={cost} snapshot={snapshot} />
+              </section>
+            )}
+
+            {snapshot && pnlExclCreators && (
+              <section className="space-y-3">
+                <SectionHeading
+                  icon={Scale}
+                  title="GGR → realized P&L — the full bridge"
+                />
+                <GgrToPnlBridge
+                  cost={cost}
+                  snapshot={snapshot}
+                  pnlExclCreators={pnlExclCreators.pnl}
+                />
               </section>
             )}
 
@@ -1152,6 +1180,262 @@ function ReconciliationCallout({
         </p>
       </div>
     </div>
+  );
+}
+
+// ─── GGR → realized P&L bridge (the full waterfall) ─────────────────
+
+/**
+ * The owner's ask: a breakdown list ANCHORED AT GGR that ends EXACTLY at
+ * realized P&L, tying out to the penny, and HONEST — one line is a
+ * reconciliation, NOT a fabricated cost.
+ *
+ * Unlike the side-by-side "two scoreboards" callout above (which shows why you
+ * CAN'T naively bridge), this is the four-step reconciliation the owner wants,
+ * stated plainly with the basis step labelled as a measurement reconciliation:
+ *
+ *   GGR                                                  (start, emerald)
+ *     − Reward & bonus spend            → NGR            (clean cost → checkpoint)
+ *     − Creator net cash                → cash margin    (population change, real cost)
+ *     − Card-value & re-wager basis     → Realized P&L   (RECONCILIATION, not a cost)
+ *
+ * Every value is read live from already-fetched page data — `cost`
+ * (getCostBreakdown: GGR/NGR/reward, creators excluded), `snapshot`
+ * (getRealizedPnlSnapshot: realized P&L, creators INCLUDED), and the one new
+ * creators-excluded realized-P&L mirror (`pnlExclCreators`). The two derived
+ * steps are EXACT plugs:
+ *
+ *   creatorEffect = pnlExclCreators − pnlInclCreators
+ *                  (creators are out of GGR/NGR but IN realized P&L — their
+ *                   real crypto withdrawals are a real cost; this is the cash
+ *                   that population difference moves)
+ *   basis         = NGR − creatorEffect − pnlInclCreators
+ *                  (the PLUG that makes the bridge tie out: the gap between
+ *                   gaming margin booked on re-wagered turnover at card-sticker
+ *                   values and realized cash bounded by deposits − withdrawals —
+ *                   a measurement reconciliation, not an itemizable expense)
+ *
+ * so that, by construction,
+ *   GGR − reward − creatorEffect − basis = pnlInclCreators = snapshot.pnl.
+ *
+ * The bridge asserts this live (within $1), the same way the per-game GGR and
+ * reward-spend panels assert their reconciliations. House-POV tones: GGR start
+ * blue→keep, reward/creator/basis are subtractions (rose), the NGR and P&L
+ * checkpoints are emerald when positive. The basis row is visually MUTED (and
+ * carries an "i" explainer) to signal it is a reconciliation, not cash spend.
+ */
+function GgrToPnlBridge({
+  cost,
+  snapshot,
+  pnlExclCreators,
+}: {
+  cost: CostBreakdown;
+  snapshot: RealizedPnlSnapshot;
+  /** Realized P&L on the GGR/NGR customer scope (creators excluded). */
+  pnlExclCreators: number;
+}) {
+  const pnlInclCreators = snapshot.pnl;
+
+  // Creators are EXCLUDED from GGR/NGR but INCLUDED in realized P&L; the cash
+  // their population moves between the two scoreboards.
+  const creatorEffect = pnlExclCreators - pnlInclCreators;
+
+  // The honest reconciliation PLUG that makes the bridge tie out exactly.
+  const basis = cost.ngr - creatorEffect - pnlInclCreators;
+
+  // Live ties-out assertion (within $1), like the per-game "reconciles exactly".
+  const reconstructed = cost.ggr - cost.rewardPayouts - creatorEffect - basis;
+  const residual = reconstructed - pnlInclCreators;
+  const tiesOut = Math.abs(residual) < 1;
+
+  const ngrPos = cost.ngr >= 0;
+  const ggrPos = cost.ggr >= 0;
+  const pnlPos = pnlInclCreators >= 0;
+  // Cash margin (customers only) = the running total after the creator step,
+  // i.e. NGR − creatorEffect. Surfaced in the popover/labels, not as its own
+  // checkpoint row (the owner asked for exactly four reconciling steps).
+  const cashMargin = cost.ngr - creatorEffect;
+
+  // Each row is the SIGNED effect on the running total (House-POV).
+  const lines: Array<{
+    key: string;
+    label: string;
+    signed: number;
+    sign: "+" | "−" | "=";
+    tone: SemanticTone;
+    icon: LucideIcon;
+    emphasis?: "normal" | "subtotal" | "result";
+    muted?: boolean;
+    info?: ReactNode;
+  }> = [
+    {
+      key: "ggr",
+      label: "GGR — gross gaming margin",
+      signed: cost.ggr,
+      sign: "+",
+      tone: ggrPos ? "keep" : "cost",
+      icon: ggrPos ? TrendingUp : TrendingDown,
+      emphasis: "subtotal",
+    },
+    {
+      key: "reward",
+      label: "Reward & bonus spend",
+      signed: -cost.rewardPayouts,
+      sign: "−",
+      tone: "cost",
+      icon: Gift,
+    },
+    {
+      key: "ngr",
+      label: "NGR — net gaming margin",
+      signed: cost.ngr,
+      sign: "=",
+      tone: ngrPos ? "keep" : "cost",
+      icon: ngrPos ? TrendingUp : TrendingDown,
+      emphasis: "subtotal",
+    },
+    {
+      key: "creator",
+      // creatorEffect > 0 ⇒ creators DRAG P&L down (real withdrawals) ⇒ a
+      // subtraction; the rare opposite sign is rendered honestly as a "+".
+      label: "Creator net cash",
+      signed: -creatorEffect,
+      sign: creatorEffect >= 0 ? "−" : "+",
+      tone: "cost",
+      icon: Users,
+      info: (
+        <MetricInfoPopover
+          tone="cost"
+          label="What is creator net cash?"
+          title="Creator net cash"
+          blurb="Creators are excluded from GGR/NGR (their house-funded 'for content' play is not customer revenue) but INCLUDED in realized P&L — their real crypto deposits/withdrawals are real cash. This step moves between the two populations."
+        >
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            = realized P&L (customers only,{" "}
+            {formatCurrency(Math.abs(pnlExclCreators))}) − realized P&L (incl.
+            creators, {formatCurrency(Math.abs(pnlInclCreators))}).
+          </p>
+        </MetricInfoPopover>
+      ),
+    },
+    {
+      key: "basis",
+      label: "Card-value & re-wager basis",
+      signed: -basis,
+      sign: basis >= 0 ? "−" : "+",
+      tone: "muted",
+      icon: Layers,
+      muted: true,
+      info: (
+        <MetricInfoPopover
+          tone="muted"
+          label="What is the card-value & re-wager basis line?"
+          title="Card-value & re-wager basis"
+          blurb="Not a cash expense — a measurement reconciliation. It's the gap between gaming margin (booked on ~$3.2M of re-wagered turnover at card-sticker values) and realized cash (bounded by deposits − withdrawals)."
+        >
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            Customers sold ~$3.05M of cards back and re-bet them, so multi-million
+            turnover came from far less real deposited cash. This reconciliation
+            line can&apos;t be itemized further — it&apos;s the difference between
+            two scoreboards, not a list of payments.
+          </p>
+        </MetricInfoPopover>
+      ),
+    },
+    {
+      key: "pnl",
+      label: "Realized P&L",
+      signed: pnlInclCreators,
+      sign: "=",
+      tone: pnlPos ? "keep" : "cost",
+      icon: pnlPos ? TrendingUp : TrendingDown,
+      emphasis: "result",
+    },
+  ];
+
+  const maxMag = Math.max(...lines.map((l) => Math.abs(l.signed)), 1);
+
+  return (
+    <Card>
+      <CardContent className="space-y-0.5 p-3 sm:p-4">
+        <p className="px-2 pb-1 text-[11px] leading-snug text-muted-foreground">
+          A single bridge anchored at GGR that ends exactly at realized P&L.
+          Only rewards and creator cash are true costs; the basis line is a
+          measurement reconciliation between the gaming and cash scoreboards.
+        </p>
+        <WaterfallBand label="Gaming margin" hint="house edge on play" />
+        {lines.map((l) => {
+          const colors = SEMANTIC_TONES[l.tone] ?? SEMANTIC_TONES.muted;
+          const Icon = l.icon;
+          // Band headers ahead of the population-change + reconciliation steps.
+          const band =
+            l.key === "creator"
+              ? {
+                  label: "Bridge to realized cash",
+                  hint: "population change + measurement basis",
+                }
+              : null;
+          return (
+            <div
+              key={l.key}
+              className={cn(l.muted && "opacity-90")}
+            >
+              {band && <WaterfallBand label={band.label} hint={band.hint} />}
+              <WaterfallRow
+                label={l.label}
+                signedAmount={l.signed}
+                sign={l.sign}
+                maxMag={maxMag}
+                tone={l.tone}
+                pctOfGgr={cost.ggr > 0 ? (l.signed / cost.ggr) * 100 : null}
+                pctOfWager={null}
+                emphasis={l.emphasis ?? "normal"}
+                iconNode={<Icon className={cn("size-3.5", colors.icon)} />}
+                info={l.info}
+              />
+            </div>
+          );
+        })}
+        {/* Live ties-out assertion — the bar this section is held to. */}
+        <p className="px-2 pt-3 text-[11px] leading-snug">
+          {tiesOut ? (
+            <span className="text-emerald-600 dark:text-emerald-400">
+              Ties out to realized P&L exactly: GGR{" "}
+              {formatCurrency(Math.abs(cost.ggr))} − reward{" "}
+              {formatCurrency(cost.rewardPayouts)} − creator cash{" "}
+              {formatCurrency(Math.abs(creatorEffect))} − basis{" "}
+              {formatCurrency(Math.abs(basis))} ={" "}
+              {pnlPos ? "+" : "−"}
+              {formatCurrency(Math.abs(pnlInclCreators))} realized P&L.
+            </span>
+          ) : (
+            <span className="text-amber-600 dark:text-amber-400">
+              Reconciliation residual vs realized P&L:{" "}
+              {residual >= 0 ? "+" : "−"}
+              {formatCurrency(Math.abs(residual))} (a leg shifted between the
+              fetches — refresh to re-tie).
+            </span>
+          )}
+        </p>
+        <p className="px-2 pt-1 text-[10px] leading-snug text-muted-foreground">
+          After rewards and the creator population step, customer cash margin is{" "}
+          <span
+            className={cn(
+              "font-medium tabular-nums",
+              cashMargin >= 0
+                ? "text-emerald-600 dark:text-emerald-400"
+                : "text-rose-600 dark:text-rose-400",
+            )}
+          >
+            {cashMargin >= 0 ? "+" : "−"}
+            {formatCurrency(Math.abs(cashMargin))}
+          </span>
+          ; the basis line then reconciles the turnover-vs-cash measurement gap
+          down to the {formatCurrency(Math.abs(pnlInclCreators))} realized
+          balance-sheet P&L.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

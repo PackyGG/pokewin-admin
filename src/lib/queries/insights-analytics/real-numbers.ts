@@ -8,6 +8,16 @@ import { withTiming } from "@/lib/observability/query-timings";
 import { MS_PER_DAY, MS_PER_MINUTE } from "@/lib/utils/time";
 import { getMetricsScope } from "@/lib/metrics/scope";
 import { upgraderMetrics } from "@/lib/metrics/queries";
+// READ-ONLY import of the canonical house-P&L formula + the fake-balance
+// carve-out predicates. The creators-excluded realized-P&L mirror below uses
+// the EXACT SAME arithmetic the balance-sheet snapshot (`_realized-pnl.ts`)
+// uses — it only swaps the user population (drops creators too) — so the two
+// can never drift on anything but the documented creator-scope difference.
+import { computeHousePnl } from "@/lib/queries/pnl";
+import {
+  officialStreamAdjustmentSqlPredicate,
+  removeLockedBalanceAdjustmentSqlPredicate,
+} from "@/lib/balance-adjustment-categories";
 import {
   GAMING_PAYOUT_TYPES_SQL,
   REWARD_PAYOUT_TYPES,
@@ -627,5 +637,138 @@ export async function getRewardSpendItemization(): Promise<RewardSpendItemizatio
       cutoffIso,
       lookbackDays: INSIGHTS_HUB_WAGER_LOOKBACK_DAYS,
     };
+  });
+}
+
+// ─── Realized P&L on the GGR/NGR customer scope (creators EXCLUDED) ──
+//
+// The GGR → realized-P&L BRIDGE on the Real Numbers page is anchored at GGR
+// (a gaming-margin number scoped to real customers, creators dropped wholesale)
+// and must end exactly at the canonical realized P&L
+// (`getRealizedPnlSnapshot().pnl`, which INCLUDES creators — their real crypto
+// withdrawals are a real cost). The bridge subtracts a "creator net cash" step
+// to move between the two populations. To quantify that step EXACTLY we need
+// the realized P&L computed on the GGR/NGR scope — i.e. the SAME balance-sheet
+// formula as the snapshot, but with creators excluded too:
+//
+//   creatorEffect = pnlCustomersExclCreators − pnlInclCreators
+//
+// This module exposes ONLY `pnlCustomersExclCreators`. It mirrors
+// `_realized-pnl.ts`'s `realizedPnlSnapshotInner` arithmetic LINE-FOR-LINE
+// (deposits − [balance_withdrawn + card_withdrawn(pending/processing/shipped/
+// completed)] − [available+locked − official_stream − remove_locked] −
+// inventory(unsold/unexchanged/unlocked) − unclaimed vouchers − unclaimed
+// rakeback), via the SAME `computeHousePnl` helper and the SAME fake-balance
+// carve-out predicates — the ONLY change is the user population: the `real_users`
+// CTE is the canonical customer scope (`getMetricsScope().userScopeSql` =
+// role NOT IN ('admin','support','creator') + the excluded-users blacklist),
+// instead of the snapshot's `role NOT IN ('admin','support')`. Read-only.
+//
+// Note on scope mechanics: these are PER-USER balance-sheet sums (balances,
+// inventory, vouchers, rakeback), so the role-based `userScopeSql` user set is
+// the complete and correct creator exclusion here. The creator-on-session
+// per-row timestamp predicate (`notInCreatorSession`) is a ledger-row filter,
+// not applicable to per-user balance totals, so it is intentionally not used —
+// dropping creators wholesale by role already removes every creator's balances.
+
+/** Realized P&L on the GGR/NGR customer scope (creators excluded). */
+export type RealizedPnlCustomersExclCreators = {
+  /**
+   * House-perspective realized P&L on the canonical customer scope (staff +
+   * creators + blacklist dropped). Same five-term formula as the balance-sheet
+   * snapshot, plus the unclaimed-rakeback liability — so it is directly
+   * comparable to `getRealizedPnlSnapshot().pnl` (the difference is purely the
+   * creator population).
+   */
+  pnl: number;
+};
+
+const cachedPnlCustomersExclCreators = unstable_cache(
+  async (userScopeSql: string): Promise<RealizedPnlCustomersExclCreators> => {
+    const db = await getDb();
+    // `userScopeSql` is the canonical `(SELECT id FROM "user" u WHERE …)`
+    // subquery from getMetricsScope (staff + creators + blacklist dropped).
+    // Mirror the snapshot's per-user balance-sheet aggregates exactly, just
+    // over this population. (No `WITH real_users` rename needed — the scope
+    // subquery is inlined directly as the `user_id IN (...)` set, identical in
+    // meaning to the snapshot's CTE.)
+    const rows = await db.$queryRawUnsafe<
+      {
+        deposited: string;
+        balance_withdrawn: string;
+        card_withdrawn: string;
+        available_balance: string;
+        locked_balance: string;
+        inventory: string;
+        vouchers: string;
+        unclaimed_rakeback: string;
+        official_stream_net: string;
+        remove_locked_net: string;
+      }[]
+    >(`
+      SELECT
+        COALESCE((SELECT SUM(total_deposited::numeric)     FROM balances                 WHERE user_id IN ${userScopeSql}), 0)::text AS deposited,
+        COALESCE((SELECT SUM(total_withdrawn::numeric)     FROM balances                 WHERE user_id IN ${userScopeSql}), 0)::text AS balance_withdrawn,
+        COALESCE((SELECT SUM(total_value_usd::numeric)     FROM card_withdrawal_requests  WHERE status IN ('pending','processing','shipped','completed') AND user_id IN ${userScopeSql}), 0)::text AS card_withdrawn,
+        COALESCE((SELECT SUM(available_balance::numeric)   FROM balances                 WHERE user_id IN ${userScopeSql}), 0)::text AS available_balance,
+        COALESCE((SELECT SUM(locked_balance::numeric)      FROM balances                 WHERE user_id IN ${userScopeSql}), 0)::text AS locked_balance,
+        COALESCE((SELECT SUM(value_at_obtained::numeric)   FROM user_inventory            WHERE sold_at IS NULL AND exchanged_at IS NULL AND withdrawal_locked_at IS NULL AND user_id IN ${userScopeSql}), 0)::text AS inventory,
+        COALESCE((SELECT SUM(value::numeric)               FROM vouchers                  WHERE claimed_at IS NULL AND user_id IN ${userScopeSql}), 0)::text AS vouchers,
+        COALESCE((SELECT SUM(rakeback_amount_usd::numeric) FROM rakeback_claims           WHERE claimed_at IS NULL AND user_id IN ${userScopeSql}), 0)::text AS unclaimed_rakeback,
+        COALESCE((SELECT SUM(amount::numeric) FROM ledger_transactions WHERE status = 'completed' AND ${officialStreamAdjustmentSqlPredicate()} AND user_id IN ${userScopeSql}), 0)::text AS official_stream_net,
+        COALESCE((SELECT SUM(amount::numeric) FROM ledger_transactions WHERE status = 'completed' AND ${removeLockedBalanceAdjustmentSqlPredicate()} AND user_id IN ${userScopeSql}), 0)::text AS remove_locked_net
+    `);
+
+    const r = rows[0];
+    const totalDeposited = toNumber(r?.deposited);
+    const balanceWithdrawn = toNumber(r?.balance_withdrawn);
+    const cardWithdrawn = toNumber(r?.card_withdrawn);
+    const totalWithdrawn = balanceWithdrawn + cardWithdrawn;
+    const availableBalance = toNumber(r?.available_balance);
+    const lockedBalance = toNumber(r?.locked_balance);
+    const officialStreamNet = toNumber(r?.official_stream_net);
+    const removeLockedNet = toNumber(r?.remove_locked_net);
+    // Net out stats-excluded adjustments so they never enter the live-balance
+    // P&L term — IDENTICAL to the snapshot.
+    const userBalance =
+      availableBalance + lockedBalance - officialStreamNet - removeLockedNet;
+    const inventory = toNumber(r?.inventory);
+    const vouchers = toNumber(r?.vouchers);
+    const unclaimedRakeback = toNumber(r?.unclaimed_rakeback);
+
+    // Canonical formula via the shared helper, then subtract the global-only
+    // unclaimed-rakeback liability — EXACTLY as the snapshot does.
+    const pnl =
+      computeHousePnl({
+        deposits: totalDeposited,
+        withdrawals: totalWithdrawn,
+        onSiteBalance: userBalance,
+        inventoryValue: inventory,
+        unclaimedVouchers: vouchers,
+      }) - unclaimedRakeback;
+
+    return { pnl };
+  },
+  ["insights-real-numbers-pnl-excl-creators-v1"],
+  { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
+);
+
+/**
+ * Realized P&L on the canonical GGR/NGR customer scope (staff + creators +
+ * blacklist dropped) — the SAME balance-sheet formula as
+ * `getRealizedPnlSnapshot`, with creators additionally excluded so the Real
+ * Numbers GGR → P&L bridge can quantify the creator step exactly:
+ *
+ *   creatorEffect = pnlCustomersExclCreators − pnlInclCreators
+ *
+ * `userScopeSql` is baked into the cache key so a blacklist change can't serve
+ * a stale value; tagged with the canonical insights tags so a wipe/restore /
+ * exclusion change busts it alongside the other insights caches. Read-only
+ * against the Main DB.
+ */
+export async function getRealizedPnlCustomersExclCreators(): Promise<RealizedPnlCustomersExclCreators> {
+  return withTiming("insights.realNumbers.pnlExclCreators", async () => {
+    const scope = await getMetricsScope();
+    return cachedPnlCustomersExclCreators(scope.userScopeSql);
   });
 }
