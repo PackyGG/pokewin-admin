@@ -2,16 +2,29 @@
 
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { adminDb } from "@/lib/admin-db";
-import { requirePageAccess, sessionHasRole } from "@/lib/dal";
+import { requirePageAccess, sessionHasRole, sessionIsAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import {
   getPackDetail,
   getPackGames,
   getPackStats,
+  getPacksPoolComposition,
+  REPRICE_INCLUDED_PACK_TYPES,
   type PackStats,
 } from "@/lib/queries/packs";
+import {
+  planPackReprice,
+  repriceEdgeWithinHardBand,
+  REPRICE_TARGET_HOUSE_EDGE,
+  REPRICE_ACCEPT_MIN_EDGE,
+  REPRICE_ACCEPT_MAX_EDGE,
+  REPRICE_HARD_MIN_EDGE,
+  REPRICE_HARD_MAX_EDGE,
+  type RepriceAction,
+} from "@/app/(admin)/insights/edge-calc/math";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
@@ -643,4 +656,256 @@ export async function quickUpdatePack(
 
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
+}
+
+// ─── Global re-price to 10.99% house edge ─────────────────────────────
+//
+// Scope: OFFICIAL packs only (never promo / custom / reward / shard). The tool
+// ONLY ever adjusts a pack's `price` — it NEVER touches card odds (the
+// pack_cards pool is read to compute EV and is never written here). The single
+// most dangerous action in the panel: it rewrites live pack prices on the game
+// DB. Architecture is deliberately defensive:
+//   1. `planRepriceAllPacks` is a READ-ONLY dry-run — it computes the full
+//      before/after plan and writes NOTHING, so the operator reviews exactly
+//      what will change before confirming.
+//   2. `repricePackToTargetEdge` writes ONE pack at a time (the client loops
+//      over the plan), re-deriving the price server-side from fresh DB truth
+//      (never trusting a client-supplied price) and HARD-asserting the
+//      resulting edge stays inside [10.8%, 11.2%] before persisting.
+// Both are admin-only. The band rule lives in the dep-free math module
+// (`planPackReprice`) so the dry-run and the write share one implementation.
+
+export type RepricePlanRow = {
+  packId: string;
+  name: string;
+  slug: string;
+  packType: string;
+  active: boolean;
+  priceBefore: number;
+  priceAfter: number | null;
+  /** House-edge fractions (0.1099 = 10.99%). */
+  edgeBefore: number;
+  edgeAfter: number | null;
+  action: RepriceAction;
+  reason: string;
+};
+
+export type RepricePlanSummary = {
+  /** Which game DB the writes would hit — surfaced so the operator can't
+   *  confuse a prod run with a dev run. */
+  dbEnv: DbEnv;
+  target: number;
+  acceptMin: number;
+  acceptMax: number;
+  hardMin: number;
+  hardMax: number;
+  counts: {
+    total: number;
+    toReprice: number;
+    unchanged: number;
+    skipped: number;
+  };
+  /** Packs that WILL change, sorted by largest absolute price swing first so
+   *  the scariest moves surface at the top of the preview. */
+  toReprice: RepricePlanRow[];
+  unchanged: RepricePlanRow[];
+  skipped: RepricePlanRow[];
+};
+
+/**
+ * READ-ONLY dry-run for the global re-price. Computes every in-scope pack's
+ * current→new price and current→new edge and buckets them. Writes nothing —
+ * safe to run even against prod. Admin-only.
+ */
+export async function planRepriceAllPacks(): Promise<RepricePlanSummary> {
+  const session = await requirePageAccess("/packs");
+  if (!sessionIsAdmin(session)) {
+    throw new Error("Re-pricing all packs is restricted to full admins.");
+  }
+
+  const dbEnv = await readDbEnv();
+  const packs = await getPacksPoolComposition(); // scoped: official packs, price > 0
+
+  const rows: RepricePlanRow[] = packs.map((p) => {
+    const plan = planPackReprice({
+      currentPrice: p.price,
+      cardsPerOpen: p.cardsPerOpen,
+      totalWeight: p.totalWeight,
+      weightedPriceSum: p.weightedPriceSum,
+    });
+    return {
+      packId: p.id,
+      name: p.name,
+      slug: p.slug,
+      packType: p.packType,
+      active: p.active,
+      priceBefore: p.price,
+      priceAfter: plan.newPrice,
+      edgeBefore: plan.currentEdge,
+      edgeAfter: plan.newEdge,
+      action: plan.action,
+      reason: plan.reason,
+    };
+  });
+
+  const toReprice = rows
+    .filter((r) => r.action === "reprice")
+    .sort(
+      (a, b) =>
+        Math.abs((b.priceAfter ?? b.priceBefore) - b.priceBefore) -
+        Math.abs((a.priceAfter ?? a.priceBefore) - a.priceBefore),
+    );
+  const unchanged = rows.filter((r) => r.action === "unchanged");
+  const skipped = rows.filter((r) => r.action === "skip");
+
+  return {
+    dbEnv,
+    target: REPRICE_TARGET_HOUSE_EDGE,
+    acceptMin: REPRICE_ACCEPT_MIN_EDGE,
+    acceptMax: REPRICE_ACCEPT_MAX_EDGE,
+    hardMin: REPRICE_HARD_MIN_EDGE,
+    hardMax: REPRICE_HARD_MAX_EDGE,
+    counts: {
+      total: rows.length,
+      toReprice: toReprice.length,
+      unchanged: unchanged.length,
+      skipped: skipped.length,
+    },
+    toReprice,
+    unchanged,
+    skipped,
+  };
+}
+
+export type RepriceResult = {
+  packId: string;
+  name: string;
+  status: "repriced" | "unchanged" | "skipped";
+  priceBefore: number;
+  priceAfter: number | null;
+  edgeBefore: number;
+  edgeAfter: number | null;
+  reason: string;
+};
+
+/**
+ * Re-price ONE pack to the 10.99% target. The client loops over the dry-run's
+ * `toReprice` ids, calling this per pack so the operation is visible, stoppable,
+ * and each pack is its own audited write.
+ *
+ * Authoritative & paranoid:
+ *   - Admin-only (+ the same `__can_update_pack` capability the editor uses).
+ *   - Re-fetches the pack's pool FRESH from the DB — the client supplies only an
+ *     id, never a price.
+ *   - Re-validates scope server-side (pack_type / price) independently of the
+ *     dry-run filter.
+ *   - HARD-asserts the resulting edge ∈ [10.8%, 11.2%] and THROWS otherwise, so
+ *     a logic regression fails closed (no write) instead of mispricing a pack.
+ *   - Writes ONLY `price` (+ updated_at); never touches realized stats / pool.
+ */
+export async function repricePackToTargetEdge(
+  packId: string,
+): Promise<RepriceResult> {
+  const db = await getDb();
+  const session = await requirePageAccess("/packs");
+  if (!sessionIsAdmin(session)) {
+    throw new Error("Re-pricing packs is restricted to full admins.");
+  }
+  await requireCapability(session, "__can_update_pack", "update packs");
+
+  const [comp] = await getPacksPoolComposition({ packIds: [packId] });
+  if (!comp) throw new Error("Pack not found");
+
+  // Defense-in-depth scope re-check (independent of the dry-run's WHERE):
+  // official packs only.
+  if (!(REPRICE_INCLUDED_PACK_TYPES as readonly string[]).includes(comp.packType)) {
+    return {
+      packId,
+      name: comp.name,
+      status: "skipped",
+      priceBefore: comp.price,
+      priceAfter: null,
+      edgeBefore: 0,
+      edgeAfter: null,
+      reason: `Out of scope: only official packs are re-priced (this is '${comp.packType}').`,
+    };
+  }
+  if (!(comp.price > 0)) {
+    return {
+      packId,
+      name: comp.name,
+      status: "skipped",
+      priceBefore: comp.price,
+      priceAfter: null,
+      edgeBefore: 0,
+      edgeAfter: null,
+      reason: "Out of scope: pack has no price.",
+    };
+  }
+
+  const plan = planPackReprice({
+    currentPrice: comp.price,
+    cardsPerOpen: comp.cardsPerOpen,
+    totalWeight: comp.totalWeight,
+    weightedPriceSum: comp.weightedPriceSum,
+  });
+
+  if (plan.action !== "reprice" || plan.newPrice === null || plan.newEdge === null) {
+    return {
+      packId,
+      name: comp.name,
+      status: plan.action === "unchanged" ? "unchanged" : "skipped",
+      priceBefore: comp.price,
+      priceAfter: plan.newPrice,
+      edgeBefore: plan.currentEdge,
+      edgeAfter: plan.newEdge,
+      reason: plan.reason,
+    };
+  }
+
+  // HARD BACKSTOP — never persist a price whose edge escapes [10.8%, 11.2%].
+  // Should be unreachable (accept band ⊂ hard band), so a trip here means a
+  // logic bug: fail closed.
+  if (!repriceEdgeWithinHardBand(plan.newEdge)) {
+    throw new Error(
+      `Refusing to write "${comp.name}": resulting edge ${(plan.newEdge * 100).toFixed(2)}% is outside the hard 10.8–11.2% band.`,
+    );
+  }
+
+  // ONLY the price is written (+ updated_at). Card odds (pack_cards) are never
+  // touched — re-pricing moves the sticker price, nothing else.
+  await db.packs.update({
+    where: { id: packId },
+    data: { price: plan.newPrice, updated_at: new Date() },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "pack_updated",
+    metadata: {
+      pack_id: packId,
+      name: comp.name,
+      via: "reprice_to_target_edge",
+      target_edge: REPRICE_TARGET_HOUSE_EDGE,
+      price_before: comp.price,
+      price_after: plan.newPrice,
+      edge_before: plan.currentEdge,
+      edge_after: plan.newEdge,
+    },
+  });
+
+  reloadPacks();
+  revalidatePath("/packs");
+  revalidatePath(`/packs/${packId}`);
+
+  return {
+    packId,
+    name: comp.name,
+    status: "repriced",
+    priceBefore: comp.price,
+    priceAfter: plan.newPrice,
+    edgeBefore: plan.currentEdge,
+    edgeAfter: plan.newEdge,
+    reason: "",
+  };
 }

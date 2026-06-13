@@ -17,6 +17,7 @@ import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabil
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { PaginationSkeleton } from "@/components/loading-skeletons";
 import { CreatePackButton } from "./create-pack-button";
+import { RepriceAllPacksButton } from "./reprice-all-packs";
 import { PacksFilterBar } from "./packs-filter-bar";
 import { PacksList } from "./packs-list";
 import { PacksKpiStrip } from "./packs-kpi-strip";
@@ -225,7 +226,14 @@ export default async function PacksPage({
             icon={Package}
             title="Packs"
             subtitle="Pack catalog — pricing, availability, and economics."
-            action={canCreate ? <CreatePackButton /> : undefined}
+            action={
+              canCreate || isAdmin ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {isAdmin && <RepriceAllPacksButton />}
+                  {canCreate && <CreatePackButton />}
+                </div>
+              ) : undefined
+            }
           />
         </PageHero>
 

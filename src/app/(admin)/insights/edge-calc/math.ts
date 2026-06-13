@@ -90,6 +90,172 @@ export function computePackEv(input: {
   };
 }
 
+// ─── Global re-price guard (target 10.99% edge) ───────────────────────
+
+/**
+ * Aim point for the global "re-price all packs" tool — the SAME knob the
+ * per-pack "set from EV" button uses (`TARGET_HOUSE_EDGE`, 10.99%).
+ */
+export const REPRICE_TARGET_HOUSE_EDGE = TARGET_HOUSE_EDGE;
+
+/**
+ * Write-acceptance band. A pack is only re-priced when the best achievable
+ * whole-cent price lands the RESULTING edge within [10.95%, 11.05%]. Because
+ * the price is rounded to cents, a tiny/cheap pool can't always hit 10.99%
+ * exactly — those that can't get this close are SKIPPED (left untouched),
+ * never written off-target. Mandated by the owner ("the edge I want is 10.99%
+ * nothing else … you allowed to make it 10.95-11.05 in that case").
+ */
+export const REPRICE_ACCEPT_MIN_EDGE = 0.1095;
+export const REPRICE_ACCEPT_MAX_EDGE = 0.1105;
+
+/**
+ * Absolute HARD band. The write action asserts the new edge sits within
+ * [10.8%, 11.2%] before it persists anything and throws otherwise — a
+ * defense-in-depth backstop that can never be crossed even if the acceptance
+ * logic above regresses. ACCEPT ⊂ HARD, so in normal operation it never
+ * triggers; it exists so a logic bug fails CLOSED (no write) instead of
+ * mispricing a live pack. Owner rule: "make it impossible to go below 10.8% …
+ * never above 11.2%".
+ */
+export const REPRICE_HARD_MIN_EDGE = 0.108;
+export const REPRICE_HARD_MAX_EDGE = 0.112;
+
+export type RepriceAction = "reprice" | "unchanged" | "skip";
+
+export type PackReprisePlan = {
+  /** Expected payout per open (EV) from the pool — price-independent. */
+  evPerOpen: number;
+  /** Theoretical house edge at the pack's CURRENT price (0-1 fraction). */
+  currentEdge: number;
+  /** The whole-cent price we'd write (null when skipping / no pool). */
+  newPrice: number | null;
+  /** Resulting theoretical edge at `newPrice` (0-1 fraction; null on skip). */
+  newEdge: number | null;
+  action: RepriceAction;
+  /** Human-readable reason for skip/unchanged (empty for a plain reprice). */
+  reason: string;
+};
+
+/**
+ * Decide how a single pack should be re-priced to the 10.99% target.
+ *
+ * Pure + dep-free so the read-only dry-run, the authoritative write action,
+ * and the correctness checks all share ONE implementation — there is no second
+ * place where the band rule could drift. The edge is monotonic in price
+ * (higher price → higher house edge), so the optimum whole-cent price is one of
+ * `floor`/`ceil` of the ideal cents; we evaluate both (plus `round`) and pick
+ * whichever lands the resulting edge closest to 10.99%.
+ *
+ * Returns `action`:
+ *   • "reprice"   → write `newPrice` (resulting edge ∈ accept band, ≠ current)
+ *   • "unchanged" → already at the target cent, write nothing
+ *   • "skip"      → no priceable pool, or closest achievable edge is outside
+ *                   the [10.95%, 11.05%] accept band → leave the price untouched
+ */
+export function planPackReprice(input: {
+  currentPrice: number;
+  cardsPerOpen: number;
+  totalWeight: number;
+  weightedPriceSum: number;
+}): PackReprisePlan {
+  const { currentPrice, cardsPerOpen, totalWeight, weightedPriceSum } = input;
+
+  const ev = computePackEv({
+    pricePerOpen: currentPrice,
+    cardsPerOpen,
+    totalWeight,
+    weightedPriceSum,
+  });
+  const evPerOpen = ev.expectedPayoutPerOpen;
+  const currentEdge = ev.houseEdge;
+
+  if (!Number.isFinite(evPerOpen) || evPerOpen <= 0) {
+    return {
+      evPerOpen: Number.isFinite(evPerOpen) ? evPerOpen : 0,
+      currentEdge,
+      newPrice: null,
+      newEdge: null,
+      action: "skip",
+      reason: "No priceable card pool (EV ≤ 0).",
+    };
+  }
+
+  const ideal = evPerOpen / (1 - REPRICE_TARGET_HOUSE_EDGE);
+  const idealCents = ideal * 100;
+  const candidateCents = [
+    Math.floor(idealCents),
+    Math.round(idealCents),
+    Math.ceil(idealCents),
+  ];
+
+  let best: { price: number; edge: number; dist: number } | null = null;
+  const seen = new Set<number>();
+  for (const cent of candidateCents) {
+    if (cent <= 0 || seen.has(cent)) continue;
+    seen.add(cent);
+    const price = cent / 100;
+    const edge = 1 - evPerOpen / price;
+    const dist = Math.abs(edge - REPRICE_TARGET_HOUSE_EDGE);
+    if (best === null || dist < best.dist) best = { price, edge, dist };
+  }
+
+  if (best === null) {
+    return {
+      evPerOpen,
+      currentEdge,
+      newPrice: null,
+      newEdge: null,
+      action: "skip",
+      reason: "Could not derive a positive price.",
+    };
+  }
+
+  if (best.edge < REPRICE_ACCEPT_MIN_EDGE || best.edge > REPRICE_ACCEPT_MAX_EDGE) {
+    return {
+      evPerOpen,
+      currentEdge,
+      newPrice: null,
+      newEdge: best.edge,
+      action: "skip",
+      reason: `Closest achievable edge ${(best.edge * 100).toFixed(2)}% is outside the 10.95–11.05% acceptance band.`,
+    };
+  }
+
+  // Compare in integer cents so 12 === 12.00 and float noise can't mark an
+  // already-on-target pack as a change.
+  const currentCents = Math.round(currentPrice * 100);
+  const newCents = Math.round(best.price * 100);
+  if (newCents === currentCents) {
+    return {
+      evPerOpen,
+      currentEdge,
+      newPrice: best.price,
+      newEdge: best.edge,
+      action: "unchanged",
+      reason: "Already priced at the 10.99% target.",
+    };
+  }
+
+  return {
+    evPerOpen,
+    currentEdge,
+    newPrice: best.price,
+    newEdge: best.edge,
+    action: "reprice",
+    reason: "",
+  };
+}
+
+/** True iff an edge fraction sits inside the absolute hard band [10.8%, 11.2%]. */
+export function repriceEdgeWithinHardBand(edge: number): boolean {
+  return (
+    Number.isFinite(edge) &&
+    edge >= REPRICE_HARD_MIN_EDGE &&
+    edge <= REPRICE_HARD_MAX_EDGE
+  );
+}
+
 // ─── Inverse odds from target EV ─────────────────────────────────────
 
 export type ComputeOddsForTargetEvResult =

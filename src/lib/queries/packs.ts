@@ -479,6 +479,109 @@ export async function getPacksListStats(
   )();
 }
 
+/**
+ * Pack types IN SCOPE for the global "re-price all to 10.99%" tool. Owner rule
+ * (2026-06-13): ONLY `official` packs — never promo / custom / reward / shard.
+ * Reward is the free daily/welcome type (no real sticker price), shard uses the
+ * separate shard-cost model, and promo/custom are intentionally left out too —
+ * the tool touches none of them. The tool ALSO only ever adjusts the pack
+ * `price`; it never changes card odds. Hardcoded trusted literals (no user
+ * input) — safe to interpolate into SQL.
+ */
+export const REPRICE_INCLUDED_PACK_TYPES = ["official"] as const;
+
+export type PackPoolComposition = {
+  id: string;
+  name: string;
+  slug: string;
+  packType: string;
+  active: boolean;
+  /** Current sticker price (USD). */
+  price: number;
+  cardsPerOpen: number;
+  /** SUM of card weights in the pool (denominator of expected card value). */
+  totalWeight: number;
+  /** SUM(weight × card price) across the pool (numerator). */
+  weightedPriceSum: number;
+};
+
+/**
+ * Per-pack card-pool composition needed to compute EV / house edge, in ONE
+ * grouped read. Used by the global re-price dry-run (all in-scope packs) and by
+ * the single-pack write action (`packIds: [id]`, which re-validates scope
+ * itself). NOT cached — callers need fresh truth immediately before a write.
+ *
+ *   • No `packIds`  → scoped set: official packs with `price > 0`.
+ *   • With `packIds`→ exactly those ids, UNFILTERED (the write action enforces
+ *     scope server-side so it can report an out-of-scope id rather than silently
+ *     returning nothing).
+ *
+ * LEFT JOINs so a pack with no cards still returns a row (weights → 0 → EV 0 →
+ * the planner skips it). Decimals cast to text and re-parsed to dodge driver
+ * precision quirks.
+ */
+export async function getPacksPoolComposition(opts?: {
+  packIds?: string[];
+}): Promise<PackPoolComposition[]> {
+  const db = await getDb();
+
+  const params: unknown[] = [];
+  let whereClause: string;
+  if (opts?.packIds && opts.packIds.length > 0) {
+    whereClause = `p.id = ANY($1::uuid[])`;
+    params.push(opts.packIds);
+  } else {
+    const included = REPRICE_INCLUDED_PACK_TYPES.map((t) => `'${t}'`).join(", ");
+    whereClause = `p.pack_type IN (${included}) AND p.price > 0`;
+  }
+
+  const rows = await db.$queryRawUnsafe<
+    {
+      id: string;
+      name: string;
+      slug: string;
+      pack_type: string;
+      active: boolean;
+      price: string;
+      cards_per_open: number;
+      total_weight: string;
+      weighted_price_sum: string;
+    }[]
+  >(
+    `
+      SELECT
+        p.id,
+        p.name,
+        p.slug,
+        p.pack_type,
+        p.active,
+        p.price::text                                   AS price,
+        p.cards_per_open,
+        COALESCE(SUM(pc.weight), 0)::text               AS total_weight,
+        COALESCE(SUM(pc.weight * c.price), 0)::text     AS weighted_price_sum
+      FROM packs p
+      LEFT JOIN pack_cards pc ON pc.pack_id = p.id
+      LEFT JOIN cards c ON c.id = pc.card_id
+      WHERE ${whereClause}
+      GROUP BY p.id, p.name, p.slug, p.pack_type, p.active, p.price, p.cards_per_open
+      ORDER BY p.name ASC
+    `,
+    ...params,
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    slug: r.slug,
+    packType: r.pack_type,
+    active: r.active,
+    price: Number(r.price),
+    cardsPerOpen: Number(r.cards_per_open),
+    totalWeight: Number(r.total_weight),
+    weightedPriceSum: Number(r.weighted_price_sum),
+  }));
+}
+
 export async function getPackDetail(id: string) {
   const db = await getDb();
   // Explicit top-level `select` listing only the columns the detail mapper
