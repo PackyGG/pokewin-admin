@@ -391,6 +391,22 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inSidebar: true,
     inPalette: true,
   },
+  {
+    // Wager Liability — platform-wide wager-requirement liability snapshot
+    // (gated user balances behind the sweepstakes wager requirement). Icon
+    // string `Lock` MUST be registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (React #130). Sidebar-only, like its
+    // Insights siblings.
+    id: "nav.insights.wager-liability",
+    group: "Insights",
+    label: "Wager Liability",
+    href: "/insights/wager-liability",
+    pageKey: "/insights/wager-liability",
+    icon: "Lock",
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
+  },
 
   {
     // Creator Analytics — palette-only (no sidebar link).
