@@ -58,6 +58,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // claims, completion). The /challenges page stays CRUD-only; this is the
   // read-only insights view. Own grantable key.
   { group: "Insights", label: "Challenges", key: "/insights/challenges" },
+  // Coins & Shards — global secondary-currency economy (live wallet supply +
+  // coin_transactions flow). Own grantable key so a role can be granted it
+  // independently of the per-reward deep-dives.
+  { group: "Insights", label: "Coins & Shards", key: "/insights/coins" },
   // Legacy routes — thin redirects; keys retained for bookmark + role grants.
   { group: "Insights", label: "Games (legacy)", key: "/insights/games" },
   { group: "Insights", label: "Signup (legacy)", key: "/insights/rewards/signup" },

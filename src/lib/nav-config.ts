@@ -326,6 +326,21 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
   {
+    // Coins & Shards — global secondary-currency economy. Icon string
+    // `Coins` is already registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (no React #130 risk). Sidebar-only,
+    // like its Insights siblings.
+    id: "nav.insights.coins",
+    group: "Insights",
+    label: "Coins & Shards",
+    href: "/insights/coins",
+    pageKey: "/insights/coins",
+    icon: "Coins",
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
     id: "nav.insights.rewards.deposit-bonus",
     group: "Insights",
     label: "Deposit Bonus",
