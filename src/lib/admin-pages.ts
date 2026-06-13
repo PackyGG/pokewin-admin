@@ -72,6 +72,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // without the full Rewards rollup).
   { group: "Insights", label: "Deposit Bonus", key: "/insights/rewards/deposit-bonus" },
   { group: "Insights", label: "Rakeback", key: "/insights/rewards/rakeback" },
+  { group: "Insights", label: "Reward Expiry", key: "/insights/rewards/expiry" },
   { group: "Insights", label: "Race", key: "/insights/rewards/race" },
   { group: "Insights", label: "Affiliate", key: "/insights/rewards/affiliate" },
   // Forecast — unified reward-forecast hub. Hosts a full-depth

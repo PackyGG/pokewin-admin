@@ -63,6 +63,7 @@ import {
   Target,
   Hash,
   Lock,
+  Hourglass,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -148,6 +149,7 @@ const ICONS: Record<string, LucideIcon> = {
   Target,
   Hash,
   Lock,
+  Hourglass,
 };
 
 type NavItem = {

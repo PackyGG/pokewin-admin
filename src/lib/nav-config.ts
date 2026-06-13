@@ -348,6 +348,17 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
   {
+    id: "nav.insights.rewards.expiry",
+    group: "Insights",
+    label: "Reward Expiry",
+    href: "/insights/rewards/expiry",
+    pageKey: "/insights/rewards/expiry",
+    icon: "Hourglass",
+    isNew: true,
+    inSidebar: false,
+    inPalette: false,
+  },
+  {
     id: "nav.insights.rewards.race",
     group: "Insights",
     label: "Race",
