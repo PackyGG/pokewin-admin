@@ -177,7 +177,11 @@ export default async function RealNumbersPage() {
                 icon={Scale}
                 title="Gaming-margin waterfall — wager → GGR → NGR"
               />
-              <GamingWaterfall cost={cost} wager={wager ?? 0} />
+              <GamingWaterfall
+                cost={cost}
+                wager={wager ?? 0}
+                netRain={rewardSpend?.netRain ?? null}
+              />
             </section>
 
             <section className="space-y-3">
@@ -579,28 +583,90 @@ function RewardSpendPanel({
 // ─── Gaming-margin waterfall ────────────────────────────────────────
 
 /**
- * Wager → −Gaming payout → GGR → −Reward cost → −Net rain → NGR.
+ * Wager → −Gaming payout → GGR → −Reward cost → NGR.
  *
  * Reuses the cost-breakdown WaterfallRow / WaterfallBand + the semantic tone
- * vocabulary. House-POV tones: the base wager is blue; gaming payout +
- * reward + net rain are realized costs (rose); the GGR / NGR checkpoints are
+ * vocabulary. House-POV tones: the base wager is blue; gaming payout + the
+ * reward giveback are realized costs (rose); the GGR / NGR checkpoints are
  * emerald when positive, rose when negative. The wager here is the canonical
  * GGR-basis wager (cost.totalWager) so the arithmetic ties out to GGR — the
  * blue headline wager tile above is the broader hub turnover (borrow-net,
  * includes the organic-stake definition), noted in the footer.
+ *
+ * The reward giveback ALWAYS sums to the canonical reward cost
+ * (`cost.rewardPayouts` = GGR − NGR), so GGR − reward = NGR holds visibly.
+ * When the reward itemization is available we split it into its real non-rain
+ * leg + the net house slice of rain (both sourced from the same canonical
+ * itemization the table below uses — `netRain`); otherwise we show a single
+ * clean "Reward & bonus cost" line (the itemized split lives in the table
+ * directly below either way). It is NEVER re-derived from ggr/ngr/reward
+ * (those are linearly dependent → always 0).
  */
 function GamingWaterfall({
   cost,
   wager,
+  netRain,
 }: {
   cost: CostBreakdown;
   wager: number;
+  /**
+   * The net house slice of rain (max(0, rain_win − rain_tip)) from the
+   * canonical reward-spend itemization, or null when that read failed. When
+   * present and ≤ the total reward cost it lets us show the excl-rain / net-
+   * rain split; otherwise the reward cost renders as one line.
+   */
+  netRain: number | null;
 }) {
-  // Reward cost split into the non-rain reward leg + the net house slice of
-  // rain, so both show as named giveback lines. rewardPayouts = reward(excl
-  // rain) + netRain by the canonical NGR definition.
   const ggrPos = cost.ggr >= 0;
   const ngrPos = cost.ngr >= 0;
+
+  // Show the rain split only when the itemized net-rain value is available
+  // AND fits inside the total reward cost (so the two legs both stay ≥ 0 and
+  // sum to exactly cost.rewardPayouts). Otherwise fall back to one line.
+  const splitRain =
+    netRain !== null && netRain >= 0 && netRain <= cost.rewardPayouts;
+
+  const rewardLines: Array<{
+    key: string;
+    label: string;
+    signed: number;
+    sign: "+" | "−" | "=";
+    tone: SemanticTone;
+    icon: LucideIcon;
+    emphasis?: "normal" | "subtotal" | "result";
+    why: string;
+  }> = splitRain
+    ? [
+        {
+          key: "reward",
+          label: "Reward & bonus cost (excl. rain)",
+          signed: -(cost.rewardPayouts - (netRain as number)),
+          sign: "−",
+          tone: "cost",
+          icon: Gift,
+          why: "House-funded giveaways credited to user balance: deposit bonuses, rakeback, promo/gift cards, race & leaderboard prizes, affiliate commissions, counted balance adjustments.",
+        },
+        {
+          key: "net-rain",
+          label: "Net rain (house slice)",
+          signed: -(netRain as number),
+          sign: "−",
+          tone: "cost",
+          icon: Gift,
+          why: "Rain winnings beyond what user/founder tips funded — max(0, rain_win − rain_tip). Only the house's slice of mixed-funded rain is a cost.",
+        },
+      ]
+    : [
+        {
+          key: "reward",
+          label: "Reward & bonus cost",
+          signed: -cost.rewardPayouts,
+          sign: "−",
+          tone: "cost",
+          icon: Gift,
+          why: "All house-funded giveaways credited to user balance: deposit bonuses, rakeback, promo/gift cards, race & leaderboard prizes, affiliate commissions, counted balance adjustments, and the net house slice of rain. Itemized in the table below.",
+        },
+      ];
 
   const lines: Array<{
     key: string;
@@ -640,24 +706,7 @@ function GamingWaterfall({
       emphasis: "subtotal",
       why: "Wager − gaming payout. The gross house edge on gaming alone, before any marketing / reward cost. The canonical GGR.",
     },
-    {
-      key: "reward",
-      label: "Reward & bonus cost (excl. rain)",
-      signed: -Math.max(0, cost.rewardPayouts - cost.ggr + cost.ngr),
-      sign: "−",
-      tone: "cost",
-      icon: Gift,
-      why: "House-funded giveaways credited to user balance: deposit bonuses, rakeback, promo/gift cards, race & leaderboard prizes, affiliate commissions, counted balance adjustments.",
-    },
-    {
-      key: "net-rain",
-      label: "Net rain (house slice)",
-      signed: -(cost.ngr - (cost.ggr - cost.rewardPayouts)),
-      sign: "−",
-      tone: "cost",
-      icon: Gift,
-      why: "Rain winnings beyond what user/founder tips funded — max(0, rain_win − rain_tip). Only the house's slice of mixed-funded rain is a cost.",
-    },
+    ...rewardLines,
     {
       key: "ngr",
       label: "NGR — net gaming margin",
