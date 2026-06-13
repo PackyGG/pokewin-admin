@@ -54,6 +54,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // cross-cutting analytical surfaces.
   { group: "Insights", label: "GGR", key: "/ggr" },
   { group: "Insights", label: "Rewards", key: "/insights/rewards" },
+  // Coins & Shards — global secondary-currency economy (live wallet supply +
+  // coin_transactions flow). Own grantable key so a role can be granted it
+  // independently of the per-reward deep-dives.
+  { group: "Insights", label: "Coins & Shards", key: "/insights/coins" },
   // Legacy routes — thin redirects; keys retained for bookmark + role grants.
   { group: "Insights", label: "Games (legacy)", key: "/insights/games" },
   { group: "Insights", label: "Signup (legacy)", key: "/insights/rewards/signup" },
