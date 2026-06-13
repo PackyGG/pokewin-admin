@@ -29,7 +29,7 @@ import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 
 const BPS_PER_X = 10000;
 const formatX = (bps: number): string =>
-  `${(bps / BPS_PER_X).toLocaleString(undefined, { maximumFractionDigits: 2 })}×`;
+  `${(bps / BPS_PER_X).toLocaleString("en-US", { maximumFractionDigits: 2 })}×`;
 
 export function UserWagerProgressCard({
   data,
@@ -47,9 +47,9 @@ export function UserWagerProgressCard({
                 Wager progress not available
               </p>
               <p>
-                The sweepstakes wager-progress columns exist on the dev
-                environment only, or this user has no balance record. Switch the
-                DB toggle to dev to inspect a user&apos;s requirement progress.
+                This user has no balance record, or the connected database
+                doesn&apos;t carry the sweepstakes wager-progress columns. No
+                requirement progress can be shown.
               </p>
             </div>
           </div>
@@ -210,10 +210,10 @@ export function UserWagerProgressCard({
           {shards > 0 && (
             <span className="inline-flex items-center gap-1.5">
               <Gem className="size-3.5" />
-              {shards.toLocaleString()} shards · {shardWagerProgress.toLocaleString(
-                undefined,
-                { maximumFractionDigits: 2 },
-              )}{" "}
+              {shards.toLocaleString("en-US")} shards ·{" "}
+              {shardWagerProgress.toLocaleString("en-US", {
+                maximumFractionDigits: 2,
+              })}{" "}
               shard-wager progress
             </span>
           )}

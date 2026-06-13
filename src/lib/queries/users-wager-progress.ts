@@ -27,15 +27,16 @@ import {
  * truth (read straight from the columns); only `required` / `remaining` are
  * DERIVED here (total × bps), and are surfaced as estimates — see CAVEAT.
  *
- * DEV-ONLY / PROD-SAFE
- * ────────────────────
- * These `balances` columns exist on the DEV game DB but NOT on the current
- * PROD game DB. The admin queries ONE schema against both via the
- * `admin_db_env` cookie, so this MUST not assume the columns exist: we probe
- * `information_schema.columns` first and return `null` (→ the card's muted
- * "not available in this environment" state) when the sweepstakes columns are
- * absent. No `prisma/schema.prisma` change is needed — the read is raw SQL,
- * so Prisma never tries to select a prod-absent column. READ-ONLY throughout.
+ * ENV-ADAPTIVE / DRIFT-SAFE
+ * ─────────────────────────
+ * The admin queries ONE schema against both the prod and dev game DBs via the
+ * `admin_db_env` cookie. As of 2026-06-13 BOTH DBs carry these `balances`
+ * columns (verified by read-only probe), so the panel renders on either. We
+ * still probe `information_schema.columns` first and return `null` (→ the
+ * card's muted state) if a connected DB ever LACKS them, so future schema
+ * drift degrades gracefully instead of throwing 42703. No
+ * `prisma/schema.prisma` change is needed — the read is raw SQL, so Prisma
+ * never selects an absent column. READ-ONLY throughout.
  *
  * CAVEAT (money-math — flagged, not guessed): the exact interaction of the
  * single per-user override (`wager_requirement_bps`; 0 = EXEMPT from the
