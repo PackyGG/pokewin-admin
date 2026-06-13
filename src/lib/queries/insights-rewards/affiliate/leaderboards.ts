@@ -104,7 +104,7 @@ async function computeTopByCommission(
     FROM claim_agg ca
     JOIN "user" u ON u.id = ca.user_id
     LEFT JOIN referred_agg ra ON ra.affiliate_user_id = ca.user_id
-    WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+    WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
     ORDER BY ca.commission DESC
     LIMIT ${TOP_LIMIT}
   `);
@@ -166,7 +166,7 @@ async function computeTopByWager(
     FROM wager_agg wa
     JOIN "user" u ON u.id = wa.affiliate_user_id
     LEFT JOIN claim_agg ca ON ca.user_id = wa.affiliate_user_id
-    WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+    WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
       AND wa.wager > 0
     ORDER BY wa.wager DESC
     LIMIT ${TOP_LIMIT}
@@ -184,26 +184,26 @@ async function computeTopByWager(
 const cachedTopByCommissionShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeTopByCommission(period, blacklistIds),
-  ["insights-affiliate-top-commission-v1-short"],
+  ["insights-affiliate-top-commission-v2-short"],
   { revalidate: 60, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 const cachedTopByCommissionLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeTopByCommission(period, blacklistIds),
-  ["insights-affiliate-top-commission-v1-long"],
+  ["insights-affiliate-top-commission-v2-long"],
   { revalidate: 300, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 
 const cachedTopByWagerShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeTopByWager(period, blacklistIds),
-  ["insights-affiliate-top-wager-v1-short"],
+  ["insights-affiliate-top-wager-v2-short"],
   { revalidate: 60, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 const cachedTopByWagerLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeTopByWager(period, blacklistIds),
-  ["insights-affiliate-top-wager-v1-long"],
+  ["insights-affiliate-top-wager-v2-long"],
   { revalidate: 300, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 

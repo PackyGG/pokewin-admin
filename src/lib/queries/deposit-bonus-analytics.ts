@@ -55,6 +55,29 @@ function daysForPeriod(period: RewardsPeriod): number | null {
 }
 
 /**
+ * Lifetime lookback cap (days) for the heavy deposit↔bonus balance-pairing
+ * scan in {@link computeDepositBonusCohortExtras}. On the `all` window the
+ * plain {@link daysForPeriod} returns `null` (unbounded), which would make
+ * the pairing scan the entire `ledger_transactions` history. Bounding both
+ * the deposit and the bonus side to the last year keeps the cold cache fill
+ * tractable while still covering effectively all currently-relevant bonus
+ * activity. Mirrors `LIFETIME_PAIRING_LOOKBACK_DAYS` / `INSIGHTS_LIFETIME_LOOKBACK_DAYS`
+ * (365d) already used by the insights-rewards deposit-bonus folder so the
+ * two stay aligned.
+ */
+const COHORT_LIFETIME_LOOKBACK_DAYS = 365;
+
+/**
+ * Like {@link daysForPeriod}, but the lifetime (`all`) window resolves to
+ * {@link COHORT_LIFETIME_LOOKBACK_DAYS} instead of `null`. Used ONLY by the
+ * cohort balance-pairing query so a lifetime view doesn't trigger a
+ * full-history table scan. Finite windows return the same value.
+ */
+function cappedDaysForCohort(period: RewardsPeriod): number {
+  return daysForPeriod(period) ?? COHORT_LIFETIME_LOOKBACK_DAYS;
+}
+
+/**
  * Cap-hit count for the period — wrapped in its own cache so the lookup
  * stays cheap and the cache key tracks the period + blacklist signature.
  * The cap-equal scan is bounded to one COUNT(*) and only runs after we
@@ -219,23 +242,41 @@ async function computeDepositBonusCohortExtras(
   blacklistIds: string[],
 ): Promise<DepositBonusCohortExtras> {
   const db = await getDb();
-  const days = daysForPeriod(period);
-  const dateFilter =
-    days !== null
-      ? `AND d.created_at >= NOW() - INTERVAL '${days} days'`
-      : "";
-  const windowStartExpr =
-    days !== null
-      ? `NOW() - INTERVAL '${days} days'`
-      : `'-infinity'::timestamp`;
+  // Lifetime (`all`) is CAPPED to COHORT_LIFETIME_LOOKBACK_DAYS (365d):
+  // both the deposit and the bonus side of the pairing are bounded so a
+  // lifetime view does not scan the entire ledger history. Finite windows
+  // use their own day count unchanged.
+  const cappedDays = cappedDaysForCohort(period);
+  const dateFilter = `AND d.created_at >= NOW() - INTERVAL '${cappedDays} days'`;
+  // The matching bonus fires within 30s AFTER its deposit, so any bonus
+  // that can pair with an in-window deposit is itself inside the same
+  // window (plus 30s slack). Bounding the bonus side to the same lookback
+  // is what makes the hash join cheap — without it Postgres scans the full
+  // `deposit_bonus` history per deposit row.
+  const bonusDateFilter = `AND b.created_at >= NOW() - INTERVAL '${cappedDays} days'`;
+  const windowStartExpr = `NOW() - INTERVAL '${cappedDays} days'`;
   const blacklistSubquery = blacklistNotInClause("id", blacklistIds);
 
   // Canonical bonus↔deposit linking rule (from dashboard-live.ts):
   // bonus.balance_before == deposit.balance_after AND bonus fires
   // within 30s of the deposit (tightened from 2 min for query
-  // performance — see header comment). We materialise the per-deposit
-  // bonus amount via a LATERAL join — one bonus row per deposit
-  // (`LIMIT 1`) so a freak duplicate bonus can't double-count.
+  // performance — see header comment).
+  //
+  // PERFORMANCE — hash join over a materialised bonus set, NOT a
+  // correlated LATERAL. The original `LEFT JOIN LATERAL (… LIMIT 1)` had no
+  // usable index for `balance_before::numeric = deposit.balance_after`
+  // (ledger_transactions is only indexed on id / external_tx_id /
+  // fireblocks_tx_id), so it ran a full Seq Scan of the 860k-row table PER
+  // deposit row → 57014 statement timeout on EVERY window (even 7d). We
+  // instead materialise the window's deposit rows AND the window's bonus
+  // rows into CTEs and let Postgres hash-join them on
+  // (user_id, balance_before = balance_after) with the 30s time window;
+  // `DISTINCT ON (wd.id) … ORDER BY wb.created_at ASC` keeps exactly the
+  // FIRST matching bonus per deposit, reproducing the old `LIMIT 1`
+  // semantics (a single bonus may still attach to two deposits, same as the
+  // per-deposit LATERAL). This drops the query from a >30s timeout to
+  // ~1.3s. MATERIALIZED prevents Postgres from inlining the bonus CTE back
+  // into a correlated form.
   //
   // First-time vs repeat split is based on whether the user had ANY
   // `deposit_bonus` row BEFORE the window starts. That keeps the
@@ -243,7 +284,7 @@ async function computeDepositBonusCohortExtras(
   // matches how acquisition analytics elsewhere in the codebase treats
   // first-time events (analytics-funnel.ts, analytics-ltv.ts).
   const rollupRows = await db.$queryRawUnsafe<CohortRollupRow[]>(`
-    WITH window_deposits AS (
+    WITH window_deposits AS MATERIALIZED (
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
@@ -251,25 +292,26 @@ async function computeDepositBonusCohortExtras(
         AND d.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
         ${dateFilter}
     ),
+    window_bonuses AS MATERIALIZED (
+      SELECT b.user_id, b.balance_before::numeric AS bal_before, ABS(b.amount::numeric) AS bonus_usd, b.created_at
+      FROM ledger_transactions b
+      WHERE b.status = 'completed'
+        AND b.type::text = 'deposit_bonus'
+        ${bonusDateFilter}
+    ),
     paired AS (
-      SELECT
+      SELECT DISTINCT ON (wd.id)
         wd.id,
         wd.user_id,
         ABS(wd.deposit_amt) AS deposit_usd,
-        b.bonus_usd
+        wb.bonus_usd
       FROM window_deposits wd
-      LEFT JOIN LATERAL (
-        SELECT ABS(lt.amount::numeric) AS bonus_usd
-        FROM ledger_transactions lt
-        WHERE lt.user_id = wd.user_id
-          AND lt.type::text = 'deposit_bonus'
-          AND lt.status = 'completed'
-          AND lt.balance_before::numeric = wd.bal_after
-          AND lt.created_at >= wd.created_at
-          AND lt.created_at < wd.created_at + INTERVAL '30 seconds'
-        ORDER BY lt.created_at ASC
-        LIMIT 1
-      ) b ON TRUE
+      LEFT JOIN window_bonuses wb
+        ON wb.user_id = wd.user_id
+        AND wb.bal_before = wd.bal_after
+        AND wb.created_at >= wd.created_at
+        AND wb.created_at < wd.created_at + INTERVAL '30 seconds'
+      ORDER BY wd.id, wb.created_at ASC
     ),
     distinct_claimants AS (
       SELECT DISTINCT user_id FROM paired WHERE bonus_usd IS NOT NULL
@@ -319,35 +361,40 @@ async function computeDepositBonusCohortExtras(
   // Bonus-to-deposit ratio histogram — buckets are half-open (lower
   // inclusive). Same paired set, but only rows with a matching bonus.
   // Bucket boundaries match common loyalty-bonus tier breakpoints.
+  // Same materialised hash-join shape as the rollup above (see the long
+  // PERFORMANCE comment there) — an inner JOIN keeps only deposits that
+  // matched a bonus, and `DISTINCT ON (wd.id)` keeps the first match per
+  // deposit (old `JOIN LATERAL … LIMIT 1` semantics).
   const bucketRows = await db.$queryRawUnsafe<
     { bucket: number; cnt: string; volume: string }[]
   >(`
-    WITH window_deposits AS (
+    WITH window_deposits AS MATERIALIZED (
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
         AND d.type::text = 'deposit'
         AND d.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
+        AND d.amount::numeric <> 0
         ${dateFilter}
     ),
+    window_bonuses AS MATERIALIZED (
+      SELECT b.user_id, b.balance_before::numeric AS bal_before, ABS(b.amount::numeric) AS bonus_usd, b.created_at
+      FROM ledger_transactions b
+      WHERE b.status = 'completed'
+        AND b.type::text = 'deposit_bonus'
+        ${bonusDateFilter}
+    ),
     paired AS (
-      SELECT
+      SELECT DISTINCT ON (wd.id)
         ABS(wd.deposit_amt) AS deposit_usd,
-        b.bonus_usd
+        wb.bonus_usd
       FROM window_deposits wd
-      JOIN LATERAL (
-        SELECT ABS(lt.amount::numeric) AS bonus_usd
-        FROM ledger_transactions lt
-        WHERE lt.user_id = wd.user_id
-          AND lt.type::text = 'deposit_bonus'
-          AND lt.status = 'completed'
-          AND lt.balance_before::numeric = wd.bal_after
-          AND lt.created_at >= wd.created_at
-          AND lt.created_at < wd.created_at + INTERVAL '30 seconds'
-        ORDER BY lt.created_at ASC
-        LIMIT 1
-      ) b ON TRUE
-      WHERE wd.deposit_amt <> 0
+      JOIN window_bonuses wb
+        ON wb.user_id = wd.user_id
+        AND wb.bal_before = wd.bal_after
+        AND wb.created_at >= wd.created_at
+        AND wb.created_at < wd.created_at + INTERVAL '30 seconds'
+      ORDER BY wd.id, wb.created_at ASC
     )
     SELECT
       CASE
@@ -388,36 +435,45 @@ async function computeDepositBonusCohortExtras(
         created_at: Date;
       }[]
     >(`
-      WITH window_deposits AS (
+      WITH window_deposits AS MATERIALIZED (
         SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
         FROM ledger_transactions d
         WHERE d.status = 'completed'
           AND d.type::text = 'deposit'
           AND d.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
           ${dateFilter}
+      ),
+      window_bonuses AS MATERIALIZED (
+        SELECT b.user_id, b.balance_before::numeric AS bal_before, ABS(b.amount::numeric) AS bonus_usd, b.created_at
+        FROM ledger_transactions b
+        WHERE b.status = 'completed'
+          AND b.type::text = 'deposit_bonus'
+          AND ABS(b.amount::numeric) = ${capValue.toFixed(2)}
+          ${bonusDateFilter}
+      ),
+      matched AS (
+        SELECT DISTINCT ON (wd.id)
+          wd.user_id,
+          ABS(wd.deposit_amt) AS deposit_usd,
+          wb.bonus_usd,
+          wd.created_at
+        FROM window_deposits wd
+        JOIN window_bonuses wb
+          ON wb.user_id = wd.user_id
+          AND wb.bal_before = wd.bal_after
+          AND wb.created_at >= wd.created_at
+          AND wb.created_at < wd.created_at + INTERVAL '30 seconds'
+        ORDER BY wd.id, wb.created_at ASC
       )
       SELECT
-        wd.user_id,
+        m.user_id,
         u.username,
-        ABS(wd.deposit_amt)::text AS deposit_usd,
-        b.bonus_usd::text AS bonus_usd,
-        wd.created_at
-      FROM window_deposits wd
-      JOIN "user" u ON u.id = wd.user_id
-      JOIN LATERAL (
-        SELECT ABS(lt.amount::numeric) AS bonus_usd
-        FROM ledger_transactions lt
-        WHERE lt.user_id = wd.user_id
-          AND lt.type::text = 'deposit_bonus'
-          AND lt.status = 'completed'
-          AND lt.balance_before::numeric = wd.bal_after
-          AND lt.created_at >= wd.created_at
-          AND lt.created_at < wd.created_at + INTERVAL '30 seconds'
-          AND ABS(lt.amount::numeric) = ${capValue.toFixed(2)}
-        ORDER BY lt.created_at ASC
-        LIMIT 1
-      ) b ON TRUE
-      ORDER BY ABS(wd.deposit_amt) DESC
+        m.deposit_usd::text AS deposit_usd,
+        m.bonus_usd::text AS bonus_usd,
+        m.created_at
+      FROM matched m
+      JOIN "user" u ON u.id = m.user_id
+      ORDER BY m.deposit_usd DESC
       LIMIT 5
     `);
 
@@ -448,10 +504,11 @@ async function computeDepositBonusCohortExtras(
 
 // 5-minute revalidate (vs 60s on the cheap baseline). The cohort SQL
 // pairs every window deposit to its bonus via an unindexed equality
-// (balance_before == balance_after) — even after tightening the join
-// window to 30s this stays the heaviest query on the tab. 30d cohort
-// numbers don't move minute-to-minute; a 5-min cache trades a small
-// staleness for a much better hit rate on the slow path.
+// (balance_before == balance_after). Even after the hash-join rewrite
+// (materialised bonus set instead of a per-row LATERAL seq scan) it is
+// still the heaviest query on the tab — ~1.3s on prod vs the cheap
+// baseline's sub-200ms. 30d cohort numbers don't move minute-to-minute;
+// a 5-min cache trades a small staleness for a much better hit rate.
 const cachedDepositBonusCohortExtras = unstable_cache(
   async (period: RewardsPeriod, capValue: number, blacklistIds: string[]) =>
     computeDepositBonusCohortExtras(period, capValue, blacklistIds),

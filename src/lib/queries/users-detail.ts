@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { affiliate_usage_type } from "@/generated/prisma/enums";
 import { toNumber } from "@/lib/utils/decimal";
+import { COINS_PER_USD } from "@/lib/constants";
 import { filterLedgerTxTypesLive } from "./_ledger-tx-types";
 import { calculateUserPnl } from "./pnl";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
@@ -361,6 +362,57 @@ export async function getUserHeader(id: string): Promise<{
   return { id: user.id, username: user.username, email: user.email };
 }
 
+/**
+ * Reads the spendable-points counter name-agnostically across schema drift.
+ * The dev and prod DBs are on different migrations: 0127 renamed
+ * balances.bonus_points -> shards on dev but not (yet) on prod. The same
+ * generated Prisma client serves BOTH DBs, so a bare findUnique() (which
+ * pulls every model column) requests the divergent column and throws P2022
+ * on whichever DB lacks it. Try the post-rename name first, fall back to the
+ * legacy name, and treat "column absent" as 0. id is parameterised and the
+ * column names are a fixed allowlist, so $queryRawUnsafe is safe here.
+ */
+async function fetchBalancePoints(db: Db, id: string): Promise<number> {
+  for (const col of ["shards", "bonus_points"] as const) {
+    try {
+      const rows = await db.$queryRawUnsafe<Array<{ pts: number | null }>>(
+        `SELECT "${col}" AS pts FROM balances WHERE user_id = $1`,
+        id,
+      );
+      return Number(rows[0]?.pts ?? 0);
+    } catch {
+      // Column doesn't exist on this DB's migration state — try the next name.
+    }
+  }
+  return 0;
+}
+
+/**
+ * Reads the sweepstakes coin balance defensively. The coin columns
+ * (balances.coin_available_balance) only exist on DBs that have the
+ * sweepstakes migration — present on dev, NOT yet on prod. The same
+ * generated Prisma client serves both, so we read via raw SQL and treat a
+ * missing column as "coins not enabled here" (enabled: false) rather than
+ * crashing the page. Returns the balance in COIN units (coin-USD × peg).
+ * When the column lands on prod this lights up automatically — no code change.
+ */
+async function fetchCoinState(
+  db: Db,
+  id: string,
+): Promise<{ enabled: boolean; coins: number }> {
+  try {
+    const rows = await db.$queryRawUnsafe<Array<{ bal: number | null }>>(
+      `SELECT coin_available_balance AS bal FROM balances WHERE user_id = $1`,
+      id,
+    );
+    const coinUsd = Number(rows[0]?.bal ?? 0);
+    return { enabled: true, coins: Math.round(coinUsd * COINS_PER_USD) };
+  } catch {
+    // coin_available_balance absent on this DB's migration state.
+    return { enabled: false, coins: 0 };
+  }
+}
+
 export async function getUserDetail(id: string) {
   const db = await getDb();
   // Everything is independent — one Promise.all instead of two serialized ones
@@ -428,6 +480,8 @@ export async function getUserDetail(id: string) {
     wagerBreakdownResolved,
     ownedCodeRows,
     tips,
+    balancePoints,
+    coinState,
   ] = await Promise.all([
     db.user.findUnique({
       where: { id },
@@ -437,7 +491,22 @@ export async function getUserDetail(id: string) {
         },
       },
     }),
-    db.balances.findUnique({ where: { user_id: id } }),
+    // SCHEMA-DRIFT GUARD: dev and prod are on different migrations (0127
+    // renamed balances.bonus_points -> shards on dev only). A bare
+    // findUnique() pulls EVERY model column, so it requests the divergent
+    // column and throws P2022 on whichever DB lacks it. Select only columns
+    // that exist identically in BOTH DBs; the points value is read
+    // name-agnostically via fetchBalancePoints below.
+    db.balances.findUnique({
+      where: { user_id: id },
+      select: {
+        available_balance: true,
+        locked_balance: true,
+        total_wagered: true,
+        total_won: true,
+        unlock_at: true,
+      },
+    }),
     db.user_statistics.findUnique({ where: { user_id: id } }),
     db.user_feature_locks.findUnique({ where: { user_id: id } }),
     // The user_battle_limits table is ABSENT in live prod (P2021). A missing
@@ -513,6 +582,12 @@ export async function getUserDetail(id: string) {
     // metadata.direction). Runs in parallel; resolves counterparty names
     // for the shown rows internally.
     getUserTips(db, id),
+    // Spendable points counter, read name-agnostically across the
+    // bonus_points -> shards rename (see fetchBalancePoints).
+    fetchBalancePoints(db, id),
+    // Sweepstakes coin balance + whether coins exist on this DB at all
+    // (false on a pre-sweepstakes schema like prod). Never throws.
+    fetchCoinState(db, id),
   ]);
 
   const depositCount = depositAgg._count._all;
@@ -692,8 +767,10 @@ export async function getUserDetail(id: string) {
           totalWithdrawn: userPnl.withdrawals,
           totalWagered: toNumber(balances.total_wagered),
           totalWon: toNumber(balances.total_won),
-          bonusPoints: balances.bonus_points,
+          bonusPoints: balancePoints,
           unlockAt: balances.unlock_at?.toISOString() ?? null,
+          coinsEnabled: coinState.enabled,
+          coinBalance: coinState.coins,
           inventoryValue: userPnl.inventoryValue,
           vouchersValue: userPnl.unclaimedVouchers,
           packsWagered: Math.abs(toNumber(

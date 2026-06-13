@@ -267,6 +267,21 @@ async function computeCapAnalysis(
   // Step 3: top 10 deposits that triggered a cap-equal bonus. Same
   // canonical bonus↔deposit pairing as `deposit-bonus-analytics.ts`
   // (balance_before == balance_after, 30s window).
+  //
+  // PERFORMANCE — hash join over a materialised, cap-equal bonus set, NOT
+  // a correlated LATERAL. The original `JOIN LATERAL (… LIMIT 1)` had no
+  // usable index for `balance_before::numeric = wd.bal_after`
+  // (ledger_transactions — ~855k rows — is only indexed on id /
+  // external_tx_id / fireblocks_tx_id), so it Seq-Scanned the whole table
+  // PER deposit row → 57014 statement timeout on short windows (7d/24d)
+  // and ~12s on longer ones. We materialise the window's deposit rows AND
+  // the cap-equal bonus rows and hash-join them on (user_id,
+  // balance_before = balance_after) within the 30s window; `DISTINCT ON
+  // (wd.id) … ORDER BY wb.created_at ASC` keeps the first cap-equal bonus
+  // per deposit (old `LIMIT 1` semantics; INNER join → only cap-paired
+  // deposits, identical to the original). The cap-equal predicate
+  // (ABS(amount) = capValue) is pushed into the materialised bonus CTE.
+  // Drops the query from a >30s timeout to <0.5s on live prod data.
   const biggestCapDepositsRows = await db.$queryRawUnsafe<
     {
       user_id: string;
@@ -276,36 +291,45 @@ async function computeCapAnalysis(
       created_at: Date;
     }[]
   >(`
-    WITH window_deposits AS (
+    WITH window_deposits AS MATERIALIZED (
       SELECT d.id, d.user_id, d.amount::numeric AS deposit_amt, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
         AND d.type::text = 'deposit'
         AND d.user_id IN ${userScope}
         ${windowDateFilterCapped(period, "d")}
+    ),
+    window_bonuses AS MATERIALIZED (
+      SELECT b.user_id, b.balance_before::numeric AS bal_before, ABS(b.amount::numeric) AS bonus_usd, b.created_at
+      FROM ledger_transactions b
+      WHERE b.status = 'completed'
+        AND b.type::text = 'deposit_bonus'
+        AND ABS(b.amount::numeric) = ${capLiteral}
+        ${windowDateFilterCapped(period, "b")}
+    ),
+    matched AS (
+      SELECT DISTINCT ON (wd.id)
+        wd.user_id,
+        ABS(wd.deposit_amt) AS deposit_usd,
+        wb.bonus_usd,
+        wd.created_at
+      FROM window_deposits wd
+      JOIN window_bonuses wb
+        ON wb.user_id = wd.user_id
+        AND wb.bal_before = wd.bal_after
+        AND wb.created_at >= wd.created_at
+        AND wb.created_at < wd.created_at + INTERVAL '30 seconds'
+      ORDER BY wd.id, wb.created_at ASC
     )
     SELECT
-      wd.user_id,
+      m.user_id,
       u.username,
-      ABS(wd.deposit_amt)::text AS deposit_usd,
-      b.bonus_usd::text AS bonus_usd,
-      wd.created_at
-    FROM window_deposits wd
-    JOIN "user" u ON u.id = wd.user_id
-    JOIN LATERAL (
-      SELECT ABS(lt.amount::numeric) AS bonus_usd
-      FROM ledger_transactions lt
-      WHERE lt.user_id = wd.user_id
-        AND lt.type::text = 'deposit_bonus'
-        AND lt.status = 'completed'
-        AND lt.balance_before::numeric = wd.bal_after
-        AND lt.created_at >= wd.created_at
-        AND lt.created_at < wd.created_at + INTERVAL '30 seconds'
-        AND ABS(lt.amount::numeric) = ${capLiteral}
-      ORDER BY lt.created_at ASC
-      LIMIT 1
-    ) b ON TRUE
-    ORDER BY ABS(wd.deposit_amt) DESC
+      m.deposit_usd::text AS deposit_usd,
+      m.bonus_usd::text AS bonus_usd,
+      m.created_at
+    FROM matched m
+    JOIN "user" u ON u.id = m.user_id
+    ORDER BY m.deposit_usd DESC
     LIMIT ${TOP_LIMIT}
   `);
 

@@ -18,8 +18,8 @@ import {
 } from "@/components/ui/table";
 import { upsertSiteConfig, deleteSiteConfig } from "./actions";
 import type { SiteConfigRow } from "@/lib/queries/security";
-import { CloudRain, Trash2, SlidersHorizontal, Plus } from "lucide-react";
-import { SectionHeading } from "@/components/modern-panels";
+import { CloudRain, Trash2, Plus } from "lucide-react";
+import { CollapsibleSecuritySection } from "./collapsible-security-section";
 import { EmptyState } from "@/components/empty-state";
 
 function isBoolean(value: string) {
@@ -91,7 +91,6 @@ export function SecurityContent({
   return (
     <div className="space-y-6">
       <div className="space-y-3">
-        <SectionHeading icon={SlidersHorizontal} title="Site Configuration" />
         {rainConfigMoved && (
           <div className="flex items-center gap-2 rounded-md border border-blue-500/40 bg-blue-500/10 p-3 text-xs text-blue-600 dark:text-blue-400">
             <CloudRain className="size-4 shrink-0" />
@@ -126,7 +125,7 @@ export function SecurityContent({
                 <TableRow className="hover:bg-transparent">
                   <TableCell colSpan={4} className="p-0">
                     <EmptyState
-                      icon={SlidersHorizontal}
+                      icon={Plus}
                       title="No configuration entries"
                       description="Add a config key below to control site behaviour."
                       compact
@@ -180,8 +179,7 @@ export function SecurityContent({
         </div>
       </div>
 
-      <div className="space-y-3">
-        <SectionHeading icon={Plus} title="Add Configuration" />
+      <CollapsibleSecuritySection icon="plus" title="Add Configuration" defaultOpen={false}>
         <div className="rounded-md border p-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
             <div className="space-y-1">
@@ -220,7 +218,7 @@ export function SecurityContent({
             </div>
           </div>
         </div>
-      </div>
+      </CollapsibleSecuritySection>
     </div>
   );
 }

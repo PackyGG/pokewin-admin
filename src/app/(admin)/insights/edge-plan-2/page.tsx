@@ -5,7 +5,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { insightsRewardsPeriodLabel } from "@/lib/queries/insights-rewards/_period";
 
-import { EDGE_PLAN_V2_PERIOD } from "./_baseline-v2";
+import { EDGE_PLAN_LIFETIME_LABEL, EDGE_PLAN_V2_PERIOD } from "./_baseline-v2";
 import { EdgePlanV2Content } from "./_content";
 import { EdgePlanV2Skeleton } from "./loading";
 
@@ -29,6 +29,10 @@ export default async function EdgePlanV2Page() {
         Baseline window:{" "}
         <span className="font-medium text-foreground">
           {insightsRewardsPeriodLabel(EDGE_PLAN_V2_PERIOD)}
+        </span>{" "}
+        (planner &amp; levers). The owner-trusted headline strip shows{" "}
+        <span className="font-medium text-foreground">
+          {EDGE_PLAN_LIFETIME_LABEL}
         </span>
         . Read-only planning — save configs in-browser to compare scenarios.
       </p>

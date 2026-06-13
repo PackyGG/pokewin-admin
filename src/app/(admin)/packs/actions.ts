@@ -2,22 +2,65 @@
 
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess, sessionHasRole } from "@/lib/dal";
+import { isRepriceOwner } from "@/lib/reprice-access";
 import { requireCapability } from "@/lib/require-capability";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import {
   getPackDetail,
   getPackGames,
   getPackStats,
+  getPacksPoolComposition,
+  REPRICE_INCLUDED_PACK_TYPES,
   type PackStats,
 } from "@/lib/queries/packs";
+import {
+  planPackReprice,
+  repriceEdgeWithinHardBand,
+  clampRepriceTarget,
+  REPRICE_TARGET_DEFAULT,
+  REPRICE_TARGET_MIN,
+  REPRICE_TARGET_MAX,
+  REPRICE_ACCEPT_TOLERANCE,
+  REPRICE_HARD_TOLERANCE,
+  type RepriceAction,
+} from "@/app/(admin)/insights/edge-calc/math";
+import { require2FA } from "@/lib/require-2fa";
+import { signRepriceToken, verifyRepriceToken } from "@/lib/reprice-token";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
 import { getCards, getRarities, getSets } from "@/lib/queries/cards";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
 import type { pack_tag } from "@/generated/prisma/enums";
+
+/**
+ * Persists a pack's `shard_cost` via raw SQL. The column is on the dev schema
+ * only (not prod), and the shared Prisma client can't type a column that's
+ * absent on one DB — so writing it through `packs.create/update` data would
+ * be a type error AND would P2022 on prod. Done as a separate post-commit
+ * UPDATE (never inside the caller's transaction, so a missing column can't
+ * poison it) and swallowed when the column is absent. Intersection-schema +
+ * raw pattern, matching the read side in queries/packs.ts.
+ */
+async function writeShardCost(
+  db: Awaited<ReturnType<typeof getDb>>,
+  packId: string,
+  shardCost: number | null,
+): Promise<void> {
+  try {
+    await db.$executeRawUnsafe(
+      `UPDATE packs SET shard_cost = $1 WHERE id = $2`,
+      shardCost,
+      packId,
+    );
+  } catch {
+    // shard_cost column absent on this DB (e.g. prod) — shard packs aren't
+    // supported here, so there's nothing to persist.
+  }
+}
 
 export type CardPickerItem = {
   id: string;
@@ -180,7 +223,6 @@ export async function createPack(data: {
         price: data.price,
         cards_per_open: data.cardsPerOpen,
         pack_type: data.packType,
-        shard_cost: shardCost,
         tags: data.tags,
         difficulty: data.difficulty,
         active: false,
@@ -202,6 +244,11 @@ export async function createPack(data: {
 
     return pack;
   });
+
+  // shard_cost is dev-only — persist it outside the transaction (no-op on a
+  // DB without the column). Shard packs are a dev feature, so this only
+  // matters where the column exists.
+  await writeShardCost(db, pack.id, shardCost);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -294,7 +341,6 @@ export async function updatePack(
         price: data.price,
         cards_per_open: data.cardsPerOpen,
         pack_type: data.packType,
-        shard_cost: shardCost,
         tags: data.tags,
         difficulty: data.difficulty,
         updated_at: new Date(),
@@ -316,6 +362,11 @@ export async function updatePack(
       });
     }
   });
+
+  // shard_cost is dev-only — persist it outside the transaction (no-op on a
+  // DB without the column). Writing null clears it when a pack is no longer
+  // a shard pack.
+  await writeShardCost(db, id, shardCost);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -384,6 +435,91 @@ export async function fetchPackGames(
   return getPackGames(packId, page, perPage, filters);
 }
 
+const MODAL_DETAIL_TIMEOUT_MS = 12_000;
+const MODAL_STATS_TIMEOUT_MS = 15_000;
+const MODAL_GAMES_TIMEOUT_MS = 15_000;
+
+const EMPTY_GAMES_PAGE = {
+  data: [] as Awaited<ReturnType<typeof getPackGames>>["data"],
+  total: 0,
+  page: 1,
+  perPage: 20,
+  totalPages: 0,
+};
+
+/** Lightweight identity read for modal header when the pack isn't on the list page. */
+export async function fetchPackListSeed(packId: string) {
+  await requirePageAccess("/packs");
+  const db = await getDb();
+  const pack = await db.packs.findUnique({
+    where: { id: packId },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      image_url: true,
+      price: true,
+      active: true,
+      pack_type: true,
+    },
+  });
+  if (!pack) return null;
+  return {
+    id: pack.id,
+    name: pack.name,
+    slug: pack.slug,
+    imageUrl: pack.image_url,
+    priceUsd: Number(pack.price),
+    active: pack.active,
+    packType: pack.pack_type as string | null,
+  };
+}
+
+export async function fetchPackDetailCore(packId: string) {
+  await requirePageAccess("/packs");
+  const { data } = await safeQuery(
+    () => getPackDetail(packId),
+    null,
+    "packs.modal.detail",
+    MODAL_DETAIL_TIMEOUT_MS,
+  );
+  return data;
+}
+
+export async function fetchPackDetailStats(
+  packId: string,
+  detail: NonNullable<Awaited<ReturnType<typeof getPackDetail>>>,
+): Promise<PackStats | null> {
+  await requirePageAccess("/packs");
+  const { data } = await safeQuery(
+    () =>
+      getPackStats(packId, detail.priceUsd, {
+        totalPayout: detail.totalPayout,
+        actualRtp: detail.actualRtp,
+      }),
+    null,
+    "packs.modal.stats",
+    MODAL_STATS_TIMEOUT_MS,
+  );
+  return data;
+}
+
+export async function fetchPackGamesSafe(
+  packId: string,
+  page: number,
+  perPage: number,
+) {
+  await requirePageAccess("/packs");
+  const { data, error } = await safeQuery(
+    () => getPackGames(packId, page, perPage),
+    EMPTY_GAMES_PAGE,
+    "packs.modal.games",
+    MODAL_GAMES_TIMEOUT_MS,
+  );
+  if (error) throw new Error("Games query timed out or failed");
+  return data;
+}
+
 /** Full detail payload for the centered pack modal opened from the list. */
 export type PackFullDetail = {
   /** The same shape the /packs/[id] page renders from `getPackDetail`. */
@@ -396,12 +532,6 @@ export type PackFullDetail = {
    */
   stats: PackStats | null;
 };
-
-// Mirror the page's deferred-stats timeout (PackStatsLazy.STATS_QUERY_TIMEOUT_MS):
-// the two getPackStats scans are unbounded JSON scans over provably_fair_results,
-// so bound the wait and degrade the stats block rather than hang the whole modal
-// fetch. cachedPackStatScans already caches the raw rows 60s.
-const MODAL_STATS_TIMEOUT_MS = 15_000;
 
 /**
  * Lazy-load the FULL pack detail for the big centered modal opened from a
@@ -416,28 +546,16 @@ const MODAL_STATS_TIMEOUT_MS = 15_000;
  * modal can show a 404 / error state. The stats sub-fetch is wrapped in
  * safeQuery+timeout so a slow scan degrades that block alone — detail + the
  * card pool still render, mirroring the page's <PackStatsLazy> boundary.
+ *
+ * Prefer `loadPackFullDetail` from pack-detail-cache.ts on the client — it
+ * dedupes in-flight requests so double-clicks don't double-query.
  */
 export async function fetchPackFullDetail(
   packId: string,
 ): Promise<PackFullDetail | null> {
-  await requirePageAccess("/packs");
-
-  const detail = await getPackDetail(packId);
+  const detail = await fetchPackDetailCore(packId);
   if (!detail) return null;
-
-  // Stats are the heavy, scan-backed part — fetch them resiliently so they can
-  // fail/timeout independently of the detail the modal already has in hand.
-  const { data: stats } = await safeQuery(
-    () =>
-      getPackStats(packId, detail.priceUsd, {
-        totalPayout: detail.totalPayout,
-        actualRtp: detail.actualRtp,
-      }),
-    null,
-    "packs.modal.stats",
-    MODAL_STATS_TIMEOUT_MS,
-  );
-
+  const stats = await fetchPackDetailStats(packId, detail);
   return { detail, stats };
 }
 
@@ -542,4 +660,333 @@ export async function quickUpdatePack(
 
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
+}
+
+// ─── Global re-price to a target house edge (default 10.99%) ──────────
+//
+// Scope: ACTIVE, OFFICIAL packs only (never inactive, never promo / custom /
+// reward / shard). The tool ONLY ever adjusts a pack's `price` — it NEVER
+// touches card odds (the pack_cards pool is read to compute EV, never written).
+// The single most dangerous action in the panel; deliberately defensive:
+//   1. `planRepriceAllPacks(target)` is a READ-ONLY dry-run — computes the full
+//      before/after plan and writes NOTHING. Owner-only (no 2FA: it can't
+//      change anything).
+//   2. `authorizeReprice(totp)` verifies the owner's 2FA ONCE and mints a
+//      short-lived signed token for the run.
+//   3. `repricePackToTargetEdge(packId, token, target)` writes ONE pack at a
+//      time (the client loops for live progress), requires a valid 2FA token,
+//      re-derives the price server-side from fresh DB truth (never a
+//      client-supplied price), and HARD-asserts the resulting edge is within
+//      the hard tolerance of the target before persisting.
+// The target + band rule live in the dep-free math module (`planPackReprice`)
+// so the dry-run and the write share one implementation.
+
+/** Validate + normalize a target edge fraction; throws on out-of-range input. */
+function resolveRepriceTarget(target: number | undefined): number {
+  const t = target ?? REPRICE_TARGET_DEFAULT;
+  if (!Number.isFinite(t) || t < REPRICE_TARGET_MIN || t > REPRICE_TARGET_MAX) {
+    throw new Error(
+      `Target edge must be between ${(REPRICE_TARGET_MIN * 100).toFixed(0)}% and ${(REPRICE_TARGET_MAX * 100).toFixed(0)}%.`,
+    );
+  }
+  return clampRepriceTarget(t);
+}
+
+export type RepricePlanRow = {
+  packId: string;
+  name: string;
+  slug: string;
+  packType: string;
+  active: boolean;
+  priceBefore: number;
+  priceAfter: number | null;
+  /** House-edge fractions (0.1099 = 10.99%). */
+  edgeBefore: number;
+  edgeAfter: number | null;
+  action: RepriceAction;
+  reason: string;
+};
+
+export type RepricePlanSummary = {
+  /** Which game DB the writes would hit — surfaced so the operator can't
+   *  confuse a prod run with a dev run. */
+  dbEnv: DbEnv;
+  /** The target edge this plan was computed for (fraction). */
+  target: number;
+  acceptMin: number;
+  acceptMax: number;
+  hardMin: number;
+  hardMax: number;
+  counts: {
+    total: number;
+    toReprice: number;
+    unchanged: number;
+    skipped: number;
+  };
+  /** Packs that WILL change, sorted by largest absolute price swing first so
+   *  the scariest moves surface at the top of the preview. */
+  toReprice: RepricePlanRow[];
+  unchanged: RepricePlanRow[];
+  skipped: RepricePlanRow[];
+};
+
+/**
+ * READ-ONLY dry-run for the global re-price at `targetEdge` (default 10.99%).
+ * Computes every in-scope (active, official) pack's current→new price and edge
+ * and buckets them. Writes nothing — safe to run even against prod. Owner-only.
+ */
+export async function planRepriceAllPacks(
+  targetEdge?: number,
+): Promise<RepricePlanSummary> {
+  const session = await requirePageAccess("/packs");
+  if (!isRepriceOwner(session)) {
+    throw new Error("The global re-price tool is restricted to the owner.");
+  }
+  const target = resolveRepriceTarget(targetEdge);
+
+  const dbEnv = await readDbEnv();
+  const packs = await getPacksPoolComposition(); // scoped: active official, price > 0
+
+  const rows: RepricePlanRow[] = packs.map((p) => {
+    const plan = planPackReprice({
+      currentPrice: p.price,
+      cardsPerOpen: p.cardsPerOpen,
+      totalWeight: p.totalWeight,
+      weightedPriceSum: p.weightedPriceSum,
+      targetEdge: target,
+    });
+    return {
+      packId: p.id,
+      name: p.name,
+      slug: p.slug,
+      packType: p.packType,
+      active: p.active,
+      priceBefore: p.price,
+      priceAfter: plan.newPrice,
+      edgeBefore: plan.currentEdge,
+      edgeAfter: plan.newEdge,
+      action: plan.action,
+      reason: plan.reason,
+    };
+  });
+
+  const toReprice = rows
+    .filter((r) => r.action === "reprice")
+    .sort(
+      (a, b) =>
+        Math.abs((b.priceAfter ?? b.priceBefore) - b.priceBefore) -
+        Math.abs((a.priceAfter ?? a.priceBefore) - a.priceBefore),
+    );
+  const unchanged = rows.filter((r) => r.action === "unchanged");
+  const skipped = rows.filter((r) => r.action === "skip");
+
+  return {
+    dbEnv,
+    target,
+    acceptMin: target - REPRICE_ACCEPT_TOLERANCE,
+    acceptMax: target + REPRICE_ACCEPT_TOLERANCE,
+    hardMin: target - REPRICE_HARD_TOLERANCE,
+    hardMax: target + REPRICE_HARD_TOLERANCE,
+    counts: {
+      total: rows.length,
+      toReprice: toReprice.length,
+      unchanged: unchanged.length,
+      skipped: skipped.length,
+    },
+    toReprice,
+    unchanged,
+    skipped,
+  };
+}
+
+/**
+ * Verify the owner's 2FA ONCE and mint a short-lived token authorizing a
+ * re-price run. The client passes this token to each per-pack write so TOTP
+ * isn't re-prompted per pack (and a long run can't expire mid-way). Owner-only.
+ */
+export async function authorizeReprice(
+  totpCode: string,
+): Promise<{ token: string }> {
+  const session = await requirePageAccess("/packs");
+  if (!isRepriceOwner(session)) {
+    throw new Error("The global re-price tool is restricted to the owner.");
+  }
+  // Throws "Invalid TOTP code" / "2FA not enabled" / "code required" verbatim.
+  await require2FA(session.userId, totpCode);
+  return { token: await signRepriceToken(session.userId) };
+}
+
+export type RepriceResult = {
+  packId: string;
+  name: string;
+  status: "repriced" | "unchanged" | "skipped" | "failed";
+  priceBefore: number;
+  priceAfter: number | null;
+  edgeBefore: number;
+  edgeAfter: number | null;
+  reason: string;
+};
+
+/**
+ * Re-price ONE pack to `targetEdge` (default 10.99%). The client loops over the
+ * dry-run's `toReprice` ids, calling this per pack so the run is visible,
+ * stoppable, and each pack is its own audited write.
+ *
+ * Authoritative & paranoid:
+ *   - Owner-only, AND requires a valid 2FA token from `authorizeReprice`.
+ *   - Re-fetches the pack's pool FRESH from the DB — the client supplies only an
+ *     id + the token + the target, never a price.
+ *   - Re-validates scope server-side (active / official / price) independently
+ *     of the dry-run filter.
+ *   - HARD-asserts the resulting edge is within the hard tolerance of the target
+ *     and THROWS otherwise, so a logic regression fails closed (no write).
+ *   - Writes ONLY `price` (+ updated_at); never touches realized stats / pool.
+ */
+export async function repricePackToTargetEdge(
+  packId: string,
+  token: string,
+  targetEdge?: number,
+): Promise<RepriceResult> {
+  const session = await requirePageAccess("/packs");
+  if (!isRepriceOwner(session)) {
+    throw new Error("The global re-price tool is restricted to the owner.");
+  }
+  await requireCapability(session, "__can_update_pack", "update packs");
+  // 2FA gate: the run must carry a valid token minted by `authorizeReprice`.
+  // Auth/token/target failures stay THROWS — they abort the whole run.
+  if (!(await verifyRepriceToken(token, session.userId))) {
+    throw new Error("2FA authorization expired or missing — re-confirm to continue.");
+  }
+  const target = resolveRepriceTarget(targetEdge);
+
+  // Everything pack-specific is wrapped so ONE pack's failure surfaces its REAL
+  // message — a value returned from a server action is NOT masked the way a
+  // thrown error is in production ("An error occurred in the Server Components
+  // render…") — and the client can keep going through the rest of the batch.
+  let comp: Awaited<ReturnType<typeof getPacksPoolComposition>>[number] | undefined;
+  try {
+    const db = await getDb();
+    [comp] = await getPacksPoolComposition({ packIds: [packId] });
+    if (!comp) {
+      return {
+        packId,
+        name: packId,
+        status: "failed",
+        priceBefore: 0,
+        priceAfter: null,
+        edgeBefore: 0,
+        edgeAfter: null,
+        reason: "Pack not found.",
+      };
+    }
+
+    // Defense-in-depth scope re-check (independent of the dry-run's WHERE):
+    // active official packs only.
+    const skip = (reason: string): RepriceResult => ({
+      packId,
+      name: comp!.name,
+      status: "skipped",
+      priceBefore: comp!.price,
+      priceAfter: null,
+      edgeBefore: 0,
+      edgeAfter: null,
+      reason,
+    });
+    if (!(REPRICE_INCLUDED_PACK_TYPES as readonly string[]).includes(comp.packType)) {
+      return skip(`Out of scope: only official packs are re-priced (this is '${comp.packType}').`);
+    }
+    if (!comp.active) {
+      return skip("Out of scope: only active packs are re-priced.");
+    }
+    if (!(comp.price > 0)) {
+      return skip("Out of scope: pack has no price.");
+    }
+
+    const plan = planPackReprice({
+      currentPrice: comp.price,
+      cardsPerOpen: comp.cardsPerOpen,
+      totalWeight: comp.totalWeight,
+      weightedPriceSum: comp.weightedPriceSum,
+      targetEdge: target,
+    });
+
+    if (plan.action !== "reprice" || plan.newPrice === null || plan.newEdge === null) {
+      return {
+        packId,
+        name: comp.name,
+        status: plan.action === "unchanged" ? "unchanged" : "skipped",
+        priceBefore: comp.price,
+        priceAfter: plan.newPrice,
+        edgeBefore: plan.currentEdge,
+        edgeAfter: plan.newEdge,
+        reason: plan.reason,
+      };
+    }
+
+    // HARD BACKSTOP — never persist a price whose edge escapes the hard
+    // tolerance of the target. Returned as a `failed` result (not thrown) so the
+    // run continues; unreachable in normal operation (accept ⊂ hard).
+    if (!repriceEdgeWithinHardBand(plan.newEdge, target)) {
+      return {
+        packId,
+        name: comp.name,
+        status: "failed",
+        priceBefore: comp.price,
+        priceAfter: null,
+        edgeBefore: plan.currentEdge,
+        edgeAfter: plan.newEdge,
+        reason: `Refused: resulting edge ${(plan.newEdge * 100).toFixed(2)}% is outside the hard band around ${(target * 100).toFixed(2)}%.`,
+      };
+    }
+
+    // ONLY the price is written (+ updated_at). Card odds (pack_cards) are never
+    // touched — re-pricing moves the sticker price, nothing else.
+    await db.packs.update({
+      where: { id: packId },
+      data: { price: plan.newPrice, updated_at: new Date() },
+    });
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "pack_updated",
+      metadata: {
+        pack_id: packId,
+        name: comp.name,
+        via: "reprice_to_target_edge",
+        target_edge: target,
+        price_before: comp.price,
+        price_after: plan.newPrice,
+        edge_before: plan.currentEdge,
+        edge_after: plan.newEdge,
+      },
+    });
+
+    reloadPacks();
+    revalidatePath("/packs");
+    revalidatePath(`/packs/${packId}`);
+
+    return {
+      packId,
+      name: comp.name,
+      status: "repriced",
+      priceBefore: comp.price,
+      priceAfter: plan.newPrice,
+      edgeBefore: plan.currentEdge,
+      edgeAfter: plan.newEdge,
+      reason: "",
+    };
+  } catch (err) {
+    // The REAL cause (DB error, audit write, etc.) — returned as data so prod
+    // doesn't mask it behind the generic digest message.
+    return {
+      packId,
+      name: comp?.name ?? packId,
+      status: "failed",
+      priceBefore: comp?.price ?? 0,
+      priceAfter: null,
+      edgeBefore: 0,
+      edgeAfter: null,
+      reason: err instanceof Error ? err.message : "Write failed.",
+    };
+  }
 }

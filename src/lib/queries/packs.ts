@@ -8,6 +8,36 @@ import { pack_tag } from "@/generated/prisma/enums";
 import { MS_PER_DAY } from "@/lib/utils/time";
 
 /**
+ * Reads pack `shard_cost` values schema-defensively. The shard-packs
+ * migration (the `shard_cost` column) is on dev but NOT prod, and the same
+ * Prisma client serves both — so a typed `select: { shard_cost: true }` would
+ * throw P2022 on prod. Read it via raw SQL instead and treat a missing column
+ * as "no shard cost" (null). Intersection-schema + raw pattern: the divergent
+ * column never enters the typed client, and this lights up on prod
+ * automatically once the column lands there.
+ */
+async function fetchShardCosts(
+  db: Awaited<ReturnType<typeof getDb>>,
+  ids: string[],
+): Promise<Map<string, number | null>> {
+  if (ids.length === 0) return new Map();
+  try {
+    const rows = await db.$queryRawUnsafe<
+      Array<{ id: string; shard_cost: number | null }>
+    >(`SELECT id, shard_cost FROM packs WHERE id = ANY($1::uuid[])`, ids);
+    return new Map(
+      rows.map((r) => [
+        r.id,
+        r.shard_cost === null ? null : Number(r.shard_cost),
+      ]),
+    );
+  } catch {
+    // shard_cost column absent on this DB (e.g. prod) — no shard costs.
+    return new Map();
+  }
+}
+
+/**
  * Category filter for the /packs list.
  *
  * The values map onto the TWO structured `packs` columns that carry a
@@ -449,6 +479,109 @@ export async function getPacksListStats(
   )();
 }
 
+/**
+ * Pack types IN SCOPE for the global "re-price all to 10.99%" tool. Owner rule
+ * (2026-06-13): ONLY `official` packs — never promo / custom / reward / shard.
+ * Reward is the free daily/welcome type (no real sticker price), shard uses the
+ * separate shard-cost model, and promo/custom are intentionally left out too —
+ * the tool touches none of them. The tool ALSO only ever adjusts the pack
+ * `price`; it never changes card odds. Hardcoded trusted literals (no user
+ * input) — safe to interpolate into SQL.
+ */
+export const REPRICE_INCLUDED_PACK_TYPES = ["official"] as const;
+
+export type PackPoolComposition = {
+  id: string;
+  name: string;
+  slug: string;
+  packType: string;
+  active: boolean;
+  /** Current sticker price (USD). */
+  price: number;
+  cardsPerOpen: number;
+  /** SUM of card weights in the pool (denominator of expected card value). */
+  totalWeight: number;
+  /** SUM(weight × card price) across the pool (numerator). */
+  weightedPriceSum: number;
+};
+
+/**
+ * Per-pack card-pool composition needed to compute EV / house edge, in ONE
+ * grouped read. Used by the global re-price dry-run (all in-scope packs) and by
+ * the single-pack write action (`packIds: [id]`, which re-validates scope
+ * itself). NOT cached — callers need fresh truth immediately before a write.
+ *
+ *   • No `packIds`  → scoped set: ACTIVE official packs with `price > 0`.
+ *   • With `packIds`→ exactly those ids, UNFILTERED (the write action enforces
+ *     scope server-side so it can report an out-of-scope id rather than silently
+ *     returning nothing).
+ *
+ * LEFT JOINs so a pack with no cards still returns a row (weights → 0 → EV 0 →
+ * the planner skips it). Decimals cast to text and re-parsed to dodge driver
+ * precision quirks.
+ */
+export async function getPacksPoolComposition(opts?: {
+  packIds?: string[];
+}): Promise<PackPoolComposition[]> {
+  const db = await getDb();
+
+  const params: unknown[] = [];
+  let whereClause: string;
+  if (opts?.packIds && opts.packIds.length > 0) {
+    whereClause = `p.id = ANY($1::uuid[])`;
+    params.push(opts.packIds);
+  } else {
+    const included = REPRICE_INCLUDED_PACK_TYPES.map((t) => `'${t}'`).join(", ");
+    whereClause = `p.pack_type IN (${included}) AND p.price > 0 AND p.active = true`;
+  }
+
+  const rows = await db.$queryRawUnsafe<
+    {
+      id: string;
+      name: string;
+      slug: string;
+      pack_type: string;
+      active: boolean;
+      price: string;
+      cards_per_open: number;
+      total_weight: string;
+      weighted_price_sum: string;
+    }[]
+  >(
+    `
+      SELECT
+        p.id,
+        p.name,
+        p.slug,
+        p.pack_type,
+        p.active,
+        p.price::text                                   AS price,
+        p.cards_per_open,
+        COALESCE(SUM(pc.weight), 0)::text               AS total_weight,
+        COALESCE(SUM(pc.weight * c.price), 0)::text     AS weighted_price_sum
+      FROM packs p
+      LEFT JOIN pack_cards pc ON pc.pack_id = p.id
+      LEFT JOIN cards c ON c.id = pc.card_id
+      WHERE ${whereClause}
+      GROUP BY p.id, p.name, p.slug, p.pack_type, p.active, p.price, p.cards_per_open
+      ORDER BY p.name ASC
+    `,
+    ...params,
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    slug: r.slug,
+    packType: r.pack_type,
+    active: r.active,
+    price: Number(r.price),
+    cardsPerOpen: Number(r.cards_per_open),
+    totalWeight: Number(r.total_weight),
+    weightedPriceSum: Number(r.weighted_price_sum),
+  }));
+}
+
 export async function getPackDetail(id: string) {
   const db = await getDb();
   // Explicit top-level `select` listing only the columns the detail mapper
@@ -477,7 +610,6 @@ export async function getPackDetail(id: string) {
       actual_house_edge: true,
       active: true,
       pack_type: true,
-      shard_cost: true,
       tags: true,
       difficulty: true,
       pack_cards: {
@@ -505,6 +637,10 @@ export async function getPackDetail(id: string) {
 
   if (!pack) return null;
 
+  // shard_cost lives only on the dev schema — read it via raw SQL (null on
+  // a DB without the column) so this detail query works on both DBs.
+  const shardCost = (await fetchShardCosts(db, [pack.id])).get(pack.id) ?? null;
+
   const totalWeight = pack.pack_cards.reduce((sum, pc) => sum + pc.weight, 0);
 
   return {
@@ -522,7 +658,7 @@ export async function getPackDetail(id: string) {
     actualHouseEdge: toNumber(pack.actual_house_edge),
     active: pack.active,
     packType: pack.pack_type,
-    shardCost: pack.shard_cost,
+    shardCost,
     tags: pack.tags,
     difficulty: pack.difficulty,
     cards: pack.pack_cards.map((pc) => ({
@@ -590,13 +726,14 @@ export async function getShardPacks(): Promise<ShardPacksResult> {
       name: true,
       slug: true,
       image_url: true,
-      shard_cost: true,
       cards_per_open: true,
       active: true,
     },
   });
 
   const ids = rows.map((p) => p.id);
+  // shard_cost is dev-only — read it via raw SQL keyed by pack id.
+  const shardCostById = await fetchShardCosts(db, ids);
   const cardCounts =
     ids.length > 0
       ? await db.pack_cards.groupBy({
@@ -612,7 +749,7 @@ export async function getShardPacks(): Promise<ShardPacksResult> {
     name: p.name,
     slug: p.slug,
     imageUrl: p.image_url,
-    shardCost: p.shard_cost,
+    shardCost: shardCostById.get(p.id) ?? null,
     cardsPerOpen: p.cards_per_open,
     active: p.active,
     cardCount: countByPack.get(p.id) ?? 0,

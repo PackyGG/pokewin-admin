@@ -1,15 +1,7 @@
 import { Suspense } from "react";
-import {
-  Coins,
-  DollarSign,
-  Gauge,
-  Package,
-  Power,
-  Sparkles,
-} from "lucide-react";
+import { Coins, Package } from "lucide-react";
 import {
   getPacks,
-  getPacksListStats,
   parsePackCategory,
   type PackListItem,
   type PackSetFilter,
@@ -25,18 +17,18 @@ import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabil
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { PaginationSkeleton } from "@/components/loading-skeletons";
 import { CreatePackButton } from "./create-pack-button";
+import { RepriceAllPacksButton } from "./reprice-all-packs";
+import { isRepriceOwner } from "@/lib/reprice-access";
 import { PacksFilterBar } from "./packs-filter-bar";
 import { PacksList } from "./packs-list";
+import { PacksKpiStrip } from "./packs-kpi-strip";
+import { PacksPageShell } from "./packs-page-shell";
 import {
-  KpiTile,
   PageHero,
   PageHeroIdentity,
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { TileErrorFallback } from "@/components/tile-error-fallback";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { houseAccent, formatPercentValue } from "@/lib/house-pov";
 import {
   resolveEntityView,
   type EntityView,
@@ -54,6 +46,7 @@ import {
 } from "@/lib/entity-surface/loader";
 import { safeQuery } from "@/lib/errors/safe-query";
 import type { PaginatedResult } from "@/lib/types";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export const metadata = { title: "Packs" };
 
@@ -94,11 +87,6 @@ async function PacksContent({
   sortOrder,
   set,
   view,
-  canToggle,
-  canDelete,
-  canEdit,
-  canEditLive,
-  isPackCreator,
 }: {
   page: number;
   perPage: number;
@@ -109,11 +97,6 @@ async function PacksContent({
   sortOrder: "asc" | "desc";
   set: PackSetFilter;
   view: EntityView;
-  canToggle: boolean;
-  canDelete: boolean;
-  canEdit: boolean;
-  canEditLive: boolean;
-  isPackCreator: boolean;
 }) {
   const { data: result, error } = await loadPrimary(
     () =>
@@ -134,15 +117,7 @@ async function PacksContent({
   return (
     <>
       <FadeIn>
-        <PacksList
-          data={result.data}
-          view={view}
-          canToggle={canToggle}
-          canDelete={canDelete}
-          canEdit={canEdit}
-          canEditLive={canEditLive}
-          isPackCreator={isPackCreator}
-        />
+        <PacksList data={result.data} view={view} />
       </FadeIn>
       <DataTablePagination
         page={result.page}
@@ -219,18 +194,6 @@ export default async function PacksPage({
   // __can_edit_live_packs; admins are never gated this way.
   const isPackCreator = sessionHasRole(session, "pack_creator");
 
-  // Tab-scoped KPI stats — cached aggregates that stay stable across page
-  // navigation + search refinements. Scoped to the active Pokemon / OnePiece
-  // pool so the strip matches the list below. Wrapped in `safeQuery` (mirrors
-  // /cards) so a failing/slow aggregate degrades the strip to an inline error
-  // tile instead of crashing the whole page to the route error boundary — the
-  // hero + filter bar + list below stay usable.
-  const { data: stats } = await safeQuery(
-    () => getPacksListStats(activeSet),
-    null,
-    "packs.kpi",
-  );
-
   const activeFilter = readActiveFilter(params);
 
   // Category filter (1% / 5% / 10% tag, or daily/reward pack type) — read +
@@ -251,136 +214,85 @@ export default async function PacksPage({
   ]);
 
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={Package}
-          title="Packs"
-          subtitle="Pack catalog — pricing, availability, and economics."
-          action={canCreate ? <CreatePackButton /> : undefined}
-        />
-      </PageHero>
-
-      {/* KPI strip — pool-scoped totals that stay stable while admins
-          paginate or filter the list below. House-POV colors throughout.
-          When the aggregate query failed (safeQuery returned null) the strip
-          collapses to a single TileErrorFallback row instead of crashing the
-          page; the filter bar + list below are unaffected. (Mirrors /cards.) */}
-      {stats ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-          <KpiTile
-            label={activeSet === "onepiece" ? "OnePiece Packs" : "Pokemon Packs"}
-            value={formatNumber(stats.totalPacks)}
-            sub={
-              stats.totalPacks > 0
-                ? `${stats.activePacks} active · ${
-                    stats.totalPacks - stats.activePacks
-                  } off`
-                : undefined
-            }
+    <PacksPageShell
+      canToggle={canToggle}
+      canDelete={canDelete}
+      canEdit={canEdit}
+      canEditLive={canEditLive}
+      isPackCreator={isPackCreator}
+    >
+      <div className="space-y-6">
+        <PageHero>
+          <PageHeroIdentity
             icon={Package}
-            accent="blue"
-          />
-          <KpiTile
-            label="Active"
-            value={formatNumber(stats.activePacks)}
-            sub={
-              stats.totalPacks > 0
-                ? `${Math.round(
-                    (stats.activePacks / stats.totalPacks) * 100,
-                  )}% of catalog`
-                : undefined
+            title="Packs"
+            subtitle="Pack catalog — pricing, availability, and economics."
+            action={
+              canCreate || isRepriceOwner(session) ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Owner-only (motha): re-price tool is hidden from every
+                      other admin. Enforced again server-side in the actions. */}
+                  {isRepriceOwner(session) && <RepriceAllPacksButton />}
+                  {canCreate && <CreatePackButton />}
+                </div>
+              ) : undefined
             }
-            icon={Power}
-            accent="cyan"
           />
-          <KpiTile
-            label="Lifetime Opens"
-            value={formatNumber(stats.totalOpenings)}
-            icon={Sparkles}
-            accent="purple"
-          />
-          <KpiTile
-            label="Lifetime Revenue"
-            value={formatCurrency(stats.totalRevenue)}
-            sub={`payout ${formatCurrency(stats.totalPayout)}`}
-            icon={DollarSign}
-            accent="emerald"
-          />
-          <KpiTile
-            label="House Edge"
-            value={formatPercentValue(stats.houseEdgePct, 1)}
-            sub={
-              stats.totalRevenue > 0
-                ? `${formatCurrency(
-                    stats.totalRevenue - stats.totalPayout,
-                  )} kept`
-                : "no opens yet"
-            }
-            icon={Gauge}
-            // House-POV: positive pool edge → emerald, negative → rose.
-            accent={houseAccent(stats.houseEdgePct)}
-          />
-        </div>
-      ) : (
-        <TileErrorFallback
-          label="Catalog stats"
-          hint="The aggregate stats query failed. The pack list below is unaffected — refresh to retry."
-        />
-      )}
+        </PageHero>
 
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Coins}
-          title={activeSet === "onepiece" ? "OnePiece Catalog" : "Pokemon Catalog"}
-        />
-        {/* Filter chrome (tab switch + search + status + view toggle). Its own
-            Suspense boundary so the controls flush before the list query. */}
-        <Suspense fallback={<FilterBarSkeleton filters={1} />}>
-          <PacksFilterBar />
-        </Suspense>
-        {/* List — keyed so the skeleton re-triggers on any param that changes
-            the result set or the view. Skeleton matches the ACTIVE view. */}
         <Suspense
-          key={suspenseKey}
+          key={`kpi-${activeSet}`}
           fallback={
-            // motion-safe duration-300 fade so the skeleton eases in when a
-            // tab switch / filter change blanks the list, instead of snapping.
-            // Matches the FadeIn the resolved list itself uses, so there's no
-            // jump on swap. Reduced-motion users get the final state instantly.
-            <FadeIn>
-              {view === "grid" ? (
-                <EntityGridSkeleton count={perPage} />
-              ) : (
-                <EntityTableSkeleton
-                  rows={Math.min(perPage, 12)}
-                  columns={7}
-                  selectable={false}
-                />
-              )}
-              <PaginationSkeleton />
-            </FadeIn>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-[68px] rounded-xl" />
+              ))}
+            </div>
           }
         >
-          <PacksContent
-            page={page}
-            perPage={perPage}
-            search={search}
-            active={activeFilter}
-            tag={categoryFilter}
-            sortBy={sortBy}
-            sortOrder={sortOrder}
-            set={activeSet}
-            view={view}
-            canToggle={canToggle}
-            canDelete={canDelete}
-            canEdit={canEdit}
-            canEditLive={canEditLive}
-            isPackCreator={isPackCreator}
-          />
+          <PacksKpiStrip activeSet={activeSet} />
         </Suspense>
+
+        <div className="space-y-3">
+          <SectionHeading
+            icon={Coins}
+            title={activeSet === "onepiece" ? "OnePiece Catalog" : "Pokemon Catalog"}
+          />
+          <Suspense fallback={<FilterBarSkeleton filters={1} />}>
+            <PacksFilterBar />
+          </Suspense>
+          <Suspense
+            key={suspenseKey}
+            fallback={
+              <FadeIn>
+                {view === "grid" ? (
+                  <EntityGridSkeleton count={perPage} />
+                ) : (
+                  <EntityTableSkeleton
+                    rows={Math.min(perPage, 12)}
+                    columns={7}
+                    selectable={false}
+                  />
+                )}
+                <PaginationSkeleton />
+              </FadeIn>
+            }
+          >
+            <PacksContent
+              page={page}
+              perPage={perPage}
+              search={search}
+              active={activeFilter}
+              tag={categoryFilter}
+              sortBy={sortBy}
+              sortOrder={sortOrder}
+              set={activeSet}
+              view={view}
+            />
+          </Suspense>
+        </div>
       </div>
-    </div>
+    </PacksPageShell>
   );
 }
 

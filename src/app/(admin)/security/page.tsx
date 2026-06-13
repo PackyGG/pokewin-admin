@@ -1,19 +1,9 @@
-import {
-  Lock,
-  Banknote,
-  Trophy,
-  Percent,
-  Coins,
-  Gem,
-  Hourglass,
-  Bitcoin,
-  Gauge,
-  Sparkles,
-} from "lucide-react";
+import { Lock } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getSiteConfig } from "@/lib/queries/security";
 import { SecurityContent } from "./security-content";
-import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { CollapsibleSecuritySection } from "./collapsible-security-section";
 import { FadeIn } from "@/components/fade-in";
 import { RAIN_CONFIG_SITE_CONFIG_KEYS } from "../rain/config-keys";
 import { WAGER_REQUIREMENT_SITE_CONFIG_KEYS } from "./wager-requirement-keys";
@@ -190,70 +180,63 @@ export default async function SecurityPage() {
       </PageHero>
 
       <FadeIn>
-        <div className="space-y-3">
-          <SectionHeading icon={Banknote} title="Withdrawal Wager Requirements" />
+        <CollapsibleSecuritySection icon="banknote" title="Withdrawal Wager Requirements">
           <WagerRequirementCard initial={wagerDefaults} />
-        </div>
+        </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <div className="space-y-3">
-          <SectionHeading icon={Trophy} title="Leaderboard Wager Weights" />
+        <CollapsibleSecuritySection icon="trophy" title="Leaderboard Wager Weights">
           <LeaderboardWagerWeightsCard initial={leaderboardWeights} />
-        </div>
+        </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <div className="space-y-3">
-          <SectionHeading icon={Percent} title="Rakeback Wager Weights" />
+        <CollapsibleSecuritySection icon="percent" title="Rakeback Wager Weights">
           <RakebackWagerWeightsCard initial={rakebackWeights} />
-        </div>
+        </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <div className="space-y-3">
-          <SectionHeading icon={Sparkles} title="Shard Earn Rate" />
+        <CollapsibleSecuritySection icon="sparkles" title="Shard Earn Rate">
           <ShardConfigCard initial={shardConfig} />
-        </div>
+        </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <div className="space-y-3">
-          <SectionHeading icon={Gem} title="Shard Wager Weights" />
+        <CollapsibleSecuritySection icon="gem" title="Shard Wager Weights">
           <ShardWagerWeightsCard initial={shardWeights} />
-        </div>
+        </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <div className="space-y-3">
-          <SectionHeading icon={Coins} title="Funding-Source Wager Weights" />
+        <CollapsibleSecuritySection icon="coins" title="Funding-Source Wager Weights">
           <SourceWagerWeightsCard initial={sourceWeights} />
-        </div>
+        </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <div className="space-y-3">
-          <SectionHeading icon={Gauge} title="Multiplier Wager Weights" />
+        <CollapsibleSecuritySection icon="gauge" title="Multiplier Wager Weights">
           <MultiplierWagerWeightsCard initial={multiplierWeights} />
-        </div>
+        </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <div className="space-y-3">
-          <SectionHeading icon={Hourglass} title="Reward Expiry" />
+        <CollapsibleSecuritySection icon="hourglass" title="Reward Expiry">
           <RewardExpiryCard initial={rewardExpiry} />
-        </div>
+        </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <div className="space-y-3">
-          <SectionHeading icon={Bitcoin} title="Crypto Exchange-Rate Fees" />
+        <CollapsibleSecuritySection icon="bitcoin" title="Crypto Exchange-Rate Fees">
           <CryptoFeesCard initial={cryptoFees} />
-        </div>
+        </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <SecurityContent config={config} rainConfigMoved={hasMovedKeys} />
+        <CollapsibleSecuritySection icon="sliders" title="Site Configuration">
+          <SecurityContent config={config} rainConfigMoved={hasMovedKeys} />
+        </CollapsibleSecuritySection>
       </FadeIn>
     </div>
   );

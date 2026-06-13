@@ -3,7 +3,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
-  excludeStaffAndBlacklistedSqlFromIds,
+  excludeStaffCreatorsAndBlacklistedSqlFromIds,
 } from "./_blacklist";
 
 // ─── Lifetime promo-code money stats for the /promo-codes hero strip ──
@@ -61,7 +61,7 @@ const cachedPromoCodesMoneyStats = unstable_cache(
   async (blacklistKey: string): Promise<PromoCodesMoneyStats> => {
     const db = await getDb();
     const blacklistIds = blacklistKey ? blacklistKey.split(",") : [];
-    const userScope = excludeStaffAndBlacklistedSqlFromIds(blacklistIds);
+    const userScope = excludeStaffCreatorsAndBlacklistedSqlFromIds(blacklistIds);
 
     const [claimedRows, allocatedRows] = await Promise.all([
       db.$queryRawUnsafe<{ total: string }[]>(`
@@ -82,7 +82,7 @@ const cachedPromoCodesMoneyStats = unstable_cache(
       allocatedOffered: toNumber(allocatedRows[0]?.total ?? "0"),
     };
   },
-  ["promo-codes-money-stats-v2"],
+  ["promo-codes-money-stats-v3"],
   { revalidate: 300, tags: ["promo-codes-money-stats"] },
 );
 

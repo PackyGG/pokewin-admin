@@ -95,6 +95,32 @@ async function computeSuspicious(
 
   // Flag 1: cash-out abuse — bonus → withdrawal within 24h, no wager
   // activity in between.
+  //
+  // PERFORMANCE — materialised hash + range join, NOT correlated subqueries.
+  // The original `JOIN LATERAL (… card_withdrawal … LIMIT 1)` plus the
+  // correlated `NOT EXISTS` wager check had no usable index for either
+  // lookup (ledger_transactions — ~855k rows — is only indexed on id /
+  // external_tx_id / fireblocks_tx_id), so each ran a full Seq Scan of the
+  // whole table PER bonus-claimant row → 57014 statement timeout on EVERY
+  // window (verified on live prod: even 7d timed out; 1d/3d took 18–20s).
+  // Indexes are off-limits (read-only prod), so the fix is query-shape only:
+  //   1. materialise the window's bonus claimants, then the claimants'
+  //      withdrawals and wager events — both scoped to `user_id IN
+  //      (bonus_claimants)`, a tiny user set, so each is ONE table pass with
+  //      a hash semi-join instead of a per-row Seq Scan;
+  //   2. range-join claimants↔withdrawals on the 24h window and keep the
+  //      FIRST matching withdrawal per claimant via `DISTINCT ON (user_id)
+  //      … ORDER BY w.created_at ASC` — identical to the old `LIMIT 1`;
+  //   3. drop the paired rows where a wager exists in [last_bonus, withdrew]
+  //      via an anti-join (`NOT EXISTS` over the materialised wager set) —
+  //      same predicate as the old correlated `NOT EXISTS`, one hash pass.
+  // The withdrawal / wager sets carry NO global date bound on purpose
+  // (membership in the claimant set already bounds them), so `all`-window
+  // pairing semantics are preserved exactly. `MATERIALIZED` prevents
+  // Postgres inlining the CTEs back into a correlated form. Verified on
+  // live prod: IDENTICAL top-25 output vs the original on the narrow
+  // windows where the original completes (2026-05-28/29, 06-06, 06-11 —
+  // 13–25 paired rows match key-for-key), and ~0.3–0.6s on 30d AND all.
   const withdrewRows = await db.$queryRawUnsafe<
     {
       user_id: string;
@@ -107,7 +133,7 @@ async function computeSuspicious(
       hours_to_withdraw: string;
     }[]
   >(`
-    WITH bonus_claimants AS (
+    WITH bonus_claimants AS MATERIALIZED (
       SELECT
         lt.user_id,
         SUM(ABS(lt.amount::numeric)) AS bonus_in_window,
@@ -120,8 +146,22 @@ async function computeSuspicious(
         ${dateFilter}
       GROUP BY lt.user_id
     ),
-    paired AS (
-      SELECT
+    withdrawals AS MATERIALIZED (
+      SELECT wd.user_id, wd.amount, wd.created_at
+      FROM ledger_transactions wd
+      WHERE wd.status = 'completed'
+        AND wd.type::text = 'card_withdrawal'
+        AND wd.user_id IN (SELECT user_id FROM bonus_claimants)
+    ),
+    wager_events AS MATERIALIZED (
+      SELECT wg.user_id, wg.created_at
+      FROM ledger_transactions wg
+      WHERE wg.status = 'completed'
+        AND wg.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+        AND wg.user_id IN (SELECT user_id FROM bonus_claimants)
+    ),
+    first_withdraw AS (
+      SELECT DISTINCT ON (bc.user_id)
         bc.user_id,
         bc.bonus_in_window,
         bc.bonus_count,
@@ -130,24 +170,20 @@ async function computeSuspicious(
         w.created_at AS withdrew_at,
         EXTRACT(EPOCH FROM (w.created_at - bc.last_bonus_at)) / 3600 AS hours_to_withdraw
       FROM bonus_claimants bc
-      JOIN LATERAL (
-        SELECT lt.amount, lt.created_at
-        FROM ledger_transactions lt
-        WHERE lt.user_id = bc.user_id
-          AND lt.type::text = 'card_withdrawal'
-          AND lt.status = 'completed'
-          AND lt.created_at > bc.last_bonus_at
-          AND lt.created_at < bc.last_bonus_at + INTERVAL '24 hours'
-        ORDER BY lt.created_at ASC
-        LIMIT 1
-      ) w ON TRUE
+      JOIN withdrawals w
+        ON w.user_id = bc.user_id
+        AND w.created_at > bc.last_bonus_at
+        AND w.created_at < bc.last_bonus_at + INTERVAL '24 hours'
+      ORDER BY bc.user_id, w.created_at ASC
+    ),
+    paired AS (
+      SELECT fw.*
+      FROM first_withdraw fw
       WHERE NOT EXISTS (
-        SELECT 1 FROM ledger_transactions w2
-        WHERE w2.user_id = bc.user_id
-          AND w2.status = 'completed'
-          AND w2.type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
-          AND w2.created_at >= bc.last_bonus_at
-          AND w2.created_at <= w.created_at
+        SELECT 1 FROM wager_events we
+        WHERE we.user_id = fw.user_id
+          AND we.created_at >= fw.last_bonus_at
+          AND we.created_at <= fw.withdrew_at
       )
     )
     SELECT

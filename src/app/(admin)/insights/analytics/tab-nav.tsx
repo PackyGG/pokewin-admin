@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useTransition } from "react";
 import {
   BarChart3,
   Users,
@@ -15,7 +15,7 @@ import {
   Coins,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { LinkPendingShell } from "@/components/ux";
+import { Spinner } from "@/components/ux";
 import { INSIGHTS_TABS, type InsightsTab } from "./types";
 
 const TAB_META: Record<InsightsTab, { label: string; icon: typeof BarChart3 }> = {
@@ -37,12 +37,24 @@ const TAB_META: Record<InsightsTab, { label: string; icon: typeof BarChart3 }> =
 /**
  * Tab strip for /insights/analytics. Same horizontal-scroller + edge-fade
  * pattern as the legacy /analytics tab nav so the two pages stay visually
- * consistent. 9 tabs × ~110px ≈ 990px — fits desktop, scrolls on phones.
+ * consistent.
+ *
+ * Navigation uses the dashboard's `useTransition` + `router.replace(...,
+ * { scroll: false })` mechanic instead of a plain `<Link>`: the transition
+ * keeps the CURRENT tab's content mounted (dimmed, with an in-chip spinner)
+ * while the next tab's RSC streams in — so switching no longer blanks to the
+ * skeleton on every click. Other tabs stay clickable during a pending switch
+ * (rapid switching is fine — the latest navigation wins), and hovering/focusing
+ * a tab prefetches it so the click lands warm. The page still mounts ONLY the
+ * active tab's segment (active-tab-only / never-preload is preserved — we only
+ * prefetch the RSC payload, we don't mount hidden tabs).
  */
 export function InsightsTabNav() {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const current = (searchParams.get("tab") ?? "overview") as InsightsTab;
+  const [isPending, startTransition] = useTransition();
 
   function hrefFor(tab: InsightsTab): string {
     // Preserve period + drop tab-specific sub-params (e.g. ?whalesBy=…
@@ -53,6 +65,13 @@ export function InsightsTabNav() {
     if (period) p.set("period", period);
     p.set("tab", tab);
     return `${pathname}?${p.toString()}`;
+  }
+
+  function go(tab: InsightsTab) {
+    if (tab === current) return;
+    startTransition(() => {
+      router.replace(hrefFor(tab), { scroll: false });
+    });
   }
 
   return (
@@ -68,24 +87,34 @@ export function InsightsTabNav() {
     >
       {INSIGHTS_TABS.map((value) => {
         const { label, icon: Icon } = TAB_META[value];
+        const active = current === value;
         return (
-          <Link
+          <button
             key={value}
-            href={hrefFor(value)}
-            replace
-            prefetch={false}
+            type="button"
+            onClick={() => go(value)}
+            onMouseEnter={() => router.prefetch(hrefFor(value))}
+            onFocus={() => router.prefetch(hrefFor(value))}
+            disabled={active}
+            aria-current={active ? "page" : undefined}
             className={cn(
               "flex shrink-0 scroll-mx-4 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-              current === value
+              active
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
+              // During a pending switch the prior tab keeps its content (the
+              // transition holds it); we only dim the OTHER chips so the
+              // loading state is legible without blanking anything.
+              isPending && !active && "opacity-50",
             )}
           >
-            <LinkPendingShell>
+            {active && isPending ? (
+              <Spinner size={14} label={`Loading ${label}`} />
+            ) : (
               <Icon className="size-3.5" />
-              {label}
-            </LinkPendingShell>
-          </Link>
+            )}
+            {label}
+          </button>
         );
       })}
     </div>

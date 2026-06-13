@@ -74,7 +74,7 @@ let sessionMetaEnsured = false;
  * mirror in `prisma/admin/schema.prisma` + the substrate SQL. No-op after the
  * first success in this process.
  */
-async function ensureSessionMetaSchema(): Promise<void> {
+export async function ensureSessionMetaSchema(): Promise<void> {
   if (sessionMetaEnsured) return;
   await adminDb.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS "creator_session_meta" (
@@ -110,7 +110,7 @@ function isMissingTableError(err: unknown): boolean {
  * retries once; any other failure degrades to an empty map with `degraded`
  * flagged so the caller can still render the sessions (just without VOD URLs).
  */
-async function readSessionMetaByIds(sessionIds: string[]): Promise<{
+export async function readSessionMetaByIds(sessionIds: string[]): Promise<{
   byId: Map<string, { kickVodUrl: string | null; notes: string | null }>;
   degraded: boolean;
 }> {

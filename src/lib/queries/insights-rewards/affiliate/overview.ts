@@ -17,8 +17,9 @@ import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
  *     wager attribution. Each row carries `wager_amount_usd` for the
  *     play that hit through the affiliate code.
  *
- * Staff (admin/support) + blacklisted users excluded on the AFFILIATE
- * side via the same standard subquery the rest of the page uses. The
+ * Staff (admin/support), creators + blacklisted users excluded on the
+ * AFFILIATE side via the canonical customer-scope subquery (matches
+ * `realCustomersScopeSql()` / `getMetricsScope()`). The
  * referred-user side is left unfiltered for the wager metric because
  * the platform aggregates the affiliate's earnings off referred wagers
  * regardless of who the referred user is (filtering there would
@@ -111,7 +112,7 @@ async function compute(
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type::text IN ('affiliate_claim', 'affiliate_leaderboard_prize')
-        AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSub})
+        AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistSub})
         ${ltDate}
     `),
     // Downstream wager + distinct referred users.
@@ -138,7 +139,7 @@ async function compute(
       WHERE lt.status = 'completed'
         AND lt.type::text = 'affiliate_claim'
         AND lt.created_at >= NOW() - INTERVAL '${chartDays} days'
-        AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSub})
+        AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistSub})
       GROUP BY 1
       ORDER BY 1 ASC
     `),
@@ -227,13 +228,13 @@ async function compute(
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     compute(period, blacklistIds),
-  ["insights-affiliate-overview-v1-short"],
+  ["insights-affiliate-overview-v2-short"],
   { revalidate: 60, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     compute(period, blacklistIds),
-  ["insights-affiliate-overview-v1-long"],
+  ["insights-affiliate-overview-v2-long"],
   { revalidate: 300, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 

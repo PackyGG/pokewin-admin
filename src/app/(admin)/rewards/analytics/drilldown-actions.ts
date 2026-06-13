@@ -37,8 +37,8 @@ const ALLOWED_CATEGORY_KEYS: readonly RewardCategoryKey[] = [
   "affiliate",
   "rainRace",
   "signupPack",
-  "creatorTip",
   "waitlist",
+  "houseCredits",
 ];
 
 function parseCategory(value: string | null): RewardCategoryKey | null {

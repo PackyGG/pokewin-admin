@@ -15,23 +15,40 @@ import {
 import { StatPanel, PanelRow } from "@/components/modern-panels";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import {
+  isLeverIncludedInEdgeV2,
   resolveLeverSeedsV2,
   type EdgePlanV2Baseline,
   type EdgePlanV2Projection,
   type PlannedLeversV2,
 } from "../../_model-v2";
 import { TEXT_TONE } from "../colors";
+import {
+  EdgeInclusionToggle,
+  InclusionAwareRewardTitle,
+} from "./edge-inclusion-toggle";
 import { EmptyLever } from "./empty-lever";
+import { NotItemizedDrilldownRow } from "./not-itemized-drilldown";
 import { PlannerBudgetInput } from "./usd-budget-input";
-import { leverEdgeDragPct, RewardPanelTitle } from "./reward-edge-drag";
+import { leverEdgeDragPct } from "./reward-edge-drag";
 
 /**
- * AdjustmentsPanel — the balance-adjustments box (owner spec #10).
+ * AdjustmentsPanel — the balance-adjustments box (owner spec #10, expanded
+ * by specs #12 + #14, 2026-06-12).
  *
  * Read-only REAL 30d per-category breakdown (canonical null-safe category
  * predicates, including the NULL "Not itemized" bucket) + ONE planning
  * lever: `adjustmentsMonthlyRecurringUsd` — the monthly $ the owner expects
  * to keep granting, seeded from the counted-credits run-rate.
+ *
+ * Spec #12: the NULL "Not itemized" row is EXPANDABLE — a lazy drill-down
+ * (server action fires on first expand only) over the same window/scope/
+ * predicate, with by-month / top-users / largest-20 / by-reason groupings
+ * whose totals reconcile exactly with the bucket row
+ * (`components/not-itemized-drilldown.tsx`).
+ *
+ * Spec #14: the title row carries the "counts toward edge" switch — OFF
+ * excludes the adjustments program from drag/cost/edge/NGR attribution
+ * while every $ here keeps displaying.
  *
  * House-POV: credits go OUT to users → rose; debits claw back → emerald.
  * Only COUNTED categories feed GGR/NGR (the "counted" badge column) —
@@ -60,13 +77,21 @@ export function AdjustmentsPanel({
   return (
     <StatPanel
       title={
-        <RewardPanelTitle
+        <InclusionAwareRewardTitle
           label="Balance adjustments"
           dragPct={leverEdgeDragPct(projection, "adjustments")}
+          included={isLeverIncludedInEdgeV2(levers, "adjustments")}
         />
       }
       icon={Scale}
       accent="blue"
+      action={
+        <EdgeInclusionToggle
+          leverKey="adjustments"
+          levers={levers}
+          setLevers={setLevers}
+        />
+      }
     >
       <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">
         In plain words: money admins manually added to (or removed from)
@@ -76,8 +101,9 @@ export function AdjustmentsPanel({
         Real 30d admin balance adjustments by category (canonical customer
         scope). Only <strong>counted</strong> categories feed GGR/NGR — the
         fake-balance and not-itemized rows are listed for completeness but
-        cost $0 here. The one lever below plans the recurring monthly $ of
-        counted credits.
+        cost $0 here. Click the <strong>Not itemized</strong> row to drill
+        into its individual rows (loaded lazily, only on expand). The one
+        lever below plans the recurring monthly $ of counted credits.
       </p>
 
       {rows.length === 0 ? (
@@ -94,47 +120,46 @@ export function AdjustmentsPanel({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((r) => (
-              <TableRow key={r.category ?? "__null__"}>
-                <TableCell className="font-medium">
-                  {r.label}
-                  {r.category == null && (
-                    <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
-                      (NULL category)
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatNumber(r.count)}
-                </TableCell>
-                <TableCell
-                  className={`text-right tabular-nums ${
-                    r.creditsUsd > 0 ? TEXT_TONE.rose : "text-muted-foreground"
-                  }`}
-                >
-                  {formatCurrency(r.creditsUsd)}
-                </TableCell>
-                <TableCell
-                  className={`text-right tabular-nums ${
-                    r.debitsUsd > 0
-                      ? TEXT_TONE.emerald
-                      : "text-muted-foreground"
-                  }`}
-                >
-                  {formatCurrency(r.debitsUsd)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] ${
-                      r.counted ? TEXT_TONE.rose : "text-muted-foreground"
+            {rows.map((r) =>
+              r.category == null ? (
+                // Spec #12: the NULL bucket row expands into the lazy
+                // drill-down (server action on first expand only).
+                <NotItemizedDrilldownRow key="__null__" row={r} />
+              ) : (
+                <TableRow key={r.category}>
+                  <TableCell className="font-medium">{r.label}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatNumber(r.count)}
+                  </TableCell>
+                  <TableCell
+                    className={`text-right tabular-nums ${
+                      r.creditsUsd > 0 ? TEXT_TONE.rose : "text-muted-foreground"
                     }`}
                   >
-                    {r.counted ? "counted" : "not counted"}
-                  </Badge>
-                </TableCell>
-              </TableRow>
-            ))}
+                    {formatCurrency(r.creditsUsd)}
+                  </TableCell>
+                  <TableCell
+                    className={`text-right tabular-nums ${
+                      r.debitsUsd > 0
+                        ? TEXT_TONE.emerald
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {formatCurrency(r.debitsUsd)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] ${
+                        r.counted ? TEXT_TONE.rose : "text-muted-foreground"
+                      }`}
+                    >
+                      {r.counted ? "counted" : "not counted"}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              ),
+            )}
           </TableBody>
         </Table>
       )}

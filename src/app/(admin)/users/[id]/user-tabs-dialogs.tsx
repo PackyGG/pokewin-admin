@@ -41,6 +41,7 @@ import { CreatorLinkPicker } from "./creator-link-picker";
 import { DepositBonusCalculator } from "./deposit-bonus-calculator";
 import {
   adjustBalance,
+  adjustCoinBalance,
   adjustXp,
   changeRole,
   forceResetCreatorToUser,
@@ -80,6 +81,8 @@ export function BalanceAdjustDialog({
   availableBalanceRaw,
   lockedBalance,
   pnl7d,
+  coinsEnabled = false,
+  coinBalance,
   open,
   onOpenChange,
 }: {
@@ -104,9 +107,24 @@ export function BalanceAdjustDialog({
   // re-type it (no drift vs the Accounts tab). Optional: legacy call sites
   // that don't have the breakdown in scope fall back to a manual input.
   pnl7d?: number;
+  // Whether the sweepstakes coin balance exists on the DB backing this page.
+  // False on a pre-sweepstakes schema (e.g. prod before the migration) — the
+  // Coins currency toggle is hidden entirely in that case.
+  coinsEnabled?: boolean;
+  // Current sweepstakes coin balance (COIN units) for the resulting-balance
+  // preview. Optional — the preview omits the "new balance" line without it.
+  coinBalance?: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  // Which balance this adjustment targets. "coins" is only reachable when
+  // coinsEnabled (the toggle is hidden otherwise), so a stale prod schema can
+  // never land here.
+  const [currency, setCurrency] = useState<"usd" | "coins">("usd");
+  // Coin adjustment inputs (separate from the USD `amount`/`reasonText` so
+  // switching currency never cross-contaminates the other form).
+  const [coinAmount, setCoinAmount] = useState("");
+  const [coinReason, setCoinReason] = useState("");
   const [amount, setAmount] = useState("");
   // The strict category drives the conditional inputs + counting.
   const [category, setCategory] = useState<BalanceAdjustmentCategory | "">("");
@@ -157,6 +175,9 @@ export function BalanceAdjustDialog({
     setTotpCode("");
     setTagWagerAbuser(false);
     setTagFraudAbuser(false);
+    setCoinAmount("");
+    setCoinReason("");
+    setCurrency("usd");
   }
 
   // The human-readable description text sent as `reason` (kept so the
@@ -444,6 +465,80 @@ export function BalanceAdjustDialog({
     setAmount(credit.toFixed(2));
   }
 
+  // ── Coin adjustment derivations + submit ──────────────────────────
+  // Coins are entered as a signed whole number (positive = grant, negative
+  // = remove). Because coin balances are stored as coin-USD at cent
+  // precision, the smallest representable step is $0.01 == 100 coins, so the
+  // amount must be a multiple of 100 — mirrored server-side.
+  const trimmedCoin = coinAmount.trim();
+  const parsedCoin = Number(trimmedCoin.replace(/[, ]/g, ""));
+  const coinValid =
+    trimmedCoin.length > 0 &&
+    Number.isFinite(parsedCoin) &&
+    Number.isInteger(parsedCoin) &&
+    parsedCoin !== 0 &&
+    parsedCoin % 100 === 0;
+  const coinNotMultiple =
+    trimmedCoin.length > 0 &&
+    Number.isFinite(parsedCoin) &&
+    Number.isInteger(parsedCoin) &&
+    parsedCoin !== 0 &&
+    parsedCoin % 100 !== 0;
+  const isCoinRemoval = coinValid && parsedCoin < 0;
+  const newCoinBalance =
+    coinValid && coinBalance !== undefined ? coinBalance + parsedCoin : null;
+  const coinReasonValid = coinReason.trim().length >= 10;
+  const coinSubmitReady =
+    coinValid &&
+    coinReasonValid &&
+    !!totpCode.trim() &&
+    (newCoinBalance === null || newCoinBalance >= 0);
+
+  function handleCoinAdjust() {
+    if (!coinValid) {
+      return void toast.error(
+        coinNotMultiple
+          ? "Coin amount must be a multiple of 100"
+          : "Enter a non-zero whole coin amount",
+      );
+    }
+    if (!coinReasonValid) {
+      return void toast.error("Reason must be at least 10 characters");
+    }
+    if (!totpCode.trim()) {
+      return void toast.error("Please enter your 2FA code");
+    }
+    if (newCoinBalance !== null && newCoinBalance < 0) {
+      return void toast.error("Resulting coin balance would be negative");
+    }
+    startTransition(async () => {
+      try {
+        const result = await adjustCoinBalance({
+          userId,
+          coins: parsedCoin,
+          reason: coinReason.trim(),
+          totpCode: totpCode.trim(),
+        });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success(
+          `${isCoinRemoval ? "Removed" : "Granted"} ${Math.abs(
+            parsedCoin,
+          ).toLocaleString()} coins`,
+        );
+        resetFields();
+        onOpenChange(false);
+        router.refresh();
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Failed to adjust coins",
+        );
+      }
+    });
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -451,6 +546,106 @@ export function BalanceAdjustDialog({
           <DialogTitle>Adjust Balance</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 py-2">
+          {/* Currency target. Only shown when the DB backing this page has
+              the sweepstakes coin columns — on a pre-sweepstakes schema
+              (e.g. prod) this stays hidden and only USD is adjustable. */}
+          {coinsEnabled && (
+            <div className="grid grid-cols-2 gap-1 rounded-md border bg-muted/30 p-1">
+              {(["usd", "coins"] as const).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setCurrency(c)}
+                  className={`rounded px-2 py-1.5 text-xs font-medium transition-colors ${
+                    currency === c
+                      ? "bg-background shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {c === "usd" ? "USD Balance" : "Coins"}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ── Coin adjustment form ──────────────────────────────── */}
+          {currency === "coins" && (
+            <>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">
+                  Coins (+ grant / − remove)
+                </Label>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="e.g. 50000 or -10000 (multiples of 100)"
+                  value={coinAmount}
+                  onChange={(e) => setCoinAmount(e.target.value)}
+                />
+                {trimmedCoin.length > 0 &&
+                  (coinValid ? (
+                    <div className="rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground">
+                          {isCoinRemoval ? "Removing" : "Granting"}
+                        </span>
+                        <span className="font-semibold tabular-nums">
+                          {isCoinRemoval ? "−" : "+"}
+                          {Math.abs(parsedCoin).toLocaleString()} coins
+                        </span>
+                      </div>
+                      {newCoinBalance !== null && (
+                        <div className="mt-1 flex items-center justify-between gap-2 border-t pt-1 text-[10px] text-muted-foreground">
+                          <span>New coin balance</span>
+                          <span
+                            className={`font-semibold tabular-nums ${
+                              newCoinBalance < 0
+                                ? "text-rose-600 dark:text-rose-400"
+                                : "text-foreground"
+                            }`}
+                          >
+                            {newCoinBalance.toLocaleString()} coins
+                          </span>
+                        </div>
+                      )}
+                      {newCoinBalance !== null && newCoinBalance < 0 && (
+                        <p className="mt-1 text-[10px] text-rose-600 dark:text-rose-400">
+                          Exceeds current balance
+                          {coinBalance !== undefined
+                            ? ` (${coinBalance.toLocaleString()} coins)`
+                            : ""}{" "}
+                          — the server will reject this.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-rose-600 dark:text-rose-400">
+                      {coinNotMultiple
+                        ? "Coin amount must be a multiple of 100"
+                        : "Enter a non-zero whole number"}
+                    </p>
+                  ))}
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Reason</Label>
+                <Textarea
+                  placeholder="Why are these coins being granted/removed? (min 10 characters)..."
+                  value={coinReason}
+                  onChange={(e) => setCoinReason(e.target.value)}
+                  rows={2}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  {coinReason.trim().length}/10 characters minimum. Logged to
+                  the coin transaction history (not real-money reporting).
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* ── USD adjustment form (existing) ────────────────────── */}
+          {currency === "usd" && (
+          <>
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <Label className="text-xs text-muted-foreground">Amount</Label>
@@ -931,6 +1126,8 @@ export function BalanceAdjustDialog({
               </p>
             )}
           </div>
+          </>
+          )}
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">2FA Code</Label>
             <Input
@@ -947,11 +1144,22 @@ export function BalanceAdjustDialog({
         <DialogFooter>
           <Button
             size="sm"
-            onClick={handleAdjust}
-            disabled={isPending || !totpCode.trim() || !isAmountValid}
+            onClick={currency === "coins" ? handleCoinAdjust : handleAdjust}
+            disabled={
+              isPending ||
+              (currency === "coins"
+                ? !coinSubmitReady
+                : !totpCode.trim() || !isAmountValid)
+            }
             className="w-full sm:w-auto"
           >
-            {isPending ? "Adjusting..." : "Apply Adjustment"}
+            {isPending
+              ? "Adjusting..."
+              : currency === "coins"
+                ? isCoinRemoval
+                  ? "Remove Coins"
+                  : "Grant Coins"
+                : "Apply Adjustment"}
           </Button>
         </DialogFooter>
       </DialogContent>

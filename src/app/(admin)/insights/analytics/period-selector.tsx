@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
-import { cn } from "@/lib/utils";
+import { useSearchParams } from "next/navigation";
+import { PeriodChips } from "@/components/ux";
 import { INSIGHTS_PERIODS, type InsightsPeriod } from "./types";
 
 const LABEL_SHORT: Record<InsightsPeriod, string> = {
@@ -17,42 +16,31 @@ const LABEL_SHORT: Record<InsightsPeriod, string> = {
   all: "Lifetime",
 };
 
+const PERIOD_ITEMS = INSIGHTS_PERIODS.map((p) => ({
+  value: p,
+  label: LABEL_SHORT[p],
+}));
+
 /**
  * Period chip strip — global selector at the top of /insights/analytics.
- * Pattern mirrors the legacy /analytics period filter (rounded chip group
- * inside a muted-bg pill) so the two pages look like cousins. Persists
- * the active chip in `?period=` and preserves every other query param
- * (tab, sub-filters) on click.
+ *
+ * Now delegates to the canonical `PeriodChips` (src/components/ux/period-chips.tsx)
+ * — the same `useTransition` + `router.replace(..., { scroll: false })`
+ * mechanic the dashboard uses. Switching a period keeps the current tab's
+ * content MOUNTED (dimmed, with an in-chip spinner) instead of blanking to the
+ * skeleton, and preserves every other query param (tab + sub-filters). The
+ * page reads `?period=` and renders the matching slice; this component just
+ * flips the param.
  */
 export function PeriodSelector() {
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const current = (searchParams.get("period") ?? "30d") as InsightsPeriod;
-
-  function hrefFor(p: InsightsPeriod): string {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("period", p);
-    return `${pathname}?${params.toString()}`;
-  }
-
   return (
-    <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/50 p-1">
-      {INSIGHTS_PERIODS.map((p) => (
-        <Link
-          key={p}
-          href={hrefFor(p)}
-          replace
-          prefetch={false}
-          className={cn(
-            "rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm",
-            current === p
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {LABEL_SHORT[p]}
-        </Link>
-      ))}
-    </div>
+    <PeriodChips
+      items={PERIOD_ITEMS}
+      current={current}
+      paramKey="period"
+      ariaNoun="period"
+    />
   );
 }

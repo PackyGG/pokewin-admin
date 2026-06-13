@@ -11,9 +11,17 @@ import {
 import { cn } from "@/lib/utils";
 import { RakebackConfigTable } from "./rakeback-config-table";
 import { RakebackClaimsTable } from "./rakeback-claims-table";
+import { InstantClaimSection } from "./instant-claim-section";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPending } from "@/components/ux";
+import { safeQuery } from "@/lib/errors/safe-query";
+import {
+  getRakebackInstantClaimConfig,
+  getRakebackInstantClaimUsage,
+  isInstantClaimPeriod,
+  type InstantClaimPeriod,
+} from "@/lib/queries/rakeback-instant-claim";
 
 export const metadata = { title: "Rakeback" };
 
@@ -32,6 +40,9 @@ export default async function RakebackPage({
   const tab = params.tab || "claims";
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
+  const icPeriod: InstantClaimPeriod = isInstantClaimPeriod(params.icPeriod)
+    ? params.icPeriod
+    : "30d";
 
   return (
     <div className="space-y-6">
@@ -63,15 +74,27 @@ export default async function RakebackPage({
         </div>
 
         {tab === "config" && (
-          <Suspense
-            fallback={
-              <div className="rounded-md border p-4">
-                <TableSkeleton rows={6} columns={4} />
-              </div>
-            }
-          >
-            <ConfigTab />
-          </Suspense>
+          <div className="space-y-8">
+            <Suspense
+              key={`ic-${icPeriod}`}
+              fallback={
+                <div className="rounded-xl border p-4">
+                  <TableSkeleton rows={4} columns={2} />
+                </div>
+              }
+            >
+              <InstantClaimTab period={icPeriod} />
+            </Suspense>
+            <Suspense
+              fallback={
+                <div className="rounded-md border p-4">
+                  <TableSkeleton rows={6} columns={4} />
+                </div>
+              }
+            >
+              <ConfigTab />
+            </Suspense>
+          </div>
         )}
         {tab === "claims" && (
           <Suspense
@@ -93,6 +116,32 @@ export default async function RakebackPage({
         )}
       </div>
     </div>
+  );
+}
+
+async function InstantClaimTab({ period }: { period: InstantClaimPeriod }) {
+  // Active-timeframe-only: only the selected window is queried. Both reads
+  // degrade gracefully (drift-safe: the early-claim columns exist on dev but
+  // not prod — the query probes and returns `supported: false` there).
+  const [{ data: config }, { data: usage }] = await Promise.all([
+    safeQuery(
+      () => getRakebackInstantClaimConfig(),
+      { supported: false as const },
+      "rakeback.instant-claim.config",
+      15_000,
+    ),
+    safeQuery(
+      () => getRakebackInstantClaimUsage(period),
+      { supported: false as const },
+      "rakeback.instant-claim.usage",
+      15_000,
+    ),
+  ]);
+
+  return (
+    <FadeIn>
+      <InstantClaimSection config={config} usage={usage} period={period} />
+    </FadeIn>
   );
 }
 

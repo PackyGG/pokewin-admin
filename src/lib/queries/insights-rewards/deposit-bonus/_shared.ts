@@ -86,6 +86,34 @@ export function windowDateFilterCapped(
 }
 
 /**
+ * Like {@link windowDateFilterCapped}, but extends the lower bound back by
+ * an extra `tailDays`. Used for a SECONDARY scan whose rows must cover a
+ * retention/forward tail AFTER each in-window row — e.g. the cohort
+ * comparison checks whether a deposit's user wagered up to 30 days LATER,
+ * so the wager scan must reach `windowStart − 0` … `now`, i.e. include
+ * activity up to `tailDays` past the deposit window's lower bound is NOT
+ * what we need (the tail is forward, not backward) — but bounding the
+ * wager scan to `days + tailDays` keeps it tractable while guaranteeing
+ * every wager that can satisfy a `≤ deposit + tailDays` predicate for an
+ * in-window deposit is present. Finite windows get `days + tailDays`;
+ * lifetime gets {@link LIFETIME_PAIRING_LOOKBACK_DAYS}` + tailDays`.
+ *
+ * The bound is intentionally generous (a small constant tail on top of the
+ * already-capped window) so it never drops a qualifying retention wager,
+ * yet still excludes the bulk of historical wager rows that can't pair
+ * with any in-window deposit.
+ */
+export function windowDateFilterCappedTail(
+  period: InsightsRewardsPeriod,
+  alias: string,
+  tailDays: number,
+): string {
+  const days = daysForInsightsPeriod(period) ?? LIFETIME_PAIRING_LOOKBACK_DAYS;
+  const bound = days + tailDays;
+  return `AND ${alias}.created_at >= NOW() - INTERVAL '${bound} days'`;
+}
+
+/**
  * Resolved exclusion list — staff (admin / support) + dynamic blacklist
  * (`excluded_users` table). Returns the sorted id list so callers
  * participate in the cache key.

@@ -204,42 +204,49 @@ check("Fix 1: battle_sponsorship is summed by WAGER_TYPES_SQL (in the IN-list)",
 check("Fix 2: pack gaming wager type is pack_opening only (reward-pack split is SQL-level, no type change)", WAGER_TYPES.includes("pack_opening") && classifyLedgerType("pack_opening") === "WAGER");
 check("Fix 2: GAMING_PAYOUT unchanged (reward-pack exclusion is an inventory/source_id SQL filter, not a payout-type change)", arrEq(GAMING_PAYOUT_TYPES, ["battle_refund", "battle_excess_to_voucher"]));
 
-// ─── 2b. SQL-shape assertions for the two fixes (gaming-sql.ts) ──────
+// ─── 2b. SQL-shape assertions for the canonical legs (gaming-sql.ts) ──
 // gaming-sql.ts is client-safe (no DB / no server-only), so the EXACT
 // SQL fragment strings the canonical gaming-leg builders compose can be
 // asserted here without a database. These pin the SQL behaviour the type
-// checks above only set the precondition for.
-console.log("[metrics checks] SQL-shape: sponsorship counted, reward packs excluded");
+// checks above only set the precondition for. The legs are on the
+// borrow-net-INCLUSIVE basis (owner decision, 2026-06-13 — see
+// gaming-sql.ts header): borrow plays are COUNTED at net cash on both
+// sides (no borrow gate), and reward/daily packs are the ONLY exclusion.
+console.log("[metrics checks] SQL-shape: borrow-inclusive legs, reward packs excluded");
 
-// Fix 1 — the reward/daily-pack identifier joins packs.pack_type='reward'
-// through a game_type='pack' session (mirrors daily-packs.ts).
+// The reward/daily-pack identifier joins packs.pack_type='reward' through
+// a game_type='pack' session (mirrors daily-packs.ts).
 check("REWARD_PACK_SESSIONS joins packs.pack_type='reward' via game_type='pack'", REWARD_PACK_SESSIONS.includes("p.pack_type = 'reward'") && REWARD_PACK_SESSIONS.includes("gs.game_type = 'pack'"));
 
-// Fix 1 — WAGER leg counts battle_sponsorship DIRECTLY (a bare
-// `OR type = 'battle_sponsorship'` arm), and does NOT gate it behind the
-// non-borrow battle-session IN-list (which would drop its NULL
-// game_session_id rows). battle_bet KEEPS the borrow gate.
+// Borrow-inclusive WAGER leg — battle_sponsorship AND battle_bet are each
+// counted DIRECTLY (bare `OR type = '<t>'` arms), with NO non-borrow
+// battle-session IN-list on EITHER (the old borrow-DROP basis gated
+// battle_bet; the owner basis counts it at its already-net amount).
 // The `type` column is text-cast (`type::text`) in the raw SQL — a
 // migration-lag hardening so a not-yet-migrated enum member compares
 // instead of throwing 22P02 (semantics-preserving; see ledger-sets.ts
-// note). The shape assertions below tolerate the optional `::text` so they
-// keep pinning the SAME structural arms (sponsorship counted directly,
-// battle_bet borrow-gated) regardless of the cast.
-check("Fix 1: WAGER_LEG_FILTER counts battle_sponsorship directly (bare OR arm)", /OR\s+type(?:::text)?\s*=\s*'battle_sponsorship'/.test(WAGER_LEG_FILTER));
-check("Fix 1: WAGER_LEG_FILTER does NOT borrow-gate battle_sponsorship (no IN-list on it)", !WAGER_LEG_FILTER.includes("'battle_sponsorship') AND") && !/battle_sponsorship'\)\s*AND\s+game_session_id\s+IN/.test(WAGER_LEG_FILTER));
-check("Fix 1: WAGER_LEG_FILTER keeps the borrow gate on battle_bet", /type(?:::text)?\s*=\s*'battle_bet'\s+AND\s+game_session_id\s+IN/.test(WAGER_LEG_FILTER) && WAGER_LEG_FILTER.includes(NON_BORROW_BATTLE_SESSIONS));
+// note). The shape assertions below tolerate the optional `::text`.
+check("WAGER_LEG_FILTER counts battle_sponsorship directly (bare OR arm)", /OR\s+type(?:::text)?\s*=\s*'battle_sponsorship'/.test(WAGER_LEG_FILTER));
+check("WAGER_LEG_FILTER counts battle_bet directly (bare OR arm, borrow-net-inclusive)", /OR\s+type(?:::text)?\s*=\s*'battle_bet'/.test(WAGER_LEG_FILTER));
+// The borrow-net-inclusive basis: NO non-borrow battle-session IN-list
+// gates any wager arm (neither battle_bet nor battle_sponsorship).
+check("WAGER_LEG_FILTER does NOT borrow-gate battle_bet (no non-borrow IN-list)", !/type(?:::text)?\s*=\s*'battle_bet'\s+AND\s+game_session_id\s+IN/.test(WAGER_LEG_FILTER) && !WAGER_LEG_FILTER.includes(NON_BORROW_BATTLE_SESSIONS));
 
-// Fix 2 — both the WAGER leg (pack_opening arm) and the PAYOUT leg
-// (inventory) exclude reward-pack sessions via the SAME REWARD_PACK_SESSIONS
-// set, NULL-guarded so a NULL-session pack open / inventory row is not
-// accidentally dropped.
-check("Fix 2: WAGER_LEG_FILTER excludes reward-pack opens from the pack wager (NULL-guarded)", WAGER_LEG_FILTER.includes(`game_session_id NOT IN ${REWARD_PACK_SESSIONS}`) && WAGER_LEG_FILTER.includes("game_session_id IS NULL OR"));
-check("Fix 2: PAYOUT_LEG_FILTER excludes reward-pack won cards from the pack payout (NULL-guarded)", PAYOUT_LEG_FILTER.includes(`source_id NOT IN ${REWARD_PACK_SESSIONS}`) && PAYOUT_LEG_FILTER.includes("source_id IS NULL OR"));
+// Reward-pack exclusion — both the WAGER leg (pack_opening arm) and the
+// PAYOUT leg (inventory) exclude reward-pack sessions via the SAME
+// REWARD_PACK_SESSIONS set, NULL-guarded so a NULL-session pack open /
+// inventory row is not accidentally dropped.
+check("WAGER_LEG_FILTER excludes reward-pack opens from the pack wager (NULL-guarded)", WAGER_LEG_FILTER.includes(`game_session_id NOT IN ${REWARD_PACK_SESSIONS}`) && WAGER_LEG_FILTER.includes("game_session_id IS NULL OR"));
+check("PAYOUT_LEG_FILTER excludes reward-pack won cards from the pack payout (NULL-guarded)", PAYOUT_LEG_FILTER.includes(`source_id NOT IN ${REWARD_PACK_SESSIONS}`) && PAYOUT_LEG_FILTER.includes("source_id IS NULL OR"));
 // The reward-pack exclusion must apply REGARDLESS of source_type so it
 // catches the 'pack'-typed reward cards in this pack/battle leg (the
 // 'reward'-typed rows never enter the leg). I.e. the source_id NOT IN
-// guard is AND'd with the borrow predicate, not nested inside one branch.
-check("Fix 2: PAYOUT reward exclusion is AND'd across both source types", /\)\s*AND\s*\(source_id IS NULL OR source_id NOT IN/.test(PAYOUT_LEG_FILTER));
+// guard is AND'd onto the whole pack/battle predicate, not nested inside
+// one branch.
+check("PAYOUT reward exclusion is AND'd across both source types", /\)\s*AND\s*\(source_id IS NULL OR source_id NOT IN/.test(PAYOUT_LEG_FILTER));
+// Borrow-net-inclusive PAYOUT leg — all pack/battle won cards are kept
+// (no non-borrow source-session IN-list before the reward-pack guard).
+check("PAYOUT_LEG_FILTER keeps all pack/battle won cards (no non-borrow gate)", PAYOUT_LEG_FILTER.includes("source_type IN ('pack','battle')") && !PAYOUT_LEG_FILTER.includes(NON_BORROW_BATTLE_SESSIONS));
 
 check("withdrawal_shipping_fee is a FEE, not WAGER", FEE_TYPES.includes("withdrawal_shipping_fee") && !(WAGER_TYPES as readonly string[]).includes("withdrawal_shipping_fee"));
 // GAMING_PAYOUT = battle_refund + battle_excess_to_voucher (both ledger

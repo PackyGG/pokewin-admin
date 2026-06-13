@@ -4,8 +4,9 @@ import { toNumber } from "@/lib/utils/decimal";
 import { MS_PER_DAY } from "@/lib/utils/time";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { STAFF_ROLES } from "./_exclude-staff";
-import { excludeStaffAndBlacklisted } from "./_blacklist";
+import { excludeStaffCreatorsAndBlacklisted } from "./_blacklist";
 import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
+import { user_role } from "@/generated/prisma/enums";
 
 /**
  * Live-feed queries for the dashboard. Kept separate from the general
@@ -47,7 +48,7 @@ export async function getLiveDeposits(params: {
   const db = await getDb();
   const limit = Math.max(1, Math.min(50, Math.floor(params.limit)));
   const since = params.sinceCreatedAt ? new Date(params.sinceCreatedAt) : null;
-  const staffRelation = await excludeStaffAndBlacklisted();
+  const staffRelation = await excludeStaffCreatorsAndBlacklisted();
 
   const dayAgo = new Date(Date.now() - MS_PER_DAY);
 
@@ -192,7 +193,7 @@ export async function getMoneyMovementsWatermark(
 ): Promise<string | null> {
   const db = await getDb();
   const since = sinceCreatedAt ? new Date(sinceCreatedAt) : null;
-  const staffRelation = await excludeStaffAndBlacklisted();
+  const staffRelation = await excludeStaffCreatorsAndBlacklisted();
 
   const [depositTop, withdrawalTop] = await Promise.all([
     db.ledger_transactions.findFirst({
@@ -247,8 +248,14 @@ const cachedMoneyMovementTotals24h = unstable_cache(
   async (blacklistIds: string[]) => {
     const db = await getDb();
     const dayAgo = new Date(Date.now() - MS_PER_DAY);
+    // Customer-analytics scope: drop staff (admin/support) AND creators
+    // AND the blacklist, matching the request-scope
+    // `excludeStaffCreatorsAndBlacklisted()` used by the live-feed row
+    // queries above. Built inline because this runs inside
+    // `unstable_cache` (no `cookies()` / `getExcludedUserIds()` here) —
+    // the blacklist ids arrive as the cache-keyed argument.
     const staffRelation = {
-      role: { notIn: [...STAFF_ROLES] },
+      role: { notIn: [...STAFF_ROLES, user_role.creator] },
       ...(blacklistIds.length > 0 ? { id: { notIn: blacklistIds } } : {}),
     };
 
@@ -277,7 +284,7 @@ const cachedMoneyMovementTotals24h = unstable_cache(
       total24hWithdrawals: toNumber(withdrawalTotalAgg._sum?.total_value_usd),
     };
   },
-  ["dashboard-live-money-totals-24h-v1"],
+  ["dashboard-live-money-totals-24h-v2"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -328,7 +335,7 @@ export async function getLiveDepositsAndWithdrawals(params: {
   const db = await getDb();
   const limit = Math.max(1, Math.min(50, Math.floor(params.limit)));
   const since = params.sinceCreatedAt ? new Date(params.sinceCreatedAt) : null;
-  const staffRelation = await excludeStaffAndBlacklisted();
+  const staffRelation = await excludeStaffCreatorsAndBlacklisted();
 
   // Totals are cached (60s revalidate) so the 4-query parallel batch
   // is now 2 row queries + a near-free cached lookup. The cache is
@@ -524,7 +531,7 @@ export async function getLiveActivityWatermark(
 ): Promise<string | null> {
   const db = await getDb();
   const since = sinceCreatedAt ? new Date(sinceCreatedAt) : null;
-  const staffRelation = await excludeStaffAndBlacklisted();
+  const staffRelation = await excludeStaffCreatorsAndBlacklisted();
 
   const [ledgerTop, withdrawalTop, signupTop] = await Promise.all([
     db.ledger_transactions.findFirst({
@@ -589,7 +596,7 @@ export async function getLiveActivity(params: {
   const db = await getDb();
   const limit = Math.max(1, Math.min(60, Math.floor(params.limit)));
   const since = params.sinceCreatedAt ? new Date(params.sinceCreatedAt) : null;
-  const staffRelation = await excludeStaffAndBlacklisted();
+  const staffRelation = await excludeStaffCreatorsAndBlacklisted();
 
   const [ledgerRows, withdrawalRequests, signupRows] = await Promise.all([
     db.ledger_transactions.findMany({

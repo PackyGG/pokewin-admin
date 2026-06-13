@@ -10,11 +10,14 @@ import {
   periodToCutoff,
 } from "@/lib/queries/dashboard-period";
 import {
-  creatorsApi,
   type CreatorListItem,
   type CreatorSessionResponse,
 } from "@/lib/backend-api";
 import { BackendApiError, BackendNetworkError } from "@/lib/backend-api";
+import {
+  getCachedCreatorRoster,
+  getCachedCreatorSessions,
+} from "@/lib/cache/creator-backend-cache";
 import { hubPeriodToInterval } from "../../_queries/hub-period-sql";
 import { getTipsSponsorSpend } from "../../../../(admin)/creators/_queries/tips-sponsor-spend";
 
@@ -68,9 +71,6 @@ export type TipsSponsorsOverview = {
   backendUnavailable: boolean;
 };
 
-const SESSIONS_PAGE_LIMIT = 100;
-const MAX_SESSION_PAGES = 100;
-const CREATOR_LIST_CAP = 500;
 const CREATOR_CONCURRENCY = 6;
 
 const TIP_TYPE = "creator_fill_spend_tip";
@@ -171,16 +171,15 @@ async function queryChart30d(): Promise<TipsSponsorChartRow[]> {
   return out;
 }
 
+/**
+ * Page the creator roster — delegates to the shared cached roster
+ * (`getCachedCreatorRoster`), which runs the identical paged `creatorsApi.list`
+ * walk (same cap/limit) and is Upstash-cached across fan-outs when configured,
+ * or a pure pass-through to the live walk when dormant. The returned roster is
+ * unchanged either way.
+ */
 async function listAllCreators(): Promise<CreatorListItem[]> {
-  const out: CreatorListItem[] = [];
-  let offset = 0;
-  while (out.length < CREATOR_LIST_CAP) {
-    const slice = await creatorsApi.list({ limit: 100, offset });
-    out.push(...slice.data);
-    offset += slice.data.length;
-    if (slice.data.length === 0 || offset >= slice.total) break;
-  }
-  return out;
+  return getCachedCreatorRoster();
 }
 
 async function sumCreatorSessionSpend(
@@ -196,27 +195,23 @@ async function sumCreatorSessionSpend(
   let sponsorUsd = 0;
   let sessionsWithSpend = 0;
   let activeSessionsWithSpend = 0;
-  let offset = 0;
   const sinceMs = since?.getTime() ?? 0;
 
-  for (let page = 0; page < MAX_SESSION_PAGES; page++) {
-    const slice = await creatorsApi.listSessions(userId, {
-      limit: SESSIONS_PAGE_LIMIT,
-      offset,
-    });
-
-    for (const session of slice.data) {
-      if (since && new Date(session.activated_at).getTime() < sinceMs) continue;
-      const { tips, sponsor } = sessionSpend(session);
-      if (tips + sponsor <= 0) continue;
-      tipsUsd += tips;
-      sponsorUsd += sponsor;
-      sessionsWithSpend += 1;
-      if (session.status === "active") activeSessionsWithSpend += 1;
-    }
-
-    offset += slice.data.length;
-    if (slice.data.length === 0 || offset >= slice.total) break;
+  // Iterate the shared cached session list instead of paging the backend
+  // directly. `getCachedCreatorSessions` runs the identical paged
+  // `creatorsApi.listSessions` walk (same limit/page cap) and is Upstash-cached
+  // when configured, or a pure pass-through to the live walk when dormant — so
+  // the set of sessions is identical to the old in-loop paging. The since-date
+  // filter + tip/sponsor summing below is unchanged.
+  const sessions = await getCachedCreatorSessions(userId);
+  for (const session of sessions) {
+    if (since && new Date(session.activated_at).getTime() < sinceMs) continue;
+    const { tips, sponsor } = sessionSpend(session);
+    if (tips + sponsor <= 0) continue;
+    tipsUsd += tips;
+    sponsorUsd += sponsor;
+    sessionsWithSpend += 1;
+    if (session.status === "active") activeSessionsWithSpend += 1;
   }
 
   return { tipsUsd, sponsorUsd, sessionsWithSpend, activeSessionsWithSpend };

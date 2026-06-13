@@ -170,6 +170,8 @@ const DATA: UserDetail = {
     totalWon: 8_765_432.1,
     bonusPoints: 0,
     unlockAt: null,
+    coinsEnabled: false,
+    coinBalance: 0,
     inventoryValue: 456_789.12,
     vouchersValue: 0,
     packsWagered: 5_000_000,
@@ -261,6 +263,7 @@ export function UserDetailFixtureClient() {
       sharedIpsPromise={ok<SharedIdentityUser[]>([])}
       sharedFingerprintsPromise={ok<SharedIdentityUser[]>([])}
       wagerRequirementPromise={Promise.resolve(null)}
+      wagerProgressPromise={Promise.resolve(null)}
       viewerIsAdjustmentOwner
       initialTab="overview"
     />

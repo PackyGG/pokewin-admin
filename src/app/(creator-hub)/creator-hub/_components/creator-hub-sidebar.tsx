@@ -16,6 +16,7 @@ import {
   Calculator,
   History,
   Settings,
+  Tv,
   UserSearch,
   type LucideIcon,
 } from "lucide-react";
@@ -63,6 +64,7 @@ type HubNavItem = {
 const HUB_NAV: HubNavItem[] = [
   { label: "Dashboard", href: "/creator-hub", icon: LayoutDashboard },
   { label: "Creators", href: "/creator-hub/creators", icon: Users },
+  { label: "All Sessions", href: "/creator-hub/sessions", icon: Tv },
   { label: "Leaderboards", href: "/creator-hub/leaderboards", icon: Trophy },
   {
     label: "Tips & Sponsors",

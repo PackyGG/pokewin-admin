@@ -79,6 +79,16 @@ export type UserDetail = {
     totalWon: number;
     bonusPoints: number;
     unlockAt: string | null;
+    /**
+     * Sweepstakes coin balance in COIN units (coin-USD × COINS_PER_USD).
+     * Read name-agnostically / defensively: `coinsEnabled` is false on a DB
+     * whose schema predates the coin columns (e.g. prod before the
+     * sweepstakes migration), in which case the Adjust-Balance modal hides
+     * the Coins option entirely. Becomes available automatically once the
+     * coin columns land on that DB.
+     */
+    coinsEnabled: boolean;
+    coinBalance: number;
     inventoryValue: number;
     vouchersValue: number;
     packsWagered: number;
@@ -607,6 +617,7 @@ export const EXCHANGE_TX_TYPES = [
 export type TabKey =
   | "overview"
   | "finances"
+  | "funds"
   | "rewards"
   | "gaming"
   | "inventory"
@@ -617,6 +628,7 @@ export type TabKey =
 export const TAB_KEYS = new Set<TabKey>([
   "overview",
   "finances",
+  "funds",
   "rewards",
   "gaming",
   "inventory",

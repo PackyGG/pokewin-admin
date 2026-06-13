@@ -14,6 +14,7 @@ import { houseAmountTextClass, toPercent } from "@/lib/house-pov";
 import { cn } from "@/lib/utils";
 import type { PackListItem } from "@/lib/queries/packs";
 import { quickUpdatePack } from "./actions";
+import { invalidatePackDetailCache } from "./pack-detail-cache";
 
 /**
  * Quick-edit drawer for a pack — the low-friction price + active edit the
@@ -96,6 +97,7 @@ function QuickEditForm({
         ...(priceChanged ? { price: priceNum } : {}),
         ...(activeChanged ? { active } : {}),
       });
+      invalidatePackDetailCache(pack.id);
       toast.success("Pack updated");
       onDone();
       router.refresh();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   DndContext,
   closestCenter,
@@ -55,6 +55,14 @@ export type SortableCard = {
 
 function OddsInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   const [text, setText] = useState(String(value));
+  const focusedRef = useRef(false);
+
+  // Parent can bulk-update odds (e.g. target-EV Set); sync display when not editing.
+  useEffect(() => {
+    if (!focusedRef.current) {
+      setText(String(value));
+    }
+  }, [value]);
 
   return (
     <Input
@@ -62,6 +70,9 @@ function OddsInput({ value, onChange }: { value: number; onChange: (v: number) =
       inputMode="decimal"
       placeholder="0.0001 – 100"
       value={text}
+      onFocus={() => {
+        focusedRef.current = true;
+      }}
       onChange={(e) => {
         const raw = e.target.value;
         if (raw === "" || /^\d*\.?\d{0,4}$/.test(raw)) {
@@ -72,6 +83,7 @@ function OddsInput({ value, onChange }: { value: number; onChange: (v: number) =
         }
       }}
       onBlur={() => {
+        focusedRef.current = false;
         const clamped = Math.min(100, Math.max(0.0001, value));
         onChange(clamped);
         setText(String(clamped));

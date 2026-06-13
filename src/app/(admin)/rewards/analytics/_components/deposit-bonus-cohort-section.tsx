@@ -18,8 +18,13 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { EmptyState } from "@/components/empty-state";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
 import { getDepositBonusCohortExtras } from "@/lib/queries/deposit-bonus-analytics";
+import {
+  safeQueryOrNull,
+  REWARD_QUERY_TIMEOUT_MS,
+} from "@/lib/errors/safe-query";
 import { type RewardsPeriod } from "@/lib/queries/rewards-analytics";
 import { CohortCompareCard } from "./cohort-compare";
 import { DistributionBarChart } from "./distribution-bar-chart";
@@ -35,9 +40,17 @@ import { DistributionBarChart } from "./distribution-bar-chart";
  *   `getDepositBonusCohortExtras` runs three CTE blocks against
  *   `ledger_transactions` with bonus-to-deposit pairing on
  *   `balance_before = balance_after`. The bonus side has no covering
- *   index on those columns, so over a 30d window this is the slow
- *   query on the tab. Lazy-loading lets the page paint while the
- *   cohort numbers resolve in the background.
+ *   index on those columns, so this is the slowest query on the tab
+ *   even after the hash-join rewrite (~1.3s on prod). Lazy-loading lets
+ *   the page paint while the cohort numbers resolve in the background.
+ *
+ * Resilience: the query is run through `safeQueryOrNull` with a
+ * statement timeout, so if it ever degrades again on a larger prod
+ * dataset it falls back to a single TileErrorFallback tile INSTEAD of
+ * throwing into the page-level /insights error boundary (which would
+ * take down the whole Rewards Insights page — that 57014 timeout was
+ * the original bug this section caused). The rest of the Deposit Bonus
+ * tab and the other category panels keep rendering.
  *
  * House-POV: same as the parent tab — every amount is house-cost rose.
  */
@@ -54,7 +67,20 @@ export async function DepositBonusCohortSection({
   count: number;
 }) {
   if (count === 0) return null;
-  const cohort = await getDepositBonusCohortExtras(period, capValue);
+  const { data: cohort } = await safeQueryOrNull(
+    () => getDepositBonusCohortExtras(period, capValue),
+    "rewards.deposit-bonus.cohort",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  if (!cohort) {
+    return (
+      <TileErrorFallback
+        label="Deposit bonus cohort"
+        hint="The cohort breakdown is taking too long — refresh to retry."
+        size="panel"
+      />
+    );
+  }
 
   // Cohort tiles appended to a small strip on top of this section so
   // the lazy-loaded numbers still get prominent placement once they

@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import type { PackListItem } from "@/lib/queries/packs";
 import { deletePack, togglePackActive } from "./actions";
+import { invalidatePackDetailCache } from "./pack-detail-cache";
 
 /**
  * Per-pack kebab menu, shared by the table rows and the gallery tiles so the
@@ -82,6 +83,7 @@ export function PackRowActions({
     startTransition(async () => {
       try {
         await togglePackActive(pack.id, !pack.active);
+        invalidatePackDetailCache(pack.id);
         toast.success(pack.active ? "Pack deactivated" : "Pack activated");
         router.refresh();
       } catch (err) {
@@ -94,6 +96,7 @@ export function PackRowActions({
     startTransition(async () => {
       try {
         await deletePack(pack.id);
+        invalidatePackDetailCache(pack.id);
         toast.success("Pack deleted");
         setDeleteOpen(false);
         router.refresh();

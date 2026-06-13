@@ -212,7 +212,10 @@ const cachedLifetimePnlWhales = unstable_cache(
         COALESCE(SUM(CASE WHEN b.type::text IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN b.type::text IN ${ggrPayoutIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
       ) > 0
-      ORDER BY pnl::numeric DESC
+      ORDER BY (
+        COALESCE(SUM(CASE WHEN b.type::text IN ${ggrWagerIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN b.type::text IN ${ggrPayoutIn} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)
+      ) DESC
       LIMIT ${LIMIT}
     `;
   },
@@ -312,7 +315,7 @@ async function getBiggestSingleDeposit(): Promise<WhaleRow[]> {
     username: r.username,
     image: r.image,
     amount: toNumber(r.amount),
-    detail: r.created_at.toISOString().slice(0, 10),
+    detail: isoDate(r.created_at),
   }));
 }
 
@@ -325,7 +328,9 @@ const cachedBiggestSingleDeposit = unstable_cache(
       username: string | null;
       image: string | null;
       amount: string;
-      created_at: Date;
+      // `Date` on a cache miss; the ISO string `unstable_cache` serialized
+      // it to on a hit — `isoDate()` in the mapper normalizes both.
+      created_at: Date | string;
     }[]
   > => {
     const db = await getDb();
@@ -366,7 +371,7 @@ async function getBiggestSingleWithdrawal(): Promise<WhaleRow[]> {
     username: r.username,
     image: r.image,
     amount: toNumber(r.amount),
-    detail: r.created_at.toISOString().slice(0, 10),
+    detail: isoDate(r.created_at),
   }));
 }
 
@@ -379,7 +384,9 @@ const cachedBiggestSingleWithdrawal = unstable_cache(
       username: string | null;
       image: string | null;
       amount: string;
-      created_at: Date;
+      // `Date` on a cache miss; the ISO string `unstable_cache` serialized
+      // it to on a hit — `isoDate()` in the mapper normalizes both.
+      created_at: Date | string;
     }[]
   > => {
     const db = await getDb();
@@ -424,7 +431,7 @@ async function getBiggestSingleLoss(): Promise<WhaleRow[]> {
     username: r.username,
     image: r.image,
     amount: toNumber(r.amount),
-    detail: `${r.type} · ${r.created_at.toISOString().slice(0, 10)}`,
+    detail: `${r.type} · ${isoDate(r.created_at)}`,
   }));
 }
 
@@ -438,7 +445,9 @@ const cachedBiggestSingleLoss = unstable_cache(
       image: string | null;
       amount: string;
       type: string;
-      created_at: Date;
+      // `Date` on a cache miss; the ISO string `unstable_cache` serialized
+      // it to on a hit — `isoDate()` in the mapper normalizes both.
+      created_at: Date | string;
     }[]
   > => {
     const db = await getDb();
@@ -485,7 +494,7 @@ async function getBiggestSingleWin(): Promise<WhaleRow[]> {
     username: r.username,
     image: r.image,
     amount: toNumber(r.amount),
-    detail: `${r.type} · ${r.created_at.toISOString().slice(0, 10)}`,
+    detail: `${r.type} · ${isoDate(r.created_at)}`,
   }));
 }
 
@@ -499,7 +508,9 @@ const cachedBiggestSingleWin = unstable_cache(
       image: string | null;
       amount: string;
       type: string;
-      created_at: Date;
+      // `Date` on a cache miss; the ISO string `unstable_cache` serialized
+      // it to on a hit — `isoDate()` in the mapper normalizes both.
+      created_at: Date | string;
     }[]
   > => {
     const db = await getDb();
@@ -536,4 +547,15 @@ const cachedBiggestSingleWin = unstable_cache(
 
 function formatUsd(n: number): string {
   return `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+}
+
+/**
+ * `YYYY-MM-DD` from a `created_at` that may be a `Date` (cache miss) or the
+ * ISO string `unstable_cache`'s JSON serialization produced (cache hit). A
+ * bare string has no `.toISOString()` — calling it directly threw the same
+ * `TypeError` the cohorts tab hit, the moment a `biggest-*` lens is opened
+ * after its 300s cache fills. Coerce, then slice.
+ */
+function isoDate(v: Date | string): string {
+  return (v instanceof Date ? v : new Date(v)).toISOString().slice(0, 10);
 }

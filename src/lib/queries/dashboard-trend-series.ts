@@ -1,7 +1,8 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { dbForEnv } from "@/lib/db";
+import { type DbEnv } from "@/lib/db-env";
 import { Prisma } from "@/generated/prisma/client";
 import { type DashboardPeriod } from "./dashboard-period";
 import {
@@ -93,8 +94,9 @@ function mergeLedgerRows(
 async function fetchDashboardTrendSeriesInner(
   period: DashboardPeriod,
   blacklistIdNotIn: string,
+  env: DbEnv,
 ): Promise<DashboardTrendSeries> {
-  const db = await getDb();
+  const db = dbForEnv(env);
   const now = new Date();
   const cutoff = dashboardChartCutoff(period, now, LIFETIME_LOOKBACK_DAYS);
   const bucketLedger = dashboardChartBucketExpr("created_at", period);
@@ -248,6 +250,12 @@ const cachedDashboardTrendSeries = unstable_cache(
 export function getDashboardTrendSeries(
   period: DashboardPeriod,
   blacklistIdNotIn: string,
+  env: DbEnv,
 ): Promise<DashboardTrendSeries> {
-  return cachedDashboardTrendSeries(period, blacklistIdNotIn);
+  // `dbForEnv` is env-scoped; bypass cross-request cache on dev so charts
+  // match the toggled DB (same pattern as cachedWindowMetricsForPeriod).
+  if (env !== "prod") {
+    return fetchDashboardTrendSeriesInner(period, blacklistIdNotIn, env);
+  }
+  return cachedDashboardTrendSeries(period, blacklistIdNotIn, env);
 }

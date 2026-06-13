@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
+import { readDbEnv } from "@/lib/db-env";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming, withTimingResult } from "@/lib/observability/query-timings";
@@ -1207,6 +1208,10 @@ export const getDashboardStats = cache(async (period: DashboardPeriod = DEFAULT_
       metricWindow: periodToMetricWindow(period, new Date()),
       periodLabel: DASHBOARD_PERIOD_LABELS[period],
       windowMetricsKey: period,
+      // Trend charts (signups, FTDs, wagers, …) need padded daily buckets;
+      // without chartPeriod the signups path skips trendSeries and falls back
+      // to sparse cachedDailySignups rows only.
+      chartPeriod: period,
       loadWindowMetrics: (blacklistIdNotIn) =>
         cachedWindowMetricsForPeriod(period, blacklistIdNotIn),
     }),
@@ -1273,6 +1278,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // query batch + post-processing), which is exactly the latency an admin
   // perceives when the streamed KPI strips resolve.
   const t0 = Date.now();
+  const dbEnv = await readDbEnv();
   const db = await getDb();
   // Resolve the combined staff+blacklist filter ONCE per request so
   // every aggregate below applies the same exclusion set. The list is
@@ -1438,7 +1444,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // when the global chip selector drives getDashboardStats).
     withTimingResult("dashboard.trendSeries", () =>
       chartPeriod
-        ? getDashboardTrendSeries(chartPeriod, blacklistIdNotIn)
+        ? getDashboardTrendSeries(chartPeriod, blacklistIdNotIn, dbEnv)
         : Promise.resolve(null as DashboardTrendSeries | null),
     ),
     // Single batched query — computes revenue / withdrawal / wager /

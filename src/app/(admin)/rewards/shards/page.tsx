@@ -6,6 +6,7 @@ import {
   getUserPermissions,
   requirePageAccess,
 } from "@/lib/dal";
+import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabilities";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
@@ -17,8 +18,10 @@ import {
 import { FadeIn } from "@/components/fade-in";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { TableSkeleton } from "@/components/loading-skeletons";
+import { parseShardStatsPeriod } from "@/lib/queries/shard-stats";
 import { CreateShardPackButton } from "./create-shard-pack-button";
 import { ShardsList } from "./shards-list";
+import { ShardStatsSection } from "./shard-stats-section";
 
 export const metadata = { title: "Shard Packs" };
 
@@ -95,8 +98,22 @@ async function ShardsContent({
   );
 }
 
-export default async function ShardPacksPage() {
+export default async function ShardPacksPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>;
+}) {
   const session = await requirePageAccess("/rewards/shards");
+
+  // Active-timeframe-only: parse the single active window from the URL so
+  // the stats section fetches ONLY that window (no eager preload of the
+  // other timeframes — see CLAUDE.md "Performance & Daten-Laden").
+  const { period: periodParam } = await searchParams;
+  const period = parseShardStatsPeriod(periodParam);
+
+  // Idempotent runtime back-fill: grants existing pack_creator users
+  // /rewards/shards (and pack capabilities) before permission read.
+  await ensurePackCreatorCapabilities();
 
   // Per-capability gating mirrors /packs: real admins always pass; everyone
   // else is gated on the same pack capabilities (the shared pack actions
@@ -151,6 +168,37 @@ export default async function ShardPacksPage() {
             canToggle={canToggle}
             canDelete={canDelete}
           />
+        </Suspense>
+
+        {/* Coin/shard economy usage stats. Its own period-keyed Suspense
+            boundary so switching the window streams just the active
+            window's read without blocking (or re-fetching) the pack list
+            above. */}
+        <Suspense
+          key={period}
+          fallback={
+            <div className="space-y-3">
+              <div className="h-9 w-40 animate-pulse rounded-lg bg-muted/30" />
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-[72px] animate-pulse rounded-xl border bg-muted/30"
+                  />
+                ))}
+              </div>
+              <div className="grid gap-3 lg:grid-cols-2">
+                {Array.from({ length: 2 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-48 animate-pulse rounded-2xl border bg-muted/30"
+                  />
+                ))}
+              </div>
+            </div>
+          }
+        >
+          <ShardStatsSection period={period} />
         </Suspense>
       </div>
     </div>

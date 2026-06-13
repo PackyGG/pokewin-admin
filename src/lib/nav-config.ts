@@ -148,6 +148,18 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    id: "nav.numbers",
+    group: "Overview",
+    label: "Numbers",
+    href: "/numbers",
+    pageKey: "/numbers",
+    icon: "Hash",
+    description: "Signup method breakdown",
+    keywords: ["signups", "registration", "email", "discord", "google", "steam", "auth"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // Map — palette-only. /map was folded into /analytics as a tab; the
     // palette still surfaces it (routing through the analytics shell) but the
     // sidebar dropped the standalone link. href carries the tab; permission
@@ -252,6 +264,20 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
   {
+    // Real Numbers — the source-of-truth page. Icon string `Sigma` is already
+    // registered in the ICONS map in `src/components/app-sidebar.tsx`
+    // (no React #130 risk). Sidebar-only, like its Insights siblings.
+    id: "nav.insights.real-numbers",
+    group: "Insights",
+    label: "Real Numbers",
+    href: "/insights/real-numbers",
+    pageKey: "/insights/real-numbers",
+    icon: "Sigma",
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
     id: "nav.insights.analytics",
     group: "Insights",
     label: "Analytics",
@@ -285,6 +311,36 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
   {
+    // Challenges — analytics surface for the challenge program (prize cost,
+    // claims, completion). The /challenges page is CRUD-only; this sits in
+    // Insights as the read-only analytics view. Icon string `Trophy` MUST be
+    // registered in the ICONS map in `src/components/app-sidebar.tsx` (it is).
+    id: "nav.insights.challenges",
+    group: "Insights",
+    label: "Challenges",
+    href: "/insights/challenges",
+    pageKey: "/insights/challenges",
+    icon: "Trophy",
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
+    // Coins & Shards — global secondary-currency economy. Icon string
+    // `Coins` is already registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (no React #130 risk). Sidebar-only,
+    // like its Insights siblings.
+    id: "nav.insights.coins",
+    group: "Insights",
+    label: "Coins & Shards",
+    href: "/insights/coins",
+    pageKey: "/insights/coins",
+    icon: "Coins",
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
     id: "nav.insights.rewards.deposit-bonus",
     group: "Insights",
     label: "Deposit Bonus",
@@ -302,6 +358,17 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     href: "/insights/rewards/rakeback",
     pageKey: "/insights/rewards/rakeback",
     icon: "Wallet",
+    isNew: true,
+    inSidebar: false,
+    inPalette: false,
+  },
+  {
+    id: "nav.insights.rewards.expiry",
+    group: "Insights",
+    label: "Reward Expiry",
+    href: "/insights/rewards/expiry",
+    pageKey: "/insights/rewards/expiry",
+    icon: "Hourglass",
     isNew: true,
     inSidebar: false,
     inPalette: false,
@@ -364,6 +431,22 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     isNew: true,
     inSidebar: true,
     inPalette: true,
+  },
+  {
+    // Wager Liability — platform-wide wager-requirement liability snapshot
+    // (gated user balances behind the sweepstakes wager requirement). Icon
+    // string `Lock` MUST be registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (React #130). Sidebar-only, like its
+    // Insights siblings.
+    id: "nav.insights.wager-liability",
+    group: "Insights",
+    label: "Wager Liability",
+    href: "/insights/wager-liability",
+    pageKey: "/insights/wager-liability",
+    icon: "Lock",
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
   },
 
   {
@@ -428,6 +511,20 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     pageKey: "/packs",
     icon: "Package",
     description: "Pack catalog",
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
+    // Shard packs — packs bought & opened with shards (a wager-earned
+    // currency). Free-roll cards into inventory like reward packs.
+    id: "nav.rewards.shards",
+    group: "Content",
+    label: "Shard Packs",
+    href: "/rewards/shards",
+    pageKey: "/rewards/shards",
+    icon: "Gem",
+    description: "Packs players buy & open with shards",
+    keywords: ["shard", "shards", "pack", "currency", "wager", "free-roll"],
     inSidebar: true,
     inPalette: true,
   },
@@ -620,20 +717,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     href: "/rewards/level-up",
     pageKey: "/rewards/level-up",
     icon: "TrendingUp",
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Shard packs — packs bought & opened with shards (a wager-earned
-    // currency). Free-roll cards into inventory like reward packs.
-    id: "nav.rewards.shards",
-    group: "Rewards",
-    label: "Shard Packs",
-    href: "/rewards/shards",
-    pageKey: "/rewards/shards",
-    icon: "Gem",
-    description: "Packs players buy & open with shards",
-    keywords: ["shard", "shards", "pack", "currency", "wager", "free-roll"],
     inSidebar: true,
     inPalette: true,
   },
@@ -872,6 +955,7 @@ const PALETTE_ORDER: string[] = [
   "nav.creators.analytics",
   "nav.promo",
   "nav.packs",
+  "nav.rewards.shards",
   "nav.cards",
   "nav.battles",
   "nav.transactions.packs",
@@ -884,7 +968,6 @@ const PALETTE_ORDER: string[] = [
   "nav.rain",
   "nav.rewards.leaderboards",
   "nav.rewards.level-up",
-  "nav.rewards.shards",
   "nav.creators.settings",
   "nav.rewards.settings",
   "nav.my-profile",

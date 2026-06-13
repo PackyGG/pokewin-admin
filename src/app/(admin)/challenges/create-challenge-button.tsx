@@ -27,7 +27,6 @@ import { ItemPicker } from "./item-picker";
 import type { SearchItem } from "./actions";
 
 type Kind = "card" | "upgrader";
-type PercentOp = "lte" | "gte" | "eq";
 
 type PickedItem = { id: string; name?: string; imageUrl?: string | null; priceUsd?: number };
 
@@ -43,8 +42,8 @@ export function CreateChallengeButton() {
   const [maxClaims, setMaxClaims] = useState("1");
   const [pack, setPack] = useState<PickedItem | null>(null);
   const [card, setCard] = useState<PickedItem | null>(null);
-  const [winPercentage, setWinPercentage] = useState("");
-  const [percentOp, setPercentOp] = useState<PercentOp>("gte");
+  const [minBetUsd, setMinBetUsd] = useState("");
+  const [minMultiplier, setMinMultiplier] = useState("");
 
   function resetForm() {
     setKind("card");
@@ -54,8 +53,8 @@ export function CreateChallengeButton() {
     setMaxClaims("1");
     setPack(null);
     setCard(null);
-    setWinPercentage("");
-    setPercentOp("gte");
+    setMinBetUsd("");
+    setMinMultiplier("");
   }
 
   function handleKindChange(next: Kind) {
@@ -64,7 +63,8 @@ export function CreateChallengeButton() {
     // apply so we never submit a stale pack_id on an upgrader challenge.
     setPack(null);
     setCard(null);
-    setWinPercentage("");
+    setMinBetUsd("");
+    setMinMultiplier("");
   }
 
   function handleSubmit() {
@@ -82,18 +82,24 @@ export function CreateChallengeButton() {
       toast.error("Max claims must be at least 1");
       return;
     }
-    if (!card?.id) {
-      toast.error("Please select a card");
-      return;
-    }
-    if (kind === "card" && !pack?.id) {
-      toast.error("Please select a pack");
-      return;
-    }
-    if (kind === "upgrader") {
-      const win = parseFloat(winPercentage);
-      if (!Number.isFinite(win)) {
-        toast.error("Enter a win percentage");
+    if (kind === "card") {
+      if (!pack?.id) {
+        toast.error("Please select a pack");
+        return;
+      }
+      if (!card?.id) {
+        toast.error("Please select a card");
+        return;
+      }
+    } else {
+      const bet = parseFloat(minBetUsd);
+      if (!Number.isFinite(bet) || bet <= 0) {
+        toast.error("Enter a minimum bet greater than 0");
+        return;
+      }
+      const mult = parseFloat(minMultiplier);
+      if (!Number.isFinite(mult) || mult <= 0) {
+        toast.error("Enter a minimum multiplier greater than 0");
         return;
       }
     }
@@ -107,10 +113,9 @@ export function CreateChallengeButton() {
           prizeAmount: prize,
           maxClaims: claims,
           packId: kind === "card" ? pack?.id : undefined,
-          cardId: card?.id,
-          winPercentage:
-            kind === "upgrader" ? parseFloat(winPercentage) : undefined,
-          percentOp: kind === "upgrader" ? percentOp : undefined,
+          cardId: kind === "card" ? card?.id : undefined,
+          minBetUsd: kind === "upgrader" ? parseFloat(minBetUsd) : undefined,
+          minMultiplier: kind === "upgrader" ? parseFloat(minMultiplier) : undefined,
         });
         if (!result.success) {
           toast.error(result.error);
@@ -200,81 +205,69 @@ export function CreateChallengeButton() {
               Requirement
             </Label>
 
-            {kind === "card" && (
-              <div className="space-y-2">
-                <Label className="text-xs">Pack (active)</Label>
-                <ItemPicker
-                  type="pack"
-                  value={pack}
-                  onSelect={(item: SearchItem) => {
-                    setPack({
-                      id: item.id,
-                      name: item.name,
-                      imageUrl: item.imageUrl,
-                      priceUsd: item.priceUsd,
-                    });
-                    // the card pool is per-pack — drop a card picked from the
-                    // previous pack so we never submit a card not in this pack.
-                    setCard(null);
-                  }}
-                />
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label className="text-xs">
-                {kind === "upgrader"
-                  ? "Card (upgrader pool)"
-                  : kind === "card"
-                    ? "Card (from pack)"
-                    : "Card"}
-              </Label>
-              <ItemPicker
-                type="card"
-                upgraderPoolOnly={kind === "upgrader"}
-                packId={kind === "card" ? pack?.id : undefined}
-                disabled={kind === "card" && !pack}
-                placeholder={kind === "card" && !pack ? "Select a pack first" : undefined}
-                value={card}
-                onSelect={(item: SearchItem) =>
-                  setCard({
-                    id: item.id,
-                    name: item.name,
-                    imageUrl: item.imageUrl,
-                    priceUsd: item.priceUsd,
-                  })
-                }
-              />
-            </div>
-
-            {kind === "upgrader" && (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {kind === "card" ? (
+              <>
                 <div className="space-y-2">
-                  <Label className="text-xs">Operator</Label>
-                  <Select
-                    value={percentOp}
-                    onValueChange={(v) => v && setPercentOp(v as PercentOp)}
-                  >
-                    <SelectTrigger className="h-9 w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="lte">≤ (at most)</SelectItem>
-                      <SelectItem value="gte">≥ (at least)</SelectItem>
-                      <SelectItem value="eq">= (exactly)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label className="text-xs">Pack (active)</Label>
+                  <ItemPicker
+                    type="pack"
+                    value={pack}
+                    onSelect={(item: SearchItem) => {
+                      setPack({
+                        id: item.id,
+                        name: item.name,
+                        imageUrl: item.imageUrl,
+                        priceUsd: item.priceUsd,
+                      });
+                      // the card pool is per-pack — drop a card picked from the
+                      // previous pack so we never submit a card not in this pack.
+                      setCard(null);
+                    }}
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-xs">Win %</Label>
+                  <Label className="text-xs">Card (from pack)</Label>
+                  <ItemPicker
+                    type="card"
+                    packId={pack?.id}
+                    disabled={!pack}
+                    placeholder={!pack ? "Select a pack first" : undefined}
+                    value={card}
+                    onSelect={(item: SearchItem) =>
+                      setCard({
+                        id: item.id,
+                        name: item.name,
+                        imageUrl: item.imageUrl,
+                        priceUsd: item.priceUsd,
+                      })
+                    }
+                  />
+                </div>
+              </>
+            ) : (
+              // Upgrader is card-agnostic: a winning play just has to bet at
+              // least this much AND hit at least this multiplier.
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label className="text-xs">Min bet (USD)</Label>
                   <Input
                     type="number"
-                    value={winPercentage}
-                    onChange={(e) => setWinPercentage(e.target.value)}
-                    placeholder="50"
+                    value={minBetUsd}
+                    onChange={(e) => setMinBetUsd(e.target.value)}
+                    placeholder="1.00"
                     min={0}
-                    max={100}
                     step="0.01"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Min multiplier</Label>
+                  <Input
+                    type="number"
+                    value={minMultiplier}
+                    onChange={(e) => setMinMultiplier(e.target.value)}
+                    placeholder="2"
+                    min={0}
+                    step="0.0001"
                   />
                 </div>
               </div>

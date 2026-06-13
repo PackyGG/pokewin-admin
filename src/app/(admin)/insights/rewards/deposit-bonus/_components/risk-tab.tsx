@@ -30,7 +30,7 @@ import {
   formatRelative,
 } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -60,16 +60,23 @@ export async function RiskTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
+  // Each query is statement-timeout bounded (REWARD_QUERY_TIMEOUT_MS) so a
+  // pathological scan degrades to its own fallback tile instead of hanging
+  // the segment — the suspicious-claimant cash-out pairing is the heaviest
+  // query on this surface (materialised hash/range join; see suspicious.ts),
+  // matching impact-tab.tsx / cap-tab.tsx / cohorts-tab.tsx.
   const [topRes, suspiciousRes] = await Promise.all([
     safeQuery(
       () => getDepositBonusTopSpenders(period),
       [],
       "insights-rewards-deposit-bonus.top",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getDepositBonusSuspicious(period),
       null,
       "insights-rewards-deposit-bonus.suspicious",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
 

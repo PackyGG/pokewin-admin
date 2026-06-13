@@ -30,7 +30,7 @@ import {
   formatNumber,
   formatRelative,
 } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -62,11 +62,17 @@ export async function CapTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
+  // Each query is statement-timeout bounded (REWARD_QUERY_TIMEOUT_MS) so a
+  // pathological scan degrades to its own fallback tile instead of hanging
+  // the segment — both the cap-analysis biggest-cap-deposit pairing and
+  // the ratio-distribution pairing are materialised hash joins (see
+  // cap-analysis.ts / cohort.ts).
   const [capRes, ratioRes] = await Promise.all([
     safeQuery(
       () => getDepositBonusCapAnalysis(period),
       null,
       "insights-rewards-deposit-bonus.cap",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     // Ratio histogram only — not the full cohort comparison (with/without
     // retention split lives on the Cohorts tab). Both share the same
@@ -75,6 +81,7 @@ export async function CapTab({
       () => getDepositBonusRatioDistribution(period),
       null,
       "insights-rewards-deposit-bonus.ratio",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
   if (capRes.error || !capRes.data) {

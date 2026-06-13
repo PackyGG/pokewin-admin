@@ -29,7 +29,6 @@ export function ItemPicker({
   type,
   value,
   onSelect,
-  upgraderPoolOnly = false,
   packId,
   disabled = false,
   placeholder,
@@ -37,8 +36,6 @@ export function ItemPicker({
   type: "pack" | "card";
   value: { id: string; name?: string; imageUrl?: string | null; priceUsd?: number } | null;
   onSelect: (item: SearchItem) => void;
-  /** Card picker only: restrict results to the upgrader output pool. */
-  upgraderPoolOnly?: boolean;
   /** Card picker only: restrict results to the cards inside this pack's pool. */
   packId?: string;
   /** Disable the trigger (e.g. a card picker before its pack is chosen). */
@@ -54,10 +51,10 @@ export function ItemPicker({
   useEffect(() => {
     if (!open) return;
     startTransition(async () => {
-      const results = await searchItems(query, type, { upgraderPoolOnly, packId });
+      const results = await searchItems(query, type, { packId });
       setItems(results);
     });
-  }, [open, query, type, upgraderPoolOnly, packId]);
+  }, [open, query, type, packId]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>

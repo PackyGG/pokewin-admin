@@ -2,8 +2,8 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
-  excludeStaffAndBlacklisted,
-  excludeStaffAndBlacklistedSqlFromIds,
+  excludeStaffCreatorsAndBlacklisted,
+  excludeStaffCreatorsAndBlacklistedSqlFromIds,
 } from "@/lib/queries/_blacklist";
 
 /**
@@ -75,7 +75,7 @@ const TOP_WINNERS_LIMIT = 5;
 
 async function raceClaimsUserScopeSql(): Promise<string> {
   const excluded = await getExcludedUserIds();
-  return excludeStaffAndBlacklistedSqlFromIds(excluded);
+  return excludeStaffCreatorsAndBlacklistedSqlFromIds(excluded);
 }
 
 /**
@@ -86,7 +86,7 @@ async function buildRaceSummary(
 ): Promise<RaceLeaderboardSummary> {
   const db = await getDb();
   const userScopeSql = await raceClaimsUserScopeSql();
-  const userRelation = await excludeStaffAndBlacklisted();
+  const userRelation = await excludeStaffCreatorsAndBlacklisted();
 
   const [tiers, activePeriod, recentEndedPeriod] = await Promise.all([
     db.race_prize_tiers.findMany({
@@ -221,7 +221,7 @@ export type LifetimePrizesBreakdown = {
  */
 export async function getLifetimePrizesBreakdown(): Promise<LifetimePrizesBreakdown> {
   const db = await getDb();
-  const userScope = await excludeStaffAndBlacklisted();
+  const userScope = await excludeStaffCreatorsAndBlacklisted();
   const rows = await db.race_claims.groupBy({
     by: ["race_type"],
     where: { user: userScope },
@@ -311,7 +311,7 @@ export async function getPrizeBudgetBreakdown(
 
 export async function getRewardsLeaderboards(): Promise<RewardsLeaderboardsData> {
   const db = await getDb();
-  const userScope = await excludeStaffAndBlacklisted();
+  const userScope = await excludeStaffCreatorsAndBlacklisted();
 
   const [daily, weekly, lifetimeRow] = await Promise.all([
     buildRaceSummary("daily"),

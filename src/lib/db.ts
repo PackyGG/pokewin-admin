@@ -176,3 +176,8 @@ export async function getDb(): Promise<PrismaClient> {
   const env = await readDbEnv();
   return getClient(env);
 }
+
+/** Sync client for a known env — use inside `unstable_cache` callbacks keyed on env. */
+export function dbForEnv(env: DbEnv): PrismaClient {
+  return getClient(env);
+}

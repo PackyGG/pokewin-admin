@@ -36,6 +36,7 @@ import {
   type SafeQueryResult,
 } from "@/lib/errors/safe-query";
 import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
+import { getUserWagerProgress } from "@/lib/queries/users-wager-progress";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -490,6 +491,15 @@ async function UserDetailBody({
     initialTab === "account"
       ? getUserWagerRequirement(id).catch(() => null)
       : null;
+  // Wager-requirement PROGRESS from the backend-written `balances` columns.
+  // ALWAYS kicked (not tab-gated): the hero shows a "Wager Left" KPI on every
+  // user view, and the Account tab renders the full per-source breakdown —
+  // both share this one promise. Timeout-wrapped → muted/null on slow/missing.
+  const wagerProgressPromise = safeQueryOrNull(
+    () => getUserWagerProgress(id),
+    "users.detail.wagerProgress",
+    USER_DETAIL_QUERY_TIMEOUT_MS,
+  ).then((r) => r.data);
 
   // Trust tab: shared-identity fan-outs. Previously these rode only the
   // 30s statement_timeout — now they get the same explicit per-query
@@ -659,6 +669,7 @@ async function UserDetailBody({
       sharedIpsPromise={sharedIpsPromise}
       sharedFingerprintsPromise={sharedFingerprintsPromise}
       wagerRequirementPromise={wagerRequirementPromise}
+      wagerProgressPromise={wagerProgressPromise}
       viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
       initialTab={initialTab}
     />
@@ -674,11 +685,11 @@ function UserDetailBodySkeleton() {
   return (
     <div className="space-y-6">
       {/* Modern user view: identity hero with avatar + status pills + KPIs.
-          8 KPI tiles + 8 tabs — counts mirror UserViewModern's hero strip
+          8 KPI tiles + 9 tabs — counts mirror UserViewModern's hero strip
           and tab bar so the streamed body swaps in without a layout jump. */}
       <Skeleton className="h-32 rounded-2xl" />
       <KpiStripSkeleton count={8} />
-      <TabBarSkeleton count={8} />
+      <TabBarSkeleton count={9} />
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Skeleton className="h-48 rounded-2xl" />
         <Skeleton className="h-48 rounded-2xl" />

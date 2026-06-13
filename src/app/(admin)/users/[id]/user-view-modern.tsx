@@ -45,6 +45,7 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   ArrowUpCircle,
+  Hourglass,
   Banknote,
   Sparkles,
   Percent,
@@ -52,6 +53,7 @@ import {
   MapPin,
   Link2,
   Megaphone,
+  GitBranch,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -70,12 +72,14 @@ import type { UserRewards } from "@/lib/queries/users";
 import type { PaginatedInventory } from "./user-tabs-types";
 import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
+import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import { ErrorPill } from "./band-error";
 import { TILE_COLORS } from "./user-view-modern-panels";
 import {
   OverviewTab,
   FinancesTab,
+  FundsTab,
   RewardsTab,
   GamingTab,
   InventoryTab,
@@ -105,6 +109,7 @@ import {
 export {
   OverviewTab,
   FinancesTab,
+  FundsTab,
   RewardsTab,
   GamingTab,
   InventoryTab,
@@ -136,6 +141,11 @@ const TABS: TabDef[] = [
   { key: "overview", label: "Overview", icon: Activity },
   { key: "gaming", label: "Gaming", icon: Swords },
   { key: "finances", label: "Finances", icon: Wallet },
+  // Funds trace — where the user's money came from + which wager it
+  // carries. Sits next to Finances (both are money surfaces): Finances
+  // is the raw deposit/withdrawal ledger, Funds is the provenance +
+  // wager-attribution view built on the sweepstakes source columns.
+  { key: "funds", label: "Funds", icon: GitBranch },
   { key: "rewards", label: "Rewards", icon: Gift },
   { key: "inventory", label: "Inventory", icon: Gem },
   { key: "trust", label: "Trust", icon: ShieldAlert },
@@ -164,6 +174,7 @@ export function UserViewModern({
   sharedIpsPromise,
   sharedFingerprintsPromise,
   wagerRequirementPromise,
+  wagerProgressPromise,
   viewerIsAdjustmentOwner,
   initialTab,
 }: {
@@ -205,6 +216,10 @@ export function UserViewModern({
   // API, NOT the MAIN DB; plain nullable value, its own catch→null wrapper
   // in page.tsx). null resolution = the card's muted degraded state.
   wagerRequirementPromise: Promise<UserWagerRequirement | null> | null;
+  // Account tab — read-only wager-requirement PROGRESS derived from the
+  // backend-written `balances` columns (dev-only). null = prod / no-balance /
+  // read failed → the card's muted "not available" state.
+  wagerProgressPromise: Promise<UserWagerProgress | null> | null;
   // True only for the owner `motha`. Defence-in-depth UI flag: when false the
   // Finances type-filter dropdown drops the "admin balance adjustment" option
   // so a non-owner never even sees the category label. The real boundary is
@@ -526,6 +541,23 @@ export function UserViewModern({
                 icon={ArrowUpCircle}
                 accent="rose"
               />
+              {/* Wager Left — weighted wager remaining before this user can
+                  withdraw balance. Neutral info (cyan). Streamed so the
+                  per-user wager read never blocks the identity hero. */}
+              {wagerProgressPromise && (
+                <Suspense
+                  fallback={
+                    <KpiTile
+                      label="Wager Left"
+                      value="…"
+                      icon={Hourglass}
+                      accent="cyan"
+                    />
+                  }
+                >
+                  <WagerLeftHeroTile promise={wagerProgressPromise} />
+                </Suspense>
+              )}
               <KpiTile
                 label="Deposits"
                 value={String(counts.deposits)}
@@ -598,6 +630,14 @@ export function UserViewModern({
           />
         )}
 
+        {/* Funds trace — money provenance + wager attribution. Uses the
+            always-kicked wagerProgressPromise for the per-source + "which
+            wager" sections and the already-resolved data.balances for the
+            balance-now KPIs, so it needs no new tab-gated query. */}
+        {activeTab === "funds" && (
+          <FundsTab data={data} wagerProgressPromise={wagerProgressPromise} />
+        )}
+
         {activeTab === "rewards" && (
           <RewardsTab rewardsPromise={rewardsPromise} />
         )}
@@ -642,10 +682,58 @@ export function UserViewModern({
             notesPromise={notesPromise}
             pnlResultPromise={pnlResultPromise}
             wagerRequirementPromise={wagerRequirementPromise}
+            wagerProgressPromise={wagerProgressPromise}
           />
         )}
       </FadeIn>
     </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  WAGER-LEFT HERO TILE — streamed island
+//
+//  Surfaces the remaining weighted wager before withdrawal as a hero KPI,
+//  so an operator sees "how far from cashing out" without opening the
+//  Account tab. use()s the always-kicked wager-progress promise; null /
+//  exempt / met / backend-unavailable each render a clear state. Neutral
+//  (cyan) — "wager left" is informational, not a house gain/loss.
+// ───────────────────────────────────────────────────────────────────
+
+function WagerLeftHeroTile({
+  promise,
+}: {
+  promise: Promise<UserWagerProgress | null>;
+}) {
+  const wp = use(promise);
+  if (!wp) {
+    return (
+      <KpiTile label="Wager Left" value="—" sub="no data" icon={Hourglass} accent="cyan" />
+    );
+  }
+  if (wp.exempt) {
+    return (
+      <KpiTile label="Wager Left" value="Exempt" sub="0× requirement" icon={Hourglass} accent="cyan" />
+    );
+  }
+  if (wp.remainingUsd == null) {
+    return (
+      <KpiTile label="Wager Left" value="—" sub="needs backend" icon={Hourglass} accent="cyan" />
+    );
+  }
+  if (wp.remainingUsd <= 0) {
+    return (
+      <KpiTile label="Wager Left" value="Met ✓" sub="can withdraw" icon={Hourglass} accent="cyan" />
+    );
+  }
+  return (
+    <KpiTile
+      label="Wager Left"
+      value={formatCurrency(wp.remainingUsd)}
+      sub="to withdraw"
+      icon={Hourglass}
+      accent="cyan"
+    />
   );
 }
 

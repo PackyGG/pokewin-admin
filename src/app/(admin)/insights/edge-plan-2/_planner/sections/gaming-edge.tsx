@@ -15,6 +15,7 @@ import {
   PLANNED_BATTLES_EDGE_DEFAULT,
   defaultPlannedEdge,
   computeBlendedEdgeBreakdownV2,
+  formatRawMathEdgePctV2,
   rawMathEdgeV2,
   type EdgePlanV2Baseline,
   type PlannedLeversV2,
@@ -62,13 +63,15 @@ export function GamingEdgeSection({
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Raw math edge
           </p>
+          {/* Spec #7: 3-decimal precision — EXACTLY "10.495%" at the
+              planning defaults, never the rounded "10.50%". */}
           <p className="mt-0.5 text-xl font-bold tabular-nums text-foreground">
-            {formatPct(rawEdge)}
+            {formatRawMathEdgePctV2(rawEdge)}
           </p>
           <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-            In plain words: simple average of the two sliders, no volumes
-            ({formatPct(packsEdge)} &amp; {formatPct(upgraderEdge)} — no wager
-            weighting).
+            In plain words: simple average of the two sliders, no volumes —
+            ({formatPct(packsEdge)} + {formatPct(upgraderEdge)}) ÷ 2 ={" "}
+            {formatRawMathEdgePctV2(rawEdge)}, no wager weighting.
           </p>
         </div>
         <div className="min-w-0 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2.5">
