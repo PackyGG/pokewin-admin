@@ -115,6 +115,8 @@ Die volle Mechanik (Scope, Hotspots, Commit-Disziplin, Honest-Reporting) steht w
 
 **Owner-Regel (2026-06-12): Wenn du fertig bist → alles pushen.** Bevor du „done" meldest: **commit + push** alle Änderungen zu deiner Aufgabe. Kein Shippedes lokal liegen lassen. Nie committen: `.env`/Secrets, `src/generated/*`, `recent-pushes.json`, temp `_verify-*` Scripts. Nach Push: `git status` clean für Feature-Files — oder explizit sagen, was offen blieb und warum.
 
+**Production (2026-06-13):** Live admin = https://pokewin-admin.vercel.app · Vercel project `packy-admin-dashboard` · **`productionBranch: main`** · push to `origin/main` = auto production deploy. Feature branches are preview-only until merged to `main`.
+
 ---
 
 ## 🔁 Persistent Parallel Workflow Mode (always active)

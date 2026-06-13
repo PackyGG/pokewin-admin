@@ -125,6 +125,15 @@ Die volle Mechanik (Scope, Hotspots, Commit-Disziplin, Honest-Reporting) steht w
 
 **Owner-Regel (2026-06-12): Wenn du fertig bist → alles pushen.** Bevor du „done" meldest oder die Session/Task abschließt: **commit + push** alle Änderungen, die zu deiner Aufgabe gehören. Nichts Shippedes lokal liegen lassen und dem User „fertig" sagen, während der Branch noch dirty ist. Ausnahmen (nie committen): `.env` / Secrets, `src/generated/*`, `recent-pushes.json`, temporäre `_verify-*` / `_probe-*` Scripts, reine Session-Noise in `AGENT_HANDOFF.md` wenn nicht Teil des Handoff-Updates. Nach Push: `git status` muss für deine Feature-Files clean sein (oder du sagst explizit, was bewusst offen blieb und warum).
 
+### Production deploy — `main` only (Owner-Regel, 2026-06-13)
+
+**Live admin URL:** https://pokewin-admin.vercel.app (Vercel project `packy-admin-dashboard`, team `packy-gg1`).
+
+- **Production branch = `main`.** Every push to `origin/main` triggers an automatic **production** Vercel deployment — no manual promote step.
+- **Feature branches** (`fix/*`, `claude/*`, worktrees) are preview-only unless explicitly merged/cherry-picked to `main`.
+- **To ship to production:** merge or cherry-pick onto `main`, run `git push origin main`, wait for the Vercel production build (Ready), then verify on pokewin-admin.vercel.app.
+- Do **not** tell the user a route is live until `main` has the code **and** production shows Ready for that commit.
+
 ---
 
 ## 🔁 Persistent Parallel Workflow Mode (always active)
