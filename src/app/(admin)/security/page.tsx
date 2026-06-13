@@ -1,14 +1,5 @@
 import {
   Lock,
-  Banknote,
-  Trophy,
-  Percent,
-  Coins,
-  Gem,
-  Hourglass,
-  Bitcoin,
-  Gauge,
-  SlidersHorizontal,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getSiteConfig } from "@/lib/queries/security";
@@ -175,55 +166,55 @@ export default async function SecurityPage() {
       </PageHero>
 
       <FadeIn>
-        <CollapsibleSecuritySection icon={Banknote} title="Withdrawal Wager Requirements">
+        <CollapsibleSecuritySection icon="banknote" title="Withdrawal Wager Requirements">
           <WagerRequirementCard initial={wagerDefaults} />
         </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <CollapsibleSecuritySection icon={Trophy} title="Leaderboard Wager Weights">
+        <CollapsibleSecuritySection icon="trophy" title="Leaderboard Wager Weights">
           <LeaderboardWagerWeightsCard initial={leaderboardWeights} />
         </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <CollapsibleSecuritySection icon={Percent} title="Rakeback Wager Weights">
+        <CollapsibleSecuritySection icon="percent" title="Rakeback Wager Weights">
           <RakebackWagerWeightsCard initial={rakebackWeights} />
         </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <CollapsibleSecuritySection icon={Gem} title="Shard Wager Weights">
+        <CollapsibleSecuritySection icon="gem" title="Shard Wager Weights">
           <ShardWagerWeightsCard initial={shardWeights} />
         </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <CollapsibleSecuritySection icon={Coins} title="Funding-Source Wager Weights">
+        <CollapsibleSecuritySection icon="coins" title="Funding-Source Wager Weights">
           <SourceWagerWeightsCard initial={sourceWeights} />
         </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <CollapsibleSecuritySection icon={Gauge} title="Multiplier Wager Weights">
+        <CollapsibleSecuritySection icon="gauge" title="Multiplier Wager Weights">
           <MultiplierWagerWeightsCard initial={multiplierWeights} />
         </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <CollapsibleSecuritySection icon={Hourglass} title="Reward Expiry">
+        <CollapsibleSecuritySection icon="hourglass" title="Reward Expiry">
           <RewardExpiryCard initial={rewardExpiry} />
         </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <CollapsibleSecuritySection icon={Bitcoin} title="Crypto Exchange-Rate Fees">
+        <CollapsibleSecuritySection icon="bitcoin" title="Crypto Exchange-Rate Fees">
           <CryptoFeesCard initial={cryptoFees} />
         </CollapsibleSecuritySection>
       </FadeIn>
 
       <FadeIn>
-        <CollapsibleSecuritySection icon={SlidersHorizontal} title="Site Configuration">
+        <CollapsibleSecuritySection icon="sliders" title="Site Configuration">
           <SecurityContent config={config} rainConfigMoved={hasMovedKeys} />
         </CollapsibleSecuritySection>
       </FadeIn>

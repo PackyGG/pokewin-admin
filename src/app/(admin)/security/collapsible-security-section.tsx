@@ -1,7 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import {
+  Banknote,
+  Bitcoin,
+  ChevronDown,
+  Coins,
+  Gauge,
+  Gem,
+  Hourglass,
+  Percent,
+  Plus,
+  SlidersHorizontal,
+  Trophy,
+  type LucideIcon,
+} from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -9,22 +22,39 @@ import {
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
+/** Serializable icon keys — server pages must not pass component refs. */
+export const SECURITY_SECTION_ICONS = {
+  banknote: Banknote,
+  trophy: Trophy,
+  percent: Percent,
+  gem: Gem,
+  coins: Coins,
+  gauge: Gauge,
+  hourglass: Hourglass,
+  bitcoin: Bitcoin,
+  sliders: SlidersHorizontal,
+  plus: Plus,
+} as const satisfies Record<string, LucideIcon>;
+
+export type SecuritySectionIcon = keyof typeof SECURITY_SECTION_ICONS;
+
 /**
  * Collapsible wrapper for /security panels — click the heading row to
  * expand/collapse the section body.
  */
 export function CollapsibleSecuritySection({
-  icon: Icon,
+  icon,
   title,
   children,
   defaultOpen = true,
 }: {
-  icon: React.ElementType;
+  icon: SecuritySectionIcon;
   title: React.ReactNode;
   children: React.ReactNode;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const Icon = SECURITY_SECTION_ICONS[icon];
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="space-y-3">

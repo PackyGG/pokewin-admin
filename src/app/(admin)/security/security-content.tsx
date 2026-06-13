@@ -179,7 +179,7 @@ export function SecurityContent({
         </div>
       </div>
 
-      <CollapsibleSecuritySection icon={Plus} title="Add Configuration" defaultOpen={false}>
+      <CollapsibleSecuritySection icon="plus" title="Add Configuration" defaultOpen={false}>
         <div className="rounded-md border p-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
             <div className="space-y-1">
