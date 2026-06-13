@@ -54,6 +54,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // cross-cutting analytical surfaces.
   { group: "Insights", label: "GGR", key: "/ggr" },
   { group: "Insights", label: "Rewards", key: "/insights/rewards" },
+  // Challenges — analytics surface for the challenge program (prize cost,
+  // claims, completion). The /challenges page stays CRUD-only; this is the
+  // read-only insights view. Own grantable key.
+  { group: "Insights", label: "Challenges", key: "/insights/challenges" },
   // Legacy routes — thin redirects; keys retained for bookmark + role grants.
   { group: "Insights", label: "Games (legacy)", key: "/insights/games" },
   { group: "Insights", label: "Signup (legacy)", key: "/insights/rewards/signup" },
