@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getSignupMethodStats, type SignupMethodKey } from "@/lib/queries/signup-methods";
+import { getPackMaxWinStats } from "@/lib/queries/pack-max-wins";
+import { PackMaxWinsSection } from "./pack-max-wins-section";
 import {
   PageHero,
   PageHeroIdentity,
@@ -53,7 +55,10 @@ function formatShare(share: number): string {
 
 export default async function NumbersPage() {
   await requirePageAccess("/numbers");
-  const stats = await getSignupMethodStats();
+  const [stats, packMaxWins] = await Promise.all([
+    getSignupMethodStats(),
+    getPackMaxWinStats(),
+  ]);
   const primaryRows = stats.methods.filter((row) =>
     PRIMARY_METHODS.includes(row.key),
   );
@@ -67,7 +72,7 @@ export default async function NumbersPage() {
         <PageHeroIdentity
           icon={Hash}
           title="Numbers"
-          subtitle="How real customers signed up — counted by the first linked auth provider (email, Discord, Google, or Steam)."
+          subtitle="Signup methods and pack max-win multipliers — quick catalog stats without leaving Overview."
         />
       </PageHero>
 
@@ -90,7 +95,7 @@ export default async function NumbersPage() {
         ))}
       </div>
 
-      <section className="space-y-4">
+      <section className="max-w-md space-y-4">
         <SectionHeading icon={Hash} title="Signup method breakdown" />
         <Card>
           <CardHeader className="pb-2">
@@ -98,22 +103,22 @@ export default async function NumbersPage() {
               All-time distribution
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-5">
+          <CardContent className="space-y-4">
             {stats.methods
               .filter((row) => row.count > 0)
               .map((row) => (
-                <div key={row.key} className="space-y-2">
+                <div key={row.key} className="space-y-1.5">
                   <div className="flex items-center justify-between gap-3 text-sm">
-                    <div className="flex items-center gap-2 font-medium">
+                    <div className="flex min-w-0 items-center gap-2 font-medium">
                       {(() => {
                         const Icon = METHOD_ICONS[row.key];
                         return (
-                          <Icon className="size-4 text-muted-foreground" />
+                          <Icon className="size-4 shrink-0 text-muted-foreground" />
                         );
                       })()}
-                      <span>{row.label}</span>
+                      <span className="truncate">{row.label}</span>
                     </div>
-                    <span className="tabular-nums text-muted-foreground">
+                    <span className="shrink-0 tabular-nums text-muted-foreground">
                       {formatNumber(row.count)} · {formatShare(row.share)}
                     </span>
                   </div>
@@ -138,7 +143,7 @@ export default async function NumbersPage() {
       </section>
 
       {tailRows.length > 0 && (
-        <section className="space-y-4">
+        <section className="max-w-md space-y-4">
           <SectionHeading icon={Users} title="Other buckets" />
           <div className="grid gap-3 md:grid-cols-2">
             {tailRows.map((row) => (
@@ -156,7 +161,7 @@ export default async function NumbersPage() {
       )}
 
       {stats.otherBreakdown.length > 0 && (
-        <section className="space-y-4">
+        <section className="max-w-md space-y-4">
           <SectionHeading icon={Hash} title="Other provider IDs" />
           <Card>
             <CardContent className="pt-6">
@@ -177,6 +182,8 @@ export default async function NumbersPage() {
           </Card>
         </section>
       )}
+
+      <PackMaxWinsSection stats={packMaxWins} />
     </div>
   );
 }

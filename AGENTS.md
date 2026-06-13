@@ -123,6 +123,8 @@ Die volle Mechanik (Scope, Hotspots, Commit-Disziplin, Honest-Reporting) steht w
 
 **Merkregel:** Ein Task = ein Push. Niemals 5 Tasks sammeln und am Ende einmal pushen.
 
+**Owner-Regel (2026-06-12): Wenn du fertig bist → alles pushen.** Bevor du „done" meldest oder die Session/Task abschließt: **commit + push** alle Änderungen, die zu deiner Aufgabe gehören. Nichts Shippedes lokal liegen lassen und dem User „fertig" sagen, während der Branch noch dirty ist. Ausnahmen (nie committen): `.env` / Secrets, `src/generated/*`, `recent-pushes.json`, temporäre `_verify-*` / `_probe-*` Scripts, reine Session-Noise in `AGENT_HANDOFF.md` wenn nicht Teil des Handoff-Updates. Nach Push: `git status` muss für deine Feature-Files clean sein (oder du sagst explizit, was bewusst offen blieb und warum).
+
 ---
 
 ## 🔁 Persistent Parallel Workflow Mode (always active)
