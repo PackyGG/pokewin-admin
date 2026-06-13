@@ -6,7 +6,13 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     staleTimes: {
-      dynamic: 30,
+      // Client Router Cache reuse window. Raised 30 → 120 so navigating BACK
+      // to an already-viewed tab / period / list within ~2 min serves the
+      // cached RSC payload instantly (no server round-trip, no skeleton).
+      // Safe because: server data caches run 60–300s anyway, and any mutation
+      // path calls revalidatePath()/router.refresh() which busts this cache —
+      // so 2-min staleness only applies to passive back-navigation.
+      dynamic: 120,
       static: 180,
     },
     // Barrel-file tree-shake hint for packages we pull many small exports
