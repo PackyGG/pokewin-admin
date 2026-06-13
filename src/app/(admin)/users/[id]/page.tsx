@@ -491,17 +491,15 @@ async function UserDetailBody({
     initialTab === "account"
       ? getUserWagerRequirement(id).catch(() => null)
       : null;
-  // Account tab: read-only wager-requirement PROGRESS derived from the
-  // backend-written `balances` columns (dev-only; resolves to null on prod /
-  // no-balance → the card's muted state). Own catch→null, like above.
-  const wagerProgressPromise =
-    initialTab === "account"
-      ? safeQueryOrNull(
-          () => getUserWagerProgress(id),
-          "users.detail.wagerProgress",
-          USER_DETAIL_QUERY_TIMEOUT_MS,
-        ).then((r) => r.data)
-      : null;
+  // Wager-requirement PROGRESS from the backend-written `balances` columns.
+  // ALWAYS kicked (not tab-gated): the hero shows a "Wager Left" KPI on every
+  // user view, and the Account tab renders the full per-source breakdown —
+  // both share this one promise. Timeout-wrapped → muted/null on slow/missing.
+  const wagerProgressPromise = safeQueryOrNull(
+    () => getUserWagerProgress(id),
+    "users.detail.wagerProgress",
+    USER_DETAIL_QUERY_TIMEOUT_MS,
+  ).then((r) => r.data);
 
   // Trust tab: shared-identity fan-outs. Previously these rode only the
   // 30s statement_timeout — now they get the same explicit per-query

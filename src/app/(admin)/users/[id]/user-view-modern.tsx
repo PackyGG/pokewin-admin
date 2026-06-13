@@ -45,6 +45,7 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   ArrowUpCircle,
+  Hourglass,
   Banknote,
   Sparkles,
   Percent,
@@ -532,6 +533,23 @@ export function UserViewModern({
                 icon={ArrowUpCircle}
                 accent="rose"
               />
+              {/* Wager Left — weighted wager remaining before this user can
+                  withdraw balance. Neutral info (cyan). Streamed so the
+                  per-user wager read never blocks the identity hero. */}
+              {wagerProgressPromise && (
+                <Suspense
+                  fallback={
+                    <KpiTile
+                      label="Wager Left"
+                      value="…"
+                      icon={Hourglass}
+                      accent="cyan"
+                    />
+                  }
+                >
+                  <WagerLeftHeroTile promise={wagerProgressPromise} />
+                </Suspense>
+              )}
               <KpiTile
                 label="Deposits"
                 value={String(counts.deposits)}
@@ -653,6 +671,53 @@ export function UserViewModern({
         )}
       </FadeIn>
     </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  WAGER-LEFT HERO TILE — streamed island
+//
+//  Surfaces the remaining weighted wager before withdrawal as a hero KPI,
+//  so an operator sees "how far from cashing out" without opening the
+//  Account tab. use()s the always-kicked wager-progress promise; null /
+//  exempt / met / backend-unavailable each render a clear state. Neutral
+//  (cyan) — "wager left" is informational, not a house gain/loss.
+// ───────────────────────────────────────────────────────────────────
+
+function WagerLeftHeroTile({
+  promise,
+}: {
+  promise: Promise<UserWagerProgress | null>;
+}) {
+  const wp = use(promise);
+  if (!wp) {
+    return (
+      <KpiTile label="Wager Left" value="—" sub="no data" icon={Hourglass} accent="cyan" />
+    );
+  }
+  if (wp.exempt) {
+    return (
+      <KpiTile label="Wager Left" value="Exempt" sub="0× requirement" icon={Hourglass} accent="cyan" />
+    );
+  }
+  if (wp.remainingUsd == null) {
+    return (
+      <KpiTile label="Wager Left" value="—" sub="needs backend" icon={Hourglass} accent="cyan" />
+    );
+  }
+  if (wp.remainingUsd <= 0) {
+    return (
+      <KpiTile label="Wager Left" value="Met ✓" sub="can withdraw" icon={Hourglass} accent="cyan" />
+    );
+  }
+  return (
+    <KpiTile
+      label="Wager Left"
+      value={formatCurrency(wp.remainingUsd)}
+      sub="to withdraw"
+      icon={Hourglass}
+      accent="cyan"
+    />
   );
 }
 
