@@ -621,7 +621,7 @@ function RewardSpendPanel({
               </li>
             );
           })}
-          {/* Total row */}
+          {/* Total row — the reconciling reward-cost subtotal (= GGR − NGR). */}
           <li className="grid grid-cols-[1fr_minmax(0,_5.5rem)_minmax(0,_3rem)] items-center gap-2 bg-muted/30 px-3 py-2.5 text-xs font-semibold sm:grid-cols-[1.6fr_minmax(0,_7rem)_minmax(0,_4.5rem)_minmax(0,_5rem)] sm:gap-3 sm:px-4">
             <span>Total reward &amp; bonus spend</span>
             <span className="text-right font-mono tabular-nums text-rose-600 dark:text-rose-400">
@@ -631,6 +631,60 @@ function RewardSpendPanel({
             <span className="text-right font-mono tabular-nums text-muted-foreground">
               {denom > 0 ? "100%" : "—"}
             </span>
+          </li>
+          {/* ── Daily / free packs — addendum BELOW the reconciling total ──
+              Daily-pack cards are a real house giveaway, but they are NOT a
+              REWARD_PAYOUT ledger type: their value lives in user_inventory and
+              is excluded from GGR's gaming payout, so it is NOT part of the
+              reward cost (GGR − NGR) the total above reconciles to. It is
+              captured instead in the realized-P&L bottom line via held
+              inventory. Shown here as a clearly-separated line (House-POV rose)
+              so the owner sees it, WITHOUT inflating the reconciling subtotal —
+              folding it in would double-count it against GGR's gaming payout. */}
+          <li className="grid grid-cols-[1fr_minmax(0,_5.5rem)_minmax(0,_3rem)] items-start gap-2 border-t border-dashed border-border/70 px-3 py-3 text-xs sm:grid-cols-[1.6fr_minmax(0,_7rem)_minmax(0,_4.5rem)_minmax(0,_5rem)] sm:gap-3 sm:px-4">
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="flex items-center gap-2">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-rose-500/10 text-rose-500">
+                  <Package className="size-3" />
+                </span>
+                <span className="truncate font-medium">
+                  Daily / free packs (card giveaway)
+                </span>
+              </span>
+              <span className="pl-8 text-[10px] leading-snug text-muted-foreground">
+                Value of cards handed out by free reward-pack opens (≈ $0 wager).
+                Tracked in inventory, NOT a ledger reward type — so it is{" "}
+                <span className="font-medium text-foreground/80">
+                  not in the GGR − NGR reward cost above
+                </span>{" "}
+                (it lands in realized P&amp;L via held inventory). Shown
+                separately to avoid double-counting it against GGR.
+              </span>
+            </span>
+            <span className="text-right font-mono font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+              −{formatCurrency(itemization.dailyPacks.cost)}
+            </span>
+            <span className="hidden text-right font-mono tabular-nums text-muted-foreground sm:block">
+              {itemization.dailyPacks.opens > 0
+                ? formatNumber(itemization.dailyPacks.opens)
+                : "—"}
+            </span>
+            <span className="text-right font-mono tabular-nums text-muted-foreground">
+              —
+            </span>
+          </li>
+          {/* Memo: reward & bonus spend INCLUDING the daily-pack giveaway. A
+              memo line (not a new reconciling subtotal) — it is the sum of two
+              figures measured on different bases (ledger reward cost + the
+              inventory-based daily-pack giveaway), shown for the owner's
+              "every penny" ask. */}
+          <li className="grid grid-cols-[1fr_minmax(0,_5.5rem)_minmax(0,_3rem)] items-center gap-2 bg-muted/20 px-3 py-2 text-[11px] font-medium text-muted-foreground sm:grid-cols-[1.6fr_minmax(0,_7rem)_minmax(0,_4.5rem)_minmax(0,_5rem)] sm:gap-3 sm:px-4">
+            <span>Total incl. daily-pack giveaway (memo)</span>
+            <span className="text-right font-mono tabular-nums text-rose-600 dark:text-rose-400">
+              −{formatCurrency(itemization.total + itemization.dailyPacks.cost)}
+            </span>
+            <span className="hidden text-right sm:block" />
+            <span className="text-right" />
           </li>
         </ul>
         <p className="px-3 py-2.5 text-[10px] leading-snug text-muted-foreground sm:px-4">
@@ -652,7 +706,16 @@ function RewardSpendPanel({
               {formatCurrency(Math.abs(residual))} (rounding / a leg outside the
               itemization).
             </span>
-          )}
+          )}{" "}
+          The{" "}
+          <span className="text-rose-600 dark:text-rose-400">
+            {formatCurrency(itemization.dailyPacks.cost)}
+          </span>{" "}
+          daily / free-pack card giveaway ({formatNumber(itemization.dailyPacks.opens)}{" "}
+          opens) is listed below the total but kept OUT of it: those cards aren&apos;t
+          a ledger reward type and are excluded from GGR&apos;s gaming payout, so
+          they sit in realized P&amp;L via held inventory — counting them in the
+          reward subtotal would double-count them.
         </p>
       </CardContent>
     </Card>

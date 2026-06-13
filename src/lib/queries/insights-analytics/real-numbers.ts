@@ -48,6 +48,18 @@ import {
   WAGER_LEG_FILTER,
   PAYOUT_LEG_FILTER,
 } from "@/lib/metrics/gaming-sql";
+// READ-ONLY import of the CANONICAL daily/free-pack giveaway cost. Daily packs
+// (`packs.pack_type='reward'`, $0 wager) are NOT a REWARD_PAYOUT_TYPES ledger
+// type — their cost is the value of the cards they hand out, tracked in
+// `user_inventory`. `getDailyPacksTotalCost` is the SAME canonical aggregation
+// the rest of the app uses (`/insights/rewards` daily-packs tab, the
+// cost-breakdown program-spend block); we reuse it verbatim rather than
+// re-deriving the cost, so this surface can never drift from it. Its scope is
+// `realCustomersScopeSql()` == `getMetricsScope().userScopeSql` (staff +
+// creators + blacklist dropped) and its `all` window is the SAME 365d cap
+// (INSIGHTS_LIFETIME_LOOKBACK_DAYS) the rest of this page uses — so the figure
+// is on an identical basis to the reward itemization.
+import { getDailyPacksTotalCost } from "@/lib/queries/insights-rewards/daily-packs";
 import { INSIGHTS_HUB_WAGER_LOOKBACK_DAYS } from "./hub-wager";
 
 /**
@@ -361,6 +373,27 @@ export type RewardSpendItemization = {
   rainTipOffset: number;
   /** Net house rain cost = max(0, rainWinGross − rainTipOffset). */
   netRain: number;
+  /**
+   * Daily / free-pack giveaway cost — the value of the cards the house hands
+   * out via `pack_type='reward'` opens (≈ $0 wager), from the CANONICAL
+   * `getDailyPacksTotalCost` helper on the SAME real-customer scope + 365d
+   * window. Kept DELIBERATELY SEPARATE from `rows`/`total`: daily-pack cards
+   * land in `user_inventory` (NOT a REWARD_PAYOUT ledger type) and are
+   * EXCLUDED from the gaming payout that defines GGR, so they are NOT part of
+   * the reward cost `GGR − NGR` that `total` reconciles to. They ARE captured
+   * in the realized-P&L bottom line via the inventory the customer holds, so
+   * folding them into `total` here would double-count them against GGR's
+   * gaming payout and break the locked GGR→NGR→P&L reconciliation. Surfaced
+   * as a clearly-labelled addendum line below the reconciling total instead.
+   */
+  dailyPacks: {
+    /** Σ value_at_obtained of cards handed out by reward-pack opens (House-POV cost). */
+    cost: number;
+    /** Distinct reward-pack opens in the window. */
+    opens: number;
+    /** Distinct users who opened at least one reward pack. */
+    claimers: number;
+  };
   /** ISO cutoff of the lifetime window (now − 365d). */
   cutoffIso: string;
   /** The lifetime lookback cap (days) used. */
@@ -548,10 +581,18 @@ const cachedRewardSpend = unstable_cache(
  * headline reward cost (`getCostBreakdown(...).rewardPayouts` = GGR − NGR)
  * by construction — it mirrors `getRewardCost`'s exact predicates. Read-only.
  *
- * `creator_tip` is deliberately ABSENT (it is a RESIDUAL user→user
- * pass-through, not a reward cost — owner decision: creator costs are out of
- * GGR/NGR). Daily / free signup packs are likewise NOT here (a separate
- * giveaway not in getRewardCost).
+ * `creator_tip` is deliberately ABSENT from `rows`/`total` (it is a RESIDUAL
+ * user→user pass-through, not a reward cost — owner decision: creator costs are
+ * out of GGR/NGR).
+ *
+ * Daily / free packs are ALSO absent from `rows`/`total` (they are not in
+ * `getRewardCost`), but — unlike creator tips — they ARE a genuine house
+ * giveaway the owner wants surfaced. They are returned in the SEPARATE
+ * `dailyPacks` field (from the canonical `getDailyPacksTotalCost`) so the
+ * itemized panel can show them as an addendum line WITHOUT inflating `total`:
+ * daily-pack cards are excluded from GGR's gaming payout and captured instead
+ * in realized P&L via held inventory, so adding them to the reward-cost
+ * subtotal would double-count them and break the GGR→NGR→P&L reconciliation.
  */
 export async function getRewardSpendItemization(): Promise<RewardSpendItemization> {
   return withTiming("insights.realNumbers.rewardSpend", async () => {
@@ -562,12 +603,20 @@ export async function getRewardSpendItemization(): Promise<RewardSpendItemizatio
     const cutoffIso = cutoff.toISOString();
 
     const scope = await getMetricsScope();
-    const legs = await cachedRewardSpend(
-      cutoffIso,
-      scope.userScopeSql,
-      scope.sessionWindowsCte,
-      scope.notInCreatorSession("user_id", "created_at"),
-    );
+    // Fetch the reward-cost legs AND the canonical daily-pack giveaway cost in
+    // parallel. `getDailyPacksTotalCost("all")` is the SAME aggregation the
+    // /insights/rewards daily-packs tab + the cost-breakdown program block use,
+    // on the SAME real-customer scope + 365d-capped `all` window — reused
+    // verbatim so this surface can never diverge from the canonical figure.
+    const [legs, dailyPacksTotal] = await Promise.all([
+      cachedRewardSpend(
+        cutoffIso,
+        scope.userScopeSql,
+        scope.sessionWindowsCte,
+        scope.notInCreatorSession("user_id", "created_at"),
+      ),
+      getDailyPacksTotalCost("all"),
+    ]);
 
     const rows: RewardSpendRow[] = [];
 
@@ -636,6 +685,13 @@ export async function getRewardSpendItemization(): Promise<RewardSpendItemizatio
       rainWinGross,
       rainTipOffset,
       netRain,
+      // Daily / free-pack giveaway — canonical, SEPARATE from rows/total (see
+      // the `dailyPacks` field doc on RewardSpendItemization).
+      dailyPacks: {
+        cost: dailyPacksTotal.cost,
+        opens: dailyPacksTotal.count,
+        claimers: dailyPacksTotal.claimers,
+      },
       cutoffIso,
       lookbackDays: INSIGHTS_HUB_WAGER_LOOKBACK_DAYS,
     };
