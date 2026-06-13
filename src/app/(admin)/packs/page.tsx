@@ -18,6 +18,7 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { PaginationSkeleton } from "@/components/loading-skeletons";
 import { CreatePackButton } from "./create-pack-button";
 import { RepriceAllPacksButton } from "./reprice-all-packs";
+import { isRepriceOwner } from "@/lib/reprice-access";
 import { PacksFilterBar } from "./packs-filter-bar";
 import { PacksList } from "./packs-list";
 import { PacksKpiStrip } from "./packs-kpi-strip";
@@ -227,9 +228,11 @@ export default async function PacksPage({
             title="Packs"
             subtitle="Pack catalog — pricing, availability, and economics."
             action={
-              canCreate || isAdmin ? (
+              canCreate || isRepriceOwner(session) ? (
                 <div className="flex flex-wrap items-center gap-2">
-                  {isAdmin && <RepriceAllPacksButton />}
+                  {/* Owner-only (motha): re-price tool is hidden from every
+                      other admin. Enforced again server-side in the actions. */}
+                  {isRepriceOwner(session) && <RepriceAllPacksButton />}
                   {canCreate && <CreatePackButton />}
                 </div>
               ) : undefined

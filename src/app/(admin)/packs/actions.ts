@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { adminDb } from "@/lib/admin-db";
-import { requirePageAccess, sessionHasRole, sessionIsAdmin } from "@/lib/dal";
+import { requirePageAccess, sessionHasRole } from "@/lib/dal";
+import { isRepriceOwner } from "@/lib/reprice-access";
 import { requireCapability } from "@/lib/require-capability";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import {
@@ -719,8 +720,8 @@ export type RepricePlanSummary = {
  */
 export async function planRepriceAllPacks(): Promise<RepricePlanSummary> {
   const session = await requirePageAccess("/packs");
-  if (!sessionIsAdmin(session)) {
-    throw new Error("Re-pricing all packs is restricted to full admins.");
+  if (!isRepriceOwner(session)) {
+    throw new Error("The global re-price tool is restricted to the owner.");
   }
 
   const dbEnv = await readDbEnv();
@@ -808,8 +809,8 @@ export async function repricePackToTargetEdge(
 ): Promise<RepriceResult> {
   const db = await getDb();
   const session = await requirePageAccess("/packs");
-  if (!sessionIsAdmin(session)) {
-    throw new Error("Re-pricing packs is restricted to full admins.");
+  if (!isRepriceOwner(session)) {
+    throw new Error("The global re-price tool is restricted to the owner.");
   }
   await requireCapability(session, "__can_update_pack", "update packs");
 
