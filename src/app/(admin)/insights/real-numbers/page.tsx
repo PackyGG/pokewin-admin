@@ -217,7 +217,7 @@ export default async function RealNumbersPage() {
               <section className="space-y-3">
                 <SectionHeading
                   icon={PiggyBank}
-                  title="Why GGR ≠ realized P&L"
+                  title="Why GGR ≠ realized P&L — two different scoreboards"
                 />
                 <ReconciliationCallout cost={cost} snapshot={snapshot} />
               </section>
@@ -887,10 +887,84 @@ function BalanceSheetWaterfall({ snapshot }: { snapshot: RealizedPnlSnapshot }) 
 // ─── Reconciliation callout ─────────────────────────────────────────
 
 /**
- * Plain-language explanation of why GGR (a gaming-margin number) is much
- * bigger than realized P&L (a cash-basis number): the gap is value customers
- * still HOLD — on-site balance, inventory, unclaimed vouchers and unclaimed
- * rakeback — money we already owe them. As they withdraw, the two converge.
+ * One labelled step in a mini-bridge column. House-POV tones:
+ *   • base  — neutral cash-in / turnover entering the column (blue)
+ *   • cost  — money that flowed back / is owed to users (rose)
+ *   • keep  — a positive house margin / result (emerald)
+ * `emphasis: "result"` renders the loud final-result row.
+ */
+function BridgeStep({
+  label,
+  value,
+  sign,
+  tone,
+  emphasis = "normal",
+}: {
+  label: string;
+  value: number;
+  sign: "+" | "−" | "=";
+  tone: SemanticTone;
+  emphasis?: "normal" | "result";
+}) {
+  const t = SEMANTIC_TONES[tone] ?? SEMANTIC_TONES.muted;
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-between gap-2 rounded-lg px-2.5",
+        emphasis === "result"
+          ? cn("py-2 ring-1 ring-inset", t.face, t.ring)
+          : "py-1.5",
+      )}
+    >
+      <span
+        className={cn(
+          "min-w-0 truncate",
+          emphasis === "result"
+            ? "text-[13px] font-bold sm:text-sm"
+            : "text-[13px] font-medium",
+        )}
+      >
+        {label}
+      </span>
+      <span
+        className={cn(
+          "shrink-0 font-mono font-semibold tabular-nums",
+          emphasis === "result" ? "text-sm sm:text-base" : "text-[13px]",
+          t.text,
+        )}
+      >
+        {sign === "=" ? "= " : sign}
+        {formatCurrency(Math.abs(value))}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * "Why GGR ≠ realized P&L" — the corrected explanation.
+ *
+ * GGR/NGR and realized P&L are TWO DIFFERENT SCOREBOARDS measured on different
+ * bases; you CANNOT subtract a list of costs to get from one to the other.
+ * (The old copy claimed the gap WAS the value customers still hold — that is
+ * mathematically false: GGR − P&L is ~hundreds of thousands, while held value
+ * is only a few thousand.)
+ *
+ * So we show them as two side-by-side mini-bridges, each internally exact:
+ *   • Gaming margin (edge on play): wager → GGR → −reward → NGR. Booked on
+ *     EVERY dollar wagered, valuing won cards at sticker. Customers re-wager
+ *     winnings, so the multi-million turnover came from far less real cash.
+ *   • Cash — the real money: deposits − withdrawals − customers-hold =
+ *     realized P&L. This column reconciles exactly (the P&L formula is
+ *     deposits − withdrawals − balance − inventory − vouchers − rakeback, and
+ *     "customers hold" = balance + inventory + vouchers + rakeback).
+ *
+ * The honest caveat (stated plainly, not hidden): NGR sits far above realized
+ * cash NOT because of extra spending but because gaming margin is booked on
+ * re-wagered turnover at card-sticker values while realized cash is bounded by
+ * deposits − withdrawals. That gaming-vs-cash gap does NOT decompose into clean
+ * line items (the /insights/cost-breakdown page carries an "unexplained
+ * residual" for exactly this reason). The trustworthy bottom line is the cash
+ * P&L. All values are read live from `cost` + `snapshot`.
  */
 function ReconciliationCallout({
   cost,
@@ -899,45 +973,137 @@ function ReconciliationCallout({
   cost: CostBreakdown;
   snapshot: RealizedPnlSnapshot;
 }) {
+  // Cash column: deposits − withdrawals − held = realized P&L, exactly (the
+  // P&L formula minus the held terms is the identity). "held" is the value
+  // customers still hold = money the house owes.
   const held =
     snapshot.userBalance +
     snapshot.inventory +
     snapshot.vouchers +
     snapshot.unclaimedRakeback;
-  const ggrPos = cost.ggr >= 0;
+  const ngrPos = cost.ngr >= 0;
   const pnlPos = snapshot.pnl >= 0;
 
   return (
     <div className="overflow-hidden rounded-2xl border bg-card ring-1 ring-foreground/10">
       <div className="flex items-start gap-3 border-b bg-muted/30 px-4 py-3 sm:px-5">
-        <div className="shrink-0 rounded-lg border border-rose-500/30 bg-rose-500/10 p-2">
-          <PiggyBank className="size-4 text-rose-500" />
+        <div className="shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2">
+          <Scale className="size-4 text-amber-500" />
         </div>
         <div className="min-w-0">
           <h3 className="text-sm font-semibold sm:text-base">
-            The gap is money customers still hold
+            Two scoreboards, two bases — you can&apos;t subtract one to get the
+            other
           </h3>
           <p className="text-xs text-muted-foreground">
-            GGR is a gaming-margin number; realized P&L is cash-basis. They
-            differ by what customers haven&apos;t cashed out yet.
+            GGR is the gaming margin booked on every dollar wagered (won cards
+            at sticker value); realized P&L is the real cash flow. They measure
+            different things, so the gap between them is not a list of costs.
           </p>
         </div>
       </div>
-      <div className="space-y-2.5 p-4 text-sm leading-relaxed sm:p-5">
+
+      {/* Two side-by-side mini-bridges, each internally exact. */}
+      <div className="grid gap-px bg-border/60 sm:grid-cols-2">
+        {/* Gaming margin — edge on play (turnover basis). */}
+        <div className="space-y-1 bg-card p-4 sm:p-5">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-blue-500/10 text-blue-500">
+              <Scale className="size-3.5" />
+            </span>
+            <h4 className="text-[13px] font-semibold tracking-tight">
+              Gaming margin (edge on play)
+            </h4>
+          </div>
+          <BridgeStep
+            label="Wager (turnover)"
+            value={cost.totalWager}
+            sign="+"
+            tone="base"
+          />
+          <BridgeStep
+            label="GGR — gross gaming margin"
+            value={cost.ggr}
+            sign="="
+            tone={cost.ggr >= 0 ? "keep" : "cost"}
+          />
+          <BridgeStep
+            label="Reward & bonus spend"
+            value={cost.rewardPayouts}
+            sign="−"
+            tone="cost"
+          />
+          <BridgeStep
+            label="NGR — net gaming margin"
+            value={cost.ngr}
+            sign="="
+            tone={ngrPos ? "keep" : "cost"}
+            emphasis="result"
+          />
+          <p className="pt-2 text-[10px] leading-snug text-muted-foreground">
+            Booked on every dollar wagered, valuing won cards at sticker
+            (value-at-obtained). Customers re-wager their winnings, so this
+            turnover came from far less real deposited cash.
+          </p>
+        </div>
+
+        {/* Cash — the real money (deposits − withdrawals − held). */}
+        <div className="space-y-1 bg-card p-4 sm:p-5">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-blue-500/10 text-blue-500">
+              <Banknote className="size-3.5" />
+            </span>
+            <h4 className="text-[13px] font-semibold tracking-tight">
+              Cash — the real money
+            </h4>
+          </div>
+          <BridgeStep
+            label="Deposits (cash in)"
+            value={snapshot.totalDeposited}
+            sign="+"
+            tone="base"
+          />
+          <BridgeStep
+            label="Withdrawals (cashed out)"
+            value={snapshot.totalWithdrawn}
+            sign="−"
+            tone="cost"
+          />
+          <BridgeStep
+            label="Customers still hold"
+            value={held}
+            sign="−"
+            tone="cost"
+          />
+          <BridgeStep
+            label="Realized P&L"
+            value={snapshot.pnl}
+            sign="="
+            tone={pnlPos ? "keep" : "cost"}
+            emphasis="result"
+          />
+          <p className="pt-2 text-[10px] leading-snug text-muted-foreground">
+            The real money: of {formatCurrency(snapshot.totalDeposited)}{" "}
+            deposited, customers withdrew{" "}
+            {formatCurrency(snapshot.totalWithdrawn)} and still hold{" "}
+            {formatCurrency(held)} (balance + inventory + vouchers + rakeback).
+            This column reconciles exactly.
+          </p>
+        </div>
+      </div>
+
+      {/* Plain-language explainer + honest caveat. */}
+      <div className="space-y-2.5 border-t bg-muted/20 p-4 text-sm leading-relaxed sm:p-5">
         <p>
-          Gaming earned{" "}
-          <span
-            className={cn(
-              "font-semibold tabular-nums",
-              ggrPos
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "text-rose-600 dark:text-rose-400",
-            )}
-          >
-            {ggrPos ? "+" : "−"}
-            {formatCurrency(Math.abs(cost.ggr))}
+          GGR is a gaming-margin number measured on{" "}
+          <span className="font-medium text-foreground">turnover</span>, not
+          cash. The real money is the cash flow on the right: of{" "}
+          {formatCurrency(snapshot.totalDeposited)} deposited, the biggest
+          outflow by far is the{" "}
+          <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+            {formatCurrency(snapshot.totalWithdrawn)}
           </span>{" "}
-          of gross margin (GGR), but the realized, cash-basis bottom line is{" "}
+          customers withdrew, leaving a realized{" "}
           <span
             className={cn(
               "font-semibold tabular-nums",
@@ -948,28 +1114,41 @@ function ReconciliationCallout({
           >
             {pnlPos ? "+" : "−"}
             {formatCurrency(Math.abs(snapshot.pnl))}
-          </span>
-          .
+          </span>{" "}
+          P&L.
         </p>
         <p>
-          The difference is{" "}
+          The only clean giveaway cost shared between the two scoreboards is the{" "}
           <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
-            {formatCurrency(held)}
+            {formatCurrency(cost.rewardPayouts)}
           </span>{" "}
-          that customers <span className="font-medium text-foreground">still hold</span> —{" "}
-          {formatCurrency(snapshot.userBalance)} on-site balance,{" "}
-          {formatCurrency(snapshot.inventory)} in card inventory,{" "}
-          {formatCurrency(snapshot.vouchers)} in unclaimed vouchers and{" "}
-          {formatCurrency(snapshot.unclaimedRakeback)} in unclaimed rakeback.
-          Every dollar of that is money we already owe them.
+          reward &amp; bonus spend (GGR → NGR, itemized above). The rest of the
+          distance — NGR of{" "}
+          <span
+            className={cn(
+              "font-semibold tabular-nums",
+              ngrPos
+                ? "text-emerald-600 dark:text-emerald-400"
+                : "text-rose-600 dark:text-rose-400",
+            )}
+          >
+            {ngrPos ? "+" : "−"}
+            {formatCurrency(Math.abs(cost.ngr))}
+          </span>{" "}
+          still sitting well above realized cash — is{" "}
+          <span className="font-medium text-foreground">
+            a measurement-basis difference, not hidden spending
+          </span>
+          : gaming margin is booked on re-wagered turnover at card-sticker
+          values, while realized cash is bounded by deposits − withdrawals.
         </p>
         <p className="text-muted-foreground">
-          GGR books the win the moment a pack is opened or a battle settles,
-          but the cards and balance stay the customer&apos;s to keep, sell or
-          withdraw. As customers cash out (or let value expire back to the
-          house), realized P&L converges toward the gaming margin. That&apos;s
-          why a healthy GGR can sit far above a thin realized P&L — the gap
-          isn&apos;t a loss, it&apos;s a liability still on the books.
+          That gaming-vs-cash gap does not decompose into clean line items — the{" "}
+          <span className="font-medium text-foreground/80">
+            /insights/cost-breakdown
+          </span>{" "}
+          page carries an &ldquo;unexplained residual&rdquo; for exactly this
+          reason. The trustworthy bottom line is the cash P&L.
         </p>
       </div>
     </div>
