@@ -83,3 +83,37 @@ needs them.
 - Withdrawal gating itself is enforced by the backend, not the admin — the admin only displays it. No
   admin change weakens a gate.
 - Never point the admin's game-DB connection at anything writable; all game-DB access stays read-only.
+
+---
+
+## 8. Requested follow-up feature (planned, NOT built) — "Adjustments" box under Tips & Rain
+
+Requested 2026-06-13. Add a dedicated **Adjustments** box to the user-detail **Overview tab**, directly
+under the existing **Tips & Rain** section, listing every admin balance adjustment for that user with
+its **category tag**.
+
+**Where:** `src/app/(admin)/users/[id]/user-view-modern-tabs.tsx` — insert a
+`<SectionHeading icon={…} title="Adjustments" />` + the new box between the `Tips & Rain` section
+(line ~244-245) and `Recent Activity` (line ~250).
+
+**Data — reuse what's already fetched (no new query):** the Overview tab already kicks
+`adjustmentsTxPromise` (the user's `admin_balance_adjustment` ledger rows, fetched in `page.tsx` and
+streamed into `RecentActivityStreamed`). The new box `use()`s that same promise. Each row already
+carries its category/reason (Reload / Bonus / Giveaway / `official_stream` / etc.) and the admin who
+made it — render that as a **tag/badge** next to each amount.
+
+**Rules to respect:**
+- **Owner-gated:** admin balance adjustments are visible only to the owner (`motha`) — the box must
+  honor the existing `viewerIsAdjustmentOwner` gate (the server already returns zero adjustment rows
+  for non-owners, so the box self-hides). Do not surface them to other admins.
+- **House-POV colors:** a credit to the user (user gains) → rose; a debit (user loses) → emerald;
+  signs from the house perspective, same rule as the rest of the site.
+- **Exclude FAKE balance:** `official_stream` adjustments are fake balance — keep them tagged but do
+  not let them distort any total (consistent with the existing exclusion).
+- Reuse the existing adjustment-row formatting from `user-tabs-transactions.tsx` /
+  `RecentActivityStreamed` rather than re-implementing the category labels.
+
+**Why it's useful:** today these adjustments are only visible buried in the unified Recent-Activity
+timeline; a dedicated tagged box surfaces "what did admins credit/debit this user, and why" at a
+glance. Buildable read-only against the already-fetched data; no game-DB write, no backend change.
+
