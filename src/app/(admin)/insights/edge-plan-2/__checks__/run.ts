@@ -449,6 +449,11 @@ function makeBaseline(): EdgePlanV2Baseline {
       { sourceId: "motha", label: "Giveaways / tips (motha)", amountUsd: 6_000 },
     ],
 
+    // Forecast-engine anchor for the time-based bonus (spec #8) — present in
+    // the MAIN fixture so the engine resolves and the time-bonus folds into
+    // the deposit-bonus lever cost (the single-source-of-truth fix, 2026-06-13).
+    depositBonusForecastBaseline: makeForecastAnchor(),
+
     recon: makeRecon(),
     // The owner's trusted dashboard tile (+$44,925.74) — components chosen
     // so the balance-sheet formula reconciles exactly (pinned below).
@@ -478,6 +483,7 @@ function makeSparseBaseline(): EdgePlanV2Baseline {
     depositSizeHistogram: [],
     depositBonusMinDepositObservedUsd: null,
     timeBonusAnchor: null,
+    depositBonusForecastBaseline: null,
     dailyPackLevels: [],
     dailyPackUsage: [],
     rewardSourceVolumes: [],
@@ -866,28 +872,157 @@ check("time bonus: split ≤ lump always; monotone in interval and amount", () =
   approx(model(10_000, 1).splitWindowUsd, anchor.totalUsd, 1e-9, "uncapped split === lump");
 });
 
-check("time bonus: projection wires cappedShare into the deposit-bonus row", () => {
+check("time bonus (SINGLE SOURCE OF TRUTH): the deposit-bonus row folds the ENGINE cost ratio, NOT the legacy cappedShare", () => {
   const levers = {
     depositBonusHourlyEnabled: true,
     depositBonusHourlyAmountUsd: 25,
     depositBonusHourlyIntervalHours: 6,
   };
-  const m = timeBonusSplitModel(
+  // The engine projection the block HEADLINES — the same number the lever
+  // must fold (owner fix 2026-06-13).
+  const engine = computeTimeBonusEngineV2(baseline, levers);
+  assert(engine != null, "fixture must resolve the forecast engine");
+  assert(engine.baselineCostUsd > 0, "engine baseline cost must be positive");
+  const engineRatio = engine.scenarioCostUsd / engine.baselineCostUsd;
+  // The split must actually move the cost (otherwise the test is vacuous).
+  assert(engineRatio < 1 - 1e-6, "$25/6h must reduce the engine cost vs baseline");
+
+  const p = project(levers);
+  const row = p.levers.find((l) => l.key === "deposit-bonus");
+  assert(row != null, "deposit-bonus row missing");
+  // At default cap/min-deposit (mult 1, ratio 1) the planned cost is exactly
+  // the anchored deposit-bonus cost × the ENGINE cost ratio.
+  approx(
+    row.plannedCost,
+    baseline.depositBonusCost * engineRatio,
+    1e-6,
+    "deposit-bonus planned = anchored cost × ENGINE cost ratio",
+  );
+  // It must DIVERGE from the stale mechanical cappedShare term (proves the
+  // single-source-of-truth swap actually happened).
+  const mech = timeBonusSplitModel(
     baseline.timeBonusAnchor,
     { depositBonusHourlyAmountUsd: 25, depositBonusHourlyIntervalHours: 6 },
     PERIOD_DAYS,
   );
-  assert(m.cappedShare < 1, "fixture must actually cap something at $25/6h");
-  const p = project(levers);
-  const row = p.levers.find((l) => l.key === "deposit-bonus");
-  assert(row != null, "deposit-bonus row missing");
-  approx(
-    row.plannedCost,
-    baseline.depositBonusCost * m.cappedShare,
-    1e-6,
-    "deposit-bonus planned = cost × cappedShare",
+  assert(
+    Math.abs(engineRatio - mech.cappedShare) > 1e-4,
+    "engine ratio must differ from the legacy cappedShare (single-source-of-truth swap)",
   );
   profitIdentity(p, "time bonus");
+});
+
+check("time bonus (REACTIVITY at 1×): enabling it moves deposit-bonus plannedCost AND profitDelta by exactly the engine term", () => {
+  const off = project({ depositBonusHourlyEnabled: false });
+  const offRow = off.levers.find((l) => l.key === "deposit-bonus")!;
+  const on = project({
+    depositBonusHourlyEnabled: true,
+    depositBonusHourlyAmountUsd: 25,
+    depositBonusHourlyIntervalHours: 6,
+  });
+  const onRow = on.levers.find((l) => l.key === "deposit-bonus")!;
+
+  const engine = computeTimeBonusEngineV2(baseline, {
+    depositBonusHourlyAmountUsd: 25,
+    depositBonusHourlyIntervalHours: 6,
+  })!;
+  const engineRatio = engine.scenarioCostUsd / engine.baselineCostUsd;
+
+  // Enabling the time bonus changes the deposit-bonus planned cost…
+  assert(
+    Math.abs(onRow.plannedCost - offRow.plannedCost) > 0.5,
+    "enabling the time bonus must move the deposit-bonus planned cost",
+  );
+  // …by exactly the engine term (off row × ratio = on row).
+  approx(onRow.plannedCost, offRow.plannedCost * engineRatio, 1e-6, "on = off × engine ratio");
+
+  // …and the profitDelta moves by exactly the cost delta (cost DOWN → profit UP).
+  const costDelta = onRow.plannedCost - offRow.plannedCost; // < 0 (a saving)
+  approx(on.profitDelta - off.profitDelta, -costDelta, 1e-6, "Δ profitDelta === −Δ deposit-bonus cost");
+  profitIdentity(on, "time bonus reactivity");
+
+  // Moving the amount/interval visibly re-moves the number (continued reactivity).
+  const tighter = project({
+    depositBonusHourlyEnabled: true,
+    depositBonusHourlyAmountUsd: 10,
+    depositBonusHourlyIntervalHours: 12,
+  });
+  const tighterRow = tighter.levers.find((l) => l.key === "deposit-bonus")!;
+  assert(
+    Math.abs(tighterRow.plannedCost - onRow.plannedCost) > 0.5,
+    "adjusting amount/interval must re-move the deposit-bonus cost",
+  );
+});
+
+check("time bonus (FIXED-WINDOW $ across scenarios): the time-bonus cost sits in the fixed-cost bucket — identical $ at m=1 and m=2, edge differs", () => {
+  const levers = {
+    depositBonusHourlyEnabled: true,
+    depositBonusHourlyAmountUsd: 25,
+    depositBonusHourlyIntervalHours: 6,
+  };
+  const p = project(levers);
+  const dbCost = p.levers.find((l) => l.key === "deposit-bonus")!.plannedCost;
+  assert(dbCost > 0, "deposit-bonus (incl. time bonus) cost must be positive");
+
+  const ctx = { baseline, levers: { ...defaultLeversV2(baseline), ...levers } };
+  const m1 = computeEdgeAfterRewards(p, { ...ctx, scenarioWagerUsd: p.plannedWager });
+  const m2 = computeEdgeAfterRewards(p, { ...ctx, scenarioWagerUsd: p.plannedWager * 2 });
+
+  const db1 = m1.leverDrags.find((d) => d.key === "deposit-bonus");
+  const db2 = m2.leverDrags.find((d) => d.key === "deposit-bonus");
+  assert(db1 != null && db2 != null, "deposit-bonus drag present at both multipliers");
+  // FIXED window $: the time-bonus cost term is IDENTICAL at m=1 and m=2…
+  approx(db1.plannedCostUsd, db2.plannedCostUsd, 1e-6, "deposit-bonus $ flat across m (not wager-proportional)");
+  approx(db1.plannedCostUsd, dbCost, 1e-6, "drag $ equals the projection plannedCost at m=1");
+  // …yet the after-rewards EDGE moves with m (GGR scales, fixed cost dilutes).
+  assert(
+    Math.abs(m2.netEdgeAfterRewards - m1.netEdgeAfterRewards) > 1e-6,
+    "after-rewards edge must differ between m=1 and m=2",
+  );
+  // And the drag % of the fixed cost roughly halves from m=1 to m=2.
+  assert(db2.dragPct < db1.dragPct - 1e-6, "fixed-cost drag dilutes at higher wager");
+});
+
+check("time bonus (#14 edge-inclusion): excluding deposit bonus drops the time-bonus contribution entirely", () => {
+  const levers = {
+    depositBonusHourlyEnabled: true,
+    depositBonusHourlyAmountUsd: 25,
+    depositBonusHourlyIntervalHours: 6,
+    edgeInclusion: { ...defaultEdgeInclusionV2(), "deposit-bonus": false },
+  };
+  const p = project(levers);
+  const ctx = { baseline, levers: { ...defaultLeversV2(baseline), ...levers } };
+  const m1 = computeEdgeAfterRewards(p, { ...ctx, scenarioWagerUsd: p.plannedWager });
+  assert(
+    m1.leverDrags.find((d) => d.key === "deposit-bonus") == null,
+    "excluded deposit-bonus (incl. its time bonus) carries no drag",
+  );
+  assert(
+    p.excludedLeverKeys.includes("deposit-bonus"),
+    "deposit-bonus is flagged excluded",
+  );
+});
+
+check("time bonus (sign): the engine term is a COST ratio (planned spend), never a mis-signed savings", () => {
+  const engine = computeTimeBonusEngineV2(baseline, {
+    depositBonusHourlyAmountUsd: 25,
+    depositBonusHourlyIntervalHours: 6,
+  })!;
+  const ratio = engine.scenarioCostUsd / engine.baselineCostUsd;
+  // A tighter cap saves → ratio < 1 but still a positive COST (never negative,
+  // never a savings figure mis-applied as the cost).
+  assert(ratio > 0 && ratio < 1, "cost ratio is a positive fraction < 1 for a saving policy");
+  assert(engine.scenarioCostUsd >= 0, "scenario cost is a non-negative spend");
+  assert(engine.grossSavingsUsd >= 0, "savings is reported separately and non-negative");
+  // The folded lever cost equals the ANCHORED cost shrunk by the ratio — i.e.
+  // the planned SPEND, not (anchored − savings) sign-flipped.
+  const p = project({
+    depositBonusHourlyEnabled: true,
+    depositBonusHourlyAmountUsd: 25,
+    depositBonusHourlyIntervalHours: 6,
+  });
+  const row = p.levers.find((l) => l.key === "deposit-bonus")!;
+  assert(row.plannedCost > 0 && row.plannedCost < baseline.depositBonusCost, "folded cost is a positive reduced spend");
 });
 
 // ─── 8. Min-deposit gate ─────────────────────────────────────────────────────
@@ -1631,6 +1766,27 @@ check("owner total P&L: balance-sheet formula reconciles to the dashboard +$44,9
     "pnl = deposits − withdrawals − onSiteBalance − inventory − vouchers − unclaimedRakeback",
   );
   approx(t.pnl, 44_925.74, CENT, "the owner's trusted dashboard figure");
+});
+
+check("headline P&L (owner fix BUG-1): the PRIMARY lifetime figure is the Total P&L snapshot, hub Realized P&L is DEMOTED", () => {
+  // The OwnerAnchorStrip headline now reads its PRIMARY lifetime P&L from
+  // `baseline.ownerTotalPnl.pnl` (the dashboard "Total P&L" balance-sheet
+  // snapshot, ~+$45K), with the hub windowed Realized P&L
+  // (`baseline.recon.lifetime.realizedPnl`, ~+$122K) demoted to the
+  // reconciliation row. These are two DIFFERENT helpers and MUST differ in
+  // the fixture (otherwise the swap is untestable).
+  const total = baseline.ownerTotalPnl;
+  const hub = baseline.recon.lifetime;
+  assert(total != null, "fixture carries the owner Total P&L snapshot");
+  // The headline primary number is the Total P&L snapshot.
+  approx(total.pnl, 44_925.74, CENT, "headline primary lifetime P&L === ownerTotalPnl.pnl");
+  // The demoted reconciliation figure is the hub windowed Realized P&L.
+  approx(hub.realizedPnl, 120_729.44, CENT, "demoted line === hub Realized P&L (recon.lifetime)");
+  // They are genuinely different formulas — the gap is real, not a bug.
+  assert(
+    Math.abs(total.pnl - hub.realizedPnl) > 1_000,
+    "Total P&L and hub Realized P&L are distinct figures (visual roles swapped, not equated)",
+  );
 });
 
 // ─── 19. Global affiliate scale (owner spec #9) ──────────────────────────────

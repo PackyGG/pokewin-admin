@@ -2067,10 +2067,24 @@ export function projectEdgePlanV2(
     baseline,
     seeds.depositBonusMinDepositUsd,
   );
-  const split = timeBonusSplitModel(baseline.timeBonusAnchor, planned, days);
+  // SINGLE SOURCE OF TRUTH for the time-based bonus (owner fix 2026-06-13):
+  // the deposit-bonus lever cost must fold in the SAME number the time-bonus
+  // block headlines — the forecast ENGINE projection (`computeTimeBonusEngineV2`,
+  // the live `scenarioCostUsd ÷ baselineCostUsd` cost ratio under the split
+  // policy), NOT the legacy mechanical user-day-cap `cappedShare`. That stale
+  // term made the displayed engine cost diverge from the folded lever cost, so
+  // toggling/adjusting the time bonus moved the block but never moved
+  // profitDelta or the after-rewards edge. Applying the ENGINE cost ratio to
+  // the window-scaled anchor keeps it scale-invariant (the engine horizon and
+  // the planner window cancel in the ratio) and reactive at 1×. The mechanical
+  // `timeBonusSplitModel` stays only as the labeled secondary floor in the UI.
+  const timeBonusEngine =
+    planned.depositBonusHourlyEnabled
+      ? computeTimeBonusEngineV2(baseline, planned)
+      : null;
   const splitFactor =
-    planned.depositBonusHourlyEnabled && split.lumpWindowUsd > 0
-      ? split.cappedShare
+    timeBonusEngine != null && timeBonusEngine.baselineCostUsd > 0
+      ? Math.max(0, timeBonusEngine.scenarioCostUsd / timeBonusEngine.baselineCostUsd)
       : 1;
   const depositBonusCurrent = anchors.depositBonus.anchorUsd;
   const depositBonusPlanned =

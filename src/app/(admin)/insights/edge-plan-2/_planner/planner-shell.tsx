@@ -477,15 +477,22 @@ function OwnerAnchorStrip({
         </div>
         <div className="min-w-0">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Realized P&amp;L
+            Total P&amp;L
           </p>
-          <p className={cn("truncate text-lg font-bold tabular-nums", lifePnlTone)}>
-            {lifetime.realizedPnl >= 0 ? "+" : "−"}
-            {formatCurrency(Math.abs(lifetime.realizedPnl))}
-          </p>
+          {totalPnl != null ? (
+            <p className={cn("truncate text-lg font-bold tabular-nums", totalPnlTone)}>
+              {totalPnl.pnl >= 0 ? "+" : "−"}
+              {formatCurrency(Math.abs(totalPnl.pnl))}
+            </p>
+          ) : (
+            <p className="truncate text-lg font-bold tabular-nums text-amber-600 dark:text-amber-400">
+              unavailable this render
+            </p>
+          )}
           <p className="text-[10px] leading-snug text-muted-foreground">
-            In plain words: what the house actually banked over the lifetime
-            window.
+            Balance-sheet snapshot · incl. unclaimed rakeback. In plain words:
+            all-time deposits minus withdrawals, player holdings and unclaimed
+            rakeback — the owner-trusted bottom line.
           </p>
         </div>
         <div className="min-w-0">
@@ -602,31 +609,25 @@ function OwnerAnchorStrip({
             Lifetime
           </span>
           <span className="text-xs tabular-nums">
-            Total P&amp;L — balance-sheet snapshot · incl. unclaimed rakeback{" "}
-            {totalPnl != null ? (
-              <span className={cn("font-semibold", totalPnlTone)}>
-                {totalPnl.pnl >= 0 ? "+" : "−"}
-                {formatCurrency(Math.abs(totalPnl.pnl))}
-              </span>
-            ) : (
-              <span className="font-semibold text-amber-600 dark:text-amber-400">
-                unavailable this render (not cached — reload to retry)
-              </span>
-            )}{" "}
+            Hub Realized P&amp;L — {lifetime.label} window, creators excluded{" "}
+            <span className={cn("font-semibold", lifePnlTone)}>
+              {lifetime.realizedPnl >= 0 ? "+" : "−"}
+              {formatCurrency(Math.abs(lifetime.realizedPnl))}
+            </span>{" "}
             <span className="text-[10px] text-muted-foreground">
-              (dashboard tile — all-time: deposits − withdrawals − player
-              holdings − unclaimed rakeback, creators included)
+              (/insights hub tile — windowed cost-breakdown P&amp;L, creators
+              excluded)
             </span>
           </span>
         </div>
         <p className="text-[10px] leading-snug text-muted-foreground">
           Why they differ: the two lifetime P&amp;L figures are different
-          formulas — Total P&amp;L is the all-time balance sheet incl. the
-          unclaimed-rakeback liability (creators count as customers), the
-          headline Realized P&amp;L covers only the {lifetime.label} window
-          with creators excluded. The gap is real, not a bug; it is not
-          cleanly decomposable from these two helpers alone, so both are
-          shown with their own formula.
+          formulas — the headline Total P&amp;L is the all-time balance sheet
+          incl. the unclaimed-rakeback liability (creators count as customers),
+          the hub Realized P&amp;L covers only the {lifetime.label} window with
+          creators excluded. The gap is real, not a bug; it is not cleanly
+          decomposable from these two helpers alone, so both are shown with
+          their own formula.
         </p>
       </div>
     </div>
