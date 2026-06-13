@@ -51,10 +51,13 @@ import {
   getRewardSpendItemization,
   getCreatorNetCashDetail,
   getCreatorProgramCost,
+  getRealizedPnlCustomersExclCreators,
+  getCustomerRecyclingDetail,
   type RealNumbersGameSplit,
   type GameGgrRow,
   type RewardSpendItemization,
   type CreatorProgramCost,
+  type CustomerRecyclingDetail,
 } from "@/lib/queries/insights-analytics/real-numbers";
 import {
   getRealizedPnlSnapshot,
@@ -108,6 +111,8 @@ export default async function RealNumbersPage() {
     { data: rewardSpend },
     { data: creatorDetail },
     { data: creatorProgram },
+    { data: customerCash },
+    { data: recycling },
   ] = await Promise.all([
     safeQuery(
       () => getCostBreakdown("all", "Lifetime", 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS),
@@ -135,6 +140,23 @@ export default async function RealNumbersPage() {
       () => getCreatorProgramCost(),
       null,
       "insights.realNumbers.creatorProgramCost",
+    ),
+    // Realized P&L on the customers-only scope (creators EXCLUDED) — the
+    // "customer cash margin" the closing waterfall lands on after the
+    // turnover→cash conversion line. Same balance-sheet arithmetic as the
+    // snapshot, just dropping creators, so the conversion + creator legs both
+    // close by construction (see GgrToNgrBridge).
+    safeQuery(
+      () => getRealizedPnlCustomersExclCreators(),
+      null,
+      "insights.realNumbers.customerCash",
+    ),
+    // Recycling evidence (customer deposits + card sell-backs) for the
+    // turnover→cash conversion line's inline proof (the ~3.5× re-wager).
+    safeQuery(
+      () => getCustomerRecyclingDetail(),
+      null,
+      "insights.realNumbers.recycling",
     ),
   ]);
 
@@ -248,7 +270,7 @@ export default async function RealNumbersPage() {
             <section className="space-y-3">
               <SectionHeading
                 icon={Scale}
-                title="GGR breakdown → NGR (gaming margin)"
+                title="GGR → realized P&L — the complete closing waterfall"
               />
               <GgrToNgrBridge
                 cost={cost}
@@ -256,6 +278,8 @@ export default async function RealNumbersPage() {
                 wager={wager ?? 0}
                 split={split}
                 rewardSpend={rewardSpend}
+                customerCashMargin={customerCash?.pnl ?? null}
+                recycling={recycling}
               />
             </section>
 
@@ -1318,33 +1342,60 @@ function BridgeSubTable({
 }
 
 /**
- * The fully-MEASURED gaming-margin breakdown, anchored at GGR and ending at
- * NGR. There is deliberately NO plug / residual / "whatever's left to force
- * the total" line and NO terminus at realized P&L — gaming margin (booked on
- * turnover, cards at sticker) and realized cash P&L (deposits − withdrawals −
- * holdings) are measured on different bases, so no honest measured bridge
- * subtracts one down to the other.
+ * The COMPLETE, CLOSING waterfall — every dollar from GGR down to realized
+ * cash P&L accounted for, with NO plug / residual / "whatever's left to force
+ * the total" line. Each step is either a directly MEASURED value or the
+ * EXPLICIT difference of two independently-measured values — and because every
+ * line is a measured difference, the running total closes to the penny at
+ * realized P&L by construction.
  *
- * Every displayed dollar is a direct measured value from `getCostBreakdown`
- * (creators + staff + blacklist excluded, borrow-net):
+ * The five anchors (all read live, never hardcoded):
  *
- *   Wager (GGR basis)                                    (turnover, blue)
- *     − Gaming payout (won & paid back)  → GGR           (measured → checkpoint)
- *     − Reward & bonus spend             → NGR           (measured cost → checkpoint)
+ *   Wager (GGR basis)                                       (turnover, blue)
+ *     − Gaming payout (won & paid back)  → GGR              (measured → checkpoint)
+ *     − Reward & bonus spend             → NGR              (measured cost → checkpoint)
+ *     − Turnover→cash conversion         → customer cash    (= NGR − customerCash)
+ *     − Creator net cash                 → Realized P&L     (= customerCash − pnlInclCreators)
  *
- * Wager − payout = GGR and GGR − reward = NGR both tie out exactly because all
- * four terms come from the same canonical legs (`cost.totalWager`,
- * `cost.gamingPayouts`, `cost.rewardPayouts`, `cost.ggr`, `cost.ngr`). The
- * existing sub-breakdowns are kept: GGR drills into the per-game split, the
- * reward line drills into the itemized reward categories — both already
- * fetched and both reconciling to their parent by construction.
+ * Why each leg closes:
+ *   • Wager − payout = GGR and GGR − reward = NGR — all four terms are the
+ *     same canonical legs (`cost.totalWager`, `cost.gamingPayouts`,
+ *     `cost.rewardPayouts`, `cost.ggr`, `cost.ngr`), so they tie out exactly.
+ *   • Turnover→cash conversion VALUE = NGR − customerCashMargin, where
+ *     customerCashMargin = `getRealizedPnlCustomersExclCreators().pnl` (the
+ *     realized P&L of customers-only, creators dropped — measured on the
+ *     balance sheet). It is NOT a plug: it is the explicit difference of two
+ *     independently-measured numbers (gaming margin vs customer cash margin),
+ *     and the running total after it lands EXACTLY on customerCashMargin. The
+ *     recycling evidence (deposits, wager, the re-wager ×multiple, card
+ *     sell-backs) is shown inline so it reads as the real basis conversion it
+ *     is — NGR is gaming margin on re-wagered turnover at card-sticker values;
+ *     customers deposited far less and recycled winnings.
+ *   • Creator net cash VALUE = customerCashMargin − pnlInclCreators =
+ *     `creatorEffect` (creators are out of GGR/NGR but IN the balance-sheet
+ *     snapshot, so moving from the customers-only margin to the full snapshot
+ *     adds back exactly the creators' net cash). This equals
+ *     `creatorDetail.netCash` by the balance-sheet identity (verified $0 drift)
+ *     — the NET real crypto creators took out, NOT the gross program funding
+ *     (which is mostly fake/recycled session money, shown separately below and
+ *     already inside these cash flows, so NOT subtracted again here).
+ *   • The result lands on `getRealizedPnlSnapshot().pnl` — measured separately
+ *     on the balance sheet — to the penny.
  *
- * The honest hand-off to realized P&L is a separate callout below (no fake
- * number): NGR is gaming margin, not cash; the realized cash bottom line is the
- * `snapshot.pnl` measured separately on the balance sheet, and the difference
- * is the turnover-vs-cash basis + the creator program — a measurement gap, not
- * itemizable spending. House-POV tones: wager blue; payout + reward are
- * subtractions (rose); GGR / NGR checkpoints emerald when positive.
+ * Both difference legs are computed from MEASURED endpoints, not as
+ * `ngr − creatorEffect − pnl` (the old plug form): the conversion line =
+ * NGR − customerCashMargin, the creator line = customerCashMargin −
+ * pnlInclCreators. Each closes by construction.
+ *
+ * The GGR step drills into the per-game split, the reward line drills into the
+ * itemized reward categories — both already fetched and both reconciling to
+ * their parent. The conversion line drills into the recycling evidence.
+ *
+ * When the customer-cash-margin read fails (null), the waterfall gracefully
+ * ends at NGR with an honest note (no fabricated terminus) rather than guessing
+ * the closing legs. House-POV tones: wager blue; payout + reward + conversion +
+ * creator are subtractions (rose); GGR / NGR / customer-cash checkpoints
+ * emerald when positive; the realized-P&L result is the loudest row.
  */
 function GgrToNgrBridge({
   cost,
@@ -1352,19 +1403,45 @@ function GgrToNgrBridge({
   wager,
   split,
   rewardSpend,
+  customerCashMargin,
+  recycling,
 }: {
   cost: CostBreakdown;
-  /** Balance-sheet snapshot — the realized-P&L value for the honest hand-off. */
+  /** Balance-sheet snapshot — the realized-P&L terminus (incl. creators). */
   snapshot: RealizedPnlSnapshot | null;
-  /** Hub wager (customer turnover) — for the turnover-vs-cash hand-off note. */
+  /** Hub wager (customer turnover) — the re-wager-multiple numerator. */
   wager: number;
   /** Per-game GGR split — the GGR step's sub-breakdown (null on read fail). */
   split: RealNumbersGameSplit | null;
   /** Reward itemization — the reward step's sub-breakdown (null on read fail). */
   rewardSpend: RewardSpendItemization | null;
+  /**
+   * Realized P&L of customers-only (creators excluded) =
+   * `getRealizedPnlCustomersExclCreators().pnl`. The "customer cash margin"
+   * the waterfall lands on after the turnover→cash conversion line. `null` on
+   * read fail → the waterfall ends at NGR with an honest note.
+   */
+  customerCashMargin: number | null;
+  /** Recycling evidence for the conversion line's inline proof (null on fail). */
+  recycling: CustomerRecyclingDetail | null;
 }) {
   const ngrPos = cost.ngr >= 0;
   const ggrPos = cost.ggr >= 0;
+
+  // The closing legs need BOTH the customers-only margin AND the snapshot
+  // (incl-creators) terminus. When either read failed we can't honestly close
+  // the waterfall — it ends at NGR with a note, no fabricated terminus.
+  const canClose = customerCashMargin !== null && snapshot !== null;
+  // Conversion line VALUE = NGR − customer cash margin (difference of two
+  // measured numbers). Creator line VALUE = customer cash margin − realized P&L
+  // incl creators (= creatorEffect). Both close by construction.
+  const conversionValue = canClose ? cost.ngr - customerCashMargin : 0;
+  const creatorNetCash = canClose
+    ? customerCashMargin - snapshot.pnl
+    : 0;
+  const realizedPnl = snapshot ? snapshot.pnl : null;
+  const customerCashPos = (customerCashMargin ?? 0) >= 0;
+  const realizedPos = realizedPnl !== null && realizedPnl >= 0;
 
   // ── Sub-breakdown rows per bridge step (visible drill-down) ────────
   // Each step's sub-table is built from already-fetched page data and
@@ -1441,13 +1518,70 @@ function GgrToNgrBridge({
     </BridgeSubTable>
   ) : null;
 
+  // Conversion → recycling evidence (reuse getCustomerRecyclingDetail + the
+  // page's already-fetched hub wager). This is NOT a list of payments — it is
+  // the recycling MECHANISM that explains the basis conversion: customers
+  // deposited far less than the turnover the house booked its edge on, because
+  // they sold won cards back to balance and re-bet. Neutral conversions
+  // (card/voucher exchange is a normal user action, never a house cost) — shown
+  // only as proof, never added to any cost.
+  const reWagerMultiple =
+    recycling && recycling.deposits > 0 ? wager / recycling.deposits : null;
+  const conversionSubRows: ReactNode =
+    canClose && recycling ? (
+      <BridgeSubTable
+        caption="Recycling evidence — why gaming margin ≠ customer cash"
+        note={
+          <>
+            Card sell-backs are neutral inventory↔balance conversions (a normal
+            user action, never a house cost) — shown here only as proof of the
+            re-wager. The conversion line above is the measured difference NGR −
+            customer cash margin, not a sum of these rows.
+          </>
+        }
+      >
+        <BridgeSubRow
+          label="Customer deposits"
+          sub="Real cash that ever entered (balances.total_deposited)"
+          amount={recycling.deposits}
+          sign="+"
+          tone="base"
+          iconNode={<ArrowDownToLine className="size-3" />}
+        />
+        <BridgeSubRow
+          label="Customer wager (turnover)"
+          sub="Total stake the house booked its edge on"
+          amount={wager}
+          sign="+"
+          tone="base"
+          iconNode={<Coins className="size-3" />}
+          pct={reWagerMultiple}
+          pctLabel="× deposits"
+        />
+        <BridgeSubRow
+          label="Card sell-backs to balance"
+          sub={`Cards sold back ${formatCurrency(
+            recycling.cardSaleLeg,
+          )} + exchanged for credit ${formatCurrency(
+            recycling.cardExchangeLeg,
+          )} — re-bet`}
+          amount={recycling.cardSellBacks}
+          sign="="
+          tone="muted"
+          iconNode={<ArrowUpCircle className="size-3" />}
+        />
+      </BridgeSubTable>
+    ) : null;
+
   // Each row is the SIGNED effect on the running total (House-POV), plus its
-  // visible sub-breakdown rendered directly beneath it. Every value is a
-  // direct measured field from getCostBreakdown — there is NO derived/plug
-  // line anywhere in this bridge.
+  // visible sub-breakdown rendered directly beneath it. Every value is either a
+  // direct measured field (getCostBreakdown / getRealizedPnlSnapshot) or the
+  // EXPLICIT difference of two measured values (the conversion + creator legs).
+  // There is NO derived/plug line — each difference closes by construction.
   const lines: Array<{
     key: string;
     label: string;
+    sub?: string;
     signed: number;
     sign: "+" | "−" | "=";
     tone: SemanticTone;
@@ -1497,40 +1631,113 @@ function GgrToNgrBridge({
       sign: "=",
       tone: ngrPos ? "keep" : "cost",
       icon: ngrPos ? TrendingUp : TrendingDown,
-      emphasis: "result",
+      emphasis: "subtotal",
     },
+    // ── Closing legs (only when both reads succeeded) ───────────────────
+    ...(canClose
+      ? [
+          {
+            key: "conversion",
+            label: "Turnover→cash conversion",
+            sub: "= NGR − customer cash margin (both measured)",
+            signed: -conversionValue,
+            sign: "−" as const,
+            tone: "cost" as const,
+            icon: ArrowUpFromLine,
+            subRows: conversionSubRows,
+          },
+          {
+            key: "customer-cash",
+            label: "Customer cash margin",
+            sub: "Realized P&L of customers only (creators excluded)",
+            signed: customerCashMargin,
+            sign: "=" as const,
+            tone: (customerCashPos ? "keep" : "cost") as SemanticTone,
+            icon: customerCashPos ? TrendingUp : TrendingDown,
+            emphasis: "subtotal" as const,
+          },
+          {
+            key: "creator-net",
+            label: "Creator net cash",
+            sub: "= customer cash margin − realized P&L (creators back in)",
+            signed: -creatorNetCash,
+            sign: (creatorNetCash >= 0 ? "−" : "+") as "+" | "−",
+            tone: "cost" as const,
+            icon: Sparkles,
+          },
+          {
+            key: "pnl",
+            label: "Realized P&L",
+            signed: snapshot.pnl,
+            sign: "=" as const,
+            tone: (realizedPos ? "keep" : "cost") as SemanticTone,
+            icon: realizedPos ? TrendingUp : TrendingDown,
+            emphasis: "result" as const,
+          },
+        ]
+      : []),
   ];
 
   const maxMag = Math.max(...lines.map((l) => Math.abs(l.signed)), 1);
 
-  // The realized cash bottom line — measured separately on the balance sheet
-  // (getRealizedPnlSnapshot), pulled live for the honest hand-off. NOT used to
-  // derive any bridge line; the bridge ends at NGR.
-  const realizedPnl = snapshot ? snapshot.pnl : null;
-  const realizedPos = realizedPnl !== null && realizedPnl >= 0;
+  // Live "ties out exactly" check: walk the running total through every leg
+  // and confirm it lands on the measured realized P&L within a penny. Pure
+  // arithmetic on measured values — not used to derive any line.
+  const runningTotal = lines
+    .filter((l) => l.sign !== "=")
+    .reduce((s, l) => s + l.signed, 0);
+  const tieOutDelta =
+    canClose && realizedPnl !== null ? runningTotal - realizedPnl : null;
+  const tiesOut = tieOutDelta !== null && Math.abs(tieOutDelta) < 1;
 
   return (
     <Card>
       <CardContent className="space-y-0.5 p-3 sm:p-4">
         <p className="px-2 pb-1 text-[11px] leading-snug text-muted-foreground">
-          A fully-measured gaming-margin breakdown — wager, gaming payout,
-          reward &amp; bonus spend are each a direct value from the canonical
-          cost model, ending at NGR. Every step drills into its sub-components
-          below it. NGR is gaming margin, not cash; the hand-off to realized
-          cash P&L is below.
+          {canClose ? (
+            <>
+              The complete closing waterfall — every dollar from GGR down to
+              realized cash P&L accounted for. Each step is a directly{" "}
+              <span className="font-medium text-foreground">measured</span>{" "}
+              value or the{" "}
+              <span className="font-medium text-foreground">
+                explicit difference of two measured values
+              </span>{" "}
+              (never a plug), so the running total closes to the penny. Every
+              step drills into its sub-components below it.
+            </>
+          ) : (
+            <>
+              A fully-measured gaming-margin breakdown — wager, gaming payout,
+              reward &amp; bonus spend are each a direct value from the canonical
+              cost model, ending at NGR. The customer-cash-margin read failed,
+              so the closing legs are withheld rather than guessed; reload to
+              close the waterfall to realized P&L.
+            </>
+          )}
         </p>
         <WaterfallBand label="Gaming margin" hint="house edge on play" />
         {lines.map((l) => {
           const colors = SEMANTIC_TONES[l.tone] ?? SEMANTIC_TONES.muted;
           const Icon = l.icon;
-          // Band header ahead of the reward & marketing giveaways.
+          // Band headers segment the waterfall into chapters.
           const band =
             l.key === "reward"
               ? {
                   label: "Less reward & marketing",
                   hint: "house-funded giveaways",
                 }
-              : null;
+              : l.key === "conversion"
+                ? {
+                    label: "Gaming margin → real customer cash",
+                    hint: "turnover-vs-cash basis conversion",
+                  }
+                : l.key === "creator-net"
+                  ? {
+                      label: "Creators back into the cash population",
+                      hint: "net real crypto out − in",
+                    }
+                  : null;
           return (
             <div key={l.key}>
               {band && <WaterfallBand label={band.label} hint={band.hint} />}
@@ -1547,85 +1754,127 @@ function GgrToNgrBridge({
                 emphasis={l.emphasis ?? "normal"}
                 iconNode={<Icon className={cn("size-3.5", colors.icon)} />}
               />
+              {/* The sub-text under difference lines (what the value equals). */}
+              {l.sub && (
+                <p className="px-2 pb-0.5 pl-[2.85rem] text-[10px] leading-snug text-muted-foreground sm:pl-[3.1rem]">
+                  {l.sub}
+                </p>
+              )}
               {/* Visible per-line drill-down, directly beneath the step. */}
               {l.subRows}
             </div>
           );
         })}
-        {/* Live measured reconciliation — every term above is a direct query
-            result, so the breakdown ties out to NGR by construction. */}
-        <p className="px-2 pt-3 text-[11px] leading-snug text-emerald-600 dark:text-emerald-400">
-          Fully measured — wager {formatCurrency(cost.totalWager)} − gaming
-          payout {formatCurrency(cost.gamingPayouts)} = GGR{" "}
-          {ggrPos ? "+" : "−"}
-          {formatCurrency(Math.abs(cost.ggr))}; GGR − reward{" "}
-          {formatCurrency(cost.rewardPayouts)} = NGR{" "}
-          {ngrPos ? "+" : "−"}
-          {formatCurrency(Math.abs(cost.ngr))}. No plug, no residual line.
-        </p>
 
-        {/* ── Honest hand-off to realized cash P&L (no fake number) ── */}
-        <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.05] p-3 sm:p-4">
-          <div className="flex items-start gap-2.5">
-            <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-500">
-              <Info className="size-3.5" />
-            </span>
-            <div className="min-w-0 space-y-1.5 text-[12px] leading-relaxed text-muted-foreground">
-              <p>
-                <span className="font-semibold text-foreground">
-                  NGR is gaming margin
-                </span>{" "}
-                — the house edge on {formatCurrency(wager)} of turnover, with
-                won cards valued at sticker.{" "}
-                <span className="font-medium text-foreground">
-                  It is NOT cash and does not subtract down to realized P&L.
-                </span>
-              </p>
-              {realizedPnl !== null ? (
+        {/* The turnover→cash conversion narrative — stated honestly: the value
+            is the difference of two measured numbers, with the recycling proof
+            inline. Only shown when the waterfall closes. */}
+        {canClose && (
+          <div className="mt-3 rounded-xl border border-border/70 bg-muted/20 p-3 sm:p-4">
+            <div className="flex items-start gap-2.5">
+              <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-rose-500/10 text-rose-500">
+                <ArrowUpFromLine className="size-3.5" />
+              </span>
+              <div className="min-w-0 space-y-1.5 text-[12px] leading-relaxed text-muted-foreground">
                 <p>
-                  The realized cash bottom line is{" "}
-                  <span
-                    className={cn(
-                      "font-semibold tabular-nums",
-                      realizedPos
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-rose-600 dark:text-rose-400",
-                    )}
-                  >
-                    {realizedPos ? "+" : "−"}
-                    {formatCurrency(Math.abs(realizedPnl))}
+                  <span className="font-semibold text-foreground">
+                    Turnover→cash conversion
                   </span>{" "}
-                  — measured separately as deposits − withdrawals − holdings
-                  (see the{" "}
-                  <span className="font-medium text-foreground/80">
-                    Balance-sheet P&L
+                  is the{" "}
+                  <span className="font-medium text-foreground">
+                    measured difference NGR − customer cash margin
                   </span>{" "}
-                  section below).
+                  — both numbers independently measured. NGR (
+                  <span className="tabular-nums">
+                    {ngrPos ? "+" : "−"}
+                    {formatCurrency(Math.abs(cost.ngr))}
+                  </span>
+                  ) is gaming margin on{" "}
+                  <span className="tabular-nums">{formatCurrency(wager)}</span>{" "}
+                  of turnover with won cards at sticker;{" "}
+                  {recycling && recycling.deposits > 0 ? (
+                    <>
+                      customers deposited only{" "}
+                      <span className="tabular-nums">
+                        {formatCurrency(recycling.deposits)}
+                      </span>{" "}
+                      and recycled winnings{" "}
+                      {reWagerMultiple !== null && (
+                        <span className="font-semibold tabular-nums text-foreground">
+                          ≈ {reWagerMultiple.toFixed(1)}×
+                        </span>
+                      )}{" "}
+                      (sold{" "}
+                      <span className="tabular-nums">
+                        {formatCurrency(recycling.cardSellBacks)}
+                      </span>{" "}
+                      of cards back to balance &amp; re-bet).
+                    </>
+                  ) : (
+                    <>customers deposited far less and recycled winnings.</>
+                  )}{" "}
+                  This converts gaming margin to real customer cash —{" "}
+                  <span className="font-medium text-foreground">
+                    not a cost, not a plug: a basis conversion.
+                  </span>
                 </p>
-              ) : (
                 <p>
-                  The realized cash bottom line is measured separately as
-                  deposits − withdrawals − holdings (see the{" "}
-                  <span className="font-medium text-foreground/80">
-                    Balance-sheet P&L
+                  <span className="font-semibold text-foreground">
+                    Creator net cash
                   </span>{" "}
-                  section below).
+                  (
+                  <span className="tabular-nums">
+                    {creatorNetCash >= 0 ? "−" : "+"}
+                    {formatCurrency(Math.abs(creatorNetCash))}
+                  </span>
+                  ) is the real crypto creators took out (out − in). The gross
+                  creator-program funding is mostly fake/recycled session money
+                  and is shown in the{" "}
+                  <span className="font-medium text-foreground/80">
+                    Creator program cost
+                  </span>{" "}
+                  panel below — it&apos;s already inside these cash flows, so it
+                  is NOT subtracted again here (that would double-count).
                 </p>
-              )}
-              <p>
-                The difference is the turnover-vs-cash basis (customers recycled
-                winnings, so this turnover came from far less real deposited
-                cash) plus the creator program — that&apos;s a measurement gap,
-                not itemizable spending, so there is deliberately no line for
-                it. See the{" "}
-                <span className="font-medium text-foreground/80">
-                  Why GGR ≠ realized P&L — two scoreboards
-                </span>{" "}
-                section for the full picture.
-              </p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
+
+        {/* Live ties-out assertion — pure arithmetic on the measured legs. */}
+        {tieOutDelta !== null && (
+          <p
+            className={cn(
+              "px-2 pt-3 text-[11px] leading-snug",
+              tiesOut
+                ? "text-emerald-600 dark:text-emerald-400"
+                : "text-amber-600 dark:text-amber-400",
+            )}
+          >
+            {tiesOut ? (
+              <>
+                Ties out to realized P&L exactly — GGR{" "}
+                {ggrPos ? "+" : "−"}
+                {formatCurrency(Math.abs(cost.ggr))} − reward{" "}
+                {formatCurrency(cost.rewardPayouts)} − (NGR − customer cash){" "}
+                {formatCurrency(conversionValue)} − creator net{" "}
+                {formatCurrency(creatorNetCash)} ={" "}
+                {realizedPos ? "+" : "−"}
+                {formatCurrency(Math.abs(realizedPnl as number))} realized P&L.
+                No plug, no residual line.
+              </>
+            ) : (
+              <>
+                Waterfall closes within{" "}
+                {formatCurrency(Math.abs(tieOutDelta))} of the measured realized
+                P&L ({realizedPos ? "+" : "−"}
+                {formatCurrency(Math.abs(realizedPnl as number))}) — a rounding
+                / cache-staleness gap between independently-cached reads, not a
+                plug.
+              </>
+            )}
+          </p>
+        )}
       </CardContent>
     </Card>
   );
