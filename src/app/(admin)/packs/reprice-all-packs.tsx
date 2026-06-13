@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Target, TriangleAlert, Loader2, ArrowRight } from "lucide-react";
+import { Target, TriangleAlert, Loader2, ArrowRight, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,14 +29,16 @@ import { houseAmountTextClass } from "@/lib/house-pov";
 import { cn } from "@/lib/utils";
 import {
   planRepriceAllPacks,
+  authorizeReprice,
   repricePackToTargetEdge,
   type RepricePlanSummary,
   type RepricePlanRow,
 } from "./actions";
 
 const CONFIRM_PHRASE = "REPRICE";
+const TARGET_MIN_PCT = 1;
+const TARGET_MAX_PCT = 50;
 
-/** A confirm/preview/progress phase. */
 type Phase = "idle" | "planning" | "ready" | "running" | "done";
 
 /** Render a house-edge fraction (0.1099) as "10.99%". */
@@ -46,13 +48,13 @@ function pct(edge: number | null): string {
 }
 
 /**
- * Global "Re-price all packs → 10.99% edge" tool. Admin-only (the page only
- * mounts it for admins; the server actions independently re-check).
+ * Global "Re-price all active official packs → target edge" tool. Owner-only
+ * (the page only mounts it for `motha`; the server actions independently
+ * re-check, and the actual writes require a 2FA token).
  *
- * Flow: button → READ-ONLY dry-run preview in a type-to-confirm dialog → a
- * stoppable, pack-by-pack progress modal that calls the guarded single-pack
- * write action once per pack. Nothing is written until the operator types the
- * confirm phrase and presses the action; each pack is its own audited write.
+ * Flow: button → READ-ONLY dry-run preview (custom target %) → type-to-confirm
+ * + 2FA code → `authorizeReprice` mints a run token → stoppable, pack-by-pack
+ * progress loop that calls the guarded single-pack write once per pack.
  */
 export function RepriceAllPacksButton() {
   const router = useRouter();
@@ -61,7 +63,11 @@ export function RepriceAllPacksButton() {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [progressOpen, setProgressOpen] = React.useState(false);
   const [plan, setPlan] = React.useState<RepricePlanSummary | null>(null);
+  /** Target fraction the current `plan` was computed for. */
+  const [planTarget, setPlanTarget] = React.useState<number | null>(null);
+  const [targetPct, setTargetPct] = React.useState("10.99");
   const [confirmText, setConfirmText] = React.useState("");
+  const [totp, setTotp] = React.useState("");
 
   // Progress state.
   const [processed, setProcessed] = React.useState(0);
@@ -70,39 +76,85 @@ export function RepriceAllPacksButton() {
   const [failure, setFailure] = React.useState<{ name: string; message: string } | null>(
     null,
   );
-  // Stop is read inside the async loop — a ref so the latest value is seen.
   const stopRef = React.useRef(false);
+
+  const parsedTarget = parseFloat(targetPct);
+  const targetFraction = Number.isFinite(parsedTarget) ? parsedTarget / 100 : NaN;
+  const targetValid =
+    Number.isFinite(parsedTarget) &&
+    parsedTarget >= TARGET_MIN_PCT &&
+    parsedTarget <= TARGET_MAX_PCT;
+  const planStale =
+    plan !== null &&
+    planTarget !== null &&
+    targetValid &&
+    Math.abs(planTarget - targetFraction) > 1e-9;
 
   const total = plan?.toReprice.length ?? 0;
   const progressPct = total > 0 ? Math.round((processed / total) * 100) : 100;
+  const totpValid = /^\d{6}$/.test(totp.trim());
   const confirmReady =
-    phase === "ready" && total > 0 && confirmText.trim().toUpperCase() === CONFIRM_PHRASE;
+    phase === "ready" &&
+    plan !== null &&
+    !planStale &&
+    total > 0 &&
+    confirmText.trim().toUpperCase() === CONFIRM_PHRASE &&
+    totpValid;
 
   function openConfirm() {
     setPlan(null);
+    setPlanTarget(null);
     setConfirmText("");
+    setTotp("");
+    setTargetPct("10.99");
     setPhase("planning");
     setConfirmOpen(true);
-    void loadPlan();
+    void loadPlan(0.1099);
   }
 
-  async function loadPlan() {
+  async function loadPlan(fraction: number) {
+    setPhase("planning");
     try {
-      const p = await planRepriceAllPacks();
+      const p = await planRepriceAllPacks(fraction);
       setPlan(p);
+      setPlanTarget(p.target);
       setPhase("ready");
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to compute the re-price plan",
       );
-      setConfirmOpen(false);
-      setPhase("idle");
+      if (plan) {
+        setPhase("ready");
+      } else {
+        setPhase("idle");
+        setConfirmOpen(false);
+      }
     }
   }
 
+  function updatePreview() {
+    if (!targetValid) {
+      toast.error(`Target must be between ${TARGET_MIN_PCT}% and ${TARGET_MAX_PCT}%.`);
+      return;
+    }
+    void loadPlan(targetFraction);
+  }
+
   async function runReprice() {
-    if (!plan || total === 0) return;
+    if (!plan || planTarget === null || total === 0) return;
     const rows = plan.toReprice;
+    const runTarget = planTarget;
+
+    // 2FA gate: verify the code ONCE and get a short-lived run token.
+    let token: string;
+    try {
+      const res = await authorizeReprice(totp.trim());
+      token = res.token;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "2FA verification failed");
+      return;
+    }
+
     stopRef.current = false;
     setProcessed(0);
     setCurrentName("");
@@ -120,14 +172,12 @@ export function RepriceAllPacksButton() {
       const row = rows[i];
       setCurrentName(row.name);
       try {
-        const res = await repricePackToTargetEdge(row.packId);
+        const res = await repricePackToTargetEdge(row.packId, token, runTarget);
         if (res.status === "repriced") repriced++;
         else skipped++;
         setProcessed(i + 1);
         setTally({ repriced, skipped, failed: 0 });
       } catch (err) {
-        // Fail CLOSED: stop the whole run on the first write error. Packs
-        // already written stay written; re-running is safe (idempotent).
         const message = err instanceof Error ? err.message : "Write failed";
         setProcessed(i + 1);
         setTally({ repriced, skipped, failed: 1 });
@@ -146,7 +196,9 @@ export function RepriceAllPacksButton() {
     if (stopRef.current) {
       toast.message(`Stopped — re-priced ${repriced} pack${repriced === 1 ? "" : "s"}.`);
     } else {
-      toast.success(`Re-priced ${repriced} pack${repriced === 1 ? "" : "s"} to ~10.99%.`);
+      toast.success(
+        `Re-priced ${repriced} pack${repriced === 1 ? "" : "s"} to ~${targetPct}%.`,
+      );
     }
     router.refresh();
   }
@@ -159,7 +211,9 @@ export function RepriceAllPacksButton() {
     setProgressOpen(false);
     setPhase("idle");
     setPlan(null);
+    setPlanTarget(null);
     setConfirmText("");
+    setTotp("");
     setProcessed(0);
     setCurrentName("");
     setTally({ repriced: 0, skipped: 0, failed: 0 });
@@ -172,7 +226,7 @@ export function RepriceAllPacksButton() {
     <>
       <Button variant="outline" size="sm" onClick={openConfirm}>
         <Target className="mr-1 size-3.5" />
-        Re-price → 10.99%
+        Re-price packs
       </Button>
 
       {/* ── Confirm + read-only preview ─────────────────────────────── */}
@@ -190,118 +244,173 @@ export function RepriceAllPacksButton() {
             <AlertDialogMedia className="bg-rose-500/10 text-rose-600 dark:text-rose-400">
               <TriangleAlert />
             </AlertDialogMedia>
-            <AlertDialogTitle>Re-price every official pack to 10.99%</AlertDialogTitle>
+            <AlertDialogTitle>Re-price active official packs</AlertDialogTitle>
             <AlertDialogDescription>
-              Official packs only. Only the pack <strong>price</strong> changes —{" "}
-              <strong>card odds are never touched</strong>. Review the plan below, then
-              type{" "}
+              Active official packs only. Only the pack <strong>price</strong> changes —{" "}
+              <strong>card odds are never touched</strong>. Review the plan, type{" "}
               <code className="rounded bg-muted px-1 py-0.5 font-mono">{CONFIRM_PHRASE}</code>{" "}
-              to enable the action. Each pack is written one at a time and the run is
+              and your 2FA code to run. Each pack is written one at a time and the run is
               stoppable.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          {phase === "planning" && (
-            <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-              Computing the re-price plan…
-            </div>
-          )}
-
-          {phase !== "planning" && plan && (
-            <div className="space-y-3 text-sm">
-              {/* DB-env banner — prod vs dev must be unmistakable. */}
-              <div
-                className={cn(
-                  "flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-medium",
-                  isProd
-                    ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                    : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-                )}
-              >
-                <span>
-                  Target DB:{" "}
-                  <span className="font-semibold uppercase">{plan.dbEnv}</span>
-                  {isProd ? " — LIVE production game DB" : " — dev game DB"}
-                </span>
-              </div>
-
-              {/* Counts */}
-              <div className="grid grid-cols-3 gap-2">
-                <CountTile label="Will re-price" value={plan.counts.toReprice} accent="emerald" />
-                <CountTile label="Already on target" value={plan.counts.unchanged} accent="muted" />
-                <CountTile label="Skipped" value={plan.counts.skipped} accent="amber" />
-              </div>
-
-              <p className="text-xs text-muted-foreground">
-                Target {pct(plan.target)} · written only if achievable within{" "}
-                {pct(plan.acceptMin)}–{pct(plan.acceptMax)} · hard cap{" "}
-                {pct(plan.hardMin)}–{pct(plan.hardMax)} (packs that can&apos;t hit it are
-                skipped, never re-priced off-target).
-              </p>
-
-              {/* Preview of the largest changes */}
-              {plan.toReprice.length > 0 && (
-                <div className="rounded-lg border">
-                  <p className="border-b px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                    Largest price changes
-                  </p>
-                  <div className="max-h-44 overflow-y-auto">
-                    {plan.toReprice.slice(0, 12).map((r) => (
-                      <ChangeRow key={r.packId} row={r} />
-                    ))}
-                  </div>
-                  {plan.toReprice.length > 12 && (
-                    <p className="border-t px-3 py-1.5 text-[11px] text-muted-foreground">
-                      +{plan.toReprice.length - 12} more pack
-                      {plan.toReprice.length - 12 === 1 ? "" : "s"} will also be re-priced.
-                    </p>
+          <div className="space-y-3 text-sm">
+            {/* Target % entry */}
+            <div className="space-y-1.5">
+              <Label htmlFor="reprice-target">Target house edge (%)</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="reprice-target"
+                  type="number"
+                  min={TARGET_MIN_PCT}
+                  max={TARGET_MAX_PCT}
+                  step="0.01"
+                  value={targetPct}
+                  onChange={(e) => setTargetPct(e.target.value)}
+                  className="w-32"
+                  aria-invalid={!targetValid}
+                  disabled={phase === "planning"}
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={updatePreview}
+                  disabled={
+                    !targetValid || phase === "planning" || (!planStale && plan !== null)
+                  }
+                >
+                  {phase === "planning" ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    "Update preview"
                   )}
-                </div>
+                </Button>
+              </div>
+              {!targetValid && (
+                <p className="text-xs text-rose-600 dark:text-rose-400">
+                  Enter a target between {TARGET_MIN_PCT}% and {TARGET_MAX_PCT}%.
+                </p>
               )}
-
-              {/* Skipped reasons (collapsed-ish) */}
-              {plan.skipped.length > 0 && (
-                <details className="rounded-lg border">
-                  <summary className="cursor-pointer px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                    {plan.skipped.length} skipped — why?
-                  </summary>
-                  <div className="max-h-40 overflow-y-auto border-t">
-                    {plan.skipped.slice(0, 20).map((r) => (
-                      <div
-                        key={r.packId}
-                        className="flex flex-col gap-0.5 border-b px-3 py-1.5 last:border-b-0"
-                      >
-                        <span className="truncate font-medium">{r.name}</span>
-                        <span className="text-[11px] text-muted-foreground">{r.reason}</span>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              )}
-
-              {total > 0 ? (
-                <div className="space-y-1.5 pt-1">
-                  <Label htmlFor="reprice-confirm">
-                    Type {CONFIRM_PHRASE} to confirm
-                  </Label>
-                  <Input
-                    id="reprice-confirm"
-                    value={confirmText}
-                    onChange={(e) => setConfirmText(e.target.value)}
-                    placeholder={CONFIRM_PHRASE}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </div>
-              ) : (
-                <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                  Nothing to re-price — every official pack is already at the 10.99%
-                  target (or can&apos;t be brought into the safe band).
+              {planStale && targetValid && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Preview is for {planTarget != null ? pct(planTarget) : "—"} — click “Update
+                  preview” to recompute for {parsedTarget}%.
                 </p>
               )}
             </div>
-          )}
+
+            {phase === "planning" && !plan && (
+              <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                Computing the re-price plan…
+              </div>
+            )}
+
+            {plan && (
+              <>
+                {/* DB-env banner */}
+                <div
+                  className={cn(
+                    "flex items-center justify-between rounded-lg border px-3 py-2 text-xs font-medium",
+                    isProd
+                      ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                      : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+                  )}
+                >
+                  <span>
+                    Target DB:{" "}
+                    <span className="font-semibold uppercase">{plan.dbEnv}</span>
+                    {isProd ? " — LIVE production game DB" : " — dev game DB"}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <CountTile label="Will re-price" value={plan.counts.toReprice} accent="emerald" />
+                  <CountTile label="Already on target" value={plan.counts.unchanged} accent="muted" />
+                  <CountTile label="Skipped" value={plan.counts.skipped} accent="amber" />
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Target {pct(plan.target)} · written only within {pct(plan.acceptMin)}–
+                  {pct(plan.acceptMax)} · hard cap {pct(plan.hardMin)}–{pct(plan.hardMax)}.
+                  Packs that can&apos;t hit it (cheap packs — 1¢ is too coarse a step) are
+                  skipped.
+                </p>
+
+                {plan.toReprice.length > 0 && (
+                  <div className="rounded-lg border">
+                    <p className="border-b px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Largest price changes
+                    </p>
+                    <div className="max-h-40 overflow-y-auto">
+                      {plan.toReprice.slice(0, 12).map((r) => (
+                        <ChangeRow key={r.packId} row={r} />
+                      ))}
+                    </div>
+                    {plan.toReprice.length > 12 && (
+                      <p className="border-t px-3 py-1.5 text-[11px] text-muted-foreground">
+                        +{plan.toReprice.length - 12} more will also be re-priced.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {plan.skipped.length > 0 && (
+                  <details className="rounded-lg border">
+                    <summary className="cursor-pointer px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                      {plan.skipped.length} skipped — why? (click to open a pack)
+                    </summary>
+                    <div className="max-h-44 overflow-y-auto border-t">
+                      {plan.skipped.slice(0, 30).map((r) => (
+                        <div
+                          key={r.packId}
+                          className="flex flex-col gap-0.5 border-b px-3 py-1.5 last:border-b-0"
+                        >
+                          <PackLink packId={r.packId} name={r.name} />
+                          <span className="text-[11px] text-muted-foreground">{r.reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+
+                {total > 0 ? (
+                  <div className="space-y-3 pt-1">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="reprice-confirm">Type {CONFIRM_PHRASE} to confirm</Label>
+                      <Input
+                        id="reprice-confirm"
+                        value={confirmText}
+                        onChange={(e) => setConfirmText(e.target.value)}
+                        placeholder={CONFIRM_PHRASE}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="reprice-totp">2FA code</Label>
+                      <Input
+                        id="reprice-totp"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        value={totp}
+                        onChange={(e) => setTotp(e.target.value.replace(/\D/g, ""))}
+                        placeholder="123456"
+                        className="w-40 tracking-[0.3em]"
+                        aria-invalid={totp.length > 0 && !totpValid}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                    Nothing to re-price at {pct(plan.target)} — every active official pack is
+                    already on target (or can&apos;t be brought into the band).
+                  </p>
+                )}
+              </>
+            )}
+          </div>
 
           <AlertDialogFooter>
             <Button
@@ -314,11 +423,7 @@ export function RepriceAllPacksButton() {
             >
               Cancel
             </Button>
-            <Button
-              onClick={runReprice}
-              disabled={!confirmReady}
-              className="w-full sm:w-auto"
-            >
+            <Button onClick={runReprice} disabled={!confirmReady} className="w-full sm:w-auto">
               Re-price {total} pack{total === 1 ? "" : "s"}
             </Button>
           </AlertDialogFooter>
@@ -329,7 +434,7 @@ export function RepriceAllPacksButton() {
       <Dialog
         open={progressOpen}
         onOpenChange={(o) => {
-          if (phase === "running") return; // can't dismiss mid-run
+          if (phase === "running") return;
           if (!o) closeProgress();
         }}
       >
@@ -343,7 +448,7 @@ export function RepriceAllPacksButton() {
                 ? "Writing one pack at a time. You can stop after the current pack."
                 : failure
                   ? "The run stopped on an error. Packs processed before it stay re-priced."
-                  : "Done. Packs already at target were left untouched."}
+                  : "Done. Packs already on target were left untouched."}
             </DialogDescription>
           </DialogHeader>
 
@@ -398,6 +503,21 @@ export function RepriceAllPacksButton() {
   );
 }
 
+/** Pack name as a link that opens the pack in a new tab (right-click friendly). */
+function PackLink({ packId, name }: { packId: string; name: string }) {
+  return (
+    <a
+      href={`/packs/${packId}`}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex min-w-0 items-center gap-1 truncate font-medium hover:underline"
+    >
+      <span className="truncate">{name}</span>
+      <ExternalLink className="size-3 shrink-0 text-muted-foreground" />
+    </a>
+  );
+}
+
 function CountTile({
   label,
   value,
@@ -428,8 +548,8 @@ function CountTile({
 function ChangeRow({ row }: { row: RepricePlanRow }) {
   return (
     <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5 last:border-b-0">
-      <span className="min-w-0 flex-1 truncate">{row.name}</span>
-      <span className="flex items-center gap-1.5 tabular-nums">
+      <PackLink packId={row.packId} name={row.name} />
+      <span className="flex shrink-0 items-center gap-1.5 tabular-nums">
         <span className="text-muted-foreground">{formatCurrency(row.priceBefore)}</span>
         <ArrowRight className="size-3 text-muted-foreground" />
         <span className="font-medium">
