@@ -21,12 +21,12 @@ import { formatCurrency } from "@/lib/utils/format";
 import {
   computePackEv,
   suggestedPriceFromEv,
-  TARGET_HOUSE_EDGE,
 } from "@/app/(admin)/insights/edge-calc/math";
 import { updatePack, getCardPickerFilters } from "./actions";
 import { uploadImageClient } from "@/lib/upload-image-client";
 import { pack_tag } from "@/generated/prisma/enums";
 import { RiskLevelSlider } from "./risk-level-slider";
+import { TargetEvOddsSetter } from "./target-ev-odds-setter";
 import { invalidatePackDetailCache } from "./pack-detail-cache";
 
 type PackCard = SortableCard;
@@ -152,6 +152,7 @@ export function PackEditForm({
   onSaved?: () => void;
   showCancel?: boolean;
 }) {
+  const isShardMode = pack.packType === "shard";
   const router = useRouter();
 
   const [name, setName] = useState(pack.name);
@@ -226,7 +227,7 @@ export function PackEditForm({
   const totalOdds = cards.reduce((sum, c) => sum + c.odds, 0);
   const weightedPriceSum = cards.reduce((sum, c) => sum + c.priceUsd * c.odds, 0);
   const packPrice = parseFloat(price) || 0;
-  const cpo = parseInt(cardsPerOpen) || 1;
+  const cpo = isShardMode ? pack.cardsPerOpen : parseInt(cardsPerOpen) || 1;
 
   const ev = computePackEv({
     pricePerOpen: packPrice,
@@ -238,6 +239,18 @@ export function PackEditForm({
   const expectedPayout = ev.expectedPayoutPerOpen;
   const houseEdge = packPrice > 0 ? ev.houseEdge * 100 : 0;
   const suggestedPrice = suggestedPriceFromEv(expectedPayout);
+
+  function resolveSubmitPrice(): number {
+    const fromState = parseFloat(price);
+    if (fromState > 0) return fromState;
+    const fromEv = suggestedPriceFromEv(expectedPayout);
+    if (fromEv > 0) return fromEv;
+    return pack.priceUsd > 0 ? pack.priceUsd : 0.01;
+  }
+
+  function applyTargetEvOdds(odds: number[]) {
+    setCards((prev) => prev.map((c, i) => ({ ...c, odds: odds[i] ?? c.odds })));
+  }
 
   function oddsToWeights(entries: PackCard[]): number[] {
     return entries.map((c) => Math.max(1, Math.round((c.odds / 100) * 1_000_000)));
@@ -262,17 +275,18 @@ export function PackEditForm({
       }
 
       const weights = oddsToWeights(cards);
+      const submitPrice = isShardMode ? resolveSubmitPrice() : parseFloat(price) || 0;
       await updatePack(pack.id, {
         name,
         slug,
-        description,
-        price: parseFloat(price) || 0,
-        cardsPerOpen: parseInt(cardsPerOpen) || 5,
+        description: isShardMode ? "" : description,
+        price: submitPrice,
+        cardsPerOpen: isShardMode ? pack.cardsPerOpen : parseInt(cardsPerOpen) || 5,
         packType,
         shardCost: packType === "shard" ? parsedShardCost : null,
         imageUrl,
-        tags,
-        difficulty: difficulty || null,
+        tags: isShardMode ? [] : tags,
+        difficulty: isShardMode ? null : difficulty || null,
         cards: cards.map((c, i) => ({
           cardId: c.cardId,
           weight: weights[i],
@@ -307,10 +321,13 @@ export function PackEditForm({
             <Input value={slug} onChange={(e) => setSlug(e.target.value)} disabled={saving} />
           </div>
         </div>
+        {!isShardMode && (
         <div className="space-y-1.5">
           <Label>Description</Label>
           <Input value={description} onChange={(e) => setDescription(e.target.value)} disabled={saving} />
         </div>
+        )}
+        {!isShardMode ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="space-y-1.5">
             <Label>Price (USD)</Label>
@@ -347,12 +364,14 @@ export function PackEditForm({
             </Select>
           </div>
         </div>
+        ) : null}
         {packType === "shard" && (
           <div className="space-y-1.5">
             <Label>Shard Cost</Label>
             <Input type="number" value={shardCost} onChange={(e) => setShardCost(e.target.value)} min="1" step="1" disabled={saving} />
           </div>
         )}
+        {!isShardMode && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Tags</Label>
@@ -386,6 +405,7 @@ export function PackEditForm({
             <RiskLevelSlider value={difficulty} onChange={setDifficulty} />
           </div>
         </div>
+        )}
         <div className="space-y-1.5">
           <Label>Image</Label>
           <ImageDropzone
@@ -412,6 +432,15 @@ export function PackEditForm({
           sets={pickerSets}
           rarities={pickerRarities}
         />
+        {isShardMode && cards.length > 0 && (
+          <TargetEvOddsSetter
+            cards={cards}
+            cardsPerOpen={cpo}
+            onApplyOdds={applyTargetEvOdds}
+            onPriceDerived={(p) => setPrice(p.toFixed(2))}
+            disabled={saving}
+          />
+        )}
         {cards.length > 0 && (
           <>
             <SortableCardTable cards={cards} onReorder={setCards} updateCard={updateCard} removeCard={removeCard} />
@@ -420,9 +449,11 @@ export function PackEditForm({
                 Total odds: {totalOdds.toFixed(6)}%
               </p>
               <p className="text-muted-foreground">EV/card: {formatCurrency(evPerCard)} · EV/open: {formatCurrency(expectedPayout)}</p>
+              {!isShardMode && (
               <p className={houseEdge < 0 ? "text-rose-600" : houseEdge < 5 ? "text-yellow-500" : "text-emerald-600"}>
                 House edge: {houseEdge.toFixed(6)}%
               </p>
+              )}
             </div>
           </>
         )}
@@ -434,7 +465,7 @@ export function PackEditForm({
             Cancel
           </Button>
         ) : null}
-        <Button onClick={handleSubmit} disabled={saving || !name || !price || !shardCostValid}>
+        <Button onClick={handleSubmit} disabled={saving || !name || !shardCostValid || (isShardMode ? cards.length === 0 : !price)}>
           {saving ? "Saving..." : "Save Changes"}
         </Button>
       </div>
