@@ -108,15 +108,15 @@ export function DbEnvSettingsCard({ display }: { display: MainDbEnvDisplay }) {
 
   return (
     <div className="space-y-4">
-      <SectionHeading icon={Database} title="Main database" />
+      <SectionHeading icon={Database} title="Development database" />
 
       <div className="flex items-start gap-2.5 rounded-xl border border-rose-500/25 bg-rose-500/[0.06] p-3 text-xs text-muted-foreground sm:text-sm">
         <ShieldAlert className="mt-0.5 size-4 shrink-0 text-rose-600 dark:text-rose-400" />
         <p>
-          Admin-only. Full connection strings include credentials — treat like
-          passwords. They are read from server env vars and never stored in the
-          admin database. The Admin DB (sessions, users, audit) is always separate
-          and is not switched by the environment toggle below.
+          Admin-only. The dev connection string includes credentials — treat like
+          a password. Production credentials are never shown here. The Admin DB
+          (sessions, users, audit) is always separate and is not switched by the
+          environment toggle below.
         </p>
       </div>
 
@@ -158,12 +158,7 @@ export function DbEnvSettingsCard({ display }: { display: MainDbEnvDisplay }) {
           </div>
         </div>
 
-        <div className="mt-6 space-y-5">
-          <ConnectionUrlField
-            label="Production (DATABASE_URL)"
-            url={display.prodDatabaseUrl}
-            hint={formatDbTargetLine(display.prod)}
-          />
+        <div className="mt-6">
           <ConnectionUrlField
             label="Development (DEV_DATABASE_URL)"
             url={display.devDatabaseUrl}

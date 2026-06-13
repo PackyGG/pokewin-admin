@@ -40,10 +40,8 @@ export function parseDbUrlDisplay(
 export type MainDbEnvDisplay = {
   activeEnv: DbEnv;
   devConfigured: boolean;
-  prod: DbTargetDisplay;
   dev: DbTargetDisplay;
-  /** Full URLs — admin-only UI; never log or commit. */
-  prodDatabaseUrl: string | null;
+  /** Full dev URL — admin-only UI; never log or commit. Prod is never exposed. */
   devDatabaseUrl: string | null;
 };
 
@@ -52,9 +50,7 @@ export async function getMainDbEnvDisplay(): Promise<MainDbEnvDisplay> {
   return {
     activeEnv,
     devConfigured: isDevDbConfigured(),
-    prod: parseDbUrlDisplay(process.env.DATABASE_URL),
     dev: parseDbUrlDisplay(process.env.DEV_DATABASE_URL),
-    prodDatabaseUrl: process.env.DATABASE_URL?.trim() || null,
     devDatabaseUrl: process.env.DEV_DATABASE_URL?.trim() || null,
   };
 }
