@@ -311,6 +311,21 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
   {
+    // Challenges — analytics surface for the challenge program (prize cost,
+    // claims, completion). The /challenges page is CRUD-only; this sits in
+    // Insights as the read-only analytics view. Icon string `Trophy` MUST be
+    // registered in the ICONS map in `src/components/app-sidebar.tsx` (it is).
+    id: "nav.insights.challenges",
+    group: "Insights",
+    label: "Challenges",
+    href: "/insights/challenges",
+    pageKey: "/insights/challenges",
+    icon: "Trophy",
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
     id: "nav.insights.rewards.deposit-bonus",
     group: "Insights",
     label: "Deposit Bonus",
