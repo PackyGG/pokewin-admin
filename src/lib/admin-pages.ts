@@ -76,6 +76,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // key so it can be granted independently of the per-reward deep-dives.
   { group: "Insights", label: "Forecast", key: "/insights/forecast" },
   { group: "Insights", label: "Edge Plan 2.0", key: "/insights/edge-plan-2" },
+  // Wager Liability — platform-wide wager-requirement liability snapshot
+  // (gated user balances behind the sweepstakes wager requirement). Own
+  // grantable key so a role can be granted it independently.
+  { group: "Insights", label: "Wager Liability", key: "/insights/wager-liability" },
   // Transactions
   // Standalone /transactions overview removed — admins land on a
   // specific sub-ledger instead. Each sub-page carries its own
