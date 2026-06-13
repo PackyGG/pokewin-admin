@@ -311,6 +311,36 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
   {
+    // Challenges — analytics surface for the challenge program (prize cost,
+    // claims, completion). The /challenges page is CRUD-only; this sits in
+    // Insights as the read-only analytics view. Icon string `Trophy` MUST be
+    // registered in the ICONS map in `src/components/app-sidebar.tsx` (it is).
+    id: "nav.insights.challenges",
+    group: "Insights",
+    label: "Challenges",
+    href: "/insights/challenges",
+    pageKey: "/insights/challenges",
+    icon: "Trophy",
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
+    // Coins & Shards — global secondary-currency economy. Icon string
+    // `Coins` is already registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (no React #130 risk). Sidebar-only,
+    // like its Insights siblings.
+    id: "nav.insights.coins",
+    group: "Insights",
+    label: "Coins & Shards",
+    href: "/insights/coins",
+    pageKey: "/insights/coins",
+    icon: "Coins",
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
     id: "nav.insights.rewards.deposit-bonus",
     group: "Insights",
     label: "Deposit Bonus",
@@ -328,6 +358,17 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     href: "/insights/rewards/rakeback",
     pageKey: "/insights/rewards/rakeback",
     icon: "Wallet",
+    isNew: true,
+    inSidebar: false,
+    inPalette: false,
+  },
+  {
+    id: "nav.insights.rewards.expiry",
+    group: "Insights",
+    label: "Reward Expiry",
+    href: "/insights/rewards/expiry",
+    pageKey: "/insights/rewards/expiry",
+    icon: "Hourglass",
     isNew: true,
     inSidebar: false,
     inPalette: false,
@@ -390,6 +431,22 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     isNew: true,
     inSidebar: true,
     inPalette: true,
+  },
+  {
+    // Wager Liability — platform-wide wager-requirement liability snapshot
+    // (gated user balances behind the sweepstakes wager requirement). Icon
+    // string `Lock` MUST be registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (React #130). Sidebar-only, like its
+    // Insights siblings.
+    id: "nav.insights.wager-liability",
+    group: "Insights",
+    label: "Wager Liability",
+    href: "/insights/wager-liability",
+    pageKey: "/insights/wager-liability",
+    icon: "Lock",
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
   },
 
   {

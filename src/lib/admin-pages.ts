@@ -54,6 +54,14 @@ export const ADMIN_PAGES: AdminPage[] = [
   // cross-cutting analytical surfaces.
   { group: "Insights", label: "GGR", key: "/ggr" },
   { group: "Insights", label: "Rewards", key: "/insights/rewards" },
+  // Challenges — analytics surface for the challenge program (prize cost,
+  // claims, completion). The /challenges page stays CRUD-only; this is the
+  // read-only insights view. Own grantable key.
+  { group: "Insights", label: "Challenges", key: "/insights/challenges" },
+  // Coins & Shards — global secondary-currency economy (live wallet supply +
+  // coin_transactions flow). Own grantable key so a role can be granted it
+  // independently of the per-reward deep-dives.
+  { group: "Insights", label: "Coins & Shards", key: "/insights/coins" },
   // Legacy routes — thin redirects; keys retained for bookmark + role grants.
   { group: "Insights", label: "Games (legacy)", key: "/insights/games" },
   { group: "Insights", label: "Signup (legacy)", key: "/insights/rewards/signup" },
@@ -68,6 +76,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // without the full Rewards rollup).
   { group: "Insights", label: "Deposit Bonus", key: "/insights/rewards/deposit-bonus" },
   { group: "Insights", label: "Rakeback", key: "/insights/rewards/rakeback" },
+  { group: "Insights", label: "Reward Expiry", key: "/insights/rewards/expiry" },
   { group: "Insights", label: "Race", key: "/insights/rewards/race" },
   { group: "Insights", label: "Affiliate", key: "/insights/rewards/affiliate" },
   // Forecast — unified reward-forecast hub. Hosts a full-depth
@@ -76,6 +85,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // key so it can be granted independently of the per-reward deep-dives.
   { group: "Insights", label: "Forecast", key: "/insights/forecast" },
   { group: "Insights", label: "Edge Plan 2.0", key: "/insights/edge-plan-2" },
+  // Wager Liability — platform-wide wager-requirement liability snapshot
+  // (gated user balances behind the sweepstakes wager requirement). Own
+  // grantable key so a role can be granted it independently.
+  { group: "Insights", label: "Wager Liability", key: "/insights/wager-liability" },
   // Transactions
   // Standalone /transactions overview removed — admins land on a
   // specific sub-ledger instead. Each sub-page carries its own
