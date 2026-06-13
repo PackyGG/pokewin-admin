@@ -130,6 +130,14 @@ const num = (v: string | number | null | undefined): number => {
 };
 
 /**
+ * Round to cents. Money values are `Decimal(20,2)`; the derived figures
+ * (per-source contribution, requirement total, remaining, locked total) are
+ * computed with JS floats, so round each to the cent before display/sum so
+ * the breakdown adds up exactly and never shows a $0.01 FP drift.
+ */
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/**
  * Read the user's wager-requirement progress, or `null` when this DB doesn't
  * carry the sweepstakes columns (prod) or the user has no balances row.
  */
@@ -191,7 +199,7 @@ export async function getUserWagerProgress(
     defaults?.wager_requirement_bps ??
     null;
 
-  const completedUsd = num(row.wager_requirement_progress);
+  const completedUsd = round2(num(row.wager_requirement_progress));
 
   // Resolve the bps for a bucket: 0 when exempt, else the supplied bps.
   const bucketBps = (bps: number | null | undefined): number | null => {
@@ -214,8 +222,9 @@ export async function getUserWagerProgress(
       lifetimeTotalUsd: num(row.total_bonus_won),
       requirementBps: bucketBps(defaults?.bonus_wager_requirement_bps),
       contributionUsd: null,
-      lockedUsd:
+      lockedUsd: round2(
         num(row.unwagered_bonus_other_usd) + num(row.unwagered_race_prize_usd),
+      ),
     },
     {
       key: "affiliate",
@@ -250,15 +259,18 @@ export async function getUserWagerProgress(
       s.contributionUsd = null;
       continue;
     }
-    const contribution = (s.lifetimeTotalUsd * s.requirementBps) / BPS_PER_X;
+    const contribution = round2((s.lifetimeTotalUsd * s.requirementBps) / BPS_PER_X);
     s.contributionUsd = contribution;
     if (requiredUsd != null) requiredUsd += contribution;
   }
+  if (requiredUsd != null) requiredUsd = round2(requiredUsd);
 
   const remainingUsd =
-    requiredUsd != null ? Math.max(0, requiredUsd - completedUsd) : null;
+    requiredUsd != null ? round2(Math.max(0, requiredUsd - completedUsd)) : null;
 
-  const totalLockedUsd = sources.reduce((acc, s) => acc + s.lockedUsd, 0);
+  const totalLockedUsd = round2(
+    sources.reduce((acc, s) => acc + s.lockedUsd, 0),
+  );
 
   return {
     completedUsd,

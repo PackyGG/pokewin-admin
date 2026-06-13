@@ -496,7 +496,11 @@ async function UserDetailBody({
   // no-balance → the card's muted state). Own catch→null, like above.
   const wagerProgressPromise =
     initialTab === "account"
-      ? getUserWagerProgress(id).catch(() => null)
+      ? safeQueryOrNull(
+          () => getUserWagerProgress(id),
+          "users.detail.wagerProgress",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        ).then((r) => r.data)
       : null;
 
   // Trust tab: shared-identity fan-outs. Previously these rode only the
