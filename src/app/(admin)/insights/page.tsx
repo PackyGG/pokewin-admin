@@ -34,6 +34,7 @@ import {
   getInsightsHubWager,
   INSIGHTS_HUB_WAGER_LOOKBACK_DAYS,
 } from "@/lib/queries/insights-analytics/hub-wager";
+import { getRealizedPnlSnapshot } from "@/lib/queries/_realized-pnl";
 import { RewardSpendPanel, type RewardSpendRow } from "./reward-spend-panel";
 
 export const metadata = { title: "Insights" };
@@ -57,11 +58,21 @@ const getHubWager = cache(() => getInsightsHubWager());
  *
  *   1. "How is the business doing right now?" — a 6-tile headline KPI
  *      strip (wager → GGR → reward cost → NGR → realized P&L → cost%
- *      of GGR) for the LIFETIME window. GGR → cost% come from the SAME
- *      `getCostBreakdown` helper Cost Breakdown / Dashboard use (no new
- *      math, no drift); the headline Wager is the rule-correct customer
- *      stake from `getInsightsHubWager` (borrow-net real amount,
- *      creator-sessions excluded, sponsored battles + upgrader included).
+ *      of GGR) for the LIFETIME window. GGR / NGR / reward cost / cost%
+ *      come from the SAME `getCostBreakdown` helper Cost Breakdown uses
+ *      (gaming margin — creators excluded; no new math, no drift); the
+ *      headline Wager is the rule-correct customer stake from
+ *      `getInsightsHubWager` (borrow-net real amount, creator-sessions
+ *      excluded, sponsored battles + upgrader included).
+ *
+ *      Realized P&L is DIFFERENT: it is the lifetime balance-sheet
+ *      snapshot from `getRealizedPnlSnapshot` (deposits − withdrawals −
+ *      on-site balance − inventory − unclaimed vouchers/rakeback), the
+ *      same source the /insights/real-numbers page renders — so the two
+ *      can't drift. It includes ALL real users incl. creators, because
+ *      their real crypto withdrawals are a real house cost. It is NOT the
+ *      windowed `getCostBreakdown(...).pnl`, which under-counts in-flight
+ *      withdrawal liability and overstates the lifetime bottom line.
  *
  *   2. "Where do I drill in next?" — a quick-link grid of every
  *      sub-area (Cost Breakdown, Analytics, GGR, Games, Rewards,
@@ -150,6 +161,11 @@ export default async function InsightsHubPage() {
  *   • NGR              — emerald when ≥ 0, rose when < 0
  *   • Realized P&L     — emerald when ≥ 0, rose when < 0 (the true bottom line)
  *   • Cost % of GGR    — cyan (a ratio, not a flow; informational)
+ *
+ * The Realized P&L tile reads the lifetime balance-sheet snapshot
+ * (`getRealizedPnlSnapshot`) on its own `safeQuery` leg, so a snapshot
+ * read failure degrades only that one tile (it falls back to the
+ * windowed cost-breakdown P&L) without taking down the rest of the strip.
  */
 async function HeadlineKpiStrip({
   period,
@@ -158,20 +174,27 @@ async function HeadlineKpiStrip({
   period: InsightsPeriod;
   periodLabel: string;
 }) {
-  const [{ data, error }, { data: wager }] = await Promise.all([
-    // Same call as before (identical args) — now routed through the
-    // per-render `cache()` wrapper so the Reward-spend box shares this
-    // ONE fetch instead of refetching the heavy legs.
-    safeQuery(
-      () => getHubCostBreakdown(period, periodLabel),
-      null,
-      "insights.hub.kpi",
-    ),
-    // Headline wager — total customer stake (borrow-net, creator-sessions
-    // excluded, sponsored + upgrader included), lifetime. Its own leg so a
-    // wager-read failure degrades only this tile, not the whole strip.
-    safeQuery(() => getHubWager(), 0, "insights.hub.wager"),
-  ]);
+  const [{ data, error }, { data: wager }, { data: pnlSnapshot }] =
+    await Promise.all([
+      // Same call as before (identical args) — now routed through the
+      // per-render `cache()` wrapper so the Reward-spend box shares this
+      // ONE fetch instead of refetching the heavy legs.
+      safeQuery(
+        () => getHubCostBreakdown(period, periodLabel),
+        null,
+        "insights.hub.kpi",
+      ),
+      // Headline wager — total customer stake (borrow-net, creator-sessions
+      // excluded, sponsored + upgrader included), lifetime. Its own leg so a
+      // wager-read failure degrades only this tile, not the whole strip.
+      safeQuery(() => getHubWager(), 0, "insights.hub.wager"),
+      // Realized P&L — the lifetime balance-sheet snapshot (deposits −
+      // withdrawals − holdings − unclaimed liabilities), the SAME source as
+      // /insights/real-numbers. React-cached + 5-min cached, so this is
+      // cheap. Its own leg → a failure degrades only the P&L tile (it then
+      // falls back to the windowed cost-breakdown P&L below).
+      safeQuery(() => getRealizedPnlSnapshot(), null, "insights.hub.realized-pnl"),
+    ]);
 
   if (error || !data) {
     return (
@@ -185,8 +208,15 @@ async function HeadlineKpiStrip({
 
   const ggrPos = data.ggr >= 0;
   const ngrPos = data.ngr >= 0;
-  const pnlPos = data.pnl >= 0;
   const costPctOfGgr = data.margin.costPctOfGgr;
+
+  // Realized P&L = the lifetime balance-sheet snapshot (the true bottom
+  // line, same as /insights/real-numbers). Falls back to the windowed
+  // cost-breakdown P&L only if the snapshot leg failed, so the tile never
+  // goes blank. `usingSnapshot` decides which sublabel we show.
+  const usingSnapshotPnl = pnlSnapshot != null;
+  const realizedPnl = usingSnapshotPnl ? pnlSnapshot.pnl : data.pnl;
+  const pnlPos = realizedPnl >= 0;
 
   // Reward cost as % of GGR — the "how much of the gross margin did we
   // give back?" ratio. Falls back to a dash when GGR is non-positive
@@ -239,10 +269,10 @@ async function HeadlineKpiStrip({
           label="Realized P&L"
           icon={pnlPos ? TrendingUp : TrendingDown}
           accent={pnlPos ? "emerald" : "rose"}
-          value={`${pnlPos ? "+" : "−"}${formatCurrency(Math.abs(data.pnl))}`}
+          value={`${pnlPos ? "+" : "−"}${formatCurrency(Math.abs(realizedPnl))}`}
           sub={
-            data.margin.pnlPctOfWager !== null
-              ? `${data.margin.pnlPctOfWager.toFixed(1)}% of wager · bottom line`
+            usingSnapshotPnl
+              ? "deposits − withdrawals − holdings · lifetime balance sheet"
               : "deposits − withdrawals − holdings"
           }
         />
