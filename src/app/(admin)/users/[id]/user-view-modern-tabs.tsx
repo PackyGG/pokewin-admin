@@ -89,6 +89,8 @@ import { UserVouchersPanel } from "./user-vouchers-panel";
 import { JoinedBattlesPanel } from "./joined-battles-panel";
 import { UserWagerRequirementCard } from "./user-wager-requirement-card";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
+import { UserWagerProgressCard } from "./user-wager-progress-card";
+import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 import type {
   PaginatedInventory,
   TipEntry,
@@ -1620,6 +1622,7 @@ export function AccountTab({
   notesPromise,
   pnlResultPromise,
   wagerRequirementPromise,
+  wagerProgressPromise,
 }: {
   data: UserDetail;
   notesPromise: Promise<SafeQueryResult<AdminNote[]>> | null;
@@ -1629,6 +1632,9 @@ export function AccountTab({
   // "awaiting backend deploy" state for null, exactly as before; only the
   // await point moved off the body gate's serial tail.
   wagerRequirementPromise: Promise<UserWagerRequirement | null> | null;
+  // Read-only wager-requirement PROGRESS from the backend-written `balances`
+  // columns (dev-only). null = prod / no-balance / read failed → muted card.
+  wagerProgressPromise: Promise<UserWagerProgress | null> | null;
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
   return (
@@ -1683,6 +1689,14 @@ export function AccountTab({
             wagerRequirementPromise={wagerRequirementPromise}
             canManage={data.sessionRole === "admin"}
           />
+        </Suspense>
+      ) : (
+        <SkeletonCard lines={3} />
+      )}
+      <SectionHeading icon={TrendingUp} title="Wager Requirement Progress" />
+      {wagerProgressPromise ? (
+        <Suspense fallback={<SkeletonCard lines={3} />}>
+          <WagerProgressStreamed wagerProgressPromise={wagerProgressPromise} />
         </Suspense>
       ) : (
         <SkeletonCard lines={3} />
@@ -1756,6 +1770,15 @@ function WagerRequirementStreamed({
       canManage={canManage}
     />
   );
+}
+
+function WagerProgressStreamed({
+  wagerProgressPromise,
+}: {
+  wagerProgressPromise: Promise<UserWagerProgress | null>;
+}) {
+  const wagerProgress = use(wagerProgressPromise);
+  return <UserWagerProgressCard data={wagerProgress} />;
 }
 
 function NotesStreamed({

@@ -70,6 +70,7 @@ import type { UserRewards } from "@/lib/queries/users";
 import type { PaginatedInventory } from "./user-tabs-types";
 import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
+import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import { ErrorPill } from "./band-error";
 import { TILE_COLORS } from "./user-view-modern-panels";
@@ -164,6 +165,7 @@ export function UserViewModern({
   sharedIpsPromise,
   sharedFingerprintsPromise,
   wagerRequirementPromise,
+  wagerProgressPromise,
   viewerIsAdjustmentOwner,
   initialTab,
 }: {
@@ -205,6 +207,10 @@ export function UserViewModern({
   // API, NOT the MAIN DB; plain nullable value, its own catch→null wrapper
   // in page.tsx). null resolution = the card's muted degraded state.
   wagerRequirementPromise: Promise<UserWagerRequirement | null> | null;
+  // Account tab — read-only wager-requirement PROGRESS derived from the
+  // backend-written `balances` columns (dev-only). null = prod / no-balance /
+  // read failed → the card's muted "not available" state.
+  wagerProgressPromise: Promise<UserWagerProgress | null> | null;
   // True only for the owner `motha`. Defence-in-depth UI flag: when false the
   // Finances type-filter dropdown drops the "admin balance adjustment" option
   // so a non-owner never even sees the category label. The real boundary is
@@ -642,6 +648,7 @@ export function UserViewModern({
             notesPromise={notesPromise}
             pnlResultPromise={pnlResultPromise}
             wagerRequirementPromise={wagerRequirementPromise}
+            wagerProgressPromise={wagerProgressPromise}
           />
         )}
       </FadeIn>

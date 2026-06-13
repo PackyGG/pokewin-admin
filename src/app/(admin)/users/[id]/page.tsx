@@ -36,6 +36,7 @@ import {
   type SafeQueryResult,
 } from "@/lib/errors/safe-query";
 import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
+import { getUserWagerProgress } from "@/lib/queries/users-wager-progress";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -490,6 +491,13 @@ async function UserDetailBody({
     initialTab === "account"
       ? getUserWagerRequirement(id).catch(() => null)
       : null;
+  // Account tab: read-only wager-requirement PROGRESS derived from the
+  // backend-written `balances` columns (dev-only; resolves to null on prod /
+  // no-balance → the card's muted state). Own catch→null, like above.
+  const wagerProgressPromise =
+    initialTab === "account"
+      ? getUserWagerProgress(id).catch(() => null)
+      : null;
 
   // Trust tab: shared-identity fan-outs. Previously these rode only the
   // 30s statement_timeout — now they get the same explicit per-query
@@ -659,6 +667,7 @@ async function UserDetailBody({
       sharedIpsPromise={sharedIpsPromise}
       sharedFingerprintsPromise={sharedFingerprintsPromise}
       wagerRequirementPromise={wagerRequirementPromise}
+      wagerProgressPromise={wagerProgressPromise}
       viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
       initialTab={initialTab}
     />
