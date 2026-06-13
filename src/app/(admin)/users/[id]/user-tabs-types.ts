@@ -617,6 +617,7 @@ export const EXCHANGE_TX_TYPES = [
 export type TabKey =
   | "overview"
   | "finances"
+  | "funds"
   | "rewards"
   | "gaming"
   | "inventory"
@@ -627,6 +628,7 @@ export type TabKey =
 export const TAB_KEYS = new Set<TabKey>([
   "overview",
   "finances",
+  "funds",
   "rewards",
   "gaming",
   "inventory",

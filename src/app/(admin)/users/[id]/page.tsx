@@ -685,11 +685,11 @@ function UserDetailBodySkeleton() {
   return (
     <div className="space-y-6">
       {/* Modern user view: identity hero with avatar + status pills + KPIs.
-          8 KPI tiles + 8 tabs — counts mirror UserViewModern's hero strip
+          8 KPI tiles + 9 tabs — counts mirror UserViewModern's hero strip
           and tab bar so the streamed body swaps in without a layout jump. */}
       <Skeleton className="h-32 rounded-2xl" />
       <KpiStripSkeleton count={8} />
-      <TabBarSkeleton count={8} />
+      <TabBarSkeleton count={9} />
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Skeleton className="h-48 rounded-2xl" />
         <Skeleton className="h-48 rounded-2xl" />

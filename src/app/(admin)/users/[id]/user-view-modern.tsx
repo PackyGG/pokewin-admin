@@ -53,6 +53,7 @@ import {
   MapPin,
   Link2,
   Megaphone,
+  GitBranch,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -78,6 +79,7 @@ import { TILE_COLORS } from "./user-view-modern-panels";
 import {
   OverviewTab,
   FinancesTab,
+  FundsTab,
   RewardsTab,
   GamingTab,
   InventoryTab,
@@ -107,6 +109,7 @@ import {
 export {
   OverviewTab,
   FinancesTab,
+  FundsTab,
   RewardsTab,
   GamingTab,
   InventoryTab,
@@ -138,6 +141,11 @@ const TABS: TabDef[] = [
   { key: "overview", label: "Overview", icon: Activity },
   { key: "gaming", label: "Gaming", icon: Swords },
   { key: "finances", label: "Finances", icon: Wallet },
+  // Funds trace — where the user's money came from + which wager it
+  // carries. Sits next to Finances (both are money surfaces): Finances
+  // is the raw deposit/withdrawal ledger, Funds is the provenance +
+  // wager-attribution view built on the sweepstakes source columns.
+  { key: "funds", label: "Funds", icon: GitBranch },
   { key: "rewards", label: "Rewards", icon: Gift },
   { key: "inventory", label: "Inventory", icon: Gem },
   { key: "trust", label: "Trust", icon: ShieldAlert },
@@ -620,6 +628,14 @@ export function UserViewModern({
             isAdmin={isAdmin}
             viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
           />
+        )}
+
+        {/* Funds trace — money provenance + wager attribution. Uses the
+            always-kicked wagerProgressPromise for the per-source + "which
+            wager" sections and the already-resolved data.balances for the
+            balance-now KPIs, so it needs no new tab-gated query. */}
+        {activeTab === "funds" && (
+          <FundsTab data={data} wagerProgressPromise={wagerProgressPromise} />
         )}
 
         {activeTab === "rewards" && (
