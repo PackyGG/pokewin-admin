@@ -5,20 +5,22 @@
  *   npx tsx "src/app/(admin)/packs/__checks__/reprice.ts"
  *
  * NO DB, NO React, NO server imports — imports ONLY the dep-free math module
- * (`insights/edge-calc/math`) and pins the safety invariants the owner set for
- * the "re-price every priced pack to 10.99%" tool:
+ * (`insights/edge-calc/math`) and pins the safety invariants for the
+ * "re-price active official packs → target edge" tool (target is owner-custom,
+ * default 10.99%; bands are RELATIVE to the chosen target):
  *
- *   1.  Band shape: hard ⊃ accept ∋ target (10.8 < 10.95 ≤ 10.99 ≤ 11.05 < 11.2).
- *   2.  Exact hit: a pack whose ideal price is a clean cent → action "reprice"
- *       at exactly 10.99%, inside the hard band.
- *   3.  Already-on-target → "unchanged" (no write), price unchanged.
- *   4.  The worked $0.45-EV case (rounds to ~11.76%) → "skip", newPrice null.
+ *   1.  Band shape: hard ⊃ accept ∋ target; target range 1%–50%.
+ *   2.  Exact hit at the default 10.99% target → "reprice" at the clean cent.
+ *   3.  Already-on-target → "unchanged" (no write).
+ *   4.  The REAL "1% 18 PLUS" case ($1.25, 1 card, EV $1.1153 → 10.78%) →
+ *       "skip" at the 10.99% target, newPrice null (no cent hits the band).
  *   5.  No pool (EV ≤ 0) → "skip", newPrice null.
- *   6.  repriceEdgeWithinHardBand boundaries (10.8% / 11.2% inclusive).
- *   7.  THE BIG ONE — sweep thousands of synthetic EVs: every "reprice" lands
- *       inside BOTH the accept band and the hard band with a positive price;
- *       every "skip" exposes NO writable price (newPrice === null). i.e. it is
- *       impossible for this tool to ever write an edge outside 10.8–11.2%.
+ *   6.  repriceEdgeWithinHardBand is relative to the target (default + custom).
+ *   7.  Custom target (15%) hits a clean cent → "reprice" at 15%.
+ *   8.  clampRepriceTarget bounds the target into [1%, 50%].
+ *   9.  THE BIG ONE — sweep thousands of synthetic EVs at multiple targets:
+ *       every "reprice" lands within ±ACCEPT of the target AND inside the hard
+ *       band; every "skip" exposes NO writable price (newPrice === null).
  *
  * Exit code 0 = all passed; 1 = at least one failure (printed).
  */
@@ -26,11 +28,12 @@
 import {
   planPackReprice,
   repriceEdgeWithinHardBand,
-  REPRICE_TARGET_HOUSE_EDGE,
-  REPRICE_ACCEPT_MIN_EDGE,
-  REPRICE_ACCEPT_MAX_EDGE,
-  REPRICE_HARD_MIN_EDGE,
-  REPRICE_HARD_MAX_EDGE,
+  clampRepriceTarget,
+  REPRICE_TARGET_DEFAULT,
+  REPRICE_TARGET_MIN,
+  REPRICE_TARGET_MAX,
+  REPRICE_ACCEPT_TOLERANCE,
+  REPRICE_HARD_TOLERANCE,
 } from "../../insights/edge-calc/math";
 
 let passes = 0;
@@ -59,51 +62,49 @@ function approx(actual: number, expected: number, eps: number, what: string): vo
 }
 
 /** A single-card pool whose EV per open equals `ev` exactly (weight 1). */
-function poolForEv(ev: number, currentPrice: number) {
+function poolForEv(ev: number, currentPrice: number, targetEdge?: number) {
   return {
     currentPrice,
     cardsPerOpen: 1,
     totalWeight: 1,
     weightedPriceSum: ev,
+    targetEdge,
   };
 }
 
 // ── 1. Band shape ───────────────────────────────────────────────────
-check("band shape: hard ⊃ accept ∋ target", () => {
-  assert(REPRICE_HARD_MIN_EDGE < REPRICE_ACCEPT_MIN_EDGE, "hard.min < accept.min");
-  assert(REPRICE_ACCEPT_MIN_EDGE <= REPRICE_TARGET_HOUSE_EDGE, "accept.min ≤ target");
-  assert(REPRICE_TARGET_HOUSE_EDGE <= REPRICE_ACCEPT_MAX_EDGE, "target ≤ accept.max");
-  assert(REPRICE_ACCEPT_MAX_EDGE < REPRICE_HARD_MAX_EDGE, "accept.max < hard.max");
-  approx(REPRICE_TARGET_HOUSE_EDGE, 0.1099, 1e-12, "target");
-  approx(REPRICE_ACCEPT_MIN_EDGE, 0.1095, 1e-12, "accept.min");
-  approx(REPRICE_ACCEPT_MAX_EDGE, 0.1105, 1e-12, "accept.max");
-  approx(REPRICE_HARD_MIN_EDGE, 0.108, 1e-12, "hard.min");
-  approx(REPRICE_HARD_MAX_EDGE, 0.112, 1e-12, "hard.max");
+check("band shape: accept ⊂ hard, sane tolerances + target range", () => {
+  assert(REPRICE_ACCEPT_TOLERANCE > 0, "accept tol > 0");
+  assert(REPRICE_HARD_TOLERANCE > REPRICE_ACCEPT_TOLERANCE, "hard tol > accept tol");
+  approx(REPRICE_TARGET_DEFAULT, 0.1099, 1e-12, "default target");
+  approx(REPRICE_TARGET_MIN, 0.01, 1e-12, "min target");
+  approx(REPRICE_TARGET_MAX, 0.5, 1e-12, "max target");
 });
 
-// ── 2. Exact hit at a clean cent ────────────────────────────────────
-check("exact 10.99%: EV 8.901 with $10.00 ideal → reprice at $10.00, 10.99%", () => {
-  // price = EV / 0.8901 = 8.901 / 0.8901 = 10.00 exactly → edge 10.99%.
+// ── 2. Exact hit at the default target ──────────────────────────────
+check("exact 10.99%: EV 8.901 with $10.00 ideal → reprice at $10.00", () => {
   const plan = planPackReprice(poolForEv(8.901, 9.0));
   assert(plan.action === "reprice", `expected reprice, got ${plan.action}`);
-  assert(plan.newPrice === 10, `expected newPrice 10.00, got ${plan.newPrice}`);
+  assert(plan.newPrice === 10, `expected $10.00, got ${plan.newPrice}`);
   approx(plan.newEdge ?? NaN, 0.1099, 1e-6, "newEdge");
-  assert(repriceEdgeWithinHardBand(plan.newEdge ?? NaN), "newEdge in hard band");
+  assert(repriceEdgeWithinHardBand(plan.newEdge ?? NaN), "in hard band");
 });
 
-// ── 3. Already on target → unchanged, no write ──────────────────────
+// ── 3. Already on target → unchanged ────────────────────────────────
 check("already on target: EV 8.901 at $10.00 → unchanged", () => {
   const plan = planPackReprice(poolForEv(8.901, 10.0));
   assert(plan.action === "unchanged", `expected unchanged, got ${plan.action}`);
-  assert(plan.newPrice === 10, "newPrice still 10.00");
 });
 
-// ── 4. Worked out-of-band case → skip, never writes ─────────────────
-check("$0.45 EV (best cent ≈ 11.76%) → skip, newPrice null", () => {
-  const plan = planPackReprice(poolForEv(0.45, 0.45));
+// ── 4. The REAL "1% 18 PLUS" pack ───────────────────────────────────
+check("'1% 18 PLUS' ($1.25, EV $1.1153) → skip at 10.99%, newPrice null", () => {
+  // Verified read-only against prod: price $1.25, cpo 1, EV $1.1153.
+  // $1.25→10.78%, $1.26→11.48% — no whole cent lands in the band.
+  const plan = planPackReprice(poolForEv(1.1153, 1.25));
   assert(plan.action === "skip", `expected skip, got ${plan.action}`);
   assert(plan.newPrice === null, `skip must not expose a price, got ${plan.newPrice}`);
-  assert(/acceptance band/i.test(plan.reason), `reason should cite the band: "${plan.reason}"`);
+  approx(plan.currentEdge, 0.10776, 5e-4, "currentEdge ~10.78%");
+  assert(/10\.78%|11\.48%/.test(plan.reason), `reason should bracket the cents: "${plan.reason}"`);
 });
 
 // ── 5. No priceable pool → skip ─────────────────────────────────────
@@ -118,71 +119,87 @@ check("no pool (totalWeight 0) → skip, newPrice null", () => {
   assert(plan.newPrice === null, "newPrice null");
 });
 
-// ── 6. Hard-band boundary helper ────────────────────────────────────
-check("repriceEdgeWithinHardBand boundaries inclusive", () => {
-  assert(!repriceEdgeWithinHardBand(0.1079), "10.79% rejected");
-  assert(repriceEdgeWithinHardBand(0.108), "10.8% accepted (inclusive)");
-  assert(repriceEdgeWithinHardBand(0.1099), "10.99% accepted");
-  assert(repriceEdgeWithinHardBand(0.112), "11.2% accepted (inclusive)");
-  assert(!repriceEdgeWithinHardBand(0.1121), "11.21% rejected");
-  assert(!repriceEdgeWithinHardBand(NaN), "NaN rejected");
+// ── 6. Hard-band helper is relative to the target ───────────────────
+check("repriceEdgeWithinHardBand relative to target", () => {
+  // default target 10.99%, hard tol 0.002 → ~[10.79%, 11.19%]. (Values are
+  // kept clearly inside/outside the boundary so IEEE float fuzz at the exact
+  // edge — which the guard correctly treats as fail-closed — can't flake.)
+  assert(!repriceEdgeWithinHardBand(0.1078), "10.78% rejected (default)");
+  assert(repriceEdgeWithinHardBand(0.1099), "10.99% accepted (default)");
+  assert(repriceEdgeWithinHardBand(0.1117), "11.17% accepted (default)");
+  assert(!repriceEdgeWithinHardBand(0.1121), "11.21% rejected (default)");
+  // custom target 15% → ~[14.8%, 15.2%]
+  assert(repriceEdgeWithinHardBand(0.15, 0.15), "15% accepted (custom)");
+  assert(repriceEdgeWithinHardBand(0.1482, 0.15), "14.82% accepted (custom)");
+  assert(!repriceEdgeWithinHardBand(0.146, 0.15), "14.6% rejected (custom)");
+  assert(!repriceEdgeWithinHardBand(0.1099, 0.15), "10.99% rejected at 15% target");
 });
 
-// ── 7. THE BIG ONE: exhaustive EV sweep, band can never be escaped ──
-check("sweep: no reprice ever lands outside the band; skips never expose a price", () => {
-  let repriced = 0;
-  let unchanged = 0;
-  let skipped = 0;
-  // EV from $0.05 to $200 in 1-cent steps over a few cardsPerOpen shapes.
-  for (const cardsPerOpen of [1, 3, 5]) {
-    for (let cents = 5; cents <= 20000; cents++) {
-      const ev = cents / 100;
-      // Pool: cardsPerOpen identical cards so expectedCardValue × cpo = ev.
-      const weightedPriceSum = ev; // expectedCardValue = ev / cardsPerOpen × cpo collapses below
-      const plan = planPackReprice({
-        currentPrice: ev, // arbitrary current price
-        cardsPerOpen,
-        totalWeight: cardsPerOpen,
-        // expectedCardValue = weightedPriceSum/totalWeight = ev/cpo;
-        // EV = (ev/cpo) × cpo = ev. So set weightedPriceSum = ev.
-        weightedPriceSum,
-      });
+// ── 7. Custom target (15%) ──────────────────────────────────────────
+check("custom 15% target: EV 8.5 → reprice at $10.00 (15% edge)", () => {
+  // price = EV / (1 - 0.15) = 8.5 / 0.85 = $10.00 exactly → edge 15%.
+  const plan = planPackReprice(poolForEv(8.5, 9.0, 0.15));
+  assert(plan.action === "reprice", `expected reprice, got ${plan.action}`);
+  assert(plan.newPrice === 10, `expected $10.00, got ${plan.newPrice}`);
+  approx(plan.newEdge ?? NaN, 0.15, 1e-6, "newEdge ~15%");
+  assert(repriceEdgeWithinHardBand(plan.newEdge ?? NaN, 0.15), "in hard band of 15%");
+});
 
-      if (plan.action === "reprice") {
-        repriced++;
-        assert(
-          plan.newPrice !== null && plan.newPrice > 0,
-          `reprice must have a positive price (ev=${ev}, cpo=${cardsPerOpen})`,
-        );
-        const edge = plan.newEdge ?? NaN;
-        assert(
-          edge >= REPRICE_ACCEPT_MIN_EDGE && edge <= REPRICE_ACCEPT_MAX_EDGE,
-          `reprice edge ${edge} outside accept band (ev=${ev}, cpo=${cardsPerOpen})`,
-        );
-        assert(
-          repriceEdgeWithinHardBand(edge),
-          `reprice edge ${edge} outside HARD band (ev=${ev}, cpo=${cardsPerOpen})`,
-        );
-      } else if (plan.action === "unchanged") {
-        unchanged++;
-        const edge = plan.newEdge ?? NaN;
-        assert(
-          repriceEdgeWithinHardBand(edge),
-          `unchanged edge ${edge} outside HARD band (ev=${ev}, cpo=${cardsPerOpen})`,
-        );
-      } else {
-        skipped++;
-        assert(
-          plan.newPrice === null,
-          `skip must not expose a writable price (ev=${ev}, cpo=${cardsPerOpen}, price=${plan.newPrice})`,
-        );
+// ── 8. clampRepriceTarget bounds ────────────────────────────────────
+check("clampRepriceTarget bounds [1%, 50%]; NaN → default", () => {
+  assert(clampRepriceTarget(0.6) === REPRICE_TARGET_MAX, "0.6 → 0.5");
+  assert(clampRepriceTarget(0.001) === REPRICE_TARGET_MIN, "0.001 → 0.01");
+  assert(clampRepriceTarget(0.15) === 0.15, "0.15 passes through");
+  assert(clampRepriceTarget(NaN) === REPRICE_TARGET_DEFAULT, "NaN → default");
+});
+
+// ── 9. THE BIG ONE: exhaustive sweep at multiple targets ────────────
+check("sweep: reprice always in band; skips never expose a price", () => {
+  let repriced = 0;
+  let skipped = 0;
+  let unchanged = 0;
+  for (const target of [0.1099, 0.15, 0.05, 0.2]) {
+    for (const cardsPerOpen of [1, 5]) {
+      for (let cents = 5; cents <= 20000; cents++) {
+        const ev = cents / 100;
+        const plan = planPackReprice({
+          currentPrice: ev,
+          cardsPerOpen,
+          totalWeight: cardsPerOpen,
+          weightedPriceSum: ev, // expectedCardValue = ev/cpo → EV = ev
+          targetEdge: target,
+        });
+        if (plan.action === "reprice") {
+          repriced++;
+          const edge = plan.newEdge ?? NaN;
+          assert(
+            plan.newPrice !== null && plan.newPrice > 0,
+            `reprice needs a positive price (ev=${ev}, t=${target})`,
+          );
+          assert(
+            Math.abs(edge - target) <= REPRICE_ACCEPT_TOLERANCE,
+            `reprice edge ${edge} outside accept of ${target} (ev=${ev})`,
+          );
+          assert(
+            repriceEdgeWithinHardBand(edge, target),
+            `reprice edge ${edge} outside HARD band of ${target} (ev=${ev})`,
+          );
+        } else if (plan.action === "unchanged") {
+          unchanged++;
+        } else {
+          skipped++;
+          assert(
+            plan.newPrice === null,
+            `skip must not expose a price (ev=${ev}, t=${target})`,
+          );
+        }
       }
     }
   }
   console.log(
     `      swept ${repriced + unchanged + skipped} pools → ${repriced} reprice / ${unchanged} unchanged / ${skipped} skip`,
   );
-  assert(repriced > 0, "sweep should produce at least some repriceable packs");
+  assert(repriced > 0, "sweep should produce repriceable packs");
 });
 
 // ── Summary ─────────────────────────────────────────────────────────

@@ -19,13 +19,16 @@ import {
 import {
   planPackReprice,
   repriceEdgeWithinHardBand,
-  REPRICE_TARGET_HOUSE_EDGE,
-  REPRICE_ACCEPT_MIN_EDGE,
-  REPRICE_ACCEPT_MAX_EDGE,
-  REPRICE_HARD_MIN_EDGE,
-  REPRICE_HARD_MAX_EDGE,
+  clampRepriceTarget,
+  REPRICE_TARGET_DEFAULT,
+  REPRICE_TARGET_MIN,
+  REPRICE_TARGET_MAX,
+  REPRICE_ACCEPT_TOLERANCE,
+  REPRICE_HARD_TOLERANCE,
   type RepriceAction,
 } from "@/app/(admin)/insights/edge-calc/math";
+import { require2FA } from "@/lib/require-2fa";
+import { signRepriceToken, verifyRepriceToken } from "@/lib/reprice-token";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
@@ -659,22 +662,35 @@ export async function quickUpdatePack(
   revalidatePath(`/packs/${packId}`);
 }
 
-// ─── Global re-price to 10.99% house edge ─────────────────────────────
+// ─── Global re-price to a target house edge (default 10.99%) ──────────
 //
-// Scope: OFFICIAL packs only (never promo / custom / reward / shard). The tool
-// ONLY ever adjusts a pack's `price` — it NEVER touches card odds (the
-// pack_cards pool is read to compute EV and is never written here). The single
-// most dangerous action in the panel: it rewrites live pack prices on the game
-// DB. Architecture is deliberately defensive:
-//   1. `planRepriceAllPacks` is a READ-ONLY dry-run — it computes the full
-//      before/after plan and writes NOTHING, so the operator reviews exactly
-//      what will change before confirming.
-//   2. `repricePackToTargetEdge` writes ONE pack at a time (the client loops
-//      over the plan), re-deriving the price server-side from fresh DB truth
-//      (never trusting a client-supplied price) and HARD-asserting the
-//      resulting edge stays inside [10.8%, 11.2%] before persisting.
-// Both are admin-only. The band rule lives in the dep-free math module
-// (`planPackReprice`) so the dry-run and the write share one implementation.
+// Scope: ACTIVE, OFFICIAL packs only (never inactive, never promo / custom /
+// reward / shard). The tool ONLY ever adjusts a pack's `price` — it NEVER
+// touches card odds (the pack_cards pool is read to compute EV, never written).
+// The single most dangerous action in the panel; deliberately defensive:
+//   1. `planRepriceAllPacks(target)` is a READ-ONLY dry-run — computes the full
+//      before/after plan and writes NOTHING. Owner-only (no 2FA: it can't
+//      change anything).
+//   2. `authorizeReprice(totp)` verifies the owner's 2FA ONCE and mints a
+//      short-lived signed token for the run.
+//   3. `repricePackToTargetEdge(packId, token, target)` writes ONE pack at a
+//      time (the client loops for live progress), requires a valid 2FA token,
+//      re-derives the price server-side from fresh DB truth (never a
+//      client-supplied price), and HARD-asserts the resulting edge is within
+//      the hard tolerance of the target before persisting.
+// The target + band rule live in the dep-free math module (`planPackReprice`)
+// so the dry-run and the write share one implementation.
+
+/** Validate + normalize a target edge fraction; throws on out-of-range input. */
+function resolveRepriceTarget(target: number | undefined): number {
+  const t = target ?? REPRICE_TARGET_DEFAULT;
+  if (!Number.isFinite(t) || t < REPRICE_TARGET_MIN || t > REPRICE_TARGET_MAX) {
+    throw new Error(
+      `Target edge must be between ${(REPRICE_TARGET_MIN * 100).toFixed(0)}% and ${(REPRICE_TARGET_MAX * 100).toFixed(0)}%.`,
+    );
+  }
+  return clampRepriceTarget(t);
+}
 
 export type RepricePlanRow = {
   packId: string;
@@ -695,6 +711,7 @@ export type RepricePlanSummary = {
   /** Which game DB the writes would hit — surfaced so the operator can't
    *  confuse a prod run with a dev run. */
   dbEnv: DbEnv;
+  /** The target edge this plan was computed for (fraction). */
   target: number;
   acceptMin: number;
   acceptMax: number;
@@ -714,18 +731,21 @@ export type RepricePlanSummary = {
 };
 
 /**
- * READ-ONLY dry-run for the global re-price. Computes every in-scope pack's
- * current→new price and current→new edge and buckets them. Writes nothing —
- * safe to run even against prod. Admin-only.
+ * READ-ONLY dry-run for the global re-price at `targetEdge` (default 10.99%).
+ * Computes every in-scope (active, official) pack's current→new price and edge
+ * and buckets them. Writes nothing — safe to run even against prod. Owner-only.
  */
-export async function planRepriceAllPacks(): Promise<RepricePlanSummary> {
+export async function planRepriceAllPacks(
+  targetEdge?: number,
+): Promise<RepricePlanSummary> {
   const session = await requirePageAccess("/packs");
   if (!isRepriceOwner(session)) {
     throw new Error("The global re-price tool is restricted to the owner.");
   }
+  const target = resolveRepriceTarget(targetEdge);
 
   const dbEnv = await readDbEnv();
-  const packs = await getPacksPoolComposition(); // scoped: official packs, price > 0
+  const packs = await getPacksPoolComposition(); // scoped: active official, price > 0
 
   const rows: RepricePlanRow[] = packs.map((p) => {
     const plan = planPackReprice({
@@ -733,6 +753,7 @@ export async function planRepriceAllPacks(): Promise<RepricePlanSummary> {
       cardsPerOpen: p.cardsPerOpen,
       totalWeight: p.totalWeight,
       weightedPriceSum: p.weightedPriceSum,
+      targetEdge: target,
     });
     return {
       packId: p.id,
@@ -761,11 +782,11 @@ export async function planRepriceAllPacks(): Promise<RepricePlanSummary> {
 
   return {
     dbEnv,
-    target: REPRICE_TARGET_HOUSE_EDGE,
-    acceptMin: REPRICE_ACCEPT_MIN_EDGE,
-    acceptMax: REPRICE_ACCEPT_MAX_EDGE,
-    hardMin: REPRICE_HARD_MIN_EDGE,
-    hardMax: REPRICE_HARD_MAX_EDGE,
+    target,
+    acceptMin: target - REPRICE_ACCEPT_TOLERANCE,
+    acceptMax: target + REPRICE_ACCEPT_TOLERANCE,
+    hardMin: target - REPRICE_HARD_TOLERANCE,
+    hardMax: target + REPRICE_HARD_TOLERANCE,
     counts: {
       total: rows.length,
       toReprice: toReprice.length,
@@ -776,6 +797,23 @@ export async function planRepriceAllPacks(): Promise<RepricePlanSummary> {
     unchanged,
     skipped,
   };
+}
+
+/**
+ * Verify the owner's 2FA ONCE and mint a short-lived token authorizing a
+ * re-price run. The client passes this token to each per-pack write so TOTP
+ * isn't re-prompted per pack (and a long run can't expire mid-way). Owner-only.
+ */
+export async function authorizeReprice(
+  totpCode: string,
+): Promise<{ token: string }> {
+  const session = await requirePageAccess("/packs");
+  if (!isRepriceOwner(session)) {
+    throw new Error("The global re-price tool is restricted to the owner.");
+  }
+  // Throws "Invalid TOTP code" / "2FA not enabled" / "code required" verbatim.
+  await require2FA(session.userId, totpCode);
+  return { token: await signRepriceToken(session.userId) };
 }
 
 export type RepriceResult = {
@@ -790,22 +828,24 @@ export type RepriceResult = {
 };
 
 /**
- * Re-price ONE pack to the 10.99% target. The client loops over the dry-run's
- * `toReprice` ids, calling this per pack so the operation is visible, stoppable,
- * and each pack is its own audited write.
+ * Re-price ONE pack to `targetEdge` (default 10.99%). The client loops over the
+ * dry-run's `toReprice` ids, calling this per pack so the run is visible,
+ * stoppable, and each pack is its own audited write.
  *
  * Authoritative & paranoid:
- *   - Admin-only (+ the same `__can_update_pack` capability the editor uses).
+ *   - Owner-only, AND requires a valid 2FA token from `authorizeReprice`.
  *   - Re-fetches the pack's pool FRESH from the DB — the client supplies only an
- *     id, never a price.
- *   - Re-validates scope server-side (pack_type / price) independently of the
- *     dry-run filter.
- *   - HARD-asserts the resulting edge ∈ [10.8%, 11.2%] and THROWS otherwise, so
- *     a logic regression fails closed (no write) instead of mispricing a pack.
+ *     id + the token + the target, never a price.
+ *   - Re-validates scope server-side (active / official / price) independently
+ *     of the dry-run filter.
+ *   - HARD-asserts the resulting edge is within the hard tolerance of the target
+ *     and THROWS otherwise, so a logic regression fails closed (no write).
  *   - Writes ONLY `price` (+ updated_at); never touches realized stats / pool.
  */
 export async function repricePackToTargetEdge(
   packId: string,
+  token: string,
+  targetEdge?: number,
 ): Promise<RepriceResult> {
   const db = await getDb();
   const session = await requirePageAccess("/packs");
@@ -813,35 +853,35 @@ export async function repricePackToTargetEdge(
     throw new Error("The global re-price tool is restricted to the owner.");
   }
   await requireCapability(session, "__can_update_pack", "update packs");
+  // 2FA gate: the run must carry a valid token minted by `authorizeReprice`.
+  if (!(await verifyRepriceToken(token, session.userId))) {
+    throw new Error("2FA authorization expired or missing — re-confirm to continue.");
+  }
+  const target = resolveRepriceTarget(targetEdge);
 
   const [comp] = await getPacksPoolComposition({ packIds: [packId] });
   if (!comp) throw new Error("Pack not found");
 
   // Defense-in-depth scope re-check (independent of the dry-run's WHERE):
-  // official packs only.
+  // active official packs only.
+  const skip = (reason: string): RepriceResult => ({
+    packId,
+    name: comp.name,
+    status: "skipped",
+    priceBefore: comp.price,
+    priceAfter: null,
+    edgeBefore: 0,
+    edgeAfter: null,
+    reason,
+  });
   if (!(REPRICE_INCLUDED_PACK_TYPES as readonly string[]).includes(comp.packType)) {
-    return {
-      packId,
-      name: comp.name,
-      status: "skipped",
-      priceBefore: comp.price,
-      priceAfter: null,
-      edgeBefore: 0,
-      edgeAfter: null,
-      reason: `Out of scope: only official packs are re-priced (this is '${comp.packType}').`,
-    };
+    return skip(`Out of scope: only official packs are re-priced (this is '${comp.packType}').`);
+  }
+  if (!comp.active) {
+    return skip("Out of scope: only active packs are re-priced.");
   }
   if (!(comp.price > 0)) {
-    return {
-      packId,
-      name: comp.name,
-      status: "skipped",
-      priceBefore: comp.price,
-      priceAfter: null,
-      edgeBefore: 0,
-      edgeAfter: null,
-      reason: "Out of scope: pack has no price.",
-    };
+    return skip("Out of scope: pack has no price.");
   }
 
   const plan = planPackReprice({
@@ -849,6 +889,7 @@ export async function repricePackToTargetEdge(
     cardsPerOpen: comp.cardsPerOpen,
     totalWeight: comp.totalWeight,
     weightedPriceSum: comp.weightedPriceSum,
+    targetEdge: target,
   });
 
   if (plan.action !== "reprice" || plan.newPrice === null || plan.newEdge === null) {
@@ -864,12 +905,12 @@ export async function repricePackToTargetEdge(
     };
   }
 
-  // HARD BACKSTOP — never persist a price whose edge escapes [10.8%, 11.2%].
-  // Should be unreachable (accept band ⊂ hard band), so a trip here means a
-  // logic bug: fail closed.
-  if (!repriceEdgeWithinHardBand(plan.newEdge)) {
+  // HARD BACKSTOP — never persist a price whose edge escapes the hard tolerance
+  // of the target. Unreachable in normal operation (accept ⊂ hard); a trip here
+  // means a logic bug: fail closed.
+  if (!repriceEdgeWithinHardBand(plan.newEdge, target)) {
     throw new Error(
-      `Refusing to write "${comp.name}": resulting edge ${(plan.newEdge * 100).toFixed(2)}% is outside the hard 10.8–11.2% band.`,
+      `Refusing to write "${comp.name}": resulting edge ${(plan.newEdge * 100).toFixed(2)}% is outside the hard band around ${(target * 100).toFixed(2)}%.`,
     );
   }
 
@@ -887,7 +928,7 @@ export async function repricePackToTargetEdge(
       pack_id: packId,
       name: comp.name,
       via: "reprice_to_target_edge",
-      target_edge: REPRICE_TARGET_HOUSE_EDGE,
+      target_edge: target,
       price_before: comp.price,
       price_after: plan.newPrice,
       edge_before: plan.currentEdge,

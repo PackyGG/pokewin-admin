@@ -93,33 +93,42 @@ export function computePackEv(input: {
 // ─── Global re-price guard (target 10.99% edge) ───────────────────────
 
 /**
- * Aim point for the global "re-price all packs" tool — the SAME knob the
- * per-pack "set from EV" button uses (`TARGET_HOUSE_EDGE`, 10.99%).
+ * Default aim point for the global "re-price all packs" tool — the SAME knob
+ * the per-pack "set from EV" button uses (`TARGET_HOUSE_EDGE`, 10.99%). The
+ * owner can override it per-run with a custom target (e.g. 15%).
  */
-export const REPRICE_TARGET_HOUSE_EDGE = TARGET_HOUSE_EDGE;
+export const REPRICE_TARGET_DEFAULT = TARGET_HOUSE_EDGE;
 
 /**
- * Write-acceptance band. A pack is only re-priced when the best achievable
- * whole-cent price lands the RESULTING edge within [10.95%, 11.05%]. Because
- * the price is rounded to cents, a tiny/cheap pool can't always hit 10.99%
- * exactly — those that can't get this close are SKIPPED (left untouched),
- * never written off-target. Mandated by the owner ("the edge I want is 10.99%
- * nothing else … you allowed to make it 10.95-11.05 in that case").
+ * Allowed range for a custom target edge (1%–50%). A fat-finger outside this
+ * (e.g. "150") is rejected, not clamped silently, by the server action.
  */
-export const REPRICE_ACCEPT_MIN_EDGE = 0.1095;
-export const REPRICE_ACCEPT_MAX_EDGE = 0.1105;
+export const REPRICE_TARGET_MIN = 0.01;
+export const REPRICE_TARGET_MAX = 0.5;
 
 /**
- * Absolute HARD band. The write action asserts the new edge sits within
- * [10.8%, 11.2%] before it persists anything and throws otherwise — a
- * defense-in-depth backstop that can never be crossed even if the acceptance
- * logic above regresses. ACCEPT ⊂ HARD, so in normal operation it never
- * triggers; it exists so a logic bug fails CLOSED (no write) instead of
- * mispricing a live pack. Owner rule: "make it impossible to go below 10.8% …
- * never above 11.2%".
+ * Tolerances are RELATIVE to the chosen target so they scale to any custom %.
+ *
+ *   • ACCEPT (±0.05pp): a pack is only re-priced when the best achievable
+ *     whole-cent price lands the resulting edge within this of the target.
+ *     Because price rounds to cents, a tiny/cheap pool can't always get this
+ *     close — those are SKIPPED (left untouched), never written off-target.
+ *   • HARD (±0.2pp): the write action asserts the new edge is within this of
+ *     the target before persisting and THROWS otherwise — a fail-closed
+ *     backstop. ACCEPT ⊂ HARD, so it never trips in normal operation; it
+ *     exists so a logic bug refuses to write rather than mispricing a pack.
+ *
+ * At the default 10.99% target this is ≈ [10.94, 11.04] accept / [10.79,
+ * 11.19] hard — the owner's original "10.95–11.05 / 10.8–11.2", generalized.
  */
-export const REPRICE_HARD_MIN_EDGE = 0.108;
-export const REPRICE_HARD_MAX_EDGE = 0.112;
+export const REPRICE_ACCEPT_TOLERANCE = 0.0005;
+export const REPRICE_HARD_TOLERANCE = 0.002;
+
+/** Clamp a target edge into the allowed range; non-finite → default. */
+export function clampRepriceTarget(target: number): number {
+  if (!Number.isFinite(target)) return REPRICE_TARGET_DEFAULT;
+  return Math.min(REPRICE_TARGET_MAX, Math.max(REPRICE_TARGET_MIN, target));
+}
 
 export type RepriceAction = "reprice" | "unchanged" | "skip";
 
@@ -138,28 +147,32 @@ export type PackReprisePlan = {
 };
 
 /**
- * Decide how a single pack should be re-priced to the 10.99% target.
+ * Decide how a single pack should be re-priced to `targetEdge` (default
+ * 10.99%, owner-overridable per run). Adjusts ONLY the price — never odds.
  *
  * Pure + dep-free so the read-only dry-run, the authoritative write action,
  * and the correctness checks all share ONE implementation — there is no second
  * place where the band rule could drift. The edge is monotonic in price
  * (higher price → higher house edge), so the optimum whole-cent price is one of
  * `floor`/`ceil` of the ideal cents; we evaluate both (plus `round`) and pick
- * whichever lands the resulting edge closest to 10.99%.
+ * whichever lands the resulting edge closest to the target.
  *
  * Returns `action`:
- *   • "reprice"   → write `newPrice` (resulting edge ∈ accept band, ≠ current)
+ *   • "reprice"   → write `newPrice` (edge within ±ACCEPT of target, ≠ current)
  *   • "unchanged" → already at the target cent, write nothing
- *   • "skip"      → no priceable pool, or closest achievable edge is outside
- *                   the [10.95%, 11.05%] accept band → leave the price untouched
+ *   • "skip"      → no priceable pool, or no whole-cent price lands within
+ *                   ±ACCEPT of the target (cheap packs: 1¢ is too coarse a
+ *                   step) → leave the price untouched
  */
 export function planPackReprice(input: {
   currentPrice: number;
   cardsPerOpen: number;
   totalWeight: number;
   weightedPriceSum: number;
+  targetEdge?: number;
 }): PackReprisePlan {
   const { currentPrice, cardsPerOpen, totalWeight, weightedPriceSum } = input;
+  const targetEdge = clampRepriceTarget(input.targetEdge ?? REPRICE_TARGET_DEFAULT);
 
   const ev = computePackEv({
     pricePerOpen: currentPrice,
@@ -181,8 +194,9 @@ export function planPackReprice(input: {
     };
   }
 
-  const ideal = evPerOpen / (1 - REPRICE_TARGET_HOUSE_EDGE);
+  const ideal = evPerOpen / (1 - targetEdge);
   const idealCents = ideal * 100;
+  const edgeAtCents = (cents: number) => 1 - evPerOpen / (cents / 100);
   const candidateCents = [
     Math.floor(idealCents),
     Math.round(idealCents),
@@ -196,7 +210,7 @@ export function planPackReprice(input: {
     seen.add(cent);
     const price = cent / 100;
     const edge = 1 - evPerOpen / price;
-    const dist = Math.abs(edge - REPRICE_TARGET_HOUSE_EDGE);
+    const dist = Math.abs(edge - targetEdge);
     if (best === null || dist < best.dist) best = { price, edge, dist };
   }
 
@@ -211,14 +225,23 @@ export function planPackReprice(input: {
     };
   }
 
-  if (best.edge < REPRICE_ACCEPT_MIN_EDGE || best.edge > REPRICE_ACCEPT_MAX_EDGE) {
+  if (Math.abs(best.edge - targetEdge) > REPRICE_ACCEPT_TOLERANCE) {
+    // Show the bracketing cents so the operator sees WHY no price works
+    // (e.g. a $1.25 single-card pack: $1.25→10.78% / $1.26→11.48%).
+    const lo = Math.floor(idealCents);
+    const hi = Math.ceil(idealCents);
+    const tgtPct = (targetEdge * 100).toFixed(2);
+    const bracket =
+      lo > 0 && hi > 0 && lo !== hi
+        ? ` — $${(lo / 100).toFixed(2)}→${(edgeAtCents(lo) * 100).toFixed(2)}%, $${(hi / 100).toFixed(2)}→${(edgeAtCents(hi) * 100).toFixed(2)}%`
+        : "";
     return {
       evPerOpen,
       currentEdge,
       newPrice: null,
       newEdge: best.edge,
       action: "skip",
-      reason: `Closest achievable edge ${(best.edge * 100).toFixed(2)}% is outside the 10.95–11.05% acceptance band.`,
+      reason: `No whole-cent price hits ${tgtPct}% (±${(REPRICE_ACCEPT_TOLERANCE * 100).toFixed(2)}%); closest is ${(best.edge * 100).toFixed(2)}%${bracket}.`,
     };
   }
 
@@ -233,7 +256,7 @@ export function planPackReprice(input: {
       newPrice: best.price,
       newEdge: best.edge,
       action: "unchanged",
-      reason: "Already priced at the 10.99% target.",
+      reason: `Already at the ${(targetEdge * 100).toFixed(2)}% target.`,
     };
   }
 
@@ -247,12 +270,17 @@ export function planPackReprice(input: {
   };
 }
 
-/** True iff an edge fraction sits inside the absolute hard band [10.8%, 11.2%]. */
-export function repriceEdgeWithinHardBand(edge: number): boolean {
+/**
+ * True iff `edge` is within the HARD tolerance of `targetEdge`. The write
+ * action calls this as a fail-closed backstop before persisting.
+ */
+export function repriceEdgeWithinHardBand(
+  edge: number,
+  targetEdge: number = REPRICE_TARGET_DEFAULT,
+): boolean {
   return (
     Number.isFinite(edge) &&
-    edge >= REPRICE_HARD_MIN_EDGE &&
-    edge <= REPRICE_HARD_MAX_EDGE
+    Math.abs(edge - clampRepriceTarget(targetEdge)) <= REPRICE_HARD_TOLERANCE
   );
 }
 

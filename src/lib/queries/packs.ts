@@ -511,7 +511,7 @@ export type PackPoolComposition = {
  * the single-pack write action (`packIds: [id]`, which re-validates scope
  * itself). NOT cached — callers need fresh truth immediately before a write.
  *
- *   • No `packIds`  → scoped set: official packs with `price > 0`.
+ *   • No `packIds`  → scoped set: ACTIVE official packs with `price > 0`.
  *   • With `packIds`→ exactly those ids, UNFILTERED (the write action enforces
  *     scope server-side so it can report an out-of-scope id rather than silently
  *     returning nothing).
@@ -532,7 +532,7 @@ export async function getPacksPoolComposition(opts?: {
     params.push(opts.packIds);
   } else {
     const included = REPRICE_INCLUDED_PACK_TYPES.map((t) => `'${t}'`).join(", ");
-    whereClause = `p.pack_type IN (${included}) AND p.price > 0`;
+    whereClause = `p.pack_type IN (${included}) AND p.price > 0 AND p.active = true`;
   }
 
   const rows = await db.$queryRawUnsafe<
