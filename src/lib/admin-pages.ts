@@ -40,6 +40,13 @@ export const ADMIN_PAGES: AdminPage[] = [
   // "where does the money go" surface that sits on top of GGR / Money
   // Flow / Rewards.
   { group: "Insights", label: "Cost Breakdown", key: "/insights/cost-breakdown" },
+  // Real Numbers — the source-of-truth page. Reads the canonical corrected
+  // metric layer (creators + staff + blacklist excluded; borrow-net basis)
+  // and shows the reconciled lifetime headline (wager / GGR / reward cost /
+  // NGR / realized P&L), a per-game GGR split, both the gaming-margin and
+  // balance-sheet waterfalls, the GGR↔P&L reconciliation, and plain-language
+  // definitions. Own grantable key so a role can be granted it independently.
+  { group: "Insights", label: "Real Numbers", key: "/insights/real-numbers" },
   { group: "Insights", label: "Analytics", key: "/insights/analytics" },
   // GGR — long-form GGR breakdown page (24h/3d/7d windows, per-type
   // cards, top-10 contributors). Sits in Insights alongside the other

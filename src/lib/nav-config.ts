@@ -252,6 +252,20 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
   {
+    // Real Numbers — the source-of-truth page. Icon string `Sigma` is already
+    // registered in the ICONS map in `src/components/app-sidebar.tsx`
+    // (no React #130 risk). Sidebar-only, like its Insights siblings.
+    id: "nav.insights.real-numbers",
+    group: "Insights",
+    label: "Real Numbers",
+    href: "/insights/real-numbers",
+    pageKey: "/insights/real-numbers",
+    icon: "Sigma",
+    isNew: true,
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
     id: "nav.insights.analytics",
     group: "Insights",
     label: "Analytics",
