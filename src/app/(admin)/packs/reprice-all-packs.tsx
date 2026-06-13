@@ -474,6 +474,15 @@ export function RepriceAllPacksButton() {
           </DialogHeader>
 
           <div className="space-y-3">
+            {planTarget != null && (
+              <p className="text-xs text-muted-foreground">
+                Aiming for{" "}
+                <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                  {pct(planTarget)}
+                </span>{" "}
+                house edge
+              </p>
+            )}
             <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
               <div
                 className="h-full rounded-full bg-primary motion-safe:transition-all motion-safe:duration-300 motion-safe:ease-out"
