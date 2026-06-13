@@ -29,6 +29,7 @@ import {
 } from "@/lib/balance-adjustment-categories";
 import { getMetricsScope } from "@/lib/metrics/scope";
 import { getCanonicalMoneyKpis } from "@/lib/queries/house-kpis";
+import { INSIGHTS_HUB_WAGER_LOOKBACK_DAYS } from "@/lib/queries/insights-analytics/hub-wager";
 
 /**
  * Cost Breakdown — the full wager → P&L leakage waterfall, built on the
@@ -1319,4 +1320,65 @@ const cachedCostBreakdownTopbar30d = unstable_cache(
  */
 export async function getCostBreakdownTopbar30d(): Promise<CostBreakdownTopbar30d> {
   return cachedCostBreakdownTopbar30d();
+}
+
+// ─── Topbar LIFETIME money chips (ADDITIVE export) ───────────────────────────
+//
+// The admin top-bar pills must equal the /insights hub headline (Lifetime) BY
+// CONSTRUCTION — so this helper runs the IDENTICAL `getCostBreakdown` call
+// shape the /insights hub runs for its lifetime margin tiles
+// (`("all", "Lifetime", 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS)` — contributors
+// skipped, 365d-capped) and merely projects the same three already-computed
+// figures out of the waterfall. No new math, no new scope — a pure cached
+// projection of the owner-trusted lifetime assembly, sharing the hub's cache
+// via the same `unstable_cache` revalidate + insights tags so it stays cheap on
+// every admin page. The 365d cap is what keeps the lifetime read bounded
+// (CLAUDE.md "Performance & Daten-Laden") — never an unbounded full-history
+// scan.
+
+/** The three cost-breakdown figures the top bar renders (lifetime, 365d-capped). */
+export type CostBreakdownTopbarLifetime = {
+  /** Canonical lifetime GGR — the same `ggr` the /insights hub lifetime margin tile shows. */
+  ggr: number;
+  /** Real cash deposited in the window — the waterfall's "Deposits (cash in)" bridge row (`residual:deposit`). */
+  deposits: number;
+  /** Card withdrawals shipped in the window — the waterfall's authoritative "Card withdrawals (shipped)" liability figure. */
+  withdrawals: number;
+};
+
+const cachedCostBreakdownTopbarLifetime = unstable_cache(
+  async (): Promise<CostBreakdownTopbarLifetime> => {
+    // EXACT /insights hub lifetime call shape (see `insights/page.tsx`
+    // `getHubCostBreakdown`): period "all", label "Lifetime", 0 contributors,
+    // 365d lifetime cap — so every figure below is the SAME assembly the hub's
+    // headline margin tiles render, and the pills share the hub's cached read.
+    const cb = await getCostBreakdown(
+      "all",
+      "Lifetime",
+      0,
+      INSIGHTS_HUB_WAGER_LOOKBACK_DAYS,
+    );
+    return {
+      ggr: cb.ggr,
+      // Residual bridge rows with a zero total are omitted from `lines`,
+      // so a missing deposit row truthfully means $0 deposited in-window.
+      deposits:
+        cb.lines.find((l) => l.key === "residual:deposit")?.amount ?? 0,
+      withdrawals: cb.cardWithdrawals,
+    };
+  },
+  ["cost-breakdown-topbar-lifetime-v1"],
+  { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
+);
+
+/**
+ * Lifetime (365d-capped) GGR / deposits / withdrawals for the admin top-bar
+ * pills — the owner-trusted `getCostBreakdown` family on a 5-minute cache
+ * (same revalidate + insights tags as the /insights hub, so the pills share
+ * the hub's cached read and stay cheap on every admin page). A thrown assembly
+ * is NOT cached (`unstable_cache` only stores fulfilled results); the topbar's
+ * `safeQuery` wrapper degrades it to "—" pills and the next render retries.
+ */
+export async function getCostBreakdownTopbarLifetime(): Promise<CostBreakdownTopbarLifetime> {
+  return cachedCostBreakdownTopbarLifetime();
 }

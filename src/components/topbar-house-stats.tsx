@@ -1,26 +1,30 @@
 import { ArrowDownToLine, ArrowUpFromLine, Coins, TrendingUp } from "lucide-react";
-import { getInsightsHubWager30d } from "@/lib/queries/insights-analytics/hub-wager";
-import { getCostBreakdownTopbar30d } from "@/lib/queries/insights-analytics/cost-breakdown";
+import { getInsightsHubWager } from "@/lib/queries/insights-analytics/hub-wager";
+import { getCostBreakdownTopbarLifetime } from "@/lib/queries/insights-analytics/cost-breakdown";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { formatCompactUsd } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
 /**
- * Admin-only "house at a glance" pills for the top bar — rolling 30d wager,
+ * Admin-only "house at a glance" pills for the top bar — LIFETIME wager,
  * deposit, withdrawal, and gaming margin (GGR), shown to the RIGHT of the
  * sidebar toggle + breadcrumbs.
  *
- * DATA (Edge Plan 2.0 spec #13 — the owner-trusted stack):
- *   • Wager ← `getInsightsHubWager30d` — the SAME cached helper behind the
- *     /insights hub tile and the Edge Plan 2.0 "Last 30 days" recon row
- *     (borrow-net real amounts, creator sessions excluded, sponsored battles
- *     + upgrader included).
- *   • GGR / Deposits / Withdrawals ← `getCostBreakdownTopbar30d` — a cached
- *     projection of the IDENTICAL `getCostBreakdown("30d", …)` assembly the
- *     edge-plan baseline and /insights cost-breakdown render.
- * So the pills equal the edge-plan 30d row and /insights BY CONSTRUCTION
- * (shared helpers, same call shapes), on a 5-min `unstable_cache` so they
- * stay cheap on every admin page.
+ * DATA (the owner-trusted lifetime stack — same sources as the /insights hub):
+ *   • Wager ← `getInsightsHubWager` — the SAME cached helper behind the
+ *     /insights hub headline Wager tile (lifetime, 365d-capped; borrow-net
+ *     real amounts, creator sessions excluded, sponsored battles + upgrader
+ *     included).
+ *   • GGR / Deposits / Withdrawals ← `getCostBreakdownTopbarLifetime` — a
+ *     cached projection of the IDENTICAL `getCostBreakdown("all", …, 365)`
+ *     assembly the /insights hub headline margin tiles render.
+ * So the pills equal the /insights lifetime overview BY CONSTRUCTION (shared
+ * helpers, same call shapes), on a 5-min `unstable_cache` that shares the
+ * hub's cached read so they stay cheap on every admin page.
+ *
+ * PERF: both helpers are 365d-capped + `unstable_cache`d (300s), so the
+ * lifetime read is bounded (never an unbounded full-history scan) and reuses
+ * the hub's cache on hits.
  *
  * RESILIENCE: wrapped in `safeQuery` (15s bound), and the layout renders
  * this inside its own `<Suspense>` boundary, so a slow or failed read
@@ -30,14 +34,14 @@ import { cn } from "@/lib/utils";
  */
 
 /** Loud window label — every pill tooltip names the window + the shared source. */
-const WINDOW_SOURCE = "Last 30 days — same source as /insights";
+const WINDOW_SOURCE = "Lifetime — same source as /insights";
 
 export async function TopbarHouseStats() {
   const { data, error } = await safeQuery(
     async () => {
       const [wager, cb] = await Promise.all([
-        getInsightsHubWager30d(),
-        getCostBreakdownTopbar30d(),
+        getInsightsHubWager(),
+        getCostBreakdownTopbarLifetime(),
       ]);
       return {
         wager,
