@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import { Check, Copy, Database, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { switchDbEnv } from "@/lib/actions/db-env";
-import type { DbEnv } from "@/lib/db-env";
 import {
   formatDbTargetLine,
+  type DbEnv,
   type MainDbEnvDisplay,
-} from "@/lib/db-env-display";
+} from "@/lib/db-env-display.types";
 import { SectionHeading } from "@/components/modern-panels";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
