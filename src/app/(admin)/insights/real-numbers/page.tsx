@@ -19,6 +19,7 @@ import {
   ScrollText,
   Layers,
   Info,
+  Receipt,
   type LucideIcon,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
@@ -31,7 +32,7 @@ import {
 import { FadeIn } from "@/components/fade-in";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
@@ -44,8 +45,10 @@ import {
 } from "@/lib/queries/insights-analytics/hub-wager";
 import {
   getRealNumbersGameSplit,
+  getRewardSpendItemization,
   type RealNumbersGameSplit,
   type GameGgrRow,
+  type RewardSpendItemization,
 } from "@/lib/queries/insights-analytics/real-numbers";
 import {
   getRealizedPnlSnapshot,
@@ -96,6 +99,7 @@ export default async function RealNumbersPage() {
     { data: wager },
     { data: split },
     { data: snapshot },
+    { data: rewardSpend },
   ] = await Promise.all([
     safeQuery(
       () => getCostBreakdown("all", "Lifetime", 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS),
@@ -105,6 +109,11 @@ export default async function RealNumbersPage() {
     safeQuery(() => getInsightsHubWager(), 0, "insights.realNumbers.wager"),
     safeQuery(() => getRealNumbersGameSplit(), null, "insights.realNumbers.split"),
     safeQuery(() => getRealizedPnlSnapshot(), null, "insights.realNumbers.pnl"),
+    safeQuery(
+      () => getRewardSpendItemization(),
+      null,
+      "insights.realNumbers.rewardSpend",
+    ),
   ]);
 
   const asOf = formatDateTime(new Date());
@@ -169,6 +178,25 @@ export default async function RealNumbersPage() {
                 title="Gaming-margin waterfall — wager → GGR → NGR"
               />
               <GamingWaterfall cost={cost} wager={wager ?? 0} />
+            </section>
+
+            <section className="space-y-3">
+              <SectionHeading
+                icon={Receipt}
+                title="Reward & bonus spend — itemized · every penny, where & why"
+              />
+              {rewardSpend ? (
+                <RewardSpendPanel
+                  itemization={rewardSpend}
+                  headlineRewardCost={cost.rewardPayouts}
+                />
+              ) : (
+                <TileErrorFallback
+                  label="Reward-spend itemization"
+                  hint="The itemized reward-spend breakdown failed to load. The headline reward cost above is unaffected."
+                  size="panel"
+                />
+              )}
             </section>
 
             {snapshot && (
@@ -435,6 +463,111 @@ function GameSplitPanel({
               {residual >= 0 ? "+" : "−"}
               {formatCurrency(Math.abs(residual))} (rounding / a leg outside the
               per-game split).
+            </span>
+          )}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Reward-spend itemization ───────────────────────────────────────
+
+/**
+ * The itemized reward-spend table — every house-funded reward dollar split by
+ * source, directly below the reward-spend line in the waterfall above.
+ *
+ * Columns: Category · Amount · Count · % of reward spend · Why. House-POV is
+ * ROSE throughout — every row is money the house GAVE users (a cost). Rows are
+ * pre-sorted by amount desc. The footer total equals the page's headline
+ * reward cost (`cost.rewardPayouts` = GGR − NGR) because the itemization
+ * mirrors `getRewardCost`'s exact predicates; the reconciliation is asserted
+ * live in-render (within $1), the same way the per-game GGR panel asserts it.
+ */
+function RewardSpendPanel({
+  itemization,
+  headlineRewardCost,
+}: {
+  itemization: RewardSpendItemization;
+  headlineRewardCost: number;
+}) {
+  // Reconciliation: Σ itemized rows vs the headline reward cost. Built from
+  // the same canonical predicates, so this should be ~0 — surfaced honestly.
+  const residual = itemization.total - headlineRewardCost;
+  const reconciles = Math.abs(residual) < 1; // sub-dollar = exact
+  const denom = itemization.total;
+
+  return (
+    <Card>
+      <CardContent className="p-0">
+        {/* Header row */}
+        <div className="grid grid-cols-[1fr_minmax(0,_5.5rem)_minmax(0,_3rem)] items-center gap-2 border-b bg-muted/30 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:grid-cols-[1.6fr_minmax(0,_7rem)_minmax(0,_4.5rem)_minmax(0,_5rem)] sm:gap-3 sm:px-4">
+          <span>Category</span>
+          <span className="text-right">Amount</span>
+          <span className="hidden text-right sm:block">Count</span>
+          <span className="text-right">% spend</span>
+        </div>
+        <ul>
+          {itemization.rows.map((r) => {
+            const pct = denom > 0 ? (r.amount / denom) * 100 : null;
+            return (
+              <li
+                key={r.key}
+                className="grid grid-cols-[1fr_minmax(0,_5.5rem)_minmax(0,_3rem)] items-start gap-2 border-b border-border/60 px-3 py-3 text-xs last:border-b-0 sm:grid-cols-[1.6fr_minmax(0,_7rem)_minmax(0,_4.5rem)_minmax(0,_5rem)] sm:gap-3 sm:px-4"
+              >
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="flex items-center gap-2">
+                    <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-rose-500/10 text-rose-500">
+                      <Receipt className="size-3" />
+                    </span>
+                    <span className="truncate font-medium">{r.label}</span>
+                  </span>
+                  <span className="pl-8 text-[10px] leading-snug text-muted-foreground">
+                    {r.why}
+                  </span>
+                </span>
+                <span className="text-right font-mono font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+                  −{formatCurrency(r.amount)}
+                </span>
+                <span className="hidden text-right font-mono tabular-nums text-muted-foreground sm:block">
+                  {r.count !== null ? formatNumber(r.count) : "—"}
+                </span>
+                <span className="text-right font-mono tabular-nums text-muted-foreground">
+                  {pct !== null ? `${pct.toFixed(1)}%` : "—"}
+                </span>
+              </li>
+            );
+          })}
+          {/* Total row */}
+          <li className="grid grid-cols-[1fr_minmax(0,_5.5rem)_minmax(0,_3rem)] items-center gap-2 bg-muted/30 px-3 py-2.5 text-xs font-semibold sm:grid-cols-[1.6fr_minmax(0,_7rem)_minmax(0,_4.5rem)_minmax(0,_5rem)] sm:gap-3 sm:px-4">
+            <span>Total reward &amp; bonus spend</span>
+            <span className="text-right font-mono tabular-nums text-rose-600 dark:text-rose-400">
+              −{formatCurrency(itemization.total)}
+            </span>
+            <span className="hidden text-right sm:block" />
+            <span className="text-right font-mono tabular-nums text-muted-foreground">
+              {denom > 0 ? "100%" : "—"}
+            </span>
+          </li>
+        </ul>
+        <p className="px-3 py-2.5 text-[10px] leading-snug text-muted-foreground sm:px-4">
+          Every line is house-funded money credited to customers (a cost, House
+          POV). Lifetime, {itemization.lookbackDays}d-capped, real customers
+          only. Rain shows the net house top-up only — gross{" "}
+          {formatCurrency(itemization.rainWinGross)} rain winnings less{" "}
+          {formatCurrency(itemization.rainTipOffset)} user/founder tips ={" "}
+          {formatCurrency(itemization.netRain)} net. Creator tips are excluded
+          (a user→user pass-through, not a house cost).{" "}
+          {reconciles ? (
+            <span className="text-emerald-600 dark:text-emerald-400">
+              Reconciles to reward spend · {formatCurrency(itemization.total)}.
+            </span>
+          ) : (
+            <span className="text-amber-600 dark:text-amber-400">
+              Reconciliation residual vs the reward-spend line:{" "}
+              {residual >= 0 ? "+" : "−"}
+              {formatCurrency(Math.abs(residual))} (rounding / a leg outside the
+              itemization).
             </span>
           )}
         </p>
