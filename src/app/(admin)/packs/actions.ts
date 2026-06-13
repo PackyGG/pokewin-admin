@@ -418,6 +418,91 @@ export async function fetchPackGames(
   return getPackGames(packId, page, perPage, filters);
 }
 
+const MODAL_DETAIL_TIMEOUT_MS = 12_000;
+const MODAL_STATS_TIMEOUT_MS = 15_000;
+const MODAL_GAMES_TIMEOUT_MS = 15_000;
+
+const EMPTY_GAMES_PAGE = {
+  data: [] as Awaited<ReturnType<typeof getPackGames>>["data"],
+  total: 0,
+  page: 1,
+  perPage: 20,
+  totalPages: 0,
+};
+
+/** Lightweight identity read for modal header when the pack isn't on the list page. */
+export async function fetchPackListSeed(packId: string) {
+  await requirePageAccess("/packs");
+  const db = await getDb();
+  const pack = await db.packs.findUnique({
+    where: { id: packId },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      image_url: true,
+      price: true,
+      active: true,
+      pack_type: true,
+    },
+  });
+  if (!pack) return null;
+  return {
+    id: pack.id,
+    name: pack.name,
+    slug: pack.slug,
+    imageUrl: pack.image_url,
+    priceUsd: Number(pack.price),
+    active: pack.active,
+    packType: pack.pack_type as string | null,
+  };
+}
+
+export async function fetchPackDetailCore(packId: string) {
+  await requirePageAccess("/packs");
+  const { data } = await safeQuery(
+    () => getPackDetail(packId),
+    null,
+    "packs.modal.detail",
+    MODAL_DETAIL_TIMEOUT_MS,
+  );
+  return data;
+}
+
+export async function fetchPackDetailStats(
+  packId: string,
+  detail: NonNullable<Awaited<ReturnType<typeof getPackDetail>>>,
+): Promise<PackStats | null> {
+  await requirePageAccess("/packs");
+  const { data } = await safeQuery(
+    () =>
+      getPackStats(packId, detail.priceUsd, {
+        totalPayout: detail.totalPayout,
+        actualRtp: detail.actualRtp,
+      }),
+    null,
+    "packs.modal.stats",
+    MODAL_STATS_TIMEOUT_MS,
+  );
+  return data;
+}
+
+export async function fetchPackGamesSafe(
+  packId: string,
+  page: number,
+  perPage: number,
+) {
+  await requirePageAccess("/packs");
+  const { data, error } = await safeQuery(
+    () => getPackGames(packId, page, perPage),
+    EMPTY_GAMES_PAGE,
+    "packs.modal.games",
+    MODAL_GAMES_TIMEOUT_MS,
+  );
+  if (error) throw new Error("Games query timed out or failed");
+  return data;
+}
+
 /** Full detail payload for the centered pack modal opened from the list. */
 export type PackFullDetail = {
   /** The same shape the /packs/[id] page renders from `getPackDetail`. */
@@ -430,12 +515,6 @@ export type PackFullDetail = {
    */
   stats: PackStats | null;
 };
-
-// Mirror the page's deferred-stats timeout (PackStatsLazy.STATS_QUERY_TIMEOUT_MS):
-// the two getPackStats scans are unbounded JSON scans over provably_fair_results,
-// so bound the wait and degrade the stats block rather than hang the whole modal
-// fetch. cachedPackStatScans already caches the raw rows 60s.
-const MODAL_STATS_TIMEOUT_MS = 15_000;
 
 /**
  * Lazy-load the FULL pack detail for the big centered modal opened from a
@@ -450,28 +529,16 @@ const MODAL_STATS_TIMEOUT_MS = 15_000;
  * modal can show a 404 / error state. The stats sub-fetch is wrapped in
  * safeQuery+timeout so a slow scan degrades that block alone — detail + the
  * card pool still render, mirroring the page's <PackStatsLazy> boundary.
+ *
+ * Prefer `loadPackFullDetail` from pack-detail-cache.ts on the client — it
+ * dedupes in-flight requests so double-clicks don't double-query.
  */
 export async function fetchPackFullDetail(
   packId: string,
 ): Promise<PackFullDetail | null> {
-  await requirePageAccess("/packs");
-
-  const detail = await getPackDetail(packId);
+  const detail = await fetchPackDetailCore(packId);
   if (!detail) return null;
-
-  // Stats are the heavy, scan-backed part — fetch them resiliently so they can
-  // fail/timeout independently of the detail the modal already has in hand.
-  const { data: stats } = await safeQuery(
-    () =>
-      getPackStats(packId, detail.priceUsd, {
-        totalPayout: detail.totalPayout,
-        actualRtp: detail.actualRtp,
-      }),
-    null,
-    "packs.modal.stats",
-    MODAL_STATS_TIMEOUT_MS,
-  );
-
+  const stats = await fetchPackDetailStats(packId, detail);
   return { detail, stats };
 }
 
