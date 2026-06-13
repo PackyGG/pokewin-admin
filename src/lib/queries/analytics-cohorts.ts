@@ -89,7 +89,16 @@ export async function getCohortRetention(
 
   const rows = await db.$queryRawUnsafe<
     {
-      cohort: Date;
+      // `date_trunc(...)::date` comes back from the pg driver adapter as a
+      // `Date` today (verified read-only against the current prod DB). But a
+      // `::date` cast is a documented string-vs-Date hazard across driver /
+      // serialization changes (the twin `insights-analytics/cohorts.ts` sees
+      // this column as a string on an `unstable_cache` HIT, where JSON
+      // serialization stringifies the Date — that threw
+      // `row.cohort.toISOString is not a function`). This query isn't cached,
+      // so it gets the live `Date`; the type admits both shapes so it can't
+      // lie and the loop below coerces once before any Date method is called.
+      cohort: Date | string;
       size: string;
       period_index: number | null;
       retained: string | null;
@@ -207,11 +216,20 @@ export async function getCohortRetention(
   >();
 
   for (const row of rows) {
-    const key = row.cohort.toISOString().slice(0, 10);
+    // Coerce ONCE: `row.cohort` is a `Date` from the live driver but could be
+    // the ISO string a future driver / serialization change hands back (the
+    // cached twin already sees the string form). A plain string has no
+    // `.toISOString()` — that is the latent TypeError this guards. The value
+    // is a `YYYY-MM-DD` bucket, so `new Date("YYYY-MM-DD")` is UTC-midnight;
+    // `entry.date` carries this one normalized Date through the `.getTime()`
+    // sort, the `Intl…format()` label, and the `.toISOString()` output below.
+    const cohortDate =
+      row.cohort instanceof Date ? row.cohort : new Date(row.cohort);
+    const key = cohortDate.toISOString().slice(0, 10);
     let entry = byCohort.get(key);
     if (!entry) {
       entry = {
-        date: row.cohort,
+        date: cohortDate,
         size: Number(row.size),
         retained: Array(MAX_PERIODS).fill(0),
         revenue: Array(MAX_PERIODS).fill(0),
