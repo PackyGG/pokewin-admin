@@ -76,19 +76,34 @@ async function computeTimeToClaim(
 ): Promise<DepositBonusTimeToClaim> {
   const db = await getDb();
   // Lifetime is capped to the pairing lookback (365d) so the deposit-side
-  // LATERAL pairing doesn't scan the entire deposit history.
+  // scan doesn't span the entire deposit history.
   const dateFilter = windowDateFilterCapped(period, "d");
+  const bonusDateFilter = windowDateFilterCapped(period, "b");
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
   // Same canonical pairing (balance_before == balance_after, 30s) so
   // results reconcile with cohort + cap queries.
+  //
+  // PERFORMANCE — hash join over a materialised bonus set, NOT a
+  // correlated LATERAL. The original `JOIN LATERAL (… LIMIT 1)` had no
+  // usable index for `balance_before::numeric = wd.bal_after`
+  // (ledger_transactions — ~855k rows — is only indexed on id /
+  // external_tx_id / fireblocks_tx_id), so it Seq-Scanned the whole table
+  // PER deposit row → 57014 statement timeout on EVERY window (even 7d).
+  // We materialise the window's deposit rows AND bonus rows and hash-join
+  // them on (user_id, balance_before = balance_after) within the 30s
+  // window; `DISTINCT ON (wd.id) … ORDER BY wb.created_at ASC` keeps the
+  // FIRST matching bonus per deposit (old `LIMIT 1` semantics; INNER join
+  // → only paired deposits, identical to the original). Drops the query
+  // from a >30s timeout to <1s on live prod data. MATERIALIZED stops
+  // Postgres re-inlining the bonus CTE into a correlated form.
   const rows = await db.$queryRawUnsafe<
     {
       bucket: number;
       cnt: string;
     }[]
   >(`
-    WITH window_deposits AS (
+    WITH window_deposits AS MATERIALIZED (
       SELECT d.id, d.user_id, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
@@ -96,22 +111,23 @@ async function computeTimeToClaim(
         AND d.user_id IN ${userScope}
         ${dateFilter}
     ),
+    window_bonuses AS MATERIALIZED (
+      SELECT b.user_id, b.balance_before::numeric AS bal_before, b.created_at
+      FROM ledger_transactions b
+      WHERE b.status = 'completed'
+        AND b.type::text = 'deposit_bonus'
+        ${bonusDateFilter}
+    ),
     paired AS (
-      SELECT
-        EXTRACT(EPOCH FROM (b.bonus_at - wd.created_at))::numeric AS delta_s
+      SELECT DISTINCT ON (wd.id)
+        EXTRACT(EPOCH FROM (wb.created_at - wd.created_at))::numeric AS delta_s
       FROM window_deposits wd
-      JOIN LATERAL (
-        SELECT lt.created_at AS bonus_at
-        FROM ledger_transactions lt
-        WHERE lt.user_id = wd.user_id
-          AND lt.type::text = 'deposit_bonus'
-          AND lt.status = 'completed'
-          AND lt.balance_before::numeric = wd.bal_after
-          AND lt.created_at >= wd.created_at
-          AND lt.created_at < wd.created_at + INTERVAL '30 seconds'
-        ORDER BY lt.created_at ASC
-        LIMIT 1
-      ) b ON TRUE
+      JOIN window_bonuses wb
+        ON wb.user_id = wd.user_id
+        AND wb.bal_before = wd.bal_after
+        AND wb.created_at >= wd.created_at
+        AND wb.created_at < wd.created_at + INTERVAL '30 seconds'
+      ORDER BY wd.id, wb.created_at ASC
     )
     SELECT
       CASE
@@ -144,7 +160,8 @@ async function computeTimeToClaim(
     totalPaired += cnt;
   }
 
-  // Percentile pull — separate query but same paired CTE shape.
+  // Percentile pull — separate query but same materialised hash-join
+  // shape as the bucket query above (see its PERFORMANCE comment).
   const statsRows = await db.$queryRawUnsafe<
     {
       median_s: string | null;
@@ -154,7 +171,7 @@ async function computeTimeToClaim(
       max_s: string | null;
     }[]
   >(`
-    WITH window_deposits AS (
+    WITH window_deposits AS MATERIALIZED (
       SELECT d.id, d.user_id, d.balance_after::numeric AS bal_after, d.created_at
       FROM ledger_transactions d
       WHERE d.status = 'completed'
@@ -162,21 +179,23 @@ async function computeTimeToClaim(
         AND d.user_id IN ${userScope}
         ${dateFilter}
     ),
+    window_bonuses AS MATERIALIZED (
+      SELECT b.user_id, b.balance_before::numeric AS bal_before, b.created_at
+      FROM ledger_transactions b
+      WHERE b.status = 'completed'
+        AND b.type::text = 'deposit_bonus'
+        ${bonusDateFilter}
+    ),
     paired AS (
-      SELECT EXTRACT(EPOCH FROM (b.bonus_at - wd.created_at))::numeric AS delta_s
+      SELECT DISTINCT ON (wd.id)
+        EXTRACT(EPOCH FROM (wb.created_at - wd.created_at))::numeric AS delta_s
       FROM window_deposits wd
-      JOIN LATERAL (
-        SELECT lt.created_at AS bonus_at
-        FROM ledger_transactions lt
-        WHERE lt.user_id = wd.user_id
-          AND lt.type::text = 'deposit_bonus'
-          AND lt.status = 'completed'
-          AND lt.balance_before::numeric = wd.bal_after
-          AND lt.created_at >= wd.created_at
-          AND lt.created_at < wd.created_at + INTERVAL '30 seconds'
-        ORDER BY lt.created_at ASC
-        LIMIT 1
-      ) b ON TRUE
+      JOIN window_bonuses wb
+        ON wb.user_id = wd.user_id
+        AND wb.bal_before = wd.bal_after
+        AND wb.created_at >= wd.created_at
+        AND wb.created_at < wd.created_at + INTERVAL '30 seconds'
+      ORDER BY wd.id, wb.created_at ASC
     )
     SELECT
       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY delta_s)::text AS median_s,

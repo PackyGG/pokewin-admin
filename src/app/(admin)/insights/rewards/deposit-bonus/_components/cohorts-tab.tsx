@@ -23,7 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { cn } from "@/lib/utils";
 import {
   insightsRewardsPeriodLabel,
@@ -57,26 +57,35 @@ export async function CohortsTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
+  // Each query is statement-timeout bounded (REWARD_QUERY_TIMEOUT_MS) so a
+  // pathological scan degrades to its own fallback tile instead of hanging
+  // the segment — the cohort + time-to-claim pairings are the heaviest
+  // queries on this surface (materialised hash joins; see cohort.ts /
+  // behavior.ts).
   const [cohortRes, newRetRes, repeatRes, ttcRes] = await Promise.all([
     safeQuery(
       () => getDepositBonusCohortComparison(period),
       null,
       "insights-rewards-deposit-bonus.cohort",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getDepositBonusNewVsReturning(period),
       null,
       "insights-rewards-deposit-bonus.new-vs-returning",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getDepositBonusRepeatClaimants(period),
       null,
       "insights-rewards-deposit-bonus.repeat",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getDepositBonusTimeToClaim(period),
       null,
       "insights-rewards-deposit-bonus.ttc",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
 
