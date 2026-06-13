@@ -30,9 +30,16 @@ export type PackMaxWinStats = {
   totalPacks: number;
   /** Highest max-win pack in the catalog. */
   peak: { name: string; maxWinMultiplier: number } | null;
+  /** Packs with max win strictly above 20× vs at/below 20×. */
+  twentyXSplit: {
+    above: { count: number; share: number };
+    atOrBelow: { count: number; share: number };
+  };
   ranges: PackMaxWinRangeRow[];
   packs: PackMaxWinRow[];
 };
+
+export const PACK_MAX_WIN_20X_THRESHOLD = 20;
 
 /** 5×-wide buckets: 1–5×, 5–10×, 10–15×, … */
 export function maxWinRangeBucket(multiplier: number): {
@@ -107,6 +114,10 @@ async function computePackMaxWinStats(env: DbEnv): Promise<PackMaxWinStats> {
     .sort((a, b) => b.maxWinMultiplier - a.maxWinMultiplier);
 
   const totalPacks = packs.length;
+  const above20Count = packs.filter(
+    (p) => p.maxWinMultiplier > PACK_MAX_WIN_20X_THRESHOLD,
+  ).length;
+  const atOrBelow20Count = totalPacks - above20Count;
   const rangeCounts = new Map<string, { label: string; order: number; count: number }>();
 
   for (const pack of packs) {
@@ -137,6 +148,16 @@ async function computePackMaxWinStats(env: DbEnv): Promise<PackMaxWinStats> {
     peak: packs[0]
       ? { name: packs[0].name, maxWinMultiplier: packs[0].maxWinMultiplier }
       : null,
+    twentyXSplit: {
+      above: {
+        count: above20Count,
+        share: totalPacks > 0 ? above20Count / totalPacks : 0,
+      },
+      atOrBelow: {
+        count: atOrBelow20Count,
+        share: totalPacks > 0 ? atOrBelow20Count / totalPacks : 0,
+      },
+    },
     ranges,
     packs,
   };
@@ -144,7 +165,7 @@ async function computePackMaxWinStats(env: DbEnv): Promise<PackMaxWinStats> {
 
 const cachedPackMaxWinStats = unstable_cache(
   computePackMaxWinStats,
-  ["pack-max-win-stats-v1"],
+  ["pack-max-win-stats-v2"],
   { revalidate: 300, tags: ["packs"] },
 );
 

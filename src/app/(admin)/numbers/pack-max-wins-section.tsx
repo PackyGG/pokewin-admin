@@ -1,8 +1,9 @@
-import { Package } from "lucide-react";
-import { SectionHeading } from "@/components/modern-panels";
+import { ArrowDown, ArrowUp, Package } from "lucide-react";
+import { SectionHeading, KpiTile } from "@/components/modern-panels";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   formatMaxWinMultiplier,
+  PACK_MAX_WIN_20X_THRESHOLD,
   type PackMaxWinStats,
 } from "@/lib/queries/pack-max-wins";
 import { formatNumber } from "@/lib/utils/format";
@@ -27,6 +28,24 @@ export function PackMaxWinsSection({ stats }: { stats: PackMaxWinStats }) {
   return (
     <section className="space-y-4">
       <SectionHeading icon={Package} title="Pack max wins" />
+      {stats.totalPacks > 0 && (
+        <div className="grid max-w-2xl grid-cols-2 gap-3">
+          <KpiTile
+            label={`Above ${PACK_MAX_WIN_20X_THRESHOLD}×`}
+            value={formatNumber(stats.twentyXSplit.above.count)}
+            sub={formatShare(stats.twentyXSplit.above.share)}
+            icon={ArrowUp}
+            accent="amber"
+          />
+          <KpiTile
+            label={`${PACK_MAX_WIN_20X_THRESHOLD}× or below`}
+            value={formatNumber(stats.twentyXSplit.atOrBelow.count)}
+            sub={formatShare(stats.twentyXSplit.atOrBelow.share)}
+            icon={ArrowDown}
+            accent="blue"
+          />
+        </div>
+      )}
       <Card className="overflow-hidden">
         <CardHeader className="border-b bg-muted/30 pb-4">
           <CardTitle className="text-base font-semibold">
@@ -55,7 +74,7 @@ export function PackMaxWinsSection({ stats }: { stats: PackMaxWinStats }) {
               No priced packs with cards in the pool yet.
             </p>
           ) : (
-            <div className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
+            <div className="grid gap-x-10 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
               {stats.ranges.map((row, index) => (
                 <div
                   key={row.key}

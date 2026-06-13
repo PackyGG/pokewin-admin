@@ -76,6 +76,8 @@ export default async function NumbersPage() {
         />
       </PageHero>
 
+      <PackMaxWinsSection stats={packMaxWins} />
+
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         <KpiTile
           label="Total Users"
@@ -95,9 +97,8 @@ export default async function NumbersPage() {
         ))}
       </div>
 
-      <div className="grid items-start gap-6 lg:grid-cols-2">
-        <section className="space-y-4">
-          <SectionHeading icon={Hash} title="Signup method breakdown" />
+      <section className="max-w-md space-y-4">
+        <SectionHeading icon={Hash} title="Signup method breakdown" />
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">
@@ -182,10 +183,7 @@ export default async function NumbersPage() {
               </Card>
             </div>
           )}
-        </section>
-
-        <PackMaxWinsSection stats={packMaxWins} />
-      </div>
+      </section>
     </div>
   );
 }
