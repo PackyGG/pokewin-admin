@@ -8,6 +8,7 @@ import {
   ledgerTypesToSqlList,
   resolveRainHouseCost,
 } from "@/lib/metrics";
+import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import {
   daysForInsightsPeriod,
   daysForInsightsPeriodCapped,
@@ -57,9 +58,19 @@ import { getDailyPacksTotalCost } from "./daily-packs";
  * the ratio "marketing spend / pure gameplay profit", which is what
  * GGR gives.)
  *
- * Staff + blacklist excluded. Period-aware. Read-only sweep over
- * ledger_transactions, indexed via the existing user_id + type
- * indexes.
+ * Staff + creators + blacklist excluded (the canonical real-customer
+ * scope — `role NOT IN ('admin','support','creator')`). The previous
+ * `role NOT IN ('admin','support')` shape leaked creator reward rows into
+ * the customer total, diverging from /rewards/analytics + the canonical
+ * `getRewardCost`. Period-aware. Read-only sweep over ledger_transactions,
+ * indexed via the existing user_id + type indexes.
+ *
+ * Reward COST mirrors `src/lib/metrics/queries.ts` `getRewardCost` exactly:
+ * REWARD_PAYOUT_TYPES (excl rain_win) + manual-voucher carve-out
+ * (`voucher_redeemed` origin manual) + counted-adjustment carve-out
+ * (`countedAdjustmentSqlPredicate()`) + NET rain. The carve-outs were
+ * previously omitted here, undercounting the cost; they are added so the
+ * headline reconciles with the per-category breakdown on the same page.
  */
 
 // Canonical reward set (incl. rain_win) — used for the payout COUNT +
@@ -75,6 +86,28 @@ const REWARD_TYPES_SQL = ledgerTypesToSqlList(REWARD_PAYOUT_TYPES);
 const REWARD_EXCL_RAIN_TYPES_SQL = ledgerTypesToSqlList(
   REWARD_PAYOUT_TYPES.filter((t) => t !== "rain_win"),
 );
+
+// Per-row carve-out predicate: an `admin_balance_adjustment` CREDIT whose
+// category is COUNTED (bonus / giveaway / reload / lossback / deposit-fix /
+// bugs / deposit_bonus) is a house-funded promo cost. Mirrors getRewardCost.
+const COUNTED_ADJ_PREDICATE = countedAdjustmentSqlPredicate({
+  typeColumn: "lt.type",
+  metadataColumn: "lt.metadata",
+  amountColumn: "lt.amount",
+});
+
+// The reward-cost SUM expression (excl rain) including the two per-row
+// carve-outs (manual vouchers + counted adjustments). Used by both the
+// current and prior-window scans so they stay symmetric.
+const REWARD_EXCL_RAIN_SUM = `COALESCE(SUM(CASE
+  WHEN lt.type::text IN ${REWARD_EXCL_RAIN_TYPES_SQL} THEN ABS(lt.amount::numeric)
+  WHEN lt.type::text = 'voucher_redeemed' AND lt.metadata->>'origin' = 'manual' THEN ABS(lt.amount::numeric)
+  WHEN ${COUNTED_ADJ_PREDICATE} THEN ABS(lt.amount::numeric)
+  ELSE 0 END), 0)::text`;
+
+// The extra source types the carve-outs scan (beyond REWARD_TYPES). Added
+// to every scan's type filter so the carve-out rows are visible.
+const CARVE_OUT_TYPES_SQL = `'voucher_redeemed','admin_balance_adjustment'`;
 
 const WAGER_TYPES_SQL = `(
   'pack_opening','battle_bet','battle_sponsorship','upgrader_bet'
@@ -147,7 +180,7 @@ async function computeCrossCategorySummary(
   ) => `
     WHERE lt.status = 'completed'
       AND lt.type::text IN ${typesSql}
-      AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
+      AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistSubquery})
       ${dateClause}
   `;
 
@@ -186,7 +219,7 @@ async function computeCrossCategorySummary(
     }[]
   >(`
     SELECT
-      COALESCE(SUM(CASE WHEN lt.type::text IN ${REWARD_EXCL_RAIN_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
+      ${REWARD_EXCL_RAIN_SUM} AS reward_excl_rain,
       COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
       COALESCE(SUM(CASE WHEN lt.type::text = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip,
       COUNT(*) FILTER (WHERE lt.type::text IN ${REWARD_TYPES_SQL})::text AS reward_count,
@@ -196,7 +229,9 @@ async function computeCrossCategorySummary(
     FROM ledger_transactions lt
     ${buildScopeClause(
       currentDateClause,
-      `(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip',${WAGER_TYPES_SQL.slice(1, -1)},${PAYOUT_TYPES_SQL.slice(1, -1)})`,
+      // Scan reward types + rain_tip (net rain) + the carve-out source
+      // types (manual voucher / counted adjustment) + wager/payout types.
+      `(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip',${CARVE_OUT_TYPES_SQL},${WAGER_TYPES_SQL.slice(1, -1)},${PAYOUT_TYPES_SQL.slice(1, -1)})`,
     )}
   `);
 
@@ -252,7 +287,7 @@ async function computeCrossCategorySummary(
       }[]
     >(`
       SELECT
-        COALESCE(SUM(CASE WHEN lt.type::text IN ${REWARD_EXCL_RAIN_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
+        ${REWARD_EXCL_RAIN_SUM} AS reward_excl_rain,
         COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
         COALESCE(SUM(CASE WHEN lt.type::text = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip,
         COUNT(*) FILTER (WHERE lt.type::text IN ${REWARD_TYPES_SQL})::text AS reward_count,
@@ -260,7 +295,7 @@ async function computeCrossCategorySummary(
       FROM ledger_transactions lt
       ${buildScopeClause(
         priorDateClause,
-        `(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip')`,
+        `(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip',${CARVE_OUT_TYPES_SQL})`,
       )}
     `);
     const prev = priorRows[0];
@@ -314,7 +349,10 @@ async function computeCrossCategorySummary(
 const cachedCrossCategorySummary = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeCrossCategorySummary(period, blacklistIds),
-  ["insights-rewards-cross-summary-v1"],
+  // -v2: canonical reward-cost alignment (real-customer scope dropping
+  // creators + manual-voucher/counted-adjustment carve-outs) so the
+  // headline reconciles with the per-category breakdown.
+  ["insights-rewards-cross-summary-v2"],
   {
     // unstable_cache reads the static config once; we pick the TTL per
     // call inside the wrapper below. This baseline (60s) covers every
@@ -327,7 +365,7 @@ const cachedCrossCategorySummary = unstable_cache(
 const cachedCrossCategorySummaryLifetime = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeCrossCategorySummary(period, blacklistIds),
-  ["insights-rewards-cross-summary-lifetime-v1"],
+  ["insights-rewards-cross-summary-lifetime-v2"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards"] },
 );
 

@@ -14,6 +14,7 @@ import {
   CalendarDays,
   CalendarRange,
   Crown,
+  Wallet,
 } from "lucide-react";
 import {
   SectionHeading,
@@ -82,8 +83,8 @@ const CATEGORY_ICONS: Record<RewardCategoryKey, React.ElementType> = {
   affiliate: Share2,
   rainRace: CloudRain,
   signupPack: Sparkles,
-  creatorTip: Sparkles,
   waitlist: Hash,
+  houseCredits: Wallet,
 };
 
 function periodLabel(p: RewardsPeriod): string {
@@ -111,8 +112,8 @@ export async function OverviewTab({ period }: { period: RewardsPeriod }) {
     affiliateBreakdown,
     rainRaceBreakdown,
     signupPackBreakdown,
-    creatorTipBreakdown,
     waitlistBreakdown,
+    houseCreditsBreakdown,
     lifetimePrizesBreakdown,
     prizeBudgetBreakdown,
   ] = await Promise.all([
@@ -123,8 +124,8 @@ export async function OverviewTab({ period }: { period: RewardsPeriod }) {
     getRewardCategoryBreakdown(period, "affiliate"),
     getRewardCategoryBreakdown(period, "rainRace"),
     getRewardCategoryBreakdown(period, "signupPack"),
-    getRewardCategoryBreakdown(period, "creatorTip"),
     getRewardCategoryBreakdown(period, "waitlist"),
+    getRewardCategoryBreakdown(period, "houseCredits"),
     getLifetimePrizesBreakdown(),
     // Headline tile sums daily + weekly. Monthly would inflate the
     // breakdown without changing the headline, so it's deliberately
@@ -139,8 +140,8 @@ export async function OverviewTab({ period }: { period: RewardsPeriod }) {
     affiliate: affiliateBreakdown,
     rainRace: rainRaceBreakdown,
     signupPack: signupPackBreakdown,
-    creatorTip: creatorTipBreakdown,
     waitlist: waitlistBreakdown,
+    houseCredits: houseCreditsBreakdown,
   };
   const kpiCategories: {
     key: RewardCategoryKey;

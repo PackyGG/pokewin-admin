@@ -1,9 +1,10 @@
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import { resolveRainHouseCost } from "@/lib/metrics";
+import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
+import { realCustomersScopeSql } from "@/lib/queries/insights-games/_shared";
 import {
   daysForInsightsPeriodCapped,
   cacheTtlForInsightsPeriod,
@@ -14,19 +15,40 @@ import { getDailyPacksGiveaway } from "./daily-packs";
 /**
  * Per-category spend breakdown for the Overview tab on /insights/rewards.
  *
- * Categories mirror the CANONICAL `REWARD_PAYOUT_TYPES` partition
- * (`@/lib/metrics`) — only genuine house-funded reward COSTS appear, so
- * the breakdown reconciles with the cross-category `totalCost` by
- * construction. Specifically:
+ * Categories mirror the CANONICAL reward-cost definition in
+ * `src/lib/metrics/queries.ts` `getRewardCost` (the single source of truth;
+ * do NOT diverge), so the breakdown reconciles with the cross-category
+ * `totalCost` and with /rewards/analytics by construction:
+ *
+ *   reward cost = Σ|amount| over REWARD_PAYOUT_TYPES EXCLUDING rain_win
+ *               + manual-voucher carve-out (`voucher_redeemed` origin manual)
+ *               + counted-adjustment carve-out
+ *                 (`countedAdjustmentSqlPredicate()`)
+ *               + NET rain  max(0, Σ|rain_win| − Σ|rain_tip|)
+ *
+ * Specifically:
+ *   • `affiliate_leaderboard_prize` is INCLUDED in the `affiliate` row
+ *     (it is an affiliate-leaderboard cost; previously omitted → the
+ *     affiliate line under-counted by the full leaderboard payout).
  *   • Rain is NETTED to its house slice `max(0, Σ|rain_win| − Σ|rain_tip|)`
  *     (owner-confirmed) inside the `rainRace` row, NOT counted gross —
  *     rain is system-automatic and mixed-funded; user/founder tips that
  *     fed the pool were never the house's money.
+ *   • A `houseCredits` row carries the manual-voucher + counted-adjustment
+ *     carve-outs (admin house-granted vouchers + categorized balance
+ *     credits: bonus / giveaway / reload / lossback / deposit-fix). These
+ *     are per-ROW metadata splits, not whole ledger types.
  *   • `creator_tip` is NOT a category — it is a verified user→user
- *     pass-through (RESIDUAL), not a house cost.
- *   • `voucher_redeemed` (non-manual) is NEUTRAL and never appears.
+ *     pass-through (RESIDUAL), not a house cost (owner decision: creator
+ *     costs stay OUT of customer GGR/NGR).
+ *   • Non-manual `voucher_redeemed` is NEUTRAL and never appears.
  *   • Any category that is $0 in the window is HIDDEN (general rule — an
  *     empty reward line never clutters the breakdown).
+ *
+ * SCOPE: real customers only — staff AND creators dropped + blacklist, via
+ * `realCustomersScopeSql()` (the canonical customer scope). The previous
+ * `role NOT IN ('admin','support')` shape leaked creator reward rows into
+ * the customer total.
  *
  * Re-emits the breakdown at the wider /insights/rewards period set
  * (24h / 3d / 7d / 30d / 90d / all) so the page can show a 90d slice —
@@ -47,6 +69,7 @@ export type InsightsCategoryKey =
   | "rainRace"
   | "signupPack"
   | "waitlist"
+  | "houseCredits"
   | "dailyPacks";
 
 const CATEGORY_LABELS: Record<InsightsCategoryKey, string> = {
@@ -56,21 +79,52 @@ const CATEGORY_LABELS: Record<InsightsCategoryKey, string> = {
   rainRace: "Rain / Race Prizes",
   signupPack: "Signup / Balance Rewards",
   waitlist: "Waitlist Prizes",
+  houseCredits: "House Credits / Vouchers",
   dailyPacks: "Daily / Free Packs",
 };
 
-// Canonical reward ledger types this breakdown buckets. Vouchers and
-// `creator_tip` are deliberately omitted: vouchers live in a separate
-// view, and `creator_tip` is a RESIDUAL user→user pass-through, not a
-// house reward cost. `rain_tip` is included so the rain house slice can
-// be netted (`max(0, rain_win − rain_tip)`); it is never a category of
-// its own (it is the rain FUNDING leg, not a payout).
+// Canonical reward ledger types this breakdown buckets, PLUS the two
+// per-row carve-out source types. `creator_tip` is deliberately omitted
+// (a RESIDUAL user→user pass-through, not a house reward cost). `rain_tip`
+// is included so the rain house slice can be netted
+// (`max(0, rain_win − rain_tip)`); it is never a category of its own (the
+// rain FUNDING leg, not a payout). `voucher_redeemed` (manual carve-out
+// only) + `admin_balance_adjustment` (counted carve-out only) feed the
+// houseCredits row via per-row predicates in the CASE below.
+const COUNTED_ADJ_PREDICATE = countedAdjustmentSqlPredicate({
+  typeColumn: "lt.type",
+  metadataColumn: "lt.metadata",
+  amountColumn: "lt.amount",
+});
 const ALL_REWARD_TYPES_SQL = `(
   'deposit_bonus','promo_code_redeemed','gift_card_redeemed',
-  'rakeback_claim','affiliate_claim',
+  'rakeback_claim','affiliate_claim','affiliate_leaderboard_prize',
   'rain_win','rain_tip','race_prize','balance_reward_claim',
-  'waitlist_prize'
+  'waitlist_prize','voucher_redeemed','admin_balance_adjustment'
 )`;
+
+// The shared CASE that maps a scanned ledger row to its category bucket
+// (or a rain pseudo-bucket / NULL for rows that don't qualify, e.g. a
+// non-manual voucher or an uncounted adjustment). Used identically by the
+// rollup and the daily-series sweeps so they bucket rows the same way.
+const CATEGORY_CASE_SQL = `CASE
+  WHEN lt.type::text IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN 'bonuses'
+  WHEN lt.type::text = 'rakeback_claim' THEN 'rakeback'
+  WHEN lt.type::text IN ('affiliate_claim','affiliate_leaderboard_prize') THEN 'affiliate'
+  WHEN lt.type::text = 'race_prize' THEN 'rainRace'
+  -- rain_win / rain_tip kept as separate pseudo-buckets so the
+  -- house slice can be netted (max(0, rain_win − rain_tip)) in JS
+  -- before folding into the rainRace row.
+  WHEN lt.type::text = 'rain_win' THEN '__rain_win'
+  WHEN lt.type::text = 'rain_tip' THEN '__rain_tip'
+  WHEN lt.type::text = 'balance_reward_claim' THEN 'signupPack'
+  WHEN lt.type::text = 'waitlist_prize' THEN 'waitlist'
+  -- House-granted manual vouchers + categorized counted balance credits.
+  -- Non-manual vouchers / uncounted adjustments fall through to NULL and
+  -- are dropped by the GROUP BY (their bucket key is NULL).
+  WHEN lt.type::text = 'voucher_redeemed' AND lt.metadata->>'origin' = 'manual' THEN 'houseCredits'
+  WHEN ${COUNTED_ADJ_PREDICATE} THEN 'houseCredits'
+END`;
 
 export type CategorySpendRow = {
   key: InsightsCategoryKey;
@@ -99,9 +153,19 @@ async function computeCategorySpendBreakdown(
   // Daten-Laden"). Matches the capped cross-category-summary so grandTotal
   // keeps reconciling with its totalCost on the lifetime window too.
   const dateFilter = `AND lt.created_at >= NOW() - INTERVAL '${daysForInsightsPeriodCapped(period)} days'`;
-  const blacklistSubquery = blacklistNotInClause("id", blacklistIds);
+  // Canonical real-customer scope: drop staff + creators + blacklist. The
+  // resolved blacklist ids are already baked into the cache key (the
+  // wrapper passes a sorted snapshot); realCustomersScopeSql re-reads the
+  // request-cached list, returning the same set.
+  const customerScope = await realCustomersScopeSql();
+  // realCustomersScopeSql returns `(SELECT id FROM "user" u WHERE ...)`,
+  // aliasing the subquery row as `u`; `void blacklistIds` keeps the cache
+  // key param referenced (it is consumed by getExcludedUserIds inside the
+  // helper, but we keep the param so the cache key still varies on it).
+  void blacklistIds;
 
-  // Two parallel sweeps:
+  // Two parallel sweeps (share the SAME category CASE so they bucket rows
+  // identically):
   //   1. Per-category rollup — total / count / distinct claimants.
   //   2. Daily series per category — drives the per-row sparkline on
   //      the breakdown panel + the per-category cost-over-time chart
@@ -116,26 +180,14 @@ async function computeCategorySpendBreakdown(
       }[]
     >(`
       SELECT
-        CASE
-          WHEN lt.type::text IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN 'bonuses'
-          WHEN lt.type::text = 'rakeback_claim' THEN 'rakeback'
-          WHEN lt.type::text = 'affiliate_claim' THEN 'affiliate'
-          WHEN lt.type::text = 'race_prize' THEN 'rainRace'
-          -- rain_win / rain_tip kept as separate pseudo-buckets so the
-          -- house slice can be netted (max(0, rain_win − rain_tip)) in JS
-          -- before folding into the rainRace row.
-          WHEN lt.type::text = 'rain_win' THEN '__rain_win'
-          WHEN lt.type::text = 'rain_tip' THEN '__rain_tip'
-          WHEN lt.type::text = 'balance_reward_claim' THEN 'signupPack'
-          WHEN lt.type::text = 'waitlist_prize' THEN 'waitlist'
-        END AS category,
+        ${CATEGORY_CASE_SQL} AS category,
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total,
         COUNT(*)::text AS cnt,
         COUNT(DISTINCT lt.user_id)::text AS claimants
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
-        AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
+        AND lt.user_id IN ${customerScope}
         ${dateFilter}
       GROUP BY 1
     `),
@@ -144,25 +196,12 @@ async function computeCategorySpendBreakdown(
     >(`
       SELECT
         DATE(lt.created_at) AS date,
-        CASE
-          WHEN lt.type::text IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN 'bonuses'
-          WHEN lt.type::text = 'rakeback_claim' THEN 'rakeback'
-          WHEN lt.type::text = 'affiliate_claim' THEN 'affiliate'
-          WHEN lt.type::text = 'race_prize' THEN 'rainRace'
-          -- rain_win / rain_tip emitted as separate per-day pseudo-buckets
-          -- so the day's rain house slice can be netted before folding
-          -- into the rainRace daily point (mirrors the canonical per-day
-          -- net-rain model in lib/metrics/queries.ts).
-          WHEN lt.type::text = 'rain_win' THEN '__rain_win'
-          WHEN lt.type::text = 'rain_tip' THEN '__rain_tip'
-          WHEN lt.type::text = 'balance_reward_claim' THEN 'signupPack'
-          WHEN lt.type::text = 'waitlist_prize' THEN 'waitlist'
-        END AS category,
+        ${CATEGORY_CASE_SQL} AS category,
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type::text IN ${ALL_REWARD_TYPES_SQL}
-        AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistSubquery})
+        AND lt.user_id IN ${customerScope}
         ${dateFilter}
       GROUP BY 1, 2
       ORDER BY 1 ASC
@@ -179,6 +218,7 @@ async function computeCategorySpendBreakdown(
     rainRace: { total: 0, count: 0, claimants: 0 },
     signupPack: { total: 0, count: 0, claimants: 0 },
     waitlist: { total: 0, count: 0, claimants: 0 },
+    houseCredits: { total: 0, count: 0, claimants: 0 },
     dailyPacks: { total: 0, count: 0, claimants: 0 },
   };
   // Rain legs captured separately so the house slice can be netted
@@ -241,6 +281,7 @@ async function computeCategorySpendBreakdown(
     rainRace: [],
     signupPack: [],
     waitlist: [],
+    houseCredits: [],
     dailyPacks: [],
   };
   // Per-day rain legs (date → { win, tip }) accumulated separately, then
@@ -308,6 +349,7 @@ async function computeCategorySpendBreakdown(
     "rainRace",
     "signupPack",
     "waitlist",
+    "houseCredits",
     "dailyPacks",
   ];
   const rows: CategorySpendRow[] = orderedKeys
@@ -333,14 +375,18 @@ async function computeCategorySpendBreakdown(
 const cachedCategorySpendBreakdown = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeCategorySpendBreakdown(period, blacklistIds),
-  ["insights-rewards-category-spend-v1"],
+  // -v2: canonical reward-cost alignment (affiliate_leaderboard_prize +
+  // manual-voucher/counted-adjustment houseCredits + real-customer scope).
+  // Bumped so stale -v1 cache entries can't serve the old (creator-leaked,
+  // affiliate-undercounted) numbers.
+  ["insights-rewards-category-spend-v2"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards"] },
 );
 
 const cachedCategorySpendBreakdownLifetime = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
     computeCategorySpendBreakdown(period, blacklistIds),
-  ["insights-rewards-category-spend-lifetime-v1"],
+  ["insights-rewards-category-spend-lifetime-v2"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards"] },
 );
 

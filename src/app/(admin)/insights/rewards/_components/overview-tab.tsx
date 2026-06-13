@@ -529,8 +529,8 @@ function buildChartDailyPoints(
   affiliate: number;
   rainRace: number;
   signupPack: number;
-  creatorTip: number;
   waitlist: number;
+  houseCredits: number;
   total: number;
 }> {
   const byDate = new Map<
@@ -542,8 +542,8 @@ function buildChartDailyPoints(
       affiliate: number;
       rainRace: number;
       signupPack: number;
-      creatorTip: number;
       waitlist: number;
+      houseCredits: number;
       total: number;
     }
   >();
@@ -556,14 +556,13 @@ function buildChartDailyPoints(
         affiliate: 0,
         rainRace: 0,
         signupPack: 0,
-        creatorTip: 0,
         waitlist: 0,
+        houseCredits: 0,
         total: 0,
       };
-      // `creatorTip` is no longer a category (it is a RESIDUAL
-      // pass-through, dropped from the breakdown), so the point keeps a
-      // `creatorTip: 0` field only to satisfy the shared
-      // `RewardsDailyPoint` shape the chart's prop type expects.
+      // The chart only consumes `date + total`; the per-category fields
+      // exist to satisfy the shared `RewardsDailyPoint` shape. `dailyPacks`
+      // has no per-category field there, so it only feeds `total`.
       switch (row.key) {
         case "bonuses":
           existing.bonuses += pt.total;
@@ -582,6 +581,9 @@ function buildChartDailyPoints(
           break;
         case "waitlist":
           existing.waitlist += pt.total;
+          break;
+        case "houseCredits":
+          existing.houseCredits += pt.total;
           break;
       }
       existing.total += pt.total;
