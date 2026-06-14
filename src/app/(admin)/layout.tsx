@@ -43,19 +43,63 @@ import { ScrollToTopOnNav } from "./scroll-to-top-on-nav";
 async function loadHeaderProfile(userId: string): Promise<{
   displayUsername: string | null;
   hasAvatar: boolean;
+  email: string;
+  /**
+   * Whether the optional admin-DB profile columns (display_username /
+   * profile_image_mime) exist. The profile dialog uses this to gate its
+   * editing controls the same way the old /profile page did. Detected by
+   * whether the column-bearing select threw P2022 / "column does not
+   * exist" — any other failure keeps the safe `false` default.
+   */
+  profileFieldsAvailable: boolean;
 }> {
   try {
     const row = await adminDb.admin_users.findUnique({
       where: { id: userId },
-      select: { display_username: true, profile_image_mime: true },
+      select: {
+        display_username: true,
+        profile_image_mime: true,
+        email: true,
+      },
     });
     return {
       displayUsername: row?.display_username ?? null,
       hasAvatar: Boolean(row?.profile_image_mime),
+      email: row?.email ?? "",
+      profileFieldsAvailable: true,
     };
   } catch (err) {
+    // Pre-migration fallback: the profile columns don't exist yet. Re-read
+    // just the always-present `email` so the dialog can still show identity,
+    // and flag the profile fields as unavailable (controls disabled). Any
+    // non-missing-column error keeps the fully-degraded default.
+    const code = (err as { code?: string })?.code;
+    const missingColumn =
+      code === "P2022" ||
+      (err instanceof Error && /column .* does not exist/i.test(err.message));
+    if (missingColumn) {
+      try {
+        const row = await adminDb.admin_users.findUnique({
+          where: { id: userId },
+          select: { email: true },
+        });
+        return {
+          displayUsername: null,
+          hasAvatar: false,
+          email: row?.email ?? "",
+          profileFieldsAvailable: false,
+        };
+      } catch (inner) {
+        console.error("[admin-layout] loadHeaderProfile email fallback failed:", inner);
+      }
+    }
     console.error("[admin-layout] loadHeaderProfile failed:", err);
-    return { displayUsername: null, hasAvatar: false };
+    return {
+      displayUsername: null,
+      hasAvatar: false,
+      email: "",
+      profileFieldsAvailable: false,
+    };
   }
 }
 
@@ -237,9 +281,12 @@ export default async function AdminLayout({
             adminId={session.userId}
             username={session.username}
             displayUsername={profile.displayUsername}
+            email={profile.email}
             hasAvatar={profile.hasAvatar}
             role={session.role}
             roles={session.roles ?? [session.role]}
+            profileFieldsAvailable={profile.profileFieldsAvailable}
+            preferences={preferences}
             dbEnv={dbEnv}
             canSwitchDbEnv={canSwitchDbEnv}
             // Admin-only top-bar house pills (all-time wager/deposit/

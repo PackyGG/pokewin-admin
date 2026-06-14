@@ -132,9 +132,10 @@ export async function updateProfile(input: {
     },
   });
 
-  revalidatePath("/profile");
-  // The avatar in the header is driven by the layout, which reads the
-  // current admin's row — revalidate the root so the header reloads.
+  // The avatar + display name in the header are driven by the layout, which
+  // reads the current admin's row — revalidate the root so the header (and
+  // the profile dialog seeded from it) reload. The /profile route was
+  // removed (the profile is now a dialog), so there's no page path to bust.
   revalidatePath("/", "layout");
 }
 
@@ -196,6 +197,8 @@ export async function uploadAvatar(formData: FormData) {
     metadata: { avatarUploaded: true, size: bytes.length, mime },
   });
 
-  revalidatePath("/profile");
+  // Header (and the dialog seeded from it) reads the admin row in the
+  // layout — bust the root layout so the new avatar shows. No /profile
+  // page path to revalidate anymore (profile is a dialog now).
   revalidatePath("/", "layout");
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LogOut,
@@ -39,9 +38,14 @@ import { switchDbEnv } from "@/lib/actions/db-env";
 import { ROLE_COLORS } from "@/lib/constants";
 import { TIMEZONE_GROUPS } from "@/lib/timezones";
 import { updatePreferences } from "@/app/(admin)/profile/preferences-actions";
+import {
+  ProfileDialog,
+  type ProfileDialogSection,
+} from "@/app/(admin)/profile/profile-dialog";
 import { useTimezoneContext } from "@/components/timezone-provider";
 import { cn } from "@/lib/utils";
 import type { DbEnv } from "@/lib/db-env";
+import type { AdminPreferences } from "@/lib/admin-preferences-types";
 
 function getBreadcrumbs(pathname: string) {
   const segments = pathname.split("/").filter(Boolean);
@@ -123,11 +127,10 @@ function ThemeSubmenu() {
 /**
  * Timezone submenu — grouped list of curated IANA zones plus a "Detect
  * from browser" option that clears the explicit preference. A "Custom…"
- * row navigates to /profile where the editor has a free-form text field
- * (keeps the dropdown itself lean).
+ * row opens the profile dialog, where the preferences editor has a
+ * free-form IANA text field (keeps the dropdown itself lean).
  */
-function TimezoneSubmenu() {
-  const router = useRouter();
+function TimezoneSubmenu({ onOpenProfile }: { onOpenProfile: () => void }) {
   const ctx = useTimezoneContext();
   const active = ctx.timezone;
 
@@ -169,7 +172,7 @@ function TimezoneSubmenu() {
           </DropdownMenuGroup>
         ))}
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => router.push("/profile")}>
+        <DropdownMenuItem onClick={onOpenProfile}>
           <span className="text-muted-foreground">Custom…</span>
         </DropdownMenuItem>
       </DropdownMenuSubContent>
@@ -242,9 +245,12 @@ export function AdminHeader({
   adminId,
   username,
   displayUsername,
+  email,
   hasAvatar,
   role,
   roles,
+  profileFieldsAvailable,
+  preferences,
   dbEnv,
   canSwitchDbEnv,
   houseStatsSlot,
@@ -252,6 +258,8 @@ export function AdminHeader({
   adminId: string;
   username: string;
   displayUsername: string | null;
+  /** Login email — shown in the profile dialog's identity block. */
+  email: string;
   hasAvatar: boolean;
   role: string;
   /**
@@ -260,6 +268,14 @@ export function AdminHeader({
    * shows every one of them — not just the primary.
    */
   roles: string[];
+  /**
+   * Whether the admin-DB profile columns exist (display name / avatar /
+   * preferences). Gates the editing controls in the profile dialog the same
+   * way the old /profile page did; the header itself works regardless.
+   */
+  profileFieldsAvailable: boolean;
+  /** The acting admin's saved preferences, seeded into the dialog editor. */
+  preferences: AdminPreferences;
   dbEnv: DbEnv;
   canSwitchDbEnv: boolean;
   /**
@@ -280,6 +296,18 @@ export function AdminHeader({
   // Hidden-form ref so the dropdown's "Log out" menu item can submit the
   // existing server action without a visible icon button.
   const logoutFormRef = React.useRef<HTMLFormElement>(null);
+
+  // Profile dialog (replaces the old /profile route). Controlled open state
+  // + which section to land on — "Change password" opens straight at the
+  // Security form; "My Profile" / the timezone "Custom…" item open at the top.
+  const [profileOpen, setProfileOpen] = React.useState(false);
+  const [profileSection, setProfileSection] =
+    React.useState<ProfileDialogSection>("profile");
+
+  function openProfile(section: ProfileDialogSection = "profile") {
+    setProfileSection(section);
+    setProfileOpen(true);
+  }
 
   const label = displayUsername ?? username;
   // Defensive: always render at least the primary role. Dedupe in case a
@@ -411,20 +439,16 @@ export function AdminHeader({
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <Link href="/profile" tabIndex={-1}>
-              <DropdownMenuItem>
-                <User className="size-4" />
-                <span>My Profile</span>
-              </DropdownMenuItem>
-            </Link>
-            <Link href="/profile#security" tabIndex={-1}>
-              <DropdownMenuItem>
-                <KeyRound className="size-4" />
-                <span>Change password</span>
-              </DropdownMenuItem>
-            </Link>
+            <DropdownMenuItem onClick={() => openProfile("profile")}>
+              <User className="size-4" />
+              <span>My Profile</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openProfile("security")}>
+              <KeyRound className="size-4" />
+              <span>Change password</span>
+            </DropdownMenuItem>
             <ThemeSubmenu />
-            <TimezoneSubmenu />
+            <TimezoneSubmenu onOpenProfile={() => openProfile("profile")} />
             {canSwitchDbEnv && <DbEnvSubmenu active={dbEnv} />}
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -454,6 +478,25 @@ export function AdminHeader({
             post to the `logout` server action. */}
         <form ref={logoutFormRef} action={logout} className="hidden" />
       </div>
+      {/* Self-service profile popup — opened from the avatar dropdown
+          ("My Profile" / "Change password") and the timezone "Custom…"
+          row. Renders via a portal, so its position here doesn't affect
+          header layout. Replaces the removed /profile route. */}
+      <ProfileDialog
+        open={profileOpen}
+        onOpenChange={setProfileOpen}
+        initialSection={profileSection}
+        data={{
+          id: adminId,
+          username,
+          email,
+          role,
+          displayUsername,
+          hasAvatar,
+          profileFieldsAvailable,
+          preferences,
+        }}
+      />
     </header>
   );
 }

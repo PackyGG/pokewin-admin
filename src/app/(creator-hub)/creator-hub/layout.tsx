@@ -60,19 +60,60 @@ import { CreatorChecklistDock } from "./creators/[id]/_components/creator-checkl
 async function loadHeaderProfile(userId: string): Promise<{
   displayUsername: string | null;
   hasAvatar: boolean;
+  email: string;
+  /**
+   * Whether the optional admin-DB profile columns exist — gates the profile
+   * dialog's editing controls. Mirrors the main (admin) layout's loader so
+   * the shared AdminHeader (and its profile popup) behaves identically here.
+   */
+  profileFieldsAvailable: boolean;
 }> {
   try {
     const row = await adminDb.admin_users.findUnique({
       where: { id: userId },
-      select: { display_username: true, profile_image_mime: true },
+      select: {
+        display_username: true,
+        profile_image_mime: true,
+        email: true,
+      },
     });
     return {
       displayUsername: row?.display_username ?? null,
       hasAvatar: Boolean(row?.profile_image_mime),
+      email: row?.email ?? "",
+      profileFieldsAvailable: true,
     };
   } catch (err) {
+    // Pre-migration fallback: the profile columns don't exist. Re-read just
+    // the always-present `email` so the dialog identity still shows, and flag
+    // the editing fields as unavailable.
+    const code = (err as { code?: string })?.code;
+    const missingColumn =
+      code === "P2022" ||
+      (err instanceof Error && /column .* does not exist/i.test(err.message));
+    if (missingColumn) {
+      try {
+        const row = await adminDb.admin_users.findUnique({
+          where: { id: userId },
+          select: { email: true },
+        });
+        return {
+          displayUsername: null,
+          hasAvatar: false,
+          email: row?.email ?? "",
+          profileFieldsAvailable: false,
+        };
+      } catch (inner) {
+        console.error("[creator-hub-layout] loadHeaderProfile email fallback failed:", inner);
+      }
+    }
     console.error("[creator-hub-layout] loadHeaderProfile failed:", err);
-    return { displayUsername: null, hasAvatar: false };
+    return {
+      displayUsername: null,
+      hasAvatar: false,
+      email: "",
+      profileFieldsAvailable: false,
+    };
   }
 }
 
@@ -192,9 +233,12 @@ export default async function CreatorHubLayout({
             adminId={session.userId}
             username={session.username}
             displayUsername={profile.displayUsername}
+            email={profile.email}
             hasAvatar={profile.hasAvatar}
             role={session.role}
             roles={session.roles ?? [session.role]}
+            profileFieldsAvailable={profile.profileFieldsAvailable}
+            preferences={preferences}
             dbEnv={dbEnv}
             canSwitchDbEnv={canSwitchDbEnv}
             houseStatsSlot={

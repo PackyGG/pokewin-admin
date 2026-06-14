@@ -19,7 +19,7 @@ import {
 // Lives in its own file so it doesn't collide with the existing profile
 // actions (display_username + avatar). Called from:
 //   • the header profile dropdown (theme / timezone quick-pick)
-//   • the /profile preferences editor (full form save)
+//   • the profile dialog's preferences editor (full form save)
 // Each field is optional so a dropdown tweak doesn't need to ship the
 // whole blob.
 // ---------------------------------------------------------------------------
