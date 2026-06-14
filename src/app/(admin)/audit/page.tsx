@@ -26,8 +26,15 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { formatNumber } from "@/lib/utils/format";
+import { getCachedConfig } from "@/lib/edge-config";
 
 export const metadata = { title: "Audit Log" };
+
+// Default rows-per-page for the audit log when the URL carries no `perPage`
+// override. Tunable at runtime via Edge Config (key `auditLogDefaultPerPage`)
+// without a redeploy; falls back to this constant when Edge Config is unset or
+// unreachable, so behavior is identical to the previous hard-coded `20`.
+const AUDIT_DEFAULT_PER_PAGE = 20;
 
 // Event-type filter options. Reconciled with the sibling per-admin audit
 // table (src/app/(admin)/admin-users/[id]/audit-events-table.tsx
@@ -103,7 +110,15 @@ export default async function AuditPage({
   await requirePageAccess("/audit");
   const params = await searchParams;
   const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
+  // Default page size is Edge-Config tunable; an explicit `?perPage=` URL
+  // override always wins. getCachedConfig degrades to AUDIT_DEFAULT_PER_PAGE
+  // when Edge Config is unset/unreachable, so the default stays 20.
+  const defaultPerPage =
+    (await getCachedConfig<number>(
+      "auditLogDefaultPerPage",
+      AUDIT_DEFAULT_PER_PAGE,
+    )) ?? AUDIT_DEFAULT_PER_PAGE;
+  const perPage = Number(params.perPage) || defaultPerPage;
 
   // Empty shape getAuditEvents would return for zero rows — the safeQuery
   // fallback, so the table + pagination still paint (degraded) when the
