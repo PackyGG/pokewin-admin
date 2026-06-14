@@ -11,26 +11,19 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { formatNumber } from "@/lib/utils/format";
 
-// COIN-LEDGER flow (these charts read `coin_transactions` — the COINS
-// currency, a SEPARATE currency from the integer shards; never rendered with
-// "$" since coins are a secondary currency, but they are NOT shards). House-POV
-// on the two legs:
-//   • EARNED — coins a game paid back to users = a house liability/out → rose
-//   • SPENT  — coins wagered into games = the house takes them in → emerald
-const ROSE = "#f43f5e";
-const EMERALD = "#10b981";
-
-const earnedConfig = {
-  earned: { label: "Coins earned", color: ROSE },
-} satisfies ChartConfig;
+// Shards are a NEUTRAL secondary wager currency (NOT USD), so the shard-spent
+// trend is rendered neutral (cyan) — never a House-POV money colour and never
+// a "$" axis. "Spent" here is the only real shard flow: shards burned opening
+// shard packs (the sole shard sink).
+const CYAN = "#06b6d4";
 
 const spentConfig = {
-  spent: { label: "Coins spent", color: EMERALD },
+  spent: { label: "Shards spent", color: CYAN },
 } satisfies ChartConfig;
 
-type DailyPoint = { date: string; earned: number; spent: number };
+type DailyPoint = { date: string; spent: number; opens: number };
 
-/** Round-then-format a coin count for axis/tooltip (no "$", coins only). */
+/** Round-then-format a shard count for axis/tooltip (no "$", shards only). */
 function fmtShards(n: number): string {
   if (!Number.isFinite(n)) return "—";
   const rounded = Math.round(n * 100) / 100;
@@ -43,82 +36,47 @@ function fmtShards(n: number): string {
 }
 
 /**
- * The two COIN-LEDGER trend charts — earnings (rose) and spendings (emerald)
- * over time — rendered side by side on lg+, stacked on mobile. These read the
- * `coin_transactions` flow: the COINS currency, a SEPARATE currency from the
- * integer shards headlined above on the page. Receives ONLY the serializable
- * daily series (no function props across the RSC boundary). Renders gracefully
- * with a single data point (the coin ledger is young); shows an empty-state
- * only when there is no daily data at all.
+ * The shard-flow trend chart — SHARDS SPENT on shard-pack opens over time
+ * (the only real shard time-series: shards have no mint/earn ledger, and
+ * opening shard packs is their sole sink). Receives ONLY the serializable
+ * daily series (no function props across the RSC boundary). Everything is in
+ * SHARDS, never USD. Renders gracefully with a single data point (the shard
+ * packs are brand-new); shows an empty-state only when there is no daily data
+ * at all.
  */
 export function ShardEconomyCharts({ daily }: { daily: DailyPoint[] }) {
   if (daily.length === 0) {
     return (
       <EmptyState
         icon={Gem}
-        title="No coin activity yet"
-        description="No coin earnings or spendings have been recorded in this window. The trend fills in as activity accrues."
+        title="No shard-pack opens yet"
+        description="No shards have been spent opening shard packs in this window. The trend fills in as opens accrue."
         compact
       />
     );
   }
 
   return (
-    <div className="grid gap-3 lg:grid-cols-2">
-      <SingleSeriesChart
-        title="Coin earnings"
-        hint="coins paid out to users · house out"
-        data={daily}
-        dataKey="earned"
-        color={ROSE}
-        gradientId="shardEarnedGradient"
-        config={earnedConfig}
-      />
-      <SingleSeriesChart
-        title="Coin spendings"
-        hint="coins wagered into games · house in"
-        data={daily}
-        dataKey="spent"
-        color={EMERALD}
-        gradientId="shardSpentGradient"
-        config={spentConfig}
-      />
-    </div>
-  );
-}
-
-function SingleSeriesChart({
-  title,
-  hint,
-  data,
-  dataKey,
-  color,
-  gradientId,
-  config,
-}: {
-  title: string;
-  hint: string;
-  data: DailyPoint[];
-  dataKey: "earned" | "spent";
-  color: string;
-  gradientId: string;
-  config: ChartConfig;
-}) {
-  return (
     <div className="rounded-2xl border bg-card/40 p-4">
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <span className="text-sm font-medium">{title}</span>
-        <span className="text-[11px] text-muted-foreground">{hint}</span>
+        <span className="text-sm font-medium">Shards spent on opens</span>
+        <span className="text-[11px] text-muted-foreground">
+          shards burned opening shard packs · per day
+        </span>
       </div>
       <ChartContainer
-        config={config}
+        config={spentConfig}
         className="aspect-auto h-[220px] w-full md:h-[260px]"
       >
-        <AreaChart data={data} margin={{ left: 6, right: 6 }} accessibilityLayer>
+        <AreaChart
+          data={daily}
+          margin={{ left: 6, right: 6 }}
+          accessibilityLayer
+        >
           <defs>
-            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity={0.35} />
-              <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+            <linearGradient id="shardSpentGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={CYAN} stopOpacity={0.35} />
+              <stop offset="100%" stopColor={CYAN} stopOpacity={0.02} />
             </linearGradient>
           </defs>
           <CartesianGrid vertical={false} />
@@ -140,16 +98,16 @@ function SingleSeriesChart({
           <ChartTooltip
             content={
               <ChartTooltipContent
-                formatter={(value) => `${fmtShards(Number(value))} coins`}
+                formatter={(value) => `${fmtShards(Number(value))} shards`}
                 hideIndicator
               />
             }
           />
           <Area
             type="monotone"
-            dataKey={dataKey}
-            stroke={color}
-            fill={`url(#${gradientId})`}
+            dataKey="spent"
+            stroke={CYAN}
+            fill="url(#shardSpentGradient)"
             strokeWidth={2}
             animationDuration={700}
             animationEasing="ease-out"

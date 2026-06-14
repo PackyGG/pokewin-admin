@@ -288,6 +288,16 @@ export type ShardGivenOut = {
   spent: number;
   /** Shards ever given out = held + spent (the headline figure). */
   givenOut: number;
+  /**
+   * Per-day SHARDS SPENT on shard-pack opens over the window (Σ
+   * `packs.shard_cost` per `date_trunc('day', created_at)`). This is the ONLY
+   * real shard time-series that exists: shards have no mint/earn ledger, and
+   * opening shard packs is their sole sink. Integer shards, never USD. The
+   * shard packs are brand-new, so on prod this may currently be a single day —
+   * the chart renders gracefully with one point. Bounded at the 365d lookback
+   * (no unbounded full-history scan).
+   */
+  daily: { date: string; spent: number; opens: number }[];
 };
 
 /** `null` when the game schema (`balances`/`packs`/`game_sessions`) is absent. */
@@ -643,6 +653,12 @@ type RawGivenOutRow = {
   spent: string | number | null;
 };
 
+type RawShardDailyRow = {
+  day: string;
+  spent: string | number | null;
+  opens: bigint | number | null;
+};
+
 async function queryShardGivenOut(env: DbEnv): Promise<ShardGivenOutResult> {
   const hasTables = await probeShardTables(env);
   if (!hasTables) return null;
@@ -676,7 +692,29 @@ async function queryShardGivenOut(env: DbEnv): Promise<ShardGivenOutResult> {
   const held = Number(r?.held ?? 0);
   const holders = Number(r?.holders ?? 0);
   const spent = Number(r?.spent ?? 0);
-  return { held, holders, spent, givenOut: held + spent };
+
+  // ── Daily SHARDS SPENT on opens — the only real shard time-series. Σ
+  //    pack.shard_cost per day over shard-pack opens, bounded at the same
+  //    365d lookback (no unbounded scan). Parameterised interval → no
+  //    injection surface. Integer shards, never USD.
+  const dailyRows = await db.$queryRaw<RawShardDailyRow[]>`
+    SELECT
+      to_char(date_trunc('day', gs.created_at), 'YYYY-MM-DD') AS day,
+      COALESCE(SUM(pk.shard_cost), 0)::bigint AS spent,
+      COUNT(*)::bigint AS opens
+    FROM game_sessions gs
+    JOIN packs pk ON pk.id = gs.game_id AND pk.pack_type = 'shard'
+    WHERE gs.game_type::text = 'pack'
+      AND gs.created_at >= NOW() - (${LIFETIME_LOOKBACK_DAYS} * INTERVAL '1 day')
+    GROUP BY 1
+    ORDER BY 1`;
+  const daily = dailyRows.map((d) => ({
+    date: d.day,
+    spent: Number(d.spent ?? 0),
+    opens: Number(d.opens ?? 0),
+  }));
+
+  return { held, holders, spent, givenOut: held + spent, daily };
 }
 
 const cachedShardGivenOut = unstable_cache(
