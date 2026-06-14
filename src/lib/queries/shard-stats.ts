@@ -101,6 +101,34 @@ function cacheTtlForPeriod(p: ShardStatsPeriod): number {
 
 // ─── Result shape ─────────────────────────────────────────────────────
 
+/**
+ * Currency-ISSUANCE types — coins/shards the HOUSE MINTED INTO existence and
+ * handed to users, NOT coins a game paid out. These are house-funded issuance
+ * (a liability the house created), not bets-vs-payouts game flow, so they must
+ * be kept OUT of the `earned`/`netHouse` game-flow math and surfaced as a
+ * separate ISSUANCE line. Kept IN SYNC with `insights-coins.ts` (same surface,
+ * same ledger) and mirrors the grant-vs-winning split in
+ * `users-shard-winnings.ts`.
+ *
+ *   • coin_deposit_grant            — coins granted on a deposit (always +).
+ *   • coin_admin_adjustment (+ leg) — an admin crediting coins to a user.
+ *
+ * Only the POSITIVE (earned) leg of `coin_admin_adjustment` is issuance; its
+ * negative leg is a claw-back and stays in the spent/game side.
+ */
+const ISSUANCE_TYPES: ReadonlySet<string> = new Set([
+  "coin_deposit_grant",
+  "coin_admin_adjustment",
+]);
+
+/**
+ * True when a ledger row is house→user currency ISSUANCE (minted coins), not a
+ * game payout. Only the EARNED leg of an issuance type counts.
+ */
+function isIssuance(type: string, direction: "earned" | "spent"): boolean {
+  return direction === "earned" && ISSUANCE_TYPES.has(type);
+}
+
 /** One `coin_transactions.type` rolled up for the breakdown table. */
 export type ShardCategoryRow = {
   type: string;
@@ -114,18 +142,33 @@ export type ShardCategoryRow = {
   total: number;
   /** Distinct users with at least one row of this type in the window. */
   users: number;
+  /**
+   * True when this row is house→user currency ISSUANCE (a minted grant), not
+   * game flow. Issuance is EXCLUDED from the earned/netHouse game-flow totals
+   * and shown separately, so the UI can flag it instead of folding it into
+   * "earned".
+   */
+  isIssuance: boolean;
 };
 
 export type ShardStatsAvailable = {
   available: true;
   period: ShardStatsPeriod;
-  /** Total coins/shards EARNED by users (balance increases) in the window. */
+  /**
+   * Coins/shards a GAME paid out to users (balance increases) in the window —
+   * i.e. game WINS only. EXCLUDES house-funded issuance (`coin_deposit_grant`
+   * and the positive leg of `coin_admin_adjustment`), which is surfaced
+   * separately as `issuedToUsers`. This is what feeds `netHouse`.
+   */
   earned: number;
   /** Total coins/shards SPENT by users (balance decreases) in the window. */
   spent: number;
   /**
-   * Net house flow in coins/shards = spent − earned. Positive ⇒ users net
-   * spent (house took in); negative ⇒ users net earned (house paid out).
+   * Net house GAME flow in coins/shards = spent − earned (issuance EXCLUDED).
+   * Positive ⇒ users net lost coins into games (house took in / self-funding);
+   * negative ⇒ games paid out more than users wagered. A healthy economy is no
+   * longer dragged negative just because the house MINTED coins (issuance lands
+   * in `issuedToUsers`, not here).
    */
   netHouse: number;
   /** Total ledger rows in the window. */
@@ -133,11 +176,12 @@ export type ShardStatsAvailable = {
   /** Distinct users with any coin/shard activity in the window. */
   activeUsers: number;
   /**
-   * Coins/shards GRANTED to users by an admin adjustment (positive-delta
-   * `coin_admin_adjustment` rows). The closest analogue to a house cost on
-   * this secondary-currency surface.
+   * Coins/shards the HOUSE ISSUED to users in the window — minted grants, NOT
+   * game payouts: `coin_deposit_grant` + the positive leg of
+   * `coin_admin_adjustment`. House-funded issuance (a created liability), shown
+   * as its OWN line so it is never mistaken for game flow.
    */
-  grantedToUsers: number;
+  issuedToUsers: number;
   /** Per-type breakdown, sorted by total desc. */
   categories: ShardCategoryRow[];
 };
@@ -234,11 +278,18 @@ async function queryShardStats(
     WHERE created_at >= NOW() - (${days} * INTERVAL '1 day')
     GROUP BY type::text, direction`;
 
+  // GAME-FLOW totals (issuance excluded). `earned` is ONLY coins a game paid
+  // out (wins); house-funded issuance (deposit grants + positive admin
+  // adjustments) is summed into `issuedToUsers` and kept OUT of earned, so
+  // `netHouse = spent − earned` is a pure bets-vs-payouts read.
   let earned = 0;
   let spent = 0;
-  let grantedToUsers = 0;
-  // Merge the two direction-split rows of a type back into one display row
-  // (a type rarely spans both directions, but admin adjustments do).
+  let issuedToUsers = 0;
+  // Per-type earned/spent magnitudes tracked SEPARATELY so the display badge
+  // direction is decided from the FINAL totals (not a half-mutated running
+  // sum). A type rarely spans both directions, but admin adjustments do.
+  const earnedByType = new Map<string, number>();
+  const spentByType = new Map<string, number>();
   const byType = new Map<string, ShardCategoryRow>();
 
   for (const r of rows) {
@@ -246,13 +297,20 @@ async function queryShardStats(
     const count = Number(r.count);
     const users = Number(r.users);
     const direction = r.direction === "spent" ? "spent" : "earned";
+    const issuance = isIssuance(r.type, direction);
 
-    if (direction === "earned") earned += total;
-    else spent += total;
-
-    if (r.type === "coin_admin_adjustment" && direction === "earned") {
-      grantedToUsers += total;
+    // Game-flow vs issuance: minted grants never touch the earned/netHouse
+    // game-flow math — they accumulate into the separate issuance line.
+    if (issuance) {
+      issuedToUsers += total;
+    } else if (direction === "earned") {
+      earned += total;
+    } else {
+      spent += total;
     }
+
+    if (direction === "earned") earnedByType.set(r.type, total);
+    else spentByType.set(r.type, total);
 
     const existing = byType.get(r.type);
     if (existing) {
@@ -261,9 +319,6 @@ async function queryShardStats(
       // Distinct users can't be summed exactly across direction splits;
       // take the max as a safe lower-bound estimate for the display row.
       existing.users = Math.max(existing.users, users);
-      // A mixed-direction type is dominated by its larger leg for the
-      // direction badge.
-      if (total > existing.total - total) existing.direction = direction;
     } else {
       byType.set(r.type, {
         type: r.type,
@@ -272,8 +327,21 @@ async function queryShardStats(
         count,
         total,
         users,
+        // Provisional; finalised below once both direction legs are merged.
+        isIssuance: issuance,
       });
     }
+  }
+
+  // Finalise each display row's badge direction + issuance flag from the FINAL
+  // per-type totals (decided at the END, not from a running total). A type is
+  // shown "earned" when its earned leg dominates; an issuance type's earned
+  // leg is house-funded issuance, so flag the row when that leg dominates.
+  for (const row of byType.values()) {
+    const earnedLeg = earnedByType.get(row.type) ?? 0;
+    const spentLeg = spentByType.get(row.type) ?? 0;
+    row.direction = earnedLeg >= spentLeg ? "earned" : "spent";
+    row.isIssuance = row.direction === "earned" && ISSUANCE_TYPES.has(row.type);
   }
 
   const categories = Array.from(byType.values()).sort(
@@ -298,7 +366,7 @@ async function queryShardStats(
     netHouse: spent - earned,
     txCount,
     activeUsers,
-    grantedToUsers,
+    issuedToUsers,
     categories,
   };
 }

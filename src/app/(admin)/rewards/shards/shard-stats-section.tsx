@@ -34,10 +34,11 @@ import { ShardStatsPeriodFilter } from "./shard-stats-period-filter";
  *
  * House-POV note: coins/shards are a SECONDARY currency, wager-earned and
  * with no direct USD P&L on this surface, so the figures are presented
- * neutrally (cyan/amber). The two cash-adjacent signals follow the house
- * rule: coins users EARN (a house liability, like a user win) read rose;
- * coins users SPEND (the house takes in) read emerald; admin GRANTS of
- * coins to users (a gift, a house cost) read rose.
+ * neutrally (cyan/amber). The cash-adjacent signals follow the house rule:
+ * coins users WIN in games (a house liability) read rose; coins users SPEND
+ * (the house takes in) read emerald; house-funded ISSUANCE (deposit/admin
+ * grants minted to users) reads rose and is kept SEPARATE from game flow —
+ * it is not a bet vs payout, so it never drags the net house game-flow read.
  */
 
 /** Round + format a coin/shard amount; guards NaN/Infinity to "—". */
@@ -108,29 +109,30 @@ export async function ShardStatsSection({
     <div className="space-y-3">
       {heading}
 
-      {/* KPI strip — secondary-currency usage over the active window.
-          House-POV: spent = house takes in (emerald); earned = house pays
-          out / user wins (rose); net house = spent − earned (emerald when
-          positive / house up, rose when negative / house down). */}
+      {/* KPI strip — secondary-currency GAME flow over the active window.
+          House-POV: spent = wagers the house takes in (emerald); earned =
+          game wins paid out (rose); net house = spent − earned, GAME FLOW
+          ONLY (house-funded issuance excluded, shown separately). Emerald
+          when positive / house up, rose when negative / house down. */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiTile
-          label="Shards spent"
+          label="Shards wagered"
           value={formatCoins(stats.spent)}
           sub={periodLabel}
           icon={ArrowDownLeft}
           accent="emerald"
         />
         <KpiTile
-          label="Shards earned"
+          label="Game wins paid"
           value={formatCoins(stats.earned)}
-          sub="paid out to users"
+          sub="won in games"
           icon={ArrowUpRight}
           accent="rose"
         />
         <KpiTile
           label="Net house flow"
           value={formatCoins(stats.netHouse)}
-          sub={stats.netHouse >= 0 ? "house took in" : "house paid out"}
+          sub={stats.netHouse >= 0 ? "game flow · house up" : "game flow · house down"}
           icon={Scale}
           accent={stats.netHouse >= 0 ? "emerald" : "rose"}
         />
@@ -144,8 +146,13 @@ export async function ShardStatsSection({
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        {/* Category breakdown — every coin_transactions.type rolled up. */}
-        <StatPanel title="Usage by category" icon={Coins} accent="cyan">
+        {/* Gross flow by category — every coin_transactions.type rolled up.
+            These are GROSS per-type totals (one side of the flow each), NOT
+            net: a game's bet leg and win leg are separate rows, and grants
+            are a third (issuance) line. Read net game flow off "Net house
+            flow" above. Issuance rows are tagged so they aren't mistaken for
+            game payouts. */}
+        <StatPanel title="Gross flow by category" icon={Coins} accent="cyan">
           {stats.categories.length === 0 ? (
             <p className="py-4 text-center text-sm text-muted-foreground">
               No coin/shard activity in {periodLabel.toLowerCase()}.
@@ -155,7 +162,7 @@ export async function ShardStatsSection({
               {stats.categories.map((cat) => (
                 <PanelRow
                   key={cat.type}
-                  label={`${cat.label} · ${formatNumber(cat.count)} tx · ${formatNumber(cat.users)} ${cat.users === 1 ? "user" : "users"}`}
+                  label={`${cat.label}${cat.isIssuance ? " · issuance" : ""} · ${formatNumber(cat.count)} tx · ${formatNumber(cat.users)} ${cat.users === 1 ? "user" : "users"}`}
                   value={
                     <span
                       className={
@@ -170,35 +177,32 @@ export async function ShardStatsSection({
                   }
                 />
               ))}
+              <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+                Gross per-type totals (each row is one side of the flow), not
+                net. &ldquo;Issuance&rdquo; rows are house-minted grants, kept
+                out of the net house game-flow figure above.
+              </p>
             </div>
           )}
         </StatPanel>
 
-        {/* House-cost-adjacent signal: coins gifted to users by an admin. */}
+        {/* House signals + sustainability read (GAME FLOW only; house-funded
+            issuance broken out separately so a healthy economy isn't read as
+            unsustainable just because the house minted coins). */}
         <StatPanel title="House signals" icon={Gift} accent="purple">
           <PanelRow
-            label="Granted to users (admin)"
-            value={
-              <span className="text-rose-600 dark:text-rose-400">
-                {stats.grantedToUsers > 0 ? "+" : ""}
-                {formatCoins(stats.grantedToUsers)}
-              </span>
-            }
-            valueClassName="text-rose-600 dark:text-rose-400"
-          />
-          <PanelRow
-            label="Total shards spent (wagered)"
+            label="Shards wagered (house in)"
             value={formatCoins(stats.spent)}
             valueClassName="text-emerald-600 dark:text-emerald-400"
           />
           <PanelRow
-            label="Total shards earned (won)"
+            label="Game wins paid (house out)"
             value={formatCoins(stats.earned)}
             valueClassName="text-rose-600 dark:text-rose-400"
           />
           <div className="mt-2 border-t pt-2">
             <PanelRow
-              label="Net house (spent − earned)"
+              label="Net house · game flow (wagered − won)"
               value={formatCoins(stats.netHouse)}
               valueClassName={
                 stats.netHouse >= 0
@@ -207,11 +211,24 @@ export async function ShardStatsSection({
               }
             />
           </div>
+          <div className="mt-2 border-t pt-2">
+            <PanelRow
+              label="Currency issued (house-funded grants)"
+              value={
+                <span className="text-rose-600 dark:text-rose-400">
+                  {stats.issuedToUsers > 0 ? "+" : ""}
+                  {formatCoins(stats.issuedToUsers)}
+                </span>
+              }
+              valueClassName="text-rose-600 dark:text-rose-400"
+            />
+          </div>
           <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
             Coins/shards are a secondary, wager-earned currency — figures are
-            in shards, not USD. &ldquo;Spent&rdquo; is the house taking shards
-            in (wagers); &ldquo;earned&rdquo; is the house paying shards out
-            (wins &amp; grants).
+            in shards, not USD. Net house is GAME FLOW only:
+            &ldquo;wagered&rdquo; (house takes in) minus game &ldquo;wins&rdquo;
+            (house pays out). Issuance is house-minted grants, shown separately
+            and never folded into game flow.
           </p>
         </StatPanel>
       </div>

@@ -26,6 +26,21 @@ import { readDbEnv } from "@/lib/db-env";
  *
  * EXCLUDED (not game winnings): bets (`coin_*_bet`), grants
  * (`coin_deposit_grant` / `coin_admin_adjustment`), and `coin_rain_tip`.
+ * Grants are house-funded ISSUANCE, not winnings — the same split the global
+ * `/insights/coins` + `/rewards/shards` economy stats apply (issuance is kept
+ * out of game flow there too).
+ *
+ * ⚠️ TODO(owner) — `coin_battle_refund` classification UNVERIFIED. It is
+ * summed here as an ADDITIVE battle WIN leg (added into totalShards/totalWins),
+ * on the house-rules premise that a battle `refund` is the CASH LEG of a normal
+ * battle win (CLAUDE.md "battle_refund is the cash leg of a normal battle
+ * win"). This is the USD-ledger semantics, not proven for the coin ledger: no
+ * `coin_battle_refund` row was found on the live prod coin DB to verify against,
+ * and there is no in-repo writer of this type (the game backend emits it). If
+ * on the coin side `coin_battle_refund` is instead a STAKE REFUND (a cancelled
+ * battle returning the wager), summing it would OVERSTATE shard winnings and it
+ * should map to null. Left AS-IS pending owner confirmation — NOT dropped on a
+ * guess. If reclassified, also drop it from `WIN_TYPES` and `sourceForWinType`.
  *
  * House-POV note: coins/shards are a SECONDARY, wager-earned currency, NOT
  * USD — figures are presented neutrally (cyan) and are NEVER summed into a
@@ -104,8 +119,6 @@ export type ShardWinSourceRow = {
   total: number;
   /** Number of winning ledger rows from this source. */
   count: number;
-  /** Distinct coin game sessions that produced a win from this source. */
-  sessions: number;
 };
 
 /** One recent winning row for the optional list (newest first). */
@@ -164,7 +177,6 @@ type RawSourceRow = {
   type: string;
   count: bigint | number;
   total: string | number | null;
-  sessions: bigint | number;
 };
 
 type RawRecentRow = {
@@ -187,28 +199,28 @@ async function queryUserShardWinnings(
   // also bound.
   const winTypes: string[] = [...WIN_TYPES];
 
-  // Per-type rollup for this user. `amount` is a positive magnitude, so we
-  // sum it directly. game_session_id can be null (e.g. rain) — COUNT(DISTINCT
-  // …) ignores nulls, which is the desired "distinct sessions" semantics.
-  const rows = await db.$queryRaw<RawSourceRow[]>`
-    SELECT
-      type::text AS type,
-      COUNT(*)::bigint AS count,
-      COALESCE(SUM(amount), 0)::text AS total,
-      COUNT(DISTINCT game_session_id)::bigint AS sessions
-    FROM coin_transactions
-    WHERE user_id = ${userId}
-      AND type::text = ANY(${winTypes})
-    GROUP BY type::text`;
-
-  const recentRows = await db.$queryRaw<RawRecentRow[]>`
-    SELECT id::text AS id, type::text AS type, amount::text AS amount,
-           created_at
-    FROM coin_transactions
-    WHERE user_id = ${userId}
-      AND type::text = ANY(${winTypes})
-    ORDER BY created_at DESC
-    LIMIT ${RECENT_LIMIT}`;
+  // Per-type rollup + the recent list are INDEPENDENT reads on the same scoped
+  // rows, so run them concurrently (behaviour-preserving — neither depends on
+  // the other). `amount` is a positive magnitude, summed directly.
+  const [rows, recentRows] = await Promise.all([
+    db.$queryRaw<RawSourceRow[]>`
+      SELECT
+        type::text AS type,
+        COUNT(*)::bigint AS count,
+        COALESCE(SUM(amount), 0)::text AS total
+      FROM coin_transactions
+      WHERE user_id = ${userId}
+        AND type::text = ANY(${winTypes})
+      GROUP BY type::text`,
+    db.$queryRaw<RawRecentRow[]>`
+      SELECT id::text AS id, type::text AS type, amount::text AS amount,
+             created_at
+      FROM coin_transactions
+      WHERE user_id = ${userId}
+        AND type::text = ANY(${winTypes})
+      ORDER BY created_at DESC
+      LIMIT ${RECENT_LIMIT}`,
+  ]);
 
   return aggregate(rows, recentRows);
 }
@@ -226,7 +238,6 @@ function aggregate(
     if (!source) continue;
     const total = Number(r.total ?? 0);
     const count = Number(r.count);
-    const sessions = Number(r.sessions);
     totalShards += total;
     totalWins += count;
 
@@ -234,16 +245,12 @@ function aggregate(
     if (existing) {
       existing.total += total;
       existing.count += count;
-      // battle_payout + battle_refund both map to "battles" and can carry
-      // different sessions; sum is a safe upper bound for the display count.
-      existing.sessions += sessions;
     } else {
       bySource.set(source, {
         source,
         label: shardWinSourceLabel(source),
         total,
         count,
-        sessions,
       });
     }
   }

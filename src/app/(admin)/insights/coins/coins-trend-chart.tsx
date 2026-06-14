@@ -13,13 +13,16 @@ import { formatNumber } from "@/lib/utils/format";
 import type { CoinDailyPoint } from "@/lib/queries/insights-coins";
 
 /**
- * Daily earned-vs-spent trend for the global coin/shard economy.
+ * Daily GAME-FLOW earned-vs-spent trend for the global coin/shard economy.
  *
  * House-POV (secondary currency, NOT USD):
  *   - SPENT = coins/shards users wagered into games → the house takes in →
  *     emerald.
- *   - EARNED = coins/shards paid out to users (wins + grants) → a house
- *     liability → rose.
+ *   - EARNED = coins/shards GAMES paid out to users (wins only) → a house
+ *     liability → rose. House-funded issuance (deposit/admin grants) is
+ *     EXCLUDED from this series — it is not game flow — so the two areas read
+ *     as a true bets-vs-payouts trend and sum back to the window game-flow
+ *     totals.
  *
  * Two stacked areas so the day's gross flow on both sides reads at a glance;
  * the tooltip carries the raw shard counts (compact axis, full counts in the
@@ -30,8 +33,8 @@ const EMERALD = "#10b981";
 const ROSE = "#f43f5e";
 
 const chartConfig = {
-  spent: { label: "Spent (house in)", color: EMERALD },
-  earned: { label: "Earned (house out)", color: ROSE },
+  spent: { label: "Wagered (house in)", color: EMERALD },
+  earned: { label: "Game wins (house out)", color: ROSE },
 } satisfies ChartConfig;
 
 /** Compact shard-count axis label (NOT currency — shards are not USD). */

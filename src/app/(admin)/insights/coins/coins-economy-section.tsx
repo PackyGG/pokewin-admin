@@ -165,38 +165,58 @@ export async function CoinsEconomySection({
       <div className="space-y-3">
         {heading}
 
-        {/* KPI strip — secondary-currency flow over the active window.
-            House-POV: spent = house takes in (emerald); earned = house pays
-            out / user wins (rose); net house = spent − earned (emerald when
-            positive / house up, rose when negative / house down). */}
+        {/* KPI strip — secondary-currency GAME flow over the active window.
+            House-POV: spent = wagers the house takes in (emerald); earned =
+            game wins paid out to users (rose); net house = spent − earned,
+            GAME FLOW ONLY (house-funded issuance is excluded and shown
+            separately below). Emerald when positive / house up, rose when
+            negative / house down. */}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <KpiTile
-            label="Shards spent"
+            label="Shards wagered"
             value={formatCoins(stats.spent)}
             sub={periodLabel}
             icon={ArrowDownLeft}
             accent="emerald"
           />
           <KpiTile
-            label="Shards earned"
+            label="Game wins paid"
             value={formatCoins(stats.earned)}
-            sub="paid out to users"
+            sub="won in games"
             icon={ArrowUpRight}
             accent="rose"
           />
           <KpiTile
             label="Net house flow"
             value={formatCoins(stats.netHouse)}
-            sub={stats.netHouse >= 0 ? "house took in" : "house paid out"}
+            sub={stats.netHouse >= 0 ? "game flow · house up" : "game flow · house down"}
             icon={Scale}
             accent={stats.netHouse >= 0 ? "emerald" : "rose"}
           />
+          <KpiTile
+            label="Issued to users"
+            value={formatCoins(stats.issuedToUsers)}
+            sub="house-funded grants"
+            icon={Gift}
+            accent="rose"
+          />
+        </div>
+
+        {/* Active-users / volume row — secondary metrics under the flow KPIs. */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <KpiTile
             label="Active users"
             value={formatNumber(stats.activeUsers)}
             sub={`${formatNumber(stats.txCount)} transactions`}
             icon={Users}
             accent="cyan"
+          />
+          <KpiTile
+            label="Currency issued"
+            value={formatCoins(stats.issuedToUsers)}
+            sub="minted grants (not game flow)"
+            icon={Gem}
+            accent="rose"
           />
         </div>
 
@@ -206,8 +226,13 @@ export async function CoinsEconomySection({
         </StatPanel>
 
         <div className="grid gap-3 lg:grid-cols-2">
-          {/* Category breakdown — every coin_transactions.type rolled up. */}
-          <StatPanel title="Usage by category" icon={Coins} accent="cyan">
+          {/* Gross flow by category — every coin_transactions.type rolled up.
+              These are GROSS per-type totals (one side of the flow each), NOT
+              net: a game's bet leg and win leg are separate rows, and grants
+              are a third (issuance) line. Read net game flow off "Net house
+              flow" above, never by eyeballing one row. Issuance rows are
+              tagged so they aren't mistaken for game payouts. */}
+          <StatPanel title="Gross flow by category" icon={Coins} accent="cyan">
             {stats.categories.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">
                 No coin/shard activity in {periodLabel.toLowerCase()}.
@@ -217,7 +242,7 @@ export async function CoinsEconomySection({
                 {stats.categories.map((cat) => (
                   <PanelRow
                     key={cat.type}
-                    label={`${cat.label} · ${formatNumber(cat.count)} tx · ${formatNumber(cat.users)} ${cat.users === 1 ? "user" : "users"}`}
+                    label={`${cat.label}${cat.isIssuance ? " · issuance" : ""} · ${formatNumber(cat.count)} tx · ${formatNumber(cat.users)} ${cat.users === 1 ? "user" : "users"}`}
                     value={
                       <span
                         className={
@@ -232,35 +257,33 @@ export async function CoinsEconomySection({
                     }
                   />
                 ))}
+                <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+                  Gross per-type totals (each row is one side of the flow), not
+                  net. &ldquo;Issuance&rdquo; rows are house-minted grants, kept
+                  out of the net house game-flow figure above.
+                </p>
               </div>
             )}
           </StatPanel>
 
-          {/* House signals + sustainability read. */}
+          {/* House signals + sustainability read. The sustainability verdict
+              is GAME FLOW only (wagers vs game wins); house-funded issuance is
+              broken out as its own line so a healthy economy isn't read as
+              unsustainable just because the house minted coins. */}
           <StatPanel title="House signals" icon={Gift} accent="purple">
             <PanelRow
-              label="Granted to users (admin)"
-              value={
-                <span className="text-rose-600 dark:text-rose-400">
-                  {stats.grantedToUsers > 0 ? "+" : ""}
-                  {formatCoins(stats.grantedToUsers)}
-                </span>
-              }
-              valueClassName="text-rose-600 dark:text-rose-400"
-            />
-            <PanelRow
-              label="Total shards spent (wagered)"
+              label="Shards wagered (house in)"
               value={formatCoins(stats.spent)}
               valueClassName="text-emerald-600 dark:text-emerald-400"
             />
             <PanelRow
-              label="Total shards earned (won)"
+              label="Game wins paid (house out)"
               value={formatCoins(stats.earned)}
               valueClassName="text-rose-600 dark:text-rose-400"
             />
             <div className="mt-2 border-t pt-2">
               <PanelRow
-                label="Net house (spent − earned)"
+                label="Net house · game flow (wagered − won)"
                 value={formatCoins(stats.netHouse)}
                 valueClassName={
                   stats.netHouse >= 0
@@ -269,26 +292,40 @@ export async function CoinsEconomySection({
                 }
               />
             </div>
+            <div className="mt-2 border-t pt-2">
+              <PanelRow
+                label="Currency issued (house-funded grants)"
+                value={
+                  <span className="text-rose-600 dark:text-rose-400">
+                    {stats.issuedToUsers > 0 ? "+" : ""}
+                    {formatCoins(stats.issuedToUsers)}
+                  </span>
+                }
+                valueClassName="text-rose-600 dark:text-rose-400"
+              />
+            </div>
             <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
               {stats.netHouse >= 0 ? (
                 <>
-                  Users net <span className="font-medium">spent</span>{" "}
-                  coins/shards into games this window — the economy is{" "}
+                  On game flow, users net <span className="font-medium">wagered</span>{" "}
+                  more coins/shards than games paid out — the economy is{" "}
                   <span className="text-emerald-600 dark:text-emerald-400">
-                    sustainable
+                    self-funding
                   </span>{" "}
-                  (house took in more than it paid out).
+                  this window.
                 </>
               ) : (
                 <>
-                  Users net <span className="font-medium">earned</span>{" "}
-                  coins/shards this window — the house{" "}
+                  On game flow, games{" "}
                   <span className="text-rose-600 dark:text-rose-400">
                     paid out
                   </span>{" "}
-                  more than it took in. Figures are in shards, not USD.
+                  more than users wagered this window.
                 </>
-              )}
+              )}{" "}
+              Issuance ({formatCoins(stats.issuedToUsers)} minted grants) is
+              house-funded and shown separately, not folded into game flow.
+              Figures are in shards/coins, not USD.
             </p>
           </StatPanel>
         </div>
