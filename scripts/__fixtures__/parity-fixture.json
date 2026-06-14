@@ -1,0 +1,434 @@
+{
+  "_comment": "Committed CI parity fixture for the role/permission rebuild (Phase A). Admin role/permission CONFIG only — NO secrets (no password_hash/totp_secret/recovery_codes/email). Snapshot of the 17 admin_users' role/roles/allowedPages + the derived per-user override plan, captured read-only on 2026-06-14. The fixture test asserts computeEffectivePermissions(baseline union grants minus revokes) reconciles each user's allowedPages (admins: gate-visible [] AND stored-array round-trip).",
+  "capturedAt": "2026-06-14",
+  "userCount": 17,
+  "users": [
+    {
+      "username": "motha",
+      "role": "admin",
+      "roles": [
+        "admin"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    },
+    {
+      "username": "axe",
+      "role": "admin",
+      "roles": [
+        "admin"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    },
+    {
+      "username": "Tonk",
+      "role": "admin",
+      "roles": [
+        "admin"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    },
+    {
+      "username": "void",
+      "role": "admin",
+      "roles": [
+        "admin"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [
+        "/chat",
+        "/users",
+        "__can_adjust_balance",
+        "__balance_limit_daily:10"
+      ],
+      "override": {
+        "grants": [
+          "/chat",
+          "/users",
+          "__can_adjust_balance",
+          "__balance_limit_daily:10"
+        ],
+        "revokes": []
+      }
+    },
+    {
+      "username": "zog",
+      "role": "admin",
+      "roles": [
+        "admin"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    },
+    {
+      "username": "demee",
+      "role": "admin",
+      "roles": [
+        "admin"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [
+        "/shifts",
+        "/users",
+        "/transactions",
+        "/transactions/packs",
+        "/transactions/battles",
+        "/transactions/rewards",
+        "/transactions/deposits",
+        "/chat",
+        "/withdrawals",
+        "__can_edit_identity",
+        "__can_ban_users",
+        "__can_lock_users",
+        "__can_toggle_feature_locks",
+        "__can_create_user_note",
+        "__can_mute_users",
+        "__can_delete_messages",
+        "__can_pin_messages"
+      ],
+      "override": {
+        "grants": [
+          "/shifts",
+          "/users",
+          "/transactions",
+          "/transactions/packs",
+          "/transactions/battles",
+          "/transactions/rewards",
+          "/transactions/deposits",
+          "/chat",
+          "/withdrawals",
+          "__can_edit_identity",
+          "__can_ban_users",
+          "__can_lock_users",
+          "__can_toggle_feature_locks",
+          "__can_create_user_note",
+          "__can_mute_users",
+          "__can_delete_messages",
+          "__can_pin_messages"
+        ],
+        "revokes": []
+      }
+    },
+    {
+      "username": "picassopixels",
+      "role": "admin",
+      "roles": [
+        "admin"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [
+        "/shifts",
+        "/users",
+        "/transactions",
+        "/transactions/packs",
+        "/transactions/battles",
+        "/transactions/rewards",
+        "/transactions/deposits",
+        "/chat",
+        "/withdrawals",
+        "__can_edit_identity",
+        "__can_ban_users",
+        "__can_lock_users",
+        "__can_toggle_feature_locks",
+        "__can_create_user_note",
+        "__can_mute_users",
+        "__can_delete_messages",
+        "__can_pin_messages"
+      ],
+      "override": {
+        "grants": [
+          "/shifts",
+          "/users",
+          "/transactions",
+          "/transactions/packs",
+          "/transactions/battles",
+          "/transactions/rewards",
+          "/transactions/deposits",
+          "/chat",
+          "/withdrawals",
+          "__can_edit_identity",
+          "__can_ban_users",
+          "__can_lock_users",
+          "__can_toggle_feature_locks",
+          "__can_create_user_note",
+          "__can_mute_users",
+          "__can_delete_messages",
+          "__can_pin_messages"
+        ],
+        "revokes": []
+      }
+    },
+    {
+      "username": "dex",
+      "role": "support",
+      "roles": [
+        "support",
+        "pack_creator"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [
+        "/shifts",
+        "/users",
+        "/transactions/packs",
+        "/transactions/rewards",
+        "/transactions/deposits",
+        "/chat",
+        "/withdrawals",
+        "__can_edit_identity",
+        "__can_ban_users",
+        "__can_lock_users",
+        "__can_toggle_feature_locks",
+        "__can_create_user_note",
+        "__can_mute_users",
+        "__can_delete_messages",
+        "__can_pin_messages",
+        "/dashboard",
+        "/packs",
+        "/cards",
+        "/sets",
+        "__can_create_pack",
+        "__can_update_pack",
+        "__can_edit_live_packs",
+        "__can_upload_pack_image",
+        "__can_create_card",
+        "__can_update_card",
+        "__can_delete_card",
+        "__can_upload_card_image",
+        "__can_create_set",
+        "/upgrader",
+        "__can_delete_pack",
+        "__can_toggle_pack_active",
+        "__can_update_set",
+        "__can_delete_set",
+        "__can_seed_initial_sets",
+        "__can_force_absorb_cards",
+        "__can_upload_set_image",
+        "__can_add_upgrader_output",
+        "__can_toggle_upgrader_output",
+        "__can_remove_upgrader_output",
+        "/rewards/shards"
+      ],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    },
+    {
+      "username": "kotha",
+      "role": "admin",
+      "roles": [
+        "admin"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [
+        "/packs",
+        "__can_create_pack",
+        "__can_upload_pack_image"
+      ],
+      "override": {
+        "grants": [
+          "/packs",
+          "__can_create_pack",
+          "__can_upload_pack_image"
+        ],
+        "revokes": []
+      }
+    },
+    {
+      "username": "Skailer",
+      "role": "pack_creator",
+      "roles": [
+        "pack_creator"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [
+        "/packs",
+        "/cards",
+        "/sets",
+        "__can_create_pack",
+        "__can_update_pack",
+        "__can_edit_live_packs",
+        "__can_upload_pack_image",
+        "__can_create_card",
+        "__can_update_card",
+        "__can_delete_card",
+        "__can_upload_card_image",
+        "__can_create_set",
+        "/upgrader",
+        "__can_delete_pack",
+        "__can_toggle_pack_active",
+        "__can_update_set",
+        "__can_delete_set",
+        "__can_seed_initial_sets",
+        "__can_force_absorb_cards",
+        "__can_upload_set_image",
+        "__can_add_upgrader_output",
+        "__can_toggle_upgrader_output",
+        "__can_remove_upgrader_output",
+        "/rewards/shards"
+      ],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    },
+    {
+      "username": "Rot",
+      "role": "support",
+      "roles": [
+        "support"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [
+        "/shifts",
+        "/users",
+        "/transactions/packs",
+        "/transactions/rewards",
+        "/transactions/deposits",
+        "/chat",
+        "/withdrawals",
+        "__can_edit_identity",
+        "__can_ban_users",
+        "__can_lock_users",
+        "__can_toggle_feature_locks",
+        "__can_create_user_note",
+        "__can_mute_users",
+        "__can_delete_messages",
+        "__can_pin_messages",
+        "/dashboard"
+      ],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    },
+    {
+      "username": "hifoen",
+      "role": "admin",
+      "roles": [
+        "admin"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    },
+    {
+      "username": "Jason",
+      "role": "support",
+      "roles": [
+        "support"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [
+        "/shifts",
+        "/users",
+        "/transactions/packs",
+        "/transactions/rewards",
+        "/transactions/deposits",
+        "/chat",
+        "/withdrawals",
+        "__can_edit_identity",
+        "__can_ban_users",
+        "__can_lock_users",
+        "__can_toggle_feature_locks",
+        "__can_create_user_note",
+        "__can_mute_users",
+        "__can_delete_messages",
+        "__can_pin_messages",
+        "/dashboard"
+      ],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    },
+    {
+      "username": "ML",
+      "role": "admin",
+      "roles": [
+        "admin"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    },
+    {
+      "username": "quaticy",
+      "role": "support",
+      "roles": [
+        "support"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [
+        "/shifts",
+        "/users",
+        "/transactions/packs",
+        "/transactions/rewards",
+        "/transactions/deposits",
+        "/chat",
+        "/withdrawals",
+        "__can_edit_identity",
+        "__can_ban_users",
+        "__can_lock_users",
+        "__can_toggle_feature_locks",
+        "__can_create_user_note",
+        "__can_mute_users",
+        "__can_delete_messages",
+        "__can_pin_messages",
+        "/dashboard"
+      ],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    },
+    {
+      "username": "e2e_admin",
+      "role": "admin",
+      "roles": [],
+      "customRoleTokens": [],
+      "allowedPages": [],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    },
+    {
+      "username": "deviation",
+      "role": "admin",
+      "roles": [
+        "admin"
+      ],
+      "customRoleTokens": [],
+      "allowedPages": [],
+      "override": {
+        "grants": [],
+        "revokes": []
+      }
+    }
+  ]
+}

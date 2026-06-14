@@ -69,6 +69,61 @@ export async function readAdminUserWithRoles<
 }
 
 /**
+ * Resilient read of the additive per-user override columns
+ * `admin_users.permission_grants` / `permission_revokes` (Phase A of the
+ * role/permission rebuild — see `ROLE_REDESIGN_DESIGN.md`).
+ *
+ * These columns do NOT exist yet (they ship in Phase C via
+ * `prisma db execute`, owner-gated). Until then, selecting them through the
+ * typed Prisma client throws P2022 ("column does not exist"). This wrapper —
+ * the exact analogue of {@link readAdminUserWithRoles} — runs the
+ * override-selecting read on the happy path and, ONLY on a missing-column
+ * error, falls back to a read WITHOUT the override columns and augments the
+ * result with the empty override `{ grants: [], revokes: [] }`.
+ *
+ * Effective behavior is therefore IDENTICAL whether or not the columns exist:
+ * every user reads as having no overrides (which is also their true state at
+ * migration), so a read can run SAFELY before the DB is altered. Once the
+ * columns are applied, only `withOverrides` runs — the real values are read
+ * with no fallback and no extra round-trip.
+ *
+ * `withOverrides` selects the row INCLUDING the override columns;
+ * `withoutOverrides` selects the SAME row WITHOUT them. Any non-missing-column
+ * error is re-thrown unchanged so real failures are not masked. `null`
+ * (row-not-found) is preserved verbatim.
+ */
+export async function readAdminUserWithOverrides<
+  TWith,
+  TWithout extends object | null,
+>(
+  withOverrides: () => Promise<TWith>,
+  withoutOverrides: () => Promise<TWithout>,
+): Promise<
+  | TWith
+  | (NonNullable<TWithout> & {
+      permission_grants: string[];
+      permission_revokes: string[];
+    })
+  | null
+> {
+  try {
+    return await withOverrides();
+  } catch (err) {
+    if (!isMissingColumnError(err)) throw err;
+    const row = await withoutOverrides();
+    // Preserve `null` (row-not-found) verbatim; otherwise inject the empty
+    // override so callers get a uniform shape identical to a real row whose
+    // columns are still at their `'{}'` defaults.
+    if (row === null || row === undefined) return null;
+    return {
+      ...(row as NonNullable<TWithout>),
+      permission_grants: [] as string[],
+      permission_revokes: [] as string[],
+    };
+  }
+}
+
+/**
  * Resilient list read for many `admin_users` rows that select `roles`.
  * Same semantics as {@link readAdminUserWithRoles} but for arrays — each
  * fallback row is augmented with `roles: []`.

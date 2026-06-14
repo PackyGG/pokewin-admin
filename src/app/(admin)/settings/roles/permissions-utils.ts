@@ -1001,9 +1001,78 @@ export function isPermissionKey(key: string): boolean {
   return PERMISSION_KEY_SET.has(key);
 }
 
-/** Keep only recognized permission keys, de-duplicated (drops stale entries). */
+// ---------------------------------------------------------------------------
+// Value tokens — `<base>:<value>` entries that carry data (a numeric limit)
+// alongside a recognized base key. These live in the same `allowed_pages`
+// String[] column as bare keys but encode a value after a colon, e.g.
+//   • "__balance_limit_daily:10"      (legacy per-admin balance cap; void holds this)
+//   • "__balance_limit_weekly:500"    (legacy weekly variant)
+//   • "__can_adjust_balance_limit_daily:500"  (current format from buildCapabilityKeys)
+//
+// The bare `isPermissionKey` check rejects them (the colon-suffixed string is
+// not in ALL_PERMISSION_KEYS), which is why the OLD sanitizer dropped them —
+// silently discarding void's "__balance_limit_daily:10". `sanitizePermissionKeys`
+// must preserve them VERBATIM whenever their base is recognized, while still
+// dropping genuinely-unknown value tokens. (See ROLE_REDESIGN_DESIGN.md
+// §"Highest-attention risk".)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recognized value-token base keys, WITHOUT the trailing `:<value>`:
+ *
+ *   - the two legacy balance-limit bases (`__balance_limit_daily` /
+ *     `__balance_limit_weekly`, parsed by `parseBalanceLimit`), and
+ *   - the per-capability limit form `${capKey}_limit_${period}` for EVERY
+ *     capability key, in both `daily` and `weekly` periods — exactly the
+ *     prefixes `parseLimit` understands and `buildCapabilityKeys` emits.
+ *
+ * Derived from the catalog so any capability's limit token is recognized
+ * automatically; nothing is hard-coded beyond the two legacy bases. (We key
+ * off every `capKey` rather than only `hasLimit` ones because `hasLimit` is a
+ * UI hint that is currently unset on every capability, while the legacy
+ * `__balance_limit_*` value tokens are real and live — e.g. void's
+ * `__balance_limit_daily:10`.)
+ */
+const VALUE_TOKEN_BASES: ReadonlySet<string> = new Set<string>([
+  // Legacy per-admin balance cap (parsed by parseBalanceLimit).
+  "__balance_limit_daily",
+  "__balance_limit_weekly",
+  // Per-capability limit format (`${capKey}_limit_${period}`), all capabilities.
+  ...CAPABILITY_KEYS.flatMap((key) => [
+    `${key}_limit_daily`,
+    `${key}_limit_weekly`,
+  ]),
+]);
+
+/**
+ * True for a `<base>:<value>` value token whose base is recognized AND whose
+ * value is a finite positive number (matching the parse guards in
+ * `parseLimit` / `parseBalanceLimit`). Unknown bases or non-numeric / ≤0
+ * values are rejected so a stale or malformed token is still dropped.
+ */
+export function isValueToken(token: string): boolean {
+  const colon = token.indexOf(":");
+  if (colon === -1) return false;
+  const base = token.slice(0, colon);
+  if (!VALUE_TOKEN_BASES.has(base)) return false;
+  const value = Number(token.slice(colon + 1));
+  return Number.isFinite(value) && value > 0;
+}
+
+/**
+ * Keep only recognized permission entries, de-duplicated (drops stale ones).
+ *
+ * Value-token-aware: an entry survives if it is EITHER a bare recognized
+ * permission key (`isPermissionKey`) OR a recognized `<base>:<value>` value
+ * token (`isValueToken`). This preserves tokens like
+ * `__balance_limit_daily:10` that the bare-key filter alone would discard,
+ * while genuinely-unknown tokens are still dropped. Order is preserved
+ * (first occurrence wins) so a materialized array stays stable.
+ */
 export function sanitizePermissionKeys(keys: string[]): string[] {
-  return Array.from(new Set(keys.filter(isPermissionKey)));
+  return Array.from(
+    new Set(keys.filter((k) => isPermissionKey(k) || isValueToken(k))),
+  );
 }
 
 /**
