@@ -146,16 +146,31 @@ export function TransactionDetailModal({
         );
       })(),
     },
-    // Worth = cash balance + held inventory (cards + vouchers) at that
-    // point, so a battle/pack that trades cash for items reads as the true
-    // total-worth change instead of looking like a pure cash loss. Computed
-    // server-side (getUserTransactions) and reused by the table row too, so
-    // the two surfaces can never drift apart.
-    { label: "Worth Before", value: formatCurrency(t.worthBefore) },
-    { label: "Worth After", value: formatCurrency(t.worthAfter) },
+    // Worth = TOTAL worth at that point = cash balance + held inventory
+    // (cards + vouchers), so a battle/pack that trades cash for items reads
+    // as the true total-worth change instead of looking like a pure cash
+    // loss. Computed server-side (getUserTransactions) and reused by the
+    // table row too, so the two surfaces can never drift apart. The cash leg
+    // is shown right below as Balance Before/After, so the held-inventory
+    // value is implicit (Worth − Balance) and doesn't need its own row.
+    {
+      label: "Worth Before",
+      value: (
+        <span title={`Cash ${formatCurrency(t.balanceBefore)} + inventory ${formatCurrency(Math.max(0, t.worthBefore - t.balanceBefore))}`}>
+          {formatCurrency(t.worthBefore)}
+        </span>
+      ),
+    },
+    {
+      label: "Worth After",
+      value: (
+        <span title={`Cash ${formatCurrency(t.balanceAfter)} + inventory ${formatCurrency(t.inventoryValue)}`}>
+          {formatCurrency(t.worthAfter)}
+        </span>
+      ),
+    },
     { label: "Balance Before", value: formatCurrency(t.balanceBefore) },
     { label: "Balance After", value: formatCurrency(t.balanceAfter) },
-    { label: "Inventory Value", value: formatCurrency(t.inventoryValue) },
     {
       label: "Status",
       value: (

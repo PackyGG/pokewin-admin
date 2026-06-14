@@ -370,7 +370,6 @@ export const CategoryTransactionsTable = React.memo(
                 {showCardsValue && <TableHead>House Profit</TableHead>}
                 <TableHead>Worth Before</TableHead>
                 <TableHead>Worth After</TableHead>
-                <TableHead>Inventory</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead>Date</TableHead>
@@ -772,13 +771,16 @@ export const CategoryTransactionsTable = React.memo(
                         </>
                       );
                     })()}
-                  {/* Before / After show TOTAL WORTH (cash balance + held
-                      inventory worth), not cash alone — the raw cash is in
-                      the tooltip, and the held inventory has its own column
-                      to the right. Matches the detail modal's Worth rows. */}
+                  {/* Before / After show TOTAL WORTH = cash balance + held
+                      inventory worth (cards + vouchers) at that moment, not
+                      cash alone. The breakdown (cash + inventory) is in each
+                      cell's tooltip, so a separate Inventory column is
+                      redundant. Matches the detail modal's Worth rows. */}
                   <TableCell
                     className="text-muted-foreground tabular-nums"
-                    title={`Cash ${formatCurrency(t.balanceBefore)} + inventory worth`}
+                    title={`Cash ${formatCurrency(t.balanceBefore)} + inventory ${formatCurrency(
+                      Math.max(0, t.worthBefore - t.balanceBefore),
+                    )}`}
                   >
                     {formatCurrency(t.worthBefore)}
                   </TableCell>
@@ -789,9 +791,6 @@ export const CategoryTransactionsTable = React.memo(
                     )} + inventory ${formatCurrency(t.inventoryValue)}`}
                   >
                     {formatCurrency(t.worthAfter)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground tabular-nums">
-                    {formatCurrency(t.inventoryValue)}
                   </TableCell>
                   <TableCell>
                     <Badge
@@ -835,7 +834,7 @@ export const CategoryTransactionsTable = React.memo(
               {txData.data.length === 0 && (
                 <TableRow className="hover:bg-transparent">
                   <TableCell
-                    colSpan={showCardsValue ? 12 : 9}
+                    colSpan={showCardsValue ? 11 : 8}
                     className="p-0"
                   >
                     {loadError ? (
