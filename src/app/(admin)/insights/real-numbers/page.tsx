@@ -18,7 +18,6 @@ import {
   Landmark,
   ScrollText,
   Layers,
-  Info,
   Receipt,
   HandCoins,
   Sparkles,
@@ -29,9 +28,9 @@ import { requirePageAccess } from "@/lib/dal";
 import {
   PageHero,
   PageHeroIdentity,
-  SectionHeading,
   KpiTile,
 } from "@/components/modern-panels";
+import { CollapsibleSection } from "./collapsible-section";
 import { FadeIn } from "@/components/fade-in";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -225,11 +224,10 @@ export default async function RealNumbersPage() {
           <div className="space-y-6">
             <KpiStrip cost={cost} wager={wager ?? 0} snapshot={snapshot} />
 
-            <section className="space-y-3">
-              <SectionHeading
-                icon={Layers}
-                title="GGR by game — packs · battles · upgrader"
-              />
+            <CollapsibleSection
+              icon="layers"
+              title="GGR by game — packs · battles · upgrader"
+            >
               {split ? (
                 <GameSplitPanel split={split} headlineGgr={cost.ggr} />
               ) : (
@@ -239,25 +237,24 @@ export default async function RealNumbersPage() {
                   size="panel"
                 />
               )}
-            </section>
+            </CollapsibleSection>
 
-            <section className="space-y-3">
-              <SectionHeading
-                icon={Scale}
-                title="Gaming-margin waterfall — wager → GGR → NGR"
-              />
+            <CollapsibleSection
+              icon="scale"
+              title="Gaming-margin waterfall — wager → GGR → NGR"
+            >
               <GamingWaterfall
                 cost={cost}
                 wager={wager ?? 0}
                 netRain={rewardSpend?.netRain ?? null}
               />
-            </section>
+            </CollapsibleSection>
 
-            <section className="space-y-3">
-              <SectionHeading
-                icon={Receipt}
-                title="Reward & bonus spend — itemized · every penny, where & why"
-              />
+            <CollapsibleSection
+              icon="receipt"
+              title="Reward & bonus spend — itemized · every penny, where & why"
+              defaultOpen={false}
+            >
               {rewardSpend ? (
                 <RewardSpendPanel
                   itemization={rewardSpend}
@@ -270,33 +267,31 @@ export default async function RealNumbersPage() {
                   size="panel"
                 />
               )}
-            </section>
+            </CollapsibleSection>
 
             {snapshot && (
-              <section className="space-y-3">
-                <SectionHeading
-                  icon={Banknote}
-                  title="Balance-sheet P&L — the cash-basis bottom line"
-                />
+              <CollapsibleSection
+                icon="banknote"
+                title="Balance-sheet P&L — the cash-basis bottom line"
+              >
                 <BalanceSheetWaterfall snapshot={snapshot} />
-              </section>
+              </CollapsibleSection>
             )}
 
             {snapshot && (
-              <section className="space-y-3">
-                <SectionHeading
-                  icon={PiggyBank}
-                  title="Why GGR ≠ realized P&L — two different scoreboards"
-                />
+              <CollapsibleSection
+                icon="piggyBank"
+                title="Why GGR ≠ realized P&L — two different scoreboards"
+                defaultOpen={false}
+              >
                 <ReconciliationCallout cost={cost} snapshot={snapshot} />
-              </section>
+              </CollapsibleSection>
             )}
 
-            <section className="space-y-3">
-              <SectionHeading
-                icon={Scale}
-                title="GGR → realized P&L — the complete closing waterfall 2.0"
-              />
+            <CollapsibleSection
+              icon="scale"
+              title="GGR → realized P&L — the complete closing waterfall 2.0"
+            >
               <GgrToNgrBridge
                 cost={cost}
                 snapshot={snapshot}
@@ -306,13 +301,13 @@ export default async function RealNumbersPage() {
                 customerCashMargin={customerCash?.pnl ?? null}
                 recycling={recycling}
               />
-            </section>
+            </CollapsibleSection>
 
-            <section className="space-y-3">
-              <SectionHeading
-                icon={Sparkles}
-                title="Creator program cost — what the house actually funds"
-              />
+            <CollapsibleSection
+              icon="sparkles"
+              title="Creator program cost — what the house actually funds"
+              defaultOpen={false}
+            >
               {creatorProgram ? (
                 <CreatorProgramCostPanel
                   program={creatorProgram}
@@ -325,12 +320,15 @@ export default async function RealNumbersPage() {
                   size="panel"
                 />
               )}
-            </section>
+            </CollapsibleSection>
 
-            <section className="space-y-3">
-              <SectionHeading icon={Info} title="Definitions — what each number means" />
+            <CollapsibleSection
+              icon="info"
+              title="Definitions — what each number means"
+              defaultOpen={false}
+            >
               <Definitions cost={cost} snapshot={snapshot} />
-            </section>
+            </CollapsibleSection>
           </div>
         </FadeIn>
       )}
