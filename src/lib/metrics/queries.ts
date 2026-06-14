@@ -830,6 +830,55 @@ export async function sumLedgerTypes(opts: {
 }
 
 /**
+ * Σ |amount| PER ledger type over a set, in ONE round-trip — the grouped
+ * companion to {@link sumLedgerTypes}. Returns a `Map<type, Σ|amount|>` that
+ * is BYTE-IDENTICAL to calling `sumLedgerTypes({ types: [t], window })` once
+ * per `t`: the SELECT (`SUM(ABS(amount::numeric))`), the `status='completed'`
+ * filter, the `type::text IN (<list>)` membership, the canonical
+ * `getMetricsScope` user scope + `notInCreatorSession` predicate, and the
+ * `created_at` since-clause are EXACTLY the per-type query's — only
+ * `type::text` is added to the SELECT + a `GROUP BY type::text`. A type with
+ * no matching rows is simply absent from the result; callers read it back as
+ * `map.get(type) ?? 0`, which equals the per-type query's `COALESCE(...,0)`.
+ *
+ * Replaces the cost-breakdown's ~37 per-type `sumLedgerTypes` round-trips
+ * (every REWARD_PAYOUT_TYPES-excl-rain member + every RESIDUAL_TYPES member)
+ * with a single grouped scan — fewer round-trips, identical numbers, no
+ * change to any sign/scope/window/amount expression. Same DB-existence
+ * caveat as `sumLedgerTypes`: pass only members that exist on the connected
+ * DB (the base sets are safe; upgrader members on a lagged DB use the
+ * streamers probe instead).
+ */
+export async function sumLedgerTypesGrouped(opts: {
+  types: readonly LedgerTransactionType[];
+  window: MetricWindow;
+}): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (opts.types.length === 0) return result;
+  return withTiming("metrics.sumLedgerTypesGrouped", async () => {
+    const db = await getDb();
+    const scope = await getMetricsScope();
+    const list = ledgerTypesToSqlList(opts.types);
+    type Row = { type: string; total: string };
+    const rows = await db.$queryRawUnsafe<Row[]>(
+      `WITH ${scope.sessionWindowsCte}
+       SELECT type::text AS type, COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
+       FROM ledger_transactions
+       WHERE status = 'completed'
+         AND type::text IN ${list}
+         AND user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("user_id", "created_at")}
+         ${sinceClause("created_at", opts.window.since)}
+       GROUP BY type::text`,
+    );
+    for (const r of rows) {
+      result.set(r.type, toNumber(r.total));
+    }
+    return result;
+  });
+}
+
+/**
  * Σ |amount| of the FAKE-BALANCE `official_stream` `admin_balance_adjustment`
  * rows over a window, through the SAME canonical scope as the gaming metrics
  * (`getMetricsScope`). official_stream is owner-designated fake balance that

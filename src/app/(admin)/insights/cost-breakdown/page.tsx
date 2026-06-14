@@ -38,7 +38,7 @@ import {
   INSIGHTS_PERIOD_LABELS,
 } from "../analytics/types";
 import {
-  getCostBreakdown,
+  getCostBreakdownCached,
   type CostLine,
   type CostBreakdown,
 } from "@/lib/queries/insights-analytics/cost-breakdown";
@@ -130,7 +130,7 @@ export default async function CostBreakdownPage({
 
   const [{ data, error }, { data: lifetimeSnapshot }] = await Promise.all([
     safeQuery(
-      () => getCostBreakdown(period, periodLabel, 10),
+      () => getCostBreakdownCached(period, periodLabel, 10),
       null,
       "insights.costBreakdown",
     ),

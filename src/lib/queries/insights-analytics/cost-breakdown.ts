@@ -12,7 +12,7 @@ import { REWARD_PAYOUT_TYPES, RESIDUAL_TYPES } from "@/lib/metrics";
 import {
   getWindowMetrics,
   getDailyGamingMetrics,
-  sumLedgerTypes,
+  sumLedgerTypesGrouped,
   sumStatsExcludedAdjustments,
   type MetricWindow,
 } from "@/lib/metrics/queries";
@@ -831,19 +831,31 @@ export async function getCostBreakdown(
     totalWager > 0 ? (signed / totalWager) * 100 : null;
 
   // ── Reward-category lines ────────────────────────────────────────
-  // Itemize each REWARD_PAYOUT_TYPES category via sumLedgerTypes (same
-  // scope), grouping ledger types into operator-friendly categories.
+  // Itemize each REWARD_PAYOUT_TYPES category via the canonical metric
+  // scope, grouping ledger types into operator-friendly categories.
   // rain_win is handled as its NET house cost (not the gross magnitude)
   // so the reward lines sum to the canonical reward cost (GGR − NGR).
+  //
+  // PERF: the per-type reward sums AND the per-type RESIDUAL_TYPES sums
+  // below are now read in ONE grouped round-trip (`sumLedgerTypesGrouped`)
+  // instead of ~37 single-type `sumLedgerTypes` scans. The grouped query is
+  // byte-identical per type (same SUM(ABS(amount)) / status / scope /
+  // notInCreatorSession / since-clause — only `GROUP BY type::text` added),
+  // so every bucket total is unchanged. The reward and residual type sets
+  // are DISJOINT (the `ledger-sets.ts` partition guarantees it), so one
+  // grouped scan over their union resolves both; a type with no rows reads
+  // back as 0 exactly like the per-type `COALESCE(...,0)`.
   const rewardTypesExclRain = REWARD_PAYOUT_TYPES.filter(
     (t) => t !== "rain_win",
   );
-  const rewardSums = await Promise.all(
-    rewardTypesExclRain.map(async (type) => ({
-      type,
-      total: await sumLedgerTypes({ types: [type], window }),
-    })),
-  );
+  const groupedLedgerSums = await sumLedgerTypesGrouped({
+    types: [...rewardTypesExclRain, ...RESIDUAL_TYPES],
+    window,
+  });
+  const rewardSums = rewardTypesExclRain.map((type) => ({
+    type,
+    total: groupedLedgerSums.get(type) ?? 0,
+  }));
 
   const rewardGroups = new Map<
     string,
@@ -911,26 +923,26 @@ export async function getCostBreakdown(
     .sort((a, b) => b.amount - a.amount);
 
   // ── RESIDUAL_TYPES named bridge rows ─────────────────────────────
-  // Itemize every RESIDUAL_TYPES bucket via sumLedgerTypes (same scope)
-  // so the GGR/NGR → P&L gap is auditable, not a catch-all. Grouped by
-  // residualGroup; `sign` is the row's house-POV effect on P&L.
-  const residualSums = await Promise.all(
-    RESIDUAL_TYPES.map(async (type) => {
-      const raw = await sumLedgerTypes({ types: [type], window });
-      // admin_balance_adjustment: the COUNTED categorized credits are now
-      // their OWN reward lines (lifted into NGR). Subtract them from the
-      // residual admin-adjustment line so they are not double-counted —
-      // what remains is the uncounted slice (`other` + corrections +
-      // manual-withdrawal debits). ALSO subtract the FAKE-BALANCE
-      // stats-excluded slice (`statsExcludedAdjSum`) so it is never surfaced
-      // as a residual admin-adjustment cost. Clamp ≥ 0 defensively.
-      const total =
-        type === "admin_balance_adjustment"
-          ? Math.max(0, raw - countedAdjustments.total - statsExcludedAdjSum)
-          : raw;
-      return { type, total };
-    }),
-  );
+  // Itemize every RESIDUAL_TYPES bucket from the SAME grouped scan above
+  // (`groupedLedgerSums`, same canonical scope) so the GGR/NGR → P&L gap is
+  // auditable, not a catch-all. Grouped by residualGroup; `sign` is the
+  // row's house-POV effect on P&L. A bucket with no rows reads back as 0
+  // (== the per-type `COALESCE(...,0)` the old per-type query returned).
+  const residualSums = RESIDUAL_TYPES.map((type) => {
+    const raw = groupedLedgerSums.get(type) ?? 0;
+    // admin_balance_adjustment: the COUNTED categorized credits are now
+    // their OWN reward lines (lifted into NGR). Subtract them from the
+    // residual admin-adjustment line so they are not double-counted —
+    // what remains is the uncounted slice (`other` + corrections +
+    // manual-withdrawal debits). ALSO subtract the FAKE-BALANCE
+    // stats-excluded slice (`statsExcludedAdjSum`) so it is never surfaced
+    // as a residual admin-adjustment cost. Clamp ≥ 0 defensively.
+    const total =
+      type === "admin_balance_adjustment"
+        ? Math.max(0, raw - countedAdjustments.total - statsExcludedAdjSum)
+        : raw;
+    return { type, total };
+  });
   const residualGroups = new Map<
     string,
     { label: string; why: string; total: number; sign: 1 | -1 | 0; types: string[] }
@@ -1323,6 +1335,55 @@ const cachedCostBreakdownLifetime = unstable_cache(
  */
 export async function getCostBreakdownLifetimeCached(): Promise<CostBreakdown> {
   return cachedCostBreakdownLifetime();
+}
+
+// ─── Per-PERIOD cost-breakdown cache (the /insights/cost-breakdown page) ─────
+//
+// The /insights/cost-breakdown page renders ONE active period per request
+// (`getCostBreakdown(period, label, 10)`), but each cold render fired the full
+// canonical assembly uncached — ~45 ledger scans, no cross-render reuse — so a
+// page refresh (or two admins on the same period) re-ran the whole waterfall
+// every time, exhausting the connection-capped prod pool. This mirrors the
+// EXACT lifetime/topbar `unstable_cache` pattern above, but keyed on the call
+// ARGUMENTS (period + label + contributorLimit) so each period gets its own
+// entry — switching the period chip fetches that period on demand (Active-
+// Timeframe-Only: no eager preload of other windows), and a repeat render of
+// the SAME period is served from cache. Returns the FULL `CostBreakdown`
+// (plain serializable data — numbers, strings incl. `cutoffIso`, arrays of
+// plain objects; no Dates/functions cross the cache boundary), byte-identical
+// to the direct call. 300s TTL + the same insights tags as the other caches.
+// A thrown assembly is NOT cached (`unstable_cache` stores only fulfilled
+// results), so a transient failure never poisons the entry — the page's
+// `safeQuery` degrades that one render and the next retries.
+
+const cachedCostBreakdownByPeriod = unstable_cache(
+  async (
+    period: InsightsPeriod,
+    periodLabel: string,
+    contributorLimit: number,
+  ): Promise<CostBreakdown> =>
+    getCostBreakdown(period, periodLabel, contributorLimit),
+  ["cost-breakdown-by-period-v1"],
+  { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
+);
+
+/**
+ * Cross-render cached `getCostBreakdown` for a finite/active period — the
+ * /insights/cost-breakdown page's read. Keyed on `(period, periodLabel,
+ * contributorLimit)` so each period chip has its own entry (no other window is
+ * eager-loaded) and a repeat render of the same period is cheap. Returns the
+ * identical `CostBreakdown` the direct call produces. The lifetime 365d-capped
+ * topbar-shared read keeps its own dedicated `getCostBreakdownLifetimeCached`
+ * (different call shape: limit 0 + 365d cap); the CSV export + edge-plan
+ * baseline keep calling `getCostBreakdown` directly (their own cached
+ * baselines / rare large-contributor exports).
+ */
+export async function getCostBreakdownCached(
+  period: InsightsPeriod,
+  periodLabel: string,
+  contributorLimit = 10,
+): Promise<CostBreakdown> {
+  return cachedCostBreakdownByPeriod(period, periodLabel, contributorLimit);
 }
 
 // ─── Topbar 30d money chips (ADDITIVE export — Edge Plan 2.0 spec #13) ───────
