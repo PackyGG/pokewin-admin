@@ -84,9 +84,12 @@ const PNL: PnlBreakdown = {
   netPnlRealized: 0,
   netPnlTrue: 0,
   pnl12h: 0,
-  pnl24h: 0,
+  // Non-zero 24h (house gain → emerald) + 7d (house loss → rose) so the
+  // new compact Platform-P&L footer chips exercise both color branches in
+  // the render-verify sweep.
+  pnl24h: 4_321.55,
   pnl3d: 0,
-  pnl7d: 0,
+  pnl7d: -2_109.4,
   pnl14d: 0,
   deposits24h: 0,
   deposits3d: 0,

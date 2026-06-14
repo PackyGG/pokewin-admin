@@ -119,7 +119,7 @@ export function StatPanel({
           colors.bg,
         )}
       />
-      <div className="relative p-4 sm:p-5">
+      <div className="relative flex h-full flex-col p-4 sm:p-5">
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
             <div className={cn("flex size-7 items-center justify-center rounded-lg shrink-0", colors.bg)}>
@@ -150,6 +150,33 @@ export function PanelRow({
     <div className="flex items-center justify-between py-1 text-sm">
       <span className="text-muted-foreground">{label}</span>
       <span className={cn("font-medium tabular-nums", valueClassName)}>{value}</span>
+    </div>
+  );
+}
+
+// Compact rolling-P&L chip for the Platform-P&L panel footer (24h / 7d).
+// House POV — must match the panel's main P&L number coloring exactly:
+//   value > 0  → house gained  → emerald
+//   value < 0  → house lost     → rose
+//   value === 0 → flat          → muted
+// No sign flip. Currency via the shared formatCurrency; tabular-nums so the
+// two chips align. Dark-mode variants included.
+function RollingPnlChip({ label, value }: { label: string; value: number }) {
+  const tone =
+    value > 0
+      ? "text-emerald-600 dark:text-emerald-400"
+      : value < 0
+        ? "text-rose-600 dark:text-rose-400"
+        : "text-muted-foreground";
+  return (
+    <div className="flex min-w-0 flex-1 items-baseline justify-between gap-1.5 rounded-lg border bg-muted/30 px-2.5 py-1.5">
+      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </span>
+      <span className={cn("truncate text-sm font-semibold tabular-nums", tone)}>
+        {value > 0 ? "+" : ""}
+        {formatCurrency(value)}
+      </span>
     </div>
   );
 }
@@ -350,14 +377,22 @@ export function ModernPnlPanel({
           }
         />
       </div>
-      {/* The rolling windowed P&L ladder (past 12h / 24h / 3d / 7d / 14d)
-          used to live here, but it made this panel noticeably taller than
-          the sibling Balances / Activity panels and unbalanced the 3-up
-          Overview row. Per owner request it was removed from the Overview
-          panel; the same five windows still live on the Account tab as a
-          horizontal tile strip alongside the wagering stats (the single
-          source for the rolling breakdown). pnl7d also still feeds the
-          Adjust-Balance dialog's Lossback autofill via ModernBalancePanel. */}
+      {/* Compact rolling-P&L footer — the full 12h/24h/3d/7d/14d ladder was
+          removed from this panel (it made the box taller than the sibling
+          Balances / Activity panels and unbalanced the 3-up Overview row;
+          the full ladder still lives on the Account tab as a tile strip).
+          Per owner request the two most-watched windows (24h + 7d) return
+          here as two compact inline chips, pinned to the BOTTOM via mt-auto
+          so they sit in the vertical slack the equal-height grid already
+          gives this (shortest) panel — they do NOT add height beyond the
+          stretched row. Same already-computed values as the Account-tab
+          strip (pnlBreakdown.pnl24h / pnl7d) — no new query, no new prop.
+          House POV matches the hero number above exactly: house gain (>=0)
+          → emerald, house loss (<0) → rose, flat (===0) → muted. */}
+      <div className="mt-auto flex items-center gap-2 border-t pt-3">
+        <RollingPnlChip label="24h" value={pnlBreakdown.pnl24h} />
+        <RollingPnlChip label="7d" value={pnlBreakdown.pnl7d} />
+      </div>
     </StatPanel>
   );
 }
