@@ -85,12 +85,14 @@ const GAMING_TYPES = [
   "reward_card_sale",
   "battle_excess_to_voucher",
 ];
-// FINANCIAL covers deposits, withdrawals, and direct cash payouts
-// (rakeback / affiliate / rain / race / gift / promo). Card sales +
-// card / voucher exchanges intentionally live in NEITHER tab — they
-// bloated the Deposits & Withdrawals view with rows admins did not
-// consider cash events. If a future surface needs them they'll get
-// their own section instead of being folded into Financial.
+// FINANCIAL covers deposits, withdrawals (card_withdrawal +
+// withdrawal_shipping_fee) and direct cash payouts (rakeback / affiliate /
+// rain / race / gift / promo). The win-realization rows (card_sale /
+// reward_card_sale / battle_excess_to_voucher) do NOT live here — they're in
+// GAMING_TYPES above, alongside the bets that produced them, so the
+// bet → win → realize trail stays on one tab. Pure card / voucher exchanges
+// (card_exchange / voucher_exchange / exchange_excess_*) are in NEITHER tab —
+// exchanging an item is value-neutral, not a cash event.
 const FINANCIAL_TYPES = [
   "deposit",
   "deposit_bonus",
