@@ -3,7 +3,7 @@
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Archive, Ban, ShieldAlert, ShieldCheck, ShieldOff, Lock, Unlock } from "lucide-react";
+import { Archive, Ban, ShieldAlert, ShieldBan, ShieldCheck, ShieldOff, Lock, Unlock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -34,7 +34,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
 import { EmptyState } from "@/components/empty-state";
 import type { UserDetail } from "./user-tabs-types";
 import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
@@ -110,6 +110,15 @@ export const ModerationSection = React.memo(function ModerationSection({
   user: UserDetail["user"];
   mutes: UserDetail["mutes"];
 }) {
+  // Self-exclusion (responsible-gambling) live state. USER-initiated on the
+  // game platform — DISPLAY-ONLY here (no admin endpoint imposes/lifts it).
+  // The flag is sticky, so we derive active-vs-expired from the `until`
+  // timestamp: a set flag with `until` in the past = the window has lapsed.
+  const selfExcludedActive =
+    user.isSelfExcluded &&
+    (!user.selfExcludedUntil ||
+      new Date(user.selfExcludedUntil).getTime() > Date.now());
+
   return (
     <div className="space-y-6">
       {/* Ban/Lock Metadata */}
@@ -163,6 +172,86 @@ export const ModerationSection = React.memo(function ModerationSection({
         </div>
       )}
 
+      {/* Self-Exclusion (responsible gambling) — USER-initiated on the game
+          platform, DISPLAY-ONLY here (there is no admin endpoint to impose or
+          lift it). Shown whenever the flag is set, regardless of whether the
+          window is still open: ACTIVE (window open / open-ended) means the user
+          is CURRENTLY restricted on the game platform — the betting/withdrawal
+          routes 403 for them; EXPIRED means the flag is still set but the
+          window has lapsed (no longer restricted). Same visual vocabulary as
+          the Ban/Lock metadata cards above. */}
+      {user.isSelfExcluded && (
+        <div
+          className={
+            selfExcludedActive
+              ? "rounded-md border border-rose-500/30 bg-rose-500/5 p-3 space-y-2"
+              : "rounded-md border border-amber-500/30 bg-amber-500/5 p-3 space-y-2"
+          }
+        >
+          <div className="flex items-center gap-2">
+            <ShieldBan
+              className={
+                selfExcludedActive
+                  ? "size-4 text-rose-400"
+                  : "size-4 text-amber-400"
+              }
+            />
+            <p
+              className={
+                selfExcludedActive
+                  ? "text-sm font-medium text-rose-400"
+                  : "text-sm font-medium text-amber-400"
+              }
+            >
+              Self-Excluded
+            </p>
+            <Badge
+              variant="outline"
+              className={
+                selfExcludedActive
+                  ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                  : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+              }
+            >
+              {selfExcludedActive ? "Active" : "Expired"}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {selfExcludedActive
+              ? "User-initiated responsible-gambling exclusion. The user is currently restricted on the game platform (betting & withdrawal routes are blocked for them)."
+              : "User-initiated responsible-gambling exclusion. The exclusion window has lapsed — the user is no longer restricted, though the flag remains set on their account."}
+          </p>
+          {user.selfExcludedReason && (
+            <p className="text-xs text-muted-foreground">
+              Reason: {user.selfExcludedReason}
+            </p>
+          )}
+          {user.selfExcludedAt && (
+            <p className="text-xs text-muted-foreground">
+              Since: {formatDateTime(user.selfExcludedAt)} (
+              {formatRelative(user.selfExcludedAt)})
+            </p>
+          )}
+          {user.selfExcludedUntil ? (
+            <p className="text-xs text-muted-foreground">
+              {selfExcludedActive ? "Lifts" : "Lifted"}:{" "}
+              {formatDateTime(user.selfExcludedUntil)} (
+              {formatRelative(user.selfExcludedUntil)})
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No end date — open-ended exclusion.
+            </p>
+          )}
+          {/* DISPLAY-ONLY: no impose/lift control. Self-exclusion is set by the
+              user on the game platform; there is no admin endpoint for it. */}
+          <p className="text-[11px] italic text-muted-foreground/70">
+            Display only — self-exclusion is managed by the user on the game
+            platform; it cannot be imposed or lifted from the admin.
+          </p>
+        </div>
+      )}
+
       {/* Mute History */}
       {mutes.length > 0 && (
         <div>
@@ -207,7 +296,10 @@ export const ModerationSection = React.memo(function ModerationSection({
         </div>
       )}
 
-      {mutes.length === 0 && !user.isBanned && !user.isLocked && (
+      {mutes.length === 0 &&
+        !user.isBanned &&
+        !user.isLocked &&
+        !user.isSelfExcluded && (
         <EmptyState
           icon={ShieldCheck}
           title="No moderation history"

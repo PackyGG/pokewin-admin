@@ -695,6 +695,19 @@ export async function getUserDetail(id: string) {
       lockedAt: user.locked_at?.toISOString() ?? null,
       lockedBy: user.locked_by,
       lockedUntil: user.locked_until?.toISOString() ?? null,
+      // Self-exclusion (responsible-gambling). USER-initiated on the game
+      // platform — there is no admin endpoint to impose/lift it, so this is
+      // DISPLAY-ONLY here. Mirrors the four game-DB columns straight off the
+      // Prisma `user` model (no extra query — they live on the same findUnique
+      // as banned/locked). `isSelfExcluded` can be true while
+      // `selfExcludedUntil` is in the PAST = EXPIRED; the view derives
+      // active-vs-expired from the timestamp, this just surfaces the raw
+      // fields. When active, the user is currently restricted on the game
+      // platform (the betting/withdrawal routes 403 for them).
+      isSelfExcluded: user.is_self_excluded,
+      selfExcludedReason: user.self_excluded_reason,
+      selfExcludedAt: user.self_excluded_at?.toISOString() ?? null,
+      selfExcludedUntil: user.self_excluded_until?.toISOString() ?? null,
       country: user.country,
       countryCode: user.country_code,
       city: user.city,

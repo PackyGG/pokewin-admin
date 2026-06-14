@@ -193,6 +193,13 @@ const DATA: UserDetail = {
     lockedAt: null,
     lockedBy: null,
     lockedUntil: null,
+    // Self-exclusion (responsible-gambling) — DISPLAY-ONLY mirror. Fixture
+    // carries an ACTIVE exclusion (until in the future) so the render harness
+    // exercises the Self-Excluded badge + flag chip + Account-tab card.
+    isSelfExcluded: true,
+    selfExcludedReason: "Taking a break (self-requested)",
+    selfExcludedAt: "2026-06-10T12:00:00.000Z",
+    selfExcludedUntil: "2026-07-10T12:00:00.000Z",
     country: "Germany",
     countryCode: "DE",
     city: "Berlin",

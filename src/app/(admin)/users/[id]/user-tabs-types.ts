@@ -18,6 +18,15 @@ export type UserDetail = {
     lockedAt: string | null;
     lockedBy: string | null;
     lockedUntil: string | null;
+    // Self-exclusion (responsible-gambling), USER-initiated on the game
+    // platform — DISPLAY-ONLY in the admin (no impose/lift action). Raw
+    // mirror of the four game-DB columns. `isSelfExcluded` true with
+    // `selfExcludedUntil` in the PAST = EXPIRED; the view derives
+    // active-vs-expired from the timestamp.
+    isSelfExcluded: boolean;
+    selfExcludedReason: string | null;
+    selfExcludedAt: string | null;
+    selfExcludedUntil: string | null;
     country: string | null;
     countryCode: string | null;
     city: string | null;

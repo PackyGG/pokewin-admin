@@ -57,12 +57,13 @@ import {
   Ban,
   Lock,
   Ticket,
+  ShieldBan,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatCompactUsd } from "@/lib/utils/format";
+import { formatCurrency, formatCompactUsd, formatDateTime } from "@/lib/utils/format";
 import { RelativeTime } from "@/components/relative-time";
 import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
 import {
@@ -175,6 +176,28 @@ const TABS: TabDef[] = [
   { key: "affiliate", label: "Affiliate", icon: Sparkles },
   { key: "account", label: "Account", icon: ShieldCheck },
 ];
+
+// ---------------------------------------------------------------------------
+// Self-exclusion state derivation (responsible-gambling). USER-initiated on
+// the game platform — DISPLAY-ONLY in the admin. The raw flag is sticky: a
+// user keeps `isSelfExcluded = true` even after the window lapses, so we
+// derive the live state from the `until` timestamp:
+//   • "none"    → not self-excluded (no chip / badge)
+//   • "active"  → window still open (or open-ended) → CURRENTLY restricted
+//   • "expired" → flag set but `until` is in the past → restriction lapsed
+// ---------------------------------------------------------------------------
+type SelfExclusionState = "none" | "active" | "expired";
+
+function deriveSelfExclusion(
+  isSelfExcluded: boolean,
+  selfExcludedUntil: string | null,
+): SelfExclusionState {
+  if (!isSelfExcluded) return "none";
+  if (!selfExcludedUntil) return "active"; // open-ended exclusion
+  return new Date(selfExcludedUntil).getTime() > Date.now()
+    ? "active"
+    : "expired";
+}
 
 export function UserViewModern({
   data,
@@ -329,6 +352,17 @@ export function UserViewModern({
     : user.isLocked
       ? "Locked"
       : "Active";
+
+  // Self-exclusion (responsible-gambling) — USER-initiated on the game
+  // platform, DISPLAY-ONLY here. A user can carry `isSelfExcluded` while the
+  // `until` timestamp is already in the PAST = EXPIRED (the flag is sticky;
+  // the restriction has lapsed). "active" means the exclusion window is still
+  // open → the user is CURRENTLY restricted on the game platform (the betting/
+  // withdrawal routes 403 for them). No `until` → treat as active (open-ended).
+  const selfExclusion = deriveSelfExclusion(
+    user.isSelfExcluded,
+    user.selfExcludedUntil,
+  );
 
   // KPIs surfaced in the hero strip.
   // P&L is expressed from the HOUSE perspective:
@@ -543,6 +577,41 @@ export function UserViewModern({
                   >
                     {statusLabel}
                   </Badge>
+                  {/* Self-exclusion (responsible-gambling) — surfaced next to
+                      the moderation status so a support admin sees a restricted
+                      account at a glance. ACTIVE = rose (currently restricted on
+                      the game platform); EXPIRED = amber (flag set but the window
+                      has lapsed). USER-initiated + DISPLAY-ONLY (no admin action
+                      imposes/lifts it). Full detail (since / until / reason) is
+                      on the Account tab's Moderation card. */}
+                  {selfExclusion === "active" && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] py-0 h-5 border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                      title={
+                        user.selfExcludedUntil
+                          ? `Self-excluded until ${formatDateTime(user.selfExcludedUntil)} — currently restricted on the game platform`
+                          : "Self-excluded (open-ended) — currently restricted on the game platform"
+                      }
+                    >
+                      <ShieldBan className="mr-0.5 size-2.5" />
+                      Self-Excluded
+                    </Badge>
+                  )}
+                  {selfExclusion === "expired" && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] py-0 h-5 border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                      title={
+                        user.selfExcludedUntil
+                          ? `Self-exclusion expired ${formatDateTime(user.selfExcludedUntil)} — no longer restricted`
+                          : "Self-exclusion expired — no longer restricted"
+                      }
+                    >
+                      <ShieldBan className="mr-0.5 size-2.5" />
+                      Self-Excl. (expired)
+                    </Badge>
+                  )}
                   <Badge
                     variant="outline"
                     className={cn(
@@ -608,6 +677,7 @@ export function UserViewModern({
                     coloring per CLAUDE.md. */}
                 <HeroFlagsStrip
                   statusKey={statusKey}
+                  selfExclusion={selfExclusion}
                   vouchersValue={vouchersValue}
                   riskResultPromise={riskResultPromise}
                 />
@@ -1000,10 +1070,12 @@ function FlagChip({
 
 function HeroFlagsStrip({
   statusKey,
+  selfExclusion,
   vouchersValue,
   riskResultPromise,
 }: {
   statusKey: "active" | "locked" | "banned";
+  selfExclusion: SelfExclusionState;
   vouchersValue: number;
   riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
 }) {
@@ -1025,6 +1097,28 @@ function HeroFlagsStrip({
           label="Locked"
           className="border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
           title="Account is locked"
+        />
+      )}
+
+      {/* Self-exclusion (responsible-gambling) — a restricted state exactly
+          like ban/lock, so it belongs in this strip. ACTIVE = rose (the user
+          is CURRENTLY blocked from betting/withdrawing on the game platform).
+          EXPIRED = amber (the flag is still set but the window lapsed — useful
+          context, not an active restriction). USER-initiated + DISPLAY-ONLY. */}
+      {selfExclusion === "active" && (
+        <FlagChip
+          icon={ShieldBan}
+          label="Self-Excluded"
+          className="border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+          title="User self-excluded (responsible gambling) — currently restricted on the game platform"
+        />
+      )}
+      {selfExclusion === "expired" && (
+        <FlagChip
+          icon={ShieldBan}
+          label="Self-Excl. expired"
+          className="border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400"
+          title="Self-exclusion window has lapsed — no longer restricted (flag still set on the account)"
         />
       )}
 
