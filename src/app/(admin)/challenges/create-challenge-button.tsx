@@ -25,6 +25,7 @@ import { Spinner } from "@/components/ux";
 import { createChallenge } from "./actions";
 import { ItemPicker } from "./item-picker";
 import { ChallengeCardSummaryPanel } from "./challenge-card-summary";
+import { ChallengeUpgraderSummaryPanel } from "./challenge-upgrader-summary";
 import type { SearchItem } from "./actions";
 
 type Kind = "card" | "upgrader";
@@ -148,7 +149,7 @@ export function CreateChallengeButton() {
       }}
     >
       <DialogTrigger render={<Button />}>Create Challenge</DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl sm:w-[min(42rem,calc(100%-2rem))]">
         <DialogHeader>
           <DialogTitle>Create Challenge</DialogTitle>
         </DialogHeader>
@@ -232,7 +233,11 @@ export function CreateChallengeButton() {
                   <Input
                     type="number"
                     value={minBetUsd}
-                    onChange={(e) => setMinBetUsd(e.target.value)}
+                    onChange={(e) => {
+                      setMinBetUsd(e.target.value);
+                      setPrizeAmount("");
+                      setActivePrizePercent(null);
+                    }}
                     placeholder="1.00"
                     min={0}
                     step="0.01"
@@ -243,7 +248,11 @@ export function CreateChallengeButton() {
                   <Input
                     type="number"
                     value={minMultiplier}
-                    onChange={(e) => setMinMultiplier(e.target.value)}
+                    onChange={(e) => {
+                      setMinMultiplier(e.target.value);
+                      setPrizeAmount("");
+                      setActivePrizePercent(null);
+                    }}
                     placeholder="2"
                     min={0}
                     step="0.0001"
@@ -266,6 +275,18 @@ export function CreateChallengeButton() {
             <ChallengeCardSummaryPanel
               packId={pack?.id}
               cardId={card?.id}
+              activePrizePercent={activePrizePercent}
+              onSelectPrizeAmount={(amount, percent) => {
+                setPrizeAmount(amount.toFixed(2));
+                setActivePrizePercent(percent);
+              }}
+            />
+          )}
+
+          {kind === "upgrader" && (
+            <ChallengeUpgraderSummaryPanel
+              minBetUsd={minBetUsd}
+              minMultiplier={minMultiplier}
               activePrizePercent={activePrizePercent}
               onSelectPrizeAmount={(amount, percent) => {
                 setPrizeAmount(amount.toFixed(2));
