@@ -101,6 +101,9 @@ import {
   ResetRoleToUserButton,
 } from "./user-tabs-dialogs";
 import { UserAdminActions } from "./user-tabs-moderation";
+import { HeroQuickActions } from "./user-hero-quick-actions";
+import { UserHeroSticky } from "./user-hero-sticky";
+import { CopyButton } from "@/components/copy-button";
 import {
   type RiskScoreBreakdown,
   RISK_TIER_COLORS,
@@ -346,10 +349,13 @@ export function UserViewModern({
   const displayName =
     user.displayUsername ?? user.username ?? user.name ?? "—";
 
-  return (
-    <div className="space-y-6">
-      {/* ── HERO ───────────────────────────────────────────────────── */}
-      <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60">
+  // ── HERO ──────────────────────────────────────────────────────────
+  // Extracted as a node so UserHeroSticky can render it inline AND derive
+  // a thin condensed bar (avatar + name + balance) that appears once the
+  // hero scrolls out of view. The tab bar's own sticky behaviour is
+  // untouched (the condensed bar layers above it on z-index).
+  const heroNode = (
+    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60">
         {/* Subtle blue glow top-right */}
         <div
           aria-hidden
@@ -448,18 +454,40 @@ export function UserViewModern({
                     isAdmin={isAdmin}
                     capabilities={capabilities}
                   />
+                  {/* Quick-action cluster — Adjust Balance (existing
+                      BalanceAdjustDialog → adjustBalance action, gated on
+                      canAdjustBalance) + Add Note (jumps to the Account tab
+                      where the tab-kicked NotesSection lives). Ban/lock/vault
+                      already render via UserAdminActions above. */}
+                  <HeroQuickActions
+                    user={user}
+                    availableBalance={balances?.availableBalance ?? 0}
+                    availableBalanceRaw={
+                      balances?.availableBalanceRaw ??
+                      balances?.availableBalance ??
+                      0
+                    }
+                    lockedBalance={balances?.lockedBalance ?? 0}
+                    canAdjustBalance={
+                      isAdmin || capabilities.canAdjustBalance
+                    }
+                    onOpenAccount={() => handleTabChange("account")}
+                  />
                 </div>
                 {canChangeUserRoles && (
                   <p className="min-w-0 text-[11px] text-muted-foreground">
                     Role on the game platform — not admin-panel access.
                   </p>
                 )}
-                <p className="text-xs text-muted-foreground truncate">
-                  {user.email}
+                <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <span className="truncate">{user.email}</span>
                   {user.emailVerified && (
-                    <span className="ml-1.5 text-[10px] font-semibold text-emerald-500">
+                    <span className="text-[10px] font-semibold text-emerald-500">
                       ✓
                     </span>
+                  )}
+                  {user.email && (
+                    <CopyButton value={user.email} label="Email" />
                   )}
                 </p>
                 <div className="flex flex-wrap items-center gap-1 pt-0.5">
@@ -535,7 +563,14 @@ export function UserViewModern({
                     <Calendar className="size-2.5" />
                     <RelativeTime date={user.createdAt} />
                   </span>
-                  <span className="font-mono">{user.id.slice(0, 8)}</span>
+                  {/* User ID — short form shown, FULL id copied. */}
+                  <span
+                    className="inline-flex items-center gap-1 font-mono"
+                    title={user.id}
+                  >
+                    {user.id.slice(0, 8)}
+                    <CopyButton value={user.id} label="User ID" />
+                  </span>
                 </div>
                 {/* VIP tag manager — relocated INTO the hero (was a
                     standalone full-width dashed row below the old top strip)
@@ -633,6 +668,23 @@ export function UserViewModern({
           </div>
         </div>
       </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Hero + scroll-collapse condensed bar (feature: collapse-to-sticky
+          on scroll). The bar shows avatar + name + current balance once the
+          hero is scrolled past. */}
+      <UserHeroSticky
+        hero={heroNode}
+        avatarImage={user.image ?? null}
+        avatarFallback={(user.username ?? user.email ?? "?")
+          .slice(0, 2)
+          .toUpperCase()}
+        displayName={displayName}
+        balanceLabel={formatCurrency(balances?.availableBalance ?? 0)}
+        statusKey={statusKey}
+      />
 
       {/* ── TAB BAR ──────────────────────────────────────────────────
           On phone the pills horizontal-scroll instead of wrapping into
