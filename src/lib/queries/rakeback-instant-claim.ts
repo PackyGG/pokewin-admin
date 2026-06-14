@@ -77,6 +77,46 @@ export function instantClaimPeriodLabel(period: InstantClaimPeriod): string {
   }
 }
 
+/** Default instant payout when config is unavailable (30% house fee → 70% paid). */
+export const DEFAULT_INSTANT_CLAIM_PAYOUT_PERCENT = 70;
+
+/**
+ * Reverse the instant-claim discount: paid amount → full accrued rakeback
+ * before the early-claim fee. `payoutPercent` is the % of accrued the user
+ * receives (e.g. 70 = 30% fee).
+ */
+export function accruedRakebackBeforeInstantFee(
+  paidUsd: number,
+  payoutPercent: number = DEFAULT_INSTANT_CLAIM_PAYOUT_PERCENT,
+): number {
+  if (!Number.isFinite(paidUsd) || paidUsd <= 0) return 0;
+  if (!Number.isFinite(payoutPercent) || payoutPercent <= 0 || payoutPercent > 100) {
+    return paidUsd;
+  }
+  return paidUsd / (payoutPercent / 100);
+}
+
+/** Build a lookup of instant payout % by rakeback cadence type. */
+export function instantClaimPayoutPercentByType(
+  config: InstantClaimConfig,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!config.supported) return map;
+  for (const tier of config.tiers) {
+    if (tier.earlyClaimPayoutPercent > 0) {
+      map.set(tier.type, tier.earlyClaimPayoutPercent);
+    }
+  }
+  return map;
+}
+
+export function instantClaimPayoutPercentForType(
+  payoutByType: Map<string, number>,
+  rakebackType: string,
+): number {
+  return payoutByType.get(rakebackType) ?? DEFAULT_INSTANT_CLAIM_PAYOUT_PERCENT;
+}
+
 /** Per-cadence early-claim config, read from `rakeback_config`. */
 export type InstantClaimTierConfig = {
   type: string;

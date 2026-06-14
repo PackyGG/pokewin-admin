@@ -23,7 +23,45 @@ type RakebackClaim = {
   claimedAt: string | null;
   /** True = early/instant-claimed (rakeback_claims.last_preclaim_at set). */
   instant: boolean;
+  /** Accrued rakeback before the instant-claim fee (instant rows only). */
+  instantAccruedAmountUsd: number | null;
 };
+
+function RakebackAmountCell({
+  paidUsd,
+  instantAccruedUsd,
+}: {
+  paidUsd: number;
+  instantAccruedUsd: number | null;
+}) {
+  const showBeforeFee =
+    instantAccruedUsd != null &&
+    Number.isFinite(instantAccruedUsd) &&
+    instantAccruedUsd > paidUsd + 0.001;
+
+  if (!showBeforeFee) {
+    return (
+      <span className="font-medium tabular-nums text-rose-600 dark:text-rose-400">
+        {formatCurrency(paidUsd)}
+      </span>
+    );
+  }
+
+  return (
+    <div
+      className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 tabular-nums"
+      title="Accrued rakeback before the instant-claim fee → amount paid out"
+    >
+      <span className="font-medium text-muted-foreground">
+        {formatCurrency(instantAccruedUsd)}
+      </span>
+      <span className="text-muted-foreground/70">→</span>
+      <span className="font-medium text-rose-600 dark:text-rose-400">
+        {formatCurrency(paidUsd)}
+      </span>
+    </div>
+  );
+}
 
 /** "Instant" pill for early-claimed rakeback rows. */
 function InstantBadge() {
@@ -86,10 +124,10 @@ function ClaimMobileCard({ c }: { c: RakebackClaim }) {
           </div>
         </div>
         <div className="shrink-0 text-right">
-          {/* Rakeback we'll pay out → house loss → rose. */}
-          <div className="text-sm font-medium tabular-nums text-rose-600 dark:text-rose-400">
-            {formatCurrency(c.rakebackAmountUsd)}
-          </div>
+          <RakebackAmountCell
+            paidUsd={c.rakebackAmountUsd}
+            instantAccruedUsd={c.instant ? c.instantAccruedAmountUsd : null}
+          />
         </div>
       </div>
     </div>
@@ -153,9 +191,11 @@ export function RakebackClaimsTable({ data }: { data: RakebackClaim[] }) {
                 </TableCell>
                 <TableCell>{formatDateTime(c.periodStart)}</TableCell>
                 <TableCell>{formatCurrency(c.wageredAmountUsd)}</TableCell>
-                {/* Rakeback we'll pay (or paid) the user → house loss → rose. */}
-                <TableCell className="text-rose-600 dark:text-rose-400 tabular-nums">
-                  {formatCurrency(c.rakebackAmountUsd)}
+                <TableCell>
+                  <RakebackAmountCell
+                    paidUsd={c.rakebackAmountUsd}
+                    instantAccruedUsd={c.instant ? c.instantAccruedAmountUsd : null}
+                  />
                 </TableCell>
                 <TableCell>
                   {c.claimedAt ? (

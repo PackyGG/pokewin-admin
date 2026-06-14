@@ -2,6 +2,12 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { excludeStaffCreatorsAndBlacklisted } from "./_blacklist";
 import { getInstantRakebackClaimIds } from "./rakeback-instant-ledger";
+import {
+  accruedRakebackBeforeInstantFee,
+  getRakebackInstantClaimConfig,
+  instantClaimPayoutPercentByType,
+  instantClaimPayoutPercentForType,
+} from "./rakeback-instant-claim";
 import type { PaginatedResult } from "@/lib/types";
 
 export type RakebackConfigItem = {
@@ -30,6 +36,11 @@ export type RakebackClaimItem = {
    * just reads "Rakeback" there instead of throwing.
    */
   instant: boolean;
+  /**
+   * Full accrued rakeback before the instant-claim discount. Set only when
+   * `instant` is true; `rakebackAmountUsd` is what was actually paid out.
+   */
+  instantAccruedAmountUsd: number | null;
 };
 
 export type RakebackStats = {
@@ -94,11 +105,15 @@ export async function getRakebackClaims(params: {
   // or an env without the early-claim column (prod), leaves every row as a
   // plain "Rakeback" claim instead of throwing.
   let instantClaimIds = new Set<string>();
+  let payoutByType = new Map<string, number>();
   if (claims.length > 0) {
     try {
-      instantClaimIds = await getInstantRakebackClaimIds(
-        claims.map((c) => c.id),
-      );
+      const [ids, instantConfig] = await Promise.all([
+        getInstantRakebackClaimIds(claims.map((c) => c.id)),
+        getRakebackInstantClaimConfig(),
+      ]);
+      instantClaimIds = ids;
+      payoutByType = instantClaimPayoutPercentByType(instantConfig);
     } catch (e) {
       console.error(
         "[getRakebackClaims] instant-claim lookup failed (non-fatal):",
@@ -108,18 +123,30 @@ export async function getRakebackClaims(params: {
   }
 
   return {
-    data: claims.map((c) => ({
-      id: c.id,
-      userId: c.user_id,
-      username: c.user?.username ?? null,
-      rakebackType: c.rakeback_type,
-      periodStart: c.period_start.toISOString(),
-      wageredAmountUsd: toNumber(c.wagered_amount_usd),
-      rakebackAmountUsd: toNumber(c.rakeback_amount_usd),
-      claimedAt: c.claimed_at?.toISOString() ?? null,
-      createdAt: c.created_at.toISOString(),
-      instant: instantClaimIds.has(c.id),
-    })),
+    data: claims.map((c) => {
+      const instant = instantClaimIds.has(c.id);
+      const rakebackAmountUsd = toNumber(c.rakeback_amount_usd);
+      const instantAccruedAmountUsd = instant
+        ? accruedRakebackBeforeInstantFee(
+            rakebackAmountUsd,
+            instantClaimPayoutPercentForType(payoutByType, c.rakeback_type),
+          )
+        : null;
+
+      return {
+        id: c.id,
+        userId: c.user_id,
+        username: c.user?.username ?? null,
+        rakebackType: c.rakeback_type,
+        periodStart: c.period_start.toISOString(),
+        wageredAmountUsd: toNumber(c.wagered_amount_usd),
+        rakebackAmountUsd,
+        claimedAt: c.claimed_at?.toISOString() ?? null,
+        createdAt: c.created_at.toISOString(),
+        instant,
+        instantAccruedAmountUsd,
+      };
+    }),
     total,
     page,
     perPage,
