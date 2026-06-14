@@ -251,15 +251,31 @@ async function queryWagerLiability(): Promise<WagerLiabilityResult> {
   // `user_wager_requirements.wager_requirement_bps = 0` ⇒ fully exempt from
   // the entire requirement (backend doc semantics, mirrored in
   // users-wager-progress.ts). Scoped to the same customer population.
-  const exemptRows = await db.$queryRawUnsafe<{ exempt: bigint | number }[]>(
-    `
-    SELECT COUNT(*)::bigint AS exempt
-      FROM user_wager_requirements uwr
-     WHERE uwr.wager_requirement_bps = 0
-       AND uwr.user_id IN ${scopeSql}
-  `,
-  );
-  const exemptUsers = Number(exemptRows[0]?.exempt ?? 0);
+  //
+  // Fault-isolated: the `balances` snapshot columns and this `user_wager_
+  // requirements` table are migrated independently by the backend, so on a
+  // PARTIALLY-migrated DB `balances.wager_requirement_progress` can exist
+  // (probe passes) while this table is still absent. Wrapping just this read
+  // means a missing piece degrades the exempt count to 0 instead of throwing
+  // 42P01 and blanking the whole liability page (the success path is
+  // unchanged when the table is present).
+  let exemptUsers = 0;
+  try {
+    const exemptRows = await db.$queryRawUnsafe<{ exempt: bigint | number }[]>(
+      `
+      SELECT COUNT(*)::bigint AS exempt
+        FROM user_wager_requirements uwr
+       WHERE uwr.wager_requirement_bps = 0
+         AND uwr.user_id IN ${scopeSql}
+    `,
+    );
+    exemptUsers = Number(exemptRows[0]?.exempt ?? 0);
+  } catch (err) {
+    console.error(
+      "[insights-wager-liability] exempt-count read failed (user_wager_requirements absent?), treating as 0:",
+      err instanceof Error ? err.message : err,
+    );
+  }
 
   // ── Cohort: blocked customers bucketed by total locked-balance size ─────
   // Buckets the blocked customers (any locked > 0) by their per-user total
