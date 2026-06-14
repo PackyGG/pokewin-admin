@@ -8,8 +8,7 @@
 //     source of truth also used by the /system/commands docs page.
 //   - Users: server-side search against the main DB (db.user). Fires only
 //     when the query is non-trivial; debounced 200ms.
-//   - A floating "⌘K" trigger button is rendered in the top-right so users
-//     can open the palette by click as well as keyboard.
+//   - Opened via the global CMD/CTRL+K hotkey (no visible trigger button).
 //
 // cmdk handles ↑↓ navigation, Enter-to-select, and its own fuzzy filter
 // over the rendered items. We set `shouldFilter={false}` when showing live
@@ -27,7 +26,6 @@ import {
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
-import { SearchIcon } from "lucide-react";
 
 import {
   Command,
@@ -41,7 +39,6 @@ import {
 } from "@/components/ui/command";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ux";
 import { ROLE_COLORS } from "@/lib/constants";
@@ -247,10 +244,6 @@ export function CommandPalette({
 
   return (
     <>
-      {/* Floating hint / trigger button — keyboard users will mostly use
-          CMD+K, but this gives a visible affordance and a click target. */}
-      <PaletteTriggerButton onClick={() => setOpen(true)} />
-
       <CommandDialog
         open={open}
         onOpenChange={setOpen}
@@ -415,46 +408,5 @@ export function CommandPalette({
         </Command>
       </CommandDialog>
     </>
-  );
-}
-
-/**
- * Small floating affordance in the bottom-left. Persistent and visible so
- * click-users can find the palette without memorising ⌘K. Keeps out of the
- * way of the existing bottom-right ChatPanel FAB.
- */
-function PaletteTriggerButton({ onClick }: { onClick: () => void }) {
-  // Platform-correct modifier symbol for the keyboard hint. This MUST be
-  // hydration-safe: the server has no `navigator`, so it always renders the
-  // "Ctrl" fallback. If we read `navigator.platform` during the initial
-  // client render, a Mac would hydrate "⌘" against the server's "Ctrl" and
-  // throw React #418 (a text-node hydration mismatch) — and because this
-  // trigger is mounted in the admin layout on EVERY page, that crash would
-  // surface site-wide. So we render "Ctrl" on first paint (byte-identical to
-  // the server) and upgrade to the real symbol only AFTER mount, in an
-  // effect, where `navigator` is guaranteed available.
-  const [modKey, setModKey] = useState("Ctrl");
-  useEffect(() => {
-    if (typeof navigator !== "undefined" && /mac/i.test(navigator.platform)) {
-      setModKey("⌘");
-    }
-  }, []);
-
-  return (
-    <Button
-      onClick={onClick}
-      variant="outline"
-      size="sm"
-      aria-label="Open command palette"
-      title="Open command palette (⌘K)"
-      className="fixed bottom-6 left-6 z-40 h-9 gap-2 rounded-full border-border/60 bg-background/80 pr-3 pl-3 shadow-sm backdrop-blur-sm hover:bg-accent"
-    >
-      <SearchIcon className="size-3.5 text-muted-foreground" />
-      <span className="text-xs text-muted-foreground">Search</span>
-      <kbd className="pointer-events-none ml-1 inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
-        <span className="text-[11px]">{modKey}</span>
-        K
-      </kbd>
-    </Button>
   );
 }
