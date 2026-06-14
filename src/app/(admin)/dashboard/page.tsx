@@ -14,6 +14,7 @@ import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today"
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
 import { getChatMessagesToday } from "@/lib/queries/dashboard-chat-messages-today";
+import { getCryptoFeeProfit } from "@/lib/queries/dashboard-crypto-fee-profit";
 import { requirePageAccess } from "@/lib/dal";
 import { formatRelative } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
@@ -28,6 +29,10 @@ import { TodayPnlStatCard } from "./today-pnl-stat-card";
 import { RewardCostsTodayCard } from "./reward-costs-today-card";
 import { CreatorCostsTodayCard } from "./creator-costs-today-card";
 import { ChatMessagesTodayCard } from "./chat-messages-today-card";
+import {
+  CryptoFeeProfitCard,
+  CryptoFeeProfitUnavailableCard,
+} from "./crypto-fee-profit-card";
 import { AutoRefresh } from "./auto-refresh";
 import {
   WagerChart,
@@ -135,6 +140,22 @@ export default async function DashboardPage() {
           fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
         >
           <DashboardChatMessagesToday />
+        </Suspense>
+      </div>
+
+      {/* Crypto fee profit — house's cumulative ALL-TIME estimated profit
+          from the hidden crypto exchange-rate fee (recorded crypto volume ×
+          avg fee-band midpoint). Unlike the four tiles above (which are
+          "today" windows), this is a lifetime cumulative figure, so it sits
+          in its own row below them. Streams behind its own Suspense +
+          safeQuery so its (cached, 5-min) scan never blocks the today tiles.
+          Full-width on mobile, capped width on wider screens so it matches a
+          single today-tile slot rather than stretching across the row. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
+        <Suspense
+          fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
+        >
+          <DashboardCryptoFeeProfit />
         </Suspense>
       </div>
 
@@ -556,6 +577,45 @@ async function DashboardChatMessagesToday() {
       uniqueChatters={data.uniqueChatters}
       deletedCount={data.deletedCount}
       dayLabel={dayLabel}
+    />
+  );
+}
+
+/**
+ * Crypto Fee Profit tile — house cumulative ALL-TIME estimated profit from
+ * the hidden crypto exchange-rate fee (recorded completed crypto volume ×
+ * the avg fee-band midpoint read from site_config). Its own standalone query
+ * (getCryptoFeeProfit, cached 5 min + env-keyed), wrapped in safeQuery so a
+ * slow/failed scan degrades to a tile fallback instead of crashing the
+ * dashboard. When the connected DB is missing a required crypto column the
+ * query returns `available: false` and the muted "not available" card
+ * renders instead.
+ */
+async function DashboardCryptoFeeProfit() {
+  const { data, error } = await safeQuery(
+    () => getCryptoFeeProfit(),
+    null,
+    "dashboard.cryptoFeeProfit",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Crypto Fee Profit"
+        hint="The crypto fee-profit scan timed out — refresh to retry."
+        size="compact"
+      />
+    );
+  }
+  if (!data.available) {
+    return <CryptoFeeProfitUnavailableCard />;
+  }
+  return (
+    <CryptoFeeProfitCard
+      totalFeeUsd={data.totalFeeUsd}
+      depositFeeUsd={data.depositFeeUsd}
+      withdrawalFeeUsd={data.withdrawalFeeUsd}
+      depositBps={data.depositBps}
+      withdrawalBps={data.withdrawalBps}
     />
   );
 }
