@@ -2,6 +2,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { getDb, getProdDb, getDevDb } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { getMetricsScope } from "@/lib/metrics/scope";
 
 /**
  * Secondary-currency (coin/shard) economy data layer. The standalone
@@ -222,6 +223,16 @@ export type CoinsEconomyAvailable = {
    * liability), shown as its OWN line so it is never mistaken for game flow.
    */
   issuedToUsers: number;
+  /**
+   * Customer-only variant of `issuedToUsers`: the same minted-grant issuance,
+   * but with STAFF + CREATORS + blacklisted users dropped (the canonical
+   * customer scope from `getMetricsScope`/`CUSTOMER_EXCLUDED_ROLES`). Use this
+   * where the figure must mean "minted to real CUSTOMERS" (e.g. the
+   * /rewards/shard-opens "minted to users" tile). `issuedToUsers` stays the
+   * UNSCOPED whole-economy issuance (the balance-sheet liability shown on
+   * /rewards/shards), so the two never have to fight over one value.
+   */
+  issuedToUsersCustomers: number;
   /** Per-type breakdown, sorted by total desc. */
   categories: CoinCategoryRow[];
   /** Daily game-flow earned-vs-spent trend over the window. */
@@ -460,6 +471,35 @@ async function queryCoinsEconomy(
 
   const txCount = categories.reduce((sum, c) => sum + c.count, 0);
 
+  // ── Customer-scoped issuance (minted-to-CUSTOMERS). Same earned-leg
+  //    issuance as `issuedToUsers` above, but with the canonical customer
+  //    scope applied (staff + creators + blacklist dropped) via the shared
+  //    `getMetricsScope` flat fragment — the exact same population every
+  //    money-metric surface uses. This is a thin FILTER on the existing
+  //    aggregation (one cheap aggregate over the same parameterised window),
+  //    NOT a new rollup, and it does NOT touch the unscoped `issuedToUsers`
+  //    that the balance-sheet liability line on /rewards/shards relies on.
+  //    The issuance type list + window are inlined as number/string literals
+  //    (no injection surface), matching the $queryRawUnsafe house pattern in
+  //    insights-xp-sales.ts / analytics.ts.
+  const scope = await getMetricsScope();
+  const scopeFrag = scope.exclStaffSessionFrag({
+    userCol: "user_id",
+    tsCol: "created_at",
+  });
+  const issuanceTypeList = [...ISSUANCE_TYPES]
+    .map((t) => `'${t}'`)
+    .join(", ");
+  const customerIssuanceRows = await db.$queryRawUnsafe<{ total: string }[]>(`
+    SELECT COALESCE(SUM(amount), 0)::text AS total
+    FROM coin_transactions
+    WHERE created_at >= NOW() - (${days} * INTERVAL '1 day')
+      AND balance_after >= balance_before
+      AND type::text IN (${issuanceTypeList})
+      ${scopeFrag}
+  `);
+  const issuedToUsersCustomers = Number(customerIssuanceRows[0]?.total ?? 0);
+
   // ── Daily GAME-FLOW earned-vs-spent trend over the window. The `earned`
   //    series is game payouts ONLY — house-funded issuance (the earned leg of
   //    an ISSUANCE_TYPES row) is EXCLUDED, exactly as in the window totals
@@ -499,6 +539,7 @@ async function queryCoinsEconomy(
     txCount,
     activeUsers,
     issuedToUsers,
+    issuedToUsersCustomers,
     categories,
     daily,
   };

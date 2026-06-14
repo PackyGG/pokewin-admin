@@ -97,18 +97,23 @@ async function EconomyOverviewContent({
           }
         />
 
-        {/* Info boxes — the three the owner requires, read clearly:
-            • Shards given out  = total minted to users (house gave it out → rose)
-            • Out there now     = live circulating supply (neutral cyan)
+        {/* Info boxes — read clearly:
+            • Grant coins minted = house-funded deposit-grant coins (≈ USD,
+              `coin_deposit_grant` + positive `coin_admin_adjustment`),
+              CUSTOMER-scoped (staff/creators/blacklist dropped) so it means
+              minted to real customers. House liability → rose. This is the
+              USD-pegged grant currency, NOT the wager-earned shard supply
+              below.
+            • Out there now     = live circulating shard supply (neutral cyan)
             • Holders           = distinct users holding shards (neutral blue)
-            plus Net house flow + Active users where they fit cleanly. Shards
-            are a secondary currency, not money — neutral readouts stay cyan/
-            blue, never a money color. */}
+            plus Net house flow + Active users where they fit cleanly. The shard
+            supply/holders/flow are a secondary wager currency, not money —
+            neutral readouts stay cyan/blue, never a money color. */}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
           <KpiTile
-            label="Shards given out"
-            value={fmtShards(economy.issuedToUsers)}
-            sub="total minted to users"
+            label="Grant coins minted"
+            value={fmtShards(economy.issuedToUsersCustomers)}
+            sub="deposit-grant coins (≈ USD) · customers only"
             icon={Gift}
             accent="rose"
           />

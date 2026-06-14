@@ -148,6 +148,13 @@ export type ShardEconomyOverview = {
   netHouse: number;
   /** Shards the HOUSE ISSUED to users in the window (minted grants). */
   issuedToUsers: number;
+  /**
+   * Customer-only variant of `issuedToUsers` — minted grants with staff +
+   * creators + blacklist dropped (canonical customer scope). This is the
+   * figure the "minted to users" tile shows, so it genuinely means real
+   * customers, not internal/admin grants.
+   */
+  issuedToUsersCustomers: number;
   /** Distinct users with any shard activity in the window. */
   activeUsers: number;
   /** Total coin/shard ledger rows in the window. */
@@ -565,6 +572,7 @@ export async function getShardEconomyOverview(
     spent: economy.spent,
     netHouse: economy.netHouse,
     issuedToUsers: economy.issuedToUsers,
+    issuedToUsersCustomers: economy.issuedToUsersCustomers,
     activeUsers: economy.activeUsers,
     txCount: economy.txCount,
     daily: economy.daily.map((d) => ({
