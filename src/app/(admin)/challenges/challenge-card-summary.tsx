@@ -120,7 +120,13 @@ export function ChallengeCardSummaryPanel({
             />
             <MetricTile
               label="Times pulled"
-              value={formatNumber(summary.cardPullCount)}
+              // `null` = the heavy historical-pull scan degraded (timed out
+              // or failed); show "—" so the rest of the summary stays usable.
+              value={
+                summary.cardPullCount == null
+                  ? "—"
+                  : formatNumber(summary.cardPullCount)
+              }
               accent="amber"
             />
             <MetricTile

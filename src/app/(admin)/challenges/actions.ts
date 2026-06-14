@@ -1,11 +1,13 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, unstable_cache } from "next/cache";
 import { z } from "zod";
-import { getDb } from "@/lib/db";
+import { getDb, dbForEnv } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   challengesApi,
@@ -32,6 +34,14 @@ import {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// App-level race budget (ms) for the heavy historical pull-count scan in
+// the create-challenge dialog. Kept SHORT (10s) — well below the global
+// 30s `statement_timeout` backstop in src/lib/db.ts — so a pathological
+// scan stops US waiting quickly and the dialog degrades the one stat to
+// "—" instead of hanging the Server Action. (The DB statement_timeout is
+// what actually frees the pooled connection; this just bounds our wait.)
+const CARD_PULL_COUNT_TIMEOUT_MS = 10_000;
+
 export type SearchItem = {
   id: string;
   type: "pack" | "card";
@@ -56,7 +66,13 @@ export type ChallengeCardSummary = {
   expectedOpenings: number | null;
   /** expectedOpenings × packPrice × 10.99% (planning house edge). */
   theoreticalProfitUsd: number;
-  cardPullCount: number;
+  /**
+   * How many times this card was pulled from this pack (all time).
+   * `null` when the (heavy, unindexed) historical-pull scan timed out or
+   * failed — the rest of the summary still renders so the create dialog
+   * stays usable; the UI shows "—" for this one stat.
+   */
+  cardPullCount: number | null;
   packOpenCount: number;
 };
 
@@ -161,6 +177,80 @@ export async function searchItems(
   });
 }
 
+/**
+ * Count how many times `cardId` was pulled from `packId` (all time).
+ *
+ * ── PERFORMANCE (2026-06-14) ───────────────────────────────────────────
+ * This is the ONE heavy read behind the create-challenge dialog. It fires
+ * on EVERY card pick. `user_inventory` (~600k rows, verified read-only on
+ * live prod) has NO index on `card_id` — its only index is the PK on `id`
+ * — so the filter is a FULL sequential scan (~15.27M-cost plan, + JIT) that
+ * approaches/exceeds the 30s statement_timeout and pins one of only THREE
+ * prod pool connections, starving other admin reads.
+ *
+ * Two mitigations are applied (the query SQL + result are unchanged):
+ *   1. `unstable_cache` keyed on `(env, packId, cardId)` (revalidate 300s).
+ *      The pull-count for a given (pack, card) barely moves, so a 5-minute
+ *      cache removes nearly every repeat scan. Env is the FIRST key
+ *      dimension so a dev-DB-toggled admin's entries never collide with
+ *      prod (mirrors the env-gated cache pattern in
+ *      `upgrader-transactions.ts` / `transactions.ts`).
+ *   2. The CALLER wraps this in `safeQueryOrNull(..., timeout)` so a slow /
+ *      failed scan degrades the count to `null` (the dialog stays fully
+ *      usable) instead of hanging the Server Action.
+ *
+ * `env` is threaded in (resolved by the public entry point) and the client
+ * is taken via `dbForEnv(env)` — NOT `getDb()`, which reads the request
+ * cookie via `cookies()` and is illegal inside `unstable_cache`. The
+ * returned value is a plain `number` (no Date), so the cache JSON
+ * round-trip is lossless.
+ *
+ * The real root fix is an index on `user_inventory(card_id)` — but MAIN is
+ * strictly read-only / no-DDL, so that is an OWNER action, flagged but not
+ * done here.
+ */
+async function computeCardPullCount(
+  env: DbEnv,
+  packId: string,
+  cardId: string,
+): Promise<number> {
+  const db = dbForEnv(env);
+  const pullRows = await db.$queryRaw<{ count: bigint }[]>`
+    SELECT COUNT(*)::bigint AS count
+    FROM user_inventory ui
+    WHERE ui.card_id = ${cardId}::uuid
+      AND (
+        (
+          ui.source_type = 'pack'
+          AND EXISTS (
+            SELECT 1
+            FROM game_sessions gs
+            WHERE gs.id = ui.source_id
+              AND gs.game_type = 'pack'
+              AND gs.game_id = ${packId}::uuid
+          )
+        )
+        OR (
+          ui.source_type = 'battle'
+          AND EXISTS (
+            SELECT 1
+            FROM battle_participants bp
+            JOIN battles b ON b.id = bp.battle_id
+            WHERE bp.game_session_id = ui.source_id
+              AND ${packId}::uuid = ANY(b.pack_ids::uuid[])
+          )
+        )
+      )
+  `;
+  return Number(pullRows[0]?.count ?? 0);
+}
+
+const cachedCardPullCount = unstable_cache(
+  computeCardPullCount,
+  ["challenge-card-pull-count-v1"],
+  { revalidate: 300, tags: ["challenge-card-pull-count"] },
+);
+
 /** Historical stats + odds for the card/pack pair shown in the create dialog. */
 export async function getChallengeCardSummary(
   packId: string,
@@ -208,34 +298,17 @@ export async function getChallengeCardSummary(
     expectedOpeningsFromProbabilityPercent(probabilityPercent);
   const packPriceUsd = toNumber(packCard.packs.price);
 
-  const pullRows = await db.$queryRaw<{ count: bigint }[]>`
-    SELECT COUNT(*)::bigint AS count
-    FROM user_inventory ui
-    WHERE ui.card_id = ${cardId}::uuid
-      AND (
-        (
-          ui.source_type = 'pack'
-          AND EXISTS (
-            SELECT 1
-            FROM game_sessions gs
-            WHERE gs.id = ui.source_id
-              AND gs.game_type = 'pack'
-              AND gs.game_id = ${packId}::uuid
-          )
-        )
-        OR (
-          ui.source_type = 'battle'
-          AND EXISTS (
-            SELECT 1
-            FROM battle_participants bp
-            JOIN battles b ON b.id = bp.battle_id
-            WHERE bp.game_session_id = ui.source_id
-              AND ${packId}::uuid = ANY(b.pack_ids::uuid[])
-          )
-        )
-      )
-  `;
-  const cardPullCount = Number(pullRows[0]?.count ?? 0);
+  // Historical pull-count is the ONE heavy read here (full seq-scan of the
+  // unindexed `user_inventory.card_id`). Resolve the DB env in REQUEST scope
+  // (cookie read happens here, NOT inside the cache), then run the cached
+  // count behind a safeQuery timeout so a slow/failed scan degrades the
+  // count to `null` (dialog stays usable) instead of hanging the action.
+  const env = await readDbEnv();
+  const { data: cardPullCount } = await safeQueryOrNull(
+    () => cachedCardPullCount(env, packId, cardId),
+    "challenges.cardPullCount",
+    CARD_PULL_COUNT_TIMEOUT_MS,
+  );
 
   return {
     cardId,
