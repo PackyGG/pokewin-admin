@@ -36,7 +36,7 @@ import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
   parseInsightsPeriod,
   INSIGHTS_PERIOD_LABELS,
-} from "../analytics/types";
+} from "@/lib/queries/insights-analytics/period";
 import {
   getCostBreakdownCached,
   type CostLine,

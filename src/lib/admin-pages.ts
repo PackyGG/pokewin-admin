@@ -33,35 +33,30 @@ export const ADMIN_PAGES: AdminPage[] = [
   // group sitting directly below Overview. Separate from the per-feature
   // analytics keys (e.g. /rewards/analytics) so role grants can be
   // managed independently.
-  // Insights Hub — the /insights landing page (a headline KPI strip
-  // sourced from the canonical cost-breakdown helper plus quick-link
-  // cards into every sub-area). Sits first so an admin granted only the
-  // hub can navigate into deeper sub-grants from there.
-  { group: "Insights", label: "Insights Hub", key: "/insights" },
+  // Real Numbers — the source-of-truth page, now the Insights LANDING
+  // (sidebar label "Overview"). Reads the canonical corrected metric layer
+  // (creators + staff + blacklist excluded; borrow-net basis) and shows the
+  // reconciled lifetime headline (wager / GGR / reward cost / NGR / realized
+  // P&L), a per-game GGR split, both the gaming-margin and balance-sheet
+  // waterfalls, the GGR↔P&L reconciliation, and plain-language definitions.
+  // The former standalone /insights hub page was removed; /insights now
+  // 308-redirects here (next.config.ts). Own grantable key.
+  { group: "Insights", label: "Overview (Real Numbers)", key: "/insights/real-numbers" },
   // Cost Breakdown — the full wager → P&L leakage waterfall (every cost
-  // category itemized so the gap between gross wager and realized P&L is
-  // fully accounted for). First entry in the group; it's the headline
-  // "where does the money go" surface that sits on top of GGR / Money
-  // Flow / Rewards.
+  // category itemized). Route is KEPT and reachable via a link on the
+  // Insights Overview page, but it no longer has its own sidebar nav entry.
+  // Active grantable key (the page still gates on it).
   { group: "Insights", label: "Cost Breakdown", key: "/insights/cost-breakdown" },
-  // Real Numbers — the source-of-truth page. Reads the canonical corrected
-  // metric layer (creators + staff + blacklist excluded; borrow-net basis)
-  // and shows the reconciled lifetime headline (wager / GGR / reward cost /
-  // NGR / realized P&L), a per-game GGR split, both the gaming-margin and
-  // balance-sheet waterfalls, the GGR↔P&L reconciliation, and plain-language
-  // definitions. Own grantable key so a role can be granted it independently.
-  { group: "Insights", label: "Real Numbers", key: "/insights/real-numbers" },
-  { group: "Insights", label: "Analytics", key: "/insights/analytics" },
-  // GGR — long-form GGR breakdown page (24h/3d/7d windows, per-type
-  // cards, top-10 contributors). Sits in Insights alongside the other
-  // cross-cutting analytical surfaces.
-  { group: "Insights", label: "GGR", key: "/ggr" },
   { group: "Insights", label: "Rewards", key: "/insights/rewards" },
-  // Challenges — analytics surface for the challenge program (prize cost,
-  // claims, completion). The /challenges page stays CRUD-only; this is the
-  // read-only insights view. Own grantable key.
-  { group: "Insights", label: "Challenges", key: "/insights/challenges" },
-  // Legacy routes — thin redirects; keys retained for bookmark + role grants.
+  // Legacy routes — thin redirects; keys retained for bookmark + role grants
+  // so existing grants don't become "unknown". The pages were removed and
+  // the routes 308-redirect to the Insights Overview (next.config.ts).
+  { group: "Insights", label: "Insights Hub (legacy)", key: "/insights" },
+  { group: "Insights", label: "Analytics (legacy)", key: "/insights/analytics" },
+  { group: "Insights", label: "GGR (legacy)", key: "/ggr" },
+  { group: "Insights", label: "Challenges insights (legacy)", key: "/insights/challenges" },
+  { group: "Insights", label: "Edge Plan 2.0 (legacy)", key: "/insights/edge-plan-2" },
+  { group: "Insights", label: "Wager Liability (legacy)", key: "/insights/wager-liability" },
   { group: "Insights", label: "Games (legacy)", key: "/insights/games" },
   { group: "Insights", label: "Signup (legacy)", key: "/insights/rewards/signup" },
   {
@@ -83,11 +78,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   // forecast), anchored on real production baselines. Own permission
   // key so it can be granted independently of the per-reward deep-dives.
   { group: "Insights", label: "Forecast", key: "/insights/forecast" },
-  { group: "Insights", label: "Edge Plan 2.0", key: "/insights/edge-plan-2" },
-  // Wager Liability — platform-wide wager-requirement liability snapshot
-  // (gated user balances behind the sweepstakes wager requirement). Own
-  // grantable key so a role can be granted it independently.
-  { group: "Insights", label: "Wager Liability", key: "/insights/wager-liability" },
   // Transactions
   // Standalone /transactions overview removed — admins land on a
   // specific sub-ledger instead. Each sub-page carries its own

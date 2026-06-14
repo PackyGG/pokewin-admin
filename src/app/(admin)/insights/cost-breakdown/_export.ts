@@ -4,7 +4,7 @@ import type { ExportSection } from "@/lib/utils/export-csv";
 import {
   INSIGHTS_PERIOD_LABELS,
   type InsightsPeriod,
-} from "../analytics/types";
+} from "@/lib/queries/insights-analytics/period";
 import { getCostBreakdown } from "@/lib/queries/insights-analytics/cost-breakdown";
 import { settle, unwrap, buildSection } from "../_export-section";
 

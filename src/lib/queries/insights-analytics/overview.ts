@@ -35,7 +35,7 @@ import {
   periodToCutoff,
   previousPeriodCutoff,
   type InsightsPeriod,
-} from "@/app/(admin)/insights/analytics/types";
+} from "./period";
 
 /**
  * Overview tab helper — top-line KPIs for the selected period AND the

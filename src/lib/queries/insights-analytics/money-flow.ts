@@ -18,7 +18,7 @@ import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-c
 import {
   periodToCutoff,
   type InsightsPeriod,
-} from "@/app/(admin)/insights/analytics/types";
+} from "./period";
 
 /**
  * Money Flow — decompose the gap between GGR and P&L over a window, built

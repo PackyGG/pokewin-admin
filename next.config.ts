@@ -57,10 +57,12 @@ const nextConfig: NextConfig = {
         permanent: true,
       },
       {
-        // System Edge Plan v1 was replaced by Edge Plan 2.0. Keep bookmarks
-        // and role presets that still reference the old route working.
+        // System Edge Plan v1 was replaced by Edge Plan 2.0, which was itself
+        // removed in the 2026-06-15 Insights IA restructure. Point the legacy
+        // v1 bookmark straight at the new Insights Overview (avoids a 308→308
+        // double hop through the now-removed /insights/edge-plan-2).
         source: "/insights/system-edge-plan",
-        destination: "/insights/edge-plan-2",
+        destination: "/insights/real-numbers",
         permanent: true,
       },
       // ── Retired-route legacy bookmarks (in-render redirect() → HTTP 308) ──
@@ -98,13 +100,59 @@ const nextConfig: NextConfig = {
       {
         // Legacy games insights — superseded by /ggr.
         source: "/insights/games",
-        destination: "/ggr",
+        destination: "/insights/real-numbers",
         permanent: true,
       },
       {
         // Legacy balance-adjustments insights — removed from the dashboard.
         source: "/insights/balance-adjustments",
-        destination: "/insights/analytics",
+        destination: "/insights/real-numbers",
+        permanent: true,
+      },
+      // ── Insights IA restructure (2026-06-15) ──────────────────────────────
+      // The standalone /insights hub page was removed and "Real Numbers"
+      // became the Insights landing/overview. These pages were deleted
+      // entirely (per owner): analytics, GGR breakdown, challenges insights,
+      // Edge Plan 2.0, Wager Liability. Cost Breakdown's ROUTE is KEPT (no
+      // nav entry; reachable via a link on the Overview page). Every deleted
+      // route 308-redirects to the new Insights Overview so bookmarks/links
+      // never 404. HTTP 308 (config redirect), NOT an in-render redirect():
+      // an unconditional in-render redirect on the initial document load is
+      // replayed by the App Router and crashes it (see the retired-route note
+      // above). All have FIXED destinations, so the static config form is
+      // correct here.
+      {
+        // Old Insights hub page → new Insights landing (Real Numbers).
+        source: "/insights",
+        destination: "/insights/real-numbers",
+        permanent: true,
+      },
+      {
+        source: "/insights/analytics",
+        destination: "/insights/real-numbers",
+        permanent: true,
+      },
+      {
+        // GGR breakdown page removed.
+        source: "/ggr",
+        destination: "/insights/real-numbers",
+        permanent: true,
+      },
+      {
+        // Insights challenges analytics removed (the CRUD /challenges page
+        // under Rewards is unaffected).
+        source: "/insights/challenges",
+        destination: "/insights/real-numbers",
+        permanent: true,
+      },
+      {
+        source: "/insights/edge-plan-2",
+        destination: "/insights/real-numbers",
+        permanent: true,
+      },
+      {
+        source: "/insights/wager-liability",
+        destination: "/insights/real-numbers",
         permanent: true,
       },
       {

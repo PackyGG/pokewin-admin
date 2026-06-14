@@ -22,7 +22,7 @@ const UTF8_BOM = "﻿";
 // Period / filter parsers — reused verbatim from the pages so the export
 // resolves the exact same window / lens / filter set the admin sees.
 import { parseInsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
-import { parseInsightsPeriod } from "../analytics/types";
+import { parseInsightsPeriod } from "@/lib/queries/insights-analytics/period";
 import { parseRakebackRoiLookback } from "../rewards/rakeback/_constants";
 import { parseRakebackTopClaimerScope } from "@/lib/queries/insights-rewards/rakeback/top-claimers";
 
@@ -32,15 +32,10 @@ import { parseRakebackTopClaimerScope } from "@/lib/queries/insights-rewards/rak
 // permission-key.
 import { gatherDepositBonusExportSections } from "../rewards/deposit-bonus/_export";
 import { gatherRewardsOverviewExportSections } from "../rewards/_export";
-import { gatherAnalyticsExportSections } from "../analytics/_export";
 import { gatherRaceExportSections } from "../rewards/race/_export";
 import { gatherAffiliateExportSections } from "../rewards/affiliate/_export";
 import { gatherRakebackExportSections } from "../rewards/rakeback/_export";
 import { gatherCostBreakdownExportSections } from "../cost-breakdown/_export";
-import {
-  gatherGgrExportSections,
-  parseGgrExportWindow,
-} from "../../ggr/_export";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -83,21 +78,6 @@ const EXPORTS: Record<string, ExportDescriptor> = {
         parseInsightsRewardsPeriod(p.get("period") ?? undefined),
       ),
   },
-  analytics: {
-    permissionKey: "/insights/analytics",
-    gather: (p) =>
-      gatherAnalyticsExportSections(
-        parseInsightsPeriod(p.get("period") ?? undefined),
-        {
-          cohortsBy: p.get("cohortsBy") ?? undefined,
-          retentionBy: p.get("retentionBy") ?? undefined,
-          ltvBy: p.get("ltvBy") ?? undefined,
-          funnelBy: p.get("funnelBy") ?? undefined,
-          whalesBy: p.get("whalesBy") ?? undefined,
-          geoBy: p.get("geoBy") ?? undefined,
-        },
-      ),
-  },
   race: {
     permissionKey: "/insights/rewards/race",
     gather: (p) =>
@@ -126,13 +106,6 @@ const EXPORTS: Record<string, ExportDescriptor> = {
     gather: (p) =>
       gatherCostBreakdownExportSections(
         parseInsightsPeriod(p.get("period") ?? undefined),
-      ),
-  },
-  ggr: {
-    permissionKey: "/ggr",
-    gather: (p) =>
-      gatherGgrExportSections(
-        parseGgrExportWindow(p.get("window") ?? undefined),
       ),
   },
 };

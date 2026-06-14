@@ -4,7 +4,7 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
-import { periodToDays, type InsightsPeriod } from "@/app/(admin)/insights/analytics/types";
+import { periodToDays, type InsightsPeriod } from "./period";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 
 /**

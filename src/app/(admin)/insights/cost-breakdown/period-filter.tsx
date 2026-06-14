@@ -7,7 +7,7 @@ import {
   INSIGHTS_PERIODS,
   DEFAULT_INSIGHTS_PERIOD,
   type InsightsPeriod,
-} from "../analytics/types";
+} from "@/lib/queries/insights-analytics/period";
 
 const LABEL_SHORT: Record<InsightsPeriod, string> = {
   "24h": "24h",

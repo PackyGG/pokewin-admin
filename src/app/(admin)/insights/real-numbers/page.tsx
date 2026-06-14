@@ -24,6 +24,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import Link from "next/link";
+import { ArrowRight } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import {
   PageHero,
@@ -194,6 +196,22 @@ export default async function RealNumbersPage() {
           accent="emerald"
           title="Real Numbers"
           subtitle="Source of truth · lifetime · real customers only (staff, creators & blacklisted users excluded) · reconciled to the ledger & balances"
+          action={
+            <Link
+              href="/insights/cost-breakdown"
+              className={cn(
+                // Outline-button look without calling the client-only
+                // buttonVariants() from this Server Component (that crashes
+                // the RSC render). Mirrors button.tsx variant="outline"
+                // size="sm": bordered, subtle hover, focus ring.
+                "group/cb inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground shadow-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring",
+              )}
+            >
+              <TrendingDown className="size-4 text-rose-500" />
+              <span>Cost Breakdown</span>
+              <ArrowRight className="size-3.5 text-muted-foreground transition-transform motion-safe:group-hover/cb:translate-x-0.5" />
+            </Link>
+          }
         />
         <div className="mt-3 flex flex-col gap-1.5 border-t border-border/50 pt-3 text-[11px] leading-snug text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <p className="flex min-w-0 items-center gap-1.5">

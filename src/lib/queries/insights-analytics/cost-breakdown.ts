@@ -20,7 +20,7 @@ import { calculateWindowedPnl } from "@/lib/metrics/realized-pnl";
 import {
   periodToCutoff,
   type InsightsPeriod,
-} from "@/app/(admin)/insights/analytics/types";
+} from "./period";
 import {
   COUNTED_ADJUSTMENT_CATEGORY_KEYS,
   BALANCE_ADJUSTMENT_CATEGORY_META,

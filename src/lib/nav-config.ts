@@ -148,18 +148,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    id: "nav.numbers",
-    group: "Overview",
-    label: "Numbers",
-    href: "/numbers",
-    pageKey: "/numbers",
-    icon: "Hash",
-    description: "Signup method breakdown",
-    keywords: ["signups", "registration", "email", "discord", "google", "steam", "auth"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
     // Map — palette-only. /map was folded into /analytics as a tab; the
     // palette still surfaces it (routing through the analytics shell) but the
     // sidebar dropped the standalone link. href carries the tab; permission
@@ -201,21 +189,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // XP Sales — global view of every xp_purchase (users buying XP with
-    // their own withdrawable balance). "Sparkles" is already in the sidebar
-    // ICONS map (app-sidebar.tsx), so no React #130 risk.
-    id: "nav.xp-sales",
-    group: "Overview",
-    label: "XP Sales",
-    href: "/xp-sales",
-    pageKey: "/xp-sales",
-    icon: "Sparkles",
-    description: "XP purchases — balance spent on XP",
-    keywords: ["xp", "experience", "level", "xp purchase", "xp_purchase", "sales"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
     // Sidebar label is "Transactions" (the unified deposits+withdrawals
     // surface); palette label is "Deposits". Same href/pageKey.
     id: "nav.deposits",
@@ -252,39 +225,18 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
 
   // ── Insights (sidebar-only; absent from palette today) ─────────────────
   {
-    // Insights Hub — the /insights landing page. KPI strip sourced from
-    // the canonical cost-breakdown helper plus quick-link cards into
-    // every sub-area. Icon string `Compass` MUST be registered in the
-    // ICONS map in `src/components/app-sidebar.tsx`. Sits first in the
-    // group so the parent route is reachable directly from the sidebar.
-    id: "nav.insights.hub",
-    group: "Insights",
-    label: "Overview",
-    href: "/insights",
-    pageKey: "/insights",
-    icon: "Compass",
-    isNew: true,
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
-    id: "nav.insights.cost-breakdown",
-    group: "Insights",
-    label: "Cost Breakdown",
-    href: "/insights/cost-breakdown",
-    pageKey: "/insights/cost-breakdown",
-    icon: "TrendingDown",
-    isNew: true,
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
-    // Real Numbers — the source-of-truth page. Icon string `Sigma` is already
-    // registered in the ICONS map in `src/components/app-sidebar.tsx`
-    // (no React #130 risk). Sidebar-only, like its Insights siblings.
+    // Insights Overview — the source-of-truth "Real Numbers" page is now the
+    // Insights landing. The former standalone /insights hub page was removed;
+    // /insights 308-redirects here (next.config.ts). Labeled "Overview" in the
+    // sidebar (it's the section landing) but keeps its own /insights/real-numbers
+    // route + permission key. Icon `Sigma` is registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (no React #130 risk). Sits first in the
+    // group so the section landing is reachable directly from the sidebar. The
+    // Cost Breakdown page (route kept) is reachable via a link on this page; it
+    // no longer has its own sidebar entry.
     id: "nav.insights.real-numbers",
     group: "Insights",
-    label: "Real Numbers",
+    label: "Overview",
     href: "/insights/real-numbers",
     pageKey: "/insights/real-numbers",
     icon: "Sigma",
@@ -293,26 +245,20 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
   {
-    id: "nav.insights.analytics",
+    // Numbers — signup-method breakdown. Moved here from the Overview group
+    // (owner: "move numbers page from overview to insights"). Same /numbers
+    // route + permission key; only the sidebar/palette grouping changed. Icon
+    // `Hash` is registered in the ICONS map in `src/components/app-sidebar.tsx`.
+    id: "nav.numbers",
     group: "Insights",
-    label: "Analytics",
-    href: "/insights/analytics",
-    pageKey: "/insights/analytics",
-    icon: "LineChart",
-    isNew: true,
+    label: "Numbers",
+    href: "/numbers",
+    pageKey: "/numbers",
+    icon: "Hash",
+    description: "Signup method breakdown",
+    keywords: ["signups", "registration", "email", "discord", "google", "steam", "auth"],
     inSidebar: true,
-    inPalette: false,
-  },
-  {
-    id: "nav.ggr",
-    group: "Insights",
-    label: "GGR",
-    href: "/ggr",
-    pageKey: "/ggr",
-    icon: "TrendingUp",
-    isNew: true,
-    inSidebar: true,
-    inPalette: false,
+    inPalette: true,
   },
   {
     id: "nav.insights.rewards",
@@ -321,21 +267,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     href: "/insights/rewards",
     pageKey: "/insights/rewards",
     icon: "Gift",
-    isNew: true,
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
-    // Challenges — analytics surface for the challenge program (prize cost,
-    // claims, completion). The /challenges page is CRUD-only; this sits in
-    // Insights as the read-only analytics view. Icon string `Trophy` MUST be
-    // registered in the ICONS map in `src/components/app-sidebar.tsx` (it is).
-    id: "nav.insights.challenges",
-    group: "Insights",
-    label: "Challenges",
-    href: "/insights/challenges",
-    pageKey: "/insights/challenges",
-    icon: "Trophy",
     isNew: true,
     inSidebar: true,
     inPalette: false,
@@ -409,44 +340,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     isNew: true,
     inSidebar: true,
     inPalette: true,
-  },
-  {
-    id: "nav.insights.edge-plan-2",
-    group: "Insights",
-    label: "Edge Plan 2.0",
-    href: "/insights/edge-plan-2",
-    pageKey: "/insights/edge-plan-2",
-    icon: "Sparkles",
-    description: "Post-raffle economics planner — shards, balance withdrawals, full-width command center",
-    keywords: [
-      "edge",
-      "plan",
-      "2.0",
-      "shards",
-      "withdrawal",
-      "wager",
-      "levers",
-      "profit",
-    ],
-    isNew: true,
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Wager Liability — platform-wide wager-requirement liability snapshot
-    // (gated user balances behind the sweepstakes wager requirement). Icon
-    // string `Lock` MUST be registered in the ICONS map in
-    // `src/components/app-sidebar.tsx` (React #130). Sidebar-only, like its
-    // Insights siblings.
-    id: "nav.insights.wager-liability",
-    group: "Insights",
-    label: "Wager Liability",
-    href: "/insights/wager-liability",
-    pageKey: "/insights/wager-liability",
-    icon: "Lock",
-    isNew: true,
-    inSidebar: true,
-    inPalette: false,
   },
 
   {
@@ -633,6 +526,24 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     href: "/rewards",
     pageKey: "/rewards",
     icon: "Award",
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
+    // XP Sales — global view of every xp_purchase (users buying XP with
+    // their own withdrawable balance). Moved here from the Overview group
+    // (owner: relocate XP Sales under Rewards). Same /xp-sales route +
+    // permission key; only the sidebar/palette grouping changed. "Sparkles"
+    // is already in the sidebar ICONS map (app-sidebar.tsx), so no React #130
+    // risk.
+    id: "nav.xp-sales",
+    group: "Rewards",
+    label: "XP Sales",
+    href: "/xp-sales",
+    pageKey: "/xp-sales",
+    icon: "Sparkles",
+    description: "XP purchases — balance spent on XP",
+    keywords: ["xp", "experience", "level", "xp purchase", "xp_purchase", "sales"],
     inSidebar: true,
     inPalette: true,
   },
