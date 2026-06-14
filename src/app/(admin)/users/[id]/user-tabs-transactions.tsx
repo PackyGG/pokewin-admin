@@ -123,6 +123,12 @@ function MergedPnlCell({
       : profit != null && profit < 0
         ? "text-rose-600 dark:text-rose-400"
         : "text-muted-foreground");
+  // Only surface the small Won Value when the user actually won something.
+  // A $0.00 won (house win where the player took nothing — coerced safely
+  // since `won` may be a Decimal/string/number, and null/undefined/0 all
+  // count as "nothing won") shows ONLY the main House Profit number, with
+  // nothing muted behind it.
+  const showWon = won != null && Number(won) > 0;
   return (
     <TableCell className="tabular-nums">
       <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
@@ -132,9 +138,9 @@ function MergedPnlCell({
               ? `${profit > 0 ? "+" : ""}${formatCurrency(profit)}`
               : "—")}
         </span>
-        {(won != null || extra) && (
+        {(showWon || extra) && (
           <span className="text-[11px] text-muted-foreground">
-            {won != null ? formatCurrency(won) : null}
+            {showWon ? formatCurrency(won) : null}
           </span>
         )}
         {extra}
@@ -1118,7 +1124,7 @@ function WatchButton({
         target="_blank"
         rel="noopener noreferrer"
         title="Open the live battle on packy.gg"
-        className="inline-flex h-7 items-center gap-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-2 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-500/20 dark:text-blue-400"
+        className="inline-flex h-5 items-center gap-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-600 transition-colors hover:bg-blue-500/20 dark:text-blue-400"
       >
         <ExternalLink className="size-3 shrink-0" />
         Watch
@@ -1176,7 +1182,7 @@ function WatchButton({
       onClick={handleClick}
       disabled={isPending}
       title="Reveal password, copy Watch URL with ?password=…, and open the live battle"
-      className="inline-flex h-7 items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 text-xs font-medium text-amber-600 transition-colors hover:bg-amber-500/20 disabled:opacity-60 dark:text-amber-400"
+      className="inline-flex h-5 items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600 transition-colors hover:bg-amber-500/20 disabled:opacity-60 dark:text-amber-400"
     >
       {isPending ? (
         <Loader2 className="size-3 shrink-0 animate-spin" />
