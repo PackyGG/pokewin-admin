@@ -544,6 +544,59 @@ model admin_settings {
   updated_by String?  @db.Uuid
 }
 
+// ─── Crypto fee profit — durable, monotonic high-water counter ─────────
+// Backs the dashboard "Crypto Fee" KPI box. The figure is the house's
+// estimated cumulative profit from the hidden crypto exchange-rate fee
+// (completed crypto deposit/withdrawal USD volume × the avg fee-band
+// midpoint), but ANCHORED to a start instant (~2h before seed) and made
+// MONOTONIC so it only ever counts UP ("guaranteed profit, can't go
+// down").
+//
+// Why this lives in the ADMIN DB (not computed purely live from the game
+// DB): the prod GAME DB has swapped hosts twice this week. A number read
+// purely live from game-DB history could DROP if that history moves to a
+// fresh/partial host — unacceptable for a "can't go down" counter. So we
+// persist the running high-water total here: the query computes the live
+// since-anchor volume × LOCKED bps, takes `GREATEST(stored, live)`, and
+// writes the high back. The stored value survives a host swap (it holds
+// the last high) and the displayed number is provably non-decreasing.
+//
+// SINGLE-ROW table — one fixed `id = 'singleton'` row, seeded once. The
+// owner can edit `count_start_at` (and the locked bps) directly in the
+// admin DB to nudge the anchor; the bps are LOCKED here (read once at
+// seed time) so a later site_config band change doesn't retroactively
+// move historical fee math.
+//
+// Provisioned in the live admin DB via a surgical `CREATE TABLE IF NOT
+// EXISTS` (prisma/admin/sql/20260614_crypto_fee_profit_counter.sql) run
+// with `prisma db execute` — NOT a Prisma migration (the admin DB has a
+// drifted migration history; never `migrate deploy` on it). This model
+// block is the MIRROR so typed `adminDb.crypto_fee_profit_counter.*`
+// queries work. The read path catches the missing-table/row error
+// (P2021/P2025/42P01) and degrades gracefully.
+//
+// bps stored as Decimal(7,4) so the withdrawal midpoint's 7.5 (= 0.075%)
+// is exact — an INT column would round 7.5 → 8 and silently inflate the
+// withdrawal leg.
+model crypto_fee_profit_counter {
+  // Fixed single-row key. Always 'singleton'.
+  id                  String   @id @default("singleton")
+  // The anchor: estimated fee profit is counted from this instant only.
+  // Seeded to ~2h before now; the owner may edit it to nudge the start.
+  count_start_at      DateTime @db.Timestamptz(6)
+  // Fee-band midpoints LOCKED at seed time (bps of market price). Read
+  // once from site_config so a later band change can't retro-move the
+  // historical math. Decimal so 7.5 bps stays exact.
+  deposit_fee_bps     Decimal  @db.Decimal(7, 4)
+  withdrawal_fee_bps  Decimal  @db.Decimal(7, 4)
+  // Running HIGH-WATER total + its split (USD). The query writes back
+  // GREATEST(stored, live) so these only ever increase.
+  total_fee_usd       Decimal  @default(0) @db.Decimal(20, 2)
+  deposit_fee_usd     Decimal  @default(0) @db.Decimal(20, 2)
+  withdrawal_fee_usd  Decimal  @default(0) @db.Decimal(20, 2)
+  updated_at          DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+}
+
 // ─── Shift planner ─────────────────────────────────────────────────
 // Weekly support-team rota. Each week has up to 3 shifts per day; the
 // admin who plans the week sets the concrete start/end instant for each

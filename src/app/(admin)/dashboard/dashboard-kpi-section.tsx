@@ -294,6 +294,17 @@ function PanelChip({
   );
 }
 
+/**
+ * bps → trimmed percent string. 45 → "0.45%", 7.5 → "0.075%", 50 → "0.5%".
+ * Up to 3 decimals, trailing zeros stripped. Used by the Crypto Fee box's
+ * "avg ~0.45% / ~0.075%" subtitle.
+ */
+function formatBpsPct(bps: number): string {
+  const pct = bps / 100;
+  const s = pct.toFixed(3).replace(/\.?0+$/, "");
+  return `${s}%`;
+}
+
 /** Static window-label chip for the snapshot boxes (no toggle). */
 function StaticWindowLabel({ label }: { label: string }) {
   return (
@@ -321,12 +332,30 @@ function StaticWindowLabel({ label }: { label: string }) {
  * Each box keeps its OWN window mode, so the admin can compare e.g. GGR
  * today against Deposits 24h side by side.
  */
+/**
+ * Crypto-fee box payload. Mirrors the {@link CryptoFeeCounter} query return
+ * (serializable primitives only — no function props cross the RSC boundary).
+ * `available: false` renders the muted slot. The total is the monotonic
+ * high-water estimate counted since `sinceLabel`; it's always positive.
+ */
+export type CryptoFeeKpi = {
+  available: boolean;
+  totalFeeUsd: number;
+  depositFeeUsd: number;
+  withdrawalFeeUsd: number;
+  depositBps: number;
+  withdrawalBps: number;
+  sinceLabel: string;
+};
+
 export function DashboardKpiSection({
   today,
   snapshot,
+  cryptoFee,
 }: {
   today: KpiWindowPayload;
   snapshot: KpiSnapshotValues;
+  cryptoFee: CryptoFeeKpi;
 }) {
   // Lazily-loaded rolling-24h payload (null until first 24h toggle).
   const [h24, setH24] = useState<KpiWindowPayload | null>(null);
@@ -373,12 +402,15 @@ export function DashboardKpiSection({
 
   return (
     <div className="space-y-6">
-      {/* Period-bound boxes — each with a today/24h toggle. Four boxes now
-          (Wager + Organic Wager merged into one): GGR, Wager, Deposits,
-          Withdrawals. Mobile-first: one column at <sm so the hero value +
-          toggle never crush, 2-up at sm, 4 across at lg+ (fills the row
-          cleanly — no orphan slot). */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+      {/* Period-bound boxes — each with a today/24h toggle. FIVE boxes now:
+          GGR, Wager (Total + Organic merged), Deposits, Withdrawals, and the
+          Crypto Fee counter (anchored monotonic estimate — NOT period-bound,
+          carries a static "since" label instead of a toggle). Mobile-first:
+          one column at <sm so the hero value + toggle never crush; 2-up at sm;
+          3-up at lg (the Wager dual-hero box keeps room before we go wide);
+          5 across at xl where there's width for all five (the wide Wager box
+          included) without crushing. */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
         {/* GGR — gaming margin. Cyan identity; Info popover with the
             wager/payout legs + lazy top-contributors, scoped to the box's
             active window. */}
@@ -522,6 +554,63 @@ export function DashboardKpiSection({
             </KpiPanel>
           );
         })()}
+
+        {/* Crypto Fee — house profit from the hidden crypto exchange-rate fee,
+            an ANCHORED + MONOTONIC estimate counted since the seed anchor (so
+            it starts near $0 and only counts up). Emerald identity (House-POV:
+            a dollar we make = green). Always positive. Not period-bound, so it
+            carries a static "est · since …" label instead of a today/24h
+            toggle. When unavailable (admin counter row missing) the muted
+            slot renders so the row still holds five cells. */}
+        {cryptoFee.available ? (
+          <KpiPanel
+            title="Crypto Fee"
+            tint="emerald"
+            icon={Coins}
+            headerRight={
+              <StaticWindowLabel label={`est · ${cryptoFee.sinceLabel}`} />
+            }
+            footer={
+              <div className="space-y-1.5">
+                <div className="grid grid-cols-2 gap-1.5 sm:-mx-0.5">
+                  <PanelChip
+                    label="Deposits"
+                    value={cryptoFee.depositFeeUsd}
+                    tone="emerald"
+                  />
+                  <PanelChip
+                    label="Withdrawals"
+                    value={cryptoFee.withdrawalFeeUsd}
+                    tone="emerald"
+                  />
+                </div>
+                <p className="text-[10px] leading-tight text-muted-foreground">
+                  avg ~{formatBpsPct(cryptoFee.depositBps)} deposits · ~
+                  {formatBpsPct(cryptoFee.withdrawalBps)} withdrawals
+                </p>
+              </div>
+            }
+          >
+            {/* Always-positive house profit → emerald hero (count-up). */}
+            <div className="text-stat-value truncate text-emerald-600 dark:text-emerald-300">
+              <AnimatedNumber value={cryptoFee.totalFeeUsd} format="currency" />
+            </div>
+          </KpiPanel>
+        ) : (
+          <KpiPanel
+            title="Crypto Fee"
+            tint="emerald"
+            icon={Coins}
+            headerRight={<StaticWindowLabel label="est" />}
+          >
+            <div className="text-stat-value truncate text-muted-foreground/70">
+              —
+            </div>
+            <p className="text-tiny text-muted-foreground">
+              Crypto fee data not available.
+            </p>
+          </KpiPanel>
+        )}
       </div>
 
       {/* Snapshot boxes — lifetime / fixed-window figures that do NOT vary
