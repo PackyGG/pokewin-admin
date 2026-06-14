@@ -171,6 +171,8 @@ const TABS: TabDef[] = [
 
 export function UserViewModern({
   data,
+  backSlot,
+  tagsSlot,
   pnlResultPromise,
   riskResultPromise,
   gamingTxPromise,
@@ -193,6 +195,13 @@ export function UserViewModern({
   initialTab,
 }: {
   data: UserDetail;
+  // Compact back-to-users button (icon) + the VIP tag manager, both
+  // pre-rendered as serializable React elements in page.tsx and threaded in
+  // here so they render INSIDE the identity hero — the back button tucked
+  // top-left, the tags inline below the badges — instead of as the old
+  // standalone top identity strip + full-width tag row.
+  backSlot: React.ReactNode;
+  tagsSlot: React.ReactNode;
   // ── Streamed-band contract (reliability remake) ──────────────────────
   // Every band promise resolves to a WHOLE SafeQueryResult ({ data, error })
   // — nothing is unwrapped server-side anymore, so each band can render
@@ -355,6 +364,10 @@ export function UserViewModern({
           {/* Identity + compact KPI chips on one wrapping row. */}
           <div className="flex flex-wrap items-start gap-3 sm:gap-4">
             <div className="flex min-w-0 flex-1 basis-[min(100%,18rem)] items-start gap-3 sm:gap-4">
+              {/* Compact back-to-users button — tucked into the hero's
+                  top-left (replaces the standalone back arrow from the
+                  now-removed top identity strip). Same /users navigation. */}
+              {backSlot}
               <div className="relative shrink-0">
                 <Avatar className="size-12 sm:size-14 ring-2 ring-background shadow-lg">
                   {user.image && <AvatarImage src={user.image} alt="" />}
@@ -524,6 +537,11 @@ export function UserViewModern({
                   </span>
                   <span className="font-mono">{user.id.slice(0, 8)}</span>
                 </div>
+                {/* VIP tag manager — relocated INTO the hero (was a
+                    standalone full-width dashed row below the old top strip)
+                    to save vertical space. Sits with the identity it
+                    annotates; all add/remove behaviour is unchanged. */}
+                {tagsSlot && <div className="pt-1.5">{tagsSlot}</div>}
               </div>
             </div>
 

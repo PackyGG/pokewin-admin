@@ -254,6 +254,8 @@ export function UserDetailFixtureClient() {
   return (
     <UserViewModern
       data={DATA}
+      backSlot={null}
+      tagsSlot={null}
       pnlResultPromise={ok(PNL)}
       riskResultPromise={ok<RiskScoreBreakdown>(RISK)}
       gamingTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}

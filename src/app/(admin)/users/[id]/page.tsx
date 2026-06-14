@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -200,9 +200,13 @@ export default async function UserDetailPage({
   // ONLY 404 path (genuinely unknown id), but a timeout/failure yields an
   // id-only placeholder header so the shell renders and the streamed body
   // (its own timeout-wrapped getUserDetail) fills in the real identity.
+  // getUserHeaderCritical stays the critical-path 404 guard: a clean
+  // not-found is the ONLY 404 path (genuinely unknown id). The identity it
+  // returns is no longer rendered as a standalone top strip (the hero in the
+  // streamed body shows username/email) — we only need the found/not-found
+  // verdict here so the shell can render and stream the body.
   const headerResult = await getUserHeaderCritical(id);
   if (!headerResult.found) notFound();
-  const header = headerResult.header;
 
   // Permissions for the union-capability checks. For admins this is a
   // constant (no query); for non-admins it's a single cache()'d admin-DB
@@ -234,6 +238,31 @@ export default async function UserDetailPage({
     "users.detail.tags",
   );
 
+  // Tags + back button are rendered here (on the critical path, where the
+  // tag data + permissions already resolved) and passed as plain React
+  // ELEMENTS (serializable nodes — NOT function props) down through the
+  // streamed body into the hero. The owner removed the redundant top
+  // identity strip (it just repeated the username/email already shown
+  // inside the hero); the back button is now a compact icon tucked into
+  // the hero's top-left, and the tag manager lives inside the hero too,
+  // saving the vertical space the old standalone rows took.
+  const backSlot = (
+    <Link
+      href="/users"
+      aria-label="Back to users"
+      className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border bg-card/60 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+    >
+      <ArrowLeft className="size-4" />
+    </Link>
+  );
+  const tagsSlot = (
+    <UserTagsPanel
+      userId={id}
+      initialTags={userTags}
+      canManage={canManageUserTags}
+    />
+  );
+
   return (
     <div className="space-y-4">
       {/* Re-fetch server data every 60s so admins watching a user-detail
@@ -241,35 +270,6 @@ export default async function UserDetailPage({
           re-runs the page-level fetches and re-renders the whole tree, so
           the active tab's tables update in place without changing tab. */}
       <AutoRefresh intervalMs={60_000} />
-      <div className="space-y-2">
-        <div className="flex items-center gap-3 flex-wrap">
-          <Link href="/users" className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground">
-            <ArrowLeft className="size-4" />
-          </Link>
-          <div className="min-w-0">
-            <h1 className="text-2xl font-bold leading-tight">
-              {/* On a degraded (timed-out) identity read username + email
-                  are both null — show a short id so the header still reads
-                  as a real user; the streamed body resolves the full
-                  identity in its own hero. */}
-              {header.username ?? header.email ?? `User ${header.id.slice(0, 8)}`}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              {header.email ?? (
-                <span className="font-mono">{header.id.slice(0, 12)}…</span>
-              )}
-            </p>
-          </div>
-        </div>
-        {/* VIP tag manager — dedicated dashed-border row so admins
-            always notice the section (even on empty profiles). Read-
-            only for viewers without __can_manage_user_tags. */}
-        <UserTagsPanel
-          userId={id}
-          initialTags={userTags}
-          canManage={canManageUserTags}
-        />
-      </div>
 
       {/* ── STREAMED HEAVY BODY ─────────────────────────────────────────
           The hero KPI strip + tabbed content (balances, P&L, inventory,
@@ -278,7 +278,9 @@ export default async function UserDetailPage({
           ~half a dozen other Main-DB reads. Streaming it behind its own
           Suspense keeps those reads off the header's TTFB, and every fetch
           inside is timeout-wrapped (safeQuery) so a slow/failed one shows a
-          fallback section instead of throwing the whole page. ─────────── */}
+          fallback section instead of throwing the whole page. The back
+          button + tag manager (both resolved above) are threaded in as
+          serializable React elements so they render inside the hero. ──── */}
       <Suspense fallback={<UserDetailBodySkeleton />}>
         <UserDetailBody
           id={id}
@@ -286,6 +288,8 @@ export default async function UserDetailPage({
           sessionUserId={session.userId}
           permissions={permissions}
           initialTab={initialTab}
+          backSlot={backSlot}
+          tagsSlot={tagsSlot}
         />
       </Suspense>
     </div>
@@ -307,6 +311,8 @@ async function UserDetailBody({
   sessionUserId,
   permissions,
   initialTab,
+  backSlot,
+  tagsSlot,
 }: {
   id: string;
   sessionRole: string;
@@ -316,6 +322,12 @@ async function UserDetailBody({
   // tag panel's and avoids a second (cache()'d, but clearer-as-prop) read.
   permissions: string[] | null;
   initialTab: TabKey;
+  // Pre-rendered React elements (serializable nodes, NOT function props)
+  // resolved on the critical path in the page above: the compact back-to-
+  // users button and the VIP tag manager. Threaded through to UserViewModern
+  // so both render INSIDE the identity hero rather than as standalone rows.
+  backSlot: ReactNode;
+  tagsSlot: ReactNode;
 }) {
   // Empty paginated-transaction shape used as the safeQuery fallback for
   // the gaming / financial / adjustments tx fetches below. Same shape
@@ -769,6 +781,8 @@ async function UserDetailBody({
   return (
     <UserViewModern
       data={detailWithSession}
+      backSlot={backSlot}
+      tagsSlot={tagsSlot}
       pnlResultPromise={pnlResultPromise}
       riskResultPromise={riskResultPromise}
       gamingTxPromise={gamingTxPromise}
