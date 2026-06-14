@@ -1,5 +1,10 @@
 import { adminDb } from "@/lib/admin-db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { getRoleBalanceLimitDefaults } from "@/lib/role-limits";
+import {
+  resolveEffectiveCap,
+  type RoleBalanceLimitDefaults,
+} from "@/lib/role-limits-merge";
 import type { limit_period_type } from "@/generated/admin-prisma/client";
 
 function getPeriodStart(periodType: limit_period_type): Date {
@@ -17,57 +22,108 @@ function getPeriodStart(periodType: limit_period_type): Date {
   }
 }
 
+/**
+ * Sum the USD an admin has already moved within the current `period` window.
+ *
+ * Unchanged logic, extracted from `checkBalanceAdjustmentLimit` so the cap
+ * merge (per-user row → else role default) can compute usage per period
+ * without duplicating it. Both event types count against the same cap:
+ * - `balance_adjustment` is the regular adjustBalance() audit event
+ *   (metadata.amount carries the signed delta in USD).
+ * - `manual_withdrawal_recorded` is recordManualWithdrawal()
+ *   (metadata.amountUsd carries the positive USD amount that was moved off the
+ *   user's on-site balance).
+ * Manual withdrawals move user money around just like a balance adjustment
+ * does, so we sum both event types. Returns the absolute total (always ≥ 0).
+ */
+async function sumPeriodUsage(
+  adminUserId: string,
+  period: limit_period_type,
+): Promise<number> {
+  const periodStart = getPeriodStart(period);
+
+  const events = await adminDb.admin_audit_events.findMany({
+    where: {
+      admin_user_id: adminUserId,
+      event_type: { in: ["balance_adjustment", "manual_withdrawal_recorded"] },
+      created_at: { gte: periodStart },
+    },
+    select: { metadata: true },
+  });
+
+  let currentUsage = 0;
+  for (const event of events) {
+    const meta = event.metadata as Record<string, unknown> | null;
+    if (!meta) continue;
+    // Accept either field — `amount` for balance_adjustment events,
+    // `amountUsd` for manual_withdrawal_recorded events.
+    if (typeof meta.amount === "number") {
+      currentUsage += Math.abs(meta.amount);
+    } else if (typeof meta.amountUsd === "number") {
+      currentUsage += Math.abs(meta.amountUsd);
+    }
+  }
+  return currentUsage;
+}
+
+const ALL_PERIODS: readonly limit_period_type[] = ["daily", "weekly", "monthly"];
+
+/**
+ * Enforce the admin's balance-adjustment cap before a balance move.
+ *
+ * Effective cap per period = `userRow.max ?? roleDefault[period] ?? null`
+ * (per-user-row WINS → else the role default → else unlimited). Today every
+ * role's limit columns are NULL, so `roleDefault` is all-null and this is
+ * IDENTICAL to the previous per-user-only behavior:
+ *   • no per-user row AND no role cap for any period ⇒ early return (unlimited),
+ *   • a per-user row ⇒ that row's cap is enforced exactly as before.
+ * When a period has a cap, throws the SAME message shape if
+ * `usage + |amount| > max`.
+ */
 export async function checkBalanceAdjustmentLimit(
   adminUserId: string,
   amount: number
 ): Promise<void> {
-  const limits = await adminDb.admin_balance_limits.findMany({
+  // Per-user caps (the authoritative WINNER when present), keyed by period.
+  const userLimits = await adminDb.admin_balance_limits.findMany({
     where: { admin_user_id: adminUserId },
   });
+  const userMaxByPeriod = new Map<limit_period_type, number>();
+  for (const l of userLimits) {
+    userMaxByPeriod.set(l.period_type, Number(l.max_amount));
+  }
 
-  if (limits.length === 0) return;
+  // Role-level defaults (lower layer). Inert today (all columns NULL).
+  let roleDefaults: RoleBalanceLimitDefaults;
+  try {
+    roleDefaults = await getRoleBalanceLimitDefaults(adminUserId);
+  } catch {
+    // A role-default read failure must NOT loosen OR tighten the per-user cap:
+    // fall back to "no role default" so per-user rows still enforce exactly.
+    roleDefaults = { daily: null, weekly: null, monthly: null };
+  }
+
+  // Resolve the effective cap per period: per-user row ?? role default ?? null.
+  const effectiveByPeriod: Array<{ period: limit_period_type; max: number }> = [];
+  for (const period of ALL_PERIODS) {
+    const userMax = userMaxByPeriod.get(period);
+    const effectiveMax = resolveEffectiveCap(userMax, roleDefaults[period]);
+    if (effectiveMax !== null) {
+      effectiveByPeriod.push({ period, max: effectiveMax });
+    }
+  }
+
+  // No capped period at all ⇒ unlimited (identical to today's empty-rows path).
+  if (effectiveByPeriod.length === 0) return;
 
   const requestedAmount = Math.abs(amount);
 
-  for (const limit of limits) {
-    const periodStart = getPeriodStart(limit.period_type);
-
-    // Both event types count against the same per-admin balance cap.
-    // - `balance_adjustment` is the regular adjustBalance() audit event
-    //   (metadata.amount carries the signed delta in USD).
-    // - `manual_withdrawal_recorded` is recordManualWithdrawal()
-    //   (metadata.amountUsd carries the positive USD amount that was
-    //   moved off the user's on-site balance).
-    // Manual withdrawals move user money around just like a balance
-    // adjustment does, so we sum both event types when checking caps.
-    const events = await adminDb.admin_audit_events.findMany({
-      where: {
-        admin_user_id: adminUserId,
-        event_type: { in: ["balance_adjustment", "manual_withdrawal_recorded"] },
-        created_at: { gte: periodStart },
-      },
-      select: { metadata: true },
-    });
-
-    let currentUsage = 0;
-    for (const event of events) {
-      const meta = event.metadata as Record<string, unknown> | null;
-      if (!meta) continue;
-      // Accept either field — `amount` for balance_adjustment events,
-      // `amountUsd` for manual_withdrawal_recorded events.
-      if (typeof meta.amount === "number") {
-        currentUsage += Math.abs(meta.amount);
-      } else if (typeof meta.amountUsd === "number") {
-        currentUsage += Math.abs(meta.amountUsd);
-      }
-    }
-
-    const maxAmount = Number(limit.max_amount);
-
-    if (currentUsage + requestedAmount > maxAmount) {
+  for (const { period, max } of effectiveByPeriod) {
+    const currentUsage = await sumPeriodUsage(adminUserId, period);
+    if (currentUsage + requestedAmount > max) {
       throw new Error(
-        `Balance adjustment limit exceeded for ${limit.period_type} period. ` +
-        `Used: $${currentUsage.toFixed(2)} / $${maxAmount.toFixed(2)}. ` +
+        `Balance adjustment limit exceeded for ${period} period. ` +
+        `Used: $${currentUsage.toFixed(2)} / $${max.toFixed(2)}. ` +
         `Requested: $${requestedAmount.toFixed(2)}`
       );
     }
