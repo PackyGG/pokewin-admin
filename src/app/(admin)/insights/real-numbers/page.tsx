@@ -295,7 +295,7 @@ export default async function RealNumbersPage() {
             <section className="space-y-3">
               <SectionHeading
                 icon={Scale}
-                title="GGR → realized P&L — the complete closing waterfall"
+                title="GGR → realized P&L — the complete closing waterfall 2.0"
               />
               <GgrToNgrBridge
                 cost={cost}
@@ -1606,59 +1606,162 @@ function GgrToNgrBridge({
     </BridgeSubTable>
   ) : null;
 
-  // Conversion → recycling evidence (reuse getCustomerRecyclingDetail + the
-  // page's already-fetched hub wager). This is NOT a list of payments — it is
-  // the recycling MECHANISM that explains the basis conversion: customers
-  // deposited far less than the turnover the house booked its edge on, because
-  // they sold won cards back to balance and re-bet. Neutral conversions
-  // (card/voucher exchange is a normal user action, never a house cost) — shown
-  // only as proof, never added to any cost.
+  // Conversion → the EXACT measured decomposition of NGR − customer cash
+  // margin, then the recycling MECHANISM that explains the residual.
+  //
+  // The conversion is the difference of two independently-MEASURED anchors:
+  // NGR (gaming margin booked on all turnover at card-sticker values) and the
+  // customer cash margin (the balance-sheet realized P&L of customers only).
+  // Only ONE clean cash term is isolable inside that gap: the daily / free-pack
+  // card giveaway — a real house cost that lands in the cash P&L (via held
+  // inventory) but is NOT a REWARD_PAYOUT ledger type and so is NOT in NGR's
+  // reward cost. Everything else is the BASIS residual: NGR values won cards at
+  // sticker on re-wagered turnover, while customer cash is bounded by deposits −
+  // withdrawals. That residual does not itemize into clean cash line items (the
+  // same "unexplained residual" /insights/cost-breakdown carries) — we surface
+  // it honestly as one measured remainder, never a plug, and prove it with the
+  // recycling evidence below.
   const reWagerMultiple =
     recycling && recycling.deposits > 0 ? wager / recycling.deposits : null;
+  // The one isolable cash term inside the conversion: the daily/free-pack
+  // giveaway (canonical getDailyPacksTotalCost via the reward itemization).
+  // Clamp into [0, conversionValue] so the basis-residual remainder stays ≥ 0
+  // and the two sum to exactly conversionValue (closes by construction).
+  const dailyPackCost = rewardSpend?.dailyPacks.cost ?? 0;
+  const dailyPackInConversion = Math.min(
+    Math.max(0, dailyPackCost),
+    Math.max(0, conversionValue),
+  );
+  const basisResidual = conversionValue - dailyPackInConversion;
   const conversionSubRows: ReactNode =
-    canClose && recycling ? (
-      <BridgeSubTable
-        caption="Recycling evidence — why gaming margin ≠ customer cash"
-        note={
-          <>
-            Card sell-backs are neutral inventory↔balance conversions (a normal
-            user action, never a house cost) — shown here only as proof of the
-            re-wager. The conversion line above is the measured difference NGR −
-            customer cash margin, not a sum of these rows.
-          </>
-        }
-      >
-        <BridgeSubRow
-          label="Customer deposits"
-          sub="Real cash that ever entered (balances.total_deposited)"
-          amount={recycling.deposits}
-          sign="+"
-          tone="base"
-          iconNode={<ArrowDownToLine className="size-3" />}
-        />
-        <BridgeSubRow
-          label="Customer wager (turnover)"
-          sub="Total stake the house booked its edge on"
-          amount={wager}
-          sign="+"
-          tone="base"
-          iconNode={<Coins className="size-3" />}
-          pct={reWagerMultiple}
-          pctLabel="× deposits"
-        />
-        <BridgeSubRow
-          label="Card sell-backs to balance"
-          sub={`Cards sold back ${formatCurrency(
-            recycling.cardSaleLeg,
-          )} + exchanged for credit ${formatCurrency(
-            recycling.cardExchangeLeg,
-          )} — re-bet`}
-          amount={recycling.cardSellBacks}
-          sign="="
-          tone="muted"
-          iconNode={<ArrowUpCircle className="size-3" />}
-        />
-      </BridgeSubTable>
+    canClose ? (
+      <>
+        {/* The exact, measured decomposition of the conversion value. */}
+        <BridgeSubTable
+          caption="Exact decomposition — NGR → customer cash margin (both measured)"
+          note={
+            <>
+              The conversion is the difference of two independently-measured
+              anchors. Only the daily / free-pack giveaway is an isolable cash
+              term inside it (a real house cost carried in realized P&amp;L via
+              held inventory, but not a REWARD_PAYOUT type, so not in NGR). The
+              rest is a measurement-basis remainder — NGR values won cards at
+              sticker on re-wagered turnover; customer cash is bounded by
+              deposits − withdrawals — not hidden spending and not a plug. It
+              ties to the penny: daily-pack giveaway + basis remainder = the
+              conversion above.
+            </>
+          }
+        >
+          <BridgeSubRow
+            label="NGR — net gaming margin (turnover basis)"
+            sub="Gaming margin on all turnover, won cards at sticker — the starting anchor"
+            amount={cost.ngr}
+            sign="="
+            tone={ngrPos ? "keep" : "cost"}
+            iconNode={
+              ngrPos ? (
+                <TrendingUp className="size-3" />
+              ) : (
+                <TrendingDown className="size-3" />
+              )
+            }
+          />
+          <BridgeSubRow
+            label="Daily / free-pack giveaway"
+            sub={`Value of cards from free reward-pack opens — in cash P&L via held inventory, NOT in NGR's reward cost${
+              rewardSpend && rewardSpend.dailyPacks.opens > 0
+                ? ` (${formatNumber(rewardSpend.dailyPacks.opens)} opens)`
+                : ""
+            }`}
+            amount={dailyPackInConversion}
+            sign="−"
+            tone="cost"
+            iconNode={<Package className="size-3" />}
+            pct={
+              conversionValue > 0
+                ? (dailyPackInConversion / conversionValue) * 100
+                : null
+            }
+            pctLabel="% of conversion"
+          />
+          <BridgeSubRow
+            label="Turnover-vs-cash basis remainder"
+            sub="Sticker-valued gaming margin on re-wagered turnover above realized cash — measurement basis, not a cost"
+            amount={basisResidual}
+            sign="−"
+            tone="muted"
+            iconNode={<Scale className="size-3" />}
+            pct={
+              conversionValue > 0
+                ? (basisResidual / conversionValue) * 100
+                : null
+            }
+            pctLabel="% of conversion"
+          />
+          <BridgeSubRow
+            label="Customer cash margin (cash basis)"
+            sub="Realized P&L of customers only — deposits − withdrawals − held"
+            amount={customerCashMargin ?? 0}
+            sign="="
+            tone={customerCashPos ? "keep" : "cost"}
+            iconNode={
+              customerCashPos ? (
+                <TrendingUp className="size-3" />
+              ) : (
+                <TrendingDown className="size-3" />
+              )
+            }
+          />
+        </BridgeSubTable>
+        {/* The recycling MECHANISM — proof of WHY the basis remainder exists.
+            Neutral conversions (card/voucher exchange is a normal user action,
+            never a house cost) — shown only as proof, never added to any cost. */}
+        {recycling && (
+          <BridgeSubTable
+            caption="Recycling evidence — why gaming margin ≠ customer cash"
+            note={
+              <>
+                Card sell-backs are neutral inventory↔balance conversions (a
+                normal user action, never a house cost) — shown here only as
+                proof of the re-wager that inflates turnover above deposited
+                cash. Not part of any cost above.
+              </>
+            }
+          >
+            <BridgeSubRow
+              label="Customer deposits"
+              sub="Real cash that ever entered (balances.total_deposited)"
+              amount={recycling.deposits}
+              sign="+"
+              tone="base"
+              iconNode={<ArrowDownToLine className="size-3" />}
+            />
+            <BridgeSubRow
+              label="Customer wager (turnover)"
+              sub="Total stake the house booked its edge on"
+              amount={wager}
+              sign="+"
+              tone="base"
+              iconNode={<Coins className="size-3" />}
+              pct={reWagerMultiple}
+              pctLabel="× deposits"
+            />
+            <BridgeSubRow
+              label="Card sell-backs to balance"
+              sub={`Cards sold back ${formatCurrency(
+                recycling.cardSaleLeg,
+              )} + exchanged for credit ${formatCurrency(
+                recycling.cardExchangeLeg,
+              )} — re-bet`}
+              amount={recycling.cardSellBacks}
+              sign="="
+              tone="muted"
+              iconNode={<ArrowUpCircle className="size-3" />}
+            />
+          </BridgeSubTable>
+        )}
+      </>
     ) : null;
 
   // Each row is the SIGNED effect on the running total (House-POV), plus its
@@ -1727,7 +1830,7 @@ function GgrToNgrBridge({
           {
             key: "conversion",
             label: "Turnover→cash conversion",
-            sub: "= NGR − customer cash margin (both measured)",
+            sub: "= NGR − customer cash margin (both measured) · decomposed below into the daily-pack giveaway + the basis remainder",
             signed: -conversionValue,
             sign: "−" as const,
             tone: "cost" as const,
@@ -1905,6 +2008,30 @@ function GgrToNgrBridge({
                   <span className="font-medium text-foreground">
                     not a cost, not a plug: a basis conversion.
                   </span>
+                </p>
+                <p>
+                  <span className="font-medium text-foreground">
+                    Decomposed exactly:
+                  </span>{" "}
+                  of the{" "}
+                  <span className="tabular-nums">
+                    {formatCurrency(conversionValue)}
+                  </span>{" "}
+                  conversion, only{" "}
+                  <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+                    {formatCurrency(dailyPackInConversion)}
+                  </span>{" "}
+                  is an isolable cash term — the daily / free-pack card giveaway,
+                  a real house cost carried in realized P&amp;L via held inventory
+                  but not a REWARD_PAYOUT type, so absent from NGR. The remaining{" "}
+                  <span className="font-semibold tabular-nums text-foreground">
+                    {formatCurrency(basisResidual)}
+                  </span>{" "}
+                  is the turnover-vs-cash basis remainder: NGR books margin on
+                  re-wagered turnover at card-sticker values, while realized cash
+                  is bounded by deposits − withdrawals. The two sum to the
+                  conversion exactly (see the decomposition table on the line
+                  above).
                 </p>
                 <p>
                   <span className="font-semibold text-foreground">
