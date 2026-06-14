@@ -63,7 +63,7 @@ async function computeCadence(
     FROM rakeback_claims rc
     JOIN "user" u ON u.id = rc.user_id
     WHERE rc.claimed_at IS NOT NULL
-      AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+      AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
       ${dateFilter}
   `);
   const totalClaims = Number(headlineRows[0]?.cnt ?? 0);
@@ -84,7 +84,7 @@ async function computeCadence(
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${dateFilter}
     )
     SELECT EXTRACT(EPOCH FROM (claimed_at - prev_claim)) / 3600 AS gap_h

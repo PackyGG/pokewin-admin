@@ -120,7 +120,7 @@ async function computeRoi(
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${dateFilter}
       GROUP BY rc.user_id
     ),
@@ -131,7 +131,7 @@ async function computeRoi(
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${dateFilter}
       GROUP BY rc.user_id
     ),

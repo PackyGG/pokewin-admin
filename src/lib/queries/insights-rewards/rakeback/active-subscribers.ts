@@ -59,7 +59,7 @@ async function computeActiveSubscribers(
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${dateFilter}
     `),
     db.$queryRawUnsafe<{ week_start: Date; active_users: string }[]>(`
@@ -69,7 +69,7 @@ async function computeActiveSubscribers(
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${dateFilter}
       GROUP BY 1
       ORDER BY 1 ASC
@@ -104,7 +104,7 @@ async function computeActiveSubscribers(
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
       GROUP BY rc.user_id
     ),
     cohort AS (

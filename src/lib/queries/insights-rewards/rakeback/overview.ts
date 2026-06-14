@@ -21,8 +21,10 @@ import { RAKEBACK_CACHE_TAGS } from "@/lib/queries/insights-rewards/rakeback/_ca
  *   - total wager attributed to those claims
  *   - period-over-period delta vs the prior-equal window (null for "all")
  *
- * Staff + blacklist excluded so the headline matches the cohort lens on
- * /insights/rewards and /rewards/analytics (rakeback tab).
+ * Customer scope (staff + creators + blacklist excluded — the canonical
+ * `getMetricsScope()` population) so the headline matches the cohort lens on
+ * /insights/rewards and /rewards/analytics (rakeback tab) AND the
+ * instant-claim view (which already uses the same creator-excluding scope).
  */
 
 export type RakebackOverview = {
@@ -83,7 +85,7 @@ async function computeOverview(
     FROM rakeback_claims rc
     JOIN "user" u ON u.id = rc.user_id
     WHERE rc.claimed_at IS NOT NULL
-      AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+      AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
       ${currentDateClause}
   `);
   const cur = currentRows[0];
@@ -111,7 +113,7 @@ async function computeOverview(
       FROM rakeback_claims rc
       JOIN "user" u ON u.id = rc.user_id
       WHERE rc.claimed_at IS NOT NULL
-        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistJoin}
         ${priorDateClause}
     `);
     const prev = priorRows[0];
