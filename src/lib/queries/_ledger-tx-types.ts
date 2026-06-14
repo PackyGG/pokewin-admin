@@ -3,7 +3,8 @@ import {
   ledger_transaction_type,
   type ledger_transaction_type as LedgerTransactionType,
 } from "@/generated/prisma/enums";
-import { getDb } from "@/lib/db";
+import { dbForEnv } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 
 /** Generated Prisma enum values — keep queries in sync with schema.prisma. */
 export const LEDGER_TX_TYPES = new Set<string>(Object.values(ledger_transaction_type));
@@ -36,8 +37,14 @@ export function filterLedgerTxTypes(types: readonly string[]): LedgerTransaction
  * — the worst case then degrades to the pre-existing behaviour.
  */
 const liveLedgerEnumCached = unstable_cache(
-  async (): Promise<string[]> => {
-    const db = await getDb();
+  // `env` is passed as an ARGUMENT (not read from the cookie inside the
+  // callback) so it becomes part of the cache key — prod and dev get
+  // separate entries. Reading the cookie inside `unstable_cache` throws (no
+  // request scope) and `readDbEnv` then silently falls back to "prod", which
+  // poisoned a dev-toggled request with the PROD enum and dropped dev-only
+  // ledger types. Use the sync `dbForEnv(env)` for the same reason.
+  async (env: DbEnv): Promise<string[]> => {
+    const db = dbForEnv(env);
     const rows = await db.$queryRaw<{ enumlabel: string }[]>`
       SELECT e.enumlabel
         FROM pg_enum e
@@ -45,13 +52,17 @@ const liveLedgerEnumCached = unstable_cache(
        WHERE t.typname = 'ledger_transaction_type'`;
     return rows.map((r) => r.enumlabel);
   },
-  ["live-ledger-tx-enum-v1"],
+  ["live-ledger-tx-enum-v2"],
   { revalidate: 300 },
 );
 
 async function getLiveLedgerTxTypes(): Promise<Set<string>> {
   try {
-    const labels = await liveLedgerEnumCached();
+    // Resolve the env OUTSIDE the cache (in request scope) and pass it in, so
+    // the cached entry is keyed per env — the established pattern in
+    // `users-detail-cache.ts`.
+    const env = await readDbEnv();
+    const labels = await liveLedgerEnumCached(env);
     // Defensive: an empty result (introspection returned nothing) would
     // strip EVERY type and silently empty every list — fall back to the
     // generated set in that case rather than degrade to "no types".
