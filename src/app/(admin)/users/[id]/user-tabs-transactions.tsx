@@ -38,6 +38,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { STATUS_COLORS } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 import {
   formatCurrency,
   formatRelative,
@@ -161,6 +162,7 @@ export const CategoryTransactionsTable = React.memo(
     isAdmin = false,
     canEditBalanceAdjustments = false,
     wagerRequirement = null,
+    groups = null,
   }: {
     title: string;
     userId: string;
@@ -195,6 +197,17 @@ export const CategoryTransactionsTable = React.memo(
      * (not passed) and when the connected DB lacks the sweepstakes columns.
      */
     wagerRequirement?: WagerRequirementSummary | null;
+    /**
+     * Optional high-level segmented filter rendered above the Type dropdown
+     * (e.g. All / Deposits / Withdrawals on the Deposits & Withdrawals
+     * table). Each group carries a subset of `types`; selecting one narrows
+     * BOTH the server query (only that subset is requested) AND the Type
+     * dropdown (only that subset is listed). The first entry is treated as
+     * the "all" group and must carry the full `types` set. Serializable
+     * plain data — no function props across the RSC boundary. null → the
+     * segmented control isn't rendered (every non-financial table).
+     */
+    groups?: readonly { key: string; label: string; types: readonly string[] }[] | null;
   }) {
     const [txData, setTxData] = useState(initialTx);
     const [loadError, setLoadError] = useState<string | null>(
@@ -210,6 +223,17 @@ export const CategoryTransactionsTable = React.memo(
     const [editDialogOpen, setEditDialogOpen] = useState(false);
     const [isPending, startTransition] = useTransition();
     const [currentPerPage, setCurrentPerPage] = useState(initialTx.perPage);
+    // High-level group filter (All / Deposits / Withdrawals …). Defaults to
+    // the first group (the "all" group). null `groups` → control not rendered.
+    const [groupKey, setGroupKey] = useState<string>(groups?.[0]?.key ?? "all");
+    // The types this table currently scopes to: the active group's subset
+    // when a non-default group is picked, otherwise the full `types`. Used
+    // for BOTH the server query (when no single type is chosen) and to scope
+    // the Type dropdown's option list.
+    const activeGroup = groups?.find((g) => g.key === groupKey) ?? null;
+    const isDefaultGroup = !activeGroup || activeGroup.key === groups?.[0]?.key;
+    const baseTypes: readonly string[] =
+      activeGroup && !isDefaultGroup ? activeGroup.types : types;
 
     // The parent /users/[id] page re-renders every 60s via AutoRefresh.
     // Each re-render produces a fresh `initialTx` from the server. If
@@ -229,6 +253,7 @@ export const CategoryTransactionsTable = React.memo(
     const filtersUnchanged =
       typeFilter === "all" &&
       statusFilter === "all" &&
+      isDefaultGroup &&
       !dateFrom &&
       !dateTo &&
       txData.page === 1;
@@ -258,14 +283,19 @@ export const CategoryTransactionsTable = React.memo(
       status?: string;
       from?: string;
       to?: string;
+      // Group changes reset typeFilter to "all" in the same tick that
+      // setGroupKey runs, so `baseTypes` (derived from state) is stale here.
+      // The handler passes the new scope explicitly to avoid a wrong query.
+      baseTypes?: readonly string[];
     }) {
       const tf = overrides?.type ?? typeFilter;
       const sf = overrides?.status ?? statusFilter;
       const df = overrides?.from ?? dateFrom;
       const dt = overrides?.to ?? dateTo;
+      const bt = overrides?.baseTypes ?? baseTypes;
       return {
         type: tf !== "all" ? tf : undefined,
-        types: tf === "all" ? [...types] : undefined,
+        types: tf === "all" ? [...bt] : undefined,
         status: sf !== "all" ? sf : undefined,
         dateFrom: df || undefined,
         dateTo: dt || undefined,
@@ -280,6 +310,7 @@ export const CategoryTransactionsTable = React.memo(
         status?: string;
         from?: string;
         to?: string;
+        baseTypes?: readonly string[];
       },
     ) {
       const pp = newPerPage ?? currentPerPage;
@@ -309,6 +340,19 @@ export const CategoryTransactionsTable = React.memo(
       load(1, undefined, { type: value });
     }
 
+    function handleGroupChange(key: string) {
+      if (!groups || key === groupKey) return;
+      const next = groups.find((g) => g.key === key) ?? null;
+      const isDefault = !next || next.key === groups[0]?.key;
+      const nextBaseTypes = next && !isDefault ? next.types : types;
+      setGroupKey(key);
+      // Switching the high-level group resets the fine-grained Type dropdown
+      // back to "all" (the previously-selected type may not exist in the new
+      // group) and re-queries the server scoped to the new group's subset.
+      setTypeFilter("all");
+      load(1, undefined, { type: "all", baseTypes: nextBaseTypes });
+    }
+
     function handleStatusChange(value: string) {
       setStatusFilter(value);
       load(1, undefined, { status: value });
@@ -325,14 +369,26 @@ export const CategoryTransactionsTable = React.memo(
     }
 
     const hasFilters =
-      typeFilter !== "all" || statusFilter !== "all" || dateFrom || dateTo;
+      typeFilter !== "all" ||
+      statusFilter !== "all" ||
+      !isDefaultGroup ||
+      dateFrom ||
+      dateTo;
 
     function clearFilters() {
       setTypeFilter("all");
       setStatusFilter("all");
       setDateFrom("");
       setDateTo("");
-      load(1, undefined, { type: "all", status: "all", from: "", to: "" });
+      const defaultKey = groups?.[0]?.key ?? "all";
+      setGroupKey(defaultKey);
+      load(1, undefined, {
+        type: "all",
+        status: "all",
+        from: "",
+        to: "",
+        baseTypes: types,
+      });
     }
 
     return (
@@ -342,6 +398,34 @@ export const CategoryTransactionsTable = React.memo(
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-start gap-3">
+            {groups && groups.length > 1 && (
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Show</Label>
+                <div className="inline-flex h-8 items-center gap-1 rounded-md border bg-muted/40 p-0.5">
+                  {groups.map((g) => {
+                    const active = g.key === groupKey;
+                    return (
+                      <Button
+                        key={g.key}
+                        type="button"
+                        variant={active ? "secondary" : "ghost"}
+                        size="sm"
+                        aria-pressed={active}
+                        className={cn(
+                          "h-7 px-2.5 text-xs font-medium",
+                          active
+                            ? "shadow-sm"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                        onClick={() => handleGroupChange(g.key)}
+                      >
+                        {g.label}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Type</Label>
               <Select
@@ -353,7 +437,7 @@ export const CategoryTransactionsTable = React.memo(
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All types</SelectItem>
-                  {types.map((t) => (
+                  {baseTypes.map((t) => (
                     <SelectItem key={t} value={t}>
                       {ledgerTypeLabel(t)}
                     </SelectItem>

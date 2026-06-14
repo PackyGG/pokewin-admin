@@ -651,6 +651,19 @@ export const FINANCIAL_TX_TYPES = [
   // with the LIVE enum, so a DB without this member just drops it.
   "xp_purchase",
 ] as const;
+// Deposit-side ledger types: the user funding their account. `deposit` is the
+// crypto/cash-in; `deposit_bonus` is the house top-up that rides on a deposit.
+// Subset of FINANCIAL_TX_TYPES — used by the Deposits & Withdrawals table's
+// "Deposits" segmented filter to narrow the server query + Type dropdown.
+export const DEPOSIT_TX_TYPES = ["deposit", "deposit_bonus"] as const;
+// Withdrawal-side ledger types: the user cashing out. `card_withdrawal` is the
+// payout; `withdrawal_shipping_fee` is the fee leg charged on a physical-card
+// withdrawal. Subset of FINANCIAL_TX_TYPES — used by the "Withdrawals"
+// segmented filter on the Deposits & Withdrawals table.
+export const WITHDRAWAL_TX_TYPES = [
+  "card_withdrawal",
+  "withdrawal_shipping_fee",
+] as const;
 // Admin balance adjustments only. Used for the dedicated, UNCAPPED Overview
 // fetch + block so every manual admin credit/clawback is guaranteed to
 // surface, instead of competing for slots in the shared 10-row financial

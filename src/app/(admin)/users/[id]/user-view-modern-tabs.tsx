@@ -107,6 +107,8 @@ import type {
 import {
   CARD_SALE_TX_TYPES,
   BATTLE_VOUCHER_TX_TYPES,
+  DEPOSIT_TX_TYPES,
+  WITHDRAWAL_TX_TYPES,
 } from "./user-tabs-types";
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import type { UserRewards } from "@/lib/queries/users";
@@ -200,13 +202,15 @@ export function OverviewTab({
     <div className="space-y-4 sm:space-y-6">
       {/* Modern stat panels — purpose-built to match the hero aesthetic:
           rounded-2xl, subtle colored corner glow, color-accented icon
-          chip + hero number + breakdown rows below. items-start so each
-          panel keeps its natural height instead of stretching to match the
-          tallest column (the panels carry different row counts). The
-          Balance + Platform-P&L panels are pnl-fed, so they stream as one
-          Suspense cluster on pnlResultPromise; the Activity panel reads
-          only the resolved detail aggregate and paints immediately. */}
-      <div className="grid items-start gap-3 sm:gap-4 grid-cols-1 md:grid-cols-3">
+          chip + hero number + breakdown rows below. items-stretch (with
+          h-full on each StatPanel) so the three columns share one even
+          height instead of the Platform-P&L panel towering over the
+          others — its tall rolling-P&L ladder was removed for the same
+          reason (it now lives only on the Account tab). The Balance +
+          Platform-P&L panels are pnl-fed, so they stream as one Suspense
+          cluster on pnlResultPromise; the Activity panel reads only the
+          resolved detail aggregate and paints immediately. */}
+      <div className="grid items-stretch gap-3 sm:gap-4 grid-cols-1 md:grid-cols-3">
         <Suspense
           fallback={
             <>
@@ -360,15 +364,24 @@ function DepositsWithdrawalsStreamed({
 }) {
   const r = use(financialTxPromise);
   const wagerProgress = wagerProgressPromise ? use(wagerProgressPromise) : null;
+  // Full type set for this table (adjustments included only for the owner).
+  // The "All" segmented group carries it verbatim; Deposits / Withdrawals
+  // carry their canonical subsets (defined in user-tabs-types.ts — no
+  // invented type names). Selecting a group narrows BOTH the server query
+  // and the Type dropdown; "All" restores the full feed.
+  const financialTypes = viewerIsAdjustmentOwner
+    ? FINANCIAL_TX_TYPES
+    : FINANCIAL_TX_TYPES_NO_ADJUSTMENTS;
   return (
     <CategoryTransactionsTable
       title="Deposits & Withdrawals"
       userId={userId}
-      types={
-        viewerIsAdjustmentOwner
-          ? FINANCIAL_TX_TYPES
-          : FINANCIAL_TX_TYPES_NO_ADJUSTMENTS
-      }
+      types={financialTypes}
+      groups={[
+        { key: "all", label: "All", types: financialTypes },
+        { key: "deposits", label: "Deposits", types: DEPOSIT_TX_TYPES },
+        { key: "withdrawals", label: "Withdrawals", types: WITHDRAWAL_TX_TYPES },
+      ]}
       initialTx={r.data}
       initialLoadError={r.error}
       cardWithdrawals={cardWithdrawals}

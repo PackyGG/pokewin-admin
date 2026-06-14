@@ -111,7 +111,7 @@ export function StatPanel({
 }) {
   const colors = TILE_COLORS[accent] ?? TILE_COLORS.blue;
   return (
-    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
+    <div className="relative h-full overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
       <div
         aria-hidden
         className={cn(
@@ -350,93 +350,14 @@ export function ModernPnlPanel({
           }
         />
       </div>
-      {/* Rolling windowed P&L — house P&L over the past 12h / 24h / 3d
-          / 7d / 14d (now − N, NOT calendar buckets), as a windowed
-          delta. House POV: gain = emerald, loss = rose. Five rungs so
-          the row reads from acute (12h) to baseline (14d) and admins
-          can spot short-term spikes vs longer trends. The Account tab
-          surfaces the same five windows as a horizontal tile strip
-          alongside the wagering stats. */}
-      <div className="mt-3 space-y-0.5 border-t pt-3">
-        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Rolling P&amp;L
-        </p>
-        <PanelRow
-          label="Past 12h"
-          value={
-            <span
-              className={cn(
-                pnlBreakdown.pnl12h >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400",
-              )}
-            >
-              {pnlBreakdown.pnl12h >= 0 ? "+" : ""}
-              {formatCurrency(pnlBreakdown.pnl12h)}
-            </span>
-          }
-        />
-        <PanelRow
-          label="Past 24h"
-          value={
-            <span
-              className={cn(
-                pnlBreakdown.pnl24h >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400",
-              )}
-            >
-              {pnlBreakdown.pnl24h >= 0 ? "+" : ""}
-              {formatCurrency(pnlBreakdown.pnl24h)}
-            </span>
-          }
-        />
-        <PanelRow
-          label="Past 3d"
-          value={
-            <span
-              className={cn(
-                pnlBreakdown.pnl3d >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400",
-              )}
-            >
-              {pnlBreakdown.pnl3d >= 0 ? "+" : ""}
-              {formatCurrency(pnlBreakdown.pnl3d)}
-            </span>
-          }
-        />
-        <PanelRow
-          label="Past 7d"
-          value={
-            <span
-              className={cn(
-                pnlBreakdown.pnl7d >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400",
-              )}
-            >
-              {pnlBreakdown.pnl7d >= 0 ? "+" : ""}
-              {formatCurrency(pnlBreakdown.pnl7d)}
-            </span>
-          }
-        />
-        <PanelRow
-          label="Past 14d"
-          value={
-            <span
-              className={cn(
-                pnlBreakdown.pnl14d >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400",
-              )}
-            >
-              {pnlBreakdown.pnl14d >= 0 ? "+" : ""}
-              {formatCurrency(pnlBreakdown.pnl14d)}
-            </span>
-          }
-        />
-      </div>
+      {/* The rolling windowed P&L ladder (past 12h / 24h / 3d / 7d / 14d)
+          used to live here, but it made this panel noticeably taller than
+          the sibling Balances / Activity panels and unbalanced the 3-up
+          Overview row. Per owner request it was removed from the Overview
+          panel; the same five windows still live on the Account tab as a
+          horizontal tile strip alongside the wagering stats (the single
+          source for the rolling breakdown). pnl7d also still feeds the
+          Adjust-Balance dialog's Lossback autofill via ModernBalancePanel. */}
     </StatPanel>
   );
 }
