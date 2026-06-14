@@ -54,11 +54,44 @@ export const metadata = { title: "Security" };
 export default async function SecurityPage() {
   await requirePageAccess("/security");
 
+  // All section reads are independent (one MAIN-DB site_config scan + 11
+  // separate backend-API GETs with no cross-dependency). They USED to run
+  // SERIALLY — one slow/failing backend read blocked or broke the whole
+  // page (total latency = sum of all 12). Fire them together via
+  // Promise.allSettled so they run in parallel AND each failure is
+  // fault-isolated: a rejected leg falls back to the SAME value its old
+  // per-await catch produced ([] for config, null for each card), so the
+  // success path renders byte-identically to before. getSiteConfig still
+  // logs on failure to match the previous behaviour.
+  const [
+    siteConfigResult,
+    wagerDefaultsResult,
+    leaderboardWeightsResult,
+    rakebackWeightsResult,
+    sourceWeightsResult,
+    shardWeightsResult,
+    shardConfigResult,
+    multiplierWeightsResult,
+    rewardExpiryResult,
+    cryptoFeesResult,
+  ] = await Promise.allSettled([
+    getSiteConfig(),
+    getWagerRequirementDefaults(),
+    getLeaderboardWagerWeights(),
+    getRakebackWagerWeights(),
+    getSourceWagerWeights(),
+    getShardWagerWeights(),
+    getShardConfig(),
+    getMultiplierWagerWeights(),
+    getRewardExpiry(),
+    getCryptoFees(),
+  ]);
+
   let allConfig: Awaited<ReturnType<typeof getSiteConfig>> = [];
-  try {
-    allConfig = await getSiteConfig();
-  } catch (err) {
-    console.error("[security] getSiteConfig failed:", err);
+  if (siteConfigResult.status === "fulfilled") {
+    allConfig = siteConfigResult.value;
+  } else {
+    console.error("[security] getSiteConfig failed:", siteConfigResult.reason);
   }
 
   const movedKeys = new Set<string>([
@@ -76,68 +109,42 @@ export default async function SecurityPage() {
     RAIN_CONFIG_SITE_CONFIG_KEYS.includes(row.key),
   );
 
-  let wagerDefaults: WagerRequirementDefaults | null = null;
-  try {
-    wagerDefaults = await getWagerRequirementDefaults();
-  } catch {
-    wagerDefaults = null;
-  }
+  const wagerDefaults: WagerRequirementDefaults | null =
+    wagerDefaultsResult.status === "fulfilled"
+      ? wagerDefaultsResult.value
+      : null;
 
-  let leaderboardWeights: LeaderboardWagerWeights | null = null;
-  try {
-    leaderboardWeights = await getLeaderboardWagerWeights();
-  } catch {
-    leaderboardWeights = null;
-  }
+  const leaderboardWeights: LeaderboardWagerWeights | null =
+    leaderboardWeightsResult.status === "fulfilled"
+      ? leaderboardWeightsResult.value
+      : null;
 
-  let rakebackWeights: RakebackWagerWeights | null = null;
-  try {
-    rakebackWeights = await getRakebackWagerWeights();
-  } catch {
-    rakebackWeights = null;
-  }
+  const rakebackWeights: RakebackWagerWeights | null =
+    rakebackWeightsResult.status === "fulfilled"
+      ? rakebackWeightsResult.value
+      : null;
 
-  let sourceWeights: SourceWagerWeights | null = null;
-  try {
-    sourceWeights = await getSourceWagerWeights();
-  } catch {
-    sourceWeights = null;
-  }
+  const sourceWeights: SourceWagerWeights | null =
+    sourceWeightsResult.status === "fulfilled"
+      ? sourceWeightsResult.value
+      : null;
 
-  let shardWeights: ShardWagerWeights | null = null;
-  try {
-    shardWeights = await getShardWagerWeights();
-  } catch {
-    shardWeights = null;
-  }
+  const shardWeights: ShardWagerWeights | null =
+    shardWeightsResult.status === "fulfilled" ? shardWeightsResult.value : null;
 
-  let shardConfig: ShardConfig | null = null;
-  try {
-    shardConfig = await getShardConfig();
-  } catch {
-    shardConfig = null;
-  }
+  const shardConfig: ShardConfig | null =
+    shardConfigResult.status === "fulfilled" ? shardConfigResult.value : null;
 
-  let multiplierWeights: MultiplierWagerWeights | null = null;
-  try {
-    multiplierWeights = await getMultiplierWagerWeights();
-  } catch {
-    multiplierWeights = null;
-  }
+  const multiplierWeights: MultiplierWagerWeights | null =
+    multiplierWeightsResult.status === "fulfilled"
+      ? multiplierWeightsResult.value
+      : null;
 
-  let rewardExpiry: RewardExpiry | null = null;
-  try {
-    rewardExpiry = await getRewardExpiry();
-  } catch {
-    rewardExpiry = null;
-  }
+  const rewardExpiry: RewardExpiry | null =
+    rewardExpiryResult.status === "fulfilled" ? rewardExpiryResult.value : null;
 
-  let cryptoFees: CryptoFees | null = null;
-  try {
-    cryptoFees = await getCryptoFees();
-  } catch {
-    cryptoFees = null;
-  }
+  const cryptoFees: CryptoFees | null =
+    cryptoFeesResult.status === "fulfilled" ? cryptoFeesResult.value : null;
 
   return (
     <div className="space-y-6">
