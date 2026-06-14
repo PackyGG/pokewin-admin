@@ -1,12 +1,4 @@
-import {
-  ShieldCheck,
-  Lock,
-  KeyRound,
-  Crown,
-  UserCog,
-  ListChecks,
-  Sparkles,
-} from "lucide-react";
+import { Lock, KeyRound, Crown, UserCog, ListChecks, Sparkles } from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
 import {
@@ -22,12 +14,7 @@ import {
   CreatorHubAccessCard,
   type CreatorHubAccessRow,
 } from "./creator-hub-access-card";
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-  KpiTile,
-} from "@/components/modern-panels";
+import { SectionHeading, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
 
@@ -48,26 +35,32 @@ const CREATOR_HUB_ROLE_LABELS: Record<
   },
 };
 
-export const metadata = { title: "Roles & Permissions" };
-
 /**
- * Unified Roles & Permissions hub (Phase B of the role/permission rebuild —
- * see ROLE_REDESIGN_DESIGN.md).
+ * "Roles & Permissions" tab content for the merged Admins & Access surface
+ * (/admin-users?tab=roles). The ENTIRE content of the former standalone
+ * /settings/roles page, minus its PageHero (the shared page shell renders the
+ * hero). Async server segment mounted inside a `<Suspense>` so its ADMIN-DB
+ * reads only run when this tab is active (Active-Tab-Only).
  *
- *   • Built-in roles — the 6 enum roles (admin / support / marketing /
- *     creator / pack_creator / creator_manager). Their canonical baselines
- *     are code-defined (`ROLE_BASELINES`) and LOCKED: shown read-only via the
- *     baseline inspector, never editable (the owner forbids changing what a
- *     built-in role grants; `updateRolePermissions` rejects them server-side).
+ *   • Built-in roles — the enum roles. Their canonical baselines are
+ *     code-defined (`ROLE_BASELINES`) and LOCKED: shown read-only via the
+ *     baseline inspector, never editable (`updateRolePermissions` rejects
+ *     them server-side).
  *   • Custom roles — reusable presets in `admin_roles`. Created here, assigned
- *     on an admin's profile, edited at /settings/roles/[id]. Fully editable;
- *     their CRUD is unchanged.
+ *     on an admin's profile, edited at /admin-users/roles/[id]. Fully editable.
  *
- * Per-user overrides (Phase C) are not edited here — the KPI strip only
- * REPORTS how many non-admin users currently carry an override (their stored
- * effective set ≠ their role baseline), computed read-only.
+ * SECURITY (CRITICAL): this surface is ADMIN-ONLY. /admin-users is gated by
+ * `requirePageAccess("/admin-users")`, which a NON-admin custom role can hold —
+ * but roles management must never be exposed to a non-admin. The page hides the
+ * Roles tab from non-admins; this segment additionally calls `requireAdmin()`
+ * as the real server-side boundary, so a non-admin hitting `?tab=roles`
+ * directly is redirected before any role data is read. Every role server
+ * action keeps its own `requireAdmin` gate.
  */
-export default async function RolesPage() {
+export async function RolesTab() {
+  // Hard admin gate — the security boundary for the whole roles surface. A
+  // non-admin (even one with the /admin-users page key) is redirected here,
+  // before getRolesOverview() reads anything.
   const session = await requireAdmin();
   const overview = await getRolesOverview();
 
@@ -99,14 +92,6 @@ export default async function RolesPage() {
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={ShieldCheck}
-          title="Roles & Permissions"
-          subtitle="Locked built-ins · editable custom roles · per-user overrides"
-        />
-      </PageHero>
-
       {/* KPI strip — headline counts (all read-only). */}
       <FadeIn>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">

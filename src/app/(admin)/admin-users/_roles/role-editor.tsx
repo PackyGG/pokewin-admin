@@ -78,7 +78,7 @@ export function RoleEditor({ role }: { role: RoleRow }) {
         return;
       }
       toast.success("Role deleted");
-      router.push("/settings/roles");
+      router.push("/admin-users?tab=roles");
     });
   }
 

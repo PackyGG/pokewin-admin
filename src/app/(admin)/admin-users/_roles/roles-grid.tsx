@@ -113,8 +113,8 @@ function BuiltInRoleCard({ role }: { role: BuiltInRoleSummary }) {
 
 /**
  * One custom role card: token + holder counts, an Editable badge, and a link
- * into the existing custom-role editor (`/settings/roles/[id]`). Behavior of
- * that editor is unchanged.
+ * into the existing custom-role editor (`/admin-users/roles/[id]`). Behavior
+ * of that editor is unchanged.
  */
 function CustomRoleCard({ role }: { role: CustomRoleSummary }) {
   return (
@@ -143,7 +143,7 @@ function CustomRoleCard({ role }: { role: CustomRoleSummary }) {
         <PanelRow label="Updated" value={formatDateTime(role.updatedAt)} />
       </div>
       <Link
-        href={`/settings/roles/${role.id}`}
+        href={`/admin-users/roles/${role.id}`}
         className="mt-3 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
       >
         <Pencil className="size-3.5" />

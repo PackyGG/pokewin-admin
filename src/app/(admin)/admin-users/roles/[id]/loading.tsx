@@ -5,7 +5,7 @@ import {
 } from "@/components/loading-skeletons";
 
 /**
- * Matches /settings/roles/[id]: hero with back arrow + role badges,
+ * Matches /admin-users/roles/[id]: hero with back arrow + role badges,
  * 3 KPI tiles (Type / Capabilities / Assigned Admins), and a large
  * RoleEditor panel underneath.
  */

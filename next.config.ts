@@ -143,6 +143,26 @@ const nextConfig: NextConfig = {
         destination: "/transactions/deposits?tab=withdrawals",
         permanent: true,
       },
+      {
+        // Roles & Permissions was merged into /admin-users as an admin-only
+        // tab ("Admins & Access"). The old standalone /settings/roles index
+        // page is gone — forward bookmarks + role presets to the merged tab.
+        // HTTP 308 (config redirect), NOT an in-render redirect(): an
+        // unconditional in-render redirect on the initial document load is
+        // replayed by the App Router and crashes it (see the retired-route
+        // note above). `source` matches exactly so it cannot swallow the
+        // relocated editor route below.
+        source: "/settings/roles",
+        destination: "/admin-users?tab=roles",
+        permanent: true,
+      },
+      {
+        // The custom-role editor relocated from /settings/roles/[id] to
+        // /admin-users/roles/[id]. Keep deep-links to a specific role working.
+        source: "/settings/roles/:id",
+        destination: "/admin-users/roles/:id",
+        permanent: true,
+      },
     ];
   },
 };

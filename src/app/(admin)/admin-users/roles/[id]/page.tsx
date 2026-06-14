@@ -4,8 +4,8 @@ import { requireAdmin } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
 import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { getRole } from "../custom-roles-actions";
-import { RoleEditor } from "../role-editor";
+import { getRole } from "../../_roles/custom-roles-actions";
+import { RoleEditor } from "../../_roles/role-editor";
 
 export const metadata = { title: "Role" };
 
@@ -31,7 +31,7 @@ export default async function RoleDetailPage({
         <PageHeroIdentity
           icon={KeyRound}
           accent="amber"
-          backHref="/settings/roles"
+          backHref="/admin-users?tab=roles"
           title={role.name}
           subtitle={role.description || undefined}
         />

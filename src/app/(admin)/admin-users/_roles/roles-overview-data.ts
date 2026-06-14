@@ -14,7 +14,7 @@ import {
   CAPABILITIES,
   CAPABILITY_KEYS,
   sanitizePermissionKeys,
-} from "./permissions-utils";
+} from "@/app/(admin)/settings/roles/permissions-utils";
 
 // ---------------------------------------------------------------------------
 // Read-only data layer for the unified Roles & Permissions overview (Phase B).

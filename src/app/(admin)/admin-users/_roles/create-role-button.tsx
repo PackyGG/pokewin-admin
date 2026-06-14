@@ -46,7 +46,7 @@ export function CreateRoleButton() {
       toast.success("Role created");
       setOpen(false);
       reset();
-      router.push(`/settings/roles/${result.id}`);
+      router.push(`/admin-users/roles/${result.id}`);
     });
   }
 

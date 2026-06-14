@@ -97,8 +97,8 @@ export async function setCreatorHubAccessToggle(
     });
 
     // The portal button + route guard read these settings in the layout,
-    // so revalidate the whole layout tree plus the settings page itself.
-    revalidatePath("/settings/roles");
+    // so revalidate the whole layout tree plus the Admins & Access page itself.
+    revalidatePath("/admin-users");
     revalidatePath("/", "layout");
     return { success: true };
   } catch (err) {

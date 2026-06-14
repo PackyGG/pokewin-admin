@@ -142,8 +142,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Moderation", label: "Chat", key: "/chat" },
   // System
   { group: "System", label: "Security", key: "/security" },
-  { group: "System", label: "Users", key: "/admin-users" },
-  { group: "System", label: "Roles", key: "/settings/roles" },
+  { group: "System", label: "Admins & Access", key: "/admin-users" },
+  // The former "/settings/roles" page key was removed: Roles & Permissions is
+  // now an ADMIN-ONLY tab of /admin-users, gated by requireAdmin (not a
+  // grantable page key), so the key is vestigial. No role baseline references
+  // it (verified), so removing it leaves no orphan token.
   // Geo Blocking — per-country deposit / withdrawal restrictions
   // (formerly the "Country Restrictions" section of the removed /settings
   // page). The page + actions enforce requireAdmin server-side; listed here

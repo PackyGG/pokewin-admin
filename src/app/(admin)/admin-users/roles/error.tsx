@@ -7,16 +7,17 @@ import { Button } from "@/components/ui/button";
 import { PageHero } from "@/components/modern-panels";
 
 /**
- * Route-level error boundary for the /settings/roles tree (roles list +
- * roles/[id] editor).
+ * Route-level error boundary for the /admin-users/roles subtree (the
+ * custom-role editor at /admin-users/roles/[id]).
  *
- * Relocated here when the /settings index page was removed (its sections
- * moved to /security and /system/geo-blocking). The roles subtree is the
- * only thing left under /settings, and it reads role / permission
- * definitions from the admin DB — a failed query or a stale column would
- * otherwise bubble to the umbrella `(admin)/error.tsx`; this boundary keeps
- * it scoped to the roles tree. The reset path re-runs the server render
- * without a full reload.
+ * The Roles & Permissions content was merged into /admin-users as a tab; the
+ * standalone editor route relocated here from /settings/roles/[id] and brought
+ * this boundary with it. It reads role / permission definitions from the admin
+ * DB — a failed query or a stale column would otherwise bubble to the umbrella
+ * `(admin)/error.tsx`; this boundary keeps it scoped to the roles editor. (The
+ * Roles TAB itself renders inside /admin-users and is covered by that route's
+ * own error boundary.) The reset path re-runs the server render without a full
+ * reload.
  *
  * SECURITY: the raw `error.message` is never rendered — only the digest
  * (safe correlation handle) is shown. Full stack lives in server logs.
@@ -29,7 +30,7 @@ export default function RolesError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[settings/roles] page error boundary caught:", error);
+    console.error("[admin-users/roles] page error boundary caught:", error);
   }, [error]);
 
   return (

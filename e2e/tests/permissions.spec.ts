@@ -3,43 +3,47 @@ import { test, expect } from "../fixtures/base";
 import { cleanupE2EAdminRoles, scratchPrefix } from "../helpers/db";
 
 /**
- * /settings/roles — custom roles system.
+ * Roles & Permissions — the admin-only Roles tab of the merged Admins &
+ * Access surface (/admin-users?tab=roles). Custom-role CRUD lives here; the
+ * standalone /settings/roles page was merged into /admin-users.
  *
  * Lightweight coverage:
- *   - the four built-in system roles are present and badged "System"
- *   - creating a new custom role persists and appears in the list
+ *   - the merged surface renders with the Roles tab content (Built-in +
+ *     Custom Roles sections)
+ *   - the legacy /settings/roles route 308-redirects onto the Roles tab
+ *   - creating a new custom role persists and redirects to the relocated
+ *     editor at /admin-users/roles/{id}
  *
  * After-all sweep wipes any leftover `_e2e_*` custom roles.
  */
-
-const SYSTEM_ROLES = ["admin", "support", "marketing", "creator"];
 
 test.describe("permissions — admin roles", () => {
   test.afterAll(async () => {
     await cleanupE2EAdminRoles();
   });
 
-  test("system roles listed as read-only", async ({ adminPage }) => {
+  test("legacy /settings/roles redirects onto the merged Roles tab", async ({
+    adminPage,
+  }) => {
     await adminPage.goto("/settings/roles");
+    // 308 config redirect lands on /admin-users?tab=roles.
+    await expect(adminPage).toHaveURL(/\/admin-users\?tab=roles/);
+    // The merged surface hero + the Roles-tab sections are present.
     await expect(
-      adminPage.getByRole("heading", { name: /admin roles/i }),
+      adminPage.getByRole("heading", { name: /admins & access/i }),
     ).toBeVisible();
-
-    // Every seeded system role shows up as a link row, and its type
-    // column is badged "System".
-    for (const name of SYSTEM_ROLES) {
-      const row = adminPage.locator("tr", {
-        has: adminPage.getByRole("link", { name, exact: true }),
-      });
-      await expect(row).toBeVisible();
-      await expect(row.getByText("System", { exact: true })).toBeVisible();
-    }
+    await expect(
+      adminPage.getByRole("heading", { name: /built-in roles/i }),
+    ).toBeVisible();
+    await expect(
+      adminPage.getByRole("heading", { name: /custom roles/i }),
+    ).toBeVisible();
   });
 
   test("create custom role → persists + redirects to editor", async ({
     adminPage,
   }) => {
-    await adminPage.goto("/settings/roles");
+    await adminPage.goto("/admin-users?tab=roles");
 
     const suffix = crypto.randomBytes(3).toString("hex");
     const roleName = `${scratchPrefix}${suffix}`;
@@ -57,19 +61,21 @@ test.describe("permissions — admin roles", () => {
 
     await dialog.getByRole("button", { name: /^create$/i }).click();
 
-    // After create, the client redirects to /settings/roles/{id} —
-    // the editor page. Wait for that URL shape before asserting.
-    await adminPage.waitForURL(/\/settings\/roles\/[0-9a-f-]{36}/, {
+    // After create, the client redirects to the relocated editor route
+    // /admin-users/roles/{id}. Wait for that URL shape before asserting.
+    await adminPage.waitForURL(/\/admin-users\/roles\/[0-9a-f-]{36}/, {
       timeout: 10_000,
     });
 
-    // Now navigate back to the list; the new role must be listed as
-    // "Custom" (not System).
-    await adminPage.goto("/settings/roles");
-    const row = adminPage.locator("tr", {
-      has: adminPage.getByRole("link", { name: roleName }),
+    // Back on the Roles tab, the new role must appear as a custom-role card
+    // (links into its editor) with the "Editable" badge.
+    await adminPage.goto("/admin-users?tab=roles");
+    const card = adminPage.locator("a", {
+      hasText: roleName,
     });
-    await expect(row).toBeVisible();
-    await expect(row.getByText("Custom", { exact: true })).toBeVisible();
+    await expect(card.first()).toBeVisible();
+    await expect(
+      adminPage.getByText("Editable", { exact: true }).first(),
+    ).toBeVisible();
   });
 });

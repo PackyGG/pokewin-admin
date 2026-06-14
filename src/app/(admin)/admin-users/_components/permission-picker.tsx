@@ -9,7 +9,7 @@ import { getCapabilityGroups } from "@/app/(admin)/settings/roles/permissions-ut
 
 /**
  * Shared permission picker — the single editor surface for both a role's
- * capability set (/settings/roles) and a user's effective permissions
+ * capability set (/admin-users/roles/[id]) and a user's effective permissions
  * (/admin-users/[id]). Works in ONE vocabulary: page routes ("/users")
  * and `__can_*` capability flags — exactly what `allowed_pages` stores.
  *

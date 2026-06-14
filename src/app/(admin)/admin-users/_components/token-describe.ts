@@ -1,5 +1,5 @@
 // Client-safe token → { label, kind } resolver for the per-user permission
-// editor. Mirrors `describeToken` in settings/roles/roles-overview-data.ts
+// editor. Mirrors `describeToken` in admin-users/_roles/roles-overview-data.ts
 // (which is server-only), using the same canonical ADMIN_PAGES / CAPABILITIES
 // catalogs. Pure + import-light so it can run in a "use client" component.
 

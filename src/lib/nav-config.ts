@@ -803,28 +803,19 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Admin panel users. Sidebar icon is ShieldCheck; palette icon is also
-    // ShieldCheck. Both labels are "Users".
+    // Admins & Access — the unified staff-administration surface (admin
+    // accounts + roles & permissions, merged into one tabbed page). The
+    // standalone "Roles" entry was removed; roles live on the admin-only
+    // Roles tab of this page (/admin-users?tab=roles). Icon `ShieldCheck`
+    // is registered in the ICONS map in `src/components/app-sidebar.tsx`.
     id: "nav.admin-users",
     group: "System",
-    label: "Users",
+    label: "Admins & Access",
     href: "/admin-users",
     pageKey: "/admin-users",
     icon: "ShieldCheck",
-    description: "Admin panel users",
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Roles. Sidebar icon KeyRound; palette icon Shield (preserve both).
-    id: "nav.settings.roles",
-    group: "System",
-    label: "Roles",
-    href: "/settings/roles",
-    pageKey: "/settings/roles",
-    icon: "Shield",
-    sidebarIcon: "KeyRound",
-    description: "Built-in & custom roles",
+    description: "Admin accounts, roles & permissions",
+    keywords: ["admin", "users", "roles", "permissions", "access", "staff"],
     inSidebar: true,
     inPalette: true,
   },
@@ -976,7 +967,6 @@ const PALETTE_ORDER: string[] = [
   "nav.rewards.settings",
   "nav.my-profile",
   "nav.admin-users",
-  "nav.settings.roles",
   "nav.security",
   "nav.geo-blocking",
   "nav.audit",

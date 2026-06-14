@@ -10,8 +10,8 @@ import { ALL_ADMIN_ROLES, isAdminRole } from "@/lib/admin-roles";
 // The owner forbids changing what a built-in (enum) role grants. The
 // canonical baseline for each built-in role is code-defined in
 // `src/lib/role-baselines.ts` (`ROLE_BASELINES`) and rendered read-only in
-// the /settings/roles inspector. There is no longer an editor that overwrites
-// the `allowed_pages` of every user of a role.
+// the Roles & Permissions inspector (the /admin-users Roles tab). There is no
+// longer an editor that overwrites the `allowed_pages` of every user of a role.
 //
 // This module previously held:
 //   • getRolePermissions()    — seeded the built-in editor from the richest
