@@ -1,4 +1,6 @@
-import { getDb } from "@/lib/db";
+import { unstable_cache } from "next/cache";
+import { getDb, getDevDb, getProdDb } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
@@ -11,6 +13,16 @@ import {
 // filter values before they hit the query rather than blind-casting.
 const CWR_STATUSES = new Set<string>(Object.values(card_withdrawal_status));
 const CWR_METHODS = new Set<string>(Object.values(card_withdrawal_method));
+
+/**
+ * Cache tag for the Withdrawals tab list. The admin actions in
+ * `withdrawals/actions.ts` (process / ship / complete / cancel / fail)
+ * call `revalidateTag(WITHDRAWALS_LIST_TAG)` after every mutation so a
+ * just-actioned withdrawal never shows a stale status — `revalidatePath`
+ * alone does NOT evict `unstable_cache` entries. Exported so the actions
+ * import the exact same string (no drift between writer and reader).
+ */
+export const WITHDRAWALS_LIST_TAG = "transactions-withdrawals-list";
 
 export type WithdrawalListItem = {
   id: string;
@@ -36,24 +48,7 @@ export type WithdrawalListItem = {
   cryptoAsset: string | null;
 };
 
-/**
- * Withdrawals tab list query.
- *
- * NOTE — deliberately NOT `unstable_cache`-wrapped (unlike the Deposits
- * tab's {@link getDepositTransactions}). `card_withdrawal_requests` is
- * mutated by the admin actions in `withdrawals/actions.ts`
- * (process / ship / complete / cancel / fail), which invalidate the view
- * via `revalidatePath("/withdrawals")`. `revalidatePath` does NOT evict
- * `unstable_cache` entries (those clear only on a matching
- * `revalidateTag` or their TTL), so caching this list would leave a
- * just-actioned withdrawal showing its stale status for up to the TTL —
- * a behaviour regression. The AutoRefresh on the page + the fresh read
- * on every navigation keep the withdrawals tab correct; switching back
- * re-runs this lean indexed query. (Cacheing it safely would mean adding
- * `revalidateTag("transactions-withdrawals-list")` to those actions,
- * which live outside this change's scope.)
- */
-export async function getWithdrawals(params: {
+type GetWithdrawalsParams = {
   page?: number;
   perPage?: number;
   status?: string;
@@ -62,11 +57,54 @@ export async function getWithdrawals(params: {
   search?: string;
   minValue?: number;
   maxValue?: number;
-}): Promise<PaginatedResult<WithdrawalListItem>> {
+};
+
+/**
+ * Actual Withdrawals-tab list query — the cached `getWithdrawals` below
+ * is the public entry point.
+ *
+ * ── Why this is now cached (root-caused 2026-06-14) ────────────────────
+ * The Withdrawals tab on `/transactions/deposits?tab=withdrawals` was
+ * intermittently degrading to the amber "query timed out or failed"
+ * band. EXPLAIN ANALYZE against live prod proved the query itself is
+ * NOT slow: `card_withdrawal_requests` holds ~4.5k rows and every filter
+ * variant (default, status, method, value-range, username-join search)
+ * returns in 12–91ms. The real cause is CONNECTION-POOL contention: prod
+ * `max_connections` is 100 and was observed at 111 open connections
+ * ("sorry, too many clients already"). The Main-DB Prisma pool is
+ * `max: 5` per env with a 10s connection-acquire timeout; when the pool
+ * is saturated an uncached read queues until it times out → `safeQuery`'s
+ * 15s budget fires → the band paints. The Deposits tab never showed this
+ * because it is `unstable_cache`-wrapped (a cache hit touches no
+ * connection at all); the Withdrawals tab was the only uncached read on
+ * the page AND it re-fired on every render + every 60s `AutoRefresh`,
+ * so it sat directly in the contention path.
+ *
+ * Fix: cache the list (60s, keyed on env + every filter + page) exactly
+ * like {@link getDepositTransactions}, so the hot path (no filter /
+ * repeated filter) is a cache hit and stops adding pool pressure. The
+ * previous "deliberately uncached" note was correct that
+ * `revalidatePath` can't evict `unstable_cache` — so the admin actions
+ * in `withdrawals/actions.ts` now ALSO call
+ * `revalidateTag(WITHDRAWALS_LIST_TAG)`, which keeps a just-actioned
+ * withdrawal from showing a stale status. The page's existing
+ * `safeQuery` degrade is unchanged (a true DB outage still paints the
+ * band rather than crashing the route).
+ *
+ * `env` is threaded in (resolved in the request scope by the public
+ * entry point) so the cache callback never calls `getDb()` — which reads
+ * the request cookie via `cookies()`, illegal inside `unstable_cache` —
+ * and so a dev-DB-toggled admin's cache entries never collide with prod.
+ * Mirrors `computeDepositTransactions`.
+ */
+async function computeWithdrawals(
+  env: DbEnv,
+  params: GetWithdrawalsParams,
+): Promise<PaginatedResult<WithdrawalListItem>> {
   const { page = 1, perPage = 20, status, statuses, method, search, minValue, maxValue } = params;
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
-  const db = await getDb();
+  const db = env === "dev" ? getDevDb() : getProdDb();
 
   const where: Prisma.card_withdrawal_requestsWhereInput = {};
 
@@ -90,8 +128,19 @@ export async function getWithdrawals(params: {
   }
 
   if (search) {
+    // `id` is a UUID column — comparing it against a non-UUID string
+    // (e.g. a username fragment like "a") makes Postgres throw
+    // `22P02 invalid input syntax for type uuid`, which crashed the whole
+    // query and painted the page's amber "timed out or failed" band on
+    // EVERY username search. Only include the id-equality leg when the
+    // search term is actually UUID-shaped; otherwise search username +
+    // email only. Mirrors the `isUuid` guard in getDepositTransactions.
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        search,
+      );
     where.OR = [
-      { id: search },
+      ...(isUuid ? [{ id: search }] : []),
       { user_card_withdrawal_requests_user_idTouser: { username: { contains: search, mode: "insensitive" } } },
       { user_card_withdrawal_requests_user_idTouser: { email: { contains: search, mode: "insensitive" } } },
     ];
@@ -130,6 +179,9 @@ export async function getWithdrawals(params: {
       status: w.status,
       totalValueUsd: toNumber(w.total_value_usd),
       itemCount: w.inventory_item_ids.length + w.voucher_ids.length,
+      // Serialized to an ISO string here so the cached payload survives
+      // `unstable_cache`'s JSON round-trip cleanly (no Date→string drift
+      // gotcha — the column never leaves this function as a Date).
       requestedAt: w.requested_at.toISOString(),
       processedBy:
         (w.metadata as Record<string, unknown>)?.processed_by_admin as string ??
@@ -150,6 +202,35 @@ export async function getWithdrawals(params: {
     perPage: safePerPage,
     totalPages: Math.ceil(total / safePerPage),
   };
+}
+
+/**
+ * Cross-request cache layer for the Withdrawals tab list.
+ *
+ * Wraps {@link computeWithdrawals} in a 60s `unstable_cache` keyed on
+ * `(env, params)` — every distinct filter/page combination gets its own
+ * entry, so re-opening the tab or paging back is an instant cache hit
+ * that touches NO database connection (the whole point — see the root
+ * cause in `computeWithdrawals`). Tagged so the admin actions can evict
+ * it on mutation. Mirrors `cachedDepositTransactions`.
+ */
+const cachedWithdrawals = unstable_cache(
+  computeWithdrawals,
+  ["transactions-withdrawals-list-v1"],
+  { revalidate: 60, tags: [WITHDRAWALS_LIST_TAG] },
+);
+
+/**
+ * Public entry point for the Withdrawals tab. Resolves the request's DB
+ * env (the cookie read happens HERE, in the request scope) then delegates
+ * to the cached compute fn. See {@link computeWithdrawals} for the query
+ * itself + the timeout root cause this caching fixes.
+ */
+export async function getWithdrawals(
+  params: GetWithdrawalsParams,
+): Promise<PaginatedResult<WithdrawalListItem>> {
+  const env = await readDbEnv();
+  return cachedWithdrawals(env, params);
 }
 
 export async function getWithdrawalDetail(id: string) {

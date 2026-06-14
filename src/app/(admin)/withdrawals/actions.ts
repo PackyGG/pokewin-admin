@@ -1,7 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { getDb } from "@/lib/db";
+import { WITHDRAWALS_LIST_TAG } from "@/lib/queries/withdrawals";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { require2FA } from "@/lib/require-2fa";
@@ -126,6 +127,11 @@ export async function processWithdrawal(
     metadata: { withdrawal_id: withdrawalId, action: "process" },
   });
 
+  // Evict the cached Withdrawals-tab list so the just-actioned row shows
+  // its new status immediately — `revalidatePath` alone does NOT clear
+  // the `unstable_cache` entry behind getWithdrawals (it clears only on a
+  // matching tag or its 60s TTL).
+  revalidateTag(WITHDRAWALS_LIST_TAG);
   revalidatePath("/withdrawals");
   revalidatePath(`/withdrawals/${withdrawalId}`);
   return ok({ withdrawalId });
@@ -171,6 +177,11 @@ export async function shipWithdrawal(
     metadata: { withdrawal_id: withdrawalId, tracking_number: trackingNumber, carrier },
   });
 
+  // Evict the cached Withdrawals-tab list so the just-actioned row shows
+  // its new status immediately — `revalidatePath` alone does NOT clear
+  // the `unstable_cache` entry behind getWithdrawals (it clears only on a
+  // matching tag or its 60s TTL).
+  revalidateTag(WITHDRAWALS_LIST_TAG);
   revalidatePath("/withdrawals");
   revalidatePath(`/withdrawals/${withdrawalId}`);
 }
@@ -199,6 +210,11 @@ export async function completeWithdrawal(withdrawalId: string) {
     metadata: { withdrawal_id: withdrawalId },
   });
 
+  // Evict the cached Withdrawals-tab list so the just-actioned row shows
+  // its new status immediately — `revalidatePath` alone does NOT clear
+  // the `unstable_cache` entry behind getWithdrawals (it clears only on a
+  // matching tag or its 60s TTL).
+  revalidateTag(WITHDRAWALS_LIST_TAG);
   revalidatePath("/withdrawals");
   revalidatePath(`/withdrawals/${withdrawalId}`);
 }
@@ -276,6 +292,11 @@ export async function cancelWithdrawal(
     metadata: { withdrawal_id: withdrawalId, reason },
   });
 
+  // Evict the cached Withdrawals-tab list so the just-actioned row shows
+  // its new status immediately — `revalidatePath` alone does NOT clear
+  // the `unstable_cache` entry behind getWithdrawals (it clears only on a
+  // matching tag or its 60s TTL).
+  revalidateTag(WITHDRAWALS_LIST_TAG);
   revalidatePath("/withdrawals");
   revalidatePath(`/withdrawals/${withdrawalId}`);
   return ok({ withdrawalId });
@@ -312,6 +333,11 @@ export async function failWithdrawal(
     metadata: { withdrawal_id: withdrawalId, reason },
   });
 
+  // Evict the cached Withdrawals-tab list so the just-actioned row shows
+  // its new status immediately — `revalidatePath` alone does NOT clear
+  // the `unstable_cache` entry behind getWithdrawals (it clears only on a
+  // matching tag or its 60s TTL).
+  revalidateTag(WITHDRAWALS_LIST_TAG);
   revalidatePath("/withdrawals");
   revalidatePath(`/withdrawals/${withdrawalId}`);
 }
