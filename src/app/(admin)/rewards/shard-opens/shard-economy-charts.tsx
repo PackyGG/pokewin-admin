@@ -11,24 +11,26 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { formatNumber } from "@/lib/utils/format";
 
-// House-POV on the two shard legs (shards are a secondary currency, NOT USD —
-// never rendered with "$"):
-//   • EARNED — shards a game paid back to users = a house liability/out → rose
-//   • SPENT  — shards wagered into games = the house takes them in → emerald
+// COIN-LEDGER flow (these charts read `coin_transactions` — the COINS
+// currency, a SEPARATE currency from the integer shards; never rendered with
+// "$" since coins are a secondary currency, but they are NOT shards). House-POV
+// on the two legs:
+//   • EARNED — coins a game paid back to users = a house liability/out → rose
+//   • SPENT  — coins wagered into games = the house takes them in → emerald
 const ROSE = "#f43f5e";
 const EMERALD = "#10b981";
 
 const earnedConfig = {
-  earned: { label: "Shards earned", color: ROSE },
+  earned: { label: "Coins earned", color: ROSE },
 } satisfies ChartConfig;
 
 const spentConfig = {
-  spent: { label: "Shards spent", color: EMERALD },
+  spent: { label: "Coins spent", color: EMERALD },
 } satisfies ChartConfig;
 
 type DailyPoint = { date: string; earned: number; spent: number };
 
-/** Round-then-format a shard count for axis/tooltip (no "$", shards only). */
+/** Round-then-format a coin count for axis/tooltip (no "$", coins only). */
 function fmtShards(n: number): string {
   if (!Number.isFinite(n)) return "—";
   const rounded = Math.round(n * 100) / 100;
@@ -41,20 +43,21 @@ function fmtShards(n: number): string {
 }
 
 /**
- * The two shard ECONOMY trend charts — earnings (rose) and spendings
- * (emerald) over time — rendered side by side on lg+, stacked on mobile.
- * Receives ONLY the serializable daily series (no function props across the
- * RSC boundary). Everything is in SHARDS, never USD. Renders gracefully with a
- * single data point (the shard ledger is brand-new); shows an empty-state only
- * when there is no daily data at all.
+ * The two COIN-LEDGER trend charts — earnings (rose) and spendings (emerald)
+ * over time — rendered side by side on lg+, stacked on mobile. These read the
+ * `coin_transactions` flow: the COINS currency, a SEPARATE currency from the
+ * integer shards headlined above on the page. Receives ONLY the serializable
+ * daily series (no function props across the RSC boundary). Renders gracefully
+ * with a single data point (the coin ledger is young); shows an empty-state
+ * only when there is no daily data at all.
  */
 export function ShardEconomyCharts({ daily }: { daily: DailyPoint[] }) {
   if (daily.length === 0) {
     return (
       <EmptyState
         icon={Gem}
-        title="No shard activity yet"
-        description="No shard earnings or spendings have been recorded in this window. The trend fills in as activity accrues."
+        title="No coin activity yet"
+        description="No coin earnings or spendings have been recorded in this window. The trend fills in as activity accrues."
         compact
       />
     );
@@ -63,8 +66,8 @@ export function ShardEconomyCharts({ daily }: { daily: DailyPoint[] }) {
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       <SingleSeriesChart
-        title="Shard earnings"
-        hint="shards paid out to users · house out"
+        title="Coin earnings"
+        hint="coins paid out to users · house out"
         data={daily}
         dataKey="earned"
         color={ROSE}
@@ -72,8 +75,8 @@ export function ShardEconomyCharts({ daily }: { daily: DailyPoint[] }) {
         config={earnedConfig}
       />
       <SingleSeriesChart
-        title="Shard spendings"
-        hint="shards wagered into games · house in"
+        title="Coin spendings"
+        hint="coins wagered into games · house in"
         data={daily}
         dataKey="spent"
         color={EMERALD}
@@ -137,7 +140,7 @@ function SingleSeriesChart({
           <ChartTooltip
             content={
               <ChartTooltipContent
-                formatter={(value) => `${fmtShards(Number(value))} shards`}
+                formatter={(value) => `${fmtShards(Number(value))} coins`}
                 hideIndicator
               />
             }

@@ -250,6 +250,49 @@ export type ShardOpensAvailable = {
  */
 export type ShardEconomyResult = ShardEconomyOverview | null;
 
+/**
+ * TRUE integer-SHARD given-out snapshot — the headline the owner asked for.
+ *
+ * CRITICAL: `shards` and "coins" are TWO DIFFERENT currencies on this DB,
+ * easy to conflate because the shard-economy panel borrows the coin ledger.
+ *   • `balances.shards` is an INTEGER wager currency (Σ ≈ 114 held). It has NO
+ *     transaction ledger table — there is no `shard_transactions` on prod.
+ *   • `coin_transactions` (numeric, ≈ USD-pegged cents) is the ledger for the
+ *     SEPARATE "coins" currency (`balances.coin_available_balance`), NOT for
+ *     shards. The `coin_deposit_grant` ≈ 1,662 figure is COINS, not shards.
+ *     Verified read-only on prod 2026-06-14: per-user latest
+ *     `coin_transactions.balance_after` reconciles byte-for-byte to
+ *     `coin_available_balance` (Σ 1588.15 ≈ 1588.16), never to `shards`.
+ *
+ * So there is no minted/earned shard LEDGER to read. But the only place shards
+ * are SPENT is opening shard packs (the only shard sink: no other game type
+ * consumes shards, and shards have no earn-back trail), so:
+ *
+ *     shards given out  =  shards still held  +  shards spent on opens
+ *
+ * This is the owner's own reconciliation (held ≈ 110 + spent ≈ 261). Verified
+ * read-only on prod 2026-06-14: held = 117, spent-on-opens = 263 (Σ
+ * pack.shard_cost over 37 shard-pack opens), so given-out = 380.
+ *
+ * UNIT: integer SHARDS, never USD — never summed with any coin/dollar figure.
+ */
+export type ShardGivenOut = {
+  /** Σ `balances.shards` across all wallets — live circulating supply. */
+  held: number;
+  /** Wallets currently holding > 0 shards. */
+  holders: number;
+  /**
+   * Σ `packs.shard_cost` over every shard-pack open (the only shard sink) —
+   * lifetime, capped at the 365d lookback so this never full-scans history.
+   */
+  spent: number;
+  /** Shards ever given out = held + spent (the headline figure). */
+  givenOut: number;
+};
+
+/** `null` when the game schema (`balances`/`packs`/`game_sessions`) is absent. */
+export type ShardGivenOutResult = ShardGivenOut | null;
+
 export type ShardOpensResult =
   | ShardOpensAvailable
   | { available: false; period: ShardOpensPeriod };
@@ -581,4 +624,75 @@ export async function getShardEconomyOverview(
       spent: d.spent,
     })),
   };
+}
+
+// ─── TRUE shards GIVEN OUT (integer shard currency) ────────────────────
+//
+// The headline the owner wants: "how many SHARDS did we give out". See the
+// `ShardGivenOut` docblock for the full currency model and prod evidence.
+// This reads the INTEGER `balances.shards` supply + the shard SINK (Σ
+// pack.shard_cost over shard-pack opens) — NOT the coin ledger — so it can
+// never be confused with the USD-pegged coin grant figure. Two cheap bounded
+// aggregates (supply is window-independent; the spent sum is capped at the
+// 365d lifetime lookback), cached 300s on prod, schema-probed so it self-hides
+// when the game schema is absent.
+
+type RawGivenOutRow = {
+  held: string | number | null;
+  holders: bigint | number | null;
+  spent: string | number | null;
+};
+
+async function queryShardGivenOut(env: DbEnv): Promise<ShardGivenOutResult> {
+  const hasTables = await probeShardTables(env);
+  if (!hasTables) return null;
+
+  const db = await getDb();
+
+  // Live integer-shard supply (Σ balances.shards) + the only shard sink
+  // (Σ pack.shard_cost over shard-pack opens). Supply is window-independent;
+  // the sink is capped at the 365d lookback so it never full-scans history.
+  // One round-trip via a cross join of two single-row scalar aggregates.
+  const rows = await db.$queryRaw<RawGivenOutRow[]>`
+    SELECT
+      sup.total_shards AS held,
+      sup.holders AS holders,
+      COALESCE(spend.shards_spent, 0) AS spent
+    FROM (
+      SELECT
+        COALESCE(SUM(shards), 0)::text AS total_shards,
+        COUNT(*) FILTER (WHERE shards > 0)::bigint AS holders
+      FROM balances
+    ) sup
+    CROSS JOIN (
+      SELECT COALESCE(SUM(pk.shard_cost), 0)::bigint AS shards_spent
+      FROM game_sessions gs
+      JOIN packs pk ON pk.id = gs.game_id AND pk.pack_type = 'shard'
+      WHERE gs.game_type::text = 'pack'
+        AND gs.created_at >= NOW() - (${LIFETIME_LOOKBACK_DAYS} * INTERVAL '1 day')
+    ) spend`;
+
+  const r = rows[0];
+  const held = Number(r?.held ?? 0);
+  const holders = Number(r?.holders ?? 0);
+  const spent = Number(r?.spent ?? 0);
+  return { held, holders, spent, givenOut: held + spent };
+}
+
+const cachedShardGivenOut = unstable_cache(
+  () => queryShardGivenOut("prod"),
+  ["shard-given-out-v1"],
+  { revalidate: 300, tags: ["shard-pack-opens"] },
+);
+
+/**
+ * Public entry point for the TRUE integer-SHARD given-out snapshot:
+ * `held` (Σ balances.shards) + `spent` (Σ pack.shard_cost over opens) =
+ * `givenOut`. Returns `null` when the game schema is absent so the tile
+ * self-hides. Cached 300s on prod; direct on a dev-toggled admin.
+ */
+export async function getShardGivenOut(): Promise<ShardGivenOutResult> {
+  const env = await readDbEnv();
+  if (env !== "prod") return queryShardGivenOut(env);
+  return cachedShardGivenOut();
 }

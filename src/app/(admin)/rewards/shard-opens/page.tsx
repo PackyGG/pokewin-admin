@@ -10,12 +10,16 @@ import {
   Activity,
   Gift,
   CreditCard,
+  Sparkles,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { formatNumber, formatCurrency } from "@/lib/utils/format";
 import {
   KpiTile,
+  MetricTile,
+  StatPanel,
+  PanelRow,
   PageHero,
   PageHeroIdentity,
   SectionHeading,
@@ -30,9 +34,11 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import {
   getShardPackOpens,
   getShardEconomyOverview,
+  getShardGivenOut,
   shardOpensPeriodLabel,
   type ShardOpensPeriod,
   type ShardEconomyResult,
+  type ShardGivenOutResult,
 } from "@/lib/queries/shard-pack-opens";
 import { ShardOpensDataTable } from "./opens-data-table";
 import { ShardEconomyCharts } from "./shard-economy-charts";
@@ -67,24 +73,38 @@ async function EconomyOverviewContent({
 }: {
   period: ShardOpensPeriod;
 }) {
-  const { data: economy } = await safeQuery<ShardEconomyResult>(
-    () => getShardEconomyOverview(period),
-    null,
-    "rewards.shard-opens.economy",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
+  // Two reads in ONE boundary (both bounded + cached):
+  //  • givenOut — the TRUE integer-SHARD headline (held + spent on opens).
+  //    This is the figure the owner asked for, in real SHARD units, NOT the
+  //    USD-pegged coin grant. See `ShardGivenOut` for the currency model.
+  //  • economy — the coin-ledger flow snapshot (Net house flow / Active users
+  //    / daily charts) + the separate COIN grant figure, clearly demoted and
+  //    relabelled below so it can never masquerade as the shard headline.
+  const [{ data: givenOut }, { data: economy }] = await Promise.all([
+    safeQuery<ShardGivenOutResult>(
+      () => getShardGivenOut(),
+      null,
+      "rewards.shard-opens.given-out",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery<ShardEconomyResult>(
+      () => getShardEconomyOverview(period),
+      null,
+      "rewards.shard-opens.economy",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ]);
 
-  // Coin/shard ledger absent on this DB (or the read failed/timed out): hide
-  // the overview rather than show a broken panel — the opens section below
-  // renders its own degrade message. The supply snapshot is window-independent
-  // so a degrade here is purely the ledger-absent / timeout case.
-  if (!economy) return null;
+  // Both reads degraded (ledger/schema absent or timeout): hide the overview
+  // rather than show a broken panel — the opens section renders its own
+  // degrade message.
+  if (!givenOut && !economy) return null;
 
   const periodLabel = shardOpensPeriodLabel(period);
 
   return (
     <FadeIn>
-      <div className="space-y-3">
+      <div className="space-y-4">
         <SectionHeading
           icon={Coins}
           title={
@@ -97,64 +117,132 @@ async function EconomyOverviewContent({
           }
         />
 
-        {/* Info boxes — read clearly:
-            • Grant coins minted = house-funded deposit-grant coins (≈ USD,
-              `coin_deposit_grant` + positive `coin_admin_adjustment`),
-              CUSTOMER-scoped (staff/creators/blacklist dropped) so it means
-              minted to real customers. House liability → rose. This is the
-              USD-pegged grant currency, NOT the wager-earned shard supply
-              below.
-            • Out there now     = live circulating shard supply (neutral cyan)
-            • Holders           = distinct users holding shards (neutral blue)
-            plus Net house flow + Active users where they fit cleanly. The shard
-            supply/holders/flow are a secondary wager currency, not money —
-            neutral readouts stay cyan/blue, never a money color. */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
-          <KpiTile
-            label="Grant coins minted"
-            value={fmtShards(economy.issuedToUsersCustomers)}
-            sub="deposit-grant coins (≈ USD) · customers only"
-            icon={Gift}
-            accent="rose"
-          />
-          <KpiTile
-            label="Out there now"
-            value={fmtShards(economy.totalShardsHeld)}
-            sub="circulating supply · live"
-            icon={Globe}
-            accent="cyan"
-          />
-          <KpiTile
-            label="Holders"
-            value={formatNumber(economy.shardHolders)}
-            sub="distinct users holding shards"
-            icon={Users}
-            accent="blue"
-          />
-          <KpiTile
-            label="Net house flow"
-            value={fmtShards(economy.netHouse)}
-            sub={
-              economy.netHouse >= 0
-                ? "game flow · house up"
-                : "game flow · house down"
-            }
-            icon={Scale}
-            accent={economy.netHouse >= 0 ? "emerald" : "rose"}
-          />
-          <KpiTile
-            label="Active users"
-            value={formatNumber(economy.activeUsers)}
-            sub={periodLabel.toLowerCase()}
-            icon={Activity}
-            accent="purple"
-          />
-        </div>
+        {/* ── HEADLINE: shards given out ──────────────────────────────────
+            The number the owner wants, front and centre, in real SHARD units
+            (integer). Shards are a neutral secondary currency (not money) →
+            cyan, never a House-POV money colour. Reconciles transparently:
+            given out = out there now (held) + spent on opens. */}
+        {givenOut && (
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+            <StatPanel
+              title={
+                <span className="flex items-center gap-2">
+                  Shards given out
+                  <span className="rounded-md border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-cyan-600 dark:text-cyan-400">
+                    shards
+                  </span>
+                </span>
+              }
+              icon={Sparkles}
+              accent="cyan"
+            >
+              <p className="text-3xl font-bold tracking-tight tabular-nums text-cyan-600 dark:text-cyan-400 sm:text-4xl">
+                {formatNumber(givenOut.givenOut)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                total shards ever issued · still held + spent on opens
+              </p>
+              <div className="mt-3 space-y-0.5 border-t pt-3">
+                <PanelRow
+                  label="Out there now (held)"
+                  value={formatNumber(givenOut.held)}
+                />
+                <PanelRow
+                  label="Spent on shard-pack opens"
+                  value={formatNumber(givenOut.spent)}
+                />
+              </div>
+              <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+                Shards have no mint ledger, so &ldquo;given out&rdquo; is
+                reconstructed from where they live: still in wallets
+                (held) plus the only place they&apos;re spent (opening shard
+                packs). Integer shards — never USD, never the coin figure
+                below.
+              </p>
+            </StatPanel>
 
-        {/* The two shard-economy trend charts — earnings (rose) over time and
-            spendings (emerald) over time. Serializable data only across the
-            RSC boundary. */}
-        <ShardEconomyCharts daily={economy.daily} />
+            <div className="grid grid-cols-2 gap-3 self-start">
+              <MetricTile
+                label="Out there now"
+                value={formatNumber(givenOut.held)}
+                sub="circulating supply · live"
+                icon={Globe}
+                accent="cyan"
+              />
+              <MetricTile
+                label="Holders"
+                value={formatNumber(givenOut.holders)}
+                sub="wallets holding shards"
+                icon={Users}
+                accent="blue"
+              />
+              <MetricTile
+                label="Spent on opens"
+                value={formatNumber(givenOut.spent)}
+                sub="shards burned opening packs"
+                icon={ArrowDownLeft}
+                accent="cyan"
+              />
+              {economy && (
+                <MetricTile
+                  label="Active users"
+                  value={formatNumber(economy.activeUsers)}
+                  sub={periodLabel.toLowerCase()}
+                  icon={Activity}
+                  accent="purple"
+                />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Coin ledger flow (SEPARATE currency) ────────────────────────
+            Everything below is the COIN ledger, NOT shards. `coin_transactions`
+            is the audit trail for the decimal, USD-pegged "coins" currency
+            (`balances.coin_available_balance`) — a different currency from the
+            integer shards above. Surfaced here for completeness but clearly
+            fenced off + labelled "coins (≈ USD)" so it can never be read as the
+            shard headline. */}
+        {economy && (
+          <div className="space-y-3">
+            <SectionHeading
+              icon={Coins}
+              title={
+                <span className="flex items-center gap-2">
+                  Coin ledger
+                  <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                    coins · ≈ USD · separate currency
+                  </span>
+                </span>
+              }
+            />
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-2 xl:grid-cols-2">
+              <KpiTile
+                label="Grant coins minted"
+                value={formatCurrency(economy.issuedToUsersCustomers)}
+                sub="deposit-grant COINS (≈ USD) · customers only · not shards"
+                icon={Gift}
+                accent="rose"
+              />
+              <KpiTile
+                label="Net house coin flow"
+                value={fmtShards(economy.netHouse)}
+                sub={
+                  economy.netHouse >= 0
+                    ? "coin game flow · house up"
+                    : "coin game flow · house down"
+                }
+                icon={Scale}
+                accent={economy.netHouse >= 0 ? "emerald" : "rose"}
+              />
+            </div>
+
+            {/* The two coin-ledger trend charts — earnings (rose) over time and
+                spendings (emerald) over time. Serializable data only across the
+                RSC boundary. (Coin flow, labelled as such in the chart card.) */}
+            <ShardEconomyCharts daily={economy.daily} />
+          </div>
+        )}
       </div>
     </FadeIn>
   );
