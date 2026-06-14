@@ -78,6 +78,7 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   chat_unmuted: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
   admin_note_created: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   admin_note_deleted: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+  admin_builtin_role_updated: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
 };
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
@@ -122,6 +123,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   chat_unmuted: "User Unmuted",
   admin_note_created: "Note Added",
   admin_note_deleted: "Note Deleted",
+  admin_builtin_role_updated: "Built-in Role Updated",
 };
 
 export function EventDetails({ event }: { event: AdminAuditEventItem }) {
