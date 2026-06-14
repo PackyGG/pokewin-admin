@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Activity,
   LayoutDashboard,
   BarChart3,
   Users,
@@ -92,6 +93,7 @@ import { getSidebarFooterItems, getSidebarGroups } from "@/lib/nav-config";
 import { LinkPending } from "@/components/ux";
 
 const ICONS: Record<string, LucideIcon> = {
+  Activity,
   LayoutDashboard,
   BarChart3,
   Users,

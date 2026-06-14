@@ -129,6 +129,7 @@ export type PaletteCommand = NavCommand | ActionCommand;
 // ---------------------------------------------------------------------------
 
 const NAV_ICONS: Record<string, LucideIcon> = {
+  Activity,
   ArrowDownToLine,
   ArrowUpCircle,
   Award,

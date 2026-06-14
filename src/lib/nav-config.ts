@@ -871,6 +871,32 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inSidebar: true,
     inPalette: true,
   },
+  {
+    // Monitor — health/overview of the standalone backend-monitor service.
+    // Icon string `Activity` MUST be registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (React #130) — it is. `inPalette: true`
+    // so it must also appear in PALETTE_ORDER below (lockstep).
+    id: "nav.system.monitor",
+    group: "System",
+    label: "Monitor",
+    href: "/system/monitor",
+    pageKey: "/system/monitor",
+    icon: "Activity",
+    description:
+      "Backend monitor service — health, notifications, analytics freshness",
+    keywords: [
+      "monitor",
+      "health",
+      "uptime",
+      "status",
+      "clickhouse",
+      "postgres",
+      "ntfy",
+    ],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
 ];
 
 export const NAV_ENTRIES: NavEntry[] = RAW_NAV_ENTRIES.map((entry) =>
@@ -954,6 +980,7 @@ const PALETTE_ORDER: string[] = [
   "nav.security",
   "nav.geo-blocking",
   "nav.audit",
+  "nav.system.monitor",
 ];
 
 /**

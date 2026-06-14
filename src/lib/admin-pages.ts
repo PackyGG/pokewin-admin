@@ -150,6 +150,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // so the key is known to the permission system.
   { group: "System", label: "Geo Blocking", key: "/system/geo-blocking" },
   { group: "System", label: "Audit Log", key: "/audit" },
+  // Monitor — health/overview of the standalone backend-monitor service
+  // (a separate Railway app from the game backend). Read-only telemetry
+  // surface fetched server-side from MONITOR_API_URL with a bearer token.
+  { group: "System", label: "Monitor", key: "/system/monitor" },
   // motha-only — the page + actions enforce the gate server-side;
   // listing here just makes the key known to the permission system
   // so it doesn't fall through as "unknown page".
