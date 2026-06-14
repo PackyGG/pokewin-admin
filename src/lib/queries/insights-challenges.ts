@@ -136,8 +136,8 @@ export type ChallengesOverview = {
   totalChallenges: number;
   activeChallenges: number;
 
-  // Total prize cost = sum of ALL `challenge_prize` ledger rows in window.
-  // This is the verified headline house cost ($129 / 7 lifetime on dev).
+  // Total prize cost = sum of customer-scoped `challenge_prize` ledger rows in
+  // window (same population as `dailyCost` below). Headline house cost.
   totalPrizeCost: number;
   prizeLineCount: number;
 
@@ -206,9 +206,11 @@ async function compute(period: ChallengesPeriod): Promise<ChallengesOverview> {
   // Lifetime caps at LIFETIME_LOOKBACK_DAYS for the time-series scan.
   const seriesDays = days ?? LIFETIME_LOOKBACK_DAYS;
 
-  // 3) Headline cost = sum of ALL challenge_prize ledger rows in window
-  //    (the verified house-cost figure; not role-scoped so it reconciles
-  //    1:1 with "what we paid out for challenges"). Window-filtered.
+  // 3) Headline cost = sum of customer-scoped challenge_prize ledger rows in
+  //    window. Customer-scoped (getMetricsScope) so the headline KPI and the
+  //    daily-cost chart below share ONE population — staff/creator/blacklisted
+  //    prizes never inflate the headline while being excluded from the chart.
+  //    Window-filtered.
   const dateFilter =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
 
@@ -222,6 +224,7 @@ async function compute(period: ChallengesPeriod): Promise<ChallengesOverview> {
                  COUNT(*)::text AS cnt
           FROM ledger_transactions lt
           WHERE lt.type::text = 'challenge_prize'
+            AND lt.user_id IN ${scope.userScopeSql}
           ${dateFilter}
         `)
       : Promise.resolve([{ total: "0", cnt: "0" }]),
