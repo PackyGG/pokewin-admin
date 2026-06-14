@@ -1,12 +1,10 @@
 import { Suspense } from "react";
 import {
   Gem,
-  Layers,
   Users,
   ArrowDownLeft,
   Scale,
   PackageOpen,
-  AlertTriangle,
   Wallet,
   Globe,
   Coins,
@@ -22,8 +20,6 @@ import {
   PageHero,
   PageHeroIdentity,
   SectionHeading,
-  StatPanel,
-  PanelRow,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
@@ -35,12 +31,10 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import {
   getShardPackOpens,
   getShardEconomyOverview,
-  parseShardOpensPeriod,
   shardOpensPeriodLabel,
   type ShardOpensPeriod,
   type ShardEconomyResult,
 } from "@/lib/queries/shard-pack-opens";
-import { OpensPeriodFilter } from "./opens-period-filter";
 import { ShardOpensDataTable } from "./opens-data-table";
 
 export const metadata = { title: "Shard Pack Opens" };
@@ -154,49 +148,6 @@ async function EconomyOverviewContent({
             accent="purple"
           />
         </div>
-
-        {/* Flow breakdown for the window — earned (wins) vs spent (wagered)
-            vs issued (grants). House-POV colors on the cash-adjacent legs. */}
-        <StatPanel
-          title={`Shard flow · ${periodLabel.toLowerCase()}`}
-          icon={Coins}
-          accent="cyan"
-        >
-          <div className="space-y-0.5">
-            <PanelRow
-              label="Shards wagered into games (house in)"
-              value={`+${fmtShards(economy.spent)}`}
-              valueClassName="text-emerald-600 dark:text-emerald-400"
-            />
-            <PanelRow
-              label="Shards won back as game payouts (house out)"
-              value={`-${fmtShards(economy.earned)}`}
-              valueClassName="text-rose-600 dark:text-rose-400"
-            />
-            <PanelRow
-              label="Shards issued to users · grants (house out)"
-              value={`-${fmtShards(economy.issuedToUsers)}`}
-              valueClassName="text-rose-600 dark:text-rose-400"
-            />
-            <PanelRow
-              label="Net house game flow (wagered − won)"
-              value={`${economy.netHouse >= 0 ? "+" : "-"}${fmtShards(Math.abs(economy.netHouse))}`}
-              valueClassName={
-                economy.netHouse >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400"
-              }
-            />
-            <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-              Shards are a secondary, wager-earned currency — every figure here
-              is in shards, never USD. &ldquo;Shards held&rdquo; /
-              &ldquo;In circulation&rdquo; is the live supply across all wallets
-              (a balance-sheet snapshot, not period-scoped). Issued grants are
-              house-minted issuance and are kept OUT of the net house game flow
-              (which is purely shards wagered − shards won).
-            </p>
-          </div>
-        </StatPanel>
       </div>
     </FadeIn>
   );
@@ -291,7 +242,7 @@ async function OpensContent({
     );
   }
 
-  const { summary, packs, feed } = result;
+  const { summary, feed } = result;
 
   return (
     <div className="space-y-6">
@@ -352,57 +303,6 @@ async function OpensContent({
         />
       </div>
 
-      {/* Per-pack breakdown */}
-      <FadeIn>
-        <div className="space-y-3">
-          <SectionHeading icon={Layers} title="By shard pack" />
-          <StatPanel title="Opens · shards spent · card value per pack" icon={Layers} accent="cyan">
-            {packs.length === 0 ? (
-              <p className="py-4 text-center text-sm text-muted-foreground">
-                No shard-pack opens in {periodLabel.toLowerCase()}.
-              </p>
-            ) : (
-              <div className="space-y-0.5">
-                {packs.map((p) => (
-                  <PanelRow
-                    key={p.packId}
-                    label={`${p.packName} · ${formatNumber(p.opens)} open${p.opens === 1 ? "" : "s"} · ${fmtShards(p.shardCost)} shards each`}
-                    value={
-                      <span className="flex items-center gap-3 tabular-nums">
-                        <span
-                          className="text-cyan-600 dark:text-cyan-400"
-                          title="Total shards spent opening this pack (house in)"
-                        >
-                          {fmtShards(p.shardsSpent)} shards
-                        </span>
-                        <span
-                          className="font-medium text-rose-600 dark:text-rose-400"
-                          title="Real $ value of the cards these opens pulled (house out)"
-                        >
-                          {formatCurrency(p.cardValueUsd)}
-                        </span>
-                      </span>
-                    }
-                  />
-                ))}
-                <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-                  Each row shows how many shards were spent opening that pack
-                  (the cost, in shards — a secondary, wager-earned currency, not
-                  USD) and the{" "}
-                  <span className="text-rose-600 dark:text-rose-400">
-                    real $ value of the cards
-                  </span>{" "}
-                  those opens rolled into inventory — the true money the house
-                  pays out through the shard-pack mechanic. Shard packs return a
-                  card, not shards: there is no shard payout. Shard figures and
-                  USD figures are never summed together.
-                </p>
-              </div>
-            )}
-          </StatPanel>
-        </div>
-      </FadeIn>
-
       {/* Individual opens feed */}
       <div className="space-y-3">
         <SectionHeading icon={Gem} title="Individual opens" />
@@ -430,7 +330,7 @@ export default async function ShardPackOpensPage({
   // Active-timeframe-only: the single active window + active page come from
   // the URL so the server fetches ONLY that window/page (no eager preload).
   const params = await searchParams;
-  const period = parseShardOpensPeriod(params.period);
+  const period: ShardOpensPeriod = "all";
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
@@ -447,32 +347,8 @@ export default async function ShardPackOpensPage({
           accent="cyan"
           title="Shard Pack Opens"
           subtitle="The shard economy + every opening of the dedicated shard packs (Common / Uncommon / Rare) — the shards each open costs plus the real $ value of the card it pulled (the money the house pays out)."
-          action={<OpensPeriodFilter />}
         />
       </PageHero>
-
-      {/* Two-dimension note: shards are the wager currency in/out; the card $
-          value is the real money the house pays out. The same Active-
-          Timeframe-Only + safeQuery contract applies so a high-volume window
-          degrades cleanly. */}
-      <div className="flex items-start gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/5 px-4 py-2.5">
-        <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0 text-cyan-500" />
-        <p className="text-xs text-muted-foreground">
-          Two units, never mixed.{" "}
-          <span className="font-medium">Shards</span> are a secondary,
-          wager-earned currency — the cost to open a shard pack (the house takes
-          them in). A shard pack returns a{" "}
-          <span className="font-medium">card</span>, not shards: there is no
-          shard payout.{" "}
-          <span className="font-medium">Card value ($)</span> is the{" "}
-          <span className="text-rose-600 dark:text-rose-400">
-            real money the house pays out
-          </span>{" "}
-          — the USD value of the card each open rolls into inventory, the true
-          cost of the shard-pack mechanic. Shard figures and USD figures are
-          shown distinctly and are never summed together.
-        </p>
-      </div>
 
       {/* Shard economy overview (Part A). Own Suspense keyed on PERIOD only —
           it is window-scoped (independent of page/perPage), so paginating the
