@@ -73,6 +73,7 @@ import type { PaginatedInventory } from "./user-tabs-types";
 import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
+import type { ShardWinningsResult } from "@/lib/queries/users-shard-winnings";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import { ErrorPill } from "./band-error";
 import { TILE_COLORS } from "./user-view-modern-panels";
@@ -165,6 +166,7 @@ export function UserViewModern({
   pnlResultPromise,
   riskResultPromise,
   gamingTxPromise,
+  shardWinningsPromise,
   financialTxPromise,
   adjustmentsTxPromise,
   rewardsPromise,
@@ -194,6 +196,9 @@ export function UserViewModern({
   riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
   // Overview + Gaming:
   gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
+  // Gaming tab only — per-user shard/coin winnings tagged by source game.
+  // null = not kicked for the active tab (Active-Timeframe-Only).
+  shardWinningsPromise: Promise<SafeQueryResult<ShardWinningsResult>> | null;
   // Overview + Finances:
   financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Overview, owner only — dedicated uncapped admin_balance_adjustment page
@@ -643,7 +648,11 @@ export function UserViewModern({
         )}
 
         {activeTab === "gaming" && (
-          <GamingTab data={data} gamingTxPromise={gamingTxPromise} />
+          <GamingTab
+            data={data}
+            gamingTxPromise={gamingTxPromise}
+            shardWinningsPromise={shardWinningsPromise}
+          />
         )}
 
         {activeTab === "inventory" && (

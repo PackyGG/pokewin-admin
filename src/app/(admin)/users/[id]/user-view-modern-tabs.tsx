@@ -104,6 +104,8 @@ import type {
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import type { UserRewards } from "@/lib/queries/users";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
+import type { ShardWinningsResult } from "@/lib/queries/users-shard-winnings";
+import { ShardWinningsSection } from "./shard-winnings-section";
 import { BandError } from "./band-error";
 import {
   SectionHeading,
@@ -763,9 +765,14 @@ export function FinancesTab({
 export function GamingTab({
   data,
   gamingTxPromise,
+  shardWinningsPromise,
 }: {
   data: UserDetail;
   gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
+  // Per-user shard/coin winnings tagged by source game. null = not kicked
+  // for the active tab (Active-Timeframe-Only). The section self-hides when
+  // the connected DB has no coin_transactions table or the user has none.
+  shardWinningsPromise: Promise<SafeQueryResult<ShardWinningsResult>> | null;
 }) {
   const { user } = data;
   // sessionRole drives the password-aware Watch button + password-reveal
@@ -788,6 +795,14 @@ export function GamingTab({
       ) : (
         <SkeletonTable rows={5} columns={6} />
       )}
+
+      {/* Shard/coin winnings (secondary currency) tagged by source game.
+          Streamed so the coin-ledger read never blocks the USD table above;
+          self-hides when there are no shard winnings (or no coin ledger on
+          the connected DB). */}
+      <Suspense fallback={null}>
+        <ShardWinningsSection shardWinningsPromise={shardWinningsPromise} />
+      </Suspense>
 
       {/* Sponsored / free battles joined — these have no battle_bet ledger
           row so they never appear in the Gaming Transactions table above.
