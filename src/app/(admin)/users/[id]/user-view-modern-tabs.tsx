@@ -11,7 +11,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { useMemo, useState, useTransition, use, Suspense } from "react";
+import { useState, useTransition, use, Suspense } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,7 +33,6 @@ import {
   Wallet,
   TrendingUp,
   TrendingDown,
-  Package,
   Swords,
   Gem,
   Trophy,
@@ -41,7 +40,6 @@ import {
   Coins,
   ShieldCheck,
   FileText,
-  Activity,
   ArrowDownToLine,
   Banknote,
   ArrowUpFromLine,
@@ -58,7 +56,6 @@ import {
   Lock,
   Landmark,
   ArrowRight,
-  Target,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
@@ -67,12 +64,6 @@ import { SkeletonCard, SkeletonTable } from "@/components/ux";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { RelativeTime } from "@/components/relative-time";
-import {
-  amountColorFor,
-  balanceMovementSign,
-  ledgerDirection,
-} from "@/lib/utils/ledger-direction";
-import { ledgerTypeLabel } from "@/lib/utils/ledger-labels";
 import {
   type UserDetail,
   type PaginatedTransactions,
@@ -160,7 +151,6 @@ import { KpiTile, StatPanel } from "@/components/modern-panels";
 
 export function OverviewTab({
   data,
-  gamingTxPromise,
   financialTxPromise,
   adjustmentsTxPromise,
   pnlResultPromise,
@@ -169,7 +159,6 @@ export function OverviewTab({
   viewerIsAdjustmentOwner,
 }: {
   data: UserDetail;
-  gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Per-user wager-requirement progress (always kicked server-side). Threaded
   // into the Deposits & Withdrawals popup so the wager-requirement status
@@ -179,12 +168,12 @@ export function OverviewTab({
   // shared 10-row `financialTx` page, which lumps adjustments together with
   // deposits/withdrawals/claims and can push an older adjustment off page 1
   // entirely). Surfacing it as its own input guarantees EVERY admin balance
-  // adjustment reaches the Recent Activity timeline + the dedicated block
-  // below, no matter how much newer financial activity sits in front of it.
-  // Same query path, so the official_stream fake-balance NOT-filter still
-  // applies automatically. For a non-owner viewer the server hands a
-  // resolved empty page (the kick is skipped; the server-side gate in
-  // getUserTransactions stays the authority).
+  // adjustment reaches the dedicated adjustments block below, no matter how
+  // much newer financial activity sits in front of it. Same query path, so
+  // the official_stream fake-balance NOT-filter still applies automatically.
+  // For a non-owner viewer the server hands a resolved empty page (the kick
+  // is skipped; the server-side gate in getUserTransactions stays the
+  // authority).
   adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Platform-P&L breakdown — feeds the Balance panel's pnl7d (Lossback
   // autofill) + the Platform P&L panel with its rolling ladder. Always
@@ -277,22 +266,6 @@ export function OverviewTab({
           (none of this was visible on any tab before). */}
       <SectionHeading icon={Coins} title="Tips & Rain" />
       <TipsSection tips={data.tips} />
-
-      {/* Recent activity — unified timeline (gaming + financial +
-          adjustments). Streamed so the heaviest gaming enrichment never
-          blocks the panels above. */}
-      <SectionHeading icon={Activity} title="Recent Activity" />
-      {gamingTxPromise && financialTxPromise && adjustmentsTxPromise ? (
-        <Suspense fallback={<SkeletonTable rows={5} columns={4} />}>
-          <RecentActivityStreamed
-            gamingTxPromise={gamingTxPromise}
-            financialTxPromise={financialTxPromise}
-            adjustmentsTxPromise={adjustmentsTxPromise}
-          />
-        </Suspense>
-      ) : (
-        <SkeletonTable rows={5} columns={4} />
-      )}
     </div>
   );
 }
@@ -440,39 +413,6 @@ function AdminAdjustmentsStreamed({
         canEditBalanceAdjustments={canEditBalanceAdjustments}
       />
     </>
-  );
-}
-
-function RecentActivityStreamed({
-  gamingTxPromise,
-  financialTxPromise,
-  adjustmentsTxPromise,
-}: {
-  gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
-  financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
-  adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
-}) {
-  const gamingTx = use(gamingTxPromise);
-  const financialTx = use(financialTxPromise);
-  const adjustmentsTx = use(adjustmentsTxPromise);
-  // The timeline merges three feeds — if any leg failed, a partial merge
-  // would silently misrepresent the user's recent history (e.g. "only
-  // deposits, no gaming") — surface the failure instead.
-  if (gamingTx.error || financialTx.error || adjustmentsTx.error) {
-    return (
-      <InlineError
-        compact
-        title="Couldn't load recent activity"
-        hint="One of the underlying feeds failed or timed out — retry to re-run them."
-      />
-    );
-  }
-  return (
-    <RecentActivityTimeline
-      gamingTx={gamingTx.data.data.slice(0, 5)}
-      financialTx={financialTx.data.data.slice(0, 5)}
-      adjustmentsTx={adjustmentsTx.data.data}
-    />
   );
 }
 
@@ -2562,157 +2502,3 @@ function WindowedWagerStrip({
     </div>
   );
 }
-
-// ───────────────────────────────────────────────────────────────────
-//  RECENT ACTIVITY TIMELINE — used by OverviewTab
-// ───────────────────────────────────────────────────────────────────
-
-type TxRow = PaginatedTransactions["data"][number];
-
-// Unified timeline merging gaming + financial + admin balance adjustments
-// into one chronological feed. Adjustments are passed in their entirety from a
-// dedicated uncapped fetch and are GUARANTEED to survive the slice: every
-// adjustment row is kept first, then the remaining slots are filled with the
-// newest gaming/financial rows, and the whole set is re-sorted by time. This
-// way an older admin balance adjustment can never be pushed out of the feed by
-// a burst of newer deposits/withdrawals (the bug this fixes).
-function RecentActivityTimeline({
-  gamingTx,
-  financialTx,
-  adjustmentsTx,
-}: {
-  gamingTx: TxRow[];
-  financialTx: TxRow[];
-  adjustmentsTx: TxRow[];
-}) {
-  const merged = useMemo(() => {
-    const MAX_ROWS = 8;
-    // Dedupe by tx id across all three sources — an adjustment may also be
-    // present in `financialTx` (admin_balance_adjustment is one of the shared
-    // FINANCIAL_TYPES), so without this it could render twice.
-    const seen = new Set<string>();
-    const result: TxRow[] = [];
-
-    // 1) Keep EVERY adjustment row first so none can be sliced away.
-    for (const tx of adjustmentsTx) {
-      if (seen.has(tx.id)) continue;
-      seen.add(tx.id);
-      result.push(tx);
-    }
-
-    // 2) Fill the remaining slots with the newest gaming/financial rows.
-    const rest = [...gamingTx, ...financialTx]
-      .filter((tx) => !seen.has(tx.id))
-      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-    for (const tx of rest) {
-      if (result.length >= Math.max(MAX_ROWS, seen.size)) break;
-      if (seen.has(tx.id)) continue;
-      seen.add(tx.id);
-      result.push(tx);
-    }
-
-    // 3) Present the final set newest-first.
-    return result.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  }, [gamingTx, financialTx, adjustmentsTx]);
-
-  if (merged.length === 0) {
-    return (
-      <Card>
-        <CardContent className="p-0">
-          <EmptyState
-            icon={Activity}
-            title="No recent activity"
-            description="Gaming and financial events will show up here."
-            compact
-          />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      <CardContent className="pt-6">
-        <ol className="relative ml-3 border-l border-border">
-          {merged.map((tx) => {
-            // Classify by ledger TYPE rather than balance delta — for
-            // deposits and withdrawals the delta sign is the user's
-            // direction, not the house's (deposit lowers external cash
-            // but raises balance, withdrawal does the opposite).
-            const dir = ledgerDirection(tx.type);
-            const Icon = iconFor(tx.type);
-            const dotBg =
-              dir === "house-loss"
-                ? "bg-rose-500"
-                : dir === "house-gain"
-                  ? "bg-emerald-500"
-                  : "bg-blue-500";
-            return (
-              <li key={tx.id} className="relative mb-4 pl-6 last:mb-0">
-                <span
-                  className={cn(
-                    "absolute -left-[9px] top-0 flex size-4 items-center justify-center rounded-full border-2 border-background",
-                    dotBg,
-                  )}
-                >
-                  <span className="size-1.5 rounded-full bg-background" />
-                </span>
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Icon className="size-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">
-                      {/* Instant (early-claimed) rakeback is labeled as such;
-                          a normal claim stays "Rakeback". Everything else uses
-                          the shared display label (challenge_prize →
-                          "Challenge prize", etc.). */}
-                      {tx.type === "rakeback_claim"
-                        ? tx.isInstantRakeback === true
-                          ? "Instant rakeback"
-                          : "Rakeback"
-                        : ledgerTypeLabel(tx.type)}
-                    </span>
-                    <RelativeTime
-                      className="text-xs text-muted-foreground"
-                      date={tx.createdAt}
-                    />
-                  </div>
-                  <span
-                    className={cn(
-                      "text-sm font-semibold tabular-nums",
-                      amountColorFor(dir),
-                    )}
-                  >
-                    {/* Color is house-POV (by ledger type); sign follows the
-                        real balance movement so a credit reads "+" even on a
-                        house-loss row (e.g. rakeback) — never contradicting the
-                        balance fields. abs-guard the magnitude for the rare
-                        genuinely-signed admin_balance_adjustment. */}
-                    {balanceMovementSign(tx.balanceBefore, tx.balanceAfter)}
-                    {formatCurrency(Math.abs(tx.amount))}
-                  </span>
-                </div>
-                {tx.description && (
-                  <p className="mt-0.5 text-xs text-muted-foreground truncate">
-                    {tx.description}
-                  </p>
-                )}
-              </li>
-            );
-          })}
-        </ol>
-      </CardContent>
-    </Card>
-  );
-}
-
-function iconFor(type: string): React.ElementType {
-  if (type.startsWith("battle")) return Swords;
-  if (type === "pack_opening") return Package;
-  if (type === "deposit" || type === "deposit_bonus") return ArrowDownToLine;
-  if (type.includes("withdrawal")) return ArrowUpFromLine;
-  if (type === "challenge_prize") return Target;
-  if (type === "race_prize" || type === "rain_win") return Trophy;
-  if (type === "rakeback_claim" || type === "balance_reward_claim") return Gift;
-  return Coins;
-}
-

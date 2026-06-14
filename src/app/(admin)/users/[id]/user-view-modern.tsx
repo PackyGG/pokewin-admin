@@ -54,6 +54,10 @@ import {
   Link2,
   Megaphone,
   GitBranch,
+  Ban,
+  Lock,
+  Ticket,
+  CheckCircle2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -580,6 +584,22 @@ export function UserViewModern({
                     <CopyButton value={user.id} label="User ID" />
                   </span>
                 </div>
+
+                {/* ── FLAGS STRIP ──────────────────────────────────────
+                    A compact, one-row (wrap-safe) strip surfacing the most
+                    important ACTIVE user states at a glance, so an operator
+                    doesn't have to scan the breakdown rows below. Every chip
+                    is gated on a REAL signal already fetched for this view —
+                    no new query, no fabricated flag. The strip collapses to
+                    nothing when the user is clean (active, low/medium risk,
+                    no held vouchers, exempt/unavailable wager). House-POV
+                    coloring per CLAUDE.md. */}
+                <HeroFlagsStrip
+                  statusKey={statusKey}
+                  vouchersValue={vouchersValue}
+                  riskResultPromise={riskResultPromise}
+                  wagerProgressPromise={wagerProgressPromise}
+                />
               </div>
             </div>
 
@@ -733,7 +753,6 @@ export function UserViewModern({
         {activeTab === "overview" && (
           <OverviewTab
             data={data}
-            gamingTxPromise={gamingTxPromise}
             financialTxPromise={financialTxPromise}
             adjustmentsTxPromise={adjustmentsTxPromise}
             pnlResultPromise={pnlResultPromise}
@@ -940,6 +959,157 @@ function HeroRiskBadges({
         </button>
       )}
     </>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  HERO FLAGS STRIP — compact one-row strip of ACTIVE user-state chips
+//
+//  Surfaces the highest-signal states at a glance. Every chip is gated on
+//  a REAL signal already fetched for this view (no new query, nothing
+//  fabricated) and only renders when its condition is TRUE — the strip
+//  collapses to nothing for a clean user. House-POV coloring (CLAUDE.md):
+//    • Banned / Locked     → rose  (account is restricted — risk signal)
+//    • Elevated risk        → tier color (high=orange, critical=rose);
+//                             low/medium are NOT surfaced (clean enough)
+//    • Unclaimed vouchers   → rose  (user holds value = house liability)
+//    • Wager requirement    → met = emerald (gate cleared), $X left = amber
+//  The risk + wager chips read streamed promises, so each lives in its own
+//  <Suspense> island (the synchronous chips paint immediately, the async
+//  ones fill in / self-skip without blocking the identity hero).
+// ───────────────────────────────────────────────────────────────────
+
+function FlagChip({
+  icon: Icon,
+  label,
+  className,
+  title,
+}: {
+  icon: React.ElementType;
+  label: string;
+  className: string;
+  title?: string;
+}) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn("h-5 gap-0.5 py-0 text-[10px]", className)}
+      title={title}
+    >
+      <Icon className="size-2.5" />
+      {label}
+    </Badge>
+  );
+}
+
+function HeroFlagsStrip({
+  statusKey,
+  vouchersValue,
+  riskResultPromise,
+  wagerProgressPromise,
+}: {
+  statusKey: "active" | "locked" | "banned";
+  vouchersValue: number;
+  riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
+  wagerProgressPromise: Promise<UserWagerProgress | null> | null;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1 pt-1.5">
+      {/* Account status — only when restricted (banned/locked). Active =
+          no chip (the green status badge above already conveys "clean"). */}
+      {statusKey === "banned" && (
+        <FlagChip
+          icon={Ban}
+          label="Banned"
+          className="border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+          title="Account is banned"
+        />
+      )}
+      {statusKey === "locked" && (
+        <FlagChip
+          icon={Lock}
+          label="Locked"
+          className="border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+          title="Account is locked"
+        />
+      )}
+
+      {/* Elevated risk — only high / critical tiers surface here (a
+          low/medium user is clean enough not to warrant a flag). The
+          always-present score badge lives in the badge row above; this is
+          the "needs attention" escalation. Skips silently on a failed scan
+          (the badge row already shows the "Risk —" load-failure pill). */}
+      <Suspense fallback={null}>
+        <RiskFlagChip riskResultPromise={riskResultPromise} />
+      </Suspense>
+
+      {/* Unclaimed vouchers — the user is holding voucher value (a card
+          equivalent / house liability per CLAUDE.md). Only when > 0. */}
+      {vouchersValue > 0 && (
+        <FlagChip
+          icon={Ticket}
+          label={`Vouchers ${formatCurrency(vouchersValue)}`}
+          className="border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+          title="User holds unclaimed voucher value (counts against Platform P&L)"
+        />
+      )}
+
+      {/* Wager requirement — met (gate cleared, can withdraw) or $X left.
+          Skips when exempt / unavailable / not kicked. */}
+      {wagerProgressPromise && (
+        <Suspense fallback={null}>
+          <WagerFlagChip promise={wagerProgressPromise} />
+        </Suspense>
+      )}
+    </div>
+  );
+}
+
+function RiskFlagChip({
+  riskResultPromise,
+}: {
+  riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
+}) {
+  const r = use(riskResultPromise);
+  // error → no chip (the badge row already surfaces the load failure).
+  if (r.error) return null;
+  const tier = r.data.tier;
+  if (tier !== "high" && tier !== "critical") return null;
+  return (
+    <FlagChip
+      icon={ShieldAlert}
+      label={`${tierLabel(tier)} risk`}
+      className={RISK_TIER_COLORS[tier]}
+      title={`Risk score ${r.data.score}/100 — ${tierLabel(tier)} tier`}
+    />
+  );
+}
+
+function WagerFlagChip({
+  promise,
+}: {
+  promise: Promise<UserWagerProgress | null>;
+}) {
+  const wp = use(promise);
+  // No data, exempt, or backend-unavailable remaining → not a flag.
+  if (!wp || wp.exempt || wp.remainingUsd == null) return null;
+  if (wp.remainingUsd <= 0) {
+    return (
+      <FlagChip
+        icon={CheckCircle2}
+        label="Wager met"
+        className="border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+        title="Withdrawal wager requirement met — the user can withdraw"
+      />
+    );
+  }
+  return (
+    <FlagChip
+      icon={Hourglass}
+      label={`Wager ${formatCurrency(wp.remainingUsd)} left`}
+      className="border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400"
+      title="Withdrawal wager requirement not yet met"
+    />
   );
 }
 
