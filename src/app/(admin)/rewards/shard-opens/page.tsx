@@ -4,9 +4,7 @@ import {
   Layers,
   Users,
   ArrowDownLeft,
-  ArrowUpRight,
   Scale,
-  Percent,
   PackageOpen,
   AlertTriangle,
   Wallet,
@@ -57,11 +55,6 @@ function fmtShards(n: number): string {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       });
-}
-
-function fmtEdge(pct: number | null): string {
-  if (pct == null || !Number.isFinite(pct)) return "—";
-  return `${pct.toFixed(1)}%`;
 }
 
 /**
@@ -210,9 +203,11 @@ async function EconomyOverviewContent({
 }
 
 /**
- * Shard-pack opens — every open of a pack bought with SHARDS (the secondary,
- * wager-earned currency), with shards spent + shards won, the net house shard
- * flow, a per-pack breakdown, and a paginated feed of individual opens.
+ * Shard-pack opens — every opening of one of the dedicated SHARD packs
+ * (Common / Uncommon / Rare). Each open costs SHARDS (the pack's shard_cost)
+ * and rolls a CARD into inventory worth $X. Shows shards spent (house in) +
+ * the real $ card value pulled (house out), a per-pack breakdown, and a
+ * paginated feed of individual opens.
  *
  * Active-timeframe-only: the active window + active page are parsed from the
  * URL and fetched in ONE keyed Suspense boundary — no eager preload of the
@@ -220,9 +215,11 @@ async function EconomyOverviewContent({
  * wrapped in safeQuery so a slow/failed read degrades to a fallback tile
  * instead of hanging the segment.
  *
- * UNIT/POV: all figures are SHARDS, never USD. House-POV coloring: shards
- * users SPEND into opens (house in) = emerald; shards users WIN (house
- * liability) = rose; net house up = emerald, down = rose.
+ * UNITS/POV: two never-summed quantities. SHARDS SPENT = the wager currency
+ * the house takes in — shards are NOT money, rendered neutral (cyan). CARD
+ * VALUE ($) = the real dollars the house pays out as the rolled card (house
+ * cost) = rose. There is NO shard payout — shard packs return a card, not
+ * shards.
  *
  * SCOPE: UNSCOPED raw activity feed (staff/creator opens shown too) — this is
  * "who opened shard packs and what happened", not the USD GGR/NGR metric
@@ -243,12 +240,10 @@ async function OpensContent({
     summary: {
       totalOpens: 0,
       uniqueOpeners: 0,
-      totalSpent: 0,
-      totalWon: 0,
-      netHouse: 0,
-      avgSpentPerOpen: 0,
-      houseEdgePct: null,
+      totalShardsSpent: 0,
+      avgShardsPerOpen: 0,
       totalCardValueUsd: 0,
+      totalCardCount: 0,
     },
     packs: [],
     feed: { data: [], total: 0, page, perPage, totalPages: 0 },
@@ -278,15 +273,19 @@ async function OpensContent({
       <div className="rounded-2xl border border-dashed bg-card/30 p-6 text-center">
         <Gem className="mx-auto size-7 text-muted-foreground/60" />
         <p className="mt-2 text-sm font-medium">
-          No coin/shard ledger on this database
+          No shard-pack schema on this database
         </p>
         <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
           The connected database has no{" "}
           <code className="rounded bg-muted px-1 py-0.5 text-[11px]">
-            coin_transactions
+            packs
           </code>{" "}
-          table, so shard-pack opens aren&apos;t available here. Switch to a
-          database with the sweepstakes schema (dev) to see shard-pack activity.
+          /{" "}
+          <code className="rounded bg-muted px-1 py-0.5 text-[11px]">
+            game_sessions
+          </code>{" "}
+          tables, so shard-pack opens aren&apos;t available here. Switch to a
+          database with the game schema (dev) to see shard-pack activity.
         </p>
       </div>
     );
@@ -308,12 +307,12 @@ async function OpensContent({
         }
       />
 
-      {/* KPI strip — SHARDS (House-POV colored) PLUS the one USD tile (card
-          value pulled, rose). spent = house in (emerald), won = house out
-          (rose), net house = emerald/rose by sign. opens/openers/avg/edge are
-          neutral readouts (cyan/amber/purple). The USD tile is the only money
-          figure here and is kept visually distinct + labelled "$". */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
+      {/* KPI strip — opens/openers are neutral readouts (cyan/blue). Shards
+          spent = the wager currency the house takes in; shards are NOT money,
+          rendered neutral (cyan). Card value pulled = the only money figure:
+          real dollars the house pays out as the rolled card → rose (house
+          cost), labelled "$", never summed with shards. */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-5">
         <KpiTile
           label="Opens"
           value={formatNumber(summary.totalOpens)}
@@ -328,39 +327,18 @@ async function OpensContent({
           accent="blue"
         />
         <KpiTile
-          label="Shards wagered"
-          value={fmtShards(summary.totalSpent)}
-          sub="house in"
+          label="Shards spent"
+          value={fmtShards(summary.totalShardsSpent)}
+          sub="cost to open · house in"
           icon={ArrowDownLeft}
-          accent="emerald"
-        />
-        <KpiTile
-          label="Shards won"
-          value={fmtShards(summary.totalWon)}
-          sub="house out"
-          icon={ArrowUpRight}
-          accent="rose"
-        />
-        <KpiTile
-          label="Net house"
-          value={fmtShards(summary.netHouse)}
-          sub={summary.netHouse >= 0 ? "shards · house up" : "shards · house down"}
-          icon={Scale}
-          accent={summary.netHouse >= 0 ? "emerald" : "rose"}
+          accent="cyan"
         />
         <KpiTile
           label="Avg per open"
-          value={fmtShards(summary.avgSpentPerOpen)}
-          sub="shards spent"
+          value={fmtShards(summary.avgShardsPerOpen)}
+          sub="shards"
           icon={Gem}
-          accent="amber"
-        />
-        <KpiTile
-          label="House edge"
-          value={fmtEdge(summary.houseEdgePct)}
-          sub="of shards wagered"
-          icon={Percent}
-          accent="purple"
+          accent="cyan"
         />
         {/* THE USD tile — real dollars the house paid out as cards through
             shard-pack opens. This is the only money figure in the strip:
@@ -368,7 +346,7 @@ async function OpensContent({
         <KpiTile
           label="Card value pulled"
           value={formatCurrency(summary.totalCardValueUsd)}
-          sub="real $ out · cards"
+          sub={`real $ out · ${formatNumber(summary.totalCardCount)} card${summary.totalCardCount === 1 ? "" : "s"}`}
           icon={CreditCard}
           accent="rose"
         />
@@ -378,7 +356,7 @@ async function OpensContent({
       <FadeIn>
         <div className="space-y-3">
           <SectionHeading icon={Layers} title="By shard pack" />
-          <StatPanel title="Opens · wagered · won · edge per pack" icon={Layers} accent="cyan">
+          <StatPanel title="Opens · shards spent · card value per pack" icon={Layers} accent="cyan">
             {packs.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">
                 No shard-pack opens in {periodLabel.toLowerCase()}.
@@ -388,48 +366,36 @@ async function OpensContent({
                 {packs.map((p) => (
                   <PanelRow
                     key={p.packId}
-                    label={`${p.packName} · ${formatNumber(p.opens)} open${p.opens === 1 ? "" : "s"} · edge ${fmtEdge(p.houseEdgePct)}`}
+                    label={`${p.packName} · ${formatNumber(p.opens)} open${p.opens === 1 ? "" : "s"} · ${fmtShards(p.shardCost)} shards each`}
                     value={
                       <span className="flex items-center gap-3 tabular-nums">
                         <span
-                          className="text-emerald-600 dark:text-emerald-400"
-                          title="Shards wagered into this pack (house in)"
+                          className="text-cyan-600 dark:text-cyan-400"
+                          title="Total shards spent opening this pack (house in)"
                         >
-                          +{fmtShards(p.spent)}
+                          {fmtShards(p.shardsSpent)} shards
                         </span>
                         <span
-                          className="text-rose-600 dark:text-rose-400"
-                          title="Shards won from this pack (house out)"
+                          className="font-medium text-rose-600 dark:text-rose-400"
+                          title="Real $ value of the cards these opens pulled (house out)"
                         >
-                          -{fmtShards(p.won)}
-                        </span>
-                        <span
-                          className={
-                            "font-medium " +
-                            (p.netHouse >= 0
-                              ? "text-emerald-600 dark:text-emerald-400"
-                              : "text-rose-600 dark:text-rose-400")
-                          }
-                          title="Net house (wagered − won) for this pack"
-                        >
-                          {p.netHouse >= 0 ? "+" : "-"}
-                          {fmtShards(Math.abs(p.netHouse))}
+                          {formatCurrency(p.cardValueUsd)}
                         </span>
                       </span>
                     }
                   />
                 ))}
                 <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-                  Figures here are in shards (a secondary, wager-earned
-                  currency), not USD. Each row shows shards wagered (house in) ·
-                  shards won (house out) · net house. Separately, the{" "}
+                  Each row shows how many shards were spent opening that pack
+                  (the cost, in shards — a secondary, wager-earned currency, not
+                  USD) and the{" "}
                   <span className="text-rose-600 dark:text-rose-400">
                     real $ value of the cards
                   </span>{" "}
-                  these opens rolled into inventory — the true money the house
-                  pays out through the shard-pack mechanic — is shown as
-                  &ldquo;Card value pulled&rdquo; above and per open in the feed
-                  below.
+                  those opens rolled into inventory — the true money the house
+                  pays out through the shard-pack mechanic. Shard packs return a
+                  card, not shards: there is no shard payout. Shard figures and
+                  USD figures are never summed together.
                 </p>
               </div>
             )}
@@ -480,7 +446,7 @@ export default async function ShardPackOpensPage({
           icon={Gem}
           accent="cyan"
           title="Shard Pack Opens"
-          subtitle="The shard economy + every open of a pack bought with shards — shards spent/won (the wager currency) plus the real $ value of the cards each open pulled (the money the house pays out)."
+          subtitle="The shard economy + every opening of the dedicated shard packs (Common / Uncommon / Rare) — the shards each open costs plus the real $ value of the card it pulled (the money the house pays out)."
           action={<OpensPeriodFilter />}
         />
       </PageHero>
@@ -494,14 +460,10 @@ export default async function ShardPackOpensPage({
         <p className="text-xs text-muted-foreground">
           Two units, never mixed.{" "}
           <span className="font-medium">Shards</span> are a secondary,
-          wager-earned currency — the amount bet into / won back from an open
-          (House-POV:{" "}
-          <span className="text-emerald-600 dark:text-emerald-400">
-            shards wagered
-          </span>{" "}
-          are taken in,{" "}
-          <span className="text-rose-600 dark:text-rose-400">shards won</span>{" "}
-          are a liability).{" "}
+          wager-earned currency — the cost to open a shard pack (the house takes
+          them in). A shard pack returns a{" "}
+          <span className="font-medium">card</span>, not shards: there is no
+          shard payout.{" "}
           <span className="font-medium">Card value ($)</span> is the{" "}
           <span className="text-rose-600 dark:text-rose-400">
             real money the house pays out
@@ -548,7 +510,7 @@ export default async function ShardPackOpensPage({
               ))}
             </div>
             <div className="h-48 animate-pulse rounded-2xl border bg-muted/30" />
-            <TableSkeleton rows={Math.min(perPage, 10)} columns={7} />
+            <TableSkeleton rows={Math.min(perPage, 10)} columns={6} />
             <PaginationSkeleton />
           </div>
         }
