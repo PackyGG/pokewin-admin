@@ -254,21 +254,52 @@ model admin_excluded_user_balance_v2 {
   @@index([set_at(sort: Desc)], map: "admin_excluded_user_balance_v2_set_at_idx")
 }
 
-// Custom role definitions for the granular-permissions system. Four
-// `is_system = true` rows (admin, support, marketing, creator) are seeded
-// by prisma/admin/seed.ts and map to the hardcoded admin_role enum values.
-// Additional rows created through the admin UI carry `is_system = false`
-// and can be freely edited / deleted.
+// Custom role definitions for the granular-permissions system.
 //
-// `capabilities` is a string[] of keys from src/lib/permissions.ts
-// (CapabilityKey). Both page access (`pages.*`) and action capabilities
-// (`domain.action`) live in this single array.
+// RoleV2 (P0 — see ROLE_REDESIGN_DESIGN.md): the six built-in `admin_role`
+// enum values are now ALSO materialized here as `is_system = true` rows,
+// keyed by the NEW nullable `system_key` column (the enum value). Custom
+// roles created through the admin UI carry `system_key = NULL` +
+// `is_system = false` and can be freely edited / deleted. This unifies the
+// built-ins and customs into one table while keeping the `admin_role` enum
+// (still load-bearing for `admin_users.role` / `roles`). Seeded by
+// prisma/admin/seed-rolev2.ts (idempotent, run-once); identity is
+// `system_key`, NOT `name` (a live custom row is named "creator manager", so
+// the system rows use distinct canonical labels — see the seed).
+//
+// `capabilities` is a string[] in the same flat vocabulary `allowed_pages`
+// uses: page routes ("/users") + `__can_*` capability flags (+ value tokens).
+// For a system row it is BYTE-EQUAL to ROLE_BASELINES[enum].tokens
+// (src/lib/role-baselines.ts), proven by the parity harness.
+//
+// The six `*_limit_*` columns are the TYPED per-role limit slots (RoleV2
+// P0). All NULL today (limits live per-user in `admin_balance_limits` /
+// value tokens); these are the future home of per-role caps and stay NULL
+// in this behavior-neutral phase. Decimal(12,2) matches `admin_balance_limits`.
+//
+// NOTE: applied to the ADMIN DB via `prisma db execute`
+// (prisma/admin/sql/2026-06-14_rolev2_columns.up.sql) — NOT a Prisma
+// migration (the admin DB has a drifted migration history; never
+// `migrate deploy` / `db push` on it). This model block is the MIRROR so
+// typed `adminDb.admin_roles.*` queries see the new columns.
 model admin_roles {
   id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name         String        @unique
+  // Built-in identity. NULL for custom roles (Postgres allows many NULLs
+  // under a UNIQUE constraint, so custom rows never collide). When set,
+  // this row IS the built-in baseline for that enum value.
+  system_key   admin_role?   @unique
   description  String?
   is_system    Boolean       @default(false)
   capabilities String[]      @default([])
+  // Typed per-role limit slots (RoleV2 P0). All NULL in the behavior-neutral
+  // foundation phase — wired into enforcement in a later phase.
+  balance_limit_daily    Decimal? @db.Decimal(12, 2)
+  balance_limit_weekly   Decimal? @db.Decimal(12, 2)
+  balance_limit_monthly  Decimal? @db.Decimal(12, 2)
+  issuance_limit_daily   Decimal? @db.Decimal(12, 2)
+  issuance_limit_weekly  Decimal? @db.Decimal(12, 2)
+  issuance_limit_monthly Decimal? @db.Decimal(12, 2)
   created_at   DateTime      @default(now()) @db.Timestamptz(6)
   updated_at   DateTime      @updatedAt        @db.Timestamptz(6)
   admin_users  admin_users[]

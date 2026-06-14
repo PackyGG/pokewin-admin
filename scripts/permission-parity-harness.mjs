@@ -192,15 +192,37 @@ try {
   const cr = await client.query(\`SELECT id, name, capabilities FROM admin_roles\`);
   customRoles = cr.rows.map((r) => ({ id: r.id, name: r.name, capabilities: r.capabilities ?? [] }));
 } catch { customRoles = []; }
+// RoleV2 P0: the six built-in roles are now ALSO rows in admin_roles, keyed by
+// system_key (the admin_role enum value). Probe them so the harness can assert
+// each system row's capabilities == the code baseline. Degrades to [] if the
+// system_key column doesn't exist yet (pre-migration) — then the assertion is
+// skipped (no system rows) and per-user parity still proves behavior.
+let systemRoles = [];
+try {
+  const sr = await client.query(
+    \`SELECT system_key, name, is_system, capabilities
+       FROM admin_roles
+      WHERE system_key IS NOT NULL
+      ORDER BY system_key ASC\`,
+  );
+  systemRoles = sr.rows.map((r) => ({
+    systemKey: r.system_key,
+    name: r.name,
+    isSystem: r.is_system === true,
+    capabilities: r.capabilities ?? [],
+  }));
+} catch { systemRoles = []; }
 await client.end();
 const out = {
   meta: {
     hasGrantsColumn: hasGrants, hasRevokesColumn: hasRevokes,
     hasRolesColumn: hasRoles, hasRoleIdColumn: hasRoleId,
     userCount: res.rows.length, customRoleCount: customRoles.length,
+    systemRoleCount: systemRoles.length,
     probedAt: new Date().toISOString(),
   },
   customRoles,
+  systemRoles,
   users: res.rows.map((r) => ({
     id: r.id, username: r.username, role: r.role,
     roles: r.roles ?? [], allowedPages: r.allowed_pages ?? [],
@@ -338,6 +360,61 @@ function main() {
     if (!pass) failures++;
   }
 
+  // ── RoleV2 P0: seed == code assertion ──────────────────────────────────────
+  // Every built-in `admin_roles` system row (system_key not null) must carry
+  // capabilities that set-equal the code baseline HARNESS_ROLE_BASELINES[key]
+  // (which the CI fixture proves equals the real ROLE_BASELINES). This is the
+  // behavior-neutrality proof for the storage unification: getBaselineMap()
+  // === code ⇒ identical materializer output ⇒ no re-materialization at deploy.
+  const systemRoles = snapshot.systemRoles ?? [];
+  console.log(
+    `\n[parity] system-role seed == code (${systemRoles.length} system rows):\n`,
+  );
+  if (systemRoles.length === 0) {
+    console.log(
+      "  (no system rows found — system_key column may not be applied/seeded yet; per-user parity above still holds)",
+    );
+  }
+  // Track which built-in enum keys we saw, so a MISSING system row also fails.
+  const seenSystemKeys = new Set();
+  for (const sr of systemRoles) {
+    seenSystemKeys.add(sr.systemKey);
+    const expected = HARNESS_ROLE_BASELINES[sr.systemKey];
+    if (!expected) {
+      console.log(
+        `  [FAIL] system_key=${sr.systemKey} — unknown built-in role (no code baseline)`,
+      );
+      failures++;
+      continue;
+    }
+    const have = sanitize(sr.capabilities);
+    const want = sanitize(expected);
+    const ok = setEq(have, want) && sr.isSystem === true;
+    if (ok) {
+      console.log(
+        `  [PASS] ${String(sr.systemKey).padEnd(16)} name="${sr.name}" capabilities ${have.length} == code ${want.length} · is_system=${sr.isSystem}`,
+      );
+    } else {
+      const missing = want.filter((k) => !have.includes(k));
+      const extra = have.filter((k) => !want.includes(k));
+      console.log(
+        `  [FAIL] ${String(sr.systemKey).padEnd(16)} name="${sr.name}" is_system=${sr.isSystem} · MISSING ${JSON.stringify(missing)} EXTRA ${JSON.stringify(extra)}`,
+      );
+      failures++;
+    }
+  }
+  // A system row must exist for EVERY built-in enum value once seeded. Only
+  // enforce completeness when at least one system row is present (so a fully
+  // pre-migration DB doesn't fail here — that path is covered by per-user parity).
+  if (systemRoles.length > 0) {
+    for (const key of Object.keys(HARNESS_ROLE_BASELINES)) {
+      if (!seenSystemKeys.has(key)) {
+        console.log(`  [FAIL] missing system row for built-in role "${key}"`);
+        failures++;
+      }
+    }
+  }
+
   // Derived override plan (feeds the owner-gated Phase-C backfill).
   console.log("\n[parity] derived override plan (per user → grants / revokes):");
   for (const p of plan) {
@@ -353,12 +430,16 @@ function main() {
   console.log("");
   if (failures === 0) {
     console.log(
-      `✅ all ${snapshot.users.length} users reconcile — baseline ∪ grants \\ revokes == current allowed_pages for every user (admins: gate-visible [] + stored array round-trips). Behavior is preserved.`,
+      `✅ all ${snapshot.users.length} users reconcile — baseline ∪ grants \\ revokes == current allowed_pages for every user (admins: gate-visible [] + stored array round-trips)` +
+        (systemRoles.length > 0
+          ? ` AND all ${systemRoles.length} built-in system rows' capabilities == code baselines`
+          : "") +
+        `. Behavior is preserved.`,
     );
     process.exit(0);
   } else {
     console.error(
-      `❌ ${failures}/${snapshot.users.length} users FAILED parity — do NOT cut over. See the MISSING/EXTRA diffs above.`,
+      `❌ ${failures} parity check(s) FAILED across ${snapshot.users.length} users + ${systemRoles.length} system rows — do NOT cut over. See the MISSING/EXTRA diffs above.`,
     );
     process.exit(1);
   }

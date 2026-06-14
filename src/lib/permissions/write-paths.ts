@@ -22,9 +22,12 @@ import "server-only";
  *     a clean baseline and dropping their manual adjustments.
  */
 
+import { unstable_cache } from "next/cache";
 import { adminDb } from "@/lib/admin-db";
-import { getEffectiveRoles } from "@/lib/admin-roles";
+import { getEffectiveRoles, isAdminRole } from "@/lib/admin-roles";
 import { readAdminUserWithOverrides } from "@/lib/admin-user-roles";
+import type { BaselineMap } from "@/lib/role-baselines";
+import { sanitizePermissionKeys } from "@/app/(admin)/settings/roles/permissions-utils";
 import type {
   PermissionToken,
   PermissionOverride,
@@ -112,3 +115,56 @@ export async function loadUserPermissionState(
     override,
   };
 }
+
+/**
+ * RoleV2 P1 — the DB-backed built-in baseline map (the EDITABLE source of each
+ * built-in role's tokens). Reads every `admin_roles` system row
+ * (`system_key not null`) and projects `{ system_key → capabilities }` into a
+ * {@link BaselineMap}. Threaded into the materializer by the write paths so a
+ * future edit of a built-in role's `capabilities` takes effect, while staying
+ * BEHAVIOR-NEUTRAL today: the seeded rows are byte-equal to the code
+ * `ROLE_BASELINES`, so the returned map produces identical materializer output.
+ *
+ * `admin` is intentionally EXCLUDED from the map even if a system row exists
+ * for it: admin is a hard total-bypass superuser and the materializer
+ * short-circuits to `[]` before consulting any baseline, so an `admin` entry
+ * could never change its access. Omitting it keeps the map honest (the gate
+ * ignores the seeded admin row) and matches the locked design decision.
+ *
+ * Cached via `unstable_cache` (tag `rolev2-baselines`, 300s) — the built-in
+ * baselines change only when an admin edits a system role (a later phase),
+ * which will `revalidateTag("rolev2-baselines")`. Degrades to an EMPTY map on
+ * ANY error (e.g. the `system_key` column not yet applied) — an empty map
+ * means full fallback to the code `ROLE_BASELINES`, i.e. identical behavior.
+ * `capabilities` is sanitized (value-token-aware) so a stale token in a row
+ * can't leak into a materialized array.
+ */
+export const getBaselineMap = unstable_cache(
+  async (): Promise<BaselineMap> => {
+    try {
+      const rows = await adminDb.admin_roles.findMany({
+        where: { system_key: { not: null } },
+        select: { system_key: true, capabilities: true },
+      });
+      const map: BaselineMap = {};
+      for (const row of rows) {
+        const key = row.system_key;
+        // Skip null (shouldn't happen given the WHERE) and the admin bypass row.
+        if (!key || key === "admin" || !isAdminRole(key)) continue;
+        map[key] = sanitizePermissionKeys(row.capabilities ?? []);
+      }
+      return map;
+    } catch (err) {
+      // The column may not exist yet (applied via prisma db execute, owner-
+      // gated). An empty map = full fallback to code ROLE_BASELINES = identical
+      // behavior. Never let a baseline-map read crash a write path.
+      console.error(
+        "[getBaselineMap] falling back to code baselines (DB read failed):",
+        err instanceof Error ? err.message : err,
+      );
+      return {};
+    }
+  },
+  ["rolev2-baseline-map"],
+  { tags: ["rolev2-baselines"], revalidate: 300 },
+);

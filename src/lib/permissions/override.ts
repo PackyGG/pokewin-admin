@@ -19,7 +19,7 @@
  */
 
 import { getEffectiveRoles } from "@/lib/admin-roles";
-import { baselineTokensFor } from "@/lib/role-baselines";
+import { baselineTokensFor, type BaselineMap } from "@/lib/role-baselines";
 import { computeEffectivePermissions } from "@/lib/permissions/materialize";
 import type {
   PermissionToken,
@@ -36,9 +36,10 @@ import type {
 export function baselineUnionFor(
   roles: readonly string[],
   customRoleTokens: readonly PermissionToken[],
+  baselines?: BaselineMap,
 ): PermissionToken[] {
   const set = new Set<PermissionToken>();
-  for (const r of roles) for (const t of baselineTokensFor(r)) set.add(t);
+  for (const r of roles) for (const t of baselineTokensFor(r, baselines)) set.add(t);
   for (const t of customRoleTokens) set.add(t);
   return [...set];
 }
@@ -92,11 +93,19 @@ export type PermissionStateCore = {
  */
 export function effectiveOverrideFor(
   state: PermissionStateCore,
+  baselines?: BaselineMap,
 ): PermissionOverride {
   const hasExplicit =
     state.override.grants.length > 0 || state.override.revokes.length > 0;
   if (hasExplicit) return state.override;
-  const baseline = baselineUnionFor(state.roles, state.customRoleTokens);
+  // Derive against the SAME baseline the re-materialization will use, so a
+  // never-edited user's manual adjustments are reconstructed correctly even
+  // when the built-in baseline comes from the DB map.
+  const baseline = baselineUnionFor(
+    state.roles,
+    state.customRoleTokens,
+    baselines,
+  );
   return deriveOverrideFromAllowedPages(state.allowedPages, baseline);
 }
 
@@ -112,14 +121,16 @@ export function rematerializeForRoleChange(
   state: PermissionStateCore,
   newRoles: readonly string[],
   customRoleTokens: readonly PermissionToken[],
+  baselines?: BaselineMap,
 ): { allowedPages: string[]; override: PermissionOverride } {
-  const override = effectiveOverrideFor(state);
+  const override = effectiveOverrideFor(state, baselines);
   const effNewRoles = getEffectiveRoles(newRoles[0] ?? state.role, newRoles);
   const allowedPages = computeEffectivePermissions({
     role: effNewRoles[0] ?? state.role,
     roles: effNewRoles,
     customRoleTokens,
     override,
+    baselines,
   });
   return { allowedPages, override };
 }
@@ -133,11 +144,13 @@ export function rematerializeForRoleChange(
 export function materializeForOverride(
   state: PermissionStateCore,
   override: PermissionOverride,
+  baselines?: BaselineMap,
 ): string[] {
   return computeEffectivePermissions({
     role: state.role,
     roles: state.roles,
     customRoleTokens: state.customRoleTokens,
     override,
+    baselines,
   });
 }

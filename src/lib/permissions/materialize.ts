@@ -50,12 +50,17 @@ export function computeEffectivePermissions(
   const roles = getEffectiveRoles(input.role, input.roles);
 
   // Total-bypass sentinel — matches getUserPermissions returning [] for any
-  // admin (the gate then bypasses every page/capability check).
+  // admin (the gate then bypasses every page/capability check). Stays FIRST
+  // and unaffected by `baselines`: admin's access is the gate bypass, never a
+  // token list, so an edited admin baseline can't widen OR narrow it here.
   if (roles.includes("admin")) return [];
 
   const set = new Set<PermissionToken>();
   for (const role of roles) {
-    for (const token of baselineTokensFor(role)) set.add(token);
+    // RoleV2 P1: `input.baselines` (the DB-backed map) overrides the code
+    // baseline per-role when present; otherwise falls back to ROLE_BASELINES.
+    // Behavior-neutral at migration (seeded map === code).
+    for (const token of baselineTokensFor(role, input.baselines)) set.add(token);
   }
   for (const token of input.customRoleTokens) set.add(token);
   for (const token of input.override.grants) set.add(token);

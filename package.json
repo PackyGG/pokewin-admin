@@ -11,6 +11,7 @@
 		"changelog:regen": "node scripts/generate-changelog.mjs",
 		"admin:migrate": "prisma migrate dev --schema=prisma/admin/schema.prisma --config=prisma/admin/prisma.config.ts",
 		"admin:seed": "npx tsx prisma/admin/seed.ts",
+		"admin:seed-rolev2": "npx tsx prisma/admin/seed-rolev2.ts",
 		"test:e2e": "playwright test",
 		"test:e2e:ui": "playwright test --ui",
 		"test:e2e:headed": "playwright test --headed",

@@ -25,6 +25,22 @@ import type { AdminRole } from "@/lib/admin-roles";
 import type { RoleBaseline, PermissionToken } from "@/lib/permissions/types";
 
 /**
+ * An OPTIONAL override of the code-defined built-in baselines, keyed by
+ * `AdminRole`. The DB-backed source (RoleV2 P1): the `admin_roles` system
+ * rows (`system_key not null`) supply each built-in role's `capabilities` so
+ * the materializer can read the EDITABLE baseline instead of the hardcoded
+ * `ROLE_BASELINES`. `Partial` because a map may cover only some roles — any
+ * role absent from the map falls back to the code baseline (least surprise,
+ * and the behavior-neutral default before any built-in is edited).
+ *
+ * Built from the live rows by `getBaselineMap()`
+ * (src/lib/permissions/write-paths.ts). At migration the seeded rows are
+ * BYTE-EQUAL to `ROLE_BASELINES`, so a provided map produces IDENTICAL
+ * materializer output — the foundation is behavior-neutral.
+ */
+export type BaselineMap = Partial<Record<AdminRole, PermissionToken[]>>;
+
+/**
  * The full out-of-the-box permission set for `pack_creator`, inlined here as
  * the canonical code baseline. It is byte-equal (as a SET) to
  * `PACK_CREATOR_DEFAULT_PAGES` in
@@ -173,8 +189,22 @@ export const ROLE_BASELINES: Record<AdminRole, RoleBaseline> = {
  * its access is the gate bypass, not a token list, so callers that union
  * baselines still must apply the admin short-circuit themselves (the
  * materializer does).
+ *
+ * RoleV2 P1: an OPTIONAL `map` (the DB-backed `BaselineMap` from the
+ * `admin_roles` system rows) takes precedence WHEN it has an entry for this
+ * role — that is the editable source. Any role NOT in the map (or no map at
+ * all) falls back to the code `ROLE_BASELINES`. Because the seeded rows are
+ * byte-equal to `ROLE_BASELINES` at migration, passing the map is
+ * behavior-neutral until a built-in is actually edited.
  */
-export function baselineTokensFor(role: AdminRole | string): PermissionToken[] {
+export function baselineTokensFor(
+  role: AdminRole | string,
+  map?: BaselineMap,
+): PermissionToken[] {
+  if (map) {
+    const fromMap = (map as Record<string, PermissionToken[] | undefined>)[role];
+    if (fromMap) return [...fromMap];
+  }
   const baseline = (ROLE_BASELINES as Record<string, RoleBaseline | undefined>)[
     role
   ];

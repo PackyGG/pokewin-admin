@@ -13,6 +13,7 @@
  */
 
 import type { AdminRole } from "@/lib/admin-roles";
+import type { BaselineMap } from "@/lib/role-baselines";
 
 /**
  * A single permission token. Tokens live in the same flat vocabulary the
@@ -53,6 +54,10 @@ export type PermissionToken = string;
  *              existing `ensureSupportBaseline` / `ensurePackCreatorCapabilities`
  *              behavior). Carried here for documentation + Phase C; Phase A
  *              does not act on it. Always a subset of `tokens`.
+ * - `limits`  — OPTIONAL typed per-role limit slots (RoleV2 P0). All-null in
+ *              the behavior-neutral foundation phase; mirrors the six
+ *              `*_limit_*` columns on the `admin_roles` system row. Omitted /
+ *              `EMPTY_ROLE_LIMITS` means "no per-role cap" (the state today).
  */
 export type RoleBaseline = {
   role: AdminRole;
@@ -61,6 +66,54 @@ export type RoleBaseline = {
   locked: boolean;
   bypass: boolean;
   stickyTokens: PermissionToken[];
+  limits?: RoleLimits;
+};
+
+/**
+ * Typed per-role limit slots (RoleV2 P0). Mirrors the six `*_limit_*` Decimal
+ * columns on `admin_roles`. A `null` slot = "no cap for this period". All
+ * `null` in the behavior-neutral foundation phase (limits live per-user in
+ * `admin_balance_limits` / value tokens today); these are the future home of
+ * per-role caps. `issuance` (gift-card / voucher issuance caps) is optional —
+ * a role may carry only balance-adjustment caps.
+ */
+export type RoleLimits = {
+  balanceAdjustment: {
+    daily: number | null;
+    weekly: number | null;
+    monthly: number | null;
+  };
+  issuance?: {
+    daily: number | null;
+    weekly: number | null;
+    monthly: number | null;
+  };
+};
+
+/** The all-null limit set — "no per-role cap" (every role's state today). */
+export const EMPTY_ROLE_LIMITS: RoleLimits = {
+  balanceAdjustment: { daily: null, weekly: null, monthly: null },
+  issuance: { daily: null, weekly: null, monthly: null },
+};
+
+/**
+ * A role as a unified, editable definition (RoleV2 P1). Spans BOTH a built-in
+ * `admin_roles` system row (`systemKey` set, `isSystem === true`) AND a custom
+ * role (`systemKey === null`, `isSystem === false`). The materializer does NOT
+ * consume this directly — it remains a flat-token function — but the editor /
+ * baseline-map seam reasons in these terms. `capabilities` is the flat token
+ * set (page routes ∪ `__can_*` flags ∪ value tokens) byte-equal to a built-in
+ * row's `ROLE_BASELINES[systemKey].tokens` at migration.
+ */
+export type RoleDefinition = {
+  id: string;
+  name: string;
+  description: string | null;
+  /** The built-in enum key, or `null` for a custom role. */
+  systemKey: AdminRole | null;
+  isSystem: boolean;
+  capabilities: PermissionToken[];
+  limits: RoleLimits;
 };
 
 /**
@@ -94,10 +147,17 @@ export type PermissionOverride = {
  *                        role (the `admin_roles` table's `capabilities`).
  *                        Empty when the user holds no custom role.
  * - `override`         — the per-user grants/revokes layer above.
+ * - `baselines`        — OPTIONAL DB-backed override of the built-in role
+ *                        baselines (RoleV2 P1). When supplied, the materializer
+ *                        reads each built-in role's tokens from this map
+ *                        instead of the code `ROLE_BASELINES`, falling back to
+ *                        code for any role the map omits. Behavior-neutral at
+ *                        migration (the seeded map === code).
  */
 export type UserPermissionInput = {
   role: string;
   roles: readonly string[] | null | undefined;
   customRoleTokens: readonly PermissionToken[];
   override: PermissionOverride;
+  baselines?: BaselineMap;
 };

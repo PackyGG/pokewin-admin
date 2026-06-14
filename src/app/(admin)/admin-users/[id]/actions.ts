@@ -11,6 +11,7 @@ import { sanitizePermissionKeys } from "@/app/(admin)/settings/roles/permissions
 import {
   loadUserPermissionState,
   materializeForOverride,
+  getBaselineMap,
 } from "@/lib/permissions/write-paths";
 import { wouldReduceOwnAccessViaOverride } from "@/lib/admin-guards";
 
@@ -106,7 +107,10 @@ export async function updateUserPermissions(
 
   // Re-materialize allowed_pages = role/custom baseline ∪ grants \ revokes
   // via the canonical materializer (the single writer for every path).
-  const allowedPages = materializeForOverride(state, sanitizedOverride);
+  // RoleV2 P1: thread the DB-backed built-in baseline map (byte-equal to code
+  // at migration → identical output). The per-user override is unchanged.
+  const baselines = await getBaselineMap();
+  const allowedPages = materializeForOverride(state, sanitizedOverride, baselines);
 
   // Guard 2 — self-demotion. An operator can't reduce their OWN access through
   // the per-user editor. (In practice an admin can't reach here for themselves

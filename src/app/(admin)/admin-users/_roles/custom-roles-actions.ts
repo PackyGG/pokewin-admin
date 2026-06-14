@@ -12,6 +12,7 @@ import {
 import {
   loadUserPermissionState,
   rematerializeForRoleChange,
+  getBaselineMap,
 } from "@/lib/permissions/write-paths";
 
 // ---------------------------------------------------------------------------
@@ -243,6 +244,10 @@ export async function updateRole(
 
   // Precompute each assigned user's re-materialized allowed_pages (reads run
   // outside the write transaction; the writes are batched atomically below).
+  // RoleV2 P1: read the DB-backed built-in baseline map ONCE and thread it
+  // through every re-materialization (byte-equal to code at migration →
+  // identical output).
+  const baselines = await getBaselineMap();
   const refreshed: { id: string; allowedPages: string[] }[] = [];
   for (const u of assigned) {
     const state = await loadUserPermissionState(u.id);
@@ -251,6 +256,7 @@ export async function updateRole(
       state,
       state.roles,
       capabilities, // the NEW custom-role capability set
+      baselines,
     );
     refreshed.push({ id: u.id, allowedPages });
   }
@@ -362,10 +368,14 @@ export async function assignRoleToAdminUser(
   }
 
   // Re-materialize with the NEW custom-role tokens; built-in roles unchanged.
+  // RoleV2 P1: thread the DB-backed built-in baseline map (byte-equal to code
+  // at migration → identical output).
+  const baselines = await getBaselineMap();
   const { allowedPages: newAllowed } = rematerializeForRoleChange(
     state,
     state.roles,
     newPreset,
+    baselines,
   );
 
   await adminDb.admin_users.update({

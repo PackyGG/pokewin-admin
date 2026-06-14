@@ -31,7 +31,7 @@ import {
   isValueToken,
 } from "@/app/(admin)/settings/roles/permissions-utils";
 import { HARNESS_ROLE_BASELINES } from "../permission-parity-harness.mjs";
-import { getEffectiveRoles } from "@/lib/admin-roles";
+import { getEffectiveRoles, ALL_ADMIN_ROLES } from "@/lib/admin-roles";
 
 // NOTE: the lock-step between ROLE_BASELINES.pack_creator and the runtime
 // PACK_CREATOR_DEFAULT_PAGES (src/lib/pack-creator/ensure-capabilities.ts) is
@@ -115,6 +115,36 @@ test("harness embedded baselines match the source ROLE_BASELINES", () => {
     assert.ok(
       setEq(real, harness),
       `harness baseline for ${role} drifted from ROLE_BASELINES`,
+    );
+  }
+});
+
+// ── 2b. RoleV2 seed source == code == harness (the seed==code drift guard) ──
+// The RoleV2 seed (prisma/admin/seed-rolev2.ts) persists, for EVERY built-in
+// `admin_role` value, `capabilities = ROLE_BASELINES[role].tokens` — imported
+// from THE SAME module this test imports. The live harness then asserts each
+// persisted system row's capabilities == HARNESS_ROLE_BASELINES[key]. This
+// test pins the third edge of that triangle into CI with NO DB: the exact
+// token source the seed writes (ROLE_BASELINES[enum].tokens, iterated over the
+// same ALL_ADMIN_ROLES the seed loops) must set-equal the harness baseline. If
+// any built-in baseline is edited in only ONE place, this fails the build —
+// the seed, the code, and the harness can never silently diverge.
+test("RoleV2 seed token source (ROLE_BASELINES) set-equals the harness baseline for every built-in role", () => {
+  // The seed iterates exactly these enum values.
+  assert.equal(
+    ALL_ADMIN_ROLES.length,
+    Object.keys(HARNESS_ROLE_BASELINES).length,
+    "ALL_ADMIN_ROLES count must match the harness baseline key count",
+  );
+  for (const role of ALL_ADMIN_ROLES) {
+    // What the seed WILL write for this role (its literal source expression).
+    const seedSource = ROLE_BASELINES[role].tokens;
+    // What the live harness asserts the persisted row equals.
+    const harness = (HARNESS_ROLE_BASELINES as Record<string, string[]>)[role];
+    assert.ok(harness, `harness missing baseline for built-in role ${role}`);
+    assert.ok(
+      setEq(seedSource, harness),
+      `seed source for ${role} (${seedSource.length}) must set-equal harness baseline (${harness.length}) — seed/code/harness drift`,
     );
   }
 });

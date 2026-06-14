@@ -16,6 +16,7 @@ import { readAdminUserWithRoles, writeAdminUserWithRoles } from "@/lib/admin-use
 import {
   loadUserPermissionState,
   rematerializeForRoleChange,
+  getBaselineMap,
 } from "@/lib/permissions/write-paths";
 import {
   countOtherActiveEffectiveAdmins,
@@ -347,10 +348,15 @@ export async function setAdminRoles(
   // new roles → materializer returns [] (gate bypass). The persisted override
   // columns are unchanged here (a role change never edits the per-user layer).
   // `rematerializeForRoleChange` normalizes the role list via getEffectiveRoles.
+  // RoleV2 P1: thread the DB-backed built-in baseline map (byte-equal to code
+  // at migration → identical output; both the derived override AND the new
+  // materialization use it consistently).
+  const baselines = await getBaselineMap();
   const { allowedPages: mergedAllowed } = rematerializeForRoleChange(
     state,
     roles,
     state.customRoleTokens,
+    baselines,
   );
 
   // Resilient to the un-applied `roles` migration: if the additive `roles`
