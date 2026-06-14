@@ -13,6 +13,7 @@ import {
   Plus,
   SlidersHorizontal,
   Sparkles,
+  Timer,
   Trophy,
   type LucideIcon,
 } from "lucide-react";
@@ -35,6 +36,7 @@ export const SECURITY_SECTION_ICONS = {
   hourglass: Hourglass,
   bitcoin: Bitcoin,
   sliders: SlidersHorizontal,
+  timer: Timer,
   plus: Plus,
 } as const satisfies Record<string, LucideIcon>;
 

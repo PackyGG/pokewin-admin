@@ -11,6 +11,7 @@ import { SourceWagerWeightsCard } from "./source-wager-weights-card";
 import { MultiplierWagerWeightsCard } from "./multiplier-wager-weights-card";
 import { RewardExpiryCard } from "./reward-expiry-card";
 import { CryptoFeesCard } from "./crypto-fees-card";
+import { VaultLockCard, type VaultLockTime } from "./vault-lock-card";
 import type { SiteConfigRow } from "@/lib/queries/security";
 import type { WagerRequirementDefaults } from "@/lib/backend-api/wager-requirements";
 import type { LeaderboardWagerWeights } from "@/lib/backend-api/leaderboard-wager-weights";
@@ -30,6 +31,7 @@ import type { CryptoFees } from "@/lib/backend-api/crypto-fees";
 export function SecurityPageSections({
   config,
   rainConfigMoved,
+  vaultLockTimes,
   wagerDefaults,
   leaderboardWeights,
   rakebackWeights,
@@ -42,6 +44,7 @@ export function SecurityPageSections({
 }: {
   config: SiteConfigRow[];
   rainConfigMoved: boolean;
+  vaultLockTimes: VaultLockTime[];
   wagerDefaults: WagerRequirementDefaults | null;
   leaderboardWeights: LeaderboardWagerWeights | null;
   rakebackWeights: RakebackWagerWeights | null;
@@ -54,6 +57,10 @@ export function SecurityPageSections({
 }) {
   return (
     <div className="space-y-6">
+      <CollapsibleSecuritySection icon="timer" title="Vault Lock Times">
+        <VaultLockCard vaultLockTimes={vaultLockTimes} />
+      </CollapsibleSecuritySection>
+
       <CollapsibleSecuritySection icon="banknote" title="Withdrawal Wager Requirements">
         <WagerRequirementCard initial={wagerDefaults} />
       </CollapsibleSecuritySection>

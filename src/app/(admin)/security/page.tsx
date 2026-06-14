@@ -1,6 +1,6 @@
 import { Lock } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
-import { getSiteConfig } from "@/lib/queries/security";
+import { getSiteConfig, getVaultLockTimes } from "@/lib/queries/security";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { SecurityPageSections } from "./security-page-sections";
@@ -74,6 +74,7 @@ export default async function SecurityPage() {
     multiplierWeightsResult,
     rewardExpiryResult,
     cryptoFeesResult,
+    vaultLockTimesResult,
   ] = await Promise.allSettled([
     getSiteConfig(),
     getWagerRequirementDefaults(),
@@ -85,6 +86,7 @@ export default async function SecurityPage() {
     getMultiplierWagerWeights(),
     getRewardExpiry(),
     getCryptoFees(),
+    getVaultLockTimes(),
   ]);
 
   let allConfig: Awaited<ReturnType<typeof getSiteConfig>> = [];
@@ -146,13 +148,18 @@ export default async function SecurityPage() {
   const cryptoFees: CryptoFees | null =
     cryptoFeesResult.status === "fulfilled" ? cryptoFeesResult.value : null;
 
+  const vaultLockTimes =
+    vaultLockTimesResult.status === "fulfilled"
+      ? vaultLockTimesResult.value
+      : [];
+
   return (
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
           icon={Lock}
           title="Security"
-          subtitle="Country restrictions, brute-force protection, and platform lockdown controls."
+          subtitle="Vault lock windows, wager weights, brute-force protection, and platform lockdown controls."
         />
       </PageHero>
 
@@ -160,6 +167,7 @@ export default async function SecurityPage() {
         <SecurityPageSections
           config={config}
           rainConfigMoved={hasMovedKeys}
+          vaultLockTimes={vaultLockTimes}
           wagerDefaults={wagerDefaults}
           leaderboardWeights={leaderboardWeights}
           rakebackWeights={rakebackWeights}

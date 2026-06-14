@@ -7,19 +7,21 @@ import { Button } from "@/components/ui/button";
 import { PageHero } from "@/components/modern-panels";
 
 /**
- * Route-level error boundary for the /settings tree (settings + roles,
- * roles/[id]).
+ * Route-level error boundary for the /settings/roles tree (roles list +
+ * roles/[id] editor).
  *
- * The settings pages read admin config + role/permission definitions
- * from the admin DB. A failed query or a stale column would otherwise
- * bubble to the umbrella `(admin)/error.tsx`; this boundary scopes it to
- * /settings. The reset path re-runs the server render without a full
- * reload.
+ * Relocated here when the /settings index page was removed (its sections
+ * moved to /security and /system/geo-blocking). The roles subtree is the
+ * only thing left under /settings, and it reads role / permission
+ * definitions from the admin DB — a failed query or a stale column would
+ * otherwise bubble to the umbrella `(admin)/error.tsx`; this boundary keeps
+ * it scoped to the roles tree. The reset path re-runs the server render
+ * without a full reload.
  *
  * SECURITY: the raw `error.message` is never rendered — only the digest
  * (safe correlation handle) is shown. Full stack lives in server logs.
  */
-export default function SettingsError({
+export default function RolesError({
   error,
   reset,
 }: {
@@ -27,7 +29,7 @@ export default function SettingsError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[settings] page error boundary caught:", error);
+    console.error("[settings/roles] page error boundary caught:", error);
   }, [error]);
 
   return (
@@ -39,11 +41,11 @@ export default function SettingsError({
           </div>
           <div className="flex-1">
             <h1 className="text-xl font-semibold leading-tight tracking-tight">
-              Couldn&apos;t load settings
+              Couldn&apos;t load roles
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              The settings query failed while rendering. The error was logged
-              — no setting, role, or permission was modified by this error.
+              The roles query failed while rendering. The error was logged
+              — no role or permission was modified by this error.
               {error.digest && (
                 <span className="ml-1 font-mono text-xs">
                   (digest {error.digest})
@@ -56,11 +58,10 @@ export default function SettingsError({
 
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
-          The settings pages read admin config and role / permission
-          definitions from the admin DB — only the read path failed, the
-          records are unchanged. A transient timeout or a stale column is the
-          most common cause. Server logs have the full stack — search for the
-          digest above.
+          The roles pages read role / permission definitions from the admin
+          DB — only the read path failed, the records are unchanged. A
+          transient timeout or a stale column is the most common cause.
+          Server logs have the full stack — search for the digest above.
         </p>
       </div>
 

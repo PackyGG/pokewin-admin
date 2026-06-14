@@ -7,54 +7,18 @@ import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { refreshSiteConfig } from "@/lib/refresh-site-config";
 
-export async function upsertVaultLockTime(
-  id: string | null,
-  hours: number,
-  label: string
-) {
-  const db = await getDb();
-  const session = await requireAdmin();
-  await requireCapability(session, "__can_upsert_vault_lock", "upsert vault lock windows");
-
-  if (hours <= 0) throw new Error("Hours must be positive");
-  if (!label.trim()) throw new Error("Label is required");
-
-  if (id) {
-    await db.vault_lock_times.update({
-      where: { id },
-      data: { hours, label: label.trim() },
-    });
-  } else {
-    await db.vault_lock_times.create({
-      data: { hours, label: label.trim() },
-    });
-  }
-
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "vault_lock_time_updated",
-    metadata: { id, hours, label },
-  });
-
-  revalidatePath("/settings");
-}
-
-export async function deleteVaultLockTime(id: string) {
-  const db = await getDb();
-  const session = await requireAdmin();
-  await requireCapability(session, "__can_delete_vault_lock", "delete vault lock windows");
-
-  await db.vault_lock_times.delete({ where: { id } });
-
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "vault_lock_time_deleted",
-    metadata: { id },
-  });
-
-  revalidatePath("/settings");
-}
-
+/**
+ * Geo Blocking (formerly "Country Restrictions") server actions — relocated
+ * verbatim from the old `/settings` page into the /system/geo-blocking
+ * feature. The guards/capabilities are unchanged: requireAdmin + the same
+ * `__can_update_country_restriction` / `__can_toggle_country_restriction`
+ * capabilities, and the same `refreshSiteConfig()` call. Only
+ * `revalidatePath` now targets /system/geo-blocking (the new home) instead
+ * of the removed /settings route.
+ *
+ * These WRITE the MAIN/PROD game DB at runtime (operator-triggered). The
+ * relocation does not change that behaviour.
+ */
 export async function updateCountryRestrictionArray(
   countryCode: string,
   field: string,
@@ -83,7 +47,7 @@ export async function updateCountryRestrictionArray(
   });
 
   await refreshSiteConfig();
-  revalidatePath("/settings");
+  revalidatePath("/system/geo-blocking");
 }
 
 export async function toggleCountryRestriction(
@@ -116,5 +80,5 @@ export async function toggleCountryRestriction(
   });
 
   await refreshSiteConfig();
-  revalidatePath("/settings");
+  revalidatePath("/system/geo-blocking");
 }

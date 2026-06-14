@@ -829,15 +829,19 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    id: "nav.settings",
+    // Geo Blocking — per-country deposit / withdrawal restrictions
+    // (formerly the "Country Restrictions" section of the removed /settings
+    // page). Icon string `Globe` is already registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (no React #130 risk).
+    id: "nav.geo-blocking",
     group: "System",
-    label: "Settings",
-    href: "/settings",
-    pageKey: "/settings",
-    icon: "Settings",
-    description: "Global admin settings",
+    label: "Geo Blocking",
+    href: "/system/geo-blocking",
+    pageKey: "/system/geo-blocking",
+    icon: "Globe",
+    description: "Per-country deposit & withdrawal restrictions",
+    keywords: ["country", "geo", "block", "restriction", "region"],
     inSidebar: true,
-    inSidebarFooter: true,
     inPalette: true,
   },
   {
@@ -948,7 +952,7 @@ const PALETTE_ORDER: string[] = [
   "nav.admin-users",
   "nav.settings.roles",
   "nav.security",
-  "nav.settings",
+  "nav.geo-blocking",
   "nav.audit",
 ];
 

@@ -144,7 +144,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "System", label: "Security", key: "/security" },
   { group: "System", label: "Users", key: "/admin-users" },
   { group: "System", label: "Roles", key: "/settings/roles" },
-  { group: "System", label: "Settings", key: "/settings" },
+  // Geo Blocking — per-country deposit / withdrawal restrictions
+  // (formerly the "Country Restrictions" section of the removed /settings
+  // page). The page + actions enforce requireAdmin server-side; listed here
+  // so the key is known to the permission system.
+  { group: "System", label: "Geo Blocking", key: "/system/geo-blocking" },
   { group: "System", label: "Audit Log", key: "/audit" },
   // motha-only — the page + actions enforce the gate server-side;
   // listing here just makes the key known to the permission system
