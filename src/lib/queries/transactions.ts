@@ -380,14 +380,25 @@ async function computeDepositTransactions(
 /**
  * Cross-request cache layer for the Deposits tab list.
  *
- * Wraps {@link computeDepositTransactions} in a 60s `unstable_cache`
- * keyed on `(env, page, perPage, search, status, minAmount)`. The
- * arguments passed to a cached function participate in its cache key, so
- * each distinct filter/page combination gets its own entry — switching
- * back to a previously-viewed page is an instant cache hit, and the
- * Active-Timeframe-Only refresh window stays short (60s) so figures
- * don't go stale. Mirrors the `unstable_cache` list pattern in
- * `users-list.ts`.
+ * Wraps {@link computeDepositTransactions} in a 300s `unstable_cache`
+ * keyed on `(env, blacklistKey, {page, perPage, search, status,
+ * minAmount})`. The arguments passed to a cached function participate in
+ * its cache key, so each distinct filter/page combination gets its own
+ * entry — switching back to a previously-viewed page is an instant cache
+ * hit. The compute path seq-scans the ~855k-row ledger (the root fix is
+ * an owner-only index, which MAIN's read-only / no-DDL policy forbids),
+ * so a COLD miss is expensive (~15s). The 300s window widens warm-key
+ * coverage — a distinct search term / minAmount stays warm five minutes
+ * instead of one, so the next admin hitting the same filter pays the
+ * cache hit, not the seq-scan. Mirrors the `unstable_cache` list pattern
+ * in `users-list.ts`.
+ *
+ * Freshness is safe at 300s: deposits are NOT admin-mutated (the admin
+ * never creates/edits a deposit ledger row), and NOTHING calls
+ * `revalidateTag("transactions-deposits-list")` — the tag exists only
+ * for a future manual bust. The page's 60s `AutoRefresh` simply re-runs
+ * the segment, which re-reads the (now warm) cache; it does not require
+ * the cache to expire on its cadence.
  *
  * `env` is the FIRST key dimension so a dev-DB-toggled admin's cache
  * entries never collide with the prod ones — behaviour is identical to
@@ -396,7 +407,7 @@ async function computeDepositTransactions(
 const cachedDepositTransactions = unstable_cache(
   computeDepositTransactions,
   ["transactions-deposits-list-v2"],
-  { revalidate: 60, tags: ["transactions-deposits-list"] },
+  { revalidate: 300, tags: ["transactions-deposits-list"] },
 );
 
 /**

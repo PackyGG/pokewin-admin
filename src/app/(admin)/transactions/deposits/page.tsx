@@ -73,10 +73,11 @@ export default async function TransactionsPage({
       {/* Periodic server refresh so the active tab's list stays fresh
           without a manual reload. router.refresh() re-runs ONLY the
           rendered route segment — i.e. the active tab's query — so the
-          hidden tab is never fetched by the refresh either. 60s matches
-          the list query's unstable_cache revalidate window. The
-          component itself skips the refresh when the tab is
-          backgrounded. */}
+          hidden tab is never fetched by the refresh either. The deposits
+          list query is cached for 300s; a refresh that lands inside the
+          window just re-reads the warm cache (no seq-scan), so the
+          cadence here is independent of the cache TTL. The component
+          itself skips the refresh when the tab is backgrounded. */}
       <AutoRefresh intervalMs={60_000} />
       <PageHero>
         <PageHeroIdentity
