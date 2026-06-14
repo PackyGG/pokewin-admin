@@ -1,5 +1,7 @@
 import "server-only";
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
+import { readDbEnv } from "@/lib/db-env";
 import { isLiveLedgerTxType } from "@/lib/queries/_ledger-tx-types";
 
 /**
@@ -77,10 +79,9 @@ type RawRecentRow = {
 /**
  * Resolve a single user's XP-purchase summary + recent list. Returns an empty
  * result (count 0) when the user has none or the connected enum lacks the
- * member — the section self-hides on count 0. NOT cached (a per-user read
- * already kicked behind a streamed Suspense boundary, like shard-winnings).
+ * member — the section self-hides on count 0.
  */
-export async function getUserXpPurchases(
+async function queryUserXpPurchases(
   userId: string,
 ): Promise<UserXpPurchasesResult> {
   // Drift guard: skip the read if the connected enum lacks the member
@@ -89,35 +90,44 @@ export async function getUserXpPurchases(
 
   const db = await getDb();
 
-  const aggRows = await db.$queryRaw<RawAggRow[]>`
-    SELECT
-      COUNT(*)::bigint AS count,
-      COALESCE(SUM(amount), 0)::text AS total_spent,
-      COALESCE(SUM(
+  // The summary aggregate and the recent-list read are independent (distinct
+  // shapes, no cross-reference) and always run together for a user with XP
+  // purchases, so fire them concurrently. Identical SQL, output shape, and
+  // numbers — purely a scheduling change that removes one full ledger scan of
+  // serial latency. The empty-user check moves below: an empty `aggRows`
+  // yields count 0 → EMPTY, exactly as before (the recent read just returns
+  // [] for that user, discarded). NOTE: `$queryRaw` (tagged template) is kept
+  // — `userId` is a bound parameter, not interpolated.
+  const [aggRows, recentRows] = await Promise.all([
+    db.$queryRaw<RawAggRow[]>`
+      SELECT
+        COUNT(*)::bigint AS count,
+        COALESCE(SUM(amount), 0)::text AS total_spent,
+        COALESCE(SUM(
+          CASE WHEN jsonb_typeof(metadata -> 'xp_awarded') = 'number'
+               THEN (metadata ->> 'xp_awarded')::numeric
+               ELSE 0 END
+        ), 0)::text AS total_xp
+      FROM ledger_transactions
+      WHERE type = 'xp_purchase'
+        AND user_id = ${userId}`,
+    db.$queryRaw<RawRecentRow[]>`
+      SELECT
+        id::text AS id,
+        amount::text AS amount,
         CASE WHEN jsonb_typeof(metadata -> 'xp_awarded') = 'number'
-             THEN (metadata ->> 'xp_awarded')::numeric
-             ELSE 0 END
-      ), 0)::text AS total_xp
-    FROM ledger_transactions
-    WHERE type = 'xp_purchase'
-      AND user_id = ${userId}`;
+             THEN (metadata ->> 'xp_awarded')
+             ELSE NULL END AS xp_awarded,
+        created_at
+      FROM ledger_transactions
+      WHERE type = 'xp_purchase'
+        AND user_id = ${userId}
+      ORDER BY created_at DESC
+      LIMIT ${RECENT_LIMIT}`,
+  ]);
   const agg = aggRows[0];
   const count = Number(agg?.count ?? 0);
   if (count === 0) return EMPTY;
-
-  const recentRows = await db.$queryRaw<RawRecentRow[]>`
-    SELECT
-      id::text AS id,
-      amount::text AS amount,
-      CASE WHEN jsonb_typeof(metadata -> 'xp_awarded') = 'number'
-           THEN (metadata ->> 'xp_awarded')
-           ELSE NULL END AS xp_awarded,
-      created_at
-    FROM ledger_transactions
-    WHERE type = 'xp_purchase'
-      AND user_id = ${userId}
-    ORDER BY created_at DESC
-    LIMIT ${RECENT_LIMIT}`;
 
   const recent: UserXpPurchaseRow[] = recentRows.map((r) => ({
     id: r.id,
@@ -135,4 +145,52 @@ export async function getUserXpPurchases(
     totalXp: Number(agg?.total_xp ?? 0),
     recent,
   };
+}
+
+// ─── Env-keyed cache wrapper ──────────────────────────────────────────
+//
+// Identical reasoning to `insights-xp-sales.ts` / `users-detail-cache.ts`:
+// `unstable_cache` runs its callback OUTSIDE request scope, so `cookies()`
+// (and `readDbEnv`) inside `getDb()` falls back to "prod". Caching a
+// dev-toggled request would serve PROD data to a dev admin. So: cache ONLY on
+// prod (the default + hot path — the /users/[id] Finances band re-fetches on
+// every 60s AutoRefresh tick AND every error-boundary "Try again"); a
+// dev-toggled admin runs the query directly so they always see live dev data.
+//
+// Date-stringify gotcha (unstable-cache-stringifies-dates): a non-issue here.
+// `queryUserXpPurchases` returns `UserXpPurchasesResult`, whose only date
+// field — `recent[].createdAt` — is ALREADY a `string` (the `.map` coerces
+// `created_at` to `.toISOString()` before this value is ever cached). So the
+// cached JSON round-trips byte-identically; nothing downstream calls a Date
+// method on it. The 60s TTL matches the AutoRefresh cadence + the rest of the
+// /users/[id] cache layer (`users-detail-cache.ts`).
+const REVALIDATE_SECONDS = 60;
+
+const cachedUserXpPurchases = unstable_cache(
+  (userId: string): Promise<UserXpPurchasesResult> =>
+    queryUserXpPurchases(userId),
+  ["users-xp-purchases-v1"],
+  { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
+);
+
+/**
+ * Public entry point — a single user's XP-purchase summary + recent list for
+ * the /users/[id] Finances tab. Cached per-user on prod (60s); direct
+ * (uncached) on a dev-toggled admin so they see live dev data — see the
+ * wrapper doc above. The drift guard runs OUTSIDE the cache so a DB that lacks
+ * the `xp_purchase` enum member degrades to EMPTY without populating a cache
+ * entry. Already kicked behind a streamed Suspense + safeQuery boundary by the
+ * caller (like shard-winnings), so this only memoizes the existing read.
+ */
+export async function getUserXpPurchases(
+  userId: string,
+): Promise<UserXpPurchasesResult> {
+  // Drift guard: skip the read entirely if the connected enum lacks the
+  // member (degrade to empty instead of throwing 22P02). Kept ahead of the
+  // cache so a transient empty never gets memoized under the prod key.
+  if (!(await isLiveLedgerTxType("xp_purchase"))) return EMPTY;
+
+  const env = await readDbEnv();
+  if (env !== "prod") return queryUserXpPurchases(userId);
+  return cachedUserXpPurchases(userId);
 }

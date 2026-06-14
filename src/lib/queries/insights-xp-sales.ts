@@ -224,25 +224,46 @@ async function queryXpSales(period: XpSalesPeriod): Promise<XpSalesResult> {
   // Early-out: nothing in the window → skip the recent + daily reads.
   if (saleCount === 0) return EMPTY_RESULT(period);
 
-  // ── Recent sales (newest first), joined to the username for display.
-  const recentRows = await db.$queryRawUnsafe<RawRecentRow[]>(`
-    SELECT
-      lt.id::text AS id,
-      lt.user_id::text AS user_id,
-      u.username AS username,
-      lt.amount::text AS amount,
-      CASE WHEN jsonb_typeof(lt.metadata -> 'xp_awarded') = 'number'
-           THEN (lt.metadata ->> 'xp_awarded')
-           ELSE NULL END AS xp_awarded,
-      lt.created_at AS created_at
-    FROM ledger_transactions lt
-    JOIN "user" u ON u.id = lt.user_id
-    WHERE lt.type = 'xp_purchase'
-      AND ${sinceFrag}
-      ${scopeFrag}
-    ORDER BY lt.created_at DESC
-    LIMIT ${RECENT_LIMIT}
-  `);
+  // The recent-sales list and the daily-trend aggregate are independent
+  // (distinct shapes, no cross-reference) and always run together once the
+  // window is non-empty, so fire them concurrently. This removes one full
+  // ledger scan of serial latency while keeping the EXACT same SQL, output
+  // shape, and numbers — purely a scheduling change. The window aggregate
+  // above stays sequential because its `saleCount` gates whether these run.
+  const [recentRows, dailyRows] = await Promise.all([
+    // ── Recent sales (newest first), joined to the username for display.
+    db.$queryRawUnsafe<RawRecentRow[]>(`
+      SELECT
+        lt.id::text AS id,
+        lt.user_id::text AS user_id,
+        u.username AS username,
+        lt.amount::text AS amount,
+        CASE WHEN jsonb_typeof(lt.metadata -> 'xp_awarded') = 'number'
+             THEN (lt.metadata ->> 'xp_awarded')
+             ELSE NULL END AS xp_awarded,
+        lt.created_at AS created_at
+      FROM ledger_transactions lt
+      JOIN "user" u ON u.id = lt.user_id
+      WHERE lt.type = 'xp_purchase'
+        AND ${sinceFrag}
+        ${scopeFrag}
+      ORDER BY lt.created_at DESC
+      LIMIT ${RECENT_LIMIT}
+    `),
+    // ── Daily revenue + sales trend over the window.
+    db.$queryRawUnsafe<RawDailyRow[]>(`
+      SELECT
+        to_char(date_trunc('day', lt.created_at), 'YYYY-MM-DD') AS day,
+        COALESCE(SUM(lt.amount), 0)::text AS revenue,
+        COUNT(*)::bigint AS sales
+      FROM ledger_transactions lt
+      WHERE lt.type = 'xp_purchase'
+        AND ${sinceFrag}
+        ${scopeFrag}
+      GROUP BY 1
+      ORDER BY 1
+    `),
+  ]);
 
   const recent: XpSaleRow[] = recentRows.map((r) => ({
     id: r.id,
@@ -255,20 +276,6 @@ async function queryXpSales(period: XpSalesPeriod): Promise<XpSalesResult> {
         ? r.created_at.toISOString()
         : new Date(r.created_at).toISOString(),
   }));
-
-  // ── Daily revenue + sales trend over the window.
-  const dailyRows = await db.$queryRawUnsafe<RawDailyRow[]>(`
-    SELECT
-      to_char(date_trunc('day', lt.created_at), 'YYYY-MM-DD') AS day,
-      COALESCE(SUM(lt.amount), 0)::text AS revenue,
-      COUNT(*)::bigint AS sales
-    FROM ledger_transactions lt
-    WHERE lt.type = 'xp_purchase'
-      AND ${sinceFrag}
-      ${scopeFrag}
-    GROUP BY 1
-    ORDER BY 1
-  `);
 
   const daily: XpSalesDailyPoint[] = dailyRows.map((r) => ({
     date: r.day,
