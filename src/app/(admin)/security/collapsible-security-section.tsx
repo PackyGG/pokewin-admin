@@ -56,7 +56,7 @@ export function CollapsibleSecuritySection({
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const Icon = SECURITY_SECTION_ICONS[icon];
+  const Icon = SECURITY_SECTION_ICONS[icon] ?? SlidersHorizontal;
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="space-y-3">

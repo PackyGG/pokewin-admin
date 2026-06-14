@@ -1,25 +1,17 @@
 import { Lock } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getSiteConfig } from "@/lib/queries/security";
-import { SecurityContent } from "./security-content";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
-import { CollapsibleSecuritySection } from "./collapsible-security-section";
 import { FadeIn } from "@/components/fade-in";
+import { SecurityPageSections } from "./security-page-sections";
 import { RAIN_CONFIG_SITE_CONFIG_KEYS } from "../rain/config-keys";
 import { WAGER_REQUIREMENT_SITE_CONFIG_KEYS } from "./wager-requirement-keys";
-import { WagerRequirementCard } from "./wager-requirement-card";
 import { LEADERBOARD_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./leaderboard-wager-weights-keys";
-import { LeaderboardWagerWeightsCard } from "./leaderboard-wager-weights-card";
 import { RAKEBACK_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./rakeback-wager-weights-keys";
-import { RakebackWagerWeightsCard } from "./rakeback-wager-weights-card";
 import { SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./source-wager-weights-keys";
-import { SourceWagerWeightsCard } from "./source-wager-weights-card";
 import { SHARD_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./shard-wager-weights-keys";
-import { ShardWagerWeightsCard } from "./shard-wager-weights-card";
 import { SHARD_CONFIG_SITE_CONFIG_KEYS } from "./shard-config-keys";
-import { ShardConfigCard } from "./shard-config-card";
 import { REWARD_EXPIRY_SITE_CONFIG_KEYS } from "./reward-expiry-keys";
-import { RewardExpiryCard } from "./reward-expiry-card";
 import {
   getWagerRequirementDefaults,
   type WagerRequirementDefaults,
@@ -52,25 +44,23 @@ import {
   getCryptoFees,
   type CryptoFees,
 } from "@/lib/backend-api/crypto-fees";
-import { CryptoFeesCard } from "./crypto-fees-card";
 import {
   getMultiplierWagerWeights,
   type MultiplierWagerWeights,
 } from "@/lib/backend-api/multiplier-wager-weights";
-import { MultiplierWagerWeightsCard } from "./multiplier-wager-weights-card";
 
 export const metadata = { title: "Security" };
 
 export default async function SecurityPage() {
   await requirePageAccess("/security");
-  const allConfig = await getSiteConfig();
 
-  // Rain-specific site_config keys are managed on /rain?tab=config; the
-  // withdrawal wager-requirement and leaderboard wager-weight keys are
-  // managed by the dedicated cards below (written through the backend
-  // API). Hide all groups from the generic config table so the same row
-  // isn't editable in two surfaces (would cause confusion + duplicate
-  // audit events).
+  let allConfig: Awaited<ReturnType<typeof getSiteConfig>> = [];
+  try {
+    allConfig = await getSiteConfig();
+  } catch (err) {
+    console.error("[security] getSiteConfig failed:", err);
+  }
+
   const movedKeys = new Set<string>([
     ...RAIN_CONFIG_SITE_CONFIG_KEYS,
     ...WAGER_REQUIREMENT_SITE_CONFIG_KEYS,
@@ -86,10 +76,6 @@ export default async function SecurityPage() {
     RAIN_CONFIG_SITE_CONFIG_KEYS.includes(row.key),
   );
 
-  // Non-critical: the wager-requirement backend branch may not be deployed
-  // yet. Read it in its own try/catch → null on any failure so the card
-  // renders its muted "awaiting backend deploy" state instead of crashing
-  // /security.
   let wagerDefaults: WagerRequirementDefaults | null = null;
   try {
     wagerDefaults = await getWagerRequirementDefaults();
@@ -97,8 +83,6 @@ export default async function SecurityPage() {
     wagerDefaults = null;
   }
 
-  // Same non-critical pattern for the leaderboard wager weights — the
-  // backend branch may not be deployed yet.
   let leaderboardWeights: LeaderboardWagerWeights | null = null;
   try {
     leaderboardWeights = await getLeaderboardWagerWeights();
@@ -106,8 +90,6 @@ export default async function SecurityPage() {
     leaderboardWeights = null;
   }
 
-  // Same non-critical pattern for the rakeback wager weights — the backend
-  // branch may not be deployed yet.
   let rakebackWeights: RakebackWagerWeights | null = null;
   try {
     rakebackWeights = await getRakebackWagerWeights();
@@ -115,8 +97,6 @@ export default async function SecurityPage() {
     rakebackWeights = null;
   }
 
-  // Same non-critical pattern for the funding-source wager weights — the
-  // backend branch may not be deployed yet.
   let sourceWeights: SourceWagerWeights | null = null;
   try {
     sourceWeights = await getSourceWagerWeights();
@@ -124,8 +104,6 @@ export default async function SecurityPage() {
     sourceWeights = null;
   }
 
-  // Same non-critical pattern for the per-game shard wager weights — the
-  // backend branch may not be deployed yet.
   let shardWeights: ShardWagerWeights | null = null;
   try {
     shardWeights = await getShardWagerWeights();
@@ -133,8 +111,6 @@ export default async function SecurityPage() {
     shardWeights = null;
   }
 
-  // Same non-critical pattern for the shard earn rate (USD per shard) — the
-  // backend branch may not be deployed yet.
   let shardConfig: ShardConfig | null = null;
   try {
     shardConfig = await getShardConfig();
@@ -142,8 +118,6 @@ export default async function SecurityPage() {
     shardConfig = null;
   }
 
-  // Same non-critical pattern for the odds-based (bet-multiplier) wager
-  // weights — the backend branch may not be deployed yet.
   let multiplierWeights: MultiplierWagerWeights | null = null;
   try {
     multiplierWeights = await getMultiplierWagerWeights();
@@ -151,8 +125,6 @@ export default async function SecurityPage() {
     multiplierWeights = null;
   }
 
-  // Same non-critical pattern for the reward claim windows — the backend
-  // branch may not be deployed yet.
   let rewardExpiry: RewardExpiry | null = null;
   try {
     rewardExpiry = await getRewardExpiry();
@@ -160,8 +132,6 @@ export default async function SecurityPage() {
     rewardExpiry = null;
   }
 
-  // Same non-critical pattern for the per-coin crypto exchange-rate fees —
-  // the backend branch may not be deployed yet.
   let cryptoFees: CryptoFees | null = null;
   try {
     cryptoFees = await getCryptoFees();
@@ -180,63 +150,19 @@ export default async function SecurityPage() {
       </PageHero>
 
       <FadeIn>
-        <CollapsibleSecuritySection icon="banknote" title="Withdrawal Wager Requirements">
-          <WagerRequirementCard initial={wagerDefaults} />
-        </CollapsibleSecuritySection>
-      </FadeIn>
-
-      <FadeIn>
-        <CollapsibleSecuritySection icon="trophy" title="Leaderboard Wager Weights">
-          <LeaderboardWagerWeightsCard initial={leaderboardWeights} />
-        </CollapsibleSecuritySection>
-      </FadeIn>
-
-      <FadeIn>
-        <CollapsibleSecuritySection icon="percent" title="Rakeback Wager Weights">
-          <RakebackWagerWeightsCard initial={rakebackWeights} />
-        </CollapsibleSecuritySection>
-      </FadeIn>
-
-      <FadeIn>
-        <CollapsibleSecuritySection icon="sparkles" title="Shard Earn Rate">
-          <ShardConfigCard initial={shardConfig} />
-        </CollapsibleSecuritySection>
-      </FadeIn>
-
-      <FadeIn>
-        <CollapsibleSecuritySection icon="gem" title="Shard Wager Weights">
-          <ShardWagerWeightsCard initial={shardWeights} />
-        </CollapsibleSecuritySection>
-      </FadeIn>
-
-      <FadeIn>
-        <CollapsibleSecuritySection icon="coins" title="Funding-Source Wager Weights">
-          <SourceWagerWeightsCard initial={sourceWeights} />
-        </CollapsibleSecuritySection>
-      </FadeIn>
-
-      <FadeIn>
-        <CollapsibleSecuritySection icon="gauge" title="Multiplier Wager Weights">
-          <MultiplierWagerWeightsCard initial={multiplierWeights} />
-        </CollapsibleSecuritySection>
-      </FadeIn>
-
-      <FadeIn>
-        <CollapsibleSecuritySection icon="hourglass" title="Reward Expiry">
-          <RewardExpiryCard initial={rewardExpiry} />
-        </CollapsibleSecuritySection>
-      </FadeIn>
-
-      <FadeIn>
-        <CollapsibleSecuritySection icon="bitcoin" title="Crypto Exchange-Rate Fees">
-          <CryptoFeesCard initial={cryptoFees} />
-        </CollapsibleSecuritySection>
-      </FadeIn>
-
-      <FadeIn>
-        <CollapsibleSecuritySection icon="sliders" title="Site Configuration">
-          <SecurityContent config={config} rainConfigMoved={hasMovedKeys} />
-        </CollapsibleSecuritySection>
+        <SecurityPageSections
+          config={config}
+          rainConfigMoved={hasMovedKeys}
+          wagerDefaults={wagerDefaults}
+          leaderboardWeights={leaderboardWeights}
+          rakebackWeights={rakebackWeights}
+          shardConfig={shardConfig}
+          shardWeights={shardWeights}
+          sourceWeights={sourceWeights}
+          multiplierWeights={multiplierWeights}
+          rewardExpiry={rewardExpiry}
+          cryptoFees={cryptoFees}
+        />
       </FadeIn>
     </div>
   );
