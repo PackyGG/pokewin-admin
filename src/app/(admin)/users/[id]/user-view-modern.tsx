@@ -62,7 +62,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatCompactUsd } from "@/lib/utils/format";
 import { RelativeTime } from "@/components/relative-time";
 import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
 import {
@@ -361,6 +361,19 @@ export function UserViewModern({
   const displayName =
     user.displayUsername ?? user.username ?? user.name ?? "—";
 
+  // The hero KPI tiles sit in a dense capped-width 4-col grid on the lg
+  // band (~1024–1280px), where a full-precision 6/7-figure currency string
+  // ("$2,345,678.90" / "-$456,789.22") overflows the tile and gets clipped
+  // by `truncate`, hiding the most significant digits. For values at/above
+  // $100K we render the compact form ("$2.3M" / "$456.8K") so the magnitude
+  // stays fully readable in the tile; the EXACT figure is always one panel
+  // down in the Overview Balances / Platform-P&L panels (full
+  // `formatCurrency`). Below $100K — the overwhelming majority of real
+  // users — the tile fits, so we keep the exact dollars-and-cents value.
+  // Sign is preserved for P&L by the formatter.
+  const heroMoney = (v: number): string =>
+    Math.abs(v) >= 100_000 ? formatCompactUsd(v) : formatCurrency(v);
+
   // ── HERO ──────────────────────────────────────────────────────────
   // Extracted as a node so UserHeroSticky can render it inline AND derive
   // a thin condensed bar (avatar + name + balance) that appears once the
@@ -611,13 +624,13 @@ export function UserViewModern({
             <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4 lg:w-[clamp(28rem,42vw,40rem)] lg:shrink-0">
               <KpiTile
                 label="Total Value"
-                value={formatCurrency(totalValue)}
+                value={heroMoney(totalValue)}
                 icon={Wallet}
                 accent="blue"
               />
               <KpiTile
                 label="P&L"
-                value={`${pnl >= 0 ? "+" : ""}${formatCurrency(pnl)}`}
+                value={`${pnl >= 0 ? "+" : ""}${heroMoney(pnl)}`}
                 icon={pnl >= 0 ? TrendingUp : TrendingDown}
                 accent={pnl >= 0 ? "emerald" : "rose"}
               />
@@ -626,7 +639,7 @@ export function UserViewModern({
                   Deposited convention used on the dashboard's KPI strip. */}
               <KpiTile
                 label="Total Deposited"
-                value={formatCurrency(deposits)}
+                value={heroMoney(deposits)}
                 icon={Banknote}
                 accent="emerald"
               />
@@ -639,7 +652,7 @@ export function UserViewModern({
                   never drift from users-list / dashboard. */}
               <KpiTile
                 label="Total Withdrawn"
-                value={formatCurrency(withdrawals)}
+                value={heroMoney(withdrawals)}
                 icon={ArrowUpCircle}
                 accent="rose"
               />

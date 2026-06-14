@@ -17,7 +17,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { Button } from "@/components/ui/button";
 import {
   BalanceAdjustDialog,
@@ -435,7 +435,7 @@ export function ModernActivityPanel({
             XP
           </p>
           <p className="text-base sm:text-lg font-semibold tabular-nums text-muted-foreground truncate">
-            {(statistics?.xp ?? 0).toLocaleString()}
+            {formatNumber(statistics?.xp ?? 0)}
           </p>
         </div>
       </div>

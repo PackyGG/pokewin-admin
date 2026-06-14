@@ -62,7 +62,7 @@ import { EmptyState } from "@/components/empty-state";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { SkeletonCard, SkeletonTable } from "@/components/ux";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
 import { RelativeTime } from "@/components/relative-time";
 import {
   type UserDetail,
@@ -1134,7 +1134,7 @@ export function AffiliateTab({ data }: { data: UserDetail }) {
           <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-3">
             <ModernMetricTile
               label="Total Referred"
-              value={affiliate.totalReferred.toLocaleString()}
+              value={formatNumber(affiliate.totalReferred)}
               accent="purple"
               icon={Sparkles}
             />
@@ -1279,7 +1279,7 @@ function AttributionJourneySection({ userId }: { userId: string }) {
       <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-3">
         <ModernMetricTile
           label="Codes Used"
-          value={codeCount.toLocaleString()}
+          value={formatNumber(codeCount)}
           accent={codeCount >= 2 ? "amber" : "purple"}
           icon={Waypoints}
         />
