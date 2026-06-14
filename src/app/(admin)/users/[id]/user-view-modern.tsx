@@ -184,6 +184,7 @@ export function UserViewModern({
   inventoryPromise,
   disposedInventoryPromise,
   cardSaleTxPromise,
+  battleVoucherTxPromise,
   sharedIpsPromise,
   sharedFingerprintsPromise,
   wagerRequirementPromise,
@@ -234,6 +235,7 @@ export function UserViewModern({
   // Inventory tab — card-sale cash-out ledger (card_sale / reward_card_sale),
   // moved off Gaming. null = tab not active (Active-Timeframe-Only).
   cardSaleTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
+  battleVoucherTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Trust tab:
   sharedIpsPromise: Promise<SafeQueryResult<SharedIdentityUser[]>> | null;
   sharedFingerprintsPromise: Promise<SafeQueryResult<SharedIdentityUser[]>> | null;
@@ -685,6 +687,7 @@ export function UserViewModern({
             inventoryPromise={inventoryPromise}
             disposedInventoryPromise={disposedInventoryPromise}
             cardSaleTxPromise={cardSaleTxPromise}
+            battleVoucherTxPromise={battleVoucherTxPromise}
           />
         )}
 

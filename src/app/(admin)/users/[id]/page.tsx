@@ -66,15 +66,13 @@ export const maxDuration = 300;
 const USER_DETAIL_QUERY_TIMEOUT_MS = 15_000;
 
 // GAMING is the full pack / battle / upgrader play cycle: the BET legs
-// (entry / sponsorship) AND the WIN-REALIZATION legs (refund, payout, and
-// the card-sale / voucher rows that turn a won card into spendable balance).
-// The realization legs MUST live here: a win arrives as an inventory CARD,
-// and the only ledger trace of it becoming cash is `card_sale` /
-// `reward_card_sale` (selling a won/reward card back) and
-// `battle_excess_to_voucher` (the voucher leg of a battle win; a voucher ==
-// a card per house rules). Without them, the Gaming tab showed money leaving
-// on every bet but never coming back, so a balance run-up (e.g. "40 → 850")
-// was untraceable. Keep this list in sync with GAMING_TX_TYPES in
+// (entry / sponsorship) AND the in-game WIN legs (battle_refund, upgrader
+// payout). The item cash-OUTS (card_sale / reward_card_sale / voucher_redeemed)
+// and the battle_excess_to_voucher win-grant were moved to the INVENTORY tab
+// per owner — they realize/grant a held item (voucher == card per house rules),
+// so they sit with the inventory they came from. battle_excess_to_voucher in
+// particular was redundant on Gaming: the paired battle_bet row already shows
+// the full win P&L. Keep this list in sync with GAMING_TX_TYPES in
 // user-tabs-types.ts (this = initial 10-row fetch; that = load-more).
 // Pure exchanges (card_exchange / voucher_exchange / exchange_excess_*) are
 // NOT here — exchanging an item is value-neutral, not a realization.
@@ -90,10 +88,19 @@ const GAMING_TYPES = [
   // item cash-OUTS — they live on the INVENTORY tab now (CARD_SALE_TX_TYPES),
   // shown next to the items they came from. Owner moved them out of Gaming so
   // this tab stays the bet/play + win surface.
-  // battle_excess_to_voucher stays — it's the voucher leg of a battle WIN
-  // (voucher == card), part of the bet → win trail on this tab.
-  "battle_excess_to_voucher",
+  // battle_excess_to_voucher ALSO moved to the INVENTORY tab
+  // (BATTLE_VOUCHER_TYPES) per owner: the paired battle_bet row already shows
+  // the full win P&L here, so the separate voucher-leg row was redundant on
+  // Gaming. It's a voucher GRANT (a held item, voucher == card), so it now
+  // sits with the inventory it created.
 ];
+// Battle-win voucher GRANT shown on the INVENTORY tab — the leftover voucher
+// leg of a battle win (voucher == card per house rules). NOT a sale/cash-out
+// like CARD_SALE_TYPES; it's the win-grant of a held item, so it gets its own
+// "Battle Win Vouchers" section on the inventory tab. Moved off Gaming per
+// owner (the paired battle_bet row already carries the full win P&L). Keep in
+// sync with BATTLE_VOUCHER_TX_TYPES in user-tabs-types.ts.
+const BATTLE_VOUCHER_TYPES = ["battle_excess_to_voucher"];
 // Item cash-OUTS shown on the INVENTORY tab — selling a won (card_sale) or
 // reward (reward_card_sale) card back to balance, OR cashing a won voucher
 // back to balance (voucher_redeemed). All realize a held item into cash, so
@@ -103,9 +110,9 @@ const CARD_SALE_TYPES = ["card_sale", "reward_card_sale", "voucher_redeemed"];
 // FINANCIAL covers deposits, withdrawals (card_withdrawal +
 // withdrawal_shipping_fee) and direct cash payouts (rakeback / affiliate /
 // rain / race / gift / promo). The win-realization rows (card_sale /
-// reward_card_sale / battle_excess_to_voucher) do NOT live here — they're in
-// GAMING_TYPES above, alongside the bets that produced them, so the
-// bet → win → realize trail stays on one tab. Pure card / voucher exchanges
+// reward_card_sale) and the battle_excess_to_voucher win-grant do NOT live
+// here — they're on the INVENTORY tab (CARD_SALE_TYPES / BATTLE_VOUCHER_TYPES),
+// next to the items they realize/created. Pure card / voucher exchanges
 // (card_exchange / voucher_exchange / exchange_excess_*) are in NEITHER tab —
 // exchanging an item is value-neutral, not a cash event.
 const FINANCIAL_TYPES = [
@@ -554,6 +561,20 @@ async function UserDetailBody({
           USER_DETAIL_QUERY_TIMEOUT_MS,
         )
       : null;
+  // Battle-win voucher grants (battle_excess_to_voucher) — Inventory tab only
+  // (Active-Timeframe-Only), gated identically to cardSaleTxPromise. Moved off
+  // Gaming per owner: the paired battle_bet row already shows the full win
+  // P&L, so the voucher leg is redundant there; here it sits with the held
+  // item it created (voucher == card).
+  const battleVoucherTxPromise =
+    initialTab === "inventory"
+      ? safeQuery(
+          () => getUserTransactions(id, 1, 10, { types: BATTLE_VOUCHER_TYPES }),
+          EMPTY_TX_PAGE,
+          "users.detail.battleVoucherTx",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        )
+      : null;
 
   // Rewards tab: one_time reward count + rakeback claimable/claimed.
   const rewardsPromise =
@@ -761,6 +782,7 @@ async function UserDetailBody({
       inventoryPromise={inventoryPromise}
       disposedInventoryPromise={disposedInventoryPromise}
       cardSaleTxPromise={cardSaleTxPromise}
+      battleVoucherTxPromise={battleVoucherTxPromise}
       sharedIpsPromise={sharedIpsPromise}
       sharedFingerprintsPromise={sharedFingerprintsPromise}
       wagerRequirementPromise={wagerRequirementPromise}

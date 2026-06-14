@@ -573,13 +573,15 @@ export type GameSessionDetails = {
   createdAt: string;
 };
 
-// Gaming = the full pack / battle / upgrader play cycle: the bet legs PLUS the
-// battle_excess_to_voucher win leg (the voucher leg of a battle win, voucher ==
-// card per house rules) which stays here as part of the bet → win trail. The
+// Gaming = the full pack / battle / upgrader play cycle: the bet/play legs. The
 // item cash-OUTS — card_sale / reward_card_sale (selling a won/reward card back
 // to balance) and voucher_redeemed (cashing a won voucher back to balance) —
 // were MOVED to the Inventory tab (CARD_SALE_TX_TYPES below) per owner: they're
-// item realizations, shown next to the items they came from.
+// item realizations, shown next to the items they came from. The
+// battle_excess_to_voucher win leg was ALSO moved to the Inventory tab
+// (BATTLE_VOUCHER_TX_TYPES below) per owner — the paired battle_bet row already
+// shows the full win P&L on Gaming, so the voucher-leg row was redundant here;
+// as a voucher GRANT (held item, voucher == card) it now sits with inventory.
 // Pure exchanges (card_exchange / voucher_exchange / exchange_excess_*) stay
 // OUT — exchanging an item is value-neutral, not a realization. Keep this list
 // in sync with GAMING_TYPES in page.tsx (this = load-more; that = initial fetch).
@@ -590,13 +592,13 @@ export const GAMING_TX_TYPES = [
   "battle_refund",
   "upgrader_bet",
   "upgrader_payout",
-  "battle_excess_to_voucher",
 ] as const;
 // Financial = deposits, withdrawals (card_withdrawal + withdrawal_shipping_fee)
 // and direct cash payouts (rakeback / affiliate / rain / race / gift / promo).
-// The win-realization rows (card_sale / reward_card_sale /
-// battle_excess_to_voucher) do NOT live here — they're in GAMING_TX_TYPES
-// above, next to the bets that produced them. Pure card / voucher exchanges
+// The win-realization rows (card_sale / reward_card_sale) and the
+// battle_excess_to_voucher win-grant do NOT live here — they're on the
+// Inventory tab (CARD_SALE_TX_TYPES / BATTLE_VOUCHER_TX_TYPES), next to the
+// items they realize/created. Pure card / voucher exchanges
 // (card_exchange / voucher_exchange / exchange_excess_*) are in neither list —
 // exchanging an item is value-neutral, not a cash event.
 export const FINANCIAL_TX_TYPES = [
@@ -638,6 +640,14 @@ export const CARD_SALE_TX_TYPES = [
   "reward_card_sale",
   "voucher_redeemed",
 ] as const;
+// Battle-win voucher GRANT surfaced on the Inventory tab's "Battle Win
+// Vouchers" section: battle_excess_to_voucher is the leftover voucher leg of a
+// battle win (voucher == card per house rules). It is NOT a sale/cash-out like
+// CARD_SALE_TX_TYPES — it's the win-grant of a held item — so it gets its own
+// section rather than diluting the sales-only "Card & Voucher Sales" meaning.
+// Moved off Gaming per owner (the paired battle_bet row already carries the
+// full win P&L). Keep in sync with BATTLE_VOUCHER_TYPES in page.tsx.
+export const BATTLE_VOUCHER_TX_TYPES = ["battle_excess_to_voucher"] as const;
 export const EXCHANGE_TX_TYPES = [
   "card_exchange",
   "exchange_excess_to_voucher",

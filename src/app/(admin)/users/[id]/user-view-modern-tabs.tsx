@@ -104,7 +104,10 @@ import type {
   LeaderboardWinEntry,
   RaceClaimEntry,
 } from "./user-tabs-types";
-import { CARD_SALE_TX_TYPES } from "./user-tabs-types";
+import {
+  CARD_SALE_TX_TYPES,
+  BATTLE_VOUCHER_TX_TYPES,
+} from "./user-tabs-types";
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import type { UserRewards } from "@/lib/queries/users";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
@@ -902,6 +905,7 @@ export function InventoryTab({
   inventoryPromise,
   disposedInventoryPromise,
   cardSaleTxPromise,
+  battleVoucherTxPromise,
 }: {
   data: UserDetail;
   // Both inventory pages are tab-gated reads (kicked only when ?tab=
@@ -914,6 +918,10 @@ export function InventoryTab({
   // the Gaming tab per owner. Same tab-gated contract: null = not kicked
   // (Active-Timeframe-Only) → skeleton until the URL-driven re-render kicks it.
   cardSaleTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
+  // Battle-win voucher GRANT ledger (battle_excess_to_voucher) — moved here off
+  // the Gaming tab per owner (the paired battle_bet row already shows the full
+  // win P&L). Same tab-gated contract as cardSaleTxPromise: null = not kicked.
+  battleVoucherTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
 }) {
   const { user } = data;
   const isAdmin = data.sessionRole === "admin";
@@ -961,7 +969,54 @@ export function InventoryTab({
       ) : (
         <SkeletonTable rows={5} columns={6} />
       )}
+
+      {/* Battle-win voucher GRANTS — battle_excess_to_voucher, the leftover
+          voucher leg of a battle win (voucher == card per house rules). This is
+          a win-GRANT of a held item, not a sale/cash-out, so it sits in its own
+          section rather than diluting "Card & Voucher Sales". Moved off the
+          Gaming tab per owner (the paired battle_bet row already shows the full
+          win P&L). Same tab-gated streaming contract as the sales section. */}
+      <SectionHeading icon={Swords} title="Battle Win Vouchers" />
+      {battleVoucherTxPromise ? (
+        <Suspense fallback={<SkeletonTable rows={4} columns={6} />}>
+          <BattleVouchersStreamed
+            userId={user.id}
+            battleVoucherTxPromise={battleVoucherTxPromise}
+            isAdmin={isAdmin}
+          />
+        </Suspense>
+      ) : (
+        <SkeletonTable rows={4} columns={6} />
+      )}
     </div>
+  );
+}
+
+// `use()`s the streamed battle-win voucher-grant ledger page and renders the
+// shared CategoryTransactionsTable with the battle_excess_to_voucher allow-list.
+// Reusing the table keeps the "Battle win — voucher" label + the per-row
+// battle Watch-button association intact in the inventory context. error ≠
+// empty — a load error surfaces visibly instead of a false "no vouchers".
+function BattleVouchersStreamed({
+  userId,
+  battleVoucherTxPromise,
+  isAdmin,
+}: {
+  userId: string;
+  battleVoucherTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
+  isAdmin: boolean;
+}) {
+  const r = use(battleVoucherTxPromise);
+  return (
+    <CategoryTransactionsTable
+      title="Battle Win Vouchers"
+      userId={userId}
+      types={BATTLE_VOUCHER_TX_TYPES}
+      initialTx={r.data}
+      initialLoadError={r.error}
+      showCardsValue
+      isAdmin={isAdmin}
+    />
   );
 }
 
