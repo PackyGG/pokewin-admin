@@ -300,3 +300,191 @@ export async function getUserShardWinnings(
   if (env !== "prod") return queryUserShardWinnings(userId);
   return cachedByUser(userId);
 }
+
+// ════════════════════════════════════════════════════════════════════════
+//  SHARD-PACK OPENS — the SPEND side of the coin economy for one user.
+// ════════════════════════════════════════════════════════════════════════
+//
+// A "shard pack" is a pack BOUGHT WITH SHARDS (the secondary, wager-earned
+// currency) instead of USD. Opening one is recorded entirely in the SAME
+// `coin_transactions` ledger, NOT in the USD `ledger_transactions`:
+//
+//   • coin_pack_bet     — shards SPENT on the open ("Opened N pack(s) with
+//                         coins"). One row per open session, `amount` is the
+//                         positive shard magnitude spent.
+//   • coin_pack_payout  — the VALUE WON from that open, ALSO in shards (the
+//                         coin value the pack(s) returned). Same
+//                         `game_session_id` as the bet. A losing/zero open
+//                         has NO payout row at all.
+//
+// Both legs are bound by `game_session_id`, so a LEFT JOIN bet→payout on
+// that column reconstructs each open with its spend + win (payout 0 when the
+// open returned nothing). `amount` on both is a positive shard magnitude, so
+// net = won − spent.
+//
+// HOUSE-POV / UNIT: shards are NOT dollars. Spend + win here are both SHARDS
+// and are presented neutrally (cyan) — never summed into any USD total. The
+// USD P&L of the underlying cards is already accounted for in the inventory /
+// USD ledger; this surface is purely the shard wager flow so an admin can see
+// how many shards a user spent and won opening shard packs.
+//
+// Same read-only drift-guard (`probeCoinTableCached`) + env-keyed cache as
+// the winnings query above. SELECT-only. Safe against the live prod DB
+// (returns `{ available: false }` when `coin_transactions` is absent).
+
+/** One shard-pack open: shards spent + value (shards) won, paired by session. */
+export type ShardPackOpenEntry = {
+  /** game_session_id of the open (stable key). */
+  id: string;
+  /** Shards spent on this open (|coin_pack_bet.amount|). */
+  spent: number;
+  /** Value won, in shards (|coin_pack_payout.amount|; 0 when no payout). */
+  won: number;
+  /** Number of packs opened in this session (from metadata.pack_ids). */
+  packs: number;
+  createdAt: string;
+};
+
+export type ShardPackOpensAvailable = {
+  available: true;
+  /** Distinct shard-pack open sessions. */
+  totalOpens: number;
+  /** Total shards spent across all opens. */
+  totalSpent: number;
+  /** Total value won (shards) across all opens. */
+  totalWon: number;
+  /** Most-recent opens (capped), newest first. */
+  recent: ShardPackOpenEntry[];
+};
+
+export type ShardPackOpensResult =
+  | ShardPackOpensAvailable
+  | { available: false };
+
+type RawOpenRow = {
+  id: string;
+  spent: string | number | null;
+  won: string | number | null;
+  packs: bigint | number | null;
+  created_at: Date | string;
+};
+
+type RawOpenTotals = {
+  opens: bigint | number;
+  spent: string | number | null;
+  won: string | number | null;
+};
+
+async function queryUserShardPackOpens(
+  userId: string,
+): Promise<ShardPackOpensResult> {
+  const hasTable = await probeCoinTableCached();
+  if (!hasTable) return { available: false };
+
+  const db = await getDb();
+
+  // Totals across ALL opens (uncapped count/sums). Pair each bet to its
+  // payout by game_session_id (LEFT JOIN → 0 won when the open returned
+  // nothing). game_session_id can in theory repeat for a payout, so collapse
+  // payouts to one summed row per session first.
+  const totalsRows = await db.$queryRaw<RawOpenTotals[]>`
+    WITH bets AS (
+      SELECT game_session_id, SUM(amount) AS spent
+      FROM coin_transactions
+      WHERE user_id = ${userId}
+        AND type::text = 'coin_pack_bet'
+        AND game_session_id IS NOT NULL
+      GROUP BY game_session_id
+    ),
+    pays AS (
+      SELECT game_session_id, SUM(amount) AS won
+      FROM coin_transactions
+      WHERE user_id = ${userId}
+        AND type::text = 'coin_pack_payout'
+        AND game_session_id IS NOT NULL
+      GROUP BY game_session_id
+    )
+    SELECT
+      COUNT(*)::bigint AS opens,
+      COALESCE(SUM(b.spent), 0)::text AS spent,
+      COALESCE(SUM(p.won), 0)::text AS won
+    FROM bets b
+    LEFT JOIN pays p USING (game_session_id)`;
+
+  const recentRows = await db.$queryRaw<RawOpenRow[]>`
+    WITH bets AS (
+      SELECT
+        game_session_id,
+        SUM(amount) AS spent,
+        MAX(created_at) AS created_at,
+        -- pack count from the metadata.pack_ids array on the bet row
+        MAX(COALESCE(jsonb_array_length(metadata -> 'pack_ids'), 0)) AS packs
+      FROM coin_transactions
+      WHERE user_id = ${userId}
+        AND type::text = 'coin_pack_bet'
+        AND game_session_id IS NOT NULL
+      GROUP BY game_session_id
+    ),
+    pays AS (
+      SELECT game_session_id, SUM(amount) AS won
+      FROM coin_transactions
+      WHERE user_id = ${userId}
+        AND type::text = 'coin_pack_payout'
+        AND game_session_id IS NOT NULL
+      GROUP BY game_session_id
+    )
+    SELECT
+      b.game_session_id::text AS id,
+      b.spent::text AS spent,
+      COALESCE(p.won, 0)::text AS won,
+      b.packs::bigint AS packs,
+      b.created_at
+    FROM bets b
+    LEFT JOIN pays p USING (game_session_id)
+    ORDER BY b.created_at DESC
+    LIMIT ${RECENT_LIMIT}`;
+
+  const t = totalsRows[0];
+  const totalOpens = t ? Number(t.opens) : 0;
+  if (totalOpens === 0) {
+    return { available: true, totalOpens: 0, totalSpent: 0, totalWon: 0, recent: [] };
+  }
+
+  const recent: ShardPackOpenEntry[] = recentRows.map((r) => ({
+    id: r.id,
+    spent: Number(r.spent ?? 0),
+    won: Number(r.won ?? 0),
+    packs: Number(r.packs ?? 0),
+    createdAt:
+      r.created_at instanceof Date
+        ? r.created_at.toISOString()
+        : String(r.created_at),
+  }));
+
+  return {
+    available: true,
+    totalOpens,
+    totalSpent: Number(t?.spent ?? 0),
+    totalWon: Number(t?.won ?? 0),
+    recent,
+  };
+}
+
+const cachedOpensByUser = unstable_cache(
+  queryUserShardPackOpens,
+  ["users-shard-pack-opens-v1"],
+  { revalidate: 60, tags: ["users-shard-pack-opens"] },
+);
+
+/**
+ * Public entry point for a user's shard-pack OPENS (shards spent + value
+ * won, both in shards). Cached 60s on prod; direct on a dev-toggled admin.
+ * ACTIVE-TIMEFRAME-ONLY: kicked ONLY when the Gaming tab is active.
+ */
+export async function getUserShardPackOpens(
+  userId: string,
+): Promise<ShardPackOpensResult> {
+  const env = await readDbEnv();
+  if (env !== "prod") return queryUserShardPackOpens(userId);
+  return cachedOpensByUser(userId);
+}

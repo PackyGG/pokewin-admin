@@ -104,8 +104,14 @@ import type {
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import type { UserRewards } from "@/lib/queries/users";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
-import type { ShardWinningsResult } from "@/lib/queries/users-shard-winnings";
-import { ShardWinningsSection } from "./shard-winnings-section";
+import type {
+  ShardWinningsResult,
+  ShardPackOpensResult,
+} from "@/lib/queries/users-shard-winnings";
+import {
+  ShardWinningsSection,
+  ShardPackOpensSection,
+} from "./shard-winnings-section";
 import { BandError } from "./band-error";
 import {
   SectionHeading,
@@ -766,6 +772,7 @@ export function GamingTab({
   data,
   gamingTxPromise,
   shardWinningsPromise,
+  shardPackOpensPromise,
 }: {
   data: UserDetail;
   gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
@@ -773,6 +780,10 @@ export function GamingTab({
   // for the active tab (Active-Timeframe-Only). The section self-hides when
   // the connected DB has no coin_transactions table or the user has none.
   shardWinningsPromise: Promise<SafeQueryResult<ShardWinningsResult>> | null;
+  // Per-user shard-PACK opens (shards spent + value won, both in shards),
+  // diamond-tagged. null = not kicked for the active tab. Self-hides when
+  // the connected DB has no coin ledger or the user never opened a shard pack.
+  shardPackOpensPromise: Promise<SafeQueryResult<ShardPackOpensResult>> | null;
 }) {
   const { user } = data;
   // sessionRole drives the password-aware Watch button + password-reveal
@@ -795,6 +806,15 @@ export function GamingTab({
       ) : (
         <SkeletonTable rows={5} columns={6} />
       )}
+
+      {/* Shard PACK opens (packs bought with shards, not USD) — diamond-
+          tagged, showing shards spent + value won (both in shards). Streamed
+          so the coin-ledger read never blocks the USD table above; self-hides
+          when there are no shard pack opens (or no coin ledger on the
+          connected DB). */}
+      <Suspense fallback={null}>
+        <ShardPackOpensSection shardPackOpensPromise={shardPackOpensPromise} />
+      </Suspense>
 
       {/* Shard/coin winnings (secondary currency) tagged by source game.
           Streamed so the coin-ledger read never blocks the USD table above;

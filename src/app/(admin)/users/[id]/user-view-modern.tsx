@@ -73,7 +73,10 @@ import type { PaginatedInventory } from "./user-tabs-types";
 import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
-import type { ShardWinningsResult } from "@/lib/queries/users-shard-winnings";
+import type {
+  ShardWinningsResult,
+  ShardPackOpensResult,
+} from "@/lib/queries/users-shard-winnings";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import { ErrorPill } from "./band-error";
 import { TILE_COLORS } from "./user-view-modern-panels";
@@ -167,6 +170,7 @@ export function UserViewModern({
   riskResultPromise,
   gamingTxPromise,
   shardWinningsPromise,
+  shardPackOpensPromise,
   financialTxPromise,
   adjustmentsTxPromise,
   rewardsPromise,
@@ -199,6 +203,9 @@ export function UserViewModern({
   // Gaming tab only — per-user shard/coin winnings tagged by source game.
   // null = not kicked for the active tab (Active-Timeframe-Only).
   shardWinningsPromise: Promise<SafeQueryResult<ShardWinningsResult>> | null;
+  // Gaming tab only — per-user shard-PACK opens (shards spent + value won).
+  // null = not kicked for the active tab (Active-Timeframe-Only).
+  shardPackOpensPromise: Promise<SafeQueryResult<ShardPackOpensResult>> | null;
   // Overview + Finances:
   financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Overview, owner only — dedicated uncapped admin_balance_adjustment page
@@ -652,6 +659,7 @@ export function UserViewModern({
             data={data}
             gamingTxPromise={gamingTxPromise}
             shardWinningsPromise={shardWinningsPromise}
+            shardPackOpensPromise={shardPackOpensPromise}
           />
         )}
 

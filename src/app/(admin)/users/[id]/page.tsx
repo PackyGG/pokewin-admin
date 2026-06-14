@@ -37,7 +37,10 @@ import {
 } from "@/lib/errors/safe-query";
 import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { getUserWagerProgress } from "@/lib/queries/users-wager-progress";
-import { getUserShardWinnings } from "@/lib/queries/users-shard-winnings";
+import {
+  getUserShardWinnings,
+  getUserShardPackOpens,
+} from "@/lib/queries/users-shard-winnings";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -445,6 +448,19 @@ async function UserDetailBody({
           USER_DETAIL_QUERY_TIMEOUT_MS,
         )
       : null;
+  // Shard-PACK opens (shards spent + value won, both in shards) — Gaming tab
+  // only (Active-Timeframe-Only). Same coin_transactions source + self-hiding
+  // drift-guard as the winnings query: returns { available: false } when the
+  // connected DB has no coin ledger (e.g. the live prod game DB).
+  const shardPackOpensPromise =
+    initialTab === "gaming"
+      ? safeQuery(
+          () => getUserShardPackOpens(id),
+          { available: false as const },
+          "users.detail.shardPackOpens",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        )
+      : null;
   // Adjustments: Overview-only. Kicked only when the viewer is the owner
   // `motha` — a non-owner gets a resolved empty page instead of a wasted
   // round trip (the server returns zero adjustment rows for them anyway;
@@ -688,6 +704,7 @@ async function UserDetailBody({
       riskResultPromise={riskResultPromise}
       gamingTxPromise={gamingTxPromise}
       shardWinningsPromise={shardWinningsPromise}
+      shardPackOpensPromise={shardPackOpensPromise}
       financialTxPromise={financialTxPromise}
       adjustmentsTxPromise={adjustmentsTxPromise}
       rewardsPromise={rewardsPromise}
