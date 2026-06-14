@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/command";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/utils/format";
-import { searchItems, type SearchItem } from "./actions";
+import { searchItems, type SearchItem } from "./prize-search-actions";
 
 export function PrizePicker({
   type,
@@ -106,12 +106,6 @@ export function PrizePicker({
             />
           </div>
           <CommandList>
-            {/* Loading rows — dimension-matched to the real result rows
-                (8px square thumb + name/price lines) so the list doesn't
-                flash empty then jump when results stream in. Only show
-                while a search is in flight AND we have nothing to show yet;
-                once we have prior results we keep them visible (soft
-                refresh) instead of blanking the list. */}
             {isPending && items.length === 0 && (
               <div className="space-y-1 p-1" aria-hidden>
                 {Array.from({ length: 4 }).map((_, i) => (

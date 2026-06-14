@@ -34,8 +34,6 @@ const MAPPING = {
   "src/app/(admin)/battles/[id]/page.tsx": "Battle Detail",
   "src/app/(admin)/rewards/page.tsx": "Rewards",
   "src/app/(admin)/rewards/rakeback/page.tsx": "Rakeback",
-  "src/app/(admin)/rewards/raffles/page.tsx": "Raffles",
-  "src/app/(admin)/rewards/raffles/[id]/page.tsx": "Raffle Detail",
   "src/app/(admin)/rewards/leaderboards/page.tsx": "Leaderboards",
   "src/app/(admin)/rewards/level-up/page.tsx": "Level Up",
   "src/app/(admin)/rewards/settings/page.tsx": "Rewards Settings",

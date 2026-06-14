@@ -8,7 +8,7 @@ import { PageHero } from "@/components/modern-panels";
 
 /**
  * Route-level error boundary for the entire /rewards subtree
- * (rewards, rakeback, raffles, leaderboards, level-up, settings).
+ * (rewards, rakeback, leaderboards, level-up, settings).
  *
  * The rewards tree owns user-facing balance-add levers — admins must
  * never see an opaque "Application error" overlay here because the
@@ -54,7 +54,7 @@ export default function RewardsError({
 
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <p className="text-xs text-muted-foreground">
-          Rewards / rakeback / raffles / leaderboards are independent
+          Rewards / rakeback / leaderboards are independent
           aggregates — a failure on one tab does not propagate to the
           others. Hitting Try again re-runs the server render without a
           full reload.

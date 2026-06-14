@@ -345,9 +345,9 @@ function MetadataCell({
   }
   if (m.raffle_id) {
     items.push(
-      <Link key="raffle" href={`/rewards/raffles/${m.raffle_id}`} className="text-blue-400 hover:underline font-mono text-xs">
+      <span key="raffle" className="font-mono text-xs text-muted-foreground">
         raffle:{(m.raffle_id as string).slice(0, 8)}
-      </Link>
+      </span>
     );
   }
   if (m.reward_id) {

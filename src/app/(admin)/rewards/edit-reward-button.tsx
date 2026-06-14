@@ -24,8 +24,8 @@ import {
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ux";
 import { updateReward } from "./actions";
-import { PrizePicker } from "./raffles/prize-picker";
-import type { SearchItem } from "./raffles/actions";
+import { PrizePicker } from "./prize-picker";
+import type { SearchItem } from "./prize-search-actions";
 import type { RewardItem } from "@/lib/queries/rewards";
 
 type PackEntry = {
