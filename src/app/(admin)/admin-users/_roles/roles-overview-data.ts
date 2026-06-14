@@ -98,6 +98,13 @@ export function groupBaselineTokens(tokens: readonly string[]): BaselineGroup[] 
 /** A built-in role, as shown on the overview grid + inspector. */
 export type BuiltInRoleSummary = {
   role: AdminRole;
+  /**
+   * The `admin_roles` system-row id for this built-in (`system_key = role`).
+   * `null` if the system row is missing (shouldn't happen post-migration) —
+   * the grid then renders the card without an editor link. Used to deep-link
+   * into the full per-role editor at `/admin-users/roles/[id]`.
+   */
+  id: string | null;
   label: string;
   /** Page-route tokens in the baseline. */
   pageCount: number;
@@ -201,6 +208,17 @@ export async function getRolesOverview(): Promise<RolesOverview> {
   const holdersByRole = new Map<string, number>();
   for (const g of roleGroups) holdersByRole.set(g.role, g._count._all);
 
+  // Map each built-in's `system_key` → its `admin_roles` row id, so the grid
+  // can deep-link a built-in into the full per-role editor. Read-only.
+  const systemRows = await adminDb.admin_roles.findMany({
+    where: { is_system: true, system_key: { not: null } },
+    select: { id: true, system_key: true },
+  });
+  const idBySystemKey = new Map<string, string>();
+  for (const r of systemRows) {
+    if (r.system_key) idBySystemKey.set(r.system_key, r.id);
+  }
+
   const builtIns: BuiltInRoleSummary[] = ALL_ADMIN_ROLES.map((role) => {
     const baseline = ROLE_BASELINES[role];
     const tokens = baseline.tokens;
@@ -211,6 +229,7 @@ export async function getRolesOverview(): Promise<RolesOverview> {
     const capabilityCount = tokens.length - pageCount - valueCount;
     return {
       role,
+      id: idBySystemKey.get(role) ?? null,
       label: baseline.label,
       pageCount,
       capabilityCount,

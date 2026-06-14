@@ -98,7 +98,7 @@ export async function RolesTab() {
           <KpiTile
             label="Built-in roles"
             value={String(kpis.builtInCount)}
-            sub="Locked baselines"
+            sub="System roles"
             icon={Lock}
             accent="amber"
           />
@@ -133,14 +133,14 @@ export async function RolesTab() {
         </div>
       </FadeIn>
 
-      {/* Built-in roles — locked, read-only baselines. */}
+      {/* Built-in roles — editable per-role (except `admin`, total bypass). */}
       <div className="space-y-3">
         <SectionHeading icon={Lock} title="Built-in Roles" />
         <p className="text-sm text-muted-foreground">
-          The fixed system roles. Their baselines are code-defined and locked —
-          view a baseline read-only, but it can&apos;t be changed. To grant
-          different access, create a custom role or set per-user access on a
-          user&apos;s profile.
+          The fixed system roles. Open one to edit its pages, capabilities, and
+          balance limits — saved changes re-materialize every holder&apos;s
+          access. The <span className="font-medium">admin</span> role is the
+          exception: it bypasses every check and can&apos;t be restricted here.
         </p>
         <FadeIn>
           <BuiltInRolesGrid roles={overview.builtIns} />

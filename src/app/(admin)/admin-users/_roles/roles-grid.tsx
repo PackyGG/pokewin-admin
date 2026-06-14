@@ -1,7 +1,6 @@
 import type * as React from "react";
 import Link from "next/link";
 import {
-  Lock,
   Pencil,
   Users,
   Crown,
@@ -11,12 +10,13 @@ import {
   Package,
   UserCog,
   ArrowRight,
+  ShieldCheck,
+  Lock,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { StatPanel, PanelRow, type AccentColor } from "@/components/modern-panels";
 import { formatDateTime } from "@/lib/utils/format";
 import type { AdminRole } from "@/lib/admin-roles";
-import { BuiltInRoleInspector } from "./built-in-role-inspector";
 import type {
   BuiltInRoleSummary,
   CustomRoleSummary,
@@ -35,44 +35,48 @@ const ROLE_VISUALS: Record<
   creator_manager: { icon: UserCog, accent: "emerald" },
 };
 
-/** A "Locked" pill for built-in roles. */
-function LockedBadge() {
+/** A "Built-in" pill for system roles. */
+function BuiltInBadge() {
   return (
     <Badge
       variant="outline"
       className="gap-1 border-amber-500/30 bg-amber-500/10 text-[10px] font-medium text-amber-600 dark:text-amber-400"
     >
       <Lock className="size-3" />
-      Locked
+      Built-in
     </Badge>
   );
 }
 
-/** An "Editable" pill for custom roles. */
-function EditableBadge() {
+/** A "Custom" pill for custom roles. */
+function CustomBadge() {
   return (
     <Badge
       variant="outline"
       className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
     >
       <Pencil className="size-3" />
-      Editable
+      Custom
     </Badge>
   );
 }
 
 /**
- * One built-in role card: token + holder counts, a Locked badge, and the
- * read-only baseline inspector trigger. No editable controls.
+ * One built-in role card: token + holder counts, a "Built-in" badge, and a link
+ * into the full per-role editor (`/admin-users/roles/[id]`). The `admin` role
+ * is the exception — it bypasses every check, so it is NOT clickable here; its
+ * card shows a "Full access" row instead.
  */
 function BuiltInRoleCard({ role }: { role: BuiltInRoleSummary }) {
   const visual = ROLE_VISUALS[role.role];
+  // `admin` is the total-bypass superuser — never editable, not linked.
+  const editable = !role.bypass && role.id !== null;
   return (
     <StatPanel
       title={role.label}
       icon={visual.icon}
       accent={visual.accent}
-      action={<LockedBadge />}
+      action={<BuiltInBadge />}
     >
       <div className="space-y-0.5">
         {role.bypass ? (
@@ -98,23 +102,29 @@ function BuiltInRoleCard({ role }: { role: BuiltInRoleSummary }) {
         />
       </div>
       <div className="mt-3">
-        <BuiltInRoleInspector
-          roleLabel={role.label}
-          groups={role.groups}
-          pageCount={role.pageCount}
-          capabilityCount={role.capabilityCount}
-          bypass={role.bypass}
-          triggerClassName="w-full"
-        />
+        {editable ? (
+          <Link
+            href={`/admin-users/roles/${role.id}`}
+            className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            <Pencil className="size-3.5" />
+            View &amp; edit
+            <ArrowRight className="size-3.5" />
+          </Link>
+        ) : (
+          <div className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-input bg-muted/30 px-3 text-xs font-medium text-muted-foreground">
+            <ShieldCheck className="size-3.5" />
+            Bypasses all checks
+          </div>
+        )}
       </div>
     </StatPanel>
   );
 }
 
 /**
- * One custom role card: token + holder counts, an Editable badge, and a link
- * into the existing custom-role editor (`/admin-users/roles/[id]`). Behavior
- * of that editor is unchanged.
+ * One custom role card: token + holder counts, a "Custom" badge, and a link
+ * into the per-role editor (`/admin-users/roles/[id]`).
  */
 function CustomRoleCard({ role }: { role: CustomRoleSummary }) {
   return (
@@ -122,7 +132,7 @@ function CustomRoleCard({ role }: { role: CustomRoleSummary }) {
       title={role.name}
       icon={Pencil}
       accent="emerald"
-      action={<EditableBadge />}
+      action={<CustomBadge />}
     >
       <div className="space-y-0.5">
         {role.description ? (
@@ -154,7 +164,7 @@ function CustomRoleCard({ role }: { role: CustomRoleSummary }) {
   );
 }
 
-/** The locked built-in roles grid. */
+/** The built-in roles grid (editable per-role, except `admin`). */
 export function BuiltInRolesGrid({ roles }: { roles: BuiltInRoleSummary[] }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
