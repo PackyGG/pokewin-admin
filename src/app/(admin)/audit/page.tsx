@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { AlertTriangle, ScrollText } from "lucide-react";
 import { getAuditEvents, getDistinctEventTypeCount } from "@/lib/queries/audit";
-import { requirePageAccess } from "@/lib/dal";
+import { requireAdmin } from "@/lib/dal";
 import {
   safeQuery,
   safeQueryOrNull,
@@ -107,7 +107,13 @@ export default async function AuditPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requirePageAccess("/audit");
+  // Hard ADMIN-ONLY: the Audit Log is gated by role, not by the grantable
+  // "/audit" page key — only the `admin` role reaches it (owners are
+  // ultra-admins = they hold the admin role, so they keep access). A
+  // non-admin (support/marketing/creator/pack_creator), even with the
+  // "/audit" page key granted via a custom role or per-user override, is
+  // redirected to their default route.
+  await requireAdmin();
   const params = await searchParams;
   const page = Number(params.page) || 1;
   // Default page size is Edge-Config tunable; an explicit `?perPage=` URL
