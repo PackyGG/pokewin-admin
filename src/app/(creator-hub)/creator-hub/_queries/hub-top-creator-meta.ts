@@ -1,6 +1,8 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
+import { unstable_cache } from "next/cache";
+import { getDb, getDevDb, getProdDb } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
@@ -74,12 +76,12 @@ export async function getWindowedSignupsByCreatorIds(
   return result;
 }
 
-/** Top creators by referred sign-ups in the overview window (KPI popover). */
-export async function getTopSignupLeaders(
+async function fetchTopSignupLeaders(
   period: DashboardPeriod,
-  limit = 5,
+  limit: number,
+  env: DbEnv,
 ): Promise<HubSignupLeader[]> {
-  const db = await getDb();
+  const db = env === "prod" ? getProdDb() : getDevDb();
   const excluded = await getExcludedUserIds();
   const blacklistAnd =
     excluded.length > 0
@@ -107,4 +109,39 @@ export async function getTopSignupLeaders(
     username: r.username,
     signups: toNumber(r.value),
   }));
+}
+
+/**
+ * Top creators by referred sign-ups in the overview window (KPI popover).
+ *
+ * Cached (60s, env-keyed) mirroring the sibling `getHubTopCreatorsByDeposits`:
+ * this runs on every Creator Hub dashboard render (it's awaited in the
+ * Overview section's `Promise.all`), so an uncached run paid a full
+ * `"user"`-self-join scan each time. `env`/`blacklistKey` are resolved in the
+ * request scope and folded into the cache key, and the inner fetch uses the
+ * env-pinned `getProdDb`/`getDevDb` (NOT the cookie-based `getDb()`, which
+ * resolves to "prod" inside `unstable_cache` and would leak prod data to a
+ * dev-toggled admin). The `HubSignupLeader[]` result is all-primitive (no
+ * `Date` fields), so the `unstable_cache` JSON round-trip is identity-safe.
+ */
+export async function getTopSignupLeaders(
+  period: DashboardPeriod,
+  limit = 5,
+): Promise<HubSignupLeader[]> {
+  const env = await readDbEnv();
+  const excluded = await getExcludedUserIds();
+  const blacklistKey =
+    excluded.length > 0 ? escapeBlacklistIds(excluded) : "none";
+
+  return unstable_cache(
+    () => fetchTopSignupLeaders(period, limit, env),
+    [
+      "hub-top-signup-leaders-v1",
+      period,
+      String(limit),
+      env,
+      blacklistKey,
+    ],
+    { revalidate: 60, tags: ["creator-hub"] },
+  )();
 }
