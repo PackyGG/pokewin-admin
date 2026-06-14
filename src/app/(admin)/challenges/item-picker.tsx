@@ -18,6 +18,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/utils/format";
 import { searchItems, type SearchItem } from "./actions";
+import {
+  formatDropChancePercent,
+  formatExpectedOpenings,
+} from "./challenge-card-math";
 
 /**
  * Pack/card search-and-select used by the create-challenge form to resolve a
@@ -130,7 +134,19 @@ export function ItemPicker({
                   )}
                   <div className="flex-1 truncate">
                     <div className="truncate text-sm">{item.name}</div>
-                    <div className="text-xs text-muted-foreground">{formatCurrency(item.priceUsd)}</div>
+                    <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                      <span>{formatCurrency(item.priceUsd)}</span>
+                      {type === "card" && item.probabilityPercent != null && (
+                        <>
+                          <span aria-hidden>·</span>
+                          <span>{formatDropChancePercent(item.probabilityPercent)}</span>
+                          <span aria-hidden>·</span>
+                          <span>
+                            ~{formatExpectedOpenings(item.expectedOpenings ?? null)} opens
+                          </span>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               </CommandItem>
