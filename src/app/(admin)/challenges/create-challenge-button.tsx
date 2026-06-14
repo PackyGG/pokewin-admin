@@ -36,13 +36,28 @@ function cardChallengeName(cardName: string) {
   return `Hit "${cardName}"`;
 }
 
+/** Challenge title multiplier — number immediately followed by "x" (no space). */
+function formatMultiplierForChallengeName(multiplier: number): string {
+  if (multiplier >= 1000) {
+    return `${(multiplier / 1000).toFixed(1).replace(/\.0$/, "")}kx`;
+  }
+  if (multiplier >= 10) {
+    return `${Math.round(multiplier)}x`;
+  }
+  return `${multiplier.toFixed(1).replace(/\.0$/, "")}x`;
+}
+
+function upgraderChallengeName(minMultiplier: number): string | null {
+  if (!Number.isFinite(minMultiplier) || minMultiplier <= 0) return null;
+  return `Hit a ${formatMultiplierForChallengeName(minMultiplier)} or more on upgrader`;
+}
+
 export function CreateChallengeButton() {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
   const [kind, setKind] = useState<Kind>("card");
-  const [name, setName] = useState("");
   const [prizeAmount, setPrizeAmount] = useState("");
   const [activePrizePercent, setActivePrizePercent] = useState<number | null>(null);
   const [maxClaims, setMaxClaims] = useState("1");
@@ -53,7 +68,6 @@ export function CreateChallengeButton() {
 
   function resetForm() {
     setKind("card");
-    setName("");
     setPrizeAmount("");
     setActivePrizePercent(null);
     setMaxClaims("1");
@@ -65,7 +79,6 @@ export function CreateChallengeButton() {
 
   function handleKindChange(next: Kind) {
     setKind(next);
-    setName("");
     setPrizeAmount("");
     setActivePrizePercent(null);
     setPack(null);
@@ -76,10 +89,16 @@ export function CreateChallengeButton() {
 
   function handleSubmit() {
     const resolvedName =
-      kind === "card" && card?.name ? cardChallengeName(card.name) : name.trim();
+      kind === "card" && card?.name
+        ? cardChallengeName(card.name)
+        : kind === "upgrader"
+          ? upgraderChallengeName(parseFloat(minMultiplier))
+          : null;
 
     if (!resolvedName) {
-      toast.error("Please enter a name");
+      toast.error(
+        kind === "card" ? "Please select a card" : "Enter a minimum multiplier",
+      );
       return;
     }
     const prize = parseFloat(prizeAmount);
@@ -140,6 +159,9 @@ export function CreateChallengeButton() {
     });
   }
 
+  const upgraderName =
+    kind === "upgrader" ? upgraderChallengeName(parseFloat(minMultiplier)) : null;
+
   return (
     <Dialog
       open={open}
@@ -167,17 +189,6 @@ export function CreateChallengeButton() {
             </Select>
           </div>
 
-          {kind === "upgrader" ? (
-            <div className="space-y-2">
-              <Label>Name</Label>
-              <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Land a 5x on the upgrader"
-              />
-            </div>
-          ) : null}
-
           <div className="space-y-3 rounded-lg border p-3">
             <Label className="text-xs font-medium text-muted-foreground">
               Requirement
@@ -198,7 +209,6 @@ export function CreateChallengeButton() {
                         priceUsd: item.priceUsd,
                       });
                       setCard(null);
-                      setName("");
                       setPrizeAmount("");
                       setActivePrizePercent(null);
                     }}
@@ -219,7 +229,6 @@ export function CreateChallengeButton() {
                         imageUrl: item.imageUrl,
                         priceUsd: item.priceUsd,
                       });
-                      setName(cardChallengeName(item.name));
                       setPrizeAmount("");
                       setActivePrizePercent(null);
                     }}
@@ -268,6 +277,15 @@ export function CreateChallengeButton() {
                 Name
               </p>
               <p className="text-sm font-medium">{cardChallengeName(card.name)}</p>
+            </div>
+          ) : null}
+
+          {upgraderName ? (
+            <div className="rounded-lg border bg-muted/20 px-3 py-2">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Name
+              </p>
+              <p className="text-sm font-medium">{upgraderName}</p>
             </div>
           ) : null}
 
