@@ -35,7 +35,6 @@ export type NavGroupKey =
   | "Insights"
   | "Employees"
   | "Content"
-  | "Transactions"
   | "Rewards"
   | "Creator Portal"
   | "Test Tools"
@@ -99,12 +98,14 @@ export type NavEntry = {
 export const NAV_GROUP_META: NavGroupMeta[] = [
   { label: "Overview" },
   { label: "Insights" },
-  { label: "Employees" },
   { label: "Content" },
-  { label: "Transactions" },
   { label: "Rewards" },
   { label: "Creator Portal", creatorOnly: true },
   { label: "Test Tools", devEnvOnly: true },
+  // Owner: "move employees over system overview" — the Employees group now
+  // sits directly above the System group (its previous slot was higher up,
+  // between Insights and Content).
+  { label: "Employees" },
   { label: "System" },
 ];
 
@@ -467,22 +468,28 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
 
-  // ── Transactions ───────────────────────────────────────────────────────
+  // ── Transactions (merged into Content) ─────────────────────────────────
+  // Owner: "merge transactions into content as a switch tab" → to free a
+  // sidebar slot, the former standalone "Transactions" nav group was folded
+  // into the "Content" group above. These entries keep their own routes,
+  // permission keys, and pages unchanged (no route moves → no redirect
+  // needed); only their `group` changed to "Content", and their sidebar
+  // `label` is now the descriptive "* Transactions" form (previously their
+  // palette-only label) so they don't collide with the existing Content
+  // "Packs"/"Upgrader" catalog items.
   {
-    // Sidebar label "Packs"; palette label "Pack Transactions".
     id: "nav.transactions.packs",
-    group: "Transactions",
-    label: "Packs",
-    paletteLabel: "Pack Transactions",
+    group: "Content",
+    label: "Pack Transactions",
     href: "/transactions/packs",
     pageKey: "/transactions/packs",
-    icon: "Package",
+    icon: "Receipt",
     inSidebar: true,
     inPalette: true,
   },
   {
     id: "nav.battles",
-    group: "Transactions",
+    group: "Content",
     label: "Battles",
     href: "/battles",
     pageKey: "/battles",
@@ -492,27 +499,23 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Sidebar label "Upgrader"; palette label "Upgrader Transactions".
     id: "nav.transactions.upgrader",
-    group: "Transactions",
-    label: "Upgrader",
-    paletteLabel: "Upgrader Transactions",
+    group: "Content",
+    label: "Upgrader Transactions",
     href: "/transactions/upgrader",
     pageKey: "/transactions/upgrader",
-    icon: "ArrowUpCircle",
+    icon: "Receipt",
     keywords: ["upgrader", "bet", "payout"],
     inSidebar: true,
     inPalette: true,
   },
   {
-    // Sidebar label "Rewards"; palette label "Reward Transactions".
     id: "nav.transactions.rewards",
-    group: "Transactions",
-    label: "Rewards",
-    paletteLabel: "Reward Transactions",
+    group: "Content",
+    label: "Reward Transactions",
     href: "/transactions/rewards",
     pageKey: "/transactions/rewards",
-    icon: "Award",
+    icon: "Receipt",
     inSidebar: true,
     inPalette: true,
   },
