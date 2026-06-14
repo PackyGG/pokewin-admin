@@ -39,7 +39,7 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
-  getCostBreakdown,
+  getCostBreakdownLifetimeCached,
   type CostBreakdown,
 } from "@/lib/queries/insights-analytics/cost-breakdown";
 import {
@@ -114,8 +114,12 @@ export default async function RealNumbersPage() {
     { data: customerCash },
     { data: recycling },
   ] = await Promise.all([
+    // Lifetime cost-breakdown via the SHARED cross-render cache (the same
+    // `getCostBreakdown("all", "Lifetime", 0, 365)` assembly as before — the
+    // figures are byte-identical). Reading it here also warms the admin top-bar
+    // pills' cache, since they read the same key.
     safeQuery(
-      () => getCostBreakdown("all", "Lifetime", 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS),
+      () => getCostBreakdownLifetimeCached(),
       null,
       "insights.realNumbers.cost",
     ),

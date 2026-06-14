@@ -1,6 +1,6 @@
 import { ArrowDownToLine, ArrowUpFromLine, Coins, TrendingUp } from "lucide-react";
 import { getInsightsHubWager } from "@/lib/queries/insights-analytics/hub-wager";
-import { getCostBreakdownTopbarLifetime } from "@/lib/queries/insights-analytics/cost-breakdown";
+import { getCostBreakdownLifetimeCached } from "@/lib/queries/insights-analytics/cost-breakdown";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { formatCompactUsd } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -10,52 +10,76 @@ import { cn } from "@/lib/utils";
  * deposit, withdrawal, and gaming margin (GGR), shown to the RIGHT of the
  * sidebar toggle + breadcrumbs.
  *
- * DATA (the owner-trusted lifetime stack — same sources as the /insights hub):
+ * DATA (the owner-trusted lifetime stack — the SAME reads the /insights pages
+ * use, so the pills equal the /insights lifetime overview BY CONSTRUCTION):
  *   • Wager ← `getInsightsHubWager` — the SAME cached helper behind the
  *     /insights hub headline Wager tile (lifetime, 365d-capped; borrow-net
  *     real amounts, creator sessions excluded, sponsored battles + upgrader
  *     included).
- *   • GGR / Deposits / Withdrawals ← `getCostBreakdownTopbarLifetime` — a
- *     cached projection of the IDENTICAL `getCostBreakdown("all", …, 365)`
- *     assembly the /insights hub headline margin tiles render.
- * So the pills equal the /insights lifetime overview BY CONSTRUCTION (shared
- * helpers, same call shapes), on a 5-min `unstable_cache` that shares the
- * hub's cached read so they stay cheap on every admin page.
+ *   • GGR / Deposits / Withdrawals ← `getCostBreakdownLifetimeCached` — the
+ *     ONE shared lifetime cost-breakdown cache the /insights hub AND
+ *     /insights/real-numbers also read (same `getCostBreakdown("all", …, 365)`
+ *     assembly). GGR = `.ggr`; Deposits = the `residual:deposit` bridge row;
+ *     Withdrawals = `.cardWithdrawals`.
  *
- * PERF: both helpers are 365d-capped + `unstable_cache`d (300s), so the
- * lifetime read is bounded (never an unbounded full-history scan) and reuses
- * the hub's cache on hits.
+ * WHY SHARED CACHE: the pills used to flash "—" on a cold load because the
+ * topbar's lifetime read had its OWN `unstable_cache` key, separate from the
+ * /insights pages. Opening /insights (which the owner does constantly) never
+ * warmed the pills, so the heavy assembly re-ran inside the 15s budget and
+ * degraded. Now both call the SAME `getCostBreakdownLifetimeCached` key
+ * (revalidate 900s), so rendering /insights or /insights/real-numbers warms the
+ * exact entry the pills read — they reliably show the numbers.
  *
- * RESILIENCE: wrapped in `safeQuery` (15s bound), and the layout renders
- * this inside its own `<Suspense>` boundary, so a slow or failed read
- * degrades to "—" pills (and never blocks the page shell / breadcrumbs).
- * A timed-out read keeps running server-side and warms the cache for the
- * next render; failures are never cached.
+ * PERF: both helpers are 365d-capped + `unstable_cache`d, so the lifetime read
+ * is bounded (never an unbounded full-history scan) and a hit is cheap.
+ *
+ * RESILIENCE: the wager pill + the cost-breakdown pills run on SEPARATE
+ * `safeQuery` legs (each 15s-bounded), and the layout renders this inside its
+ * own `<Suspense>` boundary. So a slow/cold cost-breakdown read degrades only
+ * its three pills to "—" while the lighter wager pill (its own smaller cache)
+ * still renders — and neither ever blocks the page shell / breadcrumbs. A
+ * timed-out read keeps running server-side and warms the cache for the next
+ * render; failures are never cached.
  */
 
 /** Loud window label — every pill tooltip names the window + the shared source. */
 const WINDOW_SOURCE = "Lifetime — same source as /insights";
 
 export async function TopbarHouseStats() {
-  const { data, error } = await safeQuery(
-    async () => {
-      const [wager, cb] = await Promise.all([
-        getInsightsHubWager(),
-        getCostBreakdownTopbarLifetime(),
-      ]);
-      return {
-        wager,
-        deposits: cb.deposits,
-        withdrawals: cb.withdrawals,
-        ggr: cb.ggr,
-      };
-    },
-    { wager: 0, deposits: 0, withdrawals: 0, ggr: 0 },
-    "topbar.houseStats",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
+  // Two independent legs so a cold/slow cost-breakdown read degrades only its
+  // three pills (deposits / withdrawals / GGR) to "—" without taking down the
+  // lighter, separately-cached wager pill.
+  const [{ data: wager, error: wagerError }, { data: cb, error: cbError }] =
+    await Promise.all([
+      safeQuery(
+        () => getInsightsHubWager(),
+        0,
+        "topbar.houseStats.wager",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => getCostBreakdownLifetimeCached(),
+        null,
+        "topbar.houseStats.costBreakdown",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+    ]);
 
-  const failed = error !== null;
+  // Project the three figures out of the full shared CostBreakdown. A residual
+  // bridge row with a zero total is omitted from `lines`, so a missing deposit
+  // row truthfully means $0 deposited in-window.
+  const data = {
+    wager: wager ?? 0,
+    deposits: cb?.lines.find((l) => l.key === "residual:deposit")?.amount ?? 0,
+    withdrawals: cb?.cardWithdrawals ?? 0,
+    ggr: cb?.ggr ?? 0,
+  };
+
+  // Per-leg failure: the wager pill degrades only on a wager-read failure; the
+  // three cost-breakdown pills degrade only on a cost-breakdown failure. So one
+  // cold/slow read never blanks the other's pills.
+  const wagerFailed = wagerError !== null;
+  const cbFailed = cbError !== null;
   const ggrPositive = data.ggr >= 0;
 
   return (
@@ -65,9 +89,9 @@ export async function TopbarHouseStats() {
         tone="emerald"
         icon={<Coins className="size-3.5 shrink-0" aria-hidden />}
         label="Wager"
-        value={failed ? "—" : formatCompactUsd(data.wager)}
+        value={wagerFailed ? "—" : formatCompactUsd(data.wager)}
         title={`${WINDOW_SOURCE} · customer wager (borrow-net, creator sessions excluded, incl. upgrader) · ${
-          failed ? "unavailable" : usd(data.wager)
+          wagerFailed ? "unavailable" : usd(data.wager)
         }`}
       />
       <HouseStatPill
@@ -75,9 +99,9 @@ export async function TopbarHouseStats() {
         tone="emerald"
         icon={<ArrowDownToLine className="size-3.5 shrink-0" aria-hidden />}
         label="Deposits"
-        value={failed ? "—" : formatCompactUsd(data.deposits)}
+        value={cbFailed ? "—" : formatCompactUsd(data.deposits)}
         title={`${WINDOW_SOURCE} · deposits (cash in) · ${
-          failed ? "unavailable" : usd(data.deposits)
+          cbFailed ? "unavailable" : usd(data.deposits)
         }`}
       />
       <HouseStatPill
@@ -85,9 +109,9 @@ export async function TopbarHouseStats() {
         tone="rose"
         icon={<ArrowUpFromLine className="size-3.5 shrink-0" aria-hidden />}
         label="Withdrawals"
-        value={failed ? "—" : formatCompactUsd(data.withdrawals)}
+        value={cbFailed ? "—" : formatCompactUsd(data.withdrawals)}
         title={`${WINDOW_SOURCE} · card withdrawals (completed/shipped) · ${
-          failed ? "unavailable" : usd(data.withdrawals)
+          cbFailed ? "unavailable" : usd(data.withdrawals)
         }`}
       />
       <HouseStatPill
@@ -95,9 +119,9 @@ export async function TopbarHouseStats() {
         tone={ggrPositive ? "emerald" : "rose"}
         icon={<TrendingUp className="size-3.5 shrink-0" aria-hidden />}
         label="GGR"
-        value={failed ? "—" : formatCompactUsd(data.ggr)}
+        value={cbFailed ? "—" : formatCompactUsd(data.ggr)}
         title={`${WINDOW_SOURCE} · gaming margin (GGR) · ${
-          failed ? "unavailable" : usd(data.ggr)
+          cbFailed ? "unavailable" : usd(data.ggr)
         }`}
       />
     </div>

@@ -29,11 +29,8 @@ import {
   INSIGHTS_PERIOD_LABELS,
   type InsightsPeriod,
 } from "./analytics/types";
-import { getCostBreakdown } from "@/lib/queries/insights-analytics/cost-breakdown";
-import {
-  getInsightsHubWager,
-  INSIGHTS_HUB_WAGER_LOOKBACK_DAYS,
-} from "@/lib/queries/insights-analytics/hub-wager";
+import { getCostBreakdownLifetimeCached } from "@/lib/queries/insights-analytics/cost-breakdown";
+import { getInsightsHubWager } from "@/lib/queries/insights-analytics/hub-wager";
 import { getRealizedPnlSnapshot } from "@/lib/queries/_realized-pnl";
 import { RewardSpendPanel, type RewardSpendRow } from "./reward-spend-panel";
 
@@ -42,13 +39,19 @@ export const metadata = { title: "Insights" };
 // ─── Per-render fetch dedupe ────────────────────────────────────────
 //
 // The headline KPI strip AND the additive "Reward spend" box both read
-// the page's ONE `getCostBreakdown` call — `cache()` memoizes the
-// promise per render, so adding the spend box never refetches the heavy
-// canonical legs (and a failure degrades both sections to their own
-// fallbacks). Same args as before; the KPI math is untouched.
+// the page's ONE lifetime cost-breakdown. This hub is LIFETIME-ONLY
+// (`period === "all"`, label "Lifetime"), so it reads the SHARED
+// `getCostBreakdownLifetimeCached` — the same cross-render `unstable_cache`
+// the admin top-bar pills + /insights/real-numbers read — which runs the
+// IDENTICAL `getCostBreakdown("all", "Lifetime", 0, 365)` assembly as before
+// (byte-identical numbers; the KPI math is untouched). Rendering this hub now
+// WARMS the pills' cache. The `cache()` wrapper keeps the per-render dedupe so
+// the two sections share one promise (and a failure degrades both to their own
+// fallbacks). The (period, label) args are kept for call-site clarity but are
+// always the lifetime pair on this page.
 const getHubCostBreakdown = cache(
-  (period: InsightsPeriod, periodLabel: string) =>
-    getCostBreakdown(period, periodLabel, 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS),
+  (_period: InsightsPeriod, _periodLabel: string) =>
+    getCostBreakdownLifetimeCached(),
 );
 const getHubWager = cache(() => getInsightsHubWager());
 

@@ -1270,6 +1270,61 @@ export async function getCostBreakdown(
   };
 }
 
+// ─── Shared LIFETIME cost-breakdown cache (the ONE source the hub + ─────────
+//     /insights/real-numbers + the topbar pills all read) ──────────────────
+//
+// PROBLEM this solves: the /insights pages used a per-RENDER React `cache()`
+// (or a bare call) for their lifetime `getCostBreakdown`, while the topbar
+// pills used a SEPARATE `unstable_cache` key. Those caches never met — opening
+// /insights (which the owner does constantly) did NOT warm the topbar's read,
+// so on a cold/expired topbar entry the heavy lifetime assembly re-ran inside
+// the pills' 15s `safeQuery` budget and degraded to "—".
+//
+// FIX: ONE cross-render `unstable_cache` wrapper around the EXACT lifetime
+// `getCostBreakdown("all", "Lifetime", 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS)`
+// call the /insights hub + real-numbers page already run. Every caller shares
+// this single cache key, so rendering the pages the owner opens populates the
+// very entry the topbar reads. Longer 900s TTL (vs the old 300s) so it expires
+// far less often. Returns the FULL `CostBreakdown` (plain serializable data —
+// numbers, strings incl. `cutoffIso`, and arrays of plain objects; no Dates,
+// functions, or class instances cross the cache boundary) so the pages get the
+// identical object they render today and the topbar can project its three
+// figures out of it. No new math, no new scope — same assembly, shared cache.
+//
+// A thrown assembly is NOT cached (`unstable_cache` only stores fulfilled
+// results), so a transient failure never poisons the entry — the next call
+// retries and the topbar's `safeQuery` degrades that one render to "—".
+
+const cachedCostBreakdownLifetime = unstable_cache(
+  async (): Promise<CostBreakdown> =>
+    // EXACT /insights hub + real-numbers lifetime call shape: period "all",
+    // label "Lifetime", 0 contributors (the topbar/pages don't need the
+    // contributor table here), 365d lifetime cap so the heavy canonical reads
+    // stay bounded (CLAUDE.md "Performance & Daten-Laden").
+    getCostBreakdown("all", "Lifetime", 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS),
+  ["cost-breakdown-lifetime-shared-v1"],
+  { revalidate: 900, tags: ["insights-analytics", "dashboard-lifetime"] },
+);
+
+/**
+ * THE shared lifetime cost-breakdown read. Returns the full owner-trusted
+ * `CostBreakdown` for the lifetime (365d-capped) window on a single
+ * cross-render `unstable_cache` key (revalidate 900s, insights tags). Both the
+ * /insights hub + /insights/real-numbers pages AND the admin top-bar pills call
+ * this, so the pages the owner constantly opens warm the exact entry the pills
+ * read — the pills reliably show the lifetime numbers instead of "—".
+ *
+ * The contributor table is intentionally NOT in this read (`contributorLimit`
+ * 0): a page that needs the per-user "who drove the margin" ranking still calls
+ * `getCostBreakdown` directly. Every field a current consumer reads (ggr / ngr /
+ * rewardPayouts / totalWager / gamingPayouts / margin / programSpend / cardWithdrawals
+ * / the `lines` waterfall incl. `residual:deposit`) is present and identical to
+ * the value those pages render today.
+ */
+export async function getCostBreakdownLifetimeCached(): Promise<CostBreakdown> {
+  return cachedCostBreakdownLifetime();
+}
+
 // ─── Topbar 30d money chips (ADDITIVE export — Edge Plan 2.0 spec #13) ───────
 //
 // The admin top-bar pills must equal the Edge Plan 2.0 "Last 30 days" recon
@@ -1322,63 +1377,11 @@ export async function getCostBreakdownTopbar30d(): Promise<CostBreakdownTopbar30
   return cachedCostBreakdownTopbar30d();
 }
 
-// ─── Topbar LIFETIME money chips (ADDITIVE export) ───────────────────────────
-//
-// The admin top-bar pills must equal the /insights hub headline (Lifetime) BY
-// CONSTRUCTION — so this helper runs the IDENTICAL `getCostBreakdown` call
-// shape the /insights hub runs for its lifetime margin tiles
-// (`("all", "Lifetime", 0, INSIGHTS_HUB_WAGER_LOOKBACK_DAYS)` — contributors
-// skipped, 365d-capped) and merely projects the same three already-computed
-// figures out of the waterfall. No new math, no new scope — a pure cached
-// projection of the owner-trusted lifetime assembly, sharing the hub's cache
-// via the same `unstable_cache` revalidate + insights tags so it stays cheap on
-// every admin page. The 365d cap is what keeps the lifetime read bounded
-// (CLAUDE.md "Performance & Daten-Laden") — never an unbounded full-history
-// scan.
-
-/** The three cost-breakdown figures the top bar renders (lifetime, 365d-capped). */
-export type CostBreakdownTopbarLifetime = {
-  /** Canonical lifetime GGR — the same `ggr` the /insights hub lifetime margin tile shows. */
-  ggr: number;
-  /** Real cash deposited in the window — the waterfall's "Deposits (cash in)" bridge row (`residual:deposit`). */
-  deposits: number;
-  /** Card withdrawals shipped in the window — the waterfall's authoritative "Card withdrawals (shipped)" liability figure. */
-  withdrawals: number;
-};
-
-const cachedCostBreakdownTopbarLifetime = unstable_cache(
-  async (): Promise<CostBreakdownTopbarLifetime> => {
-    // EXACT /insights hub lifetime call shape (see `insights/page.tsx`
-    // `getHubCostBreakdown`): period "all", label "Lifetime", 0 contributors,
-    // 365d lifetime cap — so every figure below is the SAME assembly the hub's
-    // headline margin tiles render, and the pills share the hub's cached read.
-    const cb = await getCostBreakdown(
-      "all",
-      "Lifetime",
-      0,
-      INSIGHTS_HUB_WAGER_LOOKBACK_DAYS,
-    );
-    return {
-      ggr: cb.ggr,
-      // Residual bridge rows with a zero total are omitted from `lines`,
-      // so a missing deposit row truthfully means $0 deposited in-window.
-      deposits:
-        cb.lines.find((l) => l.key === "residual:deposit")?.amount ?? 0,
-      withdrawals: cb.cardWithdrawals,
-    };
-  },
-  ["cost-breakdown-topbar-lifetime-v1"],
-  { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
-);
-
-/**
- * Lifetime (365d-capped) GGR / deposits / withdrawals for the admin top-bar
- * pills — the owner-trusted `getCostBreakdown` family on a 5-minute cache
- * (same revalidate + insights tags as the /insights hub, so the pills share
- * the hub's cached read and stay cheap on every admin page). A thrown assembly
- * is NOT cached (`unstable_cache` only stores fulfilled results); the topbar's
- * `safeQuery` wrapper degrades it to "—" pills and the next render retries.
- */
-export async function getCostBreakdownTopbarLifetime(): Promise<CostBreakdownTopbarLifetime> {
-  return cachedCostBreakdownTopbarLifetime();
-}
+// NOTE: the previous `getCostBreakdownTopbarLifetime` projection helper +
+// its dedicated `cost-breakdown-topbar-lifetime-v1` cache key were REMOVED.
+// Its separate cache key was the root cause of the topbar pills flashing "—":
+// it never shared the /insights pages' cached read, so opening those pages did
+// not warm the pills. The topbar now reads `getCostBreakdownLifetimeCached`
+// above — the SAME shared lifetime cache the hub + real-numbers page populate —
+// and projects `.deposits` (the `residual:deposit` bridge row) / `.withdrawals`
+// (`.cardWithdrawals`) / `.ggr` out of the full CostBreakdown itself.
