@@ -1,18 +1,22 @@
-import Link from "next/link";
-import { KeyRound, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  ShieldCheck,
+  Lock,
+  KeyRound,
+  Crown,
+  UserCog,
+  ShieldAlert,
+  Sparkles,
+} from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
-import { ADMIN_PAGES } from "@/lib/admin-pages";
-import { formatDateTime } from "@/lib/utils/format";
 import {
   isCreatorHubAccessOwner,
   getCreatorHubAccessSettings,
   CREATOR_HUB_TOGGLE_ROLES,
 } from "@/lib/creator-hub-access";
 import { isPersistableAdminRole } from "@/lib/admin-roles";
-import { getRolePermissions } from "./actions";
-import { listRoles } from "./custom-roles-actions";
-import { RolePermissionsEditor } from "./role-permissions-editor";
+import { getRolesOverview } from "./roles-overview-data";
+import { BuiltInRolesGrid, CustomRolesGrid } from "./roles-grid";
 import { CreateRoleButton } from "./create-role-button";
 import {
   CreatorHubAccessCard,
@@ -22,6 +26,7 @@ import {
   PageHero,
   PageHeroIdentity,
   SectionHeading,
+  KpiTile,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
@@ -43,23 +48,28 @@ const CREATOR_HUB_ROLE_LABELS: Record<
   },
 };
 
-export const metadata = { title: "Roles" };
+export const metadata = { title: "Roles & Permissions" };
 
 /**
- * Unified roles hub. One page for both kinds of role:
- *   • Custom roles   — reusable presets in admin_roles. Create here,
- *     assign on an admin's profile, edit at /settings/roles/[id].
- *   • Built-in roles — the fixed support / marketing / creator /
- *     pack_creator roles; editing one re-applies to all its users.
- * Previously these lived on two separate pages (/admin-users/roles +
- * /settings/roles) which made the New Role button hard to find.
+ * Unified Roles & Permissions hub (Phase B of the role/permission rebuild —
+ * see ROLE_REDESIGN_DESIGN.md).
+ *
+ *   • Built-in roles — the 6 enum roles (admin / support / marketing /
+ *     creator / pack_creator / creator_manager). Their canonical baselines
+ *     are code-defined (`ROLE_BASELINES`) and LOCKED: shown read-only via the
+ *     baseline inspector, never editable (the owner forbids changing what a
+ *     built-in role grants; `updateRolePermissions` rejects them server-side).
+ *   • Custom roles — reusable presets in `admin_roles`. Created here, assigned
+ *     on an admin's profile, edited at /settings/roles/[id]. Fully editable;
+ *     their CRUD is unchanged.
+ *
+ * Per-user overrides (Phase C) are not edited here — the KPI strip only
+ * REPORTS how many non-admin users currently carry an override (their stored
+ * effective set ≠ their role baseline), computed read-only.
  */
 export default async function RolesPage() {
   const session = await requireAdmin();
-  const [permissions, customRoles] = await Promise.all([
-    getRolePermissions(),
-    listRoles(),
-  ]);
+  const overview = await getRolesOverview();
 
   // Creator-Hub access toggles are founder-only ("motha"). Resolve the
   // username from the ADMIN DB (never trust the JWT alone for a security
@@ -85,44 +95,82 @@ export default async function RolesPage() {
       }))
     : [];
 
-  // Group pages by their group label for the built-in role editor.
-  const groupedPages: {
-    group: string;
-    pages: { key: string; label: string }[];
-  }[] = [];
-  const seen = new Set<string>();
-  for (const page of ADMIN_PAGES) {
-    if (!seen.has(page.group)) {
-      seen.add(page.group);
-      groupedPages.push({
-        group: page.group,
-        pages: ADMIN_PAGES.filter((p) => p.group === page.group).map((p) => ({
-          key: p.key,
-          label: p.label,
-        })),
-      });
-    }
-  }
+  const { kpis } = overview;
 
   return (
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
           icon={ShieldCheck}
-          title="Roles"
-          subtitle="Custom roles and built-in roles in one place. Create a custom role as a reusable preset, or edit a built-in role to change access for everyone who has it."
+          title="Roles & Permissions"
+          subtitle="Locked built-ins · editable custom roles · per-user overrides"
         />
       </PageHero>
 
-      {/* Custom roles — reusable presets stored in admin_roles. Create
-          here, then assign on an admin user's profile. */}
+      {/* KPI strip — headline counts (all read-only). */}
+      <FadeIn>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <KpiTile
+            label="Built-in roles"
+            value={String(kpis.builtInCount)}
+            sub="Locked baselines"
+            icon={Lock}
+            accent="amber"
+          />
+          <KpiTile
+            label="Custom roles"
+            value={String(kpis.customCount)}
+            sub="Editable presets"
+            icon={KeyRound}
+            accent="emerald"
+          />
+          <KpiTile
+            label="Admins"
+            value={String(kpis.adminCount)}
+            sub="Full access"
+            icon={Crown}
+            accent="blue"
+          />
+          <KpiTile
+            label="Per-user overrides"
+            value={String(kpis.overrideUserCount)}
+            sub="Differ from baseline"
+            icon={UserCog}
+            accent="purple"
+          />
+          <KpiTile
+            label="Dead capabilities"
+            value={String(kpis.deadCapabilityCount)}
+            sub="Not in any baseline"
+            icon={ShieldAlert}
+            accent="rose"
+          />
+        </div>
+      </FadeIn>
+
+      {/* Built-in roles — locked, read-only baselines. */}
+      <div className="space-y-3">
+        <SectionHeading icon={Lock} title="Built-in Roles" />
+        <p className="text-sm text-muted-foreground">
+          The fixed system roles. Their baselines are code-defined and locked —
+          view a baseline read-only, but it can&apos;t be changed. To grant
+          different access, create a custom role or set per-user access on a
+          user&apos;s profile.
+        </p>
+        <FadeIn>
+          <BuiltInRolesGrid roles={overview.builtIns} />
+        </FadeIn>
+      </div>
+
+      {/* Custom roles — reusable presets stored in admin_roles. Create here,
+          then assign on an admin user's profile. Fully editable. */}
       <div className="space-y-3">
         <SectionHeading
           icon={KeyRound}
           title="Custom Roles"
           action={<CreateRoleButton />}
         />
-        {customRoles.length === 0 ? (
+        {overview.customRoles.length === 0 ? (
           <FadeIn className="rounded-md border">
             <EmptyState
               icon={KeyRound}
@@ -132,93 +180,10 @@ export default async function RolesPage() {
             />
           </FadeIn>
         ) : (
-          <FadeIn className="space-y-2">
-            {/* Desktop table (>=md). */}
-            <div className="hidden overflow-x-auto rounded-md border md:block">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b bg-muted/50">
-                    <th className="px-4 py-3 text-left text-sm font-medium">
-                      Name
-                    </th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">
-                      Permissions
-                    </th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">
-                      Users
-                    </th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">
-                      Updated
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {customRoles.map((role) => (
-                    <tr key={role.id} className="border-b last:border-b-0">
-                      <td className="px-4 py-3 text-sm font-medium">
-                        <Link
-                          href={`/settings/roles/${role.id}`}
-                          className="text-blue-400 hover:underline"
-                        >
-                          {role.name}
-                        </Link>
-                        {role.description && (
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            {role.description}
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-muted-foreground">
-                        {role.capabilities.length}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-muted-foreground">
-                        {role.user_count}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-muted-foreground">
-                        {formatDateTime(role.updated_at)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Mobile card list (<md). */}
-            <div className="space-y-2 md:hidden">
-              {customRoles.map((role) => (
-                <Link
-                  key={role.id}
-                  href={`/settings/roles/${role.id}`}
-                  className="block rounded-lg border bg-card p-3 transition-colors hover:border-border/80"
-                >
-                  <div className="font-medium text-blue-400">{role.name}</div>
-                  {role.description && (
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {role.description}
-                    </p>
-                  )}
-                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                    <span>{role.capabilities.length} permissions</span>
-                    <span>{role.user_count} users</span>
-                    <span>Updated {formatDateTime(role.updated_at)}</span>
-                  </div>
-                </Link>
-              ))}
-            </div>
+          <FadeIn>
+            <CustomRolesGrid roles={overview.customRoles} />
           </FadeIn>
         )}
-      </div>
-
-      {/* Built-in roles — fixed enum roles. Editing one re-applies to
-          every user currently on that role. */}
-      <div className="space-y-3">
-        <SectionHeading icon={ShieldCheck} title="Built-in Roles" />
-        <FadeIn>
-          <RolePermissionsEditor
-            groupedPages={groupedPages}
-            initialPermissions={permissions}
-          />
-        </FadeIn>
       </div>
 
       {/* Creator Hub access — founder-only ("motha") per-role on/off toggles
