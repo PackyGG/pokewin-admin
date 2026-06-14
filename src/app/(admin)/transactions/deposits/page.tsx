@@ -57,6 +57,36 @@ const TABS = [
 
 type TabValue = (typeof TABS)[number]["value"];
 
+/** Withdrawals sub-views — default is open queue (pending + processing). */
+const WITHDRAWAL_VIEWS = [
+  { value: "open", label: "Open requests" },
+  { value: "all", label: "All" },
+] as const;
+
+type WithdrawalView = (typeof WITHDRAWAL_VIEWS)[number]["value"];
+
+function resolveWithdrawalView(params: Record<string, string | undefined>): WithdrawalView {
+  if (params.view === "all") return "all";
+  return "open";
+}
+
+function buildWithdrawalsTabHref(
+  view: WithdrawalView,
+  params: Record<string, string | undefined>,
+): string {
+  const next = new URLSearchParams();
+  next.set("tab", "withdrawals");
+  if (view === "all") next.set("view", "all");
+  if (params.status) next.set("status", params.status);
+  if (params.method) next.set("method", params.method);
+  if (params.search) next.set("search", params.search);
+  if (params.minValue) next.set("minValue", params.minValue);
+  if (params.maxValue) next.set("maxValue", params.maxValue);
+  if (params.perPage) next.set("perPage", params.perPage);
+  const qs = next.toString();
+  return `/transactions/deposits?${qs}`;
+}
+
 export default async function TransactionsPage({
   searchParams,
 }: {
@@ -65,6 +95,7 @@ export default async function TransactionsPage({
   await requirePageAccess("/transactions/deposits");
   const params = await searchParams;
   const tab: TabValue = params.tab === "withdrawals" ? "withdrawals" : "deposits";
+  const withdrawalView = resolveWithdrawalView(params);
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
@@ -85,7 +116,9 @@ export default async function TransactionsPage({
           subtitle={
             tab === "deposits"
               ? "All inbound deposit transactions across users."
-              : "Physical and crypto withdrawal requests — filter by status and method."
+              : withdrawalView === "open"
+                ? "Pending and processing withdrawal requests — the open queue."
+                : "All physical and crypto withdrawal requests — filter by status and method."
           }
         />
       </PageHero>
@@ -143,7 +176,12 @@ export default async function TransactionsPage({
       {tab === "deposits" ? (
         <DepositsTab page={page} perPage={perPage} params={params} />
       ) : (
-        <WithdrawalsTab page={page} perPage={perPage} params={params} />
+        <WithdrawalsTab
+          page={page}
+          perPage={perPage}
+          params={params}
+          view={withdrawalView}
+        />
       )}
     </div>
   );
@@ -297,18 +335,42 @@ function WithdrawalsTab({
   page,
   perPage,
   params,
+  view,
 }: {
   page: number;
   perPage: number;
   params: Record<string, string | undefined>;
+  view: WithdrawalView;
 }) {
   const minValue = params.minValue ? Number(params.minValue) : undefined;
   const maxValue = params.maxValue ? Number(params.maxValue) : undefined;
 
-  const sectionKey = `wd|${page}|${perPage}|${params.status ?? ""}|${params.method ?? ""}|${params.search ?? ""}|${params.minValue ?? ""}|${params.maxValue ?? ""}`;
+  const sectionKey = `wd|${view}|${page}|${perPage}|${params.status ?? ""}|${params.method ?? ""}|${params.search ?? ""}|${params.minValue ?? ""}|${params.maxValue ?? ""}`;
 
   return (
     <>
+      <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="inline-flex gap-1 rounded-lg bg-muted/60 p-1">
+          {WITHDRAWAL_VIEWS.map((v) => (
+            <Link
+              key={v.value}
+              href={buildWithdrawalsTabHref(v.value, params)}
+              replace
+              scroll={false}
+              prefetch={false}
+              className={cn(
+                "inline-flex shrink-0 items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm",
+                view === v.value
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {v.label}
+            </Link>
+          ))}
+        </div>
+      </div>
+
       <div className="space-y-4">
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
           <DataTableToolbar
@@ -342,7 +404,10 @@ function WithdrawalsTab({
       </div>
 
       <div className="space-y-3">
-        <SectionHeading icon={ListChecks} title="Withdrawal requests" />
+        <SectionHeading
+          icon={ListChecks}
+          title={view === "open" ? "Open withdrawal requests" : "All withdrawals"}
+        />
         <Suspense
           key={sectionKey}
           fallback={
@@ -355,6 +420,7 @@ function WithdrawalsTab({
           <WithdrawalsTableSection
             page={page}
             perPage={perPage}
+            view={view}
             status={params.status}
             method={params.method}
             search={params.search}
@@ -370,6 +436,7 @@ function WithdrawalsTab({
 async function WithdrawalsTableSection({
   page,
   perPage,
+  view,
   status,
   method,
   search,
@@ -378,12 +445,23 @@ async function WithdrawalsTableSection({
 }: {
   page: number;
   perPage: number;
+  view: WithdrawalView;
   status?: string;
   method?: string;
   search?: string;
   minValue?: number;
   maxValue?: number;
 }) {
+  // Default open queue = pending + processing (matches legacy /withdrawals
+  // "Withdrawal Requests" tab). An explicit Status filter overrides it.
+  const statuses =
+    status && status !== "all"
+      ? undefined
+      : view === "open"
+        ? (["pending", "processing"] as const)
+        : undefined;
+  const statusFilter = status && status !== "all" ? status : undefined;
+
   // Empty shape getWithdrawals returns for zero rows — the safeQuery
   // fallback, so the table + pagination still paint (degraded) on failure.
   const EMPTY_LIST: Awaited<ReturnType<typeof getWithdrawals>> = {
@@ -403,7 +481,8 @@ async function WithdrawalsTableSection({
       getWithdrawals({
         page,
         perPage,
-        status,
+        status: statusFilter,
+        statuses: statuses ? [...statuses] : undefined,
         method,
         search,
         minValue: minValue && !isNaN(minValue) ? minValue : undefined,
