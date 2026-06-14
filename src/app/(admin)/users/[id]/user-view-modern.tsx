@@ -991,7 +991,7 @@ function ScrollableTabBar({
   }, [activeTab]);
 
   return (
-    <div className="sticky top-0 z-20 rounded-xl border bg-card/80 p-1 backdrop-blur-md">
+    <div className="sticky top-[3.25rem] z-20 rounded-xl border bg-card/80 p-1 backdrop-blur-md">
       <div className="relative">
         {/* Edge fade hints — only visible while scrollable, but cheaper to
             always render than to compute scroll position with a ResizeObserver. */}

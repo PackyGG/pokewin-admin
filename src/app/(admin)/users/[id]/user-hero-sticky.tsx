@@ -16,12 +16,30 @@ import { cn } from "@/lib/utils";
  *
  * Detection uses a single IntersectionObserver on a zero-height sentinel
  * placed right after the hero. No scroll listener, no layout thrash. When
- * the sentinel leaves the viewport (hero scrolled past), the condensed bar
- * fades in; scrolling back up hides it again.
+ * the sentinel leaves the scroll container (hero scrolled past), the
+ * condensed bar fades in; scrolling back up hides it again.
  *
- * Reduced-motion: the fade/slide transition is gated behind `motion-safe:`,
+ * IMPORTANT: in the admin shell the page does NOT scroll the window — content
+ * scrolls inside an inner `overflow-auto` container (the admin layout's
+ * `[data-admin-scroll]` region). A viewport-rooted observer (`root: null`)
+ * therefore never fires for this content, which is why the bar previously
+ * never appeared. We resolve the nearest scrollable ancestor at mount and use
+ * it as the observer `root` (falling back to the documented
+ * `[data-admin-scroll]` container, then to the viewport when content genuinely
+ * scrolls the window).
+ *
+ * Reduced-motion: the fade/slide transition is gated behind `motion-reduce:`,
  * so reduced-motion users get an instant show/hide with no animation.
  */
+function findScrollParent(start: HTMLElement | null): HTMLElement | null {
+  let node: HTMLElement | null = start?.parentElement ?? null;
+  while (node && node !== document.body && node !== document.documentElement) {
+    const oy = window.getComputedStyle(node).overflowY;
+    if (oy === "auto" || oy === "scroll") return node;
+    node = node.parentElement;
+  }
+  return null;
+}
 export function UserHeroSticky({
   hero,
   avatarImage,
@@ -44,14 +62,31 @@ export function UserHeroSticky({
 
   useEffect(() => {
     const el = sentinelRef.current;
-    if (!el || typeof IntersectionObserver === "undefined") return;
+    if (
+      !el ||
+      typeof window === "undefined" ||
+      typeof IntersectionObserver === "undefined"
+    ) {
+      return;
+    }
+
+    // Resolve the actual scroll container: nearest scrollable ancestor →
+    // the documented admin-shell scroll region → null (viewport/window).
+    const root =
+      findScrollParent(el) ??
+      (document.querySelector("[data-admin-scroll]") as HTMLElement | null);
+
     const observer = new IntersectionObserver(
       ([entry]) => {
-        // Sentinel out of view (above the viewport) → hero is scrolled
-        // past → show the condensed bar.
-        setCollapsed(!entry.isIntersecting && entry.boundingClientRect.top < 0);
+        // Sentinel scrolled above the top of the scroll container → hero is
+        // scrolled past → show the condensed bar. `top < 0` is measured in
+        // viewport coords for both root: element and root: null, so the
+        // comparison holds either way.
+        setCollapsed(
+          !entry.isIntersecting && entry.boundingClientRect.top < 0,
+        );
       },
-      { threshold: 0 },
+      { root, threshold: 0 },
     );
     observer.observe(el);
     return () => observer.disconnect();
