@@ -133,9 +133,15 @@ const getDealTimelineBase = unstable_cache(
 
       for (const lb of leaderboards) {
         if (lb.cancelled_at) continue;
+        // House cost mirrors the canonical live-leaderboards.ts formula:
+        // net = total_prize_usd − refund_amount_usd, then × house%. Omitting
+        // the refund subtraction (and the 0–100 clamp) overstated the cost and
+        // disagreed with the Live Leaderboards surface for the same board.
         const prize = Number(lb.total_prize_usd) || 0;
-        const housePct = sponsorship.get(lb.id) ?? 100;
-        const houseCost = (prize * housePct) / 100;
+        const refund = Number(lb.refund_amount_usd) || 0;
+        const net = prize - refund;
+        const housePct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
+        const houseCost = (net * housePct) / 100;
 
         events.push({
           id: `lb_start:${lb.id}`,
