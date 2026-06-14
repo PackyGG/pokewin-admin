@@ -151,8 +151,12 @@ const TABS: TabDef[] = [
   // is the raw deposit/withdrawal ledger, Funds is the provenance +
   // wager-attribution view built on the sweepstakes source columns.
   { key: "funds", label: "Funds", icon: GitBranch },
-  { key: "rewards", label: "Rewards", icon: Gift },
+  // Inventory sits next to the money surfaces (Finances / Funds) — it now
+  // also carries the card-sale cash-out ledger (card_sale / reward_card_sale),
+  // moved off the Gaming tab per owner, alongside the owned + sold/exchanged
+  // items those sales come from.
   { key: "inventory", label: "Inventory", icon: Gem },
+  { key: "rewards", label: "Rewards", icon: Gift },
   { key: "trust", label: "Trust", icon: ShieldAlert },
   // Affiliate tab is ALWAYS visible — admins need to be able to give
   // a user a referral code (set their `referred_by`) regardless of
@@ -179,6 +183,7 @@ export function UserViewModern({
   notesPromise,
   inventoryPromise,
   disposedInventoryPromise,
+  cardSaleTxPromise,
   sharedIpsPromise,
   sharedFingerprintsPromise,
   wagerRequirementPromise,
@@ -226,6 +231,9 @@ export function UserViewModern({
   // Inventory tab:
   inventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
   disposedInventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
+  // Inventory tab — card-sale cash-out ledger (card_sale / reward_card_sale),
+  // moved off Gaming. null = tab not active (Active-Timeframe-Only).
+  cardSaleTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Trust tab:
   sharedIpsPromise: Promise<SafeQueryResult<SharedIdentityUser[]>> | null;
   sharedFingerprintsPromise: Promise<SafeQueryResult<SharedIdentityUser[]>> | null;
@@ -676,6 +684,7 @@ export function UserViewModern({
             data={data}
             inventoryPromise={inventoryPromise}
             disposedInventoryPromise={disposedInventoryPromise}
+            cardSaleTxPromise={cardSaleTxPromise}
           />
         )}
 

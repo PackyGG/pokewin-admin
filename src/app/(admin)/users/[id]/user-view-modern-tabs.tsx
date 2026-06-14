@@ -104,6 +104,7 @@ import type {
   LeaderboardWinEntry,
   RaceClaimEntry,
 } from "./user-tabs-types";
+import { CARD_SALE_TX_TYPES } from "./user-tabs-types";
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import type { UserRewards } from "@/lib/queries/users";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
@@ -900,6 +901,7 @@ export function InventoryTab({
   data,
   inventoryPromise,
   disposedInventoryPromise,
+  cardSaleTxPromise,
 }: {
   data: UserDetail;
   // Both inventory pages are tab-gated reads (kicked only when ?tab=
@@ -908,8 +910,13 @@ export function InventoryTab({
   // moving the owned page out of the body gate costs the hero nothing.
   inventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
   disposedInventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
+  // Card-sale cash-out ledger (card_sale / reward_card_sale) — moved here off
+  // the Gaming tab per owner. Same tab-gated contract: null = not kicked
+  // (Active-Timeframe-Only) → skeleton until the URL-driven re-render kicks it.
+  cardSaleTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
 }) {
   const { user } = data;
+  const isAdmin = data.sessionRole === "admin";
   return (
     <div className="space-y-6">
       <SectionHeading icon={Gem} title="Current Inventory" />
@@ -935,7 +942,50 @@ export function InventoryTab({
       ) : (
         <SkeletonTable rows={5} columns={5} />
       )}
+
+      {/* Card-sale cash-outs — selling a won (card_sale) or reward
+          (reward_card_sale) card back to balance. These realize an inventory
+          item into cash, so they sit with the items they came from (moved off
+          the Gaming tab per owner). Streamed on the tab-gated promise. */}
+      <SectionHeading icon={Banknote} title="Card Sales" />
+      {cardSaleTxPromise ? (
+        <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
+          <CardSalesStreamed
+            userId={user.id}
+            cardSaleTxPromise={cardSaleTxPromise}
+            isAdmin={isAdmin}
+          />
+        </Suspense>
+      ) : (
+        <SkeletonTable rows={5} columns={6} />
+      )}
     </div>
+  );
+}
+
+// `use()`s the streamed card-sale ledger page and renders the shared
+// CategoryTransactionsTable with the card-sale type allow-list. error ≠ empty —
+// the table surfaces a VISIBLE load error instead of a false "no sales".
+function CardSalesStreamed({
+  userId,
+  cardSaleTxPromise,
+  isAdmin,
+}: {
+  userId: string;
+  cardSaleTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
+  isAdmin: boolean;
+}) {
+  const r = use(cardSaleTxPromise);
+  return (
+    <CategoryTransactionsTable
+      title="Card Sales"
+      userId={userId}
+      types={CARD_SALE_TX_TYPES}
+      initialTx={r.data}
+      initialLoadError={r.error}
+      showCardsValue
+      isAdmin={isAdmin}
+    />
   );
 }
 

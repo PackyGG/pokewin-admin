@@ -13,6 +13,7 @@ import {
   getRiskScoreCached,
   getUserHeaderCritical,
 } from "@/lib/queries/users-detail-cache";
+import { resolveUserIdFromRouteKey } from "@/lib/queries/users-detail";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
 import { getUserTags } from "@/lib/queries/user-tags";
 import { getUserCreatorHistory } from "@/lib/queries/user-role-history";
@@ -85,10 +86,18 @@ const GAMING_TYPES = [
   "upgrader_bet",
   "upgrader_payout",
   "voucher_redeemed",
-  "card_sale",
-  "reward_card_sale",
+  // card_sale / reward_card_sale (selling a won/reward card back to cash —
+  // an inventory cash-out) live on the INVENTORY tab now, not here. Owner
+  // moved them out of Gaming so this tab stays the bet/play surface.
+  // battle_excess_to_voucher stays — it's the voucher leg of a battle WIN
+  // (voucher == card), part of the bet → win trail on this tab.
   "battle_excess_to_voucher",
 ];
+// Card-sale cash-outs (selling a won or reward card back to balance). Owner-
+// moved off the Gaming tab onto the Inventory tab — these are inventory
+// realizations, shown next to the items they came from. Keep in sync with
+// CARD_SALE_TX_TYPES in user-tabs-types.ts.
+const CARD_SALE_TYPES = ["card_sale", "reward_card_sale"];
 // FINANCIAL covers deposits, withdrawals (card_withdrawal +
 // withdrawal_shipping_fee) and direct cash payouts (rakeback / affiliate /
 // rain / race / gift / promo). The win-realization rows (card_sale /
@@ -146,7 +155,9 @@ export default async function UserDetailPage({
   // src/lib/support-baseline.ts.
   await ensureSupportBaseline();
   const session = await requirePageAccess("/users");
-  const { id } = await params;
+  const { id: routeKey } = await params;
+  const id = await resolveUserIdFromRouteKey(routeKey);
+  if (!id) notFound();
   const sp = await searchParams;
   // Active tab is URL-driven (?tab=<key>): the URL is the source of truth
   // for WHICH tab's queries get kicked in UserDetailBody (Active-Timeframe-
@@ -529,6 +540,18 @@ async function UserDetailBody({
           USER_DETAIL_QUERY_TIMEOUT_MS,
         )
       : null;
+  // Card-sale cash-outs (card_sale / reward_card_sale) — Inventory tab only
+  // (Active-Timeframe-Only). Moved off Gaming per owner: these realize a won
+  // card into balance, so they belong with the inventory the card came from.
+  const cardSaleTxPromise =
+    initialTab === "inventory"
+      ? safeQuery(
+          () => getUserTransactions(id, 1, 10, { types: CARD_SALE_TYPES }),
+          EMPTY_TX_PAGE,
+          "users.detail.cardSaleTx",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        )
+      : null;
 
   // Rewards tab: one_time reward count + rakeback claimable/claimed.
   const rewardsPromise =
@@ -735,6 +758,7 @@ async function UserDetailBody({
       notesPromise={notesPromise}
       inventoryPromise={inventoryPromise}
       disposedInventoryPromise={disposedInventoryPromise}
+      cardSaleTxPromise={cardSaleTxPromise}
       sharedIpsPromise={sharedIpsPromise}
       sharedFingerprintsPromise={sharedFingerprintsPromise}
       wagerRequirementPromise={wagerRequirementPromise}

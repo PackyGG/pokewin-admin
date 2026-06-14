@@ -7,30 +7,36 @@ import { adminDb } from "@/lib/admin-db";
  * Owner-only visibility gate for ADMIN BALANCE ADJUSTMENTS on the user
  * detail page (security-sensitive).
  *
- * Rule (owner request): NO admin except the owner `motha` may see ANY kind
- * of admin balance adjustment, anywhere on a user. The gate is enforced
- * SERVER-SIDE — the `admin_balance_adjustment` ledger rows are never sent to
- * the client for a non-owner viewer (see `getUserTransactions`). The UI also
- * hides the dedicated adjustments block + the adjustment filter option for
- * non-owners, but that is defence-in-depth only; the data carve-out is the
- * real boundary.
+ * Rule (owner request): NO admin except the trusted owner usernames below
+ * may see ANY kind of admin balance adjustment, anywhere on a user. The gate
+ * is enforced SERVER-SIDE — the `admin_balance_adjustment` ledger rows are
+ * never sent to the client for a non-owner viewer (see
+ * `getUserTransactions`). The UI also hides the dedicated adjustments block
+ * + the adjustment filter option for non-owners, but that is defence-in-depth
+ * only; the data carve-out is the real boundary.
  *
- * "Owner" is identified by the admin's `username` being exactly `motha`
- * (case-insensitive), matching the existing founder-identity convention used
- * by the Creator-Hub gate (`CREATOR_HUB_OWNER_USERNAME` in
- * `creator-hub-access.ts`). This is deliberately NARROWER than the salary
- * founder allowlist (`["motha","void","kotha"]` in `salary/motha-gate.ts`):
- * here only `motha` may see adjustments, so we match on the single owner
- * username rather than reusing that wider list.
+ * Match is case-insensitive against `admin_users.username`. Deliberately
+ * narrower than the salary founder allowlist — only explicitly listed admins
+ * may see adjustments.
  */
 
-/** Lowercased owner username with the adjustment-visibility bypass. */
-const OWNER_USERNAME = "motha";
+/** Admin usernames allowed to see admin balance adjustments on user detail. */
+export const ADJUSTMENT_VISIBILITY_OWNER_USERNAMES = [
+  "motha",
+  "picasso",
+  "picassopixel",
+] as const;
+
+export function isAdjustmentVisibilityOwnerUsername(username: string): boolean {
+  const lower = username.trim().toLowerCase();
+  return ADJUSTMENT_VISIBILITY_OWNER_USERNAMES.some((u) => u === lower);
+}
 
 /**
- * True iff the given ADMIN user (by their `admin_users.id`) is the owner
- * `motha` and is currently active. Reads the ADMIN DB (read-only) and is
- * `cache()`d so repeated calls within one request are free.
+ * True iff the given ADMIN user (by their `admin_users.id`) is on the
+ * adjustment-visibility allowlist and is currently active. Reads the ADMIN
+ * DB (read-only) and is `cache()`d so repeated calls within one request are
+ * free.
  *
  * Returns `false` (fail-closed) for an unknown id, an inactive user, a
  * username mismatch, or a transient admin-DB read failure — so a hiccup can
@@ -45,7 +51,8 @@ export const isAdjustmentVisibilityOwner = cache(
       });
       return Boolean(
         user?.is_active &&
-          (user.username ?? "").toLowerCase() === OWNER_USERNAME,
+          user.username &&
+          isAdjustmentVisibilityOwnerUsername(user.username),
       );
     } catch {
       return false;

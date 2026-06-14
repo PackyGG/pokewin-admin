@@ -271,6 +271,7 @@ export function UserDetailFixtureClient() {
       notesPromise={ok<AdminNote[]>(NOTES)}
       inventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}
       disposedInventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}
+      cardSaleTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       sharedIpsPromise={ok<SharedIdentityUser[]>([])}
       sharedFingerprintsPromise={ok<SharedIdentityUser[]>([])}
       wagerRequirementPromise={Promise.resolve(null)}

@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { affiliate_usage_type } from "@/generated/prisma/enums";
 import { toNumber } from "@/lib/utils/decimal";
+import { isUserId, isUuid } from "@/lib/utils/ids";
 import { filterLedgerTxTypesLive } from "./_ledger-tx-types";
 import { calculateUserPnl } from "./pnl";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
@@ -347,6 +348,32 @@ async function enrichLeaderboardWins(
  * here is the ONLY 404 path; once this resolves, a downstream failure in
  * the streamed body degrades that band rather than crashing the page.
  */
+/**
+ * Resolve a `/users/[id]` route segment to the canonical packy.gg user id.
+ * Accepts UUIDs, nanoid-style user ids, or a username (case-insensitive).
+ */
+export async function resolveUserIdFromRouteKey(
+  key: string,
+): Promise<string | null> {
+  const trimmed = key.trim();
+  if (!trimmed) return null;
+
+  const db = await getDb();
+  if (isUuid(trimmed) || isUserId(trimmed)) {
+    const user = await db.user.findUnique({
+      where: { id: trimmed },
+      select: { id: true },
+    });
+    return user?.id ?? null;
+  }
+
+  const byUsername = await db.user.findFirst({
+    where: { username: { equals: trimmed, mode: "insensitive" } },
+    select: { id: true },
+  });
+  return byUsername?.id ?? null;
+}
+
 export async function getUserHeader(id: string): Promise<{
   id: string;
   username: string | null;
