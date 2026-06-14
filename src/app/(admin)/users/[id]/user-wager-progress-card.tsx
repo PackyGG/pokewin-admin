@@ -1,27 +1,33 @@
 "use client";
 
 /**
- * Per-user withdrawal wager-requirement PROGRESS (read-only display).
+ * Per-user withdrawal wager-requirement standing (read-only display).
  *
  * Sibling to `user-wager-requirement-card.tsx` (which manages the per-user
- * override CONFIG). This card shows the user's actual progress toward that
- * requirement: total / completed / remaining + a per-source breakdown with
- * the contribution weighting, sourced read-only from the backend-written
- * `balances` columns (see `getUserWagerProgress`).
+ * override CONFIG). This card shows the user's actual standing against the
+ * FROZEN-RATE DEBT gate (backend rework 2026-06-14): a PARTIAL lock where the
+ * locked debt (`balances.wager_requirement_remaining`) reserves that many
+ * balance dollars and `withdrawable = max(0, available − locked)` is free to
+ * leave. Sourced read-only from the backend-written `balances` columns (see
+ * `getUserWagerProgress`).
  *
- * `data === null` → the sweepstakes columns aren't on the connected DB
- * (prod) or the user has no balances row → render a muted "not available"
- * state instead of crashing the Account tab.
+ * `data === null` → the frozen-debt column isn't on the connected DB (drift)
+ * or the user has no balances row → render a muted "not available" state
+ * instead of crashing the Account tab.
  *
- * House-POV finance colors (CLAUDE.md): requirement total / completed /
- * remaining are neutral INFO → blue/foreground; still-locked (un-wagered)
- * balance is user money we owe but gated → rose. Nothing is framed green.
- *
- * The `required` / `remaining` figures are DERIVED (total × bps) and labeled
- * as estimates; `completed` and the five lifetime totals are backend truth.
+ * House-POV finance colors (CLAUDE.md): the locked debt is user money we owe
+ * but is gated → rose. Withdrawable-now / wagered-cleared are neutral state
+ * info → blue. Nothing is framed green (no user-POV "available = good").
  */
 
-import { Target, Gauge, Hourglass, Lock, Gem, AlertTriangle } from "lucide-react";
+import {
+  Wallet,
+  Gauge,
+  Lock,
+  Gem,
+  AlertTriangle,
+  Target,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatPanel, KpiTile } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
@@ -44,12 +50,12 @@ export function UserWagerProgressCard({
             <AlertTriangle className="size-4 shrink-0 mt-0.5" />
             <div className="space-y-1">
               <p className="font-medium text-foreground">
-                Wager progress not available
+                Wager standing not available
               </p>
               <p>
                 This user has no balance record, or the connected database
-                doesn&apos;t carry the sweepstakes wager-progress columns. No
-                requirement progress can be shown.
+                doesn&apos;t carry the sweepstakes wager-requirement column. No
+                withdrawal gate can be shown.
               </p>
             </div>
           </div>
@@ -60,9 +66,11 @@ export function UserWagerProgressCard({
 
   const {
     completedUsd,
-    requiredUsd,
     remainingUsd,
+    withdrawableUsd,
+    availableBalanceUsd,
     exempt,
+    met,
     sources,
     totalLockedUsd,
     gameWeights,
@@ -71,69 +79,101 @@ export function UserWagerProgressCard({
     backendAvailable,
   } = data;
 
-  const pct =
-    requiredUsd && requiredUsd > 0
-      ? Math.min(100, (completedUsd / requiredUsd) * 100)
-      : null;
+  // Balance composition: of the available balance, how much is free to
+  // withdraw vs reserved behind the locked debt. Only meaningful when there is
+  // a balance to split.
+  const hasBalance = availableBalanceUsd > 0;
+  const lockedPct = hasBalance
+    ? Math.min(100, (remainingUsd / availableBalanceUsd) * 100)
+    : 0;
+  const withdrawablePct = Math.max(0, 100 - lockedPct);
+  const debtExceedsBalance = remainingUsd > availableBalanceUsd + 0.005;
 
   return (
     <div className="space-y-3">
-      {exempt && (
+      {exempt ? (
         <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs font-medium text-amber-600 dark:text-amber-400">
           <AlertTriangle className="size-4 shrink-0" />
           User is EXEMPT (0× override) — no wager requirement gates their
           withdrawals.
         </div>
-      )}
+      ) : met ? (
+        <div className="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+          <Lock className="size-4 shrink-0" />
+          Requirement met — the full balance is free to withdraw (no locked
+          debt remaining).
+        </div>
+      ) : null}
 
-      {/* Top KPIs — neutral/blue (info, not a user gain). */}
+      {/* Top KPIs — withdrawable / cleared neutral (blue); locked debt rose. */}
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
         <KpiTile
-          icon={Target}
-          label="Requirement"
+          icon={Wallet}
+          label="Withdrawable now"
           accent="blue"
-          value={requiredUsd != null ? formatCurrency(requiredUsd) : "—"}
-          sub={requiredUsd != null ? "estimated total" : "backend unavailable"}
+          value={formatCurrency(withdrawableUsd)}
+          sub={`of ${formatCurrency(availableBalanceUsd)} balance`}
+        />
+        <KpiTile
+          icon={Lock}
+          label="Locked behind wager"
+          accent="rose"
+          value={exempt ? "$0.00" : formatCurrency(remainingUsd)}
+          sub={exempt ? "exempt" : "must be wagered off"}
         />
         <KpiTile
           icon={Gauge}
-          label="Completed"
+          label="Wagered cleared"
           accent="blue"
           value={formatCurrency(completedUsd)}
-          sub="weighted wager cleared"
-        />
-        <KpiTile
-          icon={Hourglass}
-          label="Remaining"
-          accent="blue"
-          value={
-            exempt
-              ? "$0.00"
-              : remainingUsd != null
-                ? formatCurrency(remainingUsd)
-                : "—"
-          }
-          sub={remainingUsd != null ? "left to wager" : "needs requirement"}
+          sub="lifetime weighted"
         />
       </div>
 
-      {/* Progress bar (only meaningful when a requirement total is known). */}
-      {pct != null && (
+      {/* Balance composition — withdrawable (blue) vs locked (rose) of the
+          available balance. */}
+      {!exempt && remainingUsd > 0 && (
         <div className="space-y-1">
-          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-blue-500 motion-safe:transition-[width] motion-safe:duration-700"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-          <p className="text-[11px] tabular-nums text-muted-foreground">
-            {pct.toFixed(1)}% complete
-          </p>
+          {hasBalance ? (
+            <>
+              <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full bg-blue-500 motion-safe:transition-[width] motion-safe:duration-700"
+                  style={{ width: `${withdrawablePct}%` }}
+                />
+                <div
+                  className="h-full bg-rose-500 motion-safe:transition-[width] motion-safe:duration-700"
+                  style={{ width: `${lockedPct}%` }}
+                />
+              </div>
+              <p className="text-[11px] tabular-nums text-muted-foreground">
+                {formatCurrency(withdrawableUsd)} withdrawable ·{" "}
+                <span className="text-rose-600 dark:text-rose-400">
+                  {formatCurrency(Math.min(remainingUsd, availableBalanceUsd))}{" "}
+                  locked
+                </span>
+                {debtExceedsBalance && (
+                  <>
+                    {" "}
+                    · debt {formatCurrency(remainingUsd)} exceeds the balance
+                  </>
+                )}
+              </p>
+            </>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              No withdrawable balance —{" "}
+              <span className="text-rose-600 dark:text-rose-400">
+                {formatCurrency(remainingUsd)}
+              </span>{" "}
+              still locked behind the wager requirement.
+            </p>
+          )}
         </div>
       )}
 
-      {/* Per-source breakdown — auditable: shows total × multiplier =
-          contribution, plus the still-locked (rose) balance per source. */}
+      {/* Per-source breakdown — informational: lifetime totals, current
+          weights, and the still-unwagered (rose) balance per source. */}
       <StatPanel title="Per-source breakdown" icon={Target} accent="blue">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -142,10 +182,7 @@ export function UserWagerProgressCard({
                 <th className="py-1.5 pr-2 text-left font-medium">Source</th>
                 <th className="px-2 py-1.5 text-right font-medium">Lifetime</th>
                 <th className="px-2 py-1.5 text-right font-medium">Weight</th>
-                <th className="px-2 py-1.5 text-right font-medium">
-                  Adds to req.
-                </th>
-                <th className="py-1.5 pl-2 text-right font-medium">Locked</th>
+                <th className="py-1.5 pl-2 text-right font-medium">Unwagered</th>
               </tr>
             </thead>
             <tbody>
@@ -157,11 +194,6 @@ export function UserWagerProgressCard({
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
                     {s.requirementBps != null ? formatX(s.requirementBps) : "—"}
-                  </td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">
-                    {s.contributionUsd != null
-                      ? formatCurrency(s.contributionUsd)
-                      : "—"}
                   </td>
                   <td className="py-1.5 pl-2 text-right tabular-nums">
                     {s.lockedUsd > 0 ? (
@@ -177,12 +209,9 @@ export function UserWagerProgressCard({
             </tbody>
             <tfoot>
               <tr className="border-t font-medium">
-                <td className="py-1.5 pr-2 text-left">Total</td>
+                <td className="py-1.5 pr-2 text-left">Total unwagered</td>
                 <td className="px-2 py-1.5 text-right tabular-nums">—</td>
                 <td className="px-2 py-1.5 text-right" />
-                <td className="px-2 py-1.5 text-right tabular-nums">
-                  {requiredUsd != null ? formatCurrency(requiredUsd) : "—"}
-                </td>
                 <td className="py-1.5 pl-2 text-right tabular-nums">
                   {totalLockedUsd > 0 ? (
                     <span className="text-rose-600 dark:text-rose-400">
@@ -217,27 +246,23 @@ export function UserWagerProgressCard({
               shard-wager progress
             </span>
           )}
-          {totalLockedUsd > 0 && (
-            <span className="inline-flex items-center gap-1.5">
-              <Lock className="size-3.5" />
-              {formatCurrency(totalLockedUsd)} still locked behind the
-              requirement
-            </span>
-          )}
         </div>
 
-        {/* Auditable formula + honest disclaimer. */}
+        {/* How the gate works + honest note on the two locked counters. */}
         <p className="mt-3 border-t pt-2 text-[11px] leading-relaxed text-muted-foreground">
-          <span className="font-medium text-foreground">How this is computed:</span>{" "}
-          Requirement = Σ (source lifetime total × its multiplier). Remaining =
-          max(0, requirement − completed). <span className="font-medium">Completed</span>{" "}
-          and the lifetime totals are read directly from the backend-maintained{" "}
-          <code className="font-mono">balances</code> columns; the requirement
-          total and remaining are{" "}
-          <span className="font-medium">estimated</span> from those inputs and
-          should be reconciled against the backend&apos;s exact gating rule.
+          <span className="font-medium text-foreground">How this works:</span>{" "}
+          Withdrawals are gated by a frozen-rate debt — each deposit/bonus
+          credit adds to it (at the rate in effect then), each real weighted
+          wager burns it down.{" "}
+          <span className="font-medium">Withdrawable now</span> = max(0,
+          available balance − locked debt); the locked debt is read straight
+          from <code className="font-mono">balances.wager_requirement_remaining</code>.
+          The per-source <span className="font-medium">Unwagered</span> column
+          is a separate counter (each bonus source&apos;s still-unspent funds) —
+          it can differ from the locked debt, and the deposit part of the debt
+          has no per-source row.
           {!backendAvailable &&
-            " The wager-weight backend config wasn't reachable, so the estimate is unavailable — only the backend-truth completed + lifetime totals are shown."}
+            " The wager-weight backend config wasn't reachable, so the per-source weights are hidden — the gate figures above are still exact (read from the balance columns)."}
         </p>
       </StatPanel>
     </div>

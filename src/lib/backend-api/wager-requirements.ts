@@ -3,25 +3,38 @@ import "server-only";
 import { backendApi } from "./client";
 
 /**
- * Withdrawal wager-requirement admin API.
+ * Withdrawal wager-requirement admin API (site defaults + per-user override).
  *
- * The game backend gates every withdrawal behind a lifetime wager
- * requirement, summed across five independently-configurable buckets:
+ * The game backend gates withdrawals behind a wager requirement configured by
+ * five independent bps knobs (10000 bps = 1×), one per credit source:
  *
- *   deposit_bps   / 10000 × total_deposited
- * + bonus_bps     / 10000 × total_bonus_won      (rain, prizes, rewards,
- *                                                  sponsored battle share)
- * + affiliate_bps / 10000 × total_affiliate_won  (affiliate commission claims)
- * + rakeback_bps  / 10000 × total_rakeback_won   (rakeback claims)
- * + tips_bps      / 10000 × total_tips_won        (tips received)
+ *   deposit_bps   — on deposits
+ *   bonus_bps     — on general bonus winnings (rain, prizes, rewards,
+ *                   sponsored battle share)
+ *   affiliate_bps — on affiliate commission claims
+ *   rakeback_bps  — on rakeback claims
+ *   tips_bps      — on tips received
  *
- * before any withdrawal is allowed. Every knob is in basis points
- * (10000 bps = 1×). Per-game weights scale how much each wager counts
- * toward the requirement (e.g. upgrader at 8000 bps = 0.8× — a $100
- * upgrader bet adds only $80 of progress).
+ * ENFORCEMENT MODEL (backend rework 2026-06-14, commit 74b8042c / migration
+ * 0130): these bps are NO LONGER a live cumulative "Σ(lifetime total × bps) vs
+ * progress" gate. Each deposit/bonus credit now FREEZES `amount × its_bps /
+ * 10000` into a per-balance debt counter `balances.wager_requirement_remaining`
+ * at credit time (later edits to these knobs only affect FUTURE credits); every
+ * real weighted wager burns that debt down. Withdrawal is a PARTIAL lock:
+ * withdrawable = max(0, available − remaining). So editing a knob here changes
+ * what newly-credited funds will owe — it does NOT retroactively re-price debt
+ * already frozen. Per-game weights still scale how much a wager counts (e.g.
+ * upgrader at 8000 bps = 0.8×).
+ *
+ * NOTE (commit 85c23fe0): early-claimed rakeback is now bucketed as `rakeback`
+ * bonus funds, so it accrues this requirement and lands in `total_rakeback_won`
+ * / `unwagered_rakeback_usd` like a normal claim — balance-derived rakeback
+ * liability (per-user wager card + /insights/wager-liability) will rise from
+ * that deploy onward. The rakeback INSIGHTS surface (reads `rakeback_claims`)
+ * is unaffected.
  *
  * Source of truth (request/response shapes):
- *   packy-backend/src/routes/v1/admin/user-wager-requirements.ts
+ *   PackyGG/backend/src/routes/v1/admin/user-wager-requirements.ts
  *
  * `backendApi`'s base URL already includes `/v1`, so paths are
  * `/admin/...`. Errors surface as BackendApiError (`.status`,

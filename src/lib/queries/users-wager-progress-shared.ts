@@ -18,24 +18,35 @@ import type { UserWagerProgress } from "./users-wager-progress";
 
 /**
  * Compact, fully-serializable subset of `UserWagerProgress` for places that
- * only need the headline "filled $X of $Y required — Z% complete" status
- * (e.g. the transaction-detail popup on a deposit/withdrawal row). All-
- * primitive so it crosses the RSC → client boundary with no function props.
+ * only need the headline withdrawal-gate status (e.g. the transaction-detail
+ * popup on a deposit/withdrawal row). All-primitive so it crosses the
+ * RSC → client boundary with no function props.
  *
- * `requiredUsd` / `remainingUsd` / `pct` are null when the backend bps config
- * was unreachable (we then show only the backend-truth `completedUsd`).
+ * Frozen-rate debt model (backend rework 2026-06-14): the gate is a PARTIAL
+ * lock — `remainingUsd` (= `balances.wager_requirement_remaining`) reserves
+ * that many balance dollars and `withdrawableUsd = max(0, available −
+ * remaining)` is free to leave. `met` ⇔ remaining ≤ 0 (or exempt).
  */
 export type WagerRequirementSummary = {
+  /** Lifetime weighted wager cleared (informational). */
   completedUsd: number;
-  requiredUsd: number | null;
-  remainingUsd: number | null;
-  /** completed / required × 100, clamped 0..100; null when no requirement total. */
+  /** completed + remaining (informational "progress + still-owed"). */
+  requiredUsd: number;
+  /** Authoritative locked debt that gates withdrawal (0 when exempt). */
+  remainingUsd: number;
+  /** Authoritative withdrawable-now = max(0, available − remaining). */
+  withdrawableUsd: number;
+  /** Current available balance (backend truth). */
+  availableBalanceUsd: number;
+  /** completed / required × 100, clamped 0..100; null only when there is no
+   *  requirement total at all (completed = remaining = 0). */
   pct: number | null;
   /** True when the user is fully exempt (per-user override = 0). */
   exempt: boolean;
-  /** True when the (non-exempt) user has met the full requirement. */
+  /** True when the requirement is satisfied (remaining ≤ 0) or exempt. */
   met: boolean;
-  /** Whether the backend bps config was reachable (gates required/remaining). */
+  /** Whether the backend bps config was reachable (gates the informational
+   *  per-source weights only — the figures above are column-authoritative). */
   backendAvailable: boolean;
 };
 
@@ -49,19 +60,26 @@ export function toWagerRequirementSummary(
   data: UserWagerProgress | null,
 ): WagerRequirementSummary | null {
   if (!data) return null;
-  const { completedUsd, requiredUsd, remainingUsd, exempt, backendAvailable } =
-    data;
+  const {
+    completedUsd,
+    requiredUsd,
+    remainingUsd,
+    withdrawableUsd,
+    availableBalanceUsd,
+    exempt,
+    met,
+    backendAvailable,
+  } = data;
   const pct =
-    requiredUsd && requiredUsd > 0
+    requiredUsd > 0
       ? Math.min(100, Math.max(0, (completedUsd / requiredUsd) * 100))
-      : exempt || (requiredUsd != null && requiredUsd <= 0)
-        ? 100
-        : null;
-  const met = !exempt && remainingUsd != null && remainingUsd <= 0;
+      : 100; // nothing required → trivially complete
   return {
     completedUsd,
     requiredUsd,
     remainingUsd,
+    withdrawableUsd,
+    availableBalanceUsd,
     pct,
     exempt,
     met,

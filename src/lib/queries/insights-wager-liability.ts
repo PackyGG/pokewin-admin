@@ -82,9 +82,22 @@ export type WagerLiabilityBucket = {
 
 export type WagerLiabilityAvailable = {
   available: true;
-  /** Σ of every `unwagered_*_usd` across in-scope customers. */
+  /** AUTHORITATIVE total withdrawal-gated debt = Σ
+   *  `balances.wager_requirement_remaining` across in-scope customers. This is
+   *  the real withdrawal gate (frozen-rate debt model, backend rework
+   *  2026-06-14) and INCLUDES deposit-driven debt that the per-source
+   *  `unwagered_*` sum (`totalGatedUsd`) omits, so the two differ. null when
+   *  the connected DB lacks the column (drift) — the page then falls back to
+   *  the unwagered-only view. */
+  totalWithdrawalDebtUsd: number | null;
+  /** Distinct in-scope customers with remaining debt > 0 (the authoritative
+   *  "blocked from withdrawal" count). 0 when the column is absent. */
+  debtUsers: number;
+  /** Σ of every `unwagered_*_usd` across in-scope customers (per-source bonus
+   *  funds still unwagered — a DIFFERENT, pre-existing counter from the debt
+   *  gate above). */
   totalGatedUsd: number;
-  /** Distinct in-scope customers with ANY locked balance (> 0). */
+  /** Distinct in-scope customers with ANY `unwagered_*` balance (> 0). */
   blockedUsers: number;
   /** In-scope customers with a per-user override of 0 bps (fully exempt). */
   exemptUsers: number;
@@ -137,7 +150,10 @@ type RawBucketRow = {
  * always executes in the correct per-env scope (direct on dev; via the
  * env-keyed prod cache on prod), so an inline read is both correct and cheap.
  */
-async function probeWagerColumn(db: Awaited<ReturnType<typeof getDb>>): Promise<boolean> {
+async function probeColumn(
+  db: Awaited<ReturnType<typeof getDb>>,
+  column: string,
+): Promise<boolean> {
   try {
     const r = await db.$queryRaw<{ exists: boolean }[]>`
       SELECT EXISTS (
@@ -145,7 +161,7 @@ async function probeWagerColumn(db: Awaited<ReturnType<typeof getDb>>): Promise<
           FROM information_schema.columns
          WHERE table_schema = 'public'
            AND table_name = 'balances'
-           AND column_name = 'wager_requirement_progress'
+           AND column_name = ${column}
       ) AS exists`;
     return Boolean(r[0]?.exists);
   } catch (err) {
@@ -165,7 +181,7 @@ async function probeWagerColumn(db: Awaited<ReturnType<typeof getDb>>): Promise<
  */
 async function queryWagerLiability(): Promise<WagerLiabilityResult> {
   const db = await getDb();
-  const hasColumns = await probeWagerColumn(db);
+  const hasColumns = await probeColumn(db, "wager_requirement_progress");
   if (!hasColumns) return { available: false };
 
   const scope = await getMetricsScope();
@@ -332,8 +348,43 @@ async function queryWagerLiability(): Promise<WagerLiabilityResult> {
     };
   });
 
+  // ── AUTHORITATIVE withdrawal-gate debt (frozen-rate model, migration 0130) ─
+  // Σ `wager_requirement_remaining` is the real total customers must still
+  // wager off before withdrawing — distinct from the per-source `unwagered_*`
+  // sum, because it also carries deposit-driven debt that has no `unwagered_*`
+  // bucket. Probed separately so a DB with the older sweepstakes columns but
+  // not this one (partial migration) still renders the unwagered view instead
+  // of throwing 42703.
+  let totalWithdrawalDebtUsd: number | null = null;
+  let debtUsers = 0;
+  const hasRemaining = await probeColumn(db, "wager_requirement_remaining");
+  if (hasRemaining) {
+    try {
+      const debtRows = await db.$queryRawUnsafe<
+        { debt: string | null; users: bigint | number | null }[]
+      >(
+        `
+        SELECT
+          COALESCE(SUM(b.wager_requirement_remaining), 0)::text AS debt,
+          COUNT(*) FILTER (WHERE COALESCE(b.wager_requirement_remaining, 0) > 0)::bigint AS users
+        FROM balances b
+        WHERE b.user_id IN ${scopeSql}
+      `,
+      );
+      totalWithdrawalDebtUsd = round2(num(debtRows[0]?.debt));
+      debtUsers = Number(debtRows[0]?.users ?? 0);
+    } catch (err) {
+      console.error(
+        "[insights-wager-liability] remaining-debt read failed, omitting authoritative gate:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
   return {
     available: true,
+    totalWithdrawalDebtUsd,
+    debtUsers,
     totalGatedUsd,
     blockedUsers: Number(a.blocked_users ?? 0),
     exemptUsers,
@@ -355,7 +406,7 @@ async function queryWagerLiability(): Promise<WagerLiabilityResult> {
 // `users-detail-cache.ts` / `shard-stats.ts`.
 const cachedWagerLiability = unstable_cache(
   queryWagerLiability,
-  ["insights-wager-liability-snapshot-v1"],
+  ["insights-wager-liability-snapshot-v2"],
   { revalidate: 60, tags: ["insights-wager-liability"] },
 );
 

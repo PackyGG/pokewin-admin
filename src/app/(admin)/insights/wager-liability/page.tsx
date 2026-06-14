@@ -123,59 +123,116 @@ function UnavailableState() {
 // ─── Body ───────────────────────────────────────────────────────────────
 
 function LiabilityBody({ data }: { data: WagerLiabilityAvailable }) {
+  const debtAvailable = data.totalWithdrawalDebtUsd != null;
   const cohortData = data.buckets.map((b) => ({
     label: b.label,
     users: b.users,
     lockedUsd: b.lockedUsd,
   }));
+  // The "locked by source" + cohort sections below are the UNWAGERED-funds
+  // lens (per-source bonus tracking); the authoritative withdrawal gate is the
+  // debt headline. notBlocked stays relative to the unwagered cohort.
   const notBlocked = Math.max(0, data.totalCustomers - data.blockedUsers);
+
+  // Headline KPIs lead with the authoritative frozen-debt gate when the column
+  // is present; otherwise fall back to the legacy unwagered-only view.
+  const tiles: Array<{
+    label: string;
+    value: string;
+    sub: string;
+    icon: LucideIcon;
+    accent: AccentColor;
+  }> = debtAvailable
+    ? [
+        {
+          label: "Withdrawal-gated debt",
+          value: formatCurrency(data.totalWithdrawalDebtUsd ?? 0),
+          sub: "authoritative gate · incl. deposit debt",
+          icon: Lock,
+          accent: "rose",
+        },
+        {
+          label: "Blocked from withdrawal",
+          value: formatNumber(data.debtUsers),
+          sub: `of ${formatNumber(data.totalCustomers)} customers · debt > 0`,
+          icon: Users,
+          accent: "blue",
+        },
+        {
+          label: "Unwagered bonus funds",
+          value: formatCurrency(data.totalGatedUsd),
+          sub: "per-source · differs from debt",
+          icon: Gift,
+          accent: "rose",
+        },
+        {
+          label: "Exempt customers",
+          value: formatNumber(data.exemptUsers),
+          sub: "per-user override = 0 bps",
+          icon: ShieldCheck,
+          accent: "cyan",
+        },
+      ]
+    : [
+        {
+          label: "Total gated liability",
+          value: formatCurrency(data.totalGatedUsd),
+          sub: "locked across all customers",
+          icon: Lock,
+          accent: "rose",
+        },
+        {
+          label: "Customers blocked",
+          value: formatNumber(data.blockedUsers),
+          sub: `of ${formatNumber(data.totalCustomers)} with any locked balance`,
+          icon: Users,
+          accent: "blue",
+        },
+        {
+          label: "Exempt customers",
+          value: formatNumber(data.exemptUsers),
+          sub: "per-user override = 0 bps",
+          icon: ShieldCheck,
+          accent: "cyan",
+        },
+        {
+          label: "Wager progress cleared",
+          value: formatCurrency(data.totalProgress),
+          sub: "weighted wager toward requirement",
+          icon: Gauge,
+          accent: "blue",
+        },
+      ];
 
   return (
     <div className="space-y-6">
-      {/* KPI strip — gated liability is money we owe (rose); counts neutral. */}
+      {/* KPI strip — debt/liability is money we owe (rose); counts neutral. */}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiTile
-          label="Total gated liability"
-          value={formatCurrency(data.totalGatedUsd)}
-          sub="locked across all customers"
-          icon={Lock}
-          accent="rose"
-        />
-        <KpiTile
-          label="Customers blocked"
-          value={formatNumber(data.blockedUsers)}
-          sub={`of ${formatNumber(data.totalCustomers)} with any locked balance`}
-          icon={Users}
-          accent="blue"
-        />
-        <KpiTile
-          label="Exempt customers"
-          value={formatNumber(data.exemptUsers)}
-          sub="per-user override = 0 bps"
-          icon={ShieldCheck}
-          accent="cyan"
-        />
-        <KpiTile
-          label="Wager progress cleared"
-          value={formatCurrency(data.totalProgress)}
-          sub="weighted wager toward requirement"
-          icon={Gauge}
-          accent="blue"
-        />
+        {tiles.map((t) => (
+          <KpiTile
+            key={t.label}
+            icon={t.icon}
+            label={t.label}
+            value={t.value}
+            sub={t.sub}
+            accent={t.accent}
+          />
+        ))}
       </div>
 
-      {/* Locked-by-source breakdown */}
+      {/* Unwagered bonus funds by source — a DIFFERENT lens from the debt
+          headline (per-source bonus tracking, excludes deposit-driven debt). */}
       <section className="space-y-3">
         <SectionHeading
           icon={Layers}
-          title="Locked by source"
+          title="Unwagered bonus funds by source"
         />
         <LockedBySource data={data} />
       </section>
 
-      {/* Cohort: blocked vs not + size buckets */}
+      {/* Cohort: customers with unwagered funds, bucketed by size */}
       <section className="space-y-3">
-        <SectionHeading icon={Users} title="Blocked-customer cohort" />
+        <SectionHeading icon={Users} title="Unwagered-funds cohort" />
         <div className="grid gap-4 lg:grid-cols-2">
           <CohortSplit
             blocked={data.blockedUsers}
@@ -206,12 +263,22 @@ function LiabilityBody({ data }: { data: WagerLiabilityAvailable }) {
       </section>
 
       <p className="text-[11px] leading-snug text-muted-foreground">
-        Current snapshot — <code>balances.unwagered_*_usd</code> are
-        point-in-time counters maintained by the backend, not a time-series, so
-        there is no period selector. Customer-scoped (staff, creators and the
-        excluded-users blacklist are dropped, identical to every other money
-        surface). House perspective: a locked balance is user money we owe but
-        is gated behind the wager requirement.
+        Current snapshot — <code>balances.wager_requirement_remaining</code> /{" "}
+        <code>unwagered_*_usd</code> are point-in-time counters maintained by
+        the backend, not a time-series, so there is no period selector. The{" "}
+        <span className="font-medium text-foreground">
+          withdrawal-gated debt
+        </span>{" "}
+        (Σ <code>wager_requirement_remaining</code>) is the authoritative gate
+        and includes deposit-driven debt; the{" "}
+        <span className="font-medium text-foreground">
+          unwagered bonus funds
+        </span>{" "}
+        (Σ <code>unwagered_*_usd</code>) are a separate per-source counter and
+        will differ. Σ weighted wager cleared:{" "}
+        {formatCurrency(data.totalProgress)}. Customer-scoped (staff, creators
+        and the excluded-users blacklist dropped). House perspective: a locked
+        balance is user money we owe but is gated behind the wager requirement.
       </p>
     </div>
   );
@@ -235,13 +302,14 @@ function LockedBySource({ data }: { data: WagerLiabilityAvailable }) {
   const maxMag = Math.max(...data.sources.map((s) => s.lockedUsd), 1);
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,_20rem)_1fr]">
-      <StatPanel title="Total gated liability" icon={Lock} accent="rose">
+      <StatPanel title="Unwagered bonus funds" icon={Gift} accent="rose">
         <p className="text-3xl font-bold leading-tight tracking-tight tabular-nums text-rose-600 dark:text-rose-400 sm:text-4xl">
           {formatCurrency(data.totalGatedUsd)}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          held behind the wager requirement across{" "}
-          {formatNumber(data.blockedUsers)} blocked customers
+          per-source bonus funds still unwagered across{" "}
+          {formatNumber(data.blockedUsers)} customers — a different lens from the
+          withdrawal-gated debt above
         </p>
         <div className="mt-4 space-y-0.5 border-t border-border/60 pt-3">
           {data.sources.map((s) => (
@@ -324,13 +392,13 @@ function CohortSplit({
     accent: AccentColor;
   }> = [
     {
-      label: "Blocked",
+      label: "Has unwagered",
       value: blocked,
       sub: total > 0 ? `${blockedPct.toFixed(1)}% of customers` : "—",
       accent: "blue",
     },
     {
-      label: "Not blocked",
+      label: "Clear",
       value: notBlocked,
       sub: total > 0 ? `${(100 - blockedPct).toFixed(1)}% clear` : "—",
       accent: "cyan",
@@ -340,7 +408,7 @@ function CohortSplit({
     <Card>
       <CardContent className="space-y-4 p-4 sm:p-5">
         <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Blocked vs clear
+          Unwagered funds vs clear
         </p>
         <div className="grid grid-cols-2 gap-3">
           {tiles.map((t) => (
@@ -392,9 +460,9 @@ function CohortTable({ data }: { data: WagerLiabilityAvailable }) {
     <Card>
       <CardContent className="p-0">
         <div className="grid grid-cols-[1fr_minmax(0,_6rem)_minmax(0,_8rem)] items-center gap-2 border-b bg-muted/30 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:gap-3">
-          <span>Locked-balance band</span>
-          <span className="text-right">Blocked</span>
-          <span className="text-right">Locked</span>
+          <span>Unwagered-funds band</span>
+          <span className="text-right">Customers</span>
+          <span className="text-right">Unwagered</span>
         </div>
         <ul>
           {rows.map((b) => (

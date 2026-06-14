@@ -621,22 +621,19 @@ export function TransactionDetailModal({
 /**
  * Withdrawal wager-requirement status block for the transaction-detail popup.
  *
- * Surfaces the user's progress toward the lifetime wager requirement that
- * gates every balance withdrawal: "filled $X of $Y required — Z% complete",
- * with a progress bar. The requirement is an ACCOUNT-LEVEL value (one per
- * user, read from the backend-maintained `balances` columns via
+ * Surfaces the user's standing against the frozen-rate debt that gates every
+ * balance withdrawal (backend rework 2026-06-14): a PARTIAL lock where the
+ * locked debt reserves that many balance dollars and `withdrawable = max(0,
+ * available − locked)` is free to leave. The standing is an ACCOUNT-LEVEL
+ * value (one per user, read from the backend-maintained `balances` columns via
  * `getUserWagerProgress`), not a per-transaction figure — so the same status
  * shows on every row in the Deposits & Withdrawals popup.
  *
- * House-POV / neutral-info coloring (CLAUDE.md): the requirement progress is
- * informational, not a user gain/loss, so the bar + figures are blue/neutral
- * (the dedicated Account-tab card uses the same blue treatment). The bar turns
- * emerald only when the requirement is fully met — from the house POV a met
- * requirement means the user can now cash out (a house liability unlocks),
- * which is signalled, not celebrated.
- *
- * `completed` is backend truth; `required` / `remaining` are DERIVED estimates
- * (see getUserWagerProgress) and labeled as such. Self-hides on null data.
+ * House-POV coloring (CLAUDE.md): the locked debt is user money we owe but is
+ * gated → rose; withdrawable-now is neutral state info → blue. The composition
+ * bar splits the available balance into the free (blue) and locked (rose)
+ * portions. `withdrawable` / `remaining` are backend truth (column-read).
+ * Self-hides on null data.
  */
 function WagerRequirementBlock({
   wagerRequirement,
@@ -644,8 +641,20 @@ function WagerRequirementBlock({
   wagerRequirement: WagerRequirementSummary | null;
 }) {
   if (!wagerRequirement) return null;
-  const { completedUsd, requiredUsd, remainingUsd, pct, exempt, met, backendAvailable } =
-    wagerRequirement;
+  const {
+    completedUsd,
+    remainingUsd,
+    withdrawableUsd,
+    availableBalanceUsd,
+    exempt,
+    met,
+  } = wagerRequirement;
+
+  const hasBalance = availableBalanceUsd > 0;
+  const lockedPct = hasBalance
+    ? Math.min(100, (remainingUsd / availableBalanceUsd) * 100)
+    : 0;
+  const withdrawablePct = Math.max(0, 100 - lockedPct);
 
   return (
     <div className="rounded-lg border bg-muted/30 p-3 space-y-2.5">
@@ -679,64 +688,49 @@ function WagerRequirementBlock({
           </span>{" "}
           — no wager requirement gates their withdrawals.
         </p>
-      ) : requiredUsd != null && requiredUsd > 0 ? (
+      ) : met ? (
+        <p className="text-xs text-muted-foreground">
+          Requirement met — the full{" "}
+          <span className="font-medium text-foreground">
+            {formatCurrency(availableBalanceUsd)}
+          </span>{" "}
+          balance is free to withdraw.
+        </p>
+      ) : (
         <>
           <p className="text-sm tabular-nums">
-            Filled{" "}
             <span className="font-semibold text-foreground">
-              {formatCurrency(completedUsd)}
+              {formatCurrency(withdrawableUsd)}
             </span>{" "}
-            of{" "}
-            <span className="font-semibold text-foreground">
-              {formatCurrency(requiredUsd)}
-            </span>{" "}
-            required
-            {pct != null && (
-              <span className="text-muted-foreground">
-                {" "}
-                — {pct.toFixed(1)}% complete
-              </span>
-            )}
+            withdrawable now
+            <span className="text-muted-foreground">
+              {" "}
+              of {formatCurrency(availableBalanceUsd)} balance
+            </span>
           </p>
-          {pct != null && (
-            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+          {hasBalance && (
+            <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
               <div
-                className={`h-full rounded-full motion-safe:transition-[width] motion-safe:duration-700 ${
-                  met
-                    ? "bg-emerald-500"
-                    : "bg-blue-500"
-                }`}
-                style={{ width: `${pct}%` }}
+                className="h-full bg-blue-500 motion-safe:transition-[width] motion-safe:duration-700"
+                style={{ width: `${withdrawablePct}%` }}
+              />
+              <div
+                className="h-full bg-rose-500 motion-safe:transition-[width] motion-safe:duration-700"
+                style={{ width: `${lockedPct}%` }}
               />
             </div>
           )}
-          {!met && remainingUsd != null && (
-            <p className="text-[11px] tabular-nums text-muted-foreground">
-              {formatCurrency(remainingUsd)} left to wager before withdrawal.
-            </p>
-          )}
-          <p className="text-[10px] leading-relaxed text-muted-foreground">
-            Completed is backend truth; the requirement total is an estimate
-            derived from lifetime source totals × their multipliers.
-          </p>
-        </>
-      ) : (
-        // backend bps unreachable → only the backend-truth completed figure
-        // is meaningful; don't show a fabricated requirement total.
-        <>
-          <p className="text-sm tabular-nums">
-            Wagered{" "}
-            <span className="font-semibold text-foreground">
-              {formatCurrency(completedUsd)}
+          <p className="text-[11px] tabular-nums text-muted-foreground">
+            <span className="text-rose-600 dark:text-rose-400">
+              {formatCurrency(remainingUsd)} locked
             </span>{" "}
-            cleared toward the requirement.
+            — must be wagered off before it can be withdrawn.
           </p>
-          {!backendAvailable && (
-            <p className="text-[11px] text-muted-foreground">
-              Requirement total unavailable — the wager-weight backend config
-              couldn&apos;t be reached, so only the cleared amount is shown.
-            </p>
-          )}
+          <p className="text-[10px] leading-relaxed text-muted-foreground">
+            Partial lock: the locked debt reserves that much of the balance;
+            everything above it is free to leave.{" "}
+            {formatCurrency(completedUsd)} wagered cleared (lifetime).
+          </p>
         </>
       )}
     </div>
