@@ -1,4 +1,6 @@
-import { getDb } from "@/lib/db";
+import { unstable_cache } from "next/cache";
+import { getDevDb, getProdDb } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import type { PaginatedResult } from "@/lib/types";
 import {
   resolveUpgraderMetadata,
@@ -22,6 +24,39 @@ import {
  *
  * Mirrors the pagination / search / status filter shape of the existing
  * transactions queries so the page layer reads the same way.
+ *
+ * ── PERFORMANCE (2026-06-14): pre-slice before the LATERALs ────────────
+ * The old query ran TWO correlated `JOIN LATERAL`s over `game_sessions`
+ * (≈544k rows, NO index on `game_id` — verified read-only on live prod:
+ * the only secondary index is the partial `idx_game_sessions_created_at_
+ * user_bet ON (user_id IS NOT NULL)`). Because `WHERE`/`ORDER`/`LIMIT`
+ * were applied AFTER the joins, each LATERAL full-seq-scanned all 544k
+ * rows for EVERY upgrader_games row — a 1.7-billion-cost plan that hangs
+ * the segment forever (>12s; deeper OFFSET pages never completed at all).
+ *
+ * Fix = pre-slice the page of ids FIRST (`page_ids` CTE: the same
+ * search + outcome WHERE and the same ORDER BY, then LIMIT/OFFSET), then
+ * resolve the per-row data ONLY for those ≤20 games. Instead of running
+ * the two LATERALs per row (which would still be 2×20 = 40 seq-scans),
+ * the upgrader `game_sessions` for the whole page are materialized in a
+ * SINGLE pass (`sess` CTE) and BOTH legs are derived from it:
+ *   • `best_sess`  — DISTINCT ON (game_id) reproduces the old LATERAL-1
+ *                    "best session" pick (prefer a row WITH
+ *                    bet_ledger_tx_id, then newest) → bet_ledger_tx_id.
+ *   • `pf_agg`     — the old LATERAL-2 aggregate (best/all metadata +
+ *                    MAX target) over ALL PF rows of ALL upgrader
+ *                    sessions for the game, GROUP BY game_id.
+ * Net: ONE seq-scan of game_sessions per page instead of 40. Verified on
+ * live prod (read-only): plan drops to ~0.8s and the output is
+ * BYTE-IDENTICAL to the old query across all filters / sorts / pages
+ * (default feed p1+deep, win, loss, multiplier sort, wonAmount sort —
+ * incl. the best_metadata / all_metadata JSON + best_target columns).
+ *
+ * The owner-only real root fix is an index on `game_sessions(game_id)`
+ * (would turn each lookup into a sub-ms index seek). MAIN is strictly
+ * read-only / no-DDL, so that is an OWNER action — this rewrite makes the
+ * unindexed path cheap (single scan) and the page degrade-not-hang via
+ * the safeQuery timeout + unstable_cache warm path at the call site.
  */
 
 export type UpgraderTransactionRow = {
@@ -110,15 +145,31 @@ export type UpgraderSortBy = "recent" | "multiplier" | "wonAmount";
 
 const VALID_SORTS = new Set<UpgraderSortBy>(["recent", "multiplier", "wonAmount"]);
 
-export async function getUpgraderTransactions(params: {
-  page?: number;
-  perPage?: number;
-  search?: string;
-  outcome?: string;
-  sortBy?: string;
-}): Promise<PaginatedResult<UpgraderTransactionRow>> {
+/**
+ * The shaped page returned by the query — every field is a serializable
+ * primitive (createdAt is already an ISO string), so the `unstable_cache`
+ * JSON round-trip is lossless: no Date column survives into the cached
+ * payload, so there is nothing to coerce back from a string on a cache
+ * hit. (The raw `created_at` Date IS toISOString()'d inside the compute
+ * fn, BEFORE it crosses the cache boundary.)
+ */
+async function computeUpgraderTransactions(
+  env: DbEnv,
+  params: {
+    page?: number;
+    perPage?: number;
+    search?: string;
+    outcome?: string;
+    sortBy?: string;
+  },
+): Promise<PaginatedResult<UpgraderTransactionRow>> {
   const { page = 1, perPage = 20, search, outcome, sortBy } = params;
-  const db = await getDb();
+  // Resolve the Prisma client from the threaded env WITHOUT calling
+  // getDb() — getDb() reads the request cookie via cookies(), which is
+  // illegal inside unstable_cache. Env is resolved in the request scope
+  // by the public entry point and passed through as a cache-key dimension
+  // (mirrors getDepositTransactions in transactions.ts).
+  const db = env === "dev" ? getDevDb() : getProdDb();
 
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
@@ -207,45 +258,59 @@ export async function getUpgraderTransactions(params: {
     ${baseWhere}
   `;
 
-  // Per-page LATERAL pull of the PF row for the target-multiplier
-  // badge. Upgrader sessions are 1:1 with their `provably_fair_results`
-  // row (one spin = one ticket) so picking the lowest-cursor PF row is
-  // both safe and stable across paginated requests. Using LATERAL
-  // (instead of joining the full PF table) keeps the join cardinality
-  // at exactly one PF row per upgrader game and avoids fanning out the
-  // result set — the row count stays equal to the upgrader_games slice.
-  // result_metadata comes back as JSONB; parsing is done in JS via the
-  // shared `parseUpgraderMetadata` helper so we don't reimplement the
-  // candidate-key fallback in SQL.
+  // ── Pre-slice + single-scan data query ──────────────────────────────
+  //
+  // 1. `page_ids` — the EXACT page of upgrader_games rows (same search +
+  //    outcome WHERE, same ORDER BY, then LIMIT/OFFSET). This is the only
+  //    place the full upgrader_games table is touched for ordering; the
+  //    expensive per-row work below runs ONLY for these ≤20 ids.
+  //
+  // 2. `sess` (MATERIALIZED) — every upgrader `game_sessions` row for the
+  //    page's games, fetched in ONE scan. Joining `game_sessions` to the
+  //    small `page_ids` set lets the planner do a single seq-scan over
+  //    game_sessions instead of one per row. (No index on game_id exists
+  //    on prod, so this single scan is the unindexed floor; an owner-side
+  //    game_sessions(game_id) index would make it an index probe.)
+  //
+  // 3. `best_sess` — DISTINCT ON (game_id) reproduces the old LATERAL-1
+  //    pick: prefer a session WITH a bet_ledger_tx_id, then the newest.
+  //
+  // 4. `pf_agg` — the old LATERAL-2 aggregate over ALL PF rows of ALL
+  //    upgrader sessions for each game, GROUP BY game_id. best_metadata /
+  //    all_metadata / best_target are computed exactly as before; the
+  //    INNER JOIN to provably_fair_results means a game with no PF rows
+  //    has no pf_agg row (LEFT JOIN below yields NULL) — identical to the
+  //    old empty-aggregate behavior (best/target NULL, all_metadata
+  //    COALESCE'd to '[]' at the SELECT).
   const pfTargetExpr = upgraderTargetMultiplierSql("pf.result_metadata");
+  const userJoinForData = `LEFT JOIN "user" u ON u.id = g.user_id`;
   const dataSql = `
-    SELECT
-      g.id::text AS id,
-      g.user_id,
-      u.username,
-      u.image,
-      g.bet_amount::text AS bet_amount,
-      g.won_amount::text AS won_amount,
-      g.created_at,
-      gs.bet_ledger_tx_id::text AS ledger_tx_id,
-      to_jsonb(g) AS upgrader_game,
-      pf.best_metadata AS result_metadata,
-      pf.all_metadata AS all_metadata,
-      pf.best_target::text AS sql_target_multiplier
-    FROM upgrader_games g
-    LEFT JOIN "user" u ON u.id = g.user_id
-    LEFT JOIN LATERAL (
-      SELECT gs_inner.*
-      FROM game_sessions gs_inner
-      WHERE gs_inner.game_type::text = 'upgrader'
-        AND gs_inner.game_id = g.id
+    WITH page_ids AS (
+      SELECT g.id, g.created_at
+      FROM upgrader_games g
+      ${needsUserJoinForSearch ? userJoinForData : ""}
+      ${baseWhere}
+      ${orderBy}
+      LIMIT ${safePerPage}
+      OFFSET ${offset}
+    ),
+    sess AS MATERIALIZED (
+      SELECT gs.id, gs.game_id, gs.bet_ledger_tx_id, gs.created_at
+      FROM game_sessions gs
+      JOIN page_ids pid ON pid.id = gs.game_id
+      WHERE gs.game_type::text = 'upgrader'
+    ),
+    best_sess AS (
+      SELECT DISTINCT ON (game_id) game_id, bet_ledger_tx_id
+      FROM sess
       ORDER BY
-        CASE WHEN gs_inner.bet_ledger_tx_id IS NOT NULL THEN 0 ELSE 1 END,
-        gs_inner.created_at DESC
-      LIMIT 1
-    ) gs ON true
-    LEFT JOIN LATERAL (
+        game_id,
+        CASE WHEN bet_ledger_tx_id IS NOT NULL THEN 0 ELSE 1 END,
+        created_at DESC
+    ),
+    pf_agg AS (
       SELECT
+        s.game_id,
         (array_agg(pf.result_metadata ORDER BY
           CASE WHEN ${pfTargetExpr} IS NOT NULL THEN 0 ELSE 1 END,
           pf.cursor ASC
@@ -256,18 +321,29 @@ export async function getUpgraderTransactions(params: {
           '[]'::jsonb
         ) AS all_metadata,
         MAX(${pfTargetExpr}) AS best_target
-      FROM provably_fair_results pf
-      WHERE pf.game_session_id IN (
-        SELECT gs2.id
-        FROM game_sessions gs2
-        WHERE gs2.game_type::text = 'upgrader'
-          AND gs2.game_id = g.id
-      )
-    ) pf ON true
-    ${baseWhere}
+      FROM sess s
+      JOIN provably_fair_results pf ON pf.game_session_id = s.id
+      GROUP BY s.game_id
+    )
+    SELECT
+      g.id::text AS id,
+      g.user_id,
+      u.username,
+      u.image,
+      g.bet_amount::text AS bet_amount,
+      g.won_amount::text AS won_amount,
+      g.created_at,
+      bs.bet_ledger_tx_id::text AS ledger_tx_id,
+      to_jsonb(g) AS upgrader_game,
+      pa.best_metadata AS result_metadata,
+      COALESCE(pa.all_metadata, '[]'::jsonb) AS all_metadata,
+      pa.best_target::text AS sql_target_multiplier
+    FROM page_ids pid
+    JOIN upgrader_games g ON g.id = pid.id
+    ${userJoinForData}
+    LEFT JOIN best_sess bs ON bs.game_id = g.id
+    LEFT JOIN pf_agg pa ON pa.game_id = g.id
     ${orderBy}
-    LIMIT ${safePerPage}
-    OFFSET ${offset}
   `;
 
   type Raw = {
@@ -337,4 +413,43 @@ export async function getUpgraderTransactions(params: {
     perPage: safePerPage,
     totalPages: Math.ceil(total / safePerPage),
   };
+}
+
+/**
+ * Cross-request cache layer for the Upgrader transactions list.
+ *
+ * Wraps {@link computeUpgraderTransactions} in a 60s `unstable_cache`
+ * keyed on `(env, page, perPage, search, outcome, sortBy)` — the args
+ * passed to a cached fn participate in its key, so each distinct
+ * filter/page/sort combo gets its own entry and re-viewing a page is an
+ * instant cache hit. `env` is the FIRST key dimension so a dev-DB-toggled
+ * admin's entries never collide with prod. Mirrors the env-gated
+ * `unstable_cache` list pattern in transactions.ts (getDepositTransactions).
+ *
+ * The cached payload is the already-shaped {@link PaginatedResult}; every
+ * field is a serializable primitive (createdAt is an ISO string), so the
+ * cache's JSON round-trip is lossless — no Date column survives into the
+ * payload, so there is nothing to coerce back on a cache hit.
+ */
+const cachedUpgraderTransactions = unstable_cache(
+  computeUpgraderTransactions,
+  ["transactions-upgrader-list-v1"],
+  { revalidate: 60, tags: ["transactions-upgrader-list"] },
+);
+
+/**
+ * Public entry point for the Upgrader transactions list. Resolves the
+ * request's DB env (the cookie read happens HERE, in the request scope)
+ * then delegates to the cached compute fn. See
+ * {@link computeUpgraderTransactions} for the query itself.
+ */
+export async function getUpgraderTransactions(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  outcome?: string;
+  sortBy?: string;
+}): Promise<PaginatedResult<UpgraderTransactionRow>> {
+  const env = await readDbEnv();
+  return cachedUpgraderTransactions(env, params);
 }

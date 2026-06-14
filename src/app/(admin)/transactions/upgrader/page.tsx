@@ -1,8 +1,9 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { ArrowUpCircle } from "lucide-react";
+import { ArrowUpCircle, AlertTriangle } from "lucide-react";
 import { getUpgraderTransactions } from "@/lib/queries/upgrader-transactions";
 import { requirePageAccess } from "@/lib/dal";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { UpgraderTransactionsDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
@@ -91,6 +92,16 @@ export default async function UpgraderTransactionsPage({
                 <Link
                   key={t.value}
                   href={`/transactions/upgrader?${tabParams.toString()}`}
+                  // `prefetch={false}` is what keeps this Active-Tab-Only:
+                  // without it Next prefetches the INACTIVE outcome tab's
+                  // route segment on hover / viewport-enter, which runs
+                  // getUpgraderTransactions for that tab BEFORE the admin
+                  // ever clicks it — speculatively firing this heavy
+                  // (unindexed game_sessions) query. With prefetch off the
+                  // hidden tab's query only fires on the actual click, into
+                  // its own <Suspense> boundary below. Mirrors the deposits
+                  // tab switch in /transactions/deposits.
+                  prefetch={false}
                   className={cn(
                     "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                     tab === t.value
@@ -163,15 +174,60 @@ async function UpgraderTxTableSection({
   search: string | undefined;
   sortBy: string;
 }) {
-  const result = await getUpgraderTransactions({
+  // Empty shape getUpgraderTransactions returns for zero rows — the
+  // safeQuery fallback, so the table + pagination still paint (degraded)
+  // on failure instead of the whole segment crashing.
+  const EMPTY_LIST: Awaited<ReturnType<typeof getUpgraderTransactions>> = {
+    data: [],
+    total: 0,
     page,
     perPage,
-    search,
-    outcome: tab,
-    sortBy,
-  });
+    totalPages: 0,
+  };
+
+  // safeQuery (house 15s wall-clock bound) degrades a failed/hung list
+  // query to an empty table + a VISIBLE amber band — hero, tabs, toolbar
+  // and pagination keep rendering so the admin can clear filters or retry.
+  // This is the guard that turns the old infinite spinner (the upgrader
+  // list query running against the unindexed game_sessions table) into a
+  // bounded degrade. Identical to the bare await on the happy path, and
+  // mirrors how /transactions/deposits wraps its list query.
+  const listResult = await safeQuery(
+    () =>
+      getUpgraderTransactions({
+        page,
+        perPage,
+        search,
+        outcome: tab,
+        sortBy,
+      }),
+    EMPTY_LIST,
+    "transactions.upgrader.list",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const result = listResult.data;
+  const listFailed = listResult.error !== null;
+
   return (
     <>
+      {listFailed && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+        >
+          <AlertTriangle
+            aria-hidden
+            className="mt-0.5 size-4 shrink-0 text-amber-500"
+          />
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Couldn&apos;t load upgrader plays — the query timed out or failed.
+            This is a{" "}
+            <span className="font-medium">query error, not zero results</span>.
+            Refresh to retry, or clear the search and outcome filter.
+          </p>
+        </div>
+      )}
       <FadeIn>
         <UpgraderTransactionsDataTable data={result.data} />
       </FadeIn>
@@ -180,6 +236,7 @@ async function UpgraderTxTableSection({
         totalPages={result.totalPages}
         total={result.total}
         perPage={result.perPage}
+        degraded={listFailed}
       />
     </>
   );
