@@ -576,9 +576,10 @@ export type GameSessionDetails = {
 // Gaming = the full pack / battle / upgrader play cycle: the bet legs PLUS the
 // battle_excess_to_voucher win leg (the voucher leg of a battle win, voucher ==
 // card per house rules) which stays here as part of the bet → win trail. The
-// card_sale / reward_card_sale cash-outs (selling a won/reward card back to
-// balance) were MOVED to the Inventory tab (CARD_SALE_TX_TYPES below) per owner
-// — they're inventory realizations, shown next to the items they came from.
+// item cash-OUTS — card_sale / reward_card_sale (selling a won/reward card back
+// to balance) and voucher_redeemed (cashing a won voucher back to balance) —
+// were MOVED to the Inventory tab (CARD_SALE_TX_TYPES below) per owner: they're
+// item realizations, shown next to the items they came from.
 // Pure exchanges (card_exchange / voucher_exchange / exchange_excess_*) stay
 // OUT — exchanging an item is value-neutral, not a realization. Keep this list
 // in sync with GAMING_TYPES in page.tsx (this = load-more; that = initial fetch).
@@ -589,7 +590,6 @@ export const GAMING_TX_TYPES = [
   "battle_refund",
   "upgrader_bet",
   "upgrader_payout",
-  "voucher_redeemed",
   "battle_excess_to_voucher",
 ] as const;
 // Financial = deposits, withdrawals (card_withdrawal + withdrawal_shipping_fee)
@@ -628,7 +628,16 @@ export const FINANCIAL_TX_TYPES = [
 // older adjustment). Shares the same query path, so the official_stream
 // fake-balance exclusion still applies automatically.
 export const ADJUSTMENT_TX_TYPES = ["admin_balance_adjustment"] as const;
-export const CARD_SALE_TX_TYPES = ["card_sale", "reward_card_sale"] as const;
+// Item cash-OUTS surfaced on the Inventory tab's "Card & Voucher Sales"
+// section: selling a won (card_sale) or reward (reward_card_sale) card back to
+// balance, OR cashing a won voucher back to balance (voucher_redeemed). All
+// realize a held item into cash (voucher == card per house rules), so they sit
+// next to the items they came from. Keep in sync with CARD_SALE_TYPES in page.tsx.
+export const CARD_SALE_TX_TYPES = [
+  "card_sale",
+  "reward_card_sale",
+  "voucher_redeemed",
+] as const;
 export const EXCHANGE_TX_TYPES = [
   "card_exchange",
   "exchange_excess_to_voucher",

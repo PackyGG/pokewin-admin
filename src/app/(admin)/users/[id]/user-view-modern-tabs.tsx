@@ -943,11 +943,13 @@ export function InventoryTab({
         <SkeletonTable rows={5} columns={5} />
       )}
 
-      {/* Card-sale cash-outs — selling a won (card_sale) or reward
-          (reward_card_sale) card back to balance. These realize an inventory
-          item into cash, so they sit with the items they came from (moved off
-          the Gaming tab per owner). Streamed on the tab-gated promise. */}
-      <SectionHeading icon={Banknote} title="Card Sales" />
+      {/* Item cash-outs — selling a won (card_sale) or reward
+          (reward_card_sale) card back to balance, OR cashing a won voucher back
+          to balance (voucher_redeemed). These realize a held item into cash
+          (voucher == card per house rules), so they sit with the items they
+          came from (moved off the Gaming tab per owner). Streamed on the
+          tab-gated promise. */}
+      <SectionHeading icon={Banknote} title="Card & Voucher Sales" />
       {cardSaleTxPromise ? (
         <Suspense fallback={<SkeletonTable rows={5} columns={6} />}>
           <CardSalesStreamed
@@ -978,7 +980,7 @@ function CardSalesStreamed({
   const r = use(cardSaleTxPromise);
   return (
     <CategoryTransactionsTable
-      title="Card Sales"
+      title="Card & Voucher Sales"
       userId={userId}
       types={CARD_SALE_TX_TYPES}
       initialTx={r.data}

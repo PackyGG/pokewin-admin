@@ -85,19 +85,21 @@ const GAMING_TYPES = [
   "battle_refund",
   "upgrader_bet",
   "upgrader_payout",
-  "voucher_redeemed",
-  // card_sale / reward_card_sale (selling a won/reward card back to cash —
-  // an inventory cash-out) live on the INVENTORY tab now, not here. Owner
-  // moved them out of Gaming so this tab stays the bet/play surface.
+  // card_sale / reward_card_sale (selling a won/reward card back to cash) AND
+  // voucher_redeemed (cashing a won voucher back to balance) are inventory /
+  // item cash-OUTS — they live on the INVENTORY tab now (CARD_SALE_TX_TYPES),
+  // shown next to the items they came from. Owner moved them out of Gaming so
+  // this tab stays the bet/play + win surface.
   // battle_excess_to_voucher stays — it's the voucher leg of a battle WIN
   // (voucher == card), part of the bet → win trail on this tab.
   "battle_excess_to_voucher",
 ];
-// Card-sale cash-outs (selling a won or reward card back to balance). Owner-
-// moved off the Gaming tab onto the Inventory tab — these are inventory
-// realizations, shown next to the items they came from. Keep in sync with
-// CARD_SALE_TX_TYPES in user-tabs-types.ts.
-const CARD_SALE_TYPES = ["card_sale", "reward_card_sale"];
+// Item cash-OUTS shown on the INVENTORY tab — selling a won (card_sale) or
+// reward (reward_card_sale) card back to balance, OR cashing a won voucher
+// back to balance (voucher_redeemed). All realize a held item into cash, so
+// they sit next to the items they came from (moved off the Gaming tab per
+// owner). Keep in sync with CARD_SALE_TX_TYPES in user-tabs-types.ts.
+const CARD_SALE_TYPES = ["card_sale", "reward_card_sale", "voucher_redeemed"];
 // FINANCIAL covers deposits, withdrawals (card_withdrawal +
 // withdrawal_shipping_fee) and direct cash payouts (rakeback / affiliate /
 // rain / race / gift / promo). The win-realization rows (card_sale /

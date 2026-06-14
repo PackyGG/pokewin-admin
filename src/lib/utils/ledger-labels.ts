@@ -25,6 +25,14 @@ const LEDGER_TYPE_LABELS: Record<string, string> = {
   // default ("Xp purchase") mis-cases the acronym, so curate it. Direction /
   // color comes from `ledgerDirection` (a house gain — emerald).
   xp_purchase: "XP purchase",
+  // NOT a standalone event: the voucher leg of a battle WIN. When a battle win
+  // can't be paid out as an exact-value card, the leftover is granted as a
+  // voucher (voucher == card per house rules) so card-value + voucher-value =
+  // the full win. The raw default ("Battle excess to voucher") reads as a
+  // cryptic mystery line; this names it as part of the win so the bet → win
+  // (cash + cards + voucher) trail is human-traceable. Direction / color stay
+  // house-POV via `ledgerDirection` (a house cost — rose).
+  battle_excess_to_voucher: "Battle win — voucher",
 };
 
 /** Humanize a raw ledger type: `card_withdrawal` → "Card withdrawal". */

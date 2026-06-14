@@ -402,15 +402,20 @@ export const CategoryTransactionsTable = React.memo(
                       {t.id.slice(0, 8)}...
                     </button>
                   </TableCell>
-                  {/* Dedicated "watch live" button — gaming tab, battle_bet
-                      only. Opens packy.gg/battle/<id> in a new tab.
-                      Empty cell on other gaming rows keeps the column aligned.
-                      Private battles + admin viewer: WatchButton reveals
-                      the password on click, copies the URL with
-                      ?password=<pw>, and opens the live battle URL. */}
+                  {/* Dedicated "watch live" button — gaming tab. Opens
+                      packy.gg/battle/<id> in a new tab. Shown on the battle bet
+                      row AND on the battle_excess_to_voucher row (the voucher
+                      leg of that same battle win), so the voucher leg ties back
+                      to its battle just like the bet does. Empty cell on other
+                      gaming rows keeps the column aligned. Private battles +
+                      admin viewer: WatchButton reveals the password on click,
+                      copies the URL with ?password=<pw>, and opens the live
+                      battle URL. */}
                   {showCardsValue && (
                     <TableCell>
-                      {t.type === "battle_bet" && t.battleId ? (
+                      {(t.type === "battle_bet" ||
+                        t.type === "battle_excess_to_voucher") &&
+                      t.battleId ? (
                         <WatchButton
                           battleId={t.battleId}
                           hasPassword={t.hasPassword === true && isAdmin}
@@ -474,6 +479,17 @@ export const CategoryTransactionsTable = React.memo(
                             );
                           })()}
                       </div>
+                      {/* Battle-win voucher leg — name it as part of the win,
+                          not a standalone mystery line. The voucher is the
+                          leftover when the win couldn't be paid as an exact
+                          card (voucher == card per house rules), so it reads
+                          alongside the cash leg (battle_refund) and the kept
+                          cards as one win. */}
+                      {t.type === "battle_excess_to_voucher" && (
+                        <span className="text-[10px] text-muted-foreground">
+                          Part of a battle win (voucher leg)
+                        </span>
+                      )}
                       {/* Borrow signal lives directly under the type
                           chip so admins scrolling a long activity
                           tab can spot borrowed opens at a glance.
@@ -728,13 +744,15 @@ export const CategoryTransactionsTable = React.memo(
                           </>
                         );
                       }
-                      // Gaming is pack/battle only. Card sales /
-                      // exchanges live in the Financial tab now, so the
-                      // fallback below only has to handle pack_opening
-                      // (cardsValue present) and the few remaining
-                      // gaming types where cardsValue is absent
-                      // (voucher_redeemed — kept here since it can
-                      // unlock the borrow allowance in a battle).
+                      // Gaming is pack/battle only. Item cash-outs (card_sale /
+                      // reward_card_sale / voucher_redeemed) live on the
+                      // Inventory tab now, so the fallback below only handles
+                      // pack_opening (cardsValue present) and the remaining
+                      // gaming types where cardsValue is absent — incl.
+                      // battle_excess_to_voucher (the voucher leg of a battle
+                      // win; its Amount carries the voucher value, while the
+                      // win's Won-Value / House-Profit P&L is shown on the
+                      // paired battle_bet row, so this leg shows "—" here).
                       const cv = t.cardsValue;
                       return (
                         <>
