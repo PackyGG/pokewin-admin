@@ -1770,14 +1770,12 @@ function FundsTraceStreamed({
   const wagered = balances?.totalWagered ?? 0;
   const won = balances?.totalWon ?? 0;
   const shards = wagerProgress?.shards ?? 0;
-  const coinsEnabled = balances?.coinsEnabled ?? false;
-  const coinBalance = balances?.coinBalance ?? 0;
 
   return (
     <div className="space-y-6">
       {/* ── BALANCE NOW — KPI row ──────────────────────────────────────
           Available / Locked / Withdrawable are all user-held or user-owed
-          money → rose. Shards + coins are neutral secondary currency → cyan. */}
+          money → rose. Shards are neutral secondary currency → cyan. */}
       <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
         <KpiTile
           icon={Wallet}
@@ -1805,11 +1803,7 @@ function FundsTraceStreamed({
           label="Shards"
           accent="cyan"
           value={shards.toLocaleString("en-US")}
-          sub={
-            coinsEnabled
-              ? `${coinBalance.toLocaleString("en-US")} coins`
-              : "secondary currency"
-          }
+          sub="secondary currency"
         />
       </div>
 

@@ -1,14 +1,6 @@
 export const ROLES = ["user", "support", "admin", "creator"] as const;
 export type Role = (typeof ROLES)[number];
 
-// Coins (sweepstakes balance) peg. $1 == COINS_PER_USD coins. Coins are
-// stored on `balances.coin_available_balance` as a USD-pegged decimal
-// (coin-USD, scale 2); the peg is applied only at the display/admin-input
-// boundary. MUST stay in sync with the backend's COINS_PER_USD (constants).
-// Because coin-USD is stored to cents, the smallest representable step is
-// $0.01 = 100 coins, so admin coin adjustments are multiples of 100.
-export const COINS_PER_USD = 10_000;
-
 export const WITHDRAWAL_STATUSES = [
   "pending",
   "processing",

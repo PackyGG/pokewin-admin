@@ -26,9 +26,9 @@ import { readDbEnv } from "@/lib/db-env";
  *
  * EXCLUDED (not game winnings): bets (`coin_*_bet`), grants
  * (`coin_deposit_grant` / `coin_admin_adjustment`), and `coin_rain_tip`.
- * Grants are house-funded ISSUANCE, not winnings — the same split the global
- * `/insights/coins` + `/rewards/shards` economy stats apply (issuance is kept
- * out of game flow there too).
+ * Grants are house-funded ISSUANCE, not winnings — the same split the
+ * /rewards/shards economy stats apply (issuance is kept out of game flow
+ * there too).
  *
  * ⚠️ TODO(owner) — `coin_battle_refund` classification UNVERIFIED. It is
  * summed here as an ADDITIVE battle WIN leg (added into totalShards/totalWins),

@@ -13,25 +13,23 @@ import {
  * ──────────────────────────────────────────────────────────────────
  * The shard PACKS listed on /rewards/shards are bought & opened with the
  * secondary, wager-earned currency whose ONLY usage ledger is
- * `coin_transactions`. The GLOBAL /insights/coins page already reads exactly
- * that ledger — same window model, same earned/spent/netHouse/issued math,
- * same per-type breakdown — and adds a supply snapshot + daily trend on top.
+ * `coin_transactions`. The canonical `getCoinsEconomy` (insights-coins.ts)
+ * reads exactly that ledger — window model, earned/spent/netHouse/issued
+ * math, per-type breakdown.
  *
  * This module used to run its OWN copy of that `coin_transactions` rollup
  * behind its OWN `unstable_cache` (keys `shard-stats-*`). Two independent
- * caches over ONE ledger could hold DIFFERENT snapshots: under a cold start /
- * shared-pool contention the heavier /insights/coins read could degrade and
- * cache a stale/empty result for 60–300s while this lighter read showed fresh
- * numbers (or vice-versa), so the two pages DISAGREED on the same figure until
- * a cache expired. That divergence was the reported bug.
+ * caches over ONE ledger could hold DIFFERENT snapshots, so two surfaces
+ * could DISAGREE on the same figure until a cache expired.
  *
- * The fix: this module now DELEGATES to the canonical `getCoinsEconomy`
- * (insights-coins.ts) and projects out the subset /rewards/shards renders. So
- * there is exactly ONE cached economy value per window, shared by BOTH pages —
- * they can never show different flow numbers, cold or warm. No SQL, no second
- * cache, no second `coin_transactions` probe here anymore: the coins module
- * owns the ledger read (incl. its env-keyed schema-drift probe + per-period
- * cache), this module is a thin, type-preserving projection.
+ * The fix: this module now DELEGATES to the canonical `getCoinsEconomy` and
+ * projects out the subset /rewards/shards renders, so there is exactly ONE
+ * cached economy value per window. (The standalone /insights/coins page that
+ * also consumed it has since been removed; /rewards/shards is now the sole
+ * consumer.) No SQL, no second cache, no second `coin_transactions` probe
+ * here: the coins module owns the ledger read (incl. its env-keyed
+ * schema-drift probe + per-period cache), this module is a thin,
+ * type-preserving projection.
  *
  * READ-ONLY (inherited from `getCoinsEconomy`): SELECT + `to_regclass`
  * introspection only — no writes, no game-data mutation. Safe against the live

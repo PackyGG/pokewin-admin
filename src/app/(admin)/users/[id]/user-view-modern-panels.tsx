@@ -274,8 +274,6 @@ export function ModernBalancePanel({
           availableBalance={balances.availableBalance}
           availableBalanceRaw={balances.availableBalanceRaw}
           lockedBalance={balances.lockedBalance}
-          coinsEnabled={balances.coinsEnabled}
-          coinBalance={balances.coinBalance}
           pnl7d={pnl7d}
           open={adjustOpen}
           onOpenChange={setAdjustOpen}

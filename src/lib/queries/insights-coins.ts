@@ -4,18 +4,22 @@ import { getDb, getProdDb, getDevDb } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 
 /**
- * Global coin & shard secondary-currency economy — the data layer behind
- * the /insights/coins page.
+ * Secondary-currency (coin/shard) economy data layer. The standalone
+ * /insights/coins page was removed; the surviving consumer is the
+ * /rewards/shards panel via `shard-stats.ts`, which projects the
+ * period-scoped FLOW (earned/spent/netHouse/issued/categories) out of
+ * `getCoinsEconomy`. The free-to-play coin BALANCE wallet number was removed
+ * everywhere; only the shard supply snapshot + the coin_transactions flow
+ * remain.
  *
  * WHAT THIS READS
  * ───────────────
  * Two things, both from the MAIN game DB, both READ-ONLY:
  *
- *   1. SUPPLY (a snapshot, no period): the live secondary-currency
- *      balances held in wallets — `Σ balances.shards` (the wager-earned
- *      shard currency) and `Σ balances.coin_available_balance` (the coin
- *      balance) plus the holder counts. This is "how much currency is
- *      currently out there", independent of any time window.
+ *   1. SUPPLY (a snapshot, no period): the live `Σ balances.shards`
+ *      (the wager-earned shard currency) plus the holder count. This is
+ *      "how many shards are currently out there", independent of any time
+ *      window.
  *
  *   2. ECONOMY (period-scoped): the FLOW of coins/shards through the
  *      `coin_transactions` ledger over the active window — every coin/shard
@@ -115,10 +119,6 @@ export type CoinSupply = {
   totalShards: number;
   /** Wallets holding > 0 shards. */
   shardHolders: number;
-  /** Σ balances.coin_available_balance across all wallets. */
-  totalCoin: number;
-  /** Wallets holding > 0 coin balance. */
-  coinHolders: number;
 };
 
 /**
@@ -319,8 +319,6 @@ type RawCategoryRow = {
 type RawSupplyRow = {
   total_shards: string | number | null;
   shard_holders: bigint | number;
-  total_coin: string | number | null;
-  coin_holders: bigint | number;
 };
 
 type RawDailyRow = {
@@ -357,16 +355,12 @@ async function queryCoinsEconomy(
   const supplyRows = await db.$queryRaw<RawSupplyRow[]>`
     SELECT
       COALESCE(SUM(shards), 0)::text AS total_shards,
-      COUNT(*) FILTER (WHERE shards > 0)::bigint AS shard_holders,
-      COALESCE(SUM(coin_available_balance), 0)::text AS total_coin,
-      COUNT(*) FILTER (WHERE coin_available_balance > 0)::bigint AS coin_holders
+      COUNT(*) FILTER (WHERE shards > 0)::bigint AS shard_holders
     FROM balances`;
   const supplyRaw = supplyRows[0];
   const supply: CoinSupply = {
     totalShards: Number(supplyRaw?.total_shards ?? 0),
     shardHolders: Number(supplyRaw?.shard_holders ?? 0),
-    totalCoin: Number(supplyRaw?.total_coin ?? 0),
-    coinHolders: Number(supplyRaw?.coin_holders ?? 0),
   };
 
   // ── Per (type, direction) rollup. Direction is the SIGN of the audited

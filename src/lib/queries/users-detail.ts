@@ -1,7 +1,6 @@
 import { getDb } from "@/lib/db";
 import { affiliate_usage_type } from "@/generated/prisma/enums";
 import { toNumber } from "@/lib/utils/decimal";
-import { COINS_PER_USD } from "@/lib/constants";
 import { filterLedgerTxTypesLive } from "./_ledger-tx-types";
 import { calculateUserPnl } from "./pnl";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
@@ -387,32 +386,6 @@ async function fetchBalancePoints(db: Db, id: string): Promise<number> {
   return 0;
 }
 
-/**
- * Reads the sweepstakes coin balance defensively. The coin columns
- * (balances.coin_available_balance) only exist on DBs that have the
- * sweepstakes migration — present on dev, NOT yet on prod. The same
- * generated Prisma client serves both, so we read via raw SQL and treat a
- * missing column as "coins not enabled here" (enabled: false) rather than
- * crashing the page. Returns the balance in COIN units (coin-USD × peg).
- * When the column lands on prod this lights up automatically — no code change.
- */
-async function fetchCoinState(
-  db: Db,
-  id: string,
-): Promise<{ enabled: boolean; coins: number }> {
-  try {
-    const rows = await db.$queryRawUnsafe<Array<{ bal: number | null }>>(
-      `SELECT coin_available_balance AS bal FROM balances WHERE user_id = $1`,
-      id,
-    );
-    const coinUsd = Number(rows[0]?.bal ?? 0);
-    return { enabled: true, coins: Math.round(coinUsd * COINS_PER_USD) };
-  } catch {
-    // coin_available_balance absent on this DB's migration state.
-    return { enabled: false, coins: 0 };
-  }
-}
-
 export async function getUserDetail(id: string) {
   const db = await getDb();
   // Everything is independent — one Promise.all instead of two serialized ones
@@ -481,7 +454,6 @@ export async function getUserDetail(id: string) {
     ownedCodeRows,
     tips,
     balancePoints,
-    coinState,
   ] = await Promise.all([
     db.user.findUnique({
       where: { id },
@@ -585,9 +557,6 @@ export async function getUserDetail(id: string) {
     // Spendable points counter, read name-agnostically across the
     // bonus_points -> shards rename (see fetchBalancePoints).
     fetchBalancePoints(db, id),
-    // Sweepstakes coin balance + whether coins exist on this DB at all
-    // (false on a pre-sweepstakes schema like prod). Never throws.
-    fetchCoinState(db, id),
   ]);
 
   const depositCount = depositAgg._count._all;
@@ -769,8 +738,6 @@ export async function getUserDetail(id: string) {
           totalWon: toNumber(balances.total_won),
           bonusPoints: balancePoints,
           unlockAt: balances.unlock_at?.toISOString() ?? null,
-          coinsEnabled: coinState.enabled,
-          coinBalance: coinState.coins,
           inventoryValue: userPnl.inventoryValue,
           vouchersValue: userPnl.unclaimedVouchers,
           packsWagered: Math.abs(toNumber(
