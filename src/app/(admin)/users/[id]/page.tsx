@@ -60,10 +60,19 @@ export const maxDuration = 300;
 // kills the request. Matches the reward-insights default (REWARD_QUERY_TIMEOUT_MS).
 const USER_DETAIL_QUERY_TIMEOUT_MS = 15_000;
 
-// GAMING is pack / battle / upgrader play — entry, payout, refund.
-// Sale / exchange rows live in FINANCIAL_TYPES below so card sales
-// appear alongside deposits and withdrawals as cash-movement events;
-// the gaming tab stays focused on gameplay.
+// GAMING is the full pack / battle / upgrader play cycle: the BET legs
+// (entry / sponsorship) AND the WIN-REALIZATION legs (refund, payout, and
+// the card-sale / voucher rows that turn a won card into spendable balance).
+// The realization legs MUST live here: a win arrives as an inventory CARD,
+// and the only ledger trace of it becoming cash is `card_sale` /
+// `reward_card_sale` (selling a won/reward card back) and
+// `battle_excess_to_voucher` (the voucher leg of a battle win; a voucher ==
+// a card per house rules). Without them, the Gaming tab showed money leaving
+// on every bet but never coming back, so a balance run-up (e.g. "40 → 850")
+// was untraceable. Keep this list in sync with GAMING_TX_TYPES in
+// user-tabs-types.ts (this = initial 10-row fetch; that = load-more).
+// Pure exchanges (card_exchange / voucher_exchange / exchange_excess_*) are
+// NOT here — exchanging an item is value-neutral, not a realization.
 const GAMING_TYPES = [
   "pack_opening",
   "battle_bet",
@@ -72,6 +81,9 @@ const GAMING_TYPES = [
   "upgrader_bet",
   "upgrader_payout",
   "voucher_redeemed",
+  "card_sale",
+  "reward_card_sale",
+  "battle_excess_to_voucher",
 ];
 // FINANCIAL covers deposits, withdrawals, and direct cash payouts
 // (rakeback / affiliate / rain / race / gift / promo). Card sales +

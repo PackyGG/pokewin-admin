@@ -24,6 +24,7 @@ import {
 import { Spinner } from "@/components/ux";
 import { createChallenge } from "./actions";
 import { ItemPicker } from "./item-picker";
+import { ChallengeCardSummaryPanel } from "./challenge-card-summary";
 import type { SearchItem } from "./actions";
 
 type Kind = "card" | "upgrader";
@@ -245,8 +246,6 @@ export function CreateChallengeButton() {
                 </div>
               </>
             ) : (
-              // Upgrader is card-agnostic: a winning play just has to bet at
-              // least this much AND hit at least this multiplier.
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label className="text-xs">Min bet (USD)</Label>
@@ -273,6 +272,10 @@ export function CreateChallengeButton() {
               </div>
             )}
           </div>
+
+          {kind === "card" && (
+            <ChallengeCardSummaryPanel packId={pack?.id} cardId={card?.id} />
+          )}
         </div>
         <DialogFooter>
           <Button onClick={handleSubmit} disabled={isPending} className="w-full sm:w-auto">

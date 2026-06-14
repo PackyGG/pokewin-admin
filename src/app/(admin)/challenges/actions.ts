@@ -13,6 +13,11 @@ import {
   type Challenge,
   type ChallengeStatus,
 } from "@/lib/backend-api";
+import {
+  expectedOpeningsFromProbabilityPercent,
+  probabilityPercentFromWeight,
+  theoreticalHouseProfitUsd,
+} from "./challenge-card-math";
 
 // Challenge mutations return their error as a value instead of throwing.
 // Next.js masks all thrown Server Action errors in production — the client
@@ -33,6 +38,26 @@ export type SearchItem = {
   name: string;
   imageUrl: string | null;
   priceUsd: number;
+  /** Card-in-pack picker only: per-slot drop chance (0–100). */
+  probabilityPercent?: number;
+  /** Card-in-pack picker only: 1 / (probabilityPercent / 100). */
+  expectedOpenings?: number | null;
+};
+
+export type ChallengeCardSummary = {
+  cardId: string;
+  cardName: string;
+  cardImageUrl: string | null;
+  cardPriceUsd: number;
+  packId: string;
+  packName: string;
+  packPriceUsd: number;
+  probabilityPercent: number;
+  expectedOpenings: number | null;
+  /** expectedOpenings × packPrice × 10.99% (planning house edge). */
+  theoreticalProfitUsd: number;
+  cardPullCount: number;
+  packOpenCount: number;
 };
 
 export async function searchItems(
@@ -82,19 +107,152 @@ export async function searchItems(
   const where: Record<string, unknown> = {};
   if (opts.packId) where.pack_cards = { some: { pack_id: opts.packId } };
   if (or.length > 0) where.OR = or;
+
+  let totalWeight = 0;
+  if (opts.packId) {
+    const weights = await db.pack_cards.findMany({
+      where: { pack_id: opts.packId },
+      select: { weight: true },
+    });
+    totalWeight = weights.reduce((sum, row) => sum + row.weight, 0);
+  }
+
   const cards = await db.cards.findMany({
     where: Object.keys(where).length > 0 ? where : undefined,
-    select: { id: true, name: true, image_url: true, price: true },
+    select: {
+      id: true,
+      name: true,
+      image_url: true,
+      price: true,
+      ...(opts.packId
+        ? {
+            pack_cards: {
+              where: { pack_id: opts.packId },
+              select: { weight: true },
+              take: 1,
+            },
+          }
+        : {}),
+    },
     orderBy: { name: "asc" },
     take: 20,
   });
-  return cards.map((c) => ({
-    id: c.id,
-    type: "card" as const,
-    name: c.name,
-    imageUrl: c.image_url,
-    priceUsd: toNumber(c.price),
-  }));
+  return cards.map((c) => {
+    const weight =
+      opts.packId && "pack_cards" in c && Array.isArray(c.pack_cards)
+        ? (c.pack_cards[0]?.weight ?? 0)
+        : 0;
+    const probabilityPercent = opts.packId
+      ? probabilityPercentFromWeight(weight, totalWeight)
+      : undefined;
+    const expectedOpenings =
+      probabilityPercent != null
+        ? expectedOpeningsFromProbabilityPercent(probabilityPercent)
+        : undefined;
+    return {
+      id: c.id,
+      type: "card" as const,
+      name: c.name,
+      imageUrl: c.image_url,
+      priceUsd: toNumber(c.price),
+      ...(probabilityPercent != null ? { probabilityPercent } : {}),
+      ...(expectedOpenings !== undefined ? { expectedOpenings } : {}),
+    };
+  });
+}
+
+/** Historical stats + odds for the card/pack pair shown in the create dialog. */
+export async function getChallengeCardSummary(
+  packId: string,
+  cardId: string,
+): Promise<ChallengeCardSummary | null> {
+  const db = await getDb();
+  await requirePageAccess("/challenges");
+
+  if (!UUID_RE.test(packId) || !UUID_RE.test(cardId)) {
+    return null;
+  }
+
+  const packCard = await db.pack_cards.findUnique({
+    where: { pack_id_card_id: { pack_id: packId, card_id: cardId } },
+    select: {
+      weight: true,
+      packs: {
+        select: {
+          name: true,
+          price: true,
+          total_openings: true,
+        },
+      },
+      cards: {
+        select: {
+          name: true,
+          image_url: true,
+          price: true,
+        },
+      },
+    },
+  });
+  if (!packCard) return null;
+
+  const allWeights = await db.pack_cards.findMany({
+    where: { pack_id: packId },
+    select: { weight: true },
+  });
+  const totalWeight = allWeights.reduce((sum, row) => sum + row.weight, 0);
+  const probabilityPercent = probabilityPercentFromWeight(
+    packCard.weight,
+    totalWeight,
+  );
+  const expectedOpenings =
+    expectedOpeningsFromProbabilityPercent(probabilityPercent);
+  const packPriceUsd = toNumber(packCard.packs.price);
+
+  const pullRows = await db.$queryRaw<{ count: bigint }[]>`
+    SELECT COUNT(*)::bigint AS count
+    FROM user_inventory ui
+    WHERE ui.card_id = ${cardId}::uuid
+      AND (
+        (
+          ui.source_type = 'pack'
+          AND EXISTS (
+            SELECT 1
+            FROM game_sessions gs
+            WHERE gs.id = ui.source_id
+              AND gs.game_type = 'pack'
+              AND gs.game_id = ${packId}::uuid
+          )
+        )
+        OR (
+          ui.source_type = 'battle'
+          AND EXISTS (
+            SELECT 1
+            FROM battle_participants bp
+            JOIN battles b ON b.id = bp.battle_id
+            WHERE bp.game_session_id = ui.source_id
+              AND ${packId}::uuid = ANY(b.pack_ids::uuid[])
+          )
+        )
+      )
+  `;
+  const cardPullCount = Number(pullRows[0]?.count ?? 0);
+
+  return {
+    cardId,
+    cardName: packCard.cards.name,
+    cardImageUrl: packCard.cards.image_url,
+    cardPriceUsd: toNumber(packCard.cards.price),
+    packId,
+    packName: packCard.packs.name,
+    packPriceUsd,
+    probabilityPercent,
+    expectedOpenings,
+    theoreticalProfitUsd: expectedOpenings
+      ? theoreticalHouseProfitUsd(expectedOpenings, packPriceUsd)
+      : 0,
+    cardPullCount,
+    packOpenCount: Number(packCard.packs.total_openings),
+  };
 }
 
 // ---------------------------------------------------------------------------

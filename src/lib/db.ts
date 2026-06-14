@@ -11,7 +11,20 @@ function createClient(connectionString: string | undefined, label: string) {
     {
       connectionString,
       min: 0,
-      max: 5,
+      // Per-instance pool cap kept SMALL on purpose. This admin app shares the
+      // live prod game DB (Postgres `max_connections = 100`) with the main
+      // website backend, and on Vercel each warm serverless instance holds its
+      // OWN pool — so peak app connections ≈ (max × concurrent warm instances).
+      // At max:5 the shared DB was observed over its 100-connection cap (~111,
+      // "sorry, too many clients already"), which surfaced as "query timed
+      // out" bands on uncached admin reads (verified 2026-06-14, the
+      // /transactions withdrawals-tab incident — the query was 12–91ms, the
+      // wait was pool/connection contention, not the query). Internal admin
+      // traffic is low-volume and does not need a big per-instance pool, so cap
+      // it low to leave the bulk of the 100 connections for the game backend.
+      // Proper long-term fix is a connection pooler / pooled DATABASE_URL
+      // (PgBouncer / Prisma Accelerate) — an owner-side env change, not code.
+      max: 3,
       idleTimeoutMillis: 10_000,
       connectionTimeoutMillis: 10_000,
       // Server-side cap on how long ANY single statement may run on a
