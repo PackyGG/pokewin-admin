@@ -47,6 +47,7 @@ export function ledgerDirection(type: string): LedgerDirection {
     case "battle_refund":
     case "rain_win":
     case "race_prize":
+    case "challenge_prize": // user won + claimed a challenge prize → we pay it
     case "creator_tip":
     case "rakeback_claim":
     case "affiliate_claim":

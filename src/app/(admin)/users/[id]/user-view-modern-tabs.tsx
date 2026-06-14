@@ -58,6 +58,7 @@ import {
   Lock,
   Landmark,
   ArrowRight,
+  Target,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
@@ -71,6 +72,7 @@ import {
   amountSignFor,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
+import { ledgerTypeLabel } from "@/lib/utils/ledger-labels";
 import {
   type UserDetail,
   type PaginatedTransactions,
@@ -2472,8 +2474,16 @@ function RecentActivityTimeline({
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Icon className="size-4 text-muted-foreground" />
-                    <span className="text-sm font-medium capitalize">
-                      {tx.type.replace(/_/g, " ")}
+                    <span className="text-sm font-medium">
+                      {/* Instant (early-claimed) rakeback is labeled as such;
+                          a normal claim stays "Rakeback". Everything else uses
+                          the shared display label (challenge_prize →
+                          "Challenge prize", etc.). */}
+                      {tx.type === "rakeback_claim"
+                        ? tx.isInstantRakeback === true
+                          ? "Instant rakeback"
+                          : "Rakeback"
+                        : ledgerTypeLabel(tx.type)}
                     </span>
                     <RelativeTime
                       className="text-xs text-muted-foreground"
@@ -2509,6 +2519,7 @@ function iconFor(type: string): React.ElementType {
   if (type === "pack_opening") return Package;
   if (type === "deposit" || type === "deposit_bonus") return ArrowDownToLine;
   if (type.includes("withdrawal")) return ArrowUpFromLine;
+  if (type === "challenge_prize") return Target;
   if (type === "race_prize" || type === "rain_win") return Trophy;
   if (type === "rakeback_claim" || type === "balance_reward_claim") return Gift;
   return Coins;

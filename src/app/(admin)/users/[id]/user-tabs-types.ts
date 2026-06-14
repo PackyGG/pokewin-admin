@@ -391,6 +391,17 @@ export type Transaction = {
    * not stored or not an upgrader row.
    */
   upgraderHouseEdge: number | null;
+  /**
+   * Instant-rakeback flag for `rakeback_claim` rows.
+   *   - true  → this claim used the instant/early-claim flow
+   *             (`rakeback_claims.last_preclaim_at` is non-null), so the row
+   *             renders as "Instant rakeback".
+   *   - false → a normal (cadence-period) rakeback claim → "Rakeback".
+   *   - null  → not a rakeback_claim row, OR the early-claim column is absent
+   *             on this DB env (drift-safe: prod hasn't shipped it yet), so
+   *             the row degrades to the plain "Rakeback" label.
+   */
+  isInstantRakeback: boolean | null;
 };
 
 export type PaginatedTransactions = {
@@ -607,6 +618,9 @@ export const FINANCIAL_TX_TYPES = [
   "gift_card_redeemed",
   "rain_win",
   "race_prize",
+  // Keep in sync with FINANCIAL_TYPES in page.tsx (this = load-more list;
+  // that = initial fetch). Challenge prize is a direct cash payout.
+  "challenge_prize",
 ] as const;
 // Admin balance adjustments only. Used for the dedicated, UNCAPPED Overview
 // fetch + block so every manual admin credit/clawback is guaranteed to

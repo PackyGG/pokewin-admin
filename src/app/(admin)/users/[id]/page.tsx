@@ -104,6 +104,12 @@ const FINANCIAL_TYPES = [
   "gift_card_redeemed",
   "rain_win",
   "race_prize",
+  // Challenge prize is a direct cash payout (user completed + claimed a
+  // challenge) — surface it in the Deposits & Withdrawals feed alongside the
+  // other claim-shaped payouts. Drift-safe: getUserTransactions intersects
+  // the requested list with the LIVE enum, so a DB without this member just
+  // drops it instead of throwing 22P02.
+  "challenge_prize",
 ];
 // Admin balance adjustments get a DEDICATED, generously-sized fetch on top of
 // the shared FINANCIAL page. Reason: `admin_balance_adjustment` is just one of

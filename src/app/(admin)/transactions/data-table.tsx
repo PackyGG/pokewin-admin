@@ -25,6 +25,7 @@ import {
   amountSignFor,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
+import { ledgerTypeLabel } from "@/lib/utils/ledger-labels";
 import { formatUpgraderMultiplier } from "@/lib/utils/upgrader-metadata";
 import { MobileCard } from "@/components/data-table/mobile-card-list";
 import { EmptyState } from "@/components/empty-state";
@@ -39,6 +40,9 @@ const TYPE_COLORS: Record<string, string> = {
   card_sale: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   admin_balance_adjustment:
     "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
+  // Challenge prize = money paid to the user → house cost → rose.
+  challenge_prize:
+    "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
 };
 
 function initialsFor(username: string | null, userId: string): string {
@@ -51,7 +55,7 @@ function TransactionMobileCard({ tx }: { tx: TransactionListItem }) {
   const dir = ledgerDirection(tx.type);
   const amountClass = amountColorFor(dir);
   const sign = amountSignFor(dir);
-  const typeLabel = tx.type.replace(/_/g, " ");
+  const typeLabel = ledgerTypeLabel(tx.type);
   return (
     <MobileCard
       onClick={() => router.push(`/transactions/${tx.id}`)}

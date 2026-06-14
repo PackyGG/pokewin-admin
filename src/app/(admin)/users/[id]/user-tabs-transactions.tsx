@@ -13,6 +13,7 @@ import {
   KeyRound,
   Loader2,
   Receipt,
+  Target,
   X,
 } from "lucide-react";
 import { revealBattlePassword } from "@/app/(admin)/battles/actions";
@@ -50,6 +51,7 @@ import {
   amountSignFor,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
+import { ledgerTypeLabel } from "@/lib/utils/ledger-labels";
 import { BorrowBadge } from "@/components/borrow-badge";
 import { EmptyState } from "@/components/empty-state";
 import { InlineError } from "@/components/entity-surface/inline-error";
@@ -288,7 +290,7 @@ export const CategoryTransactionsTable = React.memo(
                   <SelectItem value="all">All types</SelectItem>
                   {types.map((t) => (
                     <SelectItem key={t} value={t}>
-                      {t.replace(/_/g, " ")}
+                      {ledgerTypeLabel(t)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -410,8 +412,24 @@ export const CategoryTransactionsTable = React.memo(
                   <TableCell>
                     <div className="flex flex-col items-start gap-0.5">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge variant="outline" className="font-mono text-xs">
-                          {t.type}
+                        <Badge
+                          variant="outline"
+                          className="text-xs"
+                          title={t.type}
+                        >
+                          {t.type === "challenge_prize" && (
+                            <Target className="mr-1 size-3 text-rose-500" />
+                          )}
+                          {/* Instant (early-claimed) rakeback reads as
+                              "Instant rakeback"; a normal claim stays
+                              "Rakeback claim". The signal
+                              (rakeback_claims.last_preclaim_at) is joined
+                              server-side onto the ledger row. */}
+                          {t.type === "rakeback_claim"
+                            ? t.isInstantRakeback === true
+                              ? "Instant rakeback"
+                              : "Rakeback"
+                            : ledgerTypeLabel(t.type)}
                         </Badge>
                         {t.type === "upgrader_bet" &&
                           t.upgraderTargetMultiplier != null && (

@@ -10,6 +10,7 @@ import {
   fetchUpgraderTargetByLedgerTxIds,
   resolveUpgraderTargetFromBatch,
 } from "./upgrader-target-batch";
+import { getInstantRakebackLedgerTxIds } from "./rakeback-instant-ledger";
 import { officialStreamAdjustmentPrismaWhere } from "@/lib/balance-adjustment-categories";
 import { getMothaAdjustmentLedgerTxIdsForUser } from "@/lib/queries/users-motha-adjustments";
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
@@ -64,7 +65,7 @@ type LedgerRow = Awaited<
   >
 >[number];
 
-function mapFinancialLedgerRow(t: LedgerRow) {
+function mapFinancialLedgerRow(t: LedgerRow, instantRakebackIds?: Set<string>) {
   const balanceBeforeNum = toNumber(t.balance_before);
   const balanceAfterNum = toNumber(t.balance_after);
   const meta = t.metadata as Record<string, unknown> | null;
@@ -123,6 +124,12 @@ function mapFinancialLedgerRow(t: LedgerRow) {
     upgraderTargetChance: null,
     upgraderTargetChanceDerived: null,
     upgraderHouseEdge: null,
+    // Instant (early-claimed) rakeback flag. null on non-rakeback rows or
+    // when the early-claim column is absent on this DB env (drift-safe).
+    isInstantRakeback:
+      t.type === "rakeback_claim"
+        ? instantRakebackIds?.has(t.id) ?? false
+        : null,
   };
 }
 
@@ -142,8 +149,29 @@ async function getUserFinancialTransactionsLight(
     db.ledger_transactions.count({ where }),
   ]);
 
+  // Instant-rakeback enrichment — flag which rakeback_claim rows on this page
+  // were early-claimed (rakeback_claims.last_preclaim_at non-null), joined by
+  // ledger_tx_id. Drift-safe + best-effort: a failure (or an env without the
+  // column) just leaves rows labeled the plain "Rakeback".
+  let instantRakebackIds = new Set<string>();
+  const rakebackLedgerIds = transactions
+    .filter((t) => t.type === "rakeback_claim")
+    .map((t) => t.id);
+  if (rakebackLedgerIds.length > 0) {
+    try {
+      instantRakebackIds = await getInstantRakebackLedgerTxIds(
+        rakebackLedgerIds,
+      );
+    } catch (e) {
+      console.error(
+        "[getUserFinancialTransactionsLight] instant-rakeback lookup failed (non-fatal):",
+        e,
+      );
+    }
+  }
+
   return {
-    data: transactions.map(mapFinancialLedgerRow),
+    data: transactions.map((t) => mapFinancialLedgerRow(t, instantRakebackIds)),
     total,
     page,
     perPage,
@@ -704,6 +732,26 @@ export async function getUserTransactions(
     }
   }
 
+  // Instant-rakeback enrichment (see getUserFinancialTransactionsLight) —
+  // flag the rakeback_claim rows on this page that were early-claimed.
+  // Drift-safe + best-effort: failures leave the plain "Rakeback" label.
+  let instantRakebackIds = new Set<string>();
+  const rakebackLedgerIds = transactions
+    .filter((t) => t.type === "rakeback_claim")
+    .map((t) => t.id);
+  if (rakebackLedgerIds.length > 0) {
+    try {
+      instantRakebackIds = await getInstantRakebackLedgerTxIds(
+        rakebackLedgerIds,
+      );
+    } catch (e) {
+      console.error(
+        "[getUserTransactions] instant-rakeback lookup failed (non-fatal):",
+        e,
+      );
+    }
+  }
+
   return {
     data: transactions.map((t) => {
       const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
@@ -931,6 +979,10 @@ export async function getUserTransactions(
         upgraderTargetChance,
         upgraderTargetChanceDerived,
         upgraderHouseEdge,
+        isInstantRakeback:
+          t.type === "rakeback_claim"
+            ? instantRakebackIds.has(t.id)
+            : null,
       };
     }),
     total,

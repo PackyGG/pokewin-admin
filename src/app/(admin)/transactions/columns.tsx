@@ -11,6 +11,7 @@ import {
   amountSignFor,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
+import { ledgerTypeLabel } from "@/lib/utils/ledger-labels";
 import { formatUpgraderMultiplier } from "@/lib/utils/upgrader-metadata";
 import type { TransactionListItem } from "@/lib/queries/transactions";
 
@@ -25,6 +26,8 @@ const TYPE_COLORS: Record<string, string> = {
   battle_bet: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
   card_sale: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   admin_balance_adjustment: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
+  // Challenge prize = money paid to the user → house cost → rose.
+  challenge_prize: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
 };
 
 export const columns: ColumnDef<TransactionListItem>[] = [
@@ -73,8 +76,12 @@ export const columns: ColumnDef<TransactionListItem>[] = [
       return (
         <div className="flex flex-col items-start gap-0.5">
           <div className="flex items-center gap-1.5">
-            <Badge variant="outline" className={TYPE_COLORS[row.original.type] ?? "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"}>
-              {row.original.type.replace(/_/g, " ")}
+            <Badge
+              variant="outline"
+              className={TYPE_COLORS[row.original.type] ?? "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"}
+              title={row.original.type}
+            >
+              {ledgerTypeLabel(row.original.type)}
             </Badge>
             {row.original.type === "upgrader_bet" && targetMultiplier != null && (
               <span

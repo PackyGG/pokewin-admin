@@ -29,6 +29,7 @@ import {
   amountSignFor,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
+import { ledgerTypeLabel } from "@/lib/utils/ledger-labels";
 import { getGameSessionDetails } from "./actions";
 import { battleUrl } from "@/lib/utils/main-site";
 import { BattlePasswordReveal } from "@/components/battle-password-reveal";
@@ -99,9 +100,20 @@ export function TransactionDetailModal({
     {
       label: "Type",
       value: (
-        <Badge variant="outline" className="font-mono text-xs">
-          {t.type}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge variant="outline" className="font-mono text-xs">
+            {t.type}
+          </Badge>
+          {/* Friendly label — Instant rakeback when early-claimed, the shared
+              display label otherwise (challenge_prize → "Challenge prize"). */}
+          <span className="text-xs text-muted-foreground">
+            {t.type === "rakeback_claim"
+              ? t.isInstantRakeback === true
+                ? "Instant rakeback"
+                : "Rakeback"
+              : ledgerTypeLabel(t.type)}
+          </span>
+        </div>
       ),
     },
     {

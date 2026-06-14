@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Percent } from "lucide-react";
+import { Percent, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -21,7 +21,23 @@ type RakebackClaim = {
   wageredAmountUsd: number;
   rakebackAmountUsd: number;
   claimedAt: string | null;
+  /** True = early/instant-claimed (rakeback_claims.last_preclaim_at set). */
+  instant: boolean;
 };
+
+/** "Instant" pill for early-claimed rakeback rows. */
+function InstantBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="h-4 gap-0.5 px-1 text-[9px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+      title="Early-claimed (instant) rakeback"
+    >
+      <Zap className="size-2.5" />
+      Instant
+    </Badge>
+  );
+}
 
 function ClaimMobileCard({ c }: { c: RakebackClaim }) {
   const claimed = c.claimedAt != null;
@@ -42,6 +58,7 @@ function ClaimMobileCard({ c }: { c: RakebackClaim }) {
             <Badge variant="outline" className="h-4 px-1 text-[9px] capitalize">
               {c.rakebackType}
             </Badge>
+            {c.instant && <InstantBadge />}
             {claimed ? (
               <Badge
                 variant="outline"
@@ -127,9 +144,12 @@ export function RakebackClaimsTable({ data }: { data: RakebackClaim[] }) {
                   </Link>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline" className="capitalize">
-                    {c.rakebackType}
-                  </Badge>
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant="outline" className="capitalize">
+                      {c.rakebackType}
+                    </Badge>
+                    {c.instant && <InstantBadge />}
+                  </div>
                 </TableCell>
                 <TableCell>{formatDateTime(c.periodStart)}</TableCell>
                 <TableCell>{formatCurrency(c.wageredAmountUsd)}</TableCell>

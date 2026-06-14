@@ -35,6 +35,10 @@ const TYPES = [
   "race_prize",
   "balance_reward_claim",
   "reward_card_sale",
+  // Challenge prize = cash leg paid to a user who claims a completed
+  // challenge. A reward-shaped payout, so it belongs in the rewards
+  // transactions view (labeled "Challenge prize" via the shared label map).
+  "challenge_prize",
 ];
 
 export default async function RewardTransactionsPage({
@@ -56,7 +60,7 @@ export default async function RewardTransactionsPage({
         <PageHeroIdentity
           icon={Gift}
           title="Reward Transactions"
-          subtitle="Rakeback claims, race prizes, and reward-card sales."
+          subtitle="Rakeback claims, race prizes, challenge wins, and reward-card sales."
         />
       </PageHero>
 

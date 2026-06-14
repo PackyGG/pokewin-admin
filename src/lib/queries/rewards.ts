@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { excludeStaffCreatorsAndBlacklisted } from "./_blacklist";
+import { getInstantRakebackClaimIds } from "./rakeback-instant-ledger";
 import type { PaginatedResult } from "@/lib/types";
 
 export type RakebackConfigItem = {
@@ -22,6 +23,13 @@ export type RakebackClaimItem = {
   rakebackAmountUsd: number;
   claimedAt: string | null;
   createdAt: string;
+  /**
+   * True when this claim used the instant/early-claim flow
+   * (`rakeback_claims.last_preclaim_at` is non-null). Drift-safe: false on a
+   * DB env that hasn't shipped the early-claim column yet (prod), so the row
+   * just reads "Rakeback" there instead of throwing.
+   */
+  instant: boolean;
 };
 
 export type RakebackStats = {
@@ -81,6 +89,24 @@ export async function getRakebackClaims(params: {
     db.rakeback_claims.count({ where }),
   ]);
 
+  // Instant-claim enrichment — flag which claims on this page were early-
+  // claimed (last_preclaim_at non-null). Drift-safe + best-effort: a failure,
+  // or an env without the early-claim column (prod), leaves every row as a
+  // plain "Rakeback" claim instead of throwing.
+  let instantClaimIds = new Set<string>();
+  if (claims.length > 0) {
+    try {
+      instantClaimIds = await getInstantRakebackClaimIds(
+        claims.map((c) => c.id),
+      );
+    } catch (e) {
+      console.error(
+        "[getRakebackClaims] instant-claim lookup failed (non-fatal):",
+        e,
+      );
+    }
+  }
+
   return {
     data: claims.map((c) => ({
       id: c.id,
@@ -92,6 +118,7 @@ export async function getRakebackClaims(params: {
       rakebackAmountUsd: toNumber(c.rakeback_amount_usd),
       claimedAt: c.claimed_at?.toISOString() ?? null,
       createdAt: c.created_at.toISOString(),
+      instant: instantClaimIds.has(c.id),
     })),
     total,
     page,
