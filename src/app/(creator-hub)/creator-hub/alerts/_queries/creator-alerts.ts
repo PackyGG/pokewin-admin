@@ -437,9 +437,42 @@ const deriveAlertCandidates = unstable_cache(
 
 // ─── Sync + list ─────────────────────────────────────────────────────
 
+// Fingerprint of the last candidate set successfully synced into the ADMIN
+// DB. `deriveAlertCandidates` is `unstable_cache`d (60s), so within a cache
+// window EVERY render produces the IDENTICAL candidate set — yet the old code
+// re-ran the full upsert-all + stale-sweep ADMIN-DB writes on every GET (the
+// alerts dock renders on each hub view). Memoizing on the candidate
+// fingerprint lets us skip the redundant writes when the persisted state is
+// already current, while keeping the sync fully idempotent: a CHANGED
+// candidate set (different keys / severity / metadata) produces a new
+// fingerprint and re-syncs, the first call after boot always syncs (null
+// start), and an error never records the fingerprint so it retries. This only
+// gates the WRITE half — `getCreatorAlerts` still reads the live read/dismiss
+// state from `creator_alerts` on every call.
+let lastSyncedFingerprint: string | null = null;
+
+function candidateFingerprint(candidates: DerivedAlertCandidate[]): string {
+  return JSON.stringify(
+    candidates
+      .map((c) => ({
+        k: c.dedupeKey,
+        s: c.severity,
+        t: c.targetUserId,
+        m: c.metadata,
+      }))
+      .sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0)),
+  );
+}
+
 async function syncCandidates(
   candidates: DerivedAlertCandidate[],
 ): Promise<boolean> {
+  // Skip the redundant ADMIN-DB write pass when the candidate set is byte-for-
+  // byte the one we last persisted (the common case inside the 60s derive
+  // cache). The list read in `getCreatorAlerts` is unaffected.
+  const fingerprint = candidateFingerprint(candidates);
+  if (fingerprint === lastSyncedFingerprint) return false;
+
   try {
     await ensureCreatorAlertsSchema();
     const activeKeys = new Set(candidates.map((c) => c.dedupeKey));
@@ -479,6 +512,9 @@ async function syncCandidates(
         data: { dismissed_at: new Date() },
       });
     }
+    // Record only on a fully-successful pass so any failure path retries the
+    // write next render instead of being skipped by the fingerprint gate.
+    lastSyncedFingerprint = fingerprint;
     return false;
   } catch (err) {
     if (isMissingTableError(err)) {
