@@ -647,6 +647,23 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // Shard Pack Opens — opens of shard-bought packs (shards spent + shards
+    // won per open) from the coin_transactions ledger. Icon string
+    // `PackageOpen` MUST be registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (React #130) — it is.
+    id: "nav.rewards.shard-opens",
+    group: "Rewards",
+    label: "Shard Pack Opens",
+    href: "/rewards/shard-opens",
+    pageKey: "/rewards/shard-opens",
+    icon: "PackageOpen",
+    description: "Opens of shard-bought packs — shards spent & won per open",
+    keywords: ["shard", "shards", "open", "opens", "pack", "currency", "wager"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // Promo Codes — sidebar uses the Tag icon. Palette has it too.
     id: "nav.promo",
     group: "Rewards",
@@ -953,6 +970,7 @@ const PALETTE_ORDER: string[] = [
   "nav.transactions.rewards",
   "nav.rewards",
   "nav.rewards.rakeback",
+  "nav.rewards.shard-opens",
   "nav.challenges",
   "nav.rain",
   "nav.rewards.leaderboards",

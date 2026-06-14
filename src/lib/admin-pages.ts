@@ -109,6 +109,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Rewards", label: "Rewards", key: "/rewards" },
   { group: "Rewards", label: "Analytics", key: "/rewards/analytics" },
   { group: "Rewards", label: "Rakeback", key: "/rewards/rakeback" },
+  // Shard Pack Opens — opens of shard-bought packs from the
+  // `coin_transactions` ledger (shards spent + shards won per open). Own
+  // grantable key so it can be granted independently of the shard-pack
+  // CATALOG (/rewards/shards, in Content).
+  { group: "Rewards", label: "Shard Pack Opens", key: "/rewards/shard-opens" },
   // Promo Codes — moved here from the Marketing group so the role
   // editor mirrors the sidebar grouping. Permission key is unchanged.
   { group: "Rewards", label: "Promo Codes", key: "/promo-codes" },

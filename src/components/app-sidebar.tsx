@@ -64,6 +64,7 @@ import {
   Hash,
   Lock,
   Hourglass,
+  PackageOpen,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -150,6 +151,7 @@ const ICONS: Record<string, LucideIcon> = {
   Hash,
   Lock,
   Hourglass,
+  PackageOpen,
 };
 
 type NavItem = {
