@@ -135,9 +135,14 @@ export async function getMonitorOverview(): Promise<MonitorResult> {
     return { status: "unconfigured", missing };
   }
 
-  // Normalize: strip a single trailing slash so `${base}/v1/...` is clean
-  // whether or not the env value ends in "/".
-  const normalizedBase = baseUrl.replace(/\/+$/, "");
+  // Normalize: ensure an absolute scheme, then strip a trailing slash, so the
+  // result is always a valid absolute URL for fetch(). A bare host like
+  // "backend-monitor-x.up.railway.app" (an easy thing to paste into an env var)
+  // otherwise makes fetch throw "Failed to parse URL from …".
+  let normalizedBase = baseUrl.replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(normalizedBase)) {
+    normalizedBase = `https://${normalizedBase}`;
+  }
   const url = `${normalizedBase}/v1/admin/overview`;
 
   let res: Response;
