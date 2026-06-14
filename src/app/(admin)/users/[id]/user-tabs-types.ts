@@ -572,9 +572,16 @@ export type GameSessionDetails = {
   createdAt: string;
 };
 
-// Gaming = pack / battle / upgrader play. Card sales + exchanges live
-// in FINANCIAL_TX_TYPES so the user-detail tabs stay coherent: Gaming
-// for gameplay, Deposits & Withdrawals for cash movement.
+// Gaming = the full pack / battle / upgrader play cycle: bet legs PLUS the
+// win-realization legs (card_sale / reward_card_sale = a won/reward card sold
+// back to cash; battle_excess_to_voucher = the voucher leg of a battle win,
+// voucher == card per house rules). These realization rows MUST be in Gaming
+// so the bet → win → realize trail is traceable on this tab (a win lands as an
+// inventory card, and these are the only ledger rows that turn it into
+// balance — without them a run-up like "40 → 850" can't be followed). Pure
+// exchanges (card_exchange / voucher_exchange / exchange_excess_*) stay OUT —
+// exchanging an item is value-neutral, not a realization. Keep this list in
+// sync with GAMING_TYPES in page.tsx (this = load-more; that = initial fetch).
 export const GAMING_TX_TYPES = [
   "pack_opening",
   "battle_bet",
@@ -583,6 +590,9 @@ export const GAMING_TX_TYPES = [
   "upgrader_bet",
   "upgrader_payout",
   "voucher_redeemed",
+  "card_sale",
+  "reward_card_sale",
+  "battle_excess_to_voucher",
 ] as const;
 export const FINANCIAL_TX_TYPES = [
   "deposit",
