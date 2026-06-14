@@ -27,6 +27,10 @@ import {
 import { formatCurrency } from "@/lib/utils/format";
 import { EmptyState } from "@/components/empty-state";
 import { freezeUserRaceClaim, unfreezeUserRaceClaim } from "./actions";
+import {
+  isRacePrizeClaimExpired,
+  type RaceClaimWindow,
+} from "@/lib/reward-expiry/race-claim-window";
 
 type HoldInfo = {
   id: string;
@@ -66,7 +70,13 @@ const POSITION_COLORS: Record<number, string> = {
 // The claim-review state shown per row. Only the period-specific leaderboard
 // (not the all-time view) carries holds/claims, so reviewable gates the
 // Status/Action columns entirely.
-function StatusBadge({ s }: { s: Standing }) {
+function StatusBadge({
+  s,
+  claimWindow,
+}: {
+  s: Standing;
+  claimWindow?: RaceClaimWindow | null;
+}) {
   if (s.claimedAt) {
     return (
       <Badge variant="outline" className="text-muted-foreground">
@@ -86,6 +96,21 @@ function StatusBadge({ s }: { s: Standing }) {
       </Badge>
     );
   }
+  if (
+    claimWindow &&
+    s.prizeAmountUsd != null &&
+    s.prizeAmountUsd > 0 &&
+    isRacePrizeClaimExpired(claimWindow, s.claimedAt)
+  ) {
+    return (
+      <Badge
+        variant="outline"
+        className="border-red-500/40 text-red-600 dark:text-red-400"
+      >
+        Expired
+      </Badge>
+    );
+  }
   return <span className="text-xs text-muted-foreground">—</span>;
 }
 
@@ -93,10 +118,12 @@ export function StandingsTable({
   data,
   raceType,
   periodStart,
+  claimWindow,
 }: {
   data: Standing[];
   raceType: string;
   periodStart?: string;
+  claimWindow?: RaceClaimWindow | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -241,9 +268,9 @@ export function StandingsTable({
                     >
                       {s.username ?? s.userId.slice(0, 8)}
                     </Link>
-                    {reviewable && (s.claimedAt || s.hold) && (
+                    {reviewable && (s.claimedAt || s.hold || claimWindow) && (
                       <div className="mt-0.5">
-                        <StatusBadge s={s} />
+                        <StatusBadge s={s} claimWindow={claimWindow} />
                       </div>
                     )}
                   </div>
@@ -302,7 +329,7 @@ export function StandingsTable({
                 )}
                 {reviewable && (
                   <TableCell>
-                    <StatusBadge s={e} />
+                    <StatusBadge s={e} claimWindow={claimWindow} />
                   </TableCell>
                 )}
                 {reviewable && (

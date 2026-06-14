@@ -2,6 +2,11 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import type { race_type } from "@/generated/prisma/enums";
+import { getRewardExpiry } from "@/lib/backend-api/reward-expiry";
+import {
+  computeRaceClaimWindow,
+  type RaceClaimWindow,
+} from "@/lib/reward-expiry/race-claim-window";
 
 export type RacePrizeTier = {
   id: string;
@@ -306,6 +311,59 @@ export async function getRacePeriodsOverview(params?: {
     active: active.map(map),
     recent: recent.map(map),
   };
+}
+
+/**
+ * Claim-window context for a standings period — period end from snapshots or
+ * race_periods, plus live race_days from the reward-expiry API.
+ */
+export async function getRaceStandingsClaimWindow(params: {
+  raceType: string;
+  periodStart: string;
+}): Promise<RaceClaimWindow> {
+  const { raceType, periodStart } = params;
+  const db = await getDb();
+  const periodStartDate = new Date(`${periodStart}T00:00:00.000Z`);
+  const nextDay = new Date(periodStartDate.getTime() + 86_400_000);
+
+  const [snapshot, racePeriod, expiryResult] = await Promise.all([
+    db.race_leaderboard_snapshots.findFirst({
+      where: {
+        race_type: raceType as race_type,
+        period_start: periodStartDate,
+      },
+      select: { period_end: true },
+      orderBy: { period_end: "desc" },
+    }),
+    db.race_periods.findFirst({
+      where: {
+        race_type: raceType as race_type,
+        starts_at: { gte: periodStartDate, lt: nextDay },
+      },
+      orderBy: { created_at: "desc" },
+      select: {
+        ends_at: true,
+        status: true,
+        claims_frozen: true,
+      },
+    }),
+    getRewardExpiry().then(
+      (e) => e.race_days as number,
+      () => null as number | null,
+    ),
+  ]);
+
+  const periodEnd =
+    snapshot?.period_end ??
+    (racePeriod?.status === "ended" || racePeriod?.status === "active"
+      ? racePeriod.ends_at
+      : null);
+
+  return computeRaceClaimWindow({
+    periodEndIso: periodEnd?.toISOString() ?? null,
+    raceExpiryDays: expiryResult,
+    claimsFrozen: racePeriod?.claims_frozen ?? false,
+  });
 }
 
 async function getAllTimeLeaderboard(params: {

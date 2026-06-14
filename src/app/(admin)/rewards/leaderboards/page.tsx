@@ -8,6 +8,7 @@ import {
   getRacePrizeTiers,
   getRaceClaims,
   getRacePeriodsOverview,
+  getRaceStandingsClaimWindow,
 } from "@/lib/queries/races";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import {
@@ -19,6 +20,7 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { PeriodSelect } from "./period-select";
 import { RaceTiersTable } from "./race-tiers-table";
 import { StandingsTable } from "./standings-table";
+import { RaceClaimExpiryBanner } from "./race-claim-expiry-banner";
 import { HistoryTable } from "./history-table";
 import { PeriodsTable } from "./periods-table";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
@@ -151,13 +153,21 @@ async function StandingsTab({
           periods.some((p) => p.periodStart === params.periodStart)
         ? params.periodStart
         : periods[0]?.periodStart;
-  const result = await getRaceLeaderboard({
-    raceType,
-    periodStart: effectivePeriod,
-    search,
-    page,
-    perPage,
-  });
+  const [result, claimWindow] = await Promise.all([
+    getRaceLeaderboard({
+      raceType,
+      periodStart: effectivePeriod,
+      search,
+      page,
+      perPage,
+    }),
+    raceType !== "all" && effectivePeriod
+      ? getRaceStandingsClaimWindow({
+          raceType,
+          periodStart: effectivePeriod,
+        })
+      : Promise.resolve(null),
+  ]);
 
   return (
     <div className="space-y-4">
@@ -192,11 +202,15 @@ async function StandingsTab({
       <Suspense>
         <DataTableToolbar searchPlaceholder="Search by username, email, or ID..." />
       </Suspense>
+      {claimWindow && (
+        <RaceClaimExpiryBanner window={claimWindow} raceType={raceType} />
+      )}
       <FadeIn>
         <StandingsTable
           data={result.data}
           raceType={raceType}
           periodStart={effectivePeriod}
+          claimWindow={claimWindow}
         />
       </FadeIn>
       <DataTablePagination
