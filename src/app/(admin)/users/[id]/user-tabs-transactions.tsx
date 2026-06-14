@@ -94,6 +94,55 @@ const CW_STATUS_COLORS: Record<string, string> = {
   cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
 };
 
+// Merged "P&L / Won" cell for the Gaming tab. Shows ONE number to read:
+//   main (large) = House Profit, house-POV color (house gain → emerald,
+//   house loss → rose, flat → muted) with its +/- sign;
+//   small muted = the total Won Value, inline directly behind it.
+// `profitColor` is an optional override for the rare cases where the win
+// is real but the won amount isn't traceable (we still want the house-loss
+// rose without deriving a profit number). `extra` carries inline badges
+// (e.g. upgrader realized/target multiplier, "Lost" chip) that used to sit
+// next to the Won Value, kept here so no signal is dropped.
+function MergedPnlCell({
+  profit,
+  won,
+  wonLabel,
+  profitColor,
+  extra,
+}: {
+  profit?: number | null;
+  won?: number | null;
+  wonLabel?: React.ReactNode;
+  profitColor?: string;
+  extra?: React.ReactNode;
+}) {
+  const profitClass =
+    profitColor ??
+    (profit != null && profit > 0
+      ? "text-emerald-600 dark:text-emerald-400"
+      : profit != null && profit < 0
+        ? "text-rose-600 dark:text-rose-400"
+        : "text-muted-foreground");
+  return (
+    <TableCell className="tabular-nums">
+      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+        <span className={`text-sm font-medium ${profitClass}`}>
+          {wonLabel ??
+            (profit != null
+              ? `${profit > 0 ? "+" : ""}${formatCurrency(profit)}`
+              : "—")}
+        </span>
+        {(won != null || extra) && (
+          <span className="text-[11px] text-muted-foreground">
+            {won != null ? formatCurrency(won) : null}
+          </span>
+        )}
+        {extra}
+      </div>
+    </TableCell>
+  );
+}
+
 export const CategoryTransactionsTable = React.memo(
   function CategoryTransactionsTable({
     title,
@@ -366,8 +415,7 @@ export const CategoryTransactionsTable = React.memo(
                 {showCardsValue && <TableHead>Battle</TableHead>}
                 <TableHead>Type</TableHead>
                 <TableHead>Amount</TableHead>
-                {showCardsValue && <TableHead>Won Value</TableHead>}
-                {showCardsValue && <TableHead>House Profit</TableHead>}
+                {showCardsValue && <TableHead>P&amp;L / Won</TableHead>}
                 <TableHead>Worth Before</TableHead>
                 <TableHead>Worth After</TableHead>
                 <TableHead>Status</TableHead>
@@ -478,6 +526,16 @@ export const CategoryTransactionsTable = React.memo(
                               </span>
                             );
                           })()}
+                        {/* Borrow signal sits INLINE next to the type chip
+                            (same row), so the "Battle bet" label and its
+                            borrow-mode % read side by side. wrap-safe via the
+                            flex-wrap parent. Renders nothing for non-borrowed
+                            events. */}
+                        <BorrowBadge
+                          percent={t.borrowPercentage}
+                          amountUsd={t.borrowedAmountUsd}
+                          size="sm"
+                        />
                       </div>
                       {/* Battle-win voucher leg — name it as part of the win,
                           not a standalone mystery line. The voucher is the
@@ -490,15 +548,6 @@ export const CategoryTransactionsTable = React.memo(
                           Part of a battle win (voucher leg)
                         </span>
                       )}
-                      {/* Borrow signal lives directly under the type
-                          chip so admins scrolling a long activity
-                          tab can spot borrowed opens at a glance.
-                          Renders nothing for non-borrowed events. */}
-                      <BorrowBadge
-                        percent={t.borrowPercentage}
-                        amountUsd={t.borrowedAmountUsd}
-                        size="sm"
-                      />
                       {/* Sponsorship signal — flags battle rows where the
                           creator fronted the entry (others join free).
                           100% = fully sponsored. Null/0 on everything
@@ -548,18 +597,8 @@ export const CategoryTransactionsTable = React.memo(
                       // simply takes the amount in (shown in Amount). We
                       // don't derive a win/loss P&L for it.
                       if (t.type === "battle_sponsorship") {
-                        return (
-                          <>
-                            <TableCell className="tabular-nums text-muted-foreground">
-                              —
-                            </TableCell>
-                            <TableCell className="tabular-nums">
-                              <span className="text-emerald-600 dark:text-emerald-400">
-                                +{formatCurrency(t.amount)}
-                              </span>
-                            </TableCell>
-                          </>
-                        );
+                        // House takes the amount in, no won value paid out.
+                        return <MergedPnlCell profit={t.amount} won={null} />;
                       }
                       if (t.type === "battle_bet") {
                         // Win/loss is the battle outcome (winner_team vs
@@ -567,10 +606,7 @@ export const CategoryTransactionsTable = React.memo(
                         // battle hasn't resolved yet.
                         if (t.gameResult === null) {
                           return (
-                            <TableCell
-                              colSpan={2}
-                              className="text-xs italic text-muted-foreground"
-                            >
+                            <TableCell className="text-xs italic text-muted-foreground">
                               Pending — battle still resolving
                             </TableCell>
                           );
@@ -579,18 +615,7 @@ export const CategoryTransactionsTable = React.memo(
                           // LOSS: player won nothing → house keeps the
                           // full bet. Won Value = $0, House Profit = +bet
                           // (house gain = emerald).
-                          return (
-                            <>
-                              <TableCell className="tabular-nums text-muted-foreground">
-                                {formatCurrency(0)}
-                              </TableCell>
-                              <TableCell className="tabular-nums">
-                                <span className="text-emerald-600 dark:text-emerald-400">
-                                  +{formatCurrency(t.amount)}
-                                </span>
-                              </TableCell>
-                            </>
-                          );
+                          return <MergedPnlCell profit={t.amount} won={0} />;
                         }
                         // WIN: winnings = the cards the player actually took
                         // from the battle (their battle-sourced inventory).
@@ -599,42 +624,23 @@ export const CategoryTransactionsTable = React.memo(
                           t.battleWinnings <= 0
                         ) {
                           // Won, but no traceable kept cards — show the
-                          // truthful outcome rather than a misleading +bet.
+                          // truthful outcome (house loss = rose) rather than a
+                          // misleading +bet, with no won number behind it.
                           return (
-                            <>
-                              <TableCell className="tabular-nums text-muted-foreground">
-                                —
-                              </TableCell>
-                              <TableCell className="text-sm font-medium text-rose-600 dark:text-rose-400">
-                                Player won
-                              </TableCell>
-                            </>
+                            <MergedPnlCell
+                              wonLabel="Player won"
+                              profitColor="text-rose-600 dark:text-rose-400"
+                            />
                           );
                         }
                         // House P&L on the battle = bet we took in minus the
                         // winnings we paid out. Negative = house lost (rose),
                         // positive = house won (emerald) — already house-POV.
-                        const profit = t.amount - t.battleWinnings;
                         return (
-                          <>
-                            <TableCell className="tabular-nums text-rose-600 dark:text-rose-400">
-                              {formatCurrency(t.battleWinnings)}
-                            </TableCell>
-                            <TableCell className="tabular-nums">
-                              <span
-                                className={
-                                  profit > 0
-                                    ? "text-emerald-600 dark:text-emerald-400"
-                                    : profit < 0
-                                      ? "text-rose-600 dark:text-rose-400"
-                                      : "text-muted-foreground"
-                                }
-                              >
-                                {profit > 0 ? "+" : ""}
-                                {formatCurrency(profit)}
-                              </span>
-                            </TableCell>
-                          </>
+                          <MergedPnlCell
+                            profit={t.amount - t.battleWinnings}
+                            won={t.battleWinnings}
+                          />
                         );
                       }
                       // Upgrader: win/loss + winnings sourced from
@@ -671,26 +677,21 @@ export const CategoryTransactionsTable = React.memo(
                           // reads as "user aimed at X×, lost". Win
                           // chance % is shown once in the Type column.
                           return (
-                            <>
-                              <TableCell className="tabular-nums">
-                                <span className="text-muted-foreground">
-                                  {formatCurrency(0)}
-                                </span>
-                                <span className="ml-1.5 inline-flex items-center rounded border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                                  Lost
-                                </span>
-                                {targetBadge}
-                              </TableCell>
-                              <TableCell className="tabular-nums">
-                                <span className="text-emerald-600 dark:text-emerald-400">
-                                  +{formatCurrency(t.amount)}
-                                </span>
-                              </TableCell>
-                            </>
+                            <MergedPnlCell
+                              profit={t.amount}
+                              won={0}
+                              extra={
+                                <>
+                                  <span className="inline-flex items-center rounded border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                                    Lost
+                                  </span>
+                                  {targetBadge}
+                                </>
+                              }
+                            />
                           );
                         }
                         if (t.upgraderResult === "win" && t.upgraderWinnings != null) {
-                          const profit = t.amount - t.upgraderWinnings;
                           // Realized multiplier — how many times the
                           // bet the user actually took out. Skip the
                           // chip on a zero-stake row (defensive — bet
@@ -699,50 +700,25 @@ export const CategoryTransactionsTable = React.memo(
                           const multiplier =
                             t.amount > 0 ? t.upgraderWinnings / t.amount : null;
                           return (
-                            <>
-                              <TableCell className="tabular-nums">
-                                <span className="text-rose-600 dark:text-rose-400">
-                                  {formatCurrency(t.upgraderWinnings)}
-                                </span>
-                                {multiplier != null && (
+                            <MergedPnlCell
+                              profit={t.amount - t.upgraderWinnings}
+                              won={t.upgraderWinnings}
+                              extra={
+                                multiplier != null ? (
                                   <span
-                                    className="ml-1.5 inline-flex items-center rounded border border-rose-500/30 bg-rose-500/15 px-1.5 py-0 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+                                    className="inline-flex items-center rounded border border-rose-500/30 bg-rose-500/15 px-1.5 py-0 text-[10px] font-medium text-rose-600 dark:text-rose-400"
                                     title="Realized multiplier (won ÷ bet)"
                                   >
                                     {formatUpgraderMultiplier(multiplier)}
                                   </span>
-                                )}
-                                {targetBadge}
-                              </TableCell>
-                              <TableCell className="tabular-nums">
-                                <span
-                                  className={
-                                    profit > 0
-                                      ? "text-emerald-600 dark:text-emerald-400"
-                                      : profit < 0
-                                        ? "text-rose-600 dark:text-rose-400"
-                                        : "text-muted-foreground"
-                                  }
-                                >
-                                  {profit > 0 ? "+" : ""}
-                                  {formatCurrency(profit)}
-                                </span>
-                              </TableCell>
-                            </>
+                                ) : null
+                              }
+                            />
                           );
                         }
                         // upgraderResult === null → row hasn't been
                         // enriched (defensive — shouldn't happen).
-                        return (
-                          <>
-                            <TableCell className="tabular-nums text-muted-foreground">
-                              —
-                            </TableCell>
-                            <TableCell className="tabular-nums text-muted-foreground">
-                              —
-                            </TableCell>
-                          </>
-                        );
+                        return <MergedPnlCell />;
                       }
                       // Gaming is pack/battle only. Item cash-outs (card_sale /
                       // reward_card_sale / voucher_redeemed) live on the
@@ -754,39 +730,16 @@ export const CategoryTransactionsTable = React.memo(
                       // win's Won-Value / House-Profit P&L is shown on the
                       // paired battle_bet row, so this leg shows "—" here).
                       const cv = t.cardsValue;
-                      return (
-                        <>
-                          <TableCell className="tabular-nums">
-                            {cv != null ? formatCurrency(cv) : "—"}
-                          </TableCell>
-                          <TableCell className="tabular-nums">
-                            {cv != null
-                              ? (() => {
-                                  // House profit on the session: bet we
-                                  // took in minus value of cards + vouchers
-                                  // we handed back. Positive = house win
-                                  // (emerald), negative = user pulled
-                                  // above bet (rose) — already in
-                                  // house-POV, no sign flip needed.
-                                  const profit = t.amount - cv;
-                                  return (
-                                    <span
-                                      className={
-                                        profit > 0
-                                          ? "text-emerald-600 dark:text-emerald-400"
-                                          : profit < 0
-                                            ? "text-rose-600 dark:text-rose-400"
-                                            : "text-muted-foreground"
-                                      }
-                                    >
-                                      {profit > 0 ? "+" : ""}
-                                      {formatCurrency(profit)}
-                                    </span>
-                                  );
-                                })()
-                              : "—"}
-                          </TableCell>
-                        </>
+                      // House profit on the session: bet we took in minus
+                      // value of cards + vouchers we handed back. Positive =
+                      // house win (emerald), negative = user pulled above bet
+                      // (rose) — already house-POV, no sign flip. cv == null
+                      // (e.g. battle_excess_to_voucher) → no P&L on this leg,
+                      // render "—".
+                      return cv != null ? (
+                        <MergedPnlCell profit={t.amount - cv} won={cv} />
+                      ) : (
+                        <MergedPnlCell />
                       );
                     })()}
                   {/* Before / After show TOTAL WORTH = cash balance + held
@@ -852,7 +805,7 @@ export const CategoryTransactionsTable = React.memo(
               {txData.data.length === 0 && (
                 <TableRow className="hover:bg-transparent">
                   <TableCell
-                    colSpan={showCardsValue ? 11 : 8}
+                    colSpan={showCardsValue ? 10 : 8}
                     className="p-0"
                   >
                     {loadError ? (
