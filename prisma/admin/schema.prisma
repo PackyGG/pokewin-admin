@@ -51,7 +51,24 @@ model admin_users {
   audit_events          admin_audit_events[]
   sessions              admin_sessions[]
   notes                 admin_notes[]
+  // The materialized runtime permission cache the gate reads
+  // (getUserPermissions in src/lib/dal.ts) — page routes ("/users") AND
+  // `__can_*` capability flags. Stays the single source of truth every gate
+  // consumes; every editor save re-materializes it via the ONE canonical
+  // writer (computeEffectivePermissions, src/lib/permissions/materialize.ts).
   allowed_pages         String[]
+  // Per-user override layer (Phase C of the role/permission rebuild — see
+  // ROLE_REDESIGN_DESIGN.md). Additive, behavior-preserving: both default to
+  // the empty array, so a user with no overrides materializes to exactly
+  // their role baseline. `permission_grants` adds tokens ON TOP of the role
+  // baseline; `permission_revokes` removes tokens (a revoke wins over a
+  // baseline/grant for the same token). These columns are the EDITABLE source
+  // — `allowed_pages` is the derived runtime cache re-materialized from them.
+  // NOTE: the columns already exist in the ADMIN DB (applied + verified, all
+  // rows = '{}'); this schema delta only teaches the Prisma client about them
+  // — do NOT `prisma db push` / `migrate` (would risk dropping un-modeled drift).
+  permission_grants     String[]                 @default([])
+  permission_revokes    String[]                 @default([])
   gift_card_actions     admin_gift_card_actions[]
   voucher_actions       admin_voucher_actions[]
   expenses              expenses[]

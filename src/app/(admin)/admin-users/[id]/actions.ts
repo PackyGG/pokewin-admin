@@ -8,6 +8,10 @@ import { requireCapability } from "@/lib/require-capability";
 import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { sanitizePermissionKeys } from "@/app/(admin)/settings/roles/permissions-utils";
+import {
+  loadUserPermissionState,
+  materializeForOverride,
+} from "@/lib/permissions/write-paths";
 
 export async function forceExpireAllSessions(adminUserId: string) {
   const session = await requireAdmin();
@@ -31,39 +35,67 @@ export async function forceExpireAllSessions(adminUserId: string) {
   revalidatePath(`/admin-users/${adminUserId}`);
 }
 
+/**
+ * Persist a non-admin admin user's explicit per-user override (the grant /
+ * revoke layer) and re-materialize their `allowed_pages` through the ONE
+ * canonical writer (`computeEffectivePermissions`).
+ *
+ * Phase C of the role/permission rebuild (see ROLE_REDESIGN_DESIGN.md): the
+ * editor sends the operator-chosen grants/revokes; this stores them in
+ * `permission_grants` / `permission_revokes` AND writes the derived
+ * `allowed_pages = baseline ∪ grants \ revokes` so the runtime gate (which
+ * still reads `allowed_pages`) sees the effective set. Both are written in one
+ * update so the editable source and the cache never diverge.
+ *
+ * Guards unchanged: admin-only caller, `__can_update_admin_permissions`
+ * capability, 2FA, and editing an `admin`-role target is rejected (admins
+ * bypass the gate — an override would be meaningless and recording one could
+ * mislead).
+ */
 export async function updateUserPermissions(
   userId: string,
-  permissions: string[],
+  override: { grants: string[]; revokes: string[] },
   totpCode: string,
 ) {
   const session = await requireAdmin();
   await requireCapability(session, "__can_update_admin_permissions", "update admin permissions");
   await require2FA(session.userId, totpCode);
 
-  const targetUser = await adminDb.admin_users.findUnique({
-    where: { id: userId },
-    select: { role: true },
-  });
-  if (!targetUser || targetUser.role === "admin") {
+  const state = await loadUserPermissionState(userId);
+  if (!state) throw new Error("Admin user not found");
+  if (state.roles.includes("admin")) {
     throw new Error("Cannot set permissions for admin users");
   }
 
-  // `allowed_pages` holds the full effective permission set — page
-  // routes AND `__can_*` capability flags. Sanitize against the combined
-  // catalog so a stale / unknown key can't be persisted. The previous
-  // page-only filter here silently wiped every capability flag on save.
-  const validKeys = sanitizePermissionKeys(permissions);
+  // Sanitize the supplied override against the combined page+capability
+  // catalog (value-token-aware) so a stale / unknown key can't be persisted.
+  const grants = sanitizePermissionKeys(override.grants ?? []);
+  const revokes = sanitizePermissionKeys(override.revokes ?? []);
+  const sanitizedOverride = { grants, revokes };
+
+  // Re-materialize allowed_pages = role/custom baseline ∪ grants \ revokes
+  // via the canonical materializer (the single writer for every path).
+  const allowedPages = materializeForOverride(state, sanitizedOverride);
 
   await adminDb.admin_users.update({
     where: { id: userId },
-    data: { allowed_pages: validKeys },
+    data: {
+      permission_grants: grants,
+      permission_revokes: revokes,
+      allowed_pages: allowedPages,
+    },
     select: { id: true },
   });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "user_permissions_updated",
-    metadata: { target_admin_id: userId, permissions: validKeys },
+    metadata: {
+      target_admin_id: userId,
+      grants,
+      revokes,
+      allowed_pages: allowedPages,
+    },
   });
 
   revalidatePath(`/admin-users/${userId}`);

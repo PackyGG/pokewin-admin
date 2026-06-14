@@ -2,12 +2,17 @@ import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
 import { getEffectiveRoles } from "@/lib/admin-roles";
 import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
+import { ROLE_BASELINES, baselineTokensFor } from "@/lib/role-baselines";
+import type { PermissionToken } from "@/lib/permissions/types";
 import type { PaginatedResult } from "@/lib/types";
 
 export async function getAdminUserDetail(id: string) {
   const db = await getDb();
   // Resilient to the unapplied `roles` migration: degrades to `roles: []`
   // (→ effective `[role]` below) so the detail page renders pre-migration.
+  // The per-user override columns (permission_grants / permission_revokes)
+  // are selected in BOTH variants — they exist in prod (applied + verified);
+  // the write side (loadUserPermissionState) carries the extra P2022 degrade.
   const user = await readAdminUserWithRoles(
     () =>
       adminDb.admin_users.findUnique({
@@ -23,6 +28,8 @@ export async function getAdminUserDetail(id: string) {
           totp_enabled: true,
           is_active: true,
           allowed_pages: true,
+          permission_grants: true,
+          permission_revokes: true,
           created_at: true,
           updated_at: true,
         },
@@ -40,6 +47,8 @@ export async function getAdminUserDetail(id: string) {
           totp_enabled: true,
           is_active: true,
           allowed_pages: true,
+          permission_grants: true,
+          permission_revokes: true,
           created_at: true,
           updated_at: true,
         },
@@ -58,28 +67,108 @@ export async function getAdminUserDetail(id: string) {
     if (mainUser) linkedUser = mainUser;
   }
 
+  // The degrade branch of readAdminUserWithRoles injects `roles: string[]`
+  // but never touches the override columns (selected in both variants), so
+  // they're always present — narrow the union for the fields we read below.
+  const u = user as typeof user & {
+    roles?: string[] | null;
+    permission_grants: string[];
+    permission_revokes: string[];
+  };
+
+  const effRoles = getEffectiveRoles(u.role, u.roles);
+  const customRoleTokens: PermissionToken[] = u.custom_role?.capabilities ?? [];
+
+  // Per-role baseline attribution for the editor's read-only baseline view:
+  // for every token a built-in role baseline confers, record which role(s)
+  // grant it (so each token can be badged `from <role>`). Built-in baselines
+  // come from the code-defined ROLE_BASELINES (label resolved for display).
+  const baselineByToken = new Map<PermissionToken, string[]>();
+  for (const r of effRoles) {
+    const label = (ROLE_BASELINES as Record<string, { label: string } | undefined>)[r]
+      ?.label ?? r;
+    for (const token of baselineTokensFor(r)) {
+      const list = baselineByToken.get(token) ?? [];
+      if (!list.includes(label)) list.push(label);
+      baselineByToken.set(token, list);
+    }
+  }
+  // Custom-role capabilities also form part of the baseline (Layer 2).
+  if (customRoleTokens.length > 0) {
+    const customLabel = u.custom_role?.name
+      ? `role "${u.custom_role.name}"`
+      : "custom role";
+    for (const token of customRoleTokens) {
+      const list = baselineByToken.get(token) ?? [];
+      if (!list.includes(customLabel)) list.push(customLabel);
+      baselineByToken.set(token, list);
+    }
+  }
+  const baselineTokens: { token: PermissionToken; from: string[] }[] = [
+    ...baselineByToken.entries(),
+  ].map(([token, from]) => ({ token, from }));
+
+  // Whether any built-in role in the user's set is a gate-bypass role (admin).
+  // The editor shows a "full access — overrides recorded but not enforced"
+  // banner instead of an effective list for such users.
+  const isGateBypass = effRoles.some(
+    (r) =>
+      (ROLE_BASELINES as Record<string, { bypass: boolean } | undefined>)[r]
+        ?.bypass === true,
+  );
+
+  // Sticky tokens (re-granted by the runtime self-heals on the role's landing
+  // page even if revoked per-user) — surfaced so the editor can warn that a
+  // revoke "will re-grant on page load". Union the stickyTokens of every
+  // built-in role the user holds.
+  const stickyTokens = [
+    ...new Set(
+      effRoles.flatMap(
+        (r) =>
+          (ROLE_BASELINES as Record<string, { stickyTokens: string[] } | undefined>)[
+            r
+          ]?.stickyTokens ?? [],
+      ),
+    ),
+  ];
+
   return {
-    id: user.id,
-    email: user.email,
-    username: user.username,
+    id: u.id,
+    email: u.email,
+    username: u.username,
     // Primary/canonical system role (highest-privilege of `roles`).
-    role: user.role,
+    role: u.role,
     // Full effective system-role set. Legacy single-role users (empty
     // `roles` column) collapse to `[role]` via getEffectiveRoles, so the
     // UI always has a non-empty list to render + preselect.
-    roles: getEffectiveRoles(user.role, user.roles),
+    roles: effRoles,
     // Assigned custom-role preset (admin_roles). null = no preset; the
     // user's allowed_pages are then purely per-user. roleName +
     // roleCapabilities are carried for display so the profile's
     // permission editor can flag per-user overrides vs the role baseline.
-    roleId: user.role_id,
-    roleName: user.custom_role?.name ?? null,
-    roleCapabilities: user.custom_role?.capabilities ?? null,
-    totpEnabled: user.totp_enabled,
-    isActive: user.is_active,
-    allowedPages: user.allowed_pages,
-    createdAt: user.created_at.toISOString(),
-    updatedAt: user.updated_at.toISOString(),
+    roleId: u.role_id,
+    roleName: u.custom_role?.name ?? null,
+    roleCapabilities: u.custom_role?.capabilities ?? null,
+    totpEnabled: u.totp_enabled,
+    isActive: u.is_active,
+    allowedPages: u.allowed_pages,
+    // ── Phase C per-user override layer ──
+    // The explicit grant/revoke columns (the EDITABLE source). Empty for a
+    // never-edited user; allowedPages stays the derived runtime cache.
+    permissionGrants: u.permission_grants ?? [],
+    permissionRevokes: u.permission_revokes ?? [],
+    // The role baseline (built-in + custom-role tokens) with per-token role
+    // attribution, rendered read-only in the editor.
+    baselineTokens,
+    // Custom-role capability tokens (already counted in baselineTokens; kept
+    // separately so the editor can compute the effective preview client-side).
+    customRoleTokens,
+    // Whether the user bypasses the gate (admin) → editor shows a banner.
+    isGateBypass,
+    // Tokens the runtime self-heals re-grant on page load even if revoked.
+    stickyTokens,
+    createdAt: u.created_at.toISOString(),
+    updatedAt: u.updated_at.toISOString(),
     linkedUser,
   };
 }

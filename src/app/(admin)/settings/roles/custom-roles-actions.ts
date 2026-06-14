@@ -8,8 +8,11 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import {
   ALL_PERMISSION_KEYS,
   sanitizePermissionKeys,
-  materializeAllowedPages,
 } from "@/app/(admin)/settings/roles/permissions-utils";
+import {
+  loadUserPermissionState,
+  rematerializeForRoleChange,
+} from "@/lib/permissions/write-paths";
 
 // ---------------------------------------------------------------------------
 // Custom roles = named, reusable permission presets.
@@ -226,14 +229,31 @@ export async function updateRole(
     return { ok: false, error: "That name is reserved for a built-in role" };
   }
 
-  // Refresh the role baseline for every assigned user. Each user's
-  // per-user adjustments (grants/revokes layered on the OLD preset) are
-  // preserved by diffing their current allowed_pages against the old
-  // capabilities — see materializeAllowedPages.
+  // Refresh the role baseline for every assigned user. Phase C: route through
+  // the ONE canonical materializer (computeEffectivePermissions) instead of
+  // the old materializeAllowedPages diff. Each user's per-user override is
+  // PRESERVED — their explicit grants/revokes if set, else the override
+  // derived from the gap between their current allowed_pages and their OLD
+  // baseline (built-in roles ∪ the role's OLD capabilities). Re-materializing
+  // against the NEW custom-role capabilities keeps every manual adjustment.
   const assigned = await adminDb.admin_users.findMany({
     where: { role_id: id },
-    select: { id: true, allowed_pages: true },
+    select: { id: true },
   });
+
+  // Precompute each assigned user's re-materialized allowed_pages (reads run
+  // outside the write transaction; the writes are batched atomically below).
+  const refreshed: { id: string; allowedPages: string[] }[] = [];
+  for (const u of assigned) {
+    const state = await loadUserPermissionState(u.id);
+    if (!state) continue;
+    const { allowedPages } = rematerializeForRoleChange(
+      state,
+      state.roles,
+      capabilities, // the NEW custom-role capability set
+    );
+    refreshed.push({ id: u.id, allowedPages });
+  }
 
   try {
     await adminDb.$transaction([
@@ -241,16 +261,10 @@ export async function updateRole(
         where: { id },
         data: { name, description: description ?? null, capabilities },
       }),
-      ...assigned.map((u) =>
+      ...refreshed.map((u) =>
         adminDb.admin_users.update({
           where: { id: u.id },
-          data: {
-            allowed_pages: materializeAllowedPages(
-              capabilities,
-              u.allowed_pages,
-              existing.capabilities,
-            ),
-          },
+          data: { allowed_pages: u.allowedPages },
           select: { id: true },
         }),
       ),
@@ -307,12 +321,17 @@ export async function deleteRole(
 }
 
 /**
- * Assign a role to an admin user (or pass `null` to clear it).
+ * Assign a custom role to an admin user (or pass `null` to clear it).
  *
- * The user's `allowed_pages` is recomputed: the new role becomes the
- * baseline, the user's existing per-user adjustments are kept. Clearing
- * a role strips the role's contribution and leaves only the manual
- * grants. Real admins are rejected — they have full access regardless.
+ * Phase C: the user's `allowed_pages` is recomputed through the ONE canonical
+ * materializer (computeEffectivePermissions). The NEW custom-role capabilities
+ * become part of the baseline; the user's per-user override is PRESERVED —
+ * their explicit grants/revokes if set, else the override derived from the gap
+ * between their current allowed_pages and their OLD baseline (built-in roles ∪
+ * OLD custom-role capabilities), so manual adjustments survive. Clearing the
+ * role drops the custom-role contribution from the baseline and re-materializes
+ * with the built-in baseline alone. Real admins are rejected — they bypass the
+ * gate, so a custom-role baseline is meaningless for them.
  */
 export async function assignRoleToAdminUser(
   adminUserId: string,
@@ -320,29 +339,18 @@ export async function assignRoleToAdminUser(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const session = await requireAdmin();
 
-  const target = await adminDb.admin_users.findUnique({
-    where: { id: adminUserId },
-    select: { id: true, role: true, role_id: true, allowed_pages: true },
-  });
-  if (!target) return { ok: false, error: "Admin user not found" };
-  if (target.role === "admin") {
+  // Full permission state — reads the OLD custom-role tokens + the per-user
+  // override columns, so the derived override is relative to the OLD baseline.
+  const state = await loadUserPermissionState(adminUserId);
+  if (!state) return { ok: false, error: "Admin user not found" };
+  if (state.roles.includes("admin")) {
     return {
       ok: false,
       error: "Admin users already have full access — roles don't apply",
     };
   }
 
-  // Old preset (the role they're currently on, if any).
-  let oldPreset: string[] = [];
-  if (target.role_id) {
-    const oldRole = await adminDb.admin_roles.findUnique({
-      where: { id: target.role_id },
-      select: { capabilities: true },
-    });
-    oldPreset = oldRole?.capabilities ?? [];
-  }
-
-  // New preset (the role being assigned, if any).
+  // New preset (the role being assigned, if any). Empty when clearing.
   let newPreset: string[] = [];
   if (roleId) {
     const newRole = await adminDb.admin_roles.findUnique({
@@ -353,10 +361,11 @@ export async function assignRoleToAdminUser(
     newPreset = newRole.capabilities;
   }
 
-  const newAllowed = materializeAllowedPages(
+  // Re-materialize with the NEW custom-role tokens; built-in roles unchanged.
+  const { allowedPages: newAllowed } = rematerializeForRoleChange(
+    state,
+    state.roles,
     newPreset,
-    target.allowed_pages,
-    oldPreset,
   );
 
   await adminDb.admin_users.update({

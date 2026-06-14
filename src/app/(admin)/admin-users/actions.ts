@@ -13,6 +13,10 @@ import { logError } from "@/lib/errors/logger";
 import { computeAllowedPagesForRoles } from "@/lib/role-baselines";
 import { isPersistableAdminRole, pickPrimaryRole } from "@/lib/admin-roles";
 import { writeAdminUserWithRoles } from "@/lib/admin-user-roles";
+import {
+  loadUserPermissionState,
+  rematerializeForRoleChange,
+} from "@/lib/permissions/write-paths";
 
 /**
  * Normalize a caller-supplied role payload into a deduped, validated set
@@ -206,14 +210,17 @@ export async function resetAdmin2FA(adminUserId: string, totpCode: string) {
  * column in sync as the highest-privilege primary. Gated on
  * __can_change_admin_role + 2FA, exactly like the old single-role path.
  *
- * Permission handling is ADDITIVE: the baselines (page + capability keys)
- * of every role in the new set are unioned ONTO the user's current
- * allowed_pages. Existing per-user grants are never stripped — switching
- * or adding a role only ever grants access, never silently revokes the
- * manual adjustments an admin made. (To truly restrict a user, edit their
- * permissions in the per-user editor below the role card.) If `admin` is
- * among the new roles, allowed_pages is irrelevant — admin bypasses every
- * page/capability gate.
+ * Permission handling (Phase C): `allowed_pages` is RE-MATERIALIZED through
+ * the canonical materializer (computeEffectivePermissions) as
+ * `newRolesBaseline ∪ grants \ revokes`. The user's per-user override is
+ * PRESERVED — their explicit grants/revokes if set, otherwise the override
+ * derived from the gap between their current allowed_pages and their OLD
+ * baseline, so every MANUAL adjustment survives the role switch. Tokens that
+ * came only from a role being REMOVED (and were never manually kept) follow
+ * the new baseline rather than lingering — this is the intended canonical
+ * behavior (to keep such a token, add it as an explicit grant in the per-user
+ * editor). If `admin` is among the new roles, allowed_pages is `[]` — admin
+ * bypasses every page/capability gate.
  *
  * Note: every built-in role is accepted, INCLUDING `pack_creator`. The
  * previous single-role `changeAdminRole` validated against a hardcoded
@@ -239,25 +246,32 @@ export async function setAdminRoles(
   // primary is one of those members, so narrow it back for the Prisma write.
   const primary = pickPrimaryRole(roles) as admin_role;
 
-  const target = await adminDb.admin_users.findUnique({
-    where: { id: adminUserId },
-    select: { allowed_pages: true },
-  });
-  if (!target) throw new Error("Admin user not found");
+  // Load the full permission state (role/roles + custom-role tokens + the
+  // per-user override columns + current allowed_pages).
+  const state = await loadUserPermissionState(adminUserId);
+  if (!state) throw new Error("Admin user not found");
 
-  // Additive merge: current grants ∪ every new role's baseline. Never
-  // removes a manually-granted key. admin → empty list (bypass).
-  const baseline = await computeAllowedPagesForRoles(roles);
-  const mergedAllowed = roles.includes("admin")
-    ? []
-    : [...new Set([...target.allowed_pages, ...baseline])];
+  // Canonical re-materialization (Phase C): route through the ONE materializer
+  // (computeEffectivePermissions) instead of the old additive `current ∪
+  // baseline` merge. The user's per-user override is PRESERVED — explicit
+  // grants/revokes if they exist, otherwise the override derived from the gap
+  // between their stored allowed_pages and their OLD baseline (so the manual
+  // adjustments they made survive the role switch). The new roles' baseline +
+  // their existing custom-role tokens form the new baseline. admin among the
+  // new roles → materializer returns [] (gate bypass). The persisted override
+  // columns are unchanged here (a role change never edits the per-user layer).
+  // `rematerializeForRoleChange` normalizes the role list via getEffectiveRoles.
+  const { allowedPages: mergedAllowed } = rematerializeForRoleChange(
+    state,
+    roles,
+    state.customRoleTokens,
+  );
 
   // Resilient to the un-applied `roles` migration: if the additive `roles`
   // column doesn't exist yet, retry the update without it. The canonical
-  // `role` (primary) and the additively-merged `allowed_pages` still
-  // persist, so the role change takes effect; the effective set collapses
-  // to `[role]` until the migration is applied — identical to the legacy
-  // single-role path, and never wipes the merged grants.
+  // `role` (primary) and the re-materialized `allowed_pages` still persist,
+  // so the role change takes effect; the effective set collapses to `[role]`
+  // until the migration is applied — identical to the legacy single-role path.
   await writeAdminUserWithRoles(
     () =>
       adminDb.admin_users.update({

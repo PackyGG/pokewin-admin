@@ -1075,30 +1075,12 @@ export function sanitizePermissionKeys(keys: string[]): string[] {
   );
 }
 
-/**
- * Recompute a user's effective `allowed_pages` when their role preset
- * changes — either the role was re-assigned, or the role itself edited.
- *
- * "Role + adjustments" model: effective = role preset, plus per-user
- * grants, minus per-user revokes. The adjustment delta is derived by
- * diffing the user's CURRENT allowed_pages against the OLD preset:
- *   extra  = currentAllowed \ oldPreset   (granted manually on top)
- *   denied = oldPreset \ currentAllowed   (revoked manually)
- * New effective = (newPreset ∪ extra) \ denied.
- *
- * With no previous role (oldPreset = []), the user's whole current set
- * becomes "extra" and merges onto the new preset — nothing is lost.
- */
-export function materializeAllowedPages(
-  newPreset: string[],
-  currentAllowed: string[],
-  oldPreset: string[],
-): string[] {
-  const oldSet = new Set(oldPreset);
-  const curSet = new Set(currentAllowed);
-  const extra = currentAllowed.filter((k) => !oldSet.has(k));
-  const denied = new Set(oldPreset.filter((k) => !curSet.has(k)));
-  const out = new Set<string>([...newPreset, ...extra]);
-  for (const d of denied) out.delete(d);
-  return Array.from(out);
-}
+// NOTE (Phase C): the old `materializeAllowedPages(newPreset, currentAllowed,
+// oldPreset)` "role + adjustments" diff is RETIRED. Every write path that
+// recomputes a user's `allowed_pages` (per-user editor, role change, custom-
+// role assign/edit) now routes through the single canonical materializer
+// `computeEffectivePermissions` (src/lib/permissions/materialize.ts) via the
+// helpers in src/lib/permissions/write-paths.ts, which preserve each user's
+// explicit `permission_grants`/`permission_revokes` override (or the override
+// derived from their current allowed_pages vs their baseline). This removes the
+// divergent dual-axis materialization the rebuild replaced.
