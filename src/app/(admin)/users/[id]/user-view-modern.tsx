@@ -376,9 +376,13 @@ export function UserViewModern({
         />
 
         <div className="relative p-3 sm:p-5 md:p-6">
-          {/* Identity + compact KPI chips on one wrapping row. */}
-          <div className="flex flex-wrap items-start gap-3 sm:gap-4">
-            <div className="flex min-w-0 flex-1 basis-[min(100%,18rem)] items-start gap-3 sm:gap-4">
+          {/* Hero = identity row (full width) on top, then a uniform metric
+              GRID (full width) below. Splitting them into two stacked rows —
+              instead of the old identity-left / metrics-right cramped
+              flex-wrap — lets every tile sit in an equal grid cell so labels
+              no longer truncate and there's no ragged wrapping / dead space. */}
+          <div className="flex flex-col gap-4 sm:gap-5">
+            <div className="flex min-w-0 items-start gap-3 sm:gap-4">
               {/* Compact back-to-users button — tucked into the hero's
                   top-left (replaces the standalone back arrow from the
                   now-removed top identity strip). Same /users navigation. */}
@@ -579,90 +583,111 @@ export function UserViewModern({
               </div>
             </div>
 
-            <div className="flex min-w-0 flex-[1.35] flex-wrap items-stretch gap-1.5 content-start sm:gap-2">
-              <KpiTile
-                label="Total Value"
-                value={formatCurrency(totalValue)}
-                icon={Wallet}
-                accent="blue"
-              />
-              <KpiTile
-                label="P&L"
-                value={`${pnl >= 0 ? "+" : ""}${formatCurrency(pnl)}`}
-                icon={pnl >= 0 ? TrendingUp : TrendingDown}
-                accent={pnl >= 0 ? "emerald" : "rose"}
-              />
-              {/* Total Depo — lifetime deposited dollars. Pairs
-                  with the P&L tile next to it (P&L denominator is
-                  effectively this number). Emerald because cash
-                  flowing in is a house gain in the moment, matching
-                  the Deposited convention used on the dashboard's
-                  KPI strip. */}
-              <KpiTile
-                label="Total Depo"
-                value={formatCurrency(deposits)}
-                icon={Banknote}
-                accent="emerald"
-              />
-              {/* Total Withdrawn — lifetime withdrawn dollars. Sits directly
-                  next to Total Depo so the operator can read "$X deposited
-                  − $Y withdrawn" left-to-right and eyeball the realized
-                  cash leg of P&L instantly. Rose because a withdrawal is
-                  the user pulling money out (user gain = house loss → red
-                  per the house-POV finance convention in CLAUDE.md).
-                  Sourced from `withdrawals` (balances.totalWithdrawn,
-                  i.e. userPnl.withdrawals — the canonical P&L helper that
-                  also drives the dashboard's lifetime aggregates), so this
-                  view can never drift from users-list / dashboard. */}
-              <KpiTile
-                label="Total Withdrawn"
-                value={formatCurrency(withdrawals)}
-                icon={ArrowUpCircle}
-                accent="rose"
-              />
-              {/* Wager Left — weighted wager remaining before this user can
-                  withdraw balance. Neutral info (cyan). Streamed so the
-                  per-user wager read never blocks the identity hero. */}
-              {wagerProgressPromise && (
-                <Suspense
-                  fallback={
-                    <KpiTile
-                      label="Wager Left"
-                      value="…"
-                      icon={Hourglass}
-                      accent="cyan"
-                    />
-                  }
-                >
-                  <WagerLeftHeroTile promise={wagerProgressPromise} />
-                </Suspense>
-              )}
-              <KpiTile
-                label="Deposits"
-                value={String(counts.deposits)}
-                sub={formatCurrency(counts.avgDeposit) + " avg"}
-                icon={ArrowDownToLine}
-                accent="emerald"
-              />
-              <KpiTile
-                label="Withdrawals"
-                value={String(counts.withdrawals)}
-                icon={ArrowUpFromLine}
-                accent="rose"
-              />
-              <KpiTile
-                label="Multiplier"
-                value={wagerMultiplier > 0 ? `${wagerMultiplier.toFixed(2)}×` : "—"}
-                sub="wager / deposit"
-                icon={Coins}
-                accent="amber"
-              />
-              <KpiTile
-                label="House Edge"
-                value={balances && balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"}
-                icon={Percent}
-                accent="purple"
-              />
+            {/* Metric grid — two tiers of EQUAL-WIDTH tiles using CSS grid
+                (not flex-wrap), so every cell is the same width regardless of
+                its content: labels never truncate, no ragged wrap, no wasted
+                whitespace. */}
+            <div className="flex flex-col gap-2 sm:gap-3">
+              {/* Headline money row — 4 equal tiles. */}
+              <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
+                <KpiTile
+                  label="Total Value"
+                  value={formatCurrency(totalValue)}
+                  icon={Wallet}
+                  accent="blue"
+                />
+                <KpiTile
+                  label="P&L"
+                  value={`${pnl >= 0 ? "+" : ""}${formatCurrency(pnl)}`}
+                  icon={pnl >= 0 ? TrendingUp : TrendingDown}
+                  accent={pnl >= 0 ? "emerald" : "rose"}
+                />
+                {/* Total Depo — lifetime deposited dollars. Pairs
+                    with the P&L tile next to it (P&L denominator is
+                    effectively this number). Emerald because cash
+                    flowing in is a house gain in the moment, matching
+                    the Deposited convention used on the dashboard's
+                    KPI strip. */}
+                <KpiTile
+                  label="Total Deposited"
+                  value={formatCurrency(deposits)}
+                  icon={Banknote}
+                  accent="emerald"
+                />
+                {/* Total Withdrawn — lifetime withdrawn dollars. Sits directly
+                    next to Total Deposited so the operator can read "$X deposited
+                    − $Y withdrawn" left-to-right and eyeball the realized
+                    cash leg of P&L instantly. Rose because a withdrawal is
+                    the user pulling money out (user gain = house loss → red
+                    per the house-POV finance convention in CLAUDE.md).
+                    Sourced from `withdrawals` (balances.totalWithdrawn,
+                    i.e. userPnl.withdrawals — the canonical P&L helper that
+                    also drives the dashboard's lifetime aggregates), so this
+                    view can never drift from users-list / dashboard. */}
+                <KpiTile
+                  label="Total Withdrawn"
+                  value={formatCurrency(withdrawals)}
+                  icon={ArrowUpCircle}
+                  accent="rose"
+                />
+              </div>
+
+              {/* Stats row — 5 equal tiles. */}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-5">
+                {/* Wager Left — weighted wager remaining before this user can
+                    withdraw balance. Neutral info (cyan). Streamed so the
+                    per-user wager read never blocks the identity hero. The
+                    Suspense wraps this single grid cell so the cell stays
+                    uniform (its fallback is the same KpiTile). */}
+                {wagerProgressPromise ? (
+                  <Suspense
+                    fallback={
+                      <KpiTile
+                        label="Wager Left"
+                        value="…"
+                        icon={Hourglass}
+                        accent="cyan"
+                      />
+                    }
+                  >
+                    <WagerLeftHeroTile promise={wagerProgressPromise} />
+                  </Suspense>
+                ) : (
+                  <KpiTile
+                    label="Wager Left"
+                    value="—"
+                    sub="no data"
+                    icon={Hourglass}
+                    accent="cyan"
+                  />
+                )}
+                <KpiTile
+                  label="Deposits"
+                  value={String(counts.deposits)}
+                  sub={formatCurrency(counts.avgDeposit) + " avg"}
+                  icon={ArrowDownToLine}
+                  accent="emerald"
+                />
+                <KpiTile
+                  label="Withdrawals"
+                  value={String(counts.withdrawals)}
+                  icon={ArrowUpFromLine}
+                  accent="rose"
+                />
+                <KpiTile
+                  label="Multiplier"
+                  value={wagerMultiplier > 0 ? `${wagerMultiplier.toFixed(2)}×` : "—"}
+                  sub="wager / deposit"
+                  icon={Coins}
+                  accent="amber"
+                />
+                <KpiTile
+                  label="House Edge"
+                  value={balances && balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"}
+                  icon={Percent}
+                  accent="purple"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -1098,7 +1123,10 @@ function KpiTile({
   return (
     <div
       className={cn(
-        "group relative min-w-0 flex-[1_1_6.25rem] max-w-[8.75rem] overflow-hidden rounded-lg border px-2 py-1.5 transition-all hover:shadow-sm sm:flex-[1_1_6.75rem] sm:px-2.5 sm:py-2",
+        // h-full + w-full so the tile fills its (equal-width) grid cell — the
+        // grid owns sizing now, so no flex-basis / max-width content-sizing
+        // (that was the source of the uneven, truncated tiles).
+        "group relative h-full w-full min-w-0 overflow-hidden rounded-lg border px-2 py-1.5 transition-all hover:shadow-sm sm:px-2.5 sm:py-2",
         colors.bg,
       )}
     >
