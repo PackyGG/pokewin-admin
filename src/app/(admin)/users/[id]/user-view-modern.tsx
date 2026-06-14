@@ -395,17 +395,27 @@ export function UserViewModern({
               </div>
 
               <div className="min-w-0 space-y-1 flex-1">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                {/* Identity — line 1 = username (the big heading), line 2 =
+                    email (with its verified ✓ + copy). The redundant @handle
+                    duplicate and the old below-the-badges email subline were
+                    removed so neither name nor email is shown twice. */}
+                <div className="flex items-center gap-1 min-w-0">
                   <h2 className="text-lg sm:text-xl font-bold leading-tight truncate min-w-0">
                     {displayName}
                   </h2>
-                  {user.username && user.displayUsername &&
-                    user.displayUsername !== user.username && (
-                      <span className="text-xs sm:text-sm text-muted-foreground truncate">
-                        @{user.username}
-                      </span>
-                    )}
+                  <CopyButton value={displayName} label="Username" />
                 </div>
+                <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <span className="truncate">{user.email}</span>
+                  {user.emailVerified && (
+                    <span className="text-[10px] font-semibold text-emerald-500">
+                      ✓
+                    </span>
+                  )}
+                  {user.email && (
+                    <CopyButton value={user.email} label="Email" />
+                  )}
+                </p>
                 {/* Admin toolbar — separate row on phone so name doesn't
                     have to share its row with 4+ action buttons that wrap
                     awkwardly. Wraps as needed; on wider screens it sits
@@ -472,24 +482,9 @@ export function UserViewModern({
                       isAdmin || capabilities.canAdjustBalance
                     }
                     onOpenAccount={() => handleTabChange("account")}
+                    tagsSlot={tagsSlot}
                   />
                 </div>
-                {canChangeUserRoles && (
-                  <p className="min-w-0 text-[11px] text-muted-foreground">
-                    Role on the game platform — not admin-panel access.
-                  </p>
-                )}
-                <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <span className="truncate">{user.email}</span>
-                  {user.emailVerified && (
-                    <span className="text-[10px] font-semibold text-emerald-500">
-                      ✓
-                    </span>
-                  )}
-                  {user.email && (
-                    <CopyButton value={user.email} label="Email" />
-                  )}
-                </p>
                 <div className="flex flex-wrap items-center gap-1 pt-0.5">
                   <Badge
                     variant="outline"
@@ -572,11 +567,6 @@ export function UserViewModern({
                     <CopyButton value={user.id} label="User ID" />
                   </span>
                 </div>
-                {/* VIP tag manager — relocated INTO the hero (was a
-                    standalone full-width dashed row below the old top strip)
-                    to save vertical space. Sits with the identity it
-                    annotates; all add/remove behaviour is unchanged. */}
-                {tagsSlot && <div className="pt-1.5">{tagsSlot}</div>}
               </div>
             </div>
 
