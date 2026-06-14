@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { RakebackConfigTable } from "./rakeback-config-table";
 import { RakebackClaimsTable } from "./rakeback-claims-table";
 import { InstantClaimSection } from "./instant-claim-section";
+import { InstantClaimSummaryBox } from "./instant-claim-summary-box";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPending } from "@/components/ux";
@@ -98,9 +99,10 @@ export default async function RakebackPage({
         )}
         {tab === "claims" && (
           <Suspense
-            key={`${page}|${perPage}|${params.type ?? ""}|${params.search ?? ""}`}
+            key={`${page}|${perPage}|${params.type ?? ""}|${params.search ?? ""}|${icPeriod}`}
             fallback={
               <>
+                <div className="h-28 rounded-xl border bg-muted/20 animate-pulse" />
                 <div className="flex gap-1 rounded-lg bg-muted p-1">
                   {Array.from({ length: 4 }).map((_, i) => (
                     <div key={i} className="h-7 w-20 rounded-md bg-muted-foreground/10 animate-pulse" />
@@ -111,7 +113,13 @@ export default async function RakebackPage({
               </>
             }
           >
-            <ClaimsTab page={page} perPage={perPage} type={params.type} search={params.search} />
+            <ClaimsTab
+              page={page}
+              perPage={perPage}
+              type={params.type}
+              search={params.search}
+              icPeriod={icPeriod}
+            />
           </Suspense>
         )}
       </div>
@@ -154,16 +162,52 @@ async function ConfigTab() {
   );
 }
 
-async function ClaimsTab({ page, perPage, type, search }: { page: number; perPage: number; type?: string; search?: string }) {
-  const claims = await getRakebackClaims({ page, perPage, type, search });
+async function ClaimsTab({
+  page,
+  perPage,
+  type,
+  search,
+  icPeriod,
+}: {
+  page: number;
+  perPage: number;
+  type?: string;
+  search?: string;
+  icPeriod: InstantClaimPeriod;
+}) {
+  const [{ data: usage }, claims] = await Promise.all([
+    safeQuery(
+      () => getRakebackInstantClaimUsage(icPeriod),
+      { supported: false as const },
+      "rakeback.instant-claim.claims-summary",
+      15_000,
+    ),
+    getRakebackClaims({ page, perPage, type, search }),
+  ]);
+
+  const typeFilter = type && type !== "all" ? type : undefined;
+
+  function claimsTypeHref(t: string) {
+    const params = new URLSearchParams({ tab: "claims", icPeriod, type: t });
+    if (search) params.set("search", search);
+    return `/rewards/rakeback?${params.toString()}`;
+  }
 
   return (
     <>
+      <FadeIn>
+        <InstantClaimSummaryBox
+          usage={usage}
+          period={icPeriod}
+          claimType={typeFilter}
+        />
+      </FadeIn>
+
       <div className="flex gap-1 rounded-lg bg-muted p-1">
         {["all", "daily", "weekly", "monthly"].map((t) => (
           <Link
             key={t}
-            href={`/rewards/rakeback?tab=claims&type=${t}`}
+            href={claimsTypeHref(t)}
             className={cn(
               "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors capitalize",
               (type || "all") === t

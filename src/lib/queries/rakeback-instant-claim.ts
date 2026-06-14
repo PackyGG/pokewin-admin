@@ -143,10 +143,14 @@ export type InstantClaimUsage =
       period: InstantClaimPeriod;
       /** Claims that used the instant/early-claim flow. */
       instantCount: number;
+      /** Distinct users who made at least one instant claim in the window. */
+      instantUniqueUsers: number;
       /** All settled (claimed) rakeback claims in the window. */
       totalClaimCount: number;
       /** $ paid out via instant claims (rakeback amount). */
       instantAmountUsd: number;
+      /** $ retained by the house via the instant-claim fee (accrued − paid). */
+      instantSavedUsd: number;
       /** $ paid out across all settled claims in the window. */
       totalAmountUsd: number;
       /** instantCount / totalClaimCount, 0..1 (0 when no claims). */
@@ -249,6 +253,21 @@ export async function getRakebackInstantClaimUsage(
     await getExcludedUserIds(),
   );
 
+  const hasPayoutPercent = await columnExists(
+    db,
+    "rakeback_config",
+    "early_claim_payout_percent",
+  );
+
+  // Per-row fee retained: paid × (100 − payout%) / payout%
+  const savedExpr = hasPayoutPercent
+    ? `rc.rakeback_amount_usd::numeric * (100 - COALESCE(cfg.early_claim_payout_percent::numeric, ${DEFAULT_INSTANT_CLAIM_PAYOUT_PERCENT})) / NULLIF(COALESCE(cfg.early_claim_payout_percent::numeric, ${DEFAULT_INSTANT_CLAIM_PAYOUT_PERCENT}), 0)`
+    : `rc.rakeback_amount_usd::numeric * (100 - ${DEFAULT_INSTANT_CLAIM_PAYOUT_PERCENT}) / ${DEFAULT_INSTANT_CLAIM_PAYOUT_PERCENT}`;
+
+  const configJoin = hasPayoutPercent
+    ? "LEFT JOIN rakeback_config cfg ON cfg.type = rc.rakeback_type"
+    : "";
+
   // Window on `claimed_at` (the settlement time) — an instant claim is still
   // a settled claim, so "share of claims that were instant" compares
   // like-for-like settled rows. Lifetime ("all") has no lower bound.
@@ -261,17 +280,22 @@ export async function getRakebackInstantClaimUsage(
     {
       total_count: bigint;
       instant_count: bigint;
+      instant_users: bigint;
       total_usd: string | null;
       instant_usd: string | null;
+      instant_saved_usd: string | null;
     }[]
   >(
     `SELECT
        COUNT(*)::bigint                                                        AS total_count,
-       COUNT(last_preclaim_at)::bigint                                         AS instant_count,
-       COALESCE(SUM(rakeback_amount_usd), 0)::text                             AS total_usd,
-       COALESCE(SUM(rakeback_amount_usd) FILTER (WHERE last_preclaim_at IS NOT NULL), 0)::text AS instant_usd
-     FROM rakeback_claims
-     WHERE claimed_at IS NOT NULL
+       COUNT(rc.last_preclaim_at)::bigint                                      AS instant_count,
+       COUNT(DISTINCT rc.user_id) FILTER (WHERE rc.last_preclaim_at IS NOT NULL)::bigint AS instant_users,
+       COALESCE(SUM(rc.rakeback_amount_usd), 0)::text                           AS total_usd,
+       COALESCE(SUM(rc.rakeback_amount_usd) FILTER (WHERE rc.last_preclaim_at IS NOT NULL), 0)::text AS instant_usd,
+       COALESCE(SUM(${savedExpr}) FILTER (WHERE rc.last_preclaim_at IS NOT NULL), 0)::text AS instant_saved_usd
+     FROM rakeback_claims rc
+     ${configJoin}
+     WHERE rc.claimed_at IS NOT NULL
        ${windowSql}
        AND ${scopeSql}`,
   );
@@ -280,30 +304,34 @@ export async function getRakebackInstantClaimUsage(
     { type: string; instant_count: bigint; instant_usd: string | null }[]
   >(
     `SELECT
-       rakeback_type::text                                         AS type,
-       COUNT(*)::bigint                                            AS instant_count,
-       COALESCE(SUM(rakeback_amount_usd), 0)::text                AS instant_usd
-     FROM rakeback_claims
-     WHERE claimed_at IS NOT NULL
-       AND last_preclaim_at IS NOT NULL
+       rc.rakeback_type::text                                         AS type,
+       COUNT(*)::bigint                                               AS instant_count,
+       COALESCE(SUM(rc.rakeback_amount_usd), 0)::text                 AS instant_usd
+     FROM rakeback_claims rc
+     WHERE rc.claimed_at IS NOT NULL
+       AND rc.last_preclaim_at IS NOT NULL
        ${windowSql}
        AND ${scopeSql}
-     GROUP BY rakeback_type
-     ORDER BY rakeback_type ASC`,
+     GROUP BY rc.rakeback_type
+     ORDER BY rc.rakeback_type ASC`,
   );
 
   const agg = aggRows[0];
   const totalClaimCount = agg ? Number(agg.total_count) : 0;
   const instantCount = agg ? Number(agg.instant_count) : 0;
+  const instantUniqueUsers = agg ? Number(agg.instant_users) : 0;
   const totalAmountUsd = agg ? Number(agg.total_usd ?? 0) : 0;
   const instantAmountUsd = agg ? Number(agg.instant_usd ?? 0) : 0;
+  const instantSavedUsd = agg ? Number(agg.instant_saved_usd ?? 0) : 0;
 
   return {
     supported: true,
     period,
     instantCount,
+    instantUniqueUsers,
     totalClaimCount,
     instantAmountUsd,
+    instantSavedUsd,
     totalAmountUsd,
     instantShareByCount:
       totalClaimCount > 0 ? instantCount / totalClaimCount : 0,
