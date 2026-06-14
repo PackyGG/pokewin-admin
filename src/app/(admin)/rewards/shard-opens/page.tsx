@@ -5,7 +5,6 @@ import {
   ArrowDownLeft,
   Scale,
   PackageOpen,
-  Wallet,
   Globe,
   Coins,
   Activity,
@@ -36,6 +35,7 @@ import {
   type ShardEconomyResult,
 } from "@/lib/queries/shard-pack-opens";
 import { ShardOpensDataTable } from "./opens-data-table";
+import { ShardEconomyCharts } from "./shard-economy-charts";
 
 export const metadata = { title: "Shard Pack Opens" };
 
@@ -97,37 +97,34 @@ async function EconomyOverviewContent({
           }
         />
 
-        {/* Supply snapshot (window-independent) — "how many shards are out
-            there" + distinct holders. Neutral (cyan/blue): shards are a
-            secondary currency, not money. */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+        {/* Info boxes — the three the owner requires, read clearly:
+            • Shards given out  = total minted to users (house gave it out → rose)
+            • Out there now     = live circulating supply (neutral cyan)
+            • Holders           = distinct users holding shards (neutral blue)
+            plus Net house flow + Active users where they fit cleanly. Shards
+            are a secondary currency, not money — neutral readouts stay cyan/
+            blue, never a money color. */}
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
           <KpiTile
-            label="Shards held"
+            label="Shards given out"
+            value={fmtShards(economy.issuedToUsers)}
+            sub="total minted to users"
+            icon={Gift}
+            accent="rose"
+          />
+          <KpiTile
+            label="Out there now"
             value={fmtShards(economy.totalShardsHeld)}
-            sub="live user holdings"
-            icon={Wallet}
+            sub="circulating supply · live"
+            icon={Globe}
             accent="cyan"
           />
           <KpiTile
             label="Holders"
             value={formatNumber(economy.shardHolders)}
-            sub="wallets with shards"
+            sub="distinct users holding shards"
             icon={Users}
             accent="blue"
-          />
-          <KpiTile
-            label="In circulation"
-            value={fmtShards(economy.totalShardsHeld)}
-            sub="total out there"
-            icon={Globe}
-            accent="cyan"
-          />
-          <KpiTile
-            label="Issued to users"
-            value={fmtShards(economy.issuedToUsers)}
-            sub={`granted · ${periodLabel.toLowerCase()}`}
-            icon={Gift}
-            accent="rose"
           />
           <KpiTile
             label="Net house flow"
@@ -148,6 +145,11 @@ async function EconomyOverviewContent({
             accent="purple"
           />
         </div>
+
+        {/* The two shard-economy trend charts — earnings (rose) over time and
+            spendings (emerald) over time. Serializable data only across the
+            RSC boundary. */}
+        <ShardEconomyCharts daily={economy.daily} />
       </div>
     </FadeIn>
   );
@@ -263,7 +265,7 @@ async function OpensContent({
           rendered neutral (cyan). Card value pulled = the only money figure:
           real dollars the house pays out as the rolled card → rose (house
           cost), labelled "$", never summed with shards. */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-4">
         <KpiTile
           label="Opens"
           value={formatNumber(summary.totalOpens)}
@@ -282,13 +284,6 @@ async function OpensContent({
           value={fmtShards(summary.totalShardsSpent)}
           sub="cost to open · house in"
           icon={ArrowDownLeft}
-          accent="cyan"
-        />
-        <KpiTile
-          label="Avg per open"
-          value={fmtShards(summary.avgShardsPerOpen)}
-          sub="shards"
-          icon={Gem}
           accent="cyan"
         />
         {/* THE USD tile — real dollars the house paid out as cards through
@@ -358,15 +353,18 @@ export default async function ShardPackOpensPage({
         key={`economy|${period}`}
         fallback={
           <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
-              {Array.from({ length: 6 }).map((_, i) => (
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
+              {Array.from({ length: 5 }).map((_, i) => (
                 <div
                   key={i}
                   className="h-[72px] animate-pulse rounded-xl border bg-muted/30"
                 />
               ))}
             </div>
-            <div className="h-40 animate-pulse rounded-2xl border bg-muted/30" />
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="h-[260px] animate-pulse rounded-2xl border bg-muted/30" />
+              <div className="h-[260px] animate-pulse rounded-2xl border bg-muted/30" />
+            </div>
           </div>
         }
       >

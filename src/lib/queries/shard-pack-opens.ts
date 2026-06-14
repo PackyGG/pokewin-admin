@@ -152,6 +152,15 @@ export type ShardEconomyOverview = {
   activeUsers: number;
   /** Total coin/shard ledger rows in the window. */
   txCount: number;
+  /**
+   * Per-day earned-vs-spent shard trend over the window (feeds the two
+   * economy charts). `earned` = shards a game paid out that day (house out),
+   * `spent` = shards wagered into games that day (house in). Projected
+   * verbatim from `getCoinsEconomy().daily`. The shard ledger is brand-new, so
+   * on prod this may currently be a single day — the charts render gracefully
+   * with one point.
+   */
+  daily: { date: string; earned: number; spent: number }[];
 };
 
 /** Headline KPIs for one window. */
@@ -558,5 +567,10 @@ export async function getShardEconomyOverview(
     issuedToUsers: economy.issuedToUsers,
     activeUsers: economy.activeUsers,
     txCount: economy.txCount,
+    daily: economy.daily.map((d) => ({
+      date: d.date,
+      earned: d.earned,
+      spent: d.spent,
+    })),
   };
 }
