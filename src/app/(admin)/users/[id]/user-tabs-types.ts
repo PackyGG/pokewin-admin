@@ -431,6 +431,34 @@ export type InventoryItem = {
   exchangedAt: string | null;
 };
 
+/**
+ * Human-readable label for a `user_inventory.source_type` enum value
+ * (pack | reward | battle | exchange | raffle | upgrader). Drives the
+ * provenance badge on inventory rows so an admin can see at a glance WHERE a
+ * card came from — in particular `reward` = a card granted by a reward /
+ * sign-up / daily pack (an inventory giveaway with no ledger grant row; the
+ * full per-pack trail lives on the Rewards tab). Unknown/future members fall
+ * back to a capitalised raw value rather than hiding data.
+ */
+export function inventorySourceLabel(sourceType: string): string {
+  switch (sourceType) {
+    case "reward":
+      return "Reward pack";
+    case "pack":
+      return "Pack open";
+    case "battle":
+      return "Battle win";
+    case "exchange":
+      return "Exchange";
+    case "raffle":
+      return "Raffle";
+    case "upgrader":
+      return "Upgrader";
+    default:
+      return sourceType.charAt(0).toUpperCase() + sourceType.slice(1);
+  }
+}
+
 export type PaginatedInventory = {
   data: InventoryItem[];
   total: number;

@@ -116,11 +116,13 @@ import type {
   ShardPackOpensResult,
 } from "@/lib/queries/users-shard-winnings";
 import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
+import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
 import {
   ShardWinningsSection,
   ShardPackOpensSection,
 } from "./shard-winnings-section";
 import { XpPurchasesSection } from "./xp-purchases-section";
+import { RewardPackOpensSection } from "./reward-pack-opens-section";
 import { BandError } from "./band-error";
 import {
   SectionHeading,
@@ -716,8 +718,14 @@ function TipPanel({
 
 export function RewardsTab({
   rewardsPromise,
+  rewardPackOpensPromise,
 }: {
   rewardsPromise: Promise<SafeQueryResult<UserRewards>> | null;
+  // Reward / sign-up pack opens (welcome/level/daily packs) + the cards they
+  // granted. null = not kicked for the active tab (Active-Timeframe-Only).
+  rewardPackOpensPromise: Promise<
+    SafeQueryResult<UserRewardPackOpensResult>
+  > | null;
 }) {
   return (
     <div className="space-y-6">
@@ -729,6 +737,15 @@ export function RewardsTab({
       ) : (
         <SkeletonCard lines={4} />
       )}
+
+      {/* Reward / sign-up pack opens — the provenance trail for cards granted
+          by a reward pack (welcome pack, level packs, daily/free packs). A
+          reward pack is an inventory giveaway with NO ledger grant row, so this
+          is the only place an admin can see where these cards came from.
+          Streamed; self-hides when the user has no reward-pack inventory. */}
+      <RewardPackOpensSection
+        rewardPackOpensPromise={rewardPackOpensPromise}
+      />
     </div>
   );
 }

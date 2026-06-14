@@ -78,6 +78,7 @@ import type {
   ShardPackOpensResult,
 } from "@/lib/queries/users-shard-winnings";
 import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
+import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import { ErrorPill } from "./band-error";
 import { TILE_COLORS } from "./user-view-modern-panels";
@@ -185,6 +186,7 @@ export function UserViewModern({
   financialTxPromise,
   adjustmentsTxPromise,
   rewardsPromise,
+  rewardPackOpensPromise,
   notesPromise,
   inventoryPromise,
   disposedInventoryPromise,
@@ -239,6 +241,13 @@ export function UserViewModern({
   adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Rewards tab:
   rewardsPromise: Promise<SafeQueryResult<UserRewards>> | null;
+  // Rewards tab — reward / sign-up pack opens (welcome/level/daily packs) and
+  // the cards each granted. null = not kicked for the active tab
+  // (Active-Timeframe-Only). The section self-hides when the user has no
+  // reward-pack-sourced inventory.
+  rewardPackOpensPromise: Promise<
+    SafeQueryResult<UserRewardPackOpensResult>
+  > | null;
   // Account tab:
   notesPromise: Promise<SafeQueryResult<AdminNote[]>> | null;
   // Inventory tab:
@@ -729,7 +738,10 @@ export function UserViewModern({
         )}
 
         {activeTab === "rewards" && (
-          <RewardsTab rewardsPromise={rewardsPromise} />
+          <RewardsTab
+            rewardsPromise={rewardsPromise}
+            rewardPackOpensPromise={rewardPackOpensPromise}
+          />
         )}
 
         {activeTab === "gaming" && (

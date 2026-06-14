@@ -43,6 +43,7 @@ import {
   getUserShardPackOpens,
 } from "@/lib/queries/users-shard-winnings";
 import { getUserXpPurchases } from "@/lib/queries/users-xp-purchases";
+import { getUserRewardPackOpens } from "@/lib/queries/users-reward-pack-opens";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -602,6 +603,20 @@ async function UserDetailBody({
           USER_DETAIL_QUERY_TIMEOUT_MS,
         )
       : null;
+  // Rewards tab: reward / sign-up pack opens (welcome pack, level packs,
+  // daily/free packs) and the cards each granted. A reward pack is an
+  // inventory GIVEAWAY with no ledger grant row, so this is the only place the
+  // "where did these cards come from" trail is visible. Active-Timeframe-Only:
+  // kicked ONLY when the Rewards tab is the active tab.
+  const rewardPackOpensPromise =
+    initialTab === "rewards"
+      ? safeQuery(
+          () => getUserRewardPackOpens(id),
+          { totalOpens: 0, totalCards: 0, totalValue: 0, opens: [] },
+          "users.detail.rewardPackOpens",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        )
+      : null;
 
   // Account tab: admin notes (admin-DB, cheap) + the backend-API
   // wager-requirement override. The latter keeps its own catch→null
@@ -792,6 +807,7 @@ async function UserDetailBody({
       financialTxPromise={financialTxPromise}
       adjustmentsTxPromise={adjustmentsTxPromise}
       rewardsPromise={rewardsPromise}
+      rewardPackOpensPromise={rewardPackOpensPromise}
       notesPromise={notesPromise}
       inventoryPromise={inventoryPromise}
       disposedInventoryPromise={disposedInventoryPromise}

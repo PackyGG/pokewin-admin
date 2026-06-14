@@ -33,9 +33,10 @@ import { InlineError } from "@/components/entity-surface/inline-error";
 import { fetchInventory } from "./actions";
 import { InventoryItemDeleteDialog } from "./inventory-item-delete-dialog";
 import { InventoryBulkDeleteDialog } from "./inventory-bulk-delete-dialog";
-import type {
-  InventoryItem,
-  PaginatedInventory,
+import {
+  inventorySourceLabel,
+  type InventoryItem,
+  type PaginatedInventory,
 } from "./user-tabs-types";
 
 const INVENTORY_RARITY_COLORS: Record<string, string> = {
@@ -433,6 +434,21 @@ export const InventoryGrid = React.memo(function InventoryGrid({
                 <p className="text-xs font-medium text-muted-foreground">
                   {formatCurrency(item.value)}
                 </p>
+                {/* Provenance badge — where this card came from. `reward` =
+                    granted by a reward / sign-up / daily pack (full per-pack
+                    trail on the Rewards tab); tinted purple to stand out from
+                    bought/won cards. */}
+                <span
+                  className={cn(
+                    "mt-0.5 inline-block max-w-full truncate rounded px-1 py-0 text-[9px] font-medium leading-tight",
+                    item.sourceType === "reward"
+                      ? "bg-purple-500/15 text-purple-600 dark:text-purple-400"
+                      : "bg-muted text-muted-foreground",
+                  )}
+                  title={`Source: ${inventorySourceLabel(item.sourceType)}`}
+                >
+                  {inventorySourceLabel(item.sourceType)}
+                </span>
               </div>
             </div>
           );
@@ -727,7 +743,16 @@ export const DisposedCardsTable = React.memo(function DisposedCardsTable({
                           {item.rarity}
                         </span>
                       )}
-                      <span>from {item.sourceType}</span>
+                      <span
+                        className={cn(
+                          "rounded px-1 py-0 text-[10px] font-medium",
+                          item.sourceType === "reward"
+                            ? "bg-purple-500/15 text-purple-600 dark:text-purple-400"
+                            : "bg-muted text-muted-foreground",
+                        )}
+                      >
+                        {inventorySourceLabel(item.sourceType)}
+                      </span>
                       <span>·</span>
                       <span>obtained {formatRelative(item.obtainedAt)}</span>
                     </div>

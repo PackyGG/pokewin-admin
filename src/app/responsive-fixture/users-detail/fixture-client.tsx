@@ -33,6 +33,7 @@ import type {
   ShardPackOpensResult,
 } from "@/lib/queries/users-shard-winnings";
 import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
+import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
 
 /** Wrap a fixture value in the resolved success shape the page's
  *  SafeQueryResult band promises carry (reliability remake). */
@@ -101,6 +102,53 @@ const REWARDS: UserRewards = {
   openOneTimeCount: 0,
   rakebackClaimableUsd: 0,
   rakebackClaimedUsd: 0,
+};
+
+// Reward / sign-up pack opens — modelled on the real verified shape (a welcome
+// pack granting several penny cards + a level pack granting one) so the
+// fixture render exercises the new Rewards-tab provenance section.
+const REWARD_PACK_OPENS: UserRewardPackOpensResult = {
+  totalOpens: 2,
+  totalCards: 4,
+  totalValue: 0.04,
+  opens: [
+    {
+      sessionId: "fixture-session-welcome",
+      packName: "Welcome Pack",
+      rewardName: "Welcome Reward",
+      rewardSlug: "onboarding",
+      rewardType: "one_time",
+      openedAt: "2026-06-13T20:32:36.609Z",
+      cardCount: 3,
+      ownedCount: 0,
+      totalValue: 0.03,
+      cards: [
+        { inventoryId: "fx-1", cardName: "Chraziard", rarity: "Common", value: 0.01, owned: false },
+        { inventoryId: "fx-2", cardName: "Chraziard", rarity: "Common", value: 0.01, owned: false },
+        { inventoryId: "fx-3", cardName: "Chraziard", rarity: "Common", value: 0.01, owned: false },
+      ],
+    },
+    {
+      sessionId: "fixture-session-level1",
+      packName: "Level 1",
+      rewardName: "Level 1",
+      rewardSlug: "level-1",
+      rewardType: "daily",
+      openedAt: "2026-06-13T20:32:36.837Z",
+      cardCount: 1,
+      ownedCount: 1,
+      totalValue: 0.01,
+      cards: [
+        {
+          inventoryId: "fx-4",
+          cardName: "Ancient Booster Energy Capsule",
+          rarity: "Uncommon",
+          value: 0.01,
+          owned: true,
+        },
+      ],
+    },
+  ],
 };
 
 const RISK: RiskScoreBreakdown = {
@@ -270,6 +318,7 @@ export function UserDetailFixtureClient() {
       financialTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       adjustmentsTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       rewardsPromise={ok<UserRewards>(REWARDS)}
+      rewardPackOpensPromise={ok<UserRewardPackOpensResult>(REWARD_PACK_OPENS)}
       notesPromise={ok<AdminNote[]>(NOTES)}
       inventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}
       disposedInventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}
