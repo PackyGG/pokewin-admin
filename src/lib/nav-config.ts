@@ -660,16 +660,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    id: "nav.rewards.raffles",
-    group: "Rewards",
-    label: "Raffles",
-    href: "/rewards/raffles",
-    pageKey: "/rewards/raffles",
-    icon: "Ticket",
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
     // Challenges — game challenge directory (card-hit / upgrader-hit). All
     // challenge data lives in the MAIN game DB and is read/written via the
     // backend admin API; this admin panel never touches it via Prisma. Icon
@@ -963,7 +953,6 @@ const PALETTE_ORDER: string[] = [
   "nav.transactions.rewards",
   "nav.rewards",
   "nav.rewards.rakeback",
-  "nav.rewards.raffles",
   "nav.challenges",
   "nav.rain",
   "nav.rewards.leaderboards",

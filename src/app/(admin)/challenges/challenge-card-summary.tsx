@@ -1,15 +1,19 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { Loader2 } from "lucide-react";
-import { CardImage } from "@/components/card-image";
+import { ImageOff, Loader2 } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { getChallengeCardSummary, type ChallengeCardSummary } from "./actions";
 import {
+  CARD_CHALLENGE_HOUSE_EDGE,
   formatDropChancePercent,
   formatExpectedOpenings,
 } from "./challenge-card-math";
-import { TARGET_HOUSE_EDGE } from "@/app/(admin)/insights/edge-calc/math";
+import {
+  ChallengeSummaryHeader,
+  MetricTile,
+  PrizePercentSection,
+} from "./challenge-summary-ui";
 
 /**
  * Rich odds + historical stats for the selected pack/card requirement in the
@@ -18,9 +22,13 @@ import { TARGET_HOUSE_EDGE } from "@/app/(admin)/insights/edge-calc/math";
 export function ChallengeCardSummaryPanel({
   packId,
   cardId,
+  activePrizePercent,
+  onSelectPrizeAmount,
 }: {
   packId: string | undefined;
   cardId: string | undefined;
+  activePrizePercent?: number | null;
+  onSelectPrizeAmount?: (amount: number, percent: number) => void;
 }) {
   const [summary, setSummary] = useState<ChallengeCardSummary | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -59,88 +67,84 @@ export function ChallengeCardSummaryPanel({
     );
   }
 
-  const edgePct = (TARGET_HOUSE_EDGE * 100).toFixed(2);
+  const edgePct = (CARD_CHALLENGE_HOUSE_EDGE * 100).toFixed(2);
 
   return (
-    <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium text-muted-foreground">Selected card summary</p>
-        <p className="text-[10px] text-muted-foreground">
-          Profit uses {(TARGET_HOUSE_EDGE * 100).toFixed(2)}% planning edge
-        </p>
-      </div>
+    <div className="w-full overflow-hidden rounded-xl border bg-muted/15">
+      <ChallengeSummaryHeader
+        title="Selected card summary"
+        edgeLabel={`Profit uses ${edgePct}% planning edge`}
+      />
 
-      <div className="flex gap-3 rounded-md border bg-background/60 p-3">
-        <div className="size-16 shrink-0 overflow-hidden rounded-lg bg-muted/40 ring-1 ring-border/60">
-          <CardImage
-            src={summary.cardImageUrl}
-            alt={summary.cardName}
-            className="size-full"
-          />
+      <div className="flex w-full flex-col gap-4 p-4 sm:flex-row sm:items-start sm:gap-5">
+        <div className="flex shrink-0 items-center justify-center self-center rounded-xl bg-gradient-to-b from-muted/50 to-muted/20 p-3 ring-1 ring-border/50 sm:w-[8.5rem]">
+          {summary.cardImageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={summary.cardImageUrl}
+              alt={summary.cardName}
+              className="h-40 w-full object-contain drop-shadow-lg sm:h-48"
+            />
+          ) : (
+            <div className="flex h-40 w-full flex-col items-center justify-center gap-2 rounded-lg bg-muted/60 text-muted-foreground sm:h-48">
+              <ImageOff className="size-8 opacity-60" />
+              <span className="text-[10px]">No image</span>
+            </div>
+          )}
         </div>
-        <div className="min-w-0 flex-1 space-y-2">
-          <div>
-            <p className="truncate font-medium leading-tight">{summary.cardName}</p>
-            <p className="truncate text-xs text-muted-foreground">
-              from {summary.packName}
+
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
+          <div className="space-y-0.5">
+            <p className="text-base font-semibold leading-snug">{summary.cardName}</p>
+            <p className="text-sm text-muted-foreground">
+              from{" "}
+              <span className="font-medium text-foreground/80">{summary.packName}</span>
             </p>
           </div>
-          <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs sm:grid-cols-3">
-            <Stat label="Drop chance" value={formatDropChancePercent(summary.probabilityPercent)} />
-            <Stat label="Card price" value={formatCurrency(summary.cardPriceUsd)} houseLoss />
-            <Stat
+
+          <div className="grid w-full grid-cols-2 gap-2.5">
+            <MetricTile
+              label="Drop chance"
+              value={formatDropChancePercent(summary.probabilityPercent)}
+              accent="sky"
+            />
+            <MetricTile
+              label="Card price"
+              value={formatCurrency(summary.cardPriceUsd)}
+              accent="rose"
+            />
+            <MetricTile
               label="Expected opens"
               value={formatExpectedOpenings(summary.expectedOpenings)}
+              accent="violet"
             />
-            <Stat
-              label="Theoretical profit"
-              value={formatCurrency(summary.theoreticalProfitUsd)}
-              houseGain
-              hint={`opens × ${formatCurrency(summary.packPriceUsd)} × ${edgePct}%`}
-            />
-            <Stat
+            <MetricTile
               label="Times pulled"
               value={formatNumber(summary.cardPullCount)}
+              accent="amber"
             />
-            <Stat
-              label="Pack opens (all time)"
+            <MetricTile
+              label="Pack opens"
               value={formatNumber(summary.packOpenCount)}
+              accent="slate"
+              hint="All time"
             />
-          </dl>
+            <MetricTile
+              label="Theoretical profit"
+              value={formatCurrency(summary.theoreticalProfitUsd)}
+              accent="emerald"
+              hint={`${formatExpectedOpenings(summary.expectedOpenings)} × ${formatCurrency(summary.packPriceUsd)} × ${edgePct}%`}
+              className="col-span-2"
+            />
+          </div>
         </div>
       </div>
-    </div>
-  );
-}
 
-function Stat({
-  label,
-  value,
-  hint,
-  houseLoss,
-  houseGain,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  houseLoss?: boolean;
-  houseGain?: boolean;
-}) {
-  const valueClass = houseLoss
-    ? "text-rose-600 dark:text-rose-400"
-    : houseGain
-      ? "text-emerald-600 dark:text-emerald-400"
-      : "text-foreground";
-
-  return (
-    <div>
-      <dt className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-        {label}
-      </dt>
-      <dd className={`font-semibold tabular-nums ${valueClass}`}>{value}</dd>
-      {hint ? (
-        <dd className="mt-0.5 text-[10px] leading-snug text-muted-foreground">{hint}</dd>
-      ) : null}
+      <PrizePercentSection
+        theoreticalProfitUsd={summary.theoreticalProfitUsd}
+        activePrizePercent={activePrizePercent}
+        onSelectPrizeAmount={onSelectPrizeAmount}
+      />
     </div>
   );
 }

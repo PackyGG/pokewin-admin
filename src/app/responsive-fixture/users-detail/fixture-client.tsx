@@ -28,7 +28,10 @@ import type { UserRewards } from "@/lib/queries/users";
 import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 import type { RiskScoreBreakdown } from "@/lib/fraud/score-types";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
-import type { ShardWinningsResult } from "@/lib/queries/users-shard-winnings";
+import type {
+  ShardWinningsResult,
+  ShardPackOpensResult,
+} from "@/lib/queries/users-shard-winnings";
 
 /** Wrap a fixture value in the resolved success shape the page's
  *  SafeQueryResult band promises carry (reliability remake). */
@@ -256,6 +259,7 @@ export function UserDetailFixtureClient() {
       riskResultPromise={ok<RiskScoreBreakdown>(RISK)}
       gamingTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       shardWinningsPromise={ok<ShardWinningsResult>({ available: false })}
+      shardPackOpensPromise={ok<ShardPackOpensResult>({ available: false })}
       financialTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       adjustmentsTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       rewardsPromise={ok<UserRewards>(REWARDS)}

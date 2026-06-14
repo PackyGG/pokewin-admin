@@ -37,7 +37,10 @@ import {
 } from "@/lib/errors/safe-query";
 import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { getUserWagerProgress } from "@/lib/queries/users-wager-progress";
-import { getUserShardWinnings } from "@/lib/queries/users-shard-winnings";
+import {
+  getUserShardWinnings,
+  getUserShardPackOpens,
+} from "@/lib/queries/users-shard-winnings";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -85,12 +88,14 @@ const GAMING_TYPES = [
   "reward_card_sale",
   "battle_excess_to_voucher",
 ];
-// FINANCIAL covers deposits, withdrawals, and direct cash payouts
-// (rakeback / affiliate / rain / race / gift / promo). Card sales +
-// card / voucher exchanges intentionally live in NEITHER tab — they
-// bloated the Deposits & Withdrawals view with rows admins did not
-// consider cash events. If a future surface needs them they'll get
-// their own section instead of being folded into Financial.
+// FINANCIAL covers deposits, withdrawals (card_withdrawal +
+// withdrawal_shipping_fee) and direct cash payouts (rakeback / affiliate /
+// rain / race / gift / promo). The win-realization rows (card_sale /
+// reward_card_sale / battle_excess_to_voucher) do NOT live here — they're in
+// GAMING_TYPES above, alongside the bets that produced them, so the
+// bet → win → realize trail stays on one tab. Pure card / voucher exchanges
+// (card_exchange / voucher_exchange / exchange_excess_*) are in NEITHER tab —
+// exchanging an item is value-neutral, not a cash event.
 const FINANCIAL_TYPES = [
   "deposit",
   "deposit_bonus",
@@ -449,6 +454,19 @@ async function UserDetailBody({
           USER_DETAIL_QUERY_TIMEOUT_MS,
         )
       : null;
+  // Shard-PACK opens (shards spent + value won, both in shards) — Gaming tab
+  // only (Active-Timeframe-Only). Same coin_transactions source + self-hiding
+  // drift-guard as the winnings query: returns { available: false } when the
+  // connected DB has no coin ledger (e.g. the live prod game DB).
+  const shardPackOpensPromise =
+    initialTab === "gaming"
+      ? safeQuery(
+          () => getUserShardPackOpens(id),
+          { available: false as const },
+          "users.detail.shardPackOpens",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        )
+      : null;
   // Adjustments: Overview-only. Kicked only when the viewer is the owner
   // `motha` — a non-owner gets a resolved empty page instead of a wasted
   // round trip (the server returns zero adjustment rows for them anyway;
@@ -692,6 +710,7 @@ async function UserDetailBody({
       riskResultPromise={riskResultPromise}
       gamingTxPromise={gamingTxPromise}
       shardWinningsPromise={shardWinningsPromise}
+      shardPackOpensPromise={shardPackOpensPromise}
       financialTxPromise={financialTxPromise}
       adjustmentsTxPromise={adjustmentsTxPromise}
       rewardsPromise={rewardsPromise}

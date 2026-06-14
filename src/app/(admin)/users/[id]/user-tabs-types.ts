@@ -605,6 +605,13 @@ export const GAMING_TX_TYPES = [
   "reward_card_sale",
   "battle_excess_to_voucher",
 ] as const;
+// Financial = deposits, withdrawals (card_withdrawal + withdrawal_shipping_fee)
+// and direct cash payouts (rakeback / affiliate / rain / race / gift / promo).
+// The win-realization rows (card_sale / reward_card_sale /
+// battle_excess_to_voucher) do NOT live here — they're in GAMING_TX_TYPES
+// above, next to the bets that produced them. Pure card / voucher exchanges
+// (card_exchange / voucher_exchange / exchange_excess_*) are in neither list —
+// exchanging an item is value-neutral, not a cash event.
 export const FINANCIAL_TX_TYPES = [
   "deposit",
   "deposit_bonus",

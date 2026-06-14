@@ -25,11 +25,32 @@ import { Spinner } from "@/components/ux";
 import { createChallenge } from "./actions";
 import { ItemPicker } from "./item-picker";
 import { ChallengeCardSummaryPanel } from "./challenge-card-summary";
+import { ChallengeUpgraderSummaryPanel } from "./challenge-upgrader-summary";
 import type { SearchItem } from "./actions";
 
 type Kind = "card" | "upgrader";
 
 type PickedItem = { id: string; name?: string; imageUrl?: string | null; priceUsd?: number };
+
+function cardChallengeName(cardName: string) {
+  return `Hit "${cardName}"`;
+}
+
+/** Challenge title multiplier — number immediately followed by "x" (no space). */
+function formatMultiplierForChallengeName(multiplier: number): string {
+  if (multiplier >= 1000) {
+    return `${(multiplier / 1000).toFixed(1).replace(/\.0$/, "")}kx`;
+  }
+  if (multiplier >= 10) {
+    return `${Math.round(multiplier)}x`;
+  }
+  return `${multiplier.toFixed(1).replace(/\.0$/, "")}x`;
+}
+
+function upgraderChallengeName(minMultiplier: number): string | null {
+  if (!Number.isFinite(minMultiplier) || minMultiplier <= 0) return null;
+  return `Hit a ${formatMultiplierForChallengeName(minMultiplier)} or more on upgrader`;
+}
 
 export function CreateChallengeButton() {
   const [open, setOpen] = useState(false);
@@ -37,9 +58,8 @@ export function CreateChallengeButton() {
   const router = useRouter();
 
   const [kind, setKind] = useState<Kind>("card");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
   const [prizeAmount, setPrizeAmount] = useState("");
+  const [activePrizePercent, setActivePrizePercent] = useState<number | null>(null);
   const [maxClaims, setMaxClaims] = useState("1");
   const [pack, setPack] = useState<PickedItem | null>(null);
   const [card, setCard] = useState<PickedItem | null>(null);
@@ -48,9 +68,8 @@ export function CreateChallengeButton() {
 
   function resetForm() {
     setKind("card");
-    setName("");
-    setDescription("");
     setPrizeAmount("");
+    setActivePrizePercent(null);
     setMaxClaims("1");
     setPack(null);
     setCard(null);
@@ -60,8 +79,8 @@ export function CreateChallengeButton() {
 
   function handleKindChange(next: Kind) {
     setKind(next);
-    // requirement fields differ between kinds — clear the ones that don't
-    // apply so we never submit a stale pack_id on an upgrader challenge.
+    setPrizeAmount("");
+    setActivePrizePercent(null);
     setPack(null);
     setCard(null);
     setMinBetUsd("");
@@ -69,8 +88,17 @@ export function CreateChallengeButton() {
   }
 
   function handleSubmit() {
-    if (!name.trim()) {
-      toast.error("Please enter a name");
+    const resolvedName =
+      kind === "card" && card?.name
+        ? cardChallengeName(card.name)
+        : kind === "upgrader"
+          ? upgraderChallengeName(parseFloat(minMultiplier))
+          : null;
+
+    if (!resolvedName) {
+      toast.error(
+        kind === "card" ? "Please select a card" : "Enter a minimum multiplier",
+      );
       return;
     }
     const prize = parseFloat(prizeAmount);
@@ -109,8 +137,7 @@ export function CreateChallengeButton() {
       try {
         const result = await createChallenge({
           kind,
-          name: name.trim(),
-          description: description.trim() || undefined,
+          name: resolvedName,
           prizeAmount: prize,
           maxClaims: claims,
           packId: kind === "card" ? pack?.id : undefined,
@@ -132,6 +159,9 @@ export function CreateChallengeButton() {
     });
   }
 
+  const upgraderName =
+    kind === "upgrader" ? upgraderChallengeName(parseFloat(minMultiplier)) : null;
+
   return (
     <Dialog
       open={open}
@@ -141,7 +171,7 @@ export function CreateChallengeButton() {
       }}
     >
       <DialogTrigger render={<Button />}>Create Challenge</DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl sm:w-[min(42rem,calc(100%-2rem))]">
         <DialogHeader>
           <DialogTitle>Create Challenge</DialogTitle>
         </DialogHeader>
@@ -157,48 +187,6 @@ export function CreateChallengeButton() {
                 <SelectItem value="upgrader">Upgrader hit (land a card at a win %)</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Name</Label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Pull the Charizard"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Description (optional)</Label>
-            <Input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Hit the target card to win a prize..."
-            />
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Prize Amount (USD)</Label>
-              <Input
-                type="number"
-                value={prizeAmount}
-                onChange={(e) => setPrizeAmount(e.target.value)}
-                placeholder="10.00"
-                min={0}
-                step="0.01"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Max Claims</Label>
-              <Input
-                type="number"
-                value={maxClaims}
-                onChange={(e) => setMaxClaims(e.target.value)}
-                onFocus={(e) => e.target.select()}
-                min={1}
-                step={1}
-              />
-            </div>
           </div>
 
           <div className="space-y-3 rounded-lg border p-3">
@@ -220,9 +208,9 @@ export function CreateChallengeButton() {
                         imageUrl: item.imageUrl,
                         priceUsd: item.priceUsd,
                       });
-                      // the card pool is per-pack — drop a card picked from the
-                      // previous pack so we never submit a card not in this pack.
                       setCard(null);
+                      setPrizeAmount("");
+                      setActivePrizePercent(null);
                     }}
                   />
                 </div>
@@ -234,14 +222,16 @@ export function CreateChallengeButton() {
                     disabled={!pack}
                     placeholder={!pack ? "Select a pack first" : undefined}
                     value={card}
-                    onSelect={(item: SearchItem) =>
+                    onSelect={(item: SearchItem) => {
                       setCard({
                         id: item.id,
                         name: item.name,
                         imageUrl: item.imageUrl,
                         priceUsd: item.priceUsd,
-                      })
-                    }
+                      });
+                      setPrizeAmount("");
+                      setActivePrizePercent(null);
+                    }}
                   />
                 </div>
               </>
@@ -252,7 +242,11 @@ export function CreateChallengeButton() {
                   <Input
                     type="number"
                     value={minBetUsd}
-                    onChange={(e) => setMinBetUsd(e.target.value)}
+                    onChange={(e) => {
+                      setMinBetUsd(e.target.value);
+                      setPrizeAmount("");
+                      setActivePrizePercent(null);
+                    }}
                     placeholder="1.00"
                     min={0}
                     step="0.01"
@@ -263,7 +257,11 @@ export function CreateChallengeButton() {
                   <Input
                     type="number"
                     value={minMultiplier}
-                    onChange={(e) => setMinMultiplier(e.target.value)}
+                    onChange={(e) => {
+                      setMinMultiplier(e.target.value);
+                      setPrizeAmount("");
+                      setActivePrizePercent(null);
+                    }}
                     placeholder="2"
                     min={0}
                     step="0.0001"
@@ -273,9 +271,75 @@ export function CreateChallengeButton() {
             )}
           </div>
 
+          {kind === "card" && card?.name ? (
+            <div className="rounded-lg border bg-muted/20 px-3 py-2">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Name
+              </p>
+              <p className="text-sm font-medium">{cardChallengeName(card.name)}</p>
+            </div>
+          ) : null}
+
+          {upgraderName ? (
+            <div className="rounded-lg border bg-muted/20 px-3 py-2">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Name
+              </p>
+              <p className="text-sm font-medium">{upgraderName}</p>
+            </div>
+          ) : null}
+
           {kind === "card" && (
-            <ChallengeCardSummaryPanel packId={pack?.id} cardId={card?.id} />
+            <ChallengeCardSummaryPanel
+              packId={pack?.id}
+              cardId={card?.id}
+              activePrizePercent={activePrizePercent}
+              onSelectPrizeAmount={(amount, percent) => {
+                setPrizeAmount(amount.toFixed(2));
+                setActivePrizePercent(percent);
+              }}
+            />
           )}
+
+          {kind === "upgrader" && (
+            <ChallengeUpgraderSummaryPanel
+              minBetUsd={minBetUsd}
+              minMultiplier={minMultiplier}
+              activePrizePercent={activePrizePercent}
+              onSelectPrizeAmount={(amount, percent) => {
+                setPrizeAmount(amount.toFixed(2));
+                setActivePrizePercent(percent);
+              }}
+            />
+          )}
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Prize Amount (USD)</Label>
+              <Input
+                type="number"
+                value={prizeAmount}
+                onChange={(e) => {
+                  setPrizeAmount(e.target.value);
+                  setActivePrizePercent(null);
+                }}
+                placeholder="10.00"
+                min={0}
+                step="0.01"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Max Claims</Label>
+              <Input
+                type="number"
+                value={maxClaims}
+                onChange={(e) => setMaxClaims(e.target.value)}
+                onFocus={(e) => e.target.select()}
+                min={1}
+                step={1}
+              />
+            </div>
+          </div>
         </div>
         <DialogFooter>
           <Button onClick={handleSubmit} disabled={isPending} className="w-full sm:w-auto">

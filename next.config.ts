@@ -29,12 +29,22 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/raffles",
-        destination: "/rewards/raffles",
+        destination: "/rewards",
         permanent: true,
       },
       {
         source: "/raffles/:id",
-        destination: "/rewards/raffles/:id",
+        destination: "/rewards",
+        permanent: true,
+      },
+      {
+        source: "/rewards/raffles",
+        destination: "/rewards",
+        permanent: true,
+      },
+      {
+        source: "/rewards/raffles/:id",
+        destination: "/rewards",
         permanent: true,
       },
       {

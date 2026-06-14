@@ -22,7 +22,14 @@
  */
 
 import { use } from "react";
-import { Coins, Package, Swords, ArrowUpCircle, CloudRain } from "lucide-react";
+import {
+  Coins,
+  Package,
+  Swords,
+  ArrowUpCircle,
+  CloudRain,
+  Gem,
+} from "lucide-react";
 import { SectionHeading, StatPanel } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { InlineError } from "@/components/entity-surface/inline-error";
@@ -34,6 +41,7 @@ import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import type {
   ShardWinningsResult,
   ShardWinSource,
+  ShardPackOpensResult,
 } from "@/lib/queries/users-shard-winnings";
 
 /** Round + format a shard amount; guards NaN/Infinity to "—". */
@@ -199,6 +207,163 @@ function ShardWinningsStreamed({
                   </span>
                   <span className="shrink-0 font-semibold tabular-nums text-cyan-600 dark:text-cyan-400">
                     +{formatShards(w.amount)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </StatPanel>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  SHARD PACK OPENS — packs bought with SHARDS (not USD), tagged with a
+//  diamond. Shows shards SPENT + value WON (also in shards) per open.
+// ════════════════════════════════════════════════════════════════════════
+//
+// House-POV / UNIT (CLAUDE.md): shards are a SECONDARY, wager-earned currency
+// — NOT dollars. Both the spend and the win here are SHARDS, presented
+// neutrally (cyan), each explicitly labelled "shards" and never summed into
+// any USD total. The diamond tag makes a shard-pack open unmistakable from a
+// USD pack open in the Gaming Transactions table above it.
+
+/** A diamond chip tagging a shard (coin-bought) pack open. */
+function DiamondTag() {
+  return (
+    <Badge
+      variant="outline"
+      className="h-5 gap-1 py-0 text-[10px] bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30"
+    >
+      <Gem className="size-2.5" />
+      Shard pack
+    </Badge>
+  );
+}
+
+export function ShardPackOpensSection({
+  shardPackOpensPromise,
+}: {
+  shardPackOpensPromise: Promise<SafeQueryResult<ShardPackOpensResult>> | null;
+}) {
+  if (!shardPackOpensPromise) {
+    return (
+      <div className="space-y-3">
+        <SectionHeading icon={Gem} title="Shard Pack Opens" />
+        <SkeletonCard lines={4} />
+      </div>
+    );
+  }
+  return (
+    <ShardPackOpensStreamed shardPackOpensPromise={shardPackOpensPromise} />
+  );
+}
+
+function ShardPackOpensStreamed({
+  shardPackOpensPromise,
+}: {
+  shardPackOpensPromise: Promise<SafeQueryResult<ShardPackOpensResult>>;
+}) {
+  const r = use(shardPackOpensPromise);
+
+  if (r.error) {
+    return (
+      <div className="space-y-3">
+        <SectionHeading icon={Gem} title="Shard Pack Opens" />
+        <InlineError
+          compact
+          title="Couldn't load shard pack opens"
+          hint="This is a load failure, not an empty history — retry to re-run the query."
+        />
+      </div>
+    );
+  }
+
+  const result = r.data;
+
+  // Self-hide when the connected DB has no coin_transactions table (e.g. the
+  // live prod game DB) OR the user never opened a shard pack.
+  if (!result.available || result.totalOpens === 0) return null;
+
+  return (
+    <div className="space-y-3">
+      <SectionHeading icon={Gem} title="Shard Pack Opens" />
+      <p className="-mt-1 text-[11px] text-muted-foreground">
+        Packs bought with{" "}
+        <span className="inline-flex items-center gap-0.5 font-medium text-cyan-600 dark:text-cyan-400">
+          <Gem className="size-3" /> shards
+        </span>{" "}
+        (the secondary, wager-earned currency) — not USD. Spend and value won
+        are both in shards and aren&apos;t part of any dollar total.
+      </p>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        {/* Totals — opens, spent, won (all shards). */}
+        <StatPanel title="Totals" icon={Gem} accent="cyan">
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Shard packs opened
+            </span>
+            <span className="text-2xl font-bold tabular-nums text-cyan-600 dark:text-cyan-400">
+              {formatNumber(result.totalOpens)}
+            </span>
+          </div>
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-2 py-1 text-sm">
+              <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                Shards spent
+              </span>
+              <span className="shrink-0 font-bold tabular-nums text-cyan-600 dark:text-cyan-400">
+                {formatShards(result.totalSpent)}
+                <span className="ml-1 text-[10px] font-medium text-muted-foreground">
+                  shards
+                </span>
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-2 py-1 text-sm">
+              <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                Value won
+              </span>
+              <span className="shrink-0 font-bold tabular-nums text-cyan-600 dark:text-cyan-400">
+                {formatShards(result.totalWon)}
+                <span className="ml-1 text-[10px] font-medium text-muted-foreground">
+                  shards
+                </span>
+              </span>
+            </div>
+          </div>
+        </StatPanel>
+
+        {/* Recent opens — newest first, diamond tag + spent/won per row. */}
+        <StatPanel title="Recent opens" icon={Gem} accent="cyan">
+          {result.recent.length === 0 ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">
+              No recent shard pack opens.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {result.recent.map((o) => (
+                <li
+                  key={o.id}
+                  className="flex items-center justify-between gap-2 text-xs"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <DiamondTag />
+                    <span className="truncate text-[11px] text-muted-foreground">
+                      {o.packs > 0
+                        ? `${formatNumber(o.packs)} ${o.packs === 1 ? "pack" : "packs"} · `
+                        : ""}
+                      <RelativeTime date={o.createdAt} />
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-baseline gap-2 tabular-nums">
+                    <span className="text-muted-foreground">
+                      −{formatShards(o.spent)}
+                    </span>
+                    <span className="font-semibold text-cyan-600 dark:text-cyan-400">
+                      +{formatShards(o.won)}
+                    </span>
                   </span>
                 </li>
               ))}

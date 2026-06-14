@@ -22,9 +22,8 @@ import {
  * type — a raffle pays out pack/card ITEMS recorded as a `prizes` JSON array on
  * the `raffles` row (`[{ type:'pack'|'card', id, quantity? }]`). So there is no
  * money column to SUM; the cost has to be RECONSTRUCTED by valuing each prize
- * line at its item price (the same valuation the canonical
- * `getRaffleDetail` query in `@/lib/queries/raffles.ts` uses for the detail
- * page: `packs.price` for a pack, `cards.price` for a card, × quantity).
+ * line at its item price (`packs.price` for a pack, `cards.price` for a card,
+ * × quantity) via the shared prize-valuation helper.
  *
  * Scope of the baseline (what the forecast anchors on):
  *   • COMPLETED raffles only (`status = 'completed'`), `completed_at` in the
