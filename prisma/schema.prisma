@@ -1648,6 +1648,14 @@ enum battle_status {
 enum card_withdrawal_method {
   physical
   crypto
+  // `balance` = crypto-balance withdrawal (new sweepstakes model). The value
+  // ALREADY EXISTS in the prod + dev DB enums; this syncs the committed schema
+  // + generated client so Prisma can deserialize balance-method rows. Without
+  // it, `db.card_withdrawal_requests.findMany()` threw "Value 'balance' not
+  // found in enum card_withdrawal_method" the moment a balance withdrawal was
+  // pending, and safeQuery silently degraded the whole Withdrawals tab to an
+  // empty table. Generated-client sync only — NOT a DB migration.
+  balance
 }
 
 enum card_withdrawal_status {
