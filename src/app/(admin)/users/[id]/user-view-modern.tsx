@@ -633,6 +633,7 @@ export function UserViewModern({
             financialTxPromise={financialTxPromise}
             adjustmentsTxPromise={adjustmentsTxPromise}
             pnlResultPromise={pnlResultPromise}
+            wagerProgressPromise={wagerProgressPromise}
             isAdmin={isAdmin}
             viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
           />
@@ -643,6 +644,7 @@ export function UserViewModern({
             data={data}
             financialTxPromise={financialTxPromise}
             xpPurchasesPromise={xpPurchasesPromise}
+            wagerProgressPromise={wagerProgressPromise}
             isAdmin={isAdmin}
             viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
           />

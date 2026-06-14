@@ -48,7 +48,7 @@ import {
 } from "@/lib/utils/upgrader-metadata";
 import {
   amountColorFor,
-  amountSignFor,
+  balanceMovementSign,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
 import { ledgerTypeLabel } from "@/lib/utils/ledger-labels";
@@ -57,6 +57,7 @@ import { EmptyState } from "@/components/empty-state";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { battleUrl } from "@/lib/utils/main-site";
 import { fetchUserTransactions } from "./actions";
+import type { WagerRequirementSummary } from "@/lib/queries/users-wager-progress-shared";
 import type {
   Transaction,
   PaginatedTransactions,
@@ -104,6 +105,7 @@ export const CategoryTransactionsTable = React.memo(
     cardWithdrawals,
     isAdmin = false,
     canEditBalanceAdjustments = false,
+    wagerRequirement = null,
   }: {
     title: string;
     userId: string;
@@ -130,6 +132,14 @@ export const CategoryTransactionsTable = React.memo(
     isAdmin?: boolean;
     /** Motha-only — opens the balance-adjustment edit dialog on ID click. */
     canEditBalanceAdjustments?: boolean;
+    /**
+     * Account-level withdrawal wager-requirement status (filled vs required
+     * + %). Surfaced inside the transaction-detail popup on the Deposits &
+     * Withdrawals table so an operator sees how far the user is from being
+     * able to cash out. Plain serializable object — null on the Gaming table
+     * (not passed) and when the connected DB lacks the sweepstakes columns.
+     */
+    wagerRequirement?: WagerRequirementSummary | null;
   }) {
     const [txData, setTxData] = useState(initialTx);
     const [loadError, setLoadError] = useState<string | null>(
@@ -500,14 +510,19 @@ export const CategoryTransactionsTable = React.memo(
                     </TableCell>
                   ) : (
                     (() => {
-                      // Finances / overview: Amount IS the signal, so
-                      // color + sign it from the HOUSE POV (classified by
-                      // ledger type, matching every other tx surface).
+                      // Finances / overview: Amount IS the signal. COLOR is
+                      // house-POV (classified by ledger type, matching every
+                      // other tx surface — a rakeback claim is a house loss →
+                      // rose). The SIGN follows the user's real balance
+                      // movement so it never contradicts the Before/After
+                      // columns to the right (a credit reads "+", a debit "−").
+                      // abs-guard the magnitude against the rare genuinely-
+                      // signed row (admin_balance_adjustment).
                       const dir = ledgerDirection(t.type);
                       return (
                         <TableCell className={amountColorFor(dir)}>
-                          {amountSignFor(dir)}
-                          {formatCurrency(t.amount)}
+                          {balanceMovementSign(t.balanceBefore, t.balanceAfter)}
+                          {formatCurrency(Math.abs(t.amount))}
                         </TableCell>
                       );
                     })()
@@ -854,6 +869,7 @@ export const CategoryTransactionsTable = React.memo(
             userId={userId}
             onClose={() => setSelectedTx(null)}
             isAdmin={isAdmin}
+            wagerRequirement={wagerRequirement}
           />
           {canEditBalanceAdjustments && (
             <BalanceAdjustmentEditDialog

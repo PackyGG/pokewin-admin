@@ -13,7 +13,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Gauge } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -26,13 +26,14 @@ import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import {
   amountColorFor,
-  amountSignFor,
+  balanceMovementSign,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
 import { ledgerTypeLabel } from "@/lib/utils/ledger-labels";
 import { getGameSessionDetails } from "./actions";
 import { battleUrl } from "@/lib/utils/main-site";
 import { BattlePasswordReveal } from "@/components/battle-password-reveal";
+import type { WagerRequirementSummary } from "@/lib/queries/users-wager-progress-shared";
 import type { Transaction, GameSessionDetails } from "./user-tabs-types";
 
 const RARITY_COLORS: Record<string, string> = {
@@ -50,6 +51,7 @@ export function TransactionDetailModal({
   userId,
   onClose,
   isAdmin = false,
+  wagerRequirement = null,
 }: {
   transaction: Transaction | null;
   userId: string;
@@ -62,6 +64,16 @@ export function TransactionDetailModal({
    * spoofed this prop still can't read the value.
    */
   isAdmin?: boolean;
+  /**
+   * The user's withdrawal wager-requirement status (filled vs required +
+   * %). Account-level (one value per user, not per-tx), surfaced here on
+   * the Deposits & Withdrawals popup so an operator sees how far the user
+   * is from being able to cash out without leaving the row. Plain
+   * serializable object (no function props over the RSC boundary). null
+   * when the connected DB lacks the sweepstakes columns or the backend
+   * config was unreachable → the block self-hides.
+   */
+  wagerRequirement?: WagerRequirementSummary | null;
 }) {
   const [gameSession, setGameSession] = useState<GameSessionDetails | null>(
     null,
@@ -119,13 +131,17 @@ export function TransactionDetailModal({
     {
       label: "Amount",
       value: (() => {
-        // Same house-POV treatment as the list row above — classify by
-        // ledger type, not balance delta.
+        // COLOR is house-POV (classify by ledger type): a rakeback claim is a
+        // house loss → rose, even though it CREDITS the user. The SIGN, in
+        // contrast, follows the user's real balance movement so it can never
+        // contradict the Balance Before/After rows below (a credit reads "+",
+        // a debit "−"). `amount` is a positive magnitude here, so abs-guard it
+        // against the rare genuinely-signed row (admin_balance_adjustment).
         const dir = ledgerDirection(t.type);
         return (
           <span className={amountColorFor(dir)}>
-            {amountSignFor(dir)}
-            {formatCurrency(t.amount)}
+            {balanceMovementSign(t.balanceBefore, t.balanceAfter)}
+            {formatCurrency(Math.abs(t.amount))}
           </span>
         );
       })(),
@@ -403,6 +419,12 @@ export function TransactionDetailModal({
             ))}
           </div>
 
+          {/* Withdrawal wager-requirement status — account-level (gates ALL
+              withdrawals of this user's balance), shown on the deposit/
+              withdrawal popup so an operator sees "how far from cashing out"
+              without leaving the row. Self-hides when no data. */}
+          <WagerRequirementBlock wagerRequirement={wagerRequirement} />
+
           {t.gameSessionId && (
             <div className="border-t pt-4 space-y-3">
               {loadingSession ? (
@@ -578,5 +600,130 @@ export function TransactionDetailModal({
         <DialogFooter showCloseButton />
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Withdrawal wager-requirement status block for the transaction-detail popup.
+ *
+ * Surfaces the user's progress toward the lifetime wager requirement that
+ * gates every balance withdrawal: "filled $X of $Y required — Z% complete",
+ * with a progress bar. The requirement is an ACCOUNT-LEVEL value (one per
+ * user, read from the backend-maintained `balances` columns via
+ * `getUserWagerProgress`), not a per-transaction figure — so the same status
+ * shows on every row in the Deposits & Withdrawals popup.
+ *
+ * House-POV / neutral-info coloring (CLAUDE.md): the requirement progress is
+ * informational, not a user gain/loss, so the bar + figures are blue/neutral
+ * (the dedicated Account-tab card uses the same blue treatment). The bar turns
+ * emerald only when the requirement is fully met — from the house POV a met
+ * requirement means the user can now cash out (a house liability unlocks),
+ * which is signalled, not celebrated.
+ *
+ * `completed` is backend truth; `required` / `remaining` are DERIVED estimates
+ * (see getUserWagerProgress) and labeled as such. Self-hides on null data.
+ */
+function WagerRequirementBlock({
+  wagerRequirement,
+}: {
+  wagerRequirement: WagerRequirementSummary | null;
+}) {
+  if (!wagerRequirement) return null;
+  const { completedUsd, requiredUsd, remainingUsd, pct, exempt, met, backendAvailable } =
+    wagerRequirement;
+
+  return (
+    <div className="rounded-lg border bg-muted/30 p-3 space-y-2.5">
+      <div className="flex items-center gap-2">
+        <span className="flex size-6 items-center justify-center rounded-md bg-blue-500/15 text-blue-600 dark:text-blue-400">
+          <Gauge className="size-3.5" />
+        </span>
+        <p className="text-sm font-medium">Withdrawal wager requirement</p>
+        {exempt ? (
+          <Badge
+            variant="outline"
+            className="ml-auto border-amber-500/30 bg-amber-500/15 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+          >
+            Exempt
+          </Badge>
+        ) : met ? (
+          <Badge
+            variant="outline"
+            className="ml-auto border-emerald-500/30 bg-emerald-500/15 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+          >
+            Met
+          </Badge>
+        ) : null}
+      </div>
+
+      {exempt ? (
+        <p className="text-xs text-muted-foreground">
+          User is{" "}
+          <span className="font-medium text-amber-600 dark:text-amber-400">
+            exempt (0× override)
+          </span>{" "}
+          — no wager requirement gates their withdrawals.
+        </p>
+      ) : requiredUsd != null && requiredUsd > 0 ? (
+        <>
+          <p className="text-sm tabular-nums">
+            Filled{" "}
+            <span className="font-semibold text-foreground">
+              {formatCurrency(completedUsd)}
+            </span>{" "}
+            of{" "}
+            <span className="font-semibold text-foreground">
+              {formatCurrency(requiredUsd)}
+            </span>{" "}
+            required
+            {pct != null && (
+              <span className="text-muted-foreground">
+                {" "}
+                — {pct.toFixed(1)}% complete
+              </span>
+            )}
+          </p>
+          {pct != null && (
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className={`h-full rounded-full motion-safe:transition-[width] motion-safe:duration-700 ${
+                  met
+                    ? "bg-emerald-500"
+                    : "bg-blue-500"
+                }`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          )}
+          {!met && remainingUsd != null && (
+            <p className="text-[11px] tabular-nums text-muted-foreground">
+              {formatCurrency(remainingUsd)} left to wager before withdrawal.
+            </p>
+          )}
+          <p className="text-[10px] leading-relaxed text-muted-foreground">
+            Completed is backend truth; the requirement total is an estimate
+            derived from lifetime source totals × their multipliers.
+          </p>
+        </>
+      ) : (
+        // backend bps unreachable → only the backend-truth completed figure
+        // is meaningful; don't show a fabricated requirement total.
+        <>
+          <p className="text-sm tabular-nums">
+            Wagered{" "}
+            <span className="font-semibold text-foreground">
+              {formatCurrency(completedUsd)}
+            </span>{" "}
+            cleared toward the requirement.
+          </p>
+          {!backendAvailable && (
+            <p className="text-[11px] text-muted-foreground">
+              Requirement total unavailable — the wager-weight backend config
+              couldn&apos;t be reached, so only the cleared amount is shown.
+            </p>
+          )}
+        </>
+      )}
+    </div>
   );
 }

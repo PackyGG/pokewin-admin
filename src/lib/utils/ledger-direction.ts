@@ -100,3 +100,44 @@ export function amountSignFor(direction: LedgerDirection): "+" | "-" | "" {
       return "";
   }
 }
+
+/**
+ * Sign for the amount from the USER's actual balance movement.
+ *
+ * The Amount must never contradict the Balance Before/After shown right next
+ * to it: a row that CREDITS the user (balance goes up) reads "+", a row that
+ * DEBITS the user (balance goes down) reads "−", and a balance-neutral leg
+ * (card/voucher legs whose cash delta is $0 — e.g. card_withdrawal,
+ * battle_refund's voucher leg) gets no sign. This is independent of the
+ * house-perspective COLOR (`amountColorFor(ledgerDirection(type))`): a
+ * rakeback claim CREDITS the user (+$X) yet is a house loss → still rose.
+ *
+ * Why this exists: signing the Amount off `ledgerDirection` (house POV) made
+ * a rakeback_claim render as "−$64.93" even though the balance rose to
+ * +$64.93 — the sign fought the adjacent Balance fields. The balance delta is
+ * the single unambiguous source of truth for the SIGN.
+ *
+ * `before`/`after` are the cash balance at the row (Decimal already coerced to
+ * number). A tiny epsilon guards against float dust so a true $0 delta reads
+ * as neutral, not a spurious ±.
+ */
+export function balanceMovementSign(
+  before: number,
+  after: number,
+): "+" | "-" | "" {
+  return balanceDeltaSign(after - before);
+}
+
+/**
+ * Sign for an already-computed signed balance delta (`balanceAfter −
+ * balanceBefore`). Same contract as {@link balanceMovementSign} — used where
+ * the caller holds the delta directly rather than the before/after pair (e.g.
+ * the related-transactions mini-list, whose rows carry only the delta). The
+ * 0.005 epsilon swallows float dust so a true $0 (balance-neutral) leg reads
+ * as neutral, not a spurious ±.
+ */
+export function balanceDeltaSign(delta: number): "+" | "-" | "" {
+  if (delta > 0.005) return "+";
+  if (delta < -0.005) return "-";
+  return "";
+}

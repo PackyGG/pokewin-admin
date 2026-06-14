@@ -69,7 +69,7 @@ import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { RelativeTime } from "@/components/relative-time";
 import {
   amountColorFor,
-  amountSignFor,
+  balanceMovementSign,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
 import { ledgerTypeLabel } from "@/lib/utils/ledger-labels";
@@ -97,6 +97,7 @@ import { UserWagerRequirementCard } from "./user-wager-requirement-card";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { UserWagerProgressCard } from "./user-wager-progress-card";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
+import { toWagerRequirementSummary } from "@/lib/queries/users-wager-progress-shared";
 import type {
   PaginatedInventory,
   TipEntry,
@@ -155,12 +156,17 @@ export function OverviewTab({
   financialTxPromise,
   adjustmentsTxPromise,
   pnlResultPromise,
+  wagerProgressPromise,
   isAdmin,
   viewerIsAdjustmentOwner,
 }: {
   data: UserDetail;
   gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
+  // Per-user wager-requirement progress (always kicked server-side). Threaded
+  // into the Deposits & Withdrawals popup so the wager-requirement status
+  // shows on a deposit/withdrawal row. null when not kicked → popup self-hides.
+  wagerProgressPromise: Promise<UserWagerProgress | null> | null;
   // Dedicated, UNCAPPED admin_balance_adjustment fetch (separate from the
   // shared 10-row `financialTx` page, which lumps adjustments together with
   // deposits/withdrawals/claims and can push an older adjustment off page 1
@@ -226,6 +232,7 @@ export function OverviewTab({
             isAdmin={isAdmin}
             canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
             viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
+            wagerProgressPromise={wagerProgressPromise}
           />
         </Suspense>
       ) : (
@@ -330,6 +337,7 @@ function DepositsWithdrawalsStreamed({
   isAdmin,
   canEditBalanceAdjustments,
   viewerIsAdjustmentOwner,
+  wagerProgressPromise,
 }: {
   userId: string;
   cardWithdrawals: UserDetail["cardWithdrawals"];
@@ -337,8 +345,15 @@ function DepositsWithdrawalsStreamed({
   isAdmin: boolean;
   canEditBalanceAdjustments: boolean;
   viewerIsAdjustmentOwner: boolean;
+  // Always-kicked per-user wager-progress promise (same one the hero + Account
+  // tab use). We project it to the compact serializable summary the
+  // transaction-detail popup renders. null = not kicked → the popup block
+  // self-hides. The wager read is timeout-wrapped server-side, so awaiting it
+  // here can't hang this Suspense leg longer than the bound.
+  wagerProgressPromise: Promise<UserWagerProgress | null> | null;
 }) {
   const r = use(financialTxPromise);
+  const wagerProgress = wagerProgressPromise ? use(wagerProgressPromise) : null;
   return (
     <CategoryTransactionsTable
       title="Deposits & Withdrawals"
@@ -353,6 +368,7 @@ function DepositsWithdrawalsStreamed({
       cardWithdrawals={cardWithdrawals}
       isAdmin={isAdmin}
       canEditBalanceAdjustments={canEditBalanceAdjustments}
+      wagerRequirement={toWagerRequirementSummary(wagerProgress)}
     />
   );
 }
@@ -739,6 +755,7 @@ export function FinancesTab({
   data,
   financialTxPromise,
   xpPurchasesPromise,
+  wagerProgressPromise,
   isAdmin,
   viewerIsAdjustmentOwner,
 }: {
@@ -747,6 +764,10 @@ export function FinancesTab({
   // Per-user XP purchases (USD balance spent to buy XP). null = not kicked
   // for the active tab. The section self-hides when the user bought no XP.
   xpPurchasesPromise: Promise<SafeQueryResult<UserXpPurchasesResult>> | null;
+  // Per-user wager-requirement progress (always kicked server-side). Threaded
+  // into the Deposits & Withdrawals popup so the wager-requirement status
+  // shows on a deposit/withdrawal row. null when not kicked → popup self-hides.
+  wagerProgressPromise: Promise<UserWagerProgress | null> | null;
   isAdmin: boolean;
   viewerIsAdjustmentOwner: boolean;
 }) {
@@ -763,6 +784,7 @@ export function FinancesTab({
             isAdmin={isAdmin}
             canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
             viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
+            wagerProgressPromise={wagerProgressPromise}
           />
         </Suspense>
       ) : (
@@ -2529,8 +2551,13 @@ function RecentActivityTimeline({
                       amountColorFor(dir),
                     )}
                   >
-                    {amountSignFor(dir)}
-                    {formatCurrency(tx.amount)}
+                    {/* Color is house-POV (by ledger type); sign follows the
+                        real balance movement so a credit reads "+" even on a
+                        house-loss row (e.g. rakeback) — never contradicting the
+                        balance fields. abs-guard the magnitude for the rare
+                        genuinely-signed admin_balance_adjustment. */}
+                    {balanceMovementSign(tx.balanceBefore, tx.balanceAfter)}
+                    {formatCurrency(Math.abs(tx.amount))}
                   </span>
                 </div>
                 {tx.description && (
