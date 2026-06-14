@@ -31,6 +31,30 @@ const eslintConfig = [
       "react-hooks/exhaustive-deps": "off",
     },
   },
+  // Database boundary: the ClickHouse read layer must never import a Postgres /
+  // Prisma client. Reads go to ClickHouse, writes stay on Postgres (getDb /
+  // adminDb) — these two worlds never cross inside src/lib/clickhouse/**.
+  {
+    files: ["src/lib/clickhouse/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            { name: "@/lib/db", message: "ClickHouse read layer must not import the Postgres game client." },
+            { name: "@/lib/admin-db", message: "ClickHouse read layer must not import the Postgres admin client." },
+            { name: "pg", message: "ClickHouse read layer must not import the Postgres driver." },
+          ],
+          patterns: [
+            {
+              group: ["@/generated/prisma*", "@/generated/admin-prisma*", "@prisma/*"],
+              message: "ClickHouse read layer must not import Prisma.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ];
 
 export default eslintConfig;
