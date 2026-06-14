@@ -47,18 +47,29 @@ function RakebackAmountCell({
     );
   }
 
+  const accruedUsd = instantAccruedUsd!;
+  const savedUsd = accruedUsd - paidUsd;
+
   return (
     <div
       className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 tabular-nums"
-      title="Accrued rakeback before the instant-claim fee → amount paid out"
+      title="Accrued rakeback before the instant-claim fee → amount paid out · green = house kept from the instant fee"
     >
       <span className="font-medium text-muted-foreground">
-        {formatCurrency(instantAccruedUsd)}
+        {formatCurrency(accruedUsd)}
       </span>
       <span className="text-muted-foreground/70">→</span>
       <span className="font-medium text-rose-600 dark:text-rose-400">
         {formatCurrency(paidUsd)}
       </span>
+      {savedUsd > 0.001 && (
+        <span
+          className="text-xs font-semibold text-emerald-600 dark:text-emerald-400"
+          title="Instant-claim fee retained by the house"
+        >
+          +{formatCurrency(savedUsd)}
+        </span>
+      )}
     </div>
   );
 }
