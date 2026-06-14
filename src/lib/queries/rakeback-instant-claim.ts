@@ -18,18 +18,22 @@ import { excludeStaffCreatorsAndBlacklistedSqlFromIds } from "./_blacklist";
  * And each `rakeback_claims` row records `last_preclaim_at` — non-NULL means
  * that claim used the instant/early-claim flow.
  *
- * DRIFT GUARD (CRITICAL)
- * ──────────────────────
- * These columns exist on the DEV game DB but NOT (yet) on the live PROD
- * game DB — the early-claim feature is a backend roll-out in progress. The
- * committed `prisma/schema.prisma` does not carry them either, so the typed
- * Prisma client cannot reference them. We therefore:
+ * COLUMN PROBE (defensive)
+ * ────────────────────────
+ * The early-claim feature is LIVE on prod: these columns exist on the live
+ * PROD game DB and there are real instant claims on it (verified read-only,
+ * 2026-06-14). It is also present on dev. The committed `prisma/schema.prisma`
+ * does NOT carry these columns, though, so the typed Prisma client cannot
+ * reference them. We therefore:
  *   1. read via raw SQL against the env-resolved client (`getDb()`), and
  *   2. PROBE `information_schema.columns` first, returning a `supported:
- *      false` shape when the column is absent so a prod-toggled admin gets a
- *      muted "awaiting backend deploy" card instead of a 42703 throw.
- * Same pattern as `getUserWagerProgress` (sweepstakes columns) and the
- * runtime enum drift-guards.
+ *      false` shape if the column is ever absent on the active env (e.g. a
+ *      dev DB that hasn't been migrated) so the surface degrades gracefully
+ *      instead of throwing 42703.
+ * The probe is cheap defensive code and is kept; it is NOT a signal that the
+ * feature is off on prod — on prod every probe returns `true`. Same pattern
+ * as `getUserWagerProgress` (sweepstakes columns) and the runtime enum
+ * drift-guards.
  *
  * READ-ONLY. No mutations here — editing the early-claim config requires a
  * backend admin endpoint that is not deployed (all `/admin/rakeback*` config
@@ -129,8 +133,9 @@ export type InstantClaimTierConfig = {
 };
 
 /**
- * Early-claim config per cadence, or `null` when this DB env lacks the
- * early-claim columns (→ muted "awaiting backend deploy" card).
+ * Early-claim config per cadence. `{ supported: false }` only when the
+ * active DB env lacks the early-claim columns (→ muted degraded card); the
+ * columns ARE present on prod, where the feature is live.
  */
 export type InstantClaimConfig =
   | { supported: true; tiers: InstantClaimTierConfig[] }
@@ -186,8 +191,9 @@ async function columnExists(
 
 /**
  * Read the per-cadence early-claim config from `rakeback_config`. Returns
- * `{ supported: false }` when the early-claim columns are absent on this DB
- * env (prod, currently). Read-only.
+ * `{ supported: false }` only if the early-claim columns are absent on the
+ * active DB env (they ARE present on prod — this guards an unmigrated dev
+ * env). Read-only.
  */
 export async function getRakebackInstantClaimConfig(): Promise<InstantClaimConfig> {
   const db = await getDb();
@@ -233,11 +239,18 @@ export async function getRakebackInstantClaimConfig(): Promise<InstantClaimConfi
 /**
  * Aggregate instant-claim usage over the ACTIVE window only (active-
  * timeframe-only — the page never preloads other windows). Returns
- * `{ supported: false }` when `rakeback_claims.last_preclaim_at` is absent
- * on this DB env.
+ * `{ supported: false }` only if `rakeback_claims.last_preclaim_at` is
+ * absent on the active DB env (it IS present on prod — this guards an
+ * unmigrated dev env).
  *
- * Scope: customer population only (staff + creators + blacklist excluded),
- * matching every other rakeback money aggregate.
+ * Scope: canonical CUSTOMER population (staff + creators + blacklist
+ * excluded), per `getMetricsScope`. NOTE: the /insights/rewards/rakeback
+ * overview modules currently use the wider staff-only exclusion
+ * (`role NOT IN ('admin','support')`, creators KEPT), so this block's
+ * total-paid is creator-excluding while that surface's headline is
+ * creator-including — they can differ by the creator-claimed amount. See
+ * the owner-sign-off proposal to align the overview (insights-rewards
+ * rakeback overview.ts).
  */
 export async function getRakebackInstantClaimUsage(
   period: InstantClaimPeriod,

@@ -129,8 +129,9 @@ export default async function RakebackPage({
 
 async function InstantClaimTab({ period }: { period: InstantClaimPeriod }) {
   // Active-timeframe-only: only the selected window is queried. Both reads
-  // degrade gracefully (drift-safe: the early-claim columns exist on dev but
-  // not prod — the query probes and returns `supported: false` there).
+  // degrade gracefully (drift-safe: the early-claim columns are present on
+  // prod — the feature is live — and the query probes `information_schema`
+  // so an unmigrated env returns `supported: false` instead of throwing).
   const [{ data: config }, { data: usage }] = await Promise.all([
     safeQuery(
       () => getRakebackInstantClaimConfig(),

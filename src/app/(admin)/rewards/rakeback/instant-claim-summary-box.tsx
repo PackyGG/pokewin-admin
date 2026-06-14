@@ -41,8 +41,10 @@ export function InstantClaimSummaryBox({
       <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-xs text-amber-600 dark:text-amber-400">
         <AlertTriangle className="size-4 shrink-0 mt-0.5" />
         <p>
-          Instant-claim stats are unavailable on this environment until the{" "}
-          <code>last_preclaim_at</code> column ships on the game database.
+          Instant-claim stats can&apos;t load on this database — the{" "}
+          <code>last_preclaim_at</code> column isn&apos;t present on the active
+          game DB. The feature is live on production; this only shows on an
+          unmigrated env.
         </p>
       </div>
     );

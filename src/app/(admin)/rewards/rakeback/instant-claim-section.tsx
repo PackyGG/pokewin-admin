@@ -71,9 +71,10 @@ export function InstantClaimSection({
 }) {
   const featureAbsent = !config.supported && !usage.supported;
 
-  // Whole feature missing on this DB env (prod, until the early-claim
-  // backend ships) → one muted, honest card. Mirrors RewardExpiryCard's
-  // "backend not updated yet" degraded state.
+  // Defensive degraded state: the early-claim columns are missing on the
+  // ACTIVE DB env. On prod the feature is LIVE (columns present, real
+  // instant claims) so this never shows there — it only guards an
+  // unmigrated env (e.g. a dev DB without the early-claim columns).
   if (featureAbsent) {
     return (
       <div className="space-y-4">
@@ -82,15 +83,15 @@ export function InstantClaimSection({
           <AlertTriangle className="size-4 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <p className="font-medium">
-              Instant claim not available on this environment yet
+              Instant-claim data unavailable on this database
             </p>
             <p className="text-amber-600/80 dark:text-amber-400/80">
               The early-claim columns (<code>early_claim_payout_percent</code>,{" "}
               <code>last_preclaim_at</code>) are not present on the active game
-              database. The feature is rolling out on the backend — this
-              section becomes live once it reaches this environment. (It is
-              already present on the dev database; switch the DB env toggle to
-              preview it.)
+              database, so this section can&apos;t load. The feature itself is
+              live on production — this only appears if the active DB env is
+              missing these columns (e.g. an unmigrated dev database). Switch
+              the DB env toggle back to production to view it.
             </p>
           </div>
         </div>
@@ -240,9 +241,10 @@ export function InstantClaimSection({
         <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-xs text-amber-600 dark:text-amber-400">
           <AlertTriangle className="size-4 shrink-0 mt-0.5" />
           <p className="text-amber-600/80 dark:text-amber-400/80">
-            Usage metrics are unavailable on this environment — the{" "}
+            Usage metrics can&apos;t load on this database — the{" "}
             <code>last_preclaim_at</code> column that flags an instant claim is
-            not present on the active game database yet.
+            not present on the active game DB (it is on production; this only
+            shows on an unmigrated env).
           </p>
         </div>
       )}
