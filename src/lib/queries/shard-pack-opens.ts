@@ -3,6 +3,8 @@ import { unstable_cache } from "next/cache";
 import { getDb, getProdDb, getDevDb } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import type { PaginatedResult } from "@/lib/types";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import {
   getCoinsEconomy,
   type CoinsPeriod,
@@ -53,8 +55,16 @@ import {
  *
  * SCOPE
  * ─────
- * UNSCOPED — a raw ACTIVITY/AUDIT feed of every shard-pack open (staff/creator
- * opens shown too), not the customer-scoped USD GGR/NGR metric layer.
+ * STAFF + BLACKLIST excluded on EVERY figure on this page. Every query drops
+ * staff (`role IN ('admin','support')`) AND the admin-managed `excluded_users`
+ * blacklist (`/system/excluded-users`) — the SAME population filter the
+ * `getTopOpenedPacks24h` opens analogue uses — so no admin/support account and
+ * no explicitly-excluded user can inflate the opens count, shards spent, card
+ * $ value, unique openers, the per-pack breakdown, the supply snapshot, or the
+ * daily chart. This is an ACTIVITY/AUDIT surface, NOT the customer GGR/NGR
+ * money-metric layer, so creators are intentionally NOT dropped wholesale here
+ * (that wholesale-creator drop is reserved for the canonical `getMetricsScope`
+ * revenue metrics); the consistent rule across the page is staff + blacklist.
  *
  * SCHEMA DRIFT (defensive)
  * ────────────────────────
@@ -277,13 +287,18 @@ export type ShardEconomyResult = ShardEconomyOverview | null;
  * UNIT: integer SHARDS, never USD — never summed with any coin/dollar figure.
  */
 export type ShardGivenOut = {
-  /** Σ `balances.shards` across all wallets — live circulating supply. */
+  /**
+   * Σ `balances.shards` across all REAL-customer wallets — live circulating
+   * supply with staff (admin/support) AND the `excluded_users` blacklist
+   * dropped (consistent with every other figure on /rewards/shard-opens).
+   */
   held: number;
-  /** Wallets currently holding > 0 shards. */
+  /** Real-customer wallets currently holding > 0 shards (staff + blacklist dropped). */
   holders: number;
   /**
-   * Σ `packs.shard_cost` over every shard-pack open (the only shard sink) —
-   * lifetime, capped at the 365d lookback so this never full-scans history.
+   * Σ `packs.shard_cost` over every (staff + blacklist excluded) shard-pack
+   * open (the only shard sink) — lifetime, capped at the 365d lookback so this
+   * never full-scans history.
    */
   spent: number;
   /** Shards ever given out = held + spent (the headline figure). */
@@ -392,14 +407,28 @@ async function queryShardPackOpens(
   const safePage = Math.max(1, Math.floor(page));
   const offset = (safePage - 1) * safePerPage;
 
+  // ── STAFF + BLACKLIST scope (applied to EVERY query below). Drop staff
+  //    (admin/support) AND the admin-managed `excluded_users` blacklist so no
+  //    internal/excluded account inflates any figure on the page — the same
+  //    population filter the `getTopOpenedPacks24h` opens analogue uses. The
+  //    blacklist ids are escaped through the canonical `blacklistNotInClause`;
+  //    `days` is an integer from a fixed switch (no injection surface), so the
+  //    interval is inlined for `$queryRawUnsafe`. Empty blacklist → empty tail
+  //    → staff-only filter (still valid SQL).
+  const excluded = await getExcludedUserIds();
+  const openerScopeSql = `gs.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistNotInClause(
+    "id",
+    excluded,
+  )})`;
+
   // ── Window-scoped opens = game_sessions(game_type='pack') joined to the
   //    SHARD packs (pack_type='shard'). Shards spent = pack.shard_cost per
   //    open. Card value/count via the provably-fair → user_inventory chain
   //    (one PF row per open, verified). The window predicate is on the
-  //    session's created_at. Parameterised interval → no injection surface.
+  //    session's created_at. Staff + blacklist openers are excluded.
 
-  // Summary KPIs across ALL opens in the window (uncapped count/sums).
-  const summaryRows = await db.$queryRaw<RawSummaryRow[]>`
+  // Summary KPIs across ALL (scoped) opens in the window (uncapped count/sums).
+  const summaryRows = await db.$queryRawUnsafe<RawSummaryRow[]>(`
     SELECT
       COUNT(*)::bigint AS opens,
       COUNT(DISTINCT gs.user_id)::bigint AS openers,
@@ -411,7 +440,8 @@ async function queryShardPackOpens(
     LEFT JOIN provably_fair_results pf ON pf.game_session_id = gs.id
     LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
     WHERE gs.game_type::text = 'pack'
-      AND gs.created_at >= NOW() - (${days} * INTERVAL '1 day')`;
+      AND gs.created_at >= NOW() - (${days} * INTERVAL '1 day')
+      AND ${openerScopeSql}`);
 
   const s = summaryRows[0];
   const totalOpens = s ? Number(s.opens) : 0;
@@ -444,8 +474,8 @@ async function queryShardPackOpens(
   const totalCardCount = Number(s?.card_count ?? 0);
 
   // ── Per-pack breakdown: opens / shards spent / card value $ / card count.
-  //    Sorted by opens desc.
-  const packRows = await db.$queryRaw<RawPackRow[]>`
+  //    Sorted by opens desc. Same staff + blacklist opener scope.
+  const packRows = await db.$queryRawUnsafe<RawPackRow[]>(`
     SELECT
       pk.id::text AS pack_id,
       pk.name AS pack_name,
@@ -460,8 +490,9 @@ async function queryShardPackOpens(
     LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
     WHERE gs.game_type::text = 'pack'
       AND gs.created_at >= NOW() - (${days} * INTERVAL '1 day')
+      AND ${openerScopeSql}
     GROUP BY pk.id, pk.name, pk.shard_cost
-    ORDER BY opens DESC, shards_spent DESC`;
+    ORDER BY opens DESC, shards_spent DESC`);
 
   const packs: ShardPackBreakdownRow[] = packRows.map((r) => ({
     packId: r.pack_id,
@@ -473,11 +504,14 @@ async function queryShardPackOpens(
     cardCount: Number(r.card_count ?? 0),
   }));
 
-  // ── Paginated feed of individual opens (newest first). The user join,
-  //    pack-name and card-name resolution run ONLY for the page slice. The PF
-  //    join is index-backed (idx_pf_results_game_session_id); inventory + card
-  //    lookups are PK seeks — cheap and bounded to ≤perPage rows.
-  const feedRows = await db.$queryRaw<RawFeedRow[]>`
+  // ── Paginated feed of individual (scoped) opens (newest first). The user
+  //    join, pack-name and card-name resolution run ONLY for the page slice.
+  //    The PF join is index-backed (idx_pf_results_game_session_id); inventory
+  //    + card lookups are PK seeks — cheap and bounded to ≤perPage rows. Same
+  //    staff + blacklist opener scope as the summary/breakdown above, so the
+  //    feed rows reconcile with the headline counts. `safePerPage`/`offset` are
+  //    already integer-clamped (no injection surface).
+  const feedRows = await db.$queryRawUnsafe<RawFeedRow[]>(`
     SELECT
       gs.id::text AS id,
       gs.user_id,
@@ -497,9 +531,10 @@ async function queryShardPackOpens(
     LEFT JOIN cards ca ON ca.id = ui.card_id
     WHERE gs.game_type::text = 'pack'
       AND gs.created_at >= NOW() - (${days} * INTERVAL '1 day')
+      AND ${openerScopeSql}
     ORDER BY gs.created_at DESC
     LIMIT ${safePerPage}
-    OFFSET ${offset}`;
+    OFFSET ${offset}`);
 
   const feedData: ShardPackOpenRow[] = feedRows.map((r) => ({
     id: r.id,
@@ -665,20 +700,42 @@ async function queryShardGivenOut(env: DbEnv): Promise<ShardGivenOutResult> {
 
   const db = await getDb();
 
+  // ── STAFF + BLACKLIST scope (applied to the supply, the sink AND the daily
+  //    series so the "Shards given out / held / holders / spent" headline and
+  //    the chart all drop staff (admin/support) + the admin-managed
+  //    `excluded_users` blacklist — consistent with the opens queries above.
+  //    Two fragments: one for `balances.user_id` (the supply join), one for
+  //    `gs.user_id` (the opens sink). Blacklist ids escaped via the canonical
+  //    `blacklistNotInClause`; `LIFETIME_LOOKBACK_DAYS` is a constant integer
+  //    (no injection surface). NOTE: this is deliberately stricter than the
+  //    whole-economy supply snapshot in `getCoinsEconomy` (which keeps ALL
+  //    holders as a balance-sheet figure) — here the page must read as "shards
+  //    held by real (non-staff, non-excluded) users".
+  const excluded = await getExcludedUserIds();
+  const blacklistBalances = blacklistNotInClause("b.user_id", excluded);
+  const openerScopeSql = `gs.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistNotInClause(
+    "id",
+    excluded,
+  )})`;
+
   // Live integer-shard supply (Σ balances.shards) + the only shard sink
   // (Σ pack.shard_cost over shard-pack opens). Supply is window-independent;
   // the sink is capped at the 365d lookback so it never full-scans history.
   // One round-trip via a cross join of two single-row scalar aggregates.
-  const rows = await db.$queryRaw<RawGivenOutRow[]>`
+  // Both legs drop staff + blacklist (supply via a join on balances.user_id,
+  // sink via the gs.user_id scope subquery).
+  const rows = await db.$queryRawUnsafe<RawGivenOutRow[]>(`
     SELECT
       sup.total_shards AS held,
       sup.holders AS holders,
       COALESCE(spend.shards_spent, 0) AS spent
     FROM (
       SELECT
-        COALESCE(SUM(shards), 0)::text AS total_shards,
-        COUNT(*) FILTER (WHERE shards > 0)::bigint AS holders
-      FROM balances
+        COALESCE(SUM(b.shards), 0)::text AS total_shards,
+        COUNT(*) FILTER (WHERE b.shards > 0)::bigint AS holders
+      FROM balances b
+      JOIN "user" u ON u.id = b.user_id
+      WHERE u.role NOT IN ('admin', 'support') ${blacklistBalances}
     ) sup
     CROSS JOIN (
       SELECT COALESCE(SUM(pk.shard_cost), 0)::bigint AS shards_spent
@@ -686,18 +743,20 @@ async function queryShardGivenOut(env: DbEnv): Promise<ShardGivenOutResult> {
       JOIN packs pk ON pk.id = gs.game_id AND pk.pack_type = 'shard'
       WHERE gs.game_type::text = 'pack'
         AND gs.created_at >= NOW() - (${LIFETIME_LOOKBACK_DAYS} * INTERVAL '1 day')
-    ) spend`;
+        AND ${openerScopeSql}
+    ) spend`);
 
   const r = rows[0];
   const held = Number(r?.held ?? 0);
   const holders = Number(r?.holders ?? 0);
   const spent = Number(r?.spent ?? 0);
 
-  // ── Daily SHARDS SPENT on opens — the only real shard time-series. Σ
-  //    pack.shard_cost per day over shard-pack opens, bounded at the same
-  //    365d lookback (no unbounded scan). Parameterised interval → no
-  //    injection surface. Integer shards, never USD.
-  const dailyRows = await db.$queryRaw<RawShardDailyRow[]>`
+  // ── Daily SHARDS SPENT on (scoped) opens — the only real shard time-series.
+  //    Σ pack.shard_cost per day over shard-pack opens, bounded at the same
+  //    365d lookback (no unbounded scan). Staff + blacklist openers excluded so
+  //    the chart reconciles with the headline `spent`. Integer shards, never
+  //    USD.
+  const dailyRows = await db.$queryRawUnsafe<RawShardDailyRow[]>(`
     SELECT
       to_char(date_trunc('day', gs.created_at), 'YYYY-MM-DD') AS day,
       COALESCE(SUM(pk.shard_cost), 0)::bigint AS spent,
@@ -706,8 +765,9 @@ async function queryShardGivenOut(env: DbEnv): Promise<ShardGivenOutResult> {
     JOIN packs pk ON pk.id = gs.game_id AND pk.pack_type = 'shard'
     WHERE gs.game_type::text = 'pack'
       AND gs.created_at >= NOW() - (${LIFETIME_LOOKBACK_DAYS} * INTERVAL '1 day')
+      AND ${openerScopeSql}
     GROUP BY 1
-    ORDER BY 1`;
+    ORDER BY 1`);
   const daily = dailyRows.map((d) => ({
     date: d.day,
     spent: Number(d.spent ?? 0),

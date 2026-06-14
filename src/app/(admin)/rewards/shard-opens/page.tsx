@@ -65,6 +65,11 @@ function fmtShards(n: number): string {
  * UNIT: integer SHARDS, never USD. Shards are a NEUTRAL secondary wager
  * currency, so supply/holders/spent are neutral readouts (cyan / blue) — never
  * a House-POV money colour and never a "$" figure.
+ *
+ * SCOPE: staff (admin/support) + the `excluded_users` blacklist are dropped
+ * from the supply, holders, spent and daily series inside `getShardGivenOut`
+ * (consistent with the opens section below), so an excluded/internal account
+ * can never inflate the "shards given out" headline.
  */
 async function EconomyOverviewContent() {
   // ONE bounded + cached read: the TRUE integer-SHARD snapshot — held (Σ
@@ -147,14 +152,14 @@ async function EconomyOverviewContent() {
             <MetricTile
               label="Out there now"
               value={formatNumber(givenOut.held)}
-              sub="circulating supply · live"
+              sub="real-customer supply · live"
               icon={Globe}
               accent="cyan"
             />
             <MetricTile
               label="Holders"
               value={formatNumber(givenOut.holders)}
-              sub="wallets holding shards"
+              sub="customer wallets holding shards"
               icon={Users}
               accent="blue"
             />
@@ -206,9 +211,12 @@ async function EconomyOverviewContent() {
  * cost) = rose. There is NO shard payout — shard packs return a card, not
  * shards.
  *
- * SCOPE: UNSCOPED raw activity feed (staff/creator opens shown too) — this is
- * "who opened shard packs and what happened", not the USD GGR/NGR metric
- * layer.
+ * SCOPE: staff (admin/support) + the `excluded_users` blacklist are dropped
+ * from every figure (opens, openers, shards spent, card $ value, per-pack
+ * breakdown and the feed) — the same population filter the `getTopOpenedPacks24h`
+ * opens analogue uses. This is an activity/audit surface, so creators are NOT
+ * dropped wholesale here (that is reserved for the customer GGR/NGR money
+ * layer); the consistent page rule is staff + blacklist.
  */
 async function OpensContent({
   period,
