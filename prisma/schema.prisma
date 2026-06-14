@@ -1755,6 +1755,12 @@ enum ledger_transaction_type {
   // balance the user SPENT to buy XP (a debit: balance_after = balance_before −
   // amount); metadata.xp_awarded carries the XP granted. House gain → emerald.
   xp_purchase
+  // Present on BOTH live prod + dev enums (verified read-only 2026-06-14); the
+  // committed schema lagged. Generated-client sync only — NOT a DB migration.
+  // balance_withdrawal = the cash leg of a crypto-BALANCE withdrawal (new
+  // sweepstakes model). Without it Prisma threw reading these ledger rows and
+  // safeQuery silently emptied the Finances/transactions views.
+  balance_withdrawal
 }
 
 enum race_type {
@@ -1816,6 +1822,9 @@ enum voucher_origin {
   creator_fill_conversion
   creator_multiplier_payout
   upgrader_excess_to_voucher
+  // Present on the live DB enum (verified read-only 2026-06-14); the committed
+  // schema lagged. Generated-client sync only — NOT a DB migration.
+  manual
 }
 
 enum pack_tag {
