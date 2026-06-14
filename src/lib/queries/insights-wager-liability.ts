@@ -369,6 +369,13 @@ async function queryWagerLiability(): Promise<WagerLiabilityResult> {
           COUNT(*) FILTER (WHERE COALESCE(b.wager_requirement_remaining, 0) > 0)::bigint AS users
         FROM balances b
         WHERE b.user_id IN ${scopeSql}
+          -- Exclude fully-exempt users (per-user override of 0 bps): the backend
+          -- ignores their stored debt live, and the per-user wager card forces
+          -- remaining = 0 for them — so exclude here for card↔dashboard parity
+          -- and to avoid inflating the gated-debt headline with ignored debt.
+          AND b.user_id NOT IN (
+            SELECT user_id FROM user_wager_requirements WHERE wager_requirement_bps = 0
+          )
       `,
       );
       totalWithdrawalDebtUsd = round2(num(debtRows[0]?.debt));

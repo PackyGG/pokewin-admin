@@ -655,6 +655,7 @@ function WagerRequirementBlock({
     ? Math.min(100, (remainingUsd / availableBalanceUsd) * 100)
     : 0;
   const withdrawablePct = Math.max(0, 100 - lockedPct);
+  const debtExceedsBalance = remainingUsd > availableBalanceUsd + 0.005;
 
   return (
     <div className="rounded-lg border bg-muted/30 p-3 space-y-2.5">
@@ -725,6 +726,8 @@ function WagerRequirementBlock({
               {formatCurrency(remainingUsd)} locked
             </span>{" "}
             — must be wagered off before it can be withdrawn.
+            {debtExceedsBalance &&
+              " The debt exceeds the current balance."}
           </p>
           <p className="text-[10px] leading-relaxed text-muted-foreground">
             Partial lock: the locked debt reserves that much of the balance;

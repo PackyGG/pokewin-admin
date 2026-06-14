@@ -867,11 +867,8 @@ function WagerLeftHeroTile({
       <KpiTile label="Wager Left" value="Exempt" sub="0× requirement" icon={Hourglass} accent="cyan" />
     );
   }
-  if (wp.remainingUsd == null) {
-    return (
-      <KpiTile label="Wager Left" value="—" sub="needs backend" icon={Hourglass} accent="cyan" />
-    );
-  }
+  // remainingUsd is the authoritative frozen debt (always column-sourced now,
+  // never null) — 0 means the requirement is met and the balance is free.
   if (wp.remainingUsd <= 0) {
     return (
       <KpiTile label="Wager Left" value="Met ✓" sub="can withdraw" icon={Hourglass} accent="cyan" />
