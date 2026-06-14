@@ -11,6 +11,7 @@ import { getDefaultRouteForUser } from "@/lib/dal";
 import { getEffectiveRoles, pickPrimaryRole } from "@/lib/admin-roles";
 import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { isMandatory2faEnabled } from "@/lib/admin-guards";
 import { MS_PER_MINUTE, MS_PER_HOUR } from "@/lib/utils/time";
 
 const loginSchema = z.object({
@@ -125,6 +126,26 @@ export async function login(
   // Server Component render — this keeps everything in one cookie set
   // from a Server Action.
   if (!adminUser.totp_secret) {
+    await createPendingSession({
+      adminUserId: adminUser.id,
+      email: adminUser.email,
+      username: adminUser.username,
+      role: adminUser.role,
+      totpSecret: generateSecret(),
+    });
+    return { requiresSetup: true };
+  }
+
+  // A secret exists but 2FA is NOT enabled (setup was started but never
+  // completed). Guard 4 — mandatory 2FA: when the flag is ON (default), this
+  // password-only bypass is CLOSED — the user must finish enrollment before
+  // they get a session. They already have a `totp_secret`, but `totp_enabled`
+  // is false, so route them through the SETUP flow with a fresh secret (the
+  // existing requiresSetup path mints a pending cookie that the (auth)
+  // middleware allows — no loop). When the flag is OFF the legacy bypass below
+  // still runs, so disabling the flag instantly restores the old behavior with
+  // no deploy.
+  if (await isMandatory2faEnabled()) {
     await createPendingSession({
       adminUserId: adminUser.id,
       email: adminUser.email,

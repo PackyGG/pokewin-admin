@@ -5,11 +5,18 @@ import { getDefaultRouteForUser } from "@/lib/dal";
 import { headers } from "next/headers";
 import { adminDb } from "@/lib/admin-db";
 import {
+  getSession,
   getPendingSession,
   deletePendingSession,
+  createPendingSession,
   createSession,
 } from "@/lib/session";
-import { verifyTOTP, generateRecoveryCodes, hashRecoveryCodes } from "@/lib/totp";
+import {
+  verifyTOTP,
+  generateSecret,
+  generateRecoveryCodes,
+  hashRecoveryCodes,
+} from "@/lib/totp";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { MS_PER_HOUR } from "@/lib/utils/time";
 
@@ -17,6 +24,53 @@ export type SetupState = {
   error?: string;
   recoveryCodes?: string[];
 };
+
+/**
+ * Phase D mandatory-2FA bridge. When `verifySession` redirects an
+ * authenticated-but-NOT-enrolled admin to /setup-2fa, they arrive with a real
+ * `admin_session` cookie but NO pending-2FA cookie — so the setup page can't
+ * render the QR (the secret normally lives in the pending cookie minted at
+ * login). This Server Action mints that pending cookie from the live session
+ * (cookie writes are allowed in a Server Action, unlike a Server Component
+ * render) with a FRESH secret, then redirects back to /setup-2fa so the QR
+ * renders. The setup-form's confirm step then enables 2FA + drops them into a
+ * real session as usual.
+ *
+ * Safe-by-construction: it only mints a pending cookie when the user is truly
+ * non-enrolled (`totp_enabled === false`). An already-enrolled user is sent to
+ * their dashboard instead (no setup needed). A request with no live session is
+ * sent to /login. The secret is server-generated and lives ONLY in the signed
+ * pending cookie — never trusted from the client.
+ */
+export async function bootstrapSetupFromSession(): Promise<void> {
+  const session = await getSession();
+  if (!session) redirect("/login");
+
+  const adminUser = await adminDb.admin_users.findUnique({
+    where: { id: session.userId },
+    select: { id: true, email: true, username: true, role: true, totp_enabled: true },
+  });
+  // No row / inactive-handled-elsewhere: fall back to login rather than minting.
+  if (!adminUser) redirect("/login");
+
+  // Already enrolled → nothing to set up. Send them to their normal landing
+  // route (this is also the guard against an enrolled admin who manually hits
+  // /setup-2fa via the middleware exception).
+  if (adminUser.totp_enabled) {
+    redirect(await getDefaultRouteForUser(adminUser.id, adminUser.role));
+  }
+
+  // Non-enrolled: mint a fresh pending-2FA session and bounce back to the setup
+  // page, which will now find the pending cookie and render the QR.
+  await createPendingSession({
+    adminUserId: adminUser.id,
+    email: adminUser.email,
+    username: adminUser.username,
+    role: adminUser.role,
+    totpSecret: generateSecret(),
+  });
+  redirect("/setup-2fa");
+}
 
 export async function confirmSetup(
   _prevState: SetupState,

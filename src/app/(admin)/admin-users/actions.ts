@@ -12,11 +12,17 @@ import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-re
 import { logError } from "@/lib/errors/logger";
 import { computeAllowedPagesForRoles } from "@/lib/role-baselines";
 import { isPersistableAdminRole, pickPrimaryRole } from "@/lib/admin-roles";
-import { writeAdminUserWithRoles } from "@/lib/admin-user-roles";
+import { readAdminUserWithRoles, writeAdminUserWithRoles } from "@/lib/admin-user-roles";
 import {
   loadUserPermissionState,
   rematerializeForRoleChange,
 } from "@/lib/permissions/write-paths";
+import {
+  countOtherActiveEffectiveAdmins,
+  roleSetHasAdmin,
+  wouldDropLastActiveAdmin,
+  wouldRemoveOwnAdminViaRoles,
+} from "@/lib/admin-guards";
 
 /**
  * Normalize a caller-supplied role payload into a deduped, validated set
@@ -165,6 +171,46 @@ export async function toggleAdminActive(
 
   await require2FA(session.userId, totpCode);
 
+  // Guard 1 — last-admin. Deactivating an admin removes them from the active-
+  // admin pool. Block it when the target is an admin being turned OFF and no
+  // OTHER active admin remains. Reads the target's effective roles resiliently
+  // (the additive `roles` column degrades to [] → effective [role]). The
+  // self-deactivation case is already blocked above; this covers deactivating
+  // the last OTHER admin.
+  if (!isActive) {
+    const target = await readAdminUserWithRoles(
+      () =>
+        adminDb.admin_users.findUnique({
+          where: { id: adminUserId },
+          select: { role: true, roles: true },
+        }),
+      () =>
+        adminDb.admin_users.findUnique({
+          where: { id: adminUserId },
+          select: { role: true },
+        }),
+    );
+    if (target) {
+      const t = target as { role: string; roles?: string[] };
+      const targetIsAdmin = roleSetHasAdmin(t.role, t.roles);
+      if (targetIsAdmin) {
+        const otherActiveAdmins = await countOtherActiveEffectiveAdmins(adminUserId);
+        if (
+          wouldDropLastActiveAdmin({
+            // The target IS an active admin today (this action is flipping it
+            // OFF) — guaranteed active here because we only reach this when the
+            // toggle target is being deactivated from an active state.
+            targetIsActiveAdminNow: true,
+            targetStaysActiveAdmin: false,
+            otherActiveAdminCount: otherActiveAdmins,
+          })
+        ) {
+          throw new Error("Cannot remove the last active admin");
+        }
+      }
+    }
+  }
+
   await adminDb.admin_users.update({
     where: { id: adminUserId },
     data: { is_active: isActive },
@@ -251,6 +297,46 @@ export async function setAdminRoles(
   const state = await loadUserPermissionState(adminUserId);
   if (!state) throw new Error("Admin user not found");
 
+  // ── Phase D guards ──────────────────────────────────────────────────────────
+  // Whether the target holds the effective `admin` role today vs. under the
+  // proposed role set. `state.roles` is the current effective set;
+  // `roles`/`primary` are the new persistable set.
+  const targetIsAdminNow = state.roles.includes("admin");
+  const targetStaysAdmin = roleSetHasAdmin(primary, roles);
+
+  // Guard 2 — self-demotion. An admin can't strip their OWN admin role.
+  if (
+    wouldRemoveOwnAdminViaRoles({
+      isSelf: session.userId === adminUserId,
+      currentlyAdmin: targetIsAdminNow,
+      newRoles: roles,
+    })
+  ) {
+    throw new Error("You can't remove your own admin access");
+  }
+
+  // Guard 1 — last-admin. Block a role change that would drop the count of
+  // ACTIVE admins to zero. Only relevant when this change removes the target's
+  // admin role; `targetStaysAdmin` short-circuits the (cheap) DB count when it
+  // doesn't. We require the TARGET to be active today for it to "count" as the
+  // last admin — a deactivated admin isn't holding an active admin slot.
+  if (targetIsAdminNow && !targetStaysAdmin) {
+    const targetRow = await adminDb.admin_users.findUnique({
+      where: { id: adminUserId },
+      select: { is_active: true },
+    });
+    const otherActiveAdmins = await countOtherActiveEffectiveAdmins(adminUserId);
+    if (
+      wouldDropLastActiveAdmin({
+        targetIsActiveAdminNow: targetRow?.is_active === true,
+        targetStaysActiveAdmin: false,
+        otherActiveAdminCount: otherActiveAdmins,
+      })
+    ) {
+      throw new Error("Cannot remove the last active admin");
+    }
+  }
+
   // Canonical re-materialization (Phase C): route through the ONE materializer
   // (computeEffectivePermissions) instead of the old additive `current ∪
   // baseline` merge. The user's per-user override is PRESERVED — explicit
@@ -324,11 +410,41 @@ export async function deleteAdminUser(
   // require2FA throws on invalid; the caller surfaces it via toast.
   await require2FA(session.userId, totpCode);
 
-  const target = await adminDb.admin_users.findUnique({
-    where: { id: adminUserId },
-    select: { id: true, email: true, username: true },
-  });
+  const target = await readAdminUserWithRoles(
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: adminUserId },
+        select: { id: true, email: true, username: true, role: true, roles: true, is_active: true },
+      }),
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: adminUserId },
+        select: { id: true, email: true, username: true, role: true, is_active: true },
+      }),
+  );
   if (!target) return { success: false, error: "Admin user not found" };
+
+  // Guard 1 — last-admin. Deleting an active admin removes them from the pool.
+  // Block when the target is an active admin and no OTHER active admin remains.
+  {
+    const t = target as {
+      role: string;
+      roles?: string[];
+      is_active: boolean;
+    };
+    if (t.is_active && roleSetHasAdmin(t.role, t.roles)) {
+      const otherActiveAdmins = await countOtherActiveEffectiveAdmins(adminUserId);
+      if (
+        wouldDropLastActiveAdmin({
+          targetIsActiveAdminNow: true,
+          targetStaysActiveAdmin: false,
+          otherActiveAdminCount: otherActiveAdmins,
+        })
+      ) {
+        return { success: false, error: "Cannot remove the last active admin" };
+      }
+    }
+  }
 
   // Audit BEFORE the delete so the event is always on record
   await createAdminAuditEvent({

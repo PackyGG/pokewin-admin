@@ -36,6 +36,18 @@ model admin_users {
   totp_enabled   Boolean              @default(false)
   recovery_codes String[]
   is_active      Boolean              @default(true)
+  // Session-revocation watermark (Phase D safety guards — see
+  // ROLE_REDESIGN_DESIGN.md §D). When set, every admin_session JWT this user
+  // holds whose `iat` (issued-at, seconds) is BEFORE this instant is treated
+  // as revoked by `verifySession` (src/lib/dal.ts) — the gate redirects to
+  // /login. Stamped to `now()` by the force-expire-sessions action so a
+  // logged-out / compromised admin's existing 12h tokens die immediately.
+  // Nullable + default NULL = no revocation (the state of every row today), so
+  // this is fully behavior-preserving until an admin force-expires someone.
+  // NOTE: the column already exists in the ADMIN DB (applied + verified, all 17
+  // rows = NULL); this schema delta only teaches the Prisma client about it —
+  // do NOT `prisma db push` / `migrate` (would risk dropping un-modeled drift).
+  sessions_valid_after DateTime?       @db.Timestamptz()
   // Profile fields (editable by the admin themselves on /profile).
   // display_username: label shown in the header/UI; falls back to `username` when null.
   // profile_image / profile_image_mime: raw avatar bytes + MIME stored directly in DB.

@@ -1,13 +1,37 @@
 import { redirect } from "next/navigation";
-import { getPendingSession } from "@/lib/session";
+import { getPendingSession, getSession } from "@/lib/session";
 import { generateTOTPUri, generateQRCode } from "@/lib/totp";
 import { SetupForm } from "./setup-form";
+import { SetupBootstrap } from "./setup-bootstrap";
 
 export const metadata = { title: "Setup 2FA" };
 
 export default async function Setup2FAPage() {
   const pending = await getPendingSession();
-  if (!pending) redirect("/login");
+
+  // No pending cookie. Two cases:
+  //   • A logged-in admin sent here by `verifySession`'s Phase D mandatory-2FA
+  //     guard (authenticated, but not enrolled) — they have a real
+  //     `admin_session` but no pending cookie. Render the bootstrap trigger,
+  //     which mints a pending session from that real session (via a Server
+  //     Action) and reloads so the QR renders. This is the loop-free bridge for
+  //     the middleware exception that lets an authenticated user reach this page.
+  //   • Anyone else (no session at all) → /login.
+  if (!pending) {
+    const session = await getSession();
+    if (!session) redirect("/login");
+    return (
+      <div className="w-[520px] max-w-full rounded-2xl border border-white/10 bg-white/5 p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
+        <div className="mb-8 text-center">
+          <h1 className="text-xl font-semibold text-foreground">Set up Two-Factor Authentication</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Two-factor authentication is required. Finishing setup…
+          </p>
+        </div>
+        <SetupBootstrap />
+      </div>
+    );
+  }
 
   // Secret lives inside the signed pending-session cookie (minted by
   // the login action). If it's absent the user is on the verify path

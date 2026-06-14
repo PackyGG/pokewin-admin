@@ -20,6 +20,14 @@ export type SessionPayload = {
   email: string;
   username: string;
   expiresAt: Date;
+  // JWT issued-at (seconds since epoch), populated by jose's `setIssuedAt()`
+  // on mint and read back from the verified token. Drives the Phase D session-
+  // revocation guard in `verifySession`: a token whose `iat` is before the
+  // account's `sessions_valid_after` watermark is treated as revoked. Optional
+  // because cookies minted before this field was surfaced won't carry it on the
+  // typed payload — consumers treat a missing `iat` as "issued at the epoch"
+  // (the safe direction: a watermark then forces a fresh login).
+  iat?: number;
 };
 
 type PendingSessionPayload = {

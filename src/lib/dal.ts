@@ -8,9 +8,10 @@ import {
   getEffectiveRoles,
   pickPrimaryRole,
 } from "./admin-roles";
-import { readAdminUserWithRoles } from "./admin-user-roles";
+import { readAdminUserWithRoles, isMissingColumnError } from "./admin-user-roles";
 import type { AdminRole } from "./admin-roles";
 import { pageAccessGranted } from "./admin-pages";
+import { isSessionRevoked, isMandatory2faEnabled } from "./admin-guards";
 
 export { getDefaultRoute };
 export type { AdminRole };
@@ -65,6 +66,58 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
   );
   if (!adminUser?.is_active) {
     redirect("/login");
+  }
+
+  // ── Phase D safety guards (session revocation + mandatory 2FA) ──────────────
+  // Read the two guard columns SEPARATELY from the role read above so a
+  // missing column can't perturb the (already battle-tested) role/active path.
+  // Both columns exist on prod, but if either is absent on some DB the read
+  // degrades to the SAFE no-op (no revocation, treat 2FA as satisfied) so the
+  // gate can NEVER lock out a normal enrolled admin because of a schema gap.
+  // This runs in the root layout on every request — it must not throw on the
+  // happy path.
+  let sessionsValidAfter: Date | null = null;
+  let totpEnabled = true; // safe default: never bounce on a read failure
+  try {
+    const guardRow = await adminDb.admin_users.findUnique({
+      where: { id: session.userId },
+      select: { sessions_valid_after: true, totp_enabled: true },
+    });
+    sessionsValidAfter = guardRow?.sessions_valid_after ?? null;
+    totpEnabled = guardRow?.totp_enabled ?? true;
+  } catch (err) {
+    // P2022 (column missing) → degrade to the no-op defaults above. Any OTHER
+    // error is also swallowed to the safe defaults: the role/active checks
+    // already passed, so a transient blip here must not white-screen the shell.
+    if (!isMissingColumnError(err)) {
+      console.error("[dal] verifySession guard-column read failed:", err);
+    }
+  }
+
+  // Guard 3 — real session revocation. If the account has a watermark and this
+  // JWT was issued before it (force-expire / compromise response), the token is
+  // dead → send to /login. `session.iat` comes from jose's `setIssuedAt()`.
+  if (isSessionRevoked(session.iat, sessionsValidAfter)) {
+    redirect("/login");
+  }
+
+  // Guard 4 — mandatory 2FA (flag-gated, default ON). A user who has NOT
+  // enrolled in 2FA (`totp_enabled === false`) is pushed to the existing setup
+  // route under the (auth) group. This is the DEFENSE-IN-DEPTH leg; the PRIMARY
+  // enforcement is closing the password-only login bypass in
+  // (auth)/login/actions.ts, so a non-enrolled user can't obtain a fresh
+  // session in the first place. Two cooperating pieces make this redirect
+  // loop-free for the (today empty) population it can fire for:
+  //   • `src/middleware.ts` lets an authenticated-but-non-enrolled user STAY on
+  //     /setup-2fa instead of bouncing them back to /dashboard, and
+  //   • `(auth)/setup-2fa/page.tsx` mints a fresh pending-2FA session from the
+  //     real admin_session when one is missing, so the QR renders.
+  // Enrolled admins (every admin today, totp_enabled === true) NEVER reach this
+  // branch, so neither the redirect nor the flag read can bounce them — a flag
+  // read that degrades to ON only ever affects a non-enrolled user, who SHOULD
+  // be sent to setup.
+  if (!totpEnabled && (await isMandatory2faEnabled())) {
+    redirect("/setup-2fa");
   }
 
   // Override the JWT role(s) with the DB truth so every downstream check

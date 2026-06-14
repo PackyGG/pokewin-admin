@@ -12,19 +12,50 @@ import {
   loadUserPermissionState,
   materializeForOverride,
 } from "@/lib/permissions/write-paths";
+import { wouldReduceOwnAccessViaOverride } from "@/lib/admin-guards";
 
 export async function forceExpireAllSessions(adminUserId: string) {
   const session = await requireAdmin();
   await requireCapability(session, "__can_force_expire_admin_sessions", "force-expire admin sessions");
 
+  const now = new Date();
+
+  // Mark the admin_sessions rows logged-out (the existing behavior — keeps the
+  // sessions list accurate).
   await adminDb.admin_sessions.updateMany({
     where: {
       admin_user_id: adminUserId,
       logged_out_at: null,
-      expires_at: { gt: new Date() },
+      expires_at: { gt: now },
     },
-    data: { logged_out_at: new Date() },
+    data: { logged_out_at: now },
   });
+
+  // Guard 3 — REAL revocation. The admin_sessions rows are an audit record, not
+  // the auth token; the live session is the signed `admin_session` JWT in the
+  // user's cookie, which the sessions list can't reach. Stamp the account's
+  // `sessions_valid_after` watermark to NOW so `verifySession` (src/lib/dal.ts)
+  // rejects every JWT this user already holds (issued-at before NOW) on their
+  // very next request — their 12h tokens die immediately instead of lingering.
+  // Wrapped so a DB without the column (shouldn't happen — it's applied on
+  // prod) still completes the logged-out write + audit rather than throwing.
+  try {
+    await adminDb.admin_users.update({
+      where: { id: adminUserId },
+      data: { sessions_valid_after: now },
+      select: { id: true },
+    });
+  } catch (err) {
+    const code = (err as { code?: string })?.code;
+    const missingColumn =
+      code === "P2022" ||
+      (err instanceof Error && /column .* does not exist/i.test(err.message));
+    if (!missingColumn) throw err;
+    console.error(
+      "[forceExpireAllSessions] sessions_valid_after column missing — JWT-level revocation skipped:",
+      err,
+    );
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -76,6 +107,22 @@ export async function updateUserPermissions(
   // Re-materialize allowed_pages = role/custom baseline ∪ grants \ revokes
   // via the canonical materializer (the single writer for every path).
   const allowedPages = materializeForOverride(state, sanitizedOverride);
+
+  // Guard 2 — self-demotion. An operator can't reduce their OWN access through
+  // the per-user editor. (In practice an admin can't reach here for themselves
+  // — admin targets are rejected above and an admin's own role set includes
+  // admin — but this is defense-in-depth: any self-edit that removes a token
+  // the actor currently holds is blocked.) `state.allowedPages` is the actor's
+  // current materialized set; `allowedPages` is the post-save set.
+  if (
+    wouldReduceOwnAccessViaOverride({
+      isSelf: session.userId === userId,
+      currentAllowed: state.allowedPages,
+      nextAllowed: allowedPages,
+    })
+  ) {
+    throw new Error("You can't remove your own admin access");
+  }
 
   await adminDb.admin_users.update({
     where: { id: userId },
