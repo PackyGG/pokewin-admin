@@ -31,7 +31,7 @@ import { ExportButton } from "@/components/export-button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
   parseInsightsPeriod,
@@ -133,6 +133,7 @@ export default async function CostBreakdownPage({
       () => getCostBreakdownCached(period, periodLabel, 10),
       null,
       "insights.costBreakdown",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     // Lifetime realized P&L — the canonical balance-sheet snapshot
     // (deposits − withdrawals − on-site balance − inventory − unclaimed
@@ -149,6 +150,7 @@ export default async function CostBreakdownPage({
       () => getRealizedPnlSnapshot(),
       null,
       "insights.costBreakdown.lifetimePnl",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
 

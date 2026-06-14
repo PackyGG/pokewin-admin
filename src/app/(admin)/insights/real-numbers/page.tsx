@@ -36,7 +36,7 @@ import { FadeIn } from "@/components/fade-in";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
   getCostBreakdownLifetimeCached,
@@ -122,14 +122,31 @@ export default async function RealNumbersPage() {
       () => getCostBreakdownLifetimeCached(),
       null,
       "insights.realNumbers.cost",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
-    safeQuery(() => getInsightsHubWager(), 0, "insights.realNumbers.wager"),
-    safeQuery(() => getRealNumbersGameSplit(), null, "insights.realNumbers.split"),
-    safeQuery(() => getRealizedPnlSnapshot(), null, "insights.realNumbers.pnl"),
+    safeQuery(
+      () => getInsightsHubWager(),
+      0,
+      "insights.realNumbers.wager",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getRealNumbersGameSplit(),
+      null,
+      "insights.realNumbers.split",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getRealizedPnlSnapshot(),
+      null,
+      "insights.realNumbers.pnl",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
     safeQuery(
       () => getRewardSpendItemization(),
       null,
       "insights.realNumbers.rewardSpend",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     // Creator net-cash detail (deposited / withdrew / hold) — the
     // reconciliation note in the "Creator program cost" panel below.
@@ -137,6 +154,7 @@ export default async function RealNumbersPage() {
       () => getCreatorNetCashDetail(),
       null,
       "insights.realNumbers.creatorNetCash",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     // Creator program cost (gross house-funded: session tips + conversion
     // vouchers + leaderboard) — informational, shown in its own panel.
@@ -144,6 +162,7 @@ export default async function RealNumbersPage() {
       () => getCreatorProgramCost(),
       null,
       "insights.realNumbers.creatorProgramCost",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     // Realized P&L on the customers-only scope (creators EXCLUDED) — the
     // "customer cash margin" the closing waterfall lands on after the
@@ -154,6 +173,7 @@ export default async function RealNumbersPage() {
       () => getRealizedPnlCustomersExclCreators(),
       null,
       "insights.realNumbers.customerCash",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     // Recycling evidence (customer deposits + card sell-backs) for the
     // turnover→cash conversion line's inline proof (the ~3.5× re-wager).
@@ -161,6 +181,7 @@ export default async function RealNumbersPage() {
       () => getCustomerRecyclingDetail(),
       null,
       "insights.realNumbers.recycling",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
 
