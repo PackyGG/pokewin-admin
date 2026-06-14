@@ -1,4 +1,4 @@
-import { User, Settings, AlertTriangle } from "lucide-react";
+import { User, Settings, AlertTriangle, KeyRound } from "lucide-react";
 import { verifySession } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -8,6 +8,7 @@ import { FadeIn } from "@/components/fade-in";
 import { ROLE_COLORS } from "@/lib/constants";
 import { ProfileForm } from "./profile-form";
 import { PreferencesForm } from "./preferences-form";
+import { PasswordForm } from "./password-form";
 import { getAdminPreferences } from "@/lib/admin-preferences";
 
 export const metadata = { title: "My Profile" };
@@ -155,6 +156,21 @@ export default async function ProfilePage() {
                 initial={preferences}
                 profileFieldsAvailable={profile.profileFieldsAvailable}
               />
+            </CardContent>
+          </Card>
+        </div>
+
+        <div id="security" className="scroll-mt-20 space-y-3">
+          <SectionHeading icon={KeyRound} title="Security" />
+          <Card>
+            <CardHeader>
+              <CardDescription>
+                Change your password. Requires your current password and a 2FA
+                code. Only affects your own account.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <PasswordForm />
             </CardContent>
           </Card>
         </div>

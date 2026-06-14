@@ -13,6 +13,7 @@ import {
   Clock,
   Check,
   Database,
+  KeyRound,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
@@ -414,6 +415,12 @@ export function AdminHeader({
               <DropdownMenuItem>
                 <User className="size-4" />
                 <span>My Profile</span>
+              </DropdownMenuItem>
+            </Link>
+            <Link href="/profile#security" tabIndex={-1}>
+              <DropdownMenuItem>
+                <KeyRound className="size-4" />
+                <span>Change password</span>
               </DropdownMenuItem>
             </Link>
             <ThemeSubmenu />
