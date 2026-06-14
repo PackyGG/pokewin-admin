@@ -36,6 +36,19 @@ model admin_users {
   totp_enabled   Boolean              @default(false)
   recovery_codes String[]
   is_active      Boolean              @default(true)
+  // OWNER / ULTRA-ADMIN flag (orthogonal to the role/permission model). An
+  // owner bypasses EVERY page + capability check (like the `admin` role) AND
+  // the owner-only surfaces (Salaries, Excluded Users, the re-price tool,
+  // creator-hub-access toggles, admin balance-adjustment visibility, …). The
+  // permanent ROOT owner `motha` is owner via a hard-coded bypass in
+  // src/lib/owners.ts and is NOT driven by this column, so motha stays owner
+  // even if this row reads false. Only the main owner (motha) can toggle this
+  // for other admins (see admin-users/[id]/owner-actions.ts). Read DB-fresh in
+  // verifySession (NOT baked into the JWT) and surfaced as `session.isOwner`,
+  // same pattern as `role`/`is_active`. Additive + default false (every
+  // existing row → non-owner). The owner helpers P2022-degrade to false if this
+  // column ships ahead of code on some deploy.
+  is_owner       Boolean              @default(false)
   // Session-revocation watermark (Phase D safety guards — see
   // ROLE_REDESIGN_DESIGN.md §D). When set, every admin_session JWT this user
   // holds whose `iat` (issued-at, seconds) is BEFORE this instant is treated

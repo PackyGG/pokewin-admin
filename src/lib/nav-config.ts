@@ -118,7 +118,13 @@ export const NAV_GROUP_META: NavGroupMeta[] = [
 // sidebar's.
 // ---------------------------------------------------------------------------
 
-/** Motha-only — applied to every entry in the Insights sidebar group. */
+/**
+ * Owner-only — applied to every entry in the Insights sidebar group. The
+ * sidebar treats `usernameAllowlist` as a cosmetic gate that ANY owner bypasses
+ * (see `AppSidebar`'s `isOwner` prop), so this list is just the permanent root
+ * owner; the live audience is "any owner". The routes enforce
+ * `requireInsightsOwner` (now owner-gated) server-side.
+ */
 const INSIGHTS_USERNAME_ALLOWLIST = ["motha"] as const;
 
 const RAW_NAV_ENTRIES: NavEntry[] = [
@@ -367,7 +373,11 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     href: "/salaries",
     pageKey: "/salaries",
     icon: "Coins",
-    usernameAllowlist: ["motha", "void", "kotha"],
+    // Owner-only now (was the founder username allowlist motha/void/kotha). The
+    // sidebar lets ANY owner bypass this cosmetic gate (`isOwner` prop), so the
+    // list is just the permanent root owner; void/kotha no longer see the link
+    // (the route's `requireMotha` is owner-gated and would redirect them).
+    usernameAllowlist: ["motha"],
     inSidebar: true,
     inPalette: false,
   },

@@ -14,7 +14,7 @@ import { RightRailProvider } from "@/components/right-rail-context";
 import { CommandPalette } from "@/components/command-palette";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { redirect } from "next/navigation";
-import { verifySession, getUserPermissions } from "@/lib/dal";
+import { verifySession, getUserPermissions, sessionIsOwner } from "@/lib/dal";
 import { getSession, type SessionPayload } from "@/lib/session";
 import { getEffectiveRoles } from "@/lib/admin-roles";
 import {
@@ -241,6 +241,14 @@ export default async function AdminLayout({
   // only `motha`.
   const canEnterCreatorHub = canAccessCreatorHub(session, hubAccessSettings);
 
+  // OWNER / ultra-admin flag for the sidebar. Computed server-side from the
+  // DB-fresh session (verifySession populated `session.isOwner`); the permanent
+  // `motha` username is owner regardless. Lets the sidebar show the owner-only
+  // nav items (Salaries, Excluded Users, Insights group) to any owner and
+  // bypass the page-access gate for them. Fail-closed: the DB-failure session
+  // fallback only ever yields `true` for the `motha` username.
+  const isOwner = sessionIsOwner(session);
+
   // Chat/mutes panel is only surfaced to users who could reach the old
   // /chat page — keeps the same permission boundary as the removed route.
   const canOpenChatPanel =
@@ -265,6 +273,7 @@ export default async function AdminLayout({
           username={session.username}
           dbEnv={dbEnv}
           canEnterCreatorHub={canEnterCreatorHub}
+          isOwner={isOwner}
         />
         {/* SidebarInset is the shadcn shell partner to <Sidebar> — it's the
             <main> landmark that flexes to fill the space beside the sidebar

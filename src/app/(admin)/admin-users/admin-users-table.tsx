@@ -8,6 +8,7 @@ import {
   Wallet,
   Users as UsersIcon,
   KeyRound,
+  Crown,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/empty-state";
@@ -31,6 +32,8 @@ export type AdminUserRow = {
   roles: AdminRole[];
   isActive: boolean;
   totpEnabled: boolean;
+  /** True if the user is an OWNER / ultra-admin (effective — column or motha). */
+  isOwner: boolean;
   createdAt: string;
   /** Max(logged_in_at) across this admin's sessions, or null if never. */
   lastLoginAt: string | null;
@@ -88,6 +91,19 @@ function StatusBadge({ active }: { active: boolean }) {
       }
     >
       {active ? "Active" : "Inactive"}
+    </Badge>
+  );
+}
+
+/** Owner / ultra-admin badge — amber crown, shown only for owners. */
+function OwnerBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+    >
+      <Crown className="mr-1 size-3" />
+      Owner
     </Badge>
   );
 }
@@ -217,13 +233,16 @@ export function AdminUsersTable({
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">
-                        {row.displayUsername ?? row.username}
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-medium">
+                          {row.displayUsername ?? row.username}
+                        </span>
                         {row.id === currentUserId && (
-                          <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
+                          <span className="text-[10px] font-normal text-muted-foreground">
                             (you)
                           </span>
                         )}
+                        {row.isOwner && <OwnerBadge />}
                       </div>
                       <div className="truncate text-xs text-muted-foreground">
                         {row.email}
@@ -343,6 +362,7 @@ export function AdminUsersTable({
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               <RoleBadges roles={row.roles} />
+              {row.isOwner && <OwnerBadge />}
               <StatusBadge active={row.isActive} />
               <Badge
                 variant="outline"

@@ -8,6 +8,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
+import { isMainOwner } from "@/lib/owners";
 import {
   getAdminUserDetail,
   getAdminUserAuditStats,
@@ -52,6 +53,11 @@ export default async function AdminUserDetailPage({
   // permissions changes, etc.) — non-admin viewers must not be able to
   // browse it.
   const isCurrentUserAdmin = session.role === "admin";
+
+  // The owner-management card is visible ONLY to the main owner (motha). Other
+  // owners get full access but cannot grow/shrink the owner set — this matches
+  // the `requireMainOwner` gate on the `setAdminOwner` action.
+  const viewerIsMainOwner = isMainOwner(session);
 
   const emptyAuditEvents: PaginatedResult<AdminAuditEventItem> = {
     data: [],
@@ -146,6 +152,7 @@ export default async function AdminUserDetailPage({
           }))}
           isCurrentUserAdmin={isCurrentUserAdmin}
           rolesColumnExists={rolesColumnExists}
+          viewerIsMainOwner={viewerIsMainOwner}
         />
       </FadeIn>
     </div>

@@ -1,6 +1,7 @@
 import { getEffectiveRoles, type AdminRole } from "@/lib/admin-roles";
 import type { SessionPayload } from "@/lib/session";
 import { getAdminSetting, setAdminSetting, SETTINGS_KEYS } from "@/lib/admin-settings";
+import { isOwner } from "@/lib/owners";
 
 /**
  * Creator-Hub access control (security-sensitive).
@@ -27,9 +28,6 @@ import { getAdminSetting, setAdminSetting, SETTINGS_KEYS } from "@/lib/admin-set
  * "not allowed" (except the hard-coded `motha` bypass, which never depends
  * on the DB).
  */
-
-/** Lowercased founder username with the permanent Creator-Hub bypass. */
-const CREATOR_HUB_OWNER_USERNAME = "motha";
 
 /**
  * The roles that carry a per-role Creator-Hub access toggle. These are the
@@ -107,10 +105,13 @@ export async function setCreatorHubAccessSetting(
  * passes iff at least one of their effective roles has its toggle enabled.
  */
 export function canAccessCreatorHub(
-  session: Pick<SessionPayload, "username" | "role" | "roles">,
+  session: Pick<SessionPayload, "username" | "role" | "roles" | "isOwner">,
   settings: CreatorHubAccessSettings,
 ): boolean {
-  if ((session.username ?? "").toLowerCase() === CREATOR_HUB_OWNER_USERNAME) {
+  // Owner bypass (was a hard-coded `motha`-username bypass). Any owner always
+  // passes, DB-toggle-independent. `isOwner` is read DB-fresh by verifySession;
+  // the permanent `motha` username is owner regardless.
+  if (isOwner(session)) {
     return true;
   }
   const roles = getEffectiveRoles(session.role, session.roles);
@@ -121,9 +122,12 @@ export function canAccessCreatorHub(
   );
 }
 
-/** True if this user is the founder who controls the toggles (motha). */
+/**
+ * True if this user controls the Creator-Hub access toggles. Now OWNER-gated
+ * (was `motha`-only by username) — any owner can flip the per-role toggles.
+ */
 export function isCreatorHubAccessOwner(
-  session: Pick<SessionPayload, "username">,
+  session: Pick<SessionPayload, "username" | "isOwner">,
 ): boolean {
-  return (session.username ?? "").toLowerCase() === CREATOR_HUB_OWNER_USERNAME;
+  return isOwner(session);
 }

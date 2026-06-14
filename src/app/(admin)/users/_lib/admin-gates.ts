@@ -1,7 +1,7 @@
 import { adminDb } from "@/lib/admin-db";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
-import { isUsersExportAdminUsername } from "@/lib/users-export/motha-gate";
-import { canIncludeExcludedUsersInSearch } from "@/lib/excluded-users/search-gate";
+import { isUsersExportOwnerRow } from "@/lib/users-export/motha-gate";
+import { isExcludedSearchOwnerRow } from "@/lib/excluded-users/search-gate";
 import { logError } from "@/lib/errors/logger";
 import type { SessionPayload } from "@/lib/session";
 
@@ -41,11 +41,12 @@ export async function getUsersPageGates(
   try {
     const row = await adminDb.admin_users.findUnique({
       where: { id: session.userId },
-      select: { username: true, is_active: true, allowed_pages: true },
+      select: { username: true, is_active: true, is_owner: true, allowed_pages: true },
     });
     const active = Boolean(row?.is_active);
     const pages = row?.allowed_pages ?? [];
     const username = row?.username ?? "";
+    const isOwner = row?.is_owner ?? false;
     return {
       // Same rule as before the consolidation: real admins always pass;
       // non-admins need BOTH the /users/deleted page key AND the
@@ -55,9 +56,11 @@ export async function getUsersPageGates(
         (active &&
           pages.includes("/users/deleted") &&
           hasCapability(pages, "__can_delete_user")),
-      canExportAll: active && isUsersExportAdminUsername(username),
-      includeExcludedInSearch:
-        active && username !== "" && canIncludeExcludedUsersInSearch(username),
+      // Owner-gated now (was a `motha` username check): compute owner from the
+      // single row we already fetched (the permanent `motha` username OR the
+      // `is_owner` flag). The throwing action gates re-verify independently.
+      canExportAll: active && isUsersExportOwnerRow(username, isOwner),
+      includeExcludedInSearch: active && isExcludedSearchOwnerRow(username, isOwner),
     };
   } catch (err) {
     logError(

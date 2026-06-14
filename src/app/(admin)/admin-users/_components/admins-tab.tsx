@@ -53,6 +53,7 @@ export async function AdminsTab({
             roles: true,
             totp_enabled: true,
             is_active: true,
+            is_owner: true,
             allowed_pages: true,
             created_at: true,
           },
@@ -68,6 +69,7 @@ export async function AdminsTab({
             role: true,
             totp_enabled: true,
             is_active: true,
+            is_owner: true,
             allowed_pages: true,
             created_at: true,
           },
@@ -128,6 +130,12 @@ export async function AdminsTab({
     const roles = getEffectiveRoles(u.role, u.roles);
     const pageKeys = u.allowed_pages.filter((p) => !p.startsWith("__can_"));
     const capabilityKeys = u.allowed_pages.filter((p) => p.startsWith("__can_"));
+    // Effective owner state for the badge: the `is_owner` column (absent on a
+    // pre-migration DB → false) OR the permanent `motha` username. The narrowed
+    // type from readAdminUsersWithRoles may omit `is_owner`, so read defensively.
+    const ownerCol = (u as { is_owner?: boolean | null }).is_owner ?? false;
+    const isOwner =
+      ownerCol || (u.username ?? "").trim().toLowerCase() === "motha";
     return {
       id: u.id,
       username: u.username,
@@ -136,6 +144,7 @@ export async function AdminsTab({
       roles,
       isActive: u.is_active,
       totpEnabled: u.totp_enabled,
+      isOwner,
       createdAt: u.created_at.toISOString(),
       lastLoginAt: lastLoginByAdmin.get(u.id) ?? null,
       activeSessions: activeSessionsByAdmin.get(u.id) ?? 0,

@@ -27,6 +27,7 @@ export async function getAdminUserDetail(id: string) {
           custom_role: { select: { id: true, name: true, capabilities: true } },
           totp_enabled: true,
           is_active: true,
+          is_owner: true,
           allowed_pages: true,
           permission_grants: true,
           permission_revokes: true,
@@ -46,6 +47,7 @@ export async function getAdminUserDetail(id: string) {
           custom_role: { select: { id: true, name: true, capabilities: true } },
           totp_enabled: true,
           is_active: true,
+          is_owner: true,
           allowed_pages: true,
           permission_grants: true,
           permission_revokes: true,
@@ -74,6 +76,9 @@ export async function getAdminUserDetail(id: string) {
     roles?: string[] | null;
     permission_grants: string[];
     permission_revokes: string[];
+    // `is_owner` is selected in both variants; on a pre-migration DB it may be
+    // absent, so treat it as optional and default to false below.
+    is_owner?: boolean | null;
   };
 
   const effRoles = getEffectiveRoles(u.role, u.roles);
@@ -151,6 +156,14 @@ export async function getAdminUserDetail(id: string) {
     roleCapabilities: u.custom_role?.capabilities ?? null,
     totpEnabled: u.totp_enabled,
     isActive: u.is_active,
+    // OWNER / ultra-admin state. `isOwner` is the EFFECTIVE flag (the raw
+    // `is_owner` column OR the permanent `motha` username bypass) — used to
+    // render the badge + the toggle's current position. `isMainOwner` marks the
+    // permanent root owner, whose status is read-only (cannot be toggled).
+    isOwner:
+      (u.is_owner ?? false) ||
+      (u.username ?? "").trim().toLowerCase() === "motha",
+    isMainOwner: (u.username ?? "").trim().toLowerCase() === "motha",
     allowedPages: u.allowed_pages,
     // ── Phase C per-user override layer ──
     // The explicit grant/revoke columns (the EDITABLE source). Empty for a

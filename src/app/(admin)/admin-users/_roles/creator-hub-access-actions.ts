@@ -1,8 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { verifySession } from "@/lib/dal";
-import { adminDb } from "@/lib/admin-db";
+import { verifySession, sessionIsOwner } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { AdminSettingsTableMissingError } from "@/lib/admin-settings";
 import {
@@ -14,33 +13,23 @@ import {
 } from "@/lib/creator-hub-access";
 
 /**
- * Server actions for the founder-controlled Creator-Hub access toggles.
+ * Server actions for the owner-controlled Creator-Hub access toggles.
  *
- * SECURITY: these mutate who can enter the Creator Hub, so the gate is the
- * tightest one in the app — ONLY the `motha` account. We resolve the
- * username from the ADMIN DB by the verified session's userId (never trust
- * a client-supplied identity) and throw before any write if it isn't motha.
+ * SECURITY: these mutate who can enter the Creator Hub, so the gate is
+ * OWNER-only (was `motha`-only by username). `sessionIsOwner` reads the
+ * DB-fresh `is_owner` flag verifySession put on the session (never trusts a
+ * client-supplied identity) and we throw before any write for a non-owner.
  * Every change is audit-logged via `createAdminAuditEvent`.
  */
-const ALLOWED_USERNAMES = ["motha"] as const;
-
-function isAllowed(username: string): boolean {
-  const lower = username.toLowerCase();
-  return ALLOWED_USERNAMES.some((u) => u === lower);
-}
 
 /**
- * Resolve + authorize the acting admin as the Creator-Hub access owner.
- * Returns the userId for audit stamping. Throws (caught at the call site →
- * toast) when the caller isn't the founder account.
+ * Resolve + authorize the acting admin as a Creator-Hub access owner. Returns
+ * the userId for audit stamping. Throws (caught at the call site → toast) when
+ * the caller isn't an owner.
  */
 async function requireCreatorHubAccessOwner(): Promise<{ userId: string }> {
   const session = await verifySession();
-  const user = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { username: true, is_active: true },
-  });
-  if (!user?.is_active || !isAllowed(user.username)) {
+  if (!sessionIsOwner(session)) {
     throw new Error("Not authorized to manage Creator Hub access.");
   }
   return { userId: session.userId };

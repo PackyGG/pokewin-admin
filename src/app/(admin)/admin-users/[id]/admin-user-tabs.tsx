@@ -10,6 +10,7 @@ import { ManagementActions } from "./management-actions";
 import { LinkMainUserCard } from "./link-main-user-card";
 import { RolesCard } from "./assign-role-card";
 import { PermissionsSection } from "./permissions-section";
+import { OwnerCard } from "./owner-card";
 import {
   AuditEventsTable,
   EventDetails,
@@ -25,9 +26,11 @@ type Props = {
   isCurrentUserAdmin: boolean;
   /** Whether admin_users.roles is migrated — gates the multi-role notice. */
   rolesColumnExists: boolean;
+  /** Whether the current viewer is the MAIN owner (motha) — gates the owner card. */
+  viewerIsMainOwner: boolean;
 };
 
-export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, isCurrentUserAdmin, rolesColumnExists }: Props) {
+export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, isCurrentUserAdmin, rolesColumnExists, viewerIsMainOwner }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
@@ -61,6 +64,17 @@ export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, 
         detail={detail}
         startTransition={startTransition}
       />
+      {/* Owner / ultra-admin management — visible ONLY to the main owner
+          (motha). Lets motha grant/revoke owner on any admin (motha's own row
+          renders read-only "permanent"). Server-gated via viewerIsMainOwner. */}
+      {viewerIsMainOwner && (
+        <OwnerCard
+          adminUserId={detail.id}
+          username={detail.username}
+          isOwner={detail.isOwner}
+          isMainOwner={detail.isMainOwner}
+        />
+      )}
       {isCurrentUserAdmin && detail.roles.includes("creator") && (
         <LinkMainUserCard detail={detail} />
       )}

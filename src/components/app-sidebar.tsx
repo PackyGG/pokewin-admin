@@ -256,6 +256,7 @@ export function AppSidebar({
   username,
   dbEnv,
   canEnterCreatorHub = false,
+  isOwner = false,
 }: {
   role: string;
   // Full effective role set (defaults to [role] for legacy single-role).
@@ -273,6 +274,13 @@ export function AppSidebar({
   // prop never reveals the portal. With both toggles off only `motha` gets
   // `true`.
   canEnterCreatorHub?: boolean;
+  // OWNER / ultra-admin flag, computed SERVER-SIDE by the layout from the
+  // DB-fresh session. An owner bypasses the `usernameAllowlist` cosmetic gate
+  // (so the owner-only nav items — Salaries, Excluded Users, the Insights group
+  // — show for ANY owner, not just `motha`) AND the page-access check (owners
+  // see every page, like admins). Defaults false (fail-closed) so a missing
+  // prop never reveals owner-only items.
+  isOwner?: boolean;
 }) {
   const pathname = usePathname();
   const effectiveRoles = roles ?? [role];
@@ -282,17 +290,20 @@ export function AppSidebar({
   const visibleFooterItems = useMemo(
     () =>
       NAV_FOOTER_ITEMS.filter((item) => {
+        // Owners bypass the username allowlist (they see every owner-only item).
         if (
           item.usernameAllowlist &&
+          !isOwner &&
           !item.usernameAllowlist.some(
             (u) => u.toLowerCase() === (username ?? "").toLowerCase(),
           )
         ) {
           return false;
         }
-        return isAdmin || pageAccessGranted(allowedPages, item.href);
+        // Owners + admins see every page.
+        return isAdmin || isOwner || pageAccessGranted(allowedPages, item.href);
       }),
-    [isAdmin, allowedPages, username],
+    [isAdmin, isOwner, allowedPages, username],
   );
 
   const groupsWithVisibility = useMemo(() =>
@@ -303,21 +314,23 @@ export function AppSidebar({
         ...group,
         visibleItems: group.items.filter((item) => {
           // usernameAllowlist is the strictest — even real admins
-          // don't see it unless their username is in the list.
-          // Used for /salaries which is a founder-only entry-point,
-          // not a role-based one. Comparison is case-insensitive.
+          // don't see it unless their username is in the list (or they
+          // are an OWNER, who bypasses it). Used for /salaries + the
+          // Insights group, owner-only entry-points. Case-insensitive.
           if (
             item.usernameAllowlist &&
+            !isOwner &&
             !item.usernameAllowlist.some(
               (u) => u.toLowerCase() === (username ?? "").toLowerCase(),
             )
           ) {
             return false;
           }
-          return isAdmin || pageAccessGranted(allowedPages, item.href);
+          // Owners + admins see every page.
+          return isAdmin || isOwner || pageAccessGranted(allowedPages, item.href);
         }),
       })),
-  [isAdmin, allowedPages, username, dbEnv]);
+  [isAdmin, isOwner, allowedPages, username, dbEnv]);
 
   const activeGroupLabel = useMemo(() =>
     groupsWithVisibility.find((group) =>

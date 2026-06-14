@@ -19,6 +19,14 @@ export type SessionPayload = {
   roles?: string[];
   email: string;
   username: string;
+  // OWNER / ULTRA-ADMIN flag. Like `roles`, this is NOT a trusted JWT claim:
+  // `verifySession` re-reads `admin_users.is_owner` from the DB on every request
+  // and overwrites it, so a stale cookie can't grant (or strip) owner power. The
+  // permanent ROOT owner `motha` is owner via a username bypass (see
+  // src/lib/owners.ts) regardless of this field. Optional because cookies minted
+  // before the owner tier shipped won't carry it — consumers treat a missing
+  // value as `false` (fail-closed; the DB re-read is authoritative anyway).
+  isOwner?: boolean;
   expiresAt: Date;
   // JWT issued-at (seconds since epoch), populated by jose's `setIssuedAt()`
   // on mint and read back from the verified token. Drives the Phase D session-

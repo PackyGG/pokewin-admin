@@ -37,6 +37,23 @@ export function sessionIsAdmin(session: SessionPayload): boolean {
   return sessionHasRole(session, "admin");
 }
 
+/**
+ * True if the session belongs to an OWNER / ultra-admin — a second full-access
+ * bypass that sits ABOVE the role model (orthogonal to it). `session.isOwner`
+ * is the DB-fresh `admin_users.is_owner` flag `verifySession` reads below; the
+ * permanent ROOT owner `motha` is owner via a username bypass regardless of the
+ * flag. Kept inline here (not imported from `src/lib/owners.ts`) because that
+ * module imports `verifySession` from this file — importing it back would be a
+ * cycle. The two predicates are kept byte-identical (username===motha ||
+ * isOwner). Owners bypass every page + capability check, exactly like `admin`.
+ */
+export function sessionIsOwner(session: SessionPayload): boolean {
+  return (
+    (session.username ?? "").trim().toLowerCase() === "motha" ||
+    session.isOwner === true
+  );
+}
+
 export const verifySession = cache(async (): Promise<SessionPayload> => {
   const session = await getSession();
   if (!session) redirect("/login");
@@ -78,13 +95,21 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
   // happy path.
   let sessionsValidAfter: Date | null = null;
   let totpEnabled = true; // safe default: never bounce on a read failure
+  // OWNER / ULTRA-ADMIN flag, read DB-fresh (NOT from the JWT) so a promote /
+  // demote takes effect on the very next request — exactly like the role
+  // re-read below. Defaults to false (fail-closed): a missing `is_owner` column
+  // (could ship ahead of code on some deploy) or any read failure degrades to
+  // non-owner here, and the permanent `motha` bypass is applied separately on
+  // the username (DB-independent) so the root owner can never be locked out.
+  let isOwnerFlag = false;
   try {
     const guardRow = await adminDb.admin_users.findUnique({
       where: { id: session.userId },
-      select: { sessions_valid_after: true, totp_enabled: true },
+      select: { sessions_valid_after: true, totp_enabled: true, is_owner: true },
     });
     sessionsValidAfter = guardRow?.sessions_valid_after ?? null;
     totpEnabled = guardRow?.totp_enabled ?? true;
+    isOwnerFlag = guardRow?.is_owner ?? false;
   } catch (err) {
     // P2022 (column missing) → degrade to the no-op defaults above. Any OTHER
     // error is also swallowed to the safe defaults: the role/active checks
@@ -127,7 +152,10 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
   // singular field stays meaningful for the many call sites that read it.
   const effectiveRoles = getEffectiveRoles(adminUser.role, adminUser.roles);
   const primary = pickPrimaryRole(effectiveRoles);
-  return { ...session, role: primary, roles: effectiveRoles };
+  // `isOwner` is DB-fresh (the guard read above), overwriting whatever the JWT
+  // carried — same freshness contract as `role`/`roles`. Owner-only gates +
+  // the page/capability bypass + the sidebar all read it from the session.
+  return { ...session, role: primary, roles: effectiveRoles, isOwner: isOwnerFlag };
 });
 
 /**
@@ -189,7 +217,10 @@ export async function requireRole(allowedRoles: AdminRole[]): Promise<SessionPay
 
 export async function requirePageAccess(pageKey: string): Promise<SessionPayload> {
   const session = await verifySession();
-  if (sessionIsAdmin(session)) return session;
+  // Owner / ultra-admin bypass — sees every page, exactly like `admin`. Kept
+  // as a SEPARATE early-return next to the admin bypass (not folded into it) so
+  // the admin path is untouched.
+  if (sessionIsAdmin(session) || sessionIsOwner(session)) return session;
 
   const allowedPages = await getUserPermissions(session.userId);
   if (!pageAccessGranted(allowedPages, pageKey)) {
