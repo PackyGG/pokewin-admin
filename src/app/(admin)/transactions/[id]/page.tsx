@@ -19,7 +19,8 @@ import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import {
   amountColorFor,
-  amountSignFor,
+  balanceDeltaSign,
+  balanceMovementSign,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
 import {
@@ -77,11 +78,15 @@ export default async function TransactionDetailPage({
   if (!data) notFound();
 
   // House-POV direction for this ledger row — drives the Amount KPI and
-  // inline amount colors so a deposit reads green, a withdrawal reads
+  // inline amount COLOR so a deposit reads green, a withdrawal reads
   // red, a wager reads green, etc. (never mixed per-row).
   const direction = ledgerDirection(data.type);
   const amountColor = amountColorFor(direction);
-  const amountSign = amountSignFor(direction);
+  // SIGN follows the real balance movement (data.amount is itself the signed
+  // balanceAfter − balanceBefore delta here), so the Amount can never
+  // contradict the Balance Before/After tiles: a credit reads "+", a debit
+  // "−", independent of the house-POV color above.
+  const amountSign = balanceMovementSign(data.balanceBefore, data.balanceAfter);
   const absAmount = Math.abs(data.amount);
 
   return (
@@ -300,7 +305,10 @@ export default async function TransactionDetailPage({
                         )
                         .map((rt) => {
                           // Related ledger rows (battle refunds, voucher
-                          // exchanges, etc.) — classify each individually.
+                          // exchanges, etc.) — COLOR each individually from the
+                          // house POV; SIGN from the row's own balance delta
+                          // (rt.amount is already balanceAfter − balanceBefore)
+                          // so a credit reads "+" and never fights the value.
                           const relDir = ledgerDirection(rt.type);
                           return (
                             <div
@@ -309,7 +317,7 @@ export default async function TransactionDetailPage({
                             >
                               <span className="truncate mr-4">{rt.type.replace(/_/g, " ")}</span>
                               <span className="shrink-0">
-                                {amountSignFor(relDir)}
+                                {balanceDeltaSign(rt.amount)}
                                 {formatCurrency(Math.abs(rt.amount))}
                               </span>
                             </div>

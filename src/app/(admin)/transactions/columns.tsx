@@ -8,7 +8,7 @@ import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import {
   amountColorFor,
-  amountSignFor,
+  balanceMovementSign,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
 import { ledgerTypeLabel } from "@/lib/utils/ledger-labels";
@@ -104,16 +104,22 @@ export const columns: ColumnDef<TransactionListItem>[] = [
   {
     accessorKey: "amount",
     header: "Amount",
-    // Colors come from the ledger TYPE, not the signed user-facing delta.
+    // COLOR comes from the ledger TYPE, not the signed user-facing delta.
     // A wager and a withdrawal both decrease the user's balance, but only
     // one is a house loss — coloring by delta alone would paint them the
     // same. `ledgerDirection` is the single source of truth the rest of
     // the site uses (Recent Activity, user timelines, etc.).
+    // The SIGN, however, follows the real balance movement (amount here IS
+    // the balanceAfter − balanceBefore delta) so a credit reads "+" and never
+    // contradicts the Before/After columns — independent of the color.
     cell: ({ row }) => {
       const dir = ledgerDirection(row.original.type);
       return (
         <span className={amountColorFor(dir)}>
-          {amountSignFor(dir)}
+          {balanceMovementSign(
+            row.original.balanceBefore,
+            row.original.balanceAfter,
+          )}
           {formatCurrency(Math.abs(row.original.amount))}
         </span>
       );

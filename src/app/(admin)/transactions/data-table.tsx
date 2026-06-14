@@ -22,7 +22,7 @@ import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import {
   amountColorFor,
-  amountSignFor,
+  balanceMovementSign,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
 import { ledgerTypeLabel } from "@/lib/utils/ledger-labels";
@@ -54,7 +54,9 @@ function TransactionMobileCard({ tx }: { tx: TransactionListItem }) {
   const router = useRouter();
   const dir = ledgerDirection(tx.type);
   const amountClass = amountColorFor(dir);
-  const sign = amountSignFor(dir);
+  // Color house-POV (by type); sign from the real balance movement (amount IS
+  // the balanceAfter − balanceBefore delta) so a credit reads "+" regardless.
+  const sign = balanceMovementSign(tx.balanceBefore, tx.balanceAfter);
   const typeLabel = ledgerTypeLabel(tx.type);
   return (
     <MobileCard
