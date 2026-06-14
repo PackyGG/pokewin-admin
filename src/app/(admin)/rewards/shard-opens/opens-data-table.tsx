@@ -13,18 +13,29 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { MobileCard } from "@/components/data-table/mobile-card-list";
 import { EmptyState } from "@/components/empty-state";
 import { Gem } from "lucide-react";
-import { formatDateTime, formatRelative, formatNumber } from "@/lib/utils/format";
+import {
+  formatDateTime,
+  formatRelative,
+  formatNumber,
+  formatCurrency,
+} from "@/lib/utils/format";
 import type { ShardPackOpenRow } from "@/lib/queries/shard-pack-opens";
 
 /**
  * Feed of individual shard-pack opens.
  *
- * UNIT: every figure is in SHARDS (the secondary, wager-earned currency),
- * never USD — so amounts are rendered as plain shard counts, not money.
+ * TWO UNITS, NEVER MIXED:
+ *  • SHARDS — the secondary, wager-earned currency the open is bet/won in
+ *    (spent / won / net house columns). Rendered as plain shard counts.
+ *  • USD — the real DOLLAR value of the CARD(s) the open rolled into the
+ *    user's inventory ("Card value" column). This is real money the house
+ *    paid out, rendered with the currency formatter, NEVER summed with shards.
+ *
  * House-POV coloring (same as the coin/shard economy panels): shards a user
  * SPENDS into an open (house takes in) → emerald; shards a user WINS (house
  * liability) → rose; net house (spent − won) → emerald when the house is up,
- * rose when down. Quick test: a user celebrating their win → rose.
+ * rose when down. The USD card value the user pulled is real money OUT of the
+ * house → rose. Quick test: a user celebrating their win/card → rose.
  */
 
 /** Round + format a shard amount; guards NaN/Infinity to "—". */
@@ -89,7 +100,7 @@ function ShardOpenMobileCard({ row }: { row: ShardPackOpenRow }) {
         </div>
       }
       footer={
-        <span className="flex items-center gap-2">
+        <span className="flex flex-wrap items-center gap-2">
           <span>{formatRelative(row.createdAt)}</span>
           <span className="text-muted-foreground">·</span>
           <span
@@ -103,6 +114,16 @@ function ShardOpenMobileCard({ row }: { row: ShardPackOpenRow }) {
             Net {houseUp ? "+" : "-"}
             {fmtShards(Math.abs(row.netHouse))} shards
           </span>
+          {/* USD card value pulled (real money out) → rose. Hidden when no
+              inventory card is linked to the open yet. Distinct unit (USD). */}
+          {row.cardValueUsd > 0 && (
+            <>
+              <span className="text-muted-foreground">·</span>
+              <span className="tabular-nums text-rose-600 dark:text-rose-400">
+                {formatCurrency(row.cardValueUsd)} card
+              </span>
+            </>
+          )}
         </span>
       }
     />
@@ -145,13 +166,17 @@ export function ShardOpensDataTable({ data }: { data: ShardPackOpenRow[] }) {
               <TableHead className="text-right">Shards spent</TableHead>
               <TableHead className="text-right">Shards won</TableHead>
               <TableHead className="text-right">Net house</TableHead>
+              {/* USD value of the card(s) the open rolled into inventory —
+                  REAL money the house paid out (house cost, rose). Distinct
+                  unit from the shard columns. */}
+              <TableHead className="text-right">Card value ($)</TableHead>
               <TableHead>Date</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {data.length === 0 ? (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={6} className="p-0">
+                <TableCell colSpan={7} className="p-0">
                   <EmptyState
                     icon={Gem}
                     title="No shard-pack opens found"
@@ -216,6 +241,31 @@ export function ShardOpensDataTable({ data }: { data: ShardPackOpenRow[] }) {
                     >
                       {houseUp ? "+" : "-"}
                       {fmtShards(Math.abs(row.netHouse))}
+                    </TableCell>
+                    {/* USD card value pulled → rose (real money out of the
+                        house). "—" when no inventory card is linked to the
+                        open yet, so the column doesn't read $0.00 on every
+                        un-linked open. */}
+                    <TableCell className="text-right tabular-nums">
+                      {row.cardValueUsd > 0 ? (
+                        <span
+                          className="text-rose-600 dark:text-rose-400"
+                          title={
+                            row.cardCount > 0
+                              ? `${formatNumber(row.cardCount)} card${row.cardCount === 1 ? "" : "s"} pulled — real money out`
+                              : "Card value pulled — real money out"
+                          }
+                        >
+                          {formatCurrency(row.cardValueUsd)}
+                        </span>
+                      ) : (
+                        <span
+                          className="text-muted-foreground"
+                          title="No inventory card linked to this open yet"
+                        >
+                          —
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell>{formatDateTime(row.createdAt)}</TableCell>
                   </TableRow>

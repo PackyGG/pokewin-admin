@@ -3,6 +3,10 @@ import { unstable_cache } from "next/cache";
 import { getDb, getProdDb, getDevDb } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import type { PaginatedResult } from "@/lib/types";
+import {
+  getCoinsEconomy,
+  type CoinsPeriod,
+} from "@/lib/queries/insights-coins";
 
 /**
  * GLOBAL shard-pack OPENS — every open of a pack bought with SHARDS (the
@@ -35,10 +39,41 @@ import type { PaginatedResult } from "@/lib/types";
  * `user`).
  *
  * So an open pairs UNAMBIGUOUSLY to its winnings by `game_session_id`, and
- * "won" means SHARDS (the secondary currency), not cards or USD — the cards
- * the open actually rolls into inventory are a separate USD concern already
- * accounted for in the inventory / USD ledger. This surface is purely the
- * SHARD wager flow of opening shard packs.
+ * "won" means SHARDS (the secondary currency), not cards or USD.
+ *
+ * TWO DIMENSIONS — SHARD FLOW (in/out) vs USD CARD VALUE (real money out)
+ * ──────────────────────────────────────────────────────────────────────
+ * A shard-pack open has TWO distinct flows that must never be summed
+ * together:
+ *
+ *   1. SHARD FLOW — the secondary-currency wager: shards SPENT into the open
+ *      and shards WON back. This is the bet↔payout pair above. Unit = shards.
+ *
+ *   2. USD CARD VALUE — the open also rolls a CARD into the user's inventory,
+ *      and that card has a REAL DOLLAR value (`user_inventory.value_at_obtained`).
+ *      That is the actual money the house pays out through the shard-pack
+ *      mechanic. Unit = USD.
+ *
+ * The open's CARD links to its inventory item through the game's provably-fair
+ * record: `provably_fair_results.game_session_id` == the open's
+ * `game_session_id`, and `provably_fair_results.inventory_item_id` →
+ * `user_inventory.id`. This is the same provably-fair chain the rest of the
+ * platform uses to tie a pack roll to the card it produced; it is the only
+ * key that correctly attributes a card to a SHARD (currency='coin') open
+ * (the card's own `user_inventory.source_id` points at a SEPARATE pack
+ * `game_session`, NOT the coin-ledger one, so `source_id = game_session_id`
+ * does NOT attribute coin-open cards — verified read-only on live prod). The
+ * card-value join is computed ONLY for the page's slice (and the window
+ * summary) via the indexed `idx_pf_results_game_session_id`, so it stays
+ * cheap + bounded.
+ *
+ * ⚠️ DATA NOTE (verified read-only on the current live prod DB, 2026-06-14):
+ * the coin (shard) pack opens present so far have `inventory_item_id = NULL`
+ * on their provably-fair rows, so the card-value join currently resolves to
+ * $0 / "no card linked yet" for those opens — the join is structurally
+ * correct (matches how cards link to opens platform-wide) and populates as
+ * soon as the backend writes the inventory link; it is NOT a hard-coded zero.
+ * The shard flow itself is fully populated and unaffected.
  *
  * HOUSE-POV / UNIT
  * ────────────────
@@ -133,7 +168,38 @@ function cacheTtlForPeriod(p: ShardOpensPeriod): number {
 
 // ─── Result shapes ────────────────────────────────────────────────────
 
-/** Headline KPIs for one window, all in SHARDS (never USD). */
+/**
+ * Shard ECONOMY OVERVIEW — the live, window-independent supply snapshot plus
+ * the period-scoped flow aggregates, REUSED verbatim from the canonical
+ * `getCoinsEconomy` (insights-coins.ts). This is NOT a second rollup: the
+ * fields are projected straight off the one-source-of-truth economy module so
+ * /rewards/shard-opens can never disagree with the canonical numbers.
+ *
+ * UNIT: all figures are SHARDS (a secondary, wager-earned currency), NOT USD —
+ * never summed into a USD total. Presented neutrally (cyan) since shards are
+ * not money; the cash-adjacent legs follow the house rule in the UI (spent =
+ * house in = emerald; issued/earned = house liability = rose).
+ */
+export type ShardEconomyOverview = {
+  /** Σ balances.shards across all wallets — live supply, no period. */
+  totalShardsHeld: number;
+  /** Wallets currently holding > 0 shards — distinct holders, no period. */
+  shardHolders: number;
+  /** Shards a GAME paid out to users in the window (wins; issuance EXCLUDED). */
+  earned: number;
+  /** Shards SPENT by users into games in the window. */
+  spent: number;
+  /** Net house GAME flow in the window = spent − earned (issuance EXCLUDED). */
+  netHouse: number;
+  /** Shards the HOUSE ISSUED to users in the window (minted grants). */
+  issuedToUsers: number;
+  /** Distinct users with any shard activity in the window. */
+  activeUsers: number;
+  /** Total coin/shard ledger rows in the window. */
+  txCount: number;
+};
+
+/** Headline KPIs for one window, all in SHARDS unless explicitly USD. */
 export type ShardOpensSummary = {
   /** Distinct shard-pack open sessions in the window. */
   totalOpens: number;
@@ -156,6 +222,16 @@ export type ShardOpensSummary = {
    * the displayed flow, not a customer-scoped revenue metric.
    */
   houseEdgePct: number | null;
+  /**
+   * Σ `user_inventory.value_at_obtained` (USD) of the CARD(s) that the opens
+   * in this window rolled into inventory — the REAL money the house paid out
+   * through the shard-pack mechanic, in DOLLARS. House cost ⇒ rendered rose.
+   * Joined via the provably-fair chain (open `game_session_id` →
+   * `provably_fair_results.inventory_item_id` → `user_inventory`). NEVER
+   * summed with the shard figures above. May be 0 when the backend has not
+   * yet linked an inventory item to the open (see DATA NOTE in the header).
+   */
+  totalCardValueUsd: number;
 };
 
 /** One shard pack rolled up: opens / shards spent / shards won / edge. */
@@ -193,6 +269,16 @@ export type ShardPackOpenRow = {
   packs: number;
   /** Resolved pack name(s) for the open (joined from packs via pack_ids). */
   packNames: string[];
+  /**
+   * USD value of the CARD(s) this open rolled into inventory — Σ
+   * `user_inventory.value_at_obtained` for the inventory item(s) the open's
+   * provably-fair record points at. This is REAL money out (a house cost),
+   * in DOLLARS — never a shard figure. 0 when no inventory card is linked to
+   * the open yet (see header DATA NOTE).
+   */
+  cardValueUsd: number;
+  /** Number of inventory cards linked to this open. */
+  cardCount: number;
   createdAt: string;
 };
 
@@ -205,6 +291,14 @@ export type ShardOpensAvailable = {
   /** Paginated feed of individual opens (newest first). */
   feed: PaginatedResult<ShardPackOpenRow>;
 };
+
+/**
+ * Shard ECONOMY OVERVIEW result — the canonical supply/flow snapshot for the
+ * window, reused from `getCoinsEconomy`. `null` when the coin/shard ledger is
+ * absent on the connected DB (mirrors the opens `available:false` degrade) so
+ * the overview self-hides without crashing.
+ */
+export type ShardEconomyResult = ShardEconomyOverview | null;
 
 export type ShardOpensResult =
   | ShardOpensAvailable
@@ -264,7 +358,13 @@ type RawFeedRow = {
   won: string | number | null;
   packs: bigint | number | null;
   pack_names: string[] | null;
+  card_value_usd: string | number | null;
+  card_count: bigint | number | null;
   created_at: Date | string;
+};
+
+type RawCardSummaryRow = {
+  card_value_usd: string | number | null;
 };
 
 // ─── Core query (uncached) ────────────────────────────────────────────
@@ -344,6 +444,7 @@ async function queryShardPackOpens(
         netHouse: 0,
         avgSpentPerOpen: 0,
         houseEdgePct: null,
+        totalCardValueUsd: 0,
       },
       packs: [],
       feed: {
@@ -424,6 +525,27 @@ async function queryShardPackOpens(
     };
   });
 
+  // ── USD CARD VALUE — total real dollars the opens in this window paid out
+  //    as cards. ONE window-bounded aggregate: every open session in the
+  //    window → its provably-fair record → the inventory item it rolled →
+  //    Σ value_at_obtained. Bounded by the same window predicate on the bet
+  //    leg; the PF join is index-backed (idx_pf_results_game_session_id) and
+  //    the inventory lookup is a PK seek, so this is cheap. value_at_obtained
+  //    is Decimal(20,2) USD — kept entirely separate from the shard sums.
+  const cardSummaryRows = await db.$queryRaw<RawCardSummaryRow[]>`
+    WITH opens AS (
+      SELECT DISTINCT game_session_id
+      FROM coin_transactions
+      WHERE type::text = 'coin_pack_bet'
+        AND game_session_id IS NOT NULL
+        AND created_at >= NOW() - (${days} * INTERVAL '1 day')
+    )
+    SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0)::text AS card_value_usd
+    FROM opens o
+    JOIN provably_fair_results pf ON pf.game_session_id = o.game_session_id
+    JOIN user_inventory ui ON ui.id = pf.inventory_item_id`;
+  const totalCardValueUsd = Number(cardSummaryRows[0]?.card_value_usd ?? 0);
+
   // ── Paginated feed of individual opens (newest first). The user join +
   //    pack-name resolution run ONLY for the page slice. pack_names is
   //    resolved by unnesting the open's pack_ids and joining `packs`,
@@ -471,6 +593,21 @@ async function queryShardPackOpens(
         FROM jsonb_array_elements_text(pg.pack_ids) AS pid(pack_id)
         JOIN packs pk ON pk.id = pid.pack_id::uuid
       ) AS pack_names,
+      -- USD CARD VALUE of this open's rolled card(s): the open's provably-fair
+      -- record points at the inventory item it produced. Runs ONLY for the
+      -- ≤perPage page rows; PF join is index-backed, inventory is a PK seek.
+      COALESCE((
+        SELECT SUM(ui.value_at_obtained::numeric)
+        FROM provably_fair_results pf
+        JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+        WHERE pf.game_session_id = pg.game_session_id
+      ), 0)::text AS card_value_usd,
+      COALESCE((
+        SELECT COUNT(*)
+        FROM provably_fair_results pf
+        JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+        WHERE pf.game_session_id = pg.game_session_id
+      ), 0)::bigint AS card_count,
       pg.created_at
     FROM page pg
     LEFT JOIN "user" u ON u.id = pg.user_id
@@ -489,6 +626,8 @@ async function queryShardPackOpens(
       netHouse: spent - won,
       packs: Number(r.packs ?? 0),
       packNames: Array.isArray(r.pack_names) ? r.pack_names : [],
+      cardValueUsd: Number(r.card_value_usd ?? 0),
+      cardCount: Number(r.card_count ?? 0),
       createdAt:
         r.created_at instanceof Date
           ? r.created_at.toISOString()
@@ -504,6 +643,7 @@ async function queryShardPackOpens(
     netHouse: totalSpent - totalWon,
     avgSpentPerOpen: totalOpens > 0 ? totalSpent / totalOpens : 0,
     houseEdgePct: edgePct(totalSpent, totalWon),
+    totalCardValueUsd,
   };
 
   return {
@@ -570,3 +710,42 @@ const cachedShardPackOpensAll = unstable_cache(
   ["shard-pack-opens-all-v1"],
   { revalidate: cacheTtlForPeriod("all"), tags: ["shard-pack-opens"] },
 );
+
+// ─── Shard economy overview (Part A) — REUSE the canonical economy ─────
+//
+// The standalone /insights/coins page was removed, taking its shard-economy
+// OVERVIEW with it. This re-surfaces the same aggregates on /rewards/shard-opens
+// by DELEGATING to the canonical `getCoinsEconomy` (insights-coins.ts) — the
+// one-source-of-truth for the coin/shard ledger — and projecting out the supply
+// snapshot + flow it already computes. NO second rollup, NO duplicated SQL: the
+// caching, env-keyed schema-drift probe, 365d lifetime cap, and Active-Timeframe-
+// Only contract all live in `getCoinsEconomy`; this is a thin, type-preserving
+// pass-through (identical to how `shard-stats.ts` projects the same module).
+// `ShardOpensPeriod` is structurally identical to `CoinsPeriod`, so the period
+// passes straight through.
+
+/**
+ * Public entry point for the shard ECONOMY OVERVIEW for ONE window: the live
+ * supply snapshot (Σ shards held, distinct holders) + the period-scoped flow
+ * (earned / spent / net house game flow / issued-to-users / active users / tx
+ * count), reused verbatim from `getCoinsEconomy`. Returns `null` when the
+ * coin/shard ledger is absent on the connected DB so the overview self-hides.
+ * ACTIVE-TIMEFRAME-ONLY (inherited): only the active window is fetched/cached.
+ */
+export async function getShardEconomyOverview(
+  period: ShardOpensPeriod,
+): Promise<ShardEconomyResult> {
+  // ShardOpensPeriod ≡ CoinsPeriod; pass through with no remapping.
+  const economy = await getCoinsEconomy(period as CoinsPeriod);
+  if (!economy.available) return null;
+  return {
+    totalShardsHeld: economy.supply.totalShards,
+    shardHolders: economy.supply.shardHolders,
+    earned: economy.earned,
+    spent: economy.spent,
+    netHouse: economy.netHouse,
+    issuedToUsers: economy.issuedToUsers,
+    activeUsers: economy.activeUsers,
+    txCount: economy.txCount,
+  };
+}
