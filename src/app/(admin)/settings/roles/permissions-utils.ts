@@ -718,26 +718,6 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Employees",
   },
 
-  // ── Bots ────────────────────────────────────────────────────────────
-  {
-    key: "__can_create_bot",
-    label: "Create Bot",
-    description: "Add a chat bot",
-    group: "Bots",
-  },
-  {
-    key: "__can_update_bot",
-    label: "Update Bot",
-    description: "Edit a chat bot",
-    group: "Bots",
-  },
-  {
-    key: "__can_toggle_bot_active",
-    label: "Toggle Bot Active",
-    description: "Enable / disable a chat bot",
-    group: "Bots",
-  },
-
   // ── System (site-wide security capabilities) ──────────────────────────
   {
     key: "__can_upsert_site_config",

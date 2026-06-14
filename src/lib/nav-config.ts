@@ -829,16 +829,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    id: "nav.bots",
-    group: "System",
-    label: "Bots",
-    href: "/bots",
-    pageKey: "/bots",
-    icon: "Bot",
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
     id: "nav.settings",
     group: "System",
     label: "Settings",
@@ -876,29 +866,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     keywords: ["log", "history"],
     inSidebar: true,
     inPalette: true,
-  },
-  {
-    id: "nav.commands",
-    group: "System",
-    label: "Commands",
-    href: "/system/commands",
-    pageKey: "/system/commands",
-    icon: "Command",
-    description: "All palette commands",
-    keywords: ["palette", "shortcuts", "cmd+k"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Dashboard Stats — sidebar-only.
-    id: "nav.system.stats",
-    group: "System",
-    label: "Dashboard Stats",
-    href: "/system/stats",
-    pageKey: "/system/stats",
-    icon: "Gauge",
-    inSidebar: true,
-    inPalette: false,
   },
 ];
 
@@ -981,10 +948,8 @@ const PALETTE_ORDER: string[] = [
   "nav.admin-users",
   "nav.settings.roles",
   "nav.security",
-  "nav.bots",
   "nav.settings",
   "nav.audit",
-  "nav.commands",
 ];
 
 /**

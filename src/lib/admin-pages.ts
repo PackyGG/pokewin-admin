@@ -144,11 +144,8 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "System", label: "Security", key: "/security" },
   { group: "System", label: "Users", key: "/admin-users" },
   { group: "System", label: "Roles", key: "/settings/roles" },
-  { group: "System", label: "Bots", key: "/bots" },
   { group: "System", label: "Settings", key: "/settings" },
   { group: "System", label: "Audit Log", key: "/audit" },
-  { group: "System", label: "Commands", key: "/system/commands" },
-  { group: "System", label: "Dashboard Stats", key: "/system/stats" },
   // motha-only — the page + actions enforce the gate server-side;
   // listing here just makes the key known to the permission system
   // so it doesn't fall through as "unknown page".
