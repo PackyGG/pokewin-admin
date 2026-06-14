@@ -21,6 +21,10 @@ const LEDGER_TYPE_LABELS: Record<string, string> = {
   // claiming it — surfaced in the Finances feed so admins can see it as a
   // distinct payout (house cost) rather than an unlabeled credit.
   challenge_prize: "Challenge prize",
+  // The user spent withdrawable balance to buy XP (a debit). The humanized
+  // default ("Xp purchase") mis-cases the acronym, so curate it. Direction /
+  // color comes from `ledgerDirection` (a house gain — emerald).
+  xp_purchase: "XP purchase",
 };
 
 /** Humanize a raw ledger type: `card_withdrawal` → "Card withdrawal". */

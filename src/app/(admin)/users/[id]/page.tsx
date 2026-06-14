@@ -41,6 +41,7 @@ import {
   getUserShardWinnings,
   getUserShardPackOpens,
 } from "@/lib/queries/users-shard-winnings";
+import { getUserXpPurchases } from "@/lib/queries/users-xp-purchases";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -115,6 +116,10 @@ const FINANCIAL_TYPES = [
   // the requested list with the LIVE enum, so a DB without this member just
   // drops it instead of throwing 22P02.
   "challenge_prize",
+  // XP purchase — the user spent withdrawable balance to buy XP (a debit /
+  // house gain). Same drift-safe intersection applies. Keep in sync with
+  // FINANCIAL_TX_TYPES in user-tabs-types.ts.
+  "xp_purchase",
 ];
 // Admin balance adjustments get a DEDICATED, generously-sized fetch on top of
 // the shared FINANCIAL page. Reason: `admin_balance_adjustment` is just one of
@@ -442,6 +447,18 @@ async function UserDetailBody({
         USER_DETAIL_QUERY_TIMEOUT_MS,
       )
     : null;
+  // XP purchases (USD balance spent to buy XP) — Finances tab only
+  // (Active-Timeframe-Only). Self-hides when the user never bought XP or the
+  // connected enum lacks the member (drift guard inside the query).
+  const xpPurchasesPromise =
+    initialTab === "finances"
+      ? safeQuery(
+          () => getUserXpPurchases(id),
+          { count: 0, totalSpent: 0, totalXp: 0, recent: [] },
+          "users.detail.xpPurchases",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        )
+      : null;
   // Shard/coin winnings (secondary currency) tagged by source game — Gaming
   // tab only (Active-Timeframe-Only). Self-hides when the connected DB has no
   // coin_transactions table (e.g. the live prod game DB) or the user has none.
@@ -711,6 +728,7 @@ async function UserDetailBody({
       gamingTxPromise={gamingTxPromise}
       shardWinningsPromise={shardWinningsPromise}
       shardPackOpensPromise={shardPackOpensPromise}
+      xpPurchasesPromise={xpPurchasesPromise}
       financialTxPromise={financialTxPromise}
       adjustmentsTxPromise={adjustmentsTxPromise}
       rewardsPromise={rewardsPromise}

@@ -77,6 +77,7 @@ import type {
   ShardWinningsResult,
   ShardPackOpensResult,
 } from "@/lib/queries/users-shard-winnings";
+import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import { ErrorPill } from "./band-error";
 import { TILE_COLORS } from "./user-view-modern-panels";
@@ -171,6 +172,7 @@ export function UserViewModern({
   gamingTxPromise,
   shardWinningsPromise,
   shardPackOpensPromise,
+  xpPurchasesPromise,
   financialTxPromise,
   adjustmentsTxPromise,
   rewardsPromise,
@@ -206,6 +208,9 @@ export function UserViewModern({
   // Gaming tab only — per-user shard-PACK opens (shards spent + value won).
   // null = not kicked for the active tab (Active-Timeframe-Only).
   shardPackOpensPromise: Promise<SafeQueryResult<ShardPackOpensResult>> | null;
+  // Finances tab only — per-user XP purchases (USD balance spent to buy XP).
+  // null = not kicked for the active tab (Active-Timeframe-Only).
+  xpPurchasesPromise: Promise<SafeQueryResult<UserXpPurchasesResult>> | null;
   // Overview + Finances:
   financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Overview, owner only — dedicated uncapped admin_balance_adjustment page
@@ -637,6 +642,7 @@ export function UserViewModern({
           <FinancesTab
             data={data}
             financialTxPromise={financialTxPromise}
+            xpPurchasesPromise={xpPurchasesPromise}
             isAdmin={isAdmin}
             viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
           />

@@ -1741,6 +1741,12 @@ enum ledger_transaction_type {
   // generated client to the DB — it is NOT a DB migration. challenge_prize is
   // the cash leg paid to a user who claims a completed challenge (house cost).
   challenge_prize
+  // Present on BOTH live prod + dev enums (verified read-only 2026-06-14:
+  // 178 rows on dev, enum member on prod). Adding it here only syncs the
+  // generated client to the DB — it is NOT a DB migration. xp_purchase is the
+  // balance the user SPENT to buy XP (a debit: balance_after = balance_before −
+  // amount); metadata.xp_awarded carries the XP granted. House gain → emerald.
+  xp_purchase
 }
 
 enum race_type {

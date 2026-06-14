@@ -628,6 +628,11 @@ export const FINANCIAL_TX_TYPES = [
   // Keep in sync with FINANCIAL_TYPES in page.tsx (this = load-more list;
   // that = initial fetch). Challenge prize is a direct cash payout.
   "challenge_prize",
+  // XP purchase — the user spent withdrawable balance to buy XP (a debit /
+  // house gain). Surface it in the Finances feed alongside the other balance
+  // movements. Drift-safe: getUserTransactions intersects the requested list
+  // with the LIVE enum, so a DB without this member just drops it.
+  "xp_purchase",
 ] as const;
 // Admin balance adjustments only. Used for the dedicated, UNCAPPED Overview
 // fetch + block so every manual admin credit/clawback is guaranteed to

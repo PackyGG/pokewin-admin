@@ -110,10 +110,12 @@ import type {
   ShardWinningsResult,
   ShardPackOpensResult,
 } from "@/lib/queries/users-shard-winnings";
+import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
 import {
   ShardWinningsSection,
   ShardPackOpensSection,
 } from "./shard-winnings-section";
+import { XpPurchasesSection } from "./xp-purchases-section";
 import { BandError } from "./band-error";
 import {
   SectionHeading,
@@ -736,11 +738,15 @@ function RewardsStreamed({
 export function FinancesTab({
   data,
   financialTxPromise,
+  xpPurchasesPromise,
   isAdmin,
   viewerIsAdjustmentOwner,
 }: {
   data: UserDetail;
   financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
+  // Per-user XP purchases (USD balance spent to buy XP). null = not kicked
+  // for the active tab. The section self-hides when the user bought no XP.
+  xpPurchasesPromise: Promise<SafeQueryResult<UserXpPurchasesResult>> | null;
   isAdmin: boolean;
   viewerIsAdjustmentOwner: boolean;
 }) {
@@ -762,6 +768,13 @@ export function FinancesTab({
       ) : (
         <SkeletonTable rows={5} columns={6} />
       )}
+
+      {/* XP purchases (USD balance spent to buy XP) — streamed so the read
+          never blocks the table above; self-hides when the user bought no
+          XP. House-POV: the spend is a house gain (emerald). */}
+      <Suspense fallback={null}>
+        <XpPurchasesSection xpPurchasesPromise={xpPurchasesPromise} />
+      </Suspense>
     </div>
   );
 }

@@ -201,6 +201,21 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // XP Sales — global view of every xp_purchase (users buying XP with
+    // their own withdrawable balance). "Sparkles" is already in the sidebar
+    // ICONS map (app-sidebar.tsx), so no React #130 risk.
+    id: "nav.xp-sales",
+    group: "Overview",
+    label: "XP Sales",
+    href: "/xp-sales",
+    pageKey: "/xp-sales",
+    icon: "Sparkles",
+    description: "XP purchases — balance spent on XP",
+    keywords: ["xp", "experience", "level", "xp purchase", "xp_purchase", "sales"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // Sidebar label is "Transactions" (the unified deposits+withdrawals
     // surface); palette label is "Deposits". Same href/pageKey.
     id: "nav.deposits",

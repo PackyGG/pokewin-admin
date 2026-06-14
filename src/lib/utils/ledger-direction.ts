@@ -31,6 +31,10 @@ export function ledgerDirection(type: string): LedgerDirection {
     case "battle_sponsorship":
     case "vault_lock":
     case "withdrawal_shipping_fee":
+    // User spends their own (withdrawable) balance to buy XP — balance
+    // shrinks, value flows to us. From the house POV every dollar the user
+    // gives up is a dollar we no longer owe → a house gain → emerald.
+    case "xp_purchase":
       return "house-gain";
 
     // ── House pays money to the user (balance grows, a liability we

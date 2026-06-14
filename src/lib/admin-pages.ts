@@ -15,6 +15,9 @@ export const ADMIN_PAGES: AdminPage[] = [
   // from /analytics. The standalone page no longer exists.
   { group: "Navigation", label: "Users", key: "/users" },
   { group: "Navigation", label: "Creators", key: "/creators" },
+  // XP Sales — global view of every xp_purchase (users buying XP with their
+  // own withdrawable balance). House-POV revenue surface, customer-scoped.
+  { group: "Navigation", label: "XP Sales", key: "/xp-sales" },
   // Recovery bin for hard-deleted users — 7-day snapshot window. Gated
   // by the same __can_delete_user capability since restoring is the
   // inverse of deleting.

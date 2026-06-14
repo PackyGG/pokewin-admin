@@ -32,6 +32,7 @@ import type {
   ShardWinningsResult,
   ShardPackOpensResult,
 } from "@/lib/queries/users-shard-winnings";
+import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
 
 /** Wrap a fixture value in the resolved success shape the page's
  *  SafeQueryResult band promises carry (reliability remake). */
@@ -260,6 +261,12 @@ export function UserDetailFixtureClient() {
       gamingTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       shardWinningsPromise={ok<ShardWinningsResult>({ available: false })}
       shardPackOpensPromise={ok<ShardPackOpensResult>({ available: false })}
+      xpPurchasesPromise={ok<UserXpPurchasesResult>({
+        count: 0,
+        totalSpent: 0,
+        totalXp: 0,
+        recent: [],
+      })}
       financialTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       adjustmentsTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       rewardsPromise={ok<UserRewards>(REWARDS)}
