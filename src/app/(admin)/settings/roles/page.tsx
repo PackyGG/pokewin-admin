@@ -4,7 +4,7 @@ import {
   KeyRound,
   Crown,
   UserCog,
-  ShieldAlert,
+  ListChecks,
   Sparkles,
 } from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
@@ -139,11 +139,11 @@ export default async function RolesPage() {
             accent="purple"
           />
           <KpiTile
-            label="Dead capabilities"
-            value={String(kpis.deadCapabilityCount)}
-            sub="Not in any baseline"
-            icon={ShieldAlert}
-            accent="rose"
+            label="Total capabilities"
+            value={String(kpis.totalCapabilityCount)}
+            sub="Defined in catalog"
+            icon={ListChecks}
+            accent="cyan"
           />
         </div>
       </FadeIn>

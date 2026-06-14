@@ -7,10 +7,14 @@ import {
   getEffectiveRoles,
   type AdminRole,
 } from "@/lib/admin-roles";
-import { ROLE_BASELINES, baselineTokensFor } from "@/lib/role-baselines";
+import { ROLE_BASELINES } from "@/lib/role-baselines";
 import { computeEffectivePermissions } from "@/lib/permissions/materialize";
 import { ADMIN_PAGES } from "@/lib/admin-pages";
-import { CAPABILITIES, sanitizePermissionKeys } from "./permissions-utils";
+import {
+  CAPABILITIES,
+  CAPABILITY_KEYS,
+  sanitizePermissionKeys,
+} from "./permissions-utils";
 
 // ---------------------------------------------------------------------------
 // Read-only data layer for the unified Roles & Permissions overview (Phase B).
@@ -131,31 +135,10 @@ export type RolesOverview = {
     adminCount: number;
     /** Non-admin users whose effective set ≠ their role baseline set. */
     overrideUserCount: number;
-    /** Informational: # capabilities defined but not in any baseline/page. */
-    deadCapabilityCount: number;
+    /** Total capability flags defined in the canonical catalog. */
+    totalCapabilityCount: number;
   };
 };
-
-/**
- * The count of distinct capability keys that appear in NO built-in baseline
- * (informational "dead capabilities" KPI). Computed from the canonical
- * catalogs only — no DB read. A capability is "live" if some built-in role's
- * baseline grants it; everything else is reachable only via a custom role or
- * an explicit per-user grant.
- */
-function computeDeadCapabilityCount(): number {
-  const inBaseline = new Set<string>();
-  for (const role of ALL_ADMIN_ROLES) {
-    for (const t of baselineTokensFor(role)) {
-      if (t.startsWith("__")) inBaseline.add(t);
-    }
-  }
-  let dead = 0;
-  for (const cap of CAPABILITIES) {
-    if (!inBaseline.has(cap.key)) dead++;
-  }
-  return dead;
-}
 
 /**
  * Whether a non-admin user carries a per-user override — i.e. their stored
@@ -323,7 +306,7 @@ export async function getRolesOverview(): Promise<RolesOverview> {
       customCount: customRoles.length,
       adminCount,
       overrideUserCount,
-      deadCapabilityCount: computeDeadCapabilityCount(),
+      totalCapabilityCount: CAPABILITY_KEYS.length,
     },
   };
 }
