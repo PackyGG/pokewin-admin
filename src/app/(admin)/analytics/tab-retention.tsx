@@ -6,6 +6,7 @@ import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { MetricTile } from "@/components/modern-panels";
 import { getRetentionCurve } from "@/lib/queries/analytics-retention";
+import { compareRetention } from "@/lib/clickhouse/compare/analytics-retention";
 import { RetentionChart } from "./retention-chart";
 import type { AnalyticsPeriod } from "./types";
 
@@ -33,6 +34,10 @@ export async function RetentionTab({
       />
     );
   }
+  // Fire-and-forget ClickHouse comparison (no-op unless the
+  // `analytics_retention` surface is in comparison mode). Never affects the
+  // served Postgres payload.
+  void compareRetention(data);
 
   const kpis = [
     {

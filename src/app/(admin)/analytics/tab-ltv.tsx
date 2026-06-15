@@ -20,6 +20,7 @@ import {
   getCreatorLtv,
   type LtvPeriod,
 } from "@/lib/queries/analytics-ltv";
+import { compareCreatorLtv } from "@/lib/clickhouse/compare/analytics-ltv";
 import type { AnalyticsPeriod } from "./types";
 
 /**
@@ -58,6 +59,9 @@ export async function LtvTab({
       />
     );
   }
+  // Fire-and-forget ClickHouse comparison (no-op unless the `analytics_ltv`
+  // surface is in comparison mode). Never affects the served Postgres payload.
+  void compareCreatorLtv(ltvPeriod, data);
 
   return (
     <FadeIn>

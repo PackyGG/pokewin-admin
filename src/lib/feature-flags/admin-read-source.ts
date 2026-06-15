@@ -89,6 +89,20 @@ export const INSIGHTS_MOTHA_SURFACE_KEY = "insights_motha_overview";
  */
 export const INSIGHTS_RAFFLE_BASELINE_SURFACE_KEY = "insights_raffle_baseline";
 
+/**
+ * Phase 2B surface flag keys for the /analytics retention + LTV tab CH twins
+ * (`getRetentionCurve` / `getCreatorLtv`). Listed here for discoverability
+ * only; like every other surface key they carry NO registration cost —
+ * `getAdminReadMode` resolves any unset key through the precedence chain whose
+ * terminal default is `"off"`, so each defaults to Postgres-only until an
+ * explicit env/Edge-Config flip to `"comparison"`. NEVER flipped to
+ * `"clickhouse"` in Phase 2B.
+ */
+export const ANALYTICS_RETENTION_LTV_SURFACE_KEYS = [
+  "analytics_retention",
+  "analytics_ltv",
+] as const;
+
 const VALID: readonly AdminReadMode[] = ["off", "comparison", "clickhouse"];
 
 function coerce(value: unknown): AdminReadMode | null {
