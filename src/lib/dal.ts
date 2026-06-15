@@ -11,6 +11,7 @@ import {
 import { readAdminUserWithRoles, isMissingColumnError } from "./admin-user-roles";
 import type { AdminRole } from "./admin-roles";
 import { pageAccessGranted } from "./admin-pages";
+import { resolveLandingRoute } from "./role-landing";
 import { isSessionRevoked, isMandatory2faEnabled } from "./admin-guards";
 
 export { getDefaultRoute };
@@ -247,7 +248,78 @@ export async function getDefaultRouteForUser(userId: string, role: string): Prom
       }),
   );
   const roles = getEffectiveRoles(user?.role ?? role, user?.roles);
+  // `admin` (the one superuser) is a hard bypass — always /dashboard, NEVER a
+  // per-role landing override (locked: admin routing is untouched).
   if (roles.includes("admin")) return "/dashboard";
   const allowedPages = await getUserPermissions(userId);
+
+  // RoleV2 P4 — per-role landing override (NON-admins only). When a role this
+  // user holds has a `landing_route` set AND valid AND actually reachable by
+  // this user, land there instead of the default surface. NULL on every row =
+  // byte-identical to today's routing (the resolver returns null → fall
+  // through). Priority: the user's assigned custom role (role_id) wins, then
+  // the primary built-in role's override. Validation + reachability guard
+  // against redirect loops (never land a user where the gate would bounce
+  // them). Wrapped so a landing read can NEVER break login routing.
+  const landing = await resolveUserLandingRoute(userId, roles, allowedPages);
+  if (landing) return landing;
+
   return getDefaultRouteForRoles(roles, allowedPages);
+}
+
+/**
+ * Resolve the per-role landing override for a NON-admin user, or `null` to fall
+ * through to the default routing. Reads the user's `role_id` (assigned custom
+ * role) + the system rows for their effective built-in roles, picks the custom
+ * role's `landing_route` first (then the primary built-in's), and only returns
+ * it when it is a KNOWN admin page AND the user can actually reach it
+ * (`pageAccessGranted` — a redirect-loop guard, since the target page's own
+ * gate would otherwise bounce them). NULL/invalid/unreachable → `null`.
+ *
+ * Defensive: any read failure (e.g. the `landing_route` column not yet applied
+ * on some DB) degrades to `null` so login routing is never broken.
+ */
+async function resolveUserLandingRoute(
+  userId: string,
+  roles: AdminRole[],
+  allowedPages: string[],
+): Promise<string | null> {
+  try {
+    const row = await adminDb.admin_users.findUnique({
+      where: { id: userId },
+      select: {
+        role_id: true,
+        custom_role: { select: { landing_route: true } },
+      },
+    });
+
+    // Candidate landing routes in priority order: assigned custom role first,
+    // then the primary built-in role's system-row override.
+    const candidates: Array<string | null | undefined> = [];
+    candidates.push(row?.custom_role?.landing_route);
+
+    if (roles.length > 0) {
+      const primary = pickPrimaryRole(roles);
+      const systemRow = await adminDb.admin_roles.findUnique({
+        where: { system_key: primary },
+        select: { landing_route: true },
+      });
+      candidates.push(systemRow?.landing_route);
+    }
+
+    for (const candidate of candidates) {
+      const resolved = resolveLandingRoute(candidate);
+      // Only honor a target the user can actually reach (avoids a redirect loop
+      // where the destination's own gate bounces them straight back).
+      if (resolved && pageAccessGranted(allowedPages, resolved)) {
+        return resolved;
+      }
+    }
+    return null;
+  } catch (err) {
+    if (!isMissingColumnError(err)) {
+      console.error("[dal] resolveUserLandingRoute failed:", err);
+    }
+    return null;
+  }
 }

@@ -305,6 +305,14 @@ model admin_roles {
   description  String?
   is_system    Boolean       @default(false)
   capabilities String[]      @default([])
+  // Per-role landing route (RoleV2 P4). NULL on every row = today's routing
+  // (getDefaultRouteForRoles fallback) — strictly behavior-neutral. When set
+  // AND valid (a known ADMIN_PAGES key), a NON-admin holder of this role lands
+  // here after auth instead of the role's default surface. `admin` is excluded
+  // (hard bypass → /dashboard); validation against ALL_PAGE_KEYS guards against
+  // redirect loops. Additive nullable column applied via `prisma db execute`
+  // (admin DB is db-push-managed) — see prisma/admin/sql/2026-06-15_add_role_landing_route.up.sql.
+  landing_route String?
   // Typed per-role limit slots (RoleV2 P0). All NULL in the behavior-neutral
   // foundation phase — wired into enforcement in a later phase.
   balance_limit_daily    Decimal? @db.Decimal(12, 2)
