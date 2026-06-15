@@ -25,6 +25,22 @@ import { isClickHouseEnabled } from "@/lib/clickhouse/client";
  */
 export type AdminReadMode = "off" | "comparison" | "clickhouse";
 
+/**
+ * Phase 2B surface flag keys for the /rewards/analytics CH twins (one per
+ * rendered leg). Listed here for discoverability; like every other surface key
+ * (e.g. `insights_rakeback_*`, `xp_sales`) they carry NO registration cost —
+ * `getAdminReadMode` resolves any unset key through the precedence chain whose
+ * terminal default is `"off"`, so each defaults to Postgres-only until an
+ * explicit env/Edge-Config flip to `"comparison"`. NEVER flipped to
+ * `"clickhouse"` in Phase 2B.
+ */
+export const REWARDS_ANALYTICS_SURFACE_KEYS = [
+  "rewards_analytics_overview",
+  "rewards_analytics_category",
+  "rewards_analytics_leaderboards",
+  "rewards_analytics_extras",
+] as const;
+
 const VALID: readonly AdminReadMode[] = ["off", "comparison", "clickhouse"];
 
 function coerce(value: unknown): AdminReadMode | null {

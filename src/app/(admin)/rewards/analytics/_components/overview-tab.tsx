@@ -49,6 +49,10 @@ import {
   getPrizeBudgetBreakdown,
   type RaceLeaderboardSummary,
 } from "@/lib/queries/rewards-analytics-leaderboards";
+import { compareRewardsAnalyticsOverview } from "@/lib/clickhouse/compare/rewards-analytics-overview";
+import { compareRewardsAnalyticsCategories } from "@/lib/clickhouse/compare/rewards-analytics-category";
+import { compareRewardsAnalyticsLeaderboards } from "@/lib/clickhouse/compare/rewards-analytics-leaderboards";
+import { compareRewardsAnalyticsExtras } from "@/lib/clickhouse/compare/rewards-analytics-extras";
 import { RewardsCostChart } from "../rewards-chart";
 import { RewardTileDrilldown } from "../reward-tile-popover";
 import {
@@ -143,6 +147,17 @@ export async function OverviewTab({ period }: { period: RewardsPeriod }) {
     waitlist: waitlistBreakdown,
     houseCredits: houseCreditsBreakdown,
   };
+
+  // Phase 2B CQRS comparison (fire-and-forget). No-op unless the matching
+  // surface flag is in `comparison` mode; the served payload is ALWAYS the
+  // Postgres value above. CH drift is only logged. Errors are swallowed.
+  void compareRewardsAnalyticsOverview(period, data);
+  void compareRewardsAnalyticsCategories(period, breakdownByCategory);
+  void compareRewardsAnalyticsLeaderboards(leaderboards);
+  void compareRewardsAnalyticsExtras(lifetimePrizesBreakdown, prizeBudgetBreakdown, [
+    "daily",
+    "weekly",
+  ]);
   const kpiCategories: {
     key: RewardCategoryKey;
     label: string;
