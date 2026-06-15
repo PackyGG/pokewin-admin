@@ -23,6 +23,7 @@ import {
   formatRelative,
 } from "@/lib/utils/format";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import { compareRewardsExpiry } from "@/lib/clickhouse/compare/insights-rewards-expiry";
 import {
   getRakebackExpiry,
   type RakebackExpiryWindow,
@@ -76,6 +77,10 @@ export async function ExpiryContent({
   }
 
   const { windows, expirationConfigured, forfeited } = res.data;
+
+  // Fire-and-forget CQRS comparison (no-op unless the surface is in
+  // `comparison` mode). Never affects the served Postgres payload.
+  void compareRewardsExpiry(period, res.data);
 
   return (
     <div className="space-y-6">
