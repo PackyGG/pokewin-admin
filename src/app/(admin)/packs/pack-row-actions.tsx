@@ -7,7 +7,6 @@ import {
   Pencil,
   Power,
   PowerOff,
-  SlidersHorizontal,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -31,42 +30,17 @@ import type { PackListItem } from "@/lib/queries/packs";
 import { deletePack, togglePackActive } from "./actions";
 import { invalidatePackDetailCache } from "./pack-detail-cache";
 
-/**
- * Per-pack kebab menu, shared by the table rows and the gallery tiles so the
- * action surface is identical in both views. Replaces the old grid-only
- * <PackActions>:
- *
- *   - "Quick edit"  → opens the QuickEditDrawer (price + active) without
- *                     leaving the list (only shown when the viewer can edit
- *                     price or toggle active).
- *   - "Open detail" → opens the centered detail MODAL on the list (via the
- *                     `?inspect=` flow), the same as a row/tile click. There is
- *                     no standalone full-page pack view — the modal is the only
- *                     detail surface, so this never navigates away.
- *   - Activate/Deactivate → togglePackActive (capability-gated).
- *   - Delete        → confirmation dialog → deletePack (capability-gated).
- *
- * All handlers stop propagation so a kebab click inside a clickable row/tile
- * never also triggers the row's inspector-open or the tile's navigation.
- */
 export function PackRowActions({
   pack,
   canToggle,
   canDelete,
-  canQuickEdit,
-  onQuickEdit,
-  onOpenDetail,
-  /** Compact trigger for dense table rows (smaller hit target). */
+  canEdit,
   size = "default",
 }: {
   pack: PackListItem;
   canToggle: boolean;
   canDelete: boolean;
-  /** Whether the viewer may open the quick-edit drawer (edit price). */
-  canQuickEdit: boolean;
-  onQuickEdit: (pack: PackListItem) => void;
-  /** Opens the centered detail modal for this pack (sets `?inspect=`). */
-  onOpenDetail: (pack: PackListItem) => void;
+  canEdit: boolean;
   size?: "default" | "sm";
 }) {
   const router = useRouter();
@@ -134,26 +108,26 @@ export function PackRowActions({
           sideOffset={4}
           className="min-w-[170px]"
         >
-          {canQuickEdit && (
-            <DropdownMenuItem
-              onClick={(e) => {
-                stop(e);
-                onQuickEdit(pack);
-              }}
-            >
-              <SlidersHorizontal className="size-3.5" />
-              Quick edit
-            </DropdownMenuItem>
-          )}
           <DropdownMenuItem
             onClick={(e) => {
               stop(e);
-              onOpenDetail(pack);
+              router.push(`/packs/${pack.id}`);
             }}
           >
             <Pencil className="size-3.5" />
-            Open detail
+            Open pack
           </DropdownMenuItem>
+          {canEdit && (
+            <DropdownMenuItem
+              onClick={(e) => {
+                stop(e);
+                router.push(`/packs/${pack.id}?edit=1`);
+              }}
+            >
+              <Pencil className="size-3.5" />
+              Edit pack
+            </DropdownMenuItem>
+          )}
           {canToggle && (
             <DropdownMenuItem onClick={handleToggle} disabled={isPending}>
               {pack.active ? (

@@ -1,7 +1,10 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
+  ArrowLeft,
   Boxes,
   Coins,
   DollarSign,
@@ -12,18 +15,11 @@ import {
   Percent,
   TrendingUp,
 } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CardImage } from "@/components/card-image";
-import { KpiTile } from "@/components/modern-panels";
+import { KpiTile, PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { InlineError } from "@/components/entity-surface";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -34,7 +30,6 @@ import { PackCardsView, GamesTable } from "./[id]/pack-tabs";
 import { TogglePackButton } from "./[id]/toggle-pack-button";
 import { DeletePackButton } from "./[id]/delete-pack-button";
 import { fetchPackListSeed, type PackFullDetail } from "./actions";
-import type { PackInspectSeed } from "./pack-inspect-context";
 import {
   invalidatePackDetailCache,
   loadPackFullDetail,
@@ -43,7 +38,7 @@ import {
 } from "./pack-detail-cache";
 import { PackEditForm } from "./pack-edit-form";
 
-type ModalState =
+type DetailState =
   | { status: "loading" }
   | { status: "ready"; payload: PackFullDetail }
   | { status: "notfound" }
@@ -52,82 +47,38 @@ type ModalState =
 type ContentTab = "cards" | "games";
 type ViewMode = "overview" | "edit";
 
-export function PackDetailModal({
+type HeaderSeed = {
+  id: string;
+  name: string;
+  slug: string;
+  imageUrl: string | null;
+  active: boolean;
+  priceUsd: number;
+};
+
+export function PackDetailView({
   packId,
-  seed,
-  open,
-  onOpenChange,
   canToggle,
   canDelete,
   canEdit,
   canEditLive,
   isPackCreator,
-}: {
-  packId: string | null;
-  seed: PackInspectSeed | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  canToggle: boolean;
-  canDelete: boolean;
-  canEdit: boolean;
-  canEditLive: boolean;
-  isPackCreator: boolean;
-}) {
-  if (!packId) return null;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="sm:max-w-5xl lg:max-w-6xl sm:w-[calc(100%-3rem)] sm:max-h-[90vh] gap-0 p-0"
-        showCloseButton
-      >
-        <ModalInner
-          key={packId}
-          packId={packId}
-          seed={seed}
-          open={open}
-          canToggle={canToggle}
-          canDelete={canDelete}
-          canEdit={canEdit}
-          canEditLive={canEditLive}
-          isPackCreator={isPackCreator}
-          onClose={() => onOpenChange(false)}
-        />
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ModalInner({
-  packId,
-  seed,
-  open,
-  canToggle,
-  canDelete,
-  canEdit,
-  canEditLive,
-  isPackCreator,
-  onClose,
+  initialViewMode = "overview",
 }: {
   packId: string;
-  seed: PackInspectSeed | null;
-  open: boolean;
   canToggle: boolean;
   canDelete: boolean;
   canEdit: boolean;
   canEditLive: boolean;
   isPackCreator: boolean;
-  onClose: () => void;
+  initialViewMode?: ViewMode;
 }) {
-  const [headerSeed, setHeaderSeed] = React.useState<PackInspectSeed | null>(seed);
-  const [state, setState] = React.useState<ModalState>({ status: "loading" });
+  const router = useRouter();
+  const [headerSeed, setHeaderSeed] = React.useState<HeaderSeed | null>(null);
+  const [state, setState] = React.useState<DetailState>({ status: "loading" });
   const [tab, setTab] = React.useState<ContentTab>("cards");
-  const [viewMode, setViewMode] = React.useState<ViewMode>("overview");
+  const [viewMode, setViewMode] = React.useState<ViewMode>(initialViewMode);
   const [statsRetrying, setStatsRetrying] = React.useState(false);
-
-  React.useEffect(() => {
-    if (seed) setHeaderSeed(seed);
-  }, [seed]);
 
   const load = React.useCallback(
     (force = false) => {
@@ -161,15 +112,13 @@ function ModalInner({
   );
 
   React.useEffect(() => {
-    if (!open) return;
     setTab("cards");
-    setViewMode("overview");
+    setViewMode(initialViewMode);
     return load(false);
-  }, [open, packId, load]);
+  }, [packId, initialViewMode, load]);
 
-  // Deep-link fallback: fetch lightweight seed when pack isn't on current page.
   React.useEffect(() => {
-    if (!open || headerSeed?.name !== "Loading…") return;
+    if (headerSeed?.name !== "Loading…") return;
     let cancelled = false;
     fetchPackListSeed(packId)
       .then((s) => {
@@ -187,7 +136,19 @@ function ModalInner({
     return () => {
       cancelled = true;
     };
-  }, [open, packId, headerSeed?.name]);
+  }, [packId, headerSeed?.name]);
+
+  React.useEffect(() => {
+    if (headerSeed) return;
+    setHeaderSeed({
+      id: packId,
+      name: "Loading…",
+      slug: "",
+      imageUrl: null,
+      active: false,
+      priceUsd: 0,
+    });
+  }, [packId, headerSeed]);
 
   const detail = state.status === "ready" ? state.payload.detail : null;
   const stats = state.status === "ready" ? state.payload.stats : null;
@@ -230,18 +191,66 @@ function ModalInner({
     }
   }
 
+  function enterEditMode() {
+    setViewMode("edit");
+    router.replace(`/packs/${packId}?edit=1`, { scroll: false });
+  }
+
+  function exitEditMode() {
+    setViewMode("overview");
+    router.replace(`/packs/${packId}`, { scroll: false });
+  }
+
   return (
-    <>
-      <DialogHeader className="sticky top-0 z-10 border-b bg-background/95 px-4 py-4 backdrop-blur-sm supports-backdrop-filter:bg-background/80 sm:px-6">
-        <div className="flex items-start gap-3 pr-10 sm:gap-4">
+    <div className="space-y-6">
+      <div className="flex items-center gap-2">
+        <Link
+          href="/packs"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <ArrowLeft className="size-3.5" />
+          Packs
+        </Link>
+      </div>
+
+      <PageHero>
+        <PageHeroIdentity
+          icon={Package}
+          title={title}
+          subtitle={slug || "Pack detail"}
+          action={
+            showActions && detail ? (
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                {showEditButton ? (
+                  <Button size="sm" variant="outline" onClick={enterEditMode}>
+                    <Pencil className="mr-1 size-3.5" />
+                    Edit
+                  </Button>
+                ) : null}
+                {canToggle ? (
+                  <TogglePackButton
+                    packId={detail.id}
+                    active={detail.active}
+                    onToggled={() => load(true)}
+                  />
+                ) : null}
+                {canDelete ? (
+                  <DeletePackButton
+                    packId={detail.id}
+                    packName={detail.name}
+                    onDeleted={() => router.push("/packs")}
+                  />
+                ) : null}
+              </div>
+            ) : undefined
+          }
+        />
+        <div className="mt-4 flex items-start gap-3 sm:gap-4">
           <div className="shrink-0 overflow-hidden rounded-xl border bg-muted/40 shadow-sm">
-            <CardImage src={imageUrl} alt={title} className="size-14 object-cover sm:size-16" />
+            <CardImage src={imageUrl} alt={title} className="size-16 object-cover sm:size-20" />
           </div>
           <div className="min-w-0 flex-1 pt-0.5">
-            <DialogTitle className="truncate text-lg font-bold leading-tight tracking-tight sm:text-2xl">
-              {title}
-            </DialogTitle>
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <Badge
                 variant="outline"
                 className={
@@ -257,54 +266,25 @@ function ModalInner({
                   {packType}
                 </Badge>
               ) : null}
-              <DialogDescription render={<span />} className="font-mono text-xs text-muted-foreground">
-                {slug}
-              </DialogDescription>
             </div>
           </div>
         </div>
-
-        {showActions && detail ? (
-          <div className="mt-3 flex flex-wrap items-center gap-1.5 sm:gap-2">
-            {showEditButton ? (
-              <Button size="sm" variant="outline" onClick={() => setViewMode("edit")}>
-                <Pencil className="mr-1 size-3.5" />
-                Edit
-              </Button>
-            ) : null}
-            {canToggle ? (
-              <TogglePackButton
-                packId={detail.id}
-                active={detail.active}
-                onToggled={() => load(true)}
-              />
-            ) : null}
-            {canDelete ? (
-              <DeletePackButton
-                packId={detail.id}
-                packName={detail.name}
-                onDeleted={onClose}
-              />
-            ) : null}
-          </div>
-        ) : null}
-
         {viewMode === "edit" ? (
           <div className="mt-3">
-            <Button size="sm" variant="ghost" onClick={() => setViewMode("overview")}>
+            <Button size="sm" variant="ghost" onClick={exitEditMode}>
               ← Back to overview
             </Button>
           </div>
         ) : null}
-      </DialogHeader>
+      </PageHero>
 
-      <div className="space-y-5 px-4 py-5 sm:px-6">
-        {loading && <ModalBodySkeleton />}
+      <div className="space-y-5">
+        {loading && <DetailBodySkeleton />}
 
         {state.status === "notfound" && (
           <InlineError
             title="Pack not found"
-            hint="This pack may have been deleted. Close this and refresh the catalog."
+            hint="This pack may have been deleted. Return to the catalog and refresh."
             compact
           />
         )}
@@ -312,7 +292,7 @@ function ModalInner({
         {state.status === "error" && (
           <InlineError
             title="Couldn't load this pack"
-            hint="The pack detail timed out or failed. Retry, or close and reopen."
+            hint="The pack detail timed out or failed. Retry, or go back to the catalog."
             onRetry={() => load(true)}
             compact
           />
@@ -322,9 +302,9 @@ function ModalInner({
           <PackEditForm
             key={detail.id}
             pack={detail}
-            onCancel={() => setViewMode("overview")}
+            onCancel={exitEditMode}
             onSaved={() => {
-              setViewMode("overview");
+              exitEditMode();
               load(true);
             }}
           />
@@ -340,7 +320,7 @@ function ModalInner({
           />
         ) : null}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -408,7 +388,7 @@ function ReadyBody({
         {tab === "cards" ? (
           <PackCardsView cards={detail.cards} />
         ) : (
-          <ModalGamesTab packId={detail.id} />
+          <GamesTab packId={detail.id} />
         )}
       </div>
     </>
@@ -445,7 +425,7 @@ function ContentTabButton({
   );
 }
 
-function ModalGamesTab({ packId }: { packId: string }) {
+function GamesTab({ packId }: { packId: string }) {
   const [games, setGames] = React.useState<Awaited<ReturnType<typeof loadPackGamesPage>> | null>(null);
   const [status, setStatus] = React.useState<"loading" | "ready" | "error">("loading");
 
@@ -496,7 +476,7 @@ function ModalGamesTab({ packId }: { packId: string }) {
   return <GamesTable packId={packId} initialGames={games} />;
 }
 
-function ModalBodySkeleton() {
+function DetailBodySkeleton() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4 lg:grid-cols-8">

@@ -1,5 +1,7 @@
 import { Suspense } from "react";
+import { redirect } from "next/navigation";
 import { Package } from "lucide-react";
+import { isUuid } from "@/lib/utils/ids";
 import {
   getUserPermissions,
   requirePageAccess,
@@ -106,6 +108,11 @@ export default async function PacksPage({
   const session = await requirePageAccess("/packs");
   const params = await searchParams;
 
+  // Legacy inspect URLs → dedicated detail route.
+  if (params.inspect && isUuid(params.inspect)) {
+    redirect(`/packs/${params.inspect}`);
+  }
+
   const tab = parsePacksTab(params.tab);
 
   // Whether the viewer may see the Transactions tab — admin/owner bypass
@@ -171,8 +178,6 @@ export default async function PacksPage({
             canToggle={caps!.canToggle}
             canDelete={caps!.canDelete}
             canEdit={caps!.canEdit}
-            canEditLive={caps!.canEditLive}
-            isPackCreator={caps!.isPackCreator}
           />
         )}
       </Suspense>

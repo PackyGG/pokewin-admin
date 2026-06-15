@@ -10,34 +10,18 @@ import { cn } from "@/lib/utils";
 import type { PackListItem } from "@/lib/queries/packs";
 import { PackRowActions } from "./pack-row-actions";
 
-/**
- * Secondary "Gallery" view for /packs — the art-browse view, one click from
- * the dense triage table (the default). Kept so the catalog's visual browse
- * isn't lost in the rebuild, but no longer the primary IA: economic triage
- * lives in the table.
- *
- * Tiles now open the shared INSPECTOR (same as a table row click) instead of
- * hard-navigating, so a quick look never loses list context; the kebab carries
- * the identical action surface as the table (quick-edit / open / toggle /
- * delete). House-POV colors are applied uniformly to edge AND RTP AND payout
- * (the old tile only colored edge).
- */
 export function PackGallery({
   data,
   canToggle,
   canDelete,
-  canQuickEdit,
-  onOpenInspector,
-  onQuickEdit,
-  activeId,
+  canEdit,
+  onOpenPack,
 }: {
   data: PackListItem[];
   canToggle: boolean;
   canDelete: boolean;
-  canQuickEdit: boolean;
-  onOpenInspector: (pack: PackListItem) => void;
-  onQuickEdit: (pack: PackListItem) => void;
-  activeId: string | null;
+  canEdit: boolean;
+  onOpenPack: (pack: PackListItem) => void;
 }) {
   if (data.length === 0) {
     return (
@@ -59,10 +43,8 @@ export function PackGallery({
           pack={pack}
           canToggle={canToggle}
           canDelete={canDelete}
-          canQuickEdit={canQuickEdit}
-          onOpenInspector={onOpenInspector}
-          onQuickEdit={onQuickEdit}
-          isActive={activeId === pack.id}
+          canEdit={canEdit}
+          onOpenPack={onOpenPack}
         />
       ))}
     </div>
@@ -73,27 +55,21 @@ function PackTile({
   pack,
   canToggle,
   canDelete,
-  canQuickEdit,
-  onOpenInspector,
-  onQuickEdit,
-  isActive,
+  canEdit,
+  onOpenPack,
 }: {
   pack: PackListItem;
   canToggle: boolean;
   canDelete: boolean;
-  canQuickEdit: boolean;
-  onOpenInspector: (pack: PackListItem) => void;
-  onQuickEdit: (pack: PackListItem) => void;
-  isActive: boolean;
+  canEdit: boolean;
+  onOpenPack: (pack: PackListItem) => void;
 }) {
-  const showActions = canToggle || canDelete || canQuickEdit;
+  const showActions = canToggle || canDelete || canEdit;
 
   function handleClick(e: React.MouseEvent) {
-    // Ignore clicks that originated on a control (kebab, menu) so the tile's
-    // inspector-open never fights the action menu.
     const el = e.target as HTMLElement;
     if (el.closest("button, a, [role=menu], [data-no-row-click]")) return;
-    onOpenInspector(pack);
+    onOpenPack(pack);
   }
 
   return (
@@ -104,14 +80,13 @@ function PackTile({
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          onOpenInspector(pack);
+          onOpenPack(pack);
         }
       }}
       className={cn(
         "group relative cursor-pointer overflow-hidden rounded-xl border bg-card/50 text-left outline-none",
         "transition-all duration-200 focus-visible:ring-2 focus-visible:ring-ring/50",
         "motion-safe:hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card hover:shadow-md",
-        isActive && "border-primary/50 bg-accent/30 ring-1 ring-primary/30",
         !pack.active && "opacity-80",
       )}
     >
@@ -121,14 +96,11 @@ function PackTile({
             pack={pack}
             canToggle={canToggle}
             canDelete={canDelete}
-            canQuickEdit={canQuickEdit}
-            onQuickEdit={onQuickEdit}
-            onOpenDetail={onOpenInspector}
+            canEdit={canEdit}
           />
         </div>
       )}
 
-      {/* Header: image + name/price + status */}
       <div className="flex items-start gap-3 p-3 pr-10">
         <div className="relative shrink-0">
           <CardImage
@@ -158,14 +130,10 @@ function PackTile({
         </div>
       </div>
 
-      {/* Stats row — four compact metrics, House-POV colored uniformly. */}
       <div className="grid grid-cols-4 gap-1 border-t bg-muted/20 px-3 py-2">
         <Metric
           label="Revenue"
           value={formatCurrency(pack.totalRevenue)}
-          // House-POV constant: revenue is money INTO the house → emerald.
-          // Fixed-semantics label (not a signed amount), so the polarity is
-          // pinned rather than derived from the value.
           valueClass={houseTextClass("positive")}
         />
         <Metric
@@ -177,13 +145,10 @@ function PackTile({
         <Metric
           label="Payout"
           value={formatCurrency(pack.totalPayout)}
-          // House-POV constant: payout is money OUT of the house → rose.
-          // Fixed-semantics label, so the polarity is pinned.
           valueClass={houseTextClass("negative")}
         />
       </div>
 
-      {/* Mini card preview strip — skipped when no cards. */}
       {pack.cards.length > 0 && (
         <div className="flex items-center gap-1 px-3 pb-3 pt-2">
           {pack.cards.map((card) => (

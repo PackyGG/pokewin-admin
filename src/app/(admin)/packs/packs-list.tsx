@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { Package } from "lucide-react";
 import {
   EntityTable,
@@ -16,23 +17,28 @@ import { toPercent } from "@/lib/house-pov";
 import type { PackListItem } from "@/lib/queries/packs";
 import { PackRowActions } from "./pack-row-actions";
 import { PackGallery } from "./pack-gallery";
-import { usePackInspect } from "./pack-inspect-context";
 
 export function PacksList({
   data,
   view,
+  canToggle,
+  canDelete,
+  canEdit,
 }: {
   data: PackListItem[];
   view: EntityView;
+  canToggle: boolean;
+  canDelete: boolean;
+  canEdit: boolean;
 }) {
-  const {
-    activePackId,
-    openDetail,
-    openQuickEdit,
-    canToggle,
-    canDelete,
-    canEdit,
-  } = usePackInspect();
+  const router = useRouter();
+
+  const openPack = React.useCallback(
+    (pack: PackListItem) => {
+      router.push(`/packs/${pack.id}`);
+    },
+    [router],
+  );
 
   const columns = React.useMemo<EntityColumn<PackListItem>[]>(
     () => [
@@ -127,16 +133,14 @@ export function PacksList({
               pack={p}
               canToggle={canToggle}
               canDelete={canDelete}
-              canQuickEdit={canEdit}
-              onQuickEdit={openQuickEdit}
-              onOpenDetail={openDetail}
+              canEdit={canEdit}
               size="sm"
             />
           </div>
         ),
       },
     ],
-    [canToggle, canDelete, canEdit, openQuickEdit, openDetail],
+    [canToggle, canDelete, canEdit],
   );
 
   return view === "grid" ? (
@@ -144,18 +148,15 @@ export function PacksList({
       data={data}
       canToggle={canToggle}
       canDelete={canDelete}
-      canQuickEdit={canEdit}
-      onOpenInspector={openDetail}
-      onQuickEdit={openQuickEdit}
-      activeId={activePackId}
+      canEdit={canEdit}
+      onOpenPack={openPack}
     />
   ) : (
     <EntityTable
       rows={data}
       columns={columns}
       rowKey={(p) => p.id}
-      onRowClick={openDetail}
-      activeRowKey={activePackId}
+      onRowClick={openPack}
       emptyState={
         <EmptyState
           icon={Package}

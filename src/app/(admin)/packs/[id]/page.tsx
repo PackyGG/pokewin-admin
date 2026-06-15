@@ -1,29 +1,60 @@
-import { notFound, redirect } from "next/navigation";
-import { requirePageAccess } from "@/lib/dal";
+import { notFound } from "next/navigation";
+import {
+  getUserPermissions,
+  requirePageAccess,
+  sessionHasRole,
+} from "@/lib/dal";
+import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
+import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabilities";
 import { isUuid } from "@/lib/utils/ids";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { PackDetailView } from "../pack-detail-view";
 
 export const metadata = { title: "Pack Detail" };
 
-/**
- * /packs/[id] — there is NO standalone full-page pack view anymore. The pack
- * detail lives ENTIRELY in the centered modal on the /packs list (opened via
- * `?inspect=<id>`). This route exists only so direct URLs / external deep-links
- * keep working: it gates access exactly like the list, then `redirect`s to
- * /packs?inspect=<id> so the link lands on the list with the modal open.
- *
- * Auth gating is preserved (requirePageAccess("/packs")) so an unauthorised /
- * unpermitted hit is redirected by the DAL before we ever bounce to the list.
- * A malformed id (not a UUID) is a 404 rather than being forwarded into the
- * list URL as a stale `?inspect=` that matches no row.
- */
 export default async function PackDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requirePageAccess("/packs");
+  const session = await requirePageAccess("/packs");
   const { id } = await params;
-  // Shape-check the UUID before forwarding it — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
-  redirect(`/packs?inspect=${id}`);
+
+  const sp = await searchParams;
+  const initialViewMode = sp.edit === "1" ? "edit" : "overview";
+
+  await ensurePackCreatorCapabilities();
+
+  const isAdmin = session.role === "admin";
+  let canToggle = isAdmin;
+  let canDelete = isAdmin;
+  let canEdit = isAdmin;
+  let canEditLive = isAdmin;
+  if (!isAdmin) {
+    const { data: perms } = await safeQuery(
+      () => getUserPermissions(session.userId),
+      [] as string[],
+      "packs.detail.perms",
+    );
+    canToggle = hasCapability(perms, "__can_toggle_pack_active");
+    canDelete = hasCapability(perms, "__can_delete_pack");
+    canEdit = hasCapability(perms, "__can_update_pack");
+    canEditLive = hasCapability(perms, "__can_edit_live_packs");
+  }
+  const isPackCreator = sessionHasRole(session, "pack_creator");
+
+  return (
+    <PackDetailView
+      packId={id}
+      canToggle={canToggle}
+      canDelete={canDelete}
+      canEdit={canEdit}
+      canEditLive={canEditLive}
+      isPackCreator={isPackCreator}
+      initialViewMode={initialViewMode}
+    />
+  );
 }

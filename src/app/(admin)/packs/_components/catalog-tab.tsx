@@ -12,7 +12,6 @@ import { PaginationSkeleton } from "@/components/loading-skeletons";
 import { PacksFilterBar } from "../packs-filter-bar";
 import { PacksList } from "../packs-list";
 import { PacksKpiStrip } from "../packs-kpi-strip";
-import { PacksPageShell } from "../packs-page-shell";
 import { SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import {
@@ -54,8 +53,7 @@ const EMPTY_PACKS: PaginatedResult<PackListItem> = {
  * gallery) is rendered server-side from `?view=` so there's no wrong-view
  * flash. The primary query is wrapped in `loadPrimary` (safeQuery + timeout)
  * so a slow/failed list degrades to an inline error in place — never a page
- * crash. ONLY the active view's data is fetched here; the inspector preview +
- * quick-edit fetch lazily from inside their own deferred overlays.
+ * crash.
  */
 async function PacksContent({
   page,
@@ -67,6 +65,9 @@ async function PacksContent({
   sortOrder,
   set,
   view,
+  canToggle,
+  canDelete,
+  canEdit,
 }: {
   page: number;
   perPage: number;
@@ -77,6 +78,9 @@ async function PacksContent({
   sortOrder: "asc" | "desc";
   set: PackSetFilter;
   view: EntityView;
+  canToggle: boolean;
+  canDelete: boolean;
+  canEdit: boolean;
 }) {
   const { data: result, error } = await loadPrimary(
     () =>
@@ -97,7 +101,13 @@ async function PacksContent({
   return (
     <>
       <FadeIn>
-        <PacksList data={result.data} view={view} />
+        <PacksList
+          data={result.data}
+          view={view}
+          canToggle={canToggle}
+          canDelete={canDelete}
+          canEdit={canEdit}
+        />
       </FadeIn>
       <DataTablePagination
         page={result.page}
@@ -124,15 +134,11 @@ export function PacksCatalogTab({
   canToggle,
   canDelete,
   canEdit,
-  canEditLive,
-  isPackCreator,
 }: {
   searchParams: Record<string, string | undefined>;
   canToggle: boolean;
   canDelete: boolean;
   canEdit: boolean;
-  canEditLive: boolean;
-  isPackCreator: boolean;
 }) {
   const params = searchParams;
 
@@ -172,69 +178,64 @@ export function PacksCatalogTab({
   ]);
 
   return (
-    <PacksPageShell
-      canToggle={canToggle}
-      canDelete={canDelete}
-      canEdit={canEdit}
-      canEditLive={canEditLive}
-      isPackCreator={isPackCreator}
-    >
-      <div className="space-y-6">
+    <div className="space-y-6">
+      <Suspense
+        key={`kpi-${activeSet}`}
+        fallback={
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-[68px] rounded-xl" />
+            ))}
+          </div>
+        }
+      >
+        <PacksKpiStrip activeSet={activeSet} />
+      </Suspense>
+
+      <div className="space-y-3">
+        <SectionHeading
+          icon={Coins}
+          title={
+            activeSet === "onepiece" ? "OnePiece Catalog" : "Pokemon Catalog"
+          }
+        />
+        <Suspense fallback={<FilterBarSkeleton filters={1} />}>
+          <PacksFilterBar />
+        </Suspense>
         <Suspense
-          key={`kpi-${activeSet}`}
+          key={suspenseKey}
           fallback={
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-[68px] rounded-xl" />
-              ))}
-            </div>
+            <FadeIn>
+              {view === "grid" ? (
+                <EntityGridSkeleton count={perPage} />
+              ) : (
+                <EntityTableSkeleton
+                  rows={Math.min(perPage, 12)}
+                  columns={7}
+                  selectable={false}
+                />
+              )}
+              <PaginationSkeleton />
+            </FadeIn>
           }
         >
-          <PacksKpiStrip activeSet={activeSet} />
-        </Suspense>
-
-        <div className="space-y-3">
-          <SectionHeading
-            icon={Coins}
-            title={
-              activeSet === "onepiece" ? "OnePiece Catalog" : "Pokemon Catalog"
-            }
+          <PacksContent
+            page={page}
+            perPage={perPage}
+            search={search}
+            active={activeFilter}
+            tag={categoryFilter}
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            set={activeSet}
+            view={view}
+            canToggle={canToggle}
+            canDelete={canDelete}
+            canEdit={canEdit}
           />
-          <Suspense fallback={<FilterBarSkeleton filters={1} />}>
-            <PacksFilterBar />
-          </Suspense>
-          <Suspense
-            key={suspenseKey}
-            fallback={
-              <FadeIn>
-                {view === "grid" ? (
-                  <EntityGridSkeleton count={perPage} />
-                ) : (
-                  <EntityTableSkeleton
-                    rows={Math.min(perPage, 12)}
-                    columns={7}
-                    selectable={false}
-                  />
-                )}
-                <PaginationSkeleton />
-              </FadeIn>
-            }
-          >
-            <PacksContent
-              page={page}
-              perPage={perPage}
-              search={search}
-              active={activeFilter}
-              tag={categoryFilter}
-              sortBy={sortBy}
-              sortOrder={sortOrder}
-              set={activeSet}
-              view={view}
-            />
-          </Suspense>
-        </div>
+        </Suspense>
       </div>
-    </PacksPageShell>
+    </div>
   );
 }
 
