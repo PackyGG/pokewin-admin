@@ -10,6 +10,7 @@ import {
 import { requirePageAccess } from "@/lib/dal";
 import { getSignupMethodStats, type SignupMethodKey } from "@/lib/queries/signup-methods";
 import { getPackMaxWinStats } from "@/lib/queries/pack-max-wins";
+import { compareNumbers } from "@/lib/clickhouse/compare/numbers";
 import { PackMaxWinsSection } from "./pack-max-wins-section";
 import {
   PageHero,
@@ -59,6 +60,7 @@ export default async function NumbersPage() {
     getSignupMethodStats(),
     getPackMaxWinStats(),
   ]);
+  void compareNumbers(stats, packMaxWins);
   const primaryRows = stats.methods.filter((row) =>
     PRIMARY_METHODS.includes(row.key),
   );
