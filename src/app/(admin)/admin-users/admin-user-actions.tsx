@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -71,6 +72,7 @@ export function AdminUserActions({
   /** Whether admin_users.roles is migrated — gates the multi-role notice. */
   rolesColumnExists: boolean;
 }) {
+  const router = useRouter();
   const [mode, setMode] = useState<DialogMode | null>(null);
   const [totpCode, setTotpCode] = useState("");
   const [isPending, setIsPending] = useState(false);
@@ -126,6 +128,11 @@ export function AdminUserActions({
         toast.success("Admin user deleted");
       }
       closeDialog();
+      // The server actions revalidatePath("/admin-users"), but this client
+      // component won't re-render with the fresh server data until the route
+      // is refreshed — mirror the detail page's ManagementActions so the row's
+      // status/roles flip (or the deleted row vanishes) without a manual reload.
+      router.refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Action failed");
       setIsPending(false);
@@ -184,17 +191,21 @@ export function AdminUserActions({
             <UserCog className="mr-2 size-4" />
             Manage (detail / page access)
           </DropdownMenuItem>
-          {/* onSelect (not onClick) so the dropdown closes its portal FIRST,
-              then the dialog opens — keeping the dropdown open traps focus
-              above the dialog and makes clicks feel dead. See the comment in
-              creators/_components/creator-row-actions.tsx. */}
-          <DropdownMenuItem onSelect={() => openDialog("editRoles")}>
+          {/* onClick (NOT onSelect) — base-ui's Menu.Item has no `onSelect`
+              prop, so an `onSelect` handler is passed through as the DOM
+              `onSelect` attribute, which only fires on text selection and
+              NEVER on a menu-item press → the dialog never opened (the bug
+              that made list-row Deactivate/Delete dead). `onClick` is the
+              base-ui way and matches the working role-card-actions kebab on
+              this same surface. base-ui still closes the menu on click
+              (closeOnClick), then the controlled dialog opens. */}
+          <DropdownMenuItem onClick={() => openDialog("editRoles")}>
             <ShieldCheck className="mr-2 size-4" />
             Edit roles
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
-            onSelect={() => {
+            onClick={() => {
               if (!(isSelf && isActive)) openDialog("toggle");
             }}
             disabled={isSelf && isActive}
@@ -204,7 +215,7 @@ export function AdminUserActions({
           </DropdownMenuItem>
           {totpEnabled && (
             <DropdownMenuItem
-              onSelect={() => openDialog("reset2fa")}
+              onClick={() => openDialog("reset2fa")}
               variant="destructive"
             >
               <ShieldCheck className="mr-2 size-4" />
@@ -212,7 +223,7 @@ export function AdminUserActions({
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
-            onSelect={() => {
+            onClick={() => {
               if (!isSelf) openDialog("delete");
             }}
             variant="destructive"
