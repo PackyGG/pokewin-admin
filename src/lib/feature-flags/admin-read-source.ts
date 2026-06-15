@@ -77,6 +77,18 @@ export const DASHBOARD_DAILY_LEGS_SURFACE_KEYS = [
  */
 export const INSIGHTS_MOTHA_SURFACE_KEY = "insights_motha_overview";
 
+/**
+ * Phase 2B surface flag key for the /insights/rewards/raffle forecast baseline
+ * CH twin (`getRaffleForecastBaseline` — the raffle reward's REAL baseline, with
+ * prize cost RECONSTRUCTED from each raffle's `prizes` JSON valued at live
+ * pack/card prices). Listed here for discoverability only; like every other
+ * surface key it carries NO registration cost — `getAdminReadMode` resolves it
+ * through the precedence chain whose terminal default is `"off"`, so it stays
+ * Postgres-only until an explicit env/Edge-Config flip to `"comparison"`. NEVER
+ * flipped to `"clickhouse"` in Phase 2B.
+ */
+export const INSIGHTS_RAFFLE_BASELINE_SURFACE_KEY = "insights_raffle_baseline";
+
 const VALID: readonly AdminReadMode[] = ["off", "comparison", "clickhouse"];
 
 function coerce(value: unknown): AdminReadMode | null {

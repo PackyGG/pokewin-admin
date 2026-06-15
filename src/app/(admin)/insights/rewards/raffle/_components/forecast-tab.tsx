@@ -7,6 +7,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { getRaffleForecastBaseline } from "@/lib/queries/insights-rewards/raffle/overview";
+import { compareRaffleForecastBaseline } from "@/lib/clickhouse/compare/insights-raffle-baseline";
 
 import { type ForecastBaseline } from "../_forecast";
 import { ForecastSimulatorIsland } from "./forecast-simulator";
@@ -48,6 +49,10 @@ export async function ForecastTab({
   );
 
   const base = baseRes.data;
+
+  // Fire-and-forget CH comparison (no-op unless the surface flag is in
+  // `comparison` mode). Served payload is always the Postgres `base`.
+  if (base) void compareRaffleForecastBaseline(period, base);
 
   // A real baseline is usable only when the query succeeded AND there were
   // actual completed raffles with a reconstructable prize cost in the window.
