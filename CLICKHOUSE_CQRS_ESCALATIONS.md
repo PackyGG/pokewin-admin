@@ -5,11 +5,25 @@ These are **documented, not silently changed**: each would alter a number the li
 dashboard serves today, so the call is the owner's. The code is left at its current
 (parity-aligned) behavior until an owner decides.
 
+> **Status update (2026-06-15): all three items RESOLVED by owner — see each
+> entry's "OWNER DECISION" note.** ESC-1 + ESC-2 (P&L scope): **keep** the
+> current 2-role real-user scope (`role NOT IN ('admin','support')`, creators
+> counted) — *"P&L is the same for everyone"*; ESC-3 (crypto-fee high-water
+> write): **keep** as-is. No served numbers change and no source code is
+> changed.
+>
+> **Phase 2B/2C ClickHouse guidance (binding):** for the upcoming ClickHouse
+> work, **all P&L surfaces must use the uniform 2-role real-user scope
+> (`role NOT IN ('admin','support')`, creators INCLUDED)** to stay consistent
+> with this owner decision. Do **not** apply the canonical 3-role
+> `getMetricsScope` / `CUSTOMER_EXCLUDED_ROLES` (which drops creators) to any
+> P&L surface — that scope remains for GGR/NGR/wager analytics only.
+
 ---
 
 ## ESC-1 — Realized P&L keeps creators (2-role scope), diverging from canonical 3-role `getMetricsScope`
 
-**Date:** 2026-06-15 · **Feature:** `m2-realized-pnl-scope-align` · **Status:** OPEN (owner decision)
+**Date:** 2026-06-15 · **Feature:** `m2-realized-pnl-scope-align` · **Status:** RESOLVED (owner decision, 2026-06-15)
 
 **What:** The served Postgres realized-P&L twin
 `getRealizedPnlSnapshot` (`src/lib/queries/_realized-pnl.ts` →
@@ -56,11 +70,22 @@ scopes). This is a behavior change to a live tile, so it is **not** made here.
   its CH twin (plus `getDailyPnl`, which shares the legacy 2-role scope — see
   ESC-2) would move together, and new served-number evidence would be required.
 
+> **OWNER DECISION (2026-06-15): RESOLVED — KEEP the current 2-role scope.**
+> The owner ruled: **"P&L is the same for everyone."** Realized P&L keeps its
+> current 2-role balance-sheet semantics (`role NOT IN ('admin','support')`,
+> creators counted as real users) — i.e. **option (A)**. Creators are treated
+> as real users in P&L, only `admin`/`support` are excluded. The divergence
+> from the canonical 3-role `getMetricsScope` / `CUSTOMER_EXCLUDED_ROLES` is
+> therefore **intentional and accepted**, not a bug. **No served number
+> changes** and **no code change** is made: the PG twin stays as-is and the CH
+> twin remains aligned to it (2-role). This scope must be applied **uniformly**
+> across the whole P&L family (see ESC-2).
+
 ---
 
 ## ESC-2 — P&L family uses the legacy 2-role scope (keeps creators) vs canonical 3-role `getMetricsScope`
 
-**Date:** 2026-06-15 · **Feature:** `m4-escalation-notes` · **Status:** OPEN (owner decision) · **Code: UNCHANGED**
+**Date:** 2026-06-15 · **Feature:** `m4-escalation-notes` · **Status:** RESOLVED (owner decision, 2026-06-15) · **Code: UNCHANGED**
 
 **What:** The dashboard P&L family scopes its "real users" to
 `role NOT IN ('admin', 'support')` — i.e. it **KEEPS creators** — rather than
@@ -108,11 +133,22 @@ WHOLE P&L family together so the surfaces stay mutually consistent:
 **Left unchanged this mission** — `git diff` of `src/lib/queries/pnl.ts` and
 `src/lib/queries/_realized-pnl.ts` shows no logic change to these functions.
 
+> **OWNER DECISION (2026-06-15): RESOLVED — option (A), KEEP the 2-role scope.**
+> The owner ruled: **"P&L is the same for everyone."** The entire P&L family
+> keeps the legacy 2-role balance-sheet scope (`role NOT IN ('admin','support')`,
+> creators counted as real users). The divergence from the canonical 3-role
+> `getMetricsScope` is **intentional and accepted** for P&L surfaces — it is the
+> deliberate balance-sheet semantics, not a bug. This scope is to be applied
+> **uniformly** across the whole P&L family — `getDailyPnl` / `computeDailyPnl`,
+> `getRealizedPnlSnapshot` / `realizedPnlSnapshotInner`, `calculateWindowedPnl`,
+> `getPnlBreakdownWindows`, and any insights P&L surface — so they stay mutually
+> consistent. **No served number changes** and **no code change** is made.
+
 ---
 
 ## ESC-3 — `getCryptoFeeProfitCounter` performs an admin-DB write on the render path
 
-**Date:** 2026-06-15 · **Feature:** `m4-escalation-notes` · **Status:** OPEN (owner decision) · **Code: UNCHANGED**
+**Date:** 2026-06-15 · **Feature:** `m4-escalation-notes` · **Status:** RESOLVED (owner decision, 2026-06-15) · **Code: UNCHANGED**
 
 **What:** The dashboard "Crypto Fee" KPI box is backed by
 `getCryptoFeeProfitCounter` (**`src/lib/queries/dashboard-crypto-fee-counter.ts:172`**),
@@ -155,3 +191,10 @@ runs, not on every viewer render), so it is not changed here.
 **Left unchanged this mission** — `git diff` of
 `src/lib/queries/dashboard-crypto-fee-counter.ts` shows no logic change to
 this function.
+
+> **OWNER DECISION (2026-06-15): RESOLVED — option (A), KEEP as-is.**
+> The owner ruled to keep the render-time monotonic high-water write-back.
+> Rationale accepted: the write is **idempotent** (`GREATEST(stored, live)`),
+> targets the **ADMIN DB only** (permitted to write — not a MAIN/prod game-DB
+> write), and guarantees the displayed counter is provably non-decreasing
+> across a game-DB host swap. **No code change** is made.
