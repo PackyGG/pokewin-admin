@@ -23,6 +23,11 @@ import {
   type TopPack24hRow,
 } from "@/lib/queries/analytics-packs";
 import { getPackAndBattleStats } from "@/lib/queries/analytics";
+import {
+  comparePackProfitability,
+  compareTopOpenedPacks24h,
+  comparePackAndBattleStats,
+} from "@/lib/clickhouse/compare/analytics-packs";
 import { BattleModesSection, PackPopularitySection } from "./sections";
 import type { AnalyticsPeriod } from "./types";
 
@@ -96,6 +101,14 @@ export async function PacksBattlesTab({
   const data = profitabilityResult.data;
   const overview = overviewResult.data;
   const topPacks24h = topPacks24hResult.data;
+
+  // Comparison-mode ClickHouse twins (fire-and-forget). Each no-ops unless its
+  // own surface flag is in `comparison` mode; never awaited, swallows its own
+  // errors, and never affects the rendered Postgres payload.
+  if (data) void comparePackProfitability(period, data);
+  if (overview) void comparePackAndBattleStats(heroPeriod, overview);
+  if (topPacks24h) void compareTopOpenedPacks24h(10, topPacks24h);
+
   const sortFn = (a: {
     revenue: number;
     grossMargin: number;

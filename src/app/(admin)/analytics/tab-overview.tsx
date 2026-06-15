@@ -8,6 +8,7 @@ import {
   Swords,
 } from "lucide-react";
 import { getAnalyticsData } from "@/lib/queries/analytics";
+import { compareAnalyticsOverview } from "@/lib/clickhouse/compare/analytics-overview";
 import {
   getPnlBreakdownWindows,
   getPackBattlePurePnl,
@@ -51,6 +52,11 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
       />
     );
   }
+
+  // Comparison-mode ClickHouse twin (fire-and-forget). No-op unless the
+  // `analytics_overview` surface is in `comparison` mode; never awaited,
+  // swallows its own errors, and never affects the rendered Postgres payload.
+  void compareAnalyticsOverview(period, data);
 
   const totalWager = data.packWager + data.battleWager + data.upgraderWager;
   const packPct =

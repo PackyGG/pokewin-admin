@@ -69,6 +69,26 @@ export const ANALYTICS_TOP_REVENUE_SURFACE_KEYS = [
 ] as const;
 
 /**
+ * Phase 2B surface flag keys for the /analytics OVERVIEW + PACKS tab CH twins —
+ * the last two unmigrated /analytics tabs: `analytics_overview` (the full
+ * `getAnalyticsData` headline + breakdown + battle/pack aggregates + daily
+ * series), and the three PACKS-tab legs `analytics_packs_profitability`
+ * (`getPackProfitability`), `analytics_packs_top24h` (`getTopOpenedPacks24h`)
+ * and `analytics_packs_stats` (`getPackAndBattleStats`). Listed here for
+ * discoverability only; like every other surface key they carry NO registration
+ * cost — `getAdminReadMode` resolves any unset key through the precedence chain
+ * whose terminal default is `"off"`, so each defaults to Postgres-only until an
+ * explicit env/Edge-Config flip to `"comparison"`. NEVER flipped to
+ * `"clickhouse"` in Phase 2B.
+ */
+export const ANALYTICS_OVERVIEW_PACKS_SURFACE_KEYS = [
+  "analytics_overview",
+  "analytics_packs_profitability",
+  "analytics_packs_top24h",
+  "analytics_packs_stats",
+] as const;
+
+/**
  * Phase 2B surface flag keys for the /dashboard remaining daily-leg CH twins
  * (one per leg). Listed here for discoverability only; like every other
  * surface key they carry NO registration cost — `getAdminReadMode` resolves any
