@@ -5,6 +5,7 @@ import {
   getDailyPnlBreakdown,
   type DailyPnlBreakdown,
 } from "@/lib/queries/dashboard-daily-pnl-breakdown";
+import { compareDashboardDailyPnlBreakdown } from "@/lib/clickhouse/compare/dashboard-daily-pnl-breakdown";
 
 /**
  * Server action backing the Daily-P&L (30-day) chart's per-bar drilldown
@@ -35,5 +36,22 @@ export async function fetchDailyPnlBreakdown(
   dayUtc: string,
 ): Promise<DailyPnlBreakdown> {
   await requirePageAccess("/dashboard");
-  return getDailyPnlBreakdown(dayUtc);
+  const breakdown = await getDailyPnlBreakdown(dayUtc);
+  // CQRS rollout: in `comparison` mode, run the ClickHouse single-day breakdown
+  // path side-by-side and LOG drift. Fire-and-forget + never-throwing — the
+  // returned breakdown stays 100% Postgres. No-op unless the flag is `comparison`.
+  void compareDashboardDailyPnlBreakdown(dayUtc, {
+    deposits: breakdown.summary.deposits,
+    withdrawals: breakdown.summary.withdrawals,
+    balanceChange: breakdown.summary.balanceChange,
+    inventoryChange: breakdown.summary.inventoryChange,
+    voucherChange: breakdown.summary.voucherChange,
+    pnl: breakdown.summary.pnl,
+    depositCount: breakdown.deposits.totalCount,
+    withdrawalCount: breakdown.withdrawals.totalCount,
+    balanceCount: breakdown.balanceChanges.totalCount,
+    inventoryCount: breakdown.inventoryChanges.totalCount,
+    voucherCount: breakdown.voucherChanges.totalCount,
+  });
+  return breakdown;
 }

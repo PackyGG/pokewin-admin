@@ -22,6 +22,7 @@ import { compareDashboardUpgraderStats } from "@/lib/clickhouse/compare/dashboar
 import { compareDashboardCreatorCostsToday } from "@/lib/clickhouse/compare/dashboard-creator-costs-today";
 import { compareDashboardAffiliateReferredPnlToday } from "@/lib/clickhouse/compare/dashboard-affiliate-referred-pnl-today";
 import { compareDashboardChatMessagesToday } from "@/lib/clickhouse/compare/dashboard-chat-messages-today";
+import { compareDashboardRewardCostsToday } from "@/lib/clickhouse/compare/dashboard-reward-costs-today";
 import { requirePageAccess } from "@/lib/dal";
 import { formatRelative } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
@@ -569,6 +570,17 @@ async function DashboardRewardCostsToday() {
       />
     );
   }
+  // CQRS rollout: in `comparison` mode, run the ClickHouse DB-derived reward-cost
+  // lines side-by-side and LOG drift. Fire-and-forget + never-throwing — the
+  // served tile below stays 100% Postgres. The non-DB rain line ($2/hr) has no
+  // DB source and is EXCLUDED from the comparison (the CH twin compares the DB
+  // sub-total = total − rainCost). No-op unless the flag is `comparison`.
+  void compareDashboardRewardCostsToday({
+    lines: data.lines.map((l) => ({ key: l.key, amount: l.amount })),
+    total: data.total,
+    rainCost: data.rainCost,
+    dayStartIso: data.dayStartIso,
+  });
   // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
   // UTC calendar day this cost covers (matches the window boundary exactly).
   const dayLabel = data.dayStartIso.slice(0, 10);
