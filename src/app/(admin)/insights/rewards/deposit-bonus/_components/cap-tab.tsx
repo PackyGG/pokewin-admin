@@ -37,6 +37,10 @@ import {
 } from "@/lib/queries/insights-rewards/_period";
 import { getDepositBonusCapAnalysis } from "@/lib/queries/insights-rewards/deposit-bonus/cap-analysis";
 import { getDepositBonusRatioDistribution } from "@/lib/queries/insights-rewards/deposit-bonus/cohort";
+import {
+  compareDepositBonusCapAnalysis,
+  compareDepositBonusRatioDistribution,
+} from "@/lib/clickhouse/compare/deposit-bonus-cap";
 import { CapAmountHistogram } from "./cap-histogram-chart";
 import { RatioBucketsBars } from "./ratio-buckets-bars";
 
@@ -96,6 +100,11 @@ export async function CapTab({
   const cap = capRes.data;
   const ratio = ratioRes.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  // Fire-and-forget ClickHouse comparisons (no-op unless each surface flag is in
+  // `comparison` mode). The served values stay the Postgres payloads above.
+  void compareDepositBonusCapAnalysis(period, cap);
+  if (ratio) void compareDepositBonusRatioDistribution(period, ratio);
 
   if (cap.capValue === 0) {
     return (

@@ -35,6 +35,7 @@ import { getDepositBonusCapHitRate } from "@/lib/queries/insights-rewards/deposi
 import { getDepositBonusDailyBreakdown } from "@/lib/queries/insights-rewards/deposit-bonus/daily-breakdown";
 import { compareDepositBonusOverview } from "@/lib/clickhouse/compare/insights-deposit-bonus-overview";
 import { compareDepositBonusCapHitRate } from "@/lib/clickhouse/compare/insights-deposit-bonus-cap-hit-rate";
+import { compareDepositBonusDailyBreakdown } from "@/lib/clickhouse/compare/deposit-bonus-daily";
 import { DepositBonusChart } from "@/app/(admin)/rewards/analytics/deposit-bonus-chart";
 
 /**
@@ -108,6 +109,7 @@ export async function OverviewTab({
       totalCount: cap.totalCount,
     });
   }
+  void compareDepositBonusDailyBreakdown(period, daily);
 
   if (overview.count === 0) {
     return (

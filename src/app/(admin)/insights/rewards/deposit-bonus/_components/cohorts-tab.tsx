@@ -35,6 +35,12 @@ import {
   getDepositBonusNewVsReturning,
   getDepositBonusTimeToClaim,
 } from "@/lib/queries/insights-rewards/deposit-bonus/behavior";
+import {
+  compareDepositBonusCohortComparison,
+  compareDepositBonusNewVsReturning,
+  compareDepositBonusRepeatClaimants,
+  compareDepositBonusTimeToClaim,
+} from "@/lib/clickhouse/compare/deposit-bonus-cohorts";
 import { CohortCompareCard } from "@/app/(admin)/rewards/analytics/_components/cohort-compare";
 
 /**
@@ -105,6 +111,13 @@ export async function CohortsTab({
       />
     );
   }
+
+  // Fire-and-forget ClickHouse comparisons (no-op unless each surface flag is in
+  // `comparison` mode). The served values stay the Postgres payloads above.
+  void compareDepositBonusCohortComparison(period, cohort);
+  if (newRet) void compareDepositBonusNewVsReturning(period, newRet);
+  if (repeat) void compareDepositBonusRepeatClaimants(period, repeat);
+  if (ttc) void compareDepositBonusTimeToClaim(period, ttc);
   if (cohort.totalDeposits === 0) {
     return (
       <div className="rounded-2xl border bg-card p-4">

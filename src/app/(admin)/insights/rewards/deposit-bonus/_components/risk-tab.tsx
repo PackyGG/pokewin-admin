@@ -37,6 +37,10 @@ import {
 } from "@/lib/queries/insights-rewards/_period";
 import { getDepositBonusTopSpenders } from "@/lib/queries/insights-rewards/deposit-bonus/top-spenders";
 import { getDepositBonusSuspicious } from "@/lib/queries/insights-rewards/deposit-bonus/suspicious";
+import {
+  compareDepositBonusTopSpenders,
+  compareDepositBonusSuspicious,
+} from "@/lib/clickhouse/compare/deposit-bonus-risk";
 
 /**
  * Top spenders + risk surveillance tab.
@@ -92,6 +96,11 @@ export async function RiskTab({
   const top = topRes.data;
   const suspicious = suspiciousRes.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  // Fire-and-forget ClickHouse comparisons (no-op unless each surface flag is in
+  // `comparison` mode). The served values stay the Postgres payloads above.
+  void compareDepositBonusTopSpenders(period, top);
+  if (suspicious) void compareDepositBonusSuspicious(period, suspicious);
 
   if (top.length === 0) {
     return (

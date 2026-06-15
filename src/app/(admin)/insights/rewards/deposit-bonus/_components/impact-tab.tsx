@@ -49,6 +49,15 @@ import {
   type DepositBonusCapHitterCohorts,
 } from "@/lib/queries/insights-rewards/deposit-bonus/impact";
 import {
+  compareDepositBonusDepositFrequency,
+  compareDepositBonusDepositSizeDistribution,
+  compareDepositBonusCapHitters,
+  compareDepositBonusTimeBetween,
+  compareDepositBonusToWagerSegments,
+  compareDepositBonusPostCapBehavior,
+  compareDepositBonusCapHitterCohorts,
+} from "@/lib/clickhouse/compare/deposit-bonus-impact";
+import {
   DepositFrequencyChart,
   DepositSizeChart,
   TimeGapChart,
@@ -144,6 +153,16 @@ export async function ImpactTab({
   const post = postRes.data;
   const cohort = cohortRes.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  // Fire-and-forget ClickHouse comparisons (no-op unless each surface flag is in
+  // `comparison` mode). The served values stay the Postgres payloads above.
+  if (freq) void compareDepositBonusDepositFrequency(period, freq);
+  if (size) void compareDepositBonusDepositSizeDistribution(period, size);
+  if (cap) void compareDepositBonusCapHitters(period, cap);
+  if (gap) void compareDepositBonusTimeBetween(period, gap);
+  if (seg) void compareDepositBonusToWagerSegments(period, seg);
+  if (post) void compareDepositBonusPostCapBehavior(period, post);
+  if (cohort) void compareDepositBonusCapHitterCohorts(period, cohort);
 
   // If every critical query failed AND there's simply no bonus/deposit
   // activity, show a single calm empty state instead of a wall of error

@@ -70,3 +70,55 @@ export function cutoffClause(cutoff: string | null, alias: string): string {
     ? `AND ${alias}.created_at >= {cutoff:DateTime64(6)}`
     : "";
 }
+
+/**
+ * Lifetime lookback cap (days) for the heavy deposit↔bonus balance-pairing
+ * queries — mirrors `LIFETIME_PAIRING_LOOKBACK_DAYS` in the PG twin's
+ * `_shared.ts` (365d). On the lifetime (`all`) window the plain cutoff is
+ * unbounded; these capped helpers bound the deposit-side scan to the last year
+ * so the pairing stays tractable, EXACTLY matching `windowDateFilterCapped`.
+ */
+export const LIFETIME_PAIRING_LOOKBACK_DAYS = 365;
+
+/**
+ * Like {@link depositBonusCutoff} but NEVER null — on the lifetime window it
+ * resolves to `now − LIFETIME_PAIRING_LOOKBACK_DAYS` instead of being
+ * unbounded. Mirrors the PG `windowDateFilterCapped`. Finite windows behave
+ * identically to {@link depositBonusCutoff}.
+ */
+export function depositBonusCappedCutoff(
+  period: InsightsRewardsPeriod,
+  now: Date,
+): string {
+  const days = daysForInsightsPeriod(period) ?? LIFETIME_PAIRING_LOOKBACK_DAYS;
+  return chDateTime(new Date(now.getTime() - days * MS_PER_DAY));
+}
+
+/**
+ * Like {@link depositBonusCappedCutoff} but extends the lower bound back by an
+ * extra `tailDays`. Mirrors the PG `windowDateFilterCappedTail` — used for a
+ * SECONDARY scan (e.g. the cohort retention wager scan) whose rows must cover a
+ * forward tail after each in-window row. Finite windows get `days + tailDays`;
+ * lifetime gets `LIFETIME_PAIRING_LOOKBACK_DAYS + tailDays`.
+ */
+export function depositBonusCappedTailCutoff(
+  period: InsightsRewardsPeriod,
+  now: Date,
+  tailDays: number,
+): string {
+  const days = daysForInsightsPeriod(period) ?? LIFETIME_PAIRING_LOOKBACK_DAYS;
+  return chDateTime(new Date(now.getTime() - (days + tailDays) * MS_PER_DAY));
+}
+
+/**
+ * Window-start cutoff literal — the lower bound the period opens at, used for
+ * `created_at < windowStart` "prior to window" tests (mirrors the PG
+ * `windowStartExpr`). Returns `null` for the lifetime window where the PG
+ * expression is `-infinity` (every row is "in window", nothing is "prior").
+ */
+export function depositBonusWindowStart(
+  period: InsightsRewardsPeriod,
+  now: Date,
+): string | null {
+  return depositBonusCutoff(period, now);
+}
