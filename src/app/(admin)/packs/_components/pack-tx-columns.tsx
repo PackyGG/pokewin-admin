@@ -1,7 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { columns as sharedColumns } from "../columns";
+import { columns as sharedColumns } from "../../transactions/columns";
 import { formatCurrency } from "@/lib/utils/format";
 import type { TransactionListItem } from "@/lib/queries/transactions";
 

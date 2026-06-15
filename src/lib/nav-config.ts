@@ -469,24 +469,17 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
   },
 
   // ── Transactions (merged into Content) ─────────────────────────────────
-  // Owner: "merge transactions into content as a switch tab" → to free a
-  // sidebar slot, the former standalone "Transactions" nav group was folded
-  // into the "Content" group above. These entries keep their own routes,
-  // permission keys, and pages unchanged (no route moves → no redirect
-  // needed); only their `group` changed to "Content", and their sidebar
-  // `label` is now the descriptive "* Transactions" form (previously their
-  // palette-only label) so they don't collide with the existing Content
-  // "Packs"/"Upgrader" catalog items.
-  {
-    id: "nav.transactions.packs",
-    group: "Content",
-    label: "Pack Transactions",
-    href: "/transactions/packs",
-    pageKey: "/transactions/packs",
-    icon: "Receipt",
-    inSidebar: true,
-    inPalette: true,
-  },
+  // Owner: "merge each catalog + its matching transactions page into ONE page
+  // with a switch tab". The Pack-Transactions and Upgrader-Transactions
+  // surfaces are now TABS of the Packs (/packs?tab=transactions) and Upgrader
+  // (/upgrader?tab=transactions) catalog pages respectively, so their former
+  // standalone sidebar entries were removed (the routes /transactions/packs
+  // and /transactions/upgrader 308-redirect to the tabbed pages — see
+  // next.config.ts). Their permission keys (/transactions/packs,
+  // /transactions/upgrader) are PRESERVED and now gate the Transactions tab.
+  //
+  // Battles and Reward Transactions have NO catalog counterpart in Content, so
+  // they stay as their own standalone Content sidebar entries.
   {
     id: "nav.battles",
     group: "Content",
@@ -495,17 +488,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     pageKey: "/battles",
     icon: "Swords",
     description: "Pack battle directory",
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    id: "nav.transactions.upgrader",
-    group: "Content",
-    label: "Upgrader Transactions",
-    href: "/transactions/upgrader",
-    pageKey: "/transactions/upgrader",
-    icon: "Receipt",
-    keywords: ["upgrader", "bet", "payout"],
     inSidebar: true,
     inPalette: true,
   },
@@ -877,8 +859,6 @@ const PALETTE_ORDER: string[] = [
   "nav.rewards.shards",
   "nav.cards",
   "nav.battles",
-  "nav.transactions.packs",
-  "nav.transactions.upgrader",
   "nav.transactions.rewards",
   "nav.rewards",
   "nav.rewards.rakeback",

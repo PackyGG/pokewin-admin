@@ -5,10 +5,9 @@ import {
   getTransactions,
   type TransactionSortMode,
 } from "@/lib/queries/transactions";
-import { requirePageAccess } from "@/lib/dal";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
-import { TransactionsDataTable } from "../data-table";
-import { columns as packColumns } from "./columns";
+import { TransactionsDataTable } from "../../transactions/data-table";
+import { columns as packColumns } from "./pack-tx-columns";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,15 +16,9 @@ import {
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPendingShell } from "@/components/ux";
-
-export const metadata = { title: "Pack Transactions" };
 
 const STATUS_TABS = [
   { value: "all", label: "All" },
@@ -39,16 +32,29 @@ const TYPES = ["pack_opening"];
 // to recency-order rather than 500'ing in the query layer.
 const SORT_MODES: TransactionSortMode[] = ["recent", "pack_multiplier"];
 
-export default async function PackTransactionsPage({
+/**
+ * "Transactions" tab content for the merged Packs surface (/packs).
+ * Lifted verbatim from the former standalone /transactions/packs page body
+ * (only the PageHero moved up to the shared page shell; the page already
+ * enforced `requirePageAccess("/transactions/packs")` before mounting this).
+ *
+ * This is an async server segment mounted inside a `<Suspense>` so it only
+ * runs its (heavy, ledger-joining) reads when the Transactions tab is active
+ * (Active-Tab-Only).
+ *
+ * Status sub-tabs use a `status` query param (NOT `tab` — that's the OUTER
+ * Catalog/Transactions selector). The outer `tab=transactions` is carried
+ * through every status link so the sub-tab switch stays on this tab.
+ */
+export async function PackTransactionsTab({
   searchParams,
 }: {
-  searchParams: Promise<Record<string, string | undefined>>;
+  searchParams: Record<string, string | undefined>;
 }) {
-  await requirePageAccess("/transactions/packs");
-  const params = await searchParams;
+  const params = searchParams;
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
-  const tab = params.tab || "all";
+  const status = params.status || "all";
   const rawSort = params.sortBy;
   const sortBy: TransactionSortMode = (
     rawSort && (SORT_MODES as string[]).includes(rawSort) ? rawSort : "recent"
@@ -57,30 +63,31 @@ export default async function PackTransactionsPage({
   // Suspense key — flips when any query input changes so the table
   // skeleton re-shows on in-segment navigation instead of leaving a
   // stale table on screen during a slow refetch.
-  const suspenseKey = `${tab}|${page}|${perPage}|${sortBy}|${params.search ?? ""}`;
+  const suspenseKey = `${status}|${page}|${perPage}|${sortBy}|${params.search ?? ""}`;
+
+  function statusHref(value: string): string {
+    const p = new URLSearchParams();
+    p.set("tab", "transactions");
+    if (value !== "all") p.set("status", value);
+    if (sortBy !== "recent") p.set("sortBy", sortBy);
+    if (params.search) p.set("search", params.search);
+    return `/packs?${p.toString()}`;
+  }
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={Package}
-          title="Pack Transactions"
-          subtitle="Pack opening transactions — filter by status or search."
-        />
-      </PageHero>
-
       <div className="space-y-4">
         <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
             {STATUS_TABS.map((t) => (
               <Link
                 key={t.value}
-                href={`/transactions/packs?tab=${t.value}`}
+                href={statusHref(t.value)}
                 className={cn(
                   "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                  tab === t.value
+                  status === t.value
                     ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 <LinkPendingShell spinnerSize={13}>{t.label}</LinkPendingShell>
@@ -118,8 +125,8 @@ export default async function PackTransactionsPage({
         {/* getTransactions joins ledger_transactions to game_sessions /
             provably_fair_results / user_inventory to compute the
             payout + multiplier columns — heavy enough to block the
-            route render on its own. Streamed inside Suspense so the
-            hero + tabs + toolbar flush immediately. */}
+            tab render on its own. Streamed inside Suspense so the
+            tabs + toolbar flush immediately. */}
         <Suspense
           key={suspenseKey}
           fallback={
@@ -132,7 +139,7 @@ export default async function PackTransactionsPage({
           <PackTxTableSection
             page={page}
             perPage={perPage}
-            tab={tab}
+            status={status}
             sortBy={sortBy}
             search={params.search}
           />
@@ -145,13 +152,13 @@ export default async function PackTransactionsPage({
 async function PackTxTableSection({
   page,
   perPage,
-  tab,
+  status,
   sortBy,
   search,
 }: {
   page: number;
   perPage: number;
-  tab: string;
+  status: string;
   sortBy: TransactionSortMode;
   search: string | undefined;
 }) {
@@ -166,7 +173,7 @@ async function PackTxTableSection({
   };
 
   // safeQuery (house 15s wall-clock bound) degrades a failed/hung list
-  // query to an empty table + a VISIBLE amber band — hero, tabs, toolbar
+  // query to an empty table + a VISIBLE amber band — tabs, toolbar
   // and pagination keep rendering so the admin can clear filters or retry.
   // Identical to the bare await on the happy path.
   const listResult = await safeQuery(
@@ -176,7 +183,7 @@ async function PackTxTableSection({
         perPage,
         search,
         types: TYPES,
-        status: tab === "all" ? undefined : tab,
+        status: status === "all" ? undefined : status,
         sortBy,
       }),
     EMPTY_LIST,

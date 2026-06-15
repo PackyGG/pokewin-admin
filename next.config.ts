@@ -215,6 +215,30 @@ const nextConfig: NextConfig = {
         destination: "/admin-users/roles/:id",
         permanent: true,
       },
+      {
+        // Pack Transactions was merged into /packs as a switch tab ("Catalog"
+        // | "Transactions"). The old standalone /transactions/packs page is
+        // gone — forward bookmarks + role presets to the Transactions tab.
+        // HTTP 308 (config redirect), NOT an in-render redirect(): an
+        // unconditional in-render redirect on the initial document load is
+        // replayed by the App Router and crashes it (see the retired-route
+        // note above). `source` matches exactly; the live transaction-detail
+        // route lives at /transactions/[id] (not nested under packs), so this
+        // cannot swallow it. Next forwards incoming query params, so deep-links
+        // keep their search/sort.
+        source: "/transactions/packs",
+        destination: "/packs?tab=transactions",
+        permanent: true,
+      },
+      {
+        // Upgrader Transactions was merged into /upgrader as a switch tab
+        // ("Catalog" | "Transactions"). Same rationale as the pack-transactions
+        // redirect above. `source` matches exactly; the detail route lives at
+        // /transactions/[id], so this cannot swallow it.
+        source: "/transactions/upgrader",
+        destination: "/upgrader?tab=transactions",
+        permanent: true,
+      },
     ];
   },
 };
