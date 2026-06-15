@@ -18,7 +18,7 @@ import { getCryptoFeeProfitCounter } from "@/lib/queries/dashboard-crypto-fee-co
 import { requirePageAccess } from "@/lib/dal";
 import { formatRelative } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
   DashboardKpiSection,
@@ -269,6 +269,7 @@ async function DashboardLoadTime() {
     () => getDashboardStats(DASHBOARD_CHART_PERIOD),
     null,
     "dashboard.loadTime",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !stats) return null;
   return (
@@ -304,14 +305,25 @@ async function DashboardKpiBoxes() {
     cryptoFeeResult,
   ] = await Promise.all([
     // Period-bound box values + GGR legs for the eager "today" window.
-    safeQuery(() => buildKpiWindowPayload("today"), null, "dashboard.kpiToday"),
+    safeQuery(
+      () => buildKpiWindowPayload("today"),
+      null,
+      "dashboard.kpiToday",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
     // Snapshot (lifetime / fixed-window) figures — read off the same cached
     // today aggregate so no second roundtrip is added.
-    safeQuery(() => getDashboardKpiStats("today"), null, "dashboard.kpiSnapshot"),
+    safeQuery(
+      () => getDashboardKpiStats("today"),
+      null,
+      "dashboard.kpiSnapshot",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
     safeQuery(
       () => getAvgPnl7d(),
       { totalPnl7d: 0, avgDailyPnl: 0 },
       "dashboard.avgPnl7d",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getRealizedPnlSnapshot(),
@@ -325,6 +337,7 @@ async function DashboardKpiBoxes() {
         unclaimedRakeback: 0,
       },
       "dashboard.lifetimePnl",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     // Crypto Fee counter — anchored, monotonic, durable (admin-DB high-water).
     // Independent of the period payload; degrades to the muted slot on
@@ -334,6 +347,7 @@ async function DashboardKpiBoxes() {
       () => getCryptoFeeProfitCounter(),
       null,
       "dashboard.cryptoFeeCounter",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
   if (
@@ -346,6 +360,7 @@ async function DashboardKpiBoxes() {
       <TileErrorFallback
         label="Platform KPIs"
         hint="A metrics query failed while loading the KPI boxes — other sections still rendered. Refresh to retry."
+        kind={payloadResult.kind ?? statsResult.kind ?? undefined}
         size="panel"
       />
     );
@@ -428,16 +443,18 @@ async function DashboardUpgraderSection() {
   // in safeQuery anyway so ANY other failure (a slow scan, a connection
   // blip) degrades this panel to a fallback instead of crashing the
   // route. Panel-size fallback fills the 50/50 row slot.
-  const { data: stats, error } = await safeQuery(
+  const { data: stats, error, kind } = await safeQuery(
     () => getUpgraderStats(),
     null,
     "dashboard.upgrader",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !stats) {
     return (
       <TileErrorFallback
         label="Upgrader Stats"
         hint="The upgrader aggregate failed to load — other sections still rendered. Refresh to retry."
+        kind={kind ?? undefined}
         size="panel"
         className="h-full min-h-[400px]"
       />
@@ -457,16 +474,18 @@ async function DashboardUpgraderSection() {
  * with the period-P&L card + daily-P&L chart.
  */
 async function DashboardTodayPnl() {
-  const { data, error } = await safeQuery(
+  const { data, error, kind } = await safeQuery(
     () => getTodayPnl(),
     null,
     "dashboard.todayPnl",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (
       <TileErrorFallback
         label="P&L Today"
         hint="The today-window P&L scan timed out — refresh to retry."
+        kind={kind ?? undefined}
         size="compact"
       />
     );
@@ -498,16 +517,18 @@ async function DashboardTodayPnl() {
  * the owner-confirmed flat $2/hr model and affiliate commissions excluded.
  */
 async function DashboardRewardCostsToday() {
-  const { data, error } = await safeQuery(
+  const { data, error, kind } = await safeQuery(
     () => getRewardCostsToday(),
     null,
     "dashboard.rewardCostsToday",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (
       <TileErrorFallback
         label="Reward Costs"
         hint="The today-window reward-cost scan timed out — refresh to retry."
+        kind={kind ?? undefined}
         size="compact"
       />
     );
@@ -543,11 +564,17 @@ async function DashboardCreatorCostsToday() {
   // independently: a failing/slow P&L scan only drops the small corner badge
   // (passed as null), it never takes the cost card down.
   const [costsResult, pnlResult] = await Promise.all([
-    safeQuery(() => getCreatorCostsToday(), null, "dashboard.creatorCostsToday"),
+    safeQuery(
+      () => getCreatorCostsToday(),
+      null,
+      "dashboard.creatorCostsToday",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
     safeQuery(
       () => getAffiliateReferredPnlToday(),
       null,
       "dashboard.affiliateReferredPnlToday",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
   if (costsResult.error || !costsResult.data) {
@@ -555,6 +582,7 @@ async function DashboardCreatorCostsToday() {
       <TileErrorFallback
         label="Creators Costs"
         hint="The today-window creator-cost scan timed out — refresh to retry."
+        kind={costsResult.kind ?? undefined}
         size="compact"
       />
     );
@@ -581,16 +609,18 @@ async function DashboardCreatorCostsToday() {
  * UTC day key), streamed in its own Suspense.
  */
 async function DashboardChatMessagesToday() {
-  const { data, error } = await safeQuery(
+  const { data, error, kind } = await safeQuery(
     () => getChatMessagesToday(),
     null,
     "dashboard.chatMessagesToday",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (
       <TileErrorFallback
         label="Chat Messages"
         hint="The today-window chat scan timed out — refresh to retry."
+        kind={kind ?? undefined}
         size="compact"
       />
     );
@@ -620,6 +650,7 @@ async function DashboardActiveRain() {
     () => getActiveRain(),
     null,
     "dashboard.activeRain",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   return <ActiveRainChip rain={rain} />;
 }
@@ -654,12 +685,14 @@ async function DashboardCharts() {
     () => getDashboardStats(DASHBOARD_CHART_PERIOD),
     null,
     "dashboard.charts",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (statsResult.error || !statsResult.data) {
     return (
       <TileErrorFallback
         label="Trends"
         hint="A metrics query failed while loading the trend charts — other sections still rendered. Refresh to retry."
+        kind={statsResult.kind ?? undefined}
         size="panel"
       />
     );
@@ -699,16 +732,18 @@ async function DashboardCharts() {
  * to a single-cell TileErrorFallback (the other charts still render).
  */
 async function DashboardDailyPnlChart() {
-  const { data, error } = await safeQuery(
+  const { data, error, kind } = await safeQuery(
     () => getDailyPnl(),
     [],
     "dashboard.dailyPnl",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error) {
     return (
       <TileErrorFallback
         label="Daily P&L"
         hint="The lifetime P&L scan timed out — other charts still rendered. Refresh to retry."
+        kind={kind ?? undefined}
         size="panel"
       />
     );
@@ -728,16 +763,18 @@ async function DashboardWagerAttribution() {
   // (the right half of the Upgrader/Attribution row) to a fallback panel
   // instead of escaping to the route error boundary and white-screening
   // the whole dashboard.
-  const { data: stats, error } = await safeQuery(
+  const { data: stats, error, kind } = await safeQuery(
     () => getDashboardStats(DASHBOARD_CHART_PERIOD),
     null,
     "dashboard.wagerAttribution",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !stats) {
     return (
       <TileErrorFallback
         label="Wager Attribution"
         hint="The wager-attribution series failed to load — other sections still rendered. Refresh to retry."
+        kind={kind ?? undefined}
         size="panel"
         className="h-full min-h-[400px]"
       />
