@@ -94,12 +94,22 @@ const WITHDRAWAL_LIABILITY_STATUSES = [
   "completed",
 ] as const;
 
+/**
+ * Real-customer scope — ALIGNED to the PG twin `realizedPnlSnapshotInner`
+ * (`role NOT IN ('admin','support')`, i.e. creators are KEPT). The PG twin's
+ * own doc: "Creators are real users — their wagers/deposits/payouts count in
+ * P&L like everyone else." This intentionally does NOT use the canonical
+ * 3-role `getMetricsScope` (which drops creators); matching the PG twin is what
+ * makes comparison-mode drift reflect engine/CDC-lag only. Canonicalizing the
+ * served PnL to 3-role would change live numbers and is an owner decision (see
+ * the mission escalation note), not a change to make here.
+ */
 function realUsersCte(hasBlacklist: boolean): string {
   return `real_users AS (
       SELECT id
       FROM ${CH_DB}.public_user FINAL
       WHERE _peerdb_is_deleted = 0
-        AND role NOT IN ('admin','support','creator')
+        AND role NOT IN ('admin','support')
         ${hasBlacklist ? "AND id NOT IN {blacklist:Array(String)}" : ""}
     )`;
 }
