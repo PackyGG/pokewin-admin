@@ -15,6 +15,10 @@ import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-toda
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
 import { getChatMessagesToday } from "@/lib/queries/dashboard-chat-messages-today";
 import { getCryptoFeeProfitCounter } from "@/lib/queries/dashboard-crypto-fee-counter";
+import { compareDashboardTodayPnl } from "@/lib/clickhouse/compare/dashboard-today-pnl";
+import { compareDashboardAvgPnl7d } from "@/lib/clickhouse/compare/dashboard-avg-pnl-7d";
+import { compareDashboardDailyPnl } from "@/lib/clickhouse/compare/dashboard-daily-pnl";
+import { compareDashboardUpgraderStats } from "@/lib/clickhouse/compare/dashboard-upgrader-stats";
 import { requirePageAccess } from "@/lib/dal";
 import { formatRelative } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
@@ -370,6 +374,11 @@ async function DashboardKpiBoxes() {
   const avgPnl7d = avgPnl7dResult.data ?? { totalPnl7d: 0, avgDailyPnl: 0 };
   const lifetimePnl = lifetimePnlResult.data?.pnl ?? 0;
 
+  // CQRS rollout: in `comparison` mode, run the ClickHouse Avg-P&L-7d path
+  // side-by-side and LOG drift. Fire-and-forget + never-throwing — the served
+  // snapshot below stays 100% Postgres. No-op unless the flag is `comparison`.
+  void compareDashboardAvgPnl7d(avgPnl7d);
+
   // Snapshot (lifetime / fixed-window) figures — the window toggle doesn't
   // change them, so they read the same for today and 24h. Deposits/Hour is a
   // FIXED 24h / 7d rate (count ÷ hours).
@@ -460,6 +469,18 @@ async function DashboardUpgraderSection() {
       />
     );
   }
+  // CQRS rollout: in `comparison` mode, run the ClickHouse upgrader-stats path
+  // side-by-side and LOG drift. Fire-and-forget + never-throwing — the served
+  // panel below stays 100% Postgres. No-op unless the flag is `comparison`.
+  void compareDashboardUpgraderStats({
+    wager: stats.wager,
+    payouts: stats.payouts,
+    pnl: stats.pnl,
+    bets: stats.bets,
+    uniquePlayers: stats.uniquePlayers,
+    wins: stats.wins,
+    losses: stats.losses,
+  });
   // The panel is itself `h-full`, so it stretches to fill the 50/50 row cell.
   return <UpgraderStatsSection stats={stats} />;
 }
@@ -490,6 +511,18 @@ async function DashboardTodayPnl() {
       />
     );
   }
+  // CQRS rollout: in `comparison` mode, run the ClickHouse windowed-P&L path
+  // side-by-side and LOG drift. Fire-and-forget + never-throwing — the served
+  // tile below stays 100% Postgres. No-op unless the flag is `comparison`.
+  void compareDashboardTodayPnl({
+    deposits: data.deposits,
+    withdrawals: data.withdrawals,
+    balanceChange: data.balanceChange,
+    inventoryChange: data.inventoryChange,
+    voucherChange: data.voucherChange,
+    pnl: data.pnl,
+    dayStartIso: data.dayStartIso,
+  });
   // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
   // UTC calendar day this P&L covers (matches the window boundary exactly).
   const dayLabel = data.dayStartIso.slice(0, 10);
@@ -748,6 +781,11 @@ async function DashboardDailyPnlChart() {
       />
     );
   }
+  // CQRS rollout: in `comparison` mode, run the ClickHouse daily-P&L path
+  // side-by-side and LOG drift on the 30-day sums. Fire-and-forget +
+  // never-throwing — the served chart below stays 100% Postgres. No-op unless
+  // the flag is `comparison`.
+  void compareDashboardDailyPnl(data);
   return <PnlChart data={data} />;
 }
 
