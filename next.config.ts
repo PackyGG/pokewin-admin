@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // @clickhouse/client is a Node-native client (http/https, streams). Keep it
+  // external so the bundler doesn't try to bundle it into server output. Inert
+  // until the ClickHouse read layer is actually imported by a query path.
+  serverExternalPackages: ["@clickhouse/client"],
   turbopack: {
     root: __dirname,
   },

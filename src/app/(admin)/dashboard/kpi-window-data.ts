@@ -6,6 +6,7 @@ import {
   type DashboardKpiWindow,
   type GgrBreakdown,
 } from "@/lib/queries/dashboard";
+import { compareDashboardCashflow } from "@/lib/clickhouse/comparison";
 
 /**
  * Serializable snapshot of every dashboard KPI box for ONE window
@@ -72,6 +73,17 @@ export async function buildKpiWindowPayload(
       ggr: 0,
     })),
   ]);
+
+  // CQRS rollout: in `comparison` mode, run the ClickHouse cash-flow path
+  // side-by-side and LOG drift. Fire-and-forget + never-throwing — the served
+  // payload below stays 100% Postgres. No-op unless the flag is flipped to
+  // `comparison` (forced off whenever ClickHouse is dormant).
+  void compareDashboardCashflow(window, {
+    deposits: stats.deposits,
+    depositCount: stats.depositCountPeriod,
+    withdrawals: stats.withdrawals,
+    withdrawalCount: stats.withdrawalCountPeriod,
+  });
 
   return {
     window,
