@@ -18,6 +18,7 @@ import { RelativeTime } from "@/components/relative-time";
 import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
+import { compareXpSales } from "@/lib/clickhouse/compare/xp-sales";
 import {
   getXpSales,
   xpSalesPeriodLabel,
@@ -71,6 +72,11 @@ export async function XpSalesSection({ period }: { period: XpSalesPeriod }) {
       </div>
     );
   }
+
+  // Fire-and-forget CQRS comparison (no-op unless the `xp_sales` surface is in
+  // comparison mode). The served Postgres payload above is the truth and is
+  // never awaited on / altered by this call.
+  void compareXpSales(period, stats);
 
   const periodLabel = xpSalesPeriodLabel(stats.period);
 
