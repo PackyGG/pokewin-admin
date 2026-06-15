@@ -110,10 +110,14 @@ function chDateTime(d: Date): string {
  *   • hourly periods → 'HH:MM' (matches d.toISOString().slice(11,16))
  *   • daily periods  → 'YYYY-MM-DD' (matches d.toISOString().slice(0,10))
  * Mirror tables store DateTime in UTC, so no timezone arg is needed.
+ *
+ * NOTE: ClickHouse formatDateTime `%i` is minutes; `%M` is the full month name
+ * (e.g. "June"), so the hourly label MUST use '%H:%i' to match Postgres's
+ * HH:MM (start-of-hour minutes are always 00).
  */
 function chBucketLabelExpr(col: string, period: DashboardPeriod): string {
   return dashboardChartHourlyBuckets(period)
-    ? `formatDateTime(toStartOfHour(${col}), '%H:%M')`
+    ? `formatDateTime(toStartOfHour(${col}), '%H:%i')`
     : `toString(toDate(${col}))`;
 }
 
@@ -236,7 +240,7 @@ async function fetchTrendSeries(
       customers AS (
         SELECT
           u.id AS id,
-          (u.referred_by IN (SELECT id FROM creator_ids)) AS under_creator
+          ifNull(u.referred_by IN (SELECT id FROM creator_ids), 0) AS under_creator
         FROM ${CH_DB}.public_user AS u FINAL
         WHERE u._peerdb_is_deleted = 0
           AND u.id IN (SELECT id FROM real_users)
