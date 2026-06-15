@@ -58,14 +58,100 @@ scopes). This is a behavior change to a live tile, so it is **not** made here.
 
 ---
 
-## ESC-2 — Other legacy 2-role / render-time-write items (tracked for the /dashboard audit milestone)
+## ESC-2 — P&L family uses the legacy 2-role scope (keeps creators) vs canonical 3-role `getMetricsScope`
 
-These are owned by the `/dashboard` audit milestone (escalate, do NOT change):
+**Date:** 2026-06-15 · **Feature:** `m4-escalation-notes` · **Status:** OPEN (owner decision) · **Code: UNCHANGED**
 
-- **`getDailyPnl` / `getRealizedPnlSnapshot` legacy 2-role scope** vs canonical
-  3-role — same balance-sheet-vs-analytics question as ESC-1; may be intentional.
-- **`getCryptoFeeProfitCounter` admin-DB write on render** — a write performed
-  during a render path; relocation is behavior-affecting.
+**What:** The dashboard P&L family scopes its "real users" to
+`role NOT IN ('admin', 'support')` — i.e. it **KEEPS creators** — rather than
+the canonical customer scope used by GGR/NGR/wager analytics.
 
-(Listed here so the realized-P&L scope question and its siblings live in one
-place; ESC-1 is the item resolved by `m2-realized-pnl-scope-align`.)
+**File / line references (current `main`):**
+
+| Function | File · line | Scope predicate today |
+|---|---|---|
+| `getDailyPnl` → `computeDailyPnl` (Daily P&L chart) | `src/lib/queries/pnl.ts:795` (computor), scope at **`pnl.ts:799`**; public entry `getDailyPnl` at `pnl.ts:1037` | `u.role NOT IN ('admin', 'support')` |
+| `getRealizedPnlSnapshot` → `realizedPnlSnapshotInner` (lifetime P&L tile) | `src/lib/queries/_realized-pnl.ts` `real_users` CTE at **`_realized-pnl.ts:108-109`** | `role NOT IN ('admin', 'support')` |
+| (siblings sharing the same 2-role scope) `calculateWindowedPnl` | `src/lib/queries/pnl.ts:347` | `u.role NOT IN ('admin', 'support')` |
+| (siblings) `getPnlBreakdownWindows` | `src/lib/queries/pnl.ts:1134` | `u.role NOT IN ('admin', 'support')` |
+
+**Canonical scope it diverges from:** `getMetricsScope()` /
+`CUSTOMER_EXCLUDED_ROLES = ['admin','support','creator']` at
+**`src/lib/metrics/scope.ts:86`** (built into `userScopeSql` at
+`scope.ts:175`) — the canonical 3-role scope that **drops creators**.
+
+**Why it may be intentional (do not assume it's a bug):** This is a
+**balance-sheet** figure, and `_realized-pnl.ts` documents the intent in its
+header (`_realized-pnl.ts:35-37`): *"All aggregates exclude only the `admin`
+role. Creators are real users — their wagers/deposits/payouts count in P&L
+like everyone else."* (Note: the predicate actually drops both `admin` and
+`support`; the header undercounts by one role but the meaning — creators are
+kept — is the deliberate part.) For a money-owed balance sheet, counting a
+creator's real deposits/holdings is defensible; the canonical 3-role scope is
+tuned for GGR/NGR/wager *analytics*, where creator activity is excluded as
+non-customer. Same question already recorded for the lifetime tile in **ESC-1**
+(resolved for ClickHouse parity by aligning the CH twin to this PG scope, not
+by changing the PG twin).
+
+**Recommended owner decision:** Choose ONE, consciously, and apply it to the
+WHOLE P&L family together so the surfaces stay mutually consistent:
+- **(A) Keep the 2-role balance-sheet semantics** (creators counted as real
+  users) — this is today's served number on the Daily P&L chart and the
+  lifetime P&L tile. No code change; close this as "intended".
+- **(B) Canonicalize to the 3-role `getMetricsScope`** (drop creators). This
+  **changes a live served number** on every P&L surface above, so it is a
+  behavior change that must move `getDailyPnl`, `getRealizedPnlSnapshot`,
+  `calculateWindowedPnl`, and `getPnlBreakdownWindows` (plus the per-user
+  `calculateUserPnl` / `calculateUsersPnlBatch` if per-user P&L should match)
+  together, and requires fresh before/after served-number evidence per window.
+
+**Left unchanged this mission** — `git diff` of `src/lib/queries/pnl.ts` and
+`src/lib/queries/_realized-pnl.ts` shows no logic change to these functions.
+
+---
+
+## ESC-3 — `getCryptoFeeProfitCounter` performs an admin-DB write on the render path
+
+**Date:** 2026-06-15 · **Feature:** `m4-escalation-notes` · **Status:** OPEN (owner decision) · **Code: UNCHANGED**
+
+**What:** The dashboard "Crypto Fee" KPI box is backed by
+`getCryptoFeeProfitCounter` (**`src/lib/queries/dashboard-crypto-fee-counter.ts:172`**),
+which is called during the `/dashboard` Server-Component render. As a side
+effect of rendering it can issue an **ADMIN-DB `UPDATE`**: the high-water
+write-back at **`dashboard-crypto-fee-counter.ts:232-240`**
+(`adminDb.$executeRaw … UPDATE "crypto_fee_profit_counter" SET … = GREATEST(…)`),
+guarded by `if (useLive && liveTotal > storedTotal)` (line 230).
+
+**Why it exists (context, not a defect):** The counter is designed to be
+**durable + monotonic** (header doc, `dashboard-crypto-fee-counter.ts:14-58`):
+the prod GAME DB has swapped hosts, so a value read purely from live game-DB
+history could DROP; persisting `GREATEST(stored, live)` in the admin DB makes
+the displayed figure provably non-decreasing across a host swap. The write is
+**idempotent** (`GREATEST(...)`, harmless under concurrent renders), targets
+the **ADMIN DB** (which the mission rules permit writing — this is NOT a
+MAIN/prod game-DB write, so it does not violate the SELECT-only invariant),
+and is wrapped in try/catch that swallows missing-object errors without taking
+the tile down (lines 241-247).
+
+**Why it's escalated:** A **render path that mutates durable state** is a
+side-effecting GET — surprising for a read surface, can write under
+auto-refresh (the dashboard re-renders every 60s), and couples tile rendering
+to admin-DB write availability. Moving the write off the render path is
+**behavior-affecting** (it changes *when/whether* the high-water mark
+advances — e.g. it would only advance when a scheduled job or explicit refresh
+runs, not on every viewer render), so it is not changed here.
+
+**Recommended owner decision:** Choose ONE:
+- **(A) Keep the render-time monotonic write-back** (simplest; idempotent;
+  guarantees the high-water mark advances whenever any admin views the
+  dashboard, surviving host swaps). No code change.
+- **(B) Relocate the write to a scheduled job / explicit refresh action**
+  (e.g. a cron or an admin-triggered server action) and make
+  `getCryptoFeeProfitCounter` a pure read (return `GREATEST(stored, live)`
+  without persisting). This removes the render-time side effect but changes
+  the advancement cadence of the stored counter — a behavior change requiring
+  its own verification.
+
+**Left unchanged this mission** — `git diff` of
+`src/lib/queries/dashboard-crypto-fee-counter.ts` shows no logic change to
+this function.
