@@ -7,6 +7,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { getMothaGiveawayOverview } from "@/lib/queries/insights-rewards/motha/overview";
+import { compareMothaOverview } from "@/lib/clickhouse/compare/motha-overview";
 
 import { type MothaForecastBaseline } from "../_forecast";
 import { ForecastSimulatorIsland } from "./forecast-simulator";
@@ -46,6 +47,10 @@ export async function ForecastTab({
   );
 
   const ov = ovRes.data;
+
+  // Fire-and-forget CH comparison (logs drift only; PG payload is served
+  // unchanged). No-op unless the surface flag is in `comparison` mode.
+  if (ov != null) void compareMothaOverview(period, ov);
 
   // A real baseline is usable only when the overview query succeeded AND motha
   // actually gave something away in the window (totalCost > 0). Otherwise the

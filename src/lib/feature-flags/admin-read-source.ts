@@ -66,6 +66,17 @@ export const DASHBOARD_DAILY_LEGS_SURFACE_KEYS = [
   "dashboard_net_holdings_movers",
 ] as const;
 
+/**
+ * Phase 2B surface flag key for the "Motha giveaways" forecast-baseline CH twin
+ * (`getMothaGiveawayOverview`, the anchor of `/insights/forecast?reward=motha`).
+ * Like every other surface key it carries NO registration cost —
+ * `getAdminReadMode` resolves any unset key through the precedence chain whose
+ * terminal default is `"off"`, so it stays Postgres-only until an explicit
+ * env/Edge-Config flip to `"comparison"`. NEVER flipped to `"clickhouse"` in
+ * Phase 2B.
+ */
+export const INSIGHTS_MOTHA_SURFACE_KEY = "insights_motha_overview";
+
 const VALID: readonly AdminReadMode[] = ["off", "comparison", "clickhouse"];
 
 function coerce(value: unknown): AdminReadMode | null {
