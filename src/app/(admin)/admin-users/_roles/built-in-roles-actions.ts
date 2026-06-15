@@ -21,6 +21,7 @@ import {
   materializeForOverride,
   getBaselineMap,
 } from "@/lib/permissions/write-paths";
+import { normalizeLandingRouteInput } from "@/lib/role-landing";
 
 // ---------------------------------------------------------------------------
 // RoleV2 P2 — EDIT a BUILT-IN (system) role's capabilities.
@@ -69,6 +70,22 @@ const updateBuiltInRoleSchema = z.object({
     // token — value-token-aware, identical to every other write path.
     .transform((arr) => sanitizePermissionKeys(arr)),
   description: z.string().trim().max(500).optional().nullable(),
+  // Optional DISPLAY name. RoleV2 P3: the 5 non-admin system rows can be
+  // renamed cosmetically WITHOUT changing identity — `system_key`/enum stays
+  // the role's identity everywhere (gate, baselines, landing). Omit to leave
+  // the name unchanged (a pure capability/description edit). `admin` is rejected
+  // wholesale below, so its name is never writable here.
+  name: z
+    .string()
+    .trim()
+    .min(2, "Name must be at least 2 characters")
+    .max(50, "Name must be at most 50 characters")
+    .regex(/^[A-Za-z0-9 _-]+$/, "Only letters, digits, spaces, _ and -")
+    .optional(),
+  // Optional per-role landing route (RoleV2 P4). `null` clears it (→ today's
+  // routing). Validated against the known ADMIN_PAGES keys so an invalid value
+  // can never cause a redirect loop. `undefined` leaves it untouched.
+  landingRoute: z.string().trim().nullable().optional(),
   // 2FA TOTP code — required, matches the per-user editor's `updateUserPermissions`.
   code: z.string().trim().min(1, "TOTP code is required"),
 });
@@ -100,7 +117,19 @@ export async function updateBuiltInRole(
   if (!parsed.success) {
     throw new Error(parsed.error.issues[0]?.message ?? "Invalid input");
   }
-  const { capabilities, description, code } = parsed.data;
+  const { capabilities, description, name, landingRoute, code } = parsed.data;
+
+  // Validate the landing route (if provided): a known ADMIN_PAGES key, empty
+  // (= clear), or reject. Guards against redirect loops. `undefined` = leave
+  // the column untouched.
+  let landingRouteToWrite: string | null | undefined;
+  if (landingRoute !== undefined) {
+    const normalized = normalizeLandingRouteInput(landingRoute);
+    if (normalized === undefined) {
+      throw new Error("Landing route must be a known admin page, or empty");
+    }
+    landingRouteToWrite = normalized; // string (valid key) or null (cleared)
+  }
 
   // --- 2FA: verify the acting admin's TOTP (same pattern as the per-user
   //     permission editor's `updateUserPermissions`). -----------------------
@@ -177,23 +206,45 @@ export async function updateBuiltInRole(
   // --- Persist atomically: the system row's new capabilities (+ description if
   //     supplied) AND every affected user's re-materialized `allowed_pages`, so
   //     the editable source and the materialized cache never diverge. ---------
-  await adminDb.$transaction([
-    adminDb.admin_roles.update({
-      where: { system_key: systemKey },
-      data: {
-        capabilities,
-        ...(description !== undefined ? { description: description ?? null } : {}),
-      },
-      select: { id: true },
-    }),
-    ...refreshed.map((u) =>
-      adminDb.admin_users.update({
-        where: { id: u.id },
-        data: { allowed_pages: u.allowedPages },
+  try {
+    await adminDb.$transaction([
+      adminDb.admin_roles.update({
+        where: { system_key: systemKey },
+        data: {
+          capabilities,
+          ...(description !== undefined ? { description: description ?? null } : {}),
+          // RoleV2 P3: write the DISPLAY name when supplied (identity stays
+          // `system_key`). RoleV2 P4: write the validated landing route when
+          // supplied (string = set, null = cleared). Both omitted when undefined.
+          ...(name !== undefined ? { name } : {}),
+          ...(landingRouteToWrite !== undefined
+            ? { landing_route: landingRouteToWrite }
+            : {}),
+        },
         select: { id: true },
       }),
-    ),
-  ]);
+      ...refreshed.map((u) =>
+        adminDb.admin_users.update({
+          where: { id: u.id },
+          data: { allowed_pages: u.allowedPages },
+          select: { id: true },
+        }),
+      ),
+    ]);
+  } catch (err) {
+    // The only user-correctable failure here is a DISPLAY-name collision
+    // (`admin_roles.name` is UNIQUE) when renaming a system row to a name
+    // another role already uses. Surface a clear message; rethrow anything else.
+    const code = (err as { code?: string })?.code;
+    const msg = err instanceof Error ? err.message.toLowerCase() : "";
+    if (
+      name !== undefined &&
+      (code === "P2002" || msg.includes("unique") || msg.includes("duplicate"))
+    ) {
+      throw new Error("A role with that name already exists");
+    }
+    throw err;
+  }
 
   // --- Bust the baseline-map cache so the next `getBaselineMap()` read (and
   //     thus every subsequent write path / gate refresh) sees the new tokens.

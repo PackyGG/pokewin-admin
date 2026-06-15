@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
+import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import {
   ALL_PERMISSION_KEYS,
@@ -14,6 +15,7 @@ import {
   rematerializeForRoleChange,
   getBaselineMap,
 } from "@/lib/permissions/write-paths";
+import { normalizeLandingRouteInput } from "@/lib/role-landing";
 
 // ---------------------------------------------------------------------------
 // Custom roles = named, reusable permission presets.
@@ -96,6 +98,27 @@ export async function listRoles(): Promise<RoleRow[]> {
   }));
 }
 
+/**
+ * The assignable role presets for the per-user "Role preset" select on
+ * /admin-users/[id]: every CUSTOM role (`is_system = false`), id + name only.
+ * The 6 enum roles are assigned via the system-role chip editor (the `role` /
+ * `roles[]` columns), NOT via `role_id` — assigning a system row as a `role_id`
+ * would double-count its baseline (the user already gets it from the enum). So
+ * the preset list is the custom roles, which is exactly what `role_id` links to.
+ * Admin-gated read.
+ */
+export async function listAssignablePresets(): Promise<
+  { id: string; name: string }[]
+> {
+  await requireAdmin();
+  const rows = await adminDb.admin_roles.findMany({
+    where: { is_system: false },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
+  return rows.map((r) => ({ id: r.id, name: r.name }));
+}
+
 export async function getRole(id: string): Promise<RoleRow | null> {
   await requireAdmin();
   const r = await adminDb.admin_roles.findUnique({
@@ -150,6 +173,13 @@ const updateRoleSchema = z.object({
   name: roleNameSchema,
   description: z.string().trim().max(500).optional().nullable(),
   capabilities: capabilitiesSchema,
+  // Optional per-role landing route (RoleV2 P4). `null` clears it (→ today's
+  // routing); a non-empty value is validated against the known ADMIN_PAGES keys
+  // (redirect-loop guard). `undefined` leaves the column untouched.
+  landingRoute: z.string().trim().nullable().optional(),
+  // 2FA TOTP code — required, matching every other role/permission save
+  // (built-in caps, per-user permissions, role limits are all 2FA-gated).
+  code: z.string().trim().min(1, "TOTP code is required"),
 });
 
 export type CreateRoleInput = z.input<typeof createRoleSchema>;
@@ -215,13 +245,47 @@ export async function updateRole(
     };
   }
 
-  const { id, name, description, capabilities } = parsed.data;
+  const { id, name, description, capabilities, landingRoute, code } = parsed.data;
+
+  // 2FA: verify the acting admin's TOTP before any capability/name mutation
+  // (same gate as updateBuiltInRole / updateUserPermissions / setRoleLimits).
+  await require2FA(session.userId, code);
+
+  // Validate the landing route (if provided): a known ADMIN_PAGES key, empty
+  // (= clear), or reject. `undefined` leaves the column untouched.
+  let landingRouteToWrite: string | null | undefined;
+  if (landingRoute !== undefined) {
+    const normalized = normalizeLandingRouteInput(landingRoute);
+    if (normalized === undefined) {
+      return {
+        ok: false,
+        error: "Landing route must be a known admin page, or empty",
+      };
+    }
+    landingRouteToWrite = normalized;
+  }
 
   const existing = await adminDb.admin_roles.findUnique({
     where: { id },
-    select: { id: true, name: true, capabilities: true },
+    select: { id: true, name: true, capabilities: true, is_system: true },
   });
   if (!existing) return { ok: false, error: "Role not found" };
+
+  // HARD GUARD: this action edits CUSTOM roles only. A built-in (system) row's
+  // capabilities are edited exclusively through `updateBuiltInRole`, which
+  // re-materializes holders against the baseline map and busts the baseline
+  // cache. Routing a system row through here would write its `capabilities`
+  // WITHOUT busting `rolev2-baselines` (the gate reads the stale baseline) and
+  // would treat its enum holders as `role_id`-assigned (they are not) — so it
+  // is rejected. The UI already hides this path for system rows; this is the
+  // server boundary.
+  if (existing.is_system) {
+    return {
+      ok: false,
+      error:
+        "Built-in roles are edited from their own editor (name + capabilities), not here.",
+    };
+  }
 
   if (
     normalizeCustomRoleName(name) !== normalizeCustomRoleName(existing.name) &&
@@ -265,7 +329,16 @@ export async function updateRole(
     await adminDb.$transaction([
       adminDb.admin_roles.update({
         where: { id },
-        data: { name, description: description ?? null, capabilities },
+        data: {
+          name,
+          description: description ?? null,
+          capabilities,
+          // RoleV2 P4: write the validated landing route when supplied
+          // (string = set, null = cleared); omitted when undefined.
+          ...(landingRouteToWrite !== undefined
+            ? { landing_route: landingRouteToWrite }
+            : {}),
+        },
       }),
       ...refreshed.map((u) =>
         adminDb.admin_users.update({
@@ -301,14 +374,28 @@ export async function updateRole(
 
 export async function deleteRole(
   id: string,
+  code: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const session = await requireAdmin();
 
+  // 2FA: deleting a role is destructive (drops the preset + unlinks holders) —
+  // gate it like every other role/permission save. Previously this action had
+  // NO 2FA; adding one only BLOCKS the dangerous path, never widens access.
+  await require2FA(session.userId, code);
+
   const existing = await adminDb.admin_roles.findUnique({
     where: { id },
-    select: { id: true, name: true },
+    select: { id: true, name: true, is_system: true },
   });
   if (!existing) return { ok: false, error: "Role not found" };
+
+  // HARD GUARD: the six built-in (system) roles are the protected, undeletable
+  // backbone — they stay enum-wired underneath. Only custom presets are
+  // deletable. The UI disables Delete on system rows; this is the server
+  // boundary so a system row can never be dropped.
+  if (existing.is_system) {
+    return { ok: false, error: "Built-in roles can't be deleted." };
+  }
 
   // FK is onDelete: SetNull — assigned users keep their current
   // allowed_pages (their effective permissions are unchanged), they just
@@ -342,8 +429,13 @@ export async function deleteRole(
 export async function assignRoleToAdminUser(
   adminUserId: string,
   roleId: string | null,
+  code: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const session = await requireAdmin();
+
+  // 2FA: assigning/clearing a role rewrites the target user's allowed_pages
+  // (their effective access changes) — gate it like every other access save.
+  await require2FA(session.userId, code);
 
   // Full permission state — reads the OLD custom-role tokens + the per-user
   // override columns, so the derived override is relative to the OLD baseline.
@@ -393,4 +485,95 @@ export async function assignRoleToAdminUser(
   revalidatePath(`/admin-users/${adminUserId}`);
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+/**
+ * Duplicate a role (built-in OR custom) into a NEW CUSTOM role — the source's
+ * `capabilities` + the six limit columns are copied verbatim onto a fresh
+ * `admin_roles` row. The clone is ALWAYS a plain custom preset (`is_system =
+ * false`, `system_key = null`, no `landing_route`): a built-in's identity is its
+ * enum key and there is exactly one row per enum value, so the copy can only be
+ * a custom role. No user is touched (a brand-new role has no holders).
+ *
+ * 2FA-gated (matches every other role write). The name is validated like
+ * `createRole` (reserved-name + uniqueness rejected). Returns the new id so the
+ * caller can open its editor (pre-filled, since the editor reads from the DB).
+ */
+export async function duplicateRole(
+  sourceId: string,
+  newName: string,
+  code: string,
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const session = await requireAdmin();
+  await require2FA(session.userId, code);
+
+  const nameParsed = roleNameSchema.safeParse(newName);
+  if (!nameParsed.success) {
+    return {
+      ok: false,
+      error: nameParsed.error.issues[0]?.message ?? "Invalid name",
+    };
+  }
+  const name = nameParsed.data;
+  if (isReservedCustomRoleName(name)) {
+    return { ok: false, error: "That name is reserved for a built-in role" };
+  }
+
+  // Read the source's caps + limits (works for a system or custom row).
+  const source = await adminDb.admin_roles.findUnique({
+    where: { id: sourceId },
+    select: {
+      capabilities: true,
+      description: true,
+      balance_limit_daily: true,
+      balance_limit_weekly: true,
+      balance_limit_monthly: true,
+      issuance_limit_daily: true,
+      issuance_limit_weekly: true,
+      issuance_limit_monthly: true,
+    },
+  });
+  if (!source) return { ok: false, error: "Source role not found" };
+
+  // Sanitize the copied capabilities the same way createRole does (value-token
+  // aware; drops anything unknown). The clone is a clean custom preset.
+  const capabilities = sanitizePermissionKeys([...source.capabilities]);
+
+  try {
+    const role = await adminDb.admin_roles.create({
+      data: {
+        name,
+        description: source.description ?? null,
+        is_system: false,
+        capabilities,
+        // Copy the limit columns verbatim (NULLs stay NULL).
+        balance_limit_daily: source.balance_limit_daily,
+        balance_limit_weekly: source.balance_limit_weekly,
+        balance_limit_monthly: source.balance_limit_monthly,
+        issuance_limit_daily: source.issuance_limit_daily,
+        issuance_limit_weekly: source.issuance_limit_weekly,
+        issuance_limit_monthly: source.issuance_limit_monthly,
+      },
+      select: { id: true },
+    });
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "admin_role_created",
+      metadata: {
+        role_id: role.id,
+        name,
+        capabilities_count: capabilities.length,
+        duplicated_from: sourceId,
+      },
+    });
+
+    revalidatePath("/admin-users");
+    return { ok: true, id: role.id };
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      return { ok: false, error: "A role with that name already exists" };
+    }
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
