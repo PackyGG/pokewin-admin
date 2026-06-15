@@ -120,6 +120,21 @@ export const ANALYTICS_RETENTION_LTV_SURFACE_KEYS = [
   "analytics_ltv",
 ] as const;
 
+/**
+ * Phase 2B surface flag keys for the /creators/[userId] detail-page CH twins:
+ * `creators_detail_aggregates` (the `getCreatorDetail` KPI/funnel/payouts
+ * snapshot) and `creators_detail_pnl` (the `getCreatorPnl` per-window + lifetime
+ * House P&L headline). Listed here for discoverability only; like every other
+ * surface key they carry NO registration cost — `getAdminReadMode` resolves any
+ * unset key through the precedence chain whose terminal default is `"off"`, so
+ * each defaults to Postgres-only until an explicit env/Edge-Config flip to
+ * `"comparison"`. NEVER flipped to `"clickhouse"` in Phase 2B.
+ */
+export const CREATORS_DETAIL_SURFACE_KEYS = [
+  "creators_detail_aggregates",
+  "creators_detail_pnl",
+] as const;
+
 const VALID: readonly AdminReadMode[] = ["off", "comparison", "clickhouse"];
 
 function coerce(value: unknown): AdminReadMode | null {
