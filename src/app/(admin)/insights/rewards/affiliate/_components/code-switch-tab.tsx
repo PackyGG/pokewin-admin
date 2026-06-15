@@ -18,6 +18,7 @@ import {
   AFFILIATE_CODE_SWITCH_MIN_COHORT,
   getAffiliateCodeSwitch,
 } from "@/lib/queries/insights-rewards/affiliate/code-switch";
+import { compareAffiliateCodeSwitch } from "@/lib/clickhouse/compare/insights-affiliate-code-switch";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -61,6 +62,8 @@ export async function AffiliateCodeSwitchTab({
     );
   }
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareAffiliateCodeSwitch(period, data);
 
   if (data.length === 0) {
     return (

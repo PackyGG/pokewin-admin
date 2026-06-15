@@ -15,6 +15,7 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { getAffiliateClaimCadence } from "@/lib/queries/insights-rewards/affiliate/claim-cadence";
+import { compareAffiliateCadence } from "@/lib/clickhouse/compare/insights-affiliate-cadence";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -53,6 +54,8 @@ export async function AffiliateCadenceTab({
     );
   }
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareAffiliateCadence(period, data);
 
   if (data.length === 0) {
     return (

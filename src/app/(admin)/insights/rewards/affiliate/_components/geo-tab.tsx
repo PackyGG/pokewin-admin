@@ -10,6 +10,7 @@ import {
   type AffiliateGeoRow,
   type ReferredGeoRow,
 } from "@/lib/queries/insights-rewards/affiliate/geo";
+import { compareAffiliateGeo } from "@/lib/clickhouse/compare/insights-affiliate-geo";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -47,6 +48,8 @@ export async function AffiliateGeoTab({
     );
   }
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareAffiliateGeo(period, data);
 
   if (
     data.affiliateGeo.length === 0 &&

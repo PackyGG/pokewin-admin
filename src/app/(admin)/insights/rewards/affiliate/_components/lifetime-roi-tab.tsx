@@ -21,6 +21,7 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { getAffiliateLifetimeRoi } from "@/lib/queries/insights-rewards/affiliate/lifetime-roi";
+import { compareAffiliateLifetimeRoi } from "@/lib/clickhouse/compare/insights-affiliate-lifetime-roi";
 
 /**
  * Lifetime ROI per affiliate (period-agnostic). Sourced from the
@@ -52,6 +53,8 @@ export async function AffiliateLifetimeRoiTab() {
       />
     );
   }
+
+  void compareAffiliateLifetimeRoi(data);
 
   if (data.length === 0) {
     return (

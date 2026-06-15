@@ -15,6 +15,7 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { getAffiliateCohort } from "@/lib/queries/insights-rewards/affiliate/cohort";
+import { compareAffiliateCohort } from "@/lib/clickhouse/compare/insights-affiliate-cohort";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -55,6 +56,8 @@ export async function AffiliateCohortTab({
     );
   }
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareAffiliateCohort(period, data);
 
   if (data.length === 0) {
     return (

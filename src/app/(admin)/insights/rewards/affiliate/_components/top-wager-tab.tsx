@@ -15,6 +15,7 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { getTopAffiliatesByWager } from "@/lib/queries/insights-rewards/affiliate/leaderboards";
+import { compareAffiliateTopWager } from "@/lib/clickhouse/compare/insights-affiliate-top-wager";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -53,6 +54,8 @@ export async function AffiliateTopWagerTab({
     );
   }
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareAffiliateTopWager(period, data);
 
   if (data.length === 0) {
     return (

@@ -16,6 +16,7 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { getAffiliateTierDistribution } from "@/lib/queries/insights-rewards/affiliate/tier-distribution";
+import { compareAffiliateTierDistribution } from "@/lib/clickhouse/compare/insights-affiliate-tier-distribution";
 import { TierDistributionChart } from "./tier-distribution-chart";
 
 /**
@@ -48,6 +49,8 @@ export async function AffiliateTierDistributionTab() {
   }
 
   const { rows, totalAffiliates } = data;
+
+  void compareAffiliateTierDistribution(data);
 
   if (totalAffiliates === 0) {
     return (
