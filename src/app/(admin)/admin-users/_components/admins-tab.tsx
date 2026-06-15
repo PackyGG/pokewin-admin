@@ -8,7 +8,9 @@ import {
 } from "@/lib/admin-user-roles";
 import { SectionHeading, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { AdminUsersTable, type AdminUserRow } from "../admin-users-table";
+import { type AdminUserRow } from "../admin-users-table";
+import { AdminsList } from "../admins-list";
+import { AdminsViewToggle } from "../admins-view-toggle";
 
 /**
  * "Admins" tab content for the merged Admins & Access surface
@@ -225,9 +227,13 @@ export async function AdminsTab({
       </div>
 
       <div className="space-y-3">
-        <SectionHeading icon={UserCog} title="All Admins" />
+        <SectionHeading
+          icon={UserCog}
+          title="All Admins"
+          action={<AdminsViewToggle />}
+        />
         <FadeIn>
-          <AdminUsersTable
+          <AdminsList
             rows={rows}
             isCurrentUserAdmin={isCurrentUserAdmin}
             currentUserId={currentUserId}
