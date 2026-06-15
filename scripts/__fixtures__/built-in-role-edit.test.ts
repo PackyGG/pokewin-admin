@@ -325,3 +325,37 @@ test("editing a built-in role: an absent map entry falls back to the code baseli
   const union = baselineUnionFor(["support"], [], { support: ["/only-this"] });
   assert.ok(setEq(union, ["/only-this"]), "provided map entry overrides code baseline");
 });
+
+// ── 11. RENAME / LANDING edit (RoleV2 P3/P4) is access-neutral ───────────────
+// `updateBuiltInRole` can now also write a DISPLAY name + a landing_route. Those
+// are PURELY cosmetic/routing — identity stays `system_key`/enum and the
+// materializer reads only `capabilities`. So a name/landing-only edit (caps
+// UNCHANGED) must leave every holder's effective set byte-identical. Proven by
+// re-materializing with the SAME baseline map on both sides (caps unchanged).
+test("editing a built-in role: a name/landing-only change leaves effective access identical", () => {
+  // Caps are the SAME on both sides — only the (un-modelled here) name/landing
+  // differ in the real action. The materializer ignores them, so old == new.
+  const baselines: BaselineMap = { support: [...SUPPORT] };
+
+  const state: PermissionStateCore = {
+    role: "support",
+    roles: ["support"],
+    customRoleTokens: [],
+    allowedPages: [...SUPPORT, "/analytics"], // a manual grant on top
+    override: { grants: [], revokes: [] },
+  };
+
+  // "Before" and "after" a rename/landing edit use the identical baseline map.
+  const before = rematerializeForBuiltInEdit(state, baselines, baselines);
+  const after = rematerializeForBuiltInEdit(state, baselines, baselines);
+  assert.ok(setEq(before, after), "rename/landing edit must not change effective access");
+  // And it equals the plain materialization (baseline ∪ grant).
+  const expected = computeEffectivePermissions({
+    role: "support",
+    roles: ["support"],
+    customRoleTokens: [],
+    override: { grants: ["/analytics"], revokes: [] },
+    baselines,
+  });
+  assert.ok(setEq(after, expected), "effective == baseline ∪ {grant} (caps unchanged)");
+});
