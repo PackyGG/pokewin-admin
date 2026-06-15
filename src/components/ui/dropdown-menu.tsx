@@ -77,11 +77,31 @@ function DropdownMenuItem({
   className,
   inset,
   variant = "default",
+  onSelect,
+  onClick,
   ...props
 }: MenuPrimitive.Item.Props & {
   inset?: boolean
   variant?: "default" | "destructive"
+  /**
+   * Radix-style alias for the item's activation handler. base-ui's `Menu.Item`
+   * has no `onSelect` prop — its activation handler is `onClick`, which fires on
+   * BOTH mouse press AND keyboard activation (Enter / Space) via the composite
+   * `useButton` (see `@base-ui/react/use-button/useButton.js`). We forward
+   * `onSelect` to `onClick` (merging with any explicit `onClick`) so existing
+   * `onSelect` call sites — a Radix-ism that previously landed as a dead DOM
+   * attribute — actually fire. `closeOnClick` (default true) still runs first,
+   * so the menu closes, then the handler/dialog opens.
+   */
+  onSelect?: MenuPrimitive.Item.Props["onClick"]
 }) {
+  const handleClick: MenuPrimitive.Item.Props["onClick"] =
+    onSelect || onClick
+      ? (event) => {
+          onClick?.(event)
+          onSelect?.(event)
+        }
+      : undefined
   return (
     <MenuPrimitive.Item
       data-slot="dropdown-menu-item"
@@ -91,6 +111,7 @@ function DropdownMenuItem({
         "group/dropdown-menu-item relative flex cursor-default items-center gap-1.5 rounded-md px-1.5 py-1 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground not-data-[variant=destructive]:focus:**:text-accent-foreground data-inset:pl-7 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive dark:data-[variant=destructive]:focus:bg-destructive/20 data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-[variant=destructive]:*:[svg]:text-destructive",
         className
       )}
+      onClick={handleClick}
       {...props}
     />
   )
