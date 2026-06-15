@@ -3,6 +3,7 @@ import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { PackBattlePurePnl } from "@/components/pack-battle-pure-pnl";
+import { comparePurePnl } from "@/lib/clickhouse/compare/pure-pnl";
 
 /**
  * Dedicated tab for the Pack & Battle Pure P&L breakdown — same panel
@@ -29,6 +30,9 @@ export async function PurePnlTab() {
       />
     );
   }
+  // Fire-and-forget ClickHouse comparison (no-op unless the `pure_pnl` surface
+  // is in comparison mode). Never affects the served Postgres payload.
+  void comparePurePnl(data);
   return (
     <div className="space-y-6">
       <FadeIn>
