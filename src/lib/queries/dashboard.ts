@@ -51,6 +51,12 @@ import {
   getDashboardTrendSeries,
   type DashboardTrendSeries,
 } from "./dashboard-trend-series";
+// Comparison-mode ClickHouse twin (Phase 2B) — fire-and-forget drift logger for
+// the headline KPI composite. Direct import (NOT via the comparison.ts barrel)
+// so this surface touches only its own NEW files + this one wiring point. No-op
+// unless the `dashboard_stats` surface flag is in `comparison` mode (forced off
+// while ClickHouse is dormant), and it never affects the served PG payload.
+import { compareDashboardStats } from "@/lib/clickhouse/compare/dashboard-stats";
 
 // Re-export the client-safe period constants so existing call sites
 // that import from "@/lib/queries/dashboard" don't have to change. The
@@ -1750,6 +1756,54 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
       Number(d.upgrader),
     ]),
   );
+
+  // Fire-and-forget ClickHouse comparison (Phase 2B, comparison mode only).
+  // Passes the SAME window cutoffs + scalar PG leg values this render produced
+  // so the CH twin diffs over identical windows; the served payload below is
+  // unchanged. `ggr`, the chart arrays, and the creator deal-payout leg are
+  // intentionally NOT diffed here (see compare/dashboard-stats.ts).
+  const rolling7d = new Date(now.getTime() - 7 * MS_PER_DAY);
+  void compareDashboardStats({
+    periodCutoffIso: periodCutoff.toISOString(),
+    upgraderSinceIso: (metricWindow.since ?? periodCutoff).toISOString(),
+    startOfDayIso: startOfDay.toISOString(),
+    startOfWeekIso: startOfWeek.toISOString(),
+    startOfMonthIso: startOfMonth.toISOString(),
+    rolling24hIso: rolling24h.toISOString(),
+    rolling7dIso: rolling7d.toISOString(),
+    usersTotal: Number(userCounts[0]?.total ?? 0),
+    usersToday: Number(userCounts[0]?.today ?? 0),
+    usersWeek: Number(userCounts[0]?.week ?? 0),
+    usersMonth: Number(userCounts[0]?.month ?? 0),
+    signups24h: Number(userCounts[0]?.rolling24h ?? 0),
+    uniqueDepositors: uniqueDepositorsResult,
+    depositCountLifetime: depositCount,
+    depositCount24h,
+    depositCount7d,
+    depositCountPeriod: num(pa.deposit_count),
+    withdrawalCountPeriod: num(pa.withdrawal_count),
+    ftds24h: ftdCount,
+    packsOpened24h,
+    battlesPlayed24h,
+    deposits: depositsPeriod,
+    withdrawals: Math.abs(num(pa.withdrawal)),
+    wagers: Math.abs(num(pa.wager_excl_session)) + upgraderWagerPeriod,
+    wagersPacks: Math.abs(num(pa.pack_wager_excl_session)),
+    wagersBattles: Math.abs(num(pa.battle_wager_excl_session)),
+    wagersUpgrader: upgraderWagerPeriod,
+    wagersOrganic: Math.abs(num(pa.wager_organic)),
+    wagersRaw: Math.abs(num(pa.wager)) + upgraderWagerPeriod,
+    realizedPnlPeriod,
+    totalDeposited: parseFloat(ba.total_deposited) || 0,
+    totalWithdrawn: parseFloat(ba.total_withdrawn) || 0,
+    totalWagered,
+    totalWon,
+    ftdTotal24h: ftdTotal,
+    balanceChangePeriod,
+    manualWdPeriod,
+    inventoryChangePeriod,
+    voucherChangePeriod,
+  });
 
   return {
     // Selected window meta — drives the UI labels (so a card title can
