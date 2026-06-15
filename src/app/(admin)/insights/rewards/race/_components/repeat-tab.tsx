@@ -22,6 +22,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { getRaceInsightsRepeatWinners } from "@/lib/queries/insights-rewards/race/repeat-winners";
+import { compareRaceRepeat } from "@/lib/clickhouse/compare/insights-race-repeat";
 import { DistributionBarChart } from "@/app/(admin)/rewards/analytics/_components/distribution-bar-chart";
 
 /**
@@ -51,6 +52,8 @@ export async function RaceRepeatWinnersTab({
   }
   const data = res.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareRaceRepeat(period, data);
 
   if (data.totalRepeatWinners === 0) {
     return (

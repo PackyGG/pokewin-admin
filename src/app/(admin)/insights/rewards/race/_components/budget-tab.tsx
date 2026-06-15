@@ -17,6 +17,7 @@ import {
   getRaceInsightsPerType,
   type RacePerTypeRow,
 } from "@/lib/queries/insights-rewards/race/per-type";
+import { compareRacePerType } from "@/lib/clickhouse/compare/insights-race-per-type";
 
 const TYPE_LABEL: Record<RacePerTypeRow["raceType"], string> = {
   daily: "Daily",
@@ -54,6 +55,9 @@ export async function RaceBudgetTab({
   }
   const rows = res.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareRacePerType(period, rows);
+
   const anyActivity = rows.some((r) => r.distinctRaces > 0);
   if (!anyActivity) {
     return (

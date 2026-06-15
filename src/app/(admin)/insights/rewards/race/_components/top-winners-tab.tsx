@@ -22,6 +22,7 @@ import {
   getRaceInsightsTopWinners,
   type RaceTopWinner,
 } from "@/lib/queries/insights-rewards/race/top-winners";
+import { compareRaceTop } from "@/lib/clickhouse/compare/insights-race-top";
 
 /**
  * Top winners tab — top 25 by total race prize in period + lifetime,
@@ -48,6 +49,9 @@ export async function RaceTopWinnersTab({
   }
   const data = res.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareRaceTop(period, data);
+
   if (data.period.length === 0 && data.lifetime.length === 0) {
     return (
       <div className="rounded-2xl border bg-card p-4">

@@ -21,6 +21,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { getRaceInsightsBreakdown } from "@/lib/queries/insights-rewards/race/breakdown";
+import { compareRaceBreakdown } from "@/lib/clickhouse/compare/insights-race-breakdown";
 
 /**
  * Race-by-race breakdown tab. Renders one row per race instance in the
@@ -52,6 +53,8 @@ export async function RaceBreakdownTab({
   }
   const rows = res.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareRaceBreakdown(period, rows);
 
   if (rows.length === 0) {
     return (

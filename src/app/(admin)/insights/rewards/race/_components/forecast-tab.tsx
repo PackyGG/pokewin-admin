@@ -9,6 +9,9 @@ import {
 import { getRaceInsightsOverview } from "@/lib/queries/insights-rewards/race/overview";
 import { getRaceInsightsPerType } from "@/lib/queries/insights-rewards/race/per-type";
 import { getRaceInsightsROI } from "@/lib/queries/insights-rewards/race/roi";
+import { compareRaceOverview } from "@/lib/clickhouse/compare/insights-race-overview";
+import { compareRacePerType } from "@/lib/clickhouse/compare/insights-race-per-type";
+import { compareRaceRoi } from "@/lib/clickhouse/compare/insights-race-roi";
 
 import { type ForecastBaseline } from "../_forecast";
 import { ForecastSimulatorIsland } from "./forecast-simulator";
@@ -58,6 +61,10 @@ export async function ForecastTab({ period }: { period: InsightsRewardsPeriod })
   const ov = ovRes.data;
   const perType = perTypeRes.data;
   const roi = roiRes.data;
+
+  if (ov != null) void compareRaceOverview(period, ov);
+  if (perType != null) void compareRacePerType(period, perType);
+  if (roi != null) void compareRaceRoi(period, roi);
 
   // A real baseline is usable only when the overview query succeeded AND there
   // were actual prize lines in the window (winnerCount > 0). Otherwise the cost /

@@ -21,6 +21,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { getRaceInsightsROI } from "@/lib/queries/insights-rewards/race/roi";
+import { compareRaceRoi } from "@/lib/clickhouse/compare/insights-race-roi";
 
 /**
  * ROI tab. Compares race-prize cost to claimants' subsequent gameplay
@@ -53,6 +54,8 @@ export async function RaceRoiTab({
   }
   const roi = res.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareRaceRoi(period, roi);
 
   if (roi.claimantCount === 0) {
     return (

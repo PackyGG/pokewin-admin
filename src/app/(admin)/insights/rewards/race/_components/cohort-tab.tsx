@@ -13,6 +13,7 @@ import {
   getRaceInsightsCohort,
   type RaceCohortRow,
 } from "@/lib/queries/insights-rewards/race/cohort";
+import { compareRaceCohort } from "@/lib/clickhouse/compare/insights-race-cohort";
 
 /**
  * Cohort / Geo / Source tab for race winners on
@@ -42,6 +43,9 @@ export async function RaceCohortTab({
   }
   const data = res.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareRaceCohort(period, data);
+
   const noActivity =
     data.countries.length === 0 &&
     data.sources.length === 0 &&

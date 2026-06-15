@@ -10,6 +10,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { getRaceInsightsPositions } from "@/lib/queries/insights-rewards/race/positions";
+import { compareRacePositions } from "@/lib/clickhouse/compare/insights-race-positions";
 import { DistributionBarChart } from "@/app/(admin)/rewards/analytics/_components/distribution-bar-chart";
 
 /**
@@ -40,6 +41,9 @@ export async function RacePositionsTab({
   }
   const buckets = res.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareRacePositions(period, buckets);
+
   const totalCount = buckets.reduce((acc, b) => acc + b.count, 0);
   const totalVolume = buckets.reduce((acc, b) => acc + b.volume, 0);
 

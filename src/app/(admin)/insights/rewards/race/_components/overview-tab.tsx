@@ -21,6 +21,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { getRaceInsightsOverview } from "@/lib/queries/insights-rewards/race/overview";
+import { compareRaceOverview } from "@/lib/clickhouse/compare/insights-race-overview";
 import { RaceDailyPrizeChart } from "./daily-prize-chart";
 
 /**
@@ -48,6 +49,8 @@ export async function RaceOverviewTab({
   }
   const data = res.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareRaceOverview(period, data);
 
   if (data.winnerCount === 0) {
     return (
