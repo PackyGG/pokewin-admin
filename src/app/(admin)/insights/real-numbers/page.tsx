@@ -64,6 +64,7 @@ import {
   getRealizedPnlSnapshot,
   type RealizedPnlSnapshot,
 } from "@/lib/queries/_realized-pnl";
+import { compareRealNumbers } from "@/lib/clickhouse/compare/insights-real-numbers";
 import { formatDateTime } from "@/lib/utils/format";
 // Reuse the cost-breakdown waterfall primitives + the directive-free
 // semantic-tone vocabulary (server-safe — see ../cost-breakdown/tones.ts).
@@ -185,6 +186,19 @@ export default async function RealNumbersPage() {
       REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
+
+  // Comparison-mode CH twin (Phase 2B) — fire-and-forget after the PG values
+  // are computed. No-op unless `insights_real_numbers` is in comparison mode;
+  // never affects the served Postgres payload.
+  void compareRealNumbers({
+    hubWager: wager ?? 0,
+    split,
+    rewardSpend,
+    pnlExclCreators: customerCash,
+    creatorNetCash: creatorDetail,
+    creatorProgram,
+    recycling,
+  });
 
   const asOf = formatDateTime(new Date());
 
