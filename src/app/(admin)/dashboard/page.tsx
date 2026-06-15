@@ -19,6 +19,9 @@ import { compareDashboardTodayPnl } from "@/lib/clickhouse/compare/dashboard-tod
 import { compareDashboardAvgPnl7d } from "@/lib/clickhouse/compare/dashboard-avg-pnl-7d";
 import { compareDashboardDailyPnl } from "@/lib/clickhouse/compare/dashboard-daily-pnl";
 import { compareDashboardUpgraderStats } from "@/lib/clickhouse/compare/dashboard-upgrader-stats";
+import { compareDashboardCreatorCostsToday } from "@/lib/clickhouse/compare/dashboard-creator-costs-today";
+import { compareDashboardAffiliateReferredPnlToday } from "@/lib/clickhouse/compare/dashboard-affiliate-referred-pnl-today";
+import { compareDashboardChatMessagesToday } from "@/lib/clickhouse/compare/dashboard-chat-messages-today";
 import { requirePageAccess } from "@/lib/dal";
 import { formatRelative } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
@@ -621,6 +624,23 @@ async function DashboardCreatorCostsToday() {
     );
   }
   const data = costsResult.data;
+  // CQRS rollout: in `comparison` mode, run the ClickHouse twins side-by-side
+  // and LOG drift. Fire-and-forget + never-throwing — the served card below
+  // stays 100% Postgres. No-op unless each flag is `comparison`. The
+  // affiliate-referred badge is an independent surface keyed off its own flag.
+  void compareDashboardCreatorCostsToday({
+    total: data.total,
+    creatorWithdrawals: data.creatorWithdrawals,
+    tips: data.tips,
+    leaderboardGross: data.leaderboardGross,
+    dayStartIso: data.dayStartIso,
+  });
+  if (pnlResult.data) {
+    void compareDashboardAffiliateReferredPnlToday({
+      pnl: pnlResult.data.pnl,
+      dayStartIso: pnlResult.data.dayStartIso,
+    });
+  }
   // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
   // UTC calendar day this cost covers (matches the window boundary exactly).
   const dayLabel = data.dayStartIso.slice(0, 10);
@@ -658,6 +678,14 @@ async function DashboardChatMessagesToday() {
       />
     );
   }
+  // CQRS rollout: comparison-mode ClickHouse twin (fire-and-forget, never
+  // throws). No-op unless `dashboard_chat_messages_today` is `comparison`.
+  void compareDashboardChatMessagesToday({
+    messageCount: data.messageCount,
+    uniqueChatters: data.uniqueChatters,
+    deletedCount: data.deletedCount,
+    dayStartIso: data.dayStartIso,
+  });
   const dayLabel = data.dayStartIso.slice(0, 10);
   return (
     <ChatMessagesTodayCard

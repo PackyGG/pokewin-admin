@@ -51,6 +51,21 @@ export const REWARDS_ANALYTICS_SURFACE_KEYS = [
  */
 export const ANALYTICS_PURE_PNL_SURFACE_KEY = "pure_pnl";
 
+/**
+ * Phase 2B surface flag keys for the /dashboard remaining daily-leg CH twins
+ * (one per leg). Listed here for discoverability only; like every other
+ * surface key they carry NO registration cost — `getAdminReadMode` resolves any
+ * unset key through the precedence chain whose terminal default is `"off"`, so
+ * each defaults to Postgres-only until an explicit env/Edge-Config flip to
+ * `"comparison"`. NEVER flipped to `"clickhouse"` in Phase 2B.
+ */
+export const DASHBOARD_DAILY_LEGS_SURFACE_KEYS = [
+  "dashboard_creator_costs_today",
+  "dashboard_affiliate_referred_pnl_today",
+  "dashboard_chat_messages_today",
+  "dashboard_net_holdings_movers",
+] as const;
+
 const VALID: readonly AdminReadMode[] = ["off", "comparison", "clickhouse"];
 
 function coerce(value: unknown): AdminReadMode | null {
