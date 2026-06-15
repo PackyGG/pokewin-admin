@@ -52,6 +52,23 @@ export const REWARDS_ANALYTICS_SURFACE_KEYS = [
 export const ANALYTICS_PURE_PNL_SURFACE_KEY = "pure_pnl";
 
 /**
+ * Phase 2B surface flag keys for the /analytics Top-performers + Revenue tab CH
+ * twins: `analytics_top` (all six leaderboards — depositors / wagerers / losers
+ * / winners / creators / countries), `analytics_revenue` (the revenue-by-source
+ * breakdown), and `analytics_revenue_withdrawals` (the withdrawn-coins card).
+ * Listed here for discoverability only; like every other surface key they carry
+ * NO registration cost — `getAdminReadMode` resolves any unset key through the
+ * precedence chain whose terminal default is `"off"`, so each defaults to
+ * Postgres-only until an explicit env/Edge-Config flip to `"comparison"`. NEVER
+ * flipped to `"clickhouse"` in Phase 2B.
+ */
+export const ANALYTICS_TOP_REVENUE_SURFACE_KEYS = [
+  "analytics_top",
+  "analytics_revenue",
+  "analytics_revenue_withdrawals",
+] as const;
+
+/**
  * Phase 2B surface flag keys for the /dashboard remaining daily-leg CH twins
  * (one per leg). Listed here for discoverability only; like every other
  * surface key they carry NO registration cost — `getAdminReadMode` resolves any

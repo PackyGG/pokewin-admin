@@ -32,6 +32,14 @@ import {
   getTopCountries,
   type LeaderboardPeriod,
 } from "@/lib/queries/analytics-top";
+import {
+  compareTopDepositors,
+  compareTopWagerers,
+  compareTopLosers,
+  compareTopWinners,
+  compareTopCreators,
+  compareTopCountries,
+} from "@/lib/clickhouse/compare/analytics-top";
 import type { AnalyticsPeriod } from "./types";
 
 type SubTab =
@@ -130,6 +138,24 @@ export async function TopPerformersTab({
           )
         : null,
     ]);
+
+  // Comparison-mode ClickHouse twin (fire-and-forget). No-op unless the
+  // `analytics_top` surface is in `comparison` mode. Diffs only the active
+  // board against its served Postgres rows; never awaited, swallows its own
+  // errors, and never affects the rendered payload.
+  if (active === "depositors" && depositors?.data) {
+    void compareTopDepositors(leaderboardPeriod, depositors.data);
+  } else if (active === "wagerers" && wagerers?.data) {
+    void compareTopWagerers(leaderboardPeriod, wagerers.data);
+  } else if (active === "losers" && losers?.data) {
+    void compareTopLosers(leaderboardPeriod, losers.data);
+  } else if (active === "winners" && winners?.data) {
+    void compareTopWinners(leaderboardPeriod, winners.data);
+  } else if (active === "creators" && creators?.data) {
+    void compareTopCreators(leaderboardPeriod, creators.data);
+  } else if (active === "countries" && countries?.data) {
+    void compareTopCountries(leaderboardPeriod, countries.data);
+  }
 
   return (
     <FadeIn>

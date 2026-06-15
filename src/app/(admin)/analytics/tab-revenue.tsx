@@ -24,6 +24,8 @@ import {
   getWithdrawnCoinsBreakdown,
   type WithdrawnAsset,
 } from "@/lib/queries/analytics-withdrawals";
+import { compareRevenue } from "@/lib/clickhouse/compare/analytics-revenue";
+import { compareWithdrawals } from "@/lib/clickhouse/compare/analytics-revenue-withdrawals";
 import { RevenueStackedCharts } from "./revenue-chart";
 import type { AnalyticsPeriod } from "./types";
 
@@ -82,6 +84,13 @@ export async function RevenueTab({
     );
   }
   const withdrawnCoins = withdrawnCoinsResult.data;
+
+  // Comparison-mode ClickHouse twins (fire-and-forget). No-op unless the
+  // `analytics_revenue` / `analytics_revenue_withdrawals` surfaces are in
+  // `comparison` mode. Diff against the served Postgres payloads; never
+  // awaited, swallow their own errors, never affect the rendered output.
+  void compareRevenue(data);
+  if (withdrawnCoins) void compareWithdrawals(withdrawnCoins);
 
   return (
     <FadeIn>
