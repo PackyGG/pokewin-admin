@@ -6,6 +6,7 @@ import {
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
+import { compareAnalyticsCohorts } from "@/lib/clickhouse/compare/analytics-cohorts-compare";
 import { CohortsHeatmap } from "./cohorts-heatmap";
 import type { AnalyticsPeriod } from "./types";
 
@@ -37,6 +38,9 @@ export async function CohortsTab({
       />
     );
   }
+
+  // CQRS comparison-mode shadow read (fire-and-forget; served payload stays PG).
+  void compareAnalyticsCohorts(granularity, data);
 
   return (
     <FadeIn>

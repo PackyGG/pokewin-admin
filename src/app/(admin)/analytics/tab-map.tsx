@@ -6,6 +6,7 @@ import {
   Swords,
 } from "lucide-react";
 import { getUsersByCountry } from "@/lib/queries/map";
+import { compareAnalyticsMap } from "@/lib/clickhouse/compare/analytics-map-compare";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
@@ -53,6 +54,9 @@ export async function MapTab({
       />
     );
   }
+  // CQRS comparison-mode shadow read (fire-and-forget; served payload stays PG).
+  void compareAnalyticsMap(period, data);
+
   const topCountry = data.byCountry[0];
 
   // Platform-wide aggregates for the KPI strip. We roll up from the

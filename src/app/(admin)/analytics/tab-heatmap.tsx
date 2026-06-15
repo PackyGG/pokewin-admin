@@ -7,6 +7,7 @@ import {
   getActivityHeatmap,
   type HeatmapPeriod,
 } from "@/lib/queries/analytics-heatmap";
+import { compareAnalyticsHeatmap } from "@/lib/clickhouse/compare/analytics-heatmap-compare";
 import { HeatmapGrid } from "./heatmap-grid";
 import type { AnalyticsPeriod } from "./types";
 
@@ -43,6 +44,9 @@ export async function HeatmapTab({
       />
     );
   }
+
+  // CQRS comparison-mode shadow read (fire-and-forget; served payload stays PG).
+  void compareAnalyticsHeatmap(period, data);
 
   return (
     <FadeIn>

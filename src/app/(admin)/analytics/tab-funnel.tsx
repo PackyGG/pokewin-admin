@@ -11,6 +11,7 @@ import {
   getFunnelData,
   type FunnelPeriod,
 } from "@/lib/queries/analytics-funnel";
+import { compareAnalyticsFunnel } from "@/lib/clickhouse/compare/analytics-funnel-compare";
 import type { AnalyticsPeriod } from "./types";
 
 /**
@@ -54,6 +55,9 @@ export async function FunnelTab({
       />
     );
   }
+
+  // CQRS comparison-mode shadow read (fire-and-forget; served payload stays PG).
+  void compareAnalyticsFunnel(funnelPeriod, data);
 
   return (
     <FadeIn>
