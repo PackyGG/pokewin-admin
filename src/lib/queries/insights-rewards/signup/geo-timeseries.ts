@@ -7,6 +7,7 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { compareSignupGeoTimeSeries } from "@/lib/clickhouse/compare/insights-signup-geo-timeseries";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -145,7 +146,12 @@ export async function getSignupGeoTimeSeries(
 ): Promise<GeoTimeSeriesCountry[]> {
   const blacklist = await getExcludedUserIds();
   const sorted = [...blacklist].sort();
-  return cacheTtlForInsightsPeriod(period) >= 300
+  const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
-    : cachedShort(period, sorted);
+    : cachedShort(period, sorted));
+  // CQRS rollout: fire-and-forget ClickHouse comparison (no-op unless the
+  // surface flag is in `comparison` mode; forced off when CH is dormant). The
+  // served value stays the Postgres payload above.
+  void compareSignupGeoTimeSeries(period, data);
+  return data;
 }

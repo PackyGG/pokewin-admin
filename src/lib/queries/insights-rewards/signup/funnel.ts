@@ -8,6 +8,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { WAGER_TYPES_SQL } from "@/lib/queries/_wager-payout-types";
+import { compareSignupFunnel } from "@/lib/clickhouse/compare/insights-signup-funnel";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -138,7 +139,12 @@ export async function getSignupFunnel(
 ): Promise<SignupFunnel> {
   const blacklist = await getExcludedUserIds();
   const sorted = [...blacklist].sort();
-  return cacheTtlForInsightsPeriod(period) >= 300
+  const data = await (cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, sorted)
-    : cachedShort(period, sorted);
+    : cachedShort(period, sorted));
+  // CQRS rollout: fire-and-forget ClickHouse comparison (no-op unless the
+  // surface flag is in `comparison` mode; forced off when CH is dormant). The
+  // served value stays the Postgres payload above.
+  void compareSignupFunnel(period, data);
+  return data;
 }
