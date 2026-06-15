@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -791,10 +792,9 @@ export type DailyPnlPoint = {
  * blacklist dropped), matching the dashboard aggregates. Standalone (not
  * part of getDashboardStats) so it streams behind its own Suspense.
  */
-export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
+async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
   return withTiming("pnl.daily", async () => {
     const db = await getDb();
-    const excluded = await getExcludedUserIds();
     const blacklist = blacklistNotInClause("u.id", excluded);
     const usersScope = `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
     const statsExcluded = statsExcludedAdjustmentSqlPredicate({
@@ -1009,6 +1009,38 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
       }))
       .sort((x, y) => x.date.localeCompare(y.date));
   });
+}
+
+/**
+ * Cached Daily-P&L wrapper. `getDailyPnl` is the heaviest uncached chart leg
+ * (a 30-day lifetime scan across the ledger / inventory / voucher tables) and
+ * was re-scanned on every 60s dashboard AutoRefresh, while every sibling chart
+ * query (getTodayPnl, getAvgPnl7d, getDashboardStats) is already cached. This
+ * mirrors those siblings exactly:
+ *   • the excluded-users blacklist is resolved OUTSIDE unstable_cache and
+ *     passed in as a serializable arg (getExcludedUserIds reads the admin DB,
+ *     which can't run inside the cache scope), and
+ *   • a UTC day key (YYYY-MM-DD) keeps the 30-day window fresh across the
+ *     00:00-UTC rollover.
+ * `revalidate: 300` per the audit; the served numbers are unchanged (identical
+ * SQL, scope, and blacklist) — only the scan is memoized.
+ */
+const cachedDailyPnl = unstable_cache(
+  async (dayKey: string, excluded: string[]): Promise<DailyPnlPoint[]> => {
+    void dayKey; // part of the cache key only
+    return computeDailyPnl(excluded);
+  },
+  ["dashboard-daily-pnl-v1"],
+  { revalidate: 300, tags: ["dashboard-activity"] },
+);
+
+export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
+  const excluded = await getExcludedUserIds();
+  // YYYY-MM-DD in UTC — rolls the cache at 00:00 UTC so the 30-day window
+  // doesn't go stale; combined with the serialized blacklist arg, the key
+  // refills when an admin edits the excluded-users list.
+  const dayKey = new Date().toISOString().slice(0, 10);
+  return cachedDailyPnl(dayKey, excluded);
 }
 
 // ─── Period P&L breakdown (24h / 3d / 7d) ────────────────────────────
