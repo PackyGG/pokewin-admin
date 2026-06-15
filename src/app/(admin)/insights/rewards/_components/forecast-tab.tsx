@@ -18,6 +18,7 @@ import { type InsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_peri
 import { ForecastLineChart } from "./forecast-line-chart";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
+import { compareForecast } from "@/lib/clickhouse/compare/insights-forecast";
 
 /**
  * Forecast tab — 60d historical line per category + 30d projection.
@@ -56,6 +57,7 @@ export async function ForecastTab({
       />
     );
   }
+  void compareForecast(data);
   const projectedTotal = data.rows.reduce((a, r) => a + r.projected30d, 0);
   const trailingTotal = data.rows.reduce(
     (a, r) => a + r.trailingSevenAvg,
