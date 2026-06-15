@@ -27,6 +27,9 @@ import {
 import { getDepositBonusROI } from "@/lib/queries/insights-rewards/deposit-bonus/roi";
 import { getDepositBonusGeoSource } from "@/lib/queries/insights-rewards/deposit-bonus/geo-source";
 import { getDepositBonusTimeOfDay } from "@/lib/queries/insights-rewards/deposit-bonus/behavior";
+import { compareDepositBonusRoi } from "@/lib/clickhouse/compare/insights-deposit-bonus-roi";
+import { compareDepositBonusGeoSource } from "@/lib/clickhouse/compare/insights-deposit-bonus-geo-source";
+import { compareDepositBonusTimeOfDay } from "@/lib/clickhouse/compare/insights-deposit-bonus-time-of-day";
 
 /**
  * ROI & Geo tab:
@@ -80,6 +83,25 @@ export async function RoiTab({
   const geo = geoRes.data;
   const tod = todRes.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  // Fire-and-forget ClickHouse comparison (no-op unless the surface flag is in
+  // `comparison` mode). The served values stay the Postgres payloads above.
+  void compareDepositBonusRoi(period, {
+    cost: roi.cost,
+    claimants: roi.claimants,
+    wager: roi.wager,
+    payouts: roi.payouts,
+    subsequentGgr: roi.subsequentGgr,
+  });
+  if (geo) {
+    void compareDepositBonusGeoSource(period, { totalCost: geo.totalCost });
+  }
+  if (tod) {
+    void compareDepositBonusTimeOfDay(period, {
+      totalCount: tod.hourly.reduce((sum, h) => sum + h.count, 0),
+      totalVolume: tod.hourly.reduce((sum, h) => sum + h.volume, 0),
+    });
+  }
 
   if (roi.cost === 0) {
     return (

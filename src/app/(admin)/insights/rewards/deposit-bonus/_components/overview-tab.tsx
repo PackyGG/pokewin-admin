@@ -33,6 +33,8 @@ import {
 import { getDepositBonusOverview } from "@/lib/queries/insights-rewards/deposit-bonus/overview";
 import { getDepositBonusCapHitRate } from "@/lib/queries/insights-rewards/deposit-bonus/cap-analysis";
 import { getDepositBonusDailyBreakdown } from "@/lib/queries/insights-rewards/deposit-bonus/daily-breakdown";
+import { compareDepositBonusOverview } from "@/lib/clickhouse/compare/insights-deposit-bonus-overview";
+import { compareDepositBonusCapHitRate } from "@/lib/clickhouse/compare/insights-deposit-bonus-cap-hit-rate";
 import { DepositBonusChart } from "@/app/(admin)/rewards/analytics/deposit-bonus-chart";
 
 /**
@@ -89,6 +91,23 @@ export async function OverviewTab({
   const cap = capRes.data;
   const daily = dailyRes.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  // Fire-and-forget ClickHouse comparison (no-op unless the surface flag is in
+  // `comparison` mode). The served value stays the Postgres payload above.
+  void compareDepositBonusOverview(period, {
+    totalCost: overview.totalCost,
+    count: overview.count,
+    uniqueClaimants: overview.uniqueClaimants,
+    depositors: overview.depositors,
+    max: overview.max,
+  });
+  if (cap) {
+    void compareDepositBonusCapHitRate(period, {
+      capValue: cap.capValue,
+      capHits: cap.capHits,
+      totalCount: cap.totalCount,
+    });
+  }
 
   if (overview.count === 0) {
     return (
