@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getAffiliateAnalytics } from "@/lib/queries/creators";
+import { compareCreatorsAnalytics } from "@/lib/clickhouse/compare/creators-analytics";
 import { PeriodFilter } from "./period-filter";
 import { CreatorAnalyticsCharts } from "./charts";
 import {
@@ -37,6 +38,7 @@ export default async function CreatorAnalyticsPage({
     | "all";
 
   const data = await getAffiliateAnalytics(period);
+  void compareCreatorsAnalytics(period, data);
 
   return (
     <div className="space-y-6">
