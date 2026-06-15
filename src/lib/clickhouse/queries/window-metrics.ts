@@ -25,7 +25,6 @@ import {
   empiricalHouseEdge,
   type RainHouseCost,
 } from "@/lib/metrics/formulas";
-import { COUNTED_ADJUSTMENT_CATEGORY_KEYS } from "@/lib/balance-adjustment-categories";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -134,7 +133,25 @@ function rewardPackSessionsSubquery(): string {
 const WAGER_TYPES_SQL = ledgerTypesToSqlList(WAGER_TYPES);
 const GAMING_PAYOUT_TYPES_SQL = ledgerTypesToSqlList(GAMING_PAYOUT_TYPES);
 const REWARD_PAYOUT_TYPES_SQL = ledgerTypesToSqlList(REWARD_PAYOUT_TYPES);
-const COUNTED_ADJ_CATEGORIES_SQL = `(${COUNTED_ADJUSTMENT_CATEGORY_KEYS.map(
+// COUNTED adjustment-category keys, inlined as raw strings so the ClickHouse
+// read graph never imports `@/lib/balance-adjustment-categories` (which pulls
+// the engine-free `@/generated/prisma/browser` sentinel) — keeping the CQRS
+// boundary free of ANY Prisma reach, directly or transitively. These are the
+// CREDIT categories EXCEPT `other`, `official_stream`, and the removal-only
+// debits (`leaderboard`/`remove_locked_balance`/`fraud_abuse`). Canonical
+// source of truth: `COUNTED_ADJUSTMENT_CATEGORY_KEYS` in
+// `@/lib/balance-adjustment-categories` — keep this list in sync (same pattern
+// dashboard-cashflow.ts and the metric layer use to stay client-safe).
+const COUNTED_ADJ_CATEGORY_KEYS = [
+  "deposit_problem",
+  "giveaway",
+  "bonus",
+  "deposit_bonus",
+  "bugs",
+  "reload",
+  "lossback",
+] as const;
+const COUNTED_ADJ_CATEGORIES_SQL = `(${COUNTED_ADJ_CATEGORY_KEYS.map(
   (k) => `'${k.replace(/'/g, "''")}'`,
 ).join(",")})`;
 
