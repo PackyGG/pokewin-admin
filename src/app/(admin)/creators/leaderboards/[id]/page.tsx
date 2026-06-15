@@ -28,6 +28,7 @@ import { getAdminDisplayTimeZone } from "@/lib/timezone/server";
 import { timezoneLabel } from "@/lib/timezones";
 import { cn } from "@/lib/utils";
 import { getAffiliateLeaderboardRankings } from "@/lib/queries/creators";
+import { compareCreatorsLeaderboards } from "@/lib/clickhouse/compare/creators-leaderboards";
 import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsorship";
 
 import { DetailActions } from "../_components/detail-actions";
@@ -132,6 +133,24 @@ export default async function AffiliateLeaderboardDetailPage({
     const standingsHousePnlUsd = rankings.reduce(
         (sum, r) => sum + r.housePnlUsd,
         0,
+    );
+
+    // Fire-and-forget CQRS comparison (Phase 2B). No-op unless the
+    // `creators_leaderboards` surface is in comparison mode; the served value
+    // above is ALWAYS the Postgres `rankings`. Mirrors the same opts so the CH
+    // twin replicates the EXACT 2-role + blacklist scope.
+    void compareCreatorsLeaderboards(
+        lb.id,
+        {
+            creatorUserId: lb.creator_user_id,
+            coCreatorUserIds: lb.co_creator_user_ids ?? [],
+            affiliateCodes: lb.affiliate_codes,
+            startDate: new Date(lb.start_date),
+            endDate: new Date(lb.end_date),
+            prizeTiers: lb.prize_tiers,
+            limit: 100,
+        },
+        rankings,
     );
 
     const now = Date.now();
