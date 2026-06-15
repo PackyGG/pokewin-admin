@@ -82,11 +82,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Standalone /transactions overview removed — admins land on a
   // specific sub-ledger instead. Each sub-page carries its own
   // permission key.
-  { group: "Transactions", label: "Packs", key: "/transactions/packs" },
-  { group: "Transactions", label: "Battles", key: "/battles" },
-  { group: "Transactions", label: "Rewards", key: "/transactions/rewards" },
+  // The deposits/withdrawals ledger lives in the Overview nav group (it
+  // was NOT part of the Transactions→Content merge); its picker group is
+  // left unchanged.
   { group: "Transactions", label: "Transactions", key: "/transactions/deposits" },
-  { group: "Transactions", label: "Upgrader", key: "/transactions/upgrader" },
   // Content
   { group: "Content", label: "Packs", key: "/packs" },
   // Shard packs — packs bought & opened with shards (a wager-earned
@@ -95,6 +94,15 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Content", label: "Cards", key: "/cards" },
   { group: "Content", label: "Sets", key: "/sets" },
   { group: "Content", label: "Upgrader", key: "/upgrader" },
+  // Transaction surfaces merged into the Content nav group (commit
+  // d28479f3 folded the standalone "Transactions" sidebar group into
+  // Content). Mirror that here so the role-permissions picker lists them
+  // under Content too — routes, pageKeys and permission boundaries are
+  // unchanged; this is a display-grouping label only.
+  { group: "Content", label: "Pack Transactions", key: "/transactions/packs" },
+  { group: "Content", label: "Battles", key: "/battles" },
+  { group: "Content", label: "Reward Transactions", key: "/transactions/rewards" },
+  { group: "Content", label: "Upgrader Transactions", key: "/transactions/upgrader" },
   // Rewards
   { group: "Rewards", label: "Rewards", key: "/rewards" },
   { group: "Rewards", label: "Analytics", key: "/rewards/analytics" },
