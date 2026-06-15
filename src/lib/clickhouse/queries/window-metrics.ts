@@ -4,7 +4,7 @@ import { clickhouseRead } from "@/lib/clickhouse/readonly-query";
 import {
   ggrWindowToMetricWindow,
   GGR_LIFETIME_LOOKBACK_DAYS,
-} from "@/lib/queries/ggr";
+} from "@/lib/metrics/ggr-window";
 import {
   type MetricWindow,
   type WindowMetrics,
