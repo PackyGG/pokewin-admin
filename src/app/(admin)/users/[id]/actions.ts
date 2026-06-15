@@ -38,6 +38,43 @@ import {
   requireBalanceAdjustmentEditAdmin,
 } from "@/lib/balance-adjustment-edit/motha-gate";
 
+/**
+ * Map an unexpected balance-adjustment exception to a SAFE, category-
+ * distinguishing client message. The real exception (with stack, query
+ * text, and any embedded connection detail) is logged server-side by the
+ * caller — this returns ONLY a coarse, non-sensitive category so an admin
+ * can tell a schema/DB fault from a generic crash, instead of the old
+ * opaque "please try again" black box.
+ *
+ * Critically this names the schema-drift case (Prisma P2022 "column does
+ * not exist" / raw 42703) that caused the original incident — a stale
+ * `balances` Prisma mirror requesting a column the live game DB had
+ * renamed. If it ever recurs, the toast itself says "database schema
+ * mismatch" so it's diagnosable without log access. No secrets, no query
+ * text, no stack ever reach the client.
+ */
+function classifyAdjustBalanceError(err: unknown): string {
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    // P2022: column does not exist — the schema-drift class that broke
+    // this action before (bonus_points -> shards rename on the game DB).
+    if (err.code === "P2022") {
+      return "Balance adjustment failed — database schema mismatch (a column the admin expects is missing on the live DB). This needs a code/schema fix, not a retry.";
+    }
+    // Other known request errors (constraint, FK, etc.) — distinguishable
+    // from a generic crash but still safe to show.
+    return `Balance adjustment failed — database error (${err.code}). Please report this; a retry alone may not help.`;
+  }
+  if (
+    err instanceof Prisma.PrismaClientValidationError ||
+    err instanceof Prisma.PrismaClientUnknownRequestError ||
+    err instanceof Prisma.PrismaClientRustPanicError ||
+    err instanceof Prisma.PrismaClientInitializationError
+  ) {
+    return "Balance adjustment failed — a database error occurred. Please report this if it persists.";
+  }
+  return "Balance adjustment failed — please try again";
+}
+
 // Hosts we accept as a "Giveaway" source URL. Anything else is rejected
 // at the action boundary so the giveaway log can't be polluted with
 // random links. Twitter accepts both legacy twitter.com + the new x.com;
@@ -562,8 +599,15 @@ export async function adjustBalance(data: {
     ) {
       return { success: false, error: message };
     }
+    // ALWAYS log the real exception server-side so this is never again a
+    // black box (the prior incident was a swallowed P2022 schema-drift
+    // error — `SELECT ... bonus_points` on a DB that had renamed the
+    // column to `shards`). The classifier below turns the opaque "please
+    // try again" into a SAFE, category-distinguishing client message
+    // (db-schema vs db vs unknown) WITHOUT leaking the connection string,
+    // query text, or stack — those stay in the server log only.
     console.error("[adjustBalance] Transaction failed:", err);
-    return { success: false, error: "Balance adjustment failed — please try again" };
+    return { success: false, error: classifyAdjustBalanceError(err) };
   }
 
   await createAdminAuditEvent({
