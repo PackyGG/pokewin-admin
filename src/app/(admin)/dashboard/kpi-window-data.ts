@@ -7,6 +7,12 @@ import {
   type GgrBreakdown,
 } from "@/lib/queries/dashboard";
 import { compareDashboardCashflow } from "@/lib/clickhouse/comparison";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import {
+  getDashboardCashflowFromClickHouse,
+  type DashboardCashflowCh,
+} from "@/lib/clickhouse/queries/dashboard-cashflow";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
  * Serializable snapshot of every dashboard KPI box for ONE window
@@ -74,16 +80,32 @@ export async function buildKpiWindowPayload(
     })),
   ]);
 
-  // CQRS rollout: in `comparison` mode, run the ClickHouse cash-flow path
-  // side-by-side and LOG drift. Fire-and-forget + never-throwing — the served
-  // payload below stays 100% Postgres. No-op unless the flag is flipped to
-  // `comparison` (forced off whenever ClickHouse is dormant).
-  void compareDashboardCashflow(window, {
-    deposits: stats.deposits,
-    depositCount: stats.depositCountPeriod,
-    withdrawals: stats.withdrawals,
-    withdrawalCount: stats.withdrawalCountPeriod,
-  });
+  // CQRS serve path for the `dashboard_cashflow` surface — a SUBSET cutover.
+  // The shared `getDashboardKpiStats` aggregate above still runs (it produces
+  // the GGR / wager / breakdown boxes, which have no CH twin at this leg), so
+  // only the four cash-flow figures resolve through ClickHouse:
+  //   • clickhouse → serve the CH cash-flow twin (SOLE read for these 4 fields;
+  //     on failure THROWS so the page's render boundary degrades).
+  //   • comparison → serve the Postgres slice, fire-and-forget drift log.
+  //   • off        → serve the Postgres slice (today's behavior).
+  const cashflow = await resolveAdminRead<DashboardCashflowCh>(
+    "dashboard_cashflow",
+    {
+      pg: async () => ({
+        deposits: stats.deposits,
+        depositCount: stats.depositCountPeriod,
+        withdrawals: stats.withdrawals,
+        withdrawalCount: stats.withdrawalCountPeriod,
+      }),
+      ch: async () => {
+        const blacklist = await getExcludedUserIds();
+        return getDashboardCashflowFromClickHouse(window, blacklist);
+      },
+      compare: (pg) => {
+        void compareDashboardCashflow(window, pg);
+      },
+    },
+  );
 
   return {
     window,
@@ -92,10 +114,10 @@ export async function buildKpiWindowPayload(
     wager: stats.wagers,
     wagerBreakdown: stats.wagersBreakdown,
     wagerOrganic: stats.wagersOrganic,
-    deposits: stats.deposits,
-    depositCount: stats.depositCountPeriod,
-    withdrawals: stats.withdrawals,
-    withdrawalCount: stats.withdrawalCountPeriod,
+    deposits: cashflow.deposits,
+    depositCount: cashflow.depositCount,
+    withdrawals: cashflow.withdrawals,
+    withdrawalCount: cashflow.withdrawalCount,
     ggrBreakdown,
   };
 }

@@ -3,6 +3,8 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { withTiming } from "@/lib/observability/query-timings";
 import { compareRealizedPnl } from "@/lib/clickhouse/comparison";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRealizedPnlSnapshotFromClickHouse } from "@/lib/clickhouse/queries/realized-pnl";
 import { computeHousePnl } from "./pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
@@ -81,7 +83,7 @@ export const getRealizedPnlSnapshot = cache(
   },
 );
 
-async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
+async function realizedPnlSnapshotPg(): Promise<RealizedPnlSnapshot> {
   const db = await getDb();
   // Pull the blacklist alongside the role-based staff exclusion so
   // admin-managed exclusions (the /system/excluded-users page) drop
@@ -157,23 +159,6 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
       unclaimedVouchers: vouchers,
     }) - unclaimedRakeback;
 
-  // Fire-and-forget ClickHouse comparison for the
-  // `dashboard_realized_pnl_lifetime` surface, fired from this UNCACHED
-  // computor so the React-cache / `unstable_cache` wrapper does not suppress
-  // it. The hook is single-arg (window-less lifetime) and fetches its own
-  // blacklist. No-op unless that surface is in `comparison` mode (forced off
-  // whenever ClickHouse is dormant) and never throws — the served snapshot
-  // below stays the Postgres value, byte-identical to before wiring.
-  void compareRealizedPnl({
-    pnl,
-    totalDeposited,
-    totalWithdrawn,
-    userBalance,
-    inventory,
-    vouchers,
-    unclaimedRakeback,
-  });
-
   return {
     pnl,
     totalDeposited,
@@ -183,4 +168,32 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
     vouchers,
     unclaimedRakeback,
   };
+}
+
+/**
+ * CQRS serve-path inner for the `dashboard_realized_pnl_lifetime` surface (the
+ * uncached computor — `cachedSnapshot` wraps it, so a CH failure in `clickhouse`
+ * mode throws THROUGH the cache and degrades via the caller rather than caching
+ * an error or re-running the heavy Postgres balance-sheet scan).
+ *
+ *   • clickhouse → serve the CH twin (SOLE read; on failure THROWS).
+ *   • comparison → serve Postgres, fire-and-forget drift log (unchanged; the
+ *     hook is single-arg lifetime and fetches its own blacklist).
+ *   • off        → serve Postgres (today's behavior).
+ *
+ * Note: this snapshot reads via `getDb()` and is cached under a STATIC key (no
+ * env arg), so it is already prod-oriented; the CH mirror (prod-only) is
+ * consistent with that existing behavior.
+ */
+async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
+  return resolveAdminRead<RealizedPnlSnapshot>("dashboard_realized_pnl_lifetime", {
+    pg: realizedPnlSnapshotPg,
+    ch: async () => {
+      const blacklist = await getExcludedUserIds();
+      return getRealizedPnlSnapshotFromClickHouse(blacklist);
+    },
+    compare: (snapshot) => {
+      void compareRealizedPnl(snapshot);
+    },
+  });
 }

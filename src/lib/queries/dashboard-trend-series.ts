@@ -3,6 +3,9 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { dbForEnv } from "@/lib/db";
 import { compareTrendSeries } from "@/lib/clickhouse/comparison";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getDashboardTrendSeriesFromClickHouse } from "@/lib/clickhouse/queries/trend-series";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { type DbEnv } from "@/lib/db-env";
 import { Prisma } from "@/generated/prisma/client";
 import { type DashboardPeriod } from "./dashboard-period";
@@ -92,7 +95,7 @@ function mergeLedgerRows(
   };
 }
 
-async function fetchDashboardTrendSeriesInner(
+async function fetchTrendSeriesPg(
   period: DashboardPeriod,
   blacklistIdNotIn: string,
   env: DbEnv,
@@ -233,19 +236,6 @@ async function fetchDashboardTrendSeriesInner(
     period,
   );
 
-  // Fire-and-forget ClickHouse comparison for the `dashboard_trend_series`
-  // surface, from the UNCACHED inner so the `unstable_cache` wrapper does not
-  // suppress it. No-op unless that surface is in `comparison` mode (forced off
-  // whenever ClickHouse is dormant) and never throws — the served series below
-  // stays the Postgres value, byte-identical to before wiring.
-  void compareTrendSeries(period, {
-    ...ledgerMerged,
-    dailySignups,
-    dailyFtds,
-    dailyWagerAttribution,
-    chartHourlyBuckets: dashboardChartHourlyBuckets(period),
-  });
-
   return {
     ...ledgerMerged,
     dailySignups,
@@ -253,6 +243,42 @@ async function fetchDashboardTrendSeriesInner(
     dailyWagerAttribution,
     chartHourlyBuckets: dashboardChartHourlyBuckets(period),
   };
+}
+
+/**
+ * CQRS serve-path inner for the `dashboard_trend_series` surface (still the
+ * uncached computor — `cachedDashboardTrendSeries` wraps it, so a CH failure in
+ * `clickhouse` mode throws THROUGH the cache and degrades via the page's
+ * safeQuery rather than caching an error or re-running Postgres).
+ *
+ *   • clickhouse → serve the CH twin (SOLE read; on failure THROWS).
+ *   • comparison → serve Postgres, fire-and-forget drift log (unchanged).
+ *   • off        → serve Postgres (today's behavior).
+ *
+ * The ClickHouse mirror reflects PROD only, so a dev-DB toggle (`env !== "prod"`)
+ * never serves from CH — it runs Postgres against the toggled DB and keeps the
+ * comparison hook firing exactly as before.
+ */
+async function fetchDashboardTrendSeriesInner(
+  period: DashboardPeriod,
+  blacklistIdNotIn: string,
+  env: DbEnv,
+): Promise<DashboardTrendSeries> {
+  if (env !== "prod") {
+    const series = await fetchTrendSeriesPg(period, blacklistIdNotIn, env);
+    void compareTrendSeries(period, series);
+    return series;
+  }
+  return resolveAdminRead<DashboardTrendSeries>("dashboard_trend_series", {
+    pg: () => fetchTrendSeriesPg(period, blacklistIdNotIn, env),
+    ch: async () => {
+      const blacklist = await getExcludedUserIds();
+      return getDashboardTrendSeriesFromClickHouse(period, blacklist);
+    },
+    compare: (series) => {
+      void compareTrendSeries(period, series);
+    },
+  });
 }
 
 const cachedDashboardTrendSeries = unstable_cache(

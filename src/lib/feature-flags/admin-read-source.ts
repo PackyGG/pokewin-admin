@@ -14,14 +14,25 @@ import { isClickHouseEnabled } from "@/lib/clickhouse/client";
  *                    heavy Postgres aggregate (that re-overloads prod).
  *
  * Resolution precedence (first match wins):
+ *   0. HARD SAFETY  ClickHouse dormant (no creds) ⇒ "off"  (checked FIRST, below)
  *   1. Env override  ADMIN_READ_SOURCE__<SURFACE>  (e.g. ADMIN_READ_SOURCE__DASHBOARD_TODAY)
  *   2. Edge Config   admin-read-source:<surface>
  *   3. Edge Config   admin-read-source:__default
- *   4. "off"
+ *   4. Hardcoded cutover set  CUTOVER_DEFAULT_CLICKHOUSE  ⇒ "clickhouse"
+ *   5. "off"
  *
  * HARD SAFETY: if ClickHouse is dormant (no creds), this ALWAYS returns "off",
  * so a surface can never be put in comparison/clickhouse without a live client —
- * keeping Phase 0 a true no-op until creds + an explicit flip are in place.
+ * keeping Phase 0 a true no-op until creds + an explicit flip are in place. This
+ * guard runs BEFORE the cutover set, so the committed `clickhouse` defaults
+ * below stay dormant until a live client exists.
+ *
+ * PHASE 2F CUTOVER: a surface listed in `CUTOVER_DEFAULT_CLICKHOUSE` ships with
+ * its committed CODE default = "clickhouse" (step 4), so a proven surface serves
+ * from ClickHouse with no deploy needed — while env (step 1) and Edge Config
+ * (steps 2–3) still OVERRIDE it, preserving instant rollback (set
+ * `admin-read-source:<surface>` = "off"/"comparison", or the env var, to pull a
+ * surface back to Postgres without a deploy).
  */
 export type AdminReadMode = "off" | "comparison" | "clickhouse";
 
@@ -155,6 +166,37 @@ export const CREATORS_DETAIL_SURFACE_KEYS = [
   "creators_detail_pnl",
 ] as const;
 
+/**
+ * PHASE 2F CUTOVER SET — surfaces whose committed CODE default is "clickhouse".
+ *
+ * A surface key in this set resolves to "clickhouse" via precedence step 4
+ * (after env + both Edge-Config lookups, before the terminal "off"), so a
+ * proven surface serves from ClickHouse by default with no deploy — while the
+ * dormant-client guard (step 0) still forces "off" without a live client, and
+ * env / Edge Config still override for instant rollback.
+ *
+ * ONLY add a surface here AFTER its CH twin is proven cent/count-exact against
+ * Postgres (parity harness, TZ=UTC, run twice) AND a logged-in render check
+ * confirms the page serves correctly from ClickHouse. The four below are the
+ * Phase 2A dashboard surfaces (re-confirmed cent/count-exact before this flip).
+ *
+ * Note on blast radius: a key here cuts over EVERY consumer of that surface's
+ * canonical read (the resolver is keyed on the surface, not the page). The four
+ * below are wired at their canonical computation functions, so:
+ *   • dashboard_trend_series / dashboard_cashflow are dashboard-only reads.
+ *   • dashboard_headline_ggr (getWindowMetrics) and dashboard_realized_pnl_lifetime
+ *     (getRealizedPnlSnapshot) are ALSO read by /ggr, /analytics, and the
+ *     /insights cost-breakdown + real-numbers pages — those consumers cut over
+ *     too. Parity is cent/count-exact for these reads, and any single surface
+ *     rolls back instantly via Edge Config.
+ */
+const CUTOVER_DEFAULT_CLICKHOUSE: ReadonlySet<string> = new Set([
+  "dashboard_headline_ggr",
+  "dashboard_trend_series",
+  "dashboard_realized_pnl_lifetime",
+  "dashboard_cashflow",
+]);
+
 const VALID: readonly AdminReadMode[] = ["off", "comparison", "clickhouse"];
 
 function coerce(value: unknown): AdminReadMode | null {
@@ -185,6 +227,12 @@ export async function getAdminReadMode(
     await getCachedConfig<string>("admin-read-source:__default"),
   );
   if (globalDefault) return globalDefault;
+
+  // Phase 2F: committed code default = "clickhouse" for proven, cut-over
+  // surfaces. Runs AFTER env + both Edge-Config lookups (so any of them still
+  // override → instant rollback) and AFTER the dormant-client guard at the top
+  // (so this never forces a CH read without a live client).
+  if (CUTOVER_DEFAULT_CLICKHOUSE.has(surfaceKey)) return "clickhouse";
 
   return "off";
 }

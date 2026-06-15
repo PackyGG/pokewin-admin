@@ -34,6 +34,8 @@ import {
   PAYOUT_LEG_FILTER,
 } from "./gaming-sql";
 import { compareWindowMetrics } from "@/lib/clickhouse/comparison";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getWindowMetricsFromClickHouse } from "@/lib/clickhouse/queries/window-metrics";
 
 /**
  * queries.ts — the CANONICAL, WIRED DB-read builders for the metric layer.
@@ -499,69 +501,96 @@ export async function getWindowMetrics(opts: {
   rainHouseCost?: RainHouseCost;
 }): Promise<WindowMetrics> {
   const { window } = opts;
-  const [legs, reward] = await Promise.all([
-    getGamingLegs(window),
-    getRewardCost(window),
-  ]);
 
-  // legs already include upgrader (folded in by getGamingLegs from
-  // upgrader_games). `battleRefund` carries the ledger gaming-payout legs
-  // PLUS upgrader payout; `wager`/`bets` likewise include upgrader. So we
-  // pass them straight through — no separate upgrader term here.
-  const wager = legs.wager;
-  const gamingPayout = gamingPayoutTotal({
-    inventoryPayout: legs.inventoryPayout,
-    battleRefund: legs.battleRefund,
-  });
-  const bets = legs.bets;
+  // The canonical Postgres read — the gaming legs + reward legs composed with
+  // the pure `formulas.ts` arithmetic. Deferred into a thunk so the CQRS
+  // serve-path resolver (`resolveAdminRead`) can run it ONLY when this surface
+  // is not on ClickHouse (in `clickhouse` mode the CH twin is the sole read and
+  // this never executes — no heavy Postgres aggregate).
+  const pgRead = async (): Promise<WindowMetrics> => {
+    const [legs, reward] = await Promise.all([
+      getGamingLegs(window),
+      getRewardCost(window),
+    ]);
 
-  const ggrValue = ggrFormula({ wager, gamingPayout });
-  const rainHouseCostInput: RainHouseCost =
-    opts.rainHouseCost ?? {
-      kind: "net",
-      rainWinTotal: reward.rainWinTotal,
-      rainTipTotal: reward.rainTipTotal,
-    };
-  const rainHouseCost = resolveRainHouseCost(rainHouseCostInput);
-  const ngrValue = ngrFormula({
-    ggr: ggrValue,
-    rewardCostExclRain: reward.rewardCostExclRain,
-    rainHouseCost: rainHouseCostInput,
-  });
+    // legs already include upgrader (folded in by getGamingLegs from
+    // upgrader_games). `battleRefund` carries the ledger gaming-payout legs
+    // PLUS upgrader payout; `wager`/`bets` likewise include upgrader. So we
+    // pass them straight through — no separate upgrader term here.
+    const wager = legs.wager;
+    const gamingPayout = gamingPayoutTotal({
+      inventoryPayout: legs.inventoryPayout,
+      battleRefund: legs.battleRefund,
+    });
+    const bets = legs.bets;
 
-  // Fire-and-forget ClickHouse comparison for the `dashboard_headline_ggr`
-  // surface. No-op unless that surface is in `comparison` mode (forced off
-  // whenever ClickHouse is dormant) and never throws — the served payload
-  // below stays the Postgres value, byte-identical to before wiring.
-  void compareWindowMetrics(
-    {
-      window,
-      windowLabel: window.since ? window.since.toISOString() : "lifetime",
-    },
-    {
+    const ggrValue = ggrFormula({ wager, gamingPayout });
+    const rainHouseCostInput: RainHouseCost =
+      opts.rainHouseCost ?? {
+        kind: "net",
+        rainWinTotal: reward.rainWinTotal,
+        rainTipTotal: reward.rainTipTotal,
+      };
+    const rainHouseCost = resolveRainHouseCost(rainHouseCostInput);
+    const ngrValue = ngrFormula({
+      ggr: ggrValue,
+      rewardCostExclRain: reward.rewardCostExclRain,
+      rainHouseCost: rainHouseCostInput,
+    });
+
+    return {
       wager,
       gamingPayout,
       ggr: ggrValue,
       ngr: ngrValue,
+      rtp: empiricalRtp({ gamingPayout, wager, bets }),
+      houseEdge: empiricalHouseEdge({ wager, ggr: ggrValue, bets }),
       bets,
       rainWinTotal: reward.rainWinTotal,
       rainTipTotal: reward.rainTipTotal,
       rainHouseCost,
-    },
-  );
-
-  return {
-    wager,
-    gamingPayout,
-    ggr: ggrValue,
-    ngr: ngrValue,
-    rtp: empiricalRtp({ gamingPayout, wager, bets }),
-    houseEdge: empiricalHouseEdge({ wager, ggr: ggrValue, bets }),
-    bets,
-    rainWinTotal: reward.rainWinTotal,
-    rainTipTotal: reward.rainTipTotal,
-    rainHouseCost,
+    };
   };
+
+  // A caller-supplied CUSTOM `rainHouseCost` (e.g. `{ kind: "full" }`) has no
+  // ClickHouse-twin equivalent — the CH twin always uses the owner-confirmed
+  // net rain model — so such a call must NEVER serve from ClickHouse. Every
+  // current caller uses the default net model (so this only guards a future
+  // override), and it keeps the served NGR correct under a custom rain model.
+  if (opts.rainHouseCost) {
+    return pgRead();
+  }
+
+  // CQRS serve path for the `dashboard_headline_ggr` surface:
+  //   • clickhouse → serve the CH twin (SOLE read; on failure THROWS so the
+  //     caller's unstable_cache/safeQuery degrades — no Postgres re-run).
+  //   • comparison → serve Postgres, fire-and-forget drift log (unchanged).
+  //   • off        → serve Postgres (today's behavior).
+  return resolveAdminRead<WindowMetrics>("dashboard_headline_ggr", {
+    pg: pgRead,
+    ch: async () => {
+      const blacklist = await getExcludedUserIds();
+      return getWindowMetricsFromClickHouse(window, blacklist);
+    },
+    compare: (pg) => {
+      void compareWindowMetrics(
+        {
+          window,
+          windowLabel: window.since ? window.since.toISOString() : "lifetime",
+        },
+        {
+          wager: pg.wager,
+          gamingPayout: pg.gamingPayout,
+          ggr: pg.ggr,
+          ngr: pg.ngr,
+          bets: pg.bets,
+          rainWinTotal: pg.rainWinTotal,
+          rainTipTotal: pg.rainTipTotal,
+          rainHouseCost: pg.rainHouseCost,
+        },
+      );
+    },
+  });
 }
 
 // ─── Daily canonical gaming-margin series ────────────────────────────
