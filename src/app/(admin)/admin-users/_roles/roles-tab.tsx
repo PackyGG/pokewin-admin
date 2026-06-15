@@ -1,4 +1,4 @@
-import { Lock, KeyRound, Crown, UserCog, ListChecks, Sparkles } from "lucide-react";
+import { KeyRound, Crown, UserCog, ListChecks, Sparkles } from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
 import {
@@ -8,7 +8,7 @@ import {
 } from "@/lib/creator-hub-access";
 import { isPersistableAdminRole } from "@/lib/admin-roles";
 import { getRolesOverview } from "./roles-overview-data";
-import { BuiltInRolesGrid, CustomRolesGrid } from "./roles-grid";
+import { RolesGrid } from "./roles-grid";
 import { CreateRoleButton } from "./create-role-button";
 import {
   CreatorHubAccessCard,
@@ -16,7 +16,6 @@ import {
 } from "./creator-hub-access-card";
 import { SectionHeading, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { EmptyState } from "@/components/empty-state";
 
 /** Display labels + descriptions for each per-role Creator-Hub toggle. */
 const CREATOR_HUB_ROLE_LABELS: Record<
@@ -92,20 +91,14 @@ export async function RolesTab() {
 
   return (
     <div className="space-y-6">
-      {/* KPI strip — headline counts (all read-only). */}
+      {/* KPI strip — headline counts (all read-only). ONE "Roles" total — no
+          built-in/custom split. */}
       <FadeIn>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <KpiTile
-            label="Built-in roles"
-            value={String(kpis.builtInCount)}
-            sub="System roles"
-            icon={Lock}
-            accent="amber"
-          />
-          <KpiTile
-            label="Custom roles"
-            value={String(kpis.customCount)}
-            sub="Editable presets"
+            label="Roles"
+            value={String(kpis.roleCount)}
+            sub="System + custom"
             icon={KeyRound}
             accent="emerald"
           />
@@ -133,42 +126,29 @@ export async function RolesTab() {
         </div>
       </FadeIn>
 
-      {/* Built-in roles — editable per-role (except `admin`, total bypass). */}
-      <div className="space-y-3">
-        <SectionHeading icon={Lock} title="Built-in Roles" />
-        <p className="text-sm text-muted-foreground">
-          The fixed system roles. Open one to edit its pages, capabilities, and
-          balance limits — saved changes re-materialize every holder&apos;s
-          access. The <span className="font-medium">admin</span> role is the
-          exception: it bypasses every check and can&apos;t be restricted here.
-        </p>
-        <FadeIn>
-          <BuiltInRolesGrid roles={overview.builtIns} />
-        </FadeIn>
-      </div>
-
-      {/* Custom roles — reusable presets stored in admin_roles. Create here,
-          then assign on an admin user's profile. Fully editable. */}
+      {/* ONE Roles list — the 6 system roles (the protected, undeletable
+          backbone) and the editable custom presets, side by side. Open any to
+          edit its pages, capabilities, limits and landing page; use the ⋯ menu
+          to Duplicate, Rename or Assign. The admin role is the one superuser —
+          it bypasses every check and can't be restricted or deleted. */}
       <div className="space-y-3">
         <SectionHeading
           icon={KeyRound}
-          title="Custom Roles"
+          title="Roles"
           action={<CreateRoleButton />}
         />
-        {overview.customRoles.length === 0 ? (
-          <FadeIn className="rounded-md border">
-            <EmptyState
-              icon={KeyRound}
-              title="No custom roles yet"
-              description="Use the New Role button above to create your first reusable preset."
-              compact
-            />
-          </FadeIn>
-        ) : (
-          <FadeIn>
-            <CustomRolesGrid roles={overview.customRoles} />
-          </FadeIn>
-        )}
+        <p className="text-sm text-muted-foreground">
+          One list for every role. The{" "}
+          <span className="font-medium">System</span> roles are the fixed
+          backbone; the rest are reusable presets you can assign on an admin
+          user&apos;s profile. Open a role to edit it, or use the{" "}
+          <span className="font-medium">⋯</span> menu to duplicate, rename or
+          assign it. The <span className="font-medium">admin</span> superuser
+          bypasses every check.
+        </p>
+        <FadeIn>
+          <RolesGrid roles={overview.roles} />
+        </FadeIn>
       </div>
 
       {/* Creator Hub access — founder-only ("motha") per-role on/off toggles

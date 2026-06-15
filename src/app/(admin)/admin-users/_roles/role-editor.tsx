@@ -22,6 +22,15 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -48,10 +57,31 @@ import {
 import { describeToken } from "@/app/(admin)/admin-users/_components/token-describe";
 import { PermissionPicker } from "@/app/(admin)/admin-users/_components/permission-picker";
 import { formatCurrency } from "@/lib/utils/format";
+import { ADMIN_PAGES } from "@/lib/admin-pages";
 import type { RoleEditorData } from "./role-editor-data";
 import { updateRole, deleteRole } from "./custom-roles-actions";
 import { updateBuiltInRole } from "./built-in-roles-actions";
 import { setRoleLimits } from "@/lib/role-limits-actions";
+
+// Sentinel for the landing-route Select's "no override" option (base-ui Select
+// can't use an empty-string value cleanly). Maps to "" (→ today's routing).
+const LANDING_DEFAULT = "__default__";
+
+// ADMIN_PAGES grouped by their nav section, in first-seen order, for the
+// landing-route Select. Plain data — no DB, computed once at module load.
+const LANDING_PAGE_GROUPS: { group: string; pages: { key: string; label: string }[] }[] =
+  (() => {
+    const order: string[] = [];
+    const byGroup = new Map<string, { key: string; label: string }[]>();
+    for (const p of ADMIN_PAGES) {
+      if (!byGroup.has(p.group)) {
+        byGroup.set(p.group, []);
+        order.push(p.group);
+      }
+      byGroup.get(p.group)!.push({ key: p.key, label: p.label });
+    }
+    return order.map((group) => ({ group, pages: byGroup.get(group)! }));
+  })();
 
 /* ── Per-role editor (RoleV2 P4) ──
  *
@@ -166,9 +196,14 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
     () => new Set(data.capabilities),
   );
   const [limits, setLimits] = useState<LimitsForm>(() => toLimitsForm(data));
+  // RoleV2 P4 — per-role landing route. "" = no override (today's routing).
+  const [landingRoute, setLandingRoute] = useState(data.landingRoute ?? "");
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [code, setCode] = useState("");
+  // Separate 2FA code for the delete flow (its own dialog).
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteCode, setDeleteCode] = useState("");
   const [isPending, startTransition] = useTransition();
 
   // ── Baseline snapshots (what's persisted) for dirty + diff ────────────────
@@ -185,12 +220,18 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
   }, [selected, savedCaps]);
 
   const descDirty = (data.description ?? "") !== description;
-  const nameDirty = !isSystem && data.name !== name;
+  // RoleV2 P3: the name is editable for EVERY role except the `admin` superuser
+  // (data.bypass). The 5 other system rows can be renamed cosmetically — their
+  // identity stays `system_key`/enum. (`admin` renders read-only entirely.)
+  const nameDirty = !data.bypass && data.name !== name;
+  // RoleV2 P4: landing-route override change.
+  const landingDirty = (data.landingRoute ?? "") !== landingRoute;
   const limitsDirty = useMemo(
     () => JSON.stringify(limits) !== JSON.stringify(savedLimits),
     [limits, savedLimits],
   );
-  const dirty = capsDirty || descDirty || nameDirty || limitsDirty;
+  const dirty =
+    capsDirty || descDirty || nameDirty || landingDirty || limitsDirty;
 
   // ── Capability diff (added / removed vs persisted) ────────────────────────
   const { added, removed } = useMemo(() => {
@@ -249,7 +290,7 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
         return;
       }
     }
-    if (!isSystem && !name.trim()) {
+    if (!data.bypass && !name.trim()) {
       toast.error("Name is required");
       return;
     }
@@ -289,13 +330,23 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
     }
     startTransition(async () => {
       try {
-        // 1) Capabilities + description (+ name for custom). Run only if those
-        //    changed — limits have their own action.
-        if (capsDirty || descDirty || nameDirty) {
+        // 1) Capabilities + description + name + landing route. Run only if any
+        //    of those changed — limits have their own action.
+        if (capsDirty || descDirty || nameDirty || landingDirty) {
+          // Empty landing input = clear the override (→ today's routing).
+          const landingArg = landingDirty
+            ? landingRoute.trim() === ""
+              ? null
+              : landingRoute.trim()
+            : undefined;
           if (isSystem && data.systemKey) {
             const res = await updateBuiltInRole(data.systemKey, {
               capabilities: [...selected],
               description: description.trim() || null,
+              // P3: write the display name only when it changed (identity stays
+              // system_key). P4: landing route when it changed.
+              ...(nameDirty ? { name: name.trim() } : {}),
+              ...(landingArg !== undefined ? { landingRoute: landingArg } : {}),
               code: code.trim(),
             });
             toast.success(
@@ -309,6 +360,8 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
               name: name.trim(),
               description: description.trim() || null,
               capabilities: [...selected],
+              ...(landingArg !== undefined ? { landingRoute: landingArg } : {}),
+              code: code.trim(),
             });
             if (!res.ok) {
               toast.error(res.error);
@@ -330,7 +383,7 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
             toast.error(res.error);
             return;
           }
-          if (!(capsDirty || descDirty || nameDirty)) {
+          if (!(capsDirty || descDirty || nameDirty || landingDirty)) {
             toast.success("Role limits updated");
           }
         }
@@ -347,8 +400,12 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
   }
 
   function handleDelete() {
+    if (!deleteCode.trim()) {
+      toast.error("Please enter your 2FA code");
+      return;
+    }
     startTransition(async () => {
-      const res = await deleteRole(data.id);
+      const res = await deleteRole(data.id, deleteCode.trim());
       if (!res.ok) {
         toast.error(res.error);
         return;
@@ -394,11 +451,12 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
                 id="role-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                disabled={isPending || isSystem}
+                disabled={isPending}
               />
               {isSystem && (
                 <p className="text-[11px] text-muted-foreground">
-                  Built-in role names are fixed.
+                  Display name only — this stays a built-in role with the same
+                  identity and access.
                 </p>
               )}
             </div>
@@ -420,6 +478,49 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
               rows={2}
               disabled={isPending}
             />
+          </div>
+          {/* ── Landing page (RoleV2 P4) ── */}
+          <div className="space-y-1.5">
+            <Label htmlFor="role-landing">Landing page</Label>
+            <Select
+              value={landingRoute === "" ? LANDING_DEFAULT : landingRoute}
+              onValueChange={(v) =>
+                setLandingRoute(v === LANDING_DEFAULT ? "" : (v ?? ""))
+              }
+            >
+              <SelectTrigger
+                id="role-landing"
+                className="w-full"
+                disabled={isPending}
+              >
+                <SelectValue placeholder="Default (role's home)">
+                  {(value: string) =>
+                    !value || value === LANDING_DEFAULT
+                      ? "Default (role's home)"
+                      : landingLabel(value)
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent className="max-h-72">
+                <SelectItem value={LANDING_DEFAULT}>
+                  Default (role&apos;s home)
+                </SelectItem>
+                {LANDING_PAGE_GROUPS.map((g) => (
+                  <SelectGroup key={g.group}>
+                    <SelectLabel>{g.group}</SelectLabel>
+                    {g.pages.map((p) => (
+                      <SelectItem key={p.key} value={p.key}>
+                        {p.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              Where a holder of this role lands after signing in. Default uses
+              the role&apos;s usual home. Must be a page the role can reach.
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -476,7 +577,13 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
       {/* ── Footer actions ───────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-3 border-t pt-4">
         {!isSystem ? (
-          <AlertDialog>
+          <AlertDialog
+            open={deleteOpen}
+            onOpenChange={(v) => {
+              setDeleteOpen(v);
+              if (!v) setDeleteCode("");
+            }}
+          >
             <AlertDialogTrigger
               className={cn(
                 "inline-flex h-8 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium hover:bg-accent hover:text-accent-foreground disabled:opacity-50",
@@ -497,9 +604,34 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
                     : "This cannot be undone."}
                 </AlertDialogDescription>
               </AlertDialogHeader>
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor="role-delete-code"
+                  className="text-xs text-muted-foreground"
+                >
+                  2FA Code
+                </Label>
+                <Input
+                  id="role-delete-code"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="Enter your 6-digit code"
+                  value={deleteCode}
+                  onChange={(e) => setDeleteCode(e.target.value)}
+                  maxLength={6}
+                  autoComplete="one-time-code"
+                />
+              </div>
               <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={handleDelete}>
+                <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={(e) => {
+                    // Keep open until the action resolves (so errors surface).
+                    e.preventDefault();
+                    handleDelete();
+                  }}
+                  disabled={isPending || !deleteCode.trim()}
+                >
                   Delete
                 </AlertDialogAction>
               </AlertDialogFooter>
@@ -544,6 +676,16 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
             {descDirty && (
               <p className="text-xs text-muted-foreground">
                 Description updated.
+              </p>
+            )}
+            {landingDirty && (
+              <p className="text-xs text-muted-foreground">
+                Landing page →{" "}
+                <span className="font-medium text-foreground">
+                  {landingRoute === ""
+                    ? "Default (role's home)"
+                    : landingLabel(landingRoute)}
+                </span>
               </p>
             )}
 
@@ -600,7 +742,8 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
               removed.length === 0 &&
               limitDiffs.length === 0 &&
               !descDirty &&
-              !nameDirty && (
+              !nameDirty &&
+              !landingDirty && (
                 <p className="text-sm text-muted-foreground">No changes.</p>
               )}
 
@@ -653,6 +796,14 @@ function EditableRoleEditor({ data }: { data: RoleEditorData }) {
 function fmtMoney(raw: string): string {
   const n = Number(raw);
   return Number.isFinite(n) ? formatCurrency(n) : raw;
+}
+
+/** Human label for a landing-route page key (its ADMIN_PAGES label, or tail). */
+function landingLabel(route: string): string {
+  const page = ADMIN_PAGES.find((p) => p.key === route);
+  if (page) return page.label;
+  const tail = route.split("/").filter(Boolean).pop() ?? route;
+  return tail.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /** Look up a capability's human label; fall back to the token describer. */

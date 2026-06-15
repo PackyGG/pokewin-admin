@@ -17,15 +17,17 @@ import {
 } from "@/app/(admin)/settings/roles/permissions-utils";
 
 // ---------------------------------------------------------------------------
-// Read-only data layer for the unified Roles & Permissions overview (Phase B).
+// Read-only data layer for the UNIFIED Roles surface.
 //
-// Everything here is READ-ONLY against the ADMIN DB. It surfaces:
-//   • the canonical, code-defined built-in role baselines (ROLE_BASELINES),
-//     grouped by domain for the read-only inspector, and
-//   • headline counts for the KPI strip + per-role holder counts.
+// There is ONE concept: Role. The 6 enum roles (admin / support / marketing /
+// creator / pack_creator / creator_manager) are the protected, undeletable
+// backbone — still enum-wired underneath, identity = `system_key` — and live as
+// `admin_roles` rows alongside the editable custom presets. This module emits a
+// SINGLE merged role list (no "built-in vs custom" split) plus headline counts.
 //
-// No write path. Built-in baselines are locked (see actions.ts); custom-role
-// CRUD lives in custom-roles-actions.ts and is untouched.
+// Everything here is READ-ONLY against the ADMIN DB. The write paths live in
+// the existing action files (custom-roles-actions.ts, built-in-roles-actions.ts,
+// role-limits-actions.ts) and are untouched.
 // ---------------------------------------------------------------------------
 
 /** A single token rendered in the read-only baseline inspector. */
@@ -95,50 +97,50 @@ export function groupBaselineTokens(tokens: readonly string[]): BaselineGroup[] 
   }));
 }
 
-/** A built-in role, as shown on the overview grid + inspector. */
-export type BuiltInRoleSummary = {
-  role: AdminRole;
+/**
+ * ONE role, as shown on the unified grid. Covers both the 6 enum roles (system)
+ * and the custom presets in a single shape — the UI never re-splits them.
+ */
+export type RoleSummary = {
   /**
-   * The `admin_roles` system-row id for this built-in (`system_key = role`).
-   * `null` if the system row is missing (shouldn't happen post-migration) —
-   * the grid then renders the card without an editor link. Used to deep-link
-   * into the full per-role editor at `/admin-users/roles/[id]`.
+   * The `admin_roles` row id. Used to deep-link into the editor at
+   * `/admin-users/roles/[id]` and as the assignment `role_id`. `null` only if a
+   * built-in system row is somehow missing post-migration (the grid then shows
+   * the card without an editor link).
    */
   id: string | null;
-  label: string;
-  /** Page-route tokens in the baseline. */
-  pageCount: number;
-  /** `__can_*` capability tokens in the baseline. */
-  capabilityCount: number;
-  /** Total tokens in the baseline (pages + capabilities + value tokens). */
-  tokenCount: number;
-  /** admin holders (read-only count from the ADMIN DB). */
-  holderCount: number;
-  /** `admin` only — the total-bypass sentinel (baseline is intentionally []). */
-  bypass: boolean;
-  /** Always true for built-ins (owner policy: role effects don't change). */
-  locked: boolean;
-  /** Tokens grouped by domain, for the read-only inspector. */
-  groups: BaselineGroup[];
-};
-
-/** A custom role row for the overview grid. */
-export type CustomRoleSummary = {
-  id: string;
+  /** Stable React key: `system_key` for built-ins, `id` for custom rows. */
+  key: string;
+  /** Display name (editable for custom + the 5 non-admin system rows). */
   name: string;
   description: string | null;
+  /** `true` for one of the 6 enum (system) roles — the protected backbone. */
+  isSystem: boolean;
+  /** The built-in enum key for a system row, else `null` (custom role). */
+  systemKey: AdminRole | null;
+  /** `admin` only — the one superuser role (total gate bypass). */
+  isSuperuser: boolean;
+  /** Page-route tokens in the role's capability set. */
+  pageCount: number;
+  /** `__can_*` capability tokens in the role's capability set. */
+  capabilityCount: number;
+  /** Total tokens (pages + capabilities + value tokens). */
   tokenCount: number;
+  /** admin holders (built-in: effective-role holders; custom: role_id links). */
   holderCount: number;
+  /** Per-role landing route override, or `null` (today's routing). */
+  landingRoute: string | null;
+  /** ISO timestamp of the role row's last update (custom rows show it). */
   updatedAt: string;
 };
 
-/** Everything the overview page renders. */
+/** Everything the unified Roles surface renders. */
 export type RolesOverview = {
-  builtIns: BuiltInRoleSummary[];
-  customRoles: CustomRoleSummary[];
+  /** ONE merged list — the 6 system roles first (privilege order), then custom. */
+  roles: RoleSummary[];
   kpis: {
-    builtInCount: number;
-    customCount: number;
+    /** Total roles (system + custom). */
+    roleCount: number;
     adminCount: number;
     /** Non-admin users whose effective set ≠ their role baseline set. */
     overrideUserCount: number;
@@ -153,9 +155,6 @@ export type RolesOverview = {
  * assigned custom role) would produce on their own. Compared as SETS via the
  * Phase-A materializer with empty overrides, so a pure-baseline user reads as
  * "no override" and any manual grant/revoke on top reads as "has override".
- *
- * READ-ONLY: this does not write the Phase-C grants/revokes columns (which do
- * not exist yet) — it derives the delta from the live `allowed_pages` cache.
  */
 function hasPerUserOverride(
   user: {
@@ -169,23 +168,13 @@ function hasPerUserOverride(
   const customRoleTokens = roleIdByUser
     ? (customRoleTokensById.get(roleIdByUser) ?? [])
     : [];
-  // Baseline-implied effective set: role baselines ∪ custom-role tokens, with
-  // NO per-user grants/revokes — i.e. exactly what this user would carry from
-  // their roles alone.
   const baselineEffective = computeEffectivePermissions({
     role: user.role,
     roles: user.roles,
     customRoleTokens,
     override: { grants: [], revokes: [] },
   });
-  // The user's ACTUAL stored set, sanitized through the SAME value-token-aware
-  // filter so the comparison is apples-to-apples (drops stale/unknown tokens,
-  // de-dupes). This is the real `allowed_pages` cache the gate reads — NOT
-  // re-unioned with the baseline.
   const actual = sanitizePermissionKeys([...user.allowed_pages]);
-  // Set-equality both ways: an EXTRA token (manual grant on top) or a MISSING
-  // baseline token (manual revoke) both mean the user carries a per-user
-  // override relative to their role baseline.
   if (baselineEffective.length !== actual.length) return true;
   const baseSet = new Set(baselineEffective);
   for (const t of actual) {
@@ -194,13 +183,31 @@ function hasPerUserOverride(
   return false;
 }
 
+/** Count the page / capability / value tokens within a flat token set. */
+function countTokens(tokens: readonly string[]): {
+  pageCount: number;
+  capabilityCount: number;
+} {
+  const pageCount = tokens.filter((t) => !t.startsWith("__")).length;
+  const valueCount = tokens.filter(
+    (t) => t.startsWith("__") && t.includes(":"),
+  ).length;
+  return { pageCount, capabilityCount: tokens.length - pageCount - valueCount };
+}
+
 /**
- * Build the full read-only overview: built-in role summaries (with grouped
- * baseline tokens + holder counts), custom-role summaries, and the KPI strip
- * counts. All ADMIN-DB reads are read-only.
+ * Build the unified Roles overview: ONE merged role list (the 6 enum roles in
+ * privilege order, then custom presets alphabetically) plus the KPI counts. All
+ * ADMIN-DB reads are read-only.
+ *
+ * Built-in token counts read the EDITABLE source — the system row's stored
+ * `capabilities` (which `updateBuiltInRole` writes) — so an already-edited
+ * built-in shows its current counts, NOT the code `ROLE_BASELINES` seed. The
+ * `admin` superuser row is the exception: it is total-bypass, so its counts are
+ * meaningless and the card renders "Full access" instead.
  */
 export async function getRolesOverview(): Promise<RolesOverview> {
-  // ── 1. Built-in role holder counts (one grouped query) ────────────────
+  // ── 1. Holder counts per built-in enum role (one grouped query) ───────────
   const roleGroups = await adminDb.admin_users.groupBy({
     by: ["role"],
     _count: { _all: true },
@@ -208,64 +215,87 @@ export async function getRolesOverview(): Promise<RolesOverview> {
   const holdersByRole = new Map<string, number>();
   for (const g of roleGroups) holdersByRole.set(g.role, g._count._all);
 
-  // Map each built-in's `system_key` → its `admin_roles` row id, so the grid
-  // can deep-link a built-in into the full per-role editor. Read-only.
-  const systemRows = await adminDb.admin_roles.findMany({
-    where: { is_system: true, system_key: { not: null } },
-    select: { id: true, system_key: true },
-  });
-  const idBySystemKey = new Map<string, string>();
-  for (const r of systemRows) {
-    if (r.system_key) idBySystemKey.set(r.system_key, r.id);
-  }
-
-  const builtIns: BuiltInRoleSummary[] = ALL_ADMIN_ROLES.map((role) => {
-    const baseline = ROLE_BASELINES[role];
-    const tokens = baseline.tokens;
-    const pageCount = tokens.filter((t) => !t.startsWith("__")).length;
-    const valueCount = tokens.filter(
-      (t) => t.startsWith("__") && t.includes(":"),
-    ).length;
-    const capabilityCount = tokens.length - pageCount - valueCount;
-    return {
-      role,
-      id: idBySystemKey.get(role) ?? null,
-      label: baseline.label,
-      pageCount,
-      capabilityCount,
-      tokenCount: tokens.length,
-      holderCount: holdersByRole.get(role) ?? 0,
-      bypass: baseline.bypass,
-      locked: baseline.locked,
-      groups: groupBaselineTokens(tokens),
-    };
-  });
-
-  // ── 2. Custom roles (admin_roles) + holder counts ─────────────────────
-  const customRoleRows = await adminDb.admin_roles.findMany({
+  // ── 2. Every admin_roles row (system + custom) in one read ────────────────
+  const allRoleRows = await adminDb.admin_roles.findMany({
     orderBy: { name: "asc" },
     select: {
       id: true,
       name: true,
       description: true,
+      is_system: true,
+      system_key: true,
       capabilities: true,
+      landing_route: true,
       updated_at: true,
       _count: { select: { admin_users: true } },
     },
   });
-  const customRoles: CustomRoleSummary[] = customRoleRows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    description: r.description,
-    tokenCount: r.capabilities.length,
-    holderCount: r._count.admin_users,
-    updatedAt: r.updated_at.toISOString(),
-  }));
-  const customTokensById = new Map(
-    customRoleRows.map((r) => [r.id, r.capabilities]),
-  );
 
-  // ── 3. KPI counts ─────────────────────────────────────────────────────
+  // Index the system rows by their enum key so each built-in's id / edited caps
+  // can be looked up; collect the custom rows separately for the merge.
+  type RoleRow = (typeof allRoleRows)[number];
+  const systemRowByKey = new Map<AdminRole, RoleRow>();
+  const customRows: RoleRow[] = [];
+  const customTokensById = new Map<string, string[]>();
+  for (const r of allRoleRows) {
+    const key = r.system_key;
+    if (r.is_system && key && (ALL_ADMIN_ROLES as readonly string[]).includes(key)) {
+      systemRowByKey.set(key as AdminRole, r);
+    } else {
+      customRows.push(r);
+      customTokensById.set(r.id, r.capabilities);
+    }
+  }
+
+  // ── 3a. The 6 enum roles, in privilege order (admin first) ────────────────
+  const systemSummaries: RoleSummary[] = ALL_ADMIN_ROLES.map((role) => {
+    const baseline = ROLE_BASELINES[role];
+    const row = systemRowByKey.get(role);
+    // The editable source: the system row's stored caps. Fall back to the code
+    // baseline tokens only if the system row is missing (shouldn't happen).
+    const tokens = row?.capabilities ?? [...baseline.tokens];
+    const { pageCount, capabilityCount } = countTokens(tokens);
+    return {
+      id: row?.id ?? null,
+      key: role,
+      name: row?.name ?? baseline.label,
+      description: row?.description ?? null,
+      isSystem: true,
+      systemKey: role,
+      isSuperuser: baseline.bypass,
+      pageCount,
+      capabilityCount,
+      tokenCount: tokens.length,
+      holderCount: holdersByRole.get(role) ?? 0,
+      landingRoute: row?.landing_route ?? null,
+      updatedAt: (row?.updated_at ?? new Date(0)).toISOString(),
+    };
+  });
+
+  // ── 3b. Custom presets (already alphabetical from the ordered read) ───────
+  const customSummaries: RoleSummary[] = customRows.map((r) => {
+    const { pageCount, capabilityCount } = countTokens(r.capabilities);
+    return {
+      id: r.id,
+      key: r.id,
+      name: r.name,
+      description: r.description,
+      isSystem: false,
+      systemKey: null,
+      isSuperuser: false,
+      pageCount,
+      capabilityCount,
+      tokenCount: r.capabilities.length,
+      holderCount: r._count.admin_users,
+      landingRoute: r.landing_route ?? null,
+      updatedAt: r.updated_at.toISOString(),
+    };
+  });
+
+  // ONE list: the protected backbone first, then the editable presets.
+  const roles = [...systemSummaries, ...customSummaries];
+
+  // ── 4. KPI counts ─────────────────────────────────────────────────────────
   const adminCount = holdersByRole.get("admin") ?? 0;
 
   // Per-user override count: read every NON-admin admin_user (roles column
@@ -302,8 +332,6 @@ export async function getRolesOverview(): Promise<RolesOverview> {
     role_id: string | null;
     allowed_pages: string[];
   }>) {
-    // A user whose primary role resolves to admin (multi-role) bypasses the
-    // gate — exclude from the override count (mirrors the admin short-circuit).
     const effRoles = getEffectiveRoles(u.role, u.roles ?? []);
     if (effRoles.includes("admin")) continue;
     if (
@@ -318,11 +346,9 @@ export async function getRolesOverview(): Promise<RolesOverview> {
   }
 
   return {
-    builtIns,
-    customRoles,
+    roles,
     kpis: {
-      builtInCount: ALL_ADMIN_ROLES.length,
-      customCount: customRoles.length,
+      roleCount: roles.length,
       adminCount,
       overrideUserCount,
       totalCapabilityCount: CAPABILITY_KEYS.length,

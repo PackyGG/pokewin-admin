@@ -28,9 +28,11 @@ type Props = {
   rolesColumnExists: boolean;
   /** Whether the current viewer is the MAIN owner (motha) — gates the owner card. */
   viewerIsMainOwner: boolean;
+  /** Assignable role presets (custom roles) for the Roles card "Role preset" select. */
+  assignablePresets: { id: string; name: string }[];
 };
 
-export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, isCurrentUserAdmin, rolesColumnExists, viewerIsMainOwner }: Props) {
+export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, isCurrentUserAdmin, rolesColumnExists, viewerIsMainOwner, assignablePresets }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
@@ -89,6 +91,9 @@ export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, 
             adminUserId={detail.id}
             currentRoles={detail.roles}
             rolesColumnExists={rolesColumnExists}
+            assignablePresets={assignablePresets}
+            currentPresetId={detail.roleId}
+            currentPresetName={detail.roleName}
           />
           <PermissionsSection detail={detail} />
         </>

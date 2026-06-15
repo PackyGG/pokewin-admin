@@ -2,6 +2,7 @@ import "server-only";
 
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
+import { readAdminUsersWithRoles } from "@/lib/admin-user-roles";
 import {
   getEffectiveRoles,
   isAdminRole,
@@ -48,6 +49,11 @@ export type RoleEditorData = {
   bypass: boolean;
   /** Flat token set (page routes ∪ `__can_*` flags ∪ value tokens). */
   capabilities: string[];
+  /**
+   * Per-role landing route override, or `null` (today's routing). When set +
+   * valid, a non-admin holder lands here after auth. `admin` is never affected.
+   */
+  landingRoute: string | null;
   /** Typed per-role limit slots (all-null until an owner sets a cap). */
   limits: RoleLimits;
   /** Admin users currently assigned this role (custom) or holding it (built-in). */
@@ -79,6 +85,7 @@ export async function getRoleEditorData(
       is_system: true,
       system_key: true,
       capabilities: true,
+      landing_route: true,
       _count: { select: { admin_users: true } },
     },
   });
@@ -109,6 +116,7 @@ export async function getRoleEditorData(
     systemKey,
     bypass,
     capabilities: row.capabilities,
+    landingRoute: row.landing_route ?? null,
     limits,
     holderCount: row._count.admin_users,
     affectedUserCount,
@@ -147,4 +155,67 @@ async function countAffectedUsers(
   }
   // Custom role: assigned users (role_id link).
   return adminDb.admin_users.count({ where: { role_id: id } });
+}
+
+/** One admin who holds this role, for the "Assigned admins" panel. */
+export type RoleHolder = {
+  id: string;
+  username: string;
+  isActive: boolean;
+};
+
+/**
+ * List the admins who hold this role (RoleV2 P1 "Assigned admins" panel).
+ *   • built-in (system) row → every admin_user whose effective roles include
+ *     `systemKey` (for `admin` this is the admins themselves), and
+ *   • custom row            → every admin_user with `role_id = id`.
+ * Read-only, admin-gated. Capped to a sensible count for the panel; the exact
+ * total is shown via `holderCount` on `RoleEditorData`.
+ */
+export async function getRoleHolders(id: string): Promise<RoleHolder[]> {
+  await requireAdmin();
+
+  const role = await adminDb.admin_roles.findUnique({
+    where: { id },
+    select: { is_system: true, system_key: true },
+  });
+  if (!role) return [];
+
+  const systemKey: AdminRole | null =
+    role.system_key && isAdminRole(role.system_key) ? role.system_key : null;
+
+  if (role.is_system && systemKey) {
+    // Effective-role membership can't be expressed in SQL — read role columns
+    // + username and filter in code (same predicate as the action). Degrades to
+    // the legacy `[role]` set if the `roles` column isn't migrated.
+    const candidates = (await readAdminUsersWithRoles(
+      () =>
+        adminDb.admin_users.findMany({
+          select: { id: true, username: true, is_active: true, role: true, roles: true },
+          orderBy: { username: "asc" },
+        }),
+      () =>
+        adminDb.admin_users.findMany({
+          select: { id: true, username: true, is_active: true, role: true },
+          orderBy: { username: "asc" },
+        }),
+    )) as Array<{
+      id: string;
+      username: string;
+      is_active: boolean;
+      role: string;
+      roles?: string[];
+    }>;
+    return candidates
+      .filter((u) => getEffectiveRoles(u.role, u.roles ?? []).includes(systemKey))
+      .map((u) => ({ id: u.id, username: u.username, isActive: u.is_active }));
+  }
+
+  // Custom role: the role_id link.
+  const rows = await adminDb.admin_users.findMany({
+    where: { role_id: id },
+    select: { id: true, username: true, is_active: true },
+    orderBy: { username: "asc" },
+  });
+  return rows.map((u) => ({ id: u.id, username: u.username, isActive: u.is_active }));
 }

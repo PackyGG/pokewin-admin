@@ -150,7 +150,15 @@ export const ADMIN_PAGES: AdminPage[] = [
   // page). The page + actions enforce requireAdmin server-side; listed here
   // so the key is known to the permission system.
   { group: "System", label: "Geo Blocking", key: "/system/geo-blocking" },
-  { group: "System", label: "Audit Log", key: "/audit" },
+  // "/audit" page key removed (RoleV2 cleanup): the Audit Log is now hard
+  // ADMIN-ONLY (the page + actions enforce `requireAdmin`, NOT a grantable page
+  // key), so the key was vestigial — keeping it only let a lower role be
+  // *granted* a toggle that the page would reject anyway. Dropping it removes
+  // that misleading grant from the permission picker / role editors. NO role
+  // baseline referenced it (verified), so no orphan token. The sidebar / command
+  // palette nav entry stays (`pageKey: "/audit"`): admins + owners see it via
+  // the role bypass; non-admins never see it (pageAccessGranted([], "/audit") =
+  // false) AND the page redirects them — so admins keep their Audit Log link.
   // Monitor — health/overview of the standalone backend-monitor service
   // (a separate Railway app from the game backend). Read-only telemetry
   // surface fetched server-side from MONITOR_API_URL with a bearer token.
