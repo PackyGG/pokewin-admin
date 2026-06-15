@@ -2,6 +2,7 @@ import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { withTiming } from "@/lib/observability/query-timings";
+import { compareRealizedPnl } from "@/lib/clickhouse/comparison";
 import { computeHousePnl } from "./pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
@@ -155,6 +156,23 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
       inventoryValue: inventory,
       unclaimedVouchers: vouchers,
     }) - unclaimedRakeback;
+
+  // Fire-and-forget ClickHouse comparison for the
+  // `dashboard_realized_pnl_lifetime` surface, fired from this UNCACHED
+  // computor so the React-cache / `unstable_cache` wrapper does not suppress
+  // it. The hook is single-arg (window-less lifetime) and fetches its own
+  // blacklist. No-op unless that surface is in `comparison` mode (forced off
+  // whenever ClickHouse is dormant) and never throws — the served snapshot
+  // below stays the Postgres value, byte-identical to before wiring.
+  void compareRealizedPnl({
+    pnl,
+    totalDeposited,
+    totalWithdrawn,
+    userBalance,
+    inventory,
+    vouchers,
+    unclaimedRakeback,
+  });
 
   return {
     pnl,

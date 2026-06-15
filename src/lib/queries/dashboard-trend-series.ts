@@ -2,6 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 import { dbForEnv } from "@/lib/db";
+import { compareTrendSeries } from "@/lib/clickhouse/comparison";
 import { type DbEnv } from "@/lib/db-env";
 import { Prisma } from "@/generated/prisma/client";
 import { type DashboardPeriod } from "./dashboard-period";
@@ -231,6 +232,19 @@ async function fetchDashboardTrendSeriesInner(
     }),
     period,
   );
+
+  // Fire-and-forget ClickHouse comparison for the `dashboard_trend_series`
+  // surface, from the UNCACHED inner so the `unstable_cache` wrapper does not
+  // suppress it. No-op unless that surface is in `comparison` mode (forced off
+  // whenever ClickHouse is dormant) and never throws — the served series below
+  // stays the Postgres value, byte-identical to before wiring.
+  void compareTrendSeries(period, {
+    ...ledgerMerged,
+    dailySignups,
+    dailyFtds,
+    dailyWagerAttribution,
+    chartHourlyBuckets: dashboardChartHourlyBuckets(period),
+  });
 
   return {
     ...ledgerMerged,

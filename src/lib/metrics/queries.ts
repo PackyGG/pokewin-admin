@@ -33,6 +33,7 @@ import {
   WAGER_LEG_FILTER,
   PAYOUT_LEG_FILTER,
 } from "./gaming-sql";
+import { compareWindowMetrics } from "@/lib/clickhouse/comparison";
 
 /**
  * queries.ts — the CANONICAL, WIRED DB-read builders for the metric layer.
@@ -527,6 +528,27 @@ export async function getWindowMetrics(opts: {
     rewardCostExclRain: reward.rewardCostExclRain,
     rainHouseCost: rainHouseCostInput,
   });
+
+  // Fire-and-forget ClickHouse comparison for the `dashboard_headline_ggr`
+  // surface. No-op unless that surface is in `comparison` mode (forced off
+  // whenever ClickHouse is dormant) and never throws — the served payload
+  // below stays the Postgres value, byte-identical to before wiring.
+  void compareWindowMetrics(
+    {
+      window,
+      windowLabel: window.since ? window.since.toISOString() : "lifetime",
+    },
+    {
+      wager,
+      gamingPayout,
+      ggr: ggrValue,
+      ngr: ngrValue,
+      bets,
+      rainWinTotal: reward.rainWinTotal,
+      rainTipTotal: reward.rainTipTotal,
+      rainHouseCost,
+    },
+  );
 
   return {
     wager,
