@@ -14,7 +14,9 @@ export const ABUSER_HUB_TAGS: UserTagValue[] = ["wager_abuser", "fraud_abuser"];
 
 export type UserTagRow = {
   tag: UserTagValue;
-  setByAdminId: string;
+  // Nullable: deleting the admin who set the tag NULLs this attribution
+  // while preserving the tag itself (see admin-users deleteAdminUser).
+  setByAdminId: string | null;
   setByAdminUsername: string | null;
   createdAt: string;
 };

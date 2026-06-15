@@ -461,11 +461,60 @@ export async function deleteAdminUser(
 
   try {
     await adminDb.$transaction(async (tx) => {
+      // ── Provenance-only nulling — PRESERVE the business/financial/CRM row,
+      // drop only the "who did it" attribution. Each of these columns is a
+      // RESTRICT / NO-ACTION FK to admin_users that would otherwise BLOCK the
+      // delete; we NULL the attribution instead of destroying real data. The
+      // columns were made nullable via
+      // prisma/admin/sql/2026-06-15_delete_admin_provenance_nullable.up.sql.
+
       // Null out admin_user_id on audit events (keep the logs)
       await tx.admin_audit_events.updateMany({
         where: { admin_user_id: adminUserId },
         data: { admin_user_id: null },
       });
+
+      // VIP/CRM tag attribution — keep the tag, drop who set it.
+      await tx.admin_user_tags.updateMany({
+        where: { set_by_admin_id: adminUserId },
+        data: { set_by_admin_id: null },
+      });
+      // Analytics exclusion — keep the user excluded, drop who excluded them.
+      await tx.excluded_users.updateMany({
+        where: { excluded_by: adminUserId },
+        data: { excluded_by: null },
+      });
+      // Balance 2.0 annotation — keep the value, drop who set it.
+      await tx.admin_excluded_user_balance_v2.updateMany({
+        where: { set_by_admin_id: adminUserId },
+        data: { set_by_admin_id: null },
+      });
+      // Salary registry / payout log — keep the financial record, drop attribution.
+      await tx.salary_employees.updateMany({
+        where: { created_by_id: adminUserId },
+        data: { created_by_id: null },
+      });
+      await tx.salary_payouts.updateMany({
+        where: { paid_by_id: adminUserId },
+        data: { paid_by_id: null },
+      });
+      // Shift schedule — keep the rota, drop who planned it.
+      await tx.admin_shifts.updateMany({
+        where: { created_by_id: adminUserId },
+        data: { created_by_id: null },
+      });
+      // creator_deal_estimates is NOT a Prisma model on the admin client
+      // (table provisioned outside the schema, NO-ACTION FK). NULL its
+      // created_by_id via parameterized raw SQL — keep the estimate, drop
+      // who created it.
+      await tx.$executeRaw`UPDATE "creator_deal_estimates" SET "created_by_id" = NULL WHERE "created_by_id" = ${adminUserId}::uuid`;
+
+      // ── Pure admin action-logs / orphan rows — safe to DELETE (no business
+      // data; consistent with the gift-card / voucher action deletes below).
+      await tx.admin_giveaway_actions.deleteMany({ where: { admin_user_id: adminUserId } });
+      // admin_balance_limits.admin_user_id is a plain String (no FK, doesn't
+      // block) but would otherwise be orphaned — clean it up.
+      await tx.admin_balance_limits.deleteMany({ where: { admin_user_id: adminUserId } });
 
       // Delete all related records with required FKs
       await tx.admin_sessions.deleteMany({ where: { admin_user_id: adminUserId } });
@@ -475,7 +524,7 @@ export async function deleteAdminUser(
       await tx.expenses.deleteMany({ where: { created_by_id: adminUserId } });
       await tx.recurring_expenses.deleteMany({ where: { created_by_id: adminUserId } });
 
-      // Delete the admin user
+      // Delete the admin user (admin_shift_assignments FK is CASCADE → auto-removed)
       await tx.admin_users.delete({ where: { id: adminUserId } });
     });
   } catch (err) {

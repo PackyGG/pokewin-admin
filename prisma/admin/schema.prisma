@@ -180,10 +180,14 @@ model admin_user_tags {
   // bad values.
   tag             String
   // Who set the tag. Used for the audit panel and to know which admin
-  // owns a CRM assignment.
-  set_by_admin_id String      @db.Uuid
+  // owns a CRM assignment. NULLABLE so deleting the admin who set the tag
+  // NULLs the attribution and PRESERVES the tag (the (user,tag) pair is the
+  // record; the audit trail of who set it lives in admin_audit_events). The
+  // DROP NOT NULL was applied to the admin DB via
+  // prisma/admin/sql/2026-06-15_delete_admin_provenance_nullable.up.sql.
+  set_by_admin_id String?      @db.Uuid
   created_at      DateTime    @default(now()) @db.Timestamptz(6)
-  admin_user      admin_users @relation(fields: [set_by_admin_id], references: [id])
+  admin_user      admin_users? @relation(fields: [set_by_admin_id], references: [id])
 
   @@unique([target_user_id, tag], map: "admin_user_tags_user_tag_unique")
   @@index([target_user_id], map: "admin_user_tags_target_user_id_idx")
@@ -209,10 +213,14 @@ model admin_user_tags {
 model excluded_users {
   user_id     String      @id
   reason      String?
-  excluded_by String      @db.Uuid
+  // NULLABLE so deleting the admin who excluded this user NULLs the
+  // attribution and KEEPS the user excluded (the row IS the exclusion
+  // record). DROP NOT NULL applied via
+  // prisma/admin/sql/2026-06-15_delete_admin_provenance_nullable.up.sql.
+  excluded_by String?      @db.Uuid
   created_at  DateTime    @default(now()) @db.Timestamptz(6)
   updated_at  DateTime    @updatedAt      @db.Timestamptz(6)
-  admin_user  admin_users @relation(fields: [excluded_by], references: [id], onDelete: Restrict)
+  admin_user  admin_users? @relation(fields: [excluded_by], references: [id], onDelete: Restrict)
 
   @@index([created_at(sort: Desc)], map: "excluded_users_created_at_idx")
 }
@@ -257,12 +265,15 @@ model admin_excluded_user_balance_v2 {
   // Hand-entered USD amount the operator wants to track. Decimal(20,2)
   // matches every other money column in the admin DB.
   balance_v2      Decimal     @db.Decimal(20, 2)
-  // admin_users.id of whoever last set the value. FK so it can't point
-  // at a deleted admin row.
-  set_by_admin_id String      @db.Uuid
+  // admin_users.id of whoever last set the value. NULLABLE so deleting
+  // that admin NULLs the attribution and PRESERVES this Balance 2.0 value
+  // (the dollar figure is the data; who set it is provenance). DROP NOT
+  // NULL applied via
+  // prisma/admin/sql/2026-06-15_delete_admin_provenance_nullable.up.sql.
+  set_by_admin_id String?      @db.Uuid
   set_at          DateTime    @default(now()) @db.Timestamptz(6)
   notes           String?
-  admin_user      admin_users @relation(fields: [set_by_admin_id], references: [id], onDelete: Restrict)
+  admin_user      admin_users? @relation(fields: [set_by_admin_id], references: [id], onDelete: Restrict)
 
   @@index([set_at(sort: Desc)], map: "admin_excluded_user_balance_v2_set_at_idx")
 }
@@ -703,8 +714,11 @@ model admin_shifts {
   // Free-form note — "on-call for card withdrawals", "sponsored tourney",
   // etc. Optional.
   notes          String?
-  created_by_id  String                    @db.Uuid
-  created_by     admin_users               @relation("admin_shifts_created_by", fields: [created_by_id], references: [id])
+  // NULLABLE so deleting the admin who planned this shift NULLs the
+  // attribution and PRESERVES the schedule row. DROP NOT NULL applied via
+  // prisma/admin/sql/2026-06-15_delete_admin_provenance_nullable.up.sql.
+  created_by_id  String?                   @db.Uuid
+  created_by     admin_users?              @relation("admin_shifts_created_by", fields: [created_by_id], references: [id])
   assignments    admin_shift_assignments[]
   created_at     DateTime                  @default(now()) @db.Timestamptz(6)
   updated_at     DateTime                  @updatedAt @db.Timestamptz(6)
@@ -769,8 +783,11 @@ model salary_employees {
   notes            String?
   created_at       DateTime            @default(now()) @db.Timestamptz(6)
   updated_at       DateTime            @updatedAt @db.Timestamptz(6)
-  created_by_id    String              @db.Uuid
-  created_by       admin_users         @relation(fields: [created_by_id], references: [id])
+  // NULLABLE so deleting the admin who created this employee NULLs the
+  // attribution and PRESERVES the financial record. DROP NOT NULL applied
+  // via prisma/admin/sql/2026-06-15_delete_admin_provenance_nullable.up.sql.
+  created_by_id    String?             @db.Uuid
+  created_by       admin_users?        @relation(fields: [created_by_id], references: [id])
 
   payouts          salary_payouts[]
   payments         salary_payments[]
@@ -795,8 +812,11 @@ model salary_payouts {
   broadcast_at    DateTime?        @db.Timestamptz(6)
   confirmed_at    DateTime?        @db.Timestamptz(6)
   failed_at       DateTime?        @db.Timestamptz(6)
-  paid_by_id      String           @db.Uuid
-  paid_by         admin_users      @relation(fields: [paid_by_id], references: [id])
+  // NULLABLE so deleting the admin who recorded this payout NULLs the
+  // attribution and PRESERVES the payout record. DROP NOT NULL applied via
+  // prisma/admin/sql/2026-06-15_delete_admin_provenance_nullable.up.sql.
+  paid_by_id      String?          @db.Uuid
+  paid_by         admin_users?     @relation(fields: [paid_by_id], references: [id])
   created_at      DateTime         @default(now()) @db.Timestamptz(6)
 
   employee        salary_employees @relation(fields: [employee_id], references: [id])
