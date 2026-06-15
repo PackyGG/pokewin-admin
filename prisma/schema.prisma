@@ -150,7 +150,12 @@ model balances {
   total_withdrawn           Decimal                  @default(0) @db.Decimal(20, 2)
   total_wagered             Decimal                  @default(0) @db.Decimal(20, 2)
   total_won                 Decimal                  @default(0) @db.Decimal(20, 2)
-  bonus_points              Int                      @default(0)
+  // NOTE: balances.bonus_points was renamed -> shards on the game DB. The admin
+  // reads it via a column-presence probe (see users-detail.ts fetchBalancePoints),
+  // NOT via this model. Declaring bonus_points here made every `balances`
+  // findUnique/all (e.g. adjustBalance) emit `SELECT ... bonus_points ...` and
+  // 42703 on prod, which surfaced as the generic "Balance adjustment failed".
+  // Keep it OUT of the model — the column does not exist on the live game DB.
   last_transaction_id       String?                  @db.Uuid
   unlock_at                 DateTime?                @db.Timestamp(6)
   version                   Int                      @default(1)
