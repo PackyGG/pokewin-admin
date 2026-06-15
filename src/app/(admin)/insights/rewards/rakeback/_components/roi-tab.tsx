@@ -15,6 +15,7 @@ import {
   getRakebackRoi,
   type RakebackRoiLookback,
 } from "@/lib/queries/insights-rewards/rakeback/roi";
+import { compareRakebackRoi } from "@/lib/clickhouse/compare/insights-rakeback-roi";
 import { type InsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
 import { RakebackRoiLookbackFilter } from "./roi-lookback-filter";
 
@@ -53,6 +54,7 @@ export async function RoiTab({
     );
   }
   const data = roiRes.data;
+  void compareRakebackRoi(period, lookback, data);
   if (data.cost === 0 && data.claimants === 0) {
     return (
       <div className="rounded-2xl border bg-card p-4">

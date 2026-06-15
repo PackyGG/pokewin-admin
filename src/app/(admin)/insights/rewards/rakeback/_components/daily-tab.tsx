@@ -6,6 +6,7 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { getRakebackDaily } from "@/lib/queries/insights-rewards/rakeback/daily";
+import { compareRakebackDaily } from "@/lib/clickhouse/compare/insights-rakeback-daily";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -42,6 +43,7 @@ export async function DailyTab({
     );
   }
   const daily = dailyRes.data;
+  void compareRakebackDaily(period, daily);
   const label = insightsRewardsPeriodLabel(period);
   if (daily.length === 0) {
     return (

@@ -7,6 +7,7 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { getRakebackLapsed, type RakebackLapsedReason } from "@/lib/queries/insights-rewards/rakeback/lapsed";
+import { compareRakebackLapsed } from "@/lib/clickhouse/compare/insights-rakeback-lapsed";
 import { type InsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
 
 /**
@@ -59,6 +60,7 @@ export async function LapsedTab({
     );
   }
   const data = lapsedRes.data;
+  void compareRakebackLapsed(period, data);
   if (data.totalLapsedUsers === 0) {
     return (
       <div className="rounded-2xl border bg-card p-4">

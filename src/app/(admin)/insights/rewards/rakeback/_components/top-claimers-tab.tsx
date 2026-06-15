@@ -10,6 +10,7 @@ import {
   getRakebackTopClaimers,
   type RakebackTopClaimerScope,
 } from "@/lib/queries/insights-rewards/rakeback/top-claimers";
+import { compareRakebackTop } from "@/lib/clickhouse/compare/insights-rakeback-top";
 import { type InsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
 import { RakebackTopScopeToggle } from "./top-claimers-scope-toggle";
 
@@ -43,6 +44,7 @@ export async function TopClaimersTab({
     );
   }
   const rows = rowsRes.data;
+  void compareRakebackTop(period, scope, rows);
   if (rows.length === 0) {
     return (
       <div className="rounded-2xl border bg-card p-4">

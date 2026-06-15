@@ -6,6 +6,7 @@ import { formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { getRakebackRateDistribution } from "@/lib/queries/insights-rewards/rakeback/rate-distribution";
+import { compareRakebackRate } from "@/lib/clickhouse/compare/insights-rakeback-rate";
 import { type InsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
 import { DistributionBarChart } from "@/app/(admin)/rewards/analytics/_components/distribution-bar-chart";
 
@@ -35,6 +36,7 @@ export async function RateTab({ period }: { period: InsightsRewardsPeriod }) {
     );
   }
   const dist = distRes.data;
+  void compareRakebackRate(period, dist);
   if (dist.cohortSize === 0) {
     return (
       <div className="rounded-2xl border bg-card p-4">

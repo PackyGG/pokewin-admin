@@ -15,6 +15,8 @@ import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { getRakebackOverview } from "@/lib/queries/insights-rewards/rakeback/overview";
 import { getRakebackDaily } from "@/lib/queries/insights-rewards/rakeback/daily";
+import { compareRakebackOverview } from "@/lib/clickhouse/compare/insights-rakeback-overview";
+import { compareRakebackDaily } from "@/lib/clickhouse/compare/insights-rakeback-daily";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -64,6 +66,9 @@ export async function OverviewTab({
   const overview = overviewRes.data;
   const daily = dailyRes.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareRakebackOverview(period, overview);
+  if (!dailyRes.error) void compareRakebackDaily(period, daily);
 
   if (overview.count === 0) {
     return (

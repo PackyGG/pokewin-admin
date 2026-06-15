@@ -6,6 +6,7 @@ import { formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { getRakebackActiveSubscribers } from "@/lib/queries/insights-rewards/rakeback/active-subscribers";
+import { compareRakebackActive } from "@/lib/clickhouse/compare/insights-rakeback-active";
 import { type InsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +39,7 @@ export async function ActiveTab({
     );
   }
   const data = activeRes.data;
+  void compareRakebackActive(period, data);
   if (data.distinctClaimants === 0) {
     return (
       <div className="rounded-2xl border bg-card p-4">

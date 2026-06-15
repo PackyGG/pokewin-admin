@@ -6,6 +6,7 @@ import { formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { getRakebackCadence } from "@/lib/queries/insights-rewards/rakeback/cadence";
+import { compareRakebackCadence } from "@/lib/clickhouse/compare/insights-rakeback-cadence";
 import { type InsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
 import { DistributionBarChart } from "@/app/(admin)/rewards/analytics/_components/distribution-bar-chart";
 import { formatHours } from "./_format";
@@ -40,6 +41,7 @@ export async function CadenceTab({
     );
   }
   const cadence = cadenceRes.data;
+  void compareRakebackCadence(period, cadence);
   if (cadence.totalClaims === 0) {
     return (
       <div className="rounded-2xl border bg-card p-4">

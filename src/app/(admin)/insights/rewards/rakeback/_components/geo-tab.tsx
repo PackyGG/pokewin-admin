@@ -6,6 +6,7 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { getRakebackGeoSource } from "@/lib/queries/insights-rewards/rakeback/geo-source";
+import { compareRakebackGeo } from "@/lib/clickhouse/compare/insights-rakeback-geo";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -40,6 +41,8 @@ export async function GeoTab({
   }
   const data = geoRes.data;
   const label = insightsRewardsPeriodLabel(period);
+
+  void compareRakebackGeo(period, data);
 
   if (data.totalRakeback === 0) {
     return (
