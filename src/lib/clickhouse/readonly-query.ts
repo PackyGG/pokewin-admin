@@ -1,6 +1,6 @@
 import "server-only";
 
-import { logError } from "@/lib/errors/logger";
+import { logQueryFailure } from "@/lib/errors/logger";
 
 import { getClickHouseClient } from "./client";
 import { assertReadOnlySql } from "./guards";
@@ -89,12 +89,25 @@ async function query<T>(opts: ClickHouseReadOptions): Promise<T[]> {
     const durationMs = Date.now() - startedAt;
     if (durationMs > CH_SLOW_MS) {
       console.warn(
-        `[clickhouse] SLOW ${opts.queryName} ${durationMs}ms rows=${rows.length}`,
+        `[clickhouse] SLOW ${opts.queryName} duration_ms=${durationMs} rows=${rows.length}`,
       );
     }
     return rows;
   } catch (cause) {
-    logError(`clickhouse.${opts.queryName}`, "ClickHouse query failed", cause);
+    const durationMs = Date.now() - startedAt;
+    // An AbortSignal.timeout fires a "TimeoutError"; the server-side
+    // max_execution_time kill surfaces as a query error. Label the wall-clock
+    // abort as a timeout, everything else as a hard error.
+    const kind: "timeout" | "error" =
+      cause instanceof Error &&
+      (cause.name === "TimeoutError" || cause.name === "AbortError")
+        ? "timeout"
+        : "error";
+    logQueryFailure(
+      `clickhouse.${opts.queryName}`,
+      { engine: "clickhouse", durationMs, kind },
+      cause,
+    );
     throw new ClickHouseQueryError(opts.queryName, cause);
   }
 }

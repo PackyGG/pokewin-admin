@@ -1,4 +1,4 @@
-import { logError } from "./logger";
+import { logQueryFailure } from "./logger";
 
 /**
  * safeQuery — run a server-side query and degrade gracefully on
@@ -131,16 +131,18 @@ export async function safeQuery<T>(
   context: string,
   timeoutMs?: number,
 ): Promise<SafeQueryResult<T>> {
+  const startedAt = Date.now();
   try {
     const data =
       timeoutMs != null ? await withTimeout(fn, timeoutMs) : await fn();
     return { data, error: null, kind: null };
   } catch (err) {
+    const durationMs = Date.now() - startedAt;
     if (isQueryTimeoutError(err)) {
-      logError(context, "safeQuery timed out", err);
+      logQueryFailure(context, { engine: "postgres", durationMs, kind: "timeout" }, err);
       return { data: fallback, error: err.message, kind: "timeout" };
     }
-    logError(context, "safeQuery caught", err);
+    logQueryFailure(context, { engine: "postgres", durationMs, kind: "error" }, err);
     const message = err instanceof Error ? err.message : "Unknown query error";
     return { data: fallback, error: message, kind: "error" };
   }
@@ -162,16 +164,18 @@ export async function safeQueryOrNull<T>(
   error: string | null;
   kind?: SafeQueryFailureKind | null;
 }> {
+  const startedAt = Date.now();
   try {
     const data =
       timeoutMs != null ? await withTimeout(fn, timeoutMs) : await fn();
     return { data, error: null, kind: null };
   } catch (err) {
+    const durationMs = Date.now() - startedAt;
     if (isQueryTimeoutError(err)) {
-      logError(context, "safeQueryOrNull timed out", err);
+      logQueryFailure(context, { engine: "postgres", durationMs, kind: "timeout" }, err);
       return { data: null, error: err.message, kind: "timeout" };
     }
-    logError(context, "safeQueryOrNull caught", err);
+    logQueryFailure(context, { engine: "postgres", durationMs, kind: "error" }, err);
     const message = err instanceof Error ? err.message : "Unknown query error";
     return { data: null, error: message, kind: "error" };
   }

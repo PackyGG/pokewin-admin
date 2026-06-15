@@ -54,16 +54,24 @@ export function computeDrift(
   });
 }
 
-export function logComparison(label: string, drift: FieldDrift[]): void {
+export function logComparison(
+  label: string,
+  drift: FieldDrift[],
+  durationMs?: number,
+): void {
   const summary = drift
     .map((d) => `${d.field}: pg=${d.pg} ch=${d.ch} Δ=${d.absDrift.toFixed(4)}`)
     .join(" | ");
+  // `duration_ms` shares the failure-line convention so timing is greppable
+  // across every observability surface; present on BOTH the OK and DRIFT
+  // branches.
+  const timing = durationMs != null ? ` duration_ms=${durationMs}` : "";
   const failing = drift.filter((d) => !d.ok);
   if (failing.length === 0) {
-    console.log(`[ch-compare] ${label} OK — ${summary}`);
+    console.log(`[ch-compare] ${label} OK${timing} — ${summary}`);
   } else {
     console.warn(
-      `[ch-compare] ${label} DRIFT ${failing.length}/${drift.length} — ${summary}`,
+      `[ch-compare] ${label} DRIFT ${failing.length}/${drift.length}${timing} — ${summary}`,
     );
   }
 }
@@ -87,6 +95,7 @@ export async function compareDashboardCashflow(
     const mode = await getAdminReadMode("dashboard_cashflow");
     if (mode !== "comparison") return;
 
+    const startedAt = Date.now();
     const blacklist = await getExcludedUserIds();
     const ch = await getDashboardCashflowFromClickHouse(window, blacklist);
     const drift = computeDrift(
@@ -104,7 +113,7 @@ export async function compareDashboardCashflow(
       },
       ["deposits", "withdrawals"],
     );
-    logComparison(`dashboard.cashflow[${window}]`, drift);
+    logComparison(`dashboard.cashflow[${window}]`, drift, Date.now() - startedAt);
   } catch (err) {
     logError(
       "clickhouse.compare.dashboard_cashflow",
@@ -142,6 +151,7 @@ export async function compareWindowMetrics(
     const mode = await getAdminReadMode("dashboard_headline_ggr");
     if (mode !== "comparison") return;
 
+    const startedAt = Date.now();
     const blacklist = await getExcludedUserIds();
     const ch = await getWindowMetricsFromClickHouse(args.window, blacklist);
     const drift = computeDrift(
@@ -175,7 +185,11 @@ export async function compareWindowMetrics(
         "rainHouseCost",
       ],
     );
-    logComparison(`dashboard_headline_ggr[${args.windowLabel}]`, drift);
+    logComparison(
+      `dashboard_headline_ggr[${args.windowLabel}]`,
+      drift,
+      Date.now() - startedAt,
+    );
   } catch (err) {
     logError(
       "clickhouse.compare.dashboard_headline_ggr",
@@ -227,6 +241,7 @@ export async function compareTrendSeries(
     const mode = await getAdminReadMode("dashboard_trend_series");
     if (mode !== "comparison") return;
 
+    const startedAt = Date.now();
     const blacklist = await getExcludedUserIds();
     const ch = await getDashboardTrendSeriesFromClickHouse(period, blacklist);
     const drift = computeDrift(sumTrendSeries(pgSeries), sumTrendSeries(ch), [
@@ -238,7 +253,7 @@ export async function compareTrendSeries(
       "organicWager",
       "creatorCodedWager",
     ]);
-    logComparison(`dashboard_trend_series[${period}]`, drift);
+    logComparison(`dashboard_trend_series[${period}]`, drift, Date.now() - startedAt);
   } catch (err) {
     logError(
       "clickhouse.compare.dashboard_trend_series",
@@ -264,6 +279,7 @@ export async function compareRealizedPnl(
     const mode = await getAdminReadMode("dashboard_realized_pnl_lifetime");
     if (mode !== "comparison") return;
 
+    const startedAt = Date.now();
     const blacklist = await getExcludedUserIds();
     const ch = await getRealizedPnlSnapshotFromClickHouse(blacklist);
     const drift = computeDrift(
@@ -295,7 +311,11 @@ export async function compareRealizedPnl(
         "unclaimedRakeback",
       ],
     );
-    logComparison(`dashboard_realized_pnl_lifetime[lifetime]`, drift);
+    logComparison(
+      `dashboard_realized_pnl_lifetime[lifetime]`,
+      drift,
+      Date.now() - startedAt,
+    );
   } catch (err) {
     logError(
       "clickhouse.compare.dashboard_realized_pnl_lifetime",

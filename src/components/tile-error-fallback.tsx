@@ -39,6 +39,7 @@ import { cn } from "@/lib/utils";
 export function TileErrorFallback({
   label,
   hint,
+  kind,
   size = "compact",
   className,
 }: {
@@ -46,6 +47,16 @@ export function TileErrorFallback({
   label: string;
   /** Optional one-line hint shown below the headline. Never a raw error. */
   hint?: string;
+  /**
+   * Why the tile degraded — drives truthful headline copy:
+   *   • "timeout" → the query was merely SLOW (a `safeQuery` timeoutMs race
+   *     fired); "Taking too long to load" invites a refresh-retry.
+   *   • "error" / omitted → a hard failure; the generic "Couldn't load" copy.
+   * A serializable string enum (NEVER a function or the raw error object) so
+   * it crosses the Server→Client RSC boundary safely. The matching
+   * `SafeQueryResult.kind` can be passed straight through.
+   */
+  kind?: "timeout" | "error";
   /** Visual shape — matches KpiTile (compact) or StatPanel (panel). */
   size?: "compact" | "panel";
   className?: string;
@@ -55,6 +66,12 @@ export function TileErrorFallback({
   // primitive each variant replaces so the surrounding grid doesn't
   // jump on partial failure.
   const isPanel = size === "panel";
+  // Caller-controlled, static copy only — never interpolate a raw error
+  // message. The timeout branch is reachable once a `timeoutMs` is wired.
+  const headline =
+    kind === "timeout"
+      ? "Taking too long to load"
+      : "Couldn't load this section";
   return (
     <div
       role="status"
@@ -90,7 +107,7 @@ export function TileErrorFallback({
                 : "text-xs font-medium",
             )}
           >
-            Couldn&apos;t load this section
+            {headline}
           </p>
           {hint && (
             <p
