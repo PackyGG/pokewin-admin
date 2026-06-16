@@ -70,6 +70,10 @@ const cachedPromoCodesMoneyStats = unstable_cache(
         WHERE status = 'completed'
           AND type::text = 'promo_code_redeemed'
           AND ${userScope}
+          -- 365d house-convention cap (CLAUDE.md "Performance & Daten-Laden"):
+          -- bounds this lifetime ledger scan instead of an unbounded
+          -- full-history sweep. No-op on current data (< 90d old).
+          AND created_at >= NOW() - INTERVAL '365 days'
       `),
       db.$queryRaw<{ total: string }[]>`
         SELECT COALESCE(SUM(value::numeric * max_uses), 0)::text AS total
@@ -82,7 +86,7 @@ const cachedPromoCodesMoneyStats = unstable_cache(
       allocatedOffered: toNumber(allocatedRows[0]?.total ?? "0"),
     };
   },
-  ["promo-codes-money-stats-v3"],
+  ["promo-codes-money-stats-v4"],
   { revalidate: 300, tags: ["promo-codes-money-stats"] },
 );
 

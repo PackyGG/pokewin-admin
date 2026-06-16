@@ -235,10 +235,15 @@ export async function getBattles(params: {
           m && m !== "all"
             ? Prisma.sql`AND b.mode::text = ${m}`
             : Prisma.empty;
+        // 24h keeps its tight floor; every other mode (lifetime/all) is
+        // capped at the 365d house convention (CLAUDE.md "Performance &
+        // Daten-Laden") so this 5-way-join CTE always has a lower bound
+        // instead of scanning the full battle history. No-op on current
+        // data (< 90d old); bounds pathological future scans.
         const sinceClause =
           s === "24h"
             ? Prisma.sql`AND b.created_at >= NOW() - INTERVAL '24 hours'`
-            : Prisma.empty;
+            : Prisma.sql`AND b.created_at >= NOW() - INTERVAL '365 days'`;
         const rows = await cdb.$queryRaw<{ id: string }[]>`
           WITH battle_multipliers AS (
             SELECT

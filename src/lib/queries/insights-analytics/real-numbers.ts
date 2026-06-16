@@ -1226,6 +1226,11 @@ const cachedCreatorProgramCost = unstable_cache(
           'creator_tip', 'creator_fill_spend_tip', 'affiliate_leaderboard_prize',
           'creator_deal_fill_grant', 'creator_fill_activation', 'creator_fill_forfeiture'
         )
+        -- 365d house-convention cap (CLAUDE.md "Performance & Daten-Laden"):
+        -- bounds this lifetime ledger scan instead of an unbounded
+        -- full-history sweep. No-op on current data (< 90d old); bounds
+        -- pathological future scans. The CH twin caps identically for parity.
+        AND created_at >= NOW() - INTERVAL '365 days'
     `);
 
     // Conversion-voucher value + count from the vouchers table — the SAME
@@ -1238,6 +1243,10 @@ const cachedCreatorProgramCost = unstable_cache(
         COUNT(*)::text AS conversion_count
       FROM vouchers
       WHERE origin::text = 'creator_fill_conversion'
+        -- 365d house-convention cap (CLAUDE.md "Performance & Daten-Laden"):
+        -- bounds this lifetime scan. No-op on current data (< 90d old). The
+        -- CH twin caps identically for parity.
+        AND created_at >= NOW() - INTERVAL '365 days'
     `);
 
     const l = ledgerRows[0] ?? {};

@@ -7,6 +7,16 @@ import type { AffiliateAnalyticsData } from "./creators-types";
 
 type Period = "today" | "7d" | "30d" | "90d" | "all";
 
+// Lifetime (`all`) is capped at this lookback rather than scanning the
+// entire affiliate_code_usages / affiliate_clicks / affiliate_payouts
+// history with no lower bound — the unbounded-lifetime pattern CLAUDE.md
+// ("Performance & Daten-Laden") forbids. Mirrors the reward-side
+// `INSIGHTS_LIFETIME_LOOKBACK_DAYS` (365d). No-op on current data
+// (< 90d old); bounds pathological future scans. The ClickHouse twin
+// (clickhouse/queries/creators/analytics.ts) caps the `all` window
+// identically for cutover/comparison parity.
+const LIFETIME_LOOKBACK_DAYS = 365;
+
 function periodToDateFilter(period: Period): string {
   switch (period) {
     case "today":
@@ -18,7 +28,7 @@ function periodToDateFilter(period: Period): string {
     case "90d":
       return "AND created_at >= NOW() - INTERVAL '90 days'";
     case "all":
-      return "";
+      return `AND created_at >= NOW() - INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'`;
   }
 }
 

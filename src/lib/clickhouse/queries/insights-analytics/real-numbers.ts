@@ -223,6 +223,12 @@ export type RealNumbersClickHouseArgs = {
   recyclingCutoff: Date;
   /** Daily-pack giveaway window (obtained_at >= now − 365d). */
   dailyPacksCutoff: Date;
+  /**
+   * Creator-program-cost window (created_at >= now − 365d). Mirrors the
+   * PG twin's `getCreatorProgramCost` 365d house-convention cap so the
+   * lifetime program-cost legs stay bounded on both engines for parity.
+   */
+  programCutoff: Date;
 };
 
 type BalanceSheetRaw = {
@@ -376,6 +382,7 @@ export async function getRealNumbersComparableFromClickHouse(
   const rewardParams = { blacklist, cutoff: chDateTime(args.rewardCutoff) };
   const recyclingParams = { blacklist, cutoff: chDateTime(args.recyclingCutoff) };
   const dpParams = { blacklist, cutoff: chDateTime(args.dailyPacksCutoff) };
+  const programParams = { blacklist, cutoff: chDateTime(args.programCutoff) };
   const noWindowParams = { blacklist };
 
   const rewardPackSessions = rewardPackSessionsSubquery();
@@ -519,7 +526,8 @@ export async function getRealNumbersComparableFromClickHouse(
       AND lt.type IN (
         'creator_tip','creator_fill_spend_tip','affiliate_leaderboard_prize',
         'creator_deal_fill_grant','creator_fill_activation','creator_fill_forfeiture'
-      )`;
+      )
+      AND lt.created_at >= {cutoff:DateTime64(6)}`;
 
   const programVoucherSql = `
     SELECT
@@ -527,7 +535,8 @@ export async function getRealNumbersComparableFromClickHouse(
       toString(count())      AS conversion_count
     FROM ${CH_DB}.public_vouchers AS v FINAL
     WHERE v._peerdb_is_deleted = 0
-      AND v.origin = 'creator_fill_conversion'`;
+      AND v.origin = 'creator_fill_conversion'
+      AND v.created_at >= {cutoff:DateTime64(6)}`;
 
   const [
     splitWager,
@@ -618,7 +627,7 @@ export async function getRealNumbersComparableFromClickHouse(
     }>({
       queryName: "insightsRealNumbers.program.ledger",
       sql: programLedgerSql,
-      params: noWindowParams,
+      params: programParams,
     }),
     clickhouseRead.query<{
       conversion_value: string;
@@ -626,7 +635,7 @@ export async function getRealNumbersComparableFromClickHouse(
     }>({
       queryName: "insightsRealNumbers.program.vouchers",
       sql: programVoucherSql,
-      params: noWindowParams,
+      params: programParams,
     }),
   ]);
 

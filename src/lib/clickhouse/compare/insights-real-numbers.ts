@@ -89,11 +89,25 @@ export async function compareRealNumbers(pgValues: {
     const dailyPacksCutoff = new Date(
       Date.now() - LIFETIME_LOOKBACK_DAYS * MS_PER_DAY,
     );
+    // Creator-program-cost legs use the SAME 365d house-convention cap the PG
+    // twin's getCreatorProgramCost now applies (`created_at >= NOW() − 365d`).
+    // getCreatorProgramCost exposes no cutoffIso (it inlines NOW() − 365d in
+    // SQL), so derive the boundary the same way; sub-minute skew is immaterial
+    // 365d back.
+    const programCutoff = new Date(
+      Date.now() - LIFETIME_LOOKBACK_DAYS * MS_PER_DAY,
+    );
 
     const { result: ch, durationMs } = await timeCh(async () => {
       const blacklist = await getExcludedUserIds();
       return getRealNumbersComparableFromClickHouse(
-        { wagerCutoff, rewardCutoff, recyclingCutoff, dailyPacksCutoff },
+        {
+          wagerCutoff,
+          rewardCutoff,
+          recyclingCutoff,
+          dailyPacksCutoff,
+          programCutoff,
+        },
         blacklist,
       );
     });

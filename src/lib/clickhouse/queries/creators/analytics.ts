@@ -49,15 +49,21 @@ import { CH_DB, chDateTime, toNumber } from "../_shared";
 
 type Period = "today" | "7d" | "30d" | "90d" | "all";
 
-const PERIOD_DAYS: Record<Exclude<Period, "all">, number> = {
+// Lifetime (`all`) capped at 365d to match the PG twin
+// (creators-analytics.ts LIFETIME_LOOKBACK_DAYS) and the house
+// INSIGHTS_LIFETIME_LOOKBACK_DAYS convention, so cutover/comparison stays
+// bounded and consistent. No-op on current data (< 90d old).
+const LIFETIME_LOOKBACK_DAYS = 365;
+
+const PERIOD_DAYS: Record<Period, number> = {
   today: 1,
   "7d": 7,
   "30d": 30,
   "90d": 90,
+  all: LIFETIME_LOOKBACK_DAYS,
 };
 
 function periodToSince(period: Period, now: Date): Date | null {
-  if (period === "all") return null;
   return new Date(now.getTime() - PERIOD_DAYS[period] * 24 * 60 * 60 * 1000);
 }
 
