@@ -62,6 +62,7 @@ import {
   Hash,
   Hourglass,
   PackageOpen,
+  PieChart,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -146,6 +147,7 @@ const ICONS: Record<string, LucideIcon> = {
   Hash,
   Hourglass,
   PackageOpen,
+  PieChart,
 };
 
 type NavItem = {

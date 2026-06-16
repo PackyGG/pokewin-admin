@@ -14,6 +14,9 @@ export const ADMIN_PAGES: AdminPage[] = [
   // /map was folded into /analytics as a tab — its permission inherits
   // from /analytics. The standalone page no longer exists.
   { group: "Navigation", label: "Users", key: "/users" },
+  // Player CRM — lifecycle + VIP value-tier segmentation and win-back
+  // targets. Customer-scoped, borrow-corrected, House POV (read-only MAIN).
+  { group: "Navigation", label: "Player CRM", key: "/crm" },
   { group: "Navigation", label: "Creators", key: "/creators" },
   // XP Sales — global view of every xp_purchase (users buying XP with their
   // own withdrawable balance). House-POV revenue surface, customer-scoped.

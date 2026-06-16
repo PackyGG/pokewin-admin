@@ -196,6 +196,24 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // Player CRM — lifecycle + VIP value-tier segmentation and win-back
+    // targets, customer-scoped (staff/creators/blacklist dropped), borrow-
+    // corrected, House POV. Icon string `PieChart` MUST be registered in the
+    // ICONS map in `src/components/app-sidebar.tsx` (React #130) and, since
+    // `inPalette: true`, the id MUST also appear in PALETTE_ORDER (lockstep).
+    id: "nav.crm",
+    group: "Overview",
+    label: "Player CRM",
+    href: "/crm",
+    pageKey: "/crm",
+    icon: "PieChart",
+    description: "Lifecycle, value tiers & win-back targets",
+    keywords: ["crm", "segment", "segmentation", "lifecycle", "vip", "whale", "retention", "cohort"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // Sidebar label is "Transactions" (the unified deposits+withdrawals
     // surface); palette label is "Deposits". Same href/pageKey.
     id: "nav.deposits",
@@ -850,6 +868,7 @@ const PALETTE_ORDER: string[] = [
   "nav.analytics",
   "nav.map",
   "nav.users",
+  "nav.crm",
   "nav.deposits",
   "nav.withdrawals",
   "nav.creators",
