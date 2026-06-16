@@ -8,7 +8,21 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `origin/main @ e20834df` · **Updated:** 2026-06-15 · **Active focus:** multiple parallel sessions + workflows — READ THE COORDINATION SECTION BELOW BEFORE EDITING ANYTHING. (Latest: `/settings/roles` MERGED into `/admin-users` as the tabbed "Admins & Access" surface; also NEW `/system/monitor` page; also a role-rebuild wave is mid-flight in sibling worktrees — its admin-DB columns `sessions_valid_after`/`permission_grants`/`permission_revokes`/`custom_role` are in the schema and a fresh `prisma generate` resolves their types, but the DB ALTER is owner-gated.)
+- **HEAD:** `origin/main @ f72fc1af` · **Updated:** 2026-06-16 · **Active focus:** full-auto perf/audit/cleanup sweep (owner asleep). See the SESSION 2026-06-16 block directly below.
+
+### SESSION 2026-06-16 — full-auto perf + audit + cleanup + docs
+
+- **⚠️ BIGGEST LEVER, OWNER ACTION:** `CLICKHOUSE_URL` is **ABSENT on Vercel prod** (`CRON_SECRET` is present). The hard-safety guard in `admin-read-source.ts` therefore forces EVERY surface to Postgres → the entire `CUTOVER_DEFAULT_CLICKHOUSE` set (~60 insights/analytics/creators/rewards surfaces) is **DORMANT in production**. That is why insights/analytics are slow. Adding the 4 `CLICKHOUSE_*` vars to Vercel auto-activates them (instant rollback per-surface via Edge Config). All optimization this session targeted the **Postgres path** accordingly.
+- **Shipped (pushed to main, gated tsc+lint+build=0 each):**
+  - `de79994e` cold-start kill + creator backend caching + `/api/cron/warm` (5-min keep-warm).
+  - `4bb94076` user trust system fully removed + ~12 perf/correctness fixes.
+  - `aa73fa69` security (11 reads cached 300s + Suspense stream + revalidateTag), shards cache, packs KPI no longer re-skeletons on paging, insights categories per-block Suspense.
+  - `9600fad0` users/[id] critical path trimmed (removed redundant identity round-trip, tags read streamed), real-numbers hero streams, creator-hub roster backend reads cached, +2 loading.tsx.
+  - `271228c5` removed orphan `insights-streamers` island + dead `getSharedIpUsers/getSharedFingerprintUsers`; lint 53→35 (left `<img>` + intentional `_`-prefixed).
+  - `f72fc1af` 25+ route audit sweep: analytics tab PG legs cached+timeout, battles/rain detail cache wrappers + revalidateTag, cards/shard-opens/rain KPI decoupled from pagination, admin-users/[id] streams, numbers signup-methods double-scan merged, marketing getDb()-in-cache bug fixed. **Bugs fixed:** rain Tips color inversion; my-profile affiliate level was hardcoded `1`, now derived from `affiliate_level_configs`.
+- **Docs:** NEW `docs/BACKEND_QUERY_SYSTEM.md` — the how-to for other agents (CQRS read-source, prod-only env-keyed `unstable_cache` recipe, Suspense keying rules, Active-Timeframe-Only, safeQuery, House-POV, indexes, concurrency).
+- **Owner index follow-ups (already in `prisma/recommended-indexes.sql`, confirm applied on prod):** `ledger_transactions(status,type,created_at DESC)` (deposits list cold scan), `game_sessions(game_id)` (upgrader tx), `user_inventory(card_id)` (challenge pull-count). MAIN is read-only so agents cannot apply them.
+- **Left for owner sign-off (unbounded all-time money-exact scans, cached+timeout-protected, NOT capped):** analytics ltv/revenue/withdrawals/top/map `all`, creators-analytics `all`, promo-codes money stats, insights real-numbers `getCreatorProgramCost`, battles "Biggest Hit" all-time.
 
 ---
 
