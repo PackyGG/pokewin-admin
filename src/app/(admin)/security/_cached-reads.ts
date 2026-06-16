@@ -12,6 +12,7 @@ import { getShardConfig } from "@/lib/backend-api/shard-config";
 import { getMultiplierWagerWeights } from "@/lib/backend-api/multiplier-wager-weights";
 import { getRewardExpiry } from "@/lib/backend-api/reward-expiry";
 import { getCryptoFees } from "@/lib/backend-api/crypto-fees";
+import { getDepositBonusConfig } from "@/lib/backend-api/deposit-bonus-config";
 import { SECURITY_CACHE_TAG } from "./security-cache-tag";
 
 /**
@@ -113,6 +114,12 @@ const cachedCryptoFees = unstable_cache(
   { revalidate: REVALIDATE_SECONDS, tags: [SECURITY_CACHE_TAG] },
 );
 
+const cachedDepositBonusConfig = unstable_cache(
+  () => getDepositBonusConfig(),
+  ["security-deposit-bonus-config-v1"],
+  { revalidate: REVALIDATE_SECONDS, tags: [SECURITY_CACHE_TAG] },
+);
+
 /**
  * Prod-cached / dev-direct read for each /security section. On a dev-toggled
  * admin every helper bypasses the cache and runs the live read so they always
@@ -195,4 +202,13 @@ export async function getCachedRewardExpiry(): ReturnType<
 export async function getCachedCryptoFees(): ReturnType<typeof getCryptoFees> {
   const env = await readDbEnv();
   return env === "prod" ? cachedCryptoFees() : getCryptoFees();
+}
+
+export async function getCachedDepositBonusConfig(): ReturnType<
+  typeof getDepositBonusConfig
+> {
+  const env = await readDbEnv();
+  return env === "prod"
+    ? cachedDepositBonusConfig()
+    : getDepositBonusConfig();
 }

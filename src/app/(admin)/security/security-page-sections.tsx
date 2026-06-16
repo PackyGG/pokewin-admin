@@ -11,6 +11,7 @@ import { SourceWagerWeightsCard } from "./source-wager-weights-card";
 import { MultiplierWagerWeightsCard } from "./multiplier-wager-weights-card";
 import { RewardExpiryCard } from "./reward-expiry-card";
 import { CryptoFeesCard } from "./crypto-fees-card";
+import { DepositBonusConfigCard } from "./deposit-bonus-config-card";
 import { VaultLockCard, type VaultLockTime } from "./vault-lock-card";
 import type { SiteConfigRow } from "@/lib/queries/security";
 import type { WagerRequirementDefaults } from "@/lib/backend-api/wager-requirements";
@@ -22,6 +23,7 @@ import type { ShardConfig } from "@/lib/backend-api/shard-config";
 import type { MultiplierWagerWeights } from "@/lib/backend-api/multiplier-wager-weights";
 import type { RewardExpiry } from "@/lib/backend-api/reward-expiry";
 import type { CryptoFees } from "@/lib/backend-api/crypto-fees";
+import type { DepositBonusConfig } from "@/lib/backend-api/deposit-bonus-config";
 
 /**
  * Single client boundary for all /security panels. The server page fetches
@@ -41,6 +43,7 @@ export function SecurityPageSections({
   multiplierWeights,
   rewardExpiry,
   cryptoFees,
+  depositBonusConfig,
 }: {
   config: SiteConfigRow[];
   rainConfigMoved: boolean;
@@ -54,6 +57,7 @@ export function SecurityPageSections({
   multiplierWeights: MultiplierWagerWeights | null;
   rewardExpiry: RewardExpiry | null;
   cryptoFees: CryptoFees | null;
+  depositBonusConfig: DepositBonusConfig | null;
 }) {
   return (
     <div className="space-y-6">
@@ -95,6 +99,10 @@ export function SecurityPageSections({
 
       <CollapsibleSecuritySection icon="bitcoin" title="Crypto Exchange-Rate Fees">
         <CryptoFeesCard initial={cryptoFees} />
+      </CollapsibleSecuritySection>
+
+      <CollapsibleSecuritySection icon="gift" title="Deposit Bonus Cap">
+        <DepositBonusConfigCard initial={depositBonusConfig} />
       </CollapsibleSecuritySection>
 
       <CollapsibleSecuritySection icon="sliders" title="Site Configuration">

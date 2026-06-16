@@ -10,6 +10,7 @@ import {
   getCachedMultiplierWagerWeights,
   getCachedRewardExpiry,
   getCachedCryptoFees,
+  getCachedDepositBonusConfig,
 } from "./_cached-reads";
 import { SecurityPageSections } from "./security-page-sections";
 import { RAIN_CONFIG_SITE_CONFIG_KEYS } from "../rain/config-keys";
@@ -19,6 +20,7 @@ import { RAKEBACK_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./rakeback-wager-weights
 import { SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./source-wager-weights-keys";
 import { SHARD_WAGER_WEIGHT_SITE_CONFIG_KEYS } from "./shard-wager-weights-keys";
 import { SHARD_CONFIG_SITE_CONFIG_KEYS } from "./shard-config-keys";
+import { DEPOSIT_BONUS_CONFIG_SITE_CONFIG_KEYS } from "./deposit-bonus-config-keys";
 import { REWARD_EXPIRY_SITE_CONFIG_KEYS } from "./reward-expiry-keys";
 import type { WagerRequirementDefaults } from "@/lib/backend-api/wager-requirements";
 import type { LeaderboardWagerWeights } from "@/lib/backend-api/leaderboard-wager-weights";
@@ -29,6 +31,7 @@ import type { ShardConfig } from "@/lib/backend-api/shard-config";
 import type { MultiplierWagerWeights } from "@/lib/backend-api/multiplier-wager-weights";
 import type { RewardExpiry } from "@/lib/backend-api/reward-expiry";
 import type { CryptoFees } from "@/lib/backend-api/crypto-fees";
+import type { DepositBonusConfig } from "@/lib/backend-api/deposit-bonus-config";
 
 /**
  * Async data loader for the /security sections. Lives behind a <Suspense>
@@ -57,6 +60,7 @@ export async function SecuritySectionsLoader() {
     multiplierWeightsResult,
     rewardExpiryResult,
     cryptoFeesResult,
+    depositBonusConfigResult,
     vaultLockTimesResult,
   ] = await Promise.allSettled([
     getCachedSiteConfig(),
@@ -69,6 +73,7 @@ export async function SecuritySectionsLoader() {
     getCachedMultiplierWagerWeights(),
     getCachedRewardExpiry(),
     getCachedCryptoFees(),
+    getCachedDepositBonusConfig(),
     getCachedVaultLockTimes(),
   ]);
 
@@ -87,6 +92,7 @@ export async function SecuritySectionsLoader() {
     ...SOURCE_WAGER_WEIGHT_SITE_CONFIG_KEYS,
     ...SHARD_WAGER_WEIGHT_SITE_CONFIG_KEYS,
     ...SHARD_CONFIG_SITE_CONFIG_KEYS,
+    ...DEPOSIT_BONUS_CONFIG_SITE_CONFIG_KEYS,
     ...REWARD_EXPIRY_SITE_CONFIG_KEYS,
   ]);
   const config = allConfig.filter((row) => !movedKeys.has(row.key));
@@ -131,6 +137,11 @@ export async function SecuritySectionsLoader() {
   const cryptoFees: CryptoFees | null =
     cryptoFeesResult.status === "fulfilled" ? cryptoFeesResult.value : null;
 
+  const depositBonusConfig: DepositBonusConfig | null =
+    depositBonusConfigResult.status === "fulfilled"
+      ? depositBonusConfigResult.value
+      : null;
+
   const vaultLockTimes =
     vaultLockTimesResult.status === "fulfilled"
       ? vaultLockTimesResult.value
@@ -150,6 +161,7 @@ export async function SecuritySectionsLoader() {
       multiplierWeights={multiplierWeights}
       rewardExpiry={rewardExpiry}
       cryptoFees={cryptoFees}
+      depositBonusConfig={depositBonusConfig}
     />
   );
 }
