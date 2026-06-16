@@ -17,7 +17,6 @@ import { getChatMessagesToday } from "@/lib/queries/dashboard-chat-messages-toda
 import { getCryptoFeeProfitCounter } from "@/lib/queries/dashboard-crypto-fee-counter";
 import { compareDashboardTodayPnl } from "@/lib/clickhouse/compare/dashboard-today-pnl";
 import { compareDashboardAvgPnl7d } from "@/lib/clickhouse/compare/dashboard-avg-pnl-7d";
-import { compareDashboardDailyPnl } from "@/lib/clickhouse/compare/dashboard-daily-pnl";
 import { compareDashboardUpgraderStats } from "@/lib/clickhouse/compare/dashboard-upgrader-stats";
 import { compareDashboardCreatorCostsToday } from "@/lib/clickhouse/compare/dashboard-creator-costs-today";
 import { compareDashboardAffiliateReferredPnlToday } from "@/lib/clickhouse/compare/dashboard-affiliate-referred-pnl-today";
@@ -821,11 +820,10 @@ async function DashboardDailyPnlChart() {
       />
     );
   }
-  // CQRS rollout: in `comparison` mode, run the ClickHouse daily-P&L path
-  // side-by-side and LOG drift on the 30-day sums. Fire-and-forget +
-  // never-throwing — the served chart below stays 100% Postgres. No-op unless
-  // the flag is `comparison`.
-  void compareDashboardDailyPnl(data);
+  // CQRS: the daily-P&L read source (off / comparison / clickhouse) is now
+  // resolved inside getDailyPnl via resolveAdminRead("dashboard_daily_pnl"),
+  // which also fires the comparison-mode drift log — so no page-level compare
+  // call is needed here (it would double-log in comparison mode).
   return <PnlChart data={data} />;
 }
 

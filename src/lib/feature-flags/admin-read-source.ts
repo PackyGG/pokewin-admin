@@ -195,6 +195,10 @@ const CUTOVER_DEFAULT_CLICKHOUSE: ReadonlySet<string> = new Set([
   "dashboard_trend_series",
   "dashboard_realized_pnl_lifetime",
   "dashboard_cashflow",
+  // Daily house P&L 30-day chart (getDailyPnl). Cut over after an aligned-
+  // window parity harness proved cent/count-exact parity on EVERY field and
+  // EVERY day (incl. the live day), Δ=0.00 — see src/lib/queries/pnl.ts.
+  "dashboard_daily_pnl",
 ]);
 
 const VALID: readonly AdminReadMode[] = ["off", "comparison", "clickhouse"];

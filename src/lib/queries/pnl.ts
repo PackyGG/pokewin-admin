@@ -2,6 +2,9 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getDailyPnlFromClickHouse } from "@/lib/clickhouse/queries/dashboard/daily-pnl";
+import { compareDashboardDailyPnl } from "@/lib/clickhouse/compare/dashboard-daily-pnl";
 import { blacklistNotInClause } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
@@ -1028,7 +1031,18 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
 const cachedDailyPnl = unstable_cache(
   async (dayKey: string, excluded: string[]): Promise<DailyPnlPoint[]> => {
     void dayKey; // part of the cache key only
-    return computeDailyPnl(excluded);
+    // CQRS serve-path: in `clickhouse` mode the CH twin is the SOLE read
+    // (a throw degrades via the cache/safeQuery boundary, never re-runs the
+    // heavy Postgres lifetime scan); `comparison` serves Postgres and logs
+    // drift fire-and-forget; `off` serves Postgres. Cent/count-exact parity
+    // confirmed (aligned-window harness: every field, every day Δ=0.00).
+    return resolveAdminRead<DailyPnlPoint[]>("dashboard_daily_pnl", {
+      pg: () => computeDailyPnl(excluded),
+      ch: () => getDailyPnlFromClickHouse(excluded),
+      compare: (pg) => {
+        void compareDashboardDailyPnl(pg);
+      },
+    });
   },
   ["dashboard-daily-pnl-v1"],
   { revalidate: 300, tags: ["dashboard-activity"] },
