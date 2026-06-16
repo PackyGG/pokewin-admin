@@ -24,6 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { Suspense } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
@@ -34,6 +35,12 @@ import {
 } from "@/components/modern-panels";
 import { CollapsibleSection } from "./collapsible-section";
 import { FadeIn } from "@/components/fade-in";
+import {
+  KpiStripSkeleton,
+  SectionHeadingSkeleton,
+} from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SkeletonText } from "@/components/ux";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -104,6 +111,105 @@ export const metadata = { title: "Real Numbers" };
 export default async function RealNumbersPage() {
   await requirePageAccess("/insights/real-numbers");
 
+  const asOf = formatDateTime(new Date());
+
+  return (
+    <div className="space-y-6">
+      <PageHero>
+        <PageHeroIdentity
+          icon={Sigma}
+          accent="emerald"
+          title="Real Numbers"
+          subtitle="Source of truth · lifetime · real customers only (staff, creators & blacklisted users excluded) · reconciled to the ledger & balances"
+          action={
+            <Link
+              href="/insights/cost-breakdown"
+              className={cn(
+                // Outline-button look without calling the client-only
+                // buttonVariants() from this Server Component (that crashes
+                // the RSC render). Mirrors button.tsx variant="outline"
+                // size="sm": bordered, subtle hover, focus ring.
+                "group/cb inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground shadow-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring",
+              )}
+            >
+              <TrendingDown className="size-4 text-rose-500" />
+              <span>Cost Breakdown</span>
+              <ArrowRight className="size-3.5 text-muted-foreground transition-transform motion-safe:group-hover/cb:translate-x-0.5" />
+            </Link>
+          }
+        />
+        <div className="mt-3 flex flex-col gap-1.5 border-t border-border/50 pt-3 text-[11px] leading-snug text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <p className="flex min-w-0 items-center gap-1.5">
+            <ScrollText className="size-3.5 shrink-0 text-muted-foreground/70" />
+            <span className="min-w-0">
+              Sourced from the canonical metric layer (
+              <span className="font-medium text-foreground/80">getCostBreakdown</span>
+              {" · "}
+              <span className="font-medium text-foreground/80">getInsightsHubWager</span>
+              {" · "}
+              <span className="font-medium text-foreground/80">getRealizedPnlSnapshot</span>
+              ) — GGR is the verified inventory-delta model; borrow plays
+              count at their real net basis.
+            </span>
+          </p>
+          <p className="shrink-0 tabular-nums">As of {asOf} · last {INSIGHTS_HUB_WAGER_LOOKBACK_DAYS}d</p>
+        </div>
+      </PageHero>
+
+      <Suspense fallback={<RealNumbersBodySkeleton />}>
+        <RealNumbersBody />
+      </Suspense>
+    </div>
+  );
+}
+
+/**
+ * Body-only fallback for the streamed `<RealNumbersBody>` boundary. The shell
+ * (PageHero) is already painted by the page above, so this mirrors only the
+ * data body below the hero — the 6-tile KPI strip + the first section
+ * silhouettes — using the same layout-matching shapes as `loading.tsx` so
+ * nothing jumps when the 9 heavy lifetime reads land.
+ */
+function RealNumbersBodySkeleton() {
+  return (
+    <div className="space-y-6">
+      <KpiStripSkeleton count={6} />
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={240} />
+        <div className="rounded-2xl border bg-card p-4 ring-1 ring-foreground/10 sm:p-5">
+          <SkeletonText lines={5} />
+        </div>
+      </div>
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={280} />
+        <div className="rounded-xl border bg-card p-3 ring-1 ring-foreground/10 sm:p-4">
+          <SkeletonText lines={10} />
+        </div>
+      </div>
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={220} />
+        <div className="rounded-xl border bg-card p-3 ring-1 ring-foreground/10 sm:p-4">
+          <Skeleton className="h-40 w-full rounded-lg" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The data body — the 9 heavy lifetime reads + the full waterfall/bridge UI.
+ *
+ * Split out of the page shell so the PageHero streams to first paint
+ * immediately (active-timeframe-only spirit: the shell is not gated on the
+ * lifetime aggregates). All 9 reads stay in ONE `Promise.all` (so they still
+ * run concurrently, and the shared `cost`/`snapshot`/`wager` values are fetched
+ * exactly once and threaded into every section) — only the FIRST-PAINT gate
+ * moved off the hero. Each read is still cached (`unstable_cache`, 365d-capped
+ * lifetime) and `safeQuery`-timeout-wrapped, so a slow leg degrades to its
+ * fallback instead of hanging the boundary. Math, shapes and House-POV colours
+ * are unchanged.
+ */
+async function RealNumbersBody() {
   // Lifetime, 365d-capped — the same window the insights hub + /ggr use.
   const [
     { data: cost, error: costErr },
@@ -200,52 +306,7 @@ export default async function RealNumbersPage() {
     recycling,
   });
 
-  const asOf = formatDateTime(new Date());
-
-  return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={Sigma}
-          accent="emerald"
-          title="Real Numbers"
-          subtitle="Source of truth · lifetime · real customers only (staff, creators & blacklisted users excluded) · reconciled to the ledger & balances"
-          action={
-            <Link
-              href="/insights/cost-breakdown"
-              className={cn(
-                // Outline-button look without calling the client-only
-                // buttonVariants() from this Server Component (that crashes
-                // the RSC render). Mirrors button.tsx variant="outline"
-                // size="sm": bordered, subtle hover, focus ring.
-                "group/cb inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground shadow-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring",
-              )}
-            >
-              <TrendingDown className="size-4 text-rose-500" />
-              <span>Cost Breakdown</span>
-              <ArrowRight className="size-3.5 text-muted-foreground transition-transform motion-safe:group-hover/cb:translate-x-0.5" />
-            </Link>
-          }
-        />
-        <div className="mt-3 flex flex-col gap-1.5 border-t border-border/50 pt-3 text-[11px] leading-snug text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-          <p className="flex min-w-0 items-center gap-1.5">
-            <ScrollText className="size-3.5 shrink-0 text-muted-foreground/70" />
-            <span className="min-w-0">
-              Sourced from the canonical metric layer (
-              <span className="font-medium text-foreground/80">getCostBreakdown</span>
-              {" · "}
-              <span className="font-medium text-foreground/80">getInsightsHubWager</span>
-              {" · "}
-              <span className="font-medium text-foreground/80">getRealizedPnlSnapshot</span>
-              ) — GGR is the verified inventory-delta model; borrow plays
-              count at their real net basis.
-            </span>
-          </p>
-          <p className="shrink-0 tabular-nums">As of {asOf} · last {INSIGHTS_HUB_WAGER_LOOKBACK_DAYS}d</p>
-        </div>
-      </PageHero>
-
-      {costErr || !cost ? (
+  return costErr || !cost ? (
         <TileErrorFallback
           label="Real Numbers"
           hint="The canonical cost-breakdown helper failed. Server logs hold the digest."
@@ -363,9 +424,7 @@ export default async function RealNumbersPage() {
             </CollapsibleSection>
           </div>
         </FadeIn>
-      )}
-    </div>
-  );
+      );
 }
 
 // ─── KPI strip ──────────────────────────────────────────────────────

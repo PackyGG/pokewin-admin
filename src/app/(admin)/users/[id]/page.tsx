@@ -11,7 +11,6 @@ import {
   getUserDetailCached,
   getUserPnlBreakdownCached,
   getRiskScoreCached,
-  getUserHeaderCritical,
 } from "@/lib/queries/users-detail-cache";
 import { resolveUserIdFromRouteKey } from "@/lib/queries/users-detail";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
@@ -175,35 +174,15 @@ export default async function UserDetailPage({
 
   // ── CRITICAL PATH — keep it tiny so first paint is instant ─────────
   //
-  // The bug this guards against: the page used to BLOCK its entire first
-  // paint on a single `Promise.all([...])` of ~14 queries — getUserDetail
-  // (~19 Main-DB round-trips + the canonical P&L helper), two inventory
-  // pages, the P&L breakdown, the risk-score aggregate, rewards, and the
-  // tab transactions. A SINGLE slow/failing query among them threw a
-  // promise that propagated to the segment error.tsx and replaced the
-  // WHOLE page with "Couldn't load this user". Mirrors the /creators/[userId]
-  // fix (commit 27d35c0): await only a cheap header on the critical path,
-  // then stream the heavy body in its own Suspense boundary.
-  //
-  // getUserHeader is two indexed identity reads — username/email for the
-  // back-link header. This is the page's ONE un-streamed critical-path
-  // read, so historically it was also the LAST way the page could hard-
-  // crash to the segment error boundary: if the Postgres pool was
-  // momentarily starved by a couple of runaway per-user scans (the
-  // failure db.ts documents), even this cheap read could block until the
-  // platform tore the request down → "Couldn't load this user" (digest
-  // 497656675). getUserHeaderCritical bounds it with a short wall-clock
-  // budget and degrades instead of throwing: a clean null is still the
-  // ONLY 404 path (genuinely unknown id), but a timeout/failure yields an
-  // id-only placeholder header so the shell renders and the streamed body
-  // (its own timeout-wrapped getUserDetail) fills in the real identity.
-  // getUserHeaderCritical stays the critical-path 404 guard: a clean
-  // not-found is the ONLY 404 path (genuinely unknown id). The identity it
-  // returns is no longer rendered as a standalone top strip (the hero in the
-  // streamed body shows username/email) — we only need the found/not-found
-  // verdict here so the shell can render and stream the body.
-  const headerResult = await getUserHeaderCritical(id);
-  if (!headerResult.found) notFound();
+  // Existence / 404 is already settled above: resolveUserIdFromRouteKey
+  // returns null (→ notFound) for an unknown route key and a non-null id
+  // only for a row that exists. The streamed body's hero renders the
+  // identity (username/email) from its own timeout-wrapped getUserDetail,
+  // so the critical path needs no second identity read — dropping the
+  // extra getUserHeaderCritical round-trip shortens first paint on this
+  // (highest-traffic) route and removes a redundant pool hit. The whole
+  // heavy body still streams behind its own Suspense boundary below, so a
+  // slow/failed aggregate degrades that band instead of the page.
 
   // Permissions for the union-capability checks. For admins this is a
   // constant (no query); for non-admins it's a single cache()'d admin-DB
@@ -218,31 +197,12 @@ export default async function UserDetailPage({
       ? null
       : await getUserPermissions(session.userId);
 
-  // Tag management is independent of the per-action capabilities so it can
-  // be granted to a CRM/sales role without giving them ban/edit-identity/
-  // wipe etc.
-  const canManageUserTags =
-    session.role === "admin" ||
-    hasCapability(permissions ?? [], "__can_manage_user_tags");
-
-  // VIP tags (admin-CRM metadata) back the dashed tag-panel row that sits
-  // with the header. Cheap admin-DB read, but still safeQuery-wrapped so a
-  // transient admin-DB hiccup renders the empty-state row rather than
-  // taking down the header.
-  const { data: userTags } = await safeQuery(
-    () => getUserTags(id),
-    [],
-    "users.detail.tags",
-  );
-
-  // Tags + back button are rendered here (on the critical path, where the
-  // tag data + permissions already resolved) and passed as plain React
-  // ELEMENTS (serializable nodes — NOT function props) down through the
-  // streamed body into the hero. The owner removed the redundant top
-  // identity strip (it just repeated the username/email already shown
-  // inside the hero); the back button is now a compact icon tucked into
-  // the hero's top-left, and the tag manager lives inside the hero too,
-  // saving the vertical space the old standalone rows took.
+  // Back button is rendered here and passed as a plain React ELEMENT
+  // (serializable node — NOT a function prop) down through the streamed
+  // body into the hero. It needs nothing async, so it stays on the
+  // critical path; the VIP tag manager (an admin-DB read) is built INSIDE
+  // the streamed body instead, keeping that read off first paint. The
+  // back button is a compact icon tucked into the hero's top-left.
   const backSlot = (
     <Link
       href="/users"
@@ -251,13 +211,6 @@ export default async function UserDetailPage({
     >
       <ArrowLeft className="size-4" />
     </Link>
-  );
-  const tagsSlot = (
-    <UserTagsPanel
-      userId={id}
-      initialTags={userTags}
-      canManage={canManageUserTags}
-    />
   );
 
   return (
@@ -276,8 +229,9 @@ export default async function UserDetailPage({
           Suspense keeps those reads off the header's TTFB, and every fetch
           inside is timeout-wrapped (safeQuery) so a slow/failed one shows a
           fallback section instead of throwing the whole page. The back
-          button + tag manager (both resolved above) are threaded in as
-          serializable React elements so they render inside the hero. ──── */}
+          button (resolved above) is threaded in as a serializable React
+          element; the tag manager is built inside the body from its own
+          parallel admin-DB read so both render inside the hero. ──── */}
       <Suspense fallback={<UserDetailBodySkeleton />}>
         <UserDetailBody
           id={id}
@@ -286,7 +240,6 @@ export default async function UserDetailPage({
           permissions={permissions}
           initialTab={initialTab}
           backSlot={backSlot}
-          tagsSlot={tagsSlot}
         />
       </Suspense>
     </div>
@@ -309,7 +262,6 @@ async function UserDetailBody({
   permissions,
   initialTab,
   backSlot,
-  tagsSlot,
 }: {
   id: string;
   sessionRole: string;
@@ -319,12 +271,12 @@ async function UserDetailBody({
   // tag panel's and avoids a second (cache()'d, but clearer-as-prop) read.
   permissions: string[] | null;
   initialTab: TabKey;
-  // Pre-rendered React elements (serializable nodes, NOT function props)
+  // Pre-rendered React element (serializable node, NOT a function prop)
   // resolved on the critical path in the page above: the compact back-to-
-  // users button and the VIP tag manager. Threaded through to UserViewModern
-  // so both render INSIDE the identity hero rather than as standalone rows.
+  // users button. The VIP tag manager (tagsSlot) is built HERE in the
+  // streamed body from a tab-independent admin-DB read kicked alongside the
+  // body gate, so its read never extends the shell's first paint.
   backSlot: ReactNode;
-  tagsSlot: ReactNode;
 }) {
   // Empty paginated-transaction shape used as the safeQuery fallback for
   // the gaming / financial / adjustments tx fetches below. Same shape
@@ -650,6 +602,7 @@ async function UserDetailBody({
     creatorHistoryResult,
     mothaCanEditResult,
     viewerIsOwnerResult,
+    userTagsResult,
   ] = await Promise.all([
     // getUserDetail is THE heavy aggregate (~19 Main-DB round-trips + the
     // canonical calculateUserPnl helper). Timeout-bounded and
@@ -678,13 +631,21 @@ async function UserDetailBody({
       "users.detail.mothaGate",
     ),
     viewerIsOwnerPromise,
+    // VIP tags (admin-CRM metadata) backing the tag manager inside the
+    // hero. Moved off the page's critical path to here so its admin-DB
+    // read runs in parallel with the heavy body gate (always faster than
+    // getUserDetail) and never extends the shell's first paint. safeQuery-
+    // wrapped: a transient admin-DB hiccup renders the empty-state row
+    // rather than taking down the streamed band.
+    safeQuery(() => getUserTags(id), [], "users.detail.tags"),
   ]);
 
   const data = detailResult.data;
 
-  // getUserDetail returns null only for a truly unknown user — but the
-  // header already resolved via getUserHeader, so a null here means the
-  // aggregate read failed/timed out. ACCEPTED LIMITATION (stated per the
+  // getUserDetail returns null only for a truly unknown user — but
+  // existence was already confirmed on the critical path by
+  // resolveUserIdFromRouteKey, so a null here means the aggregate read
+  // failed/timed out. ACCEPTED LIMITATION (stated per the
   // remake plan): a null detail cannot partially render — everything in
   // UserViewModern hangs off `data.user` — so this stays a full-band
   // visible error with retry. After the Phase-1 query fixes this branch
@@ -766,6 +727,21 @@ async function UserDetailBody({
     wasCreator,
     creatorSince: creatorHistory.creatorSince,
   };
+
+  // Tag management is independent of the per-action capabilities so it can
+  // be granted to a CRM/sales role without giving them ban/edit-identity/
+  // wipe etc. Built here (not on the critical path) and passed as a plain
+  // React ELEMENT (serializable node — NOT a function prop) into the hero.
+  const canManageUserTags =
+    sessionRole === "admin" ||
+    hasCapability(permissions ?? [], "__can_manage_user_tags");
+  const tagsSlot = (
+    <UserTagsPanel
+      userId={id}
+      initialTags={userTagsResult.data}
+      canManage={canManageUserTags}
+    />
+  );
 
   return (
     <UserViewModern

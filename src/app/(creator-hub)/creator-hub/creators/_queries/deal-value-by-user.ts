@@ -1,5 +1,7 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import { creatorsApi } from "@/lib/backend-api";
 import { getLeaderboard2wkCostByUser } from "../../../../(admin)/creators/_queries/leaderboard-cost";
 
@@ -63,6 +65,57 @@ function toFiniteNumber(value: string | number | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Per-deal cap + tip/sponsor allowance legs, serializable for the cache. */
+type DealCapTip = { capUsd: number; tipSponsorUsd: number };
+
+/**
+ * The backend `getDeal` fan-out behind {@link getDealValueByUser}, wrapped
+ * in `unstable_cache` (5-min revalidate) keyed on the requested
+ * (userId, dealId) pairs so re-renders / tab flips / period switches that
+ * surface the same active deals don't re-fan the per-deal backend
+ * round-trips. Mirrors the sibling `cachedDealCapEntries` in the admin
+ * deal-cap-by-user.ts (same TTL + tag), differing only in the legs pulled
+ * (cap + per-stream tip/sponsor allowance instead of cap + used). Backend-
+ * only (creatorsApi.getDeal), so it resolves to the prod env inside the
+ * cache scope and needs no env key. The (userId, dealId) pairs are folded
+ * into the key parts; serializable entries are returned (an
+ * `unstable_cache` callback can't store a `Map`) and the caller rebuilds
+ * the Maps.
+ */
+const cachedDealCapTipEntries = (deals: { userId: string; dealId: string }[]) =>
+  unstable_cache(
+    async (): Promise<[string, DealCapTip][]> => {
+      const settled = await Promise.allSettled(
+        deals.map((d) => creatorsApi.getDeal(d.userId, d.dealId)),
+      );
+      const entries: [string, DealCapTip][] = [];
+      settled.forEach((outcome, i) => {
+        const userId = deals[i].userId;
+        if (outcome.status === "fulfilled") {
+          const deal = outcome.value;
+          entries.push([
+            userId,
+            {
+              capUsd: toFiniteNumber(deal.total_withdraw_cap_usd),
+              // Per-stream house-funded tip + sponsorship allowance.
+              tipSponsorUsd:
+                toFiniteNumber(deal.max_tip_per_stream_usd) +
+                toFiniteNumber(deal.max_sponsorship_per_stream_usd),
+            },
+          ]);
+        } else {
+          console.error(
+            `[creator-hub roster] getDeal failed for creator ${userId} (deal value renders "—"):`,
+            outcome.reason,
+          );
+        }
+      });
+      return entries;
+    },
+    ["creators-deal-cap-tip-v1", ...deals.map((d) => `${d.userId}:${d.dealId}`)],
+    { revalidate: 300, tags: ["creators-deal-cap"] },
+  );
+
 /**
  * Resolve the full deal value for a set of creators' active/scheduled deals.
  *
@@ -90,32 +143,28 @@ export async function getDealValueByUser(
   });
 
   // Per-deal cap + tip/sponsor allowance — one backend round-trip per
-  // active/scheduled deal, all in flight together. allSettled so one dead
-  // leg can't sink the rest.
-  const settled = await Promise.allSettled(
-    deals.map((d) => creatorsApi.getDeal(d.userId, d.dealId)),
+  // active/scheduled deal, all in flight together (allSettled so one dead
+  // leg can't sink the rest), and cross-request cached so re-renders that
+  // surface the same deals don't re-fan the backend. The pairs are sorted
+  // so the cache key is stable regardless of roster order — the rebuilt
+  // Maps are keyed by userId (order-independent), so a sorted key lifts the
+  // hit rate without changing any output.
+  const sortedDeals = [...deals].sort((a, b) =>
+    a.userId === b.userId
+      ? a.dealId.localeCompare(b.dealId)
+      : a.userId.localeCompare(b.userId),
   );
+  const capTipEntries =
+    sortedDeals.length === 0
+      ? []
+      : await cachedDealCapTipEntries(sortedDeals)();
 
   const capByUser = new Map<string, number>();
   const tipSponsorByUser = new Map<string, number>();
-  settled.forEach((outcome, i) => {
-    const userId = deals[i].userId;
-    if (outcome.status === "fulfilled") {
-      const deal = outcome.value;
-      capByUser.set(userId, toFiniteNumber(deal.total_withdraw_cap_usd));
-      // Per-stream house-funded tip + sponsorship allowance.
-      tipSponsorByUser.set(
-        userId,
-        toFiniteNumber(deal.max_tip_per_stream_usd) +
-          toFiniteNumber(deal.max_sponsorship_per_stream_usd),
-      );
-    } else {
-      console.error(
-        `[creator-hub roster] getDeal failed for creator ${userId} (deal value renders "—"):`,
-        outcome.reason,
-      );
-    }
-  });
+  for (const [userId, legs] of capTipEntries) {
+    capByUser.set(userId, legs.capUsd);
+    tipSponsorByUser.set(userId, legs.tipSponsorUsd);
+  }
 
   // Union of every creator that has ANY contributing leg (a deal we
   // resolved, OR an upcoming leaderboard cost) — so a creator with only a

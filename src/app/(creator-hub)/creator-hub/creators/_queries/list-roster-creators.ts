@@ -1,5 +1,7 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import { creatorsApi, type CreatorListItem } from "@/lib/backend-api";
 
 // Reuse the EXISTING (admin)-group creator data layer. The (creator-hub)
@@ -10,10 +12,8 @@ import {
   getCodeAndWagerByUser,
   type CreatorCodeAndWager,
 } from "../../../../(admin)/creators/_queries/code-and-wager-by-user";
-import {
-  getRosterSocialsByUser,
-  type CreatorSocialSummary,
-} from "../../../../(admin)/creators/_queries/socials-by-user";
+import { type CreatorSocialSummary } from "../../../../(admin)/creators/_queries/socials-by-user";
+import { getRosterSocialsByUserCached } from "./roster-socials-cache";
 import {
   getAllCreatorsNetGgr,
   type CreatorNetGgrRow,
@@ -92,7 +92,7 @@ export type RosterResult = {
   rosterUnavailable: boolean;
 };
 
-async function walkAllCreators(): Promise<CreatorListItem[]> {
+async function computeAllCreators(): Promise<CreatorListItem[]> {
   const firstPage = await creatorsApi.list({ offset: 0, limit: PAGE_SIZE });
   const all = [...firstPage.data];
   const pagesNeeded = Math.min(
@@ -106,6 +106,22 @@ async function walkAllCreators(): Promise<CreatorListItem[]> {
   for (const page of await Promise.all(rest)) all.push(...page.data);
   return all;
 }
+
+/**
+ * The full backend roster walk cached cross-request (180s revalidate) so
+ * the Hub roster doesn't re-fan the backend creator-pool pagination on
+ * every render / tab flip / period switch. This mirrors the cached walk
+ * the legacy /creators page already uses (`creators-roster-walk-v1` in
+ * list-creators-by-tab.ts) — the Hub roster was the one surface still
+ * paying this fan-out uncached on every paint. Backend-only
+ * (creatorsApi.list), so it resolves to the prod env inside the cache
+ * scope (sibling fill-creator-count convention) and needs no env key.
+ */
+const walkAllCreators = unstable_cache(
+  computeAllCreators,
+  ["creator-hub-roster-walk-v1"],
+  { revalidate: 180, tags: ["creator-hub-roster-walk"] },
+);
 
 /**
  * Apply the owner's sort set. Every comparator is total + stable-ish (ties
@@ -234,7 +250,7 @@ export async function listRosterCreators(
         );
         return new Map<string, CreatorCodeAndWager>();
       }),
-      getRosterSocialsByUser(ids).catch((err) => {
+      getRosterSocialsByUserCached(ids).catch((err) => {
         console.error(
           "[creator-hub roster] socials fetch failed (chips hidden):",
           err,
