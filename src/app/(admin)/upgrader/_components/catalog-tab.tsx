@@ -6,12 +6,14 @@ import {
   HandCoins,
   Layers,
   Palette,
+  Plus,
   Sparkles,
 } from "lucide-react";
 
 import { SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
@@ -110,27 +112,24 @@ export async function UpgraderCatalogTab({
   const statusFilter = params.status ?? "all";
   const tierFilter = params.tier ?? "all";
 
-  // Both fetches are wrapped in safeQuery so a backend-API blip
-  // (listUpgraderOutputs calls the website backend over HTTP) or a transient
-  // main-DB fault (getUpgraderPickerFilters reads `cards`+`sets`) degrades to
-  // a panel-level error instead of taking the whole tab down. 12s timeout
+  // The canonical pool fetch is wrapped in safeQuery so a backend-API blip
+  // (listUpgraderOutputs calls the website backend over HTTP) degrades to a
+  // panel-level error instead of taking the whole tab down. 12s timeout
   // matches the entity-surface PRIMARY_QUERY_TIMEOUT_MS used on /cards + /packs.
-  const [outputsResult, filtersResult] = await Promise.all([
-    safeQuery(
-      () => listUpgraderOutputs(),
-      [] as UpgraderOutputCard[],
-      "upgrader.list",
-      12_000,
-    ),
-    safeQuery(
-      () => getUpgraderPickerFilters(),
-      { sets: [], rarities: [] } as Awaited<
-        ReturnType<typeof getUpgraderPickerFilters>
-      >,
-      "upgrader.filters",
-      12_000,
-    ),
-  ]);
+  //
+  // The picker filters (getUpgraderPickerFilters → getSets + getRarities)
+  // feed ONLY the Add Cards dialog, so they no longer gate this segment:
+  // they're fetched in a nested <Suspense> (UpgraderAddCardsAction) and
+  // stream into the section-heading action independently. The KPI strip,
+  // tier panel and grid all derive from `outputs` alone, so they now paint
+  // at listUpgraderOutputs() latency instead of waiting on the slower of the
+  // two — same values, earlier first paint.
+  const outputsResult = await safeQuery(
+    () => listUpgraderOutputs(),
+    [] as UpgraderOutputCard[],
+    "upgrader.list",
+    12_000,
+  );
 
   // If the canonical pool fetch failed there is nothing to derive the KPI
   // strip, tier panel, or grid from — render a single panel-level error tile
@@ -148,9 +147,6 @@ export async function UpgraderCatalogTab({
   }
 
   const outputs = outputsResult.data;
-  // Filters feed the AddCards dialog only; an empty fallback is the safe
-  // degraded state (the dialog renders no options instead of crashing).
-  const filters = filtersResult.data;
 
   // KPI strip + tier panel read the FULL pool so they stay stable while admins
   // refine the grid filters below.
@@ -373,11 +369,9 @@ export async function UpgraderCatalogTab({
           // (existingCardIds / sets / rarities), which the page shell can't
           // resolve without eager-loading the pool on the Transactions tab.
           action={
-            <AddUpgraderCardsDialog
-              existingCardIds={existingCardIds}
-              sets={filters.sets}
-              rarities={filters.rarities}
-            />
+            <Suspense fallback={<AddCardsActionFallback />}>
+              <UpgraderAddCardsAction existingCardIds={existingCardIds} />
+            </Suspense>
           }
         />
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
@@ -414,5 +408,53 @@ export async function UpgraderCatalogTab({
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * Placeholder for the Add Cards trigger while its picker filters
+ * (getSets + getRarities) stream in. Mirrors the dialog's trigger button
+ * (same `gap-2` + Plus icon) but disabled, so the section heading keeps its
+ * shape and the button doesn't pop in — it just enables once the filters
+ * resolve.
+ */
+function AddCardsActionFallback() {
+  return (
+    <Button className="gap-2" disabled>
+      <Plus className="size-4" />
+      Add Cards
+    </Button>
+  );
+}
+
+/**
+ * Streams the Add Cards dialog independently of the catalog's main content.
+ * The picker filters feed ONLY the dialog's rarity/set dropdowns, so they're
+ * fetched here (behind the page's <Suspense>) instead of gating the KPI
+ * strip / tier panel / grid. `existingCardIds` is derived from the already
+ * resolved pool and threaded in. safeQuery degrades a filters fault to empty
+ * dropdowns (dialog still opens) rather than crashing the tab — same value
+ * behavior as the previous inline fallback.
+ */
+async function UpgraderAddCardsAction({
+  existingCardIds,
+}: {
+  existingCardIds: string[];
+}) {
+  const filtersResult = await safeQuery(
+    () => getUpgraderPickerFilters(),
+    { sets: [], rarities: [] } as Awaited<
+      ReturnType<typeof getUpgraderPickerFilters>
+    >,
+    "upgrader.filters",
+    12_000,
+  );
+  const filters = filtersResult.data;
+  return (
+    <AddUpgraderCardsDialog
+      existingCardIds={existingCardIds}
+      sets={filters.sets}
+      rarities={filters.rarities}
+    />
   );
 }

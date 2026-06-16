@@ -71,6 +71,9 @@ export default async function RewardTransactionsPage({
               <Link
                 key={t.value}
                 href={`/transactions/rewards?tab=${t.value}`}
+                replace
+                scroll={false}
+                prefetch={false}
                 className={cn(
                   "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                   tab === t.value

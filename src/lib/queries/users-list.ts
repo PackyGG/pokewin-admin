@@ -651,6 +651,29 @@ const USER_LIST_SELECT = {
 type UserListRow = Prisma.UserGetPayload<{ select: typeof USER_LIST_SELECT }>;
 
 /**
+ * Cached wrapper around the list risk-score batch. `computeRiskScoresForList`
+ * lives in the SHARED `src/lib/fraud/score.ts` (also used by the user-detail
+ * view), so the cache is applied HERE at the list call site rather than in
+ * that file. Keyed on the SORTED page id list so the same slice (re-render,
+ * the 60s AutoRefresh tick, or a duplicate Suspense fan-out) reuses one
+ * result regardless of display order; a short 20s TTL keeps badges fresh as
+ * admins ban/lock users. `unstable_cache` JSON-serializes its return value,
+ * so the Map is round-tripped through an entries array — RiskScoreLite is
+ * plain serializable data (score / tier / sharedIpCount /
+ * sharedFingerprintCount), so the rebuilt Map is byte-identical to calling
+ * `computeRiskScoresForList` directly. Advisory badge only; the call site
+ * still catches + degrades to badge-less rows on failure.
+ */
+const cachedRiskScoresForList = unstable_cache(
+  async (sortedIds: string[]): Promise<Array<[string, RiskScoreLite]>> => {
+    const map = await computeRiskScoresForList(sortedIds);
+    return Array.from(map.entries());
+  },
+  ["users-list-risk-scores-v1"],
+  { revalidate: 20, tags: ["users-list"] },
+);
+
+/**
  * Hydrate the page slice with live per-row financials + risk badges.
  *
  * ONE truthful path — the old 4-mode variant (skipPnlBatch /
@@ -698,14 +721,16 @@ async function hydrateUserListPage(
         })
       : Promise.resolve(emptyDeposits),
     userIds.length > 0
-      ? computeRiskScoresForList(userIds).catch((err) => {
-          logError(
-            "users.list.risk",
-            "risk batch degraded — rendering rows without risk badges",
-            err,
-          );
-          return emptyRisk;
-        })
+      ? cachedRiskScoresForList([...userIds].sort())
+          .then((entries) => new Map<string, RiskScoreLite>(entries))
+          .catch((err) => {
+            logError(
+              "users.list.risk",
+              "risk batch degraded — rendering rows without risk badges",
+              err,
+            );
+            return emptyRisk;
+          })
       : Promise.resolve(emptyRisk),
   ]);
 

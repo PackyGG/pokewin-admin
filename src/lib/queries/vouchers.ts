@@ -177,14 +177,26 @@ export async function getVouchers(params: {
   };
 }
 
+// "Created By" filter options for the toolbar: the set of admins who have
+// ever created a voucher. Tab-/filter-/page-independent, so it renders the
+// same regardless of which voucher view is active and is safe to cache
+// cross-request (60s) — mirrors the getVouchersListStats cache below.
+const cachedVoucherCreators = unstable_cache(
+  async () => {
+    const admins = await adminDb.admin_users.findMany({
+      where: {
+        voucher_actions: { some: { action: "created" } },
+      },
+      select: { id: true, username: true },
+    });
+    return admins;
+  },
+  ["voucher-creators-v1"],
+  { revalidate: 60, tags: ["voucher-creators"] },
+);
+
 export async function getVoucherCreators() {
-  const admins = await adminDb.admin_users.findMany({
-    where: {
-      voucher_actions: { some: { action: "created" } },
-    },
-    select: { id: true, username: true },
-  });
-  return admins;
+  return cachedVoucherCreators();
 }
 
 // ─── Global KPI stats for the /vouchers page hero strip ───────────────

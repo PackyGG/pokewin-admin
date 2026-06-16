@@ -317,6 +317,31 @@ export async function getCardInspector(
   };
 }
 
+/**
+ * Cached `COUNT(*)` over `user_inventory` for one card — the detail page's
+ * "In Inventory" KPI. Previously this ran uncached on every `/cards/[id]`
+ * load against the large game `user_inventory` table; the value is identical
+ * across page/scroll, so we cache it per card-id for 60s (mirrors
+ * `getCardsListCount` / `getCardsStats`). Same COUNT, just memoised — the
+ * surfaced number is unchanged, only fresher reads degrade to ≤60s lag.
+ */
+async function fetchCardInventoryCount(id: string): Promise<number> {
+  const db = await getDb();
+  const rows = await db.$queryRawUnsafe<{ count: string }[]>(
+    `SELECT COUNT(*)::text AS count FROM user_inventory WHERE card_id = $1`,
+    id,
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
+function getCardInventoryCount(id: string): Promise<number> {
+  return unstable_cache(
+    () => fetchCardInventoryCount(id),
+    ["card-inventory-count-v1", id],
+    { revalidate: 60, tags: ["card-inventory-count"] },
+  )();
+}
+
 export async function getCardDetail(id: string) {
   const db = await getDb();
   // Explicit `select` on the card columns. Everything named here is a
@@ -337,7 +362,7 @@ export async function getCardDetail(id: string) {
   // pack_cards relation: we only need the related `packs` row per join,
   // not the join-row's own columns (weight, color, animation, etc.).
   // Switching include → select drops them from the wire.
-  const [card, inventoryCountRows, statsResult] = await Promise.all([
+  const [card, inventoryCount, statsResult] = await Promise.all([
     db.cards.findUnique({
       where: { id },
       select: {
@@ -363,10 +388,7 @@ export async function getCardDetail(id: string) {
         },
       },
     }),
-    db.$queryRawUnsafe<{ count: string }[]>(
-      `SELECT COUNT(*)::text AS count FROM user_inventory WHERE card_id = $1`,
-      id
-    ),
+    getCardInventoryCount(id),
     // OnePiece game-design columns. Read on their own so a DB without the
     // cost/power migration (missing-column → P2022 / 42703) degrades to
     // `null` here instead of crashing the detail page. Mirrors the
@@ -404,7 +426,7 @@ export async function getCardDetail(id: string) {
     cardNumber: card.card_number,
     setId: card.set_id,
     setName: card.sets?.name ?? null,
-    inventoryCount: Number(inventoryCountRows[0]?.count ?? 0),
+    inventoryCount,
     packs: card.pack_cards.map((pc: { packs: { id: string; name: string; image_url: string | null } }) => ({
       id: pc.packs.id,
       name: pc.packs.name,

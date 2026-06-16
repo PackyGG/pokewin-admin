@@ -1,5 +1,7 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
@@ -29,11 +31,24 @@ export type GiveawayCard = {
   };
 };
 
+// Cross-request cache (60s) keyed on the resolved limit. Values are
+// identical to the un-cached path; only freshness is bounded — a brand
+// new giveaway shows up within 60s. Wrapping here avoids re-hitting the
+// admin DB + the (read-only) main-DB username lookup on every navigation.
+const cachedGiveawayFeed = unstable_cache(
+  (limit: number) => getGiveawayFeedUncached(limit),
+  ["marketing-giveaway-feed-v1"],
+  { revalidate: 60, tags: ["marketing-giveaway-feed"] },
+);
+
 export async function getGiveawayFeed(params?: {
   limit?: number;
 }): Promise<GiveawayCard[]> {
   const limit = Math.max(1, Math.min(500, Math.floor(params?.limit ?? 200)));
+  return cachedGiveawayFeed(limit);
+}
 
+async function getGiveawayFeedUncached(limit: number): Promise<GiveawayCard[]> {
   const rows = await adminDb.admin_giveaway_actions.findMany({
     orderBy: { created_at: "desc" },
     take: limit,
@@ -96,17 +111,21 @@ export async function getGiveawayFeed(params?: {
 
 /**
  * Top-line totals for the page header (count + USD given away).
+ * Cross-request cached (60s) — same TTL as the feed so the header count
+ * and the rendered cards stay consistent. Values are identical to the
+ * un-cached aggregate.
  */
-export async function getGiveawayTotals(): Promise<{
-  count: number;
-  totalUsd: number;
-}> {
-  const agg = await adminDb.admin_giveaway_actions.aggregate({
-    _count: true,
-    _sum: { amount_usd: true },
-  });
-  return {
-    count: agg._count ?? 0,
-    totalUsd: toNumber(agg._sum.amount_usd),
-  };
-}
+export const getGiveawayTotals = unstable_cache(
+  async (): Promise<{ count: number; totalUsd: number }> => {
+    const agg = await adminDb.admin_giveaway_actions.aggregate({
+      _count: true,
+      _sum: { amount_usd: true },
+    });
+    return {
+      count: agg._count ?? 0,
+      totalUsd: toNumber(agg._sum.amount_usd),
+    };
+  },
+  ["marketing-giveaway-totals-v1"],
+  { revalidate: 60, tags: ["marketing-giveaway-totals"] },
+);

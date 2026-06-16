@@ -1,8 +1,9 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { Prisma } from "@/generated/prisma/client";
 import { getDb } from "@/lib/db";
+import { SETS_CACHE_TAG } from "@/lib/queries/sets";
 import { verifySession } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -98,6 +99,7 @@ export async function createSet(data: { name: string }): Promise<string> {
         },
       });
 
+      revalidateTag(SETS_CACHE_TAG);
       revalidatePath("/sets");
       // The card-create dropdown reads from the same table.
       revalidatePath("/cards");
@@ -165,6 +167,7 @@ export async function updateSet(
     },
   });
 
+  revalidateTag(SETS_CACHE_TAG);
   revalidatePath("/sets");
   revalidatePath("/cards");
 }
@@ -272,6 +275,7 @@ export async function seedInitialSets(): Promise<{
     },
   });
 
+  revalidateTag(SETS_CACHE_TAG);
   revalidatePath("/sets");
   revalidatePath("/cards");
   return result;
@@ -388,6 +392,7 @@ export async function forceAbsorbIntoPokemon(): Promise<{
     });
   }
 
+  revalidateTag(SETS_CACHE_TAG);
   revalidatePath("/sets");
   revalidatePath("/cards");
   return {
@@ -472,6 +477,7 @@ export async function deleteSet(
     },
   });
 
+  revalidateTag(SETS_CACHE_TAG);
   revalidatePath("/sets");
   // Orphan cards now show on /cards with no set assignment.
   revalidatePath("/cards");

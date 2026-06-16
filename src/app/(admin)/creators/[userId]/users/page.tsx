@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, Shuffle, Users } from "lucide-react";
@@ -9,6 +10,8 @@ import {
 import { requirePageAccess } from "@/lib/dal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SectionHeadingSkeleton } from "@/components/loading-skeletons";
 import {
   Table,
   TableBody,
@@ -46,30 +49,13 @@ export default async function CreatorUsersPage({
   await requirePageAccess("/creators");
   const { userId } = await params;
 
+  // Only the cheap header (2 indexed lookups) is awaited on the critical
+  // path so the hero + nav paint immediately; the heavy code-referral scan
+  // (+ code-hopper fan-out) streams in its own Suspense boundary below
+  // (mirrors the streaming pattern on /creators/[userId]). Identical data +
+  // render — just deferred.
   const profile = await getCreatorHeader(userId);
   if (!profile) notFound();
-
-  // getCodeReferrals returns a discriminated result so a failed /
-  // timed-out lookup is distinguishable from a genuinely empty code.
-  // referralsResult is null only when the creator has no code at all.
-  const referralsResult = profile.code
-    ? await getCodeReferrals(profile.code, 200)
-    : null;
-  const loadFailed = referralsResult !== null && !referralsResult.ok;
-  const referrals =
-    referralsResult && referralsResult.ok ? referralsResult.referrals : [];
-
-  // Code-hopper flags — which of these referred users have used 2+
-  // distinct affiliate codes (the code-switching / leaderboard-sniping
-  // signal reused from the streamers abuse-detection surface). One
-  // batched grouped query over the resolved user-id set; best-effort, so
-  // a failure just renders the list without badges. Skipped entirely
-  // when there are no users to flag.
-  const codeHopperFlags: Map<string, CodeHopperInfo> =
-    referrals.length > 0
-      ? await getCodeHopperFlags(referrals.map((r) => r.referredUserId))
-      : new Map();
-  const codeHopperCount = codeHopperFlags.size;
 
   return (
     <div className="space-y-6">
@@ -117,6 +103,47 @@ export default async function CreatorUsersPage({
           code-activity views without going back to the creator page. */}
       <CodeActivityNav userId={userId} active="users" />
 
+      <Suspense fallback={<UsersSectionSkeleton />}>
+        <UsersSection userId={userId} code={profile.code} />
+      </Suspense>
+    </div>
+  );
+}
+
+// ── Streamed code-referral list ───────────────────────────────────────
+//
+// Owns the heavy `getCodeReferrals` scan (up to 200 rows) + the
+// code-hopper fan-out. Streamed behind its own Suspense boundary so the
+// hero + code-activity nav paint off the cheap header instead of waiting
+// on the list. Same queries, same args, same render output — only deferred.
+async function UsersSection({
+  userId,
+  code,
+}: {
+  userId: string;
+  code: string | null;
+}) {
+  // getCodeReferrals returns a discriminated result so a failed /
+  // timed-out lookup is distinguishable from a genuinely empty code.
+  // referralsResult is null only when the creator has no code at all.
+  const referralsResult = code ? await getCodeReferrals(code, 200) : null;
+  const loadFailed = referralsResult !== null && !referralsResult.ok;
+  const referrals =
+    referralsResult && referralsResult.ok ? referralsResult.referrals : [];
+
+  // Code-hopper flags — which of these referred users have used 2+
+  // distinct affiliate codes (the code-switching / leaderboard-sniping
+  // signal reused from the streamers abuse-detection surface). One
+  // batched grouped query over the resolved user-id set; best-effort, so
+  // a failure just renders the list without badges. Skipped entirely
+  // when there are no users to flag.
+  const codeHopperFlags: Map<string, CodeHopperInfo> =
+    referrals.length > 0
+      ? await getCodeHopperFlags(referrals.map((r) => r.referredUserId))
+      : new Map();
+  const codeHopperCount = codeHopperFlags.size;
+
+  return (
       <FadeIn>
         <div className="space-y-3">
           <SectionHeading
@@ -142,7 +169,7 @@ export default async function CreatorUsersPage({
                     {codeHopperCount === 1 ? "" : "s"}
                   </span>
                 )}
-                {profile.code ? (
+                {code ? (
                   <Link
                     href={`/creators/${userId}`}
                     className="text-xs text-muted-foreground hover:text-foreground hover:underline"
@@ -227,12 +254,12 @@ export default async function CreatorUsersPage({
                       <EmptyState
                         icon={Users}
                         title={
-                          profile.code
+                          code
                             ? "No users on this code yet"
                             : "Creator has no affiliate code"
                         }
                         description={
-                          profile.code
+                          code
                             ? "Users who sign up, deposit, or wager on this code will appear here."
                             : "Once this creator owns an affiliate code, their referred users show up here."
                         }
@@ -246,6 +273,36 @@ export default async function CreatorUsersPage({
           </div>
         </div>
       </FadeIn>
+  );
+}
+
+// Inner Suspense fallback — section heading (with trailing action) + the
+// 4-column code-referral table shape, matching the route-level loading
+// skeleton so nothing reflows when the real list streams in.
+function UsersSectionSkeleton() {
+  return (
+    <div className="space-y-3">
+      <SectionHeadingSkeleton titleWidth={180} action />
+      <div className="overflow-hidden rounded-2xl border bg-card/60">
+        <div className="flex items-center gap-4 border-b px-4 py-3">
+          <Skeleton className="h-4 w-16 rounded" />
+          <Skeleton className="ml-auto h-4 w-20 rounded" />
+          <Skeleton className="h-4 w-24 rounded" />
+          <Skeleton className="h-4 w-24 rounded" />
+        </div>
+        <div className="divide-y">
+          {Array.from({ length: 10 }).map((_, r) => (
+            <div key={r} className="flex items-center gap-4 px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <Skeleton className="h-4 w-28 rounded" />
+              </div>
+              <Skeleton className="ml-auto h-4 w-16 rounded" />
+              <Skeleton className="h-4 w-20 rounded" />
+              <Skeleton className="h-4 w-24 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

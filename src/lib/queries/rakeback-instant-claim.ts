@@ -1,6 +1,8 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
+import { readDbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { excludeStaffCreatorsAndBlacklistedSqlFromIds } from "./_blacklist";
 
@@ -195,7 +197,7 @@ async function columnExists(
  * active DB env (they ARE present on prod — this guards an unmigrated dev
  * env). Read-only.
  */
-export async function getRakebackInstantClaimConfig(): Promise<InstantClaimConfig> {
+async function queryRakebackInstantClaimConfig(): Promise<InstantClaimConfig> {
   const db = await getDb();
 
   // Probe the gating column once — if the payout column is missing the
@@ -252,7 +254,7 @@ export async function getRakebackInstantClaimConfig(): Promise<InstantClaimConfi
  * the owner-sign-off proposal to align the overview (insights-rewards
  * rakeback overview.ts).
  */
-export async function getRakebackInstantClaimUsage(
+async function queryRakebackInstantClaimUsage(
   period: InstantClaimPeriod,
 ): Promise<InstantClaimUsage> {
   const db = await getDb();
@@ -356,4 +358,68 @@ export async function getRakebackInstantClaimUsage(
       instantAmountUsd: Number(r.instant_usd ?? 0),
     })),
   };
+}
+
+// ─── Prod-only cache wrappers (mirror shard-pack-opens.ts) ─────────────
+//
+// Both reads are result-identical when cached: the early-claim config + the
+// `rakeback_claims` aggregates are only ever mutated by the GAME backend
+// (the admin panel has no write path here — config edits 404, claims are
+// read-only), so there is no admin mutation to invalidate against. The page
+// already wraps these in `safeQuery` + a 15s timeout; caching just removes the
+// repeated raw scans (the `all` window is an unbounded lifetime aggregate over
+// `rakeback_claims`).
+//
+// `unstable_cache` runs its callback OUTSIDE the request's dynamic scope, so
+// `cookies()` (and `readDbEnv` inside `getDb()`) falls back to "prod". Caching
+// a dev-toggled request would serve PROD data to a dev admin, so we cache ONLY
+// on prod (the default + hot path); a dev-toggled admin runs the query
+// directly. Payloads are all-primitive shapes, so the cache JSON round-trip is
+// lossless.
+
+const cachedInstantClaimConfig = unstable_cache(
+  () => queryRakebackInstantClaimConfig(),
+  ["rakeback-instant-claim-config-v1"],
+  { revalidate: 60, tags: ["rakeback-instant-claim"] },
+);
+
+/**
+ * Public entry point for the per-cadence early-claim config. Cached 60s on
+ * prod; direct (uncached) on a dev-toggled admin so they see live dev data.
+ */
+export async function getRakebackInstantClaimConfig(): Promise<InstantClaimConfig> {
+  const env = await readDbEnv();
+  if (env !== "prod") return queryRakebackInstantClaimConfig();
+  return cachedInstantClaimConfig();
+}
+
+// Active short windows share a 60s TTL keyed on the period; the heavier
+// lifetime ("all") window gets its own 300s cache so paginating/refreshing
+// doesn't re-run the unbounded aggregate every load. Active-timeframe-only is
+// preserved: only the requested period is fetched + cached.
+const cachedInstantClaimUsage = unstable_cache(
+  (period: InstantClaimPeriod) => queryRakebackInstantClaimUsage(period),
+  ["rakeback-instant-claim-usage-v1"],
+  { revalidate: 60, tags: ["rakeback-instant-claim"] },
+);
+
+const cachedInstantClaimUsageAll = unstable_cache(
+  () => queryRakebackInstantClaimUsage("all"),
+  ["rakeback-instant-claim-usage-all-v1"],
+  { revalidate: 300, tags: ["rakeback-instant-claim"] },
+);
+
+/**
+ * Public entry point for instant-claim usage over the ACTIVE window. Cached on
+ * prod (60s for the short windows, 300s for the lifetime aggregate); direct on
+ * a dev-toggled admin. ACTIVE-TIMEFRAME-ONLY: only the requested window is
+ * fetched/cached.
+ */
+export async function getRakebackInstantClaimUsage(
+  period: InstantClaimPeriod,
+): Promise<InstantClaimUsage> {
+  const env = await readDbEnv();
+  if (env !== "prod") return queryRakebackInstantClaimUsage(period);
+  if (period === "all") return cachedInstantClaimUsageAll();
+  return cachedInstantClaimUsage(period);
 }

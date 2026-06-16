@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
@@ -18,6 +19,8 @@ import {
 import { requirePageAccess } from "@/lib/dal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SectionHeadingSkeleton } from "@/components/loading-skeletons";
 import {
   Table,
   TableBody,
@@ -80,17 +83,12 @@ export default async function CreatorWagersPage({
   await requirePageAccess("/creators");
   const { userId } = await params;
 
+  // Only the cheap header (2 indexed lookups) is awaited on the critical
+  // path so the hero + nav paint immediately; the heavy recent-wager scan
+  // streams in its own Suspense boundary below (mirrors the streaming
+  // pattern on /creators/[userId]). Identical data + render — just deferred.
   const profile = await getCreatorHeader(userId);
   if (!profile) notFound();
-
-  // getRecentWagersOnCode returns a discriminated result so a failed /
-  // timed-out lookup is distinguishable from a genuinely empty feed.
-  // wagersResult is null only when the creator has no code at all.
-  const wagersResult = profile.code
-    ? await getRecentWagersOnCode(profile.code, 100)
-    : null;
-  const loadFailed = wagersResult !== null && !wagersResult.ok;
-  const wagers = wagersResult && wagersResult.ok ? wagersResult.wagers : [];
 
   return (
     <div className="space-y-6">
@@ -136,17 +134,39 @@ export default async function CreatorWagersPage({
 
       <CodeActivityNav userId={userId} active="wagers" />
 
-      <FadeIn>
-        <div className="space-y-3">
-          <SectionHeading
-            icon={Activity}
-            title={
-              wagers.length > 0
-                ? `${wagers.length} recent wager${wagers.length === 1 ? "" : "s"}`
-                : "Last wagers"
-            }
-          />
-          <div className="rounded-2xl border bg-card/60">
+      <Suspense fallback={<WagersSectionSkeleton />}>
+        <WagersSection code={profile.code} />
+      </Suspense>
+    </div>
+  );
+}
+
+// ── Streamed wager feed ───────────────────────────────────────────────
+//
+// Owns the heavy `getRecentWagersOnCode` scan (up to 100 rows). Streamed
+// behind its own Suspense boundary so the hero + code-activity nav paint
+// off the cheap header instead of waiting on the feed. Same query, same
+// args, same render output — only deferred.
+async function WagersSection({ code }: { code: string | null }) {
+  // getRecentWagersOnCode returns a discriminated result so a failed /
+  // timed-out lookup is distinguishable from a genuinely empty feed.
+  // wagersResult is null only when the creator has no code at all.
+  const wagersResult = code ? await getRecentWagersOnCode(code, 100) : null;
+  const loadFailed = wagersResult !== null && !wagersResult.ok;
+  const wagers = wagersResult && wagersResult.ok ? wagersResult.wagers : [];
+
+  return (
+    <FadeIn>
+      <div className="space-y-3">
+        <SectionHeading
+          icon={Activity}
+          title={
+            wagers.length > 0
+              ? `${wagers.length} recent wager${wagers.length === 1 ? "" : "s"}`
+              : "Last wagers"
+          }
+        />
+        <div className="rounded-2xl border bg-card/60">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -217,12 +237,12 @@ export default async function CreatorWagersPage({
                       <EmptyState
                         icon={Activity}
                         title={
-                          profile.code
+                          code
                             ? "No wager activity yet"
                             : "Creator has no affiliate code"
                         }
                         description={
-                          profile.code
+                          code
                             ? "Recent wagers from users tied to this creator's code will appear here."
                             : "Once this creator owns an affiliate code, wager events from their users show up here."
                         }
@@ -236,6 +256,34 @@ export default async function CreatorWagersPage({
           </div>
         </div>
       </FadeIn>
+  );
+}
+
+// Inner Suspense fallback — section heading + the 4-column wager table
+// shape, matching the route-level loading skeleton so nothing reflows
+// when the real feed streams in.
+function WagersSectionSkeleton() {
+  return (
+    <div className="space-y-3">
+      <SectionHeadingSkeleton titleWidth={160} />
+      <div className="overflow-hidden rounded-2xl border bg-card/60">
+        <div className="flex items-center gap-4 border-b px-4 py-3">
+          <Skeleton className="h-4 w-16 rounded" />
+          <Skeleton className="h-4 w-12 rounded" />
+          <Skeleton className="ml-auto h-4 w-16 rounded" />
+          <Skeleton className="h-4 w-16 rounded" />
+        </div>
+        <div className="divide-y">
+          {Array.from({ length: 10 }).map((_, r) => (
+            <div key={r} className="flex items-center gap-4 px-4 py-3">
+              <Skeleton className="h-4 w-28 rounded" />
+              <Skeleton className="h-5 w-20 rounded-md" />
+              <Skeleton className="ml-auto h-4 w-16 rounded" />
+              <Skeleton className="h-4 w-16 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
