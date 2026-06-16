@@ -9,6 +9,7 @@ import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabil
 import { isUuid } from "@/lib/utils/ids";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { PackDetailView } from "../pack-detail-view";
+import { fetchPackFullDetail } from "../actions";
 
 export const metadata = { title: "Pack Detail" };
 
@@ -46,6 +47,15 @@ export default async function PackDetailPage({
   }
   const isPackCreator = sessionHasRole(session, "pack_creator");
 
+  // Prefetch the full detail (identity + economics + card pool + stats)
+  // server-side so the page paints WITH data instead of mounting a skeleton and
+  // then firing the client-side core→stats server-action waterfall after
+  // hydration (each round-trip re-runs the page-access gate — especially slow on
+  // cold prod functions). `fetchPackFullDetail` already wraps both reads in
+  // safeQuery+timeout, so a slow scan still degrades gracefully; on any failure
+  // we pass null and the client falls back to its own load()/retry flow.
+  const initialPayload = await fetchPackFullDetail(id).catch(() => null);
+
   return (
     <PackDetailView
       packId={id}
@@ -55,6 +65,7 @@ export default async function PackDetailPage({
       canEditLive={canEditLive}
       isPackCreator={isPackCreator}
       initialViewMode={initialViewMode}
+      initialPayload={initialPayload}
     />
   );
 }

@@ -51,6 +51,12 @@ const PIE_COLORS = [
   "var(--chart-4)",
   "var(--chart-5)",
 ];
+const PIE_OTHER_COLOR = "var(--muted-foreground)";
+// Cap the donut + legend at the N largest slices, merging the long tail into a
+// single "Other" row. A pack can have dozens of distinct borrow% / sponsor%
+// values; rendering one slice+legend row each made the donut a meaningless
+// 40-way repeat of the 5-colour palette and stretched the panel absurdly tall.
+const PIE_MAX_SLICES = 5;
 
 const formatValue = formatCompactUsd;
 
@@ -320,7 +326,24 @@ function BreakdownPie({
   data: { label: string; count: number }[];
 }) {
   const total = data.reduce((s, d) => s + d.count, 0);
-  const pieData = data.map((d) => ({ name: d.label, value: d.count }));
+  // Largest slices first; collapse the tail beyond PIE_MAX_SLICES into "Other"
+  // so the donut stays readable (≤6 distinctly-coloured slices) and the legend
+  // doesn't run to dozens of rows.
+  const sorted = [...data].sort((a, b) => b.count - a.count);
+  const head = sorted.slice(0, PIE_MAX_SLICES);
+  const tail = sorted.slice(PIE_MAX_SLICES);
+  const pieData: { name: string; value: number; isOther?: boolean }[] = head.map(
+    (d) => ({ name: d.label, value: d.count }),
+  );
+  if (tail.length > 0) {
+    pieData.push({
+      name: `Other (${tail.length})`,
+      value: tail.reduce((s, d) => s + d.count, 0),
+      isOther: true,
+    });
+  }
+  const colorFor = (item: { isOther?: boolean }, i: number) =>
+    item.isOther ? PIE_OTHER_COLOR : PIE_COLORS[i % PIE_COLORS.length];
 
   if (total === 0) {
     return (
@@ -359,11 +382,8 @@ function BreakdownPie({
                   animationDuration={700}
                   animationEasing="ease-out"
                 >
-                  {pieData.map((_, i) => (
-                    <Cell
-                      key={i}
-                      fill={PIE_COLORS[i % PIE_COLORS.length]}
-                    />
+                  {pieData.map((item, i) => (
+                    <Cell key={i} fill={colorFor(item, i)} />
                   ))}
                 </Pie>
                 <Tooltip
@@ -389,9 +409,7 @@ function BreakdownPie({
                 >
                   <span
                     className="size-2.5 shrink-0 rounded-full"
-                    style={{
-                      background: PIE_COLORS[i % PIE_COLORS.length],
-                    }}
+                    style={{ background: colorFor(item, i) }}
                   />
                   <span className="flex-1 truncate">{item.name}</span>
                   <span className="w-12 text-right text-xs text-muted-foreground tabular-nums">

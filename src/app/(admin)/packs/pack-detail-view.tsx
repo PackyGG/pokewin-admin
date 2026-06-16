@@ -56,6 +56,17 @@ type HeaderSeed = {
   priceUsd: number;
 };
 
+function seedFromPayload(payload: PackFullDetail): HeaderSeed {
+  return {
+    id: payload.detail.id,
+    name: payload.detail.name,
+    slug: payload.detail.slug,
+    imageUrl: payload.detail.imageUrl,
+    active: payload.detail.active,
+    priceUsd: payload.detail.priceUsd,
+  };
+}
+
 export function PackDetailView({
   packId,
   canToggle,
@@ -64,6 +75,7 @@ export function PackDetailView({
   canEditLive,
   isPackCreator,
   initialViewMode = "overview",
+  initialPayload = null,
 }: {
   packId: string;
   canToggle: boolean;
@@ -72,10 +84,22 @@ export function PackDetailView({
   canEditLive: boolean;
   isPackCreator: boolean;
   initialViewMode?: ViewMode;
+  /**
+   * Server-prefetched full detail. When present the view paints ready
+   * immediately and skips the initial client fetch (no hydrate→action
+   * waterfall). Null falls back to the client load()/retry flow.
+   */
+  initialPayload?: PackFullDetail | null;
 }) {
   const router = useRouter();
-  const [headerSeed, setHeaderSeed] = React.useState<HeaderSeed | null>(null);
-  const [state, setState] = React.useState<DetailState>({ status: "loading" });
+  const [headerSeed, setHeaderSeed] = React.useState<HeaderSeed | null>(
+    initialPayload ? seedFromPayload(initialPayload) : null,
+  );
+  const [state, setState] = React.useState<DetailState>(
+    initialPayload
+      ? { status: "ready", payload: initialPayload }
+      : { status: "loading" },
+  );
   const [tab, setTab] = React.useState<ContentTab>("cards");
   const [viewMode, setViewMode] = React.useState<ViewMode>(initialViewMode);
   const [statsRetrying, setStatsRetrying] = React.useState(false);
@@ -114,8 +138,15 @@ export function PackDetailView({
   React.useEffect(() => {
     setTab("cards");
     setViewMode(initialViewMode);
+    // Server-prefetched payload (incl. after a pack→pack navigation that
+    // re-runs the server page): paint it directly, skip the client fetch.
+    if (initialPayload) {
+      setHeaderSeed(seedFromPayload(initialPayload));
+      setState({ status: "ready", payload: initialPayload });
+      return;
+    }
     return load(false);
-  }, [packId, initialViewMode, load]);
+  }, [packId, initialViewMode, load, initialPayload]);
 
   React.useEffect(() => {
     if (headerSeed?.name !== "Loading…") return;
