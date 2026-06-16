@@ -98,29 +98,45 @@ export default async function RakebackPage({
           </div>
         )}
         {tab === "claims" && (
-          <Suspense
-            key={`${page}|${perPage}|${params.type ?? ""}|${params.search ?? ""}|${icPeriod}`}
-            fallback={
-              <>
+          <>
+            {/* Period-scoped boundary: the timeframe chips live inside the
+                summary box, so switching `icPeriod` only re-suspends/refetches
+                this heavy per-period aggregate — the claims table below has
+                its own boundary and is never blocked behind it. */}
+            <Suspense
+              key={`ic-summary-${icPeriod}|${params.type ?? ""}`}
+              fallback={
                 <div className="h-28 rounded-xl border bg-muted/20 animate-pulse" />
-                <div className="flex gap-1 rounded-lg bg-muted p-1">
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="h-7 w-20 rounded-md bg-muted-foreground/10 animate-pulse" />
-                  ))}
-                </div>
-                <TableSkeleton rows={12} columns={6} />
-                <PaginationSkeleton />
-              </>
-            }
-          >
-            <ClaimsTab
-              page={page}
-              perPage={perPage}
-              type={params.type}
-              search={params.search}
-              icPeriod={icPeriod}
-            />
-          </Suspense>
+              }
+            >
+              <ClaimsSummary icPeriod={icPeriod} type={params.type} />
+            </Suspense>
+            {/* Table boundary is period-independent (keyed only on
+                page/perPage/type/search) so a timeframe switch never collapses
+                the table into a skeleton. */}
+            <Suspense
+              key={`${page}|${perPage}|${params.type ?? ""}|${params.search ?? ""}`}
+              fallback={
+                <>
+                  <div className="flex gap-1 rounded-lg bg-muted p-1">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className="h-7 w-20 rounded-md bg-muted-foreground/10 animate-pulse" />
+                    ))}
+                  </div>
+                  <TableSkeleton rows={12} columns={6} />
+                  <PaginationSkeleton />
+                </>
+              }
+            >
+              <ClaimsTable
+                page={page}
+                perPage={perPage}
+                type={params.type}
+                search={params.search}
+                icPeriod={icPeriod}
+              />
+            </Suspense>
+          </>
         )}
       </div>
     </div>
@@ -163,7 +179,36 @@ async function ConfigTab() {
   );
 }
 
-async function ClaimsTab({
+async function ClaimsSummary({
+  icPeriod,
+  type,
+}: {
+  icPeriod: InstantClaimPeriod;
+  type?: string;
+}) {
+  // Active-timeframe-only: only the selected window is queried. Cached
+  // per-period on prod + safeQuery 15s timeout (see rakeback-instant-claim.ts).
+  const { data: usage } = await safeQuery(
+    () => getRakebackInstantClaimUsage(icPeriod),
+    { supported: false as const },
+    "rakeback.instant-claim.claims-summary",
+    15_000,
+  );
+
+  const typeFilter = type && type !== "all" ? type : undefined;
+
+  return (
+    <FadeIn>
+      <InstantClaimSummaryBox
+        usage={usage}
+        period={icPeriod}
+        claimType={typeFilter}
+      />
+    </FadeIn>
+  );
+}
+
+async function ClaimsTable({
   page,
   perPage,
   type,
@@ -176,17 +221,7 @@ async function ClaimsTab({
   search?: string;
   icPeriod: InstantClaimPeriod;
 }) {
-  const [{ data: usage }, claims] = await Promise.all([
-    safeQuery(
-      () => getRakebackInstantClaimUsage(icPeriod),
-      { supported: false as const },
-      "rakeback.instant-claim.claims-summary",
-      15_000,
-    ),
-    getRakebackClaims({ page, perPage, type, search }),
-  ]);
-
-  const typeFilter = type && type !== "all" ? type : undefined;
+  const claims = await getRakebackClaims({ page, perPage, type, search });
 
   function claimsTypeHref(t: string) {
     const params = new URLSearchParams({ tab: "claims", icPeriod, type: t });
@@ -195,15 +230,7 @@ async function ClaimsTab({
   }
 
   return (
-    <>
-      <FadeIn>
-        <InstantClaimSummaryBox
-          usage={usage}
-          period={icPeriod}
-          claimType={typeFilter}
-        />
-      </FadeIn>
-
+    <div className="space-y-4">
       <div className="flex gap-1 rounded-lg bg-muted p-1">
         {["all", "daily", "weekly", "monthly"].map((t) => (
           <Link
@@ -230,6 +257,6 @@ async function ClaimsTab({
         total={claims.total}
         perPage={claims.perPage}
       />
-    </>
+    </div>
   );
 }

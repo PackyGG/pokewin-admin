@@ -26,7 +26,8 @@ export type TopPack24hRow = {
  *     `battles.pack_ids`) pair. Each participant opens every pack
  *     listed on the battle, so UNNEST gives the right granularity.
  *     Bot participants (`battle_participants.user_id IS NULL`) and
- *     staff (admin / support) are filtered out.
+ *     staff + creators (admin / support / creator) are filtered out,
+ *     matching the canonical customer scope (scope.ts).
  *
  * Pack openings via `user_packs` (legacy reward grants, gift-card
  * grants, etc.) are still not counted, matching the rest of the
@@ -52,7 +53,7 @@ export async function getTopOpenedPacks24h(
         AND gs.created_at >= NOW() - INTERVAL '24 hours'
         AND gs.user_id IN (
           SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+          WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
         )
       GROUP BY gs.game_id
     ),
@@ -70,7 +71,7 @@ export async function getTopOpenedPacks24h(
         AND bp.user_id IS NOT NULL
         AND bp.user_id IN (
           SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+          WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
         )
       GROUP BY pid
     ),
@@ -161,7 +162,14 @@ export async function getTopOpenedPacks24h(
 
 export type PacksPeriod = "7d" | "30d" | "90d" | "all";
 
-function daysForPeriod(period: PacksPeriod): number | null {
+/**
+ * Lifetime lookback cap (days) so the `all` window never triggers an
+ * unbounded full-history scan (CLAUDE.md "Performance & Daten-Laden").
+ * Mirrors the reward-insights / shard / xp-sales 365d cap.
+ */
+const LIFETIME_LOOKBACK_DAYS = 365;
+
+function daysForPeriod(period: PacksPeriod): number {
   switch (period) {
     case "7d":
       return 7;
@@ -170,7 +178,7 @@ function daysForPeriod(period: PacksPeriod): number | null {
     case "90d":
       return 90;
     case "all":
-      return null;
+      return LIFETIME_LOOKBACK_DAYS;
   }
 }
 
@@ -205,13 +213,11 @@ export async function getPackProfitability(
 ): Promise<PacksProfitData> {
   const db = await getDb();
   const days = daysForPeriod(period);
-  const ltWhere =
-    days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
+  const ltWhere = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
   // Inventory rows are bucketed by `obtained_at` (when the card landed),
   // not the ledger `created_at`, so the payout side gets its own cutoff —
   // same split the canonical inventory-payout queries use.
-  const uiWhere =
-    days !== null ? `AND ui.obtained_at >= NOW() - INTERVAL '${days} days'` : "";
+  const uiWhere = `AND ui.obtained_at >= NOW() - INTERVAL '${days} days'`;
   const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   // Canonical real-customers scope (matches getPackBattlePurePnl /

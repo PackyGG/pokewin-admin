@@ -1,6 +1,8 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { excludeStaffCreatorsAndBlacklisted } from "./_blacklist";
+import { RAKEBACK_CACHE_TAGS } from "./insights-rewards/rakeback/_cache-tags";
 import { getInstantRakebackClaimIds } from "./rakeback-instant-ledger";
 import {
   accruedRakebackBeforeInstantFee,
@@ -310,39 +312,53 @@ export async function getLevelUpRewards(params: {
   };
 }
 
-export async function getRakebackStats(): Promise<RakebackStats> {
-  const db = await getDb();
-  const userScope = await excludeStaffCreatorsAndBlacklisted();
-  // Previously this pulled every rakeback_claims row and aggregated in JS —
-  // that scales linearly with claim count. Push the aggregation to Postgres
-  // and fetch only the two summaries we actually need.
-  const [claimedSum, pendingSum, byTypeRows] = await Promise.all([
-    db.rakeback_claims.aggregate({
-      where: { claimed_at: { not: null }, user: userScope },
-      _sum: { rakeback_amount_usd: true },
-      _count: { _all: true },
-    }),
-    db.rakeback_claims.aggregate({
-      where: { claimed_at: null, user: userScope },
-      _sum: { rakeback_amount_usd: true },
-      _count: { _all: true },
-    }),
-    db.rakeback_claims.groupBy({
-      by: ["rakeback_type"],
-      where: { user: userScope },
-      _sum: { rakeback_amount_usd: true },
-      _count: { _all: true },
-    }),
-  ]);
+// Lifetime rakeback summary for the /rewards hero strip. Three aggregates
+// pushed to Postgres (no per-row JS scan). Cached cross-request (300s) —
+// it's a no-timeframe headline aggregate like the promo-codes money stats,
+// and /rewards mutations call `revalidatePath("/rewards")` to refresh it.
+// The resolved customer scope (staff/creator/blacklist filter) is passed as
+// the argument so it participates in the cache key — a blacklist change
+// keys a fresh entry rather than serving a stale population.
+const cachedRakebackStats = unstable_cache(
+  async (
+    userScope: Awaited<ReturnType<typeof excludeStaffCreatorsAndBlacklisted>>,
+  ): Promise<RakebackStats> => {
+    const db = await getDb();
+    const [claimedSum, pendingSum, byTypeRows] = await Promise.all([
+      db.rakeback_claims.aggregate({
+        where: { claimed_at: { not: null }, user: userScope },
+        _sum: { rakeback_amount_usd: true },
+        _count: { _all: true },
+      }),
+      db.rakeback_claims.aggregate({
+        where: { claimed_at: null, user: userScope },
+        _sum: { rakeback_amount_usd: true },
+        _count: { _all: true },
+      }),
+      db.rakeback_claims.groupBy({
+        by: ["rakeback_type"],
+        where: { user: userScope },
+        _sum: { rakeback_amount_usd: true },
+        _count: { _all: true },
+      }),
+    ]);
 
-  return {
-    totalClaimed: toNumber(claimedSum._sum.rakeback_amount_usd),
-    totalPending: toNumber(pendingSum._sum.rakeback_amount_usd),
-    claimCount: claimedSum._count._all + pendingSum._count._all,
-    byType: byTypeRows.map((r) => ({
-      type: r.rakeback_type,
-      totalAmount: toNumber(r._sum.rakeback_amount_usd),
-      claimCount: r._count._all,
-    })),
-  };
+    return {
+      totalClaimed: toNumber(claimedSum._sum.rakeback_amount_usd),
+      totalPending: toNumber(pendingSum._sum.rakeback_amount_usd),
+      claimCount: claimedSum._count._all + pendingSum._count._all,
+      byType: byTypeRows.map((r) => ({
+        type: r.rakeback_type,
+        totalAmount: toNumber(r._sum.rakeback_amount_usd),
+        claimCount: r._count._all,
+      })),
+    };
+  },
+  ["rewards-rakeback-stats-v1"],
+  { revalidate: 300, tags: [...RAKEBACK_CACHE_TAGS] },
+);
+
+export async function getRakebackStats(): Promise<RakebackStats> {
+  const userScope = await excludeStaffCreatorsAndBlacklisted();
+  return cachedRakebackStats(userScope);
 }

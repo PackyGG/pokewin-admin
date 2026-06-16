@@ -812,7 +812,7 @@ export function GamesTable({ packId, initialGames }: { packId: string; initialGa
                     )}
                   </TableCell>
                   <TableCell>
-                    <span className="font-medium tabular-nums">
+                    <span className="font-medium tabular-nums text-rose-600 dark:text-rose-400">
                       {formatCurrency(g.cardPrice)}
                     </span>
                   </TableCell>

@@ -14,6 +14,9 @@ import {
 import { getBattleDetail } from "@/lib/queries/battles";
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
+import { PRIMARY_QUERY_TIMEOUT_MS } from "@/lib/entity-surface/loader";
+import { InlineError } from "@/components/entity-surface";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { CardImage } from "@/components/card-image";
@@ -65,7 +68,36 @@ export default async function BattleDetailPage({
   const { id } = await params;
   // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
-  const data = await getBattleDetail(id);
+  // Wrapped in safeQueryOrNull + timeout so a slow or failed detail read
+  // degrades to an inline error in place instead of white-screening the
+  // whole route via the error boundary. A genuine "not found" is a `null`
+  // data WITHOUT an error → notFound(); a thrown/timed-out query carries an
+  // `error` → InlineError.
+  const { data, error } = await safeQueryOrNull(
+    () => getBattleDetail(id),
+    "battles.detail",
+    PRIMARY_QUERY_TIMEOUT_MS,
+  );
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <PageHero>
+          <PageHeroIdentity
+            icon={Swords}
+            backHref="/battles"
+            title="Battle"
+            subtitle={id}
+            subtitleClassName="font-mono truncate"
+          />
+        </PageHero>
+        <InlineError
+          title="Couldn't load this battle"
+          hint="The battle query timed out or failed. Retry in a moment, or go back to the list."
+        />
+      </div>
+    );
+  }
 
   if (!data) notFound();
 
@@ -107,11 +139,13 @@ export default async function BattleDetailPage({
             icon={Package}
             accent="cyan"
           />
+          {/* House-POV per CLAUDE.md: a wager = users risking money the
+              house takes in → emerald (house gain), never neutral blue. */}
           <KpiTile
             label="Total Wagered"
             value={formatCurrency(totalWagered)}
             icon={DollarSign}
-            accent="blue"
+            accent="emerald"
           />
           <KpiTile
             label="Total Card Value"

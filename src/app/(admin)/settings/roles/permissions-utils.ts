@@ -96,24 +96,18 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "User Management",
   },
 
-  // ── User Notes & Trust ──────────────────────────────────────────────
+  // ── User Notes ───────────────────────────────────────────────────────
   {
     key: "__can_create_user_note",
     label: "Create Note",
     description: "Add an internal admin note to a user profile",
-    group: "User Notes & Trust",
+    group: "User Notes",
   },
   {
     key: "__can_delete_user_note",
     label: "Delete Note",
     description: "Delete an internal admin note from a user profile",
-    group: "User Notes & Trust",
-  },
-  {
-    key: "__can_set_user_trust",
-    label: "Set Trust Status",
-    description: "Mark a user as trusted / suspected alt or update trust flags",
-    group: "User Notes & Trust",
+    group: "User Notes",
   },
 
   // ── Dangerous / Destructive ──────────────────────────────────────────

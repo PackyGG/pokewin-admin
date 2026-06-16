@@ -5,6 +5,16 @@ import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
 import { ROLE_BASELINES, baselineTokensFor } from "@/lib/role-baselines";
 import type { PermissionToken } from "@/lib/permissions/types";
 import type { PaginatedResult } from "@/lib/types";
+import { withTimeout, isQueryTimeoutError } from "@/lib/errors/safe-query";
+import { logError } from "@/lib/errors/logger";
+
+// Wall-clock budget for the main-DB side of the per-admin audit feed
+// (search username→id resolution + target-username hydration). These are
+// bounded, indexed point lookups; the timeout only fires if the main DB is
+// genuinely slow/unavailable, in which case the feed degrades (empty search
+// match / raw target ids) rather than hanging the detail page. Mirrors
+// AUDIT_MAIN_DB_TIMEOUT_MS in audit.ts.
+const AUDIT_MAIN_DB_TIMEOUT_MS = 8_000;
 
 export async function getAdminUserDetail(id: string) {
   const db = await getDb();
@@ -319,17 +329,36 @@ export async function getAdminUserAuditEvents(
     where.event_type = filters.eventType;
   }
   if (filters?.search) {
+    const searchTerm = filters.search;
     // Try exact user ID match first, then search by username
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(filters.search);
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(searchTerm);
     if (isUuid) {
-      where.target_user_id = filters.search;
+      where.target_user_id = searchTerm;
     } else {
-      const matchingUsers = await db.user.findMany({
-        where: { username: { contains: filters.search, mode: "insensitive" } },
-        select: { id: true },
-        take: 50,
-      });
-      const ids = matchingUsers.map((u) => u.id);
+      // Username → main-DB id resolution: the only main-DB hit in the filter
+      // path. Bounded timeout + catch so a slow/unavailable main DB degrades
+      // to "no match" (empty feed for this search term) instead of hanging or
+      // throwing away the whole detail page. Mirrors audit.ts.
+      let ids: string[] = [];
+      try {
+        const matchingUsers = await withTimeout(
+          () =>
+            db.user.findMany({
+              where: { username: { contains: searchTerm, mode: "insensitive" } },
+              select: { id: true },
+              take: 50,
+            }),
+          AUDIT_MAIN_DB_TIMEOUT_MS,
+        );
+        ids = matchingUsers.map((u) => u.id);
+      } catch (err) {
+        if (isQueryTimeoutError(err)) {
+          logError("adminUsers.auditEvents.userResolve", "username→id resolution timed out", err);
+        } else {
+          logError("adminUsers.auditEvents.userResolve", "username→id resolution failed", err);
+        }
+        // Degrade: leave ids empty → "__no_match__" below.
+      }
       where.target_user_id = ids.length > 0 ? { in: ids } : "__no_match__";
     }
   }
@@ -351,12 +380,29 @@ export async function getAdminUserAuditEvents(
 
   const usernameMap = new Map<string, string>();
   if (targetUserIds.length > 0) {
-    const users = await db.user.findMany({
-      where: { id: { in: targetUserIds } },
-      select: { id: true, username: true, email: true },
-    });
-    for (const u of users) {
-      usernameMap.set(u.id, u.username ?? u.email ?? u.id);
+    // Display hydration of target usernames from the MAIN DB. The events
+    // already loaded from the admin DB above, so a slow/failed main DB must
+    // NOT throw away the feed — degrade to raw ids (no resolved usernames).
+    // Bounded timeout + catch mirrors audit.ts hydration.
+    try {
+      const users = await withTimeout(
+        () =>
+          db.user.findMany({
+            where: { id: { in: targetUserIds } },
+            select: { id: true, username: true, email: true },
+          }),
+        AUDIT_MAIN_DB_TIMEOUT_MS,
+      );
+      for (const u of users) {
+        usernameMap.set(u.id, u.username ?? u.email ?? u.id);
+      }
+    } catch (err) {
+      if (isQueryTimeoutError(err)) {
+        logError("adminUsers.auditEvents.hydrate", "target username hydration timed out", err);
+      } else {
+        logError("adminUsers.auditEvents.hydrate", "target username hydration failed", err);
+      }
+      // Degrade: usernameMap stays empty → targetUsername resolves to null.
     }
   }
 

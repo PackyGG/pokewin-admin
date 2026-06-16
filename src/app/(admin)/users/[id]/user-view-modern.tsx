@@ -73,7 +73,6 @@ import {
 } from "./user-tabs";
 import type { UserRewards } from "@/lib/queries/users";
 import type { PaginatedInventory } from "./user-tabs-types";
-import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 import type {
@@ -95,9 +94,8 @@ import {
   AffiliateTab,
   AccountTab,
 } from "./user-view-modern-tabs";
-import { TrustTab } from "./user-tabs-trust";
 import { FadeIn } from "@/components/fade-in";
-import { DURATION, SkeletonTable, SkeletonCard } from "@/components/ux";
+import { DURATION } from "@/components/ux";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChangeRoleDialog,
@@ -164,7 +162,6 @@ const TABS: TabDef[] = [
   // items those sales come from.
   { key: "inventory", label: "Inventory", icon: Gem },
   { key: "rewards", label: "Rewards", icon: Gift },
-  { key: "trust", label: "Trust", icon: ShieldAlert },
   // Affiliate tab is ALWAYS visible — admins need to be able to give
   // a user a referral code (set their `referred_by`) regardless of
   // whether the user has their own code yet. This supersedes the
@@ -217,8 +214,6 @@ export function UserViewModern({
   disposedInventoryPromise,
   cardSaleTxPromise,
   battleVoucherTxPromise,
-  sharedIpsPromise,
-  sharedFingerprintsPromise,
   wagerRequirementPromise,
   wagerProgressPromise,
   viewerIsAdjustmentOwner,
@@ -282,9 +277,6 @@ export function UserViewModern({
   // moved off Gaming. null = tab not active (Active-Timeframe-Only).
   cardSaleTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   battleVoucherTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
-  // Trust tab:
-  sharedIpsPromise: Promise<SafeQueryResult<SharedIdentityUser[]>> | null;
-  sharedFingerprintsPromise: Promise<SafeQueryResult<SharedIdentityUser[]>> | null;
   // Account tab — per-user withdrawal wager-requirement override (backend
   // API, NOT the MAIN DB; plain nullable value, its own catch→null wrapper
   // in page.tsx). null resolution = the card's muted degraded state.
@@ -642,7 +634,6 @@ export function UserViewModern({
                   >
                     <HeroRiskBadges
                       riskResultPromise={riskResultPromise}
-                      onOpenTrust={() => handleTabChange("trust")}
                     />
                   </Suspense>
                 </div>
@@ -871,26 +862,6 @@ export function UserViewModern({
           />
         )}
 
-        {activeTab === "trust" && (
-          // The whole Trust tab depends on the shared-identity fan-out +
-          // the risk scan; all three legs travel as SafeQueryResults so a
-          // failed leg renders a visible band error inside the tab. Null
-          // promises (tab not yet kicked) → fallback skeleton until the
-          // URL-driven re-render streams them.
-          (sharedIpsPromise && sharedFingerprintsPromise ? (
-            <Suspense fallback={<TrustTabFallback />}>
-              <TrustTabStreamed
-                userId={user.id}
-                riskResultPromise={riskResultPromise}
-                sharedIpsPromise={sharedIpsPromise}
-                sharedFingerprintsPromise={sharedFingerprintsPromise}
-              />
-            </Suspense>
-          ) : (
-            <TrustTabFallback />
-          ))
-        )}
-
         {activeTab === "affiliate" && <AffiliateTab data={data} />}
 
         {activeTab === "account" && (
@@ -958,16 +929,13 @@ function WagerLeftHeroTile({
 //  paints without waiting on the fraud scan. Three states:
 //    pending  → pill skeleton (Suspense fallback at the call site),
 //    error    → amber "Risk —" pill (unavailable ≠ low risk),
-//    success  → the same risk + shared-IP badges as before, both opening
-//               the Trust tab via the URL-driven tab switch.
+//    success  → the risk + shared-IP badges.
 // ───────────────────────────────────────────────────────────────────
 
 function HeroRiskBadges({
   riskResultPromise,
-  onOpenTrust,
 }: {
   riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
-  onOpenTrust: () => void;
 }) {
   const r = use(riskResultPromise);
   if (r.error) {
@@ -981,43 +949,31 @@ function HeroRiskBadges({
   const riskBreakdown = r.data;
   return (
     <>
-      <button
-        type="button"
-        onClick={onOpenTrust}
-        className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
-        aria-label={`Risk score ${riskBreakdown.score} of 100 — ${tierLabel(riskBreakdown.tier)}. Open Trust tab.`}
+      <Badge
+        variant="outline"
+        className={cn(
+          "text-[10px] py-0 h-5",
+          RISK_TIER_COLORS[riskBreakdown.tier],
+        )}
+        title={`Risk score ${riskBreakdown.score} of 100 — ${tierLabel(riskBreakdown.tier)}.`}
       >
+        <ShieldAlert className="mr-0.5 size-2.5" />
+        Risk {riskBreakdown.score}
+      </Badge>
+      {riskBreakdown.sharedIpCount >= 2 && (
         <Badge
           variant="outline"
           className={cn(
-            "text-[10px] py-0 h-5 cursor-pointer",
-            RISK_TIER_COLORS[riskBreakdown.tier],
+            "text-[10px] py-0 h-5",
+            riskBreakdown.sharedIpCount >= 5
+              ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
+              : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
           )}
+          title={`Shared IP with ${riskBreakdown.sharedIpCount} other accounts.`}
         >
-          <ShieldAlert className="mr-0.5 size-2.5" />
-          Risk {riskBreakdown.score}
+          <Link2 className="mr-0.5 size-2.5" />
+          {riskBreakdown.sharedIpCount} shared IP
         </Badge>
-      </button>
-      {riskBreakdown.sharedIpCount >= 2 && (
-        <button
-          type="button"
-          onClick={onOpenTrust}
-          className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
-          aria-label={`Shared IP with ${riskBreakdown.sharedIpCount} other accounts. Open Trust tab.`}
-        >
-          <Badge
-            variant="outline"
-            className={cn(
-              "text-[10px] py-0 h-5 cursor-pointer",
-              riskBreakdown.sharedIpCount >= 5
-                ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
-                : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-            )}
-          >
-            <Link2 className="mr-0.5 size-2.5" />
-            {riskBreakdown.sharedIpCount} shared IP
-          </Badge>
-        </button>
       )}
     </>
   );
@@ -1260,65 +1216,6 @@ function ScrollableTabBar({
             );
           })}
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────
-//  TRUST TAB — streamed wrapper + fallback
-//
-//  The Trust tab's shared-IP / shared-fingerprint lists come from a
-//  tab-gated fan-out (kicked only when ?tab=trust is active) and the risk
-//  scan is the always-kicked hero read. All three travel as WHOLE
-//  SafeQueryResults — TrustTab renders a visible per-leg error instead of
-//  "no shared accounts" / a neutral low-risk hero when a leg failed.
-//  Only mounted when the Trust tab is active, inside a <Suspense>.
-// ───────────────────────────────────────────────────────────────────
-
-function TrustTabStreamed({
-  userId,
-  riskResultPromise,
-  sharedIpsPromise,
-  sharedFingerprintsPromise,
-}: {
-  userId: string;
-  riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
-  sharedIpsPromise: Promise<SafeQueryResult<SharedIdentityUser[]>>;
-  sharedFingerprintsPromise: Promise<SafeQueryResult<SharedIdentityUser[]>>;
-}) {
-  const riskResult = use(riskResultPromise);
-  const ipsResult = use(sharedIpsPromise);
-  const fpsResult = use(sharedFingerprintsPromise);
-  return (
-    <TrustTab
-      userId={userId}
-      breakdown={riskResult.data}
-      breakdownError={riskResult.error}
-      sharedIps={ipsResult.data}
-      sharedIpsError={ipsResult.error}
-      sharedFingerprints={fpsResult.data}
-      sharedFingerprintsError={fpsResult.error}
-    />
-  );
-}
-
-// Skeleton shaped to the Trust tab while its identity fan-out streams in:
-// a stat-style header line + the shared-IP / shared-fingerprint tables.
-function TrustTabFallback() {
-  return (
-    <div className="space-y-6" aria-busy="true">
-      <div className="flex items-center gap-2">
-        <Skeleton className="size-7 shrink-0 rounded-md" />
-        <Skeleton className="h-5 w-40" />
-      </div>
-      <SkeletonCard lines={3} />
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Skeleton className="size-7 shrink-0 rounded-md" />
-          <Skeleton className="h-5 w-32" />
-        </div>
-        <SkeletonTable rows={4} columns={4} />
       </div>
     </div>
   );

@@ -30,7 +30,9 @@ function codeStatus(
 ): { label: string; cls: string } {
   const isExpired =
     row.expiresAt && new Date(row.expiresAt) < new Date();
-  const isUsedUp = row.redemptionCount >= row.maxUses;
+  // maxUses of 0 means *no cap* (unlimited) — only treat as used up when
+  // there's a real positive cap that's been reached.
+  const isUsedUp = row.maxUses > 0 && row.redemptionCount >= row.maxUses;
   if (isExpired)
     return {
       label: "Expired",
@@ -261,7 +263,12 @@ export const columns: ColumnDef<PromoCodeListItem>[] = [
   {
     accessorKey: "value",
     header: "Value",
-    cell: ({ row }) => formatCurrency(row.original.value),
+    // House-POV: promo value is house-paid credit → house cost → rose.
+    cell: ({ row }) => (
+      <span className="text-rose-600 dark:text-rose-400">
+        {formatCurrency(row.original.value)}
+      </span>
+    ),
   },
   {
     id: "requirements",

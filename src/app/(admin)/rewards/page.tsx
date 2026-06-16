@@ -16,11 +16,20 @@ import { RewardsTable } from "./rewards-table";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPending } from "@/components/ux";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 
 export const metadata = { title: "Rewards" };
 
 async function RewardsOverviewAsync() {
-  const stats = await getRakebackStats();
+  // Degrade gracefully: a thrown OR slow rakeback aggregate must not
+  // white-screen the whole /rewards page (the rewards table renders behind
+  // its own boundary). On failure/timeout the strip shows zeros instead.
+  const { data: stats } = await safeQuery(
+    () => getRakebackStats(),
+    { totalClaimed: 0, totalPending: 0, claimCount: 0, byType: [] },
+    "rewards.rakeback-stats",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
   return <RewardsOverview stats={stats} />;
 }
 

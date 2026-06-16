@@ -25,7 +25,6 @@ import type {
   AdminNote,
 } from "@/app/(admin)/users/[id]/user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
-import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 import type { RiskScoreBreakdown } from "@/lib/fraud/score-types";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import type {
@@ -334,8 +333,6 @@ export function UserDetailFixtureClient() {
       disposedInventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}
       cardSaleTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       battleVoucherTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
-      sharedIpsPromise={ok<SharedIdentityUser[]>([])}
-      sharedFingerprintsPromise={ok<SharedIdentityUser[]>([])}
       wagerRequirementPromise={Promise.resolve(null)}
       wagerProgressPromise={Promise.resolve(null)}
       viewerIsAdjustmentOwner

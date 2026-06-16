@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { unstable_cache } from "next/cache";
 
 import { getCreatorPnl } from "@/lib/queries/creators-pnl";
@@ -63,11 +64,28 @@ const cachedCreatorPnl = unstable_cache(
 );
 
 /** Cached `getCreatorPnl` on prod; direct (uncached) on a dev-toggled
- * admin so they see live dev data — see module doc. */
-export async function getCreatorPnlCached(
+ * admin so they see live dev data — see module doc.
+ *
+ * ─── REQUEST-LEVEL DEDUPE (why the React `cache()` wrapper) ──────────
+ *
+ * This scan is consumed TWICE per render of /creators/[userId] — once by
+ * `CreatorPnlPanel` (the Affiliates P&L boxes) and once by
+ * `CreatorDealCostPanel` (the "Creator Net" block reuses the same lifetime
+ * figure). Those two consumers live in SEPARATE Suspense boundaries with no
+ * shared in-flight promise, and `unstable_cache` does NOT coalesce
+ * concurrent COLD callers — so on a cold (cache-miss) load BOTH boundaries
+ * would fire the heavy ~5s ledger transaction simultaneously, doubling the
+ * contention on the `max: 5` connection pool the rest of the page also
+ * needs. Wrapping the entry point in React `cache()` memoizes it per request
+ * (keyed on `userId`), so the two consumers de-duplicate onto a SINGLE
+ * underlying call within the render — the same `cache()` + `unstable_cache`
+ * stacking the LIST page's `getAllCreatorsNetGgr` already uses. The
+ * cross-request `unstable_cache` slot still serves warm loads; this only
+ * removes the in-request double-scan. */
+export const getCreatorPnlCached = cache(async function getCreatorPnlCached(
   userId: string,
 ): Promise<CreatorPnlData> {
   const env = await readDbEnv();
   if (env !== "prod") return getCreatorPnl(userId);
   return cachedCreatorPnl(userId);
-}
+});

@@ -445,7 +445,19 @@ export type TransactionSortMode = "recent" | "pack_multiplier";
 
 const PACK_MULTIPLIER_CAP = 500;
 
-export async function getTransactions(params: {
+/**
+ * Lifetime lookback cap (days) for the pack_multiplier sort CTE. Without
+ * a bound, the CTE GROUP-BYs EVERY historical `pack_opening` row before
+ * taking the top {@link PACK_MULTIPLIER_CAP} by multiplier — a full-table
+ * aggregate scan that grows unbounded with ledger history. Bounding the
+ * candidate window to the last year keeps the scan tractable while still
+ * covering effectively all currently-relevant pack hits. Mirrors the
+ * 365-day `LIFETIME_PAIRING_LOOKBACK_DAYS` precedent in the deposit-bonus
+ * insights helpers.
+ */
+const PACK_MULTIPLIER_LOOKBACK_DAYS = 365;
+
+type GetTransactionsParams = {
   page?: number;
   perPage?: number;
   search?: string;
@@ -455,7 +467,22 @@ export async function getTransactions(params: {
   minAmount?: number;
   maxAmount?: number;
   sortBy?: TransactionSortMode;
-}): Promise<PaginatedResult<TransactionListItem>> {
+};
+
+/**
+ * Does the actual list work. Takes the resolved DB env + user-scope
+ * filter as its leading args so it NEVER calls `getDb()` /
+ * `excludeStaffAndBlacklisted()` (both request-scoped: they read the
+ * cookie / blacklist in the request) inside `unstable_cache`. Resolving
+ * those in the request scope and threading them through keeps the dev-DB
+ * toggle + blacklist honest as cache-key dimensions. Mirrors
+ * {@link computeDepositTransactions}.
+ */
+async function computeTransactions(
+  env: DbEnv,
+  userScope: Awaited<ReturnType<typeof excludeStaffAndBlacklisted>>,
+  params: GetTransactionsParams,
+): Promise<PaginatedResult<TransactionListItem>> {
   const {
     page = 1,
     perPage = 20,
@@ -469,8 +496,7 @@ export async function getTransactions(params: {
   } = params;
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
-  const db = await getDb();
-  const userScope = await excludeStaffAndBlacklisted();
+  const db = env === "dev" ? getDevDb() : getProdDb();
 
   const where: Prisma.ledger_transactionsWhereInput = {
     // FAKE-BALANCE: hide official_stream adjustments from the transactions
@@ -588,6 +614,9 @@ export async function getTransactions(params: {
         WHERE lt.type::text = 'pack_opening'
           AND lt.status = 'completed'
           AND lt.amount::numeric > 0
+          AND lt.created_at >= ${Prisma.raw(
+            `NOW() - INTERVAL '${PACK_MULTIPLIER_LOOKBACK_DAYS} days'`,
+          )}
         GROUP BY lt.id, lt.amount
       )
       SELECT id::text AS id
@@ -837,6 +866,44 @@ export async function getTransactions(params: {
     perPage: safePerPage,
     totalPages: Math.ceil(total / safePerPage),
   };
+}
+
+/**
+ * Cross-request cache for the shared transactions list — covers BOTH the
+ * `recent` and `pack_multiplier` sort paths, and every consumer of
+ * {@link getTransactions} (the Rewards tab, the Packs transactions tab,
+ * …). Wraps {@link computeTransactions} in a 300s `unstable_cache` keyed
+ * on `(env, userScope, params)`. The `params` object carries every filter
+ * dimension (search, type, types, status, minAmount, maxAmount, sortBy,
+ * page, perPage), so each distinct filter/page/sort combination — incl.
+ * the per-request search term — gets its own entry rather than colliding.
+ * `env` + `userScope` lead the key so a dev-DB-toggled admin and a changed
+ * blacklist never read a stale entry. Mirrors the
+ * `cachedDepositTransactions` 300s window above.
+ *
+ * Freshness at 300s is safe: ledger rows are NOT admin-mutated (the admin
+ * never creates/edits a ledger row), and the page's `AutoRefresh` simply
+ * re-runs the segment against the warm cache. The tag exists for a future
+ * manual bust.
+ */
+const cachedTransactions = unstable_cache(
+  computeTransactions,
+  ["transactions-list-v1"],
+  { revalidate: 300, tags: ["transactions-list"] },
+);
+
+/**
+ * Public entry point for the shared transactions list. Resolves the
+ * request's DB env + staff/blacklist user-scope (cookie + blacklist reads
+ * happen HERE, in the request scope) then delegates to the cached compute
+ * fn. See {@link computeTransactions} for the query itself.
+ */
+export async function getTransactions(
+  params: GetTransactionsParams,
+): Promise<PaginatedResult<TransactionListItem>> {
+  const env = await readDbEnv();
+  const userScope = await excludeStaffAndBlacklisted();
+  return cachedTransactions(env, userScope, params);
 }
 
 export async function getTransactionDetail(id: string) {

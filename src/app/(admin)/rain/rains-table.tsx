@@ -152,8 +152,12 @@ export function RainsTable({ data }: { data: RainRow[] }) {
                     isActive={r.status === "active"}
                   />
                 </TableCell>
-                <TableCell>{formatCurrency(r.tipAmountUsd)}</TableCell>
-                <TableCell>{formatCurrency(r.totalPoolUsd)}</TableCell>
+                <TableCell className="tabular-nums text-rose-600 dark:text-rose-400">
+                  {formatCurrency(r.tipAmountUsd)}
+                </TableCell>
+                <TableCell className="tabular-nums text-rose-600 dark:text-rose-400">
+                  {formatCurrency(r.totalPoolUsd)}
+                </TableCell>
                 <TableCell>{r.participantCount}</TableCell>
                 <TableCell>{r.winnerUsername ?? "-"}</TableCell>
                 <TableCell>{formatDateTime(r.startsAt)}</TableCell>

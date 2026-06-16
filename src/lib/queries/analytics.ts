@@ -787,7 +787,7 @@ async function computePackAndBattleStats(
       JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
       JOIN packs p ON gs.game_id = p.id
       WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
-        AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
+        AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})
       GROUP BY p.id, p.name
       ORDER BY COUNT(*) DESC
       LIMIT 20

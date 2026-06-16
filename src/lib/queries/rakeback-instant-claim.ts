@@ -259,20 +259,20 @@ async function queryRakebackInstantClaimUsage(
 ): Promise<InstantClaimUsage> {
   const db = await getDb();
 
-  if (!(await columnExists(db, "rakeback_claims", "last_preclaim_at"))) {
+  // Run the two cheap column probes + the exclusion-id resolution
+  // concurrently (they're independent) instead of three serial round-trips.
+  const [hasPreclaim, excludedIds, hasPayoutPercent] = await Promise.all([
+    columnExists(db, "rakeback_claims", "last_preclaim_at"),
+    getExcludedUserIds(),
+    columnExists(db, "rakeback_config", "early_claim_payout_percent"),
+  ]);
+
+  if (!hasPreclaim) {
     return { supported: false };
   }
 
   const days = daysForPeriod(period);
-  const scopeSql = excludeStaffCreatorsAndBlacklistedSqlFromIds(
-    await getExcludedUserIds(),
-  );
-
-  const hasPayoutPercent = await columnExists(
-    db,
-    "rakeback_config",
-    "early_claim_payout_percent",
-  );
+  const scopeSql = excludeStaffCreatorsAndBlacklistedSqlFromIds(excludedIds);
 
   // Per-row fee retained: paid × (100 − payout%) / payout%
   const savedExpr = hasPayoutPercent
@@ -291,17 +291,21 @@ async function queryRakebackInstantClaimUsage(
       ? ""
       : `AND claimed_at >= now() - interval '${days} days'`;
 
-  const aggRows = await db.$queryRawUnsafe<
-    {
-      total_count: bigint;
-      instant_count: bigint;
-      instant_users: bigint;
-      total_usd: string | null;
-      instant_usd: string | null;
-      instant_saved_usd: string | null;
-    }[]
-  >(
-    `SELECT
+  // The headline aggregate and the per-cadence breakdown are independent
+  // scans of the same window — run them concurrently so a cold load pays one
+  // round-trip's latency, not two in series.
+  const [aggRows, byTypeRows] = await Promise.all([
+    db.$queryRawUnsafe<
+      {
+        total_count: bigint;
+        instant_count: bigint;
+        instant_users: bigint;
+        total_usd: string | null;
+        instant_usd: string | null;
+        instant_saved_usd: string | null;
+      }[]
+    >(
+      `SELECT
        COUNT(*)::bigint                                                        AS total_count,
        COUNT(rc.last_preclaim_at)::bigint                                      AS instant_count,
        COUNT(DISTINCT rc.user_id) FILTER (WHERE rc.last_preclaim_at IS NOT NULL)::bigint AS instant_users,
@@ -313,12 +317,11 @@ async function queryRakebackInstantClaimUsage(
      WHERE rc.claimed_at IS NOT NULL
        ${windowSql}
        AND ${scopeSql}`,
-  );
-
-  const byTypeRows = await db.$queryRawUnsafe<
-    { type: string; instant_count: bigint; instant_usd: string | null }[]
-  >(
-    `SELECT
+    ),
+    db.$queryRawUnsafe<
+      { type: string; instant_count: bigint; instant_usd: string | null }[]
+    >(
+      `SELECT
        rc.rakeback_type::text                                         AS type,
        COUNT(*)::bigint                                               AS instant_count,
        COALESCE(SUM(rc.rakeback_amount_usd), 0)::text                 AS instant_usd
@@ -329,7 +332,8 @@ async function queryRakebackInstantClaimUsage(
        AND ${scopeSql}
      GROUP BY rc.rakeback_type
      ORDER BY rc.rakeback_type ASC`,
-  );
+    ),
+  ]);
 
   const agg = aggRows[0];
   const totalClaimCount = agg ? Number(agg.total_count) : 0;

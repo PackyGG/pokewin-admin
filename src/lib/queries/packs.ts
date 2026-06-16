@@ -874,7 +874,7 @@ const cachedPackStatScans = (packId: string, env: DbEnv) =>
       LEFT JOIN battles b ON b.id = pf.battle_id
       WHERE pf.result_metadata->>'pack_id' = $1
       GROUP BY is_battle, borrow_pct, sponsor_pct
-      ORDER BY count DESC
+      ORDER BY COUNT(*) DESC
     `, packId),
       ]);
     },
@@ -1043,7 +1043,7 @@ export async function getPackGames(
   const whereClause = conditions.join(" AND ");
   const orderCol =
     filters?.sortBy === "payout"
-      ? "card_price"
+      ? "COALESCE(c.price, 0)"
       : filters?.sortBy === "date"
         ? "pf.created_at"
         : "pf.created_at";

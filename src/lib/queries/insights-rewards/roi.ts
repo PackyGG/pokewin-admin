@@ -9,6 +9,7 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "./_period";
+import { windowDateFilterCapped } from "./deposit-bonus/_shared";
 
 /**
  * ROI analysis per reward category — for every category, compare:
@@ -173,10 +174,19 @@ async function computeRoi(
   const rows = await Promise.all(
     CATEGORIES.map(async (cat) => {
       const typesSql = typeListSql(cat.types);
+      // Lifetime (`days === null`) used to bound the forward sweep ONLY by
+      // `>= claim_at`, so each claimant's full forward ledger history was
+      // scanned with no upper/lower cap — the heaviest plan on this surface
+      // and the one most likely to hang in prod. Mirror the deposit-bonus /
+      // rakeback-ROI precedent (`windowDateFilterCapped`, bounds lifetime
+      // scans to LIFETIME_PAIRING_LOOKBACK_DAYS=365): keep the `>= claim_at`
+      // per-claimant forward floor and additionally bound the scan to the
+      // last 365 days of ledger activity so a lifetime view never triggers a
+      // full-history scan.
       const forwardWindowClause =
         days !== null
           ? `AND lt.created_at >= claim_at AND lt.created_at < claim_at + INTERVAL '${lookbackDays} days'`
-          : `AND lt.created_at >= claim_at`;
+          : `AND lt.created_at >= claim_at ${windowDateFilterCapped("all", "lt")}`;
       const resultRows = await db.$queryRawUnsafe<
         {
           cost: string;

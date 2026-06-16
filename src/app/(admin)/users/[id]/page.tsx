@@ -24,10 +24,6 @@ import { isAdjustmentVisibilityOwner } from "@/lib/users/owner-adjustments-visib
 import { ensureSupportBaseline } from "@/lib/support-baseline";
 import { UserTagsPanel } from "./user-tags-panel";
 import { AutoRefresh } from "../../dashboard/auto-refresh";
-import {
-  getSharedIpUsers,
-  getSharedFingerprintUsers,
-} from "@/lib/fraud/shared-identity";
 import { UserViewModern } from "./user-view-modern";
 import { coerceTab } from "./user-tabs-types";
 import type { TabKey } from "./user-tabs-types";
@@ -274,7 +270,7 @@ export default async function UserDetailPage({
 
       {/* ── STREAMED HEAVY BODY ─────────────────────────────────────────
           The hero KPI strip + tabbed content (balances, P&L, inventory,
-          gaming/financial transactions, rewards, trust) all live in
+          gaming/financial transactions, rewards) all live in
           UserViewModern, which needs the heavy getUserDetail aggregate +
           ~half a dozen other Main-DB reads. Streaming it behind its own
           Suspense keeps those reads off the header's TTFB, and every fetch
@@ -399,8 +395,8 @@ async function UserDetailBody({
     wager14d: 0,
   };
   // Neutral risk shape used ONLY as the safeQuery fallback carrier — the
-  // hero/Trust tab branch on the result's `error` BEFORE reading it, so a
-  // failed scan renders an amber "Risk —" pill / band error, never this
+  // hero badge branches on the result's `error` BEFORE reading it, so a
+  // failed scan renders an amber "Risk —" pill, never this
   // shape as a false "low risk" all-clear.
   const EMPTY_RISK = {
     score: 0,
@@ -445,7 +441,7 @@ async function UserDetailBody({
 
   // Always kicked (tab-independent): the P&L breakdown feeds the hero-
   // adjacent Overview panels AND the Account tab's windowed strips; the
-  // risk scan feeds the hero badge + Trust tab. Both 60s-cached
+  // risk scan feeds the hero badge. Both 60s-cached
   // cross-request, both timeout-bounded.
   const pnlResultPromise = safeQuery(
     () => getUserPnlBreakdownCached(id),
@@ -640,28 +636,6 @@ async function UserDetailBody({
     USER_DETAIL_QUERY_TIMEOUT_MS,
   ).then((r) => r.data);
 
-  // Trust tab: shared-identity fan-outs. Previously these rode only the
-  // 30s statement_timeout — now they get the same explicit per-query
-  // wall-clock bound as every other band read.
-  const sharedIpsPromise =
-    initialTab === "trust"
-      ? safeQuery(
-          () => getSharedIpUsers(id),
-          [],
-          "users.detail.sharedIps",
-          USER_DETAIL_QUERY_TIMEOUT_MS,
-        )
-      : null;
-  const sharedFingerprintsPromise =
-    initialTab === "trust"
-      ? safeQuery(
-          () => getSharedFingerprintUsers(id),
-          [],
-          "users.detail.sharedFingerprints",
-          USER_DETAIL_QUERY_TIMEOUT_MS,
-        )
-      : null;
-
   // ── AWAITED BODY GATE ──────────────────────────────────────────────
   //
   // Only what EVERYTHING in UserViewModern needs before any band can
@@ -813,8 +787,6 @@ async function UserDetailBody({
       disposedInventoryPromise={disposedInventoryPromise}
       cardSaleTxPromise={cardSaleTxPromise}
       battleVoucherTxPromise={battleVoucherTxPromise}
-      sharedIpsPromise={sharedIpsPromise}
-      sharedFingerprintsPromise={sharedFingerprintsPromise}
       wagerRequirementPromise={wagerRequirementPromise}
       wagerProgressPromise={wagerProgressPromise}
       viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
@@ -832,11 +804,11 @@ function UserDetailBodySkeleton() {
   return (
     <div className="space-y-6">
       {/* Modern user view: identity hero with avatar + status pills + KPIs.
-          8 KPI tiles + 9 tabs — counts mirror UserViewModern's hero strip
+          8 KPI tiles + 8 tabs — counts mirror UserViewModern's hero strip
           and tab bar so the streamed body swaps in without a layout jump. */}
       <Skeleton className="h-32 rounded-2xl" />
       <KpiStripSkeleton count={8} />
-      <TabBarSkeleton count={9} />
+      <TabBarSkeleton count={8} />
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Skeleton className="h-48 rounded-2xl" />
         <Skeleton className="h-48 rounded-2xl" />

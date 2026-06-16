@@ -742,7 +742,7 @@ export type RecentWagerOnCode = {
   userId: string;
   username: string | null;
   email: string | null;
-  type: "pack_opening" | "battle_bet" | "battle_sponsorship";
+  type: "pack_opening" | "battle_bet" | "battle_sponsorship" | "upgrader_bet";
   amountUsd: number;
   createdAt: string;
 };
@@ -830,7 +830,7 @@ export async function getRecentWagersOnCode(
         userId: r.user_id,
         username: r.username,
         email: r.email,
-        type: r.type as "pack_opening" | "battle_bet" | "battle_sponsorship",
+        type: r.type as "pack_opening" | "battle_bet" | "battle_sponsorship" | "upgrader_bet",
         // amount is negative on the user's ledger (money leaving their
         // balance); display as a positive bet figure.
         amountUsd: Math.abs(toNumber(r.amount)),

@@ -14,8 +14,15 @@ import {
   getAdminUserAuditStats,
   getAdminUserAuditEvents,
   type AdminAuditEventItem,
+  type AdminAuditStats,
 } from "@/lib/queries/admin-users";
 import type { PaginatedResult } from "@/lib/types";
+import {
+  safeQuery,
+  safeQueryOrNull,
+  REWARD_QUERY_TIMEOUT_MS,
+  type SafeQueryResult,
+} from "@/lib/errors/safe-query";
 import { getLimitsForAdmin } from "@/lib/balance-limits";
 import { adminRolesColumnExists } from "@/lib/admin-user-roles";
 import { listAssignablePresets } from "../_roles/custom-roles-actions";
@@ -68,34 +75,106 @@ export default async function AdminUserDetailPage({
     totalPages: 0,
   };
 
+  // Degraded fallbacks so a single read failing/timing out can't white-screen
+  // the whole detail page — each read is wrapped in safeQuery/safeQueryOrNull
+  // (mirrors /audit). The render keeps working on empty states; only `detail`
+  // failing falls through to notFound() (there is no hero/identity to paint
+  // without it), which is still a graceful degrade vs an unhandled crash.
+  const emptyAuditStats: AdminAuditStats = {
+    totalActions: 0,
+    lastActive: null,
+    eventsByType: [],
+    dailyActivity: [],
+  };
+  type BalanceLimitsResult = Awaited<ReturnType<typeof getLimitsForAdmin>>;
+  const emptyBalanceLimits: BalanceLimitsResult = [];
+  const emptyPresets: { id: string; name: string }[] = [];
+
   const [
-    detail,
-    auditStats,
-    auditEvents,
-    balanceLimits,
-    rolesColumnExists,
-    assignablePresets,
+    detailResult,
+    auditStatsResult,
+    auditEventsResult,
+    balanceLimitsResult,
+    rolesColumnExistsResult,
+    assignablePresetsResult,
   ] = await Promise.all([
-    getAdminUserDetail(id),
-    getAdminUserAuditStats(id),
+    safeQueryOrNull(
+      () => getAdminUserDetail(id),
+      "adminUsers.detail",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getAdminUserAuditStats(id),
+      emptyAuditStats,
+      "adminUsers.auditStats",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
     isCurrentUserAdmin
-      ? getAdminUserAuditEvents(id, auditPage, auditPerPage, {
-          eventType: typeof sp.auditEventType === "string" ? sp.auditEventType : undefined,
-          search: typeof sp.auditSearch === "string" ? sp.auditSearch : undefined,
-        })
-      : Promise.resolve(emptyAuditEvents),
-    isCurrentUserAdmin ? getLimitsForAdmin(id) : Promise.resolve([]),
+      ? safeQuery(
+          () =>
+            getAdminUserAuditEvents(id, auditPage, auditPerPage, {
+              eventType: typeof sp.auditEventType === "string" ? sp.auditEventType : undefined,
+              search: typeof sp.auditSearch === "string" ? sp.auditSearch : undefined,
+            }),
+          emptyAuditEvents,
+          "adminUsers.auditEvents",
+          REWARD_QUERY_TIMEOUT_MS,
+        )
+      : Promise.resolve<SafeQueryResult<PaginatedResult<AdminAuditEventItem>>>({
+          data: emptyAuditEvents,
+          error: null,
+          kind: null,
+        }),
     // Whether the additive `roles` column is migrated — drives the honest
     // "multi-role needs a migration" notice in the Roles card. Only needed
     // by an admin viewer (the card is hidden otherwise); skip the probe
     // for non-admin viewers, mirroring the balance-limits gate above.
-    isCurrentUserAdmin ? adminRolesColumnExists() : Promise.resolve(false),
+    isCurrentUserAdmin
+      ? safeQuery(
+          () => getLimitsForAdmin(id),
+          emptyBalanceLimits,
+          "adminUsers.balanceLimits",
+          REWARD_QUERY_TIMEOUT_MS,
+        )
+      : Promise.resolve<SafeQueryResult<BalanceLimitsResult>>({
+          data: emptyBalanceLimits,
+          error: null,
+          kind: null,
+        }),
+    isCurrentUserAdmin
+      ? safeQuery(
+          () => adminRolesColumnExists(),
+          false,
+          "adminUsers.rolesColumn",
+          REWARD_QUERY_TIMEOUT_MS,
+        )
+      : Promise.resolve<SafeQueryResult<boolean>>({
+          data: false,
+          error: null,
+          kind: null,
+        }),
     // Assignable role presets (custom roles) for the "Role preset" select in
     // the Roles card. Admin-only surface; skip the read for non-admin viewers.
     isCurrentUserAdmin
-      ? listAssignablePresets()
-      : Promise.resolve([] as { id: string; name: string }[]),
+      ? safeQuery(
+          () => listAssignablePresets(),
+          emptyPresets,
+          "adminUsers.presets",
+          REWARD_QUERY_TIMEOUT_MS,
+        )
+      : Promise.resolve<SafeQueryResult<{ id: string; name: string }[]>>({
+          data: emptyPresets,
+          error: null,
+          kind: null,
+        }),
   ]);
+
+  const detail = detailResult.data;
+  const auditStats = auditStatsResult.data;
+  const auditEvents = auditEventsResult.data;
+  const balanceLimits = balanceLimitsResult.data;
+  const rolesColumnExists = rolesColumnExistsResult.data;
+  const assignablePresets = assignablePresetsResult.data;
 
   if (!detail) notFound();
 

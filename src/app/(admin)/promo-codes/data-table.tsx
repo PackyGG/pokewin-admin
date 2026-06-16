@@ -57,7 +57,9 @@ function isExpired(row: PromoCodeListItem): boolean {
 
 function codeStatus(row: PromoCodeListItem): { label: string; cls: string } {
   const isExpired = row.expiresAt && new Date(row.expiresAt) < new Date();
-  const isUsedUp = row.redemptionCount >= row.maxUses;
+  // maxUses of 0 means *no cap* (unlimited) — only treat as used up when
+  // there's a real positive cap that's been reached.
+  const isUsedUp = row.maxUses > 0 && row.redemptionCount >= row.maxUses;
   if (isExpired)
     return {
       label: "Expired",

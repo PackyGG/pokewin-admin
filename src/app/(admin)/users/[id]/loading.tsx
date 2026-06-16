@@ -8,8 +8,8 @@ import {
  * Matches /users/[id]: simple back-link header (no full PageHero), large
  * hero KPI strip from UserViewModern (8 tiles: Total Value · P&L · Total
  * Depo · Total Withdrawn · Deposits · Withdrawals · Multiplier · House Edge),
- * segmented tab bar (8 tabs: Overview · Gaming · Finances · Rewards ·
- * Inventory · Trust · Affiliate · Account), and tabbed content (panels +
+ * segmented tab bar (7 tabs: Overview · Gaming · Finances · Rewards ·
+ * Inventory · Affiliate · Account), and tabbed content (panels +
  * tables). Counts mirror the real UserViewModern strip + tab bar so the
  * swap-in is jank-free.
  */
@@ -51,7 +51,7 @@ export default function UserDetailLoading() {
 
       <KpiStripSkeleton count={8} />
 
-      <TabBarSkeleton count={8} />
+      <TabBarSkeleton count={7} />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Skeleton className="h-48 rounded-2xl" />

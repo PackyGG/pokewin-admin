@@ -713,7 +713,6 @@ export type TabKey =
   | "rewards"
   | "gaming"
   | "inventory"
-  | "trust"
   | "affiliate"
   | "account";
 
@@ -724,7 +723,6 @@ export const TAB_KEYS = new Set<TabKey>([
   "rewards",
   "gaming",
   "inventory",
-  "trust",
   "affiliate",
   "account",
 ]);
