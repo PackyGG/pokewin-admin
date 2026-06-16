@@ -1,7 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { getDb } from "@/lib/db";
+import { BATTLES_LIST_TAG, BATTLES_DETAIL_TAG } from "@/lib/queries/battles-cache";
 import { requirePageAccess, requireRole } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -127,6 +128,11 @@ export async function cancelBattle(battleId: string) {
     },
   });
 
+  // Bust the prod-only unstable_cache layer (path revalidation alone does
+  // not invalidate tagged data-cache entries) so the cancelled status
+  // shows immediately on both the list and the detail view.
+  revalidateTag(BATTLES_LIST_TAG);
+  revalidateTag(BATTLES_DETAIL_TAG);
   revalidatePath("/battles");
   revalidatePath(`/battles/${battleId}`);
 }

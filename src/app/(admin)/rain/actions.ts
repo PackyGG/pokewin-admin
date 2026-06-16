@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -41,6 +41,10 @@ export async function adjustRainBase(rainId: string, newBaseAmount: number) {
     },
   });
 
+  // Bust the cached detail header/tips (unstable_cache, tag "rain-detail")
+  // so the adjusted base + total pool surface immediately instead of
+  // stale-while-revalidate. See src/lib/queries/rain-detail-cache.ts.
+  revalidateTag("rain-detail");
   revalidatePath("/rain");
   revalidatePath(`/rain/${rainId}`);
 }

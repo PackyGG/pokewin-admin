@@ -10,7 +10,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { CardImage } from "@/components/card-image";
@@ -104,6 +104,7 @@ export async function PacksBattlesTab({
           ),
         null,
         "analytics.packs.profitability",
+        REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
         () =>
@@ -120,6 +121,7 @@ export async function PacksBattlesTab({
           ),
         null,
         "analytics.packs.overview",
+        REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
         () =>
@@ -133,6 +135,7 @@ export async function PacksBattlesTab({
           ),
         null,
         "analytics.packs.top24h",
+        REWARD_QUERY_TIMEOUT_MS,
       ),
     ]);
   const data = profitabilityResult.data;

@@ -2,10 +2,10 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { Swords } from "lucide-react";
 import {
-  getBattles,
   type BattleListItem,
   type BattleSortMode,
 } from "@/lib/queries/battles";
+import { getBattlesCached } from "@/lib/queries/battles-cache";
 import { requirePageAccess } from "@/lib/dal";
 import { BattlesDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -199,7 +199,8 @@ async function BattlesTableSection({
   // crash via the route error boundary. Mirrors the hardened /packs
   // list call-site.
   const { data: result, error } = await loadPrimary(
-    () => getBattles({ page, perPage, status, mode, search, sortBy, since }),
+    () =>
+      getBattlesCached({ page, perPage, status, mode, search, sortBy, since }),
     EMPTY_BATTLES,
     "battles.list",
   );

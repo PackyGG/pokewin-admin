@@ -1,5 +1,5 @@
 import { getPackBattlePurePnl } from "@/lib/queries/pnl";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { PackBattlePurePnl } from "@/components/pack-battle-pure-pnl";
@@ -31,6 +31,7 @@ export async function PurePnlTab() {
       ),
     null,
     "analytics.purePnl",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

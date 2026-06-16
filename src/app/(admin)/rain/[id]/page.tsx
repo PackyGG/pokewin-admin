@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
@@ -10,7 +11,16 @@ import {
   Gift,
   Ticket,
 } from "lucide-react";
-import { getRainDetail } from "@/lib/queries/rain";
+import {
+  getRainEntries,
+  type RainEntryItem,
+  type RainTipItem,
+} from "@/lib/queries/rain";
+import {
+  getRainHeaderCached,
+  getRainTipsCached,
+} from "@/lib/queries/rain-detail-cache";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +33,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
+import {
+  SectionHeadingSkeleton,
+  TableSkeleton,
+  PaginationSkeleton,
+} from "@/components/loading-skeletons";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
 import {
   PageHero,
@@ -43,6 +58,8 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
 };
 
+const SECTION_TIMEOUT_MS = 10_000;
+
 export default async function RainDetailPage({
   params,
   searchParams,
@@ -58,7 +75,12 @@ export default async function RainDetailPage({
   const entriesPage = Number(sp.page) || 1;
   const entriesPerPage = Number(sp.perPage) || 20;
 
-  const data = await getRainDetail(id, { page: entriesPage, perPage: entriesPerPage });
+  // Header is the only critical-path read: it decides 404 and feeds the
+  // hero + KPI strip + Details panel. It is cached (prod-only, see
+  // rain-detail-cache.ts) so it resolves from the warmed entry on every
+  // entries `?page=` change instead of re-querying the summary boxes. The
+  // heavier tips list + paginated entries stream independently below.
+  const data = await getRainHeaderCached(id);
 
   if (!data) notFound();
 
@@ -96,7 +118,7 @@ export default async function RainDetailPage({
         <KpiTile
           label="Tips"
           value={formatCurrency(data.tipAmountUsd)}
-          sub={`${data.tips.length} tipper${data.tips.length === 1 ? "" : "s"}`}
+          sub={`${data.tipCount} tipper${data.tipCount === 1 ? "" : "s"}`}
           icon={Coins}
           accent="emerald"
         />
@@ -148,51 +170,154 @@ export default async function RainDetailPage({
         </FadeIn>
       </div>
 
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Gift}
-          title={`Tips (${data.tips.length})`}
-        />
-        <FadeIn className="rounded-md border overflow-hidden">
+      {/* Tips stream independently of the entries cursor — no re-fetch on
+          pagination. */}
+      <Suspense
+        fallback={
+          <div className="space-y-3">
+            <SectionHeadingSkeleton titleWidth={100} />
+            <TableSkeleton rows={6} columns={4} />
+          </div>
+        }
+      >
+        <TipsSection id={id} />
+      </Suspense>
+
+      {/* Entries are server-side paginated; the Suspense key re-renders ONLY
+          this section as the admin pages. */}
+      <Suspense
+        key={`${entriesPage}|${entriesPerPage}`}
+        fallback={
+          <div className="space-y-3">
+            <SectionHeadingSkeleton titleWidth={100} />
+            <TableSkeleton rows={10} columns={3} />
+            <PaginationSkeleton />
+          </div>
+        }
+      >
+        <EntriesSection id={id} page={entriesPage} perPage={entriesPerPage} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function TipsSection({ id }: { id: string }) {
+  const { data: tips } = await safeQueryOrNull(
+    () => getRainTipsCached(id),
+    "rain.detail.tips",
+    SECTION_TIMEOUT_MS,
+  );
+  const list: RainTipItem[] = tips ?? [];
+
+  return (
+    <div className="space-y-3">
+      <SectionHeading icon={Gift} title={`Tips (${list.length})`} />
+      <FadeIn className="rounded-md border overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>User</TableHead>
+              <TableHead>Amount</TableHead>
+              <TableHead>Team</TableHead>
+              <TableHead>Date</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {list.map((tip) => (
+              <TableRow key={tip.id}>
+                <TableCell>
+                  <Link href={`/users/${tip.userId}`} className="hover:underline">
+                    {tip.username ?? tip.userId.slice(0, 8)}
+                  </Link>
+                </TableCell>
+                {/* Tips fund the pool — money flows FROM user TO us
+                    → emerald (house keeps it until winner takes it). */}
+                <TableCell className="text-emerald-600 dark:text-emerald-400 tabular-nums">
+                  {formatCurrency(tip.amountUsd)}
+                </TableCell>
+                <TableCell>
+                  {tip.isTeamMember && (
+                    <Badge variant="outline" className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30">
+                      Team
+                    </Badge>
+                  )}
+                </TableCell>
+                <TableCell>{formatDateTime(tip.createdAt)}</TableCell>
+              </TableRow>
+            ))}
+            {list.length === 0 && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={4} className="p-0">
+                  <EmptyState
+                    icon={Gift}
+                    title="No tips yet"
+                    description="Tips that fund this rain pool will appear here."
+                    compact
+                  />
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </FadeIn>
+    </div>
+  );
+}
+
+async function EntriesSection({
+  id,
+  page,
+  perPage,
+}: {
+  id: string;
+  page: number;
+  perPage: number;
+}) {
+  const { data: entries } = await safeQueryOrNull(
+    () => getRainEntries(id, page, perPage),
+    "rain.detail.entries",
+    SECTION_TIMEOUT_MS,
+  );
+  const result = entries ?? {
+    data: [] as RainEntryItem[],
+    total: 0,
+    page,
+    perPage,
+    totalPages: 0,
+  };
+
+  return (
+    <div className="space-y-3">
+      <SectionHeading icon={Ticket} title={`Entries (${result.total})`} />
+      <FadeIn className="space-y-4">
+        <div className="rounded-md border overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>User</TableHead>
-                <TableHead>Amount</TableHead>
-                <TableHead>Team</TableHead>
+                <TableHead>Verified At</TableHead>
                 <TableHead>Date</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.tips.map((tip) => (
-                <TableRow key={tip.id}>
+              {result.data.map((entry) => (
+                <TableRow key={entry.id}>
                   <TableCell>
-                    <Link href={`/users/${tip.userId}`} className="hover:underline">
-                      {tip.username ?? tip.userId.slice(0, 8)}
+                    <Link href={`/users/${entry.userId}`} className="hover:underline">
+                      {entry.username ?? entry.userId.slice(0, 8)}
                     </Link>
                   </TableCell>
-                  {/* Tips fund the pool — money flows FROM user TO us
-                      → emerald (house keeps it until winner takes it). */}
-                  <TableCell className="text-emerald-600 dark:text-emerald-400 tabular-nums">
-                    {formatCurrency(tip.amountUsd)}
-                  </TableCell>
-                  <TableCell>
-                    {tip.isTeamMember && (
-                      <Badge variant="outline" className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30">
-                        Team
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>{formatDateTime(tip.createdAt)}</TableCell>
+                  <TableCell>{formatDateTime(entry.turnstileVerifiedAt)}</TableCell>
+                  <TableCell>{formatDateTime(entry.createdAt)}</TableCell>
                 </TableRow>
               ))}
-              {data.tips.length === 0 && (
+              {result.data.length === 0 && (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={4} className="p-0">
+                  <TableCell colSpan={3} className="p-0">
                     <EmptyState
-                      icon={Gift}
-                      title="No tips yet"
-                      description="Tips that fund this rain pool will appear here."
+                      icon={Ticket}
+                      title="No entries yet"
+                      description="Players who join this rain will be listed here."
                       compact
                     />
                   </TableCell>
@@ -200,59 +325,14 @@ export default async function RainDetailPage({
               )}
             </TableBody>
           </Table>
-        </FadeIn>
-      </div>
-
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Ticket}
-          title={`Entries (${data.entries.total})`}
+        </div>
+        <DataTablePagination
+          page={result.page}
+          totalPages={result.totalPages}
+          total={result.total}
+          perPage={result.perPage}
         />
-        <FadeIn className="space-y-4">
-          <div className="rounded-md border overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Verified At</TableHead>
-                  <TableHead>Date</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.entries.data.map((entry) => (
-                  <TableRow key={entry.id}>
-                    <TableCell>
-                      <Link href={`/users/${entry.userId}`} className="hover:underline">
-                        {entry.username ?? entry.userId.slice(0, 8)}
-                      </Link>
-                    </TableCell>
-                    <TableCell>{formatDateTime(entry.turnstileVerifiedAt)}</TableCell>
-                    <TableCell>{formatDateTime(entry.createdAt)}</TableCell>
-                  </TableRow>
-                ))}
-                {data.entries.data.length === 0 && (
-                  <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={3} className="p-0">
-                      <EmptyState
-                        icon={Ticket}
-                        title="No entries yet"
-                        description="Players who join this rain will be listed here."
-                        compact
-                      />
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-          <DataTablePagination
-            page={data.entries.page}
-            totalPages={data.entries.totalPages}
-            total={data.entries.total}
-            perPage={data.entries.perPage}
-          />
-        </FadeIn>
-      </div>
+      </FadeIn>
     </div>
   );
 }

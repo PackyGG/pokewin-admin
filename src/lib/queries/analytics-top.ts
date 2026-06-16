@@ -1,7 +1,9 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { WAGER_TYPES_SQL, GAMING_PAYOUT_TYPES_SQL } from "@/lib/metrics";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 import {
@@ -115,9 +117,11 @@ async function hasUpgraderGames(): Promise<boolean> {
   return probe[0]?.exists != null;
 }
 
-export async function getTopDepositors(
+async function computeTopDepositors(
   period: LeaderboardPeriod,
+  _blacklistKey: string[],
 ): Promise<UserLeaderRow[]> {
+  void _blacklistKey; // cache-key dimension only; scope is fetched internally
   const db = await getDb();
   const scope = await realCustomersScopeSql();
   const rows = await db.$queryRawUnsafe<
@@ -146,9 +150,11 @@ export async function getTopDepositors(
   }));
 }
 
-export async function getTopWagerers(
+async function computeTopWagerers(
   period: LeaderboardPeriod,
+  _blacklistKey: string[],
 ): Promise<UserLeaderRow[]> {
+  void _blacklistKey; // cache-key dimension only; scope is fetched internally
   const db = await getDb();
   const scope = await realCustomersScopeSql();
   const sessionWindowsCte = await getCreatorSessionWindowsCte();
@@ -364,9 +370,11 @@ async function getUserGamingPnl(
  * Top losers = users we made the most gross gaming revenue from. High
  * positive house P&L (canonical wager − canonical gaming payout) per user.
  */
-export async function getTopLosers(
+async function computeTopLosers(
   period: LeaderboardPeriod,
+  _blacklistKey: string[],
 ): Promise<UserLeaderRow[]> {
+  void _blacklistKey; // cache-key dimension only; scope is fetched internally
   const rows = await getUserGamingPnl(period);
   return rows
     .map((r) => ({
@@ -384,9 +392,11 @@ export async function getTopLosers(
  * Top winners = users who have taken the most money off the house. User
  * net (payout − wager) > 0; the amount shown is that positive magnitude.
  */
-export async function getTopWinners(
+async function computeTopWinners(
   period: LeaderboardPeriod,
+  _blacklistKey: string[],
 ): Promise<UserLeaderRow[]> {
+  void _blacklistKey; // cache-key dimension only; scope is fetched internally
   const rows = await getUserGamingPnl(period);
   return rows
     .map((r) => ({
@@ -400,9 +410,11 @@ export async function getTopWinners(
     .slice(0, LIMIT);
 }
 
-export async function getTopCreatorsByVolume(
+async function computeTopCreatorsByVolume(
   period: LeaderboardPeriod,
+  _blacklistKey: string[],
 ): Promise<CreatorLeaderRow[]> {
+  void _blacklistKey; // cache-key dimension only; scope is fetched internally
   const db = await getDb();
   const days = daysForPeriod(period);
   const refWindow =
@@ -465,9 +477,11 @@ export async function getTopCreatorsByVolume(
   }));
 }
 
-export async function getTopCountries(
+async function computeTopCountries(
   period: LeaderboardPeriod,
+  _blacklistKey: string[],
 ): Promise<CountryLeaderRow[]> {
+  void _blacklistKey; // cache-key dimension only; scope is fetched internally
   const db = await getDb();
   const scope = await realCustomersScopeSql();
   const sessionWindowsCte = await getCreatorSessionWindowsCte();
@@ -589,3 +603,65 @@ export async function getTopCountries(
     ggr: toNumber(r.wager) - toNumber(r.payout),
   }));
 }
+
+/**
+ * Cross-request cache for the six Top-performers leaderboards. `/analytics`
+ * → Top tab re-runs on every 5-minute `AutoRefresh` tick for every viewer;
+ * without a shared cache each heavy borrow-corrected wager / per-user P&L /
+ * per-country GGR scan re-ran per tick per viewer. Each board gets a 60s
+ * (finite window) + 300s (lifetime) `unstable_cache` pair keyed on `(period,
+ * sortedBlacklist)`. The compute functions fetch their canonical scope
+ * (`realCustomersScopeSql`) internally — which already reflects the
+ * blacklist — so the sorted-blacklist argument is purely a cache-key
+ * dimension (an excluded-users edit → a new key → fresh aggregate). Logic is
+ * byte-for-byte identical to each `computeTop*`; mirrors the
+ * `getAnalyticsData` cache idiom in `analytics.ts`.
+ *
+ * NOTE: the `all` window is still an UNBOUNDED lifetime scan on every board
+ * (money-exact leaderboard amounts — capping would change displayed numbers,
+ * so it is left for owner sign-off). The cache + the caller's `safeQuery`
+ * timeout keep a cold lifetime fill from hanging the segment.
+ */
+function makeCachedLeaderboard<T>(
+  fn: (period: LeaderboardPeriod, blacklistKey: string[]) => Promise<T>,
+  baseKey: string,
+): (period: LeaderboardPeriod) => Promise<T> {
+  const short = unstable_cache(fn, [`${baseKey}-v1`], {
+    revalidate: 60,
+    tags: ["analytics"],
+  });
+  const lifetime = unstable_cache(fn, [`${baseKey}-lifetime-v1`], {
+    revalidate: 300,
+    tags: ["analytics"],
+  });
+  return async (period: LeaderboardPeriod): Promise<T> => {
+    const blacklist = await getExcludedUserIds();
+    const sorted = [...blacklist].sort();
+    return period === "all" ? lifetime(period, sorted) : short(period, sorted);
+  };
+}
+
+export const getTopDepositors = makeCachedLeaderboard(
+  computeTopDepositors,
+  "analytics-top-depositors",
+);
+export const getTopWagerers = makeCachedLeaderboard(
+  computeTopWagerers,
+  "analytics-top-wagerers",
+);
+export const getTopLosers = makeCachedLeaderboard(
+  computeTopLosers,
+  "analytics-top-losers",
+);
+export const getTopWinners = makeCachedLeaderboard(
+  computeTopWinners,
+  "analytics-top-winners",
+);
+export const getTopCreatorsByVolume = makeCachedLeaderboard(
+  computeTopCreatorsByVolume,
+  "analytics-top-creators",
+);
+export const getTopCountries = makeCachedLeaderboard(
+  computeTopCountries,
+  "analytics-top-countries",
+);

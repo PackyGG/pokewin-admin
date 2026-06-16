@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
@@ -36,9 +37,8 @@ export type RetentionData = {
   cohortD90: number;
 };
 
-export async function getRetentionCurve(): Promise<RetentionData> {
+async function computeRetentionCurve(excluded: string[]): Promise<RetentionData> {
   const db = await getDb();
-  const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   // Pull per-day retention in one shot. For each (cohort, day-offset)
   // bucket, count distinct users that wagered in that bucket. The
@@ -110,4 +110,28 @@ export async function getRetentionCurve(): Promise<RetentionData> {
     cohortD30: d30.cohort,
     cohortD90: d90.cohort,
   };
+}
+
+/**
+ * Cross-request cache for the retention curve. `/analytics` re-runs every
+ * server component on each 5-minute `AutoRefresh` tick for every viewer;
+ * without a shared cache this 180-day cohort scan (generate_series ×
+ * distinct-user activity join) re-ran per tick per viewer. The curve is a
+ * rolling 180-day measurement that barely moves second-to-second, so a
+ * single 300s layer keyed on the sorted blacklist (an admin edit to the
+ * excluded-users list → a different key → fresh aggregate on the next tick)
+ * is sufficient. Logic is byte-for-byte identical to `computeRetentionCurve`;
+ * perf/consistency only, no number change. Mirrors the `getAnalyticsData`
+ * cache idiom in `analytics.ts`.
+ */
+const cachedRetentionCurve = unstable_cache(
+  computeRetentionCurve,
+  ["analytics-retention-v1"],
+  { revalidate: 300, tags: ["analytics"] },
+);
+
+export async function getRetentionCurve(): Promise<RetentionData> {
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return cachedRetentionCurve(sorted);
 }

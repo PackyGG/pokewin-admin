@@ -10,7 +10,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { MetricTile } from "@/components/modern-panels";
@@ -60,6 +60,7 @@ export async function LtvTab({
       ),
     null,
     "analytics.ltv",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

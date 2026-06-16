@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Filter, TrendingDown } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
@@ -56,6 +56,7 @@ export async function FunnelTab({
       ),
     null,
     "analytics.funnel",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

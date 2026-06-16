@@ -1,6 +1,6 @@
 import { Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import {
@@ -45,6 +45,7 @@ export async function HeatmapTab({
       ),
     null,
     "analytics.heatmap",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

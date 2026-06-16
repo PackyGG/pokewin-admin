@@ -29,7 +29,8 @@ import {
 } from "@/components/loading-skeletons";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import {
-  getShardPackOpens,
+  getShardOpensSummary,
+  getShardOpensFeed,
   getShardGivenOut,
   shardOpensPeriodLabel,
   type ShardOpensPeriod,
@@ -218,16 +219,14 @@ async function EconomyOverviewContent() {
  * dropped wholesale here (that is reserved for the customer GGR/NGR money
  * layer); the consistent page rule is staff + blacklist.
  */
-async function OpensContent({
-  period,
-  page,
-  perPage,
-}: {
-  period: ShardOpensPeriod;
-  page: number;
-  perPage: number;
-}) {
-  const EMPTY: Awaited<ReturnType<typeof getShardPackOpens>> = {
+/**
+ * Window SUMMARY (KPI strip) — page-INDEPENDENT, so it renders in its own
+ * window-keyed Suspense boundary that does NOT re-suspend when the feed below
+ * paginates. The schema-absent panel lives here (rendered once); the feed
+ * self-hides when the schema is absent so the message isn't duplicated.
+ */
+async function OpensSummaryContent({ period }: { period: ShardOpensPeriod }) {
+  const EMPTY: Awaited<ReturnType<typeof getShardOpensSummary>> = {
     available: true,
     period,
     summary: {
@@ -238,20 +237,17 @@ async function OpensContent({
       totalCardValueUsd: 0,
       totalCardCount: 0,
     },
-    packs: [],
-    feed: { data: [], total: 0, page, perPage, totalPages: 0 },
   };
 
   const { data: result, error } = await safeQuery(
-    () => getShardPackOpens(period, page, perPage),
+    () => getShardOpensSummary(period),
     EMPTY,
-    "rewards.shard-opens",
+    "rewards.shard-opens.summary",
     REWARD_QUERY_TIMEOUT_MS,
   );
-  const failed = error !== null;
   const periodLabel = shardOpensPeriodLabel(period);
 
-  if (failed) {
+  if (error !== null) {
     return (
       <TileErrorFallback
         label="Shard-pack opens"
@@ -284,7 +280,7 @@ async function OpensContent({
     );
   }
 
-  const { summary, feed } = result;
+  const { summary } = result;
 
   return (
     <div className="space-y-6">
@@ -337,20 +333,64 @@ async function OpensContent({
           accent="rose"
         />
       </div>
+    </div>
+  );
+}
 
-      {/* Individual opens feed */}
-      <div className="space-y-3">
-        <SectionHeading icon={Gem} title="Individual opens" />
-        <FadeIn>
-          <ShardOpensDataTable data={feed.data} />
-        </FadeIn>
-        <DataTablePagination
-          page={feed.page}
-          totalPages={feed.totalPages}
-          total={feed.total}
-          perPage={feed.perPage}
-        />
-      </div>
+/**
+ * Paginated FEED of individual opens — its own (period, page, perPage)-keyed
+ * Suspense boundary, so paging this never re-fetches or flashes the summary
+ * above. Self-hides on schema-absent (the summary renders that message once);
+ * degrades to a fallback tile on a slow/failed read.
+ */
+async function OpensFeedContent({
+  period,
+  page,
+  perPage,
+}: {
+  period: ShardOpensPeriod;
+  page: number;
+  perPage: number;
+}) {
+  const EMPTY: Awaited<ReturnType<typeof getShardOpensFeed>> = {
+    available: true,
+    period,
+    feed: { data: [], total: 0, page, perPage, totalPages: 0 },
+  };
+
+  const { data: result, error } = await safeQuery(
+    () => getShardOpensFeed(period, page, perPage),
+    EMPTY,
+    "rewards.shard-opens.feed",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+
+  if (error !== null) {
+    return (
+      <TileErrorFallback
+        label="Individual opens"
+        hint="The read failed or timed out — no data was changed. Refresh to retry."
+        size="panel"
+      />
+    );
+  }
+
+  if (!result.available) return null;
+
+  const { feed } = result;
+
+  return (
+    <div className="space-y-3">
+      <SectionHeading icon={Gem} title="Individual opens" />
+      <FadeIn>
+        <ShardOpensDataTable data={feed.data} />
+      </FadeIn>
+      <DataTablePagination
+        page={feed.page}
+        totalPages={feed.totalPages}
+        total={feed.total}
+        perPage={feed.perPage}
+      />
     </div>
   );
 }
@@ -411,25 +451,39 @@ export default async function ShardPackOpensPage({
         <EconomyOverviewContent />
       </Suspense>
 
+      {/* Window summary (KPI strip) — keyed on the WINDOW only, so paginating
+          the feed below never re-suspends or flashes these headline tiles. */}
       <Suspense
-        key={suspenseKey}
+        key={`shard-summary|${period}`}
         fallback={
           <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
-              {Array.from({ length: 8 }).map((_, i) => (
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => (
                 <div
                   key={i}
                   className="h-[72px] animate-pulse rounded-xl border bg-muted/30"
                 />
               ))}
             </div>
-            <div className="h-48 animate-pulse rounded-2xl border bg-muted/30" />
+          </div>
+        }
+      >
+        <OpensSummaryContent period={period} />
+      </Suspense>
+
+      {/* Paginated feed — its own (period, page, perPage)-keyed boundary so the
+          skeleton re-shows on in-segment navigation without disturbing the
+          summary above. */}
+      <Suspense
+        key={suspenseKey}
+        fallback={
+          <div className="space-y-3">
             <TableSkeleton rows={Math.min(perPage, 10)} columns={6} />
             <PaginationSkeleton />
           </div>
         }
       >
-        <OpensContent period={period} page={page} perPage={perPage} />
+        <OpensFeedContent period={period} page={page} perPage={perPage} />
       </Suspense>
     </div>
   );

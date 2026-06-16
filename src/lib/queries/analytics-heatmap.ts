@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -51,12 +52,12 @@ export type HeatmapData = {
   totalDeposits: number;
 };
 
-export async function getActivityHeatmap(
+async function computeActivityHeatmap(
   period: HeatmapPeriod,
+  excluded: string[],
 ): Promise<HeatmapData> {
   const db = await getDb();
   const days = daysForPeriod(period);
-  const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
 
   const rows = await db.$queryRawUnsafe<
@@ -116,4 +117,37 @@ export async function getActivityHeatmap(
     totalWager,
     totalDeposits,
   };
+}
+
+/**
+ * Cross-request cache for the activity heatmap. `/analytics` re-runs each
+ * server component on every 5-minute `AutoRefresh` tick for every viewer;
+ * without a shared cache the period-scoped 7×24 hour-of-week aggregate
+ * re-ran per tick per viewer. Two `unstable_cache` layers — 60s for the
+ * finite windows that move as activity lands, 300s for the capped "all"
+ * (180-day) view that barely shifts — both keyed on `(period,
+ * sortedBlacklist)` so an excluded-users edit busts stale aggregates on the
+ * next tick. Logic identical to `computeActivityHeatmap`; mirrors the
+ * `getAnalyticsData` cache idiom in `analytics.ts`.
+ */
+const cachedActivityHeatmap = unstable_cache(
+  computeActivityHeatmap,
+  ["analytics-heatmap-v1"],
+  { revalidate: 60, tags: ["analytics"] },
+);
+
+const cachedActivityHeatmapLifetime = unstable_cache(
+  computeActivityHeatmap,
+  ["analytics-heatmap-lifetime-v1"],
+  { revalidate: 300, tags: ["analytics"] },
+);
+
+export async function getActivityHeatmap(
+  period: HeatmapPeriod,
+): Promise<HeatmapData> {
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return period === "all"
+    ? cachedActivityHeatmapLifetime(period, sorted)
+    : cachedActivityHeatmap(period, sorted);
 }

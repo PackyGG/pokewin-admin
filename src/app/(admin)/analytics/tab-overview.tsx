@@ -17,7 +17,7 @@ import {
   getPackBattlePurePnl,
 } from "@/lib/queries/pnl";
 import { formatCurrency } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatCard } from "../dashboard/stat-card";
@@ -53,6 +53,7 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
       ),
     null,
     "analytics.overview",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (
@@ -202,6 +203,7 @@ async function OverviewPeriodPnl() {
     () => getPnlBreakdownWindows(),
     null,
     "analytics.overview.pnlWindows",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (
@@ -228,6 +230,7 @@ async function OverviewPackBattlePure() {
     () => getPackBattlePurePnl(),
     null,
     "analytics.overview.packBattlePure",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

@@ -152,9 +152,12 @@ export function RainsTable({ data }: { data: RainRow[] }) {
                     isActive={r.status === "active"}
                   />
                 </TableCell>
-                <TableCell className="tabular-nums text-rose-600 dark:text-rose-400">
+                {/* Tips fund the pool — money flows FROM users TO us
+                    → emerald (matches /rain/[id] Tips KPI + tips table). */}
+                <TableCell className="tabular-nums text-emerald-600 dark:text-emerald-400">
                   {formatCurrency(r.tipAmountUsd)}
                 </TableCell>
+                {/* Pool is paid out to the winning user → user wins → rose. */}
                 <TableCell className="tabular-nums text-rose-600 dark:text-rose-400">
                   {formatCurrency(r.totalPoolUsd)}
                 </TableCell>

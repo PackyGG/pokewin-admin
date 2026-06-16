@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import {
   BarChart3,
   DollarSign,
@@ -15,6 +16,12 @@ import { compareCreatorsAnalytics } from "@/lib/clickhouse/compare/creators-anal
 import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
 import { getAffiliateAnalyticsFromClickHouse } from "@/lib/clickhouse/queries/creators/analytics";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
+import {
+  KpiStripSkeleton,
+  ChartRowSkeleton,
+} from "@/components/loading-skeletons";
 import { PeriodFilter } from "./period-filter";
 import { CreatorAnalyticsCharts } from "./charts";
 import {
@@ -27,6 +34,8 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 export const metadata = { title: "Creator Analytics" };
 
+type CreatorAnalyticsPeriod = "today" | "7d" | "30d" | "90d" | "all";
+
 export default async function CreatorAnalyticsPage({
   searchParams,
 }: {
@@ -34,24 +43,11 @@ export default async function CreatorAnalyticsPage({
 }) {
   await requirePageAccess("/creators/analytics");
   const params = await searchParams;
-  const period = (params.period ?? "30d") as
-    | "today"
-    | "7d"
-    | "30d"
-    | "90d"
-    | "all";
+  const period = (params.period ?? "30d") as CreatorAnalyticsPeriod;
 
-  // CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
-  // through the route boundary on failure); off/comparison serve Postgres.
-  // The CH twin returns the SAME full `AffiliateAnalyticsData` (scalars +
-  // per-day series) the page renders.
-  const data = await resolveAdminRead<AffiliateAnalyticsData>("creators_analytics", {
-    pg: () => getAffiliateAnalytics(period),
-    ch: async () =>
-      getAffiliateAnalyticsFromClickHouse(period, await getExcludedUserIds(), new Date()),
-  });
-  void compareCreatorsAnalytics(period, data);
-
+  // Paint the hero shell instantly; the affiliate aggregate streams in behind
+  // its own Suspense boundary (keyed on period so a period switch re-streams),
+  // so the page no longer blocks first paint on the multi-query batch.
   return (
     <div className="space-y-6">
       <PageHero>
@@ -63,6 +59,59 @@ export default async function CreatorAnalyticsPage({
         />
       </PageHero>
 
+      <Suspense
+        key={period}
+        fallback={
+          <>
+            <KpiStripSkeleton count={7} />
+            <ChartRowSkeleton count={2} height={300} />
+          </>
+        }
+      >
+        <CreatorAnalyticsBody period={period} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function CreatorAnalyticsBody({
+  period,
+}: {
+  period: CreatorAnalyticsPeriod;
+}) {
+  // CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws on
+  // failure); off/comparison serve Postgres. The CH twin returns the SAME full
+  // `AffiliateAnalyticsData` (scalars + per-day series) the page renders.
+  // safeQuery + a statement timeout degrade a slow/failed read to a panel
+  // fallback instead of hanging the segment or escaping to the route boundary.
+  const { data, error } = await safeQuery(
+    () =>
+      resolveAdminRead<AffiliateAnalyticsData>("creators_analytics", {
+        pg: () => getAffiliateAnalytics(period),
+        ch: async () =>
+          getAffiliateAnalyticsFromClickHouse(
+            period,
+            await getExcludedUserIds(),
+            new Date(),
+          ),
+      }),
+    null,
+    "creators.analytics",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Creator analytics"
+        hint="The affiliate analytics query failed — refresh or switch period to retry."
+        size="panel"
+      />
+    );
+  }
+  void compareCreatorsAnalytics(period, data);
+
+  return (
+    <>
       {/* Modern KPI grid — migrated off the legacy <StatCard>/<Card> to
           the shared <MetricTile> primitive (accent bar + glassy sheen,
           matching the rest of the admin). Money tiles follow CLAUDE.md
@@ -139,6 +188,6 @@ export default async function CreatorAnalyticsPage({
       <FadeIn>
         <CreatorAnalyticsCharts data={data.daily} />
       </FadeIn>
-    </div>
+    </>
   );
 }

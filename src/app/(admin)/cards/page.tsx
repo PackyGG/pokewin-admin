@@ -38,6 +38,7 @@ import {
   FilterBarSkeleton,
   EntityPaginationSkeleton,
 } from "@/components/entity-surface";
+import { KpiStripSkeleton } from "@/components/loading-skeletons";
 import { resolveEntityView } from "@/components/entity-surface/view";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { loadPrimary, parseListParams } from "@/lib/entity-surface/loader";
@@ -192,6 +193,114 @@ async function CardsContent({
   );
 }
 
+/**
+ * Streamed KPI strip — the catalog-wide / per-set aggregate (four counts +
+ * aggregates over the ~50k-row cards table, cached 60s in `getCardsStats`).
+ * Lifted out of the page body into its own async segment so PageHero + the
+ * filter/list shell paint immediately instead of blocking on this scan when
+ * the cache is cold. Its Suspense boundary is keyed on the active set ONLY
+ * (see the page), so paginating / sorting / searching never re-suspends or
+ * re-fetches the strip — it persists across those navigations.
+ */
+async function CardsStatsStrip({
+  setId,
+  activeSetLabel,
+}: {
+  setId?: string;
+  activeSetLabel: string | null;
+}) {
+  const { data: stats } = await safeQuery(
+    () => getCardsStats(setId),
+    null,
+    "cards.stats",
+  );
+
+  if (!stats) {
+    return (
+      <TileErrorFallback
+        label="Catalog stats"
+        hint="The aggregate stats query failed. The cards list below is unaffected — refresh to retry."
+      />
+    );
+  }
+
+  // Quality-bucket counts for dedicated KPI tiles — regex over rarity names
+  // (handles Pokemon "Ultra Rare"/"Secret" and OnePiece "SR"/"SEC" short
+  // codes).
+  const rareCount = stats.byRarity
+    .filter(
+      (r) =>
+        (/rare/i.test(r.rarity) && !/ultra/i.test(r.rarity)) ||
+        /^r$/i.test(r.rarity),
+    )
+    .reduce((sum, r) => sum + r.count, 0);
+  const ultraCount = stats.byRarity
+    .filter((r) => /(ultra|secret|legendary|^sr$|^sec$|^sp$|^tr$)/i.test(r.rarity))
+    .reduce((sum, r) => sum + r.count, 0);
+
+  return (
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+      <KpiTile
+        label={activeSetLabel ? `Cards in ${activeSetLabel}` : "Total Cards"}
+        value={formatNumber(stats.total)}
+        icon={Layers}
+        accent="blue"
+      />
+      <KpiTile
+        label="Sets"
+        value={formatNumber(stats.totalSets)}
+        icon={Library}
+        accent="cyan"
+      />
+      <KpiTile
+        label="Rare"
+        value={formatNumber(rareCount)}
+        icon={Gem}
+        accent="purple"
+      />
+      <KpiTile
+        label="Ultra / Secret"
+        value={formatNumber(ultraCount)}
+        icon={Crown}
+        accent="amber"
+      />
+      <KpiTile
+        label="Avg. Price"
+        value={formatCurrency(stats.avgPriceUsd)}
+        sub={
+          stats.maxPriceUsd > 0
+            ? `max ${formatCurrency(stats.maxPriceUsd)}`
+            : undefined
+        }
+        icon={Coins}
+        accent="emerald"
+      />
+    </div>
+  );
+}
+
+/**
+ * Streamed filter bar — the rarity dropdown options come from a `groupBy` over
+ * the cards table (scoped to the active set, cached 60s in `getRarities`).
+ * Streamed in its own segment keyed on the active set so it neither blocks
+ * first paint nor re-fetches on pagination/sort/search.
+ */
+async function CardsFilterSection({
+  tabs,
+  setId,
+}: {
+  tabs: CardSetTab[];
+  setId?: string;
+}) {
+  const { data: raritiesRaw } = await safeQuery(
+    () => getRarities(setId),
+    [] as (string | null)[],
+    "cards.rarities",
+  );
+  const rarities = raritiesRaw.filter((r): r is string => r != null);
+  return <CardsFilterBar tabs={tabs} rarities={rarities} />;
+}
+
 export default async function CardsPage({
   searchParams,
 }: {
@@ -216,15 +325,17 @@ export default async function CardsPage({
 
   const view = resolveEntityView(params.view);
 
-  // ── Up-front frame deps (small, fast, cacheable) ──────────────────────────
-  // Only what the static frame needs: the set list (tabs), the active-set
-  // rarities (filter options), and the active-set stats (KPI strip). The
-  // bulk-move dialog's set list + series options are NO LONGER fetched here —
-  // they're deferred into the dialog's own on-open server action (CLAUDE.md
-  // hidden-component rule). `getSets` is the single set fetch reused by tabs.
+  // ── Up-front frame deps (small, fast) ─────────────────────────────────────
+  // Only the set list is awaited here — it's a tiny two-column read needed to
+  // build the tabs, resolve the active scope, and seed the hero's create
+  // button. The heavier per-set stats (KPI strip) + rarities (filter options)
+  // are streamed in their own Suspense boundaries below. The bulk-move dialog's
+  // set list + series options are NOT fetched here either — they're deferred
+  // into the dialog's own on-open server action (CLAUDE.md hidden-component
+  // rule).
   //
-  // Each is safeQuery-wrapped so one failing query degrades only its own
-  // section (TileErrorFallback) instead of crashing the page.
+  // safeQuery-wrapped so a failing set read degrades to an empty catalog
+  // instead of crashing the page.
   const { data: sets } = await safeQuery(
     () => getSets(),
     [] as Awaited<ReturnType<typeof getSets>>,
@@ -244,38 +355,10 @@ export default async function CardsPage({
         ? "unassigned"
         : undefined;
 
-  // Rarities scoped to the active set + stats scoped to the active set, both
-  // cached. Run in parallel.
-  const [raritiesRes, statsRes] = await Promise.all([
-    safeQuery(
-      () => getRarities(effectiveSetId),
-      [] as (string | null)[],
-      "cards.rarities",
-    ),
-    safeQuery(() => getCardsStats(effectiveSetId), null, "cards.stats"),
-  ]);
-  const rarities = raritiesRes.data.filter((r): r is string => r != null);
-  const stats = statsRes.data;
-
-  // Quality-bucket counts for dedicated KPI tiles — regex over rarity names
-  // (handles Pokemon "Ultra Rare"/"Secret" and OnePiece "SR"/"SEC" short
-  // codes). When `stats` is null both zero out.
-  const rareCount = stats
-    ? stats.byRarity
-        .filter(
-          (r) =>
-            (/rare/i.test(r.rarity) && !/ultra/i.test(r.rarity)) ||
-            /^r$/i.test(r.rarity),
-        )
-        .reduce((sum, r) => sum + r.count, 0)
-    : 0;
-  const ultraCount = stats
-    ? stats.byRarity
-        .filter((r) =>
-          /(ultra|secret|legendary|^sr$|^sec$|^sp$|^tr$)/i.test(r.rarity),
-        )
-        .reduce((sum, r) => sum + r.count, 0)
-    : 0;
+  // The active-set stats (KPI strip) and rarities (filter options) are no
+  // longer awaited here — they're streamed in their own set-keyed Suspense
+  // boundaries below so the heavy aggregate/groupBy never blocks PageHero, the
+  // filter shell, or the list, and never re-fetches on pagination/sort/search.
 
   // Resolved filter predicate handed to the explorer (active-set folded in) so
   // its "select all matching" action matches the visible list exactly.
@@ -321,54 +404,20 @@ export default async function CardsPage({
       </PageHero>
 
       {/* ── KPI STRIP ───────────────────────────────────────────────
-           When the stats aggregate query failed (safeQuery returned
-           null), the strip collapses to a single TileErrorFallback row
-           instead of zero-ing out every tile. The filter bar + list
-           below are unaffected. */}
-      {stats ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-          <KpiTile
-            label={activeSet ? `Cards in ${activeSet.label}` : "Total Cards"}
-            value={formatNumber(stats.total)}
-            icon={Layers}
-            accent="blue"
-          />
-          <KpiTile
-            label="Sets"
-            value={formatNumber(stats.totalSets)}
-            icon={Library}
-            accent="cyan"
-          />
-          <KpiTile
-            label="Rare"
-            value={formatNumber(rareCount)}
-            icon={Gem}
-            accent="purple"
-          />
-          <KpiTile
-            label="Ultra / Secret"
-            value={formatNumber(ultraCount)}
-            icon={Crown}
-            accent="amber"
-          />
-          <KpiTile
-            label="Avg. Price"
-            value={formatCurrency(stats.avgPriceUsd)}
-            sub={
-              stats.maxPriceUsd > 0
-                ? `max ${formatCurrency(stats.maxPriceUsd)}`
-                : undefined
-            }
-            icon={Coins}
-            accent="emerald"
-          />
-        </div>
-      ) : (
-        <TileErrorFallback
-          label="Catalog stats"
-          hint="The aggregate stats query failed. The cards list below is unaffected — refresh to retry."
+           Streamed in its own Suspense keyed on the active set ONLY, so the
+           heavy aggregate scan never blocks first paint and never re-suspends
+           on pagination/sort/search. On query failure the segment collapses to
+           a single TileErrorFallback row instead of zero-ing out every tile;
+           the filter bar + list below are unaffected. */}
+      <Suspense
+        key={`stats-${effectiveSetId ?? "all"}`}
+        fallback={<KpiStripSkeleton count={5} />}
+      >
+        <CardsStatsStrip
+          setId={effectiveSetId}
+          activeSetLabel={activeSet?.label ?? null}
         />
-      )}
+      </Suspense>
 
       {/* ── FILTER BAR + LIST ─────────────────────────────────────────
            The filter bar carries the tab switch (leading), search,
@@ -379,8 +428,11 @@ export default async function CardsPage({
           icon={Layers}
           title={activeSet ? activeSet.label : "Catalog"}
         />
-        <Suspense fallback={<FilterBarSkeleton filters={1} />}>
-          <CardsFilterBar tabs={tabs} rarities={rarities} />
+        <Suspense
+          key={`filter-${effectiveSetId ?? "all"}`}
+          fallback={<FilterBarSkeleton filters={1} />}
+        >
+          <CardsFilterSection tabs={tabs} setId={effectiveSetId} />
         </Suspense>
 
         <Suspense

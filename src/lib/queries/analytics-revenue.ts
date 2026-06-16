@@ -1,7 +1,9 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   getWindowMetrics,
   getGamingLegs,
@@ -192,9 +194,11 @@ function dailyCol(
  * presentational per-day breakdown query (canonical scope + canonical
  * type sets) for the stacked charts.
  */
-export async function getRevenueBreakdown(
+async function computeRevenueBreakdown(
   period: RevenuePeriod,
+  _blacklistKey: string[],
 ): Promise<RevenueData> {
+  void _blacklistKey; // cache-key dimension only; scope is fetched internally
   const db = await getDb();
   const window = periodToMetricWindow(period);
   const scope = await realCustomersScopeSql();
@@ -418,4 +422,42 @@ export async function getRevenueBreakdown(
     ngr: windowMetrics.ngr,
     daily,
   };
+}
+
+/**
+ * Cross-request cache for the revenue-by-source bundle. `/analytics` →
+ * Revenue tab re-runs on every 5-minute `AutoRefresh` tick for every viewer;
+ * without a shared cache the canonical metric reads + the per-day breakdown
+ * scan re-ran per tick per viewer. Two `unstable_cache` layers — 60s for the
+ * finite windows, 300s for the lifetime view — keyed on `(period,
+ * sortedBlacklist)`. The compute fetches its canonical scope
+ * (`realCustomersScopeSql`) internally — which already reflects the
+ * blacklist — so the sorted-blacklist argument is purely a cache-key
+ * dimension. Logic identical to `computeRevenueBreakdown`; mirrors the
+ * `getAnalyticsData` cache idiom in `analytics.ts`.
+ *
+ * NOTE: the `all` window is an UNBOUNDED lifetime scan (money-exact GGR/NGR
+ * + per-day series — capping would change displayed numbers, so it is left
+ * for owner sign-off).
+ */
+const cachedRevenueBreakdown = unstable_cache(
+  computeRevenueBreakdown,
+  ["analytics-revenue-breakdown-v1"],
+  { revalidate: 60, tags: ["analytics"] },
+);
+
+const cachedRevenueBreakdownLifetime = unstable_cache(
+  computeRevenueBreakdown,
+  ["analytics-revenue-breakdown-lifetime-v1"],
+  { revalidate: 300, tags: ["analytics"] },
+);
+
+export async function getRevenueBreakdown(
+  period: RevenuePeriod,
+): Promise<RevenueData> {
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return period === "all"
+    ? cachedRevenueBreakdownLifetime(period, sorted)
+    : cachedRevenueBreakdown(period, sorted);
 }

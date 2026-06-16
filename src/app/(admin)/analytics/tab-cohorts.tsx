@@ -3,7 +3,7 @@ import {
   getCohortRetention,
   type CohortGranularity,
 } from "@/lib/queries/analytics-cohorts";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { compareAnalyticsCohorts } from "@/lib/clickhouse/compare/analytics-cohorts-compare";
@@ -42,6 +42,7 @@ export async function CohortsTab({
       ),
     null,
     "analytics.cohorts",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

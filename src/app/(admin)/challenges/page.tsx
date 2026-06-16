@@ -1,8 +1,13 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Target } from "lucide-react";
+import { Target, AlertTriangle } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
-import { challengesApi, type ChallengeStatus } from "@/lib/backend-api";
+import {
+  challengesApi,
+  type Challenge,
+  type ChallengeStatus,
+} from "@/lib/backend-api";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import {
   TableSkeleton,
@@ -33,16 +38,47 @@ async function ChallengesContent({
   status?: ChallengeStatus;
 }) {
   const offset = (page - 1) * perPage;
-  const result = await challengesApi.list({
-    status,
-    offset,
-    limit: perPage,
-  });
+
+  // The list comes from the website backend admin API over HTTP. Wrap it in
+  // safeQuery (12s wall-clock bound, matching the upgrader catalog backend
+  // call) so a backend blip / timeout degrades to an empty table + a visible
+  // band — tabs and pagination keep rendering — instead of throwing the whole
+  // page into the segment error boundary. Mirrors the upgrader Transactions
+  // tab's degrade-not-crash handling.
+  const EMPTY: { data: Challenge[]; total: number; offset: number; limit: number } =
+    { data: [], total: 0, offset, limit: perPage };
+  const listResult = await safeQuery(
+    () => challengesApi.list({ status, offset, limit: perPage }),
+    EMPTY,
+    "challenges.list",
+    12_000,
+  );
+  const result = listResult.data;
+  const listFailed = listResult.error !== null;
 
   const totalPages = Math.max(1, Math.ceil(result.total / perPage));
 
   return (
     <>
+      {listFailed && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+        >
+          <AlertTriangle
+            aria-hidden
+            className="mt-0.5 size-4 shrink-0 text-amber-500"
+          />
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Couldn&apos;t load challenges — the backend request timed out or
+            failed. This is a{" "}
+            <span className="font-medium">request error, not zero results</span>
+            . Refresh to retry.
+          </p>
+        </div>
+      )}
+
       <FadeIn>
         <ChallengesTable data={result.data} />
       </FadeIn>
@@ -52,6 +88,7 @@ async function ChallengesContent({
         totalPages={totalPages}
         total={result.total}
         perPage={perPage}
+        degraded={listFailed}
       />
     </>
   );

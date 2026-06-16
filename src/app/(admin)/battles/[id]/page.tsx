@@ -11,7 +11,7 @@ import {
   ShieldCheck,
   Users as UsersIcon,
 } from "lucide-react";
-import { getBattleDetail } from "@/lib/queries/battles";
+import { getBattleDetailCached } from "@/lib/queries/battles-cache";
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
@@ -74,7 +74,7 @@ export default async function BattleDetailPage({
   // data WITHOUT an error → notFound(); a thrown/timed-out query carries an
   // `error` → InlineError.
   const { data, error } = await safeQueryOrNull(
-    () => getBattleDetail(id),
+    () => getBattleDetailCached(id),
     "battles.detail",
     PRIMARY_QUERY_TIMEOUT_MS,
   );

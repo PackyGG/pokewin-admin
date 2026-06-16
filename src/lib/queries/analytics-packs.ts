@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -33,11 +34,11 @@ export type TopPack24hRow = {
  * grants, etc.) are still not counted, matching the rest of the
  * analytics layer.
  */
-export async function getTopOpenedPacks24h(
-  limit = 20,
+async function computeTopOpenedPacks24h(
+  limit: number,
+  excluded: string[],
 ): Promise<TopPack24hRow[]> {
   const db = await getDb();
-  const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
 
   // Clamp the limit so a caller-side bug can't pull thousands of rows.
@@ -102,6 +103,29 @@ export async function getTopOpenedPacks24h(
     imageUrl: r.image_url,
     opens: Number(r.opens),
   }));
+}
+
+/**
+ * Cross-request cache for the "top opened packs (24h)" leaderboard.
+ * `/analytics` → Pack & Battle tab re-runs on every 5-minute `AutoRefresh`
+ * tick for every viewer; without a shared cache this solo+battle opens scan
+ * re-ran per tick per viewer. 60s `unstable_cache` keyed on `(limit,
+ * sortedBlacklist)` — the window is a fixed rolling 24h so a single short
+ * layer suffices. Logic identical to `computeTopOpenedPacks24h`; mirrors the
+ * `getAnalyticsData` cache idiom in `analytics.ts`.
+ */
+const cachedTopOpenedPacks24h = unstable_cache(
+  computeTopOpenedPacks24h,
+  ["analytics-top-opened-packs-24h-v1"],
+  { revalidate: 60, tags: ["analytics"] },
+);
+
+export async function getTopOpenedPacks24h(
+  limit = 20,
+): Promise<TopPack24hRow[]> {
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return cachedTopOpenedPacks24h(limit, sorted);
 }
 
 /**
@@ -208,8 +232,9 @@ export type PacksProfitData = {
   battles: BattlePackProfitRow[];
 };
 
-export async function getPackProfitability(
+async function computePackProfitability(
   period: PacksPeriod,
+  excluded: string[],
 ): Promise<PacksProfitData> {
   const db = await getDb();
   const days = daysForPeriod(period);
@@ -218,7 +243,6 @@ export async function getPackProfitability(
   // not the ledger `created_at`, so the payout side gets its own cutoff —
   // same split the canonical inventory-payout queries use.
   const uiWhere = `AND ui.obtained_at >= NOW() - INTERVAL '${days} days'`;
-  const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   // Canonical real-customers scope (matches getPackBattlePurePnl /
   // insights-games / analytics-cohorts): drop admin + support + creator and
@@ -409,4 +433,37 @@ export async function getPackProfitability(
   });
 
   return { period, packs, battles };
+}
+
+/**
+ * Cross-request cache for the pack/battle profitability deep-dive.
+ * `/analytics` → Pack & Battle tab re-runs on every 5-minute `AutoRefresh`
+ * tick for every viewer; without a shared cache the two per-pack
+ * attribution scans re-ran per tick per viewer. Two `unstable_cache`
+ * layers — 60s for the finite windows, 300s for the (365d-capped) lifetime
+ * view — keyed on `(period, sortedBlacklist)`. Logic identical to
+ * `computePackProfitability`; mirrors the `getAnalyticsData` cache idiom in
+ * `analytics.ts`. The `all` window is already bounded to
+ * `LIFETIME_LOOKBACK_DAYS` (365d), so no unbounded scan remains here.
+ */
+const cachedPackProfitability = unstable_cache(
+  computePackProfitability,
+  ["analytics-pack-profitability-v1"],
+  { revalidate: 60, tags: ["analytics"] },
+);
+
+const cachedPackProfitabilityLifetime = unstable_cache(
+  computePackProfitability,
+  ["analytics-pack-profitability-lifetime-v1"],
+  { revalidate: 300, tags: ["analytics"] },
+);
+
+export async function getPackProfitability(
+  period: PacksPeriod,
+): Promise<PacksProfitData> {
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return period === "all"
+    ? cachedPackProfitabilityLifetime(period, sorted)
+    : cachedPackProfitability(period, sorted);
 }

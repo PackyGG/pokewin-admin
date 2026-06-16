@@ -2,6 +2,41 @@ import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 
+type AffiliateLevelConfig = { level: number; threshold: unknown };
+
+/**
+ * Resolve a creator's affiliate ladder level the same way the rest of the
+ * admin panel does (see queries/insights-rewards/affiliate/tier-distribution):
+ * the highest `affiliate_level_configs.level` whose `threshold` the creator's
+ * lifetime wager volume has crossed. There is no stored level column on
+ * `affiliate_accounts` — the level is always derived from wager vs. the config
+ * ladder. Falls back to the lowest configured level (or 1) when no threshold is
+ * met or no config rows exist.
+ */
+function resolveAffiliateLevel(
+  configs: AffiliateLevelConfig[],
+  wagerVolumeUsd: number,
+): number {
+  let best: { level: number; threshold: number } | null = null;
+  for (const c of configs) {
+    const threshold = toNumber(c.threshold);
+    if (threshold > wagerVolumeUsd) continue;
+    if (
+      !best ||
+      threshold > best.threshold ||
+      (threshold === best.threshold && c.level > best.level)
+    ) {
+      best = { level: c.level, threshold };
+    }
+  }
+  if (best) return best.level;
+  const lowest = configs.reduce<number | null>(
+    (min, c) => (min === null || c.level < min ? c.level : min),
+    null,
+  );
+  return lowest ?? 1;
+}
+
 export async function getMyProfileData(adminUserId: string) {
   const db = await getDb();
   // Find the admin user to get email
@@ -24,8 +59,16 @@ export async function getMyProfileData(adminUserId: string) {
   // its affiliate/account data — both batches only depend on `targetUserId`,
   // so they can run in one Promise.all instead of being staged.
   const userId = mainUser?.id;
-  const [webhooks, deals, socials, account, referrals, payouts, clickCount] =
-    await Promise.all([
+  const [
+    webhooks,
+    deals,
+    socials,
+    account,
+    referrals,
+    payouts,
+    clickCount,
+    affiliateConfigs,
+  ] = await Promise.all([
       adminDb.creator_webhooks.findMany({
         where: { target_user_id: targetUserId },
         orderBy: { created_at: "desc" },
@@ -86,7 +129,16 @@ export async function getMyProfileData(adminUserId: string) {
             where: { code: mainUser.affiliate_code },
           })
         : Promise.resolve(0),
+      db.affiliate_level_configs.findMany({
+        select: { level: true, threshold: true },
+      }),
     ]);
+
+  // Affiliate tier is derived, not stored (see resolveAffiliateLevel).
+  const affiliateLevel = resolveAffiliateLevel(
+    affiliateConfigs,
+    account ? toNumber(account.total_wager_volume_usd) : 0,
+  );
 
   // If no main site user, return partial data
   if (!mainUser) {
@@ -96,7 +148,7 @@ export async function getMyProfileData(adminUserId: string) {
       email: adminUser.email,
       code: "",
       codeActive: false,
-      level: 1,
+      level: affiliateLevel,
       linked: false,
       totalReferred: 0,
       totalWagerVolumeUsd: 0,
@@ -137,7 +189,7 @@ export async function getMyProfileData(adminUserId: string) {
     email: mainUser.email,
     code: mainUser.affiliate_code ?? "",
     codeActive: mainUser.affiliate_code_active ?? false,
-    level: 1,
+    level: affiliateLevel,
     linked: true,
     totalReferred: referrals.length,
     totalWagerVolumeUsd: account ? toNumber(account.total_wager_volume_usd) : 0,

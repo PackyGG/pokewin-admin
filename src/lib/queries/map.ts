@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
@@ -55,10 +56,12 @@ export type MapData = {
  * country_code for the map view. Users without country_code are counted
  * separately (not plotted on the map).
  */
-export async function getUsersByCountry(period: Period): Promise<MapData> {
+async function computeUsersByCountry(
+  period: Period,
+  excluded: string[],
+): Promise<MapData> {
   const db = await getDb();
   const dateFilter = periodToDateFilter(period);
-  const excluded = await getExcludedUserIds();
   const blacklistFragment = blacklistNotInClause("id", excluded);
   const userScope = `role NOT IN ('admin', 'support') ${blacklistFragment}`;
   // Join-scoped variant for the financials query: it joins
@@ -164,4 +167,38 @@ export async function getUsersByCountry(period: Period): Promise<MapData> {
     totalUsers: Number(totalRaw[0]?.total ?? "0"),
     withoutLocation: Number(withoutLocationRaw[0]?.total ?? "0"),
   };
+}
+
+/**
+ * Cross-request cache for the map's per-country aggregate. `/analytics` →
+ * Map tab re-runs on every 5-minute `AutoRefresh` tick for every viewer;
+ * without a shared cache the 4-query country/financials batch re-ran per
+ * tick per viewer. Two `unstable_cache` layers — 60s for the finite windows,
+ * 300s for the lifetime view — both keyed on `(period, sortedBlacklist)`.
+ * Logic identical to `computeUsersByCountry`; mirrors the `getAnalyticsData`
+ * cache idiom in `analytics.ts`.
+ *
+ * NOTE: the `all` window is still an UNBOUNDED lifetime scan over `user` +
+ * `ledger_transactions` (money-exact per-country totals — capping would
+ * change displayed numbers, so it is left for owner sign-off). The cache +
+ * the caller's `safeQuery` timeout keep a cold lifetime fill from hanging.
+ */
+const cachedUsersByCountry = unstable_cache(
+  computeUsersByCountry,
+  ["analytics-map-users-by-country-v1"],
+  { revalidate: 60, tags: ["analytics"] },
+);
+
+const cachedUsersByCountryLifetime = unstable_cache(
+  computeUsersByCountry,
+  ["analytics-map-users-by-country-lifetime-v1"],
+  { revalidate: 300, tags: ["analytics"] },
+);
+
+export async function getUsersByCountry(period: Period): Promise<MapData> {
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return period === "all"
+    ? cachedUsersByCountryLifetime(period, sorted)
+    : cachedUsersByCountry(period, sorted);
 }

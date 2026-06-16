@@ -57,73 +57,69 @@ async function computeSignupMethodStats(
   const db = dbForEnv(env);
   const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
 
-  type Row = { method: SignupMethodKey; count: string };
-  type OtherRow = { provider: string; count: string };
+  // Single pass: the expensive `DISTINCT ON` provider pick (`primary_provider`)
+  // and the per-customer classification (`classified`) are computed once and
+  // reused for BOTH the method-count rollup and the "other"-bucket provider
+  // breakdown. `classified` is referenced twice below, so Postgres materializes
+  // it once instead of re-running the account scan per query (the previous
+  // two-query Promise.all recomputed it twice). `row_kind` discriminates the
+  // two UNION legs.
+  type CombinedRow = {
+    row_kind: "method" | "other";
+    bucket: string;
+    count: string;
+  };
 
-  const [methodRows, otherRows] = await Promise.all([
-    db.$queryRaw<Row[]>`
-      WITH customers AS (
-        SELECT u.id
-          FROM "user" u
-         WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistJoin)}
-      ),
-      primary_provider AS (
-        SELECT DISTINCT ON (a."userId")
-               a."userId" AS user_id,
-               a."providerId" AS provider
-          FROM account a
-          JOIN customers c ON c.id = a."userId"
-         ORDER BY a."userId", a.created_at ASC NULLS LAST
-      ),
-      classified AS (
-        SELECT
-          c.id AS user_id,
-          CASE
-            WHEN pp.provider IS NULL THEN 'unknown'
-            WHEN LOWER(pp.provider) IN ('credential', 'credentials', 'email', 'email-password') THEN 'email'
-            WHEN LOWER(pp.provider) = 'discord' THEN 'discord'
-            WHEN LOWER(pp.provider) = 'google' THEN 'google'
-            WHEN LOWER(pp.provider) = 'steam' THEN 'steam'
-            ELSE 'other'
-          END AS method
-        FROM customers c
-        LEFT JOIN primary_provider pp ON pp.user_id = c.id
-      )
-      SELECT method, COUNT(*)::text AS count
-        FROM classified
-       GROUP BY method
-    `,
-    db.$queryRaw<OtherRow[]>`
-      WITH customers AS (
-        SELECT u.id
-          FROM "user" u
-         WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistJoin)}
-      ),
-      primary_provider AS (
-        SELECT DISTINCT ON (a."userId")
-               a."userId" AS user_id,
-               a."providerId" AS provider
-          FROM account a
-          JOIN customers c ON c.id = a."userId"
-         ORDER BY a."userId", a.created_at ASC NULLS LAST
-      )
-      SELECT pp.provider, COUNT(*)::text AS count
-        FROM customers c
-        JOIN primary_provider pp ON pp.user_id = c.id
-       WHERE LOWER(pp.provider) NOT IN (
-         'credential', 'credentials', 'email', 'email-password',
-         'discord', 'google', 'steam'
-       )
-       GROUP BY pp.provider
-       ORDER BY COUNT(*) DESC
-    `,
-  ]);
+  const combinedRows = await db.$queryRaw<CombinedRow[]>`
+    WITH customers AS (
+      SELECT u.id
+        FROM "user" u
+       WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistJoin)}
+    ),
+    primary_provider AS (
+      SELECT DISTINCT ON (a."userId")
+             a."userId" AS user_id,
+             a."providerId" AS provider
+        FROM account a
+        JOIN customers c ON c.id = a."userId"
+       ORDER BY a."userId", a.created_at ASC NULLS LAST
+    ),
+    classified AS (
+      SELECT
+        c.id AS user_id,
+        pp.provider AS provider,
+        CASE
+          WHEN pp.provider IS NULL THEN 'unknown'
+          WHEN LOWER(pp.provider) IN ('credential', 'credentials', 'email', 'email-password') THEN 'email'
+          WHEN LOWER(pp.provider) = 'discord' THEN 'discord'
+          WHEN LOWER(pp.provider) = 'google' THEN 'google'
+          WHEN LOWER(pp.provider) = 'steam' THEN 'steam'
+          ELSE 'other'
+        END AS method
+      FROM customers c
+      LEFT JOIN primary_provider pp ON pp.user_id = c.id
+    )
+    SELECT 'method'::text AS row_kind, method AS bucket, COUNT(*)::text AS count
+      FROM classified
+     GROUP BY method
+    UNION ALL
+    SELECT 'other'::text AS row_kind, provider AS bucket, COUNT(*)::text AS count
+      FROM classified
+     WHERE method = 'other'
+     GROUP BY provider
+  `;
 
   const counts = new Map<SignupMethodKey, number>();
   for (const key of METHOD_ORDER) counts.set(key, 0);
-  for (const row of methodRows) {
-    counts.set(row.method, Number(row.count));
+  const otherRows: { provider: string; count: number }[] = [];
+  for (const row of combinedRows) {
+    if (row.row_kind === "method") {
+      counts.set(row.bucket as SignupMethodKey, Number(row.count));
+    } else {
+      otherRows.push({ provider: row.bucket, count: Number(row.count) });
+    }
   }
+  otherRows.sort((a, b) => b.count - a.count);
 
   const totalUsers = [...counts.values()].reduce((sum, n) => sum + n, 0);
   const methods: SignupMethodRow[] = METHOD_ORDER.map((key) => {
@@ -139,10 +135,7 @@ async function computeSignupMethodStats(
   return {
     totalUsers,
     methods,
-    otherBreakdown: otherRows.map((row) => ({
-      provider: row.provider,
-      count: Number(row.count),
-    })),
+    otherBreakdown: otherRows,
   };
 }
 

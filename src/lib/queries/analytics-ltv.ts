@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -66,12 +67,14 @@ export type CreatorLtvData = {
   };
 };
 
-export async function getCreatorLtv(period: LtvPeriod): Promise<CreatorLtvData> {
+async function computeCreatorLtv(
+  period: LtvPeriod,
+  excluded: string[],
+): Promise<CreatorLtvData> {
   const db = await getDb();
   const days = daysForPeriod(period);
   const periodWhere =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
-  const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
 
   // One raw query that joins creators → referred users → ledger for both
@@ -203,4 +206,38 @@ export async function getCreatorLtv(period: LtvPeriod): Promise<CreatorLtvData> 
   );
 
   return { period, rows: mapped, totals };
+}
+
+/**
+ * Cross-request cache for the creator-LTV bundle. `/analytics` → LTV tab
+ * re-runs on every 5-minute `AutoRefresh` tick for every viewer; without a
+ * shared cache this O(creators) referred-user P&L + creator-cost join
+ * re-ran per tick per viewer. Two `unstable_cache` layers — 60s for the
+ * finite windows, 300s for the lifetime view — both keyed on `(period,
+ * sortedBlacklist)`. Logic identical to `computeCreatorLtv`; mirrors the
+ * `getAnalyticsData` cache idiom in `analytics.ts`.
+ *
+ * NOTE: the `all` window is still an UNBOUNDED lifetime ledger scan
+ * (money-exact creator ROI — capping it would change displayed P&L, so it
+ * is left for owner sign-off). The cache + the caller's `safeQuery` timeout
+ * keep a cold lifetime fill from hanging the segment.
+ */
+const cachedCreatorLtv = unstable_cache(
+  computeCreatorLtv,
+  ["analytics-ltv-v1"],
+  { revalidate: 60, tags: ["analytics"] },
+);
+
+const cachedCreatorLtvLifetime = unstable_cache(
+  computeCreatorLtv,
+  ["analytics-ltv-lifetime-v1"],
+  { revalidate: 300, tags: ["analytics"] },
+);
+
+export async function getCreatorLtv(period: LtvPeriod): Promise<CreatorLtvData> {
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return period === "all"
+    ? cachedCreatorLtvLifetime(period, sorted)
+    : cachedCreatorLtv(period, sorted);
 }

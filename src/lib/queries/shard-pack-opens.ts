@@ -201,24 +201,6 @@ export type ShardOpensSummary = {
   totalCardCount: number;
 };
 
-/** One shard pack rolled up: opens / shards spent / card value $. */
-export type ShardPackBreakdownRow = {
-  /** packs.id of the shard pack. */
-  packId: string;
-  /** packs.name (or a short id fallback when the pack row is gone). */
-  packName: string;
-  /** The pack's shard cost per open. */
-  shardCost: number;
-  /** Distinct opens of this pack in the window. */
-  opens: number;
-  /** Total SHARDS spent on this pack's opens (shardCost × opens). House in. */
-  shardsSpent: number;
-  /** Σ USD card value the opens of this pack rolled into inventory. House out. */
-  cardValueUsd: number;
-  /** Number of cards pulled from this pack's opens. */
-  cardCount: number;
-};
-
 /** One individual shard-pack open for the feed (newest first). */
 export type ShardPackOpenRow = {
   /** game_sessions.id of the open (stable key). */
@@ -243,15 +225,29 @@ export type ShardPackOpenRow = {
   createdAt: string;
 };
 
-export type ShardOpensAvailable = {
-  available: true;
-  period: ShardOpensPeriod;
-  summary: ShardOpensSummary;
-  /** Per-pack breakdown, sorted by opens desc (top packs first). */
-  packs: ShardPackBreakdownRow[];
-  /** Paginated feed of individual opens (newest first). */
-  feed: PaginatedResult<ShardPackOpenRow>;
-};
+/**
+ * Window SUMMARY (KPIs) result. The SHARDS-spent + card-value-$ headline
+ * figures for the whole window — page-INDEPENDENT, so the page renders this in
+ * its own window-keyed Suspense boundary that does NOT re-suspend on
+ * pagination.
+ */
+export type ShardOpensSummaryResult =
+  | { available: true; period: ShardOpensPeriod; summary: ShardOpensSummary }
+  | { available: false; period: ShardOpensPeriod };
+
+/**
+ * Paginated FEED result — one window/page of individual opens (newest first)
+ * plus the window total for pagination. Fetched in its own
+ * (period, page, perPage)-keyed boundary so paginating the feed never
+ * re-fetches or flashes the window summary above.
+ */
+export type ShardOpensFeedResult =
+  | {
+      available: true;
+      period: ShardOpensPeriod;
+      feed: PaginatedResult<ShardPackOpenRow>;
+    }
+  | { available: false; period: ShardOpensPeriod };
 
 /**
  * Shard ECONOMY OVERVIEW result — the canonical supply/flow snapshot for the
@@ -318,10 +314,6 @@ export type ShardGivenOut = {
 /** `null` when the game schema (`balances`/`packs`/`game_sessions`) is absent. */
 export type ShardGivenOutResult = ShardGivenOut | null;
 
-export type ShardOpensResult =
-  | ShardOpensAvailable
-  | { available: false; period: ShardOpensPeriod };
-
 // ─── Schema probe (env-keyed) ──────────────────────────────────────────
 
 async function rawProbeShardTables(env: DbEnv): Promise<boolean> {
@@ -362,16 +354,6 @@ type RawSummaryRow = {
   card_count: bigint | number | null;
 };
 
-type RawPackRow = {
-  pack_id: string;
-  pack_name: string | null;
-  shard_cost: number | null;
-  opens: bigint | number;
-  shards_spent: string | number | null;
-  card_value_usd: string | number | null;
-  card_count: bigint | number | null;
-};
-
 type RawFeedRow = {
   id: string;
   user_id: string;
@@ -385,49 +367,47 @@ type RawFeedRow = {
   created_at: Date | string;
 };
 
-// ─── Core query (uncached) ────────────────────────────────────────────
-
-async function queryShardPackOpens(
-  period: ShardOpensPeriod,
-  page: number,
-  perPage: number,
-  env: DbEnv,
-): Promise<ShardOpensResult> {
-  const hasTables = await probeShardTables(env);
-  if (!hasTables) return { available: false, period };
-
-  // Data queries use `getDb()` (request-scope resolves the env cookie on the
-  // direct dev path; the cached prod path runs outside request scope and
-  // getDb() falls back to prod) — both resolve to the correct client for
-  // their `env`. Only the probe needs the explicit env client.
-  const db = await getDb();
-  const days = daysForPeriod(period);
-
-  const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
-  const safePage = Math.max(1, Math.floor(page));
-  const offset = (safePage - 1) * safePerPage;
-
-  // ── STAFF + BLACKLIST scope (applied to EVERY query below). Drop staff
-  //    (admin/support) AND the admin-managed `excluded_users` blacklist so no
-  //    internal/excluded account inflates any figure on the page — the same
-  //    population filter the `getTopOpenedPacks24h` opens analogue uses. The
-  //    blacklist ids are escaped through the canonical `blacklistNotInClause`;
-  //    `days` is an integer from a fixed switch (no injection surface), so the
-  //    interval is inlined for `$queryRawUnsafe`. Empty blacklist → empty tail
-  //    → staff-only filter (still valid SQL).
+// ─── Staff + blacklist opener scope (shared by both queries) ───────────
+//
+// Drop staff (admin/support) AND the admin-managed `excluded_users` blacklist
+// so no internal/excluded account inflates any figure on the page — the same
+// population filter the `getTopOpenedPacks24h` opens analogue uses. The
+// blacklist ids are escaped through the canonical `blacklistNotInClause`.
+// Returns the `gs.user_id IN (...)` SQL fragment. Empty blacklist → empty tail
+// → staff-only filter (still valid SQL).
+async function shardOpenerScopeSql(): Promise<string> {
   const excluded = await getExcludedUserIds();
-  const openerScopeSql = `gs.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistNotInClause(
+  return `gs.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistNotInClause(
     "id",
     excluded,
   )})`;
+}
 
-  // ── Window-scoped opens = game_sessions(game_type='pack') joined to the
-  //    SHARD packs (pack_type='shard'). Shards spent = pack.shard_cost per
-  //    open. Card value/count via the provably-fair → user_inventory chain
-  //    (one PF row per open, verified). The window predicate is on the
-  //    session's created_at. Staff + blacklist openers are excluded.
+// ─── Summary query (uncached) ──────────────────────────────────────────
+//
+// Window KPIs ONLY (opens / openers / shards spent / card value $) across all
+// (scoped) opens in the window. Page-INDEPENDENT, so it lives in its own cache
+// + Suspense boundary and never re-runs when the feed paginates.
+//
+// Window-scoped opens = game_sessions(game_type='pack') joined to the SHARD
+// packs (pack_type='shard'). Shards spent = pack.shard_cost per open. Card
+// value/count via the provably-fair → user_inventory chain (one PF row per
+// open, verified). `days` is an integer from a fixed switch (no injection
+// surface), so the interval is inlined for `$queryRawUnsafe`. Staff + blacklist
+// openers are excluded.
+async function queryShardOpensSummary(
+  period: ShardOpensPeriod,
+  env: DbEnv,
+): Promise<ShardOpensSummaryResult> {
+  const hasTables = await probeShardTables(env);
+  if (!hasTables) return { available: false, period };
 
-  // Summary KPIs across ALL (scoped) opens in the window (uncapped count/sums).
+  // `getDb()` resolves the correct client for `env` (request-scope cookie on
+  // the direct dev path; falls back to prod on the cached prod path).
+  const db = await getDb();
+  const days = daysForPeriod(period);
+  const openerScopeSql = await shardOpenerScopeSql();
+
   const summaryRows = await db.$queryRawUnsafe<RawSummaryRow[]>(`
     SELECT
       COUNT(*)::bigint AS opens,
@@ -445,20 +425,64 @@ async function queryShardPackOpens(
 
   const s = summaryRows[0];
   const totalOpens = s ? Number(s.opens) : 0;
+  const totalShardsSpent = Number(s?.shards_spent ?? 0);
 
-  if (totalOpens === 0) {
+  return {
+    available: true,
+    period,
+    summary: {
+      totalOpens,
+      uniqueOpeners: Number(s?.openers ?? 0),
+      totalShardsSpent,
+      avgShardsPerOpen: totalOpens > 0 ? totalShardsSpent / totalOpens : 0,
+      totalCardValueUsd: Number(s?.card_value_usd ?? 0),
+      totalCardCount: Number(s?.card_count ?? 0),
+    },
+  };
+}
+
+// ─── Feed query (uncached) ─────────────────────────────────────────────
+//
+// One window/page of individual (scoped) opens (newest first) + the window
+// total for pagination. Bounded to ≤perPage rows; its own (period, page,
+// perPage) cache. The user join, pack-name and card-name resolution run ONLY
+// for the page slice; the PF join is index-backed and inventory + card lookups
+// are PK seeks. Same staff + blacklist opener scope as the summary, so the feed
+// rows reconcile with the headline counts. `safePerPage`/`offset` are integer-
+// clamped (no injection surface).
+async function queryShardOpensFeed(
+  period: ShardOpensPeriod,
+  page: number,
+  perPage: number,
+  env: DbEnv,
+): Promise<ShardOpensFeedResult> {
+  const hasTables = await probeShardTables(env);
+  if (!hasTables) return { available: false, period };
+
+  const db = await getDb();
+  const days = daysForPeriod(period);
+  const openerScopeSql = await shardOpenerScopeSql();
+
+  const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
+  const safePage = Math.max(1, Math.floor(page));
+  const offset = (safePage - 1) * safePerPage;
+
+  // Window total (scoped) for pagination — one cheap bounded COUNT over the
+  // same opens predicate the feed slice uses, so the page count reconciles
+  // with the rows.
+  const countRows = await db.$queryRawUnsafe<{ total: bigint | number }[]>(`
+    SELECT COUNT(*)::bigint AS total
+    FROM game_sessions gs
+    JOIN packs pk ON pk.id = gs.game_id AND pk.pack_type = 'shard'
+    WHERE gs.game_type::text = 'pack'
+      AND gs.created_at >= NOW() - (${days} * INTERVAL '1 day')
+      AND ${openerScopeSql}`);
+  const total = Number(countRows[0]?.total ?? 0);
+
+  if (total === 0) {
     return {
       available: true,
       period,
-      summary: {
-        totalOpens: 0,
-        uniqueOpeners: 0,
-        totalShardsSpent: 0,
-        avgShardsPerOpen: 0,
-        totalCardValueUsd: 0,
-        totalCardCount: 0,
-      },
-      packs: [],
       feed: {
         data: [],
         total: 0,
@@ -469,48 +493,6 @@ async function queryShardPackOpens(
     };
   }
 
-  const totalShardsSpent = Number(s?.shards_spent ?? 0);
-  const totalCardValueUsd = Number(s?.card_value_usd ?? 0);
-  const totalCardCount = Number(s?.card_count ?? 0);
-
-  // ── Per-pack breakdown: opens / shards spent / card value $ / card count.
-  //    Sorted by opens desc. Same staff + blacklist opener scope.
-  const packRows = await db.$queryRawUnsafe<RawPackRow[]>(`
-    SELECT
-      pk.id::text AS pack_id,
-      pk.name AS pack_name,
-      pk.shard_cost AS shard_cost,
-      COUNT(*)::bigint AS opens,
-      COALESCE(SUM(pk.shard_cost), 0)::text AS shards_spent,
-      COALESCE(SUM(ui.value_at_obtained::numeric), 0)::text AS card_value_usd,
-      COUNT(ui.id)::bigint AS card_count
-    FROM game_sessions gs
-    JOIN packs pk ON pk.id = gs.game_id AND pk.pack_type = 'shard'
-    LEFT JOIN provably_fair_results pf ON pf.game_session_id = gs.id
-    LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
-    WHERE gs.game_type::text = 'pack'
-      AND gs.created_at >= NOW() - (${days} * INTERVAL '1 day')
-      AND ${openerScopeSql}
-    GROUP BY pk.id, pk.name, pk.shard_cost
-    ORDER BY opens DESC, shards_spent DESC`);
-
-  const packs: ShardPackBreakdownRow[] = packRows.map((r) => ({
-    packId: r.pack_id,
-    packName: r.pack_name ?? `Pack ${r.pack_id.slice(0, 8)}`,
-    shardCost: Number(r.shard_cost ?? 0),
-    opens: Number(r.opens),
-    shardsSpent: Number(r.shards_spent ?? 0),
-    cardValueUsd: Number(r.card_value_usd ?? 0),
-    cardCount: Number(r.card_count ?? 0),
-  }));
-
-  // ── Paginated feed of individual (scoped) opens (newest first). The user
-  //    join, pack-name and card-name resolution run ONLY for the page slice.
-  //    The PF join is index-backed (idx_pf_results_game_session_id); inventory
-  //    + card lookups are PK seeks — cheap and bounded to ≤perPage rows. Same
-  //    staff + blacklist opener scope as the summary/breakdown above, so the
-  //    feed rows reconcile with the headline counts. `safePerPage`/`offset` are
-  //    already integer-clamped (no injection surface).
   const feedRows = await db.$queryRawUnsafe<RawFeedRow[]>(`
     SELECT
       gs.id::text AS id,
@@ -552,79 +534,91 @@ async function queryShardPackOpens(
         : String(r.created_at),
   }));
 
-  const summary: ShardOpensSummary = {
-    totalOpens,
-    uniqueOpeners: Number(s?.openers ?? 0),
-    totalShardsSpent,
-    avgShardsPerOpen: totalOpens > 0 ? totalShardsSpent / totalOpens : 0,
-    totalCardValueUsd,
-    totalCardCount,
-  };
-
   return {
     available: true,
     period,
-    summary,
-    packs,
     feed: {
       data: feedData,
-      total: totalOpens,
+      total,
       page: safePage,
       perPage: safePerPage,
-      totalPages: Math.ceil(totalOpens / safePerPage),
+      totalPages: Math.ceil(total / safePerPage),
     },
   };
 }
 
-// ─── Env-keyed cache wrapper (mirrors insights-coins.ts) ───────────────
+// ─── Env-keyed cache wrappers (mirror insights-coins.ts) ───────────────
 //
 // `unstable_cache` runs its callback OUTSIDE the request's dynamic scope, so
 // `cookies()` (and thus `readDbEnv` inside getDb()) falls back to "prod".
 // Caching a dev-toggled request would serve PROD data to a dev admin. So:
 // cache ONLY on prod (the default + hot path); a dev-toggled admin runs the
-// query directly so they always see live dev data. Each (period, page,
-// perPage) combo is its own cache key (Active-Timeframe-Only: no eager
-// preload of other windows/pages). All-primitive payload (createdAt is an
-// ISO string), so the cache JSON round-trip is lossless — no Date to coerce.
+// query directly so they always see live dev data. All-primitive payloads
+// (createdAt is an ISO string), so the cache JSON round-trip is lossless.
+//
+// The SUMMARY is keyed on the WINDOW only (page-independent) so paginating the
+// feed never busts or re-runs it — and the page renders it in a window-keyed
+// Suspense boundary that does NOT re-suspend on pagination. The FEED is keyed
+// on (period, page, perPage) — Active-Timeframe-Only: no eager preload of
+// other windows/pages. The heavier `all` (365d) window gets the longer TTL
+// (300s) for both without changing the 60s TTL of the short windows.
 
-const cachedShardPackOpens = unstable_cache(
-  (period: ShardOpensPeriod, page: number, perPage: number) =>
-    queryShardPackOpens(period, page, perPage, "prod"),
-  ["shard-pack-opens-v2"],
+const cachedShardOpensSummary = unstable_cache(
+  (period: ShardOpensPeriod) => queryShardOpensSummary(period, "prod"),
+  ["shard-opens-summary-v1"],
   { revalidate: 60, tags: ["shard-pack-opens"] },
 );
 
+const cachedShardOpensSummaryAll = unstable_cache(
+  () => queryShardOpensSummary("all", "prod"),
+  ["shard-opens-summary-all-v1"],
+  { revalidate: cacheTtlForPeriod("all"), tags: ["shard-pack-opens"] },
+);
+
 /**
- * Public entry point. Returns the global shard-pack opens (summary KPIs +
- * per-pack breakdown + a paginated feed of individual opens) for ONE window.
- * Cached per (period, page, perPage) on prod; direct (uncached) on a
- * dev-toggled admin so they see live dev data. ACTIVE-TIMEFRAME-ONLY: the
- * caller fetches only the active window + active page — no eager preload.
+ * Public entry point for the window SUMMARY (KPIs only) — page-independent.
+ * Cached per window on prod; direct (uncached) on a dev-toggled admin so they
+ * see live dev data. ACTIVE-TIMEFRAME-ONLY: only the active window is fetched.
  */
-export async function getShardPackOpens(
+export async function getShardOpensSummary(
+  period: ShardOpensPeriod,
+): Promise<ShardOpensSummaryResult> {
+  const env = await readDbEnv();
+  if (env !== "prod") return queryShardOpensSummary(period, env);
+  if (period === "all") return cachedShardOpensSummaryAll();
+  return cachedShardOpensSummary(period);
+}
+
+const cachedShardOpensFeed = unstable_cache(
+  (period: ShardOpensPeriod, page: number, perPage: number) =>
+    queryShardOpensFeed(period, page, perPage, "prod"),
+  ["shard-opens-feed-v1"],
+  { revalidate: 60, tags: ["shard-pack-opens"] },
+);
+
+const cachedShardOpensFeedAll = unstable_cache(
+  (page: number, perPage: number) =>
+    queryShardOpensFeed("all", page, perPage, "prod"),
+  ["shard-opens-feed-all-v1"],
+  { revalidate: cacheTtlForPeriod("all"), tags: ["shard-pack-opens"] },
+);
+
+/**
+ * Public entry point for the paginated FEED of individual opens for ONE
+ * window/page. Cached per (period, page, perPage) on prod; direct on a
+ * dev-toggled admin. ACTIVE-TIMEFRAME-ONLY: only the active window + active
+ * page is fetched — no eager preload.
+ */
+export async function getShardOpensFeed(
   period: ShardOpensPeriod,
   page: number,
   perPage: number,
-): Promise<ShardOpensResult> {
+): Promise<ShardOpensFeedResult> {
   const env = await readDbEnv();
-  if (env !== "prod") return queryShardPackOpens(period, page, perPage, env);
-  // Pin the per-period TTL by routing through a period-keyed wrapper. The
-  // `cachedShardPackOpens` revalidate is 60s; for `all` we want 300s, so wrap
-  // the lifetime window in its own longer-lived cache. Keeps the active-only
-  // contract (only the requested period/page is fetched + cached).
-  if (period === "all") return cachedShardPackOpensAll(page, perPage);
-  return cachedShardPackOpens(period, page, perPage);
+  if (env !== "prod") return queryShardOpensFeed(period, page, perPage, env);
+  if (period === "all") return cachedShardOpensFeedAll(page, perPage);
+  return cachedShardOpensFeed(period, page, perPage);
 }
-
-// Separate lifetime cache so the heavier 365d window gets the longer TTL
-// (300s) without changing the 60s TTL of the active short windows. Same
-// prod-only contract.
-const cachedShardPackOpensAll = unstable_cache(
-  (page: number, perPage: number) =>
-    queryShardPackOpens("all", page, perPage, "prod"),
-  ["shard-pack-opens-all-v2"],
-  { revalidate: cacheTtlForPeriod("all"), tags: ["shard-pack-opens"] },
-);
 
 // ─── Shard economy overview (Part A) — REUSE the canonical economy ─────
 //

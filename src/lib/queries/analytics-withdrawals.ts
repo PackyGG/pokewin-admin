@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
@@ -59,15 +60,15 @@ function intervalSqlForPeriod(period: WithdrawalsPeriod): string | null {
   }
 }
 
-export async function getWithdrawnCoinsBreakdown(
+async function computeWithdrawnCoinsBreakdown(
   period: WithdrawalsPeriod,
+  excluded: string[],
 ): Promise<WithdrawnCoinsData> {
   const db = await getDb();
   const interval = intervalSqlForPeriod(period);
   const dateFilter = interval
     ? `AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - ${interval}`
     : "";
-  const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
   // Single round-trip: per-asset crypto totals + a single physical
@@ -135,4 +136,41 @@ export async function getWithdrawnCoinsBreakdown(
     physicalUsd,
     physicalCount,
   };
+}
+
+/**
+ * Cross-request cache for the withdrawn-coins breakdown. `/analytics` →
+ * Revenue tab re-runs on every 5-minute `AutoRefresh` tick for every
+ * viewer; without a shared cache the per-asset `card_withdrawal_requests`
+ * scan re-ran per tick per viewer. Two `unstable_cache` layers — 60s for
+ * the finite windows, 300s for the unbounded "all" view — both keyed on
+ * `(period, sortedBlacklist)`. Logic identical to
+ * `computeWithdrawnCoinsBreakdown`; mirrors the `getAnalyticsData` cache
+ * idiom in `analytics.ts`.
+ *
+ * NOTE: the `all` window is still an UNBOUNDED lifetime scan (money-exact
+ * "total withdrawn" — capping it would change a displayed number, so it is
+ * left for owner sign-off). The cache + the caller's `safeQuery` timeout
+ * keep a cold lifetime fill from hanging the segment.
+ */
+const cachedWithdrawnCoinsBreakdown = unstable_cache(
+  computeWithdrawnCoinsBreakdown,
+  ["analytics-withdrawals-v1"],
+  { revalidate: 60, tags: ["analytics"] },
+);
+
+const cachedWithdrawnCoinsBreakdownLifetime = unstable_cache(
+  computeWithdrawnCoinsBreakdown,
+  ["analytics-withdrawals-lifetime-v1"],
+  { revalidate: 300, tags: ["analytics"] },
+);
+
+export async function getWithdrawnCoinsBreakdown(
+  period: WithdrawalsPeriod,
+): Promise<WithdrawnCoinsData> {
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return period === "all"
+    ? cachedWithdrawnCoinsBreakdownLifetime(period, sorted)
+    : cachedWithdrawnCoinsBreakdown(period, sorted);
 }

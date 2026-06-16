@@ -10,7 +10,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { MetricTile } from "@/components/modern-panels";
@@ -70,7 +70,12 @@ export async function RevenueTab({
   // the whole tab to a panel fallback (everything below depends on it);
   // a failed withdrawn-coins scan only degrades its own card.
   const [{ data, error }, withdrawnCoinsResult] = await Promise.all([
-    safeQuery(() => getRevenueBreakdown(period), null, "analytics.revenue"),
+    safeQuery(
+      () => getRevenueBreakdown(period),
+      null,
+      "analytics.revenue",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
     safeQuery(
       () =>
         resolveAdminRead<Awaited<ReturnType<typeof getWithdrawnCoinsBreakdown>>>(
@@ -86,6 +91,7 @@ export async function RevenueTab({
         ),
       null,
       "analytics.revenue.withdrawnCoins",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
   if (error || !data) {

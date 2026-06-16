@@ -11,7 +11,7 @@ import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
 import { getUsersByCountryFromClickHouse } from "@/lib/clickhouse/queries/analytics/map";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -55,6 +55,7 @@ export async function MapTab({
       ),
     null,
     "analytics.map",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

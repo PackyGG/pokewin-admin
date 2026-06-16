@@ -117,7 +117,21 @@ export type RainEntryItem = {
   createdAt: string;
 };
 
-export type RainDetail = {
+/**
+ * Detail header — everything the hero + KPI strip + Details panel needs,
+ * and nothing that depends on the entries pagination cursor.
+ *
+ * Split out of the old monolithic `getRainDetail` so the summary boxes
+ * (Total Pool / Tips / Participants / Winner) and the editable base-amount
+ * panel resolve from ONE cheap PK lookup (+ a relation count) instead of
+ * re-paying the tips relation load and the admin-emails fan-out on every
+ * `?page=` change of the entries table. Tipper count comes from a relation
+ * `_count` so the header never loads the tip rows themselves.
+ *
+ * Serializable by construction (Decimals → numbers, dates → ISO strings)
+ * so it is safe to memoize in `unstable_cache` (see rain-detail-cache.ts).
+ */
+export type RainHeader = {
   id: string;
   status: string;
   baseAmountUsd: number;
@@ -129,38 +143,95 @@ export type RainDetail = {
   completedAt: string | null;
   winnerUserId: string | null;
   winnerUsername: string | null;
-  tips: RainTipItem[];
-  entries: PaginatedResult<RainEntryItem>;
+  tipCount: number;
 };
 
-export async function getRainDetail(
-  id: string,
-  params: { page?: number; perPage?: number },
-): Promise<RainDetail | null> {
+export async function getRainHeader(id: string): Promise<RainHeader | null> {
   const db = await getDb();
-  const { page = 1, perPage = 20 } = params;
+  const rain = await db.rains.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      base_amount_usd: true,
+      tip_amount_usd: true,
+      total_pool_usd: true,
+      participant_count: true,
+      starts_at: true,
+      ends_at: true,
+      completed_at: true,
+      winner_user_id: true,
+      user: { select: { username: true } },
+      _count: { select: { rain_tips: true } },
+    },
+  });
 
-  // Rain, admin-users (for team check) and paginated entries are independent —
-  // fetch them in parallel. Tipper-user emails were a serial second hop in
-  // the previous version, but the rain.rain_tips relation already pulls
-  // each tipper's role. We can fold the email into the relation `select`
-  // to keep the second hop off the wire entirely — the tipper's email isn't
-  // returned to the client, it's only used here to cross-check against
-  // admin-DB team emails.
-  const [rain, adminUsers, entries, totalEntries] = await Promise.all([
-    db.rains.findUnique({
-      where: { id },
+  if (!rain) return null;
+
+  return {
+    id: rain.id,
+    status: rain.status,
+    baseAmountUsd: toNumber(rain.base_amount_usd),
+    tipAmountUsd: toNumber(rain.tip_amount_usd),
+    totalPoolUsd: toNumber(rain.total_pool_usd),
+    participantCount: rain.participant_count,
+    startsAt: rain.starts_at.toISOString(),
+    endsAt: rain.ends_at.toISOString(),
+    completedAt: rain.completed_at?.toISOString() ?? null,
+    winnerUserId: rain.winner_user_id,
+    winnerUsername: rain.user?.username ?? null,
+    tipCount: rain._count.rain_tips,
+  };
+}
+
+/**
+ * Tips that fund one rain pool, with a team-member flag.
+ *
+ * Bounded by a single rain instance (not a lifetime scan). The tipper's
+ * email is pulled only to cross-check against admin-DB team emails and is
+ * never returned to the client. Admin emails are read from the Admin DB in
+ * parallel (separate-DB lookup, joined in code — no cross-DB join).
+ */
+export async function getRainTips(id: string): Promise<RainTipItem[]> {
+  const db = await getDb();
+  const [tips, adminUsers] = await Promise.all([
+    db.rain_tips.findMany({
+      where: { rain_id: id },
       include: {
-        user: { select: { username: true } },
-        rain_tips: {
-          include: {
-            user: { select: { username: true, email: true, role: true } },
-          },
-          orderBy: { created_at: "desc" },
-        },
+        user: { select: { username: true, email: true, role: true } },
       },
+      orderBy: { created_at: "desc" },
     }),
     adminDb.admin_users.findMany({ select: { email: true } }),
+  ]);
+
+  const adminEmails = new Set(adminUsers.map((a) => a.email));
+
+  return tips.map((t) => {
+    const isTeam =
+      t.user?.role === "admin" ||
+      t.user?.role === "support" ||
+      (t.user?.email ? adminEmails.has(t.user.email) : false);
+    return {
+      id: t.id,
+      userId: t.user_id,
+      username: t.user?.username ?? null,
+      amountUsd: toNumber(t.amount_usd),
+      isTeamMember: isTeam,
+      createdAt: t.created_at.toISOString(),
+    };
+  });
+}
+
+/** Server-side bounded, paginated entries for one rain. */
+export async function getRainEntries(
+  id: string,
+  page = 1,
+  perPage = 20,
+): Promise<PaginatedResult<RainEntryItem>> {
+  const db = await getDb();
+
+  const [entries, total] = await Promise.all([
     db.rain_entries.findMany({
       where: { rain_id: id },
       select: {
@@ -177,48 +248,17 @@ export async function getRainDetail(
     db.rain_entries.count({ where: { rain_id: id } }),
   ]);
 
-  if (!rain) return null;
-
-  const adminEmails = new Set(adminUsers.map((a) => a.email));
-
   return {
-    id: rain.id,
-    status: rain.status,
-    baseAmountUsd: toNumber(rain.base_amount_usd),
-    tipAmountUsd: toNumber(rain.tip_amount_usd),
-    totalPoolUsd: toNumber(rain.total_pool_usd),
-    participantCount: rain.participant_count,
-    startsAt: rain.starts_at.toISOString(),
-    endsAt: rain.ends_at.toISOString(),
-    completedAt: rain.completed_at?.toISOString() ?? null,
-    winnerUserId: rain.winner_user_id,
-    winnerUsername: rain.user?.username ?? null,
-    tips: rain.rain_tips.map((t) => {
-      const isTeam =
-        t.user?.role === "admin" ||
-        t.user?.role === "support" ||
-        (t.user?.email ? adminEmails.has(t.user.email) : false);
-      return {
-        id: t.id,
-        userId: t.user_id,
-        username: t.user?.username ?? null,
-        amountUsd: toNumber(t.amount_usd),
-        isTeamMember: isTeam,
-        createdAt: t.created_at.toISOString(),
-      };
-    }),
-    entries: {
-      data: entries.map((e) => ({
-        id: e.id,
-        userId: e.user_id,
-        username: e.user?.username ?? null,
-        turnstileVerifiedAt: e.turnstile_verified_at.toISOString(),
-        createdAt: e.created_at.toISOString(),
-      })),
-      total: totalEntries,
-      page,
-      perPage,
-      totalPages: Math.ceil(totalEntries / perPage),
-    },
+    data: entries.map((e) => ({
+      id: e.id,
+      userId: e.user_id,
+      username: e.user?.username ?? null,
+      turnstileVerifiedAt: e.turnstile_verified_at.toISOString(),
+      createdAt: e.created_at.toISOString(),
+    })),
+    total,
+    page,
+    perPage,
+    totalPages: Math.ceil(total / perPage),
   };
 }

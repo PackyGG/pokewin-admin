@@ -61,16 +61,21 @@ export async function RolesTab() {
   // non-admin (even one with the /admin-users page key) is redirected here,
   // before getRolesOverview() reads anything.
   const session = await requireAdmin();
-  const overview = await getRolesOverview();
 
+  // The roles overview (heavy: grouped holder counts + all role rows + every
+  // non-admin user for the override tally) and the founder-username probe are
+  // independent — run them in one round-trip instead of back-to-back.
   // Creator-Hub access toggles are founder-only ("motha"). Resolve the
   // username from the ADMIN DB (never trust the JWT alone for a security
   // surface) and only load + render the card for the owner. A non-owner
   // admin never sees it; the server actions enforce the same gate.
-  const ownerRow = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { username: true },
-  });
+  const [overview, ownerRow] = await Promise.all([
+    getRolesOverview(),
+    adminDb.admin_users.findUnique({
+      where: { id: session.userId },
+      select: { username: true },
+    }),
+  ]);
   const isHubAccessOwner = isCreatorHubAccessOwner({
     username: ownerRow?.username ?? "",
   });

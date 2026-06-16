@@ -3,7 +3,8 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { adminDb } from "@/lib/admin-db";
-import { getDb } from "@/lib/db";
+import { dbForEnv } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -31,12 +32,19 @@ export type GiveawayCard = {
   };
 };
 
-// Cross-request cache (60s) keyed on the resolved limit. Values are
-// identical to the un-cached path; only freshness is bounded — a brand
-// new giveaway shows up within 60s. Wrapping here avoids re-hitting the
+// Cross-request cache (60s) keyed on (env, limit). Values are identical
+// to the un-cached path; only freshness is bounded — a brand new
+// giveaway shows up within 60s. Wrapping here avoids re-hitting the
 // admin DB + the (read-only) main-DB username lookup on every navigation.
+//
+// `env` is resolved OUTSIDE the cache (via readDbEnv) and passed in so
+// it becomes part of the cache key. This follows the documented db.ts
+// contract — `dbForEnv(env)` inside an unstable_cache callback — instead
+// of calling getDb()/cookies() inside the cache, which Next 15 forbids
+// (it would throw and silently fall back to prod, ignoring the admin's
+// dev toggle and risking cross-env cache bleed).
 const cachedGiveawayFeed = unstable_cache(
-  (limit: number) => getGiveawayFeedUncached(limit),
+  (env: DbEnv, limit: number) => getGiveawayFeedUncached(env, limit),
   ["marketing-giveaway-feed-v1"],
   { revalidate: 60, tags: ["marketing-giveaway-feed"] },
 );
@@ -45,10 +53,14 @@ export async function getGiveawayFeed(params?: {
   limit?: number;
 }): Promise<GiveawayCard[]> {
   const limit = Math.max(1, Math.min(500, Math.floor(params?.limit ?? 200)));
-  return cachedGiveawayFeed(limit);
+  const env = await readDbEnv();
+  return cachedGiveawayFeed(env, limit);
 }
 
-async function getGiveawayFeedUncached(limit: number): Promise<GiveawayCard[]> {
+async function getGiveawayFeedUncached(
+  env: DbEnv,
+  limit: number,
+): Promise<GiveawayCard[]> {
   const rows = await adminDb.admin_giveaway_actions.findMany({
     orderBy: { created_at: "desc" },
     take: limit,
@@ -67,7 +79,7 @@ async function getGiveawayFeedUncached(limit: number): Promise<GiveawayCard[]> {
     { username: string | null; image: string | null }
   >();
   if (recipientIds.length > 0) {
-    const db = await getDb();
+    const db = dbForEnv(env);
     const users = await db.user.findMany({
       where: { id: { in: recipientIds } },
       select: { id: true, username: true, image: true },

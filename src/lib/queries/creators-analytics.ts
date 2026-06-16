@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -21,10 +22,12 @@ function periodToDateFilter(period: Period): string {
   }
 }
 
-export async function getAffiliateAnalytics(period: Period): Promise<AffiliateAnalyticsData> {
+async function computeAffiliateAnalytics(
+  period: Period,
+  excluded: string[],
+): Promise<AffiliateAnalyticsData> {
   const db = await getDb();
   const dateFilter = periodToDateFilter(period);
-  const excluded = await getExcludedUserIds();
   const referredScope = realCustomerIdsSubquery(excluded);
   const referredFilter = `AND referred_user_id IN ${referredScope}`;
 
@@ -117,6 +120,43 @@ export async function getAffiliateAnalytics(period: Period): Promise<AffiliateAn
     activeCreators,
     daily,
   };
+}
+
+/**
+ * Cross-request cache for the creator/affiliate analytics bundle that backs
+ * `/creators/analytics`. The page re-runs its server component for every
+ * viewer; without a shared cache the 7-query affiliate aggregate batch
+ * (signups / payouts / usages / clicks / daily series) re-ran per render.
+ * Two `unstable_cache` layers — 60s for the finite windows, 300s for the
+ * lifetime view — both keyed on `(period, sortedBlacklist)` so an
+ * excluded-users edit busts stale aggregates. Logic identical to
+ * `computeAffiliateAnalytics`; mirrors the `getAnalyticsData` cache idiom in
+ * `analytics.ts`.
+ *
+ * NOTE: the `all` window is an UNBOUNDED lifetime scan over
+ * `affiliate_code_usages` / `affiliate_clicks` (money-exact totals — capping
+ * would change displayed numbers, so it is left for owner sign-off).
+ */
+const cachedAffiliateAnalytics = unstable_cache(
+  computeAffiliateAnalytics,
+  ["creators-affiliate-analytics-v1"],
+  { revalidate: 60, tags: ["creators-analytics"] },
+);
+
+const cachedAffiliateAnalyticsLifetime = unstable_cache(
+  computeAffiliateAnalytics,
+  ["creators-affiliate-analytics-lifetime-v1"],
+  { revalidate: 300, tags: ["creators-analytics"] },
+);
+
+export async function getAffiliateAnalytics(
+  period: Period,
+): Promise<AffiliateAnalyticsData> {
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return period === "all"
+    ? cachedAffiliateAnalyticsLifetime(period, sorted)
+    : cachedAffiliateAnalytics(period, sorted);
 }
 
 export async function getAffiliateLevelConfigs() {

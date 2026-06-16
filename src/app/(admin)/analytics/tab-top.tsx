@@ -18,7 +18,7 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
@@ -121,6 +121,7 @@ export async function TopPerformersTab({
               ),
             null,
             "analytics.top.depositors",
+            REWARD_QUERY_TIMEOUT_MS,
           )
         : null,
       active === "wagerers"
@@ -139,6 +140,7 @@ export async function TopPerformersTab({
               ),
             null,
             "analytics.top.wagerers",
+            REWARD_QUERY_TIMEOUT_MS,
           )
         : null,
       active === "losers"
@@ -157,6 +159,7 @@ export async function TopPerformersTab({
               ),
             null,
             "analytics.top.losers",
+            REWARD_QUERY_TIMEOUT_MS,
           )
         : null,
       active === "winners"
@@ -175,6 +178,7 @@ export async function TopPerformersTab({
               ),
             null,
             "analytics.top.winners",
+            REWARD_QUERY_TIMEOUT_MS,
           )
         : null,
       active === "creators"
@@ -189,6 +193,7 @@ export async function TopPerformersTab({
               ),
             null,
             "analytics.top.creators",
+            REWARD_QUERY_TIMEOUT_MS,
           )
         : null,
       active === "countries"
@@ -207,6 +212,7 @@ export async function TopPerformersTab({
               ),
             null,
             "analytics.top.countries",
+            REWARD_QUERY_TIMEOUT_MS,
           )
         : null,
     ]);

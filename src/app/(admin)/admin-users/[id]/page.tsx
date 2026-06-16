@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import {
   UserCog,
@@ -15,6 +16,7 @@ import {
   getAdminUserAuditEvents,
   type AdminAuditEventItem,
   type AdminAuditStats,
+  type AdminUserDetail,
 } from "@/lib/queries/admin-users";
 import type { PaginatedResult } from "@/lib/types";
 import {
@@ -29,12 +31,20 @@ import { listAssignablePresets } from "../_roles/custom-roles-actions";
 import { Badge } from "@/components/ui/badge";
 import { formatRelative } from "@/lib/utils/format";
 import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
+import {
+  KpiStripSkeleton,
+  SectionHeadingSkeleton,
+  TableSkeleton,
+} from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 import { FadeIn } from "@/components/fade-in";
 import { AdminUserTabs } from "./admin-user-tabs";
 
 export const metadata = { title: "Admin User Detail" };
 
 const AUDIT_PER_PAGE_OPTIONS = [10, 20, 50, 100] as const;
+
+type BalanceLimitsResult = Awaited<ReturnType<typeof getLimitsForAdmin>>;
 
 export default async function AdminUserDetailPage({
   params,
@@ -86,95 +96,87 @@ export default async function AdminUserDetailPage({
     eventsByType: [],
     dailyActivity: [],
   };
-  type BalanceLimitsResult = Awaited<ReturnType<typeof getLimitsForAdmin>>;
   const emptyBalanceLimits: BalanceLimitsResult = [];
   const emptyPresets: { id: string; name: string }[] = [];
 
-  const [
-    detailResult,
-    auditStatsResult,
-    auditEventsResult,
-    balanceLimitsResult,
-    rolesColumnExistsResult,
-    assignablePresetsResult,
-  ] = await Promise.all([
-    safeQueryOrNull(
-      () => getAdminUserDetail(id),
-      "adminUsers.detail",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getAdminUserAuditStats(id),
-      emptyAuditStats,
-      "adminUsers.auditStats",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    isCurrentUserAdmin
-      ? safeQuery(
-          () =>
-            getAdminUserAuditEvents(id, auditPage, auditPerPage, {
-              eventType: typeof sp.auditEventType === "string" ? sp.auditEventType : undefined,
-              search: typeof sp.auditSearch === "string" ? sp.auditSearch : undefined,
-            }),
-          emptyAuditEvents,
-          "adminUsers.auditEvents",
-          REWARD_QUERY_TIMEOUT_MS,
-        )
-      : Promise.resolve<SafeQueryResult<PaginatedResult<AdminAuditEventItem>>>({
-          data: emptyAuditEvents,
-          error: null,
-          kind: null,
-        }),
-    // Whether the additive `roles` column is migrated — drives the honest
-    // "multi-role needs a migration" notice in the Roles card. Only needed
-    // by an admin viewer (the card is hidden otherwise); skip the probe
-    // for non-admin viewers, mirroring the balance-limits gate above.
-    isCurrentUserAdmin
-      ? safeQuery(
-          () => getLimitsForAdmin(id),
-          emptyBalanceLimits,
-          "adminUsers.balanceLimits",
-          REWARD_QUERY_TIMEOUT_MS,
-        )
-      : Promise.resolve<SafeQueryResult<BalanceLimitsResult>>({
-          data: emptyBalanceLimits,
-          error: null,
-          kind: null,
-        }),
-    isCurrentUserAdmin
-      ? safeQuery(
-          () => adminRolesColumnExists(),
-          false,
-          "adminUsers.rolesColumn",
-          REWARD_QUERY_TIMEOUT_MS,
-        )
-      : Promise.resolve<SafeQueryResult<boolean>>({
-          data: false,
-          error: null,
-          kind: null,
-        }),
-    // Assignable role presets (custom roles) for the "Role preset" select in
-    // the Roles card. Admin-only surface; skip the read for non-admin viewers.
-    isCurrentUserAdmin
-      ? safeQuery(
-          () => listAssignablePresets(),
-          emptyPresets,
-          "adminUsers.presets",
-          REWARD_QUERY_TIMEOUT_MS,
-        )
-      : Promise.resolve<SafeQueryResult<{ id: string; name: string }[]>>({
-          data: emptyPresets,
-          error: null,
-          kind: null,
-        }),
-  ]);
+  // Kick every read off NOW (unawaited). Only `detail` is awaited below — the
+  // hero identity + the notFound() guard need it before any markup paints.
+  // Every other read is streamed in behind <Suspense> via AdminUserDetailBody,
+  // so the hero flushes immediately instead of blocking the whole route on the
+  // audit feed / audit stats / balance-limits / presets reads (house lazy-leg
+  // pattern, see /audit + balance-limits). safeQuery/safeQueryOrNull never
+  // reject, so holding the promises unawaited is safe.
+  const detailPromise = safeQueryOrNull(
+    () => getAdminUserDetail(id),
+    "adminUsers.detail",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const auditStatsPromise = safeQuery(
+    () => getAdminUserAuditStats(id),
+    emptyAuditStats,
+    "adminUsers.auditStats",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const auditEventsPromise = isCurrentUserAdmin
+    ? safeQuery(
+        () =>
+          getAdminUserAuditEvents(id, auditPage, auditPerPage, {
+            eventType: typeof sp.auditEventType === "string" ? sp.auditEventType : undefined,
+            search: typeof sp.auditSearch === "string" ? sp.auditSearch : undefined,
+          }),
+        emptyAuditEvents,
+        "adminUsers.auditEvents",
+        REWARD_QUERY_TIMEOUT_MS,
+      )
+    : Promise.resolve<SafeQueryResult<PaginatedResult<AdminAuditEventItem>>>({
+        data: emptyAuditEvents,
+        error: null,
+        kind: null,
+      });
+  // Whether the additive `roles` column is migrated — drives the honest
+  // "multi-role needs a migration" notice in the Roles card. Only needed
+  // by an admin viewer (the card is hidden otherwise); skip the probe
+  // for non-admin viewers, mirroring the balance-limits gate above.
+  const balanceLimitsPromise = isCurrentUserAdmin
+    ? safeQuery(
+        () => getLimitsForAdmin(id),
+        emptyBalanceLimits,
+        "adminUsers.balanceLimits",
+        REWARD_QUERY_TIMEOUT_MS,
+      )
+    : Promise.resolve<SafeQueryResult<BalanceLimitsResult>>({
+        data: emptyBalanceLimits,
+        error: null,
+        kind: null,
+      });
+  const rolesColumnExistsPromise = isCurrentUserAdmin
+    ? safeQuery(
+        () => adminRolesColumnExists(),
+        false,
+        "adminUsers.rolesColumn",
+        REWARD_QUERY_TIMEOUT_MS,
+      )
+    : Promise.resolve<SafeQueryResult<boolean>>({
+        data: false,
+        error: null,
+        kind: null,
+      });
+  // Assignable role presets (custom roles) for the "Role preset" select in
+  // the Roles card. Admin-only surface; skip the read for non-admin viewers.
+  const assignablePresetsPromise = isCurrentUserAdmin
+    ? safeQuery(
+        () => listAssignablePresets(),
+        emptyPresets,
+        "adminUsers.presets",
+        REWARD_QUERY_TIMEOUT_MS,
+      )
+    : Promise.resolve<SafeQueryResult<{ id: string; name: string }[]>>({
+        data: emptyPresets,
+        error: null,
+        kind: null,
+      });
 
-  const detail = detailResult.data;
-  const auditStats = auditStatsResult.data;
-  const auditEvents = auditEventsResult.data;
-  const balanceLimits = balanceLimitsResult.data;
-  const rolesColumnExists = rolesColumnExistsResult.data;
-  const assignablePresets = assignablePresetsResult.data;
+  const detail = (await detailPromise).data;
 
   if (!detail) notFound();
 
@@ -201,6 +203,90 @@ export default async function AdminUserDetailPage({
         />
       </PageHero>
 
+      {/* Stream the KPI strip + tabs as a single leg keyed on the admin id, so
+          navigating between admin profiles re-shows the skeleton, but an
+          in-page audit-feed navigation (?auditPage / ?auditEventType / …) does
+          NOT re-key the summary KPIs — they reconcile in place. */}
+      <Suspense
+        key={detail.id}
+        fallback={
+          <div className="space-y-6">
+            <KpiStripSkeleton count={4} />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <Skeleton className="h-64 rounded-2xl" />
+              <Skeleton className="h-64 rounded-2xl" />
+              <Skeleton className="h-64 rounded-2xl" />
+            </div>
+            <div className="space-y-3">
+              <SectionHeadingSkeleton titleWidth={120} />
+              <TableSkeleton rows={8} columns={5} />
+            </div>
+          </div>
+        }
+      >
+        <AdminUserDetailBody
+          detail={detail}
+          auditStatsPromise={auditStatsPromise}
+          auditEventsPromise={auditEventsPromise}
+          balanceLimitsPromise={balanceLimitsPromise}
+          rolesColumnExistsPromise={rolesColumnExistsPromise}
+          assignablePresetsPromise={assignablePresetsPromise}
+          isCurrentUserAdmin={isCurrentUserAdmin}
+          viewerIsMainOwner={viewerIsMainOwner}
+        />
+      </Suspense>
+    </div>
+  );
+}
+
+/**
+ * Streamed body leg — consumes the already-running reads (kicked off in the
+ * page before the `detail` await) and renders the KPI strip + the tabs. Held
+ * behind <Suspense> so the hero paints first; every read here was wrapped in
+ * safeQuery so a single failure/timeout degrades only its own data, never the
+ * whole route.
+ */
+async function AdminUserDetailBody({
+  detail,
+  auditStatsPromise,
+  auditEventsPromise,
+  balanceLimitsPromise,
+  rolesColumnExistsPromise,
+  assignablePresetsPromise,
+  isCurrentUserAdmin,
+  viewerIsMainOwner,
+}: {
+  detail: AdminUserDetail;
+  auditStatsPromise: Promise<SafeQueryResult<AdminAuditStats>>;
+  auditEventsPromise: Promise<SafeQueryResult<PaginatedResult<AdminAuditEventItem>>>;
+  balanceLimitsPromise: Promise<SafeQueryResult<BalanceLimitsResult>>;
+  rolesColumnExistsPromise: Promise<SafeQueryResult<boolean>>;
+  assignablePresetsPromise: Promise<SafeQueryResult<{ id: string; name: string }[]>>;
+  isCurrentUserAdmin: boolean;
+  viewerIsMainOwner: boolean;
+}) {
+  const [
+    auditStatsResult,
+    auditEventsResult,
+    balanceLimitsResult,
+    rolesColumnExistsResult,
+    assignablePresetsResult,
+  ] = await Promise.all([
+    auditStatsPromise,
+    auditEventsPromise,
+    balanceLimitsPromise,
+    rolesColumnExistsPromise,
+    assignablePresetsPromise,
+  ]);
+
+  const auditStats = auditStatsResult.data;
+  const auditEvents = auditEventsResult.data;
+  const balanceLimits = balanceLimitsResult.data;
+  const rolesColumnExists = rolesColumnExistsResult.data;
+  const assignablePresets = assignablePresetsResult.data;
+
+  return (
+    <div className="space-y-6">
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 md:grid-cols-4">
         <KpiTile
           label="Status"
