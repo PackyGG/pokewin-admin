@@ -301,7 +301,6 @@ export function RewardPackCatalogGrid({
 export function WelcomePackTunerCard({
   packId,
   packName,
-  packSlug,
   rewardName,
   rewardSlug,
   imageUrl,

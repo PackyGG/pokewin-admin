@@ -47,6 +47,7 @@ import {
 
 // Two source files reference these dimensions — keep them in sync.
 const PANEL_WIDTH_PX = 320;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const COLLAPSED_WIDTH_PX = 56;
 
 const MAX_ITEMS = 30;

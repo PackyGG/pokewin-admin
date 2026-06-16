@@ -43,6 +43,7 @@ function RewardMobileCard({ r }: { r: RewardItem }) {
                   className="flex items-center gap-1.5 text-[10px] text-muted-foreground"
                 >
                   {p.imageUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={p.imageUrl}
                       alt=""
@@ -133,6 +134,7 @@ export function RewardsTable({ data }: { data: RewardItem[] }) {
                       {r.packs.map((p) => (
                         <div key={p.id} className="flex items-center gap-1.5">
                           {p.imageUrl && (
+                            // eslint-disable-next-line @next/next/no-img-element
                             <img
                               src={p.imageUrl}
                               alt=""

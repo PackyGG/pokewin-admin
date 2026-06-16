@@ -62,6 +62,7 @@ export function PrizePicker({
         {value?.name ? (
           <span className="flex items-center gap-2 truncate">
             {value.imageUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
               <img src={value.imageUrl} alt="" className="size-5 rounded object-contain" />
             )}
             <span className="truncate">{value.name}</span>
@@ -136,6 +137,7 @@ export function PrizePicker({
               >
                 <div className="flex w-full items-center gap-2">
                   {item.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={item.imageUrl} alt="" className="size-8 rounded object-contain" />
                   ) : (
                     <div className="flex size-8 items-center justify-center rounded bg-muted text-[10px] text-muted-foreground">

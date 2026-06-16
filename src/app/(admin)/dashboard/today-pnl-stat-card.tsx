@@ -248,7 +248,6 @@ function TodayPnlInfoPopover({
   isProfit,
   pnl,
   deposits,
-  withdrawals,
   balanceChange,
   inventoryChange,
   voucherChange,

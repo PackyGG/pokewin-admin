@@ -85,6 +85,7 @@ function ImageDropzone({
   if (preview) {
     return (
       <div className="relative inline-block">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={preview} alt="Preview" className="h-24 rounded-lg object-contain" />
         <button
           type="button"

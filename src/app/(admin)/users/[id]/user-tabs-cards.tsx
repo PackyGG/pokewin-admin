@@ -37,7 +37,6 @@ import { BalanceAdjustDialog, XpAdjustDialog } from "./user-tabs-dialogs";
 export const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
   balances,
   userId,
-  isAdmin,
   canAdjustBalance,
 }: {
   balances: UserDetail["balances"];

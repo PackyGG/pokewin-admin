@@ -295,6 +295,7 @@ export function TransactionDetailModal({
       value: (
         <div className="flex items-center gap-3 rounded-lg border p-2">
           {t.soldCard.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={t.soldCard.imageUrl}
               alt={t.soldCard.name}
@@ -473,6 +474,7 @@ export function TransactionDetailModal({
                       className="flex items-center gap-4 py-2 group"
                     >
                       {gameSession.pack.imageUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={gameSession.pack.imageUrl}
                           alt={gameSession.pack.name}
@@ -502,6 +504,7 @@ export function TransactionDetailModal({
                             className="flex flex-col items-center gap-1.5"
                           >
                             {item.imageUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
                               <img
                                 src={item.imageUrl}
                                 alt={item.cardName}

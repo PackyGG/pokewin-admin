@@ -151,6 +151,7 @@ function SortableCardRow({
       <td className="p-2">
         <div className="flex items-center gap-2">
           {card.imageUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
             <img src={card.imageUrl} alt="" className="size-8 rounded object-contain" />
           )}
           <div className="min-w-0">

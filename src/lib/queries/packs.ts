@@ -952,7 +952,6 @@ export async function getPackStats(
     }
   }
 
-  const totalRevenue = revBuckets.all;
   // Payout from our query is unreliable (unassigned high-value cards have no
   // inventory_item_id). Use the backend's pre-computed value instead.
   const totalPayout = dbTotals.totalPayout;

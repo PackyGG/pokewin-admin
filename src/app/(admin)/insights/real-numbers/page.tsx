@@ -2420,7 +2420,6 @@ function CreatorProgramCostPanel({
  * reference text, not KPIs) so the reading stays calm.
  */
 function Definitions({
-  cost,
   snapshot,
 }: {
   cost: CostBreakdown;

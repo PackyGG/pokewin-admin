@@ -4,7 +4,6 @@
 // type.
 
 import https from "node:https";
-import crypto from "node:crypto";
 import { Receiver, PerMessageDeflate, Sender } from "ws";
 
 const TYPES = [
@@ -36,8 +35,7 @@ const TYPES = [
 
 const HOST = "api.packy.gg";
 const PATH = "/v1/ws";
-const WS_KEY = "LMUTEH207xvS5FA2bTrXCw==";
-const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const WS_KEY = "************************";
 
 const HEADERS = {
   Host: HOST,

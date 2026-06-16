@@ -1380,7 +1380,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // every aggregate below applies the same exclusion set. The list is
   // cached via React `cache()` in fetch.ts → repeated invocations are
   // free.
-  const [staffRelation, excluded, sessionWindowsCte] = await Promise.all([
+  const [, excluded, sessionWindowsCte] = await Promise.all([
     excludeStaffAndBlacklisted(),
     getExcludedUserIds(),
     // Creator deal/stream session windows (backend creators API;
