@@ -481,6 +481,7 @@ export async function getUserDetail(id: string) {
     ownedCodeRows,
     tips,
     balancePoints,
+    liveAffiliateRows,
   ] = await Promise.all([
     db.user.findUnique({
       where: { id },
@@ -584,6 +585,34 @@ export async function getUserDetail(id: string) {
     // Spendable points counter, read name-agnostically across the
     // bonus_points -> shards rename (see fetchBalancePoints).
     fetchBalancePoints(db, id),
+    // LIVE affiliate aggregates — sourced from the canonical
+    // affiliate_code_usages table the leaderboard reads (see
+    // creators-leaderboards.ts:142-161). The denormalized
+    // affiliate_accounts row can be stale / missing for code-owners
+    // whose totals haven't been backfilled, so the Affiliate Stats
+    // tiles on /users/[id] read live for the click/wager numbers.
+    // Payout fields stay on affiliateAccount (cash-out state lives
+    // there authoritatively). Matches the leaderboard's exact
+    // semantics: UPPER(code) match, usage_type::text='wager',
+    // referred_user_id counted DISTINCT. Lifetime (no window) to
+    // match what the user-page currently shows. Single round-trip,
+    // .catch keeps page from breaking on enum/schema drift.
+    db.$queryRaw<Array<{ total_referred: bigint | number | null; total_wager_volume_usd: string | null }>>`
+      WITH codes AS (
+        SELECT UPPER(code) AS uc FROM affiliate_codes WHERE user_id = ${id}
+      )
+      SELECT
+        (SELECT COUNT(DISTINCT acu.referred_user_id)
+           FROM affiliate_code_usages acu
+           WHERE UPPER(acu.code) IN (SELECT uc FROM codes)) AS total_referred,
+        (SELECT COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text
+           FROM affiliate_code_usages acu
+           WHERE UPPER(acu.code) IN (SELECT uc FROM codes)
+             AND acu.usage_type::text = 'wager') AS total_wager_volume_usd
+    `.catch((e) => {
+      console.error("[getUserDetail] live affiliate aggregate query failed:", e);
+      return [] as Array<{ total_referred: bigint | number | null; total_wager_volume_usd: string | null }>;
+    }),
   ]);
 
   const depositCount = depositAgg._count._all;
@@ -826,18 +855,43 @@ export async function getUserDetail(id: string) {
         }
       : null,
     inventoryCount,
-    affiliate: affiliateAccount
-      ? {
-          code: user?.affiliate_code ?? newestOwnedCode ?? "",
-          totalReferred: affiliateAccount.total_referred,
-          totalWagerVolumeUsd: toNumber(affiliateAccount.total_wager_volume_usd),
-          totalEarnedUsd: toNumber(affiliateAccount.total_earned_usd),
-          availableUsd: toNumber(affiliateAccount.available_usd),
-          totalPaidOutUsd: toNumber(affiliateAccount.total_paid_out_usd),
-          totalBonusDistributedUsd: toNumber(affiliateAccount.total_bonus_distributed_usd),
-          lastPayoutAt: affiliateAccount.last_payout_at?.toISOString() ?? null,
-        }
-      : null,
+    // Render the Affiliate Stats column whenever this user has ANY
+    // affiliate footprint — owned codes, recorded usages keyed to
+    // his codes (covered by liveAffiliateRows.total_referred > 0),
+    // OR an existing affiliate_accounts row (payout state). The
+    // previous gate required affiliate_accounts to exist, which
+    // hid the column for code-owners whose denormalized row had
+    // not been backfilled yet. Click/wager numbers now come from
+    // affiliate_code_usages (same source the leaderboard reads —
+    // see creators-leaderboards.ts:142-161); payout fields stay
+    // on affiliate_accounts (authoritative cash-out state).
+    affiliate: (() => {
+      const live = liveAffiliateRows[0];
+      const liveTotalReferred = Number(live?.total_referred ?? 0);
+      const liveWager = toNumber(live?.total_wager_volume_usd ?? 0);
+      const hasFootprint =
+        ownedCodeRows.length > 0 ||
+        liveTotalReferred > 0 ||
+        affiliateAccount != null;
+      if (!hasFootprint) return null;
+      return {
+        code: user?.affiliate_code ?? newestOwnedCode ?? "",
+        // LIVE click/wager — parallel to the leaderboard's source.
+        totalReferred: liveTotalReferred,
+        totalWagerVolumeUsd: liveWager,
+        // Payout state stays on affiliate_accounts (the cash-out
+        // source of truth even when click/wager totals are stale).
+        // Falls back to 0 / null when no account row exists yet —
+        // the panel still renders so admins see the live numbers.
+        totalEarnedUsd: affiliateAccount ? toNumber(affiliateAccount.total_earned_usd) : 0,
+        availableUsd: affiliateAccount ? toNumber(affiliateAccount.available_usd) : 0,
+        totalPaidOutUsd: affiliateAccount ? toNumber(affiliateAccount.total_paid_out_usd) : 0,
+        totalBonusDistributedUsd: affiliateAccount
+          ? toNumber(affiliateAccount.total_bonus_distributed_usd)
+          : 0,
+        lastPayoutAt: affiliateAccount?.last_payout_at?.toISOString() ?? null,
+      };
+    })(),
     shippingAddress: shippingAddress
       ? {
           firstName: shippingAddress.first_name,
