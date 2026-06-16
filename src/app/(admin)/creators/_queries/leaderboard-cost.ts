@@ -1,5 +1,7 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import {
   affiliateLeaderboardsApi,
   type LeaderboardAdminRow,
@@ -17,7 +19,7 @@ const MAX_PAGES = 50;
  * Shared by getLeaderboardCostTotal (global KPI) and
  * getLeaderboard2wkCostByUser (per-creator 14-day cost).
  */
-async function fetchAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
+async function computeAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
   const firstPage = await affiliateLeaderboardsApi.list({
     status: "approved",
     offset: 0,
@@ -44,6 +46,22 @@ async function fetchAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
   }
   return all;
 }
+
+/**
+ * Cross-request cache (5-min revalidate) for the full APPROVED-leaderboard
+ * backend walk shared by both the global cost KPI and the per-creator
+ * 2-week cost. Backend-only (affiliateLeaderboardsApi), so it resolves to
+ * the prod env inside the cache scope (same convention as the sibling
+ * fill-creator-count walk) and needs no env key. The sponsorship overlay
+ * + the per-call NOW() date partitioning stay OUTSIDE this cache: the
+ * admin-DB sponsorship lookup is cheap and the past/active/window math
+ * must run against a live clock, not a frozen one.
+ */
+const fetchAllApprovedLeaderboards = unstable_cache(
+  computeAllApprovedLeaderboards,
+  ["creators-approved-leaderboards-v1"],
+  { revalidate: 300, tags: ["creators-leaderboard-cost"] },
+);
 
 /**
  * Per-board cost row — one APPROVED leaderboard's contribution to the

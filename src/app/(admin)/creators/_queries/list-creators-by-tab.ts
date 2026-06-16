@@ -1,5 +1,7 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import { creatorsApi, type CreatorListItem } from "@/lib/backend-api";
 import type { CreatorsSearchParams } from "../_lib/search-params";
 import type { CreatorsListPage } from "./list-creators";
@@ -24,7 +26,7 @@ import { getMultiplierCreatorIds } from "./multiplier-creator-count";
 const PAGE_SIZE = 100;
 const FETCH_CAP = 500;
 
-async function walkAllCreators(): Promise<CreatorListItem[]> {
+async function computeAllCreators(): Promise<CreatorListItem[]> {
   const firstPage = await creatorsApi.list({ offset: 0, limit: PAGE_SIZE });
   const all = [...firstPage.data];
   const pagesNeeded = Math.min(
@@ -38,6 +40,22 @@ async function walkAllCreators(): Promise<CreatorListItem[]> {
   for (const page of await Promise.all(rest)) all.push(...page.data);
   return all;
 }
+
+/**
+ * The full backend roster walk cached cross-request (3-min revalidate) so
+ * the tab list doesn't re-walk the creator pool on every render / tab
+ * flip. ONLY the backend walk is cached — the tab filter, search, the
+ * GGR-map sort, and pagination in `getCreatorsListForTab` all depend on
+ * per-request input (params + the per-request `ggrByUser` Map) and stay
+ * uncached in memory. Backend-only (creatorsApi.list), so it resolves to
+ * the prod env inside the cache scope (sibling fill-creator-count
+ * convention) and needs no env key.
+ */
+const walkAllCreators = unstable_cache(
+  computeAllCreators,
+  ["creators-roster-walk-v1"],
+  { revalidate: 180, tags: ["creators-roster-walk"] },
+);
 
 export async function getCreatorsListForTab(
   params: CreatorsSearchParams,

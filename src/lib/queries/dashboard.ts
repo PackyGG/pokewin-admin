@@ -1327,6 +1327,9 @@ export const getDashboardKpiStats = cache(
         metricWindow: { since: cutoff },
         periodLabel: DASHBOARD_KPI_WINDOW_TITLE[window],
         windowMetricsKey: `kpi-${window}`,
+        // KPI boxes read only scalar fields — skip the four 30-day daily
+        // chart scans (pure wasted cold work on this path).
+        includeCharts: false,
         loadWindowMetrics: (blacklistIdNotIn) =>
           cachedKpiWindowMetrics(window, cutoff.toISOString(), blacklistIdNotIn),
       }),
@@ -1351,6 +1354,14 @@ type DashboardStatsConfig = {
   windowMetricsKey: string;
   /** When set, trend charts + wager attribution use period-scoped buckets. */
   chartPeriod?: DashboardPeriod;
+  /**
+   * Whether to compute the 30-day daily chart series (wager / upgrader /
+   * signups / wager-attribution). Defaults to `true`. The KPI-boxes path
+   * (`getDashboardKpiStats`) sets this `false` because its consumers only
+   * read the scalar boxes — never the chart arrays — so computing those four
+   * 30-day ledger scans there is pure wasted (cold) work.
+   */
+  includeCharts?: boolean;
   /** Loader for the (cached, timeout-wrapped) headline window metrics. */
   loadWindowMetrics: (blacklistIdNotIn: string) => Promise<WindowMetrics>;
 };
@@ -1411,6 +1422,12 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // the today/24h path passes `kpiWindowToCutoff(window)`.
   const periodCutoff = config.cutoff;
   const chartPeriod = config.chartPeriod;
+  // KPI-boxes path opts out of the 30-day daily chart series (its consumers
+  // read only the scalar boxes). Default true preserves the chip-enum path.
+  // `skipDailyCharts` is true when a period chip is active (the trend series
+  // replaces them) OR the caller explicitly excluded charts.
+  const includeCharts = config.includeCharts ?? true;
+  const skipDailyCharts = Boolean(chartPeriod) || !includeCharts;
   // Canonical metric window for the headline GGR + upgrader reads, which
   // bake in the central real-customer + borrow-corrected scope (so the
   // session-window / scope fixes landing in `@/lib/metrics` propagate here
@@ -1538,23 +1555,27 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // change and today's row moves slowly enough that operators
     // wouldn't notice a 5-min lag.
     withTimingResult("dashboard.dailyChart", () =>
-      chartPeriod ? Promise.resolve([]) : cachedDailyChart(blacklistIdNotIn),
+      skipDailyCharts ? Promise.resolve([]) : cachedDailyChart(blacklistIdNotIn),
     ),
     // Daily upgrader wager (last 30 days) from `upgrader_games` — the
     // upgrader-native companion to the daily ledger scan above. Merged
     // into the dailyWagers series by date. Empty on a pre-upgrader DB
     // (to_regclass guard). 5-min cached.
     withTimingResult("dashboard.dailyUpgrader", () =>
-      chartPeriod ? Promise.resolve([]) : cachedDailyUpgrader(blacklistIdNotIn),
+      skipDailyCharts
+        ? Promise.resolve([])
+        : cachedDailyUpgrader(blacklistIdNotIn),
     ),
     // Signups last 30 days. 5-min cached for the same reason.
     withTimingResult("dashboard.dailySignups", () =>
-      chartPeriod ? Promise.resolve([]) : cachedDailySignups(blacklistIdNotIn),
+      skipDailyCharts
+        ? Promise.resolve([])
+        : cachedDailySignups(blacklistIdNotIn),
     ),
     // Daily wager attribution split — organic (no creator-code
     // referral) vs creator-attributed. 5-min cached.
     withTimingResult("dashboard.dailyWagerAttribution", () =>
-      chartPeriod
+      skipDailyCharts
         ? Promise.resolve([])
         : cachedDailyWagerAttribution(blacklistIdNotIn),
     ),

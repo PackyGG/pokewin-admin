@@ -1,5 +1,7 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
+
 import { creatorsApi } from "@/lib/backend-api";
 import { getConvertedFromVouchersTotal } from "./converted-from-vouchers-total";
 import { getWithdrawnFromConvertedTotal } from "./withdrawn-from-converted-total";
@@ -73,58 +75,93 @@ export type CreatorsGlobalStats = {
 const PAGE_SIZE = 100;
 const MAX_PAGES = 50; // 5,000 creators — way above current/projected pool.
 
-export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
-  // First page also tells us the absolute total. Once we know the
-  // total we can request the remaining pages in parallel.
-  const firstPage = await creatorsApi.list({
-    // No search filter — these are global counts. If the user types
-    // in the search box, the KPI tiles should stay stable.
-    offset: 0,
-    limit: PAGE_SIZE,
-  });
+type CreatorGlobalCounts = {
+  totalCreators: number;
+  fillCreatorCount: number;
+  activeDealCount: number;
+  liveCount: number;
+};
 
-  const pagesNeeded = Math.min(
-    MAX_PAGES,
-    Math.ceil(firstPage.total / PAGE_SIZE),
-  );
+/**
+ * The backend creator-pool walk + tally behind the global KPI strip,
+ * wrapped in `unstable_cache` (5-min revalidate) so the full paginated
+ * roster walk runs at most once per 5 min per cold slot instead of on
+ * every /creators render. Backend-only (creatorsApi.list resolves to the
+ * prod env inside the cache scope, same convention as the sibling
+ * fill-creator-count walk), so no env key is needed. The converted /
+ * withdrawn Main-DB aggregates are env-dependent + separately catch-
+ * wrapped, so they stay OUTSIDE this cache.
+ */
+const cachedCreatorGlobalCounts = unstable_cache(
+  async (): Promise<CreatorGlobalCounts> => {
+    // First page also tells us the absolute total. Once we know the
+    // total we can request the remaining pages in parallel.
+    const firstPage = await creatorsApi.list({
+      // No search filter — these are global counts. If the user types
+      // in the search box, the KPI tiles should stay stable.
+      offset: 0,
+      limit: PAGE_SIZE,
+    });
 
-  // Build the list of additional pages (skip page 0, we already have it).
-  const remainingPagePromises: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    remainingPagePromises.push(
-      creatorsApi.list({ offset: p * PAGE_SIZE, limit: PAGE_SIZE }),
+    const pagesNeeded = Math.min(
+      MAX_PAGES,
+      Math.ceil(firstPage.total / PAGE_SIZE),
     );
-  }
-  const remainingPages = await Promise.all(remainingPagePromises);
 
-  // Count predicates across every page we fetched. The "Converted /
-  // withdrawn" totals no longer need a per-deal id set — they're now
-  // lifetime, all-creators aggregates over the `creator_fill_conversion`
-  // voucher origin (owner scope decision), so the active/scheduled-deal
-  // walk below only feeds the `activeDealCount` tile.
-  let activeDealCount = 0;
-  let liveCount = 0;
-  // Creators with ≥1 fill (weekly) deal — total_deals_count is the
-  // backend's lifetime fill-deal count for the creator.
-  let fillCreatorCount = 0;
-  const tallyPage = (rows: typeof firstPage.data) => {
-    for (const c of rows) {
-      if (
-        c.current_deal?.status === "active" ||
-        c.current_deal?.status === "scheduled"
-      ) {
-        activeDealCount += 1;
-      }
-      if (c.active_session_id !== null) {
-        liveCount += 1;
-      }
-      if (c.total_deals_count > 0) {
-        fillCreatorCount += 1;
-      }
+    // Build the list of additional pages (skip page 0, we already have it).
+    const remainingPagePromises: Promise<typeof firstPage>[] = [];
+    for (let p = 1; p < pagesNeeded; p++) {
+      remainingPagePromises.push(
+        creatorsApi.list({ offset: p * PAGE_SIZE, limit: PAGE_SIZE }),
+      );
     }
-  };
-  tallyPage(firstPage.data);
-  for (const pg of remainingPages) tallyPage(pg.data);
+    const remainingPages = await Promise.all(remainingPagePromises);
+
+    // Count predicates across every page we fetched. The "Converted /
+    // withdrawn" totals no longer need a per-deal id set — they're now
+    // lifetime, all-creators aggregates over the `creator_fill_conversion`
+    // voucher origin (owner scope decision), so the active/scheduled-deal
+    // walk below only feeds the `activeDealCount` tile.
+    let activeDealCount = 0;
+    let liveCount = 0;
+    // Creators with ≥1 fill (weekly) deal — total_deals_count is the
+    // backend's lifetime fill-deal count for the creator.
+    let fillCreatorCount = 0;
+    const tallyPage = (rows: typeof firstPage.data) => {
+      for (const c of rows) {
+        if (
+          c.current_deal?.status === "active" ||
+          c.current_deal?.status === "scheduled"
+        ) {
+          activeDealCount += 1;
+        }
+        if (c.active_session_id !== null) {
+          liveCount += 1;
+        }
+        if (c.total_deals_count > 0) {
+          fillCreatorCount += 1;
+        }
+      }
+    };
+    tallyPage(firstPage.data);
+    for (const pg of remainingPages) tallyPage(pg.data);
+
+    return {
+      // `total` from the backend is the absolute count (not affected
+      // by per-page paging). Use it directly so the tile stays
+      // accurate even if MAX_PAGES caps the count traversal.
+      totalCreators: firstPage.total,
+      fillCreatorCount,
+      activeDealCount,
+      liveCount,
+    };
+  },
+  ["creators-global-counts-v1"],
+  { revalidate: 300, tags: ["creators-global-stats"] },
+);
+
+export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
+  const counts = await cachedCreatorGlobalCounts();
 
   // "Converted" — sum the MINTED `creator_fill_conversion` payout
   // vouchers across EVERY creator ever (LIFETIME, no active/scheduled-
@@ -163,13 +200,10 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
     withdrawnTotalResult.withdrawPendingUsd;
 
   return {
-    // `total` from the backend is the absolute count (not affected
-    // by per-page paging). Use it directly so the tile stays
-    // accurate even if MAX_PAGES caps the count traversal.
-    totalCreators: firstPage.total,
-    fillCreatorCount,
-    activeDealCount,
-    liveCount,
+    totalCreators: counts.totalCreators,
+    fillCreatorCount: counts.fillCreatorCount,
+    activeDealCount: counts.activeDealCount,
+    liveCount: counts.liveCount,
     convertedTotal,
     withdrawnFromConvertedTotal,
     withdrawPendingFromConvertedTotal,

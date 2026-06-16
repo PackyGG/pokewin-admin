@@ -563,6 +563,11 @@ async function CreatorsGridSection({
   let result: CreatorsListPage | null = null;
   let socialsByUser: Map<string, CreatorSocialSummary[]> = new Map();
   let codeAndWagerByUser: Map<string, CreatorCodeAndWager> = new Map();
+  // Kicked off the moment the roster resolves so it overlaps the active-
+  // tab deal-cost fan-out below (one fewer wave); awaited inside that
+  // fan-out for active tabs, and separately for the Past tab.
+  let codeAndWagerPromise: Promise<Map<string, CreatorCodeAndWager>> | null =
+    null;
   // Windowed code-user GGR per creator over the active `?period=` window,
   // keyed on `creatorUserId`. GGR-side ONLY — the full Net PnL (GGR −
   // cost) is a per-creator backend round-trip that lives on the detail
@@ -657,7 +662,13 @@ async function CreatorsGridSection({
       BACKEND_READ_TIMEOUT_MS,
     );
 
-    codeAndWagerByUser = await getCodeAndWagerByUser(
+    // Kick off code+wager enrichment for the resolved roster WITHOUT
+    // awaiting it here — it depends only on `result`, so starting it now
+    // lets it run concurrently with the active-tab deal-cost fan-out below
+    // (collapsing a wave). It must run for ALL tabs (past + active), so
+    // active tabs await it inside the Promise.all and the Past tab awaits
+    // it separately. The best-effort fallback is unchanged.
+    codeAndWagerPromise = getCodeAndWagerByUser(
       result.data.map((c) => c.id),
     ).catch((e) => {
       console.error(
@@ -723,39 +734,57 @@ async function CreatorsGridSection({
             c.current_deal.status === "scheduled"),
       )
       .map((c) => ({ userId: c.id, dealId: c.current_deal!.id }));
-    const [capInfoResult, withdrawn, lb2wkResult] = await Promise.all([
-      // Deal cap — BACKEND read (creatorsApi.getDeal per active deal, already
-      // allSettled internally). safeQuery + timeout so a dead/slow backend
-      // degrades to an empty map (cards render the cap chips as "—") instead
-      // of hanging this segment.
-      safeQuery(
-        () => getDealCapInfoByUser(pageActiveDeals),
-        new Map<string, DealCapInfo>(),
-        "creators.deal-cap",
-        BACKEND_READ_TIMEOUT_MS,
-      ),
-      // Withdrawn-from-converted — Main-DB query (NOT a backend read).
-      // Best-effort: a failure hides the sub-line.
-      getWithdrawnFromConvertedByDeal(pageActiveDeals).catch((e) => {
-        console.error(
-          "[creators] withdrawn-from-converted fetch failed (sub-line hidden):",
-          e,
-        );
-        return new Map<string, WithdrawnFromConverted>();
-      }),
-      // Leaderboard 2-week cost — BACKEND read (affiliateLeaderboardsApi).
-      // safeQuery + timeout so a dead/slow backend degrades to an empty map
-      // (cards render the leaderboard cost as "—") instead of hanging.
-      safeQuery(
-        () => getLeaderboard2wkCostByUser(),
-        new Map<string, Lb2wkInfo>(),
-        "creators.leaderboard-2wk",
-        BACKEND_READ_TIMEOUT_MS,
-      ),
-    ]);
+    const [capInfoResult, withdrawn, lb2wkResult, codeAndWager] =
+      await Promise.all([
+        // Deal cap — BACKEND read (creatorsApi.getDeal per active deal, already
+        // allSettled internally). safeQuery + timeout so a dead/slow backend
+        // degrades to an empty map (cards render the cap chips as "—") instead
+        // of hanging this segment.
+        safeQuery(
+          () => getDealCapInfoByUser(pageActiveDeals),
+          new Map<string, DealCapInfo>(),
+          "creators.deal-cap",
+          BACKEND_READ_TIMEOUT_MS,
+        ),
+        // Withdrawn-from-converted — Main-DB query (NOT a backend read).
+        // Best-effort: a failure hides the sub-line.
+        getWithdrawnFromConvertedByDeal(pageActiveDeals).catch((e) => {
+          console.error(
+            "[creators] withdrawn-from-converted fetch failed (sub-line hidden):",
+            e,
+          );
+          return new Map<string, WithdrawnFromConverted>();
+        }),
+        // Leaderboard 2-week cost — BACKEND read (affiliateLeaderboardsApi).
+        // safeQuery + timeout so a dead/slow backend degrades to an empty map
+        // (cards render the leaderboard cost as "—") instead of hanging.
+        safeQuery(
+          () => getLeaderboard2wkCostByUser(),
+          new Map<string, Lb2wkInfo>(),
+          "creators.leaderboard-2wk",
+          BACKEND_READ_TIMEOUT_MS,
+        ),
+        // Code + wager enrichment — kicked off above the moment `result`
+        // resolved; folded into this fan-out so it runs concurrently with
+        // the deal-cost reads instead of in its own preceding wave. Its
+        // best-effort fallback is already attached at the kickoff site; a
+        // null promise (shouldn't happen here — result exists) degrades to
+        // an empty map.
+        codeAndWagerPromise ??
+          Promise.resolve(new Map<string, CreatorCodeAndWager>()),
+      ]);
     dealCapByUser = capInfoResult.data;
     withdrawnFromConvertedByUser = withdrawn;
     leaderboard2wkByUser = lb2wkResult.data;
+    codeAndWagerByUser = codeAndWager;
+  }
+
+  // Past tab has no active-deal fan-out to ride along, so resolve the
+  // code+wager enrichment (kicked off above) on its own here. Active tabs
+  // already resolved it inside the Promise.all. A null promise (the roster
+  // failed to load) leaves the default empty map.
+  if (isPast && codeAndWagerPromise) {
+    codeAndWagerByUser = await codeAndWagerPromise;
   }
 
   // Enriched + ordered creator rows — identical data for both render

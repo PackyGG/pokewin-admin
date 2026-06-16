@@ -1,6 +1,9 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
+import { unstable_cache } from "next/cache";
+
+import { getDevDb, getProdDb } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -79,31 +82,42 @@ function metadataCode(metadata: unknown): string | null {
 }
 
 /**
- * Fetch (code, wagerVolumeUsd, signups, ftds, deposits3d, wagers3d)
- * for a list of creator user_ids in batch. Keyed on user_id; missing
- * creators get a zero/null record so callers can `.get(id) ?? EMPTY`
- * without guards.
+ * The six parallel round-trips behind {@link getCodeAndWagerByUser},
+ * wrapped in `unstable_cache` (180s revalidate — per-creator card
+ * metadata, roster-like, so a ≤3-min staleness is fine) so the card
+ * enrichment isn't re-paid on every /creators render / tab flip.
  *
- * Five parallel round-trips.
+ * Env + blacklist are env-dependent (Main-DB via the env toggle + an
+ * admin-DB read) and CANNOT be resolved inside an `unstable_cache`
+ * callback (it reads the request cookie), so they're resolved OUTSIDE and
+ * threaded in via this factory closure — exactly how all-creators-net-pnl.ts
+ * handles it. They're folded into the key parts so prod/dev and each
+ * blacklist land in a separate slot; the resolved `userIds` are appended
+ * after a sentinel so two id lists can't collide in the key. Returns
+ * serializable entries (an `unstable_cache` callback can't store a `Map`);
+ * the public helper rebuilds the Map.
  */
-async function buildBlacklistAnd(): Promise<string> {
-  const excluded = await getExcludedUserIds();
-  return excluded.length > 0
-    ? ` AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-    : "";
-}
-
-export async function getCodeAndWagerByUser(
+const cachedCodeAndWagerEntries = (
+  env: DbEnv,
+  excludedIds: string[],
   userIds: string[],
-): Promise<Map<string, CreatorCodeAndWager>> {
-  const result = new Map<string, CreatorCodeAndWager>();
-  if (userIds.length === 0) return result;
+) =>
+  unstable_cache(
+    async (): Promise<[string, CreatorCodeAndWager][]> => {
+      const db = env === "dev" ? getDevDb() : getProdDb();
+      const blacklistAnd =
+        excludedIds.length > 0
+          ? ` AND u.id NOT IN (${excludedIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+          : "";
 
-  const db = await getDb();
-  const blacklistAnd = await buildBlacklistAnd();
-
-  const [codeRows, signupRows, ftdRows, depositRows, wagerRows, auditCodeRows] =
-    await Promise.all([
+      const [
+        codeRows,
+        signupRows,
+        ftdRows,
+        depositRows,
+        wagerRows,
+        auditCodeRows,
+      ] = await Promise.all([
       // Oldest affiliate_codes row per user_id — same convention as
       // `/creators/[id]`'s primaryCode.
       db.$queryRawUnsafe<{ user_id: string; code: string }[]>(
@@ -183,32 +197,71 @@ export async function getCodeAndWagerByUser(
       }) as Promise<AuditCodeRow[]>,
     ]);
 
-  const codeById = new Map(codeRows.map((r) => [r.user_id, r.code]));
-  for (const row of auditCodeRows) {
-    if (!row.target_user_id || codeById.has(row.target_user_id)) continue;
-    const code = metadataCode(row.metadata);
-    if (code) codeById.set(row.target_user_id, code);
-  }
-  const signupsById = new Map(
-    signupRows.map((r) => [r.user_id, Number(r.signups)]),
+      const codeById = new Map(codeRows.map((r) => [r.user_id, r.code]));
+      for (const row of auditCodeRows) {
+        if (!row.target_user_id || codeById.has(row.target_user_id)) continue;
+        const code = metadataCode(row.metadata);
+        if (code) codeById.set(row.target_user_id, code);
+      }
+      const signupsById = new Map(
+        signupRows.map((r) => [r.user_id, Number(r.signups)]),
+      );
+      const ftdsById = new Map(ftdRows.map((r) => [r.user_id, Number(r.ftds)]));
+      const depById = new Map(depositRows.map((r) => [r.creator_user_id, r]));
+      const wagById = new Map(wagerRows.map((r) => [r.creator_user_id, r]));
+
+      const entries: [string, CreatorCodeAndWager][] = [];
+      for (const userId of userIds) {
+        const dep = depById.get(userId);
+        const wag = wagById.get(userId);
+
+        entries.push([
+          userId,
+          {
+            code: codeById.get(userId) ?? null,
+            wagerVolumeUsd: wag ? toNumber(wag.total_wagered) : 0,
+            signups: signupsById.get(userId) ?? 0,
+            ftds: ftdsById.get(userId) ?? 0,
+            deposits3dUsd: dep ? toNumber(dep.deposits_3d) : 0,
+            wagers3dUsd: wag ? toNumber(wag.wagers_3d) : 0,
+          },
+        ]);
+      }
+
+      return entries;
+    },
+    [
+      "creators-code-and-wager-v1",
+      env,
+      ...excludedIds,
+      "|users|",
+      ...userIds,
+    ],
+    { revalidate: 180, tags: ["creators-code-and-wager"] },
   );
-  const ftdsById = new Map(ftdRows.map((r) => [r.user_id, Number(r.ftds)]));
-  const depById = new Map(depositRows.map((r) => [r.creator_user_id, r]));
-  const wagById = new Map(wagerRows.map((r) => [r.creator_user_id, r]));
 
-  for (const userId of userIds) {
-    const dep = depById.get(userId);
-    const wag = wagById.get(userId);
+/**
+ * Fetch (code, wagerVolumeUsd, signups, ftds, deposits3d, wagers3d)
+ * for a list of creator user_ids in batch. Keyed on user_id; missing
+ * creators get a zero/null record so callers can `.get(id) ?? EMPTY`
+ * without guards.
+ */
+export async function getCodeAndWagerByUser(
+  userIds: string[],
+): Promise<Map<string, CreatorCodeAndWager>> {
+  if (userIds.length === 0) return new Map();
 
-    result.set(userId, {
-      code: codeById.get(userId) ?? null,
-      wagerVolumeUsd: wag ? toNumber(wag.total_wagered) : 0,
-      signups: signupsById.get(userId) ?? 0,
-      ftds: ftdsById.get(userId) ?? 0,
-      deposits3dUsd: dep ? toNumber(dep.deposits_3d) : 0,
-      wagers3dUsd: wag ? toNumber(wag.wagers_3d) : 0,
-    });
-  }
+  // Resolve env + blacklist in REQUEST scope (cookie + admin-DB reads that
+  // can't run inside the unstable_cache callback) and thread them in so
+  // prod/dev and each blacklist land in a separate slot — same handling as
+  // all-creators-net-pnl.ts. The userIds are sorted so the cache key is
+  // stable regardless of roster order (the result Map is keyed by userId,
+  // so order doesn't affect the shape).
+  const env = await readDbEnv();
+  const excludedIds = [...(await getExcludedUserIds())].sort();
+  const sortedUserIds = [...userIds].sort();
 
-  return result;
+  return new Map(
+    await cachedCodeAndWagerEntries(env, excludedIds, sortedUserIds)(),
+  );
 }
