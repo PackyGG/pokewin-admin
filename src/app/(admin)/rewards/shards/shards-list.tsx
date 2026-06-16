@@ -58,7 +58,7 @@ export function ShardsList({
 
   return (
     <div className="overflow-hidden rounded-xl border bg-card/50">
-      <div className="hidden grid-cols-[1fr_auto_auto_auto_auto] gap-4 border-b bg-muted/30 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground sm:grid">
+      <div className="hidden grid-cols-[2fr_1fr_1fr_1fr_auto] gap-4 border-b bg-muted/30 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground sm:grid">
         <span>Pack</span>
         <span className="text-right">Shard cost</span>
         <span className="text-right">Cards / open</span>
@@ -148,7 +148,7 @@ function ShardRow({
   return (
     <li
       className={cn(
-        "grid grid-cols-1 gap-3 px-4 py-3 sm:grid-cols-[1fr_auto_auto_auto_auto] sm:items-center sm:gap-4",
+        "grid grid-cols-1 gap-3 px-4 py-3 sm:grid-cols-[2fr_1fr_1fr_1fr_auto] sm:items-center sm:gap-4",
         !pack.active && "opacity-75",
       )}
     >
