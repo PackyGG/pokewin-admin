@@ -44,7 +44,6 @@ import {
   Activity,
   ArrowDownToLine,
   ArrowUpFromLine,
-  ArrowUpCircle,
   Hourglass,
   Banknote,
   Sparkles,
@@ -704,28 +703,25 @@ export function UserViewModern({
                 icon={pnl >= 0 ? TrendingUp : TrendingDown}
                 accent={pnl >= 0 ? "emerald" : "rose"}
               />
-              {/* Total Depo — lifetime deposited dollars. Emerald because cash
-                  flowing in is a house gain in the moment, matching the
-                  Deposited convention used on the dashboard's KPI strip. */}
-              <KpiTile
-                label="Total Deposited"
-                value={heroMoney(deposits)}
-                icon={Banknote}
-                accent="emerald"
-              />
-              {/* Total Withdrawn — lifetime withdrawn dollars. Rose because a
-                  withdrawal is the user pulling money out (user gain = house
-                  loss → red per the house-POV finance convention in CLAUDE.md).
-                  Sourced from `withdrawals` (balances.totalWithdrawn,
-                  i.e. userPnl.withdrawals — the canonical P&L helper that also
-                  drives the dashboard's lifetime aggregates), so this view can
-                  never drift from users-list / dashboard. */}
-              <KpiTile
-                label="Total Withdrawn"
-                value={heroMoney(withdrawals)}
-                icon={ArrowUpCircle}
-                accent="rose"
-              />
+              {/* Total Deposited + Total Withdrawn consolidated into ONE
+                  side-by-side tile (per owner request 2026-06-16) — same as
+                  the DepWdCountTile pattern but for $ totals. Deposit total
+                  on the left in emerald (cash flowing in = house gain in the
+                  moment), withdrawal total on the right in rose (user pulling
+                  money out = house loss per the house-POV finance convention
+                  in CLAUDE.md). Same numbers as before — `deposits` is
+                  balances.totalDeposited, `withdrawals` is
+                  balances.totalWithdrawn (userPnl helper, the canonical P&L
+                  source that also drives the dashboard's lifetime aggregates),
+                  so this view stays in lockstep with users-list / dashboard.
+                  Spans two grid columns so each half has the same visual
+                  weight as a standalone KpiTile. */}
+              <div className="col-span-2">
+                <DepWdTotalsTile
+                  depositLabel={heroMoney(deposits)}
+                  withdrawalLabel={heroMoney(withdrawals)}
+                />
+              </div>
               {/* Wager Left — weighted wager remaining before this user can
                   withdraw balance. Neutral info (cyan). Streamed so the
                   per-user wager read never blocks the identity hero. The
@@ -1427,6 +1423,68 @@ function DepWdCountTile({
       <p className="mt-0.5 truncate text-[9px] text-muted-foreground sm:text-[10px]">
         {formatCurrency(avgDeposit)} avg dep
       </p>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  DEP / WD TOTALS TILE — consolidated deposit + withdrawal $ TOTALS
+//
+//  Merges the previously-separate "Total Deposited" and "Total Withdrawn"
+//  KpiTiles into a single side-by-side tile (per owner 2026-06-16) so the
+//  two halves of the user's cash flow read as one unit, not two competing
+//  cells. Deposit total on the left in emerald (house cash-in), withdrawal
+//  total on the right in rose (user cashing out), matching the house-POV
+//  finance convention in CLAUDE.md (see also: DepWdCountTile, which does
+//  the same consolidation for COUNTS). Spans 2 grid columns so each half
+//  has the same visual weight as a standalone KpiTile.
+//
+//  Pre-formatted strings (depositLabel / withdrawalLabel) are passed in so
+//  this stays a pure presentational component and the parent keeps using
+//  its local heroMoney() compact-vs-full formatter.
+// ───────────────────────────────────────────────────────────────────
+
+function DepWdTotalsTile({
+  depositLabel,
+  withdrawalLabel,
+}: {
+  depositLabel: string;
+  withdrawalLabel: string;
+}) {
+  return (
+    <div className="group relative h-full w-full min-w-0 overflow-hidden rounded-lg border bg-card/40 px-2 py-1.5 transition-all hover:shadow-sm sm:px-2.5 sm:py-2">
+      <div className="flex items-center gap-1">
+        <Banknote className="size-3 shrink-0 text-muted-foreground" />
+        <span className="truncate text-[9px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[10px]">
+          Deposits / Withdrawals
+        </span>
+      </div>
+      <div className="mt-0.5 grid grid-cols-2 gap-2">
+        <div className="min-w-0">
+          <div
+            className="inline-flex max-w-full items-center gap-0.5 text-sm font-bold tabular-nums leading-tight text-emerald-600 dark:text-emerald-400 sm:text-base"
+            title={`Total deposited: ${depositLabel}`}
+          >
+            <ArrowDownToLine className="size-3 shrink-0 text-emerald-500" />
+            <span className="truncate">{depositLabel}</span>
+          </div>
+          <p className="mt-0.5 truncate text-[9px] text-muted-foreground sm:text-[10px]">
+            deposited
+          </p>
+        </div>
+        <div className="min-w-0">
+          <div
+            className="inline-flex max-w-full items-center gap-0.5 text-sm font-bold tabular-nums leading-tight text-rose-600 dark:text-rose-400 sm:text-base"
+            title={`Total withdrawn: ${withdrawalLabel}`}
+          >
+            <ArrowUpFromLine className="size-3 shrink-0 text-rose-500" />
+            <span className="truncate">{withdrawalLabel}</span>
+          </div>
+          <p className="mt-0.5 truncate text-[9px] text-muted-foreground sm:text-[10px]">
+            withdrawn
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
