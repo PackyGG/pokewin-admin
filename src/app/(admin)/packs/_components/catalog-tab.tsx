@@ -124,10 +124,17 @@ async function PacksContent({
  * from the former standalone /packs page body (only the PageHero + create /
  * reprice actions moved up to the shared page shell, which owns them per-tab).
  *
- * Mounted inside the page's `<Suspense key={tab}>` so its catalog queries only
- * run when the Catalog tab is active (Active-Tab-Only). The permission flags
- * are resolved by the page (which already ran `requirePageAccess("/packs")`)
- * and threaded down so this segment never re-runs the gate.
+ * Two INDEPENDENT Suspense boundaries (no shared per-tab wrapper above them):
+ * the KPI strip keyed ONLY on the active `set` (page-independent) and the
+ * paginated list keyed on page/view/sort/search. Paging therefore re-suspends
+ * only the list boundary — the KPI boxes (lifetime aggregates) persist across
+ * page changes instead of flashing a skeleton (mirrors /creators +
+ * /rewards/rakeback's split boundaries).
+ *
+ * Rendered only on the active Catalog tab so its catalog queries run lazily
+ * (Active-Tab-Only). The permission flags are resolved by the page (which
+ * already ran `requirePageAccess("/packs")`) and threaded down so this segment
+ * never re-runs the gate.
  */
 export function PacksCatalogTab({
   searchParams,
@@ -179,6 +186,11 @@ export function PacksCatalogTab({
 
   return (
     <div className="space-y-6">
+      {/* KPI strip — its OWN boundary keyed ONLY on `set` (page-independent),
+          so paginating the catalog never re-keys / re-skeletons these lifetime
+          aggregates. Sibling of (not parent/child of) the list boundary below,
+          and no per-tab wrapper sits above them, so the two re-suspend
+          independently. */}
       <Suspense
         key={`kpi-${activeSet}`}
         fallback={

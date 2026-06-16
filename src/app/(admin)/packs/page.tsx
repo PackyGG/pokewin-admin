@@ -19,7 +19,6 @@ import { isRepriceOwner } from "@/lib/reprice-access";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
-  KpiStripSkeleton,
   SectionHeadingSkeleton,
   TableSkeleton,
 } from "@/components/loading-skeletons";
@@ -156,31 +155,37 @@ export default async function PacksPage({
 
       <PacksTabNav canViewTransactions={canViewTransactions} />
 
-      {/* One async segment per tab — only the active one mounts so the
-          inactive tab never runs its queries (Active-Tab-Only). */}
-      <Suspense
-        key={tab}
-        fallback={
-          <div className="space-y-6">
-            <KpiStripSkeleton count={5} />
+      {/* Active-Tab-Only is enforced by this conditional alone: only the
+          active tab's segment is ever in the tree, so the inactive tab never
+          runs its queries. The Catalog tab is rendered DIRECTLY (not wrapped
+          in a combined per-tab boundary) so its own internal boundaries — the
+          KPI strip (keyed only on the active set, NOT on `page`) and the
+          paginated table (keyed on page/view/sort/search) — stay independent.
+          Paging therefore re-keys only the table boundary and the KPI boxes
+          persist across page changes instead of flashing a skeleton (mirrors
+          /rewards/rakeback's split summary + table boundaries). The
+          Transactions tab is async (it re-enforces its own permission gate),
+          so it gets its own keyed Suspense. */}
+      {tab === "transactions" ? (
+        <Suspense
+          key="tab-transactions"
+          fallback={
             <div className="space-y-3">
               <SectionHeadingSkeleton titleWidth={120} />
               <TableSkeleton rows={8} columns={6} />
             </div>
-          </div>
-        }
-      >
-        {tab === "transactions" ? (
+          }
+        >
           <PackTransactionsTabSegment params={params} />
-        ) : (
-          <PacksCatalogTab
-            searchParams={params}
-            canToggle={caps!.canToggle}
-            canDelete={caps!.canDelete}
-            canEdit={caps!.canEdit}
-          />
-        )}
-      </Suspense>
+        </Suspense>
+      ) : (
+        <PacksCatalogTab
+          searchParams={params}
+          canToggle={caps!.canToggle}
+          canDelete={caps!.canDelete}
+          canEdit={caps!.canEdit}
+        />
+      )}
     </div>
   );
 }

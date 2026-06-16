@@ -1,6 +1,7 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+import { SECURITY_CACHE_TAG } from "./security-cache-tag";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -53,6 +54,7 @@ export async function upsertSiteConfig(
   await refreshSiteConfig();
 
   revalidatePath("/security");
+  revalidateTag(SECURITY_CACHE_TAG);
 }
 
 export async function deleteSiteConfig(key: string) {
@@ -71,4 +73,5 @@ export async function deleteSiteConfig(key: string) {
   await refreshSiteConfig();
 
   revalidatePath("/security");
+  revalidateTag(SECURITY_CACHE_TAG);
 }

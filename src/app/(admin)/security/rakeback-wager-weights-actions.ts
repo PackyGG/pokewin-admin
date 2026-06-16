@@ -1,6 +1,7 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+import { SECURITY_CACHE_TAG } from "./security-cache-tag";
 import { z } from "zod";
 import { requirePageAccess, requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -87,5 +88,6 @@ export async function updateRakebackWagerWeightsAction(
   });
 
   revalidatePath("/security");
+  revalidateTag(SECURITY_CACHE_TAG);
   return { success: true, data: updated };
 }

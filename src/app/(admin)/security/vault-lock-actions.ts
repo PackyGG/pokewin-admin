@@ -1,6 +1,7 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+import { SECURITY_CACHE_TAG } from "./security-cache-tag";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -47,6 +48,7 @@ export async function upsertVaultLockTime(
   });
 
   revalidatePath("/security");
+  revalidateTag(SECURITY_CACHE_TAG);
 }
 
 export async function deleteVaultLockTime(id: string) {
@@ -63,4 +65,5 @@ export async function deleteVaultLockTime(id: string) {
   });
 
   revalidatePath("/security");
+  revalidateTag(SECURITY_CACHE_TAG);
 }

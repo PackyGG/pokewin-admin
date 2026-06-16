@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { Gem, Layers, Power, Coins } from "lucide-react";
-import { getShardPacks } from "@/lib/queries/packs";
+import { getShardPacksCached } from "./shard-packs-cache";
 import { formatNumber } from "@/lib/utils/format";
 import {
   getUserPermissions,
@@ -35,7 +35,7 @@ async function ShardsContent({
   canDelete: boolean;
 }) {
   const { data: result } = await safeQuery(
-    () => getShardPacks(),
+    () => getShardPacksCached(),
     null,
     "rewards.shards.list",
   );
@@ -103,17 +103,22 @@ export default async function ShardPacksPage({
 }: {
   searchParams: Promise<{ period?: string }>;
 }) {
-  const session = await requirePageAccess("/rewards/shards");
-
+  // These three are mutually independent, so overlap their I/O instead of
+  // awaiting them in series — the pack_creator back-fill (a one-time
+  // per-process admin-DB write loop) no longer stacks its round-trips on top
+  // of the auth gate before the shell can paint. The auth gate (redirect on
+  // no-access) still resolves before any data read / render below.
   // Active-timeframe-only: parse the single active window from the URL so
   // the stats section fetches ONLY that window (no eager preload of the
   // other timeframes — see CLAUDE.md "Performance & Daten-Laden").
-  const { period: periodParam } = await searchParams;
+  const [session, { period: periodParam }] = await Promise.all([
+    requirePageAccess("/rewards/shards"),
+    searchParams,
+    // Idempotent runtime back-fill: grants existing pack_creator users
+    // /rewards/shards (and pack capabilities) before permission read.
+    ensurePackCreatorCapabilities(),
+  ]);
   const period = parseShardStatsPeriod(periodParam);
-
-  // Idempotent runtime back-fill: grants existing pack_creator users
-  // /rewards/shards (and pack capabilities) before permission read.
-  await ensurePackCreatorCapabilities();
 
   // Per-capability gating mirrors /packs: real admins always pass; everyone
   // else is gated on the same pack capabilities (the shared pack actions

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { Layers } from "lucide-react";
 import { SectionHeading } from "@/components/modern-panels";
 import { DepositBonusTab } from "@/app/(admin)/rewards/analytics/_components/deposit-bonus-tab";
@@ -5,6 +6,7 @@ import { RakebackTab } from "@/app/(admin)/rewards/analytics/_components/rakebac
 import { RaceTab } from "@/app/(admin)/rewards/analytics/_components/race-tab";
 import { AffiliateTab } from "@/app/(admin)/rewards/analytics/_components/affiliate-tab";
 import { SignupTab } from "@/app/(admin)/rewards/analytics/_components/signup-tab";
+import { RewardsAnalyticsTabSkeleton } from "@/app/(admin)/rewards/analytics/_components/tab-skeleton";
 import {
   insightsPeriodToCategoryPeriod,
   insightsRewardsPeriodLabel,
@@ -74,15 +76,32 @@ export async function CategoriesTab({
         )}
       </div>
 
-      <DepositBonusTab period={categoryPeriod} periodLabel={periodLabel} />
+      {/* Each per-category deep-dive streams behind its OWN Suspense
+          boundary so the page paints the heading + five skeletons
+          immediately and every category fills in as its own (already
+          cached) queries resolve — instead of the page-level boundary
+          stalling on the slowest of all five before showing anything.
+          Keyed on `categoryPeriod` so a window flip shows the skeleton
+          rather than stale numbers. */}
+      <Suspense key={`db:${categoryPeriod}`} fallback={<RewardsAnalyticsTabSkeleton />}>
+        <DepositBonusTab period={categoryPeriod} periodLabel={periodLabel} />
+      </Suspense>
       <div className="border-t" />
-      <RakebackTab period={categoryPeriod} periodLabel={periodLabel} />
+      <Suspense key={`rb:${categoryPeriod}`} fallback={<RewardsAnalyticsTabSkeleton />}>
+        <RakebackTab period={categoryPeriod} periodLabel={periodLabel} />
+      </Suspense>
       <div className="border-t" />
-      <RaceTab period={categoryPeriod} periodLabel={periodLabel} />
+      <Suspense key={`race:${categoryPeriod}`} fallback={<RewardsAnalyticsTabSkeleton />}>
+        <RaceTab period={categoryPeriod} periodLabel={periodLabel} />
+      </Suspense>
       <div className="border-t" />
-      <AffiliateTab period={categoryPeriod} periodLabel={periodLabel} />
+      <Suspense key={`aff:${categoryPeriod}`} fallback={<RewardsAnalyticsTabSkeleton />}>
+        <AffiliateTab period={categoryPeriod} periodLabel={periodLabel} />
+      </Suspense>
       <div className="border-t" />
-      <SignupTab period={categoryPeriod} periodLabel={periodLabel} />
+      <Suspense key={`signup:${categoryPeriod}`} fallback={<RewardsAnalyticsTabSkeleton />}>
+        <SignupTab period={categoryPeriod} periodLabel={periodLabel} />
+      </Suspense>
     </div>
   );
 }
