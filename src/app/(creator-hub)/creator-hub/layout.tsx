@@ -11,6 +11,7 @@ import {
 import { DockedRecentActivity } from "@/components/docked-recent-activity";
 import { LiveMoneyChat } from "@/components/live-money-chat";
 import { RightRailProvider } from "@/components/right-rail-context";
+import { RailWidthSync } from "@/components/rail-width-sync";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { DevDbBanner } from "@/components/dev-db-banner";
 
@@ -274,6 +275,7 @@ export default async function CreatorHubLayout({
             recent activity stay available inside the Hub. Chat dock is
             gated to the same permission boundary as the main layout. */}
         <RightRailProvider mounted={{ chat: canOpenChatPanel, alerts: true }}>
+          <RailWidthSync />
           <LiveMoneyChat />
           <DockedRecentActivity />
           <DockedAlerts />

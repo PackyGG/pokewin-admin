@@ -11,6 +11,7 @@ import { DockedChat } from "@/components/docked-chat";
 import { DockedRecentActivity } from "@/components/docked-recent-activity";
 import { LiveMoneyChat } from "@/components/live-money-chat";
 import { RightRailProvider } from "@/components/right-rail-context";
+import { RailWidthSync } from "@/components/rail-width-sync";
 import { CommandPalette } from "@/components/command-palette";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { redirect } from "next/navigation";
@@ -369,6 +370,7 @@ export default async function AdminLayout({
             geometry whether to reserve space for chat — without it the
             non-admin shell would leave a 5rem empty band at the bottom. */}
         <RightRailProvider mounted={{ chat: canOpenChatPanel, alerts: false }}>
+          <RailWidthSync />
           <LiveMoneyChat />
           <DockedRecentActivity />
           {canOpenChatPanel && <DockedChat role={session.role} />}
