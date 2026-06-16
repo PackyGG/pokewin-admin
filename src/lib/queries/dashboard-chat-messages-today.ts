@@ -4,6 +4,8 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getChatMessagesTodayFromClickHouse } from "@/lib/clickhouse/queries/dashboard/chat-messages-today";
 
 /**
  * On-site chat volume for the dashboard "Chat messages (today)" tile.
@@ -36,27 +38,37 @@ const cachedChatMessagesToday = unstable_cache(
   async (dayKey: string, sinceIso: string): Promise<Omit<ChatMessagesToday, "dayStartIso">> => {
     void dayKey;
     return withTiming("dashboard.chatMessagesToday", async () => {
-      const db = await getDb();
-      type Row = {
-        message_count: string;
-        unique_chatters: string;
-        deleted_count: string;
-      };
-      const rows = await db.$queryRawUnsafe<Row[]>(
-        `SELECT
-           COUNT(*)::text AS message_count,
-           COUNT(DISTINCT user_id)::text AS unique_chatters,
-           COUNT(*) FILTER (WHERE is_deleted)::text AS deleted_count
-         FROM chat_messages
-         WHERE created_at >= $1::timestamptz`,
-        sinceIso,
+      // CQRS serve-path: clickhouse serves the CH twin (SOLE read);
+      // off/comparison serve Postgres. Parity confirmed exact (CDC-lag only).
+      return resolveAdminRead<Omit<ChatMessagesToday, "dayStartIso">>(
+        "dashboard_chat_messages_today",
+        {
+          pg: async () => {
+            const db = await getDb();
+            type Row = {
+              message_count: string;
+              unique_chatters: string;
+              deleted_count: string;
+            };
+            const rows = await db.$queryRawUnsafe<Row[]>(
+              `SELECT
+                 COUNT(*)::text AS message_count,
+                 COUNT(DISTINCT user_id)::text AS unique_chatters,
+                 COUNT(*) FILTER (WHERE is_deleted)::text AS deleted_count
+               FROM chat_messages
+               WHERE created_at >= $1::timestamptz`,
+              sinceIso,
+            );
+            const r = rows[0];
+            return {
+              messageCount: toNumber(r?.message_count),
+              uniqueChatters: toNumber(r?.unique_chatters),
+              deletedCount: toNumber(r?.deleted_count),
+            };
+          },
+          ch: () => getChatMessagesTodayFromClickHouse(new Date(sinceIso)),
+        },
       );
-      const r = rows[0];
-      return {
-        messageCount: toNumber(r?.message_count),
-        uniqueChatters: toNumber(r?.unique_chatters),
-        deletedCount: toNumber(r?.deleted_count),
-      };
     });
   },
   ["dashboard-chat-messages-today-v1"],

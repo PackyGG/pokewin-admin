@@ -4,6 +4,8 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getCreatorCostsTodayFromClickHouse } from "@/lib/clickhouse/queries/dashboard/creator-costs-today";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import {
   getConvertedFillSessionsInWindow,
@@ -132,8 +134,36 @@ const cachedCreatorCostsToday = unstable_cache(
   }> => {
     void dayKey; // part of the cache key only
     return withTiming("dashboard.creatorCostsToday", async () => {
-      const db = await getDb();
-      const since = `'${sinceIso}'::timestamptz`;
+      // CQRS serve-path: clickhouse serves the CH twin (SOLE read);
+      // off/comparison serve Postgres. Parity confirmed exact (CDC-lag only).
+      return resolveAdminRead<{
+        creatorWithdrawals: number;
+        tips: number;
+        leaderboardGross: number;
+      }>("dashboard_creator_costs_today", {
+        pg: () => creatorCostsTodayFromPg(sinceIso),
+        ch: async () => {
+          const r = await getCreatorCostsTodayFromClickHouse(new Date(sinceIso));
+          return {
+            creatorWithdrawals: r.creatorWithdrawals,
+            tips: r.tips,
+            leaderboardGross: r.leaderboardGross,
+          };
+        },
+      });
+    });
+  },
+  ["dashboard-creator-costs-today-v5-fill-vouchers"],
+  { revalidate: 60, tags: ["dashboard-activity"] },
+);
+
+async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
+  creatorWithdrawals: number;
+  tips: number;
+  leaderboardGross: number;
+}> {
+  const db = await getDb();
+  const since = `'${sinceIso}'::timestamptz`;
 
       // ── Converted deal payouts today ───────────────────────────────────
       // Fill: `creator_fill_conversion` vouchers minted in the window.
@@ -181,14 +211,10 @@ const cachedCreatorCostsToday = unstable_cache(
            AND type::text = 'affiliate_leaderboard_prize'
            AND created_at >= ${since}`,
       );
-      const leaderboardGross = toNumber(leaderboardRows[0]?.gross);
+  const leaderboardGross = toNumber(leaderboardRows[0]?.gross);
 
-      return { creatorWithdrawals, tips, leaderboardGross };
-    });
-  },
-  ["dashboard-creator-costs-today-v5-fill-vouchers"],
-  { revalidate: 60, tags: ["dashboard-activity"] },
-);
+  return { creatorWithdrawals, tips, leaderboardGross };
+}
 
 /**
  * Creator costs for the current calendar day (since 00:00 UTC). Resolves the

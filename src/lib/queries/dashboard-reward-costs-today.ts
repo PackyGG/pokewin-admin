@@ -6,6 +6,8 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getMetricsScope } from "@/lib/metrics/scope";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRewardCostsTodayDbFromClickHouse } from "@/lib/clickhouse/queries/dashboard/reward-costs-today";
 import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windows";
 import { realCustomersScopeSql } from "@/lib/queries/insights-games/_shared";
 import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
@@ -195,9 +197,47 @@ const cachedLedgerAndPacks = unstable_cache(
   ): Promise<{ lines: RewardCostLine[] }> => {
     void dayKey; // part of the cache key only
     void blacklistKey; // part of the cache key only (scope re-resolves it)
-    return withTiming("dashboard.rewardCostsToday", async () => {
-      const db = await getDb();
-      const since = `'${sinceIso}'::timestamptz`;
+    // CQRS serve-path: clickhouse serves the CH DB-derived lines twin (SOLE
+    // read; the non-DB flat-$2/hr rain line is added at the wrapper either
+    // way); off/comparison serve Postgres. Parity confirmed cent-exact.
+    return resolveAdminRead<{ lines: RewardCostLine[] }>(
+      "dashboard_reward_costs_today",
+      {
+        pg: () => rewardCostsTodayLinesFromPg(sinceIso),
+        ch: async () => {
+          const c = await getRewardCostsTodayDbFromClickHouse(
+            new Date(sinceIso),
+            await getExcludedUserIds(),
+          );
+          const lines: RewardCostLine[] = [
+            { key: "deposit_bonus", label: "Deposit bonuses", amount: c.depositBonus },
+            { key: "daily_packs", label: "Daily / free packs", amount: c.dailyPacks },
+            { key: "signup_balance", label: "Signup / balance rewards", amount: c.signupBalance },
+            { key: "rakeback", label: "Rakeback claims", amount: c.rakeback },
+            { key: "affiliate", label: "Affiliate commissions", amount: c.affiliate },
+            { key: "promo_gift", label: "Promo / gift cards", amount: c.promoGift },
+            { key: "race", label: "Race wins", amount: c.race },
+            { key: "raffles", label: "Raffle prizes", amount: c.raffles },
+            { key: "motha", label: "Motha giveaways", amount: c.motha },
+            { key: "manual_voucher", label: "Manual vouchers", amount: c.manualVoucher },
+            { key: "counted_adjustments", label: "Promo balance credits", amount: c.countedAdjustments },
+          ];
+          return { lines };
+        },
+      },
+    );
+  },
+  // v2: split race/raffle, surface affiliate + motha as their own lines.
+  ["dashboard-reward-costs-today-v2"],
+  { revalidate: 60, tags: ["dashboard-activity"] },
+);
+
+async function rewardCostsTodayLinesFromPg(
+  sinceIso: string,
+): Promise<{ lines: RewardCostLine[] }> {
+  return withTiming("dashboard.rewardCostsToday", async () => {
+    const db = await getDb();
+    const since = `'${sinceIso}'::timestamptz`;
 
       // ── Ledger reward legs (today) ───────────────────────────────────
       // SAME canonical scope + SAME carve-outs as getRewardCost, broken
@@ -455,11 +495,7 @@ const cachedLedgerAndPacks = unstable_cache(
 
       return { lines };
     });
-  },
-  // v2: split race/raffle, surface affiliate + motha as their own lines.
-  ["dashboard-reward-costs-today-v2"],
-  { revalidate: 60, tags: ["dashboard-activity"] },
-);
+}
 
 /**
  * UTC start-of-day for the instant `now`. Mirrors the P&L Today box's

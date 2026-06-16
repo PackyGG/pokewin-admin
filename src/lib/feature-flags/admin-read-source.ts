@@ -199,6 +199,18 @@ const CUTOVER_DEFAULT_CLICKHOUSE: ReadonlySet<string> = new Set([
   // window parity harness proved cent/count-exact parity on EVERY field and
   // EVERY day (incl. the live day), Δ=0.00 — see src/lib/queries/pnl.ts.
   "dashboard_daily_pnl",
+  // Standalone dashboard legs cut over after a 2nd aligned-window parity pass
+  // confirmed each SAFE-TO-CUTOVER (only freshest-tail CDC-lag, no structural
+  // drift). P&L Today + Avg P&L 7d (windowed-pnl twin), lifetime Upgrader
+  // stats, and the four "today" tiles (reward costs DB lines [rain stays PG],
+  // creator costs, chat messages, affiliate-referred P&L).
+  "dashboard_today_pnl",
+  "dashboard_avg_pnl_7d",
+  "dashboard_upgrader_stats",
+  "dashboard_reward_costs_today",
+  "dashboard_creator_costs_today",
+  "dashboard_chat_messages_today",
+  "dashboard_affiliate_referred_pnl_today",
 ]);
 
 const VALID: readonly AdminReadMode[] = ["off", "comparison", "clickhouse"];

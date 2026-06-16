@@ -1,5 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { withTiming } from "@/lib/observability/query-timings";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getWindowedPnlFromClickHouse } from "@/lib/clickhouse/queries/dashboard/windowed-pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { calculateWindowedPnl, type WindowedPnl } from "./pnl";
 
@@ -66,9 +68,16 @@ const cachedTodayPnl = unstable_cache(
     excludeUserIds: string[],
   ): Promise<WindowedPnl> => {
     void dayKey; // part of the cache key only
-    return calculateWindowedPnl({
-      since: new Date(sinceIso),
-      excludeUserIds,
+    // CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+    // through the cache on failure); off/comparison serve Postgres. Parity
+    // confirmed cent-exact (aligned-window harness; live-tail CDC-lag only).
+    return resolveAdminRead<WindowedPnl>("dashboard_today_pnl", {
+      pg: () =>
+        calculateWindowedPnl({
+          since: new Date(sinceIso),
+          excludeUserIds,
+        }),
+      ch: () => getWindowedPnlFromClickHouse(new Date(sinceIso), excludeUserIds),
     });
   },
   ["dashboard-today-pnl-v2"],

@@ -2,6 +2,8 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 import { withTiming } from "@/lib/observability/query-timings";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getWindowedPnlFromClickHouse } from "@/lib/clickhouse/queries/dashboard/windowed-pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { calculateWindowedPnl } from "./pnl";
 
@@ -24,16 +26,23 @@ export type AvgPnl7d = {
 const ROLLING_7D_MS = 7 * 24 * 60 * 60 * 1000;
 
 const cachedAvgPnl7d = unstable_cache(
-  async (blacklistKey: string): Promise<Omit<AvgPnl7d, never>> => {
+  async (blacklistKey: string): Promise<AvgPnl7d> => {
     void blacklistKey;
     return withTiming("dashboard.avgPnl7d", async () => {
       const excludeUserIds = await getExcludedUserIds();
       const since = new Date(Date.now() - ROLLING_7D_MS);
-      const { pnl } = await calculateWindowedPnl({ since, excludeUserIds });
-      return {
-        totalPnl7d: pnl,
-        avgDailyPnl: pnl / 7,
-      };
+      // CQRS serve-path: clickhouse serves the CH windowed-P&L twin (SOLE
+      // read); off/comparison serve Postgres. Parity confirmed cent-exact.
+      return resolveAdminRead<AvgPnl7d>("dashboard_avg_pnl_7d", {
+        pg: async () => {
+          const { pnl } = await calculateWindowedPnl({ since, excludeUserIds });
+          return { totalPnl7d: pnl, avgDailyPnl: pnl / 7 };
+        },
+        ch: async () => {
+          const { pnl } = await getWindowedPnlFromClickHouse(since, excludeUserIds);
+          return { totalPnl7d: pnl, avgDailyPnl: pnl / 7 };
+        },
+      });
     });
   },
   ["dashboard-avg-pnl-7d-v1"],
