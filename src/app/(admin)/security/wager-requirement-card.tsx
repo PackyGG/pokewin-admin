@@ -47,8 +47,10 @@ const FIELDS: {
     label: "Deposit requirement",
     help: (
       <>
-        Multiplier on lifetime deposits a user must wager before any
-        withdrawal. Default 1×. <code>0×</code> disables the deposit
+        Multiplier frozen onto each deposit when it lands — the user must wager
+        the deposited amount × this before that deposit can be withdrawn.
+        Applied per deposit, not on a lifetime total; editing it only affects
+        future deposits. Default 1×. <code>0×</code> disables the deposit
         requirement entirely.
       </>
     ),
@@ -58,10 +60,12 @@ const FIELDS: {
     label: "Bonus-winnings requirement",
     help: (
       <>
-        Multiplier on lifetime general bonus winnings (rain, prizes, rewards,
-        sponsored battles). Default 1×. <code>0×</code> disables it. Rakeback
-        and tips have their own requirements below; affiliate claims are
-        configured on Creator Settings.
+        Multiplier frozen onto each general bonus credit (rain, prizes,
+        rewards, sponsored battles) when it&apos;s awarded. Applied per credit,
+        not on a lifetime total; editing it only affects future credits.
+        Default 1×. <code>0×</code> disables it. Rakeback and tips have their
+        own requirements below; affiliate claims are configured on Creator
+        Settings.
       </>
     ),
   },
@@ -83,8 +87,9 @@ const FIELDS: {
     label: "Rakeback requirement",
     help: (
       <>
-        Multiplier on lifetime rakeback claims a user must wager before any
-        withdrawal. Default 1×. <code>0×</code> disables it.
+        Multiplier frozen onto each rakeback claim when it&apos;s claimed.
+        Applied per claim, not on a lifetime total; editing it only affects
+        future claims. Default 1×. <code>0×</code> disables it.
       </>
     ),
   },
@@ -93,8 +98,9 @@ const FIELDS: {
     label: "Tips requirement",
     help: (
       <>
-        Multiplier on lifetime tips received a user must wager before any
-        withdrawal. Default 1×. <code>0×</code> disables it.
+        Multiplier frozen onto each tip when it&apos;s received. Applied per
+        tip, not on a lifetime total; editing it only affects future tips.
+        Default 1×. <code>0×</code> disables it.
       </>
     ),
   },
@@ -224,18 +230,23 @@ export function WagerRequirementCard({
           Withdrawal Wager Requirements
         </CardTitle>
         <CardDescription>
-          Site-wide defaults a user must wager before any withdrawal. Values
-          are multipliers (1× = 10000 bps). Saving writes through the backend,
-          which validates and refreshes its own cache.
+          Site-wide defaults applied to NEW credits. Each deposit, bonus, claim
+          or tip freezes its own requirement at the moment it&apos;s credited —
+          these knobs only affect future credits, never requirements already
+          frozen. Values are multipliers (1× = 10000 bps). Saving writes through
+          the backend, which validates and refreshes its own cache.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex gap-2 rounded-md border border-blue-500/40 bg-blue-500/10 p-3 text-xs text-blue-600 dark:text-blue-400">
           <Info className="size-4 shrink-0 mt-0.5" />
           <p className="text-blue-600/80 dark:text-blue-400/80">
-            Requirement = deposit× × lifetime deposits + bonus× × lifetime
-            bonus winnings. Per-game weights scale how much each wager counts
-            toward that target. Per-user overrides live on the user detail
+            Each credit freezes amount × its multiplier into the user&apos;s
+            wager debt at credit time; real wagers burn that debt down, and
+            withdrawal is a partial lock (withdrawable = balance − remaining
+            debt). Editing a knob reprices only future credits, never debt
+            already frozen. Per-game weights scale how much each wager counts
+            toward burning it down. Per-user overrides live on the user detail
             page.
           </p>
         </div>
