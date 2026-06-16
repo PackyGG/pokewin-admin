@@ -4,6 +4,15 @@ import { decrypt } from "@/lib/session";
 const PUBLIC_ROUTES = ["/login"];
 const PENDING_2FA_ROUTES = ["/verify-2fa", "/setup-2fa"];
 
+// Role → landing page. Chat is a slide-out panel now, so support/marketing land
+// on a real page. Used both for the post-login bounce and the legacy /chat
+// bookmark redirect below.
+const DEFAULT_ROUTE_BY_ROLE: Record<string, string> = {
+  admin: "/dashboard",
+  support: "/users",
+  marketing: "/analytics",
+};
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isPublicRoute = PUBLIC_ROUTES.includes(pathname);
@@ -38,16 +47,20 @@ export async function middleware(request: NextRequest) {
   // already-authenticated user has nothing to verify). `/login` is still
   // bounced. This is the ONLY behavioral change to the authenticated branch.
   if (isAuthenticated) {
+    // Legacy /chat bookmark → resolve the redirect at the HTTP layer, BEFORE
+    // React renders. chat/page.tsx did this with an in-render redirect(); an
+    // unconditional in-render redirect on the initial document load is replayed
+    // by the App Router and corrupts its internal hook count (transient React
+    // #310). Doing it here removes that trigger entirely (same rationale as the
+    // static config redirects in next.config.ts).
+    if (pathname === "/chat") {
+      const dest = DEFAULT_ROUTE_BY_ROLE[session.role] ?? "/dashboard";
+      return NextResponse.redirect(new URL(dest, request.url));
+    }
+
     const isSetup2FARoute = pathname === "/setup-2fa";
     if ((isPublicRoute || isPending2FARoute) && !isSetup2FARoute) {
-      // Chat is now a slide-out panel available from every page, so
-      // support/marketing land on a real page instead of the old /chat route.
-      const defaultRoutes: Record<string, string> = {
-        admin: "/dashboard",
-        support: "/users",
-        marketing: "/analytics",
-      };
-      const defaultRoute = defaultRoutes[session.role] ?? "/dashboard";
+      const defaultRoute = DEFAULT_ROUTE_BY_ROLE[session.role] ?? "/dashboard";
       return NextResponse.redirect(new URL(defaultRoute, request.url));
     }
     return NextResponse.next();

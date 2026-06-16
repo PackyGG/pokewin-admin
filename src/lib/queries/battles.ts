@@ -1,4 +1,7 @@
-import { getDb } from "@/lib/db";
+import { unstable_cache } from "next/cache";
+import { getDb, dbForEnv } from "@/lib/db";
+import { readDbEnv } from "@/lib/db-env";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
@@ -214,41 +217,65 @@ export async function getBattles(params: {
     // `mode_clause` and `since_clause` are inlined safely — both come
     // from a fixed allowlist (enum value + literal "24h"), not user
     // input that could carry SQL.
-    const modeClause =
-      mode && mode !== "all"
-        ? Prisma.sql`AND b.mode::text = ${mode}`
-        : Prisma.empty;
-    const sinceClause =
-      since === "24h"
-        ? Prisma.sql`AND b.created_at >= NOW() - INTERVAL '24 hours'`
-        : Prisma.empty;
+    // Reliability: this multiplier CTE scans every completed battle with a
+    // 5-way join. It previously ran uncached AND untimed, so a cold run could
+    // hang the whole /battles page (and a pg statement-timeout would crash it).
+    // It is now cached per (env, mode, since) for 120s and bounded by a 15s
+    // safeQuery timeout that degrades to an empty biggest-hit list instead of
+    // blocking/crashing the page. Measured ~7.3s warm on prod; 15s gives a cold
+    // run headroom to complete and populate the cache (then instant for 120s).
+    // The durable fix is the recommended battle_participants(battle_id) +
+    // provably_fair_results FK indexes (see prisma/recommended-indexes.sql),
+    // which bring this well under a second.
+    const env = await readDbEnv();
+    const loadTopHitIds = unstable_cache(
+      async (m: string | null, s: string | null): Promise<string[]> => {
+        const cdb = dbForEnv(env);
+        const modeClause =
+          m && m !== "all"
+            ? Prisma.sql`AND b.mode::text = ${m}`
+            : Prisma.empty;
+        const sinceClause =
+          s === "24h"
+            ? Prisma.sql`AND b.created_at >= NOW() - INTERVAL '24 hours'`
+            : Prisma.empty;
+        const rows = await cdb.$queryRaw<{ id: string }[]>`
+          WITH battle_multipliers AS (
+            SELECT
+              b.id,
+              b.bet_amount::numeric AS bet_amount,
+              COALESCE(SUM(COALESCE(ui.value_at_obtained::numeric, c.price::numeric, 0)), 0) AS total_card_value
+            FROM battles b
+            LEFT JOIN battle_participants bp ON bp.battle_id = b.id
+            LEFT JOIN game_sessions gs ON gs.id = bp.game_session_id
+            LEFT JOIN provably_fair_results pf ON pf.game_session_id = gs.id
+            LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+            LEFT JOIN cards c ON c.id::text = pf.result_metadata->>'card_id'
+            WHERE b.status = 'completed'
+              AND b.bet_amount::numeric > 0
+              ${modeClause}
+              ${sinceClause}
+            GROUP BY b.id, b.bet_amount
+          )
+          SELECT id::text AS id
+          FROM battle_multipliers
+          WHERE total_card_value > 0
+          ORDER BY (total_card_value / bet_amount) DESC NULLS LAST
+          LIMIT ${BIGGEST_HIT_CAP}
+        `;
+        return rows.map((r) => r.id);
+      },
+      ["battles-biggest-hit-ids-v1", env],
+      { revalidate: 120, tags: ["battles-biggest-hit"] },
+    );
 
-    const topRows = await db.$queryRaw<{ id: string }[]>`
-      WITH battle_multipliers AS (
-        SELECT
-          b.id,
-          b.bet_amount::numeric AS bet_amount,
-          COALESCE(SUM(COALESCE(ui.value_at_obtained::numeric, c.price::numeric, 0)), 0) AS total_card_value
-        FROM battles b
-        LEFT JOIN battle_participants bp ON bp.battle_id = b.id
-        LEFT JOIN game_sessions gs ON gs.id = bp.game_session_id
-        LEFT JOIN provably_fair_results pf ON pf.game_session_id = gs.id
-        LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
-        LEFT JOIN cards c ON c.id::text = pf.result_metadata->>'card_id'
-        WHERE b.status = 'completed'
-          AND b.bet_amount::numeric > 0
-          ${modeClause}
-          ${sinceClause}
-        GROUP BY b.id, b.bet_amount
-      )
-      SELECT id::text AS id
-      FROM battle_multipliers
-      WHERE total_card_value > 0
-      ORDER BY (total_card_value / bet_amount) DESC NULLS LAST
-      LIMIT ${BIGGEST_HIT_CAP}
-    `;
-
-    const topIds = topRows.map((r) => r.id);
+    const topIdsResult = await safeQuery(
+      () => loadTopHitIds(mode ?? null, since ?? null),
+      [] as string[],
+      "battles.biggestHitIds",
+      15_000,
+    );
+    const topIds = topIdsResult.data;
 
     // Fetch full data for the pre-capped IDs and rebuild order. The
     // search filter is applied here (rather than in the SQL CTE) so
