@@ -71,7 +71,6 @@ test.describe("Platform P&L footer chips", () => {
     const hBal = await boxHeight(page, "Balances");
     const hPnl = await boxHeight(page, "Platform P&L");
     const hAct = await boxHeight(page, "Activity");
-    // eslint-disable-next-line no-console
     console.log(
       `[pnl-footer] desktop heights — Balances=${hBal} PnL=${hPnl} Activity=${hAct}`,
     );

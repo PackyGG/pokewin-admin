@@ -9,7 +9,6 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
 import type { MultiplierDealResponse } from "@/lib/backend-api";
 
 import { MultiplierDealFormDialog } from "../../_components/multiplier-review/deal-form-dialog";

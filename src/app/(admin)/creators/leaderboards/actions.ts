@@ -196,7 +196,6 @@ function toErrorMessage(err: unknown): string {
 
 function logAuditFailure(action: string, err: unknown): void {
     // Audit logging must not fail the operation — backend already committed.
-    // eslint-disable-next-line no-console
     console.error(`[${action}] audit logging failed:`, err);
 }
 

@@ -8,7 +8,6 @@ import { compareDashboardDailyPnl } from "@/lib/clickhouse/compare/dashboard-dai
 import { blacklistNotInClause } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
-  officialStreamAdjustmentSqlPredicate,
   officialStreamAdjustmentPrismaWhere,
   removeLockedBalanceAdjustmentPrismaWhere,
   statsExcludedAdjustmentSqlPredicate,

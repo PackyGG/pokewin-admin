@@ -56,7 +56,6 @@ const displayUsernameSchema = z
   .min(2, "Display name must be at least 2 characters")
   .max(32, "Display name must be at most 32 characters")
   .refine((v) => v === v.trim(), "No leading or trailing whitespace")
-  // eslint-disable-next-line no-control-regex
   .refine((v) => !/[\x00-\x1f\x7f]/.test(v), "Invalid characters");
 
 const updateProfileSchema = z

@@ -1,5 +1,4 @@
 const IMAGEKIT_PUBLIC_KEY = "public_lS39S3O5jxxdHwDOfOON7HM/cBA=";
-const IMAGEKIT_URL_ENDPOINT = "https://ik.imagekit.io/scrkflpgw";
 
 export async function uploadImageClient(
   file: File,

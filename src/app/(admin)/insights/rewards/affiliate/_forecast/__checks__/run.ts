@@ -73,7 +73,7 @@ import {
   type AffiliateBaselineExt,
   type AffiliateLevelConfig,
 } from "../live-policy";
-import type { Assumptions, RatePolicy, ScenarioConfig, SimulationResult } from "../types";
+import type { Assumptions, RatePolicy, SimulationResult } from "../types";
 
 let passed = 0;
 let failed = 0;

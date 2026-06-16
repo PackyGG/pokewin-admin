@@ -27,7 +27,7 @@
  */
 
 import type { ForecastBaseline } from "../../../_forecast-engine";
-import { BASELINE_BLENDED_RATE, BASELINE_TIER_RATE, DEFAULT_TIER_MIX, TIERS } from "./constants";
+import { BASELINE_BLENDED_RATE, DEFAULT_TIER_MIX, TIERS } from "./constants";
 import type { ScenarioConfig, TierId } from "./types";
 
 /** One real `affiliate_level_configs` row, narrowed to what the forecast needs. */

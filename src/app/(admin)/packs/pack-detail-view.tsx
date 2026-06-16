@@ -151,7 +151,6 @@ export function PackDetailView({
   }, [packId, headerSeed]);
 
   const detail = state.status === "ready" ? state.payload.detail : null;
-  const stats = state.status === "ready" ? state.payload.stats : null;
 
   const title = detail?.name ?? headerSeed?.name ?? "Pack";
   const slug = detail?.slug ?? headerSeed?.slug ?? "";

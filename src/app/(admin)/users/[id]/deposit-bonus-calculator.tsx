@@ -80,7 +80,6 @@ export function DepositBonusCalculator({
     } else {
       onClearRef.current();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [computed, pct, selectedSum, selected.size]);
 
   function toggle(id: string) {

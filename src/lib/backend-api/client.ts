@@ -216,7 +216,6 @@ export const backendApiRequest = async <T = unknown>(
       });
     } catch (err) {
       const networkErr = new BackendNetworkError(url, err);
-      // eslint-disable-next-line no-console
       console.log(
         `[backend-api] network failure env=${config.env} method=${method} url=${url} code=${networkErr.causeCode ?? "unknown"} cause=${networkErr.causeMessage ?? "(none)"} cfHeaders=${Object.keys(config.cfHeaders).length > 0}`,
       );
@@ -262,18 +261,15 @@ export const backendApiRequest = async <T = unknown>(
     // doesn't surface them in the browser error overlay. The real error is
     // the thrown BackendApiError below; these lines are for grepability.
     if (res.status === 401 || res.status === 403) {
-      // eslint-disable-next-line no-console
       console.log(
         `[backend-api] auth rejected ${ctx} status=${res.status} backendMessage="${message}" payload=${JSON.stringify(payload)}`,
       );
     } else if (res.status >= 500) {
-      // eslint-disable-next-line no-console
       console.log(
         `[backend-api] server error ${ctx} status=${res.status} payload=${JSON.stringify(payload)}`,
       );
     } else {
       // 4xx other than auth — useful to see during validation/logic errors
-      // eslint-disable-next-line no-console
       console.log(
         `[backend-api] request failed ${ctx} status=${res.status} payload=${JSON.stringify(payload)}`,
       );

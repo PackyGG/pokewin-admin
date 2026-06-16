@@ -5,7 +5,7 @@ import { readDbEnv } from "@/lib/db-env";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming, withTimingResult } from "@/lib/observability/query-timings";
-import { MS_PER_DAY, MS_PER_HOUR } from "@/lib/utils/time";
+import { MS_PER_DAY } from "@/lib/utils/time";
 import {
   excludeStaffAndBlacklisted,
   blacklistNotInClause,

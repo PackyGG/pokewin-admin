@@ -68,7 +68,6 @@ export default async function CreatorSocialsPage({
         ? "The creator_socials migration has not been applied on this environment yet. Run the migration to enable this page."
         : detail,
     };
-    // eslint-disable-next-line no-console
     console.error("[creators/socials] listSocials failed:", err);
   }
 
