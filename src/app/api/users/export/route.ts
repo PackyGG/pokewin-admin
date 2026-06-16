@@ -5,6 +5,13 @@ import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { exportUsers, rowsToCsv } from "@/lib/queries/users-export";
+import { buildCacheKey, rateLimit } from "@/lib/cache/redis";
+
+// Heavy PII export (100k+ rows, full table scans). Cap per-admin volume so a
+// runaway script / accidental loop can't hammer the prod DB. Dormant-safe: when
+// Upstash is unconfigured the limiter fails open (no behavior change locally).
+const EXPORT_RATE_LIMIT = 10;
+const EXPORT_RATE_WINDOW_SECONDS = 60;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,6 +44,23 @@ export async function POST(request: Request): Promise<Response> {
         { status: 403 },
       );
     }
+  }
+
+  const rl = await rateLimit(
+    buildCacheKey("ratelimit:users-export", [session.userId]),
+    EXPORT_RATE_LIMIT,
+    EXPORT_RATE_WINDOW_SECONDS,
+  );
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many export requests. Please wait a moment and retry." },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rl.resetSeconds ?? EXPORT_RATE_WINDOW_SECONDS),
+        },
+      },
+    );
   }
 
   let body: unknown;

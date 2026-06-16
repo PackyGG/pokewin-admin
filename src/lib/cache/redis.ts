@@ -173,6 +173,79 @@ export async function cacheGetOrSet<T>(
   return fresh;
 }
 
+export type RateLimitResult = {
+  /** Whether the call is permitted under the limit. */
+  allowed: boolean;
+  /** Configured ceiling for the window. */
+  limit: number;
+  /** Remaining calls in the current window (>= 0). */
+  remaining: number;
+  /** Seconds until the window resets, or null when unknown/dormant. */
+  resetSeconds: number | null;
+  /** True when no Redis is configured, so no limiting was applied. */
+  dormant: boolean;
+};
+
+/**
+ * Fixed-window rate limiter (Upstash INCR + EXPIRE).
+ *
+ * GRACEFUL DEGRADE (same contract as the rest of this module): when Redis is
+ * dormant OR any Redis call throws, this FAILS OPEN — it returns `allowed:true`
+ * so behavior is identical to not having a limiter (local dev / unconfigured
+ * never blocks). It is therefore safe to gate a handler with this without
+ * risking a false 429 outage if Upstash is down.
+ *
+ *   const rl = await rateLimit(buildCacheKey("ratelimit:export", [adminId]), 5, 60);
+ *   if (!rl.allowed) return new Response("Too many requests", { status: 429 });
+ *
+ * @param key            namespaced limiter key (use buildCacheKey)
+ * @param limit          max calls allowed per window
+ * @param windowSeconds  window length in seconds
+ */
+export async function rateLimit(
+  key: string,
+  limit: number,
+  windowSeconds: number,
+): Promise<RateLimitResult> {
+  const r = getRedis();
+  if (!r) {
+    return {
+      allowed: true,
+      limit,
+      remaining: limit,
+      resetSeconds: null,
+      dormant: true,
+    };
+  }
+
+  try {
+    const count = await r.incr(key);
+    // First hit in this window: start the TTL. (If EXPIRE races/fails the key
+    // simply persists; a stuck counter would only over-restrict, but the
+    // catch below fails open on any throw.)
+    if (count === 1) {
+      await r.expire(key, windowSeconds);
+    }
+    const ttl = await r.ttl(key);
+    return {
+      allowed: count <= limit,
+      limit,
+      remaining: Math.max(0, limit - count),
+      resetSeconds: ttl >= 0 ? ttl : windowSeconds,
+      dormant: false,
+    };
+  } catch {
+    // Fail open — a limiter outage must never take down the gated handler.
+    return {
+      allowed: true,
+      limit,
+      remaining: limit,
+      resetSeconds: null,
+      dormant: false,
+    };
+  }
+}
+
 /**
  * Best-effort delete of a single cache key. No-op when dormant; any Redis
  * error is swallowed. Safe to call from mutation paths that want to bust a
