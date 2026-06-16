@@ -18,6 +18,7 @@
  *  - withdrawal_affiliate_wager_requirement_bps affiliate-claims requirement
  *  - withdrawal_rakeback_wager_requirement_bps  rakeback requirement
  *  - withdrawal_tips_wager_requirement_bps      tips requirement
+ *  - withdrawal_admin_adjustment_wager_requirement_bps  admin-credit requirement
  *  - wager_weight_packs_bps                     pack wager weight
  *  - wager_weight_battles_bps                battle wager weight
  *  - wager_weight_upgrader_bps               upgrader wager weight
@@ -28,6 +29,7 @@ export const WAGER_REQUIREMENT_SITE_CONFIG_KEYS: readonly string[] = [
   "withdrawal_affiliate_wager_requirement_bps",
   "withdrawal_rakeback_wager_requirement_bps",
   "withdrawal_tips_wager_requirement_bps",
+  "withdrawal_admin_adjustment_wager_requirement_bps",
   "wager_weight_packs_bps",
   "wager_weight_battles_bps",
   "wager_weight_upgrader_bps",

@@ -53,6 +53,14 @@ export type WagerRequirementDefaults = {
   rakeback_wager_requirement_bps: number;
   /** Requirement on lifetime tips received, in bps (10000 = 1×, 0 = disabled). */
   tips_wager_requirement_bps: number;
+  /**
+   * Requirement FROZEN onto each admin balance-adjustment CREDIT, in bps of
+   * the credited amount (10000 = 1×, 0 = disabled). Applied by the admin
+   * panel's adjustBalance writer (freezes `amount × bps / 10000` into
+   * `balances.wager_requirement_remaining`), so a giveaway/bonus credit can't
+   * be instantly withdrawn. Per-credit, not lifetime.
+   */
+  admin_adjustment_wager_requirement_bps: number;
   /** How much pack wagers count toward the requirement, in bps (10000 = 1×). */
   wager_weight_packs_bps: number;
   /** How much battle wagers count toward the requirement, in bps (10000 = 1×). */

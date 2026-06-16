@@ -66,6 +66,19 @@ const FIELDS: {
     ),
   },
   {
+    key: "admin_adjustment_wager_requirement_bps",
+    label: "Admin-adjustment requirement",
+    help: (
+      <>
+        Multiplier frozen onto each admin balance credit (giveaways, bonuses,
+        manual adjustments). 1× means a credited user must wager the credited
+        amount once before that money can be withdrawn. Applied per credit (not
+        lifetime). Default 1×. <code>0×</code> makes admin credits instantly
+        withdrawable.
+      </>
+    ),
+  },
+  {
     key: "rakeback_wager_requirement_bps",
     label: "Rakeback requirement",
     help: (
@@ -135,7 +148,10 @@ export function WagerRequirementCard({
   const [values, setValues] = useState<Record<FieldKey, string>>(() => {
     const seed = {} as Record<FieldKey, string>;
     for (const f of FIELDS) {
-      seed[f.key] = initial ? bpsToX(initial[f.key]) : "";
+      // `?? BPS_PER_X` guards the brief deploy window where this admin build
+      // is live but the backend hasn't yet shipped a new knob (the field is
+      // absent from the response) — fall back to 1× rather than rendering NaN.
+      seed[f.key] = initial ? bpsToX(initial[f.key] ?? BPS_PER_X) : "";
     }
     return seed;
   });

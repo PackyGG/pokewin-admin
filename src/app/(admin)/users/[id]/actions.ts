@@ -488,6 +488,30 @@ export async function adjustBalance(data: {
   // Capture the ledger row id so the admin-side metadata write below can
   // cross-reference it.
   const ledgerTxId = crypto.randomUUID();
+
+  // Resolve the admin-adjustment wager requirement (FROZEN per credit, exactly
+  // the model deposits/bonuses use on the backend). Read straight from the
+  // game-DB `site_config` row the /security "Admin-adjustment requirement" knob
+  // writes — no backend round-trip. Missing/invalid → 1× (10000), matching the
+  // backend's `getNumber(key, 10_000)` default. Only positive credits to
+  // AVAILABLE balance accrue debt; removals and locked-balance ops never do.
+  let adminAdjustmentWagerBps = 10_000;
+  try {
+    const cfg = await db.site_config.findUnique({
+      where: { key: "withdrawal_admin_adjustment_wager_requirement_bps" },
+    });
+    if (cfg) {
+      const n = Number(cfg.value);
+      if (Number.isFinite(n) && n >= 0) {
+        adminAdjustmentWagerBps = Math.round(n);
+      }
+    }
+  } catch {
+    // Keep the 1× default if the config row can't be read — fail safe toward
+    // requiring a wager rather than allowing instant withdrawal.
+  }
+  const accruesWagerDebt =
+    !affectsLockedBalance && parsed.amount > 0 && adminAdjustmentWagerBps > 0;
   try {
     await db.$transaction(async (tx) => {
       const b = await tx.balances.findUnique({
@@ -553,6 +577,22 @@ export async function adjustBalance(data: {
         throw new Error("Balance changed concurrently — please retry");
       }
 
+      if (accruesWagerDebt) {
+        // FREEZE `amount × bps / 10000` into the rollover debt
+        // (`balances.wager_requirement_remaining`) — the exact SQL the backend
+        // uses for deposit/bonus credits (transactions.ts wagerRemainingAccrual).
+        // Real weighted wagers burn it down; the withdrawal gate reserves it,
+        // so this credit can't be instantly withdrawn. Keyed on the balance row
+        // we just version-locked above (same row, held until commit).
+        await tx.$executeRaw`
+          UPDATE balances
+          SET wager_requirement_remaining =
+            COALESCE(wager_requirement_remaining, 0)::numeric
+            + (${parsed.amount}::numeric * ${adminAdjustmentWagerBps}::numeric / 10000)
+          WHERE id = ${b.id}::uuid
+        `;
+      }
+
       await tx.ledger_transactions.create({
         data: {
           id: ledgerTxId,
@@ -576,13 +616,19 @@ export async function adjustBalance(data: {
           // the dashboard "Creators Costs" / leaderboard-spend accounting
           // is a deliberate follow-up — this only persists the link. Driven
           // by the guard so a new creator-linked category is covered.
-          metadata:
-            isCreatorLinkedAdjustmentCategory(parsed.category) && meta.creatorId
-              ? {
-                  adjustment_category: parsed.category,
-                  creator_id: meta.creatorId,
-                }
-              : { adjustment_category: parsed.category },
+          metadata: {
+            adjustment_category: parsed.category,
+            ...(isCreatorLinkedAdjustmentCategory(parsed.category) &&
+            meta.creatorId
+              ? { creator_id: meta.creatorId }
+              : {}),
+            // Record the frozen requirement so support can see WHY a giveaway
+            // credit is locked (and at what rate). Only stamped when debt was
+            // actually accrued (positive credit, bps > 0).
+            ...(accruesWagerDebt
+              ? { wager_requirement_bps: adminAdjustmentWagerBps }
+              : {}),
+          },
           status: "completed",
         },
       });
@@ -622,6 +668,11 @@ export async function adjustBalance(data: {
       // official_stream); omitted for every other category.
       ...(isCreatorLinkedAdjustmentCategory(parsed.category) && meta.creatorId
         ? { creatorId: meta.creatorId }
+        : {}),
+      // The wager requirement frozen onto this credit (bps of the amount),
+      // recorded for the audit trail. Omitted when no debt was accrued.
+      ...(accruesWagerDebt
+        ? { wagerRequirementBps: adminAdjustmentWagerBps }
         : {}),
     },
   });
