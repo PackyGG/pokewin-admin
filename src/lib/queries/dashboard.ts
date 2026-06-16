@@ -467,7 +467,7 @@ export function getPeriodAggregates(
       -- RESULT-IDENTICAL and stops this CTE scanning all-history withdrawals
       -- on the 24h view.
       WHERE cwr.status IN ('completed', 'shipped')
-        AND COALESCE(cwr.completed_at, cwr.shipped_at) >= ${cutoff}
+        AND (cwr.completed_at >= ${cutoff} OR (cwr.completed_at IS NULL AND cwr.shipped_at >= ${cutoff}))
     ),
     -- Creator DEAL-PAYOUT cash-outs — the house's REAL creator cost that
     -- has actually walked out the door. Joins completed/shipped
@@ -503,7 +503,7 @@ export function getPeriodAggregates(
         -- Window to the selected period (the same effective_at the outer
         -- creator_wd_amount / creator_wd_count aggregates gate on) -- RESULT-
         -- IDENTICAL, and avoids the full-history voucher_ids array-unnest.
-        AND COALESCE(cwr.completed_at, cwr.shipped_at) >= ${cutoff}
+        AND (cwr.completed_at >= ${cutoff} OR (cwr.completed_at IS NULL AND cwr.shipped_at >= ${cutoff}))
     )
     SELECT
       COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS revenue,
@@ -615,7 +615,7 @@ async function creatorWithdrawalsPeriodFromPg(
       JOIN vouchers v ON v.id = ANY(cwr.voucher_ids)
       WHERE cwr.status IN ('completed', 'shipped')
         AND v.origin::text IN ('creator_fill_conversion', 'creator_multiplier_payout')
-        AND COALESCE(cwr.completed_at, cwr.shipped_at) >= ${cutoff}
+        AND (cwr.completed_at >= ${cutoff} OR (cwr.completed_at IS NULL AND cwr.shipped_at >= ${cutoff}))
     )
     SELECT
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} THEN amount ELSE 0 END) FROM creator_deal_payouts), 0)::text AS creator_wd_amount,
