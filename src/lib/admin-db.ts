@@ -8,7 +8,12 @@ const globalForAdminPrisma = globalThis as unknown as {
 function createClient() {
   const adapter = new PrismaPg(
     {
-      connectionString: process.env.ADMIN_DATABASE_URL,
+      // Prefer a managed-pooler URL when set, else the direct URL (safe drop-in
+      // fallback). Keep ADMIN_DATABASE_URL pointing at the DIRECT endpoint so
+      // the Prisma CLI (`db push`/`db execute`, which the admin DB uses) keeps
+      // working; ADMIN_DATABASE_URL_POOLED only routes the runtime adapter.
+      connectionString:
+        process.env.ADMIN_DATABASE_URL_POOLED ?? process.env.ADMIN_DATABASE_URL,
       min: 0,
       max: 5,
       idleTimeoutMillis: 10_000,

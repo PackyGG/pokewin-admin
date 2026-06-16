@@ -136,14 +136,22 @@ function getClient(env: DbEnv): PrismaClient {
   let client = clients.get(env);
   if (client) return client;
 
+  // Prefer a managed-pooler URL (PgBouncer / Neon / Supabase / Supavisor) when
+  // set, else the direct URL — a safe drop-in fallback so behavior is identical
+  // until the owner provisions a pooler. The pg driver adapter takes a raw
+  // connection string, so a pooled endpoint is a drop-in (Prisma Accelerate is
+  // NOT compatible with the @prisma/adapter-pg driver adapter). For transaction
+  // -mode poolers append `?pgbouncer=true` to the pooled URL.
+  const prodConnectionString =
+    process.env.DATABASE_URL_POOLED ?? process.env.DATABASE_URL;
   const connectionString =
-    env === "dev" ? process.env.DEV_DATABASE_URL : process.env.DATABASE_URL;
+    env === "dev" ? process.env.DEV_DATABASE_URL : prodConnectionString;
 
   if (env === "dev" && !connectionString) {
     // Caller should have verified DEV_DATABASE_URL is configured via
     // isDevDbConfigured(). If not, fall back to prod instead of
     // instantiating a broken client with an empty connection string.
-    const prodClient = clients.get("prod") ?? createClient(process.env.DATABASE_URL, "prod");
+    const prodClient = clients.get("prod") ?? createClient(prodConnectionString, "prod");
     clients.set("prod", prodClient);
     return prodClient;
   }
