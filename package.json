@@ -29,6 +29,7 @@
 		"@dnd-kit/utilities": "^3.2.2",
 		"@prisma/adapter-pg": "^7.5.0",
 		"@prisma/client": "^7.5.0",
+		"@sentry/nextjs": "^10.58.0",
 		"@tanstack/react-table": "^8.21.3",
 		"@upstash/redis": "^1.38.0",
 		"@vercel/edge-config": "^1.4.3",

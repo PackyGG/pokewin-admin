@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 
 /**
  * Last-resort error boundary. `global-error.tsx` catches errors thrown
@@ -89,6 +90,9 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     console.error("[global-error] root layout threw:", error);
+    // Report to Sentry (no-op when dormant). This is where root-layout React
+    // crashes (incl. transient hook-order #310) become visible with a digest.
+    Sentry.captureException(error);
   }, [error]);
 
   return (

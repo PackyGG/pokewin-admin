@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
   // @clickhouse/client is a Node-native client (http/https, streams). Keep it
@@ -243,4 +244,22 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Sentry build integration (source-map upload, auto-instrumentation) only runs
+// when configured, so a build without SENTRY_* env is byte-identical to before.
+// Runtime error/perf capture is driven by src/instrumentation*.ts regardless;
+// this wrapper adds source maps + release tagging when the owner sets env.
+const sentryEnabled =
+  Boolean(process.env.SENTRY_DSN) || Boolean(process.env.SENTRY_AUTH_TOKEN);
+
+export default sentryEnabled
+  ? withSentryConfig(nextConfig, {
+      org: process.env.SENTRY_ORG,
+      project: process.env.SENTRY_PROJECT,
+      authToken: process.env.SENTRY_AUTH_TOKEN,
+      silent: !process.env.CI,
+      widenClientFileUpload: true,
+      disableLogger: true,
+      // Skip source-map upload unless an auth token is present.
+      sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
+    })
+  : nextConfig;
