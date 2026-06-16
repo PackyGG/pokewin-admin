@@ -276,7 +276,7 @@ function ClusterCard({ cluster }: { cluster: AltCluster }) {
 
       {/* Members */}
       <div className="border-t border-border/60">
-        <div className="grid grid-cols-[1fr_auto_auto] gap-x-3 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="grid grid-cols-[2fr_1fr_1fr] gap-x-3 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           <span>Account</span>
           <span className="text-right">Deposits</span>
           <span className="text-right">Wager</span>
@@ -285,7 +285,7 @@ function ClusterCard({ cluster }: { cluster: AltCluster }) {
           {cluster.members.map((m) => (
             <div
               key={m.userId}
-              className="grid grid-cols-[1fr_auto_auto] items-center gap-x-3 px-4 py-2 text-sm"
+              className="grid grid-cols-[2fr_1fr_1fr] items-center gap-x-3 px-4 py-2 text-sm"
             >
               <div className="min-w-0">
                 <div className="truncate font-medium">

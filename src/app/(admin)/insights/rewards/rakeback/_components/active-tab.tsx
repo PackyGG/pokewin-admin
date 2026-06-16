@@ -96,7 +96,7 @@ export async function ActiveTab({
       <FadeIn>
         <SectionHeading icon={Activity} title="Weekly active rakebackers" />
         <div className="mt-3 overflow-hidden rounded-2xl border bg-card">
-          <div className="grid grid-cols-[1fr_auto] gap-x-3 px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground sm:grid-cols-[1fr_auto_auto] sm:px-5">
+          <div className="grid grid-cols-[2fr_1fr] gap-x-3 px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground sm:px-5">
             <span>Week</span>
             <span className="text-right">Active users</span>
           </div>
@@ -109,7 +109,7 @@ export async function ActiveTab({
               [...data.weeklyActive].reverse().map((wk) => (
                 <div
                   key={wk.weekStart}
-                  className="grid grid-cols-[1fr_auto] gap-x-3 border-t border-border/40 px-4 py-2 text-sm sm:px-5"
+                  className="grid grid-cols-[2fr_1fr] gap-x-3 border-t border-border/40 px-4 py-2 text-sm sm:px-5"
                 >
                   <span className="tabular-nums text-muted-foreground">
                     {wk.weekStart}
