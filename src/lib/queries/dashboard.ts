@@ -57,6 +57,17 @@ import {
 // unless the `dashboard_stats` surface flag is in `comparison` mode (forced off
 // while ClickHouse is dormant), and it never affects the served PG payload.
 import { compareDashboardStats } from "@/lib/clickhouse/compare/dashboard-stats";
+// Phase 2F cutover — when the `dashboard_stats` surface is in `clickhouse`
+// mode, the two heavy uncached scalar legs (periodAggregates +
+// windowedPeriodDelta) are served from this CH twin instead of Postgres. The
+// deferred `creatorWithdrawals` array-join leg has no twin, so it stays a small
+// standalone PG query. All other legs (cached counts/balances, charts, GGR)
+// are untouched.
+import {
+  getDashboardStatsFromClickHouse,
+  type DashboardStatsCh,
+} from "@/lib/clickhouse/queries/dashboard/stats";
+import { getAdminReadMode } from "@/lib/feature-flags/admin-read-source";
 
 // Re-export the client-safe period constants so existing call sites
 // that import from "@/lib/queries/dashboard" don't have to change. The
@@ -574,6 +585,74 @@ export function getPeriodAggregates(
         THEN amount ELSE 0 END), 0)::text AS manual_wd
     FROM base
   `;
+}
+
+// ── Phase 2F cutover helpers (dashboard_stats → ClickHouse) ──────────────
+//
+// When the `dashboard_stats` surface is in `clickhouse` mode, the two heavy
+// uncached scalar legs of dashboardStatsInner are served from the CH twin
+// (getDashboardStatsFromClickHouse) instead of the full-table Postgres scans:
+//   • periodAggregates    → periodAggregatesFromCh (CH scalars + PG creator_wd)
+//   • windowedPeriodDelta → derived from the same CH twin result
+// The CH twin does NOT carry the creator deal-payout cash-out leg (a
+// card_withdrawal_requests.voucher_ids ⋈ vouchers.origin array pairing the
+// migration deferred), so it stays this small standalone PG query — RESULT-
+// IDENTICAL to the creator_deal_payouts CTE inside getPeriodAggregates above.
+async function creatorWithdrawalsPeriodFromPg(
+  db: PrismaClient,
+  cutoff: Date,
+): Promise<{ creator_wd_amount: string; creator_wd_count: string }> {
+  const rows = await db.$queryRaw<
+    { creator_wd_amount: string; creator_wd_count: string }[]
+  >`
+    WITH creator_deal_payouts AS (
+      SELECT DISTINCT
+        cwr.id AS request_id,
+        v.id   AS voucher_id,
+        v.value::numeric AS amount,
+        COALESCE(cwr.completed_at, cwr.shipped_at) AS effective_at
+      FROM card_withdrawal_requests cwr
+      JOIN vouchers v ON v.id = ANY(cwr.voucher_ids)
+      WHERE cwr.status IN ('completed', 'shipped')
+        AND v.origin::text IN ('creator_fill_conversion', 'creator_multiplier_payout')
+        AND COALESCE(cwr.completed_at, cwr.shipped_at) >= ${cutoff}
+    )
+    SELECT
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} THEN amount ELSE 0 END) FROM creator_deal_payouts), 0)::text AS creator_wd_amount,
+      (SELECT COUNT(DISTINCT request_id) FROM creator_deal_payouts WHERE effective_at >= ${cutoff})::text AS creator_wd_count
+  `;
+  return rows[0] ?? { creator_wd_amount: "0", creator_wd_count: "0" };
+}
+
+// Map the CH twin's scalar result into the EXACT row shape getPeriodAggregates
+// returns, so the downstream `num(pa.*)` reads stay byte-identical. The 3-role
+// scope has no creator-on-session carve-out, so wager ≡ wager_excl_session
+// (same ledger sum); upgrader wager is added downstream from the (still-PG)
+// upgraderWindow leg, so the ledger-only wager here EXCLUDES upgrader
+// (wagersRaw − wagersUpgrader). creator_wd_* come from the small PG query above.
+async function periodAggregatesFromCh(
+  chStats: Promise<DashboardStatsCh>,
+  creatorWd: Promise<{ creator_wd_amount: string; creator_wd_count: string }>,
+): Promise<Awaited<ReturnType<typeof getPeriodAggregates>>> {
+  const [s, cwd] = await Promise.all([chStats, creatorWd]);
+  const wagerLedger = s.wagersRaw - s.wagersUpgrader;
+  return [
+    {
+      revenue: String(s.deposits),
+      withdrawal: String(s.withdrawals),
+      withdrawal_count: String(s.withdrawalCountPeriod),
+      wager: String(wagerLedger),
+      wager_excl_session: String(wagerLedger),
+      pack_wager_excl_session: String(s.wagersPacks),
+      battle_wager_excl_session: String(s.wagersBattles),
+      wager_organic: String(s.wagersOrganic),
+      deposit_count: String(s.depositCountPeriod),
+      balance_change: String(s.balanceChangePeriod),
+      manual_wd: String(s.manualWdPeriod),
+      creator_wd_amount: cwd.creator_wd_amount,
+      creator_wd_count: cwd.creator_wd_count,
+    },
+  ];
 }
 
 // Lifetime realized P&L lives in src/lib/queries/_realized-pnl.ts so the
@@ -1339,6 +1418,39 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // enum's "all"; a plain `{ since: cutoff }` for the today/24h windows).
   const metricWindow = config.metricWindow;
 
+  // Phase 2F cutover gate for the headline KPI composite. When the
+  // `dashboard_stats` surface is in `clickhouse` mode, the two heavy uncached
+  // scalar legs (periodAggregates + windowedPeriodDelta — full-table ledger /
+  // inventory / voucher scans) are served from the CH twin instead of
+  // Postgres. ONE CH fetch is shared by both legs (no double read). The
+  // deferred creator deal-payout leg has no twin, so it stays a small PG query.
+  // All other legs (cached counts/balances/FTDs, chart series, headline GGR)
+  // are untouched. On a CH failure the legs reject → the whole batch rejects →
+  // the page's safeQuery wrapper degrades to the fallback (never wrong money).
+  const rolling7d = new Date(now.getTime() - 7 * MS_PER_DAY);
+  const statsReadMode = await getAdminReadMode("dashboard_stats");
+  const useChStats = statsReadMode === "clickhouse";
+  const chStatsPromise: Promise<DashboardStatsCh> | null = useChStats
+    ? getDashboardStatsFromClickHouse(
+        {
+          periodCutoff,
+          upgraderSince: metricWindow.since ?? periodCutoff,
+          startOfDay,
+          startOfWeek,
+          startOfMonth,
+          rolling24h,
+          rolling7d,
+        },
+        Array.from(excluded),
+      )
+    : null;
+  const creatorWdPromise: Promise<{
+    creator_wd_amount: string;
+    creator_wd_count: string;
+  }> | null = useChStats
+    ? creatorWithdrawalsPeriodFromPg(db, periodCutoff)
+    : null;
+
   // Perf audit (2026-05-27): cut the dashboard's parallel query batch
   // from 17 to 12 queries, and dropped the 4-query
   // calculateWindowedPnl() call for the 24h P&L. Net is roughly 9
@@ -1464,7 +1576,9 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // NOT cached — recomputes every render because the cutoff depends
     // on the selected period.
     withTimingResult("dashboard.periodAggregates", () =>
-      getPeriodAggregates(db, periodCutoff, blacklistIdNotIn, sessionWindowsCte),
+      useChStats
+        ? periodAggregatesFromCh(chStatsPromise!, creatorWdPromise!)
+        : getPeriodAggregates(db, periodCutoff, blacklistIdNotIn, sessionWindowsCte),
     ),
     // Canonical headline GGR (+ NGR / RTP / house-edge / bets) for the
     // selected window, from the `@/lib/metrics` inventory-delta
@@ -1543,7 +1657,20 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // composite query. Each subselect is a narrow indexed range scan;
     // PG materializes the common `real_users` CTE once.
     withTimingResult("dashboard.windowedPeriodDelta", () =>
-      db.$queryRaw<{
+      useChStats
+        ? chStatsPromise!.then((s) => [
+            {
+              // CH twin returns the NET deltas (obtained−disposed, issued−claimed).
+              // Downstream reads `inv_obtained − inv_disposed` and
+              // `vch_issued − vch_claimed`, so park the net in the first term and
+              // zero the second to preserve the exact subtraction.
+              inv_obtained: String(s.inventoryChangePeriod),
+              inv_disposed: "0",
+              vch_issued: String(s.voucherChangePeriod),
+              vch_claimed: "0",
+            },
+          ])
+        : db.$queryRaw<{
         inv_obtained: string;
         inv_disposed: string;
         vch_issued: string;
@@ -1762,7 +1889,8 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // so the CH twin diffs over identical windows; the served payload below is
   // unchanged. `ggr`, the chart arrays, and the creator deal-payout leg are
   // intentionally NOT diffed here (see compare/dashboard-stats.ts).
-  const rolling7d = new Date(now.getTime() - 7 * MS_PER_DAY);
+  // `rolling7d` is computed once near the top of this function (shared with the
+  // Phase 2F cutover gate).
   void compareDashboardStats({
     periodCutoffIso: periodCutoff.toISOString(),
     upgraderSinceIso: (metricWindow.since ?? periodCutoff).toISOString(),

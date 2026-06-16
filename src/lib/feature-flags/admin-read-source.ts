@@ -213,6 +213,15 @@ const CUTOVER_DEFAULT_CLICKHOUSE: ReadonlySet<string> = new Set([
   "dashboard_affiliate_referred_pnl_today",
   // Standalone dashboard movers + breakdown helpers.
   "dashboard_net_holdings_movers",
+  // Headline KPI / P&L composite (getDashboardStats). Cut over per owner
+  // decision (2026-06-16, "flip to ClickHouse anyway", accepting the 1-2 min
+  // CDC delay on the freshest period-P&L rows). Only the two heavy uncached
+  // scalar legs (periodAggregates + windowedPeriodDelta) are served from the CH
+  // twin; the creator deal-payout leg has no twin and stays a small PG query,
+  // and a CH failure degrades the whole composite via the page's safeQuery
+  // fallback (never wrong money). Parity was validated in comparison mode
+  // (only freshest-tail CDC drift on inventory/realized-pnl, no structural drift).
+  "dashboard_stats",
   // /insights signup legs whose CH twin returns the FULL render payload.
   "insights_signup_funnel",
   "insights_signup_drop_off",
