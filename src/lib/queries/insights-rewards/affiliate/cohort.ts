@@ -6,6 +6,8 @@ import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getAffiliateCohortFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/cohort";
 
 /**
  * Referred-user cohort metrics. For each top affiliate by downstream
@@ -184,7 +186,11 @@ export async function getAffiliateCohort(
   period: InsightsRewardsPeriod,
 ): Promise<AffiliateCohortRow[]> {
   const blacklist = await loadBlacklist();
-  return period === "all"
-    ? cachedLong(period, blacklist)
-    : cachedShort(period, blacklist);
+  return resolveAdminRead<AffiliateCohortRow[]>("insights_affiliate_cohort", {
+    pg: () =>
+      period === "all"
+        ? cachedLong(period, blacklist)
+        : cachedShort(period, blacklist),
+    ch: () => getAffiliateCohortFromClickHouse(period, blacklist, new Date()),
+  });
 }

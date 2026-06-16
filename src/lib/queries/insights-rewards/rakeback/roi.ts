@@ -15,6 +15,8 @@ import {
   RAKEBACK_ROI_LOOKBACK_DEFAULT,
   type RakebackRoiLookback,
 } from "@/app/(admin)/insights/rewards/rakeback/_constants";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRakebackRoiFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/roi";
 
 // Re-export the client-safe lookback constants/helpers so server callers
 // can keep importing them from this module. The runtime values live in
@@ -177,12 +179,26 @@ async function computeRoi(
   };
 }
 
+// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+// through the cache on failure); off/comparison serve Postgres unchanged. The
+// SAME lookback the PG path used is forwarded so the windows match exactly.
+async function resolveRoi(
+  period: InsightsRewardsPeriod,
+  lookbackDays: RakebackRoiLookback,
+  blacklistIds: string[],
+): Promise<RakebackRoi> {
+  return resolveAdminRead<RakebackRoi>("insights_rakeback_roi", {
+    pg: () => computeRoi(period, lookbackDays, blacklistIds),
+    ch: () => getRakebackRoiFromClickHouse(period, lookbackDays, blacklistIds),
+  });
+}
+
 // Shared 60s/300s cache pair, keyed on `(period, lookbackDays, blacklist)`.
 // The lookback selector stays part of the cache key (an extra key dimension
 // threaded through `makeCachedPair`), so each `?lookback=` value caches
 // independently — identical behaviour to the hand-rolled pair this replaces.
 const cachedRoi = makeCachedPair(
-  computeRoi,
+  resolveRoi,
   "insights-rewards-rakeback-roi",
   RAKEBACK_CACHE_TAGS,
 );

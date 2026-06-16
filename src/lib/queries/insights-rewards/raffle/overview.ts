@@ -1,4 +1,6 @@
 import { unstable_cache } from "next/cache";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRaffleForecastBaselineFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/raffle/baseline";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -248,14 +250,20 @@ const RAFFLE_CACHE_TAGS = ["insights-rewards", "insights-rewards-raffle"] as con
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeRaffleBaseline(period, blacklistIds),
+    resolveAdminRead<RaffleForecastBaseline>("insights_raffle_baseline", {
+      pg: () => computeRaffleBaseline(period, blacklistIds),
+      ch: () => getRaffleForecastBaselineFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-raffle-baseline-v1"],
   { revalidate: 60, tags: [...RAFFLE_CACHE_TAGS] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeRaffleBaseline(period, blacklistIds),
+    resolveAdminRead<RaffleForecastBaseline>("insights_raffle_baseline", {
+      pg: () => computeRaffleBaseline(period, blacklistIds),
+      ch: () => getRaffleForecastBaselineFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-raffle-baseline-lifetime-v1"],
   { revalidate: 300, tags: [...RAFFLE_CACHE_TAGS] },
 );

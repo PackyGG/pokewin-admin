@@ -12,6 +12,9 @@ import {
   type FunnelPeriod,
 } from "@/lib/queries/analytics-funnel";
 import { compareAnalyticsFunnel } from "@/lib/clickhouse/compare/analytics-funnel-compare";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getFunnelDataFromClickHouse } from "@/lib/clickhouse/queries/analytics/funnel";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import type { AnalyticsPeriod } from "./types";
 
 /**
@@ -42,7 +45,15 @@ export async function FunnelTab({
         : "30d";
 
   const { data, error } = await safeQuery(
-    () => getFunnelData(funnelPeriod),
+    () =>
+      resolveAdminRead<Awaited<ReturnType<typeof getFunnelData>>>(
+        "analytics_funnel",
+        {
+          pg: () => getFunnelData(funnelPeriod),
+          ch: async () =>
+            getFunnelDataFromClickHouse(funnelPeriod, await getExcludedUserIds()),
+        },
+      ),
     null,
     "analytics.funnel",
   );

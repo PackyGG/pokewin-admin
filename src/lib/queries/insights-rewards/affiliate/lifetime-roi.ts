@@ -3,6 +3,8 @@ import { getDb } from "@/lib/db";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import { CACHE_TAG, loadBlacklist } from "./_shared";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getAffiliateLifetimeRoiFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/lifetime-roi";
 
 /**
  * Lifetime ROI per affiliate.
@@ -118,5 +120,8 @@ const cached = unstable_cache(
 
 export async function getAffiliateLifetimeRoi(): Promise<LifetimeRoiRow[]> {
   const blacklist = await loadBlacklist();
-  return cached(blacklist);
+  return resolveAdminRead<LifetimeRoiRow[]>("insights_affiliate_lifetime_roi", {
+    pg: () => cached(blacklist),
+    ch: () => getAffiliateLifetimeRoiFromClickHouse(blacklist),
+  });
 }

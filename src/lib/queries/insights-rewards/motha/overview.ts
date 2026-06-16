@@ -1,6 +1,8 @@
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getMothaGiveawayOverviewFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/motha/overview";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
@@ -227,6 +229,17 @@ const cachedOverviewLifetime = unstable_cache(
 export async function getMothaGiveawayOverview(
   period: InsightsRewardsPeriod,
 ): Promise<MothaGiveawayOverview> {
-  const ttl = cacheTtlForInsightsPeriod(period);
-  return ttl >= 300 ? cachedOverviewLifetime(period) : cachedOverview(period);
+  // CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+  // through on failure); off/comparison serve Postgres unchanged. Comparison-
+  // mode drift is logged by the motha forecast tab's existing
+  // compareMothaOverview() call, so no compare thunk here.
+  return resolveAdminRead<MothaGiveawayOverview>("insights_motha_overview", {
+    pg: () => {
+      const ttl = cacheTtlForInsightsPeriod(period);
+      return ttl >= 300
+        ? cachedOverviewLifetime(period)
+        : cachedOverview(period);
+    },
+    ch: () => getMothaGiveawayOverviewFromClickHouse(period),
+  });
 }

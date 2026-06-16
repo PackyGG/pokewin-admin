@@ -6,6 +6,8 @@ import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getAffiliateGeoBreakdownFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/geo";
 
 /**
  * Geo distribution lens. Two side-by-side breakdowns:
@@ -146,7 +148,12 @@ export async function getAffiliateGeoBreakdown(
   period: InsightsRewardsPeriod,
 ): Promise<AffiliateGeoBreakdown> {
   const blacklist = await loadBlacklist();
-  return period === "all"
-    ? cachedLong(period, blacklist)
-    : cachedShort(period, blacklist);
+  return resolveAdminRead<AffiliateGeoBreakdown>("insights_affiliate_geo", {
+    pg: () =>
+      period === "all"
+        ? cachedLong(period, blacklist)
+        : cachedShort(period, blacklist),
+    ch: () =>
+      getAffiliateGeoBreakdownFromClickHouse(period, blacklist, new Date()),
+  });
 }

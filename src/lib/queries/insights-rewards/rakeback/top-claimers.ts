@@ -8,6 +8,8 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRakebackTopClaimersFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/top-claimers";
 
 /**
  * Top 25 rakeback claimers. Two flavours:
@@ -119,12 +121,26 @@ async function computeTopClaimers(
   });
 }
 
+// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+// through the cache on failure); off/comparison serve Postgres unchanged. The
+// SAME scope the PG path used is forwarded so the windows match exactly.
+async function resolveTopClaimers(
+  period: InsightsRewardsPeriod,
+  scope: RakebackTopClaimerScope,
+  blacklistIds: string[],
+): Promise<RakebackTopClaimer[]> {
+  return resolveAdminRead<RakebackTopClaimer[]>("insights_rakeback_top", {
+    pg: () => computeTopClaimers(period, scope, blacklistIds),
+    ch: () => getRakebackTopClaimersFromClickHouse(period, scope, blacklistIds),
+  });
+}
+
 const cachedShort = unstable_cache(
   async (
     period: InsightsRewardsPeriod,
     scope: RakebackTopClaimerScope,
     blacklistIds: string[],
-  ) => computeTopClaimers(period, scope, blacklistIds),
+  ) => resolveTopClaimers(period, scope, blacklistIds),
   ["insights-rewards-rakeback-top-claimers-v1"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
@@ -134,7 +150,7 @@ const cachedLong = unstable_cache(
     period: InsightsRewardsPeriod,
     scope: RakebackTopClaimerScope,
     blacklistIds: string[],
-  ) => computeTopClaimers(period, scope, blacklistIds),
+  ) => resolveTopClaimers(period, scope, blacklistIds),
   ["insights-rewards-rakeback-top-claimers-lifetime-v1"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );

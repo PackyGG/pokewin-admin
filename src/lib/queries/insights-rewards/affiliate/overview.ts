@@ -6,6 +6,8 @@ import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getAffiliateOverviewFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/overview";
 
 /**
  * Overview KPI summary for /insights/rewards/affiliate.
@@ -242,7 +244,11 @@ export async function getAffiliateOverview(
   period: InsightsRewardsPeriod,
 ): Promise<AffiliateOverview> {
   const blacklist = await loadBlacklist();
-  return period === "all"
-    ? cachedLong(period, blacklist)
-    : cachedShort(period, blacklist);
+  return resolveAdminRead<AffiliateOverview>("insights_affiliate_overview", {
+    pg: () =>
+      period === "all"
+        ? cachedLong(period, blacklist)
+        : cachedShort(period, blacklist),
+    ch: () => getAffiliateOverviewFromClickHouse(period, blacklist, new Date()),
+  });
 }

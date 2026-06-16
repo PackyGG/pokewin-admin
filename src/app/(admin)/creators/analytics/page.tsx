@@ -10,7 +10,11 @@ import {
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getAffiliateAnalytics } from "@/lib/queries/creators";
+import type { AffiliateAnalyticsData } from "@/lib/queries/creators-types";
 import { compareCreatorsAnalytics } from "@/lib/clickhouse/compare/creators-analytics";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getAffiliateAnalyticsFromClickHouse } from "@/lib/clickhouse/queries/creators/analytics";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { PeriodFilter } from "./period-filter";
 import { CreatorAnalyticsCharts } from "./charts";
 import {
@@ -37,7 +41,15 @@ export default async function CreatorAnalyticsPage({
     | "90d"
     | "all";
 
-  const data = await getAffiliateAnalytics(period);
+  // CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+  // through the route boundary on failure); off/comparison serve Postgres.
+  // The CH twin returns the SAME full `AffiliateAnalyticsData` (scalars +
+  // per-day series) the page renders.
+  const data = await resolveAdminRead<AffiliateAnalyticsData>("creators_analytics", {
+    pg: () => getAffiliateAnalytics(period),
+    ch: async () =>
+      getAffiliateAnalyticsFromClickHouse(period, await getExcludedUserIds(), new Date()),
+  });
   void compareCreatorsAnalytics(period, data);
 
   return (

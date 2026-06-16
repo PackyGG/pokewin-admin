@@ -1,4 +1,6 @@
 import { unstable_cache } from "next/cache";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRaceInsightsPositionsFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/positions";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -85,14 +87,20 @@ async function computePositions(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computePositions(period, blacklistIds),
+    resolveAdminRead<RacePositionBucket[]>("insights_race_positions", {
+      pg: () => computePositions(period, blacklistIds),
+      ch: () => getRaceInsightsPositionsFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-race-positions-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computePositions(period, blacklistIds),
+    resolveAdminRead<RacePositionBucket[]>("insights_race_positions", {
+      pg: () => computePositions(period, blacklistIds),
+      ch: () => getRaceInsightsPositionsFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-race-positions-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

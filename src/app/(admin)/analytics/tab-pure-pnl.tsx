@@ -4,6 +4,9 @@ import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { PackBattlePurePnl } from "@/components/pack-battle-pure-pnl";
 import { comparePurePnl } from "@/lib/clickhouse/compare/pure-pnl";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getPackBattlePurePnlFromClickHouse } from "@/lib/clickhouse/queries/analytics/pure-pnl";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
  * Dedicated tab for the Pack & Battle Pure P&L breakdown — same panel
@@ -17,7 +20,15 @@ import { comparePurePnl } from "@/lib/clickhouse/compare/pure-pnl";
  */
 export async function PurePnlTab() {
   const { data, error } = await safeQuery(
-    () => getPackBattlePurePnl(),
+    () =>
+      resolveAdminRead<Awaited<ReturnType<typeof getPackBattlePurePnl>>>(
+        "pure_pnl",
+        {
+          pg: () => getPackBattlePurePnl(),
+          ch: async () =>
+            getPackBattlePurePnlFromClickHouse(await getExcludedUserIds()),
+        },
+      ),
     null,
     "analytics.purePnl",
   );

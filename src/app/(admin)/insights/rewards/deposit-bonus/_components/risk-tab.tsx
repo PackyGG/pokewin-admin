@@ -35,12 +35,22 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { getDepositBonusTopSpenders } from "@/lib/queries/insights-rewards/deposit-bonus/top-spenders";
-import { getDepositBonusSuspicious } from "@/lib/queries/insights-rewards/deposit-bonus/suspicious";
+import {
+  getDepositBonusTopSpenders,
+  type DepositBonusTopSpender,
+} from "@/lib/queries/insights-rewards/deposit-bonus/top-spenders";
+import {
+  getDepositBonusSuspicious,
+  type DepositBonusSuspicious,
+} from "@/lib/queries/insights-rewards/deposit-bonus/suspicious";
 import {
   compareDepositBonusTopSpenders,
   compareDepositBonusSuspicious,
 } from "@/lib/clickhouse/compare/deposit-bonus-risk";
+import { getDepositBonusTopSpendersFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/deposit-bonus/top-spenders";
+import { getDepositBonusSuspiciousFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/deposit-bonus/suspicious";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
  * Top spenders + risk surveillance tab.
@@ -71,13 +81,37 @@ export async function RiskTab({
   // matching impact-tab.tsx / cap-tab.tsx / cohorts-tab.tsx.
   const [topRes, suspiciousRes] = await Promise.all([
     safeQuery(
-      () => getDepositBonusTopSpenders(period),
+      () =>
+        resolveAdminRead<DepositBonusTopSpender[]>(
+          "insights_deposit_bonus_top_spenders",
+          {
+            pg: () => getDepositBonusTopSpenders(period),
+            ch: async () =>
+              getDepositBonusTopSpendersFromClickHouse(
+                period,
+                await getExcludedUserIds(),
+              ),
+            compare: (pg) => void compareDepositBonusTopSpenders(period, pg),
+          },
+        ),
       [],
       "insights-rewards-deposit-bonus.top",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
-      () => getDepositBonusSuspicious(period),
+      () =>
+        resolveAdminRead<DepositBonusSuspicious>(
+          "insights_deposit_bonus_suspicious",
+          {
+            pg: () => getDepositBonusSuspicious(period),
+            ch: async () =>
+              getDepositBonusSuspiciousFromClickHouse(
+                period,
+                await getExcludedUserIds(),
+              ),
+            compare: (pg) => void compareDepositBonusSuspicious(period, pg),
+          },
+        ),
       null,
       "insights-rewards-deposit-bonus.suspicious",
       REWARD_QUERY_TIMEOUT_MS,
@@ -96,11 +130,6 @@ export async function RiskTab({
   const top = topRes.data;
   const suspicious = suspiciousRes.data;
   const label = insightsRewardsPeriodLabel(period);
-
-  // Fire-and-forget ClickHouse comparisons (no-op unless each surface flag is in
-  // `comparison` mode). The served values stay the Postgres payloads above.
-  void compareDepositBonusTopSpenders(period, top);
-  if (suspicious) void compareDepositBonusSuspicious(period, suspicious);
 
   if (top.length === 0) {
     return (

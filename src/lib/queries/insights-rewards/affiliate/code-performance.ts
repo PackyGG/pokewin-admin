@@ -6,6 +6,8 @@ import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getAffiliateCodePerformanceFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/code-performance";
 
 /**
  * Per-affiliate-code funnel — click → signup → first deposit → wager.
@@ -166,7 +168,12 @@ export async function getAffiliateCodePerformance(
   period: InsightsRewardsPeriod,
 ): Promise<CodePerformanceRow[]> {
   const blacklist = await loadBlacklist();
-  return period === "all"
-    ? cachedLong(period, blacklist)
-    : cachedShort(period, blacklist);
+  return resolveAdminRead<CodePerformanceRow[]>("insights_affiliate_code_perf", {
+    pg: () =>
+      period === "all"
+        ? cachedLong(period, blacklist)
+        : cachedShort(period, blacklist),
+    ch: () =>
+      getAffiliateCodePerformanceFromClickHouse(period, blacklist, new Date()),
+  });
 }

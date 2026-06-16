@@ -40,6 +40,16 @@ import {
   compareTopCreators,
   compareTopCountries,
 } from "@/lib/clickhouse/compare/analytics-top";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import {
+  getTopDepositorsFromClickHouse,
+  getTopWagerersFromClickHouse,
+  getTopLosersFromClickHouse,
+  getTopWinnersFromClickHouse,
+  getTopCreatorsByVolumeFromClickHouse,
+  getTopCountriesFromClickHouse,
+} from "@/lib/clickhouse/queries/analytics/top";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import type { AnalyticsPeriod } from "./types";
 
 type SubTab =
@@ -97,42 +107,104 @@ export async function TopPerformersTab({
     await Promise.all([
       active === "depositors"
         ? safeQuery(
-            () => getTopDepositors(leaderboardPeriod),
+            () =>
+              resolveAdminRead<Awaited<ReturnType<typeof getTopDepositors>>>(
+                "analytics_top",
+                {
+                  pg: () => getTopDepositors(leaderboardPeriod),
+                  ch: async () =>
+                    getTopDepositorsFromClickHouse(
+                      leaderboardPeriod,
+                      await getExcludedUserIds(),
+                    ),
+                },
+              ),
             null,
             "analytics.top.depositors",
           )
         : null,
       active === "wagerers"
         ? safeQuery(
-            () => getTopWagerers(leaderboardPeriod),
+            () =>
+              resolveAdminRead<Awaited<ReturnType<typeof getTopWagerers>>>(
+                "analytics_top",
+                {
+                  pg: () => getTopWagerers(leaderboardPeriod),
+                  ch: async () =>
+                    getTopWagerersFromClickHouse(
+                      leaderboardPeriod,
+                      await getExcludedUserIds(),
+                    ),
+                },
+              ),
             null,
             "analytics.top.wagerers",
           )
         : null,
       active === "losers"
         ? safeQuery(
-            () => getTopLosers(leaderboardPeriod),
+            () =>
+              resolveAdminRead<Awaited<ReturnType<typeof getTopLosers>>>(
+                "analytics_top",
+                {
+                  pg: () => getTopLosers(leaderboardPeriod),
+                  ch: async () =>
+                    getTopLosersFromClickHouse(
+                      leaderboardPeriod,
+                      await getExcludedUserIds(),
+                    ),
+                },
+              ),
             null,
             "analytics.top.losers",
           )
         : null,
       active === "winners"
         ? safeQuery(
-            () => getTopWinners(leaderboardPeriod),
+            () =>
+              resolveAdminRead<Awaited<ReturnType<typeof getTopWinners>>>(
+                "analytics_top",
+                {
+                  pg: () => getTopWinners(leaderboardPeriod),
+                  ch: async () =>
+                    getTopWinnersFromClickHouse(
+                      leaderboardPeriod,
+                      await getExcludedUserIds(),
+                    ),
+                },
+              ),
             null,
             "analytics.top.winners",
           )
         : null,
       active === "creators"
         ? safeQuery(
-            () => getTopCreatorsByVolume(leaderboardPeriod),
+            () =>
+              resolveAdminRead<Awaited<ReturnType<typeof getTopCreatorsByVolume>>>(
+                "analytics_top",
+                {
+                  pg: () => getTopCreatorsByVolume(leaderboardPeriod),
+                  ch: () => getTopCreatorsByVolumeFromClickHouse(leaderboardPeriod),
+                },
+              ),
             null,
             "analytics.top.creators",
           )
         : null,
       active === "countries"
         ? safeQuery(
-            () => getTopCountries(leaderboardPeriod),
+            () =>
+              resolveAdminRead<Awaited<ReturnType<typeof getTopCountries>>>(
+                "analytics_top",
+                {
+                  pg: () => getTopCountries(leaderboardPeriod),
+                  ch: async () =>
+                    getTopCountriesFromClickHouse(
+                      leaderboardPeriod,
+                      await getExcludedUserIds(),
+                    ),
+                },
+              ),
             null,
             "analytics.top.countries",
           )

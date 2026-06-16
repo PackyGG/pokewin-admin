@@ -7,6 +7,8 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRakebackActiveSubscribersFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/active-subscribers";
 
 /**
  * Active rakeback "subscribers" view — distinct claimants per week +
@@ -183,16 +185,32 @@ async function computeActiveSubscribers(
   };
 }
 
+// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+// through the cache on failure); off/comparison serve Postgres unchanged.
+async function resolveActiveSubscribers(
+  period: InsightsRewardsPeriod,
+  blacklistIds: string[],
+): Promise<RakebackActiveSubscribers> {
+  return resolveAdminRead<RakebackActiveSubscribers>(
+    "insights_rakeback_active",
+    {
+      pg: () => computeActiveSubscribers(period, blacklistIds),
+      ch: () =>
+        getRakebackActiveSubscribersFromClickHouse(period, blacklistIds),
+    },
+  );
+}
+
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeActiveSubscribers(period, blacklistIds),
+    resolveActiveSubscribers(period, blacklistIds),
   ["insights-rewards-rakeback-active-v1"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeActiveSubscribers(period, blacklistIds),
+    resolveActiveSubscribers(period, blacklistIds),
   ["insights-rewards-rakeback-active-lifetime-v1"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );

@@ -8,6 +8,8 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRakebackLapsedFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/lapsed";
 
 /**
  * Lapsed claimants — users who claimed in the PRIOR-equal window but
@@ -229,16 +231,29 @@ async function computeLapsed(
   };
 }
 
+// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+// through the cache on failure); off/comparison serve Postgres unchanged.
+// Both legs return null for lifetime windows (no prior frame).
+async function resolveLapsed(
+  period: InsightsRewardsPeriod,
+  blacklistIds: string[],
+): Promise<RakebackLapsed | null> {
+  return resolveAdminRead<RakebackLapsed | null>("insights_rakeback_lapsed", {
+    pg: () => computeLapsed(period, blacklistIds),
+    ch: () => getRakebackLapsedFromClickHouse(period, blacklistIds),
+  });
+}
+
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeLapsed(period, blacklistIds),
+    resolveLapsed(period, blacklistIds),
   ["insights-rewards-rakeback-lapsed-v1"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeLapsed(period, blacklistIds),
+    resolveLapsed(period, blacklistIds),
   ["insights-rewards-rakeback-lapsed-lifetime-v1"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );

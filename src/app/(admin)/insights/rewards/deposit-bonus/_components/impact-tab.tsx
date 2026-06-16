@@ -42,6 +42,8 @@ import {
   getDepositBonusToWagerSegments,
   getDepositBonusPostCapBehavior,
   getDepositBonusCapHitterCohorts,
+  type DepositBonusDepositFrequency,
+  type DepositBonusDepositSizeDistribution,
   type DepositBonusCapHitters,
   type DepositBonusTimeBetween,
   type DepositBonusToWagerSegments,
@@ -57,6 +59,17 @@ import {
   compareDepositBonusPostCapBehavior,
   compareDepositBonusCapHitterCohorts,
 } from "@/lib/clickhouse/compare/deposit-bonus-impact";
+import {
+  getDepositBonusDepositFrequencyFromClickHouse,
+  getDepositBonusDepositSizeDistributionFromClickHouse,
+  getDepositBonusCapHittersFromClickHouse,
+  getDepositBonusTimeBetweenFromClickHouse,
+  getDepositBonusToWagerSegmentsFromClickHouse,
+  getDepositBonusPostCapBehaviorFromClickHouse,
+  getDepositBonusCapHitterCohortsFromClickHouse,
+} from "@/lib/clickhouse/queries/insights-rewards/deposit-bonus/impact";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   DepositFrequencyChart,
   DepositSizeChart,
@@ -102,43 +115,132 @@ export async function ImpactTab({
   const [freqRes, sizeRes, capRes, gapRes, segRes, postRes, cohortRes] =
     await Promise.all([
       safeQuery(
-        () => getDepositBonusDepositFrequency(period),
+        () =>
+          resolveAdminRead<DepositBonusDepositFrequency>(
+            "insights_deposit_bonus_impact_frequency",
+            {
+              pg: () => getDepositBonusDepositFrequency(period),
+              ch: async () =>
+                getDepositBonusDepositFrequencyFromClickHouse(
+                  period,
+                  await getExcludedUserIds(),
+                ),
+              compare: (pg) =>
+                void compareDepositBonusDepositFrequency(period, pg),
+            },
+          ),
         null,
         "insights-rewards-deposit-bonus.impact.frequency",
         REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
-        () => getDepositBonusDepositSizeDistribution(period),
+        () =>
+          resolveAdminRead<DepositBonusDepositSizeDistribution>(
+            "insights_deposit_bonus_impact_size",
+            {
+              pg: () => getDepositBonusDepositSizeDistribution(period),
+              ch: async () =>
+                getDepositBonusDepositSizeDistributionFromClickHouse(
+                  period,
+                  await getExcludedUserIds(),
+                ),
+              compare: (pg) =>
+                void compareDepositBonusDepositSizeDistribution(period, pg),
+            },
+          ),
         null,
         "insights-rewards-deposit-bonus.impact.size",
         REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
-        () => getDepositBonusCapHitters(period),
+        () =>
+          resolveAdminRead<DepositBonusCapHitters>(
+            "insights_deposit_bonus_impact_cap_hitters",
+            {
+              pg: () => getDepositBonusCapHitters(period),
+              ch: async () =>
+                getDepositBonusCapHittersFromClickHouse(
+                  period,
+                  await getExcludedUserIds(),
+                ),
+              compare: (pg) => void compareDepositBonusCapHitters(period, pg),
+            },
+          ),
         null,
         "insights-rewards-deposit-bonus.impact.cap-hitters",
         REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
-        () => getDepositBonusTimeBetween(period),
+        () =>
+          resolveAdminRead<DepositBonusTimeBetween>(
+            "insights_deposit_bonus_impact_time_between",
+            {
+              pg: () => getDepositBonusTimeBetween(period),
+              ch: async () =>
+                getDepositBonusTimeBetweenFromClickHouse(
+                  period,
+                  await getExcludedUserIds(),
+                ),
+              compare: (pg) => void compareDepositBonusTimeBetween(period, pg),
+            },
+          ),
         null,
         "insights-rewards-deposit-bonus.impact.time-between",
         REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
-        () => getDepositBonusToWagerSegments(period),
+        () =>
+          resolveAdminRead<DepositBonusToWagerSegments>(
+            "insights_deposit_bonus_impact_bonus_wager",
+            {
+              pg: () => getDepositBonusToWagerSegments(period),
+              ch: async () =>
+                getDepositBonusToWagerSegmentsFromClickHouse(
+                  period,
+                  await getExcludedUserIds(),
+                ),
+              compare: (pg) =>
+                void compareDepositBonusToWagerSegments(period, pg),
+            },
+          ),
         null,
         "insights-rewards-deposit-bonus.impact.bonus-wager",
         REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
-        () => getDepositBonusPostCapBehavior(period),
+        () =>
+          resolveAdminRead<DepositBonusPostCapBehavior>(
+            "insights_deposit_bonus_impact_post_cap",
+            {
+              pg: () => getDepositBonusPostCapBehavior(period),
+              ch: async () =>
+                getDepositBonusPostCapBehaviorFromClickHouse(
+                  period,
+                  await getExcludedUserIds(),
+                ),
+              compare: (pg) =>
+                void compareDepositBonusPostCapBehavior(period, pg),
+            },
+          ),
         null,
         "insights-rewards-deposit-bonus.impact.post-cap",
         REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
-        () => getDepositBonusCapHitterCohorts(period),
+        () =>
+          resolveAdminRead<DepositBonusCapHitterCohorts>(
+            "insights_deposit_bonus_impact_cohorts",
+            {
+              pg: () => getDepositBonusCapHitterCohorts(period),
+              ch: async () =>
+                getDepositBonusCapHitterCohortsFromClickHouse(
+                  period,
+                  await getExcludedUserIds(),
+                ),
+              compare: (pg) =>
+                void compareDepositBonusCapHitterCohorts(period, pg),
+            },
+          ),
         null,
         "insights-rewards-deposit-bonus.impact.cohorts",
         REWARD_QUERY_TIMEOUT_MS,
@@ -153,16 +255,6 @@ export async function ImpactTab({
   const post = postRes.data;
   const cohort = cohortRes.data;
   const label = insightsRewardsPeriodLabel(period);
-
-  // Fire-and-forget ClickHouse comparisons (no-op unless each surface flag is in
-  // `comparison` mode). The served values stay the Postgres payloads above.
-  if (freq) void compareDepositBonusDepositFrequency(period, freq);
-  if (size) void compareDepositBonusDepositSizeDistribution(period, size);
-  if (cap) void compareDepositBonusCapHitters(period, cap);
-  if (gap) void compareDepositBonusTimeBetween(period, gap);
-  if (seg) void compareDepositBonusToWagerSegments(period, seg);
-  if (post) void compareDepositBonusPostCapBehavior(period, post);
-  if (cohort) void compareDepositBonusCapHitterCohorts(period, cohort);
 
   // If every critical query failed AND there's simply no bonus/deposit
   // activity, show a single calm empty state instead of a wall of error

@@ -26,6 +26,9 @@ import {
 } from "@/lib/queries/analytics-withdrawals";
 import { compareRevenue } from "@/lib/clickhouse/compare/analytics-revenue";
 import { compareWithdrawals } from "@/lib/clickhouse/compare/analytics-revenue-withdrawals";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getWithdrawnCoinsBreakdownFromClickHouse } from "@/lib/clickhouse/queries/analytics/withdrawals";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { RevenueStackedCharts } from "./revenue-chart";
 import type { AnalyticsPeriod } from "./types";
 
@@ -69,7 +72,18 @@ export async function RevenueTab({
   const [{ data, error }, withdrawnCoinsResult] = await Promise.all([
     safeQuery(() => getRevenueBreakdown(period), null, "analytics.revenue"),
     safeQuery(
-      () => getWithdrawnCoinsBreakdown(period),
+      () =>
+        resolveAdminRead<Awaited<ReturnType<typeof getWithdrawnCoinsBreakdown>>>(
+          "analytics_revenue_withdrawals",
+          {
+            pg: () => getWithdrawnCoinsBreakdown(period),
+            ch: async () =>
+              getWithdrawnCoinsBreakdownFromClickHouse(
+                period,
+                await getExcludedUserIds(),
+              ),
+          },
+        ),
       null,
       "analytics.revenue.withdrawnCoins",
     ),

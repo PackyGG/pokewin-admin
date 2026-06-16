@@ -9,6 +9,9 @@ import {
 } from "lucide-react";
 import { getAnalyticsData } from "@/lib/queries/analytics";
 import { compareAnalyticsOverview } from "@/lib/clickhouse/compare/analytics-overview";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getAnalyticsDataFromClickHouse } from "@/lib/clickhouse/queries/analytics/overview";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   getPnlBreakdownWindows,
   getPackBattlePurePnl,
@@ -39,7 +42,15 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
   // three queries. safeQuery degrades a failure to a panel fallback
   // instead of escaping to the route error boundary.
   const { data, error } = await safeQuery(
-    () => getAnalyticsData(period),
+    () =>
+      resolveAdminRead<Awaited<ReturnType<typeof getAnalyticsData>>>(
+        "analytics_overview",
+        {
+          pg: () => getAnalyticsData(period),
+          ch: async () =>
+            getAnalyticsDataFromClickHouse(period, await getExcludedUserIds()),
+        },
+      ),
     null,
     "analytics.overview",
   );

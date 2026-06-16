@@ -29,11 +29,17 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { getDepositBonusCohortComparison } from "@/lib/queries/insights-rewards/deposit-bonus/cohort";
+import {
+  getDepositBonusCohortComparison,
+  type DepositBonusCohortComparison,
+} from "@/lib/queries/insights-rewards/deposit-bonus/cohort";
 import {
   getDepositBonusRepeatClaimants,
   getDepositBonusNewVsReturning,
   getDepositBonusTimeToClaim,
+  type DepositBonusRepeatClaimants,
+  type DepositBonusNewVsReturning,
+  type DepositBonusTimeToClaim,
 } from "@/lib/queries/insights-rewards/deposit-bonus/behavior";
 import {
   compareDepositBonusCohortComparison,
@@ -41,6 +47,12 @@ import {
   compareDepositBonusRepeatClaimants,
   compareDepositBonusTimeToClaim,
 } from "@/lib/clickhouse/compare/deposit-bonus-cohorts";
+import { getDepositBonusCohortComparisonFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/deposit-bonus/cohort";
+import { getDepositBonusNewVsReturningFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/deposit-bonus/new-vs-returning";
+import { getDepositBonusRepeatClaimantsFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/deposit-bonus/repeat-claimants";
+import { getDepositBonusTimeToClaimFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/deposit-bonus/time-to-claim";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { CohortCompareCard } from "@/app/(admin)/rewards/analytics/_components/cohort-compare";
 
 /**
@@ -70,25 +82,76 @@ export async function CohortsTab({
   // behavior.ts).
   const [cohortRes, newRetRes, repeatRes, ttcRes] = await Promise.all([
     safeQuery(
-      () => getDepositBonusCohortComparison(period),
+      () =>
+        resolveAdminRead<DepositBonusCohortComparison>(
+          "insights_deposit_bonus_cohort",
+          {
+            pg: () => getDepositBonusCohortComparison(period),
+            ch: async () =>
+              getDepositBonusCohortComparisonFromClickHouse(
+                period,
+                await getExcludedUserIds(),
+              ),
+            compare: (pg) =>
+              void compareDepositBonusCohortComparison(period, pg),
+          },
+        ),
       null,
       "insights-rewards-deposit-bonus.cohort",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
-      () => getDepositBonusNewVsReturning(period),
+      () =>
+        resolveAdminRead<DepositBonusNewVsReturning>(
+          "insights_deposit_bonus_new_vs_returning",
+          {
+            pg: () => getDepositBonusNewVsReturning(period),
+            ch: async () =>
+              getDepositBonusNewVsReturningFromClickHouse(
+                period,
+                await getExcludedUserIds(),
+              ),
+            compare: (pg) =>
+              void compareDepositBonusNewVsReturning(period, pg),
+          },
+        ),
       null,
       "insights-rewards-deposit-bonus.new-vs-returning",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
-      () => getDepositBonusRepeatClaimants(period),
+      () =>
+        resolveAdminRead<DepositBonusRepeatClaimants>(
+          "insights_deposit_bonus_repeat_claimants",
+          {
+            pg: () => getDepositBonusRepeatClaimants(period),
+            ch: async () =>
+              getDepositBonusRepeatClaimantsFromClickHouse(
+                period,
+                await getExcludedUserIds(),
+              ),
+            compare: (pg) =>
+              void compareDepositBonusRepeatClaimants(period, pg),
+          },
+        ),
       null,
       "insights-rewards-deposit-bonus.repeat",
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
-      () => getDepositBonusTimeToClaim(period),
+      () =>
+        resolveAdminRead<DepositBonusTimeToClaim>(
+          "insights_deposit_bonus_time_to_claim",
+          {
+            pg: () => getDepositBonusTimeToClaim(period),
+            ch: async () =>
+              getDepositBonusTimeToClaimFromClickHouse(
+                period,
+                await getExcludedUserIds(),
+              ),
+            compare: (pg) => void compareDepositBonusTimeToClaim(period, pg),
+          },
+        ),
       null,
       "insights-rewards-deposit-bonus.ttc",
       REWARD_QUERY_TIMEOUT_MS,
@@ -112,12 +175,6 @@ export async function CohortsTab({
     );
   }
 
-  // Fire-and-forget ClickHouse comparisons (no-op unless each surface flag is in
-  // `comparison` mode). The served values stay the Postgres payloads above.
-  void compareDepositBonusCohortComparison(period, cohort);
-  if (newRet) void compareDepositBonusNewVsReturning(period, newRet);
-  if (repeat) void compareDepositBonusRepeatClaimants(period, repeat);
-  if (ttc) void compareDepositBonusTimeToClaim(period, ttc);
   if (cohort.totalDeposits === 0) {
     return (
       <div className="rounded-2xl border bg-card p-4">

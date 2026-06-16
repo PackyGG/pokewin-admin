@@ -6,6 +6,8 @@ import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getAffiliateClaimCadenceFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/claim-cadence";
 
 /**
  * Repeat-claim cadence per affiliate. Surfaces how often each
@@ -152,7 +154,12 @@ export async function getAffiliateClaimCadence(
   period: InsightsRewardsPeriod,
 ): Promise<ClaimCadenceRow[]> {
   const blacklist = await loadBlacklist();
-  return period === "all"
-    ? cachedLong(period, blacklist)
-    : cachedShort(period, blacklist);
+  return resolveAdminRead<ClaimCadenceRow[]>("insights_affiliate_cadence", {
+    pg: () =>
+      period === "all"
+        ? cachedLong(period, blacklist)
+        : cachedShort(period, blacklist),
+    ch: () =>
+      getAffiliateClaimCadenceFromClickHouse(period, blacklist, new Date()),
+  });
 }

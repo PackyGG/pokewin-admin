@@ -1,4 +1,6 @@
 import { unstable_cache } from "next/cache";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRaceInsightsOverviewFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/overview";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -125,14 +127,20 @@ async function computeOverview(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeOverview(period, blacklistIds),
+    resolveAdminRead<RaceOverviewKpis>("insights_race_overview", {
+      pg: () => computeOverview(period, blacklistIds),
+      ch: () => getRaceInsightsOverviewFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-race-overview-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeOverview(period, blacklistIds),
+    resolveAdminRead<RaceOverviewKpis>("insights_race_overview", {
+      pg: () => computeOverview(period, blacklistIds),
+      ch: () => getRaceInsightsOverviewFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-race-overview-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

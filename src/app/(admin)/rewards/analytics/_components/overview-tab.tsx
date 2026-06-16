@@ -39,6 +39,7 @@ import {
   getRewardsAnalytics,
   getRewardCategoryBreakdown,
   type RewardsPeriod,
+  type RewardsAnalyticsData,
   type RewardCategoryKey,
   type RewardCategoryBreakdown,
   type RewardRecipientRow,
@@ -48,11 +49,23 @@ import {
   getLifetimePrizesBreakdown,
   getPrizeBudgetBreakdown,
   type RaceLeaderboardSummary,
+  type RewardsLeaderboardsData,
+  type LifetimePrizesBreakdown,
+  type PrizeBudgetBreakdown,
 } from "@/lib/queries/rewards-analytics-leaderboards";
 import { compareRewardsAnalyticsOverview } from "@/lib/clickhouse/compare/rewards-analytics-overview";
 import { compareRewardsAnalyticsCategories } from "@/lib/clickhouse/compare/rewards-analytics-category";
 import { compareRewardsAnalyticsLeaderboards } from "@/lib/clickhouse/compare/rewards-analytics-leaderboards";
 import { compareRewardsAnalyticsExtras } from "@/lib/clickhouse/compare/rewards-analytics-extras";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { getRewardsAnalyticsFromClickHouse } from "@/lib/clickhouse/queries/rewards-analytics/overview";
+import { getRewardCategoryBreakdownFromClickHouse } from "@/lib/clickhouse/queries/rewards-analytics/category-breakdown";
+import { getRewardsLeaderboardsFromClickHouse } from "@/lib/clickhouse/queries/rewards-analytics/leaderboards";
+import {
+  getLifetimePrizesBreakdownFromClickHouse,
+  getPrizeBudgetBreakdownFromClickHouse,
+} from "@/lib/clickhouse/queries/rewards-analytics/extras";
 import { RewardsCostChart } from "../rewards-chart";
 import { RewardTileDrilldown } from "../reward-tile-popover";
 import {
@@ -121,20 +134,67 @@ export async function OverviewTab({ period }: { period: RewardsPeriod }) {
     lifetimePrizesBreakdown,
     prizeBudgetBreakdown,
   ] = await Promise.all([
-    getRewardsAnalytics(period),
-    getRewardsLeaderboards(),
-    getRewardCategoryBreakdown(period, "bonuses"),
-    getRewardCategoryBreakdown(period, "rakeback"),
-    getRewardCategoryBreakdown(period, "affiliate"),
-    getRewardCategoryBreakdown(period, "rainRace"),
-    getRewardCategoryBreakdown(period, "signupPack"),
-    getRewardCategoryBreakdown(period, "waitlist"),
-    getRewardCategoryBreakdown(period, "houseCredits"),
-    getLifetimePrizesBreakdown(),
+    // CQRS serve-path: clickhouse mode serves each leg's CH twin (SOLE read,
+    // throws through the surface's boundary on failure); off/comparison serve
+    // Postgres unchanged. Every CH twin below returns the SAME full payload its
+    // PG twin renders (Overview KPIs + daily + categories + top recipients; each
+    // per-category drilldown; the daily/weekly race summaries + lifetime totals;
+    // the lifetime-prizes + prize-budget breakdowns).
+    resolveAdminRead<RewardsAnalyticsData>("rewards_analytics_overview", {
+      pg: () => getRewardsAnalytics(period),
+      ch: async () =>
+        getRewardsAnalyticsFromClickHouse(period, await getExcludedUserIds(), new Date()),
+    }),
+    resolveAdminRead<RewardsLeaderboardsData>("rewards_analytics_leaderboards", {
+      pg: () => getRewardsLeaderboards(),
+      ch: async () => getRewardsLeaderboardsFromClickHouse(await getExcludedUserIds()),
+    }),
+    resolveAdminRead<RewardCategoryBreakdown>("rewards_analytics_category", {
+      pg: () => getRewardCategoryBreakdown(period, "bonuses"),
+      ch: async () =>
+        getRewardCategoryBreakdownFromClickHouse(period, "bonuses", await getExcludedUserIds(), new Date()),
+    }),
+    resolveAdminRead<RewardCategoryBreakdown>("rewards_analytics_category", {
+      pg: () => getRewardCategoryBreakdown(period, "rakeback"),
+      ch: async () =>
+        getRewardCategoryBreakdownFromClickHouse(period, "rakeback", await getExcludedUserIds(), new Date()),
+    }),
+    resolveAdminRead<RewardCategoryBreakdown>("rewards_analytics_category", {
+      pg: () => getRewardCategoryBreakdown(period, "affiliate"),
+      ch: async () =>
+        getRewardCategoryBreakdownFromClickHouse(period, "affiliate", await getExcludedUserIds(), new Date()),
+    }),
+    resolveAdminRead<RewardCategoryBreakdown>("rewards_analytics_category", {
+      pg: () => getRewardCategoryBreakdown(period, "rainRace"),
+      ch: async () =>
+        getRewardCategoryBreakdownFromClickHouse(period, "rainRace", await getExcludedUserIds(), new Date()),
+    }),
+    resolveAdminRead<RewardCategoryBreakdown>("rewards_analytics_category", {
+      pg: () => getRewardCategoryBreakdown(period, "signupPack"),
+      ch: async () =>
+        getRewardCategoryBreakdownFromClickHouse(period, "signupPack", await getExcludedUserIds(), new Date()),
+    }),
+    resolveAdminRead<RewardCategoryBreakdown>("rewards_analytics_category", {
+      pg: () => getRewardCategoryBreakdown(period, "waitlist"),
+      ch: async () =>
+        getRewardCategoryBreakdownFromClickHouse(period, "waitlist", await getExcludedUserIds(), new Date()),
+    }),
+    resolveAdminRead<RewardCategoryBreakdown>("rewards_analytics_category", {
+      pg: () => getRewardCategoryBreakdown(period, "houseCredits"),
+      ch: async () =>
+        getRewardCategoryBreakdownFromClickHouse(period, "houseCredits", await getExcludedUserIds(), new Date()),
+    }),
+    resolveAdminRead<LifetimePrizesBreakdown>("rewards_analytics_extras", {
+      pg: () => getLifetimePrizesBreakdown(),
+      ch: async () => getLifetimePrizesBreakdownFromClickHouse(await getExcludedUserIds()),
+    }),
     // Headline tile sums daily + weekly. Monthly would inflate the
     // breakdown without changing the headline, so it's deliberately
     // excluded from this call too.
-    getPrizeBudgetBreakdown(["daily", "weekly"]),
+    resolveAdminRead<PrizeBudgetBreakdown>("rewards_analytics_extras", {
+      pg: () => getPrizeBudgetBreakdown(["daily", "weekly"]),
+      ch: () => getPrizeBudgetBreakdownFromClickHouse(["daily", "weekly"]),
+    }),
   ]);
 
   const byKey = new Map(data.categories.map((c) => [c.key, c]));

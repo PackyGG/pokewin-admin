@@ -1,4 +1,6 @@
 import { unstable_cache } from "next/cache";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRaceInsightsBreakdownFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/breakdown";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -168,14 +170,20 @@ async function computeBreakdown(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeBreakdown(period, blacklistIds),
+    resolveAdminRead<RaceBreakdownRow[]>("insights_race_breakdown", {
+      pg: () => computeBreakdown(period, blacklistIds),
+      ch: () => getRaceInsightsBreakdownFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-race-breakdown-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeBreakdown(period, blacklistIds),
+    resolveAdminRead<RaceBreakdownRow[]>("insights_race_breakdown", {
+      pg: () => computeBreakdown(period, blacklistIds),
+      ch: () => getRaceInsightsBreakdownFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-race-breakdown-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

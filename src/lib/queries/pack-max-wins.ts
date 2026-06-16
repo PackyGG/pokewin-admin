@@ -4,6 +4,8 @@ import { unstable_cache } from "next/cache";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { dbForEnv } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getPackMaxWinStatsFromClickHouse } from "@/lib/clickhouse/queries/numbers/pack-max-wins";
 
 export type PackMaxWinRow = {
   packId: string;
@@ -174,7 +176,14 @@ export async function getPackMaxWinStats(): Promise<PackMaxWinStats> {
   if (env !== "prod") {
     return computePackMaxWinStats(env);
   }
-  return cachedPackMaxWinStats(env);
+  // CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+  // through on failure); off/comparison serve Postgres unchanged. The `numbers`
+  // surface is shared with the signup-method leg; comparison-mode drift is
+  // logged by the page's existing compareNumbers() call, so no compare thunk.
+  return resolveAdminRead<PackMaxWinStats>("numbers", {
+    pg: () => cachedPackMaxWinStats(env),
+    ch: () => getPackMaxWinStatsFromClickHouse(),
+  });
 }
 
 export function formatMaxWinMultiplier(multiplier: number): string {

@@ -3,6 +3,8 @@ import { getDb } from "@/lib/db";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import { CACHE_TAG, loadBlacklist } from "./_shared";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getAffiliateTierDistributionFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/tier-distribution";
 
 /**
  * Tier (affiliate level) distribution.
@@ -156,5 +158,11 @@ const cached = unstable_cache(
 
 export async function getAffiliateTierDistribution(): Promise<TierDistribution> {
   const blacklist = await loadBlacklist();
-  return cached(blacklist);
+  return resolveAdminRead<TierDistribution>(
+    "insights_affiliate_tier_distribution",
+    {
+      pg: () => cached(blacklist),
+      ch: () => getAffiliateTierDistributionFromClickHouse(blacklist),
+    },
+  );
 }

@@ -8,6 +8,8 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRakebackRateDistributionFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/rate-distribution";
 
 /**
  * "Rakeback as % of wager" cohort lens for the deep stats page.
@@ -138,16 +140,28 @@ async function computeRateDistribution(
   };
 }
 
+// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+// through the cache on failure); off/comparison serve Postgres unchanged.
+async function resolveRateDistribution(
+  period: InsightsRewardsPeriod,
+  blacklistIds: string[],
+): Promise<RakebackRateDistribution> {
+  return resolveAdminRead<RakebackRateDistribution>("insights_rakeback_rate", {
+    pg: () => computeRateDistribution(period, blacklistIds),
+    ch: () => getRakebackRateDistributionFromClickHouse(period, blacklistIds),
+  });
+}
+
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeRateDistribution(period, blacklistIds),
+    resolveRateDistribution(period, blacklistIds),
   ["insights-rewards-rakeback-rate-dist-v1"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeRateDistribution(period, blacklistIds),
+    resolveRateDistribution(period, blacklistIds),
   ["insights-rewards-rakeback-rate-dist-lifetime-v1"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );

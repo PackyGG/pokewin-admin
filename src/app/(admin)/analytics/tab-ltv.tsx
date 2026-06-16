@@ -21,6 +21,9 @@ import {
   type LtvPeriod,
 } from "@/lib/queries/analytics-ltv";
 import { compareCreatorLtv } from "@/lib/clickhouse/compare/analytics-ltv";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getCreatorLtvFromClickHouse } from "@/lib/clickhouse/queries/analytics/ltv";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import type { AnalyticsPeriod } from "./types";
 
 /**
@@ -46,7 +49,15 @@ export async function LtvTab({
         : "30d";
 
   const { data, error } = await safeQuery(
-    () => getCreatorLtv(ltvPeriod),
+    () =>
+      resolveAdminRead<Awaited<ReturnType<typeof getCreatorLtv>>>(
+        "analytics_ltv",
+        {
+          pg: () => getCreatorLtv(ltvPeriod),
+          ch: async () =>
+            getCreatorLtvFromClickHouse(ltvPeriod, await getExcludedUserIds()),
+        },
+      ),
     null,
     "analytics.ltv",
   );

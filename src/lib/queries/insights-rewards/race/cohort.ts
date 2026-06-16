@@ -1,4 +1,6 @@
 import { unstable_cache } from "next/cache";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRaceInsightsCohortFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/cohort";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -216,14 +218,20 @@ async function computeCohort(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeCohort(period, blacklistIds),
+    resolveAdminRead<RaceCohortResult>("insights_race_cohort", {
+      pg: () => computeCohort(period, blacklistIds),
+      ch: () => getRaceInsightsCohortFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-race-cohort-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeCohort(period, blacklistIds),
+    resolveAdminRead<RaceCohortResult>("insights_race_cohort", {
+      pg: () => computeCohort(period, blacklistIds),
+      ch: () => getRaceInsightsCohortFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-race-cohort-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

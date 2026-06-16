@@ -9,6 +9,8 @@ import {
 } from "@/lib/queries/insights-rewards/_period";
 import { WAGER_TYPES_SQL } from "@/lib/queries/_wager-payout-types";
 import { compareSignupFunnel } from "@/lib/clickhouse/compare/insights-signup-funnel";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getSignupFunnelFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/signup/funnel";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -120,16 +122,43 @@ async function computeFunnel(
   };
 }
 
+// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+// through the cache on failure); off/comparison serve Postgres. Wrapped inside
+// the cache so the served leg (CH or PG) is memoized identically. The CH twin
+// returns the same 5 distinct-user counts, mapped explicitly to SignupFunnel.
+async function resolveFunnel(
+  period: InsightsRewardsPeriod,
+  blacklistIds: string[],
+): Promise<SignupFunnel> {
+  return resolveAdminRead<SignupFunnel>("insights_signup_funnel", {
+    pg: () => computeFunnel(period, blacklistIds),
+    ch: async () => {
+      const r = await getSignupFunnelFromClickHouse(
+        period,
+        blacklistIds,
+        new Date(),
+      );
+      return {
+        signups: r.signups,
+        claimed: r.claimed,
+        firstDeposit: r.firstDeposit,
+        firstWager: r.firstWager,
+        repeatDeposit: r.repeatDeposit,
+      };
+    },
+  });
+}
+
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeFunnel(period, blacklistIds),
+    resolveFunnel(period, blacklistIds),
   ["insights-rewards-signup-funnel-v1"],
   { revalidate: 60, tags: [SIGNUP_CACHE_TAG] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeFunnel(period, blacklistIds),
+    resolveFunnel(period, blacklistIds),
   ["insights-rewards-signup-funnel-lifetime-v1"],
   { revalidate: 300, tags: [SIGNUP_CACHE_TAG] },
 );

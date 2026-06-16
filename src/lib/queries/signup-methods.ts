@@ -6,6 +6,8 @@ import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { dbForEnv } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getSignupMethodStatsFromClickHouse } from "@/lib/clickhouse/queries/numbers/signup-methods";
 
 export type SignupMethodKey =
   | "email"
@@ -156,5 +158,12 @@ export async function getSignupMethodStats(): Promise<SignupMethodStats> {
   if (env !== "prod") {
     return computeSignupMethodStats(blacklist, env);
   }
-  return cachedSignupMethodStats(blacklist, env);
+  // CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+  // through on failure); off/comparison serve Postgres unchanged. The `numbers`
+  // surface is shared with the pack-max-win leg; comparison-mode drift is logged
+  // by the page's existing compareNumbers() call, so no compare thunk here.
+  return resolveAdminRead<SignupMethodStats>("numbers", {
+    pg: () => cachedSignupMethodStats(blacklist, env),
+    ch: () => getSignupMethodStatsFromClickHouse(blacklist),
+  });
 }

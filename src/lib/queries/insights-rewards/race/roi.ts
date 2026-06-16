@@ -1,4 +1,6 @@
 import { unstable_cache } from "next/cache";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRaceInsightsROIFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/roi";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -160,7 +162,12 @@ const cachedShort = unstable_cache(
     period: InsightsRewardsPeriod,
     lookbackDays: number,
     blacklistIds: string[],
-  ) => computeRoi(period, lookbackDays, blacklistIds),
+  ) =>
+    resolveAdminRead<RaceRoiResult>("insights_race_roi", {
+      pg: () => computeRoi(period, lookbackDays, blacklistIds),
+      ch: () =>
+        getRaceInsightsROIFromClickHouse(period, lookbackDays, blacklistIds),
+    }),
   ["insights-rewards-race-roi-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
@@ -170,7 +177,12 @@ const cachedLong = unstable_cache(
     period: InsightsRewardsPeriod,
     lookbackDays: number,
     blacklistIds: string[],
-  ) => computeRoi(period, lookbackDays, blacklistIds),
+  ) =>
+    resolveAdminRead<RaceRoiResult>("insights_race_roi", {
+      pg: () => computeRoi(period, lookbackDays, blacklistIds),
+      ch: () =>
+        getRaceInsightsROIFromClickHouse(period, lookbackDays, blacklistIds),
+    }),
   ["insights-rewards-race-roi-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

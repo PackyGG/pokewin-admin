@@ -7,6 +7,9 @@ import { FadeIn } from "@/components/fade-in";
 import { MetricTile } from "@/components/modern-panels";
 import { getRetentionCurve } from "@/lib/queries/analytics-retention";
 import { compareRetention } from "@/lib/clickhouse/compare/analytics-retention";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRetentionCurveFromClickHouse } from "@/lib/clickhouse/queries/analytics/retention";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { RetentionChart } from "./retention-chart";
 import type { AnalyticsPeriod } from "./types";
 
@@ -21,7 +24,15 @@ export async function RetentionTab({
 }) {
   void _period;
   const { data, error } = await safeQuery(
-    () => getRetentionCurve(),
+    () =>
+      resolveAdminRead<Awaited<ReturnType<typeof getRetentionCurve>>>(
+        "analytics_retention",
+        {
+          pg: () => getRetentionCurve(),
+          ch: async () =>
+            getRetentionCurveFromClickHouse(await getExcludedUserIds()),
+        },
+      ),
     null,
     "analytics.retention",
   );

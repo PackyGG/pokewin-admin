@@ -9,6 +9,8 @@ import {
 } from "@/lib/queries/insights-rewards/_period";
 import { WAGER_TYPES_SQL } from "@/lib/queries/_wager-payout-types";
 import { compareSignupRetention } from "@/lib/clickhouse/compare/insights-signup-retention";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getSignupRetentionFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/signup/retention";
 import { SIGNUP_CACHE_TAG } from "./_shared";
 
 /**
@@ -177,16 +179,65 @@ async function computeRetention(
   };
 }
 
+// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+// through the cache on failure); off/comparison serve Postgres. Wrapped inside
+// the cache so the served leg (CH or PG) is memoized identically. The CH twin
+// returns the raw claimer/non-claimer retained + cohort counts; the shares +
+// lift % are reconstructed here with the SAME derivation as the PG `build`
+// helper above, so the served Retention is byte-identical to the PG shape.
+async function resolveRetention(
+  period: InsightsRewardsPeriod,
+  blacklistIds: string[],
+): Promise<Retention> {
+  return resolveAdminRead<Retention>("insights_signup_retention", {
+    pg: () => computeRetention(period, blacklistIds),
+    ch: async () => {
+      const r = await getSignupRetentionFromClickHouse(
+        period,
+        blacklistIds,
+        new Date(),
+      );
+      const build = (
+        claimerRetained: number,
+        nonClaimerRetained: number,
+      ): RetentionCurveValue => {
+        const claimerShare =
+          r.claimerTotal > 0 ? claimerRetained / r.claimerTotal : 0;
+        const nonClaimerShare =
+          r.nonClaimerTotal > 0 ? nonClaimerRetained / r.nonClaimerTotal : 0;
+        const liftPct =
+          nonClaimerShare > 0
+            ? ((claimerShare - nonClaimerShare) / nonClaimerShare) * 100
+            : null;
+        return {
+          claimerCount: r.claimerTotal,
+          claimerRetained,
+          claimerShare,
+          nonClaimerCount: r.nonClaimerTotal,
+          nonClaimerRetained,
+          nonClaimerShare,
+          liftPct,
+        };
+      };
+      return {
+        retention24h: build(r.claimer24h, r.nonClaimer24h),
+        retention7d: build(r.claimer7d, r.nonClaimer7d),
+        retention30d: build(r.claimer30d, r.nonClaimer30d),
+      };
+    },
+  });
+}
+
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeRetention(period, blacklistIds),
+    resolveRetention(period, blacklistIds),
   ["insights-rewards-signup-retention-v1"],
   { revalidate: 60, tags: [SIGNUP_CACHE_TAG] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeRetention(period, blacklistIds),
+    resolveRetention(period, blacklistIds),
   ["insights-rewards-signup-retention-lifetime-v1"],
   { revalidate: 300, tags: [SIGNUP_CACHE_TAG] },
 );

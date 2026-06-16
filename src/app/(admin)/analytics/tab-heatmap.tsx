@@ -8,6 +8,9 @@ import {
   type HeatmapPeriod,
 } from "@/lib/queries/analytics-heatmap";
 import { compareAnalyticsHeatmap } from "@/lib/clickhouse/compare/analytics-heatmap-compare";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getActivityHeatmapFromClickHouse } from "@/lib/clickhouse/queries/analytics/heatmap";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { HeatmapGrid } from "./heatmap-grid";
 import type { AnalyticsPeriod } from "./types";
 
@@ -31,7 +34,15 @@ export async function HeatmapTab({
         ? heroPeriod
         : "30d";
   const { data, error } = await safeQuery(
-    () => getActivityHeatmap(period),
+    () =>
+      resolveAdminRead<Awaited<ReturnType<typeof getActivityHeatmap>>>(
+        "analytics_heatmap",
+        {
+          pg: () => getActivityHeatmap(period),
+          ch: async () =>
+            getActivityHeatmapFromClickHouse(period, await getExcludedUserIds()),
+        },
+      ),
     null,
     "analytics.heatmap",
   );

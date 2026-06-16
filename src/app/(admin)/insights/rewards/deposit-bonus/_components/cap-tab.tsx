@@ -35,12 +35,22 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { getDepositBonusCapAnalysis } from "@/lib/queries/insights-rewards/deposit-bonus/cap-analysis";
-import { getDepositBonusRatioDistribution } from "@/lib/queries/insights-rewards/deposit-bonus/cohort";
+import {
+  getDepositBonusCapAnalysis,
+  type DepositBonusCapAnalysis,
+} from "@/lib/queries/insights-rewards/deposit-bonus/cap-analysis";
+import {
+  getDepositBonusRatioDistribution,
+  type DepositBonusRatioDistribution,
+} from "@/lib/queries/insights-rewards/deposit-bonus/cohort";
 import {
   compareDepositBonusCapAnalysis,
   compareDepositBonusRatioDistribution,
 } from "@/lib/clickhouse/compare/deposit-bonus-cap";
+import { getDepositBonusCapAnalysisFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/deposit-bonus/cap-analysis";
+import { getDepositBonusRatioDistributionFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/deposit-bonus/ratio-distribution";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { CapAmountHistogram } from "./cap-histogram-chart";
 import { RatioBucketsBars } from "./ratio-buckets-bars";
 
@@ -73,7 +83,19 @@ export async function CapTab({
   // cap-analysis.ts / cohort.ts).
   const [capRes, ratioRes] = await Promise.all([
     safeQuery(
-      () => getDepositBonusCapAnalysis(period),
+      () =>
+        resolveAdminRead<DepositBonusCapAnalysis>(
+          "insights_deposit_bonus_cap_analysis",
+          {
+            pg: () => getDepositBonusCapAnalysis(period),
+            ch: async () =>
+              getDepositBonusCapAnalysisFromClickHouse(
+                period,
+                await getExcludedUserIds(),
+              ),
+            compare: (pg) => void compareDepositBonusCapAnalysis(period, pg),
+          },
+        ),
       null,
       "insights-rewards-deposit-bonus.cap",
       REWARD_QUERY_TIMEOUT_MS,
@@ -82,7 +104,20 @@ export async function CapTab({
     // retention split lives on the Cohorts tab). Both share the same
     // canonical pairing but are cached independently.
     safeQuery(
-      () => getDepositBonusRatioDistribution(period),
+      () =>
+        resolveAdminRead<DepositBonusRatioDistribution>(
+          "insights_deposit_bonus_ratio_distribution",
+          {
+            pg: () => getDepositBonusRatioDistribution(period),
+            ch: async () =>
+              getDepositBonusRatioDistributionFromClickHouse(
+                period,
+                await getExcludedUserIds(),
+              ),
+            compare: (pg) =>
+              void compareDepositBonusRatioDistribution(period, pg),
+          },
+        ),
       null,
       "insights-rewards-deposit-bonus.ratio",
       REWARD_QUERY_TIMEOUT_MS,
@@ -100,11 +135,6 @@ export async function CapTab({
   const cap = capRes.data;
   const ratio = ratioRes.data;
   const label = insightsRewardsPeriodLabel(period);
-
-  // Fire-and-forget ClickHouse comparisons (no-op unless each surface flag is in
-  // `comparison` mode). The served values stay the Postgres payloads above.
-  void compareDepositBonusCapAnalysis(period, cap);
-  if (ratio) void compareDepositBonusRatioDistribution(period, ratio);
 
   if (cap.capValue === 0) {
     return (

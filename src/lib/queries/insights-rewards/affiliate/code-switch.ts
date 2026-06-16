@@ -5,6 +5,8 @@ import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getAffiliateCodeSwitchFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/code-switch";
 
 /**
  * Code-switch correlation lens.
@@ -175,9 +177,14 @@ export async function getAffiliateCodeSwitch(
   period: InsightsRewardsPeriod,
 ): Promise<CodeSwitchRow[]> {
   const blacklist = await loadBlacklist();
-  return period === "all"
-    ? cachedLong(period, blacklist)
-    : cachedShort(period, blacklist);
+  return resolveAdminRead<CodeSwitchRow[]>("insights_affiliate_code_switch", {
+    pg: () =>
+      period === "all"
+        ? cachedLong(period, blacklist)
+        : cachedShort(period, blacklist),
+    ch: () =>
+      getAffiliateCodeSwitchFromClickHouse(period, blacklist, new Date()),
+  });
 }
 
 export const AFFILIATE_CODE_SWITCH_MIN_COHORT = COHORT_MIN_USERS;

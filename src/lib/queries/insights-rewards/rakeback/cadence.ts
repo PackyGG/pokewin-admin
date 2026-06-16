@@ -7,6 +7,8 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRakebackCadenceFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/cadence";
 
 /**
  * Claim cadence distribution — gap-between-claims histogram per user.
@@ -129,16 +131,28 @@ async function computeCadence(
   };
 }
 
+// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+// through the cache on failure); off/comparison serve Postgres unchanged.
+async function resolveCadence(
+  period: InsightsRewardsPeriod,
+  blacklistIds: string[],
+): Promise<RakebackCadence> {
+  return resolveAdminRead<RakebackCadence>("insights_rakeback_cadence", {
+    pg: () => computeCadence(period, blacklistIds),
+    ch: () => getRakebackCadenceFromClickHouse(period, blacklistIds),
+  });
+}
+
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeCadence(period, blacklistIds),
+    resolveCadence(period, blacklistIds),
   ["insights-rewards-rakeback-cadence-v1"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeCadence(period, blacklistIds),
+    resolveCadence(period, blacklistIds),
   ["insights-rewards-rakeback-cadence-lifetime-v1"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );

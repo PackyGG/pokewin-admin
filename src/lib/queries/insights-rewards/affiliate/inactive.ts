@@ -6,6 +6,8 @@ import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getInactiveAffiliatesFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/inactive";
 
 /**
  * Inactive-affiliate lens. We surface affiliate_accounts rows that
@@ -160,7 +162,11 @@ export async function getInactiveAffiliates(
   period: InsightsRewardsPeriod,
 ): Promise<InactiveAffiliateRow[]> {
   const blacklist = await loadBlacklist();
-  return period === "all"
-    ? cachedLong(period, blacklist)
-    : cachedShort(period, blacklist);
+  return resolveAdminRead<InactiveAffiliateRow[]>("insights_affiliate_inactive", {
+    pg: () =>
+      period === "all"
+        ? cachedLong(period, blacklist)
+        : cachedShort(period, blacklist),
+    ch: () => getInactiveAffiliatesFromClickHouse(period, blacklist, new Date()),
+  });
 }

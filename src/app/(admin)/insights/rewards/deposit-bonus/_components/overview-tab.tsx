@@ -32,10 +32,16 @@ import {
 } from "@/lib/queries/insights-rewards/_period";
 import { getDepositBonusOverview } from "@/lib/queries/insights-rewards/deposit-bonus/overview";
 import { getDepositBonusCapHitRate } from "@/lib/queries/insights-rewards/deposit-bonus/cap-analysis";
-import { getDepositBonusDailyBreakdown } from "@/lib/queries/insights-rewards/deposit-bonus/daily-breakdown";
+import {
+  getDepositBonusDailyBreakdown,
+  type DepositBonusDailyRow,
+} from "@/lib/queries/insights-rewards/deposit-bonus/daily-breakdown";
 import { compareDepositBonusOverview } from "@/lib/clickhouse/compare/insights-deposit-bonus-overview";
 import { compareDepositBonusCapHitRate } from "@/lib/clickhouse/compare/insights-deposit-bonus-cap-hit-rate";
 import { compareDepositBonusDailyBreakdown } from "@/lib/clickhouse/compare/deposit-bonus-daily";
+import { getDepositBonusDailyBreakdownFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/deposit-bonus/daily-breakdown";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { DepositBonusChart } from "@/app/(admin)/rewards/analytics/deposit-bonus-chart";
 
 /**
@@ -73,7 +79,20 @@ export async function OverviewTab({
       "insights-rewards-deposit-bonus.cap-hit-rate",
     ),
     safeQuery(
-      () => getDepositBonusDailyBreakdown(period),
+      () =>
+        resolveAdminRead<DepositBonusDailyRow[]>(
+          "insights_deposit_bonus_daily_breakdown",
+          {
+            pg: () => getDepositBonusDailyBreakdown(period),
+            ch: async () =>
+              getDepositBonusDailyBreakdownFromClickHouse(
+                period,
+                await getExcludedUserIds(),
+              ),
+            compare: (pg) =>
+              void compareDepositBonusDailyBreakdown(period, pg),
+          },
+        ),
       [],
       "insights-rewards-deposit-bonus.daily",
     ),
@@ -109,7 +128,6 @@ export async function OverviewTab({
       totalCount: cap.totalCount,
     });
   }
-  void compareDepositBonusDailyBreakdown(period, daily);
 
   if (overview.count === 0) {
     return (

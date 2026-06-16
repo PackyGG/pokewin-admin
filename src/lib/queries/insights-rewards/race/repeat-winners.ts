@@ -1,4 +1,6 @@
 import { unstable_cache } from "next/cache";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRaceInsightsRepeatWinnersFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/repeat-winners";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -145,14 +147,20 @@ async function computeRepeatWinners(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeRepeatWinners(period, blacklistIds),
+    resolveAdminRead<RaceRepeatWinnersResult>("insights_race_repeat", {
+      pg: () => computeRepeatWinners(period, blacklistIds),
+      ch: () => getRaceInsightsRepeatWinnersFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-race-repeat-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeRepeatWinners(period, blacklistIds),
+    resolveAdminRead<RaceRepeatWinnersResult>("insights_race_repeat", {
+      pg: () => computeRepeatWinners(period, blacklistIds),
+      ch: () => getRaceInsightsRepeatWinnersFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-race-repeat-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

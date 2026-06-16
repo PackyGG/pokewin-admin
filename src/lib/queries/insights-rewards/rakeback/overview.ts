@@ -7,6 +7,8 @@ import {
 } from "@/lib/queries/insights-rewards/_period";
 import { makeCachedPair } from "@/lib/queries/insights-rewards/_cache";
 import { RAKEBACK_CACHE_TAGS } from "@/lib/queries/insights-rewards/rakeback/_cache-tags";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRakebackOverviewFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/overview";
 
 /**
  * Rakeback overview headline numbers for /insights/rewards/rakeback.
@@ -143,11 +145,23 @@ async function computeOverview(
   };
 }
 
+// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+// through the cache on failure); off/comparison serve Postgres unchanged.
+async function resolveOverview(
+  period: InsightsRewardsPeriod,
+  blacklistIds: string[],
+): Promise<RakebackOverview> {
+  return resolveAdminRead<RakebackOverview>("insights_rakeback_overview", {
+    pg: () => computeOverview(period, blacklistIds),
+    ch: () => getRakebackOverviewFromClickHouse(period, blacklistIds),
+  });
+}
+
 // Shared 60s/300s `(period,blacklist)`-keyed cache pair (short for finite
 // windows that change as new claims land, long for the lifetime sweep that
 // barely moves). Behaviour identical to the hand-rolled pair this replaces.
 export const getRakebackOverview = makeCachedPair(
-  computeOverview,
+  resolveOverview,
   "insights-rewards-rakeback-overview",
   RAKEBACK_CACHE_TAGS,
 );

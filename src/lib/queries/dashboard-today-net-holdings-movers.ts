@@ -7,6 +7,8 @@ import { withTiming } from "@/lib/observability/query-timings";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
 import { statsExcludedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getTodayNetHoldingsTopHoldersFromClickHouse } from "@/lib/clickhouse/queries/dashboard/net-holdings-movers";
 
 /**
  * Top net-holdings movers for the P&L Today tile's "Net holdings Δ"
@@ -196,11 +198,17 @@ export async function getTodayNetHoldingsTopHolders(): Promise<TodayNetHoldingsT
     const dayKey = sinceIso.slice(0, 10);
     const excluded = await getExcludedUserIds();
 
-    const { holders } = await cachedTodayNetHoldingsTopHolders(
-      dayKey,
-      sinceIso,
-      excluded,
-    );
+    // CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+    // through on failure); off/comparison serve Postgres unchanged. The
+    // `dayStartIso` scalar is assembled here from the same window; comparison-
+    // mode drift is logged by the dashboard action's existing
+    // compareDashboardNetHoldingsMovers() call, so no compare thunk here.
+    const { holders } = await resolveAdminRead<
+      Omit<TodayNetHoldingsTopHolders, "dayStartIso">
+    >("dashboard_net_holdings_movers", {
+      pg: () => cachedTodayNetHoldingsTopHolders(dayKey, sinceIso, excluded),
+      ch: () => getTodayNetHoldingsTopHoldersFromClickHouse(since, excluded),
+    });
     return { holders, dayStartIso: sinceIso };
   });
 }

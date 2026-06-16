@@ -8,6 +8,8 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRakebackGeoSourceFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/geo-source";
 
 /**
  * Geo + signup-source breakdown for rakeback claimants.
@@ -134,16 +136,28 @@ async function computeGeoSource(
   return { countries, sources, totalRakeback };
 }
 
+// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+// through the cache on failure); off/comparison serve Postgres unchanged.
+async function resolveGeoSource(
+  period: InsightsRewardsPeriod,
+  blacklistIds: string[],
+): Promise<RakebackGeoSource> {
+  return resolveAdminRead<RakebackGeoSource>("insights_rakeback_geo", {
+    pg: () => computeGeoSource(period, blacklistIds),
+    ch: () => getRakebackGeoSourceFromClickHouse(period, blacklistIds),
+  });
+}
+
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeGeoSource(period, blacklistIds),
+    resolveGeoSource(period, blacklistIds),
   ["insights-rewards-rakeback-geo-v1"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeGeoSource(period, blacklistIds),
+    resolveGeoSource(period, blacklistIds),
   ["insights-rewards-rakeback-geo-lifetime-v1"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );

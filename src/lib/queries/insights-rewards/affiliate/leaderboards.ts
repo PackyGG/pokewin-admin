@@ -6,6 +6,8 @@ import {
   type InsightsRewardsPeriod,
 } from "../_period";
 import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getTopAffiliatesByWagerFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/affiliate/leaderboards";
 
 /**
  * Two-lens leaderboards for the affiliate program. Both lenses sit on
@@ -220,7 +222,12 @@ export async function getTopAffiliatesByWager(
   period: InsightsRewardsPeriod,
 ): Promise<TopAffiliateByWager[]> {
   const blacklist = await loadBlacklist();
-  return period === "all"
-    ? cachedTopByWagerLong(period, blacklist)
-    : cachedTopByWagerShort(period, blacklist);
+  return resolveAdminRead<TopAffiliateByWager[]>("insights_affiliate_top_wager", {
+    pg: () =>
+      period === "all"
+        ? cachedTopByWagerLong(period, blacklist)
+        : cachedTopByWagerShort(period, blacklist),
+    ch: () =>
+      getTopAffiliatesByWagerFromClickHouse(period, blacklist, new Date()),
+  });
 }

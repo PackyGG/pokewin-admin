@@ -28,6 +28,13 @@ import {
   compareTopOpenedPacks24h,
   comparePackAndBattleStats,
 } from "@/lib/clickhouse/compare/analytics-packs";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import {
+  getPackProfitabilityFromClickHouse,
+  getTopOpenedPacks24hFromClickHouse,
+  getPackAndBattleStatsFromClickHouse,
+} from "@/lib/clickhouse/queries/analytics/packs";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { BattleModesSection, PackPopularitySection } from "./sections";
 import type { AnalyticsPeriod } from "./types";
 
@@ -83,17 +90,47 @@ export async function PacksBattlesTab({
   const [profitabilityResult, overviewResult, topPacks24hResult] =
     await Promise.all([
       safeQuery(
-        () => getPackProfitability(period),
+        () =>
+          resolveAdminRead<Awaited<ReturnType<typeof getPackProfitability>>>(
+            "analytics_packs_profitability",
+            {
+              pg: () => getPackProfitability(period),
+              ch: async () =>
+                getPackProfitabilityFromClickHouse(
+                  period,
+                  await getExcludedUserIds(),
+                ),
+            },
+          ),
         null,
         "analytics.packs.profitability",
       ),
       safeQuery(
-        () => getPackAndBattleStats(heroPeriod),
+        () =>
+          resolveAdminRead<Awaited<ReturnType<typeof getPackAndBattleStats>>>(
+            "analytics_packs_stats",
+            {
+              pg: () => getPackAndBattleStats(heroPeriod),
+              ch: async () =>
+                getPackAndBattleStatsFromClickHouse(
+                  heroPeriod,
+                  await getExcludedUserIds(),
+                ),
+            },
+          ),
         null,
         "analytics.packs.overview",
       ),
       safeQuery(
-        () => getTopOpenedPacks24h(10),
+        () =>
+          resolveAdminRead<Awaited<ReturnType<typeof getTopOpenedPacks24h>>>(
+            "analytics_packs_top24h",
+            {
+              pg: () => getTopOpenedPacks24h(10),
+              ch: async () =>
+                getTopOpenedPacks24hFromClickHouse(10, await getExcludedUserIds()),
+            },
+          ),
         null,
         "analytics.packs.top24h",
       ),

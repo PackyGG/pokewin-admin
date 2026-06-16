@@ -7,6 +7,9 @@ import {
 } from "lucide-react";
 import { getUsersByCountry } from "@/lib/queries/map";
 import { compareAnalyticsMap } from "@/lib/clickhouse/compare/analytics-map-compare";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getUsersByCountryFromClickHouse } from "@/lib/clickhouse/queries/analytics/map";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
@@ -41,7 +44,15 @@ export async function MapTab({
   metric: MapMetric;
 }) {
   const { data, error } = await safeQuery(
-    () => getUsersByCountry(period),
+    () =>
+      resolveAdminRead<Awaited<ReturnType<typeof getUsersByCountry>>>(
+        "analytics_map",
+        {
+          pg: () => getUsersByCountry(period),
+          ch: async () =>
+            getUsersByCountryFromClickHouse(period, await getExcludedUserIds()),
+        },
+      ),
     null,
     "analytics.map",
   );

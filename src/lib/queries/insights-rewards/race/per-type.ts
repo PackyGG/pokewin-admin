@@ -1,4 +1,6 @@
 import { unstable_cache } from "next/cache";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRaceInsightsPerTypeFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/race/per-type";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
@@ -209,14 +211,20 @@ async function computePerType(
 
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computePerType(period, blacklistIds),
+    resolveAdminRead<RacePerTypeRow[]>("insights_race_per_type", {
+      pg: () => computePerType(period, blacklistIds),
+      ch: () => getRaceInsightsPerTypeFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-race-per-type-v1"],
   { revalidate: 60, tags: ["insights-rewards-race"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computePerType(period, blacklistIds),
+    resolveAdminRead<RacePerTypeRow[]>("insights_race_per_type", {
+      pg: () => computePerType(period, blacklistIds),
+      ch: () => getRaceInsightsPerTypeFromClickHouse(period, blacklistIds),
+    }),
   ["insights-rewards-race-per-type-lifetime-v1"],
   { revalidate: 300, tags: ["insights-rewards-race"] },
 );

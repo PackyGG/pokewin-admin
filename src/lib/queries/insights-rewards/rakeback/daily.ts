@@ -8,6 +8,8 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getRakebackDailyFromClickHouse } from "@/lib/clickhouse/queries/insights-rewards/rakeback/daily";
 
 /**
  * Day-by-day breakdown for the rakeback insights page:
@@ -78,16 +80,28 @@ async function computeDaily(
   });
 }
 
+// CQRS serve-path: clickhouse mode serves the CH twin (SOLE read, throws
+// through the cache on failure); off/comparison serve Postgres unchanged.
+async function resolveDaily(
+  period: InsightsRewardsPeriod,
+  blacklistIds: string[],
+): Promise<RakebackDailyPoint[]> {
+  return resolveAdminRead<RakebackDailyPoint[]>("insights_rakeback_daily", {
+    pg: () => computeDaily(period, blacklistIds),
+    ch: () => getRakebackDailyFromClickHouse(period, blacklistIds),
+  });
+}
+
 const cachedShort = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeDaily(period, blacklistIds),
+    resolveDaily(period, blacklistIds),
   ["insights-rewards-rakeback-daily-v1"],
   { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
 
 const cachedLong = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeDaily(period, blacklistIds),
+    resolveDaily(period, blacklistIds),
   ["insights-rewards-rakeback-daily-lifetime-v1"],
   { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
 );
