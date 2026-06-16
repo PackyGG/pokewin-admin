@@ -47,6 +47,13 @@ export type WithdrawnCoinsData = {
   physicalCount: number;
 };
 
+// Lifetime (`all`) is capped at this lookback rather than an unbounded
+// full-history scan — the unbounded-lifetime pattern CLAUDE.md
+// ("Performance & Daten-Laden") forbids. Mirrors the reward-side
+// `INSIGHTS_LIFETIME_LOOKBACK_DAYS` (365d); covers all currently-relevant
+// withdrawal activity.
+const LIFETIME_LOOKBACK_DAYS = 365;
+
 function intervalSqlForPeriod(period: WithdrawalsPeriod): string | null {
   switch (period) {
     case "7d":
@@ -56,7 +63,7 @@ function intervalSqlForPeriod(period: WithdrawalsPeriod): string | null {
     case "90d":
       return "INTERVAL '90 days'";
     case "all":
-      return null;
+      return `INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'`;
   }
 }
 

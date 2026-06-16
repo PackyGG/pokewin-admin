@@ -31,6 +31,13 @@ import { blacklistNotInClause } from "./_blacklist";
 
 export type LtvPeriod = "7d" | "30d" | "90d" | "all";
 
+// Lifetime (`all`) is capped at this lookback rather than scanning the
+// entire ledger history with no lower bound — the unbounded-lifetime
+// pattern CLAUDE.md ("Performance & Daten-Laden") forbids. Mirrors the
+// reward-side `INSIGHTS_LIFETIME_LOOKBACK_DAYS` (365d) so the two stay
+// aligned; covers all currently-relevant activity.
+const LIFETIME_LOOKBACK_DAYS = 365;
+
 function daysForPeriod(period: LtvPeriod): number | null {
   switch (period) {
     case "7d":
@@ -40,7 +47,7 @@ function daysForPeriod(period: LtvPeriod): number | null {
     case "90d":
       return 90;
     case "all":
-      return null;
+      return LIFETIME_LOOKBACK_DAYS;
   }
 }
 

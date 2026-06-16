@@ -62,6 +62,11 @@ const LIMIT = 20;
 const CANDIDATE_LIMIT = 500;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// Lifetime (`all`) capped at 365d to match the PG twin (analytics-top.ts
+// LIFETIME_LOOKBACK_DAYS) and the house INSIGHTS_LIFETIME_LOOKBACK_DAYS
+// convention, so cutover/comparison stays bounded and consistent.
+const LIFETIME_LOOKBACK_DAYS = 365;
+
 function daysForPeriod(period: LeaderboardPeriod): number | null {
   switch (period) {
     case "7d":
@@ -69,7 +74,7 @@ function daysForPeriod(period: LeaderboardPeriod): number | null {
     case "30d":
       return 30;
     case "all":
-      return null;
+      return LIFETIME_LOOKBACK_DAYS;
   }
 }
 

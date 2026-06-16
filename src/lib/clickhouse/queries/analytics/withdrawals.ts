@@ -33,6 +33,11 @@ import { CH_DB, chDateTime, toNumber } from "../_shared";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// Lifetime (`all`) capped at 365d to match the PG twin (analytics-withdrawals.ts
+// LIFETIME_LOOKBACK_DAYS) and the house INSIGHTS_LIFETIME_LOOKBACK_DAYS
+// convention, so cutover/comparison stays bounded and consistent.
+const LIFETIME_LOOKBACK_DAYS = 365;
+
 function daysForPeriod(period: WithdrawalsPeriod): number | null {
   switch (period) {
     case "7d":
@@ -42,7 +47,7 @@ function daysForPeriod(period: WithdrawalsPeriod): number | null {
     case "90d":
       return 90;
     case "all":
-      return null;
+      return LIFETIME_LOOKBACK_DAYS;
   }
 }
 

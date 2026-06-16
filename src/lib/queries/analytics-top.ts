@@ -56,6 +56,13 @@ import {
 
 export type LeaderboardPeriod = "7d" | "30d" | "all";
 
+// Lifetime (`all`) is capped at this lookback rather than an unbounded
+// full-history scan — the unbounded-lifetime pattern CLAUDE.md
+// ("Performance & Daten-Laden") forbids. Mirrors the reward-side
+// `INSIGHTS_LIFETIME_LOOKBACK_DAYS` (365d); covers all currently-relevant
+// leaderboard activity.
+const LIFETIME_LOOKBACK_DAYS = 365;
+
 function daysForPeriod(period: LeaderboardPeriod): number | null {
   switch (period) {
     case "7d":
@@ -63,7 +70,7 @@ function daysForPeriod(period: LeaderboardPeriod): number | null {
     case "30d":
       return 30;
     case "all":
-      return null;
+      return LIFETIME_LOOKBACK_DAYS;
   }
 }
 

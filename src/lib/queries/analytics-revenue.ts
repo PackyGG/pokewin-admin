@@ -56,8 +56,14 @@ import { realCustomersScopeSql } from "./insights-games/_shared";
 
 export type RevenuePeriod = "7d" | "30d" | "90d" | "all";
 
+// Lifetime (`all`) is capped at this lookback rather than an unbounded
+// full-history scan — the unbounded-lifetime pattern CLAUDE.md
+// ("Performance & Daten-Laden") forbids. Mirrors the reward-side
+// `INSIGHTS_LIFETIME_LOOKBACK_DAYS` (365d); covers all currently-relevant
+// activity while keeping both the metric totals and the daily chart bounded.
+const LIFETIME_LOOKBACK_DAYS = 365;
+
 function periodToMetricWindow(period: RevenuePeriod): MetricWindow {
-  if (period === "all") return { since: null };
   const days = daysForPeriod(period);
   return { since: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
 }
@@ -71,15 +77,12 @@ function daysForPeriod(period: RevenuePeriod): number {
     case "90d":
       return 90;
     case "all":
-      // Lifetime — only used to build the `created_at >= …` chart filter;
-      // the canonical metric window is `{ since: null }` (no lower bound).
-      return 36500;
+      return LIFETIME_LOOKBACK_DAYS;
   }
 }
 
 /** Inline `AND created_at >= NOW() - INTERVAL …` for the daily chart query. */
 function dateFilterForPeriod(period: RevenuePeriod): string {
-  if (period === "all") return "";
   return `AND created_at >= NOW() - INTERVAL '${daysForPeriod(period)} days'`;
 }
 

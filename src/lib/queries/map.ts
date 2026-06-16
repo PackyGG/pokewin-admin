@@ -77,9 +77,15 @@ async function computeUsersByCountry(
   // unambiguously owns the column name. For the tx query we re-derive the
   // boundary on lt.created_at so the period semantics stay consistent —
   // `today` anchored at midnight UTC, the others rolling N days.
+  // The financials leg joins ledger_transactions (heavy). Lifetime (`all`)
+  // is capped at 365d here so it bounds the ledger scan instead of an
+  // unbounded full-history sweep (CLAUDE.md "Performance & Daten-Laden";
+  // mirrors the reward-side INSIGHTS_LIFETIME_LOOKBACK_DAYS). The signup
+  // user-count leg (dateFilter above) stays lifetime — it scans the much
+  // smaller users table, not the ledger.
   const txDateFilter =
     period === "all"
-      ? ""
+      ? "AND lt.created_at >= NOW() - INTERVAL '365 days'"
       : period === "today"
         ? `AND lt.created_at >= '${utcStartOfDay().toISOString()}'::timestamptz`
         : `AND lt.created_at >= NOW() - INTERVAL '${periodToDays[period]} days'`;
