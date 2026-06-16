@@ -143,9 +143,10 @@ async function computeAffiliateAnalytics(
  * `computeAffiliateAnalytics`; mirrors the `getAnalyticsData` cache idiom in
  * `analytics.ts`.
  *
- * NOTE: the `all` window is an UNBOUNDED lifetime scan over
- * `affiliate_code_usages` / `affiliate_clicks` (money-exact totals — capping
- * would change displayed numbers, so it is left for owner sign-off).
+ * NOTE: the `all` window is bounded by the 365d house-convention cap
+ * (`LIFETIME_LOOKBACK_DAYS`, see `periodToDateFilter`) rather than an
+ * unbounded full-history scan. No-op on current data (< 90d old); bounds
+ * pathological future scans.
  */
 const cachedAffiliateAnalytics = unstable_cache(
   computeAffiliateAnalytics,
