@@ -361,3 +361,92 @@ export async function getLeaderboard2wkCostByUser(): Promise<
   }
   return out;
 }
+
+export type CreatorLbFrame = {
+  /** Backend leaderboard id of the current-frame board. */
+  boardId: string;
+  /** Board title (its display name on /creators/leaderboards). */
+  title: string;
+  /** Run-window start (epoch ms). */
+  startMs: number;
+  /** Run-window end (epoch ms). */
+  endMs: number;
+  /** Sponsored-weighted house cost of this board (rose). */
+  houseCostUsd: number;
+  /** True when now ∈ [start, end] (the frame is running right now). */
+  isLive: boolean;
+};
+
+/**
+ * The CURRENT deal frame per creator, defined by their approved
+ * leaderboard's run window (the owner's model: "the leaderboard frame IS
+ * the current deal"). Past boards (`end_date < now`) are dropped — those
+ * are past deals. For each creator we keep one board:
+ *   • a LIVE board (now ∈ [start,end]) wins over an upcoming one, and
+ *     among live boards the one starting latest (most current) wins;
+ *   • otherwise the soonest UPCOMING board.
+ *
+ * Reuses the SAME cached approved-board walk + sponsorship map as the cost
+ * totals — no extra backend round-trip.
+ */
+export async function getActiveLeaderboardFrameByUser(): Promise<
+  Map<string, CreatorLbFrame>
+> {
+  const all = await fetchAllApprovedLeaderboards();
+  const now = Date.now();
+
+  let sponsorship: Map<string, number>;
+  try {
+    sponsorship = await getLeaderboardSponsorshipMap(all.map((lb) => lb.id));
+  } catch (e) {
+    console.error(
+      "[leaderboard-frame] sponsorship lookup failed (treating all as 100%):",
+      e,
+    );
+    sponsorship = new Map();
+  }
+
+  const byCreator = new Map<string, CreatorLbFrame>();
+  for (const lb of all) {
+    const startMs = new Date(lb.start_date).getTime();
+    const endMs = new Date(lb.end_date).getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
+    // Past boards are past deals — skip; keep live + upcoming only.
+    if (endMs < now) continue;
+
+    const prize = Number(lb.total_prize_usd) || 0;
+    const refund = Number(lb.refund_amount_usd) || 0;
+    const net = prize - refund;
+    const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
+    const houseCostUsd = net * (pct / 100);
+    const isLive = startMs <= now && endMs >= now;
+
+    const cand: CreatorLbFrame = {
+      boardId: lb.id,
+      title: lb.title,
+      startMs,
+      endMs,
+      houseCostUsd,
+      isLive,
+    };
+
+    const existing = byCreator.get(lb.creator_user_id);
+    if (!existing) {
+      byCreator.set(lb.creator_user_id, cand);
+      continue;
+    }
+    // Live beats upcoming; tie-break by start date (latest live = most
+    // current; soonest upcoming = next to begin).
+    let better: CreatorLbFrame;
+    if (existing.isLive !== cand.isLive) {
+      better = existing.isLive ? existing : cand;
+    } else if (existing.isLive) {
+      better = cand.startMs > existing.startMs ? cand : existing;
+    } else {
+      better = cand.startMs < existing.startMs ? cand : existing;
+    }
+    byCreator.set(lb.creator_user_id, better);
+  }
+
+  return byCreator;
+}

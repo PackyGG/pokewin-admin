@@ -1,34 +1,51 @@
 import "server-only";
 
-import type { DashboardPeriod } from "@/lib/queries/dashboard-period";
-import { listRosterCreators } from "../../creators/_queries/list-roster-creators";
+import { unstable_cache } from "next/cache";
+
+import { creatorsApi, type CreatorListItem } from "@/lib/backend-api";
+
+import { getDealValueByUser } from "../../creators/_queries/deal-value-by-user";
+import { getCodeAndWagerByUser } from "../../../../(admin)/creators/_queries/code-and-wager-by-user";
+import {
+  getActiveLeaderboardFrameByUser,
+  type CreatorLbFrame,
+} from "../../../../(admin)/creators/_queries/leaderboard-cost";
+import { getFrameWagerByUser, type FrameWindow } from "./frame-wager-by-user";
 
 /**
  * Creator Hub — Profitability data.
  *
- * Sources the SAME fill-creator roster the `/creator-hub/creators` page
- * renders (`listRosterCreators` → backend creator API + the verified
- * `getDealValueByUser` deal-cost composition + windowed cohort wager). No
- * new DB read is introduced here — this only re-projects the already-loaded,
- * cached roster rows into a cost-vs-wager profitability view:
+ * Each creator with a current (active/scheduled) deal is costed over the
+ * frame of their CURRENT leaderboard cycle (the owner's model: the active
+ * leaderboard window IS the current deal; past boards are past deals). The
+ * actual wager is measured strictly INSIDE that frame, so a fixed deal cost
+ * is always compared against the wager driven in the same window.
  *
- *   dealCost      = the roster's composed deal value (withdraw cap +
- *                   leaderboard funding × house share + tip/sponsor
- *                   allowance) — house cost, rose POV.
- *   expectedWager = dealCost / house edge (7.5%) — the wager volume whose
- *                   GGR would exactly cover that cost.
- *   actualWager   = the creator's windowed cohort affiliate wager (the
- *                   roster's "Wager" column, scoped to `period`).
+ *   dealCost      = withdraw cap + this board's sponsored-weighted house
+ *                   cost + tip/sponsor allowance (house cost, rose POV).
+ *   expectedWager = dealCost / house edge (7.5%).
+ *   actualWager   = code-cohort wager inside [frame start, min(now, end)];
+ *                   0 for a not-yet-started (upcoming) frame.
  *   conversion    = actualWager / expectedWager (≥1× = deal pays for itself).
+ *
+ * No timespan toggle: the window is the deal frame itself, per creator.
  */
 
 const HOUSE_EDGE = 0.075;
+const PAGE_SIZE = 100;
+const FETCH_CAP = 500;
 
 export type CreatorProfitabilityRow = {
   userId: string;
   username: string | null;
   image: string | null;
   code: string | null;
+  /** Current-frame leaderboard title, when the frame is a board. */
+  boardTitle: string | null;
+  frameStartMs: number | null;
+  frameEndMs: number | null;
+  /** True when the frame is running right now. */
+  isLive: boolean;
   capUsd: number;
   leaderboardUsd: number;
   tipSponsorUsd: number;
@@ -50,50 +67,153 @@ export type ProfitabilityTotals = {
 export type ProfitabilityData = {
   rows: CreatorProfitabilityRow[];
   totals: ProfitabilityTotals;
-  /** True when the backend roster walk failed (page shows the error state). */
+  /** True when the backend creator walk failed (page shows the error state). */
   rosterUnavailable: boolean;
 };
 
-export async function getCreatorProfitability(
-  period: DashboardPeriod,
-): Promise<ProfitabilityData> {
-  // deal_desc => biggest deal cost first; "fill" => creators on a fill deal,
-  // exactly the roster the /creators page's default tab walks.
-  const { creators, rosterUnavailable } = await listRosterCreators(
-    period,
-    "deal_desc",
-    "fill",
+const EMPTY_TOTALS: ProfitabilityTotals = {
+  totalCost: 0,
+  totalActualPnl: 0,
+  totalExpectedWager: 0,
+  totalCreatorWager: 0,
+  avgConversionRate: 0,
+};
+
+async function computeWalk(): Promise<CreatorListItem[]> {
+  const firstPage = await creatorsApi.list({ offset: 0, limit: PAGE_SIZE });
+  const all = [...firstPage.data];
+  const pagesNeeded = Math.min(
+    Math.ceil(FETCH_CAP / PAGE_SIZE),
+    Math.ceil(firstPage.total / PAGE_SIZE),
+  );
+  const rest: Promise<typeof firstPage>[] = [];
+  for (let p = 1; p < pagesNeeded; p++) {
+    rest.push(creatorsApi.list({ offset: p * PAGE_SIZE, limit: PAGE_SIZE }));
+  }
+  for (const page of await Promise.all(rest)) all.push(...page.data);
+  return all;
+}
+
+// Shares the roster walk's revalidation tag so it stays in lockstep, but is
+// its own cache slot (this page only needs identity + current deal id +
+// deal window — not the roster's heavy enrichment passes).
+const walkCreators = unstable_cache(computeWalk, ["profitability-creator-walk-v1"], {
+  revalidate: 180,
+  tags: ["creator-hub-roster-walk"],
+});
+
+export async function getCreatorProfitability(): Promise<ProfitabilityData> {
+  let roster: CreatorListItem[];
+  try {
+    roster = await walkCreators();
+  } catch (err) {
+    console.error("[profitability] backend creator walk failed:", err);
+    return { rows: [], totals: EMPTY_TOTALS, rosterUnavailable: true };
+  }
+
+  const fill = roster.filter(
+    (c) =>
+      c.current_deal != null &&
+      (c.current_deal.status === "active" ||
+        c.current_deal.status === "scheduled"),
   );
 
-  const rows: CreatorProfitabilityRow[] = creators
-    .filter((c) => c.dealValue != null && c.dealValue.dealValueUsd > 0)
-    .map((c) => {
-      const dv = c.dealValue!;
-      const dealCost = dv.dealValueUsd;
-      const expectedWager = dealCost / HOUSE_EDGE;
-      const actualWager = c.windowedWagerUsd;
-      const conversionRate = expectedWager > 0 ? actualWager / expectedWager : 0;
-      return {
+  if (fill.length === 0) {
+    return { rows: [], totals: EMPTY_TOTALS, rosterUnavailable: false };
+  }
+
+  const ids = fill.map((c) => c.id);
+  const deals = fill.map((c) => ({ userId: c.id, dealId: c.current_deal!.id }));
+
+  const [frames, dealValues, codeWager] = await Promise.all([
+    getActiveLeaderboardFrameByUser().catch((err) => {
+      console.error("[profitability] leaderboard frame fetch failed:", err);
+      return new Map<string, CreatorLbFrame>();
+    }),
+    getDealValueByUser(deals).catch((err) => {
+      console.error("[profitability] deal-value fetch failed:", err);
+      return new Map<string, { capUsd: number; tipSponsorUsd: number }>();
+    }),
+    getCodeAndWagerByUser(ids).catch((err) => {
+      console.error("[profitability] code fetch failed:", err);
+      return new Map<string, { code: string | null }>();
+    }),
+  ]);
+
+  const now = Date.now();
+
+  // Resolve each creator's frame (leaderboard window preferred, deal week
+  // as fallback) and collect the started-frame windows for the wager query.
+  const resolved = new Map<
+    string,
+    { board: CreatorLbFrame | null; startMs: number; endMs: number; isLive: boolean }
+  >();
+  const frameWindows: FrameWindow[] = [];
+  for (const c of fill) {
+    const board = frames.get(c.id) ?? null;
+    const startMs = board
+      ? board.startMs
+      : Date.parse(c.current_deal!.week_start_utc);
+    const endMs = board
+      ? board.endMs
+      : Date.parse(c.current_deal!.week_end_utc);
+    const isLive =
+      Number.isFinite(startMs) &&
+      Number.isFinite(endMs) &&
+      startMs <= now &&
+      endMs >= now;
+    resolved.set(c.id, { board, startMs, endMs, isLive });
+
+    if (Number.isFinite(startMs) && startMs <= now) {
+      const endForQuery = Number.isFinite(endMs) ? Math.min(endMs, now) : now;
+      frameWindows.push({
         userId: c.id,
-        username: c.username,
-        image: c.image,
-        code: c.code,
-        capUsd: dv.capUsd,
-        leaderboardUsd: dv.leaderboardUsd,
-        tipSponsorUsd: dv.tipSponsorUsd,
-        dealCost,
-        expectedWager,
-        actualWager,
-        conversionRate,
-      };
-    });
+        startIso: new Date(startMs).toISOString(),
+        endIso: new Date(endForQuery).toISOString(),
+      });
+    }
+  }
+
+  const wagerByUser = await getFrameWagerByUser(frameWindows).catch((err) => {
+    console.error("[profitability] frame wager fetch failed:", err);
+    return new Map<string, number>();
+  });
+
+  const rows: CreatorProfitabilityRow[] = fill.map((c) => {
+    const dv = dealValues.get(c.id);
+    const fr = resolved.get(c.id)!;
+    const capUsd = dv?.capUsd ?? 0;
+    const tipSponsorUsd = dv?.tipSponsorUsd ?? 0;
+    const leaderboardUsd = fr.board?.houseCostUsd ?? 0;
+    const dealCost = capUsd + leaderboardUsd + tipSponsorUsd;
+    const expectedWager = dealCost / HOUSE_EDGE;
+    const actualWager = wagerByUser.get(c.id) ?? 0;
+    const conversionRate = expectedWager > 0 ? actualWager / expectedWager : 0;
+
+    return {
+      userId: c.id,
+      username: c.username,
+      image: c.image,
+      code: codeWager.get(c.id)?.code ?? null,
+      boardTitle: fr.board?.title ?? null,
+      frameStartMs: Number.isFinite(fr.startMs) ? fr.startMs : null,
+      frameEndMs: Number.isFinite(fr.endMs) ? fr.endMs : null,
+      isLive: fr.isLive,
+      capUsd,
+      leaderboardUsd,
+      tipSponsorUsd,
+      dealCost,
+      expectedWager,
+      actualWager,
+      conversionRate,
+    };
+  });
+
+  rows.sort((a, b) => b.dealCost - a.dealCost);
 
   const totalCost = rows.reduce((acc, r) => acc + r.dealCost, 0);
   const totalExpectedWager = rows.reduce((acc, r) => acc + r.expectedWager, 0);
   const totalCreatorWager = rows.reduce((acc, r) => acc + r.actualWager, 0);
-
-  // Actual P&L of the deal program (house-POV): the GGR the creators' real
-  // windowed wager throws off at the house edge, minus what the deals cost.
   const totalActualPnl = totalCreatorWager * HOUSE_EDGE - totalCost;
 
   const converting = rows.filter((r) => r.expectedWager > 0);
@@ -112,6 +232,6 @@ export async function getCreatorProfitability(
       totalCreatorWager,
       avgConversionRate,
     },
-    rosterUnavailable,
+    rosterUnavailable: false,
   };
 }

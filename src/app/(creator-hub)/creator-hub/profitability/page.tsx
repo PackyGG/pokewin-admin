@@ -10,10 +10,7 @@ import {
 import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/utils/format";
-import { DASHBOARD_PERIOD_LABELS } from "@/lib/queries/dashboard-period";
 
-import { resolveRosterPeriod } from "../creators/_lib/roster-params";
-import { RosterPeriodControl } from "../creators/_components/roster-period-control";
 import { getCreatorProfitability } from "./_queries/deal-profitability";
 import { HubKpiBox } from "../_components/hub-kpi-box";
 import { ProfitabilityList } from "./_components/profitability-list";
@@ -24,21 +21,13 @@ export const metadata = { title: "Profitability · Creator Hub" };
 /**
  * Creator Hub — Profitability.
  *
- * Costs out the fill-creator roster (the same backend-API roster the
- * /creators page walks) and checks each deal cost against the wager the
- * creator actually drove in the selected window. Shell-first: the hero +
- * window chips paint instantly; the costed roster streams behind Suspense
- * (active-timeframe-only, keyed on the window).
+ * Costs out every creator with a current deal over the frame of their
+ * active leaderboard cycle, and checks it against the wager driven INSIDE
+ * that frame. Shell-first: the hero paints instantly; the costed roster
+ * streams behind Suspense.
  */
-export default async function CreatorHubProfitabilityPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | undefined>>;
-}) {
+export default async function CreatorHubProfitabilityPage() {
   await requireCreatorHubPageAccess();
-
-  const period = resolveRosterPeriod((await searchParams).period);
-  const windowLabel = DASHBOARD_PERIOD_LABELS[period];
 
   return (
     <div className="space-y-6">
@@ -47,33 +36,22 @@ export default async function CreatorHubProfitabilityPage({
           icon={TrendingUp}
           accent="emerald"
           title="Profitability"
-          subtitle="Per-creator deal cost vs expected & actual wager — conversion check."
+          subtitle="Per-creator deal cost vs the wager driven in the current deal frame."
         />
       </PageHero>
 
       <div className="space-y-3">
-        <SectionHeading
-          icon={Coins}
-          title="Deal economics"
-          action={<RosterPeriodControl current={period} />}
-        />
-        <Suspense key={period} fallback={<ProfitabilitySkeleton />}>
-          <ProfitabilitySection period={period} windowLabel={windowLabel} />
+        <SectionHeading icon={Coins} title="Deal economics" />
+        <Suspense fallback={<ProfitabilitySkeleton />}>
+          <ProfitabilitySection />
         </Suspense>
       </div>
     </div>
   );
 }
 
-async function ProfitabilitySection({
-  period,
-  windowLabel,
-}: {
-  period: ReturnType<typeof resolveRosterPeriod>;
-  windowLabel: string;
-}) {
-  const { rows, totals, rosterUnavailable } =
-    await getCreatorProfitability(period);
+async function ProfitabilitySection() {
+  const { rows, totals, rosterUnavailable } = await getCreatorProfitability();
 
   if (rosterUnavailable) {
     return <RosterError />;
@@ -111,7 +89,7 @@ async function ProfitabilitySection({
           icon={Activity}
           accent="emerald"
           value={formatCurrency(totals.totalCreatorWager)}
-          sub={`Actual · ${windowLabel}`}
+          sub="Actual · in deal frame"
         />
         <HubKpiBox
           label="Avg Conversion"
@@ -124,9 +102,8 @@ async function ProfitabilitySection({
 
       <div className="space-y-2">
         <p className="text-[11px] text-muted-foreground">
-          Deal cost is lifetime/per-deal (cap + leaderboard × house share +
-          tip & sponsorship allowance). Actual wager is the creator&apos;s
-          cohort wager scoped to {windowLabel}.
+          Each creator&apos;s deal cost is checked against the wager driven
+          inside their current leaderboard cycle (the active deal frame).
         </p>
         <ProfitabilityList rows={rows} />
       </div>
