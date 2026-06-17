@@ -147,6 +147,14 @@ export type AttributionJourneyEntry = {
   firstUsedAt: string;
   /** Most-recent acu row under this code (ISO) — when they last touched it. */
   lastUsedAt: string;
+  /**
+   * Most-recent date this specific code was actually APPLIED to the user —
+   * MAX(created_at) of the `signup` (attribution) acu rows under the code,
+   * as opposed to `lastUsedAt` which is dominated by the user's later
+   * deposit/wager activity. NULL when no `signup` row exists for the code
+   * (e.g. an admin-injected code, which writes a `deposit`-type row).
+   */
+  lastAppliedAt: string | null;
   /** Deposits booked under this code — Σ acu.deposit_amount_usd. */
   depositAmountUsd: number;
   /** Wager booked under this code — Σ acu.wager_amount_usd. */
@@ -161,6 +169,7 @@ type AttributionJourneyRow = {
   creator_name: string | null;
   first_used_at: Date;
   last_used_at: Date;
+  last_applied_at: Date | null;
   deposit_total: string;
   wager_total: string;
   usage_count: string;
@@ -185,6 +194,7 @@ export async function getUserAttributionJourney(
             (array_agg(COALESCE(u.username, u.email) ORDER BY acu.created_at DESC))[1] AS creator_name,
             MIN(acu.created_at) AS first_used_at,
             MAX(acu.created_at) AS last_used_at,
+            MAX(acu.created_at) FILTER (WHERE acu.usage_type::text = 'signup') AS last_applied_at,
             COALESCE(SUM(acu.deposit_amount_usd::numeric), 0)::text AS deposit_total,
             COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text AS wager_total,
             COUNT(*)::text AS usage_count
@@ -204,6 +214,7 @@ export async function getUserAttributionJourney(
     creatorName: r.creator_name,
     firstUsedAt: r.first_used_at.toISOString(),
     lastUsedAt: r.last_used_at.toISOString(),
+    lastAppliedAt: r.last_applied_at ? r.last_applied_at.toISOString() : null,
     depositAmountUsd: toNumber(r.deposit_total),
     wagerAmountUsd: toNumber(r.wager_total),
     usageCount: Number(r.usage_count),

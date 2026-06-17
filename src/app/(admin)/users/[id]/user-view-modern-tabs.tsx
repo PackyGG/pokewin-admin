@@ -1351,6 +1351,14 @@ function AttributionJourneySection({ userId }: { userId: string }) {
                           · <RelativeTime date={row.firstUsedAt} />
                         </span>
                       </p>
+                      {row.lastAppliedAt && (
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          Last applied:{" "}
+                          <span className="font-medium text-foreground/80">
+                            {formatDateTime(row.lastAppliedAt)}
+                          </span>
+                        </p>
+                      )}
                     </div>
                   </div>
 
