@@ -97,7 +97,7 @@ export async function GET(request: Request): Promise<Response> {
     try {
       const rows = await clickhouseRead.query<{ latest_unix: number | null }>({
         queryName: "health.latest_event",
-        sql: "SELECT toUnixTimestamp(max(created_at)) AS latest_unix FROM ledger_transactions",
+        sql: "SELECT toUnixTimestamp(max(created_at)) AS latest_unix FROM packy_prod.public_ledger_transactions FINAL WHERE _peerdb_is_deleted = 0",
         timeoutMs: 5_000,
       });
       const latestUnix = rows[0]?.latest_unix ?? null;
