@@ -143,6 +143,24 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // Roadmap — internal product-planning month calendar. Each block is a
+    // planned feature; the detail page links Linear issues, detail fields,
+    // notes and resources. Icon `CalendarRange` MUST be registered in the
+    // ICONS map in `src/components/app-sidebar.tsx` (React #130) and, since
+    // `inPalette: true`, the id MUST also appear in PALETTE_ORDER (lockstep).
+    id: "nav.roadmap",
+    group: "Overview",
+    label: "Roadmap",
+    href: "/roadmap",
+    pageKey: "/roadmap",
+    icon: "CalendarRange",
+    description: "Plan features on a calendar; link Linear tasks",
+    keywords: ["roadmap", "calendar", "plan", "feature", "linear", "product"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     id: "nav.analytics",
     group: "Overview",
     label: "Analytics",
@@ -864,6 +882,7 @@ export function getSidebarFooterItems(): NavEntry[] {
 // references ids — all entry DATA still lives in `NAV_ENTRIES`.
 const PALETTE_ORDER: string[] = [
   "nav.dashboard",
+  "nav.roadmap",
   "nav.shifts",
   "nav.analytics",
   "nav.map",

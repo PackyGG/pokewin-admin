@@ -7,6 +7,11 @@ export type AdminPage = {
 export const ADMIN_PAGES: AdminPage[] = [
   // Navigation
   { group: "Navigation", label: "Dashboard", key: "/dashboard" },
+  // Roadmap — internal product-planning month calendar (Overview sidebar
+  // group). Grantable so non-admin "developer" accounts can be given access;
+  // admins/owners bypass. Linear task CREATION on the detail page is gated
+  // separately by requireOwner() (super-admin only).
+  { group: "Navigation", label: "Roadmap", key: "/roadmap" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
   { group: "Navigation", label: "Numbers", key: "/numbers" },
   { group: "Navigation", label: "Raw P&L", key: "/analytics/pure-pnl" },

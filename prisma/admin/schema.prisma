@@ -1246,6 +1246,36 @@ model admin_changelog_entries {
   @@index([published_at(sort: Desc)], map: "admin_changelog_entries_published_at_idx")
 }
 
+// ─── Per-pack "set / pool" assignment (admin categorization) ───────────────
+// A pack's /packs pool tab (Pokemon / One Piece / Meme / Rewards) is normally
+// DERIVED from the sets of the cards it contains. This table lets an admin
+// OVERRIDE that per-pack from the pack editor WITHOUT touching any cards — the
+// prod game DB is read-only and has no pack-level set column, so the override
+// can only live here. A pack with a row here shows under `pack_set` regardless
+// of its cards; packs with no row keep the card-derived classification.
+//
+// Provisioned at runtime via the IF-NOT-EXISTS fallback in
+// src/lib/pack-set-assignments/ensure-schema.ts — NO migration file (drifted
+// admin-DB migration history, never `migrate deploy` on it). This model block
+// mirrors the table so typed `adminDb.pack_set_assignments.*` queries work;
+// read paths catch the missing-table error (P2021 / 42P01) and degrade to
+// "no overrides". No real FKs (separate Postgres clusters) — loose columns
+// only, matching admin_leaderboard_sponsorship / admin_changelog_entries.
+model pack_set_assignments {
+  // packy.gg packs.id (uuid). Primary key: one set assignment per pack.
+  pack_id         String   @id @db.Uuid
+  // Pool key: 'pokemon' | 'onepiece' | 'meme' | 'rewards'. Validated
+  // server-side against PACK_POOLS; plain text so adding a pool needs no
+  // migration.
+  pack_set        String
+  // admin_users.id of whoever set it. Loose column (no Prisma relation).
+  set_by_admin_id String?  @db.Uuid
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([pack_set], map: "pack_set_assignments_pack_set_idx")
+}
+
 // ─── Creator Hub substrate (external data + onboarding/CRM/alerts) ──────────
 // All tables below are ADMIN-DB only, additive, and provisioned at runtime via
 // IF-NOT-EXISTS SQL (prisma/admin/sql/20260606_creator_hub_substrate.sql +
@@ -1533,4 +1563,90 @@ model creator_session_meta {
   updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@index([target_user_id], map: "creator_session_meta_target_user_idx")
+}
+
+// ── Product Roadmap (ADMIN-DB) ──────────────────────────────────────
+// Internal feature-planning roadmap rendered as a month calendar in the
+// Overview section. Each row is a feature block; the detail page links
+// Linear issues (live status cached on roadmap_linear_links), user-defined
+// detail fields, free-text markdown notes and a links section. Pure
+// admin/product data — never touches the MAIN game DB.
+enum roadmap_status {
+  planned
+  in_progress
+  shipped
+  blocked
+  cancelled
+}
+
+model roadmap_items {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title       String
+  description String?
+  status      roadmap_status @default(planned)
+  // Calendar placement. Date-only semantics, stored as timestamptz at UTC
+  // midnight; end_date is inclusive of the block's last day.
+  start_date  DateTime       @db.Timestamptz(6)
+  end_date    DateTime       @db.Timestamptz(6)
+  // Accent color token (a TILE_COLORS key) for the calendar block.
+  color       String?
+  // Free-text markdown notes shown on the detail page.
+  body        String?
+  sort_order  Int            @default(0)
+  // admin_users.id of the creator (loose column, no FK).
+  created_by  String?        @db.Uuid
+  archived_at DateTime?      @db.Timestamptz(6)
+  created_at  DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime       @default(now()) @updatedAt @db.Timestamptz(6)
+
+  detail_fields roadmap_detail_fields[]
+  links         roadmap_links[]
+  linear_links  roadmap_linear_links[]
+
+  @@index([archived_at, start_date], map: "roadmap_items_active_idx")
+  @@index([start_date, end_date], map: "roadmap_items_range_idx")
+}
+
+model roadmap_detail_fields {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  item_id    String        @db.Uuid
+  label      String
+  value      String
+  sort_order Int           @default(0)
+  created_at DateTime      @default(now()) @db.Timestamptz(6)
+  item       roadmap_items @relation(fields: [item_id], references: [id], onDelete: Cascade)
+
+  @@index([item_id], map: "roadmap_detail_fields_item_idx")
+}
+
+model roadmap_links {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  item_id    String        @db.Uuid
+  label      String
+  url        String
+  sort_order Int           @default(0)
+  created_at DateTime      @default(now()) @db.Timestamptz(6)
+  item       roadmap_items @relation(fields: [item_id], references: [id], onDelete: Cascade)
+
+  @@index([item_id], map: "roadmap_links_item_idx")
+}
+
+model roadmap_linear_links {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  item_id         String        @db.Uuid
+  // Linear issue UUID + cached snapshot for offline/fallback rendering.
+  linear_issue_id String
+  identifier      String
+  title           String
+  url             String
+  state_name      String?
+  state_type      String?
+  state_color     String?
+  assignee_name   String?
+  synced_at       DateTime      @default(now()) @db.Timestamptz(6)
+  created_at      DateTime      @default(now()) @db.Timestamptz(6)
+  item            roadmap_items @relation(fields: [item_id], references: [id], onDelete: Cascade)
+
+  @@unique([item_id, linear_issue_id], map: "roadmap_linear_links_item_issue_key")
+  @@index([item_id], map: "roadmap_linear_links_item_idx")
 }
