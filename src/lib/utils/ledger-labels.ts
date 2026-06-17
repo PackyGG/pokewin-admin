@@ -33,6 +33,11 @@ const LEDGER_TYPE_LABELS: Record<string, string> = {
   // (cash + cards + voucher) trail is human-traceable. Direction / color stay
   // house-POV via `ledgerDirection` (a house cost — rose).
   battle_excess_to_voucher: "Battle win — voucher",
+  // Prize paid to a user who placed on a creator/affiliate leaderboard. The
+  // raw default ("Affiliate leaderboard prize") is clunky; admins know these
+  // as "leaderboard wins" (the dedicated Overview box uses the same term).
+  // Direction / color stay house-POV via `ledgerDirection` (a house cost — rose).
+  affiliate_leaderboard_prize: "Leaderboard win",
 };
 
 /** Humanize a raw ledger type: `card_withdrawal` → "Card withdrawal". */

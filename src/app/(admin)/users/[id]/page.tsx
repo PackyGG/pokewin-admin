@@ -115,6 +115,10 @@ const FINANCIAL_TYPES = [
   "deposit_bonus",
   "admin_balance_adjustment",
   "card_withdrawal",
+  // Cash leg of a crypto-BALANCE withdrawal (new sweepstakes model) — the user
+  // cashing out, same as card_withdrawal. Keep in sync with FINANCIAL_TX_TYPES
+  // in user-tabs-types.ts. Drift-safe via the LIVE-enum intersection.
+  "balance_withdrawal",
   "withdrawal_shipping_fee",
   "rakeback_claim",
   "balance_reward_claim",
@@ -123,6 +127,11 @@ const FINANCIAL_TYPES = [
   "gift_card_redeemed",
   "rain_win",
   "race_prize",
+  // Creator/affiliate-leaderboard win paid to the user — surfaced in the
+  // Deposits & Withdrawals feed alongside race_prize (it ALSO keeps its own
+  // "Leaderboard" box on Overview). Keep in sync with FINANCIAL_TX_TYPES in
+  // user-tabs-types.ts. Drift-safe via the LIVE-enum intersection.
+  "affiliate_leaderboard_prize",
   // Challenge prize is a direct cash payout (user completed + claimed a
   // challenge) — surface it in the Deposits & Withdrawals feed alongside the
   // other claim-shaped payouts. Drift-safe: getUserTransactions intersects

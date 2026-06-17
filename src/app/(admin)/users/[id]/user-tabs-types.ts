@@ -643,6 +643,10 @@ export const FINANCIAL_TX_TYPES = [
   "deposit_bonus",
   "admin_balance_adjustment",
   "card_withdrawal",
+  // Cash leg of a crypto-BALANCE withdrawal (new sweepstakes model) — the user
+  // cashing out, same as card_withdrawal. Surface it in the Finances feed.
+  // Drift-safe: getUserTransactions intersects with the LIVE enum.
+  "balance_withdrawal",
   "withdrawal_shipping_fee",
   "rakeback_claim",
   "balance_reward_claim",
@@ -651,6 +655,11 @@ export const FINANCIAL_TX_TYPES = [
   "gift_card_redeemed",
   "rain_win",
   "race_prize",
+  // Creator/affiliate-leaderboard win paid to the user. Also surfaced in its
+  // own "Leaderboard" box on Overview (tips.leaderboardWins) — shown HERE too
+  // so it appears in the Deposits & Withdrawals feed like race_prize does.
+  // Drift-safe: getUserTransactions intersects with the LIVE enum.
+  "affiliate_leaderboard_prize",
   // Keep in sync with FINANCIAL_TYPES in page.tsx (this = load-more list;
   // that = initial fetch). Challenge prize is a direct cash payout.
   "challenge_prize",
@@ -671,6 +680,7 @@ export const DEPOSIT_TX_TYPES = ["deposit", "deposit_bonus"] as const;
 // segmented filter on the Deposits & Withdrawals table.
 export const WITHDRAWAL_TX_TYPES = [
   "card_withdrawal",
+  "balance_withdrawal",
   "withdrawal_shipping_fee",
 ] as const;
 // Admin balance adjustments only. Used for the dedicated, UNCAPPED Overview

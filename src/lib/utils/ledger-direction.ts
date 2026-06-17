@@ -40,6 +40,7 @@ export function ledgerDirection(type: string): LedgerDirection {
     // ── House pays money to the user (balance grows, a liability we
     // already owed is being settled out). ────────────────────────────
     case "card_withdrawal":
+    case "balance_withdrawal": // cash leg of a crypto-balance withdrawal
     case "withdrawal":
     case "card_sale": // user sells card back → we credit them USD
     case "reward_card_sale":
@@ -55,6 +56,7 @@ export function ledgerDirection(type: string): LedgerDirection {
     case "creator_tip":
     case "rakeback_claim":
     case "affiliate_claim":
+    case "affiliate_leaderboard_prize": // creator-leaderboard win paid to user
     case "admin_balance_adjustment":
     case "balance_reward_claim":
     case "waitlist_prize":

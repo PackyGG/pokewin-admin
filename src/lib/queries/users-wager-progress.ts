@@ -60,6 +60,36 @@ import {
 /** Half-a-cent tolerance for the "met" comparison on Decimal(20,2) money. */
 const EPSILON_USD = 0.005;
 
+/**
+ * Hard wall-clock budget for the OPTIONAL backend bps reads below. The
+ * authoritative gate figures (`remaining`/`withdrawable`/`met`) are pure
+ * column reads and do NOT depend on the backend; the bps knobs only feed the
+ * informational per-source weights + exemption flag. `backendApi`'s own 8s
+ * timeout is PER ATTEMPT and GETs retry up to 3× on 429/503 → a single stalled
+ * call could burn >20s and blow this query's outer `safeQueryOrNull` budget
+ * (15s), nulling the whole read and BLANKING the wager card / withdrawal-popup
+ * block. Capping the bps fan-out here guarantees the column-authoritative
+ * figures always render; a backend that's slow past this cap just degrades the
+ * informational weights to null (`backendAvailable: false`).
+ */
+const WAGER_BACKEND_BUDGET_MS = 6000;
+
+/** Resolve `null` if `p` doesn't settle within `ms` (never rejects). The
+ *  abandoned fetch aborts itself on `backendApi`'s own timeout. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout>;
+  const cap = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([
+    p.then(
+      (v) => v,
+      () => null,
+    ),
+    cap,
+  ]).finally(() => clearTimeout(timer));
+}
+
 export type WagerProgressSourceKey =
   | "deposit"
   | "bonus"
@@ -213,8 +243,8 @@ export async function getUserWagerProgress(
   // Only used for the informational per-source weights + exemption flag; the
   // gate figures below are column-read and don't depend on this.
   const [defaults, userReq] = await Promise.all([
-    getWagerRequirementDefaults().catch(() => null),
-    getUserWagerRequirement(userId).catch(() => null),
+    withTimeout(getWagerRequirementDefaults(), WAGER_BACKEND_BUDGET_MS),
+    withTimeout(getUserWagerRequirement(userId), WAGER_BACKEND_BUDGET_MS),
   ]);
   const backendAvailable = defaults !== null;
 
