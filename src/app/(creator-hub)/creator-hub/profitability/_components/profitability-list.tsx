@@ -3,14 +3,15 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatCurrency } from "@/lib/utils/format";
-import type { CreatorProfitabilityRow } from "../../../../(admin)/creators/_queries/deal-profitability";
+import type { CreatorProfitabilityRow } from "../_queries/deal-profitability";
 
 /**
  * Per-creator deal profitability list. Left: avatar + name + code + the
- * deal's payout window. Right: the four headline figures — projected
- * house deal cost (rose), the wager needed to cover it (expected),
- * the wager actually driven in the window (emerald), and the resulting
- * conversion ratio (coloured by how much of the expectation it covers).
+ * deal-cost breakdown (cap · leaderboard · tips). Right: the four headline
+ * figures — projected house deal cost (rose), the wager needed to cover it
+ * (expected), the wager actually driven in the window (emerald), and the
+ * resulting conversion ratio (coloured by how much of the expectation it
+ * covers).
  *
  * Colours follow CLAUDE.md house-POV: deal cost is a house cost → rose;
  * actual wager is house throughput income → emerald; conversion ≥ 1×
@@ -48,6 +49,12 @@ function Metric({
 
 function ProfitabilityRow({ row }: { row: CreatorProfitabilityRow }) {
   const initial = (row.username ?? row.code ?? "?").slice(0, 1).toUpperCase();
+  const breakdown = [
+    `Cap ${formatCurrency(row.capUsd)}`,
+    `LB ${formatCurrency(row.leaderboardUsd)}`,
+    `Tips ${formatCurrency(row.tipSponsorUsd)}`,
+  ].join(" · ");
+
   return (
     <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 items-center gap-3">
@@ -70,7 +77,7 @@ function ProfitabilityRow({ row }: { row: CreatorProfitabilityRow }) {
             )}
           </div>
           <div className="truncate text-[11px] text-muted-foreground">
-            {row.dealName ?? "Active deal"} · {row.periodLabel}
+            {breakdown}
           </div>
         </div>
       </div>
@@ -105,7 +112,7 @@ export function ProfitabilityList({
   if (rows.length === 0) {
     return (
       <div className="rounded-2xl border bg-card p-10 text-center text-sm text-muted-foreground">
-        No active creator deals to cost out yet.
+        No fill-creator deals to cost out yet.
       </div>
     );
   }

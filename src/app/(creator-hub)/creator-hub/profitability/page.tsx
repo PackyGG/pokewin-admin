@@ -10,25 +10,35 @@ import {
 import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/utils/format";
+import { DASHBOARD_PERIOD_LABELS } from "@/lib/queries/dashboard-period";
 
-import { getCreatorProfitability } from "../../../(admin)/creators/_queries/deal-profitability";
+import { resolveRosterPeriod } from "../creators/_lib/roster-params";
+import { RosterPeriodControl } from "../creators/_components/roster-period-control";
+import { getCreatorProfitability } from "./_queries/deal-profitability";
 import { HubKpiBox } from "../_components/hub-kpi-box";
 import { ProfitabilityList } from "./_components/profitability-list";
+import { RosterError } from "../creators/_components/roster-error";
 
 export const metadata = { title: "Profitability · Creator Hub" };
 
 /**
  * Creator Hub — Profitability.
  *
- * Costs out every active creator deal (withdraw cap + leaderboard funding
- * + tip pool, normalised to the deal's payout window) and checks it
- * against the wager the creator actually drove in that window. Shell-first:
- * the hero paints instantly; the costed roster streams behind Suspense.
- *
- * ACCESS: `requireCreatorHubPageAccess` — same gate as the rest of the Hub.
+ * Costs out the fill-creator roster (the same backend-API roster the
+ * /creators page walks) and checks each deal cost against the wager the
+ * creator actually drove in the selected window. Shell-first: the hero +
+ * window chips paint instantly; the costed roster streams behind Suspense
+ * (active-timeframe-only, keyed on the window).
  */
-export default async function CreatorHubProfitabilityPage() {
+export default async function CreatorHubProfitabilityPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
   await requireCreatorHubPageAccess();
+
+  const period = resolveRosterPeriod((await searchParams).period);
+  const windowLabel = DASHBOARD_PERIOD_LABELS[period];
 
   return (
     <div className="space-y-6">
@@ -41,18 +51,35 @@ export default async function CreatorHubProfitabilityPage() {
         />
       </PageHero>
 
-      <Suspense fallback={<ProfitabilitySkeleton />}>
-        <ProfitabilitySection />
-      </Suspense>
+      <div className="space-y-3">
+        <SectionHeading
+          icon={Coins}
+          title="Deal economics"
+          action={<RosterPeriodControl current={period} />}
+        />
+        <Suspense key={period} fallback={<ProfitabilitySkeleton />}>
+          <ProfitabilitySection period={period} windowLabel={windowLabel} />
+        </Suspense>
+      </div>
     </div>
   );
 }
 
-async function ProfitabilitySection() {
-  const { rows, totals } = await getCreatorProfitability();
+async function ProfitabilitySection({
+  period,
+  windowLabel,
+}: {
+  period: ReturnType<typeof resolveRosterPeriod>;
+  windowLabel: string;
+}) {
+  const { rows, totals, rosterUnavailable } =
+    await getCreatorProfitability(period);
 
-  // House-POV: a positive house P&L is a house gain (emerald); negative
-  // is a house loss (rose).
+  if (rosterUnavailable) {
+    return <RosterError />;
+  }
+
+  // House-POV: positive house P&L is a house gain (emerald); negative a loss.
   const pnlAccent = totals.totalActualPnl >= 0 ? "emerald" : "rose";
 
   return (
@@ -63,7 +90,7 @@ async function ProfitabilitySection() {
           icon={Coins}
           accent="rose"
           value={formatCurrency(totals.totalCost)}
-          sub="Deal cost + sponsorships"
+          sub="Cap + leaderboard + tips"
         />
         <HubKpiBox
           label="Total Actual PNL"
@@ -76,15 +103,15 @@ async function ProfitabilitySection() {
           label="Expected Wager"
           icon={TrendingUp}
           accent="blue"
-          value={formatCurrency(totals.totalExpectedWagerMonthly)}
-          sub="Monthly · to cover cost"
+          value={formatCurrency(totals.totalExpectedWager)}
+          sub="To cover deal cost"
         />
         <HubKpiBox
           label="Creator Wager"
           icon={Activity}
           accent="emerald"
           value={formatCurrency(totals.totalCreatorWager)}
-          sub="Actual · in deal windows"
+          sub={`Actual · ${windowLabel}`}
         />
         <HubKpiBox
           label="Avg Conversion"
@@ -95,8 +122,12 @@ async function ProfitabilitySection() {
         />
       </div>
 
-      <div className="space-y-3">
-        <SectionHeading icon={Coins} title={`Active deals (${rows.length})`} />
+      <div className="space-y-2">
+        <p className="text-[11px] text-muted-foreground">
+          Deal cost is lifetime/per-deal (cap + leaderboard × house share +
+          tip & sponsorship allowance). Actual wager is the creator&apos;s
+          cohort wager scoped to {windowLabel}.
+        </p>
         <ProfitabilityList rows={rows} />
       </div>
     </FadeIn>
