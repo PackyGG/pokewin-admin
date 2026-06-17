@@ -11,10 +11,12 @@ import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
 import { getMetricsScope } from "@/lib/metrics/scope";
 import { WAGER_LEG_FILTER } from "@/lib/metrics/gaming-sql";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getHubCohortScansFromClickHouse } from "@/lib/clickhouse/queries/creator-hub/cohort";
 import {
-  hubSinceClause,
   hubBucketTrunc,
   hubCoveringLateral,
+  hubPeriodToSinceDate,
   HUB_CHART_PERIOD,
 } from "./hub-period-sql";
 import {
@@ -39,9 +41,23 @@ export type HubCohortWindowed = {
   dailySignupsFtds: HubSignupsFtdsChartRow[];
 };
 
-type BucketRow = { bucket: Date; amount: string };
-type CountBucketRow = { bucket: Date; value: string };
-type WagerBucketRow = { bucket: Date; packs: string; battles: string };
+// `bucket` is a Date from the Postgres leg and a 'YYYY-MM-DD' string from the
+// ClickHouse twin; both are accepted by `new Date(...)` in the merge helpers.
+type BucketRow = { bucket: Date | string; amount: string };
+type CountBucketRow = { bucket: Date | string; value: string };
+type WagerBucketRow = { bucket: Date | string; packs: string; battles: string };
+type CountRow = { value: string };
+
+type HubCohortScanBundle = {
+  signupRows: CountRow[];
+  ftdRows: CountRow[];
+  depositTotalRows: CountRow[];
+  signupSeriesRows: CountBucketRow[];
+  ftdSeriesRows: CountBucketRow[];
+  depositSeriesRows: BucketRow[];
+  ledgerWagerSeriesRows: WagerBucketRow[];
+  upgraderWagerSeriesRows: BucketRow[];
+};
 
 function mergeWagerBucketRows(
   ledgerRows: WagerBucketRow[],
@@ -144,21 +160,27 @@ const cachedHubCohortScans = (
   exclLedger: string,
   upgBlacklist: string,
   hasUpgrader: boolean,
+  excluded: string[],
 ) =>
   unstable_cache(
     async (): Promise<HubCohortWindowed> => {
       const db = env === "dev" ? getDevDb() : getProdDb();
-      const sinceSignup = hubSinceClause("u.created_at", period);
-      const sinceAcu = hubSinceClause("acu.created_at", period);
-      const sinceLt = hubSinceClause("lt.created_at", period);
       // Chart series always roll 30 daily buckets — independent of the KPI chip.
       const chartPeriod = HUB_CHART_PERIOD;
-      const sinceChartLt = hubSinceClause("lt.created_at", chartPeriod);
-      const sinceChartLedger = hubSinceClause(
-        "ledger_transactions.created_at",
-        chartPeriod,
-      );
-      const sinceChartUpg = hubSinceClause("upgrader_games.created_at", chartPeriod);
+      // Anchor BOTH engines to a single instant so the PG and ClickHouse legs
+      // are deterministically comparable (mirrors crm / top-creators). The
+      // anchor is fixed per unstable_cache entry (revalidate 300s).
+      const now = new Date();
+      const sinceKpiDate = hubPeriodToSinceDate(period, now);
+      const sinceChartDate = hubPeriodToSinceDate(chartPeriod, now);
+      const kpiIso = sinceKpiDate.toISOString();
+      const chartIso = sinceChartDate.toISOString();
+      const sinceSignup = `AND u.created_at >= '${kpiIso}'::timestamptz`;
+      const sinceAcu = `AND acu.created_at >= '${kpiIso}'::timestamptz`;
+      const sinceLt = `AND lt.created_at >= '${kpiIso}'::timestamptz`;
+      const sinceChartLt = `AND lt.created_at >= '${chartIso}'::timestamptz`;
+      const sinceChartLedger = `AND ledger_transactions.created_at >= '${chartIso}'::timestamptz`;
+      const sinceChartUpg = `AND upgrader_games.created_at >= '${chartIso}'::timestamptz`;
       const bucketDeposit = hubBucketTrunc("cd.created_at", chartPeriod);
       const bucketLedger = hubBucketTrunc(
         "ledger_transactions.created_at",
@@ -167,14 +189,12 @@ const cachedHubCohortScans = (
       const bucketUpg = hubBucketTrunc("upgrader_games.created_at", chartPeriod);
       const covering = hubCoveringLateral;
 
-      type CountRow = { value: string };
-
       const bucketSignup = hubBucketTrunc("u.created_at", chartPeriod);
       const bucketFtd = hubBucketTrunc("acu.created_at", chartPeriod);
-      const sinceChartSignup = hubSinceClause("u.created_at", chartPeriod);
-      const sinceChartAcu = hubSinceClause("acu.created_at", chartPeriod);
+      const sinceChartSignup = `AND u.created_at >= '${chartIso}'::timestamptz`;
+      const sinceChartAcu = `AND acu.created_at >= '${chartIso}'::timestamptz`;
 
-      const [
+      const {
         signupRows,
         ftdRows,
         depositTotalRows,
@@ -183,8 +203,21 @@ const cachedHubCohortScans = (
         depositSeriesRows,
         ledgerWagerSeriesRows,
         upgraderWagerSeriesRows,
-      ] = await Promise.all([
-        db.$queryRawUnsafe<CountRow[]>(
+      } = await resolveAdminRead<HubCohortScanBundle>("creator_hub_cohort", {
+        ch: () =>
+          getHubCohortScansFromClickHouse(excluded, sinceKpiDate, sinceChartDate),
+        pg: async () => {
+          const [
+            signupRows,
+            ftdRows,
+            depositTotalRows,
+            signupSeriesRows,
+            ftdSeriesRows,
+            depositSeriesRows,
+            ledgerWagerSeriesRows,
+            upgraderWagerSeriesRows,
+          ] = await Promise.all([
+            db.$queryRawUnsafe<CountRow[]>(
           `SELECT COUNT(*)::text AS value
              FROM "user" u
              JOIN "user" c ON c.id = u.referred_by AND c.role = 'creator'
@@ -328,7 +361,19 @@ const cachedHubCohortScans = (
                 ORDER BY 1`,
             )
           : Promise.resolve([] as BucketRow[]),
-      ]);
+          ]);
+          return {
+            signupRows,
+            ftdRows,
+            depositTotalRows,
+            signupSeriesRows,
+            ftdSeriesRows,
+            depositSeriesRows,
+            ledgerWagerSeriesRows,
+            upgraderWagerSeriesRows,
+          };
+        },
+      });
 
       const dailyWagers = padHubWagerChartSeries(
         mergeWagerBucketRows(
@@ -399,6 +444,7 @@ export async function getHubCohortWindowed(
       exclLedger,
       upgBlacklist,
       hasUpgrader,
+      excluded,
     )();
   });
 }
