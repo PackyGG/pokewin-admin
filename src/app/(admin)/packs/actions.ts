@@ -1,7 +1,9 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { getDb } from "@/lib/db";
+import { isUuid } from "@/lib/utils/ids";
+import { SETS_CACHE_TAG } from "@/lib/queries/sets";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess, sessionHasRole } from "@/lib/dal";
@@ -557,6 +559,85 @@ export async function fetchPackFullDetail(
   if (!detail) return null;
   const stats = await fetchPackDetailStats(packId, detail);
   return { detail, stats };
+}
+
+/**
+ * Reassign EVERY card in a pack to a target `sets` row. This is what drives
+ * which pool tab (Pokemon / OnePiece / Rewards / Meme) the pack appears under
+ * on /packs, since a pack's pool is derived from the sets of its cards.
+ *
+ * Mirrors the sanctioned `bulkMoveCardsToSet` (cards/set-actions.ts): same
+ * `cards.set_id` write, same `__can_update_card` gate, same audit. Because
+ * cards are SHARED across packs, this also moves them in every other pack that
+ * contains them and in the /cards catalog — the caller's confirm dialog spells
+ * that out. Scoped to exactly the pack's distinct card ids.
+ */
+export async function movePackCardsToSet(
+  packId: string,
+  setId: string,
+): Promise<{ count: number; setName: string }> {
+  const session = await requirePageAccess("/packs");
+  await requireCapability(
+    session,
+    "__can_update_card",
+    "reassign cards to a set",
+  );
+
+  if (!isUuid(packId)) throw new Error("Invalid pack id");
+  if (!isUuid(setId)) throw new Error("Invalid set id");
+
+  const db = await getDb();
+
+  // Validate the target set up-front so a deleted FK target surfaces a clean
+  // error instead of a silent 0-row update.
+  const set = await db.sets.findUnique({
+    where: { id: setId },
+    select: { id: true, name: true },
+  });
+  if (!set) throw new Error("Set not found");
+
+  const pack = await db.packs.findUnique({
+    where: { id: packId },
+    select: { id: true, name: true },
+  });
+  if (!pack) throw new Error("Pack not found");
+
+  const packCards = await db.pack_cards.findMany({
+    where: { pack_id: packId },
+    select: { card_id: true },
+  });
+  const cardIds = Array.from(new Set(packCards.map((pc) => pc.card_id)));
+  if (cardIds.length === 0) {
+    return { count: 0, setName: set.name };
+  }
+
+  const result = await db.cards.updateMany({
+    where: { id: { in: cardIds } },
+    data: { set_id: set.id, updated_at: new Date() },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "pack_cards_moved_to_set",
+    metadata: {
+      packId: pack.id,
+      packName: pack.name,
+      setId: set.id,
+      setName: set.name,
+      count: result.count,
+      cardIds,
+    },
+  });
+
+  // Pool membership + per-set card counts changed: evict the pool KPI stats,
+  // the /sets catalog (card counts), and re-render the affected surfaces.
+  revalidateTag("packs-list-stats");
+  revalidateTag(SETS_CACHE_TAG);
+  revalidatePath("/packs");
+  revalidatePath(`/packs/${packId}`);
+  revalidatePath("/cards");
+
+  return { count: result.count, setName: set.name };
 }
 
 /**

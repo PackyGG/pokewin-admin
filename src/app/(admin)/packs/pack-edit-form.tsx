@@ -27,6 +27,7 @@ import { uploadImageClient } from "@/lib/upload-image-client";
 import { pack_tag } from "@/generated/prisma/enums";
 import { RiskLevelSlider } from "./risk-level-slider";
 import { TargetEvOddsSetter } from "./target-ev-odds-setter";
+import { ChangePackSet } from "./change-pack-set";
 import { invalidatePackDetailCache } from "./pack-detail-cache";
 
 type PackCard = SortableCard;
@@ -459,6 +460,13 @@ export function PackEditForm({
           </>
         )}
       </div>
+
+      <ChangePackSet
+        packId={pack.id}
+        cardCount={cards.length}
+        sets={pickerSets}
+        onMoved={onSaved}
+      />
 
       <div className="flex items-center justify-end gap-2">
         {showCancel && onCancel ? (
