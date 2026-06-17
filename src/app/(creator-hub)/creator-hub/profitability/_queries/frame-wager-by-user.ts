@@ -4,6 +4,8 @@ import { unstable_cache } from "next/cache";
 
 import { getDevDb, getProdDb } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 
 /** One creator's deal-frame window — the wager is summed inside [start, end]. */
@@ -19,10 +21,17 @@ export type FrameWindow = {
  * `affiliate_code_usages` (Bitmap Index Scan on
  * `idx_affiliate_code_usages_affiliate_referred`, EXPLAIN-verified) — the
  * per-creator [start, end] bounds are joined in via a VALUES list so a
- * single round-trip covers the whole roster. Staff + self-play excluded
- * (same gate the roster wager uses).
+ * single round-trip covers the whole roster. Staff/creator roles, self-play
+ * AND the `excluded_users` blacklist are excluded — the SAME scope the
+ * deposit leg (`frame-affiliate-pnl-by-user`) applies, so the Creator
+ * Wager / Expected Wager / Avg Conversion top-bar boxes never count a
+ * user the deposits leg already drops.
  */
-const cachedFrameWager = (env: DbEnv, frames: FrameWindow[]) =>
+const cachedFrameWager = (
+  env: DbEnv,
+  frames: FrameWindow[],
+  blacklistIds: string[],
+) =>
   unstable_cache(
     async (): Promise<[string, number][]> => {
       const db = env === "dev" ? getDevDb() : getProdDb();
@@ -35,6 +44,11 @@ const cachedFrameWager = (env: DbEnv, frames: FrameWindow[]) =>
         params.push(f.userId, f.startIso, f.endIso);
       });
 
+      const blacklistAnd =
+        blacklistIds.length > 0
+          ? ` AND u.id NOT IN (${escapeBlacklistIds(blacklistIds)})`
+          : "";
+
       const rows = await db.$queryRawUnsafe<
         { affiliate_user_id: string; wager: string }[]
       >(
@@ -46,7 +60,7 @@ const cachedFrameWager = (env: DbEnv, frames: FrameWindow[]) =>
              ON f.cid = acu.affiliate_user_id
           WHERE acu.usage_type::text = 'wager'
             AND u.role NOT IN ('admin', 'support', 'creator')
-            AND u.id <> acu.affiliate_user_id
+            AND u.id <> acu.affiliate_user_id${blacklistAnd}
             AND acu.created_at >= f.start_ts
             AND acu.created_at <= f.end_ts
           GROUP BY acu.affiliate_user_id`,
@@ -56,9 +70,10 @@ const cachedFrameWager = (env: DbEnv, frames: FrameWindow[]) =>
       return rows.map((r) => [r.affiliate_user_id, toNumber(r.wager)]);
     },
     [
-      "profitability-frame-wager-v1",
+      "profitability-frame-wager-v2",
       env,
       ...frames.map((f) => `${f.userId}:${f.startIso}:${f.endIso}`),
+      ...blacklistIds,
     ],
     { revalidate: 180, tags: ["profitability-frame-wager"] },
   );
@@ -68,6 +83,7 @@ export async function getFrameWagerByUser(
 ): Promise<Map<string, number>> {
   if (frames.length === 0) return new Map();
   const env = await readDbEnv();
-  const entries = await cachedFrameWager(env, frames)();
+  const blacklistIds = await getExcludedUserIds();
+  const entries = await cachedFrameWager(env, frames, blacklistIds)();
   return new Map(entries);
 }
