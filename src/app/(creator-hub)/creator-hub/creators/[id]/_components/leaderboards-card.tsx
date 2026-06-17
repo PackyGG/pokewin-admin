@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 
 import { getCreatorLeaderboardCost } from "../../../../../(admin)/creators/[userId]/_queries/leaderboard-cost-by-creator";
 import { getCreatorLeaderboardWagerMap } from "../../../../../(admin)/creators/[userId]/_queries/leaderboard-wager-by-board";
+import { getLeaderboardSponsorshipMap } from "../../../../../(admin)/creators/_queries/leaderboard-sponsorship";
 import {
   getLeaderboardsPreviewCached,
   type LeaderboardApprovalStatus,
@@ -135,20 +136,32 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
   const total = listResult.preview.total;
 
   let wagerFailed = false;
-  const wagerMap = await getCreatorLeaderboardWagerMap(
-    rows.map((r) => ({
-      id: r.id,
-      creatorUserId: r.creator_user_id,
-      coCreatorUserIds: r.co_creator_user_ids ?? [],
-      affiliateCodes: r.affiliate_codes ?? [],
-      startDate: new Date(r.start_date),
-      endDate: new Date(r.end_date),
-    })),
-  ).catch((e) => {
-    console.error("[creator-hub.creators.leaderboards] wager map failed:", e);
-    wagerFailed = true;
-    return new Map<string, number>();
-  });
+  // Per-board wager driven + the admin sponsored % (the house-funded share
+  // of each prize pool). The sponsorship map defaults a board to 100% when
+  // un-annotated — same convention as the cost aggregates above.
+  const [wagerMap, sponsorshipMap] = await Promise.all([
+    getCreatorLeaderboardWagerMap(
+      rows.map((r) => ({
+        id: r.id,
+        creatorUserId: r.creator_user_id,
+        coCreatorUserIds: r.co_creator_user_ids ?? [],
+        affiliateCodes: r.affiliate_codes ?? [],
+        startDate: new Date(r.start_date),
+        endDate: new Date(r.end_date),
+      })),
+    ).catch((e) => {
+      console.error("[creator-hub.creators.leaderboards] wager map failed:", e);
+      wagerFailed = true;
+      return new Map<string, number>();
+    }),
+    getLeaderboardSponsorshipMap(rows.map((r) => r.id)).catch((e) => {
+      console.error(
+        "[creator-hub.creators.leaderboards] sponsorship map failed:",
+        e,
+      );
+      return new Map<string, number>();
+    }),
+  ]);
 
   // Visible (muted) note when a chip source failed — a missing cost/wager
   // chip must be distinguishable from a genuine $0 / no-wager board.
@@ -195,6 +208,15 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
             <div className="space-y-2">
               {rows.map((r) => {
                 const wagered = wagerMap.get(r.id);
+                // House-funded share: admin sponsored % (default 100% when
+                // un-annotated) × the prize pool. This is what we actually
+                // pay off the board → rose (house spend).
+                const sponsoredPct = Math.min(
+                  100,
+                  Math.max(0, sponsorshipMap.get(r.id) ?? 100),
+                );
+                const prizeUsd = Number(r.total_prize_usd) || 0;
+                const houseCostUsd = prizeUsd * (sponsoredPct / 100);
                 return (
                 <Link
                   key={r.id}
@@ -219,6 +241,12 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                     </div>
                     <div className="mt-1 truncate text-xs text-muted-foreground">
                       {formatDate(r.start_date)} → {formatDate(r.end_date)}
+                    </div>
+                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                      House pays {sponsoredPct}% ·{" "}
+                      <span className="font-medium tabular-nums text-rose-600 dark:text-rose-400">
+                        {formatCurrency(houseCostUsd)}
+                      </span>
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0">

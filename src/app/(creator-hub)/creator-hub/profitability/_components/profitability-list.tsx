@@ -83,7 +83,13 @@ function Metric({
 
 function ProfitabilityRow({ row }: { row: CreatorProfitabilityRow }) {
   const initial = (row.username ?? row.code ?? "?").slice(0, 1).toUpperCase();
-  const breakdown = `Cap ${formatCurrency(row.capUsd)} · LB ${formatCurrency(
+  const capLabel =
+    row.dealWeeks > 1
+      ? `Cap ${formatCurrency(row.capUsd)} (${formatCurrency(
+          row.weeklyCapUsd,
+        )}/wk × ${row.dealWeeks})`
+      : `Cap ${formatCurrency(row.capUsd)}`;
+  const breakdown = `${capLabel} · LB ${formatCurrency(
     row.leaderboardUsd,
   )} · Tips ${formatCurrency(row.tipSponsorUsd)}`;
 

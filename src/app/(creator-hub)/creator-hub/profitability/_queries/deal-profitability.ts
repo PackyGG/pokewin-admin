@@ -21,8 +21,13 @@ import { getFrameWagerByUser, type FrameWindow } from "./frame-wager-by-user";
  * actual wager is measured strictly INSIDE that frame, so a fixed deal cost
  * is always compared against the wager driven in the same window.
  *
- *   dealCost      = withdraw cap + this board's sponsored-weighted house
- *                   cost + tip/sponsor allowance (house cost, rose POV).
+ *   dealCost      = (per-week withdraw cap × deal-length weeks) + this
+ *                   board's sponsored-weighted house cost + tip/sponsor
+ *                   allowance (house cost, rose POV). The deal length is
+ *                   the leaderboard frame length, so a 2-week (bi-weekly)
+ *                   board counts the weekly withdraw cap twice. The LB leg
+ *                   is the WHOLE board's cost (already spans the frame), so
+ *                   it is not re-multiplied.
  *   expectedWager = dealCost / house edge (7.5%).
  *   actualWager   = code-cohort wager inside [frame start, min(now, end)];
  *                   0 for a not-yet-started (upcoming) frame.
@@ -34,6 +39,21 @@ import { getFrameWagerByUser, type FrameWindow } from "./frame-wager-by-user";
 const HOUSE_EDGE = 0.075;
 const PAGE_SIZE = 100;
 const FETCH_CAP = 500;
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Number of whole weeks in a deal frame, used to scale the per-week
+ * withdraw cap over the deal length (= leaderboard length). Boards run in
+ * weekly multiples (weekly / bi-weekly), so the duration is rounded to the
+ * nearest week and floored at 1 (a missing / degenerate frame costs one
+ * week, never zero).
+ */
+function frameWeeks(startMs: number, endMs: number): number {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return 1;
+  }
+  return Math.max(1, Math.round((endMs - startMs) / MS_PER_WEEK));
+}
 
 export type CreatorProfitabilityRow = {
   userId: string;
@@ -46,6 +66,11 @@ export type CreatorProfitabilityRow = {
   frameEndMs: number | null;
   /** True when the frame is running right now. */
   isLive: boolean;
+  /** Per-week withdraw cap from the deal (`total_withdraw_cap_usd`). */
+  weeklyCapUsd: number;
+  /** Whole weeks in the deal frame (= leaderboard length). */
+  dealWeeks: number;
+  /** Total withdraw cap over the deal length (`weeklyCapUsd × dealWeeks`). */
   capUsd: number;
   leaderboardUsd: number;
   tipSponsorUsd: number;
@@ -182,7 +207,9 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
   const rows: CreatorProfitabilityRow[] = fill.map((c) => {
     const dv = dealValues.get(c.id);
     const fr = resolved.get(c.id)!;
-    const capUsd = dv?.capUsd ?? 0;
+    const weeklyCapUsd = dv?.capUsd ?? 0;
+    const dealWeeks = frameWeeks(fr.startMs, fr.endMs);
+    const capUsd = weeklyCapUsd * dealWeeks;
     const tipSponsorUsd = dv?.tipSponsorUsd ?? 0;
     const leaderboardUsd = fr.board?.houseCostUsd ?? 0;
     const dealCost = capUsd + leaderboardUsd + tipSponsorUsd;
@@ -199,6 +226,8 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
       frameStartMs: Number.isFinite(fr.startMs) ? fr.startMs : null,
       frameEndMs: Number.isFinite(fr.endMs) ? fr.endMs : null,
       isLive: fr.isLive,
+      weeklyCapUsd,
+      dealWeeks,
       capUsd,
       leaderboardUsd,
       tipSponsorUsd,
