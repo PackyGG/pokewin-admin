@@ -13,8 +13,12 @@ import {
   getCachedCreatorRoster,
   getCachedCreatorSessions,
 } from "@/lib/cache/creator-backend-cache";
+import { adminDb } from "@/lib/admin-db";
+import { resolveLinkedHandle } from "@/lib/creator-hub";
+import { logWarn } from "@/lib/errors/logger";
 
 import { readSessionMetaByIds } from "../../creators/[id]/_queries/sessions-data";
+import { isLinkedSocialUsername } from "../../../../(admin)/creators/_queries/socials-by-user";
 
 /**
  * Creator Hub — `/creator-hub/sessions` (All Sessions) data.
@@ -67,6 +71,8 @@ export type AllCreatorSessionRow = CreatorSessionResponse & {
   creatorUsername: string | null;
   /** The creator's avatar URL, or null. */
   creatorImage: string | null;
+  /** The creator's linked Kick handle (admin DB `creator_socials`), or null. */
+  creatorKickHandle: string | null;
 };
 
 /** Lifetime/full-set KPI roll-up summed over the WHOLE merged feed. */
@@ -84,7 +90,7 @@ export type AllSessionsKpis = {
 /** Status filter for the feed (`all` = no filter). */
 export type AllSessionsStatusFilter = StreamSessionStatus | "all";
 
-/** Sort direction over `activated_at` — `asc` = oldest first (default). */
+/** Sort direction over `activated_at` — `desc` = newest first (default). */
 export type AllSessionsOrder = "asc" | "desc";
 
 /** The cached, GLOBAL aggregate — sessions ASC by `activated_at` + KPIs/flags. */
@@ -322,13 +328,52 @@ function applyStatusFilter(
   return sessions.filter((s) => s.status === status);
 }
 
+/** A missing-relation error (table not migrated): Prisma P2021 / Postgres 42P01. */
+function isMissingRelation(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const code = (err as { code?: unknown }).code;
+  return code === "P2021" || code === "42P01";
+}
+
+/**
+ * Read linked Kick handles (ADMIN DB `creator_socials` where `platform = 'kick'`)
+ * for the displayed slice's creators only — keyed by `target_user_id`. Mirrors
+ * the per-slice {@link readSessionMetaByIds} sidecar pattern: a small, bounded
+ * ADMIN-DB read (never MAIN). Best-effort — a missing relation or any read
+ * failure degrades to an empty map (handle simply renders as "not linked").
+ */
+async function readKickHandlesByUserIds(
+  userIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = [...new Set(userIds)];
+  if (unique.length === 0) return out;
+  try {
+    const rows = await adminDb.creator_socials.findMany({
+      where: { target_user_id: { in: unique }, platform: "kick" },
+      select: { target_user_id: true, username: true },
+    });
+    for (const r of rows) {
+      if (!isLinkedSocialUsername(r.username)) continue;
+      const handle = resolveLinkedHandle(r.username);
+      if (handle) out.set(r.target_user_id, handle);
+    }
+  } catch (err) {
+    if (!isMissingRelation(err)) {
+      logWarn("creator-hub.all-sessions", "kick handle read failed", err);
+    }
+  }
+  return out;
+}
+
 /**
  * Read the global aggregate, apply the optional status filter + order, slice to
  * one page, then attach the admin-DB VOD/notes sidecar for ONLY the displayed
  * session ids.
  *
  * @param params.page   1-based page (clamped ≥ 1).
- * @param params.order  `asc` (oldest first, the cached order) or `desc`.
+ * @param params.order  `desc` (newest first, default) or `asc` (oldest first,
+ *                      the cached order).
  * @param params.status `active` | `ended` | `converted` | `all` (default `all`).
  */
 export async function getAllSessionsPage(params: {
@@ -336,7 +381,7 @@ export async function getAllSessionsPage(params: {
   order?: AllSessionsOrder;
   status?: AllSessionsStatusFilter;
 }): Promise<AllSessionsPage> {
-  const order: AllSessionsOrder = params.order === "desc" ? "desc" : "asc";
+  const order: AllSessionsOrder = params.order === "asc" ? "asc" : "desc";
   const status: AllSessionsStatusFilter = params.status ?? "all";
   const rawPage = params.page;
   const page =
@@ -355,8 +400,12 @@ export async function getAllSessionsPage(params: {
   const slice = ordered.slice(start, start + PAGE_SIZE);
 
   // VOD/notes sidecar for ONLY the displayed slice (reuses the self-healing
-  // per-creator reader — no duplicate ensure-schema logic).
-  const { byId, degraded } = await readSessionMetaByIds(slice.map((s) => s.id));
+  // per-creator reader — no duplicate ensure-schema logic). The Kick-handle
+  // sidecar (admin DB `creator_socials`) is read for the same slice's creators.
+  const [{ byId, degraded }, kickByCreator] = await Promise.all([
+    readSessionMetaByIds(slice.map((s) => s.id)),
+    readKickHandlesByUserIds(slice.map((s) => s.creatorId)),
+  ]);
 
   const rows: AllCreatorSessionRow[] = slice.map((s) => {
     const meta = byId.get(s.id);
@@ -364,6 +413,7 @@ export async function getAllSessionsPage(params: {
       ...s,
       kickVodUrl: meta?.kickVodUrl ?? null,
       notes: meta?.notes ?? null,
+      creatorKickHandle: kickByCreator.get(s.creatorId) ?? null,
     };
   });
 

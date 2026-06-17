@@ -39,7 +39,7 @@ export const metadata = { title: "All Sessions · Creator Hub" };
  * ONE merged chronological feed of EVERY creator's past + current activated
  * stream sessions, with the same columns + click-through detail as the
  * per-creator Sessions tab plus a leading Creator column. Default order is
- * OLDEST FIRST (asc), with a toggle to newest first (desc) and a status filter
+ * NEWEST FIRST (desc), with a toggle to oldest first (asc) and a status filter
  * — all URL-driven (no client state), so only the active page/order/status
  * loads (active-timeframe/lazy rule).
  */
@@ -52,7 +52,7 @@ const STATUS_OPTIONS: { value: AllSessionsStatusFilter; label: string }[] = [
 ];
 
 function normalizeOrder(raw: string | undefined): AllSessionsOrder {
-  return raw === "desc" ? "desc" : "asc";
+  return raw === "asc" ? "asc" : "desc";
 }
 
 function normalizeStatus(raw: string | undefined): AllSessionsStatusFilter {
@@ -405,8 +405,9 @@ function AllSessionsPager({
 }
 
 /**
- * Build the canonical URL for the feed. `order=asc` + `status=all` are the
- * defaults and are omitted (clean URL); `page=1` is omitted too.
+ * Build the canonical URL for the feed. `order=desc` (newest first) +
+ * `status=all` are the defaults and are omitted (clean URL); `page=1` is
+ * omitted too.
  */
 function buildHref({
   order,
@@ -418,7 +419,7 @@ function buildHref({
   page?: number;
 }): string {
   const params = new URLSearchParams();
-  if (order !== "asc") params.set("order", order);
+  if (order !== "desc") params.set("order", order);
   if (status !== "all") params.set("status", status);
   if (page != null && page > 1) params.set("page", String(page));
   const qs = params.toString();

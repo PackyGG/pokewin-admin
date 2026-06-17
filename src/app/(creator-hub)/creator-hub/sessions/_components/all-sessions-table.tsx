@@ -8,6 +8,7 @@ import {
   ExternalLink,
   Loader2,
   Pencil,
+  Radio,
   Tv,
   X,
 } from "lucide-react";
@@ -41,6 +42,7 @@ import type { StreamSessionStatus } from "@/lib/backend-api";
 
 import { setSessionVodUrl } from "../../creators/[id]/_components/sessions-actions";
 import type { AllCreatorSessionRow } from "../_queries/all-sessions-data";
+import { ForceEndSessionButton } from "./force-end-session-dialog";
 
 /**
  * Creator Hub — `/creator-hub/sessions` (All Sessions) table (client).
@@ -130,7 +132,7 @@ export function AllSessionsTable({ rows }: { rows: AllCreatorSessionRow[] }) {
                   house-funded
                 </div>
               </TableHead>
-              <TableHead className="min-w-[200px]">Kick VOD</TableHead>
+              <TableHead className="min-w-[320px]">Kick VOD / actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -267,9 +269,9 @@ const SessionRow = memo(function SessionRow({
       <TableCell className="text-right tabular-nums">
         <CommunitySpend session={session} />
       </TableCell>
-      {/* Inline VOD editor — clicks here don't bubble to the row (no modal). */}
+      {/* VOD editor + watch-stream + force-end — clicks here don't bubble. */}
       <TableCell onClick={stopRowClick} onKeyDown={stopRowKey}>
-        <InlineVodEditor
+        <SessionControls
           session={session}
           vodUrl={vodUrl}
           onVodChange={onVodChange}
@@ -357,7 +359,7 @@ const SessionMobileCard = memo(function SessionMobileCard({
         )}
       </button>
       <div className="mt-2.5">
-        <InlineVodEditor
+        <SessionControls
           session={session}
           vodUrl={vodUrl}
           onVodChange={onVodChange}
@@ -527,6 +529,71 @@ function InlineVodEditor({
           <Tv className="mr-1.5 size-3.5" />
           Add VOD
         </Button>
+      )}
+    </div>
+  );
+}
+
+// ── Watch stream + row controls ──────────────────────────────────────
+
+/**
+ * "Watch stream" link to the creator's Kick channel
+ * (`https://kick.com/<handle>`), opened in a new tab. Rendered only when the
+ * creator has a linked Kick handle (admin DB `creator_socials`); omitted
+ * otherwise. Neutral styling — this is a navigation action, not a money value,
+ * so it carries no House-POV finance color. Clicks stop row propagation.
+ */
+function WatchStreamButton({ handle }: { handle: string | null }) {
+  if (!handle) return null;
+  const url = `https://kick.com/${handle}`;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={stopRowClick}
+      onKeyDown={stopRowKey}
+      title={`Watch on Kick · ${url}`}
+      className="inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/50"
+    >
+      <Radio className="size-3.5 shrink-0" />
+      <span>Watch stream</span>
+      <ExternalLink className="size-3 shrink-0 text-muted-foreground" />
+    </a>
+  );
+}
+
+/**
+ * The per-row action cluster: the inline Kick VOD editor (kept — owner
+ * confirmed), then to its RIGHT a "Watch stream" link (when the creator has a
+ * linked Kick channel) and, for an ACTIVE session only, a destructive
+ * "Force end" confirm button. Shared by the desktop row + the mobile card.
+ */
+function SessionControls({
+  session,
+  vodUrl,
+  onVodChange,
+  compact = true,
+}: {
+  session: AllCreatorSessionRow;
+  vodUrl: string | null;
+  onVodChange: (sessionId: string, next: string | null) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <InlineVodEditor
+        session={session}
+        vodUrl={vodUrl}
+        onVodChange={onVodChange}
+        compact={compact}
+      />
+      <WatchStreamButton handle={session.creatorKickHandle} />
+      {session.status === "active" && (
+        <ForceEndSessionButton
+          userId={session.user_id}
+          sessionId={session.id}
+        />
       )}
     </div>
   );
