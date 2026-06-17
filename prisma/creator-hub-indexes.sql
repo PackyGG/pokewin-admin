@@ -100,9 +100,20 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_upper_code
 --   • getHubCohortWindowed        (_queries/hub-dashboard-cohort.ts)
 --   • getHubTopCreatorsByDeposits (_queries/hub-top-creators-query.ts)
 --   • getTopSignupLeaders         (_queries/hub-top-creator-meta.ts)
+--   • deriveBigFtdAlerts          (alerts/_queries/creator-alerts.ts)
 -- These are the hot per-render dashboard fan-out aggregates (covered-deposit
--- DISTINCT-ON + 7d lateral); twinned + parity-proven, dormant until the owner
--- adds CLICKHOUSE_* env on Vercel + the surface key joins CUTOVER_DEFAULT_CLICKHOUSE.
+-- DISTINCT-ON + 7d lateral; first-deposit-per-user over all ledger rows);
+-- twinned + parity-proven (TZ=UTC, twice), dormant until the owner adds
+-- CLICKHOUSE_* env on Vercel + the surface key joins CUTOVER_DEFAULT_CLICKHOUSE.
 --
--- Still to audit: deriveBigFtdAlerts (alerts/_queries/creator-alerts.ts).
+-- DEFERRED — shared (admin)/creators aggregates consumed by /creator-hub but
+-- OWNED by the /creators surface (a cross-section HOTSPOT; migrating them must
+-- be parity- AND regression-verified on BOTH /creators and /creator-hub, so it
+-- belongs to its own focused effort, not the /creator-hub pass):
+--   • getAllCreatorsNetGgr     ((admin)/creators/_queries/all-creators-net-pnl.ts)
+--   • getAllCreatorsLifetimePnl((admin)/creators/_queries/all-creators-lifetime-pnl.ts)
+-- Both are legacy $queryRawUnsafe global covering-attribution fan-outs over
+-- ledger + inventory + upgrader (same shape as the cohort wager leg already
+-- twinned) → Path-2 candidates. getCreatorsGlobalStats (creators-stats.ts) is
+-- backend-API-served (no DB scan) and needs no migration.
 -- ============================================================================
