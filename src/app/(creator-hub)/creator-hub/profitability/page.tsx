@@ -1,5 +1,12 @@
 import { Suspense } from "react";
-import { Activity, Coins, LineChart, Percent, TrendingUp } from "lucide-react";
+import {
+  Activity,
+  Coins,
+  LineChart,
+  Percent,
+  TrendingUp,
+  Users,
+} from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import {
@@ -61,10 +68,14 @@ async function ProfitabilitySection() {
   // exceeded earnings → house loss) → rose; negative (earnings beat cost →
   // house gain) → emerald.
   const pnlAccent = totals.totalActualPnl > 0 ? "rose" : "emerald";
+  // Affiliates made us = cohort deposits − card withdrawals (house POV).
+  // Positive = we kept value (house gain) → emerald; negative → rose.
+  const affiliatesAccent =
+    totals.totalAffiliatesMadeUs < 0 ? "rose" : "emerald";
 
   return (
     <FadeIn className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <HubKpiBox
           label="Total Cost"
           icon={Coins}
@@ -78,6 +89,13 @@ async function ProfitabilitySection() {
           accent={pnlAccent}
           value={formatCurrency(totals.totalActualPnl)}
           sub="Deal cost − affiliates made us"
+        />
+        <HubKpiBox
+          label="Affiliates Made Us"
+          icon={Users}
+          accent={affiliatesAccent}
+          value={formatCurrency(totals.totalAffiliatesMadeUs)}
+          sub="Cohort deposits − withdrawals"
         />
         <HubKpiBox
           label="Expected Wager"
@@ -116,8 +134,8 @@ async function ProfitabilitySection() {
 function ProfitabilitySkeleton() {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, i) => (
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {Array.from({ length: 6 }).map((_, i) => (
           <Skeleton key={i} className="h-[104px] rounded-2xl" />
         ))}
       </div>

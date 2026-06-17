@@ -104,6 +104,8 @@ export type CreatorProfitabilityRow = {
 
 export type ProfitabilityTotals = {
   totalCost: number;
+  /** Σ affiliatesMadeUs across the roster (house POV: + = we kept value). */
+  totalAffiliatesMadeUs: number;
   totalActualPnl: number;
   totalExpectedWager: number;
   totalCreatorWager: number;
@@ -119,6 +121,7 @@ export type ProfitabilityData = {
 
 const EMPTY_TOTALS: ProfitabilityTotals = {
   totalCost: 0,
+  totalAffiliatesMadeUs: 0,
   totalActualPnl: 0,
   totalExpectedWager: 0,
   totalCreatorWager: 0,
@@ -290,6 +293,12 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
   const totalCost = rows.reduce((acc, r) => acc + r.dealCost, 0);
   const totalExpectedWager = rows.reduce((acc, r) => acc + r.expectedWager, 0);
   const totalCreatorWager = rows.reduce((acc, r) => acc + r.actualWager, 0);
+  // Σ affiliatesMadeUs: positive = the roster's affiliate cohorts net-earned
+  // the house value over their deal frames (house gain), negative = net loss.
+  const totalAffiliatesMadeUs = rows.reduce(
+    (acc, r) => acc + r.affiliatesMadeUs,
+    0,
+  );
   // Σ(dealCost − affiliatesMadeUs): positive = the roster's deals cost more
   // than their affiliates earned us (house loss), negative = net house gain.
   const totalActualPnl = rows.reduce((acc, r) => acc + r.actualPnl, 0);
@@ -305,6 +314,7 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
     rows,
     totals: {
       totalCost,
+      totalAffiliatesMadeUs,
       totalActualPnl,
       totalExpectedWager,
       totalCreatorWager,
