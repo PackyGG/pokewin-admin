@@ -17,7 +17,9 @@ import {
   type LeaderboardPreviewRow,
   type LeaderboardTimeStatus,
 } from "../_queries/leaderboards-preview";
+import { getPreviousLeaderboardsCached } from "../_queries/previous-leaderboards";
 import { CreateLeaderboardDialog } from "./create-leaderboard-dialog";
+import { PreviousLeaderboardsDialog } from "./previous-leaderboards-dialog";
 
 /**
  * Affiliate Leaderboards card (right half of the Overview "Deal | Affiliate
@@ -57,20 +59,14 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
   // Link targets to the EXISTING flows (this wave reuses them as-is).
   const manageHref = `/creator-hub/leaderboards`;
 
-  const heading = (
-    <SectionHeading
-      icon={Trophy}
-      title="Affiliate Leaderboards"
-      action={<CreateLeaderboardDialog userId={userId} />}
-    />
-  );
-
-  // List preview + realized house cost, fetched together. Both best-effort:
-  // a list failure degrades to a note; a cost failure renders a visible
-  // muted "chips unavailable" note (never a silent omission). The list read
-  // is wrapped OUTSIDE the cache so a transport / non-2xx failure returns a
-  // marker instead of throwing the card down (a throw is never cached).
-  const [listResult, costResult] = await Promise.all([
+  // List preview + realized house cost + previous (ended) boards, fetched
+  // together. All best-effort: a list failure degrades to a note; a cost
+  // failure renders a visible muted "chips unavailable" note (never a silent
+  // omission); a previous-boards failure simply hides the modal trigger. The
+  // list read is wrapped OUTSIDE the cache so a transport / non-2xx failure
+  // returns a marker instead of throwing the card down (a throw is never
+  // cached).
+  const [listResult, costResult, previousResult] = await Promise.all([
     getLeaderboardsPreviewCached(userId)
       .then((r) => ({ ok: true as const, preview: r }))
       .catch((err: unknown) => {
@@ -92,8 +88,31 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
         );
         return { ok: false as const };
       }),
+    getPreviousLeaderboardsCached(userId).catch((e: unknown) => {
+      console.error(
+        "[creator-hub.creators.leaderboards] previous boards fetch failed:",
+        e,
+      );
+      return [];
+    }),
   ]);
   const cost = costResult.ok ? costResult.cost : null;
+  const previousRows = previousResult;
+
+  const heading = (
+    <SectionHeading
+      icon={Trophy}
+      title="Affiliate Leaderboards"
+      action={
+        <div className="flex flex-wrap items-center gap-2">
+          {previousRows.length > 0 && (
+            <PreviousLeaderboardsDialog rows={previousRows} />
+          )}
+          <CreateLeaderboardDialog userId={userId} />
+        </div>
+      }
+    />
+  );
 
   if (!listResult.ok) {
     return (
