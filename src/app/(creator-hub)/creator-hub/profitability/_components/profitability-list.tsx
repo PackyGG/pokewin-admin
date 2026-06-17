@@ -60,6 +60,31 @@ function frameLabel(row: CreatorProfitabilityRow): string {
   return `${range} · ended`;
 }
 
+/** Deal length as whole weeks (with a day count fallback under a week). */
+function dealLengthLabel(row: CreatorProfitabilityRow): string {
+  const { frameStartMs, frameEndMs, dealWeeks } = row;
+  if (frameStartMs == null || frameEndMs == null) return "—";
+  if (dealWeeks <= 1) {
+    const days = Math.max(
+      1,
+      Math.round((frameEndMs - frameStartMs) / MS_PER_DAY),
+    );
+    return `${days} day${days === 1 ? "" : "s"}`;
+  }
+  return `${dealWeeks} weeks`;
+}
+
+/** Time remaining in the frame: "X days" (live), "Upcoming", or "Ended". */
+function timeLeftLabel(row: CreatorProfitabilityRow): string {
+  const { frameStartMs, frameEndMs } = row;
+  if (frameStartMs == null || frameEndMs == null) return "—";
+  const now = Date.now();
+  if (frameStartMs > now) return "Upcoming";
+  if (frameEndMs < now) return "Ended";
+  const daysLeft = Math.max(0, Math.ceil((frameEndMs - now) / MS_PER_DAY));
+  return `${daysLeft} day${daysLeft === 1 ? "" : "s"}`;
+}
+
 function Metric({
   label,
   value,
@@ -130,6 +155,25 @@ function ProfitabilityRow({ row }: { row: CreatorProfitabilityRow }) {
       </div>
 
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:flex sm:items-center sm:gap-6">
+        <div className="col-span-2 flex items-center gap-3 rounded-lg border bg-background/40 px-3 py-1.5 sm:col-span-1">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Length
+            </div>
+            <div className="text-sm font-semibold tabular-nums">
+              {dealLengthLabel(row)}
+            </div>
+          </div>
+          <div className="h-7 w-px bg-border" />
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Time Left
+            </div>
+            <div className="text-sm font-semibold tabular-nums">
+              {timeLeftLabel(row)}
+            </div>
+          </div>
+        </div>
         <Metric
           label="Deal Cost"
           value={formatCurrency(row.dealCost)}
