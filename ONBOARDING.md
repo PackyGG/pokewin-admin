@@ -38,6 +38,23 @@ Two fully separate Postgres databases, treated **very differently**:
 
 ---
 
+## 1.5 🗄️ BACKEND READ POLICY — Index-or-ClickHouse (HARD RULE, 2026-06-17)
+
+> **Canonical short reference:** `docs/BACKEND_QUERY_SYSTEM.md`. Mirrored as a top-priority rule in `CLAUDE.md` / `AGENTS.md`.
+
+The backend was fully reworked. **Every read is served by exactly one of two paths — there is no third way:**
+
+> **A read either hits a confirmed Postgres index OR runs through ClickHouse. No unindexed read, no full-table/seq-scan on MAIN — ever, not even "just once".**
+
+- **Indexed Postgres** → live / per-user / money-exact reads (`dashboard_stats`, user detail, lists, operational boards). Must be `EXPLAIN ANALYZE`-proven to hit an index (read-only probe). MAIN is read-only, so agents **do not apply indexes** — add the `CREATE INDEX CONCURRENTLY` to `prisma/recommended-indexes.sql` and flag the owner; a read that can only seq-scan is **BLOCKED** until then.
+- **ClickHouse** → heavy aggregate / analytics / fan-out (`/insights/*`, `/analytics/*`, creators/rewards analytics, dashboard legs). Wired through `resolveAdminRead(surfaceKey, { pg, ch, compare })` (`src/lib/clickhouse/resolve-read.ts`), gated by `getAdminReadMode` (`src/lib/feature-flags/admin-read-source.ts`). CH twins must be cent/count-exact vs Postgres before joining `CUTOVER_DEFAULT_CLICKHOUSE`; per-surface instant rollback via Edge Config.
+- **New queries MUST follow this construct; the old plain Prisma/PG query layer is legacy.** Do not add new unindexed PG queries. When you touch/extend a read or build a new page, bring it onto a confirmed index or a ClickHouse twin. A query that serves neither is wrong and must not ship.
+- This does **not** loosen the MAIN read-only rule (§1).
+
+**Note (2026-06-16):** ClickHouse creds are not yet on Vercel prod, so the dormant-client guard forces every CH surface to `"off"` → analytics currently serve from Postgres. Optimization work therefore targets the indexed-`pg()` path until the owner adds `CLICKHOUSE_*` env vars.
+
+---
+
 ## 2. ⚙️ WORKING RULES (from CLAUDE.md)
 
 - **Workflow-first is STRICT.** Begin every non-trivial task with a `Workflow` (deterministic multi-agent orchestration). Multiple tasks → multiple workflows in parallel. Use as many agents as useful. Inline/single-agent only for: a pure codebase question (no edit), ONE trivial 1-file fix, live troubleshooting, or explicit "inline".

@@ -44,6 +44,35 @@ Diese Datei (`CLAUDE.md`) ist die **bindende Regel-Quelle**. Zu Sessionbeginn mi
 
 ---
 
+## 🗄️ ABSOLUTE BACKEND-REGEL — Index-or-ClickHouse (Owner, 2026-06-17, höchste Priorität, gleichrangig mit Prod-DB-Policy)
+
+**Das Backend wurde komplett umgestellt. Ab sofort wird JEDER Read ausschließlich über genau einen von zwei Pfaden bedient: (1) indexierte Postgres-Query ODER (2) ClickHouse. Es gibt keinen dritten Weg.**
+
+### Die EINE Regel
+> **Jeder Read trifft entweder einen bestätigten Postgres-Index ODER läuft über ClickHouse. Kein unindexierter Read, kein Full-Table-/Seq-Scan auf der MAIN-DB — niemals, auch nicht „nur kurz" oder „nur einmal".**
+
+Warum: Beide Pfade sind die einzigen, die unter realer Last + Concurrency auf der prod MAIN-DB skalieren. Ein unindexierter Scan auf MAIN ist ein Prod-Incident, kein Implementierungsdetail.
+
+### Pfad 1 — Indexierte Postgres-Query
+- **Wofür:** live / per-user / money-exact Reads (z. B. `dashboard_stats`, User-Detail, Listen, operative Boards). Diese bleiben bewusst auf indexiertem Postgres (zero CDC-Lag, cent-exakt).
+- **Pflicht:** die Query MUSS einen Index treffen — per read-only `EXPLAIN ANALYZE` gegen prod verifiziert (Index-Scan, kein Seq-Scan). Probe über temporäres `node --env-file=.env`-Script mit `pg` (uncommitted, druckt keine Secrets, danach löschen).
+- **MAIN ist read-only** → der Agent legt einen fehlenden Index **nicht selbst an**. Stattdessen das `CREATE INDEX CONCURRENTLY`-Statement in **`prisma/recommended-indexes.sql`** ergänzen und dem Owner zum Anwenden flaggen. Eine Query, die ohne diesen Index nur per Seq-Scan läuft, gilt bis dahin als **BLOCKED**, nicht „done".
+
+### Pfad 2 — ClickHouse
+- **Wofür:** heavy Aggregate / Analytics / Fan-out (`/insights/*`, `/analytics/*`, creators-/rewards-analytics, dashboard-Legs).
+- **Pflicht:** über **`resolveAdminRead(surfaceKey, { pg, ch, compare })`** (`src/lib/clickhouse/resolve-read.ts`) verdrahten, gated durch **`getAdminReadMode`** (`src/lib/feature-flags/admin-read-source.ts`). CH-Twin muss cent/count-exakt gegen Postgres geprüft sein (Parity-Harness, `TZ=UTC`, zweimal), bevor der Surface-Key in `CUTOVER_DEFAULT_CLICKHOUSE`. Per-Surface Instant-Rollback via Edge Config bleibt erhalten.
+
+### Neue Queries = Pflicht-Konstrukt, alter PG-Layer = Legacy
+- **Jede NEUE Query / jedes neue Read-File MUSS auf dem Index-or-ClickHouse-Konstrukt aufbauen.** Keine neuen plain/unindexierten Prisma-/PG-Queries mehr.
+- Der bestehende direkte Prisma-/PG-Query-Layer gilt als **Legacy**. Wenn du einen Read anfasst, erweiterst oder eine Page neu baust: bring ihn auf einen bestätigten Index oder einen ClickHouse-Twin — nicht „so lassen wie er war".
+- **Verboten:** ein neues heavy Aggregate direkt auf MAIN ohne Index-Beleg oder CH-Twin; unbounded Lifetime-Scans (`windowDateFilterCapped` nutzen); „schnelle" Raw-Queries an der Regel vorbei.
+
+**Volle Mechanik (Caching, Suspense-Streaming, Active-Timeframe-Only, `safeQuery`, House-POV-Farben, Checkliste neue Page):** **`docs/BACKEND_QUERY_SYSTEM.md`** — vor jeder Read-/Page-Arbeit lesen. Diese Regel hebt KEINE der Prod-DB-Regeln auf (MAIN bleibt read-only).
+
+**Merkregel:** Bedient eine Query weder einen bestätigten Index noch ClickHouse → sie ist falsch gebaut und darf nicht shippen.
+
+---
+
 ## 🔥 ABSOLUTE PRIORITÄTSREGEL — Parallel-Modus ist Pflicht
 
 **Jede neue User-Aufgabe → sofort `Agent` Tool mit `run_in_background: true` starten und nur eine 1–2-zeilige Bestätigung antworten.** Keine inline-Bearbeitung. Keine Bündelung mehrerer User-Messages in eine lange Inline-Session. Keine Ausnahmen für "kurze" Fixes.

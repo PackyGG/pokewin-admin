@@ -7,6 +7,30 @@ practical "how to actually do it".
 
 ---
 
+## ⚖️ THE HARD RULE — Index-or-ClickHouse (2026-06-17)
+
+The backend was fully reworked. **Every read is served by exactly one of two
+paths — there is no third way:**
+
+> **A read either hits a confirmed Postgres index OR runs through ClickHouse.
+> No unindexed read, no full-table / seq-scan on MAIN — ever, not even
+> "just once" or "just quickly".**
+
+- **Indexed Postgres** = live / per-user / money-exact reads. The query MUST be
+  `EXPLAIN ANALYZE`-proven to hit an index (read-only probe). MAIN is read-only,
+  so agents **never apply an index** — add the `CREATE INDEX CONCURRENTLY` to
+  `prisma/recommended-indexes.sql` and flag the owner. A read that can only
+  seq-scan is **BLOCKED**, not "done".
+- **ClickHouse** = heavy aggregate / analytics / fan-out, wired through
+  `resolveAdminRead` (§6).
+- **New queries MUST follow this construct; the old plain Prisma/PG query layer
+  is legacy.** No new unindexed PG queries. Touching/extending a read or
+  building a new page → bring it onto a confirmed index or a CH twin. A query
+  that serves neither is wrong and must not ship.
+- This does **not** loosen the MAIN read-only rule (§1).
+
+---
+
 ## 0. TL;DR decision tree
 
 When you add or touch a read:
