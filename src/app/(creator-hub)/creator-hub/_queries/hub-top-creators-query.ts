@@ -10,10 +10,14 @@ import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { getCodeAndWagerByUser } from "../../../(admin)/creators/_queries/code-and-wager-by-user";
 import {
-  topCreatorsSinceClause,
   type TopCreatorsPeriod,
 } from "../_lib/top-creators-period";
 import { getWindowedSignupsByCreatorIds } from "./hub-top-creator-meta";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import {
+  rankTopCreatorsByDepositsFromClickHouse,
+  topCreatorsSinceDate,
+} from "@/lib/clickhouse/queries/creator-hub/top-creators";
 
 export type HubTopCreator = {
   creatorUserId: string;
@@ -33,46 +37,68 @@ type DepositRankRow = {
   deposits: string;
 };
 
+/**
+ * The heavy "rank creators by covered deposits" leg. Anchored to a single
+ * `since` instant (deterministic), so the Postgres and ClickHouse twins are
+ * directly comparable, and routed through `resolveAdminRead` (Index-or-
+ * ClickHouse construct). Surface key `creator_hub_top_creators` is dormant
+ * (not in CUTOVER_DEFAULT_CLICKHOUSE) → serves Postgres until proven + flipped.
+ */
+async function rankTopCreatorsByDeposits(
+  period: TopCreatorsPeriod,
+  env: DbEnv,
+  excluded: string[],
+  since: Date,
+): Promise<DepositRankRow[]> {
+  return resolveAdminRead("creator_hub_top_creators", {
+    pg: async () => {
+      const db = env === "prod" ? await getProdDb() : await getDevDb();
+      const blacklistAnd = blacklistNotInClause("u.id", excluded);
+      return db.$queryRawUnsafe<DepositRankRow[]>(
+        `WITH covered_deposits AS (
+           SELECT DISTINCT ON (lt.id)
+                  lt.amount::numeric AS amount,
+                  acu.affiliate_user_id AS creator_id
+             FROM ledger_transactions lt
+             JOIN "user" u ON u.id = lt.user_id
+             LEFT JOIN affiliate_code_usages acu
+                    ON acu.referred_user_id = lt.user_id
+                   AND acu.created_at <= lt.created_at
+                   AND acu.created_at >= lt.created_at - INTERVAL '7 days'
+                   AND acu.referred_user_id <> acu.affiliate_user_id
+            WHERE lt.type = 'deposit'
+              AND lt.status = 'completed'
+              AND u.role NOT IN ('admin', 'support', 'creator')
+              AND lt.created_at >= $1::timestamptz
+              ${blacklistAnd}
+            ORDER BY lt.id, acu.created_at DESC
+         )
+         SELECT cd.creator_id,
+                c.username,
+                c.image,
+                COALESCE(SUM(cd.amount), 0)::text AS deposits
+           FROM covered_deposits cd
+           JOIN "user" c ON c.id = cd.creator_id AND c.role = 'creator'
+          WHERE cd.creator_id IS NOT NULL
+          GROUP BY cd.creator_id, c.username, c.image
+          HAVING COALESCE(SUM(cd.amount), 0) > 0
+          ORDER BY SUM(cd.amount) DESC
+          LIMIT ${TOP_CREATORS_LIMIT}`,
+        since.toISOString(),
+      );
+    },
+    ch: () => rankTopCreatorsByDepositsFromClickHouse(period, excluded, since),
+  });
+}
+
 async function fetchTopCreatorsByDeposits(
   period: TopCreatorsPeriod,
   env: DbEnv,
 ): Promise<HubTopCreator[]> {
-  const db = env === "prod" ? await getProdDb() : await getDevDb();
   const excluded = await getExcludedUserIds();
-  const blacklistAnd = blacklistNotInClause("u.id", excluded);
-  const sinceLt = topCreatorsSinceClause("lt.created_at", period);
+  const since = topCreatorsSinceDate(period);
 
-  const rows = await db.$queryRawUnsafe<DepositRankRow[]>(
-    `WITH covered_deposits AS (
-       SELECT DISTINCT ON (lt.id)
-              lt.amount::numeric AS amount,
-              acu.affiliate_user_id AS creator_id
-         FROM ledger_transactions lt
-         JOIN "user" u ON u.id = lt.user_id
-         LEFT JOIN affiliate_code_usages acu
-                ON acu.referred_user_id = lt.user_id
-               AND acu.created_at <= lt.created_at
-               AND acu.created_at >= lt.created_at - INTERVAL '7 days'
-               AND acu.referred_user_id <> acu.affiliate_user_id
-        WHERE lt.type = 'deposit'
-          AND lt.status = 'completed'
-          AND u.role NOT IN ('admin', 'support', 'creator')
-          ${sinceLt}
-          ${blacklistAnd}
-        ORDER BY lt.id, acu.created_at DESC
-     )
-     SELECT cd.creator_id,
-            c.username,
-            c.image,
-            COALESCE(SUM(cd.amount), 0)::text AS deposits
-       FROM covered_deposits cd
-       JOIN "user" c ON c.id = cd.creator_id AND c.role = 'creator'
-      WHERE cd.creator_id IS NOT NULL
-      GROUP BY cd.creator_id, c.username, c.image
-      HAVING COALESCE(SUM(cd.amount), 0) > 0
-      ORDER BY SUM(cd.amount) DESC
-      LIMIT ${TOP_CREATORS_LIMIT}`,
-  );
+  const rows = await rankTopCreatorsByDeposits(period, env, excluded, since);
 
   if (rows.length === 0) return [];
 

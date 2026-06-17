@@ -1,0 +1,85 @@
+-- ============================================================================
+-- CREATOR-HUB — recommended Postgres indexes (OWNER TO RUN on MAIN/prod game DB)
+-- ============================================================================
+--
+-- WHY THIS FILE EXISTS
+--   The /creator-hub section was audited against the Index-or-ClickHouse rule
+--   (docs/BACKEND_QUERY_SYSTEM.md). Every read is being moved onto exactly one
+--   of two paths:
+--     • Path 1 (indexed Postgres) — keyed / type-filtered / bounded reads.
+--     • Path 2 (ClickHouse twin)  — the heavy multi-table fan-out aggregates
+--                                    (covered-deposit DISTINCT-ON + 7d lateral,
+--                                    correlated cohort subqueries). Those do NOT
+--                                    need a PG index; they are served from the
+--                                    ClickHouse mirror via resolveAdminRead.
+--
+--   This file contains ONLY the Path-1 indexes the EXPLAIN audit proved are
+--   missing. Agents NEVER apply indexes to MAIN (it is strictly read-only) —
+--   so these are listed here for the OWNER to run by hand.
+--
+-- HOW TO RUN (owner, on the MAIN/prod game DB):
+--   Run each statement separately. CREATE INDEX CONCURRENTLY cannot run inside
+--   a transaction block, so do NOT wrap these in BEGIN/COMMIT and do NOT run
+--   them as a single multi-statement batch in some clients.
+--
+--   psql "$DATABASE_URL" -c "CREATE INDEX CONCURRENTLY ..."   (one at a time)
+--
+--   CONCURRENTLY keeps the table writable during the build (no app downtime).
+--   Each IF NOT EXISTS makes re-runs safe.
+--
+-- AUDIT EVIDENCE (EXPLAIN on prod, 2026-06-17, read-only):
+--   • affiliate_codes WHERE user_id = $1            → Seq Scan (no user_id index)
+--   • "user" WHERE referred_by IN (...)             → Seq Scan (no referred_by index)
+--   • vouchers WHERE origin = $1 AND created_at >=   → Seq Scan (no (origin,created_at) index)
+--   • ledger_transactions (status,type,created_at)  → ALREADY indexed
+--       (idx_ledger_tx_status_type_created_at) — creator-cost tips/leaderboard
+--       and tips-sponsors ledger SUMs are already Path-1 compliant, NO new index.
+-- ============================================================================
+
+
+-- 1) affiliate_codes(user_id) ------------------------------------------------
+--    Serves: creators/[id]/_queries/creator-metadata.ts
+--            (SELECT ... FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at)
+--    Small table, but the keyed lookup currently seq-scans; this makes it a
+--    plain index lookup (Path 1).
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_user_created_at
+  ON affiliate_codes (user_id, created_at DESC);
+
+
+-- 2) "user"(referred_by) -----------------------------------------------------
+--    Serves: _queries/hub-top-creator-meta.ts  (getWindowedSignupsByCreatorIds:
+--              "user" WHERE referred_by IN (<=6 creator ids))
+--            and the referred_by JOIN legs of the hub cohort / signup reads.
+--    Turns the referred-cohort lookups into an index scan instead of a full
+--    14.5k-row "user" seq scan. Partial index keeps it small (most rows have a
+--    NULL referrer).
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_referred_by
+  ON "user" (referred_by)
+  WHERE referred_by IS NOT NULL;
+
+
+-- 3) vouchers(origin, created_at) --------------------------------------------
+--    Serves: _queries/hub-dashboard-creator-cost.ts  (multiplier-payout leg:
+--              vouchers WHERE origin = 'creator_multiplier_payout'
+--                            AND created_at >= NOW() - INTERVAL ...)
+--            and any other origin+window voucher SUM on the hub.
+--    Currently a full 49.8k-row vouchers seq scan; this makes the windowed
+--    origin SUM index-served (Path 1).
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vouchers_origin_created_at
+  ON vouchers (origin, created_at DESC);
+
+
+-- ============================================================================
+-- NOT in this file (served by ClickHouse twins, Path 2 — no PG index):
+--   • getHubCohortWindowed        (_queries/hub-dashboard-cohort.ts)
+--   • getHubTopCreatorsByDeposits (_queries/hub-top-creators-query.ts)
+--   • getTopSignupLeaders         (_queries/hub-top-creator-meta.ts)
+--   • getRiskData                 (creators/[id]/_queries/risk-data.ts)
+--   • getCohortsData              (creators/[id]/_queries/cohorts-data.ts)
+--   • getAltAccountsData          (creators/[id]/_queries/alt-accounts-data.ts)
+--   • deriveBigFtdAlerts          (alerts/_queries/creator-alerts.ts)
+-- These are heavy fan-out aggregates over ledger/affiliate/audit cohorts; they
+-- are wired through resolveAdminRead(<surfaceKey>, { pg, ch }) and serve from
+-- the ClickHouse mirror once the owner adds CLICKHOUSE_* env on Vercel + the
+-- surface key joins CUTOVER_DEFAULT_CLICKHOUSE (after cent/count-exact parity).
+-- ============================================================================
