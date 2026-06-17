@@ -416,6 +416,44 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_role_banned_locked
 -- mirror. Same reasoning as the `dashboard_stats` note in
 -- src/lib/feature-flags/admin-read-source.ts.
 
+-- #18 ----------------------------------------------------------------
+-- user_inventory partial index for the 2-NULL "owned" predicate
+-- ===================================================================
+-- Added by the 2026-06-17 Speed-Insights perf pass (top route /users/[id],
+-- the #1-traffic page).
+--
+-- #4 (idx_user_inv_open_by_user) is a partial index whose predicate is
+-- (sold_at IS NULL AND exchanged_at IS NULL AND withdrawal_locked_at IS NULL)
+-- — THREE nulls. Postgres can only use a partial index when the query's
+-- WHERE *implies* the index predicate, so a query that filters on only the
+-- first TWO nulls (sold_at IS NULL AND exchanged_at IS NULL, WITHOUT the
+-- withdrawal_locked_at clause) CANNOT use #4 and falls back to a parallel
+-- seq scan of the whole table (~636k rows on prod, EXPLAIN cost ≈ 19,939).
+--
+-- Two hot per-user reads on /users/[id] use exactly that 2-null predicate
+-- and therefore seq-scan on essentially every (per-user-cold) load:
+--   • src/lib/queries/users-detail.ts  getUserDetail → inventoryCount
+--       db.user_inventory.count({ where:{ user_id, sold_at:null, exchanged_at:null } })
+--     (AWAITED in the streamed body gate → directly gates the body's LCP)
+--   • src/lib/queries/users-financial.ts getUserPnlBreakdown → inventoryValue
+--       db.user_inventory.aggregate({ where:{ user_id, sold_at:null, exchanged_at:null }, _sum:{ value_at_obtained } })
+--
+-- These two intentionally include withdrawal-locked items (the header count
+-- and getUserPnlBreakdown's unrealized-liability lens both count a card that
+-- is locked for an in-flight withdrawal as still-held), so they deliberately
+-- do NOT carry the withdrawal_locked_at clause that calculateUserPnl uses.
+-- That means the fix is an INDEX, not a query change — changing the query to
+-- add the 3rd null would alter a displayed count / P&L number.
+--
+-- EXPLAIN against prod (2026-06-17, read-only, no ANALYZE):
+--   2-null predicate, no index  → Parallel Seq Scan, cost 0..18,939 (636k rows)
+--   same query once this exists  → Index Scan, cost ≈ 12   (≈1,600× cheaper)
+--
+-- Partial, so it stays tiny (only not-sold-and-not-exchanged rows ≈ 13k).
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_inv_owned_by_user
+  ON user_inventory (user_id)
+  WHERE sold_at IS NULL AND exchanged_at IS NULL;
+
 -- -------------------------------------------------------------------
 -- ADMIN DB (separate database — apply against ADMIN_DATABASE_URL, NOT
 -- the main game DB).
