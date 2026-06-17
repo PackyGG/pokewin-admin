@@ -37,6 +37,13 @@ function conversionClass(rate: number): string {
   return "text-muted-foreground";
 }
 
+/** House-POV PnL color: house gain → emerald, house loss → rose. */
+function housePnlClass(value: number): string {
+  if (value > 0) return "text-emerald-600 dark:text-emerald-400";
+  if (value < 0) return "text-rose-600 dark:text-rose-400";
+  return "text-muted-foreground";
+}
+
 /** Frame label: dates + day X/N (live), "Upcoming" (not started), or "Ended". */
 function frameLabel(row: CreatorProfitabilityRow): string {
   const { frameStartMs, frameEndMs, isLive } = row;
@@ -171,6 +178,21 @@ function ProfitabilityRow({ row }: { row: CreatorProfitabilityRow }) {
             </div>
             <div className="text-sm font-semibold tabular-nums">
               {timeLeftLabel(row)}
+            </div>
+          </div>
+          <div className="h-7 w-px bg-border" />
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Actual PnL
+            </div>
+            <div
+              className={cn(
+                "text-sm font-semibold tabular-nums",
+                housePnlClass(row.actualPnl),
+              )}
+            >
+              {row.actualPnl >= 0 ? "+" : ""}
+              {formatCurrency(row.actualPnl)}
             </div>
           </div>
         </div>

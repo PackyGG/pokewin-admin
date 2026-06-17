@@ -77,6 +77,14 @@ export type CreatorProfitabilityRow = {
   dealCost: number;
   expectedWager: number;
   actualWager: number;
+  /**
+   * House PnL inside the frame: the GGR the cohort's wager earns the house
+   * (`actualWager × house edge`) minus what we spent on the deal
+   * (`dealCost`). Positive = the affiliate cohort more than paid for the
+   * deal (house gain, emerald); negative = the deal is still underwater
+   * (house loss, rose). ≥ 0 exactly when conversion ≥ 1×.
+   */
+  actualPnl: number;
   /** `expectedWager > 0 ? actualWager / expectedWager : 0`. */
   conversionRate: number;
 };
@@ -215,6 +223,7 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
     const dealCost = capUsd + leaderboardUsd + tipSponsorUsd;
     const expectedWager = dealCost / HOUSE_EDGE;
     const actualWager = wagerByUser.get(c.id) ?? 0;
+    const actualPnl = actualWager * HOUSE_EDGE - dealCost;
     const conversionRate = expectedWager > 0 ? actualWager / expectedWager : 0;
 
     return {
@@ -234,6 +243,7 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
       dealCost,
       expectedWager,
       actualWager,
+      actualPnl,
       conversionRate,
     };
   });
