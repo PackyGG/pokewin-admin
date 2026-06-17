@@ -2,9 +2,11 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
-import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { WAGER_TYPES_SQL, GAMING_PAYOUT_TYPES_SQL } from "@/lib/metrics";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getCrmRowsFromClickHouse } from "@/lib/clickhouse/queries/crm";
+import { compareCrmSnapshot } from "@/lib/clickhouse/comparison";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 import {
   realCustomersScopeSql,
@@ -12,6 +14,20 @@ import {
   WAGER_NON_BORROW_FILTER,
   PAYOUT_NON_BORROW_FILTER,
 } from "./insights-games/_shared";
+import { bucketCrmSnapshot, type CrmAggregateRow, type CrmSnapshot } from "./crm-types";
+
+// Types live in the engine-neutral ./crm-types (so the CH comparison layer can
+// share the bucketer without an import cycle); re-exported here so existing
+// `@/lib/queries/crm` consumers (the /crm page) keep their import path.
+export type {
+  LifecycleKey,
+  VipTierKey,
+  CrmSegmentRow,
+  CrmPlayerRow,
+  CrmSnapshot,
+  CrmAggregateRow,
+} from "./crm-types";
+export { bucketCrmSnapshot } from "./crm-types";
 
 /**
  * Player CRM / segmentation snapshot for the Overview → Player CRM page.
@@ -42,97 +58,7 @@ import {
  */
 
 const LIFETIME_LOOKBACK_DAYS = 365;
-const NEW_CUSTOMER_DAYS = 30;
-const DORMANT_WHALE_MIN_DEPOSITS = 1000;
-const DORMANT_WHALE_MIN_RECENCY_DAYS = 30;
-const DORMANT_WHALE_LIMIT = 15;
-const TOP_VALUE_LIMIT = 20;
-
-export type LifecycleKey = "active" | "at_risk" | "dormant" | "churned";
-export type VipTierKey =
-  | "diamond"
-  | "platinum"
-  | "gold"
-  | "silver"
-  | "bronze";
-
-export type CrmSegmentRow = {
-  key: string;
-  label: string;
-  users: number;
-  deposits: number;
-  ggr: number;
-};
-
-export type CrmPlayerRow = {
-  userId: string;
-  username: string | null;
-  image: string | null;
-  deposits: number;
-  netDeposits: number;
-  ggr: number;
-  plays: number;
-  recencyDays: number;
-  lifecycle: LifecycleKey;
-};
-
-export type CrmSnapshot = {
-  totalCustomers: number;
-  depositingCustomers: number;
-  newCustomers: number;
-  totalDeposits: number;
-  totalNetDeposits: number;
-  totalGgr: number;
-  avgDepositPerCustomer: number;
-  lifecycle: CrmSegmentRow[];
-  vipTiers: CrmSegmentRow[];
-  dormantWhales: CrmPlayerRow[];
-  topValue: CrmPlayerRow[];
-};
-
-type RawRow = {
-  user_id: string;
-  username: string | null;
-  image: string | null;
-  deposits: string;
-  withdrawals: string;
-  wager: string;
-  payout: string;
-  plays: number;
-  recency_days: number;
-  signup_days: number;
-};
-
-const LIFECYCLE_LABELS: Record<LifecycleKey, string> = {
-  active: "Active (≤14d)",
-  at_risk: "At-Risk (15-30d)",
-  dormant: "Dormant (31-90d)",
-  churned: "Churned (>90d)",
-};
-
-const VIP_LABELS: Record<VipTierKey, string> = {
-  diamond: "Diamond ($5k+)",
-  platinum: "Platinum ($2k-5k)",
-  gold: "Gold ($500-2k)",
-  silver: "Silver ($100-500)",
-  bronze: "Bronze (<$100)",
-};
-
-function lifecycleFor(recencyDays: number): LifecycleKey {
-  if (recencyDays <= 14) return "active";
-  if (recencyDays <= 30) return "at_risk";
-  if (recencyDays <= 90) return "dormant";
-  return "churned";
-}
-
-function vipTierFor(deposits: number): VipTierKey | null {
-  if (deposits >= 5000) return "diamond";
-  if (deposits >= 2000) return "platinum";
-  if (deposits >= 500) return "gold";
-  if (deposits >= 100) return "silver";
-  if (deposits > 0) return "bronze";
-  return null;
-}
+type RawRow = CrmAggregateRow;
 
 /**
  * `true` when the connected DB has `upgrader_games`. Upgrader lives ONLY
@@ -146,15 +72,21 @@ async function hasUpgraderGames(): Promise<boolean> {
   return probe[0]?.exists != null;
 }
 
-async function computeCrmSnapshot(
-  _blacklistKey: string[],
-): Promise<CrmSnapshot> {
-  void _blacklistKey; // cache-key dimension only; scope fetched internally
+async function computeCrmRowsPg(anchor: Date): Promise<RawRow[]> {
   const db = await getDb();
   const scope = await realCustomersScopeSql();
   const sessionWindowsCte = await getCreatorSessionWindowsCte();
   const upgrader = await hasUpgraderGames();
-  const cutoff = `NOW() - INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'`;
+  // Anchor every NOW()-relative term (cutoff + recency + signup) to a single
+  // fixed instant so the read is deterministic — and so the ClickHouse twin,
+  // fed the SAME anchor, computes identical recency/signup buckets (no
+  // wall-clock skew between the two engines during comparison/parity). The
+  // 365-day cutoff is computed as exact seconds (not a calendar INTERVAL) so
+  // both engines bound the window byte-identically.
+  const anchorEpoch = anchor.getTime() / 1000;
+  const cutoffEpoch = anchorEpoch - LIFETIME_LOOKBACK_DAYS * 86400;
+  const anchorSql = `to_timestamp(${anchorEpoch})`;
+  const cutoff = `to_timestamp(${cutoffEpoch})`;
 
   const notInSession = (userCol: string, tsCol: string) => `
     AND NOT EXISTS (
@@ -237,8 +169,8 @@ async function computeCrmSnapshot(
            SUM(g.wager)::text AS wager,
            SUM(g.payout)::text AS payout,
            SUM(g.plays)::int AS plays,
-           (EXTRACT(EPOCH FROM (NOW() - MAX(g.act_ts))) / 86400)::int AS recency_days,
-           (EXTRACT(EPOCH FROM (NOW() - u.created_at)) / 86400)::int AS signup_days
+           (EXTRACT(EPOCH FROM (${anchorSql} - MAX(g.act_ts))) / 86400)::int AS recency_days,
+           (EXTRACT(EPOCH FROM (${anchorSql} - u.created_at)) / 86400)::int AS signup_days
     FROM (
       SELECT user_id, deposits, withdrawals, wager, payout, plays, act_ts FROM deposit_src
       UNION ALL SELECT * FROM withdrawal_src
@@ -252,98 +184,33 @@ async function computeCrmSnapshot(
     HAVING SUM(g.deposits) > 0 OR SUM(g.wager) > 0
   `);
 
-  // ── In-memory bucketing ──────────────────────────────────────────────
-  const lifecycleAgg: Record<LifecycleKey, { users: number; deposits: number; ggr: number }> = {
-    active: { users: 0, deposits: 0, ggr: 0 },
-    at_risk: { users: 0, deposits: 0, ggr: 0 },
-    dormant: { users: 0, deposits: 0, ggr: 0 },
-    churned: { users: 0, deposits: 0, ggr: 0 },
-  };
-  const vipAgg: Record<VipTierKey, { users: number; deposits: number; ggr: number }> = {
-    diamond: { users: 0, deposits: 0, ggr: 0 },
-    platinum: { users: 0, deposits: 0, ggr: 0 },
-    gold: { users: 0, deposits: 0, ggr: 0 },
-    silver: { users: 0, deposits: 0, ggr: 0 },
-    bronze: { users: 0, deposits: 0, ggr: 0 },
-  };
+  return rows;
+}
 
-  let totalDeposits = 0;
-  let totalWithdrawals = 0;
-  let totalGgr = 0;
-  let depositingCustomers = 0;
-  let newCustomers = 0;
-
-  const players: CrmPlayerRow[] = rows.map((r) => {
-    const deposits = toNumber(r.deposits);
-    const withdrawals = toNumber(r.withdrawals);
-    const ggr = toNumber(r.wager) - toNumber(r.payout);
-    const recencyDays = Math.max(0, r.recency_days);
-    const lc = lifecycleFor(recencyDays);
-
-    totalDeposits += deposits;
-    totalWithdrawals += withdrawals;
-    totalGgr += ggr;
-    if (deposits > 0) depositingCustomers += 1;
-    if (r.signup_days <= NEW_CUSTOMER_DAYS) newCustomers += 1;
-
-    lifecycleAgg[lc].users += 1;
-    lifecycleAgg[lc].deposits += deposits;
-    lifecycleAgg[lc].ggr += ggr;
-
-    const tier = vipTierFor(deposits);
-    if (tier) {
-      vipAgg[tier].users += 1;
-      vipAgg[tier].deposits += deposits;
-      vipAgg[tier].ggr += ggr;
-    }
-
-    return {
-      userId: r.user_id,
-      username: r.username,
-      image: r.image,
-      deposits,
-      netDeposits: deposits - withdrawals,
-      ggr,
-      plays: r.plays,
-      recencyDays,
-      lifecycle: lc,
-    };
+/**
+ * CQRS serve-path for the `crm_snapshot` surface. Both legs return the same
+ * per-customer aggregate rows, bucketed by the SAME pure `bucketCrmSnapshot`,
+ * so the served snapshot is identical regardless of engine:
+ *
+ *   • "clickhouse" → CH twin is the SOLE read (on failure it throws THROUGH the
+ *     cache so the page's `safeQuery` degrades — never re-runs the heavy PG
+ *     aggregate).
+ *   • "comparison" → serve Postgres, fire-and-forget drift log.
+ *   • "off"        → serve Postgres (today's behavior; CH dormant in prod).
+ *
+ * A single `anchor` instant is captured per compute and passed to BOTH engines
+ * so cutoff/recency/signup are wall-clock-identical across the two paths.
+ */
+async function computeCrmSnapshot(blacklist: string[]): Promise<CrmSnapshot> {
+  const anchor = new Date();
+  return resolveAdminRead<CrmSnapshot>("crm_snapshot", {
+    pg: async () => bucketCrmSnapshot(await computeCrmRowsPg(anchor)),
+    ch: async () =>
+      bucketCrmSnapshot(await getCrmRowsFromClickHouse(anchor, blacklist)),
+    compare: (snapshot) => {
+      void compareCrmSnapshot(anchor, blacklist, snapshot);
+    },
   });
-
-  const lifecycle: CrmSegmentRow[] = (Object.keys(lifecycleAgg) as LifecycleKey[]).map(
-    (key) => ({ key, label: LIFECYCLE_LABELS[key], ...lifecycleAgg[key] }),
-  );
-  const vipTiers: CrmSegmentRow[] = (Object.keys(vipAgg) as VipTierKey[]).map(
-    (key) => ({ key, label: VIP_LABELS[key], ...vipAgg[key] }),
-  );
-
-  const dormantWhales = players
-    .filter(
-      (p) =>
-        p.deposits >= DORMANT_WHALE_MIN_DEPOSITS &&
-        p.recencyDays > DORMANT_WHALE_MIN_RECENCY_DAYS,
-    )
-    .sort((a, b) => b.deposits - a.deposits)
-    .slice(0, DORMANT_WHALE_LIMIT);
-
-  const topValue = [...players]
-    .sort((a, b) => b.deposits - a.deposits)
-    .slice(0, TOP_VALUE_LIMIT);
-
-  return {
-    totalCustomers: players.length,
-    depositingCustomers,
-    newCustomers,
-    totalDeposits,
-    totalNetDeposits: totalDeposits - totalWithdrawals,
-    totalGgr,
-    avgDepositPerCustomer:
-      depositingCustomers > 0 ? totalDeposits / depositingCustomers : 0,
-    lifecycle,
-    vipTiers,
-    dormantWhales,
-    topValue,
-  };
 }
 
 /**
@@ -355,7 +222,7 @@ async function computeCrmSnapshot(
  */
 const cachedCrmSnapshot = unstable_cache(
   computeCrmSnapshot,
-  ["crm-snapshot-v1"],
+  ["crm-snapshot-v2"],
   { revalidate: 300, tags: ["analytics", "crm"] },
 );
 

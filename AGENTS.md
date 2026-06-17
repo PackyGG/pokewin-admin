@@ -77,9 +77,22 @@ Warum: Beide Pfade sind die einzigen, die unter realer Last + Concurrency auf de
 - Der bestehende direkte Prisma-/PG-Query-Layer gilt als **Legacy**. Wenn du einen Read anfasst, erweiterst oder eine Page neu baust: bring ihn auf einen bestätigten Index oder einen ClickHouse-Twin — nicht „so lassen wie er war".
 - **Verboten:** ein neues heavy Aggregate direkt auf MAIN ohne Index-Beleg oder CH-Twin; unbounded Lifetime-Scans (`windowDateFilterCapped` nutzen); „schnelle" Raw-Queries an der Regel vorbei.
 
+### Pflicht: Shell-first Suspense-Streaming (gleichrangig mit Index-or-ClickHouse)
+- **Jede Admin-Page mit einem nicht-trivialen Read MUSS shell-first streamen.** Die Page-`page.tsx` rendert den `PageHero`-Shell (+ statische Controls) **sofort** und lädt die Daten in einer `async`-Child-Komponente hinter einer **`<Suspense fallback={<…Skeleton/>}>`**-Boundary. **Niemals** den heavy Read direkt im Page-Body awaiten — das blockiert First Paint.
+- **Pflicht-Begleiter:** eine `loading.tsx`, die denselben Shell + Skeletons rendert (Skeletons aus `@/components/loading-skeletons`); bei Timespan-/Tab-Seiten `<Suspense key={`${tab}-${period}`}>`. Referenz: `/creators/analytics`, `/crm`.
+- Der Read selbst läuft trotzdem über `safeQuery`/`safeQueryOrNull` + Timeout, ist gecached (`unstable_cache`, Active-Timeframe-Only) **und** über Pfad 1 (Index) oder Pfad 2 (ClickHouse) verdrahtet. Streaming ersetzt KEINEN der beiden Pfade — es kommt obendrauf.
+
+### Pflicht-Checkliste pro Read / Page (alle Punkte, sonst nicht „done")
+1. Read über Pfad 1 (bestätigter Index, per `EXPLAIN` belegt — oder dokumentiert warum Seq-Scan optimal ist) **oder** Pfad 2 (`resolveAdminRead` + CH-Twin, parity-proven).
+2. `page.tsx` = Shell sofort + `<Suspense>` + `loading.tsx` (kein Top-Level-await des heavy Reads).
+3. `safeQuery`/Timeout + `unstable_cache` (Active-Timeframe-Only, keine hidden Tabs/Timespans eager laden).
+4. Money Decimal-safe (`toString(sum)`→`toNumber`, nie Float), House-POV-Farben.
+5. tsc + lint + `npm run build` grün; bei UI Browser-/Render-Check.
+6. CH-Twin (falls gebaut) bleibt dormant (off/comparison) bis cent/count-exakte Parität (`TZ=UTC`, zweimal) **und** Logged-in-Render-Check — erst dann in `CUTOVER_DEFAULT_CLICKHOUSE`.
+
 **Volle Mechanik (Caching, Suspense-Streaming, Active-Timeframe-Only, `safeQuery`, House-POV-Farben, Checkliste neue Page):** **`docs/BACKEND_QUERY_SYSTEM.md`** — vor jeder Read-/Page-Arbeit lesen. Diese Regel hebt KEINE der Prod-DB-Regeln auf (MAIN bleibt read-only).
 
-**Merkregel:** Bedient eine Query weder einen bestätigten Index noch ClickHouse → sie ist falsch gebaut und darf nicht shippen.
+**Merkregel:** Bedient eine Query weder einen bestätigten Index noch ClickHouse, ODER blockt eine Page First Paint statt zu streamen → sie ist falsch gebaut und darf nicht shippen.
 
 ---
 

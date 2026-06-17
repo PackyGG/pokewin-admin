@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import {
   Users,
@@ -26,6 +27,10 @@ import {
   KpiTile,
   type AccentColor,
 } from "@/components/modern-panels";
+import {
+  KpiStripSkeleton,
+  ChartRowSkeleton,
+} from "@/components/loading-skeletons";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -145,12 +150,10 @@ function PlayerRow({ p }: { p: CrmPlayerRow }) {
 export default async function CrmPage() {
   await requirePageAccess("/crm");
 
-  const { data: snap, error } = await safeQueryOrNull(
-    () => getCrmSnapshot(),
-    "crm.snapshot",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
-
+  // Paint the hero shell instantly; the heavy 365-day per-customer aggregate
+  // streams in behind its own Suspense boundary, so first paint no longer
+  // blocks on the multi-table segmentation query (Index-or-ClickHouse rule:
+  // the read itself resolves via `resolveAdminRead("crm_snapshot")`).
   return (
     <div className="space-y-5">
       <PageHero>
@@ -162,6 +165,30 @@ export default async function CrmPage() {
         />
       </PageHero>
 
+      <Suspense
+        fallback={
+          <>
+            <KpiStripSkeleton count={6} />
+            <ChartRowSkeleton count={2} height={260} />
+            <ChartRowSkeleton count={2} height={260} />
+          </>
+        }
+      >
+        <CrmBody />
+      </Suspense>
+    </div>
+  );
+}
+
+async function CrmBody() {
+  const { data: snap, error } = await safeQueryOrNull(
+    () => getCrmSnapshot(),
+    "crm.snapshot",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+
+  return (
+    <>
       {!snap ? (
         <div className="rounded-xl border bg-card p-8 text-center text-sm text-muted-foreground">
           {error
@@ -291,6 +318,6 @@ export default async function CrmPage() {
           </div>
         </>
       )}
-    </div>
+    </>
   );
 }

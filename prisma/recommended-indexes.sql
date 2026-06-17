@@ -379,6 +379,43 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_lower_display_username_trgm
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_role_banned_locked
   ON "user" (role, is_banned, is_locked);
 
+-- #17 ----------------------------------------------------------------
+-- /crm Player-CRM snapshot — NO new index recommended (documented finding)
+-- ===================================================================
+-- Added by the 2026-06-17 Index-or-ClickHouse compliance pass for
+-- src/lib/queries/crm.ts (computeCrmRowsPg).
+--
+-- The CRM snapshot is a 365-day, cross-customer per-user aggregate over
+-- ledger_transactions (deposits / withdrawals / wager / gaming-payout) +
+-- user_inventory (pack/battle payout) + upgrader_games, joined to "user".
+-- EXPLAIN ANALYZE on prod (2026-06-17): Planning 21ms, Execution ~1.45s.
+--
+-- Every leg is a PARALLEL SEQ SCAN — and that is the planner's OPTIMAL
+-- choice, NOT a missing index:
+--   • ledger_transactions: index #1 (status, type, created_at DESC) EXISTS,
+--     but a 365-day window matches too large a fraction of the table, so the
+--     planner correctly rejects the index for a parallel seq scan (a narrow
+--     window WOULD use #1 — verified on the dashboard period legs).
+--   • user_inventory: source_type IN ('pack','battle') + obtained_at >= 365d
+--     is likewise low-selectivity over a lifetime window — a
+--     (source_type, obtained_at) index would not be chosen and is NOT added.
+--   • "user" role NOT IN ('admin','support','creator') is ~all rows (low
+--     selectivity) → seq scan optimal; #16 does not help a NOT IN.
+--   • non_borrow_battle_sessions is a FULL non-borrow scan (no date bound) by
+--     design → inherently a scan.
+--
+-- Compliance posture (Index-or-ClickHouse): this read is NOT index-fixable;
+-- it is served from indexed Postgres behind (a) shell-first <Suspense>
+-- streaming so it never blocks first paint, (b) a 300s unstable_cache so the
+-- ~1.45s cold aggregate runs at most once per 5 min, and (c) a safeQuery
+-- timeout. The cent/count-exact ClickHouse twin
+-- (src/lib/clickhouse/queries/crm.ts, surface `crm_snapshot`) is wired via
+-- resolveAdminRead and parity-proven (TZ=UTC, run twice: 3387/3387 users,
+-- every total Δ=0.00) — it stays dormant until ClickHouse creds + an
+-- explicit Edge-Config/cutover flip, then offloads this scan to the columnar
+-- mirror. Same reasoning as the `dashboard_stats` note in
+-- src/lib/feature-flags/admin-read-source.ts.
+
 -- -------------------------------------------------------------------
 -- ADMIN DB (separate database — apply against ADMIN_DATABASE_URL, NOT
 -- the main game DB).

@@ -29,6 +29,34 @@ paths — there is no third way:**
   that serves neither is wrong and must not ship.
 - This does **not** loosen the MAIN read-only rule (§1).
 
+### Streaming is mandatory, not optional (equal weight to Index-or-ClickHouse)
+
+Every admin page with a non-trivial read MUST **stream shell-first**: the
+`page.tsx` renders the `PageHero` shell instantly and the heavy read lives in an
+`async` child behind its **own `<Suspense fallback={…Skeleton}>`** (§3), with a
+matching **`loading.tsx`**. NEVER top-level-`await` the heavy read in the page
+body — that blocks first paint (the exact `/crm` bug this rule was written for).
+Streaming is **on top of** Path 1/Path 2, not a substitute for either.
+
+### Per-read / per-page checklist (ALL must hold, else not "done")
+
+1. Served by Path 1 (index, `EXPLAIN`-proven — or a documented reason a seq scan
+   is the planner's optimal choice for a low-selectivity lifetime aggregate)
+   **or** Path 2 (`resolveAdminRead` + a parity-proven CH twin).
+2. `page.tsx` = instant shell + `<Suspense>` + a `loading.tsx` (no top-level
+   await of the heavy read); period/tab pages key the boundary on
+   `${tab}-${period}` and load only the active window/tab (§4).
+3. `safeQuery`/timeout + `unstable_cache` (prod-only, env-keyed) (§2, §5).
+4. Money is Decimal-safe (`toString(sum)` → `toNumber`, never Float) and uses
+   House-POV colors (§7).
+5. tsc + lint + `npm run build` green; for UI, a browser/render check.
+6. A CH twin stays dormant (`off`/`comparison`) until it is cent/count-exact vs
+   Postgres (parity harness, `TZ=UTC`, run twice) **and** a logged-in render
+   check passes — only then add the surface key to `CUTOVER_DEFAULT_CLICKHOUSE`.
+
+Reference implementation following every point: **`/crm`** (`src/app/(admin)/crm/`
++ `src/lib/queries/crm.ts` + `src/lib/clickhouse/queries/crm.ts`).
+
 ---
 
 ## 0. TL;DR decision tree

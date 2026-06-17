@@ -6,7 +6,10 @@ import { getAdminReadMode } from "@/lib/feature-flags/admin-read-source";
 import type { MetricWindow } from "@/lib/metrics/queries";
 import type { DashboardPeriod } from "@/lib/queries/dashboard-period";
 
+import { bucketCrmSnapshot, type CrmSnapshot } from "@/lib/queries/crm-types";
+
 import { computeDrift, logComparison } from "./compare/_core";
+import { getCrmRowsFromClickHouse } from "./queries/crm";
 import { getWindowMetricsFromClickHouse } from "./queries/window-metrics";
 import {
   getDashboardTrendSeriesFromClickHouse,
@@ -172,6 +175,80 @@ export async function compareTrendSeries(
       "comparison failed (ignored)",
       err,
     );
+  }
+}
+
+/**
+ * Flatten a CRM snapshot to scalar leaves so `computeDrift` can diff it.
+ * Money leaves (totals + per-segment deposits/ggr) use the half-cent tolerance;
+ * the count leaves (customer counts + per-segment user counts) are omitted from
+ * the money list below so they must match EXACTLY.
+ */
+function flattenCrmSnapshot(s: CrmSnapshot): Record<string, number> {
+  const out: Record<string, number> = {
+    totalCustomers: s.totalCustomers,
+    depositingCustomers: s.depositingCustomers,
+    newCustomers: s.newCustomers,
+    totalDeposits: s.totalDeposits,
+    totalNetDeposits: s.totalNetDeposits,
+    totalGgr: s.totalGgr,
+    avgDepositPerCustomer: s.avgDepositPerCustomer,
+  };
+  for (const row of s.lifecycle) {
+    out[`lc_${row.key}_users`] = row.users;
+    out[`lc_${row.key}_deposits`] = row.deposits;
+    out[`lc_${row.key}_ggr`] = row.ggr;
+  }
+  for (const row of s.vipTiers) {
+    out[`vip_${row.key}_users`] = row.users;
+    out[`vip_${row.key}_deposits`] = row.deposits;
+    out[`vip_${row.key}_ggr`] = row.ggr;
+  }
+  return out;
+}
+
+/** The money leaves of the flattened CRM snapshot (half-cent tolerance). */
+function crmMoneyKeys(s: CrmSnapshot): string[] {
+  const keys = [
+    "totalDeposits",
+    "totalNetDeposits",
+    "totalGgr",
+    "avgDepositPerCustomer",
+  ];
+  for (const row of s.lifecycle) keys.push(`lc_${row.key}_deposits`, `lc_${row.key}_ggr`);
+  for (const row of s.vipTiers) keys.push(`vip_${row.key}_deposits`, `vip_${row.key}_ggr`);
+  return keys;
+}
+
+/**
+ * Fire-and-forget comparison for the Player-CRM snapshot. No-op unless the
+ * `crm_snapshot` surface is in `comparison` mode (forced off whenever
+ * ClickHouse is dormant). The ClickHouse twin is fed the SAME `anchor` +
+ * blacklist used to compute the Postgres snapshot and bucketed by the SAME
+ * pure `bucketCrmSnapshot`, so logged drift reflects engine/CDC-lag only.
+ * Customer/segment counts must match exactly (omitted from the money list);
+ * totals + per-segment money use the half-cent tolerance. Swallows every
+ * error — the served Postgres payload is never affected.
+ */
+export async function compareCrmSnapshot(
+  anchor: Date,
+  blacklist: string[],
+  pgSnapshot: CrmSnapshot,
+): Promise<void> {
+  try {
+    const mode = await getAdminReadMode("crm_snapshot");
+    if (mode !== "comparison") return;
+
+    const startedAt = Date.now();
+    const ch = bucketCrmSnapshot(await getCrmRowsFromClickHouse(anchor, blacklist));
+    const drift = computeDrift(
+      flattenCrmSnapshot(pgSnapshot),
+      flattenCrmSnapshot(ch),
+      crmMoneyKeys(pgSnapshot),
+    );
+    logComparison("crm_snapshot[lifetime]", drift, Date.now() - startedAt);
+  } catch (err) {
+    logError("clickhouse.compare.crm_snapshot", "comparison failed (ignored)", err);
   }
 }
 
