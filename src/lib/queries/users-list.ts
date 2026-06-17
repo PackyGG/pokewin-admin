@@ -5,11 +5,6 @@ import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
 import { user_role } from "@/generated/prisma/enums";
 import {
-  computeRiskScoresForList,
-  type RiskScoreLite,
-  type RiskTier,
-} from "@/lib/fraud/score";
-import {
   officialStreamAdjustmentSqlPredicate,
   removeLockedBalanceAdjustmentSqlPredicate,
 } from "@/lib/balance-adjustment-categories";
@@ -17,7 +12,6 @@ import { calculateUsersPnlBatch, type UserPnl } from "./pnl";
 import { isUserId, isUuid } from "@/lib/utils/ids";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
 import { escapeBlacklistIds } from "./_blacklist";
-import { logError } from "@/lib/errors/logger";
 
 // Allowlist from the generated Prisma user_role enum — validate the
 // role filter before it reaches either the Prisma where or the raw-SQL
@@ -466,8 +460,8 @@ const cachedFilteredColumnSortUserIds = unstable_cache(
  * statement_timeout + the page-level safeQuery wall clock are the real
  * safety nets, not query cost.
  *
- * Kept separate from the row hydration (findMany + PnL batch + risk
- * scores) on purpose: the ranking depends ONLY on the serializable
+ * Kept separate from the row hydration (findMany + PnL batch) on
+ * purpose: the ranking depends ONLY on the serializable
  * (sort / filter / page) inputs, so it can be cached cross-request, while
  * the hydration reads LIVE per-row values that must stay fresh. See
  * cachedRankedUserIds below.
@@ -555,7 +549,7 @@ async function computeRankedUserIds(
  *    IDs.
  *
  * Both keep the hydration step in getUsers UNCACHED, so per-row balances /
- * PnL / risk are always live even when the ID ordering is served from
+ * PnL are always live even when the ID ordering is served from
  * cache.
  *
  * `getDb()` inside each cache callback resolves to the prod client (its
@@ -620,10 +614,6 @@ type UserListItem = {
    */
   netHoldings: number;
   createdAt: string;
-  riskScore: number;
-  riskTier: RiskTier;
-  sharedIpCount: number;
-  sharedFingerprintCount: number;
 };
 
 const USER_LIST_SELECT = {
@@ -651,35 +641,12 @@ const USER_LIST_SELECT = {
 type UserListRow = Prisma.UserGetPayload<{ select: typeof USER_LIST_SELECT }>;
 
 /**
- * Cached wrapper around the list risk-score batch. `computeRiskScoresForList`
- * lives in the SHARED `src/lib/fraud/score.ts` (also used by the user-detail
- * view), so the cache is applied HERE at the list call site rather than in
- * that file. Keyed on the SORTED page id list so the same slice (re-render,
- * the 60s AutoRefresh tick, or a duplicate Suspense fan-out) reuses one
- * result regardless of display order; a short 20s TTL keeps badges fresh as
- * admins ban/lock users. `unstable_cache` JSON-serializes its return value,
- * so the Map is round-tripped through an entries array — RiskScoreLite is
- * plain serializable data (score / tier / sharedIpCount /
- * sharedFingerprintCount), so the rebuilt Map is byte-identical to calling
- * `computeRiskScoresForList` directly. Advisory badge only; the call site
- * still catches + degrades to badge-less rows on failure.
- */
-const cachedRiskScoresForList = unstable_cache(
-  async (sortedIds: string[]): Promise<Array<[string, RiskScoreLite]>> => {
-    const map = await computeRiskScoresForList(sortedIds);
-    return Array.from(map.entries());
-  },
-  ["users-list-risk-scores-v1"],
-  { revalidate: 20, tags: ["users-list"] },
-);
-
-/**
- * Hydrate the page slice with live per-row financials + risk badges.
+ * Hydrate the page slice with live per-row financials.
  *
  * ONE truthful path — the old 4-mode variant (skipPnlBatch /
- * skipListRisk / precomputedMetrics / rankedSortBy) rendered $0.00
- * P&L/Inventory/Net on exact-match searches and on the computed-sort
- * pages whenever its mode routing skipped the batch. Now every render:
+ * precomputedMetrics / rankedSortBy) rendered $0.00 P&L/Inventory/Net on
+ * exact-match searches and on the computed-sort pages whenever its mode
+ * routing skipped the batch. Now every render:
  *
  *  • `calculateUsersPnlBatch` (6 parallel PK-IN queries, canonical
  *    null-safe official_stream / remove_locked carve-outs) — a failure
@@ -687,11 +654,6 @@ const cachedRiskScoresForList = unstable_cache(
  *    Money columns are the page's core content; silently falling back to
  *    the balances row would render numbers that are confidently wrong.
  *  • deposit-count groupBy (Prisma enum literal — drift-safe).
- *  • `computeRiskScoresForList` — advisory badge only, so its failure is
- *    CAUGHT, logged, and degraded to empty (a missing badge must never
- *    blank the whole list — the user_battle_limits lesson class). It now
- *    runs on EVERY path including search: a "low" badge on a searched
- *    fraudster is the same lying-zero class as $0 P&L.
  */
 async function hydrateUserListPage(
   users: UserListRow[],
@@ -703,9 +665,8 @@ async function hydrateUserListPage(
   const userIds = users.map((u) => u.id);
   const emptyDeposits: Array<{ user_id: string; _count: { _all: number } }> =
     [];
-  const emptyRisk = new Map<string, RiskScoreLite>();
 
-  const [pnlByUserId, depositCountRows, riskScoresMap] = await Promise.all([
+  const [pnlByUserId, depositCountRows] = await Promise.all([
     userIds.length > 0
       ? calculateUsersPnlBatch(userIds)
       : Promise.resolve(new Map<string, UserPnl>()),
@@ -720,18 +681,6 @@ async function hydrateUserListPage(
           _count: { _all: true },
         })
       : Promise.resolve(emptyDeposits),
-    userIds.length > 0
-      ? cachedRiskScoresForList([...userIds].sort())
-          .then((entries) => new Map<string, RiskScoreLite>(entries))
-          .catch((err) => {
-            logError(
-              "users.list.risk",
-              "risk batch degraded — rendering rows without risk badges",
-              err,
-            );
-            return emptyRisk;
-          })
-      : Promise.resolve(emptyRisk),
   ]);
 
   const depositCountMap = new Map(
@@ -759,7 +708,6 @@ async function hydrateUserListPage(
       const pnl = userPnl ? -userPnl.pnl : 0;
       const netHoldings =
         availableBalance + lockedBalance + inventoryValue + unclaimedVouchers;
-      const risk = riskScoresMap.get(u.id);
       return {
         id: u.id,
         username: u.username,
@@ -778,10 +726,6 @@ async function hydrateUserListPage(
         depositCount: depositCountMap.get(u.id) ?? 0,
         pnl,
         createdAt: u.created_at.toISOString(),
-        riskScore: risk?.score ?? 0,
-        riskTier: risk?.tier ?? ("low" as RiskTier),
-        sharedIpCount: risk?.sharedIpCount ?? 0,
-        sharedFingerprintCount: risk?.sharedFingerprintCount ?? 0,
       };
     }),
     total,
@@ -1030,7 +974,7 @@ export async function getUsers(params: {
     // Top losers lifetime-PnL ranking) is delegated to the cached
     // ranking helper, which memoises the ordered ID slice + total for
     // this (sort / filter / page) tuple with a long TTL. Page row
-    // HYDRATION stays here and stays UNCACHED so balances / PnL / risk
+    // HYDRATION stays here and stays UNCACHED so balances / PnL
     // are always live; only the slow ordering is served from cache.
     const { ids, total: totalCount } = await cachedRankedUserIds({
       ...filterInput,

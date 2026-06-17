@@ -72,11 +72,6 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
     (ROLE_RANK[a.role] ?? -1) - (ROLE_RANK[b.role] ?? -1),
   status: (a, b) =>
     (STATUS_RANK[a.status] ?? -1) - (STATUS_RANK[b.status] ?? -1),
-  // Risk is client-sortable only — the server query ignores the sortBy
-  // value for riskScore and returns the pre-paginated list of users
-  // with their scores attached. For normal page sizes (≤100) this is
-  // fine; cross-page ordering would need a computed column.
-  riskScore: (a, b) => a.riskScore - b.riskScore,
   country: (a, b) =>
     (a.country ?? a.countryCode ?? "").localeCompare(
       b.country ?? b.countryCode ?? "",

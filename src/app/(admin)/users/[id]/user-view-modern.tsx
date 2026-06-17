@@ -40,7 +40,6 @@ import {
   Gift,
   Coins,
   ShieldCheck,
-  ShieldAlert,
   Activity,
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -50,7 +49,6 @@ import {
   Percent,
   Calendar,
   MapPin,
-  Link2,
   Megaphone,
   GitBranch,
   Ban,
@@ -82,7 +80,6 @@ import type {
 import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
-import { ErrorPill } from "./band-error";
 import { TILE_COLORS } from "./user-view-modern-panels";
 import {
   OverviewTab,
@@ -96,7 +93,6 @@ import {
 } from "./user-view-modern-tabs";
 import { FadeIn } from "@/components/fade-in";
 import { DURATION } from "@/components/ux";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChangeRoleDialog,
   EditIdentityButton,
@@ -106,11 +102,6 @@ import { UserAdminActions } from "./user-tabs-moderation";
 import { HeroQuickActions } from "./user-hero-quick-actions";
 import { UserHeroSticky } from "./user-hero-sticky";
 import { CopyButton } from "@/components/copy-button";
-import {
-  type RiskScoreBreakdown,
-  RISK_TIER_COLORS,
-  tierLabel,
-} from "@/lib/fraud/score-types";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so call sites that previously
@@ -200,7 +191,6 @@ export function UserViewModern({
   backSlot,
   tagsSlot,
   pnlResultPromise,
-  riskResultPromise,
   gamingTxPromise,
   shardWinningsPromise,
   shardPackOpensPromise,
@@ -239,7 +229,6 @@ export function UserViewModern({
   //
   // Always kicked (tab-independent — they feed the hero + cross-tab P&L):
   pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
-  riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
   // Overview + Gaming:
   gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Gaming tab only — per-user shard/coin winnings tagged by source game.
@@ -623,19 +612,6 @@ export function UserViewModern({
                       {user.affiliateCode}
                     </Badge>
                   )}
-                  {/* Risk badges — their own streamed island so the heavy
-                      fraud scan never blocks the identity hero. On a failed
-                      scan the pill reads "Risk —" (unavailable) — NEVER a
-                      neutral "Risk 0" false all-clear. */}
-                  <Suspense
-                    fallback={
-                      <Skeleton className="h-5 w-16 rounded-full" />
-                    }
-                  >
-                    <HeroRiskBadges
-                      riskResultPromise={riskResultPromise}
-                    />
-                  </Suspense>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-muted-foreground">
                   <span className="inline-flex items-center gap-0.5">
@@ -662,14 +638,13 @@ export function UserViewModern({
                     doesn't have to scan the breakdown rows below. Every chip
                     is gated on a REAL signal already fetched for this view —
                     no new query, no fabricated flag. The strip collapses to
-                    nothing when the user is clean (active, low/medium risk,
-                    no held vouchers, exempt/unavailable wager). House-POV
-                    coloring per CLAUDE.md. */}
+                    nothing when the user is clean (active, no held vouchers,
+                    exempt/unavailable wager). House-POV coloring per
+                    CLAUDE.md. */}
                 <HeroFlagsStrip
                   statusKey={statusKey}
                   selfExclusion={selfExclusion}
                   vouchersValue={vouchersValue}
-                  riskResultPromise={riskResultPromise}
                 />
               </div>
             </div>
@@ -923,78 +898,16 @@ function WagerLeftHeroTile({
 }
 
 // ───────────────────────────────────────────────────────────────────
-//  HERO RISK BADGES — streamed island
-//
-//  `use()`s the always-kicked risk SafeQueryResult so the identity hero
-//  paints without waiting on the fraud scan. Three states:
-//    pending  → pill skeleton (Suspense fallback at the call site),
-//    error    → amber "Risk —" pill (unavailable ≠ low risk),
-//    success  → the risk + shared-IP badges.
-// ───────────────────────────────────────────────────────────────────
-
-function HeroRiskBadges({
-  riskResultPromise,
-}: {
-  riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
-}) {
-  const r = use(riskResultPromise);
-  if (r.error) {
-    return (
-      <ErrorPill
-        label="Risk —"
-        title="Risk score unavailable — the fraud scan failed or timed out. This is a load failure, not a low-risk signal."
-      />
-    );
-  }
-  const riskBreakdown = r.data;
-  return (
-    <>
-      <Badge
-        variant="outline"
-        className={cn(
-          "text-[10px] py-0 h-5",
-          RISK_TIER_COLORS[riskBreakdown.tier],
-        )}
-        title={`Risk score ${riskBreakdown.score} of 100 — ${tierLabel(riskBreakdown.tier)}.`}
-      >
-        <ShieldAlert className="mr-0.5 size-2.5" />
-        Risk {riskBreakdown.score}
-      </Badge>
-      {riskBreakdown.sharedIpCount >= 2 && (
-        <Badge
-          variant="outline"
-          className={cn(
-            "text-[10px] py-0 h-5",
-            riskBreakdown.sharedIpCount >= 5
-              ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
-              : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-          )}
-          title={`Shared IP with ${riskBreakdown.sharedIpCount} other accounts.`}
-        >
-          <Link2 className="mr-0.5 size-2.5" />
-          {riskBreakdown.sharedIpCount} shared IP
-        </Badge>
-      )}
-    </>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────
 //  HERO FLAGS STRIP — compact one-row strip of ACTIVE user-state chips
 //
 //  Surfaces the highest-signal states at a glance. Every chip is gated on
 //  a REAL signal already fetched for this view (no new query, nothing
 //  fabricated) and only renders when its condition is TRUE — the strip
 //  collapses to nothing for a clean user. House-POV coloring (CLAUDE.md):
-//    • Banned / Locked     → rose  (account is restricted — risk signal)
-//    • Elevated risk        → tier color (high=orange, critical=rose);
-//                             low/medium are NOT surfaced (clean enough)
+//    • Banned / Locked     → rose  (account is restricted)
 //    • Unclaimed vouchers   → rose  (user holds value = house liability)
 //  Wager requirement is deliberately NOT a chip here — the hero's dedicated
 //  "Wager Left" KPI tile already surfaces it, so a chip would duplicate it.
-//  The risk chip reads a streamed promise, so it lives in its own <Suspense>
-//  island (the synchronous chips paint immediately, the async one fills in /
-//  self-skips without blocking the identity hero).
 // ───────────────────────────────────────────────────────────────────
 
 function FlagChip({
@@ -1024,12 +937,10 @@ function HeroFlagsStrip({
   statusKey,
   selfExclusion,
   vouchersValue,
-  riskResultPromise,
 }: {
   statusKey: "active" | "locked" | "banned";
   selfExclusion: SelfExclusionState;
   vouchersValue: number;
-  riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1 pt-1.5">
@@ -1074,15 +985,6 @@ function HeroFlagsStrip({
         />
       )}
 
-      {/* Elevated risk — only high / critical tiers surface here (a
-          low/medium user is clean enough not to warrant a flag). The
-          always-present score badge lives in the badge row above; this is
-          the "needs attention" escalation. Skips silently on a failed scan
-          (the badge row already shows the "Risk —" load-failure pill). */}
-      <Suspense fallback={null}>
-        <RiskFlagChip riskResultPromise={riskResultPromise} />
-      </Suspense>
-
       {/* Unclaimed vouchers — the user is holding voucher value (a card
           equivalent / house liability per CLAUDE.md). Only when > 0. */}
       {vouchersValue > 0 && (
@@ -1098,26 +1000,6 @@ function HeroFlagsStrip({
           remaining requirement (met / $X left / exempt), so a duplicate
           flag chip would be redundant. */}
     </div>
-  );
-}
-
-function RiskFlagChip({
-  riskResultPromise,
-}: {
-  riskResultPromise: Promise<SafeQueryResult<RiskScoreBreakdown>>;
-}) {
-  const r = use(riskResultPromise);
-  // error → no chip (the badge row already surfaces the load failure).
-  if (r.error) return null;
-  const tier = r.data.tier;
-  if (tier !== "high" && tier !== "critical") return null;
-  return (
-    <FlagChip
-      icon={ShieldAlert}
-      label={`${tierLabel(tier)} risk`}
-      className={RISK_TIER_COLORS[tier]}
-      title={`Risk score ${r.data.score}/100 — ${tierLabel(tier)} tier`}
-    />
   );
 }
 

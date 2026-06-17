@@ -25,7 +25,6 @@ import type {
   AdminNote,
 } from "@/app/(admin)/users/[id]/user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
-import type { RiskScoreBreakdown } from "@/lib/fraud/score-types";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import type {
   ShardWinningsResult,
@@ -151,21 +150,6 @@ const REWARD_PACK_OPENS: UserRewardPackOpensResult = {
       ],
     },
   ],
-};
-
-const RISK: RiskScoreBreakdown = {
-  score: 27,
-  tier: "low",
-  signals: [],
-  topReasons: [],
-  suggestions: [],
-  timeline: [],
-  sharedIpCount: 0,
-  sharedFingerprintCount: 0,
-  sharedBannedCount: 0,
-  sharedLockedCount: 0,
-  computedAt: Date.now(),
-  computeDurationMs: 0,
 };
 
 const NOTES: AdminNote[] = [];
@@ -314,7 +298,6 @@ export function UserDetailFixtureClient() {
       backSlot={null}
       tagsSlot={null}
       pnlResultPromise={ok(PNL)}
-      riskResultPromise={ok<RiskScoreBreakdown>(RISK)}
       gamingTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       shardWinningsPromise={ok<ShardWinningsResult>({ available: false })}
       shardPackOpensPromise={ok<ShardPackOpensResult>({ available: false })}

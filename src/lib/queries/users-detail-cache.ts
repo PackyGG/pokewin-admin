@@ -2,15 +2,12 @@ import { unstable_cache } from "next/cache";
 import { readDbEnv } from "@/lib/db-env";
 import { getUserDetail, getUserHeader } from "./users-detail";
 import { getUserPnlBreakdown, type PnlBreakdown } from "./users-financial";
-import { computeRiskScore } from "@/lib/fraud/score";
-import type { RiskScoreBreakdown } from "@/lib/fraud/score-types";
 
 /**
- * Cross-request cache for the THREE heaviest per-user reads behind
+ * Cross-request cache for the TWO heaviest per-user reads behind
  * /users/[id] — the detail aggregate (~19 Main-DB round-trips + the
- * canonical P&L helper), the Platform-P&L breakdown (multiple ledger
- * aggregates + the 5-window rolling scan), and the fraud/risk score
- * (cross-table aggregate + network/timeline fan-out).
+ * canonical P&L helper) and the Platform-P&L breakdown (multiple ledger
+ * aggregates + the 5-window rolling scan).
  *
  * Why this exists
  * ───────────────
@@ -29,7 +26,7 @@ import type { RiskScoreBreakdown } from "@/lib/fraud/score-types";
  *
  * DB-env correctness (prod-only cache)
  * ────────────────────────────────────
- * `getUserDetail` / `getUserPnlBreakdown` / `computeRiskScore` each call
+ * `getUserDetail` / `getUserPnlBreakdown` each call
  * `getDb()` internally, which resolves the per-admin `admin_db_env`
  * cookie. `unstable_cache` runs its callback OUTSIDE the request's
  * dynamic scope, so a `cookies()` read inside it throws and `readDbEnv`
@@ -85,12 +82,6 @@ const cachedUserPnlBreakdown = unstable_cache(
   { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
 );
 
-const cachedRiskScore = unstable_cache(
-  (userId: string): Promise<RiskScoreBreakdown> => computeRiskScore(userId),
-  ["users-detail-risk-v1"],
-  { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
-);
-
 /** Cached `getUserDetail` on prod; direct (uncached) on a dev-toggled
  * admin so they see live dev data — see module doc. */
 export async function getUserDetailCached(
@@ -108,19 +99,6 @@ export async function getUserPnlBreakdownCached(
   const env = await readDbEnv();
   if (env !== "prod") return getUserPnlBreakdown(userId);
   return cachedUserPnlBreakdown(userId);
-}
-
-/** Cached `computeRiskScore` on prod; direct on dev — see module doc.
- * Layered on top of the score module's own 60s in-process memo: this
- * adds the cross-request Next data-cache layer so a fresh function
- * instance (cold start) or a second concurrent request still avoids
- * re-running the scan. */
-export async function getRiskScoreCached(
-  userId: string,
-): Promise<RiskScoreBreakdown> {
-  const env = await readDbEnv();
-  if (env !== "prod") return computeRiskScore(userId);
-  return cachedRiskScore(userId);
 }
 
 /**

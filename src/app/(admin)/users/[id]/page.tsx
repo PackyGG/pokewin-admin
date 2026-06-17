@@ -10,7 +10,6 @@ import {
 import {
   getUserDetailCached,
   getUserPnlBreakdownCached,
-  getRiskScoreCached,
 } from "@/lib/queries/users-detail-cache";
 import { resolveUserIdFromRouteKey } from "@/lib/queries/users-detail";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
@@ -346,25 +345,6 @@ async function UserDetailBody({
     wager7d: 0,
     wager14d: 0,
   };
-  // Neutral risk shape used ONLY as the safeQuery fallback carrier — the
-  // hero badge branches on the result's `error` BEFORE reading it, so a
-  // failed scan renders an amber "Risk —" pill, never this
-  // shape as a false "low risk" all-clear.
-  const EMPTY_RISK = {
-    score: 0,
-    tier: "low" as const,
-    signals: [],
-    topReasons: [],
-    suggestions: [],
-    timeline: [],
-    sharedIpCount: 0,
-    sharedFingerprintCount: 0,
-    sharedBannedCount: 0,
-    sharedLockedCount: 0,
-    computedAt: Date.now(),
-    computeDurationMs: 0,
-  };
-
   type UserTxPage = Awaited<ReturnType<typeof getUserTransactions>>;
 
   // ── KICKED, NOT AWAITED — full-result band promises ────────────────
@@ -392,19 +372,12 @@ async function UserDetailBody({
   );
 
   // Always kicked (tab-independent): the P&L breakdown feeds the hero-
-  // adjacent Overview panels AND the Account tab's windowed strips; the
-  // risk scan feeds the hero badge. Both 60s-cached
-  // cross-request, both timeout-bounded.
+  // adjacent Overview panels AND the Account tab's windowed strips.
+  // 60s-cached cross-request, timeout-bounded.
   const pnlResultPromise = safeQuery(
     () => getUserPnlBreakdownCached(id),
     EMPTY_PNL,
     "users.detail.pnl",
-    USER_DETAIL_QUERY_TIMEOUT_MS,
-  );
-  const riskResultPromise = safeQuery(
-    () => getRiskScoreCached(id),
-    EMPTY_RISK,
-    "users.detail.riskScore",
     USER_DETAIL_QUERY_TIMEOUT_MS,
   );
 
@@ -749,7 +722,6 @@ async function UserDetailBody({
       backSlot={backSlot}
       tagsSlot={tagsSlot}
       pnlResultPromise={pnlResultPromise}
-      riskResultPromise={riskResultPromise}
       gamingTxPromise={gamingTxPromise}
       shardWinningsPromise={shardWinningsPromise}
       shardPackOpensPromise={shardPackOpensPromise}
