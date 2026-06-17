@@ -18,6 +18,7 @@ import {
   Settings,
   Tv,
   UserSearch,
+  TrendingUp,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -90,6 +91,11 @@ const HUB_NAV: HubNavItem[] = [
     label: "Wager / Fraud Abusers",
     href: "/creator-hub/wager-abusers",
     icon: ShieldAlert,
+  },
+  {
+    label: "Profitability",
+    href: "/creator-hub/profitability",
+    icon: TrendingUp,
   },
   {
     label: "ROI Calculator",
