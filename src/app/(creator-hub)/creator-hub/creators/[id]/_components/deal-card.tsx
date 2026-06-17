@@ -15,6 +15,9 @@ import { cn } from "@/lib/utils";
 import { getDealCardDataCached } from "../_queries/deal-card-data";
 import type { CreatorDealResponse } from "@/lib/backend-api";
 import { NewDealDialog } from "./new-deal-dialog";
+import { TerminateDealDialog } from "./terminate-deal-dialog";
+import { EditDealDialog } from "./edit-deal-dialog";
+import { PreviousDealsDialog } from "./previous-deals-dialog";
 
 /**
  * Deal card (left half of the Overview "Deal | Affiliate Leaderboards" row).
@@ -105,6 +108,13 @@ export async function DealCard({ userId }: { userId: string }) {
     [...deals].sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ??
     null;
 
+  // The active deal drives the terminate / edit actions (both apply only to a
+  // live deal). "Previous" = deals ended by any means (completed/terminated).
+  const activeDeal = deals.find((d) => d.status === "active") ?? null;
+  const previousDeals = deals.filter(
+    (d) => d.status === "completed" || d.status === "terminated",
+  );
+
   if (!deal) {
     return (
       <div className="space-y-3">
@@ -128,7 +138,22 @@ export async function DealCard({ userId }: { userId: string }) {
 
   return (
     <div className="space-y-3">
-      {heading}
+      <SectionHeading
+        icon={HandCoins}
+        title="Deal"
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            {previousDeals.length > 0 && (
+              <PreviousDealsDialog deals={previousDeals} />
+            )}
+            {activeDeal && <EditDealDialog userId={userId} deal={activeDeal} />}
+            {activeDeal && (
+              <TerminateDealDialog userId={userId} dealId={activeDeal.id} />
+            )}
+            <NewDealDialog userId={userId} />
+          </div>
+        }
+      />
       <Card size="sm">
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">

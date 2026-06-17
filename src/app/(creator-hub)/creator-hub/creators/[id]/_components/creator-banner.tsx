@@ -1,10 +1,12 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { ArrowLeft, Info, Star } from "lucide-react";
+import { ArrowLeft, Info, Shield, Star } from "lucide-react";
 
 import { PageHero } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+
+import { LinkButton } from "./link-button";
 
 // Reuse the EXISTING masked-email client component + header-socials read
 // from the (admin) creators group (sibling route group on disk). Importing
@@ -114,6 +116,13 @@ export function CreatorBanner({
               <BannerSocials userId={userId} />
             </Suspense>
           </div>
+          <LinkButton
+            href={`/users/${userId}`}
+            className="ml-auto h-8 shrink-0 self-start"
+          >
+            <Shield className="size-3.5" />
+            Open in Admin
+          </LinkButton>
         </div>
       </PageHero>
     );
@@ -183,6 +192,13 @@ export function CreatorBanner({
             <BannerSocials userId={header.userId} />
           </Suspense>
         </div>
+        <LinkButton
+          href={`/users/${header.userId}`}
+          className="ml-auto h-8 shrink-0 self-start"
+        >
+          <Shield className="size-3.5" />
+          Open in Admin
+        </LinkButton>
       </div>
     </PageHero>
   );
