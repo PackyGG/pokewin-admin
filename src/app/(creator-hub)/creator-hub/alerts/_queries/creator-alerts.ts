@@ -14,6 +14,8 @@ import { getDealCapInfoByUser } from "../../../../(admin)/creators/_queries/deal
 import { getAllCreatorsLifetimePnl } from "../../../../(admin)/creators/_queries/all-creators-lifetime-pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { deriveBigFtdAlertsFromClickHouse } from "@/lib/clickhouse/queries/creator-hub/big-ftd-alerts";
 import { Prisma } from "@/generated/prisma/client";
 import type { Prisma as AdminPrisma } from "@/generated/admin-prisma/client";
 
@@ -194,15 +196,28 @@ async function deriveBigFtdAlerts(): Promise<DerivedAlertCandidate[]> {
     const excluded = await getExcludedUserIds();
     const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
     const db = await getDb();
-    const rows = await db.$queryRaw<
+    // Anchor BOTH engines to one instant for deterministic parity.
+    const since = new Date(Date.now() - BIG_FTD_LOOKBACK_HOURS * 3_600_000);
+    const rows = await resolveAdminRead<
       {
         ledger_tx_id: string;
         user_id: string;
         amount: string;
-        created_at: Date;
+        created_at: Date | string;
         creator_user_id: string | null;
       }[]
-    >`
+    >("creator_hub_big_ftd_alerts", {
+      ch: () => deriveBigFtdAlertsFromClickHouse(excluded, since, BIG_FTD_MIN_USD),
+      pg: () =>
+        db.$queryRaw<
+          {
+            ledger_tx_id: string;
+            user_id: string;
+            amount: string;
+            created_at: Date | string;
+            creator_user_id: string | null;
+          }[]
+        >`
       WITH first_deposits AS (
         SELECT DISTINCT ON (lt.user_id)
           lt.id AS ledger_tx_id,
@@ -232,9 +247,10 @@ async function deriveBigFtdAlerts(): Promise<DerivedAlertCandidate[]> {
            LIMIT 1
         ) AS creator_user_id
       FROM first_deposits fd
-      WHERE fd.created_at >= NOW() - (${BIG_FTD_LOOKBACK_HOURS} * INTERVAL '1 hour')
+      WHERE fd.created_at >= ${since}
         AND fd.amount >= ${BIG_FTD_MIN_USD}
-    `;
+    `,
+    });
 
     for (const row of rows) {
       if (!row.creator_user_id) continue;
