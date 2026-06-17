@@ -68,10 +68,12 @@ export type RoadmapItemSummary = {
   title: string;
   description: string | null;
   status: RoadmapStatus;
-  /** ISO timestamp (UTC midnight of the block's first day). */
-  startDate: string;
-  /** ISO timestamp (UTC midnight of the block's last, inclusive day). */
-  endDate: string;
+  /** ISO timestamp (UTC midnight of the block's first day), or null when the
+   *  item is an unscheduled backlog idea. */
+  startDate: string | null;
+  /** ISO timestamp (UTC midnight of the block's last, inclusive day), or null
+   *  when unscheduled. */
+  endDate: string | null;
   color: RoadmapColor | null;
   linearCount: number;
 };

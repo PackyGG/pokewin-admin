@@ -16,7 +16,9 @@ function toColor(c: string | null): RoadmapColor | null {
 export async function getRoadmapItems(): Promise<RoadmapItemSummary[]> {
   const rows = await adminDb.roadmap_items.findMany({
     where: { archived_at: null },
-    orderBy: [{ start_date: "asc" }, { sort_order: "asc" }],
+    // sort_order drives the manual backlog ordering; the calendar positions
+    // scheduled items by date and ignores this ordering.
+    orderBy: [{ sort_order: "asc" }, { created_at: "asc" }],
     select: {
       id: true,
       title: true,
@@ -33,8 +35,8 @@ export async function getRoadmapItems(): Promise<RoadmapItemSummary[]> {
     title: r.title,
     description: r.description,
     status: r.status as RoadmapStatus,
-    startDate: r.start_date.toISOString(),
-    endDate: r.end_date.toISOString(),
+    startDate: r.start_date?.toISOString() ?? null,
+    endDate: r.end_date?.toISOString() ?? null,
     color: toColor(r.color),
     linearCount: r._count.linear_links,
   }));
@@ -59,8 +61,8 @@ export async function getRoadmapItem(
     title: r.title,
     description: r.description,
     status: r.status as RoadmapStatus,
-    startDate: r.start_date.toISOString(),
-    endDate: r.end_date.toISOString(),
+    startDate: r.start_date?.toISOString() ?? null,
+    endDate: r.end_date?.toISOString() ?? null,
     color: toColor(r.color),
     body: r.body,
     linearCount: r.linear_links.length,

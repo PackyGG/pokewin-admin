@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -65,6 +66,15 @@ function isoToDateInput(iso: string): string {
   return iso.slice(0, 10);
 }
 
+type ItemPayload = {
+  title: string;
+  description?: string;
+  status: RoadmapStatus;
+  color?: RoadmapColor;
+  startDate?: string;
+  endDate?: string;
+};
+
 type FeatureDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -89,6 +99,7 @@ export function FeatureDialog({
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [status, setStatus] = React.useState<RoadmapStatus>("planned");
+  const [scheduled, setScheduled] = React.useState(true);
   const [startDate, setStartDate] = React.useState("");
   const [endDate, setEndDate] = React.useState("");
   const [color, setColor] = React.useState<RoadmapColor | "">("");
@@ -98,18 +109,21 @@ export function FeatureDialog({
   // Reset / hydrate the form whenever the dialog opens.
   React.useEffect(() => {
     if (!open) return;
+    const today = new Date().toISOString().slice(0, 10);
     if (mode === "edit" && item) {
+      const isScheduled = item.startDate != null && item.endDate != null;
       setTitle(item.title);
       setDescription(item.description ?? "");
       setStatus(item.status);
-      setStartDate(isoToDateInput(item.startDate));
-      setEndDate(isoToDateInput(item.endDate));
+      setScheduled(isScheduled);
+      setStartDate(item.startDate ? isoToDateInput(item.startDate) : today);
+      setEndDate(item.endDate ? isoToDateInput(item.endDate) : today);
       setColor(item.color ?? "");
     } else {
-      const today = new Date().toISOString().slice(0, 10);
       setTitle("");
       setDescription("");
       setStatus("planned");
+      setScheduled(!!defaultStartDate);
       setStartDate(defaultStartDate ?? today);
       setEndDate(defaultEndDate ?? defaultStartDate ?? today);
       setColor("");
@@ -122,23 +136,27 @@ export function FeatureDialog({
       toast.error("Title is required");
       return;
     }
-    if (!startDate || !endDate) {
-      toast.error("Start and end date are required");
-      return;
-    }
-    if (endDate < startDate) {
-      toast.error("End date must be on or after the start date");
-      return;
+    if (scheduled) {
+      if (!startDate || !endDate) {
+        toast.error("Start and end date are required");
+        return;
+      }
+      if (endDate < startDate) {
+        toast.error("End date must be on or after the start date");
+        return;
+      }
     }
 
-    const payload = {
+    const payload: ItemPayload = {
       title: trimmedTitle,
       description: description.trim() || undefined,
       status,
-      startDate,
-      endDate,
       color: color || undefined,
-    } as const;
+    };
+    if (scheduled) {
+      payload.startDate = startDate;
+      payload.endDate = endDate;
+    }
 
     setSaving(true);
     try {
@@ -263,30 +281,54 @@ export function FeatureDialog({
               </Select>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="feature-start" className="text-xs font-medium">
-                  Start date
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="space-y-0.5 pr-3">
+                <Label
+                  htmlFor="feature-scheduled"
+                  className="text-xs font-medium"
+                >
+                  Schedule on calendar
                 </Label>
-                <Input
-                  id="feature-start"
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                />
+                <p className="text-[11px] text-muted-foreground">
+                  Off keeps it in the backlog to plan and order later.
+                </p>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="feature-end" className="text-xs font-medium">
-                  End date
-                </Label>
-                <Input
-                  id="feature-end"
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                />
-              </div>
+              <Switch
+                id="feature-scheduled"
+                checked={scheduled}
+                onCheckedChange={(v) => setScheduled(!!v)}
+              />
             </div>
+
+            {scheduled && (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="feature-start"
+                    className="text-xs font-medium"
+                  >
+                    Start date
+                  </Label>
+                  <Input
+                    id="feature-start"
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="feature-end" className="text-xs font-medium">
+                    End date
+                  </Label>
+                  <Input
+                    id="feature-end"
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">
@@ -352,7 +394,9 @@ export function FeatureDialog({
                   ? "Saving…"
                   : mode === "edit"
                     ? "Save changes"
-                    : "Create feature"}
+                    : scheduled
+                      ? "Create feature"
+                      : "Add to backlog"}
               </Button>
             </div>
           </DialogFooter>

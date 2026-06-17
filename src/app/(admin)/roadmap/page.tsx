@@ -5,6 +5,7 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getRoadmapItems } from "./queries";
 import { RoadmapCalendar } from "./roadmap-calendar";
+import { RoadmapBacklog } from "./roadmap-backlog";
 
 export const metadata = { title: "Roadmap" };
 
@@ -12,8 +13,28 @@ const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function CalendarSkeleton() {
   return (
-    <div className="space-y-4">
-      {/* Toolbar skeleton */}
+    <div className="space-y-6">
+      {/* Backlog skeleton */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <Skeleton className="h-8 w-48 rounded-md" />
+          <Skeleton className="h-8 w-28 rounded-md" />
+        </div>
+        <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-3 border-b p-3 last:border-b-0"
+            >
+              <Skeleton className="size-4 rounded" />
+              <Skeleton className="h-4 w-48 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {/* Toolbar skeleton */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Skeleton className="h-9 w-9 rounded-md" />
@@ -49,6 +70,7 @@ function CalendarSkeleton() {
             ))}
           </div>
         ))}
+        </div>
       </div>
     </div>
   );
@@ -56,7 +78,14 @@ function CalendarSkeleton() {
 
 async function RoadmapData() {
   const items = await getRoadmapItems();
-  return <RoadmapCalendar items={items} />;
+  const backlog = items.filter((i) => !i.startDate || !i.endDate);
+  const scheduled = items.filter((i) => i.startDate && i.endDate);
+  return (
+    <div className="space-y-6">
+      <RoadmapBacklog items={backlog} />
+      <RoadmapCalendar items={scheduled} />
+    </div>
+  );
 }
 
 export default async function RoadmapPage() {
@@ -68,7 +97,7 @@ export default async function RoadmapPage() {
         <PageHeroIdentity
           icon={CalendarRange}
           title="Roadmap"
-          subtitle="Plan upcoming features on a calendar. Click a block to open its product page."
+          subtitle="Plan features in the backlog, then schedule them on the calendar. Click any item to open its product page."
         />
       </PageHero>
 

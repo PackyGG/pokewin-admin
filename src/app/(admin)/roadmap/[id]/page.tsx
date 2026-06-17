@@ -38,9 +38,12 @@ export default async function RoadmapItemPage({
 
   const canCreateLinear = isOwner(session);
   const status = ROADMAP_STATUS_META[item.status];
-  const range = `${formatDate(new Date(item.startDate))} – ${formatDate(
-    new Date(item.endDate),
-  )}`;
+  const range =
+    item.startDate && item.endDate
+      ? `${formatDate(new Date(item.startDate))} – ${formatDate(
+          new Date(item.endDate),
+        )}`
+      : "Not scheduled";
 
   return (
     <div className="space-y-6">

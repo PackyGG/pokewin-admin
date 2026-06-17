@@ -135,13 +135,20 @@ export function RoadmapCalendar({
   // click that would otherwise fire on the dragged bar / dropped cell.
   const justDragged = React.useRef(false);
 
+  // Only scheduled items (both dates set) appear on the calendar; backlog
+  // ideas live in the section above it.
   const parsedItems = React.useMemo<ParsedItem[]>(
     () =>
-      items.map((it) => ({
-        ...it,
-        start: parseYmd(it.startDate.slice(0, 10)),
-        end: parseYmd(it.endDate.slice(0, 10)),
-      })),
+      items
+        .filter(
+          (it): it is RoadmapItemSummary & { startDate: string; endDate: string } =>
+            !!it.startDate && !!it.endDate,
+        )
+        .map((it) => ({
+          ...it,
+          start: parseYmd(it.startDate.slice(0, 10)),
+          end: parseYmd(it.endDate.slice(0, 10)),
+        })),
     [items],
   );
 
@@ -198,7 +205,7 @@ export function RoadmapCalendar({
     if (delta === 0) return;
 
     const target = items.find((i) => i.id === seg.item.id);
-    if (!target) return;
+    if (!target || !target.startDate || !target.endDate) return;
 
     const newStart = addDays(parseYmd(target.startDate.slice(0, 10)), delta);
     const newEnd = addDays(parseYmd(target.endDate.slice(0, 10)), delta);

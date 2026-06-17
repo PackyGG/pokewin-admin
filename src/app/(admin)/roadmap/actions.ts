@@ -41,14 +41,40 @@ const itemCreateSchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(200),
   description: z.string().trim().max(2000).nullish(),
   status: z.enum(ROADMAP_STATUSES),
-  startDate: dateOnly,
-  endDate: dateOnly,
+  // Both present → scheduled on the calendar. Both absent → backlog idea.
+  startDate: dateOnly.optional(),
+  endDate: dateOnly.optional(),
   color: z.enum(ROADMAP_COLORS).nullish(),
 });
 
 const itemUpdateSchema = itemCreateSchema.extend({
   id: z.string().uuid(),
 });
+
+const reorderSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1),
+});
+
+const BOTH_OR_NEITHER =
+  "Provide both a start and end date, or leave both empty to keep it in the backlog";
+
+// Resolve the optional date pair into UTC-midnight Dates (or nulls for a
+// backlog item). Returns an error string when only one date is supplied or
+// the range is inverted.
+function resolveDates(
+  startDate?: string,
+  endDate?: string,
+): { start: Date | null; end: Date | null } | { error: string } {
+  const hasStart = !!startDate;
+  const hasEnd = !!endDate;
+  if (hasStart !== hasEnd) return { error: BOTH_OR_NEITHER };
+  if (!hasStart) return { start: null, end: null };
+  const start = toUtcMidnight(startDate!);
+  const end = toUtcMidnight(endDate!);
+  const rangeErr = validateRange(start, end);
+  if (rangeErr) return { error: rangeErr };
+  return { start, end };
+}
 
 const moveSchema = z.object({
   id: z.string().uuid(),
@@ -70,19 +96,28 @@ export async function createRoadmapItem(
   const parsed = itemCreateSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
   const d = parsed.data;
-  const start = toUtcMidnight(d.startDate);
-  const end = toUtcMidnight(d.endDate);
-  const rangeErr = validateRange(start, end);
-  if (rangeErr) return fail(rangeErr);
+  const dates = resolveDates(d.startDate, d.endDate);
+  if ("error" in dates) return fail(dates.error);
+
+  // Backlog ideas append to the end of the manual order.
+  let sortOrder = 0;
+  if (!dates.start) {
+    const max = await adminDb.roadmap_items.aggregate({
+      where: { archived_at: null, start_date: null },
+      _max: { sort_order: true },
+    });
+    sortOrder = (max._max.sort_order ?? -1) + 1;
+  }
 
   const row = await adminDb.roadmap_items.create({
     data: {
       title: d.title,
       description: d.description ?? null,
       status: d.status,
-      start_date: start,
-      end_date: end,
+      start_date: dates.start,
+      end_date: dates.end,
       color: d.color ?? null,
+      sort_order: sortOrder,
       created_by: session.userId,
     },
     select: { id: true },
@@ -103,10 +138,8 @@ export async function updateRoadmapItem(
   const parsed = itemUpdateSchema.safeParse(input);
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
   const d = parsed.data;
-  const start = toUtcMidnight(d.startDate);
-  const end = toUtcMidnight(d.endDate);
-  const rangeErr = validateRange(start, end);
-  if (rangeErr) return fail(rangeErr);
+  const dates = resolveDates(d.startDate, d.endDate);
+  if ("error" in dates) return fail(dates.error);
 
   await adminDb.roadmap_items.update({
     where: { id: d.id },
@@ -114,8 +147,8 @@ export async function updateRoadmapItem(
       title: d.title,
       description: d.description ?? null,
       status: d.status,
-      start_date: start,
-      end_date: end,
+      start_date: dates.start,
+      end_date: dates.end,
       color: d.color ?? null,
     },
   });
@@ -145,6 +178,26 @@ export async function moveRoadmapItem(
     data: { start_date: start, end_date: end },
   });
   revalidateItem(d.id);
+  return { success: true };
+}
+
+/** Persist the manual ordering of backlog ideas. `ids` is the full backlog in
+ *  its new top-to-bottom order; each row's sort_order becomes its index. */
+export async function reorderBacklog(
+  input: z.infer<typeof reorderSchema>,
+): Promise<ActionResult> {
+  await requirePageAccess(PAGE_KEY);
+  const parsed = reorderSchema.safeParse(input);
+  if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid input");
+  await adminDb.$transaction(
+    parsed.data.ids.map((id, idx) =>
+      adminDb.roadmap_items.update({
+        where: { id },
+        data: { sort_order: idx },
+      }),
+    ),
+  );
+  revalidateItem();
   return { success: true };
 }
 
