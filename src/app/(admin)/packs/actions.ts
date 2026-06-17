@@ -3,7 +3,8 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { getDb } from "@/lib/db";
 import { isUuid } from "@/lib/utils/ids";
-import { SETS_CACHE_TAG } from "@/lib/queries/sets";
+import { ensurePackSetAssignmentsSchema } from "@/lib/pack-set-assignments/ensure-schema";
+import { getPackSetAssignment } from "@/lib/queries/pack-set-assignments";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess, sessionHasRole } from "@/lib/dal";
@@ -15,7 +16,9 @@ import {
   getPackGames,
   getPackStats,
   getPacksPoolComposition,
+  PACK_POOLS,
   REPRICE_INCLUDED_PACK_TYPES,
+  type PackSetFilter,
   type PackStats,
 } from "@/lib/queries/packs";
 import {
@@ -562,82 +565,63 @@ export async function fetchPackFullDetail(
 }
 
 /**
- * Reassign EVERY card in a pack to a target `sets` row. This is what drives
- * which pool tab (Pokemon / OnePiece / Rewards / Meme) the pack appears under
- * on /packs, since a pack's pool is derived from the sets of its cards.
- *
- * Mirrors the sanctioned `bulkMoveCardsToSet` (cards/set-actions.ts): same
- * `cards.set_id` write, same `__can_update_card` gate, same audit. Because
- * cards are SHARED across packs, this also moves them in every other pack that
- * contains them and in the /cards catalog — the caller's confirm dialog spells
- * that out. Scoped to exactly the pack's distinct card ids.
+ * Assign a pack to a /packs pool tab (Pokemon / One Piece / Meme / Rewards)
+ * WITHOUT touching any of its cards. A pack's pool is normally derived from
+ * the sets of its cards; this override is stored in the ADMIN DB (the prod
+ * game DB is read-only and has no pack-level set column) and wins over the
+ * derived classification on /packs. Passing the pack's current derived pool
+ * is fine — it just persists that choice explicitly.
  */
-export async function movePackCardsToSet(
+export async function setPackSet(
   packId: string,
-  setId: string,
-): Promise<{ count: number; setName: string }> {
+  set: string,
+): Promise<{ set: PackSetFilter }> {
   const session = await requirePageAccess("/packs");
-  await requireCapability(
-    session,
-    "__can_update_card",
-    "reassign cards to a set",
-  );
+  await requireCapability(session, "__can_update_pack", "update packs");
 
   if (!isUuid(packId)) throw new Error("Invalid pack id");
-  if (!isUuid(setId)) throw new Error("Invalid set id");
+  if (!(PACK_POOLS as readonly string[]).includes(set)) {
+    throw new Error("Invalid set");
+  }
+  const pool = set as PackSetFilter;
 
+  // Validate the pack exists (read-only main DB) so we don't persist an
+  // assignment for a deleted/typo'd id.
   const db = await getDb();
-
-  // Validate the target set up-front so a deleted FK target surfaces a clean
-  // error instead of a silent 0-row update.
-  const set = await db.sets.findUnique({
-    where: { id: setId },
-    select: { id: true, name: true },
-  });
-  if (!set) throw new Error("Set not found");
-
   const pack = await db.packs.findUnique({
     where: { id: packId },
     select: { id: true, name: true },
   });
   if (!pack) throw new Error("Pack not found");
 
-  const packCards = await db.pack_cards.findMany({
+  await ensurePackSetAssignmentsSchema();
+  await adminDb.pack_set_assignments.upsert({
     where: { pack_id: packId },
-    select: { card_id: true },
-  });
-  const cardIds = Array.from(new Set(packCards.map((pc) => pc.card_id)));
-  if (cardIds.length === 0) {
-    return { count: 0, setName: set.name };
-  }
-
-  const result = await db.cards.updateMany({
-    where: { id: { in: cardIds } },
-    data: { set_id: set.id, updated_at: new Date() },
+    create: { pack_id: packId, pack_set: pool, set_by_admin_id: session.userId },
+    update: { pack_set: pool, set_by_admin_id: session.userId, updated_at: new Date() },
   });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
-    eventType: "pack_cards_moved_to_set",
-    metadata: {
-      packId: pack.id,
-      packName: pack.name,
-      setId: set.id,
-      setName: set.name,
-      count: result.count,
-      cardIds,
-    },
+    eventType: "pack_set_assigned",
+    metadata: { packId: pack.id, packName: pack.name, set: pool },
   });
 
-  // Pool membership + per-set card counts changed: evict the pool KPI stats,
-  // the /sets catalog (card counts), and re-render the affected surfaces.
+  // Pool membership changed → evict the cached pool KPI stats + re-render.
   revalidateTag("packs-list-stats");
-  revalidateTag(SETS_CACHE_TAG);
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
-  revalidatePath("/cards");
 
-  return { count: result.count, setName: set.name };
+  return { set: pool };
+}
+
+/** The pack's explicit set override (null = none → card-derived). */
+export async function getPackSetForEdit(
+  packId: string,
+): Promise<PackSetFilter | null> {
+  await requirePageAccess("/packs");
+  if (!isUuid(packId)) return null;
+  return getPackSetAssignment(packId);
 }
 
 /**

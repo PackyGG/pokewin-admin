@@ -1585,9 +1585,10 @@ model roadmap_items {
   description String?
   status      roadmap_status @default(planned)
   // Calendar placement. Date-only semantics, stored as timestamptz at UTC
-  // midnight; end_date is inclusive of the block's last day.
-  start_date  DateTime       @db.Timestamptz(6)
-  end_date    DateTime       @db.Timestamptz(6)
+  // midnight; end_date is inclusive of the block's last day. NULL on both =
+  // an unscheduled backlog idea (ordered by sort_order, not yet on the calendar).
+  start_date  DateTime?      @db.Timestamptz(6)
+  end_date    DateTime?      @db.Timestamptz(6)
   // Accent color token (a TILE_COLORS key) for the calendar block.
   color       String?
   // Free-text markdown notes shown on the detail page.

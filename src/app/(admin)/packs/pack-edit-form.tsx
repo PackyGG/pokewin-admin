@@ -461,12 +461,7 @@ export function PackEditForm({
         )}
       </div>
 
-      <ChangePackSet
-        packId={pack.id}
-        cardCount={cards.length}
-        sets={pickerSets}
-        onMoved={onSaved}
-      />
+      <ChangePackSet packId={pack.id} />
 
       <div className="flex items-center justify-end gap-2">
         {showCancel && onCancel ? (

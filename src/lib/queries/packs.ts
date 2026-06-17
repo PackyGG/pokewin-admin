@@ -6,6 +6,7 @@ import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
 import { pack_tag } from "@/generated/prisma/enums";
 import { MS_PER_DAY } from "@/lib/utils/time";
+import { getPackSetAssignmentsGrouped } from "@/lib/queries/pack-set-assignments";
 
 /**
  * Reads pack `shard_cost` values schema-defensively. The shard-packs
@@ -131,113 +132,26 @@ export type PackListItem = {
 };
 
 /**
- * The pack pools. `pokemon` is the implicit default — packs carry no
- * first-class "type" column (the `pack_tag` enum is for battle odds:
- * %1 / %5 / %10 / 50/50, NOT card game), so a pack's pool is *derived*
- * from the sets of the cards it contains:
+ * The pack "set" axis (a.k.a. pool tab on /packs): Pokemon / One Piece /
+ * Rewards / Meme. This is a PACK-LEVEL label an admin assigns from the pack
+ * editor — its OWN axis, fully independent of `pack_type`
+ * (official / custom / reward / shard / promo) and the `pack_tag` battle-odds
+ * tags (%1 / %5 / %10 / 50-50 / onepiece). It has NOTHING to do with the card
+ * `sets` table.
  *
- *   • onepiece / rewards / meme = has ≥1 card whose `set_id` is in the
- *     set of that name (`pack_cards.some`)
- *   • pokemon                   = the catch-all: every pack with NO card
- *     in one of the named special sets (incl. packs with no cards yet)
- *
- * The discriminator lives in the card→set linkage exactly like /cards,
- * which scopes its catalog by `cards.set_id → sets.name`.
+ * The prod `packs` table has no column for it and is read-only, so the
+ * assignment lives in the admin DB (`pack_set_assignments`, see
+ * src/lib/queries/pack-set-assignments.ts). A pack with no assignment defaults
+ * to Pokemon until an admin sets its set explicitly.
  */
 export const PACK_POOLS = ["pokemon", "onepiece", "rewards", "meme"] as const;
 export type PackSetFilter = (typeof PACK_POOLS)[number];
-
-/** The non-default pools, each backed by a `sets` row of the given name. */
-type SpecialPool = Exclude<PackSetFilter, "pokemon">;
-
-/**
- * The `sets.name` (case-insensitive) backing each non-default pool. The
- * Rewards / meme sets were added to the catalog so packs whose cards are
- * assigned to them surface under their own tab; Pokemon is everything
- * not in one of these.
- */
-const SPECIAL_POOL_SET_NAMES: Record<SpecialPool, string> = {
-  onepiece: "onepiece",
-  rewards: "rewards",
-  meme: "meme",
-};
-
-/** Set ids grouped by lowercased set name (e.g. `{ onepiece: [...] }`). */
-type PoolSetIds = Record<string, string[]>;
-
-/**
- * Resolve the set id(s) for every non-default pool, keyed by lowercased
- * set name. Returned per-name (not a flat list) because the per-pool
- * predicates need to tell OnePiece cards from Rewards/meme cards.
- * Multiple rows per name are tolerated (nothing in the schema guarantees
- * a single row). Cached cross-request (5 min) since the set catalog is
- * tiny and changes rarely; within a render unstable_cache also dedupes so
- * a page hitting both getPacks + getPacksListStats resolves it once.
- */
-const cachedPoolSetIds = unstable_cache(
-  async (): Promise<PoolSetIds> => {
-    const db = await getDb();
-    const names = Object.values(SPECIAL_POOL_SET_NAMES);
-    const sets = await db.sets.findMany({
-      where: {
-        OR: names.map((n) => ({
-          name: { equals: n, mode: "insensitive" as const },
-        })),
-      },
-      select: { id: true, name: true },
-    });
-    const byName: PoolSetIds = {};
-    for (const s of sets) {
-      const key = s.name.toLowerCase();
-      (byName[key] ??= []).push(s.id);
-    }
-    return byName;
-  },
-  ["packs-pool-set-ids-v1"],
-  { revalidate: 300, tags: ["sets"] },
-);
-
-/** Set ids backing one non-default pool (empty if its set doesn't exist). */
-function poolSetIds(byName: PoolSetIds, pool: SpecialPool): string[] {
-  return byName[SPECIAL_POOL_SET_NAMES[pool].toLowerCase()] ?? [];
-}
-
-/** Every special-pool set id (the Pokemon catch-all excludes all of these). */
-function allSpecialSetIds(byName: PoolSetIds): string[] {
-  return Object.values(byName).flat();
-}
 
 /** Coerce a raw `?set=` value to a known pool, defaulting to Pokemon. */
 export function parsePackSet(value: string | undefined): PackSetFilter {
   return (PACK_POOLS as readonly string[]).includes(value ?? "")
     ? (value as PackSetFilter)
     : "pokemon";
-}
-
-/**
- * Build the `pack_cards` relation predicate that scopes the packs list /
- * stats to one pool. Returns `undefined` for the Pokemon default when no
- * special set exists at all (nothing to exclude → every pack is Pokemon),
- * keeping the query free of a redundant clause.
- *
- *   • onepiece/rewards/meme → packs with ≥1 card in that set (`some`)
- *   • pokemon               → packs with 0 cards in any special set (`none`)
- */
-function buildPackSetWhere(
-  set: PackSetFilter,
-  byName: PoolSetIds,
-): Prisma.packsWhereInput["pack_cards"] | undefined {
-  if (set === "pokemon") {
-    const special = allSpecialSetIds(byName);
-    if (special.length === 0) return undefined; // whole catalog
-    return { none: { cards: { set_id: { in: special } } } };
-  }
-  const ids = poolSetIds(byName, set);
-  if (ids.length === 0) {
-    // That pool's set doesn't exist (or has no cards) → matches nothing.
-    return { some: { card_id: { in: [] } } };
-  }
-  return { some: { cards: { set_id: { in: ids } } } };
 }
 
 export async function getPacks(params: {
@@ -288,11 +202,24 @@ export async function getPacks(params: {
   if (tag) Object.assign(where, buildPackCategoryWhere(tag));
   else where.pack_type = { not: "shard" };
 
-  // Scope to the active pool (Pokemon / OnePiece / Rewards / meme) via the
-  // card→set linkage.
-  const poolSetIdsByName = await cachedPoolSetIds();
-  const packCardsWhere = buildPackSetWhere(set, poolSetIdsByName);
-  if (packCardsWhere) where.pack_cards = packCardsWhere;
+  // Scope to the active pool (Pokemon / One Piece / Rewards / Meme). The set is
+  // a PACK-LEVEL admin assignment (admin DB), not derived from cards: a pack
+  // shows under the set it's assigned to; any pack WITHOUT an assignment
+  // defaults to Pokemon.
+  const assigned = await getPackSetAssignmentsGrouped();
+  const assignedToThis = assigned.idsBySet[set] ?? [];
+  if (set === "pokemon") {
+    const poolOr: Prisma.packsWhereInput[] = [];
+    if (assignedToThis.length > 0) poolOr.push({ id: { in: assignedToThis } });
+    // Unassigned packs default to Pokemon.
+    poolOr.push(
+      assigned.allIds.length > 0 ? { id: { notIn: assigned.allIds } } : {},
+    );
+    where.AND = [{ OR: poolOr }];
+  } else {
+    // Only explicitly-assigned packs appear under a non-default set.
+    where.AND = [{ id: { in: assignedToThis } }];
+  }
 
   const orderBy: Prisma.packsOrderByWithRelationInput = {};
   // Whitelisted sortable columns — all first-class `packs` columns. `price`,
@@ -409,16 +336,16 @@ export async function getPacks(params: {
 // ─── Tab-scoped KPI stats for the /packs page hero strip ───────────────
 //
 // Counts + lifetime totals shown in the hero KPI strip, scoped to the
-// active Pokemon / OnePiece tab so the numbers match the grid below.
-// Reads off the maintained `packs.total_openings` / `total_revenue` /
-// `total_payout` columns (kept in sync by the backend pack-opening
-// pipeline) so this is one round-trip instead of the 4 .count() /
-// .aggregate() calls the page would otherwise fan out to.
+// active set tab so the numbers match the grid below. Reads off the
+// maintained `packs.total_openings` / `total_revenue` / `total_payout`
+// columns (kept in sync by the backend pack-opening pipeline) so this is
+// one round-trip instead of the 4 .count() / .aggregate() calls the page
+// would otherwise fan out to.
 //
-// The pool split is the same derived discriminator as getPacks: a pack
-// is in onepiece/rewards/meme when it has ≥1 card in that set, Pokemon
-// otherwise (no card in any special set). Applied here as an EXISTS /
-// NOT EXISTS subquery on pack_cards → cards.set_id.
+// The pool split is the same PACK-LEVEL admin assignment as getPacks: a
+// pack counts toward the set it's assigned to; any pack without an
+// assignment defaults to Pokemon. Applied here as an id = ANY(...) filter
+// on the admin-DB assignment lists (no card→set logic).
 //
 // Cached cross-request (60s revalidate) so admins spamming the search
 // box don't fan into the DB on every keystroke. Within a single render
@@ -449,37 +376,38 @@ export type PacksListStats = {
 
 async function fetchPacksListStats(
   set: PackSetFilter,
-  byName: PoolSetIds,
 ): Promise<PacksListStats> {
   const db = await getDb();
 
-  // Build the pool predicate as a correlated EXISTS / NOT EXISTS on
-  // pack_cards → cards.set_id. Mirrors buildPackSetWhere: for a special
-  // pool with no backing set the pool is empty (FALSE); for Pokemon with
-  // no special sets at all the pool is the whole catalog (TRUE).
-  let poolPredicate: string;
+  // Build the pool predicate from the PACK-LEVEL admin assignments: a pack
+  // counts toward the set it's assigned to; any pack without an assignment
+  // defaults to Pokemon.
+  const assigned = await getPackSetAssignmentsGrouped();
+  const assignedToThis = assigned.idsBySet[set] ?? [];
   const queryParams: unknown[] = [];
-  const existsClause = `EXISTS (
-      SELECT 1 FROM pack_cards pc
-      JOIN cards c ON c.id = pc.card_id
-      WHERE pc.pack_id = packs.id AND c.set_id = ANY($1::uuid[])
-    )`;
+  const pushParam = (v: unknown): number => {
+    queryParams.push(v);
+    return queryParams.length;
+  };
+
+  let poolPredicate: string;
   if (set === "pokemon") {
-    const special = allSpecialSetIds(byName);
-    if (special.length === 0) {
-      poolPredicate = "TRUE";
-    } else {
-      poolPredicate = `NOT ${existsClause}`;
-      queryParams.push(special);
+    const branches: string[] = [];
+    if (assignedToThis.length > 0) {
+      branches.push(`packs.id = ANY($${pushParam(assignedToThis)}::uuid[])`);
     }
+    // Unassigned packs default to Pokemon.
+    branches.push(
+      assigned.allIds.length > 0
+        ? `NOT (packs.id = ANY($${pushParam(assigned.allIds)}::uuid[]))`
+        : "TRUE",
+    );
+    poolPredicate = `(${branches.join(" OR ")})`;
   } else {
-    const ids = poolSetIds(byName, set);
-    if (ids.length === 0) {
-      poolPredicate = "FALSE";
-    } else {
-      poolPredicate = existsClause;
-      queryParams.push(ids);
-    }
+    poolPredicate =
+      assignedToThis.length > 0
+        ? `packs.id = ANY($${pushParam(assignedToThis)}::uuid[])`
+        : "FALSE";
   }
 
   // Single round-trip aggregate using FILTER for the count breakdown.
@@ -524,20 +452,14 @@ async function fetchPacksListStats(
 export async function getPacksListStats(
   set: PackSetFilter = "pokemon",
 ): Promise<PacksListStats> {
-  const byName = await cachedPoolSetIds();
   // `set` is mixed into keyParts per call: unstable_cache does NOT fold
   // function args into the cache key automatically, so a single static
-  // key would let the per-pool aggregates collide (the first to land
-  // would serve all — the exact stale-cache bug fixed on getCardsStats).
-  // The resolved set fingerprint is mixed in too so adding/renaming a
-  // pool set busts the slot.
-  const fingerprint = Object.entries(byName)
-    .map(([name, ids]) => `${name}:${ids.join("|")}`)
-    .sort()
-    .join(",");
+  // key would let the per-set aggregates collide (the first to land would
+  // serve all — the exact stale-cache bug fixed on getCardsStats). Pack-set
+  // assignment changes bust this slot via revalidateTag("packs-list-stats").
   return unstable_cache(
-    () => fetchPacksListStats(set, byName),
-    ["packs-list-stats-v3", set, fingerprint],
+    () => fetchPacksListStats(set),
+    ["packs-list-stats-v4", set],
     { revalidate: 60, tags: ["packs-list-stats"] },
   )();
 }

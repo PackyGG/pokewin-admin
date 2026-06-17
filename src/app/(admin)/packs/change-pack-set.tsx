@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Layers } from "lucide-react";
 import { toast } from "sonner";
@@ -13,76 +13,88 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { movePackCardsToSet } from "./actions";
-import { invalidatePackDetailCache } from "./pack-detail-cache";
+import { setPackSet, getPackSetForEdit } from "./actions";
 
-export function ChangePackSet({
-  packId,
-  cardCount,
-  sets,
-  onMoved,
-}: {
-  packId: string;
-  cardCount: number;
-  sets: { id: string; name: string }[];
-  onMoved?: () => void;
-}) {
+// The Set axis (card pool) — independent of pack_type (official/reward/…)
+// and tags (%1/%5/%10/50-50). Order matches the /packs tabs.
+const POOL_OPTIONS: { value: string; label: string }[] = [
+  { value: "pokemon", label: "Pokémon" },
+  { value: "onepiece", label: "One Piece" },
+  { value: "rewards", label: "Rewards" },
+  { value: "meme", label: "Meme" },
+];
+
+export function ChangePackSet({ packId }: { packId: string }) {
   const router = useRouter();
-  const [setId, setSetId] = useState("");
-  const [open, setOpen] = useState(false);
+  const [current, setCurrent] = useState<string | null>(null);
+  const [value, setValue] = useState<string>("");
+  const [loaded, setLoaded] = useState(false);
   const [isPending, startTransition] = useTransition();
 
-  const selected = sets.find((s) => s.id === setId);
+  useEffect(() => {
+    let active = true;
+    getPackSetForEdit(packId)
+      .then((s) => {
+        if (!active) return;
+        setCurrent(s);
+        setValue(s ?? "");
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [packId]);
 
-  function confirmMove() {
+  function save() {
+    if (!value || value === current) return;
     startTransition(async () => {
       try {
-        const res = await movePackCardsToSet(packId, setId);
-        invalidatePackDetailCache(packId);
+        const res = await setPackSet(packId, value);
+        setCurrent(res.set);
         toast.success(
-          `Moved ${res.count} card${res.count === 1 ? "" : "s"} to ${res.setName}`,
+          `Pack set changed to ${
+            POOL_OPTIONS.find((o) => o.value === res.set)?.label ?? res.set
+          }`,
         );
-        setOpen(false);
-        onMoved?.();
         router.refresh();
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to move cards");
+        toast.error(e instanceof Error ? e.message : "Failed to change pack set");
       }
     });
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <h3 className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
         <Layers className="size-4" />
-        Card Set / Pool
+        Pack Set
       </h3>
       <p className="text-xs text-muted-foreground">
-        Reassigns all {cardCount} card{cardCount === 1 ? "" : "s"} in this pack to
-        the chosen set. A pack&apos;s pool tab (Pokemon / One Piece / Rewards /
-        Meme) is derived from the sets of its cards. Because cards are shared,
-        this also moves them in every other pack that contains them and in the
-        /cards catalog.
+        Which pool tab (Pokémon / One Piece / Rewards / Meme) this pack is sorted
+        under on /packs. This is its own axis — separate from the pack type
+        (official / reward / …) and the %1 / %5 / %10 / 50-50 tags. It only
+        changes the pack&apos;s category; it does NOT move or change any cards.
+        Packs with no explicit set fall back to being grouped by the sets of
+        their cards.
       </p>
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1.5">
-          <Label>Target set</Label>
-          <Select value={setId} onValueChange={(v) => v && setSetId(v)}>
+          <Label>Set</Label>
+          <Select
+            value={value}
+            onValueChange={(v) => v && setValue(v)}
+            disabled={!loaded || isPending}
+          >
             <SelectTrigger className="w-[220px]">
-              <SelectValue placeholder="Choose a set…" />
+              <SelectValue placeholder={loaded ? "Auto (from cards)" : "Loading…"} />
             </SelectTrigger>
             <SelectContent>
-              {sets.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.name}
+              {POOL_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -91,40 +103,17 @@ export function ChangePackSet({
         <Button
           type="button"
           variant="outline"
-          disabled={!setId || cardCount === 0}
-          onClick={() => setOpen(true)}
+          disabled={!value || value === current || isPending}
+          onClick={save}
         >
-          Move {cardCount} card{cardCount === 1 ? "" : "s"}
+          {isPending ? "Saving…" : "Save set"}
         </Button>
       </div>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Move cards to {selected?.name ?? "set"}?</DialogTitle>
-            <DialogDescription>
-              This reassigns all {cardCount} card
-              {cardCount === 1 ? "" : "s"} in this pack to{" "}
-              <strong>{selected?.name}</strong> in the live game database. Because
-              cards are shared across packs, those cards also move in every other
-              pack that contains them and in the /cards catalog. This cannot be
-              undone automatically.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setOpen(false)}
-              disabled={isPending}
-            >
-              Cancel
-            </Button>
-            <Button onClick={confirmMove} disabled={isPending || !setId}>
-              {isPending ? "Moving…" : "Move cards"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {loaded && current === null && (
+        <p className="text-xs text-muted-foreground">
+          Currently auto-classified from this pack&apos;s cards.
+        </p>
+      )}
     </div>
   );
 }
