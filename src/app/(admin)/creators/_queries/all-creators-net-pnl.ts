@@ -20,6 +20,8 @@ import {
 } from "@/lib/metrics/gaming-sql";
 import { getMetricsScope } from "@/lib/metrics/scope";
 import { ggr as ggrFormula, gamingPayoutTotal } from "@/lib/metrics/formulas";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getAllCreatorsNetGgrScansFromClickHouse } from "@/lib/clickhouse/queries/creators/net-ggr";
 
 /**
  * all-creators-net-pnl.ts — the BATCH (all-creators) variant of the
@@ -132,19 +134,27 @@ export type AllCreatorsNetGgr = {
  * cache key the coarse `period` label, not a per-render timestamp that
  * would never hit.
  */
-function periodToIntervalLiteral(period: DashboardPeriod): string | null {
-  switch (period) {
-    case "1h": return "1 hour";
-    case "3h": return "3 hours";
-    case "6h": return "6 hours";
-    case "12h": return "12 hours";
-    case "24h": return "24 hours";
-    case "48h": return "48 hours";
-    case "3d": return "3 days";
-    case "7d": return "7 days";
-    case "30d": return "30 days";
-    case "all": return null;
-  }
+/**
+ * Map a `DashboardPeriod` to a since-`Date` relative to `now`, or `null` for
+ * the lifetime ("all") window. Used to anchor BOTH engines (the anchored PG
+ * `sinceClause` AND the ClickHouse twin's `since` param) to one instant per
+ * cache entry, so the comparison/cutover is deterministic — same pattern as
+ * the creator-hub cohort twin (`hubPeriodToSinceDate`).
+ */
+function periodToSinceDate(period: DashboardPeriod, now: Date): Date | null {
+  const ms: Record<Exclude<DashboardPeriod, "all">, number> = {
+    "1h": 3_600_000,
+    "3h": 3 * 3_600_000,
+    "6h": 6 * 3_600_000,
+    "12h": 12 * 3_600_000,
+    "24h": 24 * 3_600_000,
+    "48h": 48 * 3_600_000,
+    "3d": 3 * 86_400_000,
+    "7d": 7 * 86_400_000,
+    "30d": 30 * 86_400_000,
+  };
+  if (period === "all") return null;
+  return new Date(now.getTime() - ms[period]);
 }
 
 type LedgerRow = {
@@ -203,13 +213,21 @@ const cachedNetGgrScans = (
   exclInventory: string,
   upgBlacklist: string,
   hasUpgrader: boolean,
+  excluded: string[],
 ) =>
   unstable_cache(
     async (): Promise<NetGgrScans> => {
       const db = env === "dev" ? getDevDb() : getProdDb();
-      const interval = periodToIntervalLiteral(period);
+      // Anchor BOTH engines to a single instant so the Postgres leg and the
+      // ClickHouse twin are deterministically comparable (mirrors the
+      // creator-hub cohort twin). The anchor is fixed per unstable_cache entry
+      // (revalidate 300s).
+      const now = new Date();
+      const sinceDate = periodToSinceDate(period, now);
       const sinceClause = (col: string): string =>
-        interval === null ? "" : `AND ${col} >= NOW() - INTERVAL '${interval}'`;
+        sinceDate === null
+          ? ""
+          : `AND ${col} >= '${sinceDate.toISOString()}'::timestamptz`;
 
       // Covering-creator lateral: the most-recent acu whose 7-day window
       // covers this event row, the creator's own play dropped. `userCol` /
@@ -227,6 +245,13 @@ const cachedNetGgrScans = (
             LIMIT 1
          ) cov ON TRUE`;
 
+      // Index-or-ClickHouse: serve the 3 heavy attribution scans from the
+      // ClickHouse twin when cut over (gated per surface key); the in-code
+      // merge below runs unchanged on either source. The CH twin is parity-
+      // proven cent-exact (TZ=UTC, twice) against the anchored Postgres legs.
+      return resolveAdminRead<NetGgrScans>("creators_net_ggr", {
+        ch: () => getAllCreatorsNetGgrScansFromClickHouse(excluded, sinceDate),
+        pg: async () => {
       const [ledgerRows, invRows, upgRows] = await Promise.all([
         // Ledger wager + ledger gaming payout, attributed per covering
         // creator via the lateral. UNALIASED `ledger_transactions` so
@@ -281,7 +306,9 @@ const cachedNetGgrScans = (
           : Promise.resolve([] as UpgRow[]),
       ]);
 
-      return { ledgerRows, invRows, upgRows };
+          return { ledgerRows, invRows, upgRows };
+        },
+      });
     },
     ["creators-net-ggr-scans-v1", period, env, exclLedger, exclInventory, upgBlacklist, String(hasUpgrader)],
     { revalidate: 300, tags: ["creators-net-ggr"] },
@@ -348,6 +375,7 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
       exclInventory,
       upgBlacklist,
       hasUpgrader,
+      excluded,
     )();
 
     // Merge the three creator-keyed sets.
