@@ -9,7 +9,7 @@ import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabil
 import { isUuid } from "@/lib/utils/ids";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { PackDetailView } from "../pack-detail-view";
-import { fetchPackFullDetail } from "../actions";
+import { fetchPackDetailCore } from "../actions";
 
 export const metadata = { title: "Pack Detail" };
 
@@ -47,14 +47,16 @@ export default async function PackDetailPage({
   }
   const isPackCreator = sessionHasRole(session, "pack_creator");
 
-  // Prefetch the full detail (identity + economics + card pool + stats)
-  // server-side so the page paints WITH data instead of mounting a skeleton and
-  // then firing the client-side core→stats server-action waterfall after
-  // hydration (each round-trip re-runs the page-access gate — especially slow on
-  // cold prod functions). `fetchPackFullDetail` already wraps both reads in
-  // safeQuery+timeout, so a slow scan still degrades gracefully; on any failure
-  // we pass null and the client falls back to its own load()/retry flow.
-  const initialPayload = await fetchPackFullDetail(id).catch(() => null);
+  // Prefetch ONLY the fast core detail (identity + economics + card pool) so
+  // the page paints immediately on navigation. The heavy `getPackStats` ("two
+  // JSON scans") are deliberately NOT in this blocking path — they were what
+  // made deep-linking into a pack feel like it hung. PackDetailView auto-loads
+  // the stats client-side behind a skeleton (see its stats auto-load effect),
+  // so the charts stream in after first paint instead of blocking it.
+  // `fetchPackDetailCore` wraps the read in safeQuery+timeout; on failure we
+  // pass null and the client falls back to its own load()/retry flow.
+  const detail = await fetchPackDetailCore(id).catch(() => null);
+  const initialPayload = detail ? { detail, stats: null } : null;
 
   return (
     <PackDetailView

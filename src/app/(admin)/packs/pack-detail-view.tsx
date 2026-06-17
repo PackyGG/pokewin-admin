@@ -201,6 +201,30 @@ export function PackDetailView({
     detail != null &&
     (showEditButton || canToggle || canDelete);
 
+  // The server now prefetches only the core detail (stats === null) so the
+  // page paints fast. Auto-load the heavy stats ONCE per pack here so the
+  // stats section streams in behind a skeleton instead of blocking first
+  // paint. A genuine failure (loadPackStats resolves null) leaves stats null
+  // and — since the ref guard already fired — surfaces the manual retry tile.
+  const statsAutoLoadedFor = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (state.status !== "ready") return;
+    if (state.payload.stats !== null) return;
+    if (statsAutoLoadedFor.current === packId) return;
+    statsAutoLoadedFor.current = packId;
+    setStatsRetrying(true);
+    loadPackStats(packId, state.payload.detail)
+      .then((nextStats) => {
+        setState((prev) =>
+          prev.status === "ready"
+            ? { status: "ready", payload: { ...prev.payload, stats: nextStats } }
+            : prev,
+        );
+      })
+      .catch(() => {})
+      .finally(() => setStatsRetrying(false));
+  }, [state, packId]);
+
   async function retryStats() {
     if (!detail || statsRetrying) return;
     setStatsRetrying(true);
@@ -389,6 +413,11 @@ function ReadyBody({
 
       {stats ? (
         <PackStatsSection stats={stats} />
+      ) : statsRetrying ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Skeleton className="h-[250px] rounded-xl" />
+          <Skeleton className="h-[250px] rounded-xl" />
+        </div>
       ) : (
         <div className="space-y-2">
           <TileErrorFallback
