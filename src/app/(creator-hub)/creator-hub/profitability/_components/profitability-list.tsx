@@ -1,9 +1,17 @@
+"use client";
+
+import { useMemo, useState } from "react";
 import Link from "next/link";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/utils/format";
 import type { CreatorProfitabilityRow } from "../_queries/deal-profitability";
+
+/** Creators per page — rows are already loaded, this is a client-side slice. */
+const PAGE_SIZE = 25;
 
 /**
  * Per-creator deal profitability list. Left: avatar + name + code + the
@@ -142,6 +150,15 @@ export function ProfitabilityList({
 }: {
   rows: CreatorProfitabilityRow[];
 }) {
+  const [page, setPage] = useState(1);
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageRows = useMemo(
+    () => rows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [rows, safePage],
+  );
+
   if (rows.length === 0) {
     return (
       <div className="rounded-2xl border bg-card p-10 text-center text-sm text-muted-foreground">
@@ -150,11 +167,47 @@ export function ProfitabilityList({
     );
   }
 
+  const first = (safePage - 1) * PAGE_SIZE + 1;
+  const last = Math.min(safePage * PAGE_SIZE, rows.length);
+
   return (
-    <div className="divide-y overflow-hidden rounded-2xl border bg-card">
-      {rows.map((row) => (
-        <ProfitabilityRow key={row.userId} row={row} />
-      ))}
+    <div className="space-y-3">
+      <div className="divide-y overflow-hidden rounded-2xl border bg-card">
+        {pageRows.map((row) => (
+          <ProfitabilityRow key={row.userId} row={row} />
+        ))}
+      </div>
+
+      {rows.length > PAGE_SIZE && (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] text-muted-foreground">
+            {first}–{last} of {rows.length} creators
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-8"
+              disabled={safePage <= 1}
+              onClick={() => setPage(safePage - 1)}
+            >
+              <ChevronLeft className="size-4" />
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Page {safePage} of {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-8"
+              disabled={safePage >= totalPages}
+              onClick={() => setPage(safePage + 1)}
+            >
+              <ChevronRight className="size-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
