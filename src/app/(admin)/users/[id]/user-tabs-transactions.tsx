@@ -541,7 +541,7 @@ export const CategoryTransactionsTable = React.memo(
                     </button>
                   </TableCell>
                   {/* Dedicated "watch live" button — gaming tab. Opens
-                      packy.gg/battle/<id> in a new tab. Shown on the battle bet
+                      packy.gg/games/battles/<id> in a new tab. Shown on the battle bet
                       row AND on the battle_excess_to_voucher row (the voucher
                       leg of that same battle win), so the voucher leg ties back
                       to its battle just like the bet does. Empty cell on other
@@ -1175,7 +1175,7 @@ function CardWithdrawalsSubTable({
  * Watch-live button on the Gaming-tab battle rows. Has two modes:
  *
  *   • Public battle (or non-admin viewer) → plain anchor that opens
- *     packy.gg/battle/<id> in a new tab. Same shape and styling as the
+ *     packy.gg/games/battles/<id> in a new tab. Same shape and styling as the
  *     historical button so the table layout is unchanged.
  *
  *   • Private battle + admin viewer (hasPassword=true) → click reveals

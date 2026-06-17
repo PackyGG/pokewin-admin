@@ -320,7 +320,7 @@ export type Transaction = {
   /**
    * Battle id for battle rows (battle_bet / battle_sponsorship /
    * battle_refund) — powers the "watch live" link to
-   * packy.gg/battle/<id>. Null on non-battle rows.
+   * packy.gg/games/battles/<id>. Null on non-battle rows.
    */
   battleId: string | null;
   /**
