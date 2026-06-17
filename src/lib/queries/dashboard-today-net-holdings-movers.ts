@@ -6,6 +6,7 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
+import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 import { statsExcludedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
 import { getTodayNetHoldingsTopHoldersFromClickHouse } from "@/lib/clickhouse/queries/dashboard/net-holdings-movers";
@@ -91,6 +92,7 @@ const cachedTodayNetHoldingsTopHolders = unstable_cache(
            AND lt.type::text = 'admin_balance_adjustment'
            AND lt.metadata->>'kind' = 'inventory_removal'
            AND lt.user_id IN (SELECT id FROM eligible)
+           AND ${nonCreatorOwnerSql("lt.user_id")}
            AND NOT EXISTS (
              SELECT 1 FROM user_inventory ui2
              WHERE ui2.id::text = lt.metadata->>'inventory_item_id'
@@ -98,6 +100,9 @@ const cachedTodayNetHoldingsTopHolders = unstable_cache(
          GROUP BY lt.user_id
        ),
        inv AS (
+         -- CREATOR-INVENTORY carve-out: drop creator-owned inventory from the
+         -- holdings delta (matches calculateWindowedPnl). See
+         -- _creator-pnl-exclusion.ts.
          SELECT ui.user_id,
            COALESCE(SUM(CASE WHEN ui.obtained_at >= $1
                              THEN ui.value_at_obtained::numeric ELSE 0 END), 0) AS obtained,
@@ -106,6 +111,7 @@ const cachedTodayNetHoldingsTopHolders = unstable_cache(
          FROM user_inventory ui
          WHERE (ui.obtained_at >= $1 OR ui.sold_at >= $1 OR ui.exchanged_at >= $1)
            AND ui.user_id IN (SELECT id FROM eligible)
+           AND ${nonCreatorOwnerSql("ui.user_id")}
          GROUP BY ui.user_id
        ),
        admin_vch AS (

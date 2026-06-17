@@ -44,4 +44,18 @@ export function customerScopeCte(opts: {
     )`;
 }
 
+/**
+ * Creator-inventory carve-out predicate (ClickHouse twin of
+ * `nonCreatorOwnerSql` in `queries/_creator-pnl-exclusion.ts`). Keeps an
+ * inventory row ONLY if its owner is not a creator — applied to the
+ * `inventoryChange` leg of the dashboard P&L twins (windowed / daily /
+ * net-holdings movers / stats) so the CH-served figures match the Postgres
+ * house-P&L formula, which drops creator inventory from the liability term.
+ * Balance + voucher legs are unaffected. `userIdCol` is the row's user-id
+ * column, e.g. `ui.user_id`.
+ */
+export function nonCreatorOwnerCh(userIdCol: string): string {
+  return `${userIdCol} NOT IN (SELECT id FROM ${CH_DB}.public_user FINAL WHERE _peerdb_is_deleted = 0 AND role = 'creator')`;
+}
+
 export { toNumber } from "@/lib/utils/decimal";

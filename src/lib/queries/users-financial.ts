@@ -90,7 +90,15 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
       GROUP BY type
     `,
     db.user_inventory.aggregate({
-      where: { user_id: userId, sold_at: null, exchanged_at: null },
+      // CREATOR-INVENTORY carve-out: a creator's open inventory is
+      // house-funded sponsored stream play, dropped from the unrealized
+      // liability term (matches calculateUserPnl). See _creator-pnl-exclusion.ts.
+      where: {
+        user_id: userId,
+        sold_at: null,
+        exchanged_at: null,
+        user: { role: { not: "creator" } },
+      },
       _sum: { value_at_obtained: true },
     }),
     // Rolling windowed house P&L for this user across all five windows

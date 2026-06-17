@@ -1,7 +1,7 @@
 import "server-only";
 
 import { clickhouseRead } from "@/lib/clickhouse/readonly-query";
-import { CH_DB, chDateTime, toNumber } from "../_shared";
+import { CH_DB, chDateTime, toNumber, nonCreatorOwnerCh } from "../_shared";
 
 /**
  * Phase 2B — single-UTC-day house-P&L breakdown SUMMARY, read from the
@@ -166,6 +166,7 @@ export async function getDailyPnlBreakdownFromClickHouse(
     FROM ${CH_DB}.public_user_inventory AS ui FINAL
     WHERE ui._peerdb_is_deleted = 0
       AND ui.user_id IN (SELECT id FROM real_users)
+      AND ${nonCreatorOwnerCh("ui.user_id")}
       AND (${inDay("ui.obtained_at")} OR ${inDay("coalesce(ui.sold_at, ui.exchanged_at)")})`;
 
   const vchSql = `

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { clickhouseRead } from "@/lib/clickhouse/readonly-query";
-import { CH_DB, chDateTime, toNumber } from "../_shared";
+import { CH_DB, chDateTime, toNumber, nonCreatorOwnerCh } from "../_shared";
 
 /**
  * Phase 2B — Dashboard "Net holdings Δ" top movers (P&L Today drilldown), read
@@ -102,6 +102,7 @@ export async function getTodayNetHoldingsTopHoldersFromClickHouse(
       AND lt.type = 'admin_balance_adjustment'
       AND JSONExtractString(lt.metadata, 'kind') = 'inventory_removal'
       AND lt.user_id IN (SELECT id FROM eligible)
+      AND ${nonCreatorOwnerCh("lt.user_id")}
       AND JSONExtractString(lt.metadata, 'inventory_item_id') NOT IN ${liveInventoryIds}
     GROUP BY lt.user_id`;
 
@@ -129,6 +130,7 @@ export async function getTodayNetHoldingsTopHoldersFromClickHouse(
     FROM ${CH_DB}.public_user_inventory AS ui FINAL
     WHERE ui._peerdb_is_deleted = 0
       AND ui.user_id IN (SELECT id FROM eligible)
+      AND ${nonCreatorOwnerCh("ui.user_id")}
       AND (ui.obtained_at >= {cutoff:DateTime64(6)}
         OR ifNull(ui.sold_at >= {cutoff:DateTime64(6)}, 0) = 1
         OR ifNull(ui.exchanged_at >= {cutoff:DateTime64(6)}, 0) = 1)

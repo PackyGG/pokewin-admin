@@ -12,6 +12,7 @@ import {
 } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
+import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 // Canonical metric layer (single source of truth for GGR / wager / payout
 // / scope). The dashboard's headline GGR + the GGR breakdown popover are
@@ -1704,10 +1705,12 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
         SELECT
           COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
             WHERE obtained_at >= ${periodCutoff}
-              AND user_id IN (SELECT id FROM real_users)), 0)::text AS inv_obtained,
+              AND user_id IN (SELECT id FROM real_users)
+              AND ${Prisma.raw(nonCreatorOwnerSql("user_id"))}), 0)::text AS inv_obtained,
           COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
             WHERE (sold_at >= ${periodCutoff} OR exchanged_at >= ${periodCutoff})
-              AND user_id IN (SELECT id FROM real_users)), 0)::text AS inv_disposed,
+              AND user_id IN (SELECT id FROM real_users)
+              AND ${Prisma.raw(nonCreatorOwnerSql("user_id"))}), 0)::text AS inv_disposed,
           COALESCE((SELECT SUM(value::numeric) FROM vouchers
             WHERE created_at >= ${periodCutoff}
               AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_issued,

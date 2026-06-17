@@ -6,6 +6,7 @@ import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
 import { getDailyPnlFromClickHouse } from "@/lib/clickhouse/queries/dashboard/daily-pnl";
 import { compareDashboardDailyPnl } from "@/lib/clickhouse/compare/dashboard-daily-pnl";
 import { blacklistNotInClause } from "./_blacklist";
+import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   officialStreamAdjustmentPrismaWhere,
@@ -221,6 +222,12 @@ export async function calculateUserPnl(userId: string): Promise<UserPnl> {
             // the User Detail / Users List PnL aligned with the dashboard's
             // totalInventoryValue aggregate (which filters the same way).
             withdrawal_locked_at: null,
+            // CREATOR-INVENTORY carve-out: a creator's open inventory is
+            // house-funded sponsored stream play, not a real holding, so it
+            // is dropped from the P&L liability term (the converted streamer
+            // voucher stays counted via unclaimedVouchers). See
+            // _creator-pnl-exclusion.ts. MUST mirror calculateUsersPnlBatch.
+            user: { role: { not: "creator" } },
           },
           _sum: { value_at_obtained: true },
         }),
@@ -381,15 +388,20 @@ export async function calculateWindowedPnl(opts: {
         ...params,
       ),
       db.$queryRawUnsafe<InvRow[]>(
+        // CREATOR-INVENTORY carve-out: drop creator-owned inventory from BOTH
+        // the obtained and disposed legs symmetrically (incl. admin removals)
+        // so the windowed delta matches the lifetime liability carve-out. See
+        // _creator-pnl-exclusion.ts.
         `SELECT
            COALESCE(SUM(CASE WHEN ui.obtained_at >= $1 THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained,
            (
              COALESCE(SUM(CASE WHEN (ui.sold_at >= $1 OR ui.exchanged_at >= $1) THEN ui.value_at_obtained::numeric ELSE 0 END), 0)
-             + ${adminInventoryRemovalDisposedSql("$1", userScopeLt)}
+             + ${adminInventoryRemovalDisposedSql("$1", `${userScopeLt} AND ${nonCreatorOwnerSql("lt.user_id")}`)}
            )::text AS disposed
          FROM user_inventory ui
          WHERE (ui.obtained_at >= $1 OR ui.sold_at >= $1 OR ui.exchanged_at >= $1)
-           AND ${scope("ui.user_id")}`,
+           AND ${scope("ui.user_id")}
+           AND ${nonCreatorOwnerSql("ui.user_id")}`,
         ...params,
       ),
       db.$queryRawUnsafe<VchRow[]>(
@@ -681,6 +693,10 @@ export async function calculateUsersPnlBatch(
             // counted there), so it appears exactly once — list PnL now
             // equals detail PnL.
             withdrawal_locked_at: null,
+            // CREATOR-INVENTORY carve-out — MUST mirror calculateUserPnl so
+            // users-LIST P&L equals user-DETAIL P&L. See
+            // _creator-pnl-exclusion.ts.
+            user: { role: { not: "creator" } },
           },
           _sum: { value_at_obtained: true },
         }),
@@ -893,11 +909,13 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
            SELECT DATE(ui.obtained_at) AS d, ui.value_at_obtained::numeric AS obtained, 0::numeric AS disposed
            FROM user_inventory ui
            WHERE ui.obtained_at >= NOW() - INTERVAL '30 days' AND ui.user_id IN ${usersScope}
+             AND ${nonCreatorOwnerSql("ui.user_id")}
            UNION ALL
            SELECT DATE(COALESCE(ui.sold_at, ui.exchanged_at)) AS d, 0::numeric AS obtained, ui.value_at_obtained::numeric AS disposed
            FROM user_inventory ui
            WHERE (ui.sold_at >= NOW() - INTERVAL '30 days' OR ui.exchanged_at >= NOW() - INTERVAL '30 days')
              AND ui.user_id IN ${usersScope}
+             AND ${nonCreatorOwnerSql("ui.user_id")}
            UNION ALL
            SELECT DATE(lt.created_at) AS d, 0::numeric AS obtained, ABS(lt.amount::numeric) AS disposed
            FROM ledger_transactions lt
@@ -906,6 +924,7 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
              AND lt.type::text = 'admin_balance_adjustment'
              AND lt.metadata->>'kind' = 'inventory_removal'
              AND ${ledgerUserScope}
+             AND ${nonCreatorOwnerSql("lt.user_id")}
              AND NOT EXISTS (
                SELECT 1 FROM user_inventory ui2
                WHERE ui2.id::text = lt.metadata->>'inventory_item_id'

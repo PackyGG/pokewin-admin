@@ -1,7 +1,7 @@
 import "server-only";
 
 import { clickhouseRead } from "@/lib/clickhouse/readonly-query";
-import { CH_DB, chDateTime, toNumber } from "../_shared";
+import { CH_DB, chDateTime, toNumber, nonCreatorOwnerCh } from "../_shared";
 
 /**
  * Phase 2B — Rolling-window house P&L, read from the ClickHouse prod game
@@ -139,6 +139,7 @@ export async function getWindowedPnlFromClickHouse(
       toString(sum(if(
         lt.type = 'admin_balance_adjustment'
         AND JSONExtractString(lt.metadata, 'kind') = 'inventory_removal'
+        AND ${nonCreatorOwnerCh("lt.user_id")}
         AND JSONExtractString(lt.metadata, 'inventory_item_id') NOT IN ${liveInventoryIds},
         abs(lt.amount), toDecimal128(0, 2)))) AS admin_inv_removal,
       toString(sum(if(
@@ -171,7 +172,8 @@ export async function getWindowedPnlFromClickHouse(
         ui.value_at_obtained, toDecimal128(0, 2)))) AS disposed_ui
     FROM ${CH_DB}.public_user_inventory AS ui FINAL
     WHERE ui._peerdb_is_deleted = 0
-      AND ui.user_id IN (SELECT id FROM real_users)`;
+      AND ui.user_id IN (SELECT id FROM real_users)
+      AND ${nonCreatorOwnerCh("ui.user_id")}`;
 
   const vchSql = `
     WITH ${realUsersCte(hasBlacklist)}

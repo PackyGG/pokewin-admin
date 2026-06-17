@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { statsExcludedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
+import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 import type { WindowedPnl } from "./pnl";
 
 /**
@@ -155,10 +156,12 @@ export async function getUserWindowedPnlMulti(
         ...params,
       ),
       db.$queryRawUnsafe<InvRow[]>(
+        // CREATOR-INVENTORY carve-out (matches calculateWindowedPnl).
         `SELECT ${invObtainedCase}, ${invDisposedCase}
          FROM user_inventory ui
          WHERE (ui.obtained_at >= $2 OR ui.sold_at >= $2 OR ui.exchanged_at >= $2)
-           AND ui.user_id = $1`,
+           AND ui.user_id = $1
+           AND ${nonCreatorOwnerSql("ui.user_id")}`,
         ...params,
       ),
       db.$queryRawUnsafe<VchRow[]>(
@@ -176,6 +179,7 @@ export async function getUserWindowedPnlMulti(
            AND lt.user_id = $1
            AND lt.type::text = 'admin_balance_adjustment'
            AND lt.metadata->>'kind' = 'inventory_removal'
+           AND ${nonCreatorOwnerSql("lt.user_id")}
            AND NOT EXISTS (
              SELECT 1 FROM user_inventory ui2
              WHERE ui2.id::text = lt.metadata->>'inventory_item_id'

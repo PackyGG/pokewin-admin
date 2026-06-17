@@ -12,6 +12,7 @@ import { calculateUsersPnlBatch, type UserPnl } from "./pnl";
 import { isUserId, isUuid } from "@/lib/utils/ids";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
 import { escapeBlacklistIds } from "./_blacklist";
+import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 
 // Allowlist from the generated Prisma user_role enum — validate the
 // role filter before it reaches either the Prisma where or the raw-SQL
@@ -135,6 +136,7 @@ function buildAggregateCtes(needs: readonly AggregateKey[]): string {
          WHERE ui.sold_at IS NULL
            AND ui.exchanged_at IS NULL
            AND ui.withdrawal_locked_at IS NULL
+           AND ${nonCreatorOwnerSql("ui.user_id")}
          GROUP BY ui.user_id
       )`);
   }

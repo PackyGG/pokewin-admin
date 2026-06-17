@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { blacklistNotInClause } from "./_blacklist";
+import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { statsExcludedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 
@@ -287,7 +288,8 @@ export async function getDailyPnlBreakdown(
          FROM user_inventory ui
          WHERE (DATE(ui.obtained_at) = ${dayLit}
                 OR DATE(COALESCE(ui.sold_at, ui.exchanged_at)) = ${dayLit})
-           AND ui.user_id IN ${usersScope}`,
+           AND ui.user_id IN ${usersScope}
+           AND ${nonCreatorOwnerSql("ui.user_id")}`,
       ),
       // Voucher aggregate — issued (by created_at) vs claimed (by claimed_at).
       db.$queryRawUnsafe<VchAggRow[]>(
@@ -399,6 +401,7 @@ export async function getDailyPnlBreakdown(
            FROM user_inventory ui
            JOIN "user" u ON u.id = ui.user_id
            WHERE DATE(ui.obtained_at) = ${dayLit} AND ui.user_id IN ${usersScope}
+             AND ${nonCreatorOwnerSql("ui.user_id")}
            UNION ALL
            SELECT ui.id::text AS id, ui.user_id AS user_id, u.username AS username,
                   (-ui.value_at_obtained)::float8 AS value,
@@ -408,6 +411,7 @@ export async function getDailyPnlBreakdown(
            JOIN "user" u ON u.id = ui.user_id
            WHERE DATE(COALESCE(ui.sold_at, ui.exchanged_at)) = ${dayLit}
              AND ui.user_id IN ${usersScope}
+             AND ${nonCreatorOwnerSql("ui.user_id")}
          ) x
          ORDER BY ABS(x.value) DESC
          LIMIT ${cap}`,
@@ -415,11 +419,13 @@ export async function getDailyPnlBreakdown(
       db.$queryRawUnsafe<CountRow[]>(
         `SELECT (
            (SELECT COUNT(*) FROM user_inventory ui
-             WHERE DATE(ui.obtained_at) = ${dayLit} AND ui.user_id IN ${usersScope})
+             WHERE DATE(ui.obtained_at) = ${dayLit} AND ui.user_id IN ${usersScope}
+               AND ${nonCreatorOwnerSql("ui.user_id")})
            +
            (SELECT COUNT(*) FROM user_inventory ui
              WHERE DATE(COALESCE(ui.sold_at, ui.exchanged_at)) = ${dayLit}
-               AND ui.user_id IN ${usersScope})
+               AND ui.user_id IN ${usersScope}
+               AND ${nonCreatorOwnerSql("ui.user_id")})
          )::int AS n`,
       ),
 

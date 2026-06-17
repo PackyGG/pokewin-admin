@@ -1,7 +1,7 @@
 import "server-only";
 
 import { clickhouseRead } from "@/lib/clickhouse/readonly-query";
-import { CH_DB, chDateTime, toNumber } from "../_shared";
+import { CH_DB, chDateTime, toNumber, nonCreatorOwnerCh } from "../_shared";
 
 /**
  * Phase 2B — Daily house P&L for the last 30 days, read from the ClickHouse
@@ -112,6 +112,7 @@ export async function getDailyPnlFromClickHouse(
       toString(sum(if(
         lt.type = 'admin_balance_adjustment'
         AND JSONExtractString(lt.metadata, 'kind') = 'inventory_removal'
+        AND ${nonCreatorOwnerCh("lt.user_id")}
         AND JSONExtractString(lt.metadata, 'inventory_item_id') NOT IN ${liveInventoryIds},
         abs(lt.amount), toDecimal128(0, 2)))) AS admin_inv_removal,
       toString(sum(if(
@@ -147,6 +148,7 @@ export async function getDailyPnlFromClickHouse(
     WHERE ui._peerdb_is_deleted = 0
       AND ui.obtained_at >= {cutoff:DateTime64(6)}
       AND ui.user_id IN (SELECT id FROM real_users)
+      AND ${nonCreatorOwnerCh("ui.user_id")}
     GROUP BY toDate(ui.obtained_at)`;
 
   const disposedSql = `
@@ -159,6 +161,7 @@ export async function getDailyPnlFromClickHouse(
       AND (ifNull(ui.sold_at >= {cutoff:DateTime64(6)}, 0) = 1
         OR ifNull(ui.exchanged_at >= {cutoff:DateTime64(6)}, 0) = 1)
       AND ui.user_id IN (SELECT id FROM real_users)
+      AND ${nonCreatorOwnerCh("ui.user_id")}
     GROUP BY toDate(coalesce(ui.sold_at, ui.exchanged_at))`;
 
   const issuedSql = `
