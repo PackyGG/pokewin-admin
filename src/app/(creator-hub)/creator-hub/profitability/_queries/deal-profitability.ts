@@ -34,10 +34,10 @@ import { getFrameAffiliatePnlByUser } from "./frame-affiliate-pnl-by-user";
  *                   0 for a not-yet-started (upcoming) frame.
  *   conversion    = actualWager / expectedWager (≥1× = deal pays for itself).
  *   affiliatesMadeUs = coverage-attributed cohort deposits − card
- *                   withdrawals over the FULL frame [start, end] (the same
- *                   methodology as the creator-detail "Creator Net" box).
- *   actualPnl     = dealCost − affiliatesMadeUs (house POV: + = the deal
- *                   cost more than the cohort earned us).
+ *                   withdrawals − the creator's own affiliate_claim code
+ *                   earnings, over the FULL frame [start, end].
+ *   actualPnl     = affiliatesMadeUs − dealCost (house-profit convention:
+ *                   + = the cohort earned back more than the deal cost).
  *
  * No timespan toggle: the window is the deal frame itself, per creator.
  */
@@ -86,16 +86,15 @@ export type CreatorProfitabilityRow = {
   /**
    * What this creator's affiliate cohort actually earned the house INSIDE
    * the deal frame — coverage-attributed cohort deposits − card withdrawals
-   * (the SAME methodology as the creator-detail "Creator Net (P&L)" box's
-   * "Affiliates made us" leg, windowed to the deal frame). House POV:
-   * positive = we kept value.
+   * − the creator's own affiliate_claim code earnings (windowed to the deal
+   * frame). House POV: positive = we kept value.
    */
   affiliatesMadeUs: number;
   /**
-   * Actual deal PnL = `dealCost − affiliatesMadeUs`, over the full deal
-   * frame `[start, end]`. Positive = the deal cost more than the cohort
-   * earned us (house loss, rose); negative = the cohort earned back more
-   * than the deal cost (house gain, emerald).
+   * Actual deal PnL = `affiliatesMadeUs − dealCost`, over the full deal
+   * frame `[start, end]`. House-profit convention: positive = the cohort
+   * earned back more than the deal cost (house gain, emerald); negative =
+   * the deal cost more than the cohort earned us (house loss, rose).
    */
   actualPnl: number;
   /** `expectedWager > 0 ? actualWager / expectedWager : 0`. */
@@ -262,7 +261,7 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
     const expectedWager = dealCost / HOUSE_EDGE;
     const actualWager = wagerByUser.get(c.id) ?? 0;
     const affiliatesMadeUs = affiliatePnlByUser.get(c.id)?.affiliatesMadeUs ?? 0;
-    const actualPnl = dealCost - affiliatesMadeUs;
+    const actualPnl = affiliatesMadeUs - dealCost;
     const conversionRate = expectedWager > 0 ? actualWager / expectedWager : 0;
 
     return {
@@ -299,8 +298,8 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
     (acc, r) => acc + r.affiliatesMadeUs,
     0,
   );
-  // Σ(dealCost − affiliatesMadeUs): positive = the roster's deals cost more
-  // than their affiliates earned us (house loss), negative = net house gain.
+  // Σ(affiliatesMadeUs − dealCost): positive = the roster's affiliates
+  // earned back more than the deals cost (house gain), negative = net loss.
   const totalActualPnl = rows.reduce((acc, r) => acc + r.actualPnl, 0);
 
   const converting = rows.filter((r) => r.expectedWager > 0);

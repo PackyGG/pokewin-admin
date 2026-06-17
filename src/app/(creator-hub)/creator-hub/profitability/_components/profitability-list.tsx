@@ -38,13 +38,13 @@ function conversionClass(rate: number): string {
 }
 
 /**
- * House-POV color for Actual PnL = deal cost − affiliates made us.
- * Positive (cost exceeded earnings → house loss) → rose; negative
- * (affiliates earned back more than the deal cost → house gain) → emerald.
+ * House-POV color for Actual PnL = affiliates made us − deal cost.
+ * Positive (affiliates earned back more than the deal cost → house gain) →
+ * emerald; negative (deal cost exceeded earnings → house loss) → rose.
  */
 function housePnlClass(value: number): string {
-  if (value > 0) return "text-rose-600 dark:text-rose-400";
-  if (value < 0) return "text-emerald-600 dark:text-emerald-400";
+  if (value > 0) return "text-emerald-600 dark:text-emerald-400";
+  if (value < 0) return "text-rose-600 dark:text-rose-400";
   return "text-muted-foreground";
 }
 
@@ -186,11 +186,11 @@ function ProfitabilityRow({ row }: { row: CreatorProfitabilityRow }) {
           </div>
           <div className="h-7 w-px bg-border" />
           <div
-            title={`Deal cost ${formatCurrency(
-              row.dealCost,
-            )} − affiliates made us ${formatCurrency(
+            title={`Affiliates made us ${formatCurrency(
               row.affiliatesMadeUs,
-            )} (cohort deposits − card withdrawals, this deal's timeframe). Positive = the deal cost more than the affiliates earned us.`}
+            )} (cohort deposits − card withdrawals − the creator's own affiliate_claim earnings, this deal's timeframe) − deal cost ${formatCurrency(
+              row.dealCost,
+            )}. Positive = the affiliates earned back more than the deal cost.`}
           >
             <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Actual PnL

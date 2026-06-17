@@ -20,6 +20,7 @@ import { formatCurrency } from "@/lib/utils/format";
 
 import { getCreatorProfitability } from "./_queries/deal-profitability";
 import { HubKpiBox } from "../_components/hub-kpi-box";
+import { HubKpiInfoPopover } from "../_components/hub-kpi-info-popover";
 import { ProfitabilityList } from "./_components/profitability-list";
 import { RosterError } from "../creators/_components/roster-error";
 
@@ -64,10 +65,10 @@ async function ProfitabilitySection() {
     return <RosterError />;
   }
 
-  // Actual PnL = deal cost − affiliates made us. House-POV: positive (cost
-  // exceeded earnings → house loss) → rose; negative (earnings beat cost →
-  // house gain) → emerald.
-  const pnlAccent = totals.totalActualPnl > 0 ? "rose" : "emerald";
+  // Actual PnL = affiliates made us − deal cost (house-profit convention).
+  // Positive (cohort earned back more than the deal cost → house gain) →
+  // emerald; negative (deal cost exceeded earnings → house loss) → rose.
+  const pnlAccent = totals.totalActualPnl < 0 ? "rose" : "emerald";
   // Affiliates made us = cohort deposits − card withdrawals (house POV).
   // Positive = we kept value (house gain) → emerald; negative → rose.
   const affiliatesAccent =
@@ -88,14 +89,25 @@ async function ProfitabilitySection() {
           icon={LineChart}
           accent={pnlAccent}
           value={formatCurrency(totals.totalActualPnl)}
-          sub="Deal cost − affiliates made us"
+          sub="Affiliates made us − deal cost"
         />
         <HubKpiBox
           label="Affiliates Made Us"
           icon={Users}
           accent={affiliatesAccent}
           value={formatCurrency(totals.totalAffiliatesMadeUs)}
-          sub="Cohort deposits − withdrawals"
+          sub="Deposits − withdrawals − claims"
+          info={
+            <HubKpiInfoPopover
+              title="Affiliates Made Us"
+              description="What each creator's affiliate cohort net-earned the house, summed across the roster. Per creator = coverage-attributed cohort deposits − card withdrawals − the creator's own affiliate_claim code earnings, all measured strictly inside that creator's deal frame. Staff, creator-role users, blacklisted users and the creator's own deposits are excluded. House POV: positive = we kept value (emerald), negative = net loss (rose)."
+              footer={{
+                label: "Total",
+                value: formatCurrency(totals.totalAffiliatesMadeUs),
+                tone: totals.totalAffiliatesMadeUs < 0 ? "rose" : "emerald",
+              }}
+            />
+          }
         />
         <HubKpiBox
           label="Expected Wager"

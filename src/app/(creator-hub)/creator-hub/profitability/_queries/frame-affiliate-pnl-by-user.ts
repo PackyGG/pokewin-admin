@@ -21,6 +21,7 @@ import type { FrameWindow } from "./frame-wager-by-user";
  * instead of the fixed 24h/…/365d windows.
  *
  *   affiliatesMadeUs = depositsInFrame − cardWithdrawalsInFrame
+ *                      − affiliateClaimsInFrame
  *
  * where, for a creator C:
  *   • depositsInFrame  — ledger deposits whose covering creator at deposit
@@ -31,6 +32,9 @@ import type { FrameWindow } from "./frame-wager-by-user";
  *     vouchers, house-liability statuses) with `withdrawn_at` inside C's
  *     frame, belonging to one of C's coverage-depositors AND traced to one
  *     of C's wager sessions. Mirrors `attr_wd` (lifetime semantics).
+ *   • affiliateClaimsInFrame — C's OWN `affiliate_claim` ledger credits
+ *     (completed) claimed inside C's frame: the code earnings we pay the
+ *     creator, a direct house cost of the deal.
  *
  * COHORT MEMBERSHIP (who counts as C's affiliate) is the 365-day
  * coverage-depositor + wager-session set — exactly the lifetime block of
@@ -58,10 +62,17 @@ const PNL_TX_OPTIONS = {
 } as const;
 
 type FrameAffiliatePnl = {
-  /** depositsInFrame − cardWithdrawalsInFrame (house POV: + = we kept value). */
+  /**
+   * depositsInFrame − cardWithdrawalsInFrame − affiliateClaimsInFrame
+   * (house POV: + = we kept value). The affiliate-claim leg is the creator's
+   * OWN `affiliate_claim` code earnings claimed inside the frame — a direct
+   * house cost of running their code.
+   */
   affiliatesMadeUs: number;
   deposits: number;
   cardWithdrawals: number;
+  /** Creator's own affiliate_claim code earnings claimed inside the frame. */
+  affiliateClaims: number;
 };
 
 const cachedFramePnl = (
@@ -169,38 +180,62 @@ const cachedFramePnl = (
             JOIN deptors dp ON dp.creator_id = f.cid AND dp.user_id = wu.user_id
             JOIN sess s ON s.creator_id = f.cid AND s.game_session_id = wu.source_id
            GROUP BY f.cid
+        ),
+        -- Creator's OWN affiliate_claim code earnings claimed INSIDE the
+        -- frame. affiliate_claim credits the creator (amount > 0, same column
+        -- convention as deposits) and is a direct house cost of the deal.
+        claims AS (
+          SELECT f.cid AS creator_id,
+                 COALESCE(SUM(lt.amount::numeric), 0) AS affiliate_claims
+            FROM ledger_transactions lt
+            JOIN frames f
+              ON f.cid = lt.user_id
+             AND lt.created_at >= f.start_ts
+             AND lt.created_at <= f.end_ts
+           WHERE lt.type::text = 'affiliate_claim'
+             AND lt.status = 'completed'
+           GROUP BY f.cid
         )
         SELECT f.cid AS creator_id,
                COALESCE(d.deposits, 0)::text AS deposits,
-               COALESCE(w.card_withdrawals, 0)::text AS card_withdrawals
+               COALESCE(w.card_withdrawals, 0)::text AS card_withdrawals,
+               COALESCE(cl.affiliate_claims, 0)::text AS affiliate_claims
           FROM frames f
           LEFT JOIN dep d ON d.creator_id = f.cid
-          LEFT JOIN wd w ON w.creator_id = f.cid`;
+          LEFT JOIN wd w ON w.creator_id = f.cid
+          LEFT JOIN claims cl ON cl.creator_id = f.cid`;
 
       const rows = await db.$transaction(async (tx) => {
         await tx.$executeRawUnsafe(
           `SET LOCAL statement_timeout = ${COLD_SCAN_STATEMENT_TIMEOUT_MS}`,
         );
         return tx.$queryRawUnsafe<
-          { creator_id: string; deposits: string; card_withdrawals: string }[]
+          {
+            creator_id: string;
+            deposits: string;
+            card_withdrawals: string;
+            affiliate_claims: string;
+          }[]
         >(sql, ...params);
       }, PNL_TX_OPTIONS);
 
       return rows.map((r) => {
         const deposits = toNumber(r.deposits);
         const cardWithdrawals = toNumber(r.card_withdrawals);
+        const affiliateClaims = toNumber(r.affiliate_claims);
         return [
           r.creator_id,
           {
             deposits,
             cardWithdrawals,
-            affiliatesMadeUs: deposits - cardWithdrawals,
+            affiliateClaims,
+            affiliatesMadeUs: deposits - cardWithdrawals - affiliateClaims,
           },
         ] satisfies [string, FrameAffiliatePnl];
       });
     },
     [
-      "profitability-frame-affiliate-pnl-v1",
+      "profitability-frame-affiliate-pnl-v2",
       env,
       ...frames.map((f) => `${f.userId}:${f.startIso}:${f.endIso}`),
       ...blacklistIds,
