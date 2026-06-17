@@ -142,7 +142,7 @@ const USERS_PER_PERIOD_CAP = 50;
 // two schema-declared acu indexes above, is an OWNER task: prod DDL is
 // forbidden for agents. This is the dominant unlock for the ~5s cold
 // creator-PnL transaction.)
-const COVERING_CREATOR_SQL = `(
+export const COVERING_CREATOR_SQL = `(
   SELECT acu_c.affiliate_user_id
     FROM affiliate_code_usages acu_c
    WHERE acu_c.referred_user_id = lt.user_id
@@ -237,7 +237,7 @@ const PNL_TX_OPTIONS = {
 // (processing) / requested_at (pending) buckets in-flight requests at the
 // moment they were made, so the per-period figures are continuous too
 // (shipped/completed rows are unchanged — shipped_at/completed_at win).
-const WITHDRAWN_UNITS_SQL = `(
+export const WITHDRAWN_UNITS_SQL = `(
   SELECT cwr_unnested.withdrawn_at,
          ui.user_id, ui.source_id, ui.value_at_obtained::numeric AS value
     FROM (

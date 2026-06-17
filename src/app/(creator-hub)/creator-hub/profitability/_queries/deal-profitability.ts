@@ -11,6 +11,7 @@ import {
   type CreatorLbFrame,
 } from "../../../../(admin)/creators/_queries/leaderboard-cost";
 import { getFrameWagerByUser, type FrameWindow } from "./frame-wager-by-user";
+import { getFrameAffiliatePnlByUser } from "./frame-affiliate-pnl-by-user";
 
 /**
  * Creator Hub — Profitability data.
@@ -32,6 +33,11 @@ import { getFrameWagerByUser, type FrameWindow } from "./frame-wager-by-user";
  *   actualWager   = code-cohort wager inside [frame start, min(now, end)];
  *                   0 for a not-yet-started (upcoming) frame.
  *   conversion    = actualWager / expectedWager (≥1× = deal pays for itself).
+ *   affiliatesMadeUs = coverage-attributed cohort deposits − card
+ *                   withdrawals over the FULL frame [start, end] (the same
+ *                   methodology as the creator-detail "Creator Net" box).
+ *   actualPnl     = dealCost − affiliatesMadeUs (house POV: + = the deal
+ *                   cost more than the cohort earned us).
  *
  * No timespan toggle: the window is the deal frame itself, per creator.
  */
@@ -78,11 +84,18 @@ export type CreatorProfitabilityRow = {
   expectedWager: number;
   actualWager: number;
   /**
-   * House PnL inside the frame: the GGR the cohort's wager earns the house
-   * (`actualWager × house edge`) minus what we spent on the deal
-   * (`dealCost`). Positive = the affiliate cohort more than paid for the
-   * deal (house gain, emerald); negative = the deal is still underwater
-   * (house loss, rose). ≥ 0 exactly when conversion ≥ 1×.
+   * What this creator's affiliate cohort actually earned the house INSIDE
+   * the deal frame — coverage-attributed cohort deposits − card withdrawals
+   * (the SAME methodology as the creator-detail "Creator Net (P&L)" box's
+   * "Affiliates made us" leg, windowed to the deal frame). House POV:
+   * positive = we kept value.
+   */
+  affiliatesMadeUs: number;
+  /**
+   * Actual deal PnL = `dealCost − affiliatesMadeUs`, over the full deal
+   * frame `[start, end]`. Positive = the deal cost more than the cohort
+   * earned us (house loss, rose); negative = the cohort earned back more
+   * than the deal cost (house gain, emerald).
    */
   actualPnl: number;
   /** `expectedWager > 0 ? actualWager / expectedWager : 0`. */
@@ -182,6 +195,11 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
     { board: CreatorLbFrame | null; startMs: number; endMs: number; isLive: boolean }
   >();
   const frameWindows: FrameWindow[] = [];
+  // Affiliate-PnL windows use the FULL deal frame [start, end] (true end,
+  // even when it is in the future) — the owner's spec for "how much the
+  // affiliates made us from that deal timeframe". Deposits/withdrawals can
+  // only land up to now, so a future end never over-counts.
+  const pnlFrameWindows: FrameWindow[] = [];
   for (const c of fill) {
     const board = frames.get(c.id) ?? null;
     const startMs = board
@@ -205,12 +223,29 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
         endIso: new Date(endForQuery).toISOString(),
       });
     }
+
+    if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+      pnlFrameWindows.push({
+        userId: c.id,
+        startIso: new Date(startMs).toISOString(),
+        endIso: new Date(endMs).toISOString(),
+      });
+    }
   }
 
-  const wagerByUser = await getFrameWagerByUser(frameWindows).catch((err) => {
-    console.error("[profitability] frame wager fetch failed:", err);
-    return new Map<string, number>();
-  });
+  const [wagerByUser, affiliatePnlByUser] = await Promise.all([
+    getFrameWagerByUser(frameWindows).catch((err) => {
+      console.error("[profitability] frame wager fetch failed:", err);
+      return new Map<string, number>();
+    }),
+    getFrameAffiliatePnlByUser(pnlFrameWindows).catch((err) => {
+      console.error("[profitability] frame affiliate-pnl fetch failed:", err);
+      return new Map<
+        string,
+        { affiliatesMadeUs: number; deposits: number; cardWithdrawals: number }
+      >();
+    }),
+  ]);
 
   const rows: CreatorProfitabilityRow[] = fill.map((c) => {
     const dv = dealValues.get(c.id);
@@ -223,7 +258,8 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
     const dealCost = capUsd + leaderboardUsd + tipSponsorUsd;
     const expectedWager = dealCost / HOUSE_EDGE;
     const actualWager = wagerByUser.get(c.id) ?? 0;
-    const actualPnl = actualWager * HOUSE_EDGE - dealCost;
+    const affiliatesMadeUs = affiliatePnlByUser.get(c.id)?.affiliatesMadeUs ?? 0;
+    const actualPnl = dealCost - affiliatesMadeUs;
     const conversionRate = expectedWager > 0 ? actualWager / expectedWager : 0;
 
     return {
@@ -243,6 +279,7 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
       dealCost,
       expectedWager,
       actualWager,
+      affiliatesMadeUs,
       actualPnl,
       conversionRate,
     };
@@ -253,7 +290,9 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
   const totalCost = rows.reduce((acc, r) => acc + r.dealCost, 0);
   const totalExpectedWager = rows.reduce((acc, r) => acc + r.expectedWager, 0);
   const totalCreatorWager = rows.reduce((acc, r) => acc + r.actualWager, 0);
-  const totalActualPnl = totalCreatorWager * HOUSE_EDGE - totalCost;
+  // Σ(dealCost − affiliatesMadeUs): positive = the roster's deals cost more
+  // than their affiliates earned us (house loss), negative = net house gain.
+  const totalActualPnl = rows.reduce((acc, r) => acc + r.actualPnl, 0);
 
   const converting = rows.filter((r) => r.expectedWager > 0);
   const avgConversionRate =

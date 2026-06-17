@@ -57,8 +57,10 @@ async function ProfitabilitySection() {
     return <RosterError />;
   }
 
-  // House-POV: positive house P&L is a house gain (emerald); negative a loss.
-  const pnlAccent = totals.totalActualPnl >= 0 ? "emerald" : "rose";
+  // Actual PnL = deal cost − affiliates made us. House-POV: positive (cost
+  // exceeded earnings → house loss) → rose; negative (earnings beat cost →
+  // house gain) → emerald.
+  const pnlAccent = totals.totalActualPnl > 0 ? "rose" : "emerald";
 
   return (
     <FadeIn className="space-y-6">
@@ -75,7 +77,7 @@ async function ProfitabilitySection() {
           icon={LineChart}
           accent={pnlAccent}
           value={formatCurrency(totals.totalActualPnl)}
-          sub="GGR (7.5%) − deal cost"
+          sub="Deal cost − affiliates made us"
         />
         <HubKpiBox
           label="Expected Wager"
