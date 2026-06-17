@@ -7,12 +7,14 @@ import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { getTopSignupLeadersFromClickHouse } from "@/lib/clickhouse/queries/creator-hub/top-signup-leaders";
 import {
   TOP_CREATORS_PERIODS,
   topCreatorsSinceClause,
   type TopCreatorsPeriod,
 } from "../_lib/top-creators-period";
-import { hubSinceClause } from "./hub-period-sql";
+import { hubSinceClause, hubPeriodToSinceDate } from "./hub-period-sql";
 
 type SignupWindowPeriod = DashboardPeriod | TopCreatorsPeriod;
 
@@ -87,10 +89,15 @@ async function fetchTopSignupLeaders(
     excluded.length > 0
       ? ` AND u.id NOT IN (${escapeBlacklistIds(excluded)})`
       : "";
-  const sinceSignup = hubSinceClause("u.created_at", period);
+  // Anchor BOTH engines to one instant for deterministic parity.
+  const since = hubPeriodToSinceDate(period);
+  const sinceSignup = `AND u.created_at >= '${since.toISOString()}'::timestamptz`;
 
-  const rows = await db.$queryRawUnsafe<LeaderRow[]>(
-    `SELECT u.referred_by AS creator_id,
+  const rows = await resolveAdminRead<LeaderRow[]>("creator_hub_signup_leaders", {
+    ch: () => getTopSignupLeadersFromClickHouse(excluded, since, limit),
+    pg: () =>
+      db.$queryRawUnsafe<LeaderRow[]>(
+        `SELECT u.referred_by AS creator_id,
             c.username,
             COUNT(*)::text AS value
        FROM "user" u
@@ -102,7 +109,8 @@ async function fetchTopSignupLeaders(
       GROUP BY u.referred_by, c.username
       ORDER BY COUNT(*) DESC
       LIMIT ${limit}`,
-  );
+      ),
+  });
 
   return rows.map((r) => ({
     creatorUserId: r.creator_id,
