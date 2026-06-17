@@ -6,24 +6,26 @@ import { cn } from "@/lib/utils";
 import { LinkPendingShell } from "@/components/ux/route-transition";
 
 /**
- * One of the two well-known pack pools. `pokemon` is the implicit
- * default — most packs are Pokemon and carry no OnePiece marker, so an
- * absent / unknown `?set=` param falls through to Pokemon both here and
- * server-side in page.tsx.
+ * One of the pack pools. `pokemon` is the implicit default / catch-all —
+ * most packs are Pokemon and carry no special-set marker, so an absent /
+ * unknown `?set=` param falls through to Pokemon both here and
+ * server-side in catalog-tab.
  */
-export type PackSetSlug = "pokemon" | "onepiece";
+export type PackSetSlug = "pokemon" | "onepiece" | "rewards" | "meme";
 
 type PackSetTab = {
   slug: PackSetSlug;
   label: string;
 };
 
-// Static two-tab list. Unlike /cards (which builds tabs from every set
-// in the catalog) a pack's "type" is binary: it either contains OnePiece
-// cards or it doesn't. So the switch is a fixed Pokemon / OnePiece pair.
+// One tab per pool. Pokemon is the catch-all (packs with no card in a
+// special set); OnePiece / Rewards / meme each scope to packs with ≥1
+// card in the set of that name (resolved server-side in getPacks).
 const PACK_SET_TABS: PackSetTab[] = [
   { slug: "pokemon", label: "Pokemon" },
   { slug: "onepiece", label: "OnePiece" },
+  { slug: "rewards", label: "Rewards" },
+  { slug: "meme", label: "Meme" },
 ];
 
 /**

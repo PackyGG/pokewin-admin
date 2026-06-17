@@ -14,6 +14,14 @@ import { safeQuery } from "@/lib/errors/safe-query";
 
 const KPI_QUERY_TIMEOUT_MS = 10_000;
 
+/** Display label per pool slug for the "<pool> Packs" KPI tile. */
+const POOL_LABELS: Record<PackSetFilter, string> = {
+  pokemon: "Pokemon",
+  onepiece: "OnePiece",
+  rewards: "Rewards",
+  meme: "Meme",
+};
+
 export async function PacksKpiStrip({ activeSet }: { activeSet: PackSetFilter }) {
   const { data: stats } = await safeQuery(
     () => getPacksListStats(activeSet),
@@ -34,7 +42,7 @@ export async function PacksKpiStrip({ activeSet }: { activeSet: PackSetFilter })
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
       <KpiTile
-        label={activeSet === "onepiece" ? "OnePiece Packs" : "Pokemon Packs"}
+        label={`${POOL_LABELS[activeSet]} Packs`}
         value={formatNumber(stats.totalPacks)}
         sub={
           stats.totalPacks > 0

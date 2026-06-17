@@ -3,6 +3,7 @@ import { Coins } from "lucide-react";
 import {
   getPacks,
   parsePackCategory,
+  parsePackSet,
   type PackListItem,
   type PackSetFilter,
   type PackCategoryFilter,
@@ -39,6 +40,14 @@ const PACKS_SORT_FIELDS = [
   "actual_rtp",
   "actual_house_edge",
 ] as const;
+
+/** Display label per pool slug for headings + KPI labels. */
+const POOL_LABELS: Record<PackSetFilter, string> = {
+  pokemon: "Pokemon",
+  onepiece: "OnePiece",
+  rewards: "Rewards",
+  meme: "Meme",
+};
 
 const EMPTY_PACKS: PaginatedResult<PackListItem> = {
   data: [],
@@ -156,11 +165,10 @@ export function PacksCatalogTab({
     defaultSortOrder: "desc",
   });
 
-  // Pokemon / OnePiece pool. Packs have no first-class type column — the
-  // split is derived from the sets of the cards inside each pack (see
-  // getPacks). `pokemon` is the default.
-  const activeSet: PackSetFilter =
-    params.set === "onepiece" ? "onepiece" : "pokemon";
+  // Active pool (Pokemon / OnePiece / Rewards / meme). Packs have no
+  // first-class type column — the split is derived from the sets of the
+  // cards inside each pack (see getPacks). `pokemon` is the default.
+  const activeSet: PackSetFilter = parsePackSet(params.set);
 
   // Default to the dense triage TABLE; the gallery is one toggle away.
   const view = resolveEntityView(params.view);
@@ -205,12 +213,7 @@ export function PacksCatalogTab({
       </Suspense>
 
       <div className="space-y-3">
-        <SectionHeading
-          icon={Coins}
-          title={
-            activeSet === "onepiece" ? "OnePiece Catalog" : "Pokemon Catalog"
-          }
-        />
+        <SectionHeading icon={Coins} title={`${POOL_LABELS[activeSet]} Catalog`} />
         <Suspense fallback={<FilterBarSkeleton filters={1} />}>
           <PacksFilterBar />
         </Suspense>
