@@ -69,17 +69,40 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_vouchers_origin_created_at
   ON vouchers (origin, created_at DESC);
 
 
+-- 4) affiliate_code_usages(UPPER(code)) — functional index ------------------
+--    Serves: creators/[id]/_queries/alt-accounts-data.ts (cohort resolution:
+--              SELECT DISTINCT referred_user_id FROM affiliate_code_usages
+--               WHERE UPPER(code) = ANY($1::text[]))
+--    EXPLAIN (prod, 2026-06-17): Parallel Seq Scan over all 153,222 acu rows
+--    (~35 MB, growing with every wager/deposit) because no index covers the
+--    UPPER(code) expression. The expression index turns it into an index scan.
+--    Until applied, the alt-accounts cohort resolution is BLOCKED (Path-2-less
+--    seq scan on a growing MAIN table). The rest of alt-accounts is already
+--    Path-1 (user_id = ANY(<bounded cohort>) index lookups).
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_upper_code
+  ON affiliate_code_usages (UPPER(code));
+
+
 -- ============================================================================
--- NOT in this file (served by ClickHouse twins, Path 2 — no PG index):
+-- AUDIT OUTCOME for the creator-DETAIL reads (EXPLAIN on prod, 2026-06-17):
+--   These are per-creator / per-entity scoped reads with 365d-capped lookbacks,
+--   NOT global fan-out aggregates — so they stay on Path-1 (indexed Postgres),
+--   NOT ClickHouse:
+--   • getRiskData    — Index Only Scan on idx_ledger_tx_user_type_status_created_at
+--                      + idx_acu_referred_user_created_at; ~561 ms for the BUSIEST
+--                      creator (11,551 wager usages). Index-backed → Path-1.
+--   • getCohortsData — affiliate_user_id = $1 + ledger user_id, capped lookbacks;
+--                      same index-backed per-creator shape → Path-1.
+--   • getAltAccountsData — user_id = ANY(<bounded cohort>) index lookups → Path-1,
+--                      EXCEPT the UPPER(code) cohort resolution above (index #4).
+--
+-- Served by ClickHouse twins (Path 2 — no PG index; resolveAdminRead, dormant):
 --   • getHubCohortWindowed        (_queries/hub-dashboard-cohort.ts)
 --   • getHubTopCreatorsByDeposits (_queries/hub-top-creators-query.ts)
 --   • getTopSignupLeaders         (_queries/hub-top-creator-meta.ts)
---   • getRiskData                 (creators/[id]/_queries/risk-data.ts)
---   • getCohortsData              (creators/[id]/_queries/cohorts-data.ts)
---   • getAltAccountsData          (creators/[id]/_queries/alt-accounts-data.ts)
---   • deriveBigFtdAlerts          (alerts/_queries/creator-alerts.ts)
--- These are heavy fan-out aggregates over ledger/affiliate/audit cohorts; they
--- are wired through resolveAdminRead(<surfaceKey>, { pg, ch }) and serve from
--- the ClickHouse mirror once the owner adds CLICKHOUSE_* env on Vercel + the
--- surface key joins CUTOVER_DEFAULT_CLICKHOUSE (after cent/count-exact parity).
+-- These are the hot per-render dashboard fan-out aggregates (covered-deposit
+-- DISTINCT-ON + 7d lateral); twinned + parity-proven, dormant until the owner
+-- adds CLICKHOUSE_* env on Vercel + the surface key joins CUTOVER_DEFAULT_CLICKHOUSE.
+--
+-- Still to audit: deriveBigFtdAlerts (alerts/_queries/creator-alerts.ts).
 -- ============================================================================
