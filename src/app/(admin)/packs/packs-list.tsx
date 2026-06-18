@@ -53,6 +53,7 @@ export function PacksList({
             name={p.name}
             secondary={p.slug}
             badge={<ActiveBadge active={p.active} size="sm" />}
+            href={`/packs/${p.id}`}
           />
         ),
       },
@@ -149,7 +150,6 @@ export function PacksList({
       canToggle={canToggle}
       canDelete={canDelete}
       canEdit={canEdit}
-      onOpenPack={openPack}
     />
   ) : (
     <EntityTable

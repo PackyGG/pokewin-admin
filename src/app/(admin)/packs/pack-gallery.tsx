@@ -1,6 +1,6 @@
 "use client";
 
-import * as React from "react";
+import Link from "next/link";
 import { Package } from "lucide-react";
 import { CardImage } from "@/components/card-image";
 import { EmptyState, ActiveBadge } from "@/components/entity-surface";
@@ -15,13 +15,11 @@ export function PackGallery({
   canToggle,
   canDelete,
   canEdit,
-  onOpenPack,
 }: {
   data: PackListItem[];
   canToggle: boolean;
   canDelete: boolean;
   canEdit: boolean;
-  onOpenPack: (pack: PackListItem) => void;
 }) {
   if (data.length === 0) {
     return (
@@ -44,7 +42,6 @@ export function PackGallery({
           canToggle={canToggle}
           canDelete={canDelete}
           canEdit={canEdit}
-          onOpenPack={onOpenPack}
         />
       ))}
     </div>
@@ -56,49 +53,35 @@ function PackTile({
   canToggle,
   canDelete,
   canEdit,
-  onOpenPack,
 }: {
   pack: PackListItem;
   canToggle: boolean;
   canDelete: boolean;
   canEdit: boolean;
-  onOpenPack: (pack: PackListItem) => void;
 }) {
   const showActions = canToggle || canDelete || canEdit;
   const href = `/packs/${pack.id}`;
 
-  function handleInteract(e: React.MouseEvent) {
-    const el = e.target as HTMLElement;
-    if (el.closest("button, a, [role=menu], [data-no-row-click]")) return;
-    // ctrl/cmd-click or middle-click → open in a new tab.
-    if (e.metaKey || e.ctrlKey || e.button === 1) {
-      e.preventDefault();
-      window.open(href, "_blank", "noopener,noreferrer");
-      return;
-    }
-    if (e.button === 1) return;
-    onOpenPack(pack);
-  }
-
   return (
     <div
-      role="button"
-      tabIndex={0}
-      onClick={handleInteract}
-      onAuxClick={handleInteract}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onOpenPack(pack);
-        }
-      }}
       className={cn(
-        "group relative cursor-pointer overflow-hidden rounded-xl border bg-card/50 text-left outline-none",
-        "transition-all duration-200 focus-visible:ring-2 focus-visible:ring-ring/50",
+        "group relative cursor-pointer overflow-hidden rounded-xl border bg-card/50 text-left",
+        "transition-all duration-200",
         "motion-safe:hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card hover:shadow-md",
         !pack.active && "opacity-80",
       )}
     >
+      {/* Stretched-link overlay — a real <a href> covering the whole tile so
+          the browser's native right-click "Open in new tab" works, and
+          ctrl/cmd/middle-click open a new tab. A plain left-click is fast SPA
+          nav. Interactive controls (the actions menu) sit at z-10, above this
+          overlay, so they stay clickable; the visual content paints beneath
+          the transparent link. */}
+      <Link
+        href={href}
+        aria-label={`Open pack ${pack.name}`}
+        className="absolute inset-0 z-0 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+      />
       {showActions && (
         <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity motion-safe:duration-150 group-hover:opacity-100 focus-within:opacity-100">
           <PackRowActions

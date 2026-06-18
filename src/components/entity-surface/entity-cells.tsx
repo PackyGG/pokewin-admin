@@ -1,4 +1,5 @@
 import * as React from "react";
+import Link from "next/link";
 import { CardImage } from "@/components/card-image";
 import { cn } from "@/lib/utils";
 import { houseAmountTextClass } from "@/lib/house-pov";
@@ -27,6 +28,7 @@ export function EntityNameCell({
   secondary,
   thumbClassName,
   badge,
+  href,
 }: {
   imageUrl: string | null;
   name: string;
@@ -35,26 +37,52 @@ export function EntityNameCell({
   thumbClassName?: string;
   /** Inline node after the name (e.g. an ActiveBadge / rarity dot). */
   badge?: React.ReactNode;
+  /**
+   * When set, the thumbnail + name become a real `<a href>` (Next.js Link),
+   * so the browser's native right-click "Open in new tab" works and
+   * ctrl/cmd/middle-click open a new tab — without losing fast SPA nav on a
+   * plain left-click. Omit to render a plain (non-link) cell.
+   */
+  href?: string;
 }) {
+  const thumb = (
+    <div
+      className={cn(
+        "relative size-8 shrink-0 overflow-hidden rounded-md bg-muted/40 ring-1 ring-border",
+        thumbClassName,
+      )}
+    >
+      <CardImage
+        src={imageUrl}
+        alt={name}
+        className="absolute inset-0 size-full"
+      />
+    </div>
+  );
   return (
     <div className="flex min-w-0 items-center gap-2.5">
-      <div
-        className={cn(
-          "relative size-8 shrink-0 overflow-hidden rounded-md bg-muted/40 ring-1 ring-border",
-          thumbClassName,
-        )}
-      >
-        <CardImage
-          src={imageUrl}
-          alt={name}
-          className="absolute inset-0 size-full"
-        />
-      </div>
+      {href ? (
+        <Link href={href} className="shrink-0" aria-label={name} tabIndex={-1}>
+          {thumb}
+        </Link>
+      ) : (
+        thumb
+      )}
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="truncate text-sm font-medium" title={name}>
-            {name}
-          </span>
+          {href ? (
+            <Link
+              href={href}
+              className="truncate text-sm font-medium outline-none hover:underline focus-visible:underline"
+              title={name}
+            >
+              {name}
+            </Link>
+          ) : (
+            <span className="truncate text-sm font-medium" title={name}>
+              {name}
+            </span>
+          )}
           {badge}
         </div>
         {secondary != null && (
