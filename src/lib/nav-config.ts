@@ -173,6 +173,24 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // One Piece — dedicated overview of the One Piece pack pool: lifetime
+    // stats, per-pack insights and a daily opens/revenue trend. Icon `Anchor`
+    // MUST be registered in the ICONS map in `src/components/app-sidebar.tsx`
+    // (React #130) and, since `inPalette: true`, the id MUST also appear in
+    // PALETTE_ORDER (lockstep).
+    id: "nav.one-piece",
+    group: "Overview",
+    label: "One Piece",
+    href: "/one-piece",
+    pageKey: "/one-piece",
+    icon: "Anchor",
+    description: "One Piece pack pool stats, insights & daily trend",
+    keywords: ["one piece", "onepiece", "packs", "pool", "pirate", "anchor"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // Map — palette-only. /map was folded into /analytics as a tab; the
     // palette still surfaces it (routing through the analytics shell) but the
     // sidebar dropped the standalone link. href carries the tab; permission
@@ -904,6 +922,7 @@ const PALETTE_ORDER: string[] = [
   "nav.roadmap",
   "nav.shifts",
   "nav.analytics",
+  "nav.one-piece",
   "nav.map",
   "nav.users",
   "nav.crm",

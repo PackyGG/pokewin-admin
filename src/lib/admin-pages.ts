@@ -13,6 +13,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // separately by requireOwner() (super-admin only).
   { group: "Navigation", label: "Roadmap", key: "/roadmap" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
+  { group: "Navigation", label: "One Piece", key: "/one-piece" },
   { group: "Navigation", label: "Numbers", key: "/numbers" },
   { group: "Navigation", label: "Raw P&L", key: "/analytics/pure-pnl" },
   // GGR moved to the Insights group below.
