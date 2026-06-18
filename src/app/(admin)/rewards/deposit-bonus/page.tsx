@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import {
   Coins,
   Wallet,
@@ -7,6 +8,8 @@ import {
   TrendingDown,
   PiggyBank,
   Activity,
+  Scissors,
+  Trophy,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import {
@@ -16,12 +19,14 @@ import {
   KpiTile,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { LinkPending } from "@/components/ux";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import {
   getDepositBonusTracker,
+  getDepositBonusTopRecipients,
   DEPOSIT_BONUS_RATE_PCT,
 } from "@/lib/queries/rewards/deposit-bonus-tracker";
 import { getDepositBonusConfig } from "@/lib/backend-api/deposit-bonus-config";
@@ -29,8 +34,19 @@ import { DepositBonusTrendChart } from "./_components/trend-chart";
 
 export const metadata = { title: "Deposit Bonus" };
 
-export default async function DepositBonusPage() {
+const TABS = [
+  { value: "overview", label: "Overview" },
+  { value: "recipients", label: "Top Recipients" },
+];
+
+export default async function DepositBonusPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
   await requirePageAccess("/rewards/deposit-bonus");
+  const params = await searchParams;
+  const tab = params.tab === "recipients" ? "recipients" : "overview";
 
   return (
     <div className="space-y-6">
@@ -43,9 +59,33 @@ export default async function DepositBonusPage() {
         />
       </PageHero>
 
-      <Suspense fallback={<TrackerSkeleton />}>
-        <TrackerBody />
-      </Suspense>
+      <div className="flex gap-1 rounded-lg bg-muted p-1">
+        {TABS.map((t) => (
+          <Link
+            key={t.value}
+            href={`/rewards/deposit-bonus?tab=${t.value}`}
+            className={cn(
+              "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              tab === t.value
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t.label}
+            <LinkPending size={13} />
+          </Link>
+        ))}
+      </div>
+
+      {tab === "recipients" ? (
+        <Suspense fallback={<RecipientsSkeleton />}>
+          <RecipientsBody />
+        </Suspense>
+      ) : (
+        <Suspense fallback={<TrackerSkeleton />}>
+          <TrackerBody />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -253,6 +293,56 @@ async function TrackerBody() {
           </div>
         </div>
 
+        {/* ── Cap effectiveness ─────────────────────────────────── */}
+        <div>
+          <SectionHeading
+            icon={Scissors}
+            title="Cap effectiveness"
+            action={
+              tracker.cap.capUsd !== null ? (
+                <span className="text-xs text-muted-foreground">
+                  cap {formatCurrency(tracker.cap.capUsd)} per window
+                </span>
+              ) : undefined
+            }
+          />
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
+            <KpiTile
+              label="Saved by the cap"
+              value={formatCurrency(tracker.cap.clamped)}
+              sub={`vs uncapped 5% (${formatCurrency(tracker.cap.uncapped5pct)})`}
+              icon={Scissors}
+              accent="emerald"
+            />
+            <KpiTile
+              label="Deposits over cap"
+              value={formatNumber(tracker.cap.overCapCount)}
+              sub={
+                tracker.cap.overCapPct === null
+                  ? `of ${formatNumber(tracker.cap.depositCount)} deposits`
+                  : `${(tracker.cap.overCapPct * 100).toFixed(1)}% of ${formatNumber(tracker.cap.depositCount)} deposits`
+              }
+              icon={Percent}
+              accent="amber"
+            />
+            <KpiTile
+              label="5% exceeds cap above"
+              value={
+                tracker.cap.capUsd === null
+                  ? "—"
+                  : formatCurrency(tracker.cap.capUsd * 20)
+              }
+              sub="single-deposit size that alone hits the cap"
+              icon={Wallet}
+              accent="blue"
+            />
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Isolates the cap&apos;s direct impact: how much of the 5% bonus is
+            clamped, separate from any shift in deposit mix.
+          </p>
+        </div>
+
         {/* ── Trend chart ───────────────────────────────────────── */}
         <div>
           <SectionHeading
@@ -339,6 +429,87 @@ function RateRow({
     <div className="flex items-center justify-between">
       <span className="text-sm text-muted-foreground">{label}</span>
       <span className={cn("text-lg font-bold tabular-nums", tint)}>{value}</span>
+    </div>
+  );
+}
+
+async function RecipientsBody() {
+  const { data: recipients } = await safeQueryOrNull(
+    () => getDepositBonusTopRecipients(),
+    "rewards.deposit-bonus-recipients",
+    20_000,
+  );
+
+  if (!recipients || recipients.length === 0) {
+    return (
+      <div className="rounded-xl border bg-muted/20 p-6 text-sm text-muted-foreground">
+        No deposit bonuses have been paid since the new system went live yet.
+      </div>
+    );
+  }
+
+  return (
+    <FadeIn>
+      <div>
+        <SectionHeading
+          icon={Trophy}
+          title="Top recipients since go-live"
+          action={
+            <span className="text-xs text-muted-foreground">
+              {formatNumber(recipients.length)} users
+            </span>
+          }
+        />
+        <div className="mt-3 overflow-hidden rounded-2xl border bg-card">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-2.5 font-medium">#</th>
+                <th className="px-4 py-2.5 font-medium">User</th>
+                <th className="px-4 py-2.5 text-right font-medium">Bonus earned</th>
+                <th className="px-4 py-2.5 text-right font-medium">Bonuses</th>
+                <th className="px-4 py-2.5 text-right font-medium">Largest</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recipients.map((r, i) => (
+                <tr key={r.userId} className="border-b last:border-0 hover:bg-muted/30">
+                  <td className="px-4 py-2.5 tabular-nums text-muted-foreground">
+                    {i + 1}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <Link
+                      href={`/users/${r.userId}`}
+                      className="font-medium text-primary hover:underline"
+                    >
+                      {r.username ?? r.userId.slice(0, 8)}
+                      <LinkPending size={12} />
+                    </Link>
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-rose-600 dark:text-rose-400">
+                    {formatCurrency(r.bonus)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                    {formatNumber(r.count)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {formatCurrency(r.max)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </FadeIn>
+  );
+}
+
+function RecipientsSkeleton() {
+  return (
+    <div className="space-y-3">
+      <div className="h-8 w-56 rounded bg-muted animate-pulse" />
+      <div className="h-[420px] rounded-2xl border bg-muted/20 animate-pulse" />
     </div>
   );
 }

@@ -67,6 +67,18 @@ export type DepositBonusTracker = {
   lifetime: { bonus: number; count: number };
   /** Deposit volume over the trailing 30 days — the projection run-rate base. */
   last30dDeposits: number;
+  /** How much of the savings comes from the cap clamping the 5% bonus. */
+  cap: {
+    capUsd: number | null;
+    /** 5% of all post-cutover deposits — the uncapped theoretical bonus. */
+    uncapped5pct: number;
+    /** uncapped5pct − actual bonus paid since cutover (≥ 0). */
+    clamped: number;
+    /** Deposits since cutover whose 5% alone exceeds the cap. */
+    overCapCount: number;
+    depositCount: number;
+    overCapPct: number | null;
+  };
   savings: {
     /** Old-rate × post-cutover deposits − actual bonus paid since cutover. */
     realizedSinceCutover: number | null;
@@ -86,6 +98,9 @@ export type DepositBonusTracker = {
 
 type ScalarRow = {
   cutover: string;
+  cap: string | null;
+  new_deposit_count: string | null;
+  new_dep_over_cap_count: string | null;
   new_bonus: string | null;
   new_count: string | null;
   new_claimants: string | null;
@@ -132,9 +147,19 @@ async function computeTracker(
           AND lt.type = 'deposit'
           AND lt.user_id IN ${userScope}
           AND lt.created_at >= NOW() - INTERVAL '90 days'
+      ),
+      cap AS (
+        SELECT COALESCE(
+          (SELECT value FROM site_config
+            WHERE key = 'deposit_bonus_cap_per_period_usd')::numeric, 20) AS c
       )
       SELECT
         to_char((SELECT t FROM cut), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS cutover,
+        (SELECT c::text FROM cap) AS cap,
+        (SELECT COUNT(*)::text FROM dep d, cut WHERE d.created_at >= cut.t) AS new_deposit_count,
+        (SELECT COUNT(*)::text FROM dep d, cut, cap
+          WHERE d.created_at >= cut.t
+            AND ABS(d.amount::numeric) * 0.05 > cap.c) AS new_dep_over_cap_count,
         (SELECT COALESCE(SUM(ABS(b.amount::numeric)), 0)::text FROM bonus b, cut
           WHERE b.created_at >= cut.t) AS new_bonus,
         (SELECT COUNT(*)::text FROM bonus b, cut WHERE b.created_at >= cut.t) AS new_count,
@@ -203,6 +228,11 @@ async function computeTracker(
   const lifetimeBonus = toNumber(r?.lifetime_bonus);
   const lifetimeCount = Number(r?.lifetime_count ?? 0);
   const last30dDeposits = toNumber(r?.last30d_deposits);
+  const capUsd = r?.cap != null ? toNumber(r.cap) : null;
+  const newDepositCount = Number(r?.new_deposit_count ?? 0);
+  const overCapCount = Number(r?.new_dep_over_cap_count ?? 0);
+  const uncapped5pct = 0.05 * newDeposits;
+  const clamped = Math.max(0, uncapped5pct - newBonus);
 
   const newEffRate = newDeposits > 0 ? newBonus / newDeposits : null;
   const oldEffRate = oldDeposits > 0 ? oldBonus / oldDeposits : null;
@@ -249,6 +279,14 @@ async function computeTracker(
     },
     lifetime: { bonus: lifetimeBonus, count: lifetimeCount },
     last30dDeposits,
+    cap: {
+      capUsd,
+      uncapped5pct,
+      clamped,
+      overCapCount,
+      depositCount: newDepositCount,
+      overCapPct: newDepositCount > 0 ? overCapCount / newDepositCount : null,
+    },
     savings: {
       realizedSinceCutover,
       projectedPer30d,
@@ -268,4 +306,69 @@ const cachedTracker = unstable_cache(
 export async function getDepositBonusTracker(): Promise<DepositBonusTracker> {
   const blacklist = await getResolvedBlacklist();
   return cachedTracker(blacklist);
+}
+
+export type DepositBonusRecipient = {
+  userId: string;
+  username: string | null;
+  bonus: number;
+  count: number;
+  max: number;
+};
+
+async function computeTopRecipients(
+  blacklistIds: string[],
+): Promise<DepositBonusRecipient[]> {
+  const db = await getDb();
+  const userScope = staffAndBlacklistSubquery(blacklistIds);
+  type Row = {
+    user_id: string;
+    username: string | null;
+    bonus: string;
+    cnt: string;
+    max: string;
+  };
+  // Since-cutover deposit-bonus leaderboard. Grouped on the
+  // (user_id, type, status, created_at) index, joined to "user" by PK.
+  const rows = await db.$queryRawUnsafe<Row[]>(`
+    WITH cut AS (
+      SELECT COALESCE(MIN(created_at), TIMESTAMP '${CUTOVER_FALLBACK}') AS t
+      FROM site_config WHERE key = 'deposit_bonus_cap_per_period_usd'
+    )
+    SELECT lt.user_id,
+           u.username,
+           SUM(ABS(lt.amount::numeric))::text AS bonus,
+           COUNT(*)::text AS cnt,
+           MAX(ABS(lt.amount::numeric))::text AS max
+    FROM ledger_transactions lt
+    JOIN "user" u ON u.id = lt.user_id
+    CROSS JOIN cut
+    WHERE lt.status = 'completed'
+      AND lt.type = 'deposit_bonus'
+      AND lt.user_id IN ${userScope}
+      AND lt.created_at >= cut.t
+    GROUP BY lt.user_id, u.username
+    ORDER BY SUM(ABS(lt.amount::numeric)) DESC
+    LIMIT 50
+  `);
+  return rows.map((r) => ({
+    userId: r.user_id,
+    username: r.username,
+    bonus: toNumber(r.bonus),
+    count: Number(r.cnt),
+    max: toNumber(r.max),
+  }));
+}
+
+const cachedRecipients = unstable_cache(
+  async (blacklistIds: string[]) => computeTopRecipients(blacklistIds),
+  ["rewards-deposit-bonus-recipients-v1"],
+  { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-deposit-bonus"] },
+);
+
+export async function getDepositBonusTopRecipients(): Promise<
+  DepositBonusRecipient[]
+> {
+  const blacklist = await getResolvedBlacklist();
+  return cachedRecipients(blacklist);
 }
