@@ -203,6 +203,13 @@ export type EntityTableProps<T> = {
   rowKey: (row: T) => string;
   /** Row click opens an inspector/drawer. Ignored if a control was clicked. */
   onRowClick?: (row: T) => void;
+  /**
+   * When provided, a row supports opening this href in a NEW TAB via
+   * ctrl/cmd-click or middle-click (browser-native new tab). A plain
+   * left-click still uses `onRowClick` (fast SPA navigation) when set.
+   * Purely additive — rows without `rowHref` behave exactly as before.
+   */
+  rowHref?: (row: T) => string;
   /** Highlight this row key (e.g. the row whose inspector is open). */
   activeRowKey?: string | null;
 
@@ -231,6 +238,7 @@ export function EntityTable<T>({
   columns,
   rowKey,
   onRowClick,
+  rowHref,
   activeRowKey,
   selectable = false,
   selected,
@@ -256,19 +264,30 @@ export function EntityTable<T>({
     selected != null &&
     visibleKeys.some((k) => selected.has(k));
 
-  // Guard row-click so clicking an interactive control (checkbox, button,
-  // link, the kebab menu) never also triggers row navigation.
-  const handleRowClick = React.useCallback(
+  // Guard row interaction so clicking an interactive control (checkbox,
+  // button, link, the kebab menu) never also triggers row navigation.
+  // ctrl/cmd-click or middle-click opens `rowHref` in a new tab; a plain
+  // left-click uses `onRowClick` (fast SPA nav) when provided.
+  const handleRowInteract = React.useCallback(
     (row: T, e: React.MouseEvent) => {
-      if (!onRowClick) return;
       const el = e.target as HTMLElement;
       if (el.closest("button, a, input, [role=checkbox], [data-no-row-click]")) {
         return;
       }
-      onRowClick(row);
+      const href = rowHref?.(row);
+      const wantsNewTab = e.metaKey || e.ctrlKey || e.button === 1;
+      if (href && wantsNewTab) {
+        e.preventDefault();
+        window.open(href, "_blank", "noopener,noreferrer");
+        return;
+      }
+      // Middle-click without an href: do nothing (don't fall through to nav).
+      if (e.button === 1) return;
+      onRowClick?.(row);
     },
-    [onRowClick],
+    [onRowClick, rowHref],
   );
+  const rowInteractive = Boolean(onRowClick || rowHref);
 
   const colCount = columns.length + (selectable ? 1 : 0);
 
@@ -343,11 +362,14 @@ export function EntityTable<T>({
                     key={key}
                     data-state={isSelected ? "selected" : undefined}
                     onClick={
-                      onRowClick ? (e) => handleRowClick(row, e) : undefined
+                      rowInteractive ? (e) => handleRowInteract(row, e) : undefined
+                    }
+                    onAuxClick={
+                      rowHref ? (e) => handleRowInteract(row, e) : undefined
                     }
                     className={cn(
                       "border-b transition-colors",
-                      onRowClick && "cursor-pointer",
+                      rowInteractive && "cursor-pointer",
                       isActive && "bg-accent/40",
                       !isActive && "hover:bg-muted/50",
                     )}

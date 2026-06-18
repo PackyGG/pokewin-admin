@@ -65,10 +65,18 @@ function PackTile({
   onOpenPack: (pack: PackListItem) => void;
 }) {
   const showActions = canToggle || canDelete || canEdit;
+  const href = `/packs/${pack.id}`;
 
-  function handleClick(e: React.MouseEvent) {
+  function handleInteract(e: React.MouseEvent) {
     const el = e.target as HTMLElement;
     if (el.closest("button, a, [role=menu], [data-no-row-click]")) return;
+    // ctrl/cmd-click or middle-click → open in a new tab.
+    if (e.metaKey || e.ctrlKey || e.button === 1) {
+      e.preventDefault();
+      window.open(href, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (e.button === 1) return;
     onOpenPack(pack);
   }
 
@@ -76,7 +84,8 @@ function PackTile({
     <div
       role="button"
       tabIndex={0}
-      onClick={handleClick}
+      onClick={handleInteract}
+      onAuxClick={handleInteract}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();

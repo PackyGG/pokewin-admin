@@ -252,7 +252,10 @@ export function PackDetailView({
 
   function exitEditMode() {
     setViewMode("overview");
-    router.replace(`/packs/${packId}`, { scroll: false });
+    // Pass edit=0 explicitly: the detail page now defaults to edit mode for
+    // editors, so a bare /packs/:id would re-open the editor. edit=0 pins
+    // the overview when the user steps back out of the form.
+    router.replace(`/packs/${packId}?edit=0`, { scroll: false });
   }
 
   return (

@@ -25,7 +25,6 @@ export default async function PackDetailPage({
   if (!isUuid(id)) notFound();
 
   const sp = await searchParams;
-  const initialViewMode = sp.edit === "1" ? "edit" : "overview";
 
   await ensurePackCreatorCapabilities();
 
@@ -64,6 +63,22 @@ export default async function PackDetailPage({
     ? await fetchPackDetailStats(id, detail).catch(() => null)
     : null;
   const initialPayload = detail ? { detail, stats } : null;
+
+  // Auto edit mode: open straight into the editor when this user is actually
+  // allowed to edit THIS pack (mirrors the `showEditButton` gate in the view —
+  // a pack_creator can only edit inactive packs unless they have live-edit).
+  // `?edit=0` forces overview, `?edit=1` forces edit; otherwise default to
+  // edit for editors so there's no extra click.
+  const canEditThisPack =
+    canEdit && detail != null && (!isPackCreator || !detail.active || canEditLive);
+  const initialViewMode: "edit" | "overview" =
+    sp.edit === "0"
+      ? "overview"
+      : sp.edit === "1"
+        ? "edit"
+        : canEditThisPack
+          ? "edit"
+          : "overview";
 
   return (
     <PackDetailView

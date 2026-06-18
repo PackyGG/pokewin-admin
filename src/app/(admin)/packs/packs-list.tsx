@@ -157,6 +157,7 @@ export function PacksList({
       columns={columns}
       rowKey={(p) => p.id}
       onRowClick={openPack}
+      rowHref={(p) => `/packs/${p.id}`}
       emptyState={
         <EmptyState
           icon={Package}
