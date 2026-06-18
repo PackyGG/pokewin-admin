@@ -564,6 +564,22 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // Deposit Bonus — tracks the rebuilt affiliate deposit bonus (fixed 5%
+    // of each deposit, capped per rolling window) + the empirical savings
+    // vs the old regime. Icon string "Coins" is already in the sidebar
+    // ICONS map (app-sidebar.tsx), so no React #130 risk.
+    id: "nav.rewards.deposit-bonus",
+    group: "Rewards",
+    label: "Deposit Bonus",
+    href: "/rewards/deposit-bonus",
+    pageKey: "/rewards/deposit-bonus",
+    icon: "Coins",
+    description: "Deposit-bonus spend + savings vs the old system",
+    keywords: ["deposit", "bonus", "deposit bonus", "affiliate bonus", "savings"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // XP Sales — global view of every xp_purchase (users buying XP with
     // their own withdrawable balance). Moved here from the Overview group
     // (owner: relocate XP Sales under Rewards). Same /xp-sales route +
@@ -902,6 +918,7 @@ const PALETTE_ORDER: string[] = [
   "nav.battles",
   "nav.transactions.rewards",
   "nav.rewards",
+  "nav.rewards.deposit-bonus",
   "nav.rewards.rakeback",
   "nav.rewards.shard-opens",
   "nav.challenges",

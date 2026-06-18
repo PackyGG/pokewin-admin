@@ -114,6 +114,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Content", label: "Upgrader Transactions", key: "/transactions/upgrader" },
   // Rewards
   { group: "Rewards", label: "Rewards", key: "/rewards" },
+  { group: "Rewards", label: "Deposit Bonus", key: "/rewards/deposit-bonus" },
   { group: "Rewards", label: "Analytics", key: "/rewards/analytics" },
   { group: "Rewards", label: "Rakeback", key: "/rewards/rakeback" },
   // Shard Pack Opens — opens of shard-bought packs from the
