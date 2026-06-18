@@ -102,6 +102,8 @@ export type CreatorProfitabilityRow = {
 };
 
 export type ProfitabilityTotals = {
+  /** Creators whose current deal status is "active" (excludes scheduled). */
+  totalActiveDeals: number;
   totalCost: number;
   /** Σ affiliatesMadeUs across the roster (house POV: + = we kept value). */
   totalAffiliatesMadeUs: number;
@@ -119,6 +121,7 @@ export type ProfitabilityData = {
 };
 
 const EMPTY_TOTALS: ProfitabilityTotals = {
+  totalActiveDeals: 0,
   totalCost: 0,
   totalAffiliatesMadeUs: 0,
   totalActualPnl: 0,
@@ -289,6 +292,9 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
 
   rows.sort((a, b) => b.dealCost - a.dealCost);
 
+  const totalActiveDeals = fill.filter(
+    (c) => c.current_deal!.status === "active",
+  ).length;
   const totalCost = rows.reduce((acc, r) => acc + r.dealCost, 0);
   const totalExpectedWager = rows.reduce((acc, r) => acc + r.expectedWager, 0);
   const totalCreatorWager = rows.reduce((acc, r) => acc + r.actualWager, 0);
@@ -312,6 +318,7 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
   return {
     rows,
     totals: {
+      totalActiveDeals,
       totalCost,
       totalAffiliatesMadeUs,
       totalActualPnl,

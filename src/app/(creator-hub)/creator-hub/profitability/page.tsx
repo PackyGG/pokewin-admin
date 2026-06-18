@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import {
   Activity,
   Coins,
+  Handshake,
   LineChart,
   Percent,
   TrendingUp,
@@ -16,7 +17,7 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 import { getCreatorProfitability } from "./_queries/deal-profitability";
 import { HubKpiBox } from "../_components/hub-kpi-box";
@@ -76,7 +77,14 @@ async function ProfitabilitySection() {
 
   return (
     <FadeIn className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
+        <HubKpiBox
+          label="Active Deals"
+          icon={Handshake}
+          accent="blue"
+          value={formatNumber(totals.totalActiveDeals)}
+          sub="Creators on an active deal"
+        />
         <HubKpiBox
           label="Total Cost"
           icon={Coins}
@@ -146,8 +154,8 @@ async function ProfitabilitySection() {
 function ProfitabilitySkeleton() {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {Array.from({ length: 6 }).map((_, i) => (
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
+        {Array.from({ length: 7 }).map((_, i) => (
           <Skeleton key={i} className="h-[104px] rounded-2xl" />
         ))}
       </div>
