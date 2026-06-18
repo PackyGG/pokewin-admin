@@ -555,12 +555,14 @@ function PnlTooltip({
       balanceChange: number;
       inventoryChange: number;
       voucherChange: number;
+      creatorCost?: number;
     };
   }>;
 }) {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   const up = p.pnl >= 0;
+  const creatorCost = p.creatorCost ?? 0;
   // Signed contribution to house P&L. Deposits add; every other term
   // subtracts (so a positive liability delta — a liability that GREW —
   // becomes a negative contribution, and a shrinking liability a positive
@@ -610,6 +612,18 @@ function PnlTooltip({
           {formatCurrency(Math.abs(p.pnl))}
         </span>
       </div>
+      {/* Informational only — creator cost (converted payouts + leaderboard
+          prizes) is ALREADY inside the balance/voucher deltas above, so it is
+          NOT re-subtracted here. The "(in P&L)" note flags that. House-POV:
+          money paid out → house cost → rose. Shown only on days with spend. */}
+      {creatorCost > 0 && (
+        <div className="flex items-center justify-between gap-3 border-t border-dashed border-border/40 pt-1.5 text-[11px]">
+          <span className="text-muted-foreground">Creator cost (in P&amp;L)</span>
+          <span className="font-mono tabular-nums text-rose-600 dark:text-rose-400">
+            {formatCurrency(creatorCost)}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -822,6 +836,8 @@ export function PnlChart({
     balanceChange: number;
     inventoryChange: number;
     voucherChange: number;
+    /** Informational per-day creator cost (already inside P&L; hover-only). */
+    creatorCost?: number;
   }[];
 }) {
   // The clicked day's YYYY-MM-DD key — drives the drilldown modal. null when

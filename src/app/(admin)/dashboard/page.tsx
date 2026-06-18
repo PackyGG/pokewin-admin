@@ -7,6 +7,7 @@ import {
 } from "@/lib/queries/dashboard";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
+import { getDailyCreatorCost } from "@/lib/queries/dashboard-daily-creator-cost";
 import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
 import { getAvgPnl7d } from "@/lib/queries/dashboard-avg-pnl-7d";
 import { getRealizedPnlSnapshot } from "@/lib/queries/_realized-pnl";
@@ -804,12 +805,23 @@ async function DashboardCharts() {
  * to a single-cell TileErrorFallback (the other charts still render).
  */
 async function DashboardDailyPnlChart() {
-  const { data, error, kind } = await safeQuery(
-    () => getDailyPnl(),
-    [],
-    "dashboard.dailyPnl",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
+  // P&L (the bars) and the informational per-day creator cost (the hover-only
+  // line) are independent reads — fetch them in parallel. Creator cost is a
+  // SEPARATE series merged here at the page level; it never touches
+  // DailyPnlPoint or the dashboard_daily_pnl ClickHouse twin (so the P&L
+  // parity harness is unaffected) and is NOT summed into the P&L total.
+  const [
+    { data, error, kind },
+    { data: creatorCostPoints },
+  ] = await Promise.all([
+    safeQuery(() => getDailyPnl(), [], "dashboard.dailyPnl", REWARD_QUERY_TIMEOUT_MS),
+    safeQuery(
+      () => getDailyCreatorCost(),
+      [],
+      "dashboard.dailyCreatorCost",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ]);
   if (error) {
     return (
       <TileErrorFallback
@@ -824,7 +836,14 @@ async function DashboardDailyPnlChart() {
   // resolved inside getDailyPnl via resolveAdminRead("dashboard_daily_pnl"),
   // which also fires the comparison-mode drift log — so no page-level compare
   // call is needed here (it would double-log in comparison mode).
-  return <PnlChart data={data} />;
+  const creatorCostByDate = new Map(
+    creatorCostPoints.map((p) => [p.date, p.creatorCost]),
+  );
+  const merged = data.map((d) => ({
+    ...d,
+    creatorCost: creatorCostByDate.get(d.date) ?? 0,
+  }));
+  return <PnlChart data={merged} />;
 }
 
 /**
