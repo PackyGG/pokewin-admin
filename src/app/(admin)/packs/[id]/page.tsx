@@ -9,7 +9,7 @@ import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabil
 import { isUuid } from "@/lib/utils/ids";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { PackDetailView } from "../pack-detail-view";
-import { fetchPackDetailCore } from "../actions";
+import { fetchPackDetailCore, fetchPackDetailStats } from "../actions";
 
 export const metadata = { title: "Pack Detail" };
 
@@ -47,16 +47,23 @@ export default async function PackDetailPage({
   }
   const isPackCreator = sessionHasRole(session, "pack_creator");
 
-  // Prefetch ONLY the fast core detail (identity + economics + card pool) so
-  // the page paints immediately on navigation. The heavy `getPackStats` ("two
-  // JSON scans") are deliberately NOT in this blocking path — they were what
-  // made deep-linking into a pack feel like it hung. PackDetailView auto-loads
-  // the stats client-side behind a skeleton (see its stats auto-load effect),
-  // so the charts stream in after first paint instead of blocking it.
-  // `fetchPackDetailCore` wraps the read in safeQuery+timeout; on failure we
-  // pass null and the client falls back to its own load()/retry flow.
+  // Prefetch the core detail (identity + economics + card pool) AND the chart
+  // stats server-side. `getPackStats` was historically deferred to a client
+  // round-trip because its two `result_metadata->>'pack_id'` scans were
+  // unindexed full-scans; that index now exists on prod
+  // (`idx_pf_result_metadata_pack_id_created_at`), so the scans run in ~130ms
+  // and are cached 60s. Prefetching them here removes the separate client
+  // `loadPackStats` request, which under the shared DB's small connection pool
+  // (max:3) lost the connection race and timed out → the "Pack stats couldn't
+  // load" fallback even though the query itself is fast (pool contention, not
+  // the query — same signature as the 2026-06-14 withdrawals incident).
+  // Both reads are safeQuery+timeout-wrapped (return null on genuine failure),
+  // so a degraded scan still falls back to the client auto-load/retry flow.
   const detail = await fetchPackDetailCore(id).catch(() => null);
-  const initialPayload = detail ? { detail, stats: null } : null;
+  const stats = detail
+    ? await fetchPackDetailStats(id, detail).catch(() => null)
+    : null;
+  const initialPayload = detail ? { detail, stats } : null;
 
   return (
     <PackDetailView
