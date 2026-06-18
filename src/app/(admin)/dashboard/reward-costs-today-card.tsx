@@ -12,6 +12,7 @@ import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { RaceWinClaimants } from "./reward-cost-race-claimants";
+import { PromoBalanceCreditClaimants } from "./reward-cost-promo-claimants";
 
 /**
  * "Reward Costs (today)" dashboard tile — what the house SPENT on rewards
@@ -197,6 +198,9 @@ function RewardCostsInfoPopover({
             >
               {l.key === "race" && l.amount > 0 && (
                 <RaceWinClaimants raceTotal={l.amount} />
+              )}
+              {l.key === "counted_adjustments" && l.amount > 0 && (
+                <PromoBalanceCreditClaimants creditTotal={l.amount} />
               )}
             </RewardCostRow>
           ))}

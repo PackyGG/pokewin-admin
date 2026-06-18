@@ -10,7 +10,11 @@ import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
 import { getRewardCostsTodayDbFromClickHouse } from "@/lib/clickhouse/queries/dashboard/reward-costs-today";
 import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windows";
 import { realCustomersScopeSql } from "@/lib/queries/insights-games/_shared";
-import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
+import {
+  countedAdjustmentSqlPredicate,
+  BALANCE_ADJUSTMENT_CATEGORY_META,
+  isBalanceAdjustmentCategory,
+} from "@/lib/balance-adjustment-categories";
 
 /** Lowercased username of the founder giveaway account (mirror motha/overview.ts). */
 const MOTHA_USERNAME = "motha";
@@ -644,4 +648,103 @@ export async function getRaceWinClaimants(): Promise<RaceWinClaimantsBreakdown> 
 
     return { claims, totalAmount, dayStartIso: sinceIso };
   });
+}
+
+// ─── Promo balance credit claimant drilldown (lazy, click-to-load) ───────
+
+/** One counted balance-adjustment CREDIT booked today (one ledger row). */
+export type PromoBalanceCreditClaimRow = {
+  userId: string;
+  username: string | null;
+  /** Credited amount for this row (ABS ledger amount, always > 0). */
+  amount: number;
+  /** Raw counted-adjustment category key (giveaway / bonus / reload / …). */
+  category: string | null;
+  /** Operator-friendly category label (resolved from the canonical meta). */
+  categoryLabel: string | null;
+  creditedAtIso: string;
+};
+
+export type PromoBalanceCreditClaimantsBreakdown = {
+  /** Individual credits today, largest amount first. */
+  claims: PromoBalanceCreditClaimRow[];
+  /** Σ credit amounts — reconciles to the card's "Promo balance credits" line. */
+  totalAmount: number;
+  /** ISO window start (today 00:00 UTC). */
+  dayStartIso: string;
+};
+
+/**
+ * Per-recipient breakdown for the Reward Costs card's "Promo balance
+ * credits" line. Uses the SAME canonical metrics scope + today window +
+ * counted-adjustment predicate as the cached `counted_adjustments` aggregate
+ * on the card (`countedAdjustmentSqlPredicate`: `admin_balance_adjustment`
+ * credits with a COUNTED `metadata.adjustment_category`, `amount > 0`), so the
+ * per-row total reconciles to the line. Each row carries its category so the
+ * operator sees WHY each user got credited (giveaway / bonus / reload /
+ * lossback / deposit-fix / bug-comp). Lazy — not called on initial render.
+ */
+export async function getPromoBalanceCreditClaimants(): Promise<PromoBalanceCreditClaimantsBreakdown> {
+  return withTiming(
+    "dashboard.rewardCostsToday.promoCreditClaimants",
+    async () => {
+      const now = new Date();
+      const since = utcStartOfDay(now);
+      const sinceIso = since.toISOString();
+      const sinceSql = `'${sinceIso}'::timestamptz`;
+
+      const db = await getDb();
+      const scope = await getMetricsScope();
+      const countedAdj = countedAdjustmentSqlPredicate({
+        typeColumn: "lt.type",
+        metadataColumn: "lt.metadata",
+        amountColumn: "lt.amount",
+      });
+
+      type Row = {
+        user_id: string;
+        username: string | null;
+        amount: string;
+        category: string | null;
+        credited_at: Date;
+      };
+      const rows = await db.$queryRawUnsafe<Row[]>(
+        `WITH ${scope.sessionWindowsCte}
+         SELECT
+           lt.user_id,
+           u.username,
+           ABS(lt.amount::numeric)::text AS amount,
+           lt.metadata->>'adjustment_category' AS category,
+           lt.created_at AS credited_at
+         FROM ledger_transactions lt
+         JOIN "user" u ON u.id = lt.user_id
+         WHERE lt.status = 'completed'
+           AND (${countedAdj})
+           AND lt.user_id IN ${scope.userScopeSql}
+           AND ${scope.notInCreatorSession("user_id", "created_at")}
+           AND lt.created_at >= ${sinceSql}
+         ORDER BY ABS(lt.amount::numeric) DESC, lt.created_at DESC`,
+      );
+
+      const claims: PromoBalanceCreditClaimRow[] = rows.map((r) => {
+        const category = r.category;
+        const categoryLabel =
+          category != null && isBalanceAdjustmentCategory(category)
+            ? BALANCE_ADJUSTMENT_CATEGORY_META[category].costLabel
+            : null;
+        return {
+          userId: r.user_id,
+          username: r.username,
+          amount: toNumber(r.amount),
+          category,
+          categoryLabel,
+          creditedAtIso: new Date(r.credited_at).toISOString(),
+        };
+      });
+
+      const totalAmount = claims.reduce((sum, c) => sum + c.amount, 0);
+
+      return { claims, totalAmount, dayStartIso: sinceIso };
+    },
+  );
 }
