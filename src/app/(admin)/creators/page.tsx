@@ -79,6 +79,7 @@ import { type CreatorWithSocials } from "./_components/creator-card-grid";
 import { LeaderboardSpendPanel } from "./_components/leaderboard-spend-tile";
 import { TipsSponsorSpendPanel } from "./_components/tips-sponsor-spend-tile";
 import { AddCreatorDialog } from "./_components/add-creator-dialog";
+import { WhitelistDialog } from "./_components/whitelist-dialog";
 import { CreatorsSearchProvider } from "./_components/creators-search-context";
 import { CreatorsSearchInput } from "./_components/creators-search-input";
 import { CreatorsTabSwitch } from "./_components/creators-tab-switch";
@@ -155,7 +156,12 @@ export default async function CreatorsPage({
           accent="pink"
           title="Creators"
           subtitle="Weekly fill deals, stream sessions, and payouts."
-          action={<AddCreatorDialog />}
+          action={
+            <div className="flex items-center gap-2">
+              <WhitelistDialog />
+              <AddCreatorDialog />
+            </div>
+          }
         />
       </PageHero>
 
