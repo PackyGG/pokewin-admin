@@ -214,21 +214,24 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Player CRM — lifecycle + VIP value-tier segmentation and win-back
-    // targets, customer-scoped (staff/creators/blacklist dropped), borrow-
-    // corrected, House POV. Icon string `PieChart` MUST be registered in the
-    // ICONS map in `src/components/app-sidebar.tsx` (React #130) and, since
+    // Player CRM — palette-only. /crm was folded into the (owner-only)
+    // Insights Overview as a tab; the standalone /crm route now 308-redirects
+    // to ?tab=crm and the sidebar dropped the standalone link. href carries
+    // the tab; permission INHERITS from /insights/real-numbers — which is
+    // owner-only (the Insights layout enforces requireInsightsOwner), so the
+    // palette filters this entry out for non-owners by pageKey. Icon string
+    // `PieChart` MUST be registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (React #130) and, since
     // `inPalette: true`, the id MUST also appear in PALETTE_ORDER (lockstep).
     id: "nav.crm",
     group: "Overview",
     label: "Player CRM",
-    href: "/crm",
-    pageKey: "/crm",
+    href: "/insights/real-numbers?tab=crm",
+    pageKey: "/insights/real-numbers",
     icon: "PieChart",
     description: "Lifecycle, value tiers & win-back targets",
     keywords: ["crm", "segment", "segmentation", "lifecycle", "vip", "whale", "retention", "cohort"],
-    isNew: true,
-    inSidebar: true,
+    inSidebar: false,
     inPalette: true,
   },
   {

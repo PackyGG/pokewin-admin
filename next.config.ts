@@ -240,6 +240,18 @@ const nextConfig: NextConfig = {
         destination: "/upgrader?tab=transactions",
         permanent: true,
       },
+      {
+        // Player CRM was folded into the (owner-only) Insights Overview as a
+        // tab ("Real Numbers" | "Player CRM"). The old standalone /crm page is
+        // gone — forward bookmarks to the tab. HTTP 308 (config redirect), NOT
+        // an in-render redirect(): an unconditional in-render redirect on the
+        // initial document load is replayed by the App Router and crashes it
+        // (see the retired-route note above). Non-owners hitting this are then
+        // bounced to /dashboard by the Insights layout's owner gate.
+        source: "/crm",
+        destination: "/insights/real-numbers?tab=crm",
+        permanent: true,
+      },
     ];
   },
 };
