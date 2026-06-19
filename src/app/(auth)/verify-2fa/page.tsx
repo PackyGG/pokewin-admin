@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getPendingSession } from "@/lib/session";
+import { adminDb } from "@/lib/admin-db";
 import { VerifyForm } from "./verify-form";
 
 export const metadata = { title: "Verify 2FA" };
@@ -7,6 +8,19 @@ export const metadata = { title: "Verify 2FA" };
 export default async function Verify2FAPage() {
   const pending = await getPendingSession();
   if (!pending) redirect("/login");
+
+  // Only offer the passkey option to accounts that have registered one.
+  // Resilient: a count failure degrades to "no passkeys" so the TOTP form
+  // always renders.
+  let hasPasskeys = false;
+  try {
+    hasPasskeys =
+      (await adminDb.admin_passkeys.count({
+        where: { admin_user_id: pending.adminUserId },
+      })) > 0;
+  } catch {
+    hasPasskeys = false;
+  }
 
   return (
     <div className="w-[520px] max-w-full rounded-2xl border border-white/10 bg-white/5 p-12 shadow-2xl shadow-black/30 backdrop-blur-xl">
@@ -16,7 +30,7 @@ export default async function Verify2FAPage() {
           Enter the 6-digit code from your authenticator app
         </p>
       </div>
-      <VerifyForm />
+      <VerifyForm hasPasskeys={hasPasskeys} />
     </div>
   );
 }

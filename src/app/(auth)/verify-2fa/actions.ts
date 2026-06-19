@@ -9,11 +9,19 @@ import {
   getPendingSession,
   deletePendingSession,
   createSession,
+  createWebauthnChallenge,
+  getWebauthnChallenge,
+  deleteWebauthnChallenge,
 } from "@/lib/session";
 import { verifyTOTP, verifyRecoveryCode } from "@/lib/totp";
+import { buildAuthenticationOptions, checkAuthentication } from "@/lib/webauthn";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { headers } from "next/headers";
 import { MS_PER_MINUTE, MS_PER_HOUR } from "@/lib/utils/time";
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+} from "@simplewebauthn/server";
 
 type VerifyState = {
   error?: string;
@@ -182,4 +190,182 @@ export async function verify2FA(
   await deletePendingSession();
 
   redirect(await getDefaultRouteForUser(pending.adminUserId, pending.role));
+}
+
+// ── Passkey (WebAuthn) — alternative second factor ──────────────────────────
+//
+// A passkey clears the SAME 2FA step a TOTP code does: it only runs AFTER a
+// valid password produced a pending-2FA session (the same precondition the
+// TOTP/recovery paths require). On success it mints the IDENTICAL session via
+// the shared finalizer below — same audit event + admin_sessions row (with
+// auth_method "passkey") + landing redirect. Password and TOTP enrollment are
+// untouched; this is purely an additional way to satisfy the existing gate.
+
+/** Build assertion options scoped to the pending user's registered passkeys. */
+export async function startPasskeyLogin(): Promise<PublicKeyCredentialRequestOptionsJSON> {
+  const pending = await getPendingSession();
+  if (!pending) {
+    throw new Error("Session expired. Please login again.");
+  }
+  const creds = await adminDb.admin_passkeys.findMany({
+    where: { admin_user_id: pending.adminUserId },
+    select: { credential_id: true, transports: true },
+  });
+  if (creds.length === 0) {
+    throw new Error("No passkeys are registered for this account.");
+  }
+  const options = await buildAuthenticationOptions({
+    allowCredentials: creds.map((c) => ({
+      credentialId: c.credential_id,
+      transports: c.transports,
+    })),
+  });
+  await createWebauthnChallenge({
+    challenge: options.challenge,
+    type: "auth",
+    adminUserId: pending.adminUserId,
+  });
+  return options;
+}
+
+export async function verifyPasskeyLogin(
+  response: AuthenticationResponseJSON,
+): Promise<VerifyState> {
+  const pending = await getPendingSession();
+  if (!pending) {
+    return { error: "Session expired. Please login again." };
+  }
+  if (isVerifyRateLimited(pending.adminUserId)) {
+    return {
+      error:
+        "Too many failed verification attempts. Try again in a few minutes.",
+    };
+  }
+
+  const challenge = await getWebauthnChallenge();
+  if (
+    !challenge ||
+    challenge.type !== "auth" ||
+    challenge.adminUserId !== pending.adminUserId
+  ) {
+    return { error: "Passkey session expired. Please try again." };
+  }
+
+  // Resolve the exact credential the authenticator asserted with, and make sure
+  // it actually belongs to the account that passed the password step.
+  const stored = await adminDb.admin_passkeys.findUnique({
+    where: { credential_id: response.id },
+    select: {
+      id: true,
+      admin_user_id: true,
+      credential_id: true,
+      public_key: true,
+      counter: true,
+      transports: true,
+    },
+  });
+  if (!stored || stored.admin_user_id !== pending.adminUserId) {
+    recordVerifyFailure(pending.adminUserId);
+    await deleteWebauthnChallenge();
+    return { error: "Unrecognized passkey." };
+  }
+
+  let verified = false;
+  let newCounter = Number(stored.counter);
+  try {
+    const result = await checkAuthentication({
+      response,
+      expectedChallenge: challenge.challenge,
+      credential: {
+        credentialId: stored.credential_id,
+        publicKey: new Uint8Array(stored.public_key),
+        counter: Number(stored.counter),
+        transports: stored.transports,
+      },
+    });
+    verified = result.verified;
+    newCounter = result.authenticationInfo.newCounter;
+  } catch {
+    verified = false;
+  } finally {
+    // One-time challenge — burn it whatever the outcome.
+    await deleteWebauthnChallenge();
+  }
+
+  if (!verified) {
+    recordVerifyFailure(pending.adminUserId);
+    return { error: "Could not verify passkey. Please try again." };
+  }
+
+  // Replay guard: persist the authenticator's reported counter + usage time.
+  await adminDb.admin_passkeys.update({
+    where: { id: stored.id },
+    data: { counter: BigInt(newCounter), last_used_at: new Date() },
+  });
+
+  clearVerifyFailures(pending.adminUserId);
+  await finalizePasskeyLogin(pending.adminUserId, pending.email, pending.username, pending.role);
+  // finalizePasskeyLogin redirects, so this is never reached.
+  return {};
+}
+
+/**
+ * Mint the real admin session for a passkey-verified login and redirect to the
+ * user's landing route. Mirrors the TOTP success tail in verify2FA: re-reads the
+ * effective role set from the DB, writes the `admin_login` audit event + an
+ * `admin_sessions` row (auth_method "passkey"), clears the pending cookie.
+ */
+async function finalizePasskeyLogin(
+  adminUserId: string,
+  email: string,
+  username: string,
+  fallbackRole: string,
+): Promise<never> {
+  const adminUser = await readAdminUserWithRoles(
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: adminUserId },
+        select: { role: true, roles: true },
+      }),
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: adminUserId },
+        select: { role: true },
+      }),
+  );
+
+  const effectiveRoles = getEffectiveRoles(adminUser?.role ?? fallbackRole, adminUser?.roles);
+  await createSession({
+    userId: adminUserId,
+    role: pickPrimaryRole(effectiveRoles),
+    roles: effectiveRoles,
+    email,
+    username,
+  });
+
+  const headersList = await headers();
+  const ip = headersList.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const userAgent = headersList.get("user-agent") ?? null;
+
+  await Promise.all([
+    createAdminAuditEvent({
+      adminUserId,
+      eventType: "admin_login",
+      ip,
+      metadata: { method: "passkey" },
+    }),
+    adminDb.admin_sessions.create({
+      data: {
+        admin_user_id: adminUserId,
+        ip,
+        user_agent: userAgent,
+        auth_method: "passkey",
+        expires_at: new Date(Date.now() + 8 * MS_PER_HOUR),
+      },
+    }),
+  ]);
+
+  await deletePendingSession();
+
+  redirect(await getDefaultRouteForUser(adminUserId, fallbackRole));
 }

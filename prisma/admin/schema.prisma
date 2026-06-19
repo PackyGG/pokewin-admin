@@ -106,6 +106,39 @@ model admin_users {
   excluded_user_balances_v2 admin_excluded_user_balance_v2[]
   giveaway_actions       admin_giveaway_actions[]
   user_tags              admin_user_tags[]
+  passkeys               admin_passkeys[]
+}
+
+/// WebAuthn passkey credentials for admins, usable as an ALTERNATIVE to the
+/// TOTP code at the 2FA verification step (password remains factor one; TOTP
+/// enrollment is unchanged). One row per registered authenticator. Lives in the
+/// ADMIN DB — pure admin-panel data. Provisioned via `prisma db execute`
+/// (prisma/admin/sql/2026-06-20_add_admin_passkeys.up.sql); this model is the
+/// typed mirror. Do NOT `prisma db push` / `migrate` (would risk dropping
+/// un-modeled drift in the admin DB).
+model admin_passkeys {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  admin_user_id String      @db.Uuid
+  /// Base64URL-encoded credential ID returned by the authenticator. Globally
+  /// unique — used to look up the credential at authentication time.
+  credential_id String      @unique
+  /// COSE-encoded public key bytes (from registrationInfo.credential.publicKey).
+  public_key    Bytes
+  /// Signature counter — bumped to the authenticator's reported value on each
+  /// successful authentication to detect cloned authenticators (replay guard).
+  counter       BigInt      @default(0)
+  /// Reported transports ("internal", "usb", "hybrid", ...) — hints the browser
+  /// on subsequent ceremonies.
+  transports    String[]    @default([])
+  /// User-supplied label so an admin can tell their devices apart.
+  device_name   String?
+  /// Whether the credential is a backed-up / multi-device (synced) passkey.
+  backed_up     Boolean     @default(false)
+  created_at    DateTime    @default(now()) @db.Timestamptz(6)
+  last_used_at  DateTime?   @db.Timestamptz(6)
+  admin_user    admin_users @relation(fields: [admin_user_id], references: [id], onDelete: Cascade)
+
+  @@index([admin_user_id])
 }
 
 /// Admin-DB metadata for balance adjustments tagged as "Giveaway" on the

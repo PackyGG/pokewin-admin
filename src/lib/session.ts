@@ -6,6 +6,7 @@ const secretKey = process.env.SESSION_SECRET!;
 const encodedKey = new TextEncoder().encode(secretKey);
 const COOKIE_NAME = "admin_session";
 const PENDING_COOKIE_NAME = "admin_2fa_pending";
+const WEBAUTHN_CHALLENGE_COOKIE = "admin_webauthn_challenge";
 
 export type SessionPayload = {
   userId: string;
@@ -145,5 +146,52 @@ export async function getPendingSession(): Promise<PendingSessionPayload | null>
 export async function deletePendingSession() {
   const cookieStore = await cookies();
   cookieStore.delete(PENDING_COOKIE_NAME);
+}
+
+// --- WebAuthn (passkey) challenge (5-min expiry) ---
+//
+// A passkey ceremony is two round-trips: the server issues a random challenge,
+// the authenticator signs it, and the server verifies the signature against the
+// SAME challenge. We stash that challenge in a short-lived signed cookie (the
+// exact pattern the pending-2FA cookie uses) so it survives the round-trip
+// without any new infra. `type` pins the cookie to its ceremony (register vs
+// auth) and `adminUserId` scopes it to the acting account so a register
+// challenge can't be replayed into an auth flow or across users.
+
+type WebauthnChallengePayload = {
+  challenge: string;
+  type: "register" | "auth";
+  adminUserId: string;
+  expiresAt: string;
+};
+
+export async function createWebauthnChallenge(
+  payload: Omit<WebauthnChallengePayload, "expiresAt">,
+) {
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+  const token = await encryptGeneric(
+    { ...payload, expiresAt: expiresAt.toISOString() },
+    "5m",
+  );
+  const cookieStore = await cookies();
+  cookieStore.set(WEBAUTHN_CHALLENGE_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    expires: expiresAt,
+    path: "/",
+  });
+}
+
+export async function getWebauthnChallenge(): Promise<WebauthnChallengePayload | null> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(WEBAUTHN_CHALLENGE_COOKIE)?.value;
+  if (!token) return null;
+  return decryptGeneric<WebauthnChallengePayload>(token);
+}
+
+export async function deleteWebauthnChallenge() {
+  const cookieStore = await cookies();
+  cookieStore.delete(WEBAUTHN_CHALLENGE_COOKIE);
 }
 

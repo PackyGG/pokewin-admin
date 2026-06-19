@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { User, Settings, KeyRound, AlertTriangle } from "lucide-react";
+import { User, Settings, KeyRound, AlertTriangle, Fingerprint } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -16,6 +16,7 @@ import type { AdminPreferences } from "@/lib/admin-preferences-types";
 import { ProfileForm } from "./profile-form";
 import { PreferencesForm } from "./preferences-form";
 import { PasswordForm } from "./password-form";
+import { PasskeysCard } from "./passkeys-card";
 
 // ---------------------------------------------------------------------------
 // Profile dialog
@@ -159,6 +160,13 @@ export function ProfileDialog({
               code. Only affects your own account.
             </p>
             <PasswordForm />
+
+            <div className="mt-6 border-t border-border pt-5">
+              <SectionHeading icon={Fingerprint} title="Passkeys" />
+              <div className="mt-3">
+                <PasskeysCard active={open} />
+              </div>
+            </div>
           </section>
         </div>
       </DialogContent>

@@ -97,6 +97,7 @@ The backend was fully reworked. **Every read is served by exactly one of two pat
 - Use the DAL only (`src/lib/dal.ts`): `verifySession()`, `requireAdmin()`, `requireRole(roles)`, `requirePageAccess(pageKey)`. They `redirect()` on failure — don't reimplement. `src/middleware.ts` enforces the flow (decrypts the `admin_session` JWT + checks expiry).
 - Roles (`src/lib/admin-roles.ts`): `admin`, `support`, `marketing`, `creator`, `pack_creator`. `ROLE_PRIORITY` (admin wins), `getEffectiveRoles()` normalizes `role` + `roles`. Per-page access via `allowed_pages`.
 - Mutating actions must `createAdminAuditEvent()`. 2FA-gate sensitive mutations (balance, XP, withdrawals).
+- **Login = password → second factor at `/verify-2fa`.** Second factor is EITHER a TOTP code (`otpauth`) OR a **passkey (WebAuthn, `@simplewebauthn` v13)** — passkeys are an additive ALTERNATIVE to TOTP, not a replacement. Passkeys live in the ADMIN DB table `admin_passkeys` (per-admin, FK cascade); enrollment is in the profile dialog's Security section (`src/app/(admin)/profile/passkeys-card.tsx` + `passkey-actions.ts`); login branch in `src/app/(auth)/verify-2fa/`. Server wrappers + RP config in `src/lib/webauthn.ts` (RP ID/origin derived from request host, overridable via `WEBAUTHN_RP_ID`/`WEBAUTHN_ORIGIN`). The WebAuthn challenge rides a 5-min signed cookie (`admin_webauthn_challenge`) via the existing `encryptGeneric`/`decryptGeneric` in `session.ts`. Counter + `last_used_at` give a replay guard; passkey login audits with `method:"passkey"`.
 
 ---
 
