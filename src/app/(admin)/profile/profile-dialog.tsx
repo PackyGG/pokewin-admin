@@ -56,9 +56,9 @@ export function ProfileDialog({
   onOpenChange,
   data,
   /**
-   * Which section to bring into view when the dialog opens. The "Change
-   * password" dropdown entry passes `"security"` so the user lands on the
-   * password form; everything else opens at the top ("profile").
+   * Which section to bring into view when the dialog opens. The "Security"
+   * dropdown entry passes `"security"` so the user lands on the password +
+   * passkeys section; everything else opens at the top ("profile").
    */
   initialSection = "profile",
 }: {

@@ -445,7 +445,7 @@ export function AdminHeader({
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => openProfile("security")}>
               <KeyRound className="size-4" />
-              <span>Change password</span>
+              <span>Security</span>
             </DropdownMenuItem>
             <ThemeSubmenu />
             <TimezoneSubmenu onOpenProfile={() => openProfile("profile")} />
