@@ -397,7 +397,12 @@ async function UserDetailBody({
 
   const gamingTxPromise = wantsGamingTx
     ? safeQuery(
-        () => getUserTransactions(id, 1, 10, { types: GAMING_TYPES }),
+        // Gaming tab defaults to 25 rows; the Overview tab's compact gaming
+        // preview keeps the smaller 10-row page.
+        () =>
+          getUserTransactions(id, 1, initialTab === "gaming" ? 25 : 10, {
+            types: GAMING_TYPES,
+          }),
         EMPTY_TX_PAGE,
         "users.detail.gamingTx",
         USER_DETAIL_QUERY_TIMEOUT_MS,
