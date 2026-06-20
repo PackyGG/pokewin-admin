@@ -21,7 +21,15 @@ import type {
 // verification step (see (auth)/verify-2fa). Every action re-derives the acting
 // admin from the session and scopes its reads/writes to that admin's OWN
 // passkeys — an admin can never touch another admin's credentials.
+//
+// Each admin may hold at most MAX_PASSKEYS_PER_ADMIN credentials. The limit is
+// enforced server-side both when starting and finishing registration (the
+// finish check is authoritative against a start/finish race). The client card
+// mirrors the same number for UX, but the server is the source of truth.
 // ---------------------------------------------------------------------------
+
+const MAX_PASSKEYS_PER_ADMIN = 2;
+const PASSKEY_LIMIT_MESSAGE = `You can have at most ${MAX_PASSKEYS_PER_ADMIN} passkeys. Remove one to add another.`;
 
 export type PasskeySummary = {
   id: string;
@@ -59,6 +67,9 @@ export async function startPasskeyRegistration(): Promise<PublicKeyCredentialCre
     where: { admin_user_id: session.userId },
     select: { credential_id: true, transports: true },
   });
+  if (existing.length >= MAX_PASSKEYS_PER_ADMIN) {
+    throw new Error(PASSKEY_LIMIT_MESSAGE);
+  }
   const options = await buildRegistrationOptions({
     userId: session.userId,
     userName: session.email,
@@ -124,6 +135,15 @@ export async function finishPasskeyRegistration(
   });
   if (dup) {
     throw new Error("This passkey is already registered.");
+  }
+
+  // Authoritative cap check: re-count right before insert so a second
+  // concurrent registration can't slip past the start-time guard.
+  const ownedCount = await adminDb.admin_passkeys.count({
+    where: { admin_user_id: session.userId },
+  });
+  if (ownedCount >= MAX_PASSKEYS_PER_ADMIN) {
+    throw new Error(PASSKEY_LIMIT_MESSAGE);
   }
 
   const cleanName = parsedName.data ? parsedName.data : null;

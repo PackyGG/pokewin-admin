@@ -32,6 +32,10 @@ import {
   type PasskeySummary,
 } from "./passkey-actions";
 
+// Mirrors MAX_PASSKEYS_PER_ADMIN in passkey-actions.ts (the server is the
+// source of truth; this is only for UX — disabling the add control + hint).
+const MAX_PASSKEYS_PER_ADMIN = 2;
+
 /**
  * Self-service passkey management, slotted into the Security section of the
  * profile dialog. A registered passkey works as an ALTERNATIVE to the TOTP code
@@ -66,7 +70,15 @@ export function PasskeysCard({ active }: { active: boolean }) {
     }
   }, [active, load]);
 
+  const atLimit = (passkeys?.length ?? 0) >= MAX_PASSKEYS_PER_ADMIN;
+
   async function handleAdd() {
+    if (atLimit) {
+      toast.error(
+        `You can have at most ${MAX_PASSKEYS_PER_ADMIN} passkeys. Remove one to add another.`,
+      );
+      return;
+    }
     if (!browserSupportsWebAuthn()) {
       toast.error("This browser does not support passkeys.");
       return;
@@ -125,10 +137,15 @@ export function PasskeysCard({ active }: { active: boolean }) {
           value={newName}
           onChange={(e) => setNewName(e.target.value.slice(0, 60))}
           placeholder="Device name (optional)"
-          disabled={adding}
+          disabled={adding || atLimit}
           className="sm:max-w-[220px]"
         />
-        <Button type="button" size="sm" onClick={handleAdd} disabled={adding}>
+        <Button
+          type="button"
+          size="sm"
+          onClick={handleAdd}
+          disabled={adding || atLimit}
+        >
           {adding ? (
             <Spinner size={14} className="text-current" />
           ) : (
@@ -137,6 +154,13 @@ export function PasskeysCard({ active }: { active: boolean }) {
           {adding ? "Waiting for device..." : "Add passkey"}
         </Button>
       </div>
+
+      {atLimit && (
+        <p className="text-xs text-muted-foreground">
+          You&apos;ve reached the limit of {MAX_PASSKEYS_PER_ADMIN} passkeys.
+          Remove one below to add another.
+        </p>
+      )}
 
       <div className="space-y-2">
         {loading && passkeys === null ? (
