@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   Activity,
@@ -14,15 +15,19 @@ import {
   Gauge,
   Hourglass,
   Info,
+  KeyRound,
   Layers,
   Lock,
   Plug,
+  Plus,
   Route,
   Server,
   Settings2,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   Timer,
+  Trash2,
   Unlock,
   XCircle,
   Zap,
@@ -40,6 +45,16 @@ import { FadeIn } from "@/components/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { CopyButton } from "@/components/copy-button";
 import {
@@ -53,7 +68,7 @@ import {
 import { formatDateTime, formatNumber, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { MonitorRefreshButton } from "./refresh-button";
-import { toggleMonitorEvent } from "./actions";
+import { toggleMonitorEvent, createApiKey, revokeApiKey } from "./actions";
 import type {
   MonitorNotificationSource,
   MonitorOverview,
@@ -64,6 +79,9 @@ import type {
   MonitorEventsResult,
   MonitorApiEndpoint,
   MonitorEndpointsResult,
+  MonitorApiKey,
+  MonitorApiKeysResult,
+  CreatedMonitorApiKey,
 } from "@/lib/backend-api/monitor";
 
 // ─── Formatting helpers ───────────────────────────────────────────
@@ -207,12 +225,14 @@ export function MonitorView({
   antifraud,
   events,
   endpoints,
+  apiKeys,
   fetchedAt,
 }: {
   result: MonitorResult;
   antifraud: AntifraudResult;
   events: MonitorEventsResult;
   endpoints: MonitorEndpointsResult;
+  apiKeys: MonitorApiKeysResult;
   fetchedAt: string;
 }) {
   // Env missing → nothing can load. Show the single setup empty-state (no
@@ -348,6 +368,10 @@ export function MonitorView({
             <Route className="size-3.5" aria-hidden />
             Endpoints
           </TabsTrigger>
+          <TabsTrigger value="apikeys">
+            <KeyRound className="size-3.5" aria-hidden />
+            API Keys
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="pt-4">
@@ -394,6 +418,10 @@ export function MonitorView({
 
         <TabsContent value="endpoints" className="pt-4">
           <EndpointsTab result={endpoints} />
+        </TabsContent>
+
+        <TabsContent value="apikeys" className="pt-4">
+          <ApiKeysTab result={apiKeys} />
         </TabsContent>
       </Tabs>
 
@@ -1355,6 +1383,300 @@ function EndpointsTab({ result }: { result: MonitorEndpointsResult }) {
           </FadeIn>
         );
       })}
+    </div>
+  );
+}
+
+// ─── API Keys tab ─────────────────────────────────────────────────
+
+function ApiKeysTab({ result }: { result: MonitorApiKeysResult }) {
+  const router = useRouter();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [label, setLabel] = useState("");
+  const [created, setCreated] = useState<CreatedMonitorApiKey | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<MonitorApiKey | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = label.trim();
+    if (!trimmed) {
+      toast.error("Label is required");
+      return;
+    }
+    startTransition(async () => {
+      const res = await createApiKey({ label: trimmed });
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      setCreated(res.created);
+      setLabel("");
+      setCreateOpen(false);
+      toast.success("API key created");
+      router.refresh();
+    });
+  }
+
+  function handleRevoke() {
+    if (!revokeTarget) return;
+    const target = revokeTarget;
+    startTransition(async () => {
+      const res = await revokeApiKey({ id: target.id });
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`Revoked ${target.label}`);
+      setRevokeTarget(null);
+      router.refresh();
+    });
+  }
+
+  if (result.status !== "ok") {
+    return (
+      <ResultNotice
+        status={result.status}
+        httpStatus={result.status === "error" ? result.httpStatus : undefined}
+        message={result.status === "error" ? result.message : undefined}
+        missing={result.status === "unconfigured" ? result.missing : undefined}
+      />
+    );
+  }
+
+  const keys = result.keys;
+  const activeCount = keys.filter((k) => k.active).length;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 rounded-xl border border-border bg-muted/30 p-3">
+        <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <p className="text-xs text-muted-foreground">
+          Bearer keys for the monitor API, minted server-side with the master
+          token. A new key&apos;s secret is shown{" "}
+          <strong className="text-foreground">once</strong> at creation and can
+          never be retrieved again — copy it immediately. Revoking takes effect
+          within ~30s.
+        </p>
+      </div>
+
+      <SectionHeading
+        icon={KeyRound}
+        title={
+          <span className="flex items-baseline gap-2">
+            API keys
+            <span className="text-xs font-normal text-muted-foreground">
+              {activeCount} active · {keys.length} total
+            </span>
+          </span>
+        }
+        action={
+          <Button size="sm" onClick={() => setCreateOpen(true)} disabled={isPending}>
+            <Plus className="size-4" aria-hidden />
+            Create key
+          </Button>
+        }
+      />
+
+      {keys.length === 0 ? (
+        <p className="rounded-lg border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+          No API keys yet. Create one to grant programmatic access to the
+          monitor.
+        </p>
+      ) : (
+        <div className="rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Label</TableHead>
+                <TableHead>Key prefix</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {keys.map((k) => (
+                <TableRow key={k.id}>
+                  <TableCell className="font-medium">{k.label}</TableCell>
+                  <TableCell>
+                    {k.key_prefix ? (
+                      <code className="text-xs">{k.key_prefix}…</code>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {k.created_at ? (
+                      <span className="tabular-nums" title={k.created_at}>
+                        {formatDateTime(asUtc(k.created_at))}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                    {k.created_by && (
+                      <span className="block text-[11px]">by {k.created_by}</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {k.active ? (
+                      <StatusBadge tone="good">Active</StatusBadge>
+                    ) : (
+                      <StatusBadge tone="neutral">Revoked</StatusBadge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {k.active ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={isPending}
+                        onClick={() => setRevokeTarget(k)}
+                        className="border-rose-500/40 text-rose-600 hover:bg-rose-500/10 hover:text-rose-700 dark:text-rose-400"
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                        Revoke
+                      </Button>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        {k.revoked_at
+                          ? `revoked ${formatRelative(asUtc(k.revoked_at))}`
+                          : "revoked"}
+                      </span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      {/* Create dialog */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create API key</DialogTitle>
+            <DialogDescription>
+              Give the key a recognizable label. The secret is shown once after
+              creation.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCreate} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="monitor-key-label">Label</Label>
+              <Input
+                id="monitor-key-label"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="e.g. dashboard-prod"
+                maxLength={100}
+                autoFocus
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCreateOpen(false)}
+                disabled={isPending}
+                className="w-full sm:w-auto"
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isPending} className="w-full sm:w-auto">
+                {isPending ? "Creating…" : "Create key"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* One-time secret reveal */}
+      <Dialog
+        open={created != null}
+        onOpenChange={(open) => {
+          if (!open) setCreated(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="size-4 text-emerald-500" aria-hidden />
+              Key created — copy it now
+            </DialogTitle>
+            <DialogDescription>
+              This is the only time the full key for{" "}
+              <span className="font-medium text-foreground">{created?.label}</span>{" "}
+              is shown. Store it securely — it can&apos;t be retrieved again.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 rounded-lg border bg-muted/40 p-3">
+              <code className="flex-1 break-all text-xs">{created?.key}</code>
+              {created?.key && <CopyButton value={created.key} label="API key" />}
+            </div>
+            <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5">
+              <AlertTriangle
+                className="mt-0.5 size-3.5 shrink-0 text-amber-500"
+                aria-hidden
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Keep this server-side only — never embed it in browser code. If
+                it leaks, revoke it here and create a new one.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setCreated(null)} className="w-full sm:w-auto">
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Revoke confirm */}
+      <Dialog
+        open={revokeTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setRevokeTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Revoke API key</DialogTitle>
+            <DialogDescription>
+              Revoke{" "}
+              <span className="font-medium text-foreground">
+                {revokeTarget?.label}
+              </span>
+              {revokeTarget?.key_prefix ? ` (${revokeTarget.key_prefix}…)` : ""}? Any
+              service using it stops working within ~30s. This can&apos;t be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRevokeTarget(null)}
+              disabled={isPending}
+              className="w-full sm:w-auto"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleRevoke}
+              disabled={isPending}
+              className="w-full bg-rose-600 text-white hover:bg-rose-700 sm:w-auto"
+            >
+              {isPending ? "Revoking…" : "Revoke key"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

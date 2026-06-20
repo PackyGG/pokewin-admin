@@ -256,7 +256,7 @@ type MonitorRawResult =
 /** Generic JSON request against the monitor base. Never throws. */
 async function monitorRequest(
   path: string,
-  init?: { method?: "GET" | "PUT" | "POST"; body?: unknown },
+  init?: { method?: "GET" | "PUT" | "POST" | "DELETE"; body?: unknown },
 ): Promise<MonitorRawResult> {
   const resolved = resolveMonitorBase();
   if ("missing" in resolved) {
@@ -568,6 +568,163 @@ export async function getMonitorApiEndpoints(): Promise<MonitorEndpointsResult> 
     (a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method),
   );
   return { status: "ok", endpoints };
+}
+
+// ===========================================================================
+// Monitor API keys: GET/POST /v1/admin/keys, DELETE /v1/admin/keys/{id}
+// Master-key-only admin routes (keys minted via the API get 403). The raw key
+// returned by POST is shown exactly once and is never retrievable again.
+// ===========================================================================
+
+const monitorApiKeySchema = z
+  .object({
+    id: z.string(),
+    label: z.string().nullable().optional(),
+    key_prefix: z.string().nullable().optional(),
+    created_at: z.string().nullable().optional(),
+    created_by: z.string().nullable().optional(),
+    revoked_at: z.string().nullable().optional(),
+    active: z.boolean().nullable().optional(),
+  })
+  .passthrough();
+
+export type MonitorApiKey = {
+  id: string;
+  label: string;
+  key_prefix: string | null;
+  created_at: string | null;
+  created_by: string | null;
+  revoked_at: string | null;
+  active: boolean;
+};
+
+export type MonitorApiKeysResult =
+  | { status: "unconfigured"; missing: string[] }
+  | { status: "error"; httpStatus: number | null; message: string }
+  | { status: "ok"; keys: MonitorApiKey[] };
+
+function normalizeApiKey(
+  raw: z.infer<typeof monitorApiKeySchema>,
+): MonitorApiKey {
+  return {
+    id: raw.id,
+    label: raw.label ?? "(unlabeled)",
+    key_prefix: raw.key_prefix ?? null,
+    created_at: raw.created_at ?? null,
+    created_by: raw.created_by ?? null,
+    revoked_at: raw.revoked_at ?? null,
+    // `active` falls back to "no revoked_at" when the field is absent.
+    active: raw.active ?? raw.revoked_at == null,
+  };
+}
+
+export async function getMonitorApiKeys(): Promise<MonitorApiKeysResult> {
+  const res = await monitorRequest("/v1/admin/keys");
+  if (res.status !== "ok") return res;
+  const payload =
+    res.body && typeof res.body === "object" && "data" in res.body
+      ? (res.body as { data: unknown }).data
+      : res.body;
+  const parsed = z.array(monitorApiKeySchema).safeParse(payload);
+  if (!parsed.success) {
+    return {
+      status: "error",
+      httpStatus: null,
+      message: "The monitor returned an unexpected API-keys shape.",
+    };
+  }
+  // Newest first when timestamps are present; otherwise preserve server order.
+  const keys = parsed.data.map(normalizeApiKey).sort((a, b) => {
+    if (!a.created_at || !b.created_at) return 0;
+    return b.created_at.localeCompare(a.created_at);
+  });
+  return { status: "ok", keys };
+}
+
+const createdApiKeySchema = z
+  .object({
+    id: z.string(),
+    label: z.string().nullable().optional(),
+    key: z.string(),
+    key_prefix: z.string().nullable().optional(),
+    created_at: z.string().nullable().optional(),
+    note: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+export type CreatedMonitorApiKey = {
+  id: string;
+  label: string;
+  /** The raw bearer token — returned by POST exactly once, never persisted. */
+  key: string;
+  key_prefix: string | null;
+  created_at: string | null;
+  note: string | null;
+};
+
+/**
+ * Mint a new monitor API key. Server-only mutation — the caller (a server
+ * action) handles auth + audit. The raw `key` in the response is shown once
+ * and is never recoverable; surface it immediately and don't log it.
+ */
+export async function createMonitorApiKey(
+  label: string,
+): Promise<
+  | { ok: true; created: CreatedMonitorApiKey }
+  | { ok: false; message: string }
+> {
+  const res = await monitorRequest("/v1/admin/keys", {
+    method: "POST",
+    body: { label },
+  });
+  if (res.status === "unconfigured") {
+    return { ok: false, message: "Monitor connection is not configured." };
+  }
+  if (res.status === "error") {
+    return { ok: false, message: res.message };
+  }
+  const payload =
+    res.body && typeof res.body === "object" && "data" in res.body
+      ? (res.body as { data: unknown }).data
+      : res.body;
+  const parsed = createdApiKeySchema.safeParse(payload);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message:
+        "The key was created, but the response was malformed — check the keys list.",
+    };
+  }
+  return {
+    ok: true,
+    created: {
+      id: parsed.data.id,
+      label: parsed.data.label ?? label,
+      key: parsed.data.key,
+      key_prefix: parsed.data.key_prefix ?? null,
+      created_at: parsed.data.created_at ?? null,
+      note: parsed.data.note ?? null,
+    },
+  };
+}
+
+/**
+ * Revoke a monitor API key by id. Server-only mutation — the caller handles
+ * auth + audit. Revocation takes effect within ~30s across instances.
+ */
+export async function revokeMonitorApiKey(
+  id: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await monitorRequest(`/v1/admin/keys/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (res.status === "unconfigured") {
+    return { ok: false, message: "Monitor connection is not configured." };
+  }
+  if (res.status === "error") {
+    return { ok: false, message: res.message };
+  }
+  return { ok: true };
 }
 
 /** Hostname only (no token, no path) for safe diagnostic logging. */

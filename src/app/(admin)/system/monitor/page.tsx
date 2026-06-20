@@ -4,6 +4,7 @@ import {
   getAntifraudSystem,
   getMonitorEvents,
   getMonitorApiEndpoints,
+  getMonitorApiKeys,
 } from "@/lib/backend-api/monitor";
 import { MonitorView } from "./monitor-view";
 
@@ -28,13 +29,15 @@ export const metadata = { title: "Monitor" };
 export default async function MonitorPage() {
   await requirePageAccess("/system/monitor");
 
-  // All four reads are lightweight external calls — fetch them in parallel so
-  // the tabs (Overview / Antifraud / Events / Endpoints) are ready together.
-  const [result, antifraud, events, endpoints] = await Promise.all([
+  // All reads are lightweight external calls — fetch them in parallel so the
+  // tabs (Overview / Antifraud / Events / Endpoints / API Keys) are ready
+  // together.
+  const [result, antifraud, events, endpoints, apiKeys] = await Promise.all([
     getMonitorOverview(),
     getAntifraudSystem(),
     getMonitorEvents(),
     getMonitorApiEndpoints(),
+    getMonitorApiKeys(),
   ]);
   // Stamp the fetch instant on the server so the "Last fetched" indicator is
   // accurate to when the data was actually read (not when the client mounts).
@@ -46,6 +49,7 @@ export default async function MonitorPage() {
       antifraud={antifraud}
       events={events}
       endpoints={endpoints}
+      apiKeys={apiKeys}
       fetchedAt={fetchedAt}
     />
   );
