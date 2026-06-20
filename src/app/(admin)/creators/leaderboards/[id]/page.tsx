@@ -27,13 +27,19 @@ import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { getAdminDisplayTimeZone } from "@/lib/timezone/server";
 import { timezoneLabel } from "@/lib/timezones";
 import { cn } from "@/lib/utils";
-import { getAffiliateLeaderboardRankings } from "@/lib/queries/creators";
+import {
+    getAffiliateLeaderboardRankings,
+    getAffiliateLeaderboardClaims,
+} from "@/lib/queries/creators";
+import { getRewardExpiry } from "@/lib/backend-api/reward-expiry";
+import { computeLeaderboardClaimWindow } from "@/lib/reward-expiry/leaderboard-claim-window";
 import { compareCreatorsLeaderboards } from "@/lib/clickhouse/compare/creators-leaderboards";
 import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsorship";
 
 import { DetailActions } from "../_components/detail-actions";
 import { ManualPaymentPanel } from "../_components/manual-payment-panel";
 import { LeaderboardStandingsPanel } from "../_components/leaderboard-standings-panel";
+import { LeaderboardClaimsPanel } from "../_components/leaderboard-claims-panel";
 import {
     LeaderboardDetailCountdown,
     type LeaderboardCountdownMode,
@@ -76,7 +82,7 @@ export default async function AffiliateLeaderboardDetailPage({
     }
     const db = await getDb();
     const participatingCreatorIds = [lb.creator_user_id, ...(lb.co_creator_user_ids ?? [])];
-    const [creators, rankings, sponsorshipMap, claimHolds] = await Promise.all([
+    const [creators, rankings, sponsorshipMap, claimHolds, claims, leaderboardExpiryDays] = await Promise.all([
         // Hydrate the primary creator plus every co-creator in one query so we
         // can render names alongside each id on the definition card.
         // Best-effort — a failure just renders the raw ids (names omitted)
@@ -119,7 +125,24 @@ export default async function AffiliateLeaderboardDetailPage({
             console.error("[leaderboard] claim holds query failed", err);
             return [] as Awaited<ReturnType<typeof affiliateLeaderboardsApi.listClaimHolds>>;
         }),
+        // Settled prize claims — who has already claimed (MAIN DB, indexed on
+        // leaderboard_id). Best-effort — a failure just renders an empty
+        // claimants list instead of throwing the whole page.
+        getAffiliateLeaderboardClaims(id).catch((err) => {
+            console.error("[leaderboard] claims query failed", err);
+            return [] as Awaited<ReturnType<typeof getAffiliateLeaderboardClaims>>;
+        }),
+        // Live claim-window length (days after the event ends; 0 = never).
+        // null on failure → the banner renders an "unavailable" state.
+        getRewardExpiry().then(
+            (e) => e.leaderboard_days,
+            () => null as number | null,
+        ),
     ]);
+    const claimWindow = computeLeaderboardClaimWindow({
+        endIso: lb.end_date,
+        expiryDays: leaderboardExpiryDays,
+    });
     // Map user_id → active hold so standings rows can render freeze state in O(1).
     const holdByUserId = new Map(claimHolds.map((h) => [h.user_id, h]));
     const creatorById = new Map(creators.map((c) => [c.id, c]));
@@ -428,6 +451,12 @@ export default async function AffiliateLeaderboardDetailPage({
                     </div>
                 );
             })()}
+
+            <LeaderboardClaimsPanel
+                claimWindow={claimWindow}
+                claims={claims}
+                tz={tz}
+            />
 
             <LeaderboardStandingsPanel
                 leaderboardId={lb.id}

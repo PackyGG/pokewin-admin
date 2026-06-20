@@ -16,10 +16,16 @@ import { FadeIn } from "@/components/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import { getAffiliateLeaderboardRankings } from "@/lib/queries/creators";
+import {
+    getAffiliateLeaderboardRankings,
+    getAffiliateLeaderboardClaims,
+} from "@/lib/queries/creators";
+import { getRewardExpiry } from "@/lib/backend-api/reward-expiry";
+import { computeLeaderboardClaimWindow } from "@/lib/reward-expiry/leaderboard-claim-window";
 import { getCreatorLeaderboardWagerMap } from "../../../../(admin)/creators/[userId]/_queries/leaderboard-wager-by-board";
 
 import { LeaderboardStandingsPanel } from "../../../../(admin)/creators/leaderboards/_components/leaderboard-standings-panel";
+import { LeaderboardClaimsPanel } from "../../../../(admin)/creators/leaderboards/_components/leaderboard-claims-panel";
 
 export const metadata = { title: "Leaderboard · Creator Hub" };
 
@@ -58,7 +64,7 @@ export default async function CreatorHubLeaderboardDetailPage({
     }
 
     const db = await getDb();
-    const [creator, rankings, claimHolds, wagerMap] = await Promise.all([
+    const [creator, rankings, claimHolds, wagerMap, claims, leaderboardExpiryDays] = await Promise.all([
         db.user
             .findUnique({
                 where: { id: lb.creator_user_id },
@@ -97,8 +103,20 @@ export default async function CreatorHubLeaderboardDetailPage({
             console.error("[creator-hub.leaderboard] wager map failed", err);
             return new Map<string, number>();
         }),
+        getAffiliateLeaderboardClaims(id).catch((err) => {
+            console.error("[creator-hub.leaderboard] claims query failed", err);
+            return [] as Awaited<ReturnType<typeof getAffiliateLeaderboardClaims>>;
+        }),
+        getRewardExpiry().then(
+            (e) => e.leaderboard_days,
+            () => null as number | null,
+        ),
     ]);
 
+    const claimWindow = computeLeaderboardClaimWindow({
+        endIso: lb.end_date,
+        expiryDays: leaderboardExpiryDays,
+    });
     const holdByUserId = new Map(claimHolds.map((h) => [h.user_id, h]));
     const creatorLabel =
         creator?.username ?? creator?.email ?? lb.creator_user_id.slice(0, 8);
@@ -207,6 +225,8 @@ export default async function CreatorHubLeaderboardDetailPage({
                     </div>
                 </div>
             </FadeIn>
+
+            <LeaderboardClaimsPanel claimWindow={claimWindow} claims={claims} />
 
             <LeaderboardStandingsPanel
                 leaderboardId={lb.id}

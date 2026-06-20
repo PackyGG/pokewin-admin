@@ -26,7 +26,7 @@ export {
   getRecentWagersOnCode,
   getCreatorsCodesListStats,
 } from "./creators-codes";
-export { getAffiliateLeaderboardRankings } from "./creators-leaderboards";
-export type { LeaderboardRanking } from "./creators-leaderboards";
+export { getAffiliateLeaderboardRankings, getAffiliateLeaderboardClaims } from "./creators-leaderboards";
+export type { LeaderboardRanking, LeaderboardClaim } from "./creators-leaderboards";
 export { getAffiliateAnalytics, getAffiliateLevelConfigs } from "./creators-analytics";
 export { refreshStaleSocials } from "./creators-social";

@@ -210,6 +210,55 @@ export async function getAffiliateLeaderboardRankings(opts: {
   });
 }
 
+export type LeaderboardClaim = {
+  userId: string;
+  username: string | null;
+  email: string | null;
+  position: number;
+  prizeUsd: number;
+  claimedAt: string;
+  ledgerTxId: string;
+};
+
+/**
+ * Already-settled prize claims for a single affiliate / creator leaderboard.
+ *
+ * Reads `affiliate_leaderboard_claims` on the MAIN DB — one immutable row per
+ * (leaderboard, user) the moment a participant claims their prize. The
+ * `WHERE leaderboard_id = $1` lookup hits the
+ * `affiliate_leaderboard_claims_leaderboard_user_unique` index (leaderboard_id
+ * is the leading column), verified read-only via EXPLAIN (Bitmap Index Scan,
+ * no seq scan). The `user` join is a PK lookup. Ordered by finishing position
+ * so the panel renders top finishers first.
+ */
+export async function getAffiliateLeaderboardClaims(
+  leaderboardId: string,
+): Promise<LeaderboardClaim[]> {
+  const db = await getDb();
+  const rows = await db.affiliate_leaderboard_claims.findMany({
+    where: { leaderboard_id: leaderboardId },
+    select: {
+      user_id: true,
+      position: true,
+      prize_amount_usd: true,
+      claimed_at: true,
+      ledger_tx_id: true,
+      user: { select: { username: true, email: true } },
+    },
+    orderBy: { position: "asc" },
+  });
+
+  return rows.map((r) => ({
+    userId: r.user_id,
+    username: r.user?.username ?? null,
+    email: r.user?.email ?? null,
+    position: r.position,
+    prizeUsd: toNumber(r.prize_amount_usd),
+    claimedAt: r.claimed_at.toISOString(),
+    ledgerTxId: r.ledger_tx_id,
+  }));
+}
+
 type PositionReachedParams = {
   userIds: string[];
   thresholds: number[];
