@@ -64,7 +64,7 @@ export default async function CreatorHubLeaderboardDetailPage({
     }
 
     const db = await getDb();
-    const [creator, rankings, claimHolds, wagerMap, claims, leaderboardExpiryDays] = await Promise.all([
+    const [creator, standings, claimHolds, wagerMap, claims, leaderboardExpiryDays] = await Promise.all([
         db.user
             .findUnique({
                 where: { id: lb.creator_user_id },
@@ -75,6 +75,7 @@ export default async function CreatorHubLeaderboardDetailPage({
                 return null;
             }),
         getAffiliateLeaderboardRankings({
+            leaderboardId: lb.id,
             creatorUserId: lb.creator_user_id,
             coCreatorUserIds: lb.co_creator_user_ids ?? [],
             affiliateCodes: lb.affiliate_codes,
@@ -84,7 +85,7 @@ export default async function CreatorHubLeaderboardDetailPage({
             limit: 100,
         }).catch((err) => {
             console.error("[creator-hub.leaderboard] rankings query failed", err);
-            return [];
+            return { rankings: [], source: "live" as const };
         }),
         affiliateLeaderboardsApi.listClaimHolds(id).catch((err) => {
             console.error("[creator-hub.leaderboard] claim holds query failed", err);
@@ -117,6 +118,7 @@ export default async function CreatorHubLeaderboardDetailPage({
         endIso: lb.end_date,
         expiryDays: leaderboardExpiryDays,
     });
+    const rankings = standings.rankings;
     const holdByUserId = new Map(claimHolds.map((h) => [h.user_id, h]));
     const creatorLabel =
         creator?.username ?? creator?.email ?? lb.creator_user_id.slice(0, 8);
@@ -233,6 +235,7 @@ export default async function CreatorHubLeaderboardDetailPage({
                 rankings={rankings}
                 holdByUserId={holdByUserId}
                 timeStatus={lb.time_status}
+                source={standings.source}
             />
         </div>
     );

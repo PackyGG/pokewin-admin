@@ -19,6 +19,24 @@ export type LeaderboardRanking = {
   positionReachedAt: string | null;
 };
 
+export type LeaderboardStandings = {
+  rankings: LeaderboardRanking[];
+  /**
+   * Where the standings came from:
+   *   • "settled" — read straight from the authoritative
+   *     `affiliate_leaderboard_snapshots` the backend froze when the board
+   *     ended. These already carry the per-game wager WEIGHTING (packs /
+   *     battles / upgrader count at different rates toward leaderboards),
+   *     so they match what was actually paid out.
+   *   • "live"    — recomputed live from raw `affiliate_code_usages`
+   *     (`wager_amount_usd` is the UNWEIGHTED wager). Used while a board is
+   *     still active and no snapshot exists yet. This is an estimate: it
+   *     does NOT apply the leaderboard weighting, so order / prize tiers can
+   *     differ from the final settled standings.
+   */
+  source: "settled" | "live";
+};
+
 /**
  * Compute the live standings for an affiliate leaderboard event.
  *
@@ -57,6 +75,12 @@ export type LeaderboardRanking = {
  *      position; a row whose position has no tier just gets null.
  */
 export async function getAffiliateLeaderboardRankings(opts: {
+  /**
+   * Backend leaderboard id. When supplied, settled standings are read from
+   * `affiliate_leaderboard_snapshots` (the weighted source of truth) if a
+   * snapshot exists; otherwise the live raw computation below runs.
+   */
+  leaderboardId?: string;
   creatorUserId: string;
   coCreatorUserIds?: string[];
   affiliateCodes: string[];
@@ -64,7 +88,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
   endDate: Date;
   prizeTiers: { position: number; prize_amount_usd: string }[];
   limit?: number;
-}): Promise<LeaderboardRanking[]> {
+}): Promise<LeaderboardStandings> {
   const { creatorUserId, startDate, endDate, prizeTiers } = opts;
   const coCreatorUserIds = (opts.coCreatorUserIds ?? []).filter(
     (id) => id && id !== creatorUserId,
@@ -77,6 +101,71 @@ export async function getAffiliateLeaderboardRankings(opts: {
   const limit = Math.max(1, Math.min(Math.floor(opts.limit ?? 100), 500));
 
   const db = await getDb();
+
+  // ── Settled standings: prefer the authoritative weighted snapshot ──
+  // The game applies per-game wager WEIGHTS (packs / battles / upgrader
+  // count at different rates toward leaderboards). Those weights are
+  // frozen at wager time and the resulting weighted standings are written
+  // into `affiliate_leaderboard_snapshots` when a board settles. Raw
+  // `affiliate_code_usages.wager_amount_usd` is UNWEIGHTED, so recomputing
+  // from it (the live path below) mis-ranks and mis-prizes any board that
+  // ran under non-1× weights. Whenever a snapshot exists, it wins.
+  // Lookup is by (leaderboard_id, position) — hits
+  // `affiliate_leaderboard_snapshots_leaderboard_position_idx`.
+  if (opts.leaderboardId) {
+    const snaps = await db.affiliate_leaderboard_snapshots.findMany({
+      where: { leaderboard_id: opts.leaderboardId },
+      orderBy: { position: "asc" },
+      take: limit,
+      select: {
+        user_id: true,
+        position: true,
+        total_wagered_usd: true,
+        prize_amount_usd: true,
+        user: { select: { username: true, email: true } },
+      },
+    });
+    if (snaps.length > 0) {
+      const snapPrizeByPosition = new Map<number, number>();
+      for (const t of prizeTiers) {
+        snapPrizeByPosition.set(t.position, toNumber(t.prize_amount_usd));
+      }
+      const pnlByUser = await calculateUsersBoundedWindowedPnlBatch(
+        snaps.map((s) => s.user_id),
+        startDate,
+        endDate,
+      ).catch((err) => {
+        console.error("[leaderboard] windowed PnL batch failed (snapshot)", err);
+        return new Map<string, number>();
+      });
+      return {
+        source: "settled",
+        rankings: snaps.map((s) => {
+          const snapPrize = toNumber(s.prize_amount_usd);
+          return {
+            position: s.position,
+            userId: s.user_id,
+            username: s.user?.username ?? null,
+            email: s.user?.email ?? null,
+            totalWageredUsd: toNumber(s.total_wagered_usd),
+            housePnlUsd: pnlByUser.get(s.user_id) ?? 0,
+            // Prefer the prize frozen on the snapshot; fall back to the
+            // current prize-tier table by position when the snapshot
+            // didn't carry one (legacy rows default prize to 0).
+            prizeUsd:
+              snapPrize > 0
+                ? snapPrize
+                : (snapPrizeByPosition.get(s.position) ?? null),
+            // The snapshot doesn't record when a place was reached, and a
+            // raw running-total estimate wouldn't line up with the weighted
+            // positions — leave it blank for settled standings.
+            positionReachedAt: null,
+          };
+        }),
+      };
+    }
+  }
+
   const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
@@ -106,7 +195,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
     );
     codes = owned.map((c) => c.code);
   }
-  if (codes.length === 0) return []; // no codes resolved for any participating creator
+  if (codes.length === 0) return { rankings: [], source: "live" }; // no codes resolved for any participating creator
 
   // Casing dance — same convention as creators-codes.ts:
   // affiliate_clicks is always uppercase, affiliate_code_usages is
@@ -194,7 +283,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
     }),
   ]);
 
-  return rows.map((r, i) => {
+  const rankings = rows.map((r, i) => {
     const position = i + 1;
     const reached = reachedAtByUser.get(r.user_id);
     return {
@@ -208,6 +297,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
       positionReachedAt: reached ? reached.toISOString() : null,
     };
   });
+  return { rankings, source: "live" };
 }
 
 export type LeaderboardClaim = {

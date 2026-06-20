@@ -25,21 +25,46 @@ export function LeaderboardStandingsPanel({
     rankings,
     holdByUserId,
     timeStatus,
+    source = "live",
     userHref = (userId) => `/users/${userId}`,
 }: {
     leaderboardId: string;
     rankings: LeaderboardRanking[];
     holdByUserId: Map<string, HoldSummary>;
     timeStatus: TimeStatus;
+    /**
+     * "settled" — weighted standings read from the final snapshot (matches
+     * what was paid). "live" — unweighted live estimate from raw wager
+     * volume (per-game leaderboard weights aren't applied), shown while a
+     * board is active and no snapshot exists yet.
+     */
+    source?: "settled" | "live";
     userHref?: (userId: string) => string;
 }) {
+    const showLiveEstimateNote = source === "live" && rankings.length > 0;
     return (
         <FadeIn>
             <div className="rounded-lg border">
-                <div className="border-b px-5 py-3 flex items-center justify-between">
-                    <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                        Standings
-                    </h2>
+                <div className="border-b px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                            Standings
+                        </h2>
+                        {rankings.length > 0 && (
+                            <span
+                                className={cn(
+                                    "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                                    source === "settled"
+                                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                        : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+                                )}
+                            >
+                                {source === "settled"
+                                    ? "Settled · weighted"
+                                    : "Live estimate · unweighted"}
+                            </span>
+                        )}
+                    </div>
                     <span className="text-xs text-muted-foreground">
                         {rankings.length === 0
                             ? "no wager activity yet"
@@ -48,6 +73,15 @@ export function LeaderboardStandingsPanel({
                               : `${rankings.length} users wagered`}
                     </span>
                 </div>
+                {showLiveEstimateNote && (
+                    <div className="border-b bg-amber-500/5 px-5 py-2.5 text-xs text-muted-foreground">
+                        Live estimate from raw wager volume — the per-game
+                        leaderboard wager weights aren&apos;t applied here, so the
+                        order and prize tiers can differ from the final settled
+                        standings. Weighted standings are locked in when the board
+                        ends.
+                    </div>
+                )}
                 <Table>
                     <TableHeader>
                         <TableRow>

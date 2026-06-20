@@ -78,6 +78,28 @@ async function computeCreatorLeaderboardWagerMap(
   if (boards.length === 0) return result;
 
   const db = await getDb();
+
+  // ── Settled boards: use the authoritative weighted snapshot total ──
+  // Per-game wager weights (packs / battles / upgrader) are applied at
+  // wager time and frozen into affiliate_leaderboard_snapshots when a board
+  // settles. Raw affiliate_code_usages.wager_amount_usd is UNWEIGHTED, so
+  // for any board that has a snapshot we sum the snapshot instead — keeping
+  // this card consistent with the (weighted) detail-page standings. Only
+  // boards WITHOUT a snapshot fall through to the live raw scan below.
+  const boardIds = boards.map((b) => b.id);
+  const snapSums = await db.affiliate_leaderboard_snapshots.groupBy({
+    by: ["leaderboard_id"],
+    where: { leaderboard_id: { in: boardIds } },
+    _sum: { total_wagered_usd: true },
+  });
+  const settledBoardIds = new Set<string>();
+  for (const s of snapSums) {
+    settledBoardIds.add(s.leaderboard_id);
+    result.set(s.leaderboard_id, toNumber(s._sum.total_wagered_usd ?? 0));
+  }
+  const liveBoards = boards.filter((b) => !settledBoardIds.has(b.id));
+  if (liveBoards.length === 0) return result;
+
   const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
@@ -88,7 +110,7 @@ async function computeCreatorLeaderboardWagerMap(
   // to its owner so the per-board fallback can keep the
   // transferred-code guard (acu.affiliate_user_id ∈ that board's
   // participating creators).
-  const fallbackBoards = boards.filter((b) => b.affiliateCodes.length === 0);
+  const fallbackBoards = liveBoards.filter((b) => b.affiliateCodes.length === 0);
   let codesByOwner = new Map<string, string[]>();
   if (fallbackBoards.length > 0) {
     const ownerIds = Array.from(
@@ -135,7 +157,7 @@ async function computeCreatorLeaderboardWagerMap(
     creatorIds: string[];
   };
   const tuples: Tuple[] = [];
-  for (const b of boards) {
+  for (const b of liveBoards) {
     const participating = [
       b.creatorUserId,
       ...b.coCreatorUserIds.filter((id) => id && id !== b.creatorUserId),

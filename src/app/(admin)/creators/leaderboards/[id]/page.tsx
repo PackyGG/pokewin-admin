@@ -82,7 +82,7 @@ export default async function AffiliateLeaderboardDetailPage({
     }
     const db = await getDb();
     const participatingCreatorIds = [lb.creator_user_id, ...(lb.co_creator_user_ids ?? [])];
-    const [creators, rankings, sponsorshipMap, claimHolds, claims, leaderboardExpiryDays] = await Promise.all([
+    const [creators, standings, sponsorshipMap, claimHolds, claims, leaderboardExpiryDays] = await Promise.all([
         // Hydrate the primary creator plus every co-creator in one query so we
         // can render names alongside each id on the definition card.
         // Best-effort — a failure just renders the raw ids (names omitted)
@@ -96,11 +96,14 @@ export default async function AffiliateLeaderboardDetailPage({
                 console.error("[leaderboard] creator hydration query failed", err);
                 return [] as { id: string; username: string | null; email: string | null }[];
             }),
-        // Live standings — computed against the main DB (this
-        // backend doesn't expose a /rankings endpoint yet).
-        // Wraps in a try/catch so a query error never breaks the
-        // page — the rest of the leaderboard config still renders.
+        // Standings — settled boards read the authoritative WEIGHTED
+        // snapshot (affiliate_leaderboard_snapshots); active boards with no
+        // snapshot yet fall back to a live UNWEIGHTED estimate from raw
+        // affiliate_code_usages (this backend exposes no /rankings endpoint).
+        // Wraps in a try/catch so a query error never breaks the page — the
+        // rest of the leaderboard config still renders.
         getAffiliateLeaderboardRankings({
+            leaderboardId: lb.id,
             creatorUserId: lb.creator_user_id,
             coCreatorUserIds: lb.co_creator_user_ids ?? [],
             affiliateCodes: lb.affiliate_codes,
@@ -110,7 +113,7 @@ export default async function AffiliateLeaderboardDetailPage({
             limit: 100,
         }).catch((err) => {
             console.error("[leaderboard] rankings query failed", err);
-            return [];
+            return { rankings: [], source: "live" as const };
         }),
         // Admin-side sponsored % so the Edit dialog can pre-fill it.
         // Best-effort — a failure just defaults the field to 100%.
@@ -139,6 +142,10 @@ export default async function AffiliateLeaderboardDetailPage({
             () => null as number | null,
         ),
     ]);
+    const rankings = standings.rankings;
+    // "settled" → weighted snapshot (matches what was paid); "live" →
+    // unweighted live estimate for an active board with no snapshot yet.
+    const standingsSettled = standings.source === "settled";
     const claimWindow = computeLeaderboardClaimWindow({
         endIso: lb.end_date,
         expiryDays: leaderboardExpiryDays,
@@ -161,20 +168,24 @@ export default async function AffiliateLeaderboardDetailPage({
     // Fire-and-forget CQRS comparison (Phase 2B). No-op unless the
     // `creators_leaderboards` surface is in comparison mode; the served value
     // above is ALWAYS the Postgres `rankings`. Mirrors the same opts so the CH
-    // twin replicates the EXACT 2-role + blacklist scope.
-    void compareCreatorsLeaderboards(
-        lb.id,
-        {
-            creatorUserId: lb.creator_user_id,
-            coCreatorUserIds: lb.co_creator_user_ids ?? [],
-            affiliateCodes: lb.affiliate_codes,
-            startDate: new Date(lb.start_date),
-            endDate: new Date(lb.end_date),
-            prizeTiers: lb.prize_tiers,
-            limit: 100,
-        },
-        rankings,
-    );
+    // twin replicates the EXACT 2-role + blacklist scope. Only meaningful for
+    // the LIVE raw path — settled boards now serve the weighted snapshot,
+    // which the raw CH twin can't reproduce, so skip the comparison there.
+    if (!standingsSettled) {
+        void compareCreatorsLeaderboards(
+            lb.id,
+            {
+                creatorUserId: lb.creator_user_id,
+                coCreatorUserIds: lb.co_creator_user_ids ?? [],
+                affiliateCodes: lb.affiliate_codes,
+                startDate: new Date(lb.start_date),
+                endDate: new Date(lb.end_date),
+                prizeTiers: lb.prize_tiers,
+                limit: 100,
+            },
+            rankings,
+        );
+    }
 
     const now = Date.now();
     const startMs = new Date(lb.start_date).getTime();
@@ -463,6 +474,7 @@ export default async function AffiliateLeaderboardDetailPage({
                 rankings={rankings}
                 holdByUserId={holdByUserId}
                 timeStatus={lb.time_status}
+                source={standings.source}
             />
 
             <FadeIn>
