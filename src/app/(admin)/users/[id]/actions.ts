@@ -1699,7 +1699,11 @@ export async function toggleFeatureLock(
     metadata: { feature, locked },
   });
 
-  revalidatePath(`/users/${userId}`);
+  // NOTE: intentionally NO revalidatePath here. revalidatePath inside a
+  // Server Action makes Next.js re-render the whole /users/[id] route as
+  // part of the action response, which re-runs the ~30s getUserDetail
+  // aggregate just to flip one boolean. The client toggles optimistically
+  // and the 60s AutoRefresh tick reconciles the lock state from the DB.
 }
 
 export async function fetchInventory(

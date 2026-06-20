@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useTransition } from "react";
+import React, { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { FileText, Loader2, LineChart, Trash2 } from "lucide-react";
@@ -491,38 +491,61 @@ export const FeatureLocksCard = React.memo(function FeatureLocksCard({
   canToggle: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
-  const features = [
+  // Server-truth lock state, recomputed whenever the detail aggregate
+  // re-renders (e.g. the 60s AutoRefresh tick).
+  const serverLocks = useMemo(
+    () => ({
+      locked_withdrawals_crypto: featureLocks?.lockedWithdrawalsCrypto ?? false,
+      locked_withdrawals_items: featureLocks?.lockedWithdrawalsItems ?? false,
+      locked_inventory_sales: featureLocks?.lockedInventorySales ?? false,
+      locked_exchanges: featureLocks?.lockedExchanges ?? false,
+      locked_openings: featureLocks?.lockedOpenings ?? false,
+      locked_vault: featureLocks?.lockedVault ?? false,
+    }),
+    [featureLocks],
+  );
+
+  // Optimistic local mirror so a toggle flips the switch INSTANTLY instead
+  // of waiting on a full page re-render of the ~30s getUserDetail aggregate.
+  // The action only writes the boolean + audit row; we no longer
+  // revalidatePath/router.refresh on every flip — the AutoRefresh tick
+  // reconciles this back to server truth.
+  const [locks, setLocks] = useState(serverLocks);
+  useEffect(() => {
+    setLocks(serverLocks);
+  }, [serverLocks]);
+
+  const features: { key: keyof typeof serverLocks; label: string; locked: boolean }[] = [
     {
       key: "locked_withdrawals_crypto",
       label: "Crypto Withdrawals",
-      locked: featureLocks?.lockedWithdrawalsCrypto ?? false,
+      locked: locks.locked_withdrawals_crypto,
     },
     {
       key: "locked_withdrawals_items",
       label: "Item Withdrawals",
-      locked: featureLocks?.lockedWithdrawalsItems ?? false,
+      locked: locks.locked_withdrawals_items,
     },
     {
       key: "locked_inventory_sales",
       label: "Inventory Sales",
-      locked: featureLocks?.lockedInventorySales ?? false,
+      locked: locks.locked_inventory_sales,
     },
     {
       key: "locked_exchanges",
       label: "Exchanges",
-      locked: featureLocks?.lockedExchanges ?? false,
+      locked: locks.locked_exchanges,
     },
     {
       key: "locked_openings",
       label: "Openings",
-      locked: featureLocks?.lockedOpenings ?? false,
+      locked: locks.locked_openings,
     },
     {
       key: "locked_vault",
       label: "Vault",
-      locked: featureLocks?.lockedVault ?? false,
+      locked: locks.locked_vault,
     },
   ];
 
@@ -551,12 +574,21 @@ export const FeatureLocksCard = React.memo(function FeatureLocksCard({
                   checked={f.locked}
                   disabled={isPending}
                   onCheckedChange={(checked) => {
+                    setLocks((prev) => ({ ...prev, [f.key]: checked }));
                     startTransition(async () => {
-                      await toggleFeatureLock(userId, f.key, checked);
-                      toast.success(
-                        `${f.label} ${checked ? "locked" : "unlocked"}`,
-                      );
-                      router.refresh();
+                      try {
+                        await toggleFeatureLock(userId, f.key, checked);
+                        toast.success(
+                          `${f.label} ${checked ? "locked" : "unlocked"}`,
+                        );
+                      } catch (err) {
+                        setLocks((prev) => ({ ...prev, [f.key]: !checked }));
+                        toast.error(
+                          err instanceof Error
+                            ? err.message
+                            : "Failed to update feature lock",
+                        );
+                      }
                     });
                   }}
                 />
