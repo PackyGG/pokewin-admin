@@ -1,6 +1,8 @@
 "use client";
 
+import { useState, useTransition } from "react";
 import Link from "next/link";
+import { toast } from "sonner";
 import {
   Activity,
   AlertTriangle,
@@ -11,12 +13,19 @@ import {
   Database,
   Gauge,
   Hourglass,
+  Info,
+  Layers,
+  Lock,
   Plug,
   Route,
   Server,
   Settings2,
+  Shield,
+  ShieldAlert,
   Timer,
+  Unlock,
   XCircle,
+  Zap,
 } from "lucide-react";
 import {
   PageHero,
@@ -30,6 +39,8 @@ import {
 import { FadeIn } from "@/components/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { CopyButton } from "@/components/copy-button";
 import {
   Table,
@@ -42,10 +53,17 @@ import {
 import { formatDateTime, formatNumber, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { MonitorRefreshButton } from "./refresh-button";
+import { toggleMonitorEvent } from "./actions";
 import type {
   MonitorNotificationSource,
   MonitorOverview,
   MonitorResult,
+  AntifraudResult,
+  AntifraudSignal,
+  MonitorEvent,
+  MonitorEventsResult,
+  MonitorApiEndpoint,
+  MonitorEndpointsResult,
 } from "@/lib/backend-api/monitor";
 
 // ─── Formatting helpers ───────────────────────────────────────────
@@ -71,6 +89,13 @@ function formatPollInterval(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
   if (ms >= 1000) return `${formatNumber(ms)} ms (${(ms / 1000).toFixed(1)}s)`;
   return `${formatNumber(ms)} ms`;
+}
+
+/** Human duration from a millisecond count: "30s" / "6h" / "5m". */
+function formatMs(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 1000) return `${formatNumber(ms)} ms`;
+  return formatUptime(ms / 1000);
 }
 
 /**
@@ -179,25 +204,201 @@ function freshnessTone(ageMs: number): StatusTone {
 
 export function MonitorView({
   result,
+  antifraud,
+  events,
+  endpoints,
   fetchedAt,
 }: {
   result: MonitorResult;
+  antifraud: AntifraudResult;
+  events: MonitorEventsResult;
+  endpoints: MonitorEndpointsResult;
   fetchedAt: string;
 }) {
+  // Env missing → nothing can load. Show the single setup empty-state (no
+  // tabs); the other reads would all be unconfigured too.
   if (result.status === "unconfigured") {
     return <UnconfiguredState missing={result.missing} fetchedAt={fetchedAt} />;
   }
-  if (result.status === "error") {
-    return (
-      <ErrorState
-        httpStatus={result.httpStatus}
-        message={result.message}
-        fetchedAt={fetchedAt}
-      />
-    );
-  }
+
+  const overviewOk = result.status === "ok" ? result : null;
+  const data = overviewOk?.data ?? null;
+
+  const dependencies = data?.dependencies ?? null;
+  const depEntries = dependencies ? Object.entries(dependencies) : [];
+  const anyDepDown = depEntries.some(([, v]) => toneForDependency(v) !== "good");
+  const overallTone: StatusTone = !overviewOk
+    ? "bad"
+    : depEntries.length === 0
+      ? "neutral"
+      : anyDepDown
+        ? "bad"
+        : "good";
+  const service = data?.service ?? null;
+  const analytics = data?.analytics ?? null;
+
   return (
-    <OkState data={result.data} parsedLoosely={result.parsedLoosely} fetchedAt={fetchedAt} />
+    <div className="space-y-6">
+      {/* ── Hero + health summary ───────────────────────────────── */}
+      <PageHero>
+        <PageHeroIdentity
+          icon={Activity}
+          accent={TONE_ACCENT[overallTone]}
+          title={
+            <span className="flex flex-wrap items-center gap-2">
+              Monitor
+              {service?.name && (
+                <span className="font-mono text-sm font-normal text-muted-foreground">
+                  {service.name}
+                </span>
+              )}
+            </span>
+          }
+          subtitle="Backend monitor service — health, antifraud scoring, event switches & API surface."
+          badges={
+            <StatusBadge tone={overallTone}>
+              {overallTone === "good"
+                ? "All systems healthy"
+                : overallTone === "bad"
+                  ? "Degraded"
+                  : "Status unknown"}
+            </StatusBadge>
+          }
+          action={<MonitorRefreshButton />}
+        />
+
+        {overviewOk && (
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+            <KpiTile
+              label="Postgres"
+              value={depStatusText(dependencies?.postgres)}
+              icon={Database}
+              accent={TONE_ACCENT[depTone(dependencies?.postgres)]}
+            />
+            <KpiTile
+              label="ClickHouse"
+              value={depStatusText(dependencies?.clickhouse)}
+              icon={Database}
+              accent={TONE_ACCENT[depTone(dependencies?.clickhouse)]}
+            />
+            <KpiTile
+              label="Uptime"
+              value={formatUptime(service?.uptime_seconds)}
+              icon={Timer}
+              accent="blue"
+            />
+            <KpiTile
+              label="Poll interval"
+              value={
+                service?.poll_interval_ms != null
+                  ? `${formatNumber(service.poll_interval_ms)} ms`
+                  : "—"
+              }
+              icon={Gauge}
+              accent="cyan"
+            />
+            <KpiTile
+              label="Node"
+              value={service?.node ?? "—"}
+              icon={Server}
+              accent="purple"
+            />
+            <KpiTile
+              label="Analytics"
+              value={
+                analytics?.reachable === true
+                  ? "Reachable"
+                  : analytics?.reachable === false
+                    ? "Unreachable"
+                    : "Unknown"
+              }
+              icon={Activity}
+              accent={TONE_ACCENT[boolTone(analytics?.reachable)]}
+            />
+          </div>
+        )}
+      </PageHero>
+
+      {overviewOk?.parsedLoosely && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+          <p className="text-xs text-muted-foreground">
+            The monitor returned data in an unexpected shape, so some fields may
+            be displayed loosely. The raw values are still shown below where
+            possible.
+          </p>
+        </div>
+      )}
+
+      {/* ── Tabs ────────────────────────────────────────────────── */}
+      <Tabs defaultValue="overview">
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="overview">
+            <Activity className="size-3.5" aria-hidden />
+            Overview
+          </TabsTrigger>
+          <TabsTrigger value="antifraud">
+            <ShieldAlert className="size-3.5" aria-hidden />
+            Antifraud
+          </TabsTrigger>
+          <TabsTrigger value="events">
+            <Bell className="size-3.5" aria-hidden />
+            Events
+          </TabsTrigger>
+          <TabsTrigger value="endpoints">
+            <Route className="size-3.5" aria-hidden />
+            Endpoints
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="pt-4">
+          {overviewOk ? (
+            <OverviewBody data={overviewOk.data} overallTone={overallTone} />
+          ) : result.status === "error" ? (
+            <InlineNotice
+              tone="bad"
+              icon={AlertTriangle}
+              title="Couldn't load the overview"
+            >
+              <p className="text-sm text-muted-foreground">{result.message}</p>
+              {result.httpStatus != null && (
+                <Badge
+                  variant="outline"
+                  className="gap-1 font-mono text-rose-600 dark:text-rose-400"
+                >
+                  HTTP {result.httpStatus}
+                </Badge>
+              )}
+              <div className="flex items-center gap-2 pt-1">
+                <MonitorRefreshButton />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  nativeButton={false}
+                  render={<Link href="/dashboard" />}
+                >
+                  <ArrowLeft className="size-4" aria-hidden />
+                  Back to dashboard
+                </Button>
+              </div>
+            </InlineNotice>
+          ) : null}
+        </TabsContent>
+
+        <TabsContent value="antifraud" className="pt-4">
+          <AntifraudTab result={antifraud} />
+        </TabsContent>
+
+        <TabsContent value="events" className="pt-4">
+          <EventsTab result={events} />
+        </TabsContent>
+
+        <TabsContent value="endpoints" className="pt-4">
+          <EndpointsTab result={endpoints} />
+        </TabsContent>
+      </Tabs>
+
+      <LastFetched fetchedAt={fetchedAt} />
+    </div>
   );
 }
 
@@ -214,6 +415,96 @@ function LastFetched({ fetchedAt }: { fetchedAt: string }) {
       <span suppressHydrationWarning>{formatRelative(fetchedAt)}</span> ·{" "}
       <span className="tabular-nums">{formatDateTime(fetchedAt)}</span>
     </p>
+  );
+}
+
+// ─── Inline notice (per-tab error / unconfigured states) ──────────
+
+function InlineNotice({
+  tone,
+  icon: Icon,
+  title,
+  children,
+}: {
+  tone: StatusTone;
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  children?: React.ReactNode;
+}) {
+  const border =
+    tone === "bad"
+      ? "border-rose-500/30 bg-rose-500/5"
+      : tone === "warn"
+        ? "border-amber-500/30 bg-amber-500/5"
+        : "border-border bg-muted/30";
+  const ring =
+    tone === "bad"
+      ? "bg-rose-500/10 ring-rose-500/30 text-rose-500"
+      : tone === "warn"
+        ? "bg-amber-500/10 ring-amber-500/30 text-amber-500"
+        : "bg-muted ring-border text-muted-foreground";
+  return (
+    <FadeIn>
+      <div className={cn("rounded-2xl border p-6", border)}>
+        <div className="flex items-start gap-3">
+          <div
+            className={cn(
+              "flex size-10 shrink-0 items-center justify-center rounded-xl ring-1",
+              ring,
+            )}
+          >
+            <Icon className="size-5" />
+          </div>
+          <div className="flex-1 space-y-2">
+            <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+            {children}
+          </div>
+        </div>
+      </div>
+    </FadeIn>
+  );
+}
+
+/** Convert a non-ok result into a friendly inline notice. */
+function ResultNotice({
+  status,
+  httpStatus,
+  message,
+  missing,
+}: {
+  status: "unconfigured" | "error";
+  httpStatus?: number | null;
+  message?: string;
+  missing?: string[];
+}) {
+  if (status === "unconfigured") {
+    return (
+      <InlineNotice tone="warn" icon={Settings2} title="Not configured">
+        <p className="text-sm text-muted-foreground">
+          The monitor connection isn&apos;t set up in this environment
+          {missing && missing.length > 0
+            ? ` (missing ${missing.join(", ")})`
+            : ""}
+          .
+        </p>
+      </InlineNotice>
+    );
+  }
+  return (
+    <InlineNotice tone="bad" icon={AlertTriangle} title="Couldn't load">
+      <p className="text-sm text-muted-foreground">{message}</p>
+      {httpStatus != null && (
+        <Badge
+          variant="outline"
+          className="gap-1 font-mono text-rose-600 dark:text-rose-400"
+        >
+          HTTP {httpStatus}
+        </Badge>
+      )}
+      <div className="pt-1">
+        <MonitorRefreshButton />
+      </div>
+    </InlineNotice>
   );
 }
 
@@ -292,87 +583,14 @@ function UnconfiguredState({
   );
 }
 
-// ─── Error state: fetch failed / non-200 / bad JSON ───────────────
+// ─── Overview tab body ────────────────────────────────────────────
 
-function ErrorState({
-  httpStatus,
-  message,
-  fetchedAt,
-}: {
-  httpStatus: number | null;
-  message: string;
-  fetchedAt: string;
-}) {
-  return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={Activity}
-          accent="rose"
-          title="Monitor"
-          subtitle="Backend monitor service — health, notifications & analytics freshness."
-          action={<MonitorRefreshButton />}
-        />
-      </PageHero>
-
-      <FadeIn>
-        <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-6">
-          <div className="flex items-start gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/10 ring-1 ring-rose-500/30">
-              <AlertTriangle className="size-5 text-rose-500" />
-            </div>
-            <div className="flex-1 space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-base font-semibold tracking-tight">
-                  Couldn&apos;t load the monitor
-                </h2>
-                {httpStatus != null && (
-                  <Badge
-                    variant="outline"
-                    className="gap-1 font-mono text-rose-600 dark:text-rose-400"
-                  >
-                    HTTP {httpStatus}
-                  </Badge>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground">{message}</p>
-              <p className="text-xs text-muted-foreground">
-                The data was not loaded — this is a connection/response problem
-                with the monitor service, not a sign that anything in it is
-                down. Use Refresh to retry.
-              </p>
-              <div className="flex items-center gap-2 pt-1">
-                <MonitorRefreshButton />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  nativeButton={false}
-                  render={<Link href="/dashboard" />}
-                >
-                  <ArrowLeft className="size-4" aria-hidden />
-                  Back to dashboard
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </FadeIn>
-
-      <LastFetched fetchedAt={fetchedAt} />
-    </div>
-  );
-}
-
-// ─── Success state: render everything ─────────────────────────────
-
-function OkState({
+function OverviewBody({
   data,
-  parsedLoosely,
-  fetchedAt,
+  overallTone,
 }: {
   data: MonitorOverview;
-  parsedLoosely: boolean;
-  fetchedAt: string;
+  overallTone: StatusTone;
 }) {
   const service = data.service ?? null;
   const notifications = data.notifications ?? null;
@@ -380,11 +598,6 @@ function OkState({
   const dependencies = data.dependencies ?? null;
 
   const depEntries = dependencies ? Object.entries(dependencies) : [];
-  // Overall health: every dependency "up" → healthy; any not up → degraded.
-  const anyDepDown = depEntries.some(([, v]) => toneForDependency(v) !== "good");
-  const overallTone: StatusTone =
-    depEntries.length === 0 ? "neutral" : anyDepDown ? "bad" : "good";
-
   const freshnessEntries = analytics?.freshness
     ? Object.entries(analytics.freshness)
     : [];
@@ -392,95 +605,6 @@ function OkState({
 
   return (
     <div className="space-y-6">
-      {/* ── Hero + health summary ───────────────────────────────── */}
-      <PageHero>
-        <PageHeroIdentity
-          icon={Activity}
-          accent={TONE_ACCENT[overallTone]}
-          title={
-            <span className="flex flex-wrap items-center gap-2">
-              Monitor
-              {service?.name && (
-                <span className="font-mono text-sm font-normal text-muted-foreground">
-                  {service.name}
-                </span>
-              )}
-            </span>
-          }
-          subtitle="Backend monitor service — health, notifications & analytics freshness."
-          badges={
-            <StatusBadge tone={overallTone}>
-              {overallTone === "good"
-                ? "All systems healthy"
-                : overallTone === "bad"
-                  ? "Degraded"
-                  : "Status unknown"}
-            </StatusBadge>
-          }
-          action={<MonitorRefreshButton />}
-        />
-
-        {/* KPI strip */}
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-          <KpiTile
-            label="Postgres"
-            value={depStatusText(dependencies?.postgres)}
-            icon={Database}
-            accent={TONE_ACCENT[depTone(dependencies?.postgres)]}
-          />
-          <KpiTile
-            label="ClickHouse"
-            value={depStatusText(dependencies?.clickhouse)}
-            icon={Database}
-            accent={TONE_ACCENT[depTone(dependencies?.clickhouse)]}
-          />
-          <KpiTile
-            label="Uptime"
-            value={formatUptime(service?.uptime_seconds)}
-            icon={Timer}
-            accent="blue"
-          />
-          <KpiTile
-            label="Poll interval"
-            value={
-              service?.poll_interval_ms != null
-                ? `${formatNumber(service.poll_interval_ms)} ms`
-                : "—"
-            }
-            icon={Gauge}
-            accent="cyan"
-          />
-          <KpiTile
-            label="Node"
-            value={service?.node ?? "—"}
-            icon={Server}
-            accent="purple"
-          />
-          <KpiTile
-            label="Analytics"
-            value={
-              analytics?.reachable === true
-                ? "Reachable"
-                : analytics?.reachable === false
-                  ? "Unreachable"
-                  : "Unknown"
-            }
-            icon={Activity}
-            accent={TONE_ACCENT[boolTone(analytics?.reachable)]}
-          />
-        </div>
-      </PageHero>
-
-      {parsedLoosely && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
-          <p className="text-xs text-muted-foreground">
-            The monitor returned data in an unexpected shape, so some fields may
-            be displayed loosely. The raw values are still shown below where
-            possible.
-          </p>
-        </div>
-      )}
-
       {/* ── Service + Dependencies ──────────────────────────────── */}
       <FadeIn>
         <div className="space-y-4">
@@ -520,12 +644,6 @@ function OkState({
                   label="Reported at"
                   value={
                     service?.ts ? (
-                      // The monitor's `ts` is its own "now" — a near-current
-                      // instant. A relative label ("X ago"/"in X") flips
-                      // direction across the SSR→hydration boundary for a
-                      // near-now value, so render the stable ABSOLUTE time
-                      // here (the relative "Last fetched" line below already
-                      // gives recency context).
                       <span className="tabular-nums" title={service.ts}>
                         {formatDateTime(asUtc(service.ts))}
                       </span>
@@ -537,7 +655,11 @@ function OkState({
               </div>
             </StatPanel>
 
-            <StatPanel title="Dependencies" icon={Plug} accent={TONE_ACCENT[overallTone]}>
+            <StatPanel
+              title="Dependencies"
+              icon={Plug}
+              accent={TONE_ACCENT[overallTone]}
+            >
               {depEntries.length === 0 ? (
                 <p className="py-2 text-sm text-muted-foreground">
                   No dependencies reported.
@@ -614,9 +736,7 @@ function OkState({
               />
               <PanelRow
                 label="Authenticated"
-                value={
-                  <BoolBadge value={notifications?.auth} />
-                }
+                value={<BoolBadge value={notifications?.auth} />}
               />
             </div>
 
@@ -706,34 +826,535 @@ function OkState({
               )}
             </StatPanel>
 
-            {/* Endpoints */}
-            <StatPanel title="Monitored endpoints" icon={Route} accent="purple">
+            {/* Analytics endpoints (subset — full list is in the Endpoints tab) */}
+            <StatPanel title="Analytics endpoints" icon={Route} accent="purple">
               {analytics?.endpoints && analytics.endpoints.length > 0 ? (
-                <ul className="space-y-1.5">
-                  {analytics.endpoints.map((ep) => (
-                    <li
-                      key={ep}
-                      className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5"
-                    >
-                      <Route
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
-                      <code className="truncate text-xs">{ep}</code>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <ul className="space-y-1.5">
+                    {analytics.endpoints.map((ep) => (
+                      <li
+                        key={ep}
+                        className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5"
+                      >
+                        <Route
+                          className="size-3.5 shrink-0 text-muted-foreground"
+                          aria-hidden
+                        />
+                        <code className="truncate text-xs">{ep}</code>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    These are the ClickHouse-served analytics routes the monitor
+                    reports. See the <strong>Endpoints</strong> tab for the
+                    complete API surface.
+                  </p>
+                </>
               ) : (
                 <p className="py-2 text-sm text-muted-foreground">
-                  No endpoints reported.
+                  No analytics endpoints reported.
                 </p>
               )}
             </StatPanel>
           </div>
         </div>
       </FadeIn>
+    </div>
+  );
+}
 
-      <LastFetched fetchedAt={fetchedAt} />
+// ─── Antifraud tab ────────────────────────────────────────────────
+
+/** Fraud-risk severity ramp (severity, NOT money House-POV). */
+function riskTone(level: string | null | undefined): StatusTone {
+  const v = (level ?? "").toLowerCase();
+  if (v === "critical" || v === "high") return "bad";
+  if (v === "medium") return "warn";
+  return "neutral";
+}
+
+/** Render a signal's point contribution: flat ("+15") or tiered ("burst +25, critical +40"). */
+function renderPoints(points: AntifraudSignal["points"]): string {
+  if (points == null) return "—";
+  if (typeof points === "number") return `+${points}`;
+  const tiers = Object.entries(points);
+  if (tiers.length === 0) return "—";
+  return tiers.map(([k, v]) => `${k} +${v}`).join(", ");
+}
+
+function AntifraudTab({ result }: { result: AntifraudResult }) {
+  if (result.status !== "ok") {
+    return (
+      <ResultNotice
+        status={result.status}
+        httpStatus={result.status === "error" ? result.httpStatus : undefined}
+        message={result.status === "error" ? result.message : undefined}
+        missing={result.status === "unconfigured" ? result.missing : undefined}
+      />
+    );
+  }
+
+  const af = result.data;
+  const scoring = af.scoring ?? null;
+  const alerting = af.alerting ?? null;
+  const riskLevels = scoring?.riskLevels ?? [];
+  const signals = scoring?.signals ?? [];
+  const guards = af.falsePositiveGuards ?? [];
+  const runtime = af.runtime ?? null;
+  const runtimeEntries = runtime ? Object.entries(runtime) : [];
+
+  return (
+    <div className="space-y-6">
+      {result.parsedLoosely && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+          <p className="text-xs text-muted-foreground">
+            The antifraud config came back in an unexpected shape; some fields
+            may be missing below.
+          </p>
+        </div>
+      )}
+
+      {/* Header: what this system is */}
+      <FadeIn>
+        <StatPanel
+          title={
+            <span className="flex flex-wrap items-center gap-2">
+              {af.service ?? "Antifraud"}
+              <StatusBadge tone={boolTone(af.enabled)}>
+                {af.enabled === false ? "Disabled" : "Active"}
+              </StatusBadge>
+            </span>
+          }
+          icon={ShieldAlert}
+          accent="rose"
+        >
+          {af.mode && (
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {af.mode}
+            </p>
+          )}
+          {af.description && (
+            <p className="text-sm text-muted-foreground">{af.description}</p>
+          )}
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-2.5">
+            <Info className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+            <p className="text-[11px] text-muted-foreground">
+              This system is read-only / advisory (notify-only) and has no
+              enforcement. There is no API switch to toggle it — the per-event
+              notification switches live in the <strong>Events</strong> tab.
+            </p>
+          </div>
+        </StatPanel>
+      </FadeIn>
+
+      {/* Scoring KPIs */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <KpiTile
+          label="Max score"
+          value={scoring?.maxScore != null ? String(scoring.maxScore) : "—"}
+          icon={Gauge}
+          accent="purple"
+        />
+        <KpiTile
+          label="Alert at ≥"
+          value={
+            alerting?.minScoreToAlert != null
+              ? String(alerting.minScoreToAlert)
+              : "—"
+          }
+          icon={ShieldAlert}
+          accent="rose"
+        />
+        <KpiTile
+          label="Scan interval"
+          value={formatMs(numField(runtime, "scanIntervalMs"))}
+          icon={Timer}
+          accent="blue"
+        />
+        <KpiTile
+          label="Window"
+          value={
+            numField(runtime, "windowMinutes") != null
+              ? `${numField(runtime, "windowMinutes")} min`
+              : "—"
+          }
+          icon={Hourglass}
+          accent="cyan"
+        />
+      </div>
+
+      {/* Risk levels */}
+      {riskLevels.length > 0 && (
+        <FadeIn>
+          <div className="space-y-3">
+            <SectionHeading icon={Layers} title="Risk levels" />
+            <div className="flex flex-wrap gap-2">
+              {riskLevels.map((lvl, i) => (
+                <Badge
+                  key={lvl.level ?? i}
+                  variant="outline"
+                  className={cn("gap-1.5", TONE_BADGE[riskTone(lvl.level)])}
+                >
+                  <span className="font-semibold">{lvl.level ?? "—"}</span>
+                  <span className="opacity-80">≥ {lvl.minScore ?? 0}</span>
+                </Badge>
+              ))}
+            </div>
+          </div>
+        </FadeIn>
+      )}
+
+      {/* Signals table */}
+      <FadeIn>
+        <div className="space-y-3">
+          <SectionHeading
+            icon={Shield}
+            title="Scoring signals"
+            action={
+              scoring?.note ? (
+                <span className="text-[11px] text-muted-foreground">
+                  {scoring.note}
+                </span>
+              ) : undefined
+            }
+          />
+          {signals.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No signals reported.</p>
+          ) : (
+            <div className="rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Category</TableHead>
+                    <TableHead>Signal</TableHead>
+                    <TableHead className="text-right">Points</TableHead>
+                    <TableHead>Description</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {signals.map((sig, i) => (
+                    <TableRow key={sig.key ?? i}>
+                      <TableCell className="whitespace-nowrap font-medium">
+                        {sig.category ?? "—"}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <code className="text-xs">{sig.key ?? "—"}</code>
+                          {sig.tiered && (
+                            <Badge
+                              variant="outline"
+                              className="gap-1 text-[10px] text-amber-600 dark:text-amber-400"
+                            >
+                              tiered
+                            </Badge>
+                          )}
+                          {sig.conditional && (
+                            <Badge
+                              variant="outline"
+                              className="gap-1 text-[10px] text-cyan-600 dark:text-cyan-400"
+                            >
+                              conditional
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right font-mono whitespace-nowrap tabular-nums">
+                        {renderPoints(sig.points)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {sig.description ?? "—"}
+                        {sig.conditional && (
+                          <span className="mt-0.5 block text-[11px] italic">
+                            {sig.conditional}
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+      </FadeIn>
+
+      {/* Alerting + guards */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {alerting && (
+          <StatPanel title="Alerting" icon={Bell} accent="amber">
+            <div className="space-y-3">
+              <PanelRow
+                label="Min score to alert"
+                value={alerting.minScoreToAlert ?? "—"}
+              />
+              {alerting.gating && (
+                <p className="text-xs text-muted-foreground">{alerting.gating}</p>
+              )}
+              {alerting.strongSignals && alerting.strongSignals.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-foreground">
+                    Strong signals
+                  </p>
+                  <ul className="space-y-1">
+                    {alerting.strongSignals.map((s, i) => (
+                      <li
+                        key={i}
+                        className="flex items-start gap-2 text-xs text-muted-foreground"
+                      >
+                        <Zap className="mt-0.5 size-3 shrink-0 text-amber-500" />
+                        {s}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </StatPanel>
+        )}
+
+        {guards.length > 0 && (
+          <StatPanel title="False-positive guards" icon={Shield} accent="emerald">
+            <ul className="space-y-1.5">
+              {guards.map((g, i) => (
+                <li
+                  key={i}
+                  className="flex items-start gap-2 text-xs text-muted-foreground"
+                >
+                  <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-emerald-500" />
+                  {g}
+                </li>
+              ))}
+            </ul>
+          </StatPanel>
+        )}
+      </div>
+
+      {/* Runtime config */}
+      {runtimeEntries.length > 0 && (
+        <FadeIn>
+          <div className="space-y-3">
+            <SectionHeading icon={Settings2} title="Runtime" />
+            <div className="grid gap-x-6 gap-y-1 rounded-lg border p-4 sm:grid-cols-2">
+              {runtimeEntries.map(([k, v]) => (
+                <PanelRow
+                  key={k}
+                  label={k}
+                  value={
+                    typeof v === "boolean" ? (
+                      <BoolBadge value={v} />
+                    ) : (
+                      <span className="font-mono text-xs">
+                        {/dedupettlms|scanintervalms/i.test(k)
+                          ? formatMs(Number(v))
+                          : String(v)}
+                      </span>
+                    )
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        </FadeIn>
+      )}
+    </div>
+  );
+}
+
+// ─── Events tab (toggle on/off) ───────────────────────────────────
+
+function EventsTab({ result }: { result: MonitorEventsResult }) {
+  if (result.status !== "ok") {
+    return (
+      <ResultNotice
+        status={result.status}
+        httpStatus={result.status === "error" ? result.httpStatus : undefined}
+        message={result.status === "error" ? result.message : undefined}
+        missing={result.status === "unconfigured" ? result.missing : undefined}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 rounded-xl border border-border bg-muted/30 p-3">
+        <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <p className="text-xs text-muted-foreground">
+          Toggle a notification source on or off. When off, the monitor stops
+          pushing that event&apos;s alerts. Changes apply immediately and are
+          recorded in the admin audit log.
+        </p>
+      </div>
+
+      <SectionHeading icon={Bell} title="Notification events" />
+      <div className="grid gap-3 sm:grid-cols-2">
+        {result.events.map((event) => (
+          <EventToggleRow key={event.name} event={event} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EventToggleRow({ event }: { event: MonitorEvent }) {
+  const [enabled, setEnabled] = useState(event.enabled);
+  const [isPending, startTransition] = useTransition();
+
+  function onToggle(next: boolean) {
+    const previous = enabled;
+    setEnabled(next); // optimistic
+    startTransition(async () => {
+      try {
+        const res = await toggleMonitorEvent({ name: event.name, enabled: next });
+        if (!res.success) {
+          setEnabled(previous);
+          toast.error(res.error);
+          return;
+        }
+        setEnabled(res.enabled);
+        toast.success(
+          `${event.name} ${res.enabled ? "enabled" : "disabled"}`,
+        );
+      } catch (err) {
+        setEnabled(previous);
+        toast.error(
+          err instanceof Error ? err.message : "Failed to toggle event",
+        );
+      }
+    });
+  }
+
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-between gap-3 rounded-xl border bg-card p-4 ring-1 ring-foreground/5 transition-colors",
+        enabled ? "border-emerald-500/30" : "border-border",
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <div
+          className={cn(
+            "flex size-9 shrink-0 items-center justify-center rounded-lg ring-1",
+            enabled
+              ? "bg-emerald-500/10 text-emerald-500 ring-emerald-500/30"
+              : "bg-muted text-muted-foreground ring-border",
+          )}
+        >
+          <Bell className="size-4" />
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium capitalize">
+            {event.name}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {enabled ? "Notifications on" : "Notifications off"}
+          </p>
+        </div>
+      </div>
+      <Switch
+        checked={enabled}
+        onCheckedChange={onToggle}
+        disabled={isPending}
+        aria-label={`Toggle ${event.name} notifications`}
+      />
+    </div>
+  );
+}
+
+// ─── Endpoints tab (full API surface) ─────────────────────────────
+
+const METHOD_BADGE: Record<string, string> = {
+  GET: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
+  PUT: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+  PATCH: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+  POST: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+  DELETE: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
+};
+
+function EndpointsTab({ result }: { result: MonitorEndpointsResult }) {
+  if (result.status !== "ok") {
+    return (
+      <ResultNotice
+        status={result.status}
+        httpStatus={result.status === "error" ? result.httpStatus : undefined}
+        message={result.status === "error" ? result.message : undefined}
+        missing={result.status === "unconfigured" ? result.missing : undefined}
+      />
+    );
+  }
+
+  // Group by first tag (fallback to first path segment, then "other").
+  const groups = new Map<string, MonitorApiEndpoint[]>();
+  for (const ep of result.endpoints) {
+    const key =
+      ep.tags[0] ?? ep.path.split("/").filter(Boolean)[0] ?? "other";
+    const arr = groups.get(key) ?? [];
+    arr.push(ep);
+    groups.set(key, arr);
+  }
+  const groupNames = [...groups.keys()].sort();
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 rounded-xl border border-border bg-muted/30 p-3">
+        <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <p className="text-xs text-muted-foreground">
+          The complete API surface from the monitor&apos;s OpenAPI document
+          ({result.endpoints.length} routes). The Overview tab&apos;s
+          &quot;Analytics endpoints&quot; only lists the ClickHouse-served
+          subset.
+        </p>
+      </div>
+
+      {groupNames.map((name) => {
+        const eps = groups.get(name)!;
+        return (
+          <FadeIn key={name}>
+            <div className="space-y-2">
+              <SectionHeading
+                icon={Route}
+                title={<span className="capitalize">{name}</span>}
+              />
+              <ul className="space-y-1.5">
+                {eps.map((ep) => (
+                  <li
+                    key={`${ep.method} ${ep.path}`}
+                    className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-2"
+                  >
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "w-[58px] shrink-0 justify-center font-mono text-[10px]",
+                        METHOD_BADGE[ep.method] ?? TONE_BADGE.neutral,
+                      )}
+                    >
+                      {ep.method}
+                    </Badge>
+                    <code className="shrink-0 text-xs">{ep.path}</code>
+                    {ep.summary && (
+                      <span className="truncate text-xs text-muted-foreground">
+                        — {ep.summary}
+                      </span>
+                    )}
+                    <span className="ml-auto shrink-0">
+                      {ep.authRequired ? (
+                        <Lock
+                          className="size-3.5 text-amber-500"
+                          aria-label="Requires auth"
+                        />
+                      ) : (
+                        <Unlock
+                          className="size-3.5 text-muted-foreground"
+                          aria-label="Public"
+                        />
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </FadeIn>
+        );
+      })}
     </div>
   );
 }
@@ -834,6 +1455,17 @@ function depStatusText(status: string | undefined): string {
   if (!status) return "—";
   // Capitalize the reported status ("up" → "Up").
   return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+/** Read a numeric field out of the open runtime record (string/number/bool). */
+function numField(
+  runtime: Record<string, number | string | boolean> | null | undefined,
+  key: string,
+): number | null {
+  if (!runtime) return null;
+  const v = runtime[key];
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
 }
 
 /** Normalize a bare Postgres timestamp string to a UTC Date (for formatters). */

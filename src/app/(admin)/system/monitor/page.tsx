@@ -1,5 +1,10 @@
 import { requirePageAccess } from "@/lib/dal";
-import { getMonitorOverview } from "@/lib/backend-api/monitor";
+import {
+  getMonitorOverview,
+  getAntifraudSystem,
+  getMonitorEvents,
+  getMonitorApiEndpoints,
+} from "@/lib/backend-api/monitor";
 import { MonitorView } from "./monitor-view";
 
 /**
@@ -23,10 +28,25 @@ export const metadata = { title: "Monitor" };
 export default async function MonitorPage() {
   await requirePageAccess("/system/monitor");
 
-  const result = await getMonitorOverview();
+  // All four reads are lightweight external calls — fetch them in parallel so
+  // the tabs (Overview / Antifraud / Events / Endpoints) are ready together.
+  const [result, antifraud, events, endpoints] = await Promise.all([
+    getMonitorOverview(),
+    getAntifraudSystem(),
+    getMonitorEvents(),
+    getMonitorApiEndpoints(),
+  ]);
   // Stamp the fetch instant on the server so the "Last fetched" indicator is
   // accurate to when the data was actually read (not when the client mounts).
   const fetchedAt = new Date().toISOString();
 
-  return <MonitorView result={result} fetchedAt={fetchedAt} />;
+  return (
+    <MonitorView
+      result={result}
+      antifraud={antifraud}
+      events={events}
+      endpoints={endpoints}
+      fetchedAt={fetchedAt}
+    />
+  );
 }

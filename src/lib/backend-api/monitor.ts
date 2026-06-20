@@ -228,6 +228,348 @@ export async function getMonitorOverview(): Promise<MonitorResult> {
   return { status: "ok", data: parsed.data, raw: body, parsedLoosely: false };
 }
 
+// ===========================================================================
+// Shared request primitive (used by the antifraud / events / endpoints reads
+// below). `getMonitorOverview` predates this and keeps its own inline copy so
+// its verified behavior is untouched.
+// ===========================================================================
+
+function resolveMonitorBase():
+  | { base: string; token: string }
+  | { missing: string[] } {
+  const baseUrl = process.env.MONITOR_API_URL?.trim();
+  const token = process.env.MONITOR_API_TOKEN?.trim();
+  const missing: string[] = [];
+  if (!baseUrl) missing.push("MONITOR_API_URL");
+  if (!token) missing.push("MONITOR_API_TOKEN");
+  if (missing.length > 0 || !baseUrl || !token) return { missing };
+  let base = baseUrl.replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
+  return { base, token };
+}
+
+type MonitorRawResult =
+  | { status: "unconfigured"; missing: string[] }
+  | { status: "error"; httpStatus: number | null; message: string }
+  | { status: "ok"; body: unknown };
+
+/** Generic JSON request against the monitor base. Never throws. */
+async function monitorRequest(
+  path: string,
+  init?: { method?: "GET" | "PUT" | "POST"; body?: unknown },
+): Promise<MonitorRawResult> {
+  const resolved = resolveMonitorBase();
+  if ("missing" in resolved) {
+    return { status: "unconfigured", missing: resolved.missing };
+  }
+  const { base, token } = resolved;
+  const url = `${base}${path}`;
+  const hasBody = init?.body !== undefined;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: init?.method ?? "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        ...(hasBody ? { "Content-Type": "application/json" } : {}),
+      },
+      body: hasBody ? JSON.stringify(init?.body) : undefined,
+      cache: "no-store",
+      signal: AbortSignal.timeout(MONITOR_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const reason =
+      err instanceof Error
+        ? err.name === "TimeoutError" || err.name === "AbortError"
+          ? `request timed out after ${MONITOR_TIMEOUT_MS / 1000}s`
+          : err.message
+        : "unknown error";
+    console.log(
+      `[monitor-api] network failure host=${safeHost(base)} path=${path} reason=${reason}`,
+    );
+    return {
+      status: "error",
+      httpStatus: null,
+      message: `Couldn't reach the monitor service (${reason}).`,
+    };
+  }
+
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = (await res.text()).slice(0, 200);
+    } catch {
+      // ignore body read failure
+    }
+    console.log(
+      `[monitor-api] non-200 host=${safeHost(base)} path=${path} status=${res.status} detail=${JSON.stringify(detail)}`,
+    );
+    const friendly =
+      res.status === 401 || res.status === 403
+        ? "Authentication was rejected — check MONITOR_API_TOKEN."
+        : res.status >= 500
+          ? "The monitor service returned a server error."
+          : `The monitor service responded with ${res.status} ${res.statusText}.`;
+    return { status: "error", httpStatus: res.status, message: friendly };
+  }
+
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    return {
+      status: "error",
+      httpStatus: res.status,
+      message: "The monitor service returned a response that wasn't valid JSON.",
+    };
+  }
+  return { status: "ok", body };
+}
+
+// ===========================================================================
+// Antifraud system rubric (read-only): GET /v1/antifraud/system
+// Response is wrapped as { data: { … } }. Advisory scoring config — every
+// signal, its points, risk levels, alerting + runtime knobs. No enforcement.
+// ===========================================================================
+
+const antifraudSignalSchema = z
+  .object({
+    key: z.string().nullable().optional(),
+    category: z.string().nullable().optional(),
+    tiered: z.boolean().nullable().optional(),
+    conditional: z.string().nullable().optional(),
+    // Either a flat point value or a tiered map (e.g. { burst, critical }).
+    points: z
+      .union([z.number(), z.record(z.string(), z.number())])
+      .nullable()
+      .optional(),
+    description: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+const antifraudSystemSchema = z
+  .object({
+    service: z.string().nullable().optional(),
+    mode: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+    enabled: z.boolean().nullable().optional(),
+    scoring: z
+      .object({
+        maxScore: z.number().nullable().optional(),
+        riskLevels: z
+          .array(
+            z
+              .object({
+                level: z.string().nullable().optional(),
+                minScore: z.number().nullable().optional(),
+              })
+              .passthrough(),
+          )
+          .nullable()
+          .optional(),
+        note: z.string().nullable().optional(),
+        signals: z.array(antifraudSignalSchema).nullable().optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+    alerting: z
+      .object({
+        minScoreToAlert: z.number().nullable().optional(),
+        gating: z.string().nullable().optional(),
+        strongSignals: z.array(z.string()).nullable().optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+    falsePositiveGuards: z.array(z.string()).nullable().optional(),
+    burstTiers: z.record(z.string(), z.number()).nullable().optional(),
+    runtime: z
+      .record(z.string(), z.union([z.number(), z.string(), z.boolean()]))
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
+
+export type AntifraudSystem = z.infer<typeof antifraudSystemSchema>;
+export type AntifraudSignal = z.infer<typeof antifraudSignalSchema>;
+
+export type AntifraudResult =
+  | { status: "unconfigured"; missing: string[] }
+  | { status: "error"; httpStatus: number | null; message: string }
+  | { status: "ok"; data: AntifraudSystem; raw: unknown; parsedLoosely: boolean };
+
+export async function getAntifraudSystem(): Promise<AntifraudResult> {
+  const res = await monitorRequest("/v1/antifraud/system");
+  if (res.status !== "ok") return res;
+  // Unwrap the { data } envelope; tolerate a bare object too.
+  const payload =
+    res.body && typeof res.body === "object" && "data" in res.body
+      ? (res.body as { data: unknown }).data
+      : res.body;
+  const parsed = antifraudSystemSchema.safeParse(payload);
+  if (!parsed.success) {
+    return {
+      status: "ok",
+      data: (typeof payload === "object" && payload !== null
+        ? payload
+        : {}) as AntifraudSystem,
+      raw: res.body,
+      parsedLoosely: true,
+    };
+  }
+  return { status: "ok", data: parsed.data, raw: res.body, parsedLoosely: false };
+}
+
+// ===========================================================================
+// Event on/off switches: GET /v1/admin/events, PUT /v1/admin/events/{name}
+// These are the monitor's notification sources (upgrader / pack / battle /
+// deposit / withdrawal / signup). Response is wrapped as { data: [...] }.
+// ===========================================================================
+
+const monitorEventSchema = z
+  .object({
+    name: z.string(),
+    enabled: z.boolean(),
+  })
+  .passthrough();
+
+export type MonitorEvent = z.infer<typeof monitorEventSchema>;
+
+export type MonitorEventsResult =
+  | { status: "unconfigured"; missing: string[] }
+  | { status: "error"; httpStatus: number | null; message: string }
+  | { status: "ok"; events: MonitorEvent[] };
+
+export async function getMonitorEvents(): Promise<MonitorEventsResult> {
+  const res = await monitorRequest("/v1/admin/events");
+  if (res.status !== "ok") return res;
+  const payload =
+    res.body && typeof res.body === "object" && "data" in res.body
+      ? (res.body as { data: unknown }).data
+      : res.body;
+  const parsed = z.array(monitorEventSchema).safeParse(payload);
+  if (!parsed.success) {
+    return {
+      status: "error",
+      httpStatus: null,
+      message: "The monitor returned an unexpected events shape.",
+    };
+  }
+  return { status: "ok", events: parsed.data };
+}
+
+/**
+ * Toggle a single notification event on/off. Server-only mutation — the
+ * caller (a server action) is responsible for auth + audit. Returns the
+ * confirmed enabled state when the monitor echoes it back.
+ */
+export async function setMonitorEvent(
+  name: string,
+  enabled: boolean,
+): Promise<
+  | { ok: true; enabled: boolean }
+  | { ok: false; message: string }
+> {
+  const res = await monitorRequest(`/v1/admin/events/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    body: { enabled },
+  });
+  if (res.status === "unconfigured") {
+    return { ok: false, message: "Monitor connection is not configured." };
+  }
+  if (res.status === "error") {
+    return { ok: false, message: res.message };
+  }
+  // Best-effort read-back of the confirmed state; fall back to requested.
+  const payload =
+    res.body && typeof res.body === "object" && "data" in res.body
+      ? (res.body as { data: unknown }).data
+      : res.body;
+  const parsed = monitorEventSchema.safeParse(payload);
+  return {
+    ok: true,
+    enabled: parsed.success ? parsed.data.enabled : enabled,
+  };
+}
+
+// ===========================================================================
+// Full API surface from the OpenAPI document: GET /openapi.json
+// The overview's `analytics.endpoints` only lists the ClickHouse-served
+// analytics routes — this reads the complete route list (meta / leaderboards
+// / stats / antifraud / admin) so the UI can show every endpoint.
+// ===========================================================================
+
+export type MonitorApiEndpoint = {
+  method: string;
+  path: string;
+  summary: string | null;
+  tags: string[];
+  authRequired: boolean;
+};
+
+export type MonitorEndpointsResult =
+  | { status: "unconfigured"; missing: string[] }
+  | { status: "error"; httpStatus: number | null; message: string }
+  | { status: "ok"; endpoints: MonitorApiEndpoint[] };
+
+const HTTP_METHODS = ["get", "put", "post", "patch", "delete", "head", "options"];
+
+export async function getMonitorApiEndpoints(): Promise<MonitorEndpointsResult> {
+  const res = await monitorRequest("/openapi.json");
+  if (res.status !== "ok") return res;
+
+  const doc = res.body as
+    | {
+        paths?: Record<string, Record<string, unknown>>;
+        security?: unknown[];
+      }
+    | null;
+  if (!doc || typeof doc !== "object" || !doc.paths) {
+    return {
+      status: "error",
+      httpStatus: null,
+      message: "The OpenAPI document did not contain any paths.",
+    };
+  }
+
+  const rootSecure = Array.isArray(doc.security) && doc.security.length > 0;
+  const endpoints: MonitorApiEndpoint[] = [];
+
+  for (const [path, ops] of Object.entries(doc.paths)) {
+    if (!ops || typeof ops !== "object") continue;
+    for (const [method, opRaw] of Object.entries(ops)) {
+      if (!HTTP_METHODS.includes(method.toLowerCase())) continue;
+      const op = (opRaw ?? {}) as {
+        summary?: unknown;
+        tags?: unknown;
+        security?: unknown[];
+      };
+      const opSecurity = Array.isArray(op.security)
+        ? op.security.length > 0
+        : null;
+      endpoints.push({
+        method: method.toUpperCase(),
+        path,
+        summary: typeof op.summary === "string" ? op.summary : null,
+        tags: Array.isArray(op.tags)
+          ? op.tags.filter((t): t is string => typeof t === "string")
+          : [],
+        // An operation can override the root security. `[]` explicitly means
+        // public; absent means it inherits the root requirement.
+        authRequired: opSecurity ?? rootSecure,
+      });
+    }
+  }
+
+  endpoints.sort(
+    (a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method),
+  );
+  return { status: "ok", endpoints };
+}
+
 /** Hostname only (no token, no path) for safe diagnostic logging. */
 function safeHost(base: string): string {
   try {
