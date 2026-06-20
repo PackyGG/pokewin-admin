@@ -56,6 +56,7 @@ import {
   Lock,
   Landmark,
   ArrowRight,
+  Scale,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
@@ -88,6 +89,8 @@ import { UserWagerRequirementCard } from "./user-wager-requirement-card";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { UserWagerProgressCard } from "./user-wager-progress-card";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
+import { UserBalanceWeightingCard } from "./user-balance-weighting-card";
+import type { UserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
 import { toWagerRequirementSummary } from "@/lib/queries/users-wager-progress-shared";
 import type {
   PaginatedInventory,
@@ -2142,6 +2145,7 @@ export function AccountTab({
   pnlResultPromise,
   wagerRequirementPromise,
   wagerProgressPromise,
+  balanceWeightingPromise,
 }: {
   data: UserDetail;
   notesPromise: Promise<SafeQueryResult<AdminNote[]>> | null;
@@ -2154,6 +2158,10 @@ export function AccountTab({
   // Read-only wager-requirement PROGRESS from the backend-written `balances`
   // columns (dev-only). null = prod / no-balance / read failed → muted card.
   wagerProgressPromise: Promise<UserWagerProgress | null> | null;
+  // How each part of the balance is weighted toward each destination
+  // (funding-source wager-weight matrix × balance composition). null = tab
+  // not active / read failed → muted card.
+  balanceWeightingPromise: Promise<UserBalanceWeighting | null> | null;
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
   return (
@@ -2219,6 +2227,16 @@ export function AccountTab({
         </Suspense>
       ) : (
         <SkeletonCard lines={3} />
+      )}
+      <SectionHeading icon={Scale} title="Balance Wager Weighting" />
+      {balanceWeightingPromise ? (
+        <Suspense fallback={<SkeletonCard lines={4} />}>
+          <BalanceWeightingStreamed
+            balanceWeightingPromise={balanceWeightingPromise}
+          />
+        </Suspense>
+      ) : (
+        <SkeletonCard lines={4} />
       )}
       <SectionHeading icon={ShieldCheck} title="Moderation" />
       <Card>
@@ -2298,6 +2316,15 @@ function WagerProgressStreamed({
 }) {
   const wagerProgress = use(wagerProgressPromise);
   return <UserWagerProgressCard data={wagerProgress} />;
+}
+
+function BalanceWeightingStreamed({
+  balanceWeightingPromise,
+}: {
+  balanceWeightingPromise: Promise<UserBalanceWeighting | null>;
+}) {
+  const weighting = use(balanceWeightingPromise);
+  return <UserBalanceWeightingCard data={weighting} />;
 }
 
 function NotesStreamed({

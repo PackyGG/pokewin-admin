@@ -32,6 +32,7 @@ import {
 } from "@/lib/errors/safe-query";
 import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { getUserWagerProgress } from "@/lib/queries/users-wager-progress";
+import { getUserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
 import {
   getUserShardWinnings,
   getUserShardPackOpens,
@@ -560,6 +561,18 @@ async function UserDetailBody({
     initialTab === "account"
       ? getUserWagerRequirement(id).catch(() => null)
       : null;
+  // Account tab: how each part of the user's balance is weighted toward each
+  // destination (withdrawal / races / rakeback / shards) — the funding-source
+  // wager-weight matrix projected onto their balance composition. Account-tab
+  // only (Active-Timeframe-Only); timeout-wrapped → muted card on slow/missing.
+  const balanceWeightingPromise =
+    initialTab === "account"
+      ? safeQueryOrNull(
+          () => getUserBalanceWeighting(id),
+          "users.detail.balanceWeighting",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        ).then((r) => r.data)
+      : null;
   // Wager-requirement PROGRESS from the backend-written `balances` columns.
   // ALWAYS kicked (not tab-gated): the hero shows a "Wager Left" KPI on every
   // user view, and the Account tab renders the full per-source breakdown —
@@ -746,6 +759,7 @@ async function UserDetailBody({
       battleVoucherTxPromise={battleVoucherTxPromise}
       wagerRequirementPromise={wagerRequirementPromise}
       wagerProgressPromise={wagerProgressPromise}
+      balanceWeightingPromise={balanceWeightingPromise}
       viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
       initialTab={initialTab}
     />

@@ -73,6 +73,7 @@ import type { UserRewards } from "@/lib/queries/users";
 import type { PaginatedInventory } from "./user-tabs-types";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
+import type { UserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
 import type {
   ShardWinningsResult,
   ShardPackOpensResult,
@@ -206,6 +207,7 @@ export function UserViewModern({
   battleVoucherTxPromise,
   wagerRequirementPromise,
   wagerProgressPromise,
+  balanceWeightingPromise,
   viewerIsAdjustmentOwner,
   initialTab,
 }: {
@@ -274,6 +276,10 @@ export function UserViewModern({
   // backend-written `balances` columns (dev-only). null = prod / no-balance /
   // read failed → the card's muted "not available" state.
   wagerProgressPromise: Promise<UserWagerProgress | null> | null;
+  // Account tab — how each part of the balance is weighted toward each
+  // destination (funding-source wager-weight matrix × this user's balance
+  // composition). null = tab not active / read failed → muted card.
+  balanceWeightingPromise: Promise<UserBalanceWeighting | null> | null;
   // True only for the owner `motha`. Defence-in-depth UI flag: when false the
   // Finances type-filter dropdown drops the "admin balance adjustment" option
   // so a non-owner never even sees the category label. The real boundary is
@@ -846,6 +852,7 @@ export function UserViewModern({
             pnlResultPromise={pnlResultPromise}
             wagerRequirementPromise={wagerRequirementPromise}
             wagerProgressPromise={wagerProgressPromise}
+            balanceWeightingPromise={balanceWeightingPromise}
           />
         )}
       </FadeIn>

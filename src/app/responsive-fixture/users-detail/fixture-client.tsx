@@ -318,6 +318,7 @@ export function UserDetailFixtureClient() {
       battleVoucherTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       wagerRequirementPromise={Promise.resolve(null)}
       wagerProgressPromise={Promise.resolve(null)}
+      balanceWeightingPromise={Promise.resolve(null)}
       viewerIsAdjustmentOwner
       initialTab="overview"
     />
