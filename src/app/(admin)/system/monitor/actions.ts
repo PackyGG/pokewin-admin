@@ -128,41 +128,38 @@ export async function revokeApiKey(data: {
   return { success: true };
 }
 
-// ─── Notification channel routing (per-event destination) ──────────
+// ─── Notification channels (per-event fan-out: ntfy AND/OR Discord) ─
 
-// Validation rules mirror the monitor backend exactly (see the frontend
-// handoff doc). Empty optional fields mean "clear / inherit the env default".
+// Validation rules mirror the monitor backend exactly (see the
+// notification-channels handoff doc). Empty optional secrets mean
+// "clear / inherit the env default".
 const NTFY_TOPIC_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const HTTP_URL_RE = /^https?:\/\/.+/i;
 const DISCORD_WEBHOOK_RE =
   /^https:\/\/(?:(?:canary|ptb)\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/i;
 
-const setChannelSchema = z.intersection(
-  z.object({ name: z.string().trim().min(1).max(64) }),
-  z.discriminatedUnion("transport", [
-    z.object({
-      transport: z.literal("ntfy"),
-      ntfyTopic: z
-        .string()
-        .trim()
-        .regex(NTFY_TOPIC_RE, "Topic must be 1–64 letters, numbers, _ or -")
-        .optional(),
-      ntfyServer: z
-        .string()
-        .trim()
-        .regex(HTTP_URL_RE, "Server must be an http(s):// URL")
-        .optional(),
-      ntfyToken: z.string().trim().min(1).optional(),
-    }),
-    z.object({
-      transport: z.literal("discord"),
-      discordWebhookUrl: z
-        .string()
-        .trim()
-        .regex(DISCORD_WEBHOOK_RE, "Enter a valid Discord webhook URL"),
-    }),
-  ]),
-);
+const setChannelSchema = z
+  .object({
+    name: z.string().trim().min(1).max(64),
+    ntfyEnabled: z.boolean().optional(),
+    ntfyTopic: z
+      .string()
+      .trim()
+      .regex(NTFY_TOPIC_RE, "Topic must be 1–64 letters, numbers, _ or -")
+      .optional(),
+    ntfyServer: z
+      .string()
+      .trim()
+      .regex(HTTP_URL_RE, "Server must be an http(s):// URL")
+      .optional(),
+    ntfyToken: z.string().trim().min(1).optional(),
+    discordEnabled: z.boolean().optional(),
+    discordWebhookUrl: z
+      .string()
+      .trim()
+      .regex(DISCORD_WEBHOOK_RE, "Enter a valid Discord webhook URL")
+      .optional(),
+  });
 
 /** Drop empty-string optionals so blank fields are treated as "inherit". */
 function pruneEmpty<T extends Record<string, unknown>>(obj: T): T {
@@ -176,17 +173,19 @@ function pruneEmpty<T extends Record<string, unknown>>(obj: T): T {
 }
 
 /**
- * Route one monitored event to a destination (ntfy topic or Discord webhook)
- * via PUT {MONITOR_API_URL}/v1/admin/channels/{name}. Server-only: the secret
- * (ntfy token / webhook URL) stays server-side. Gated by the monitor page
- * access check and audited (name + transport only — never the secret value).
+ * Update one monitored event's notification channels (ntfy AND/OR Discord)
+ * via PUT {MONITOR_API_URL}/v1/admin/channels/{name}. Partial patch — only the
+ * provided fields change. Server-only: secrets stay server-side. Gated by the
+ * monitor page access check and audited (which channels changed — never the
+ * secret value itself). This is also the on/off switch for `fraud` alerts.
  */
 export async function updateMonitorChannel(data: {
   name: string;
-  transport: "ntfy" | "discord";
+  ntfyEnabled?: boolean;
   ntfyTopic?: string;
   ntfyServer?: string;
   ntfyToken?: string;
+  discordEnabled?: boolean;
   discordWebhookUrl?: string;
 }): Promise<
   | { success: true; channel: MonitorChannel }
@@ -199,16 +198,15 @@ export async function updateMonitorChannel(data: {
     return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  const { name, ...rest } = parsed.data;
-  const input: SetChannelInput =
-    rest.transport === "ntfy"
-      ? {
-          transport: "ntfy",
-          ntfyTopic: rest.ntfyTopic,
-          ntfyServer: rest.ntfyServer,
-          ntfyToken: rest.ntfyToken,
-        }
-      : { transport: "discord", discordWebhookUrl: rest.discordWebhookUrl };
+  const { name, ...patch } = parsed.data;
+  const input: SetChannelInput = {
+    ntfyEnabled: patch.ntfyEnabled,
+    ntfyTopic: patch.ntfyTopic,
+    ntfyServer: patch.ntfyServer,
+    ntfyToken: patch.ntfyToken,
+    discordEnabled: patch.discordEnabled,
+    discordWebhookUrl: patch.discordWebhookUrl,
+  };
 
   const result = await setMonitorChannel(name, input);
   if (!result.ok) {
@@ -220,12 +218,11 @@ export async function updateMonitorChannel(data: {
     eventType: "monitor_channel_updated",
     metadata: {
       event: name,
-      transport: rest.transport,
+      ntfy_enabled: patch.ntfyEnabled ?? null,
+      discord_enabled: patch.discordEnabled ?? null,
       // Record only whether a secret was provided — never the value itself.
-      secret_provided:
-        rest.transport === "ntfy"
-          ? rest.ntfyToken != null
-          : rest.discordWebhookUrl != null,
+      ntfy_token_provided: patch.ntfyToken != null,
+      discord_webhook_provided: patch.discordWebhookUrl != null,
     },
   });
 

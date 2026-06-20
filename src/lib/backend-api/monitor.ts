@@ -728,38 +728,57 @@ export async function revokeMonitorApiKey(
 }
 
 // ===========================================================================
-// Per-event notification CHANNELS (routing): GET /v1/admin/channels,
-// PUT /v1/admin/channels/{name}. Separate from the on/off toggle above —
-// the toggle controls WHETHER an event notifies, the channel controls WHERE
-// it goes (an ntfy topic or a Discord webhook). Response is wrapped as
-// { data: [...] }. Secrets come back MASKED: the ntfy token is only a boolean
-// (`ntfyTokenSet`) and the Discord webhook URL has its token segment replaced
-// with `****`. The raw values never reach the client.
+// Per-event notification CHANNELS (fan-out): GET /v1/admin/channels,
+// PUT /v1/admin/channels/{name}. Every routable event (the 6 sources + the
+// `fraud` detector) can fan out to ntfy AND/OR Discord at once, each with its
+// own enable switch. This is where the `fraud` event's on/off lives (it is NOT
+// in the /v1/admin/events source list). Response is wrapped as { data: [...] }.
+// Secrets come back MASKED: the ntfy token is only a boolean (`ntfy.tokenSet`)
+// and the Discord webhook URL has its token segment replaced with `****`. The
+// raw values never reach the client.
 // ===========================================================================
+
+const channelNtfySchema = z
+  .object({
+    enabled: z.boolean().nullable().optional(),
+    topic: z.string().nullable().optional(),
+    server: z.string().nullable().optional(),
+    tokenSet: z.boolean().nullable().optional(),
+  })
+  .passthrough();
+
+const channelDiscordSchema = z
+  .object({
+    enabled: z.boolean().nullable().optional(),
+    webhook: z.string().nullable().optional(),
+  })
+  .passthrough();
 
 const monitorChannelSchema = z
   .object({
     name: z.string(),
-    transport: z.string().nullable().optional(),
     configured: z.boolean().nullable().optional(),
-    ntfyTopic: z.string().nullable().optional(),
-    ntfyServer: z.string().nullable().optional(),
-    ntfyTokenSet: z.boolean().nullable().optional(),
-    discordWebhook: z.string().nullable().optional(),
+    ntfy: channelNtfySchema.nullable().optional(),
+    discord: channelDiscordSchema.nullable().optional(),
   })
   .passthrough();
 
 export type MonitorChannel = {
   name: string;
-  /** "ntfy" | "discord" — kept as a string so an unknown transport still renders. */
-  transport: string;
   /** false = no row saved yet (showing the env-default ntfy topic). */
   configured: boolean;
-  ntfyTopic: string | null;
-  ntfyServer: string | null;
-  ntfyTokenSet: boolean;
-  /** Masked webhook URL (token segment is `****`) when transport = discord. */
-  discordWebhook: string | null;
+  /** ntfy destination — events can fan out to ntfy AND/OR Discord at once. */
+  ntfy: {
+    enabled: boolean;
+    topic: string | null;
+    server: string | null;
+    tokenSet: boolean;
+  };
+  /** Discord destination. `webhook` is masked (token segment is `****`). */
+  discord: {
+    enabled: boolean;
+    webhook: string | null;
+  };
 };
 
 export type MonitorChannelsResult =
@@ -772,12 +791,17 @@ function normalizeChannel(
 ): MonitorChannel {
   return {
     name: raw.name,
-    transport: raw.transport ?? "ntfy",
     configured: raw.configured ?? false,
-    ntfyTopic: raw.ntfyTopic ?? null,
-    ntfyServer: raw.ntfyServer ?? null,
-    ntfyTokenSet: raw.ntfyTokenSet ?? false,
-    discordWebhook: raw.discordWebhook ?? null,
+    ntfy: {
+      enabled: raw.ntfy?.enabled ?? false,
+      topic: raw.ntfy?.topic ?? null,
+      server: raw.ntfy?.server ?? null,
+      tokenSet: raw.ntfy?.tokenSet ?? false,
+    },
+    discord: {
+      enabled: raw.discord?.enabled ?? false,
+      webhook: raw.discord?.webhook ?? null,
+    },
   };
 }
 
@@ -800,20 +824,20 @@ export async function getMonitorChannels(): Promise<MonitorChannelsResult> {
 }
 
 /**
- * The destination payload for one event. The caller (a server action) is
- * responsible for validation + auth + audit. For ntfy every field is optional
- * (blank = inherit the env default); for discord the webhook URL is required.
- * An empty/omitted secret means "clear / inherit default" — never sent unless
- * the user re-enters it (the GET masks secrets so the form can't pre-fill them).
+ * A partial patch for one event's channels — events fan out to ntfy AND/OR
+ * Discord. The caller (a server action) is responsible for validation + auth +
+ * audit. Any omitted field keeps its stored value; an empty-string secret
+ * (`ntfyToken` / `discordWebhookUrl`) clears it. Secrets come back masked, so
+ * the form never re-sends a secret it didn't capture from the user.
  */
-export type SetChannelInput =
-  | {
-      transport: "ntfy";
-      ntfyTopic?: string;
-      ntfyServer?: string;
-      ntfyToken?: string;
-    }
-  | { transport: "discord"; discordWebhookUrl: string };
+export type SetChannelInput = {
+  ntfyEnabled?: boolean;
+  ntfyTopic?: string;
+  ntfyServer?: string;
+  ntfyToken?: string;
+  discordEnabled?: boolean;
+  discordWebhookUrl?: string;
+};
 
 export async function setMonitorChannel(
   name: string,
