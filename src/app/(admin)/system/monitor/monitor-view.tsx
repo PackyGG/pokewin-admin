@@ -77,7 +77,6 @@ import {
   updateMonitorChannel,
 } from "./actions";
 import type {
-  MonitorNotificationSource,
   MonitorOverview,
   MonitorResult,
   AntifraudResult,
@@ -571,7 +570,7 @@ function UnconfiguredState({
           icon={Activity}
           accent="amber"
           title="Monitor"
-          subtitle="Backend monitor service — health, notifications & analytics freshness."
+          subtitle="Backend monitor service — health & analytics freshness."
           action={<MonitorRefreshButton />}
         />
       </PageHero>
@@ -640,7 +639,6 @@ function OverviewBody({
   overallTone: StatusTone;
 }) {
   const service = data.service ?? null;
-  const notifications = data.notifications ?? null;
   const analytics = data.analytics ?? null;
   const dependencies = data.dependencies ?? null;
 
@@ -648,7 +646,6 @@ function OverviewBody({
   const freshnessEntries = analytics?.freshness
     ? Object.entries(analytics.freshness)
     : [];
-  const sources = notifications?.sources ?? [];
 
   return (
     <div className="space-y-6">
@@ -731,87 +728,6 @@ function OverviewBody({
               )}
             </StatPanel>
           </div>
-        </div>
-      </FadeIn>
-
-      {/* ── Notifications ───────────────────────────────────────── */}
-      <FadeIn>
-        <div className="space-y-4">
-          <SectionHeading icon={Bell} title="Notifications" />
-          <StatPanel
-            title={
-              <span className="flex flex-wrap items-center gap-2">
-                Provider
-                {notifications?.provider && (
-                  <span className="font-mono text-foreground">
-                    {notifications.provider}
-                  </span>
-                )}
-              </span>
-            }
-            icon={Bell}
-            accent="cyan"
-            action={
-              <BoolBadge
-                value={notifications?.auth}
-                yes="Auth on"
-                no="Auth off"
-              />
-            }
-          >
-            <div className="mb-4 grid gap-x-6 gap-y-1 sm:grid-cols-2">
-              <PanelRow label="Provider" value={notifications?.provider ?? "—"} />
-              <PanelRow
-                label="Topic"
-                value={
-                  notifications?.topic ? (
-                    <span className="font-mono">{notifications.topic}</span>
-                  ) : (
-                    "—"
-                  )
-                }
-              />
-              <PanelRow
-                label="Server"
-                value={
-                  notifications?.server ? (
-                    <span className="font-mono">{notifications.server}</span>
-                  ) : (
-                    "—"
-                  )
-                }
-              />
-              <PanelRow
-                label="Authenticated"
-                value={<BoolBadge value={notifications?.auth} />}
-              />
-            </div>
-
-            {sources.length > 0 ? (
-              <div className="rounded-lg border">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead>Source</TableHead>
-                      <TableHead>Title</TableHead>
-                      <TableHead>Table</TableHead>
-                      <TableHead>Filter</TableHead>
-                      <TableHead>Last seen</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sources.map((src, i) => (
-                      <SourceRow key={src.name ?? i} src={src} />
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            ) : (
-              <p className="py-2 text-sm text-muted-foreground">
-                No notification sources reported.
-              </p>
-            )}
-          </StatPanel>
         </div>
       </FadeIn>
 
@@ -2069,50 +1985,6 @@ function ApiKeysTab({ result }: { result: MonitorApiKeysResult }) {
 }
 
 // ─── Row sub-components ───────────────────────────────────────────
-
-function SourceRow({ src }: { src: MonitorNotificationSource }) {
-  const cursor = src.cursor ?? null;
-  const cursorTs = cursor?.created_at ?? null;
-  const cursorId = cursor?.id ?? null;
-  return (
-    <TableRow>
-      <TableCell className="font-medium capitalize">{src.name ?? "—"}</TableCell>
-      <TableCell className="text-muted-foreground">{src.title ?? "—"}</TableCell>
-      <TableCell>
-        {src.table ? <code className="text-xs">{src.table}</code> : "—"}
-      </TableCell>
-      <TableCell>
-        {src.filter ? (
-          <code className="text-xs">{src.filter}</code>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-      </TableCell>
-      <TableCell>
-        {cursorTs ? (
-          <div className="flex flex-col gap-0.5">
-            {/* Relative label can refer to a near-now cursor on an active
-                stream → direction flips across hydration; suppress the
-                warning (client re-renders the correct value). */}
-            <span className="text-xs" title={cursorTs} suppressHydrationWarning>
-              {formatRelative(asUtc(cursorTs))}
-            </span>
-            {cursorId && (
-              <span className="flex items-center gap-1">
-                <code className="max-w-[140px] truncate text-[10px] text-muted-foreground">
-                  {cursorId}
-                </code>
-                <CopyButton value={cursorId} label="Cursor ID" />
-              </span>
-            )}
-          </div>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-      </TableCell>
-    </TableRow>
-  );
-}
 
 function FreshnessRow({
   streamKey,
