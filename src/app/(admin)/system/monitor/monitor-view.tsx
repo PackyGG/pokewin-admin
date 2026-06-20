@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -20,7 +20,9 @@ import {
   Lock,
   Plug,
   Plus,
+  Pencil,
   Route,
+  Send,
   Server,
   Settings2,
   Shield,
@@ -68,7 +70,12 @@ import {
 import { formatDateTime, formatNumber, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { MonitorRefreshButton } from "./refresh-button";
-import { toggleMonitorEvent, createApiKey, revokeApiKey } from "./actions";
+import {
+  toggleMonitorEvent,
+  createApiKey,
+  revokeApiKey,
+  updateMonitorChannel,
+} from "./actions";
 import type {
   MonitorNotificationSource,
   MonitorOverview,
@@ -82,6 +89,8 @@ import type {
   MonitorApiKey,
   MonitorApiKeysResult,
   CreatedMonitorApiKey,
+  MonitorChannel,
+  MonitorChannelsResult,
 } from "@/lib/backend-api/monitor";
 
 // ─── Formatting helpers ───────────────────────────────────────────
@@ -226,6 +235,7 @@ export function MonitorView({
   events,
   endpoints,
   apiKeys,
+  channels,
   fetchedAt,
 }: {
   result: MonitorResult;
@@ -233,6 +243,7 @@ export function MonitorView({
   events: MonitorEventsResult;
   endpoints: MonitorEndpointsResult;
   apiKeys: MonitorApiKeysResult;
+  channels: MonitorChannelsResult;
   fetchedAt: string;
 }) {
   // Env missing → nothing can load. Show the single setup empty-state (no
@@ -364,6 +375,10 @@ export function MonitorView({
             <Bell className="size-3.5" aria-hidden />
             Events
           </TabsTrigger>
+          <TabsTrigger value="channels">
+            <Send className="size-3.5" aria-hidden />
+            Channels
+          </TabsTrigger>
           <TabsTrigger value="endpoints">
             <Route className="size-3.5" aria-hidden />
             Endpoints
@@ -414,6 +429,10 @@ export function MonitorView({
 
         <TabsContent value="events" className="pt-4">
           <EventsTab result={events} />
+        </TabsContent>
+
+        <TabsContent value="channels" className="pt-4">
+          <ChannelsTab result={channels} events={events} />
         </TabsContent>
 
         <TabsContent value="endpoints" className="pt-4">
@@ -1285,6 +1304,374 @@ function EventToggleRow({ event }: { event: MonitorEvent }) {
         aria-label={`Toggle ${event.name} notifications`}
       />
     </div>
+  );
+}
+
+// ─── Channels tab (per-event notification routing) ────────────────
+
+const TRANSPORT_BADGE: Record<string, string> = {
+  ntfy: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
+  discord:
+    "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30",
+};
+
+// Mirror of the backend validation (see notification-channels handoff doc) so
+// the form can give instant feedback before the round-trip.
+const NTFY_TOPIC_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const HTTP_URL_RE = /^https?:\/\/.+/i;
+const DISCORD_WEBHOOK_RE =
+  /^https:\/\/(?:(?:canary|ptb)\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/i;
+
+/** One-line summary of where an event currently routes. */
+function channelSummary(ch: MonitorChannel): string {
+  if (ch.transport === "discord") {
+    return ch.discordWebhook ?? "Discord webhook";
+  }
+  const server = (ch.ntfyServer ?? "https://ntfy.sh").replace(/^https?:\/\//, "");
+  return `${ch.ntfyTopic ?? "—"} · ${server}`;
+}
+
+function ChannelsTab({
+  result,
+  events,
+}: {
+  result: MonitorChannelsResult;
+  events: MonitorEventsResult;
+}) {
+  const router = useRouter();
+  const [rows, setRows] = useState<MonitorChannel[]>(
+    result.status === "ok" ? result.channels : [],
+  );
+  const [editing, setEditing] = useState<MonitorChannel | null>(null);
+
+  // Read-only on/off indicator pulled from the Events read (the toggle itself
+  // lives on the Events tab; here it's just context).
+  const enabledByName = useMemo(() => {
+    const m = new Map<string, boolean>();
+    if (events.status === "ok") {
+      for (const e of events.events) m.set(e.name, e.enabled);
+    }
+    return m;
+  }, [events]);
+
+  if (result.status !== "ok") {
+    return (
+      <ResultNotice
+        status={result.status}
+        httpStatus={result.status === "error" ? result.httpStatus : undefined}
+        message={result.status === "error" ? result.message : undefined}
+        missing={result.status === "unconfigured" ? result.missing : undefined}
+      />
+    );
+  }
+
+  function onSaved(ch: MonitorChannel) {
+    setRows((prev) => prev.map((r) => (r.name === ch.name ? ch : r)));
+    setEditing(null);
+    router.refresh();
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 rounded-xl border border-border bg-muted/30 p-3">
+        <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <p className="text-xs text-muted-foreground">
+          Route each event to a destination — an{" "}
+          <strong className="text-foreground">ntfy</strong> topic or a{" "}
+          <strong className="text-foreground">Discord</strong> webhook. This is
+          separate from the on/off toggle on the Events tab: the toggle controls
+          whether an event notifies, the channel controls where it goes. Secrets
+          are masked and never returned — leaving a secret field blank clears it
+          (inherits the server default).
+        </p>
+      </div>
+
+      <SectionHeading icon={Send} title="Notification channels" />
+      <div className="grid gap-3 sm:grid-cols-2">
+        {rows.map((ch) => (
+          <ChannelRow
+            key={ch.name}
+            channel={ch}
+            enabled={enabledByName.get(ch.name)}
+            onEdit={() => setEditing(ch)}
+          />
+        ))}
+      </div>
+
+      <ChannelEditDialog
+        channel={editing}
+        onClose={() => setEditing(null)}
+        onSaved={onSaved}
+      />
+    </div>
+  );
+}
+
+function ChannelRow({
+  channel,
+  enabled,
+  onEdit,
+}: {
+  channel: MonitorChannel;
+  enabled: boolean | undefined;
+  onEdit: () => void;
+}) {
+  const isDiscord = channel.transport === "discord";
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border bg-card p-4 ring-1 ring-foreground/5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground ring-1 ring-border">
+            {isDiscord ? <Send className="size-4" /> : <Bell className="size-4" />}
+          </div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium capitalize">
+              {channel.name}
+            </p>
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+              <Badge
+                variant="outline"
+                className={cn(
+                  "text-[10px] capitalize",
+                  TRANSPORT_BADGE[channel.transport] ?? TONE_BADGE.neutral,
+                )}
+              >
+                {channel.transport}
+              </Badge>
+              {!channel.configured && (
+                <span className="text-[10px] text-muted-foreground">default</span>
+              )}
+              {enabled === false && <StatusBadge tone="neutral">off</StatusBadge>}
+            </div>
+          </div>
+        </div>
+        <Button variant="outline" size="sm" onClick={onEdit}>
+          <Pencil className="size-3.5" aria-hidden />
+          Edit
+        </Button>
+      </div>
+      <div className="rounded-lg border bg-muted/30 px-2.5 py-2">
+        <code className="block break-all text-xs text-muted-foreground">
+          {channelSummary(channel)}
+        </code>
+        {channel.transport === "ntfy" && (
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            Token {channel.ntfyTokenSet ? "set" : "unset"}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChannelEditDialog({
+  channel,
+  onClose,
+  onSaved,
+}: {
+  channel: MonitorChannel | null;
+  onClose: () => void;
+  onSaved: (ch: MonitorChannel) => void;
+}) {
+  return (
+    <Dialog
+      open={channel != null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent>
+        {channel && (
+          // Key by name so the form state resets each time a row is opened.
+          <ChannelEditForm
+            key={channel.name}
+            channel={channel}
+            onClose={onClose}
+            onSaved={onSaved}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ChannelEditForm({
+  channel,
+  onClose,
+  onSaved,
+}: {
+  channel: MonitorChannel;
+  onClose: () => void;
+  onSaved: (ch: MonitorChannel) => void;
+}) {
+  const [transport, setTransport] = useState<"ntfy" | "discord">(
+    channel.transport === "discord" ? "discord" : "ntfy",
+  );
+  const [ntfyTopic, setNtfyTopic] = useState(channel.ntfyTopic ?? "");
+  const [ntfyServer, setNtfyServer] = useState(channel.ntfyServer ?? "");
+  const [ntfyToken, setNtfyToken] = useState("");
+  const [discordWebhookUrl, setDiscordWebhookUrl] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  function validate(): string | null {
+    if (transport === "ntfy") {
+      const topic = ntfyTopic.trim();
+      if (topic && !NTFY_TOPIC_RE.test(topic)) {
+        return "Topic must be 1–64 letters, numbers, _ or -";
+      }
+      const server = ntfyServer.trim();
+      if (server && !HTTP_URL_RE.test(server)) {
+        return "Server must be an http(s):// URL";
+      }
+      return null;
+    }
+    if (!DISCORD_WEBHOOK_RE.test(discordWebhookUrl.trim())) {
+      return "Enter a valid Discord webhook URL";
+    }
+    return null;
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const err = validate();
+    if (err) {
+      toast.error(err);
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const res = await updateMonitorChannel({
+          name: channel.name,
+          transport,
+          ntfyTopic:
+            transport === "ntfy" ? ntfyTopic.trim() || undefined : undefined,
+          ntfyServer:
+            transport === "ntfy" ? ntfyServer.trim() || undefined : undefined,
+          ntfyToken:
+            transport === "ntfy" ? ntfyToken.trim() || undefined : undefined,
+          discordWebhookUrl:
+            transport === "discord" ? discordWebhookUrl.trim() : undefined,
+        });
+        if (!res.success) {
+          toast.error(res.error);
+          return;
+        }
+        toast.success(`${channel.name} routed to ${transport}`);
+        onSaved(res.channel);
+      } catch (err2) {
+        toast.error(
+          err2 instanceof Error ? err2.message : "Failed to save channel",
+        );
+      }
+    });
+  }
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="capitalize">Route {channel.name}</DialogTitle>
+        <DialogDescription>
+          Choose where this event&apos;s notifications go. Secrets are masked,
+          so blank fields clear the value and inherit the server default.
+        </DialogDescription>
+      </DialogHeader>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-2">
+          <Label>Transport</Label>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant={transport === "ntfy" ? "default" : "outline"}
+              onClick={() => setTransport("ntfy")}
+              disabled={isPending}
+            >
+              <Bell className="size-4" aria-hidden />
+              ntfy
+            </Button>
+            <Button
+              type="button"
+              variant={transport === "discord" ? "default" : "outline"}
+              onClick={() => setTransport("discord")}
+              disabled={isPending}
+            >
+              <Send className="size-4" aria-hidden />
+              Discord
+            </Button>
+          </div>
+        </div>
+
+        {transport === "ntfy" ? (
+          <>
+            <div className="space-y-2">
+              <Label htmlFor="channel-ntfy-topic">Topic</Label>
+              <Input
+                id="channel-ntfy-topic"
+                value={ntfyTopic}
+                onChange={(e) => setNtfyTopic(e.target.value)}
+                placeholder="server default"
+                maxLength={64}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="channel-ntfy-server">Server</Label>
+              <Input
+                id="channel-ntfy-server"
+                value={ntfyServer}
+                onChange={(e) => setNtfyServer(e.target.value)}
+                placeholder="https://ntfy.sh"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="channel-ntfy-token">
+                Token{" "}
+                <span className="text-xs font-normal text-muted-foreground">
+                  ({channel.ntfyTokenSet ? "set" : "unset"} — blank keeps cleared)
+                </span>
+              </Label>
+              <Input
+                id="channel-ntfy-token"
+                type="password"
+                value={ntfyToken}
+                onChange={(e) => setNtfyToken(e.target.value)}
+                placeholder="leave blank to clear / inherit"
+                autoComplete="off"
+              />
+            </div>
+          </>
+        ) : (
+          <div className="space-y-2">
+            <Label htmlFor="channel-discord-url">Webhook URL</Label>
+            <Input
+              id="channel-discord-url"
+              value={discordWebhookUrl}
+              onChange={(e) => setDiscordWebhookUrl(e.target.value)}
+              placeholder="https://discord.com/api/webhooks/123/abc"
+              autoComplete="off"
+              required
+            />
+            <p className="text-[11px] text-muted-foreground">
+              The current webhook is masked and can&apos;t be shown — re-enter it
+              to keep Discord routing.
+            </p>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onClose}
+            disabled={isPending}
+            className="w-full sm:w-auto"
+          >
+            Cancel
+          </Button>
+          <Button type="submit" disabled={isPending} className="w-full sm:w-auto">
+            {isPending ? "Saving…" : "Save channel"}
+          </Button>
+        </DialogFooter>
+      </form>
+    </>
   );
 }
 

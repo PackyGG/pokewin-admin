@@ -7,7 +7,10 @@ import {
   setMonitorEvent,
   createMonitorApiKey,
   revokeMonitorApiKey,
+  setMonitorChannel,
   type CreatedMonitorApiKey,
+  type MonitorChannel,
+  type SetChannelInput,
 } from "@/lib/backend-api/monitor";
 
 const toggleSchema = z.object({
@@ -123,4 +126,108 @@ export async function revokeApiKey(data: {
   });
 
   return { success: true };
+}
+
+// ─── Notification channel routing (per-event destination) ──────────
+
+// Validation rules mirror the monitor backend exactly (see the frontend
+// handoff doc). Empty optional fields mean "clear / inherit the env default".
+const NTFY_TOPIC_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const HTTP_URL_RE = /^https?:\/\/.+/i;
+const DISCORD_WEBHOOK_RE =
+  /^https:\/\/(?:(?:canary|ptb)\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/i;
+
+const setChannelSchema = z.intersection(
+  z.object({ name: z.string().trim().min(1).max(64) }),
+  z.discriminatedUnion("transport", [
+    z.object({
+      transport: z.literal("ntfy"),
+      ntfyTopic: z
+        .string()
+        .trim()
+        .regex(NTFY_TOPIC_RE, "Topic must be 1–64 letters, numbers, _ or -")
+        .optional(),
+      ntfyServer: z
+        .string()
+        .trim()
+        .regex(HTTP_URL_RE, "Server must be an http(s):// URL")
+        .optional(),
+      ntfyToken: z.string().trim().min(1).optional(),
+    }),
+    z.object({
+      transport: z.literal("discord"),
+      discordWebhookUrl: z
+        .string()
+        .trim()
+        .regex(DISCORD_WEBHOOK_RE, "Enter a valid Discord webhook URL"),
+    }),
+  ]),
+);
+
+/** Drop empty-string optionals so blank fields are treated as "inherit". */
+function pruneEmpty<T extends Record<string, unknown>>(obj: T): T {
+  const out = { ...obj };
+  for (const k of Object.keys(out)) {
+    if (typeof out[k] === "string" && (out[k] as string).trim() === "") {
+      delete out[k];
+    }
+  }
+  return out;
+}
+
+/**
+ * Route one monitored event to a destination (ntfy topic or Discord webhook)
+ * via PUT {MONITOR_API_URL}/v1/admin/channels/{name}. Server-only: the secret
+ * (ntfy token / webhook URL) stays server-side. Gated by the monitor page
+ * access check and audited (name + transport only — never the secret value).
+ */
+export async function updateMonitorChannel(data: {
+  name: string;
+  transport: "ntfy" | "discord";
+  ntfyTopic?: string;
+  ntfyServer?: string;
+  ntfyToken?: string;
+  discordWebhookUrl?: string;
+}): Promise<
+  | { success: true; channel: MonitorChannel }
+  | { success: false; error: string }
+> {
+  const session = await requirePageAccess("/system/monitor");
+
+  const parsed = setChannelSchema.safeParse(pruneEmpty(data));
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  const { name, ...rest } = parsed.data;
+  const input: SetChannelInput =
+    rest.transport === "ntfy"
+      ? {
+          transport: "ntfy",
+          ntfyTopic: rest.ntfyTopic,
+          ntfyServer: rest.ntfyServer,
+          ntfyToken: rest.ntfyToken,
+        }
+      : { transport: "discord", discordWebhookUrl: rest.discordWebhookUrl };
+
+  const result = await setMonitorChannel(name, input);
+  if (!result.ok) {
+    return { success: false, error: result.message };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "monitor_channel_updated",
+    metadata: {
+      event: name,
+      transport: rest.transport,
+      // Record only whether a secret was provided — never the value itself.
+      secret_provided:
+        rest.transport === "ntfy"
+          ? rest.ntfyToken != null
+          : rest.discordWebhookUrl != null,
+    },
+  });
+
+  return { success: true, channel: result.channel };
 }

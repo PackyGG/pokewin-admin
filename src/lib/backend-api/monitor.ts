@@ -727,6 +727,126 @@ export async function revokeMonitorApiKey(
   return { ok: true };
 }
 
+// ===========================================================================
+// Per-event notification CHANNELS (routing): GET /v1/admin/channels,
+// PUT /v1/admin/channels/{name}. Separate from the on/off toggle above —
+// the toggle controls WHETHER an event notifies, the channel controls WHERE
+// it goes (an ntfy topic or a Discord webhook). Response is wrapped as
+// { data: [...] }. Secrets come back MASKED: the ntfy token is only a boolean
+// (`ntfyTokenSet`) and the Discord webhook URL has its token segment replaced
+// with `****`. The raw values never reach the client.
+// ===========================================================================
+
+const monitorChannelSchema = z
+  .object({
+    name: z.string(),
+    transport: z.string().nullable().optional(),
+    configured: z.boolean().nullable().optional(),
+    ntfyTopic: z.string().nullable().optional(),
+    ntfyServer: z.string().nullable().optional(),
+    ntfyTokenSet: z.boolean().nullable().optional(),
+    discordWebhook: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+export type MonitorChannel = {
+  name: string;
+  /** "ntfy" | "discord" — kept as a string so an unknown transport still renders. */
+  transport: string;
+  /** false = no row saved yet (showing the env-default ntfy topic). */
+  configured: boolean;
+  ntfyTopic: string | null;
+  ntfyServer: string | null;
+  ntfyTokenSet: boolean;
+  /** Masked webhook URL (token segment is `****`) when transport = discord. */
+  discordWebhook: string | null;
+};
+
+export type MonitorChannelsResult =
+  | { status: "unconfigured"; missing: string[] }
+  | { status: "error"; httpStatus: number | null; message: string }
+  | { status: "ok"; channels: MonitorChannel[] };
+
+function normalizeChannel(
+  raw: z.infer<typeof monitorChannelSchema>,
+): MonitorChannel {
+  return {
+    name: raw.name,
+    transport: raw.transport ?? "ntfy",
+    configured: raw.configured ?? false,
+    ntfyTopic: raw.ntfyTopic ?? null,
+    ntfyServer: raw.ntfyServer ?? null,
+    ntfyTokenSet: raw.ntfyTokenSet ?? false,
+    discordWebhook: raw.discordWebhook ?? null,
+  };
+}
+
+export async function getMonitorChannels(): Promise<MonitorChannelsResult> {
+  const res = await monitorRequest("/v1/admin/channels");
+  if (res.status !== "ok") return res;
+  const payload =
+    res.body && typeof res.body === "object" && "data" in res.body
+      ? (res.body as { data: unknown }).data
+      : res.body;
+  const parsed = z.array(monitorChannelSchema).safeParse(payload);
+  if (!parsed.success) {
+    return {
+      status: "error",
+      httpStatus: null,
+      message: "The monitor returned an unexpected channels shape.",
+    };
+  }
+  return { status: "ok", channels: parsed.data.map(normalizeChannel) };
+}
+
+/**
+ * The destination payload for one event. The caller (a server action) is
+ * responsible for validation + auth + audit. For ntfy every field is optional
+ * (blank = inherit the env default); for discord the webhook URL is required.
+ * An empty/omitted secret means "clear / inherit default" — never sent unless
+ * the user re-enters it (the GET masks secrets so the form can't pre-fill them).
+ */
+export type SetChannelInput =
+  | {
+      transport: "ntfy";
+      ntfyTopic?: string;
+      ntfyServer?: string;
+      ntfyToken?: string;
+    }
+  | { transport: "discord"; discordWebhookUrl: string };
+
+export async function setMonitorChannel(
+  name: string,
+  input: SetChannelInput,
+): Promise<
+  | { ok: true; channel: MonitorChannel }
+  | { ok: false; message: string }
+> {
+  const res = await monitorRequest(
+    `/v1/admin/channels/${encodeURIComponent(name)}`,
+    { method: "PUT", body: input },
+  );
+  if (res.status === "unconfigured") {
+    return { ok: false, message: "Monitor connection is not configured." };
+  }
+  if (res.status === "error") {
+    return { ok: false, message: res.message };
+  }
+  const payload =
+    res.body && typeof res.body === "object" && "data" in res.body
+      ? (res.body as { data: unknown }).data
+      : res.body;
+  const parsed = monitorChannelSchema.safeParse(payload);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message:
+        "The channel was saved, but the response was malformed — refresh to confirm.",
+    };
+  }
+  return { ok: true, channel: normalizeChannel(parsed.data) };
+}
+
 /** Hostname only (no token, no path) for safe diagnostic logging. */
 function safeHost(base: string): string {
   try {
