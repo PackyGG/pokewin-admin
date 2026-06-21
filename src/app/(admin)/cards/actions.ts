@@ -527,20 +527,27 @@ async function checkCardReferences(
     }),
     // 5. provably_fair_results.result_metadata — Json soft reference. A card id
     //    can sit at the top level as the rolled `card_id` OR (for upgrader
-    //    rolls) nested as `target_card_id`. One combined scan returns the
-    //    distinct candidate ids that appear in EITHER position. Uses jsonb
-    //    containment (`@>`) so it becomes index-eligible once the recommended
-    //    GIN index lands; correct on a seq scan today. `Prisma.join` safely
-    //    parameterises the id list (no string interpolation).
+    //    rolls) nested as `target_card_id`. Each branch probes with jsonb
+    //    containment (`@> ANY(ARRAY[...])`) so it is served by the
+    //    `idx_pf_result_metadata_gin` (jsonb_path_ops) index as a Bitmap Index
+    //    Scan. The `->>'…' IN (...)` text-extraction form a jsonb_path_ops GIN
+    //    CANNOT use — it seq-scans the whole 3.4M-row table (~1s); EXPLAIN
+    //    against prod confirms the `@>` form is the index lookup (cost ~1.3k vs
+    //    ~379k). The SELECT still extracts the matched id; `Prisma.sql` safely
+    //    parameterises each id (no string interpolation).
     db.$queryRaw<{ card_id: string }[]>(Prisma.sql`
       SELECT DISTINCT t.card_id FROM (
         SELECT (result_metadata->>'card_id') AS card_id
           FROM provably_fair_results
-         WHERE result_metadata->>'card_id' IN (${Prisma.join(uniqueIds)})
+         WHERE result_metadata @> ANY (ARRAY[${Prisma.join(
+           uniqueIds.map((id) => Prisma.sql`jsonb_build_object('card_id', ${id})`),
+         )}]::jsonb[])
         UNION ALL
         SELECT (result_metadata->>'target_card_id') AS card_id
           FROM provably_fair_results
-         WHERE result_metadata->>'target_card_id' IN (${Prisma.join(uniqueIds)})
+         WHERE result_metadata @> ANY (ARRAY[${Prisma.join(
+           uniqueIds.map((id) => Prisma.sql`jsonb_build_object('target_card_id', ${id})`),
+         )}]::jsonb[])
       ) t
     `),
   ]);
