@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { AnimatedNumber } from "@/components/animated-number";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import type { RiskTier } from "@/app/(admin)/insights/edge-calc/risk";
 import type { PortfolioProfileResult } from "../doctor/retune-actions";
 import type { PortfolioSystemPlan } from "../_lib/portfolio";
 
@@ -17,34 +16,18 @@ import type { PortfolioSystemPlan } from "../_lib/portfolio";
  * pack portfolio, the read that backs the "Balance whole system" toggle.
  *
  * Shows four headline KPIs (pack count, total max-win exposure vs the bankroll
- * cap, aggregate CV, spicy share), a tier histogram, and — when system-balance
- * mode is ON — the `systemPlan`'s before→after projection plus the list of which
- * packs were tightened + why, so the owner understands the cross-pack balancing.
+ * cap, aggregate CV, spicy share), a compact within-bounds verdict, and — when
+ * system-balance mode is ON — the `systemPlan`'s before→after projection plus the
+ * list of which packs were tightened + why, so the owner understands the
+ * cross-pack balancing. The volatility tier-distribution histogram that used to
+ * sit here was moved to the Pack Studio Overview ("Risk system" box) so the
+ * single-pack review stays focused.
  *
  * House-POV coloring: exposure ABOVE its cap and a spicy share ABOVE its bound
- * are house RISK → rose; inside the bound is healthy → emerald. The tier
- * histogram tints the spicy tiers (T4/T5) rose, the calm tiers emerald/blue.
+ * are house RISK → rose; inside the bound is healthy → emerald.
  * Pure presentation over serializable props (no function props cross the RSC
  * boundary; numbers animate via the `formatKind`-enum `AnimatedNumber`).
  */
-
-const TIERS: readonly RiskTier[] = ["T1", "T2", "T3", "T4", "T5"] as const;
-
-const TIER_BAR: Record<RiskTier, string> = {
-  T1: "bg-emerald-500/70",
-  T2: "bg-emerald-500/70",
-  T3: "bg-amber-500/70",
-  T4: "bg-orange-500/70",
-  T5: "bg-rose-500/70",
-};
-
-const TIER_TEXT: Record<RiskTier, string> = {
-  T1: "text-emerald-600 dark:text-emerald-400",
-  T2: "text-emerald-600 dark:text-emerald-400",
-  T3: "text-amber-600 dark:text-amber-400",
-  T4: "text-orange-600 dark:text-orange-400",
-  T5: "text-rose-600 dark:text-rose-400",
-};
 
 export function SystemBalancePanel({
   portfolio,
@@ -100,70 +83,31 @@ export function SystemBalancePanel({
         />
       </div>
 
-      {/* Tier histogram + bounds verdict */}
-      <div className="rounded-xl border bg-card p-3 sm:p-4">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Volatility tier distribution
-          </p>
-          <Badge
-            variant="outline"
-            className={cn(
-              "h-5 px-1.5 text-[10px]",
-              withinBounds
-                ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                : "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400",
-            )}
-          >
-            {withinBounds ? "Within bounds" : "Over bounds"}
-          </Badge>
-        </div>
-        <TierHistogram distribution={profile.tierDistribution} total={profile.packCount} />
+      {/* Bounds verdict — the functional pass/fail for the whole catalog. The
+          tier-distribution histogram that used to live here was moved to the Pack
+          Studio Overview ("Risk system" box) so the single-pack review stays
+          focused; only the actionable verdict remains. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card px-3 py-2.5 sm:px-4">
+        <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          Catalog within system bounds
+        </p>
+        <Badge
+          variant="outline"
+          className={cn(
+            "h-5 px-1.5 text-[10px]",
+            withinBounds
+              ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+              : "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400",
+          )}
+        >
+          {withinBounds ? "Within bounds" : "Over bounds"}
+        </Badge>
       </div>
 
       {/* System plan — only when balance mode is on */}
       {portfolioMode && systemPlan && (
         <SystemPlanPanel plan={systemPlan} />
       )}
-    </div>
-  );
-}
-
-function TierHistogram({
-  distribution,
-  total,
-}: {
-  distribution: Record<RiskTier, number>;
-  total: number;
-}) {
-  const max = Math.max(1, ...TIERS.map((t) => distribution[t]));
-  return (
-    <div className="flex items-end gap-2">
-      {TIERS.map((tier) => {
-        const count = distribution[tier];
-        const heightPct = (count / max) * 100;
-        const share = total > 0 ? (count / total) * 100 : 0;
-        return (
-          <div key={tier} className="flex flex-1 flex-col items-center gap-1">
-            <span className="text-[11px] font-medium tabular-nums text-muted-foreground">
-              {count}
-            </span>
-            <div className="flex h-16 w-full items-end overflow-hidden rounded-md bg-muted/40">
-              <div
-                className={cn(
-                  "w-full rounded-md motion-safe:transition-all motion-safe:duration-500 motion-safe:ease-out",
-                  TIER_BAR[tier],
-                )}
-                style={{ height: `${Math.max(count > 0 ? 6 : 0, heightPct)}%` }}
-                title={`${tier}: ${count} packs (${share.toFixed(0)}%)`}
-              />
-            </div>
-            <span className={cn("text-[11px] font-semibold", TIER_TEXT[tier])}>
-              {tier}
-            </span>
-          </div>
-        );
-      })}
     </div>
   );
 }

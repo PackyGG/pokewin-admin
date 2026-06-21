@@ -1,10 +1,12 @@
 import type * as React from "react";
 import Link from "next/link";
 import {
+  Activity,
   AlertTriangle,
   ArrowUpRight,
   BarChart3,
   CheckCircle2,
+  Flame,
   Gauge,
   Layers,
   Percent,
@@ -16,6 +18,7 @@ import {
 
 import {
   KpiTile,
+  MetricTile,
   PanelRow,
   SectionHeading,
   StatPanel,
@@ -43,6 +46,17 @@ function pct(value: number): string {
 // is flagged "below target" when its edge falls under that floor.
 const EDGE_FLOOR_LABEL = pct(DEFAULT_EDGE_FLOOR);
 const EDGE_BAND_LABEL = `${pct(DEFAULT_EDGE_FLOOR)}–${pct(DEFAULT_EDGE_CEILING)}`;
+
+// One-line plain-English label per volatility tier (T1 calmest → T5 spiciest).
+// The tiers run from steady, frequent-small-win packs up to lottery-style packs
+// where a rare huge hit drives the payout. Higher tiers = more house variance.
+const TIER_LABELS: Record<string, { name: string; blurb: string }> = {
+  T1: { name: "Steady", blurb: "Frequent small wins, low variance" },
+  T2: { name: "Balanced", blurb: "Mild swings, mostly modest payouts" },
+  T3: { name: "Spicy", blurb: "Bigger top hits, noticeable variance" },
+  T4: { name: "Volatile", blurb: "Rare large hits drive the payout" },
+  T5: { name: "Lottery", blurb: "Jackpot-style — one huge hit, high variance" },
+};
 
 /**
  * One compliance-alert group rendered as a clickable card linking to the Pack
@@ -240,13 +254,104 @@ export async function PackStudioOverviewContent() {
         </div>
 
         <div className="space-y-3">
-          <SectionHeading
-            icon={BarChart3}
-            title="Volatility tier distribution"
-          />
+          <SectionHeading icon={BarChart3} title="Volatility tier distribution" />
           <div className="surface-sheen surface-raise relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/70 p-4 sm:rounded-2xl sm:p-5">
             <TierDistributionChart data={tierData} />
           </div>
+        </div>
+      </section>
+
+      {/* ── Risk system ────────────────────────────────────────────
+          A prominent, explained box for the risk-scoring system: what it
+          measures, the tier mix (with a one-line label per tier), the 0–100
+          composite-score spread, average payout volatility (CV), and how many
+          packs sit below their per-pack edge target. House-POV note: a volatility
+          tier / CV / risk score is NOT a money figure — a spicier catalog is more
+          house *variance*, not a loss — so these read NEUTRAL (blue/cyan/amber),
+          never the red/green finance palette. The one money-shaped signal here,
+          packs below their edge target, is a margin leak = BAD → rose. */}
+      <section className="space-y-3">
+        <SectionHeading icon={Activity} title="Risk system" />
+        <p className="text-xs text-muted-foreground">
+          The risk system scores every active cash pack on how volatile its
+          payouts are — the spread between a typical pull and a rare big hit. Each
+          pack gets a 0–100 risk score and a tier (T1 steady → T5 lottery), so we
+          can see at a glance how much variance the catalog carries and whether
+          any pack drifts below its edge target.
+        </p>
+
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <MetricTile
+            label="Avg risk score"
+            value={data.riskScore.avg.toFixed(0)}
+            sub={`Range ${data.riskScore.min}–${data.riskScore.max} · 0–100`}
+            icon={Gauge}
+            accent="cyan"
+          />
+          <MetricTile
+            label="Avg volatility (CV)"
+            value={data.avgCv.toFixed(2)}
+            sub="Payout coefficient of variation"
+            icon={Activity}
+            accent="blue"
+          />
+          <MetricTile
+            label="Spicy packs (T4+T5)"
+            value={formatNumber(
+              (data.tierDistribution.T4 ?? 0) + (data.tierDistribution.T5 ?? 0),
+            )}
+            sub={`of ${formatNumber(data.activeTotal)} scored`}
+            icon={Flame}
+            accent="amber"
+          />
+          {/* A pack under its per-pack edge target is a margin leak = BAD for
+              the house → rose when any exist, else neutral blue. */}
+          <MetricTile
+            label="Below edge target"
+            value={formatNumber(data.countBelowTarget)}
+            sub={`Floor ${EDGE_FLOOR_LABEL}`}
+            icon={TrendingUp}
+            accent={data.countBelowTarget > 0 ? "rose" : "blue"}
+          />
+        </div>
+
+        {/* Tier ladder — each tier's count + a one-line plain-English label so the
+            distribution reads without needing to know what "T3" means. */}
+        <div className="rounded-xl border bg-card p-4 sm:p-5">
+          <p className="mb-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            Tier ladder · steady → lottery
+          </p>
+          <ul className="space-y-2">
+            {tierData.map(({ tier, count }) => {
+              const meta = TIER_LABELS[tier];
+              const share =
+                data.activeTotal > 0 ? (count / data.activeTotal) * 100 : 0;
+              return (
+                <li
+                  key={tier}
+                  className="flex items-center gap-3 rounded-lg border bg-background/40 px-3 py-2"
+                >
+                  <span className="w-7 shrink-0 text-sm font-semibold tabular-nums text-muted-foreground">
+                    {tier}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{meta?.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {meta?.blurb}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-right">
+                    <span className="block text-sm font-semibold tabular-nums">
+                      {formatNumber(count)}
+                    </span>
+                    <span className="block text-[11px] tabular-nums text-muted-foreground">
+                      {share.toFixed(0)}%
+                    </span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       </section>
 

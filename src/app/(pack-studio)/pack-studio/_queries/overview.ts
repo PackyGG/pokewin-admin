@@ -52,6 +52,10 @@ export type PackStudioOverview = {
   nearMissCoverage: number;
   /** Risk-tier histogram (T1..T5 → count). */
   tierDistribution: Record<string, number>;
+  /** Average coefficient of variation (payout volatility) across scored packs. */
+  avgCv: number;
+  /** Composite 0–100 risk-score spread across scored packs (avg + min/max). */
+  riskScore: { avg: number; min: number; max: number };
   /** Ramp config (phase / reserves / win cap). */
   ramp: RampConfig;
   /** Compliance alert lists (one entry per offending pack per rule). */
@@ -72,6 +76,8 @@ const EMPTY_OVERVIEW: PackStudioOverview = {
   countOverCap: 0,
   nearMissCoverage: 0,
   tierDistribution: { T1: 0, T2: 0, T3: 0, T4: 0, T5: 0 },
+  avgCv: 0,
+  riskScore: { avg: 0, min: 0, max: 0 },
   ramp: { phase: null, reserves: null, maxWinCap: DEFAULT_MAX_WIN_CAP },
   alerts: {
     belowTargetEdge: [],
@@ -87,6 +93,10 @@ type CachedScoreLite = {
   edge: number;
   nearMiss: number;
   maxWin: number;
+  /** Coefficient of variation of the pack's payout distribution. */
+  cv: number;
+  /** Composite 0–100 risk score. */
+  riskScore: number;
   tier: string;
   flags: PackComplianceFlags | null;
   /** ISO string (already serialized so a cache hit can't hand back a Date). */
@@ -109,6 +119,8 @@ const getCachedOverviewBase = unstable_cache(
           edge: true,
           near_miss: true,
           max_win: true,
+          cv: true,
+          risk_score: true,
           tier: true,
           compliance: true,
           computed_at: true,
@@ -121,13 +133,15 @@ const getCachedOverviewBase = unstable_cache(
       edge: toNumber(r.edge),
       nearMiss: toNumber(r.near_miss),
       maxWin: toNumber(r.max_win),
+      cv: toNumber(r.cv),
+      riskScore: r.risk_score,
       tier: r.tier,
       flags: isPackComplianceFlags(r.compliance) ? r.compliance : null,
       computedAt: r.computed_at.toISOString(),
     }));
     return { scores, cfg };
   },
-  ["pack-studio-overview-base-v2"],
+  ["pack-studio-overview-base-v3"],
   { revalidate: 60, tags: ["pack-studio-overview"] },
 );
 
@@ -174,6 +188,8 @@ async function computeOverview(): Promise<PackStudioOverview> {
         edge: r.edge,
         nearMiss: r.nearMiss,
         maxWin: r.maxWin,
+        cv: r.cv,
+        riskScore: r.riskScore,
         tier: r.tier,
         flags: r.flags,
         computedAt: r.computedAt,
@@ -187,6 +203,16 @@ async function computeOverview(): Promise<PackStudioOverview> {
 
   const activeTotal = scored.length;
   const avgEdge = scored.reduce((s, r) => s + r.edge, 0) / activeTotal;
+
+  // Volatility (CV) + composite risk-score (0–100) spread across the scored
+  // catalog — the headline numbers the Overview "Risk System" box surfaces.
+  const avgCv = scored.reduce((s, r) => s + r.cv, 0) / activeTotal;
+  const riskScores = scored.map((r) => r.riskScore);
+  const riskScore = {
+    avg: riskScores.reduce((s, v) => s + v, 0) / activeTotal,
+    min: Math.min(...riskScores),
+    max: Math.max(...riskScores),
+  };
 
   const countBelowTarget = scored.filter((r) => r.flags?.belowTargetEdge).length;
   const countOverCap = scored.filter((r) => r.flags?.overMaxWinCap).length;
@@ -240,6 +266,8 @@ async function computeOverview(): Promise<PackStudioOverview> {
     countOverCap,
     nearMissCoverage,
     tierDistribution,
+    avgCv,
+    riskScore,
     ramp,
     alerts,
   };
