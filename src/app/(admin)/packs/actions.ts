@@ -64,6 +64,11 @@ import {
   type ResolvedAutoTargetCfg,
 } from "@/app/(pack-studio)/pack-studio/_lib/risk-config";
 import type { pack_tag } from "@/generated/prisma/enums";
+import {
+  capturePackSnapshot,
+  getPackSnapshot,
+  type SnapshotCard,
+} from "@/app/(pack-studio)/pack-studio/_lib/pack-history";
 
 /**
  * Persists a pack's `shard_cost` via raw SQL. The column is on the dev schema
@@ -358,6 +363,12 @@ export async function updatePack(
       editedLivePackUnderCapability = true;
     }
   }
+
+  // Capture the PRIOR state (price + every card weight) into the ADMIN change
+  // history BEFORE the MAIN write below replaces it — so this snapshot is the
+  // state the owner can revert TO. Best-effort: a snapshot failure must NOT
+  // fail the committed edit (the helper swallows + logs its own errors).
+  await capturePackSnapshot({ packId: id, action: "edit", capturedBy: session.userId });
 
   await db.$transaction(async (tx) => {
     await tx.packs.update({
@@ -1151,6 +1162,16 @@ export async function repricePackToTargetEdge(
       };
     }
 
+    // Capture the PRIOR state (price + every card weight) into the ADMIN change
+    // history BEFORE the price write below — so this snapshot is the state the
+    // owner can revert TO. Best-effort: a snapshot failure must NOT fail the
+    // committed reprice (the helper swallows + logs its own errors).
+    await capturePackSnapshot({
+      packId,
+      action: "reprice",
+      capturedBy: session.userId,
+    });
+
     // ONLY the price is written (+ updated_at). Card odds (pack_cards) are never
     // touched — re-pricing moves the sticker price, nothing else.
     await db.packs.update({
@@ -1602,6 +1623,16 @@ export async function applyPackRetune(
     };
   });
 
+  // Capture the PRIOR state (price + every card weight) into the ADMIN change
+  // history BEFORE the weight write below — so this snapshot is the state the
+  // owner can revert TO. Best-effort: a snapshot failure must NOT fail the
+  // committed retune (the helper swallows + logs its own errors).
+  await capturePackSnapshot({
+    packId,
+    action: "retune",
+    capturedBy: session.userId,
+  });
+
   // SAME delete-all-then-createMany pattern updatePack uses.
   await db.$transaction(async (tx) => {
     await tx.packs.update({ where: { id: packId }, data: { updated_at: new Date() } });
@@ -1661,6 +1692,201 @@ export async function applyPackRetune(
     status: "retuned",
     before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
     after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
+  };
+}
+
+// ─── Revert a pack to a captured change-history snapshot ───────────────
+//
+// Owner-gated + 2FA-token-guarded restore of a pack's price + per-card WEIGHTS
+// to an earlier `pack_state_snapshots` row. It is a WEIGHT + PRICE write to MAIN
+// (the same blast radius as a retune), so it mirrors applyPackRetune's paranoia:
+//   - Owner-only AND requires a valid RETUNE token (`verifyRetuneToken`).
+//   - `__can_update_pack` capability + the pack_creator live-pack carve-out.
+//   - Loads the snapshot from ADMIN; FIRST captures a "revert" snapshot of the
+//     CURRENT state (so the revert is itself undoable), then writes the
+//     snapshot's price + weights back via the SAME delete-all-then-createMany
+//     pack_cards transaction updatePack/applyPackRetune use.
+//   - Only re-creates cards that STILL EXIST in the pack's live pool; any card
+//     in the snapshot that no longer exists is skipped and reported (never
+//     silently dropped, never re-inserted into a pool it left).
+//   - Audits "pack_reverted"; refreshes the ADMIN risk row. FAIL-CLOSED.
+
+export type RevertPackResult = {
+  packId: string;
+  name: string;
+  status: "reverted";
+  /** Snapshot the pack was reverted TO. */
+  snapshotId: string;
+  priceBefore: number;
+  priceAfter: number;
+  /** Cards from the snapshot that were restored (still exist in the pool). */
+  restoredCardCount: number;
+  /** Card ids in the snapshot that no longer exist in the live pool (skipped). */
+  skippedCardIds: string[];
+};
+
+/**
+ * Revert a pack's price + per-card weights to an earlier captured snapshot.
+ * Owner-only AND requires a valid RETUNE token from `authorizePackRetune`
+ * (the same 2FA scope a retune carries — a revert is a weight write).
+ *
+ * Fail-closed: every auth/scope/integrity failure THROWS before any MAIN write.
+ * Only cards that still exist in the live pool are restored; cards removed from
+ * the pool since the snapshot are skipped and returned in `skippedCardIds`.
+ */
+export async function revertPackToSnapshot(
+  snapshotId: string,
+  token: string,
+): Promise<RevertPackResult> {
+  const session = await requirePageAccess("/packs");
+  if (!isRepriceOwner(session)) {
+    throw new Error("The pack revert tool is restricted to the owner.");
+  }
+  await requireCapability(session, "__can_update_pack", "revert packs");
+  if (!(await verifyRetuneToken(token, session.userId))) {
+    throw new Error("2FA authorization expired or missing — re-confirm to continue.");
+  }
+  if (!isUuid(snapshotId)) throw new Error("Invalid snapshot id");
+
+  // Load the revert target from the ADMIN change history.
+  const snapshot = await getPackSnapshot(snapshotId);
+  if (!snapshot) throw new Error("Snapshot not found.");
+  const packId = snapshot.packId;
+  if (!isUuid(packId)) throw new Error("Snapshot references an invalid pack id.");
+
+  const db = await getDb();
+
+  // Fresh pack row: scope + name + the CURRENT live pool (so we only restore
+  // cards that still exist, and can detect price/scope drift since capture).
+  const pack = await db.packs.findUnique({
+    where: { id: packId },
+    select: {
+      price: true,
+      active: true,
+      pack_type: true,
+      name: true,
+      pack_cards: { select: { card_id: true } },
+    },
+  });
+  if (!pack) throw new Error("Pack not found.");
+
+  if (!REPRICE_OR_RETUNE_PACK_TYPES.includes(pack.pack_type)) {
+    throw new Error(
+      `Out of scope: only official packs can be reverted (this is '${pack.pack_type}').`,
+    );
+  }
+
+  const snapshotPrice = snapshot.price;
+  if (!(snapshotPrice > 0)) {
+    throw new Error("Refused: snapshot has no valid price to restore.");
+  }
+
+  // pack_creator live-pack carve-out (same gate updatePack / applyPackRetune use).
+  const editedLivePackUnderCapability = await enforcePackCreatorLiveGate(
+    db,
+    session,
+    packId,
+    pack.active,
+  );
+
+  // Restore ONLY cards that still exist in the live pool. A card removed from the
+  // pool since the snapshot is skipped + reported (never silently re-inserted).
+  const liveCardIds = new Set(pack.pack_cards.map((pc) => pc.card_id));
+  const snapshotCards: SnapshotCard[] = Array.isArray(snapshot.cards)
+    ? snapshot.cards
+    : [];
+  const restorable = snapshotCards.filter((c) => liveCardIds.has(c.card_id));
+  const skippedCardIds = snapshotCards
+    .filter((c) => !liveCardIds.has(c.card_id))
+    .map((c) => c.card_id);
+
+  if (restorable.length === 0) {
+    throw new Error(
+      "Refused: none of the snapshot's cards still exist in the pack's pool — nothing to restore.",
+    );
+  }
+
+  const priceBefore = Number(pack.price.toString());
+
+  // FIRST capture the CURRENT state so the revert is itself undoable, noting the
+  // snapshot it reverts TO. Best-effort by contract (must not block the write).
+  await capturePackSnapshot({
+    packId,
+    action: "revert",
+    capturedBy: session.userId,
+    note: `Revert to snapshot ${snapshotId}`,
+  });
+
+  // Rebuild the pack_cards rows from the snapshot (only restorable cards),
+  // preserving each card's captured weight / color / animation / order.
+  const rows = restorable.map((c, i) => ({
+    pack_id: packId,
+    card_id: c.card_id,
+    weight: c.weight,
+    color: c.color ?? null,
+    animation: c.animation ?? false,
+    order: typeof c.order === "number" ? c.order : i,
+  }));
+
+  // SAME delete-all-then-createMany pattern updatePack / applyPackRetune use,
+  // plus the snapshot price.
+  await db.$transaction(async (tx) => {
+    await tx.packs.update({
+      where: { id: packId },
+      data: { price: snapshotPrice, updated_at: new Date() },
+    });
+    await tx.pack_cards.deleteMany({ where: { pack_id: packId } });
+    if (rows.length > 0) {
+      await tx.pack_cards.createMany({ data: rows });
+    }
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "pack_reverted",
+    metadata: {
+      pack_id: packId,
+      name: pack.name,
+      snapshot_id: snapshotId,
+      snapshot_action: snapshot.action,
+      snapshot_captured_at: snapshot.capturedAt,
+      price_before: priceBefore,
+      price_after: snapshotPrice,
+      restored_card_count: rows.length,
+      skipped_card_ids: skippedCardIds,
+      ...(editedLivePackUnderCapability && { edited_live_pack_under_capability: true }),
+    },
+  });
+
+  // Refresh the ADMIN risk row from the reverted (fresh) pool + price. Best-effort
+  // by contract: the MAIN write already committed. Read the pool back read-only
+  // and score it the same way the snapshot writer does.
+  try {
+    const pool = await getPackCardValues(packId);
+    if (pool.length > 0) {
+      const revertedRisk = computePackRisk({
+        cards: pool.map((c) => ({ value: c.value, weight: c.weight })),
+        price: snapshotPrice,
+      });
+      await refreshPackRiskScore(packId, revertedRisk, await readMaxWinCap());
+    }
+  } catch (err) {
+    console.error("revertPackToSnapshot: risk refresh failed", err);
+  }
+
+  reloadPacks();
+  revalidatePath("/packs");
+  revalidatePath(`/packs/${packId}`);
+
+  return {
+    packId,
+    name: pack.name,
+    status: "reverted",
+    snapshotId,
+    priceBefore,
+    priceAfter: snapshotPrice,
+    restoredCardCount: rows.length,
+    skippedCardIds,
   };
 }
 

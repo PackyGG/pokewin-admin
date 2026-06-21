@@ -1718,3 +1718,45 @@ model pack_risk_scores {
   compliance  Json
   computed_at DateTime @default(now()) @db.Timestamptz(6)
 }
+
+// ─── Pack change-history snapshots (price + every card weight before a write) ──
+// One row captured BEFORE each MAIN pack write that changes a pack's price or
+// per-card weights (edit / reprice / retune / build), plus one captured at the
+// start of a revert. Each row is the FULL prior state of the pack — the exact
+// thing the owner can REVERT the pack back to. Pure admin/product data derived
+// from the (read-only) MAIN pack definition: MAIN has no place to store change
+// history, so the snapshot lives here. No real FK to packs / admin_users
+// (separate Postgres clusters) — loose `pack_id` / `captured_by` columns only,
+// matching pack_risk_scores / pack_set_assignments.
+//
+// Provisioned in the live admin DB via `prisma db push` (the admin DB is
+// db-push-managed; never `migrate deploy` on it). This model block is the
+// authoritative shape so typed `adminDb.pack_state_snapshots.*` queries work.
+model pack_state_snapshots {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // packy.gg packs.id (uuid string — separate system, not an FK).
+  pack_id     String
+  captured_at DateTime @default(now()) @db.Timestamptz(6)
+  // admin_users.id of whoever triggered the write this snapshot precedes.
+  // Loose column (no Prisma relation) — same convention as pack_risk_scores.
+  captured_by String   @db.Uuid
+  // What write this state was captured BEFORE: "edit" | "reprice" | "retune"
+  // | "revert" | "build". Plain text so the set can grow without a migration;
+  // set at the call boundary.
+  action      String
+  // The pack's price at capture time. Decimal(20,2) matches the MAIN pack
+  // price + every money column in the admin DB.
+  price       Decimal  @db.Decimal(20, 2)
+  // The FULL card pool at capture time: an array of
+  // { card_id, weight, color, animation, order } — exactly what a revert
+  // re-writes into pack_cards. JSONB so the whole pool is one atomic row.
+  cards       Json     @db.JsonB
+  // The PackRisk breakdown at capture time (optional — best-effort, may be
+  // absent if risk couldn't be computed). Lets the history UI show the
+  // pack's edge/CV/win-rate at each point without recomputing.
+  risk        Json?    @db.JsonB
+  // Optional free-text note (e.g. the revert target id, or operator context).
+  note        String?
+
+  @@index([pack_id, captured_at(sort: Desc)], map: "pack_state_snapshots_pack_captured_idx")
+}

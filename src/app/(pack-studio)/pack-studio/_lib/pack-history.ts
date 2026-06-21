@@ -1,0 +1,253 @@
+import "server-only";
+
+import { getDb } from "@/lib/db";
+import { adminDb } from "@/lib/admin-db";
+import { isUuid } from "@/lib/utils/ids";
+import { getPackCardValues } from "@/lib/queries/pack-card-values";
+import {
+  computePackRisk,
+  type PackRisk,
+} from "@/app/(admin)/insights/edge-calc/risk";
+import type { Prisma } from "@/generated/admin-prisma/client";
+
+/**
+ * Pack change-history + revert backend.
+ *
+ * Goal: capture the FULL prior state of a pack (its price + every card weight,
+ * color, animation, order) BEFORE each write that changes weights or price, into
+ * the ADMIN DB (`pack_state_snapshots`), so the owner can review the history and
+ * REVERT a pack to an older state.
+ *
+ * Dual-DB discipline (CRITICAL):
+ *   • The pack's CURRENT state is read READ-ONLY from the MAIN game DB
+ *     (`packs.price` + `pack_cards`). MAIN is never written here.
+ *   • The snapshot row is written to the ADMIN DB only.
+ *   • No cross-DB FK — `pack_id` / `captured_by` are loose columns (same
+ *     convention as pack_risk_scores / pack_set_assignments).
+ *
+ * The capture is BEST-EFFORT by contract for the write hooks: it runs BEFORE the
+ * committed MAIN write so the recorded state is the one you can revert TO, but a
+ * snapshot failure must NOT fail the MAIN write — `capturePackSnapshot` swallows
+ * + logs its own errors and returns null on failure (see the hook call sites).
+ */
+
+/** The action a snapshot was captured before. */
+export type PackSnapshotAction =
+  | "edit"
+  | "reprice"
+  | "retune"
+  | "revert"
+  | "build";
+
+/** One card slot in a snapshot's `cards` JSON — exactly what a revert re-writes. */
+export type SnapshotCard = {
+  card_id: string;
+  weight: number;
+  color: string | null;
+  animation: boolean;
+  order: number;
+};
+
+/**
+ * READ-ONLY (MAIN): the pack's current price + full pack_cards pool with the
+ * metadata a revert needs to faithfully re-create the rows (weight, color,
+ * animation, order). Returns null when the pack doesn't exist.
+ */
+async function readCurrentPackState(packId: string): Promise<{
+  price: number;
+  cards: SnapshotCard[];
+} | null> {
+  const db = await getDb();
+  const pack = await db.packs.findUnique({
+    where: { id: packId },
+    select: {
+      price: true,
+      pack_cards: {
+        select: {
+          card_id: true,
+          weight: true,
+          color: true,
+          animation: true,
+          order: true,
+        },
+        orderBy: { order: "asc" },
+      },
+    },
+  });
+  if (!pack) return null;
+
+  return {
+    price: Number(pack.price.toString()),
+    cards: pack.pack_cards.map((pc) => ({
+      card_id: pc.card_id,
+      weight: pc.weight,
+      color: pc.color,
+      animation: pc.animation,
+      order: pc.order,
+    })),
+  };
+}
+
+/**
+ * Best-effort current PackRisk for the pack — uses the SAME read-only pool +
+ * price the rest of the risk surfaces score with (`getPackCardValues` +
+ * `computePackRisk`). Returns null if it can't be computed (empty pool, read
+ * error) so the snapshot's `risk` column stays optional.
+ */
+async function computeCurrentRisk(
+  packId: string,
+  price: number,
+): Promise<PackRisk | null> {
+  try {
+    const pool = await getPackCardValues(packId);
+    if (pool.length === 0) return null;
+    return computePackRisk({
+      cards: pool.map((c) => ({ value: c.value, weight: c.weight })),
+      price,
+    });
+  } catch (err) {
+    console.error("[pack-history] computeCurrentRisk failed", err);
+    return null;
+  }
+}
+
+export type CapturePackSnapshotInput = {
+  packId: string;
+  action: PackSnapshotAction;
+  /** admin_users.id of whoever triggered the write this snapshot precedes. */
+  capturedBy: string;
+  note?: string;
+};
+
+/**
+ * Capture ONE snapshot of the pack's CURRENT state (price + every card weight)
+ * into the ADMIN DB. Reads MAIN read-only, writes ADMIN only.
+ *
+ * BEST-EFFORT: never throws. On any failure it logs and returns null so a hook
+ * placed before a committed MAIN write can't break that write. Returns the new
+ * snapshot id on success.
+ *
+ * The CALLER is responsible for auth — every call site is already behind an
+ * owner/admin + capability gate (the pack write actions). This function does NOT
+ * re-gate, mirroring how `refreshPackRiskScore` is invoked post-gate.
+ */
+export async function capturePackSnapshot(
+  input: CapturePackSnapshotInput,
+): Promise<string | null> {
+  try {
+    if (!isUuid(input.packId)) {
+      console.error("[pack-history] capturePackSnapshot: invalid pack id");
+      return null;
+    }
+
+    const state = await readCurrentPackState(input.packId);
+    if (!state) {
+      // Pack doesn't exist (e.g. captured for a build before the pack is
+      // created) — nothing to snapshot. Not an error.
+      return null;
+    }
+
+    const risk = await computeCurrentRisk(input.packId, state.price);
+
+    const row = await adminDb.pack_state_snapshots.create({
+      data: {
+        pack_id: input.packId,
+        captured_by: input.capturedBy,
+        action: input.action,
+        price: state.price,
+        cards: state.cards as unknown as Prisma.InputJsonValue,
+        risk: (risk ?? undefined) as Prisma.InputJsonValue | undefined,
+        note: input.note ?? null,
+      },
+      select: { id: true },
+    });
+    return row.id;
+  } catch (err) {
+    console.error("[pack-history] capturePackSnapshot failed", err);
+    return null;
+  }
+}
+
+/** A single history entry surfaced to the review/revert UI. */
+export type PackSnapshot = {
+  id: string;
+  packId: string;
+  capturedAt: string;
+  capturedBy: string;
+  action: string;
+  price: number;
+  cards: SnapshotCard[];
+  risk: PackRisk | null;
+  note: string | null;
+};
+
+const HISTORY_DEFAULT_LIMIT = 50;
+const HISTORY_MAX_LIMIT = 200;
+
+function mapSnapshotRow(r: {
+  id: string;
+  pack_id: string;
+  captured_at: Date;
+  captured_by: string;
+  action: string;
+  price: Prisma.Decimal;
+  cards: Prisma.JsonValue;
+  risk: Prisma.JsonValue | null;
+  note: string | null;
+}): PackSnapshot {
+  return {
+    id: r.id,
+    packId: r.pack_id,
+    capturedAt: r.captured_at.toISOString(),
+    capturedBy: r.captured_by,
+    action: r.action,
+    price: Number(r.price.toString()),
+    cards: (Array.isArray(r.cards) ? r.cards : []) as unknown as SnapshotCard[],
+    risk: (r.risk ?? null) as unknown as PackRisk | null,
+    note: r.note,
+  };
+}
+
+/**
+ * READ-ONLY ADMIN list of pack snapshots, newest first. When `packId` is given,
+ * scopes to that pack (served by the
+ * `pack_state_snapshots_pack_captured_idx` (pack_id, captured_at DESC) index);
+ * otherwise returns the most recent snapshots across ALL packs.
+ *
+ * Caller is responsible for auth (owner/admin gate at the action boundary).
+ */
+export async function getPackHistory(
+  packId?: string,
+  limit: number = HISTORY_DEFAULT_LIMIT,
+): Promise<PackSnapshot[]> {
+  const take = Math.min(
+    Math.max(1, Math.floor(Number.isFinite(limit) ? limit : HISTORY_DEFAULT_LIMIT)),
+    HISTORY_MAX_LIMIT,
+  );
+
+  if (packId !== undefined && !isUuid(packId)) {
+    throw new Error("Invalid pack id");
+  }
+
+  const rows = await adminDb.pack_state_snapshots.findMany({
+    where: packId ? { pack_id: packId } : undefined,
+    orderBy: { captured_at: "desc" },
+    take,
+  });
+
+  return rows.map(mapSnapshotRow);
+}
+
+/**
+ * READ-ONLY ADMIN fetch of a single snapshot by id (the revert target). Returns
+ * null when the id doesn't exist. Caller is responsible for auth.
+ */
+export async function getPackSnapshot(
+  snapshotId: string,
+): Promise<PackSnapshot | null> {
+  if (!isUuid(snapshotId)) return null;
+  const row = await adminDb.pack_state_snapshots.findUnique({
+    where: { id: snapshotId },
+  });
+  return row ? mapSnapshotRow(row) : null;
+}
