@@ -11,6 +11,8 @@ import {
   PACK_STUDIO_CASH_PACK_TYPES,
   buildPackCompliance,
   readMaxWinCap,
+  autoTargetEdge,
+  readEdgeCurveConfig,
 } from "../_lib/risk-config";
 
 /**
@@ -50,6 +52,10 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
   );
 
   const maxWinCap = await readMaxWinCap();
+  // Resolve the per-pack edge-curve config ONCE up-front (mirrors `readMaxWinCap`)
+  // so every pack's `belowTargetEdge` flag is checked against ITS OWN curve target
+  // — `autoTargetEdge({price, maxWin}, edgeCurveCfg)` — not the flat 10.99% floor.
+  const edgeCurveCfg = await readEdgeCurveConfig();
 
   // ── Resolve in-scope pack ids (active cash packs) from MAIN, read-only ──
   // Active `official` cash packs (`PACK_STUDIO_CASH_PACK_TYPES`). We resolve the
@@ -114,7 +120,19 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
       max_mult: risk.maxMult,
       risk_score: risk.riskScore0to100,
       tier: risk.tier,
-      compliance: buildPackCompliance(risk, maxWinCap),
+      // `buildPackCompliance` derives every flag except `belowTargetEdge` from the
+      // pack's own risk; it uses the flat floor for that one. Override it here with
+      // the PER-PACK curve target so a pack is "below target" only when it falls
+      // below ITS OWN `autoTargetEdge(price, maxWin)` — not the flat 10.99% floor.
+      compliance: {
+        ...buildPackCompliance(risk, maxWinCap),
+        belowTargetEdge:
+          risk.edge <
+          autoTargetEdge(
+            { price: c.price, maxWin: risk.maxWin },
+            edgeCurveCfg,
+          ),
+      },
       computed_at: computedAt,
     };
   });
