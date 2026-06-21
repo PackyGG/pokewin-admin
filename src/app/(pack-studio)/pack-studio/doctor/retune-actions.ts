@@ -271,6 +271,13 @@ export async function planCustomRepin(
       totalWeight: p.totalWeight,
       weightedPriceSum: p.weightedPriceSum,
       targetEdge: packTarget,
+      // One-sided-up rounding — IDENTICAL to the `repricePackToTargetEdge` write
+      // this dry-run previews. Each re-pinned pack's edge lands ≥ its per-pack
+      // target (never below the 10.99% floor); a pack whose only round-up cent
+      // overshoots beyond ±ACCEPT is skipped, not overcharged. The preview and
+      // the write share this mode so the dry-run can't promise a write the action
+      // would round differently.
+      roundingMode: "up",
     });
     return {
       packId: p.id,

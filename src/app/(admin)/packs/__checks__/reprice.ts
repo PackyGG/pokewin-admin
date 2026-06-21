@@ -291,6 +291,75 @@ check("round-up: $1.25/EV $1.1153 → skip (ceil cent $1.26→11.48% overshoots)
   assert(plan.newPrice === null, `skip must not expose a price, got ${plan.newPrice}`);
 });
 
+// ── 13. WRITE-PATH WIRING: re-pin/reprice write is one-sided-up ─────
+// The authoritative write (`repricePackToTargetEdge`) and BOTH dry-runs
+// (`planRepriceAllPacks`, `planCustomRepin`) now call `planPackReprice` with
+// `roundingMode: "up"`. This check pins the END-TO-END invariant that wiring
+// guarantees: for the exact shape those call sites pass — a per-pack target
+// (the curve target lands anywhere in [10.99%, 11.50%]) plus a fresh pool — a
+// "reprice"/"unchanged" result NEVER lands the edge BELOW target. A "skip"
+// exposes no price. This is stricter than §10's ACCEPT-slack lower bound: a
+// WRITTEN edge must be ≥ target up to a tight float epsilon, i.e. truly never
+// under the floor.
+check("write-path: round-up reprice/unchanged edge ≥ target (never below), per-pack targets", () => {
+  // Float epsilon only — NOT the ACCEPT tolerance. A written price's edge must be
+  // at or above target; the only slack permitted is IEEE rounding noise.
+  const EPS = 1e-9;
+  let written = 0;
+  let skipped = 0;
+  // Sweep per-pack-shaped targets across the full curve band [10.99%, 11.50%]
+  // (what `autoTargetEdge` can emit) plus the flat-tool extremes, against a wide
+  // EV grid and both cards-per-open the real pools use.
+  for (const target of [0.1099, 0.111, 0.1125, 0.114, 0.115, 0.05, 0.2, 0.5]) {
+    for (const cardsPerOpen of [1, 5]) {
+      for (let cents = 5; cents <= 20000; cents++) {
+        const ev = cents / 100;
+        const plan = planPackReprice({
+          currentPrice: ev,
+          cardsPerOpen,
+          totalWeight: cardsPerOpen,
+          weightedPriceSum: ev,
+          targetEdge: target,
+          roundingMode: "up",
+        });
+        if (plan.action === "reprice" || plan.action === "unchanged") {
+          written++;
+          const edge = plan.newEdge ?? NaN;
+          assert(
+            plan.newPrice !== null && plan.newPrice > 0,
+            `written needs a positive price (ev=${ev}, t=${target})`,
+          );
+          // THE FLOOR: a written edge is NEVER below target (float-eps only).
+          assert(
+            edge >= target - EPS,
+            `WRITE FLOOR VIOLATED: edge ${edge} < target ${target} (ev=${ev}, cpo=${cardsPerOpen})`,
+          );
+          // And still inside the accept band on the high side (never overcharge).
+          assert(
+            edge - target <= REPRICE_ACCEPT_TOLERANCE,
+            `written edge ${edge} overshoots accept of ${target} (ev=${ev})`,
+          );
+          assert(
+            repriceEdgeWithinHardBand(edge, target),
+            `written edge ${edge} outside HARD band of ${target} (ev=${ev})`,
+          );
+        } else {
+          skipped++;
+          assert(
+            plan.newPrice === null,
+            `skip must not expose a price (ev=${ev}, t=${target})`,
+          );
+        }
+      }
+    }
+  }
+  console.log(
+    `      write-path swept → ${written} written (edge ≥ target) / ${skipped} skip`,
+  );
+  assert(written > 0, "write-path sweep should produce written packs");
+  assert(skipped > 0, "write-path sweep should produce skips (overshoot cases)");
+});
+
 // ── Summary ─────────────────────────────────────────────────────────
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} re-price check(s) failed:`);

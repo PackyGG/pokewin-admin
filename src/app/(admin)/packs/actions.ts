@@ -927,6 +927,10 @@ export async function planRepriceAllPacks(
       totalWeight: p.totalWeight,
       weightedPriceSum: p.weightedPriceSum,
       targetEdge: target,
+      // Same one-sided-up rounding the write (`repricePackToTargetEdge`) uses, so
+      // the dry-run preview reflects exactly what would be written — edge ≥ target,
+      // never below — with no drift between preview and write.
+      roundingMode: "up",
     });
     return {
       packId: p.id,
@@ -1108,6 +1112,14 @@ export async function repricePackToTargetEdge(
       totalWeight: comp.totalWeight,
       weightedPriceSum: comp.weightedPriceSum,
       targetEdge: target,
+      // One-sided-up rounding: the chosen cent's edge is ALWAYS ≥ the pack's
+      // target — never the marginal under-target a "nearest" round could land
+      // within the ±ACCEPT tolerance. This enforces the owner's floor (a
+      // re-priced pack's edge is at or above target, never below). If no
+      // whole-cent price hits target without overshooting beyond ACCEPT, "up"
+      // returns skip (we never overcharge to force it). The dry-run preview uses
+      // the SAME mode, so there's no drift between what's shown and what's written.
+      roundingMode: "up",
     });
 
     if (plan.action !== "reprice" || plan.newPrice === null || plan.newEdge === null) {
