@@ -289,16 +289,44 @@ export type ShapeWeightsInput = {
   winRateTol?: number;
 };
 
+/**
+ * One soft-target relaxation the solver applied to stay feasible. `requested` is
+ * what the caller asked for; `applied` is the achievable value the solver fell
+ * back to. For near-miss / floor / win-rate, relaxation only ever loosens the
+ * soft target downward, so `applied` is between 0 and `requested`.
+ */
+export type ShapeWeightsRelaxation = {
+  lever: "nearMiss" | "winRate" | "floor";
+  requested: number;
+  applied: number;
+  reason: string;
+};
+
 export type ShapeWeightsSuccess = {
   weights: number[];
   risk: PackRisk;
   ev: number;
   edge: number;
+  /** Soft targets the solver had to relax to reach a feasible result. Empty when nothing was relaxed. */
+  relaxations: ShapeWeightsRelaxation[];
+};
+
+/**
+ * Structured description of the HARD limit that made the request genuinely
+ * impossible (only the truly unsatisfiable cases — see `shapeWeights`). Carries
+ * a human-readable detail plus a concrete, actionable suggestion.
+ */
+export type ShapeWeightsLimit = {
+  kind: string;
+  detail: string;
+  suggestion: string;
 };
 
 export type ShapeWeightsError = {
   error: string;
   feasibility?: Record<string, unknown>;
+  /** What hard limit was hit + how to resolve it. */
+  limit: ShapeWeightsLimit;
 };
 
 export type ShapeWeightsResult = ShapeWeightsSuccess | ShapeWeightsError;
@@ -318,6 +346,15 @@ function bandEvForBeta(values: readonly number[], beta: number): number {
   const weighted = w.reduce((s, wi, i) => s + wi * values[i]!, 0);
   return weighted / sumW;
 }
+
+/**
+ * Shared-beta bisection bounds for the EV solve. BETA_LO skews each band toward
+ * its EXPENSIVE end (max EV); BETA_HI skews toward CHEAP (min EV). Module-level
+ * so the up-front win-rate-vs-EV feasibility bound and the in-solver bisection
+ * use the SAME endpoints (the bound must match what the solver can actually do).
+ */
+const BETA_LO = -20; // skew expensive → max EV
+const BETA_HI = 50; // skew cheap → min EV
 
 /** Power-law weight template for a band, normalized to sum to `mass`. */
 function bandWeights(values: readonly number[], beta: number, mass: number): number[] {
@@ -352,25 +389,62 @@ function gcd(a: number, b: number): number {
  * DUST band's beta is the free knob binary-searched (it is the most EV-elastic
  * band) so the total EV lands exactly on ev* = price·(1 − targetEdge).
  *
- * Returns EITHER a success `{weights,risk,ev,edge}` (weights = positive ints,
- * gcd-reduced) OR an error `{error,feasibility?}`. The two arms are DISJOINT —
- * an error never carries a weights vector.
+ * GRACEFUL RELAXATION: the near-miss floor, the modal-floor pin, and the
+ * win-rate target are all SOFT. When the pool genuinely cannot honour one of
+ * them, the solver does NOT fail — it RELAXES the soft target down to the
+ * achievable maximum (possibly 0), proceeds, and records what it gave up in
+ * `relaxations`. The edge target stays HARD (one-sided-up: edge ≥ targetEdge in
+ * every success). HARD errors are reserved for the truly impossible: no
+ * win/grail card at all, a required EV outside the pool's min/max value range,
+ * or a degenerate single-value pool (no value spread → no edge can be shaped).
+ *
+ * Returns EITHER a success `{weights,risk,ev,edge,relaxations}` (weights =
+ * positive ints, gcd-reduced; relaxations empty when nothing relaxed) OR an
+ * error `{error,feasibility?,limit}` (limit = structured kind/detail/suggestion).
+ * The two arms are DISJOINT — success has weights+relaxations, an error has
+ * error+limit, never both.
  */
 export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   const price = input.price;
   const targetEdge = input.targetEdge ?? TARGET_HOUSE_EDGE;
-  const targetWinRate = input.targetWinRate;
-  const nearMissMin = input.nearMissMin ?? 0.1;
+  const requestedWinRate = input.targetWinRate;
+  const requestedNearMissMin = input.nearMissMin ?? 0.1;
   const winRateTol = input.winRateTol ?? 0.02;
   const maxWinCap = input.maxWinCap;
   const floorRatioMin = input.floorRatioMin;
 
-  if (!(price > 0)) return { error: "Price must be positive." };
-  if (!Number.isFinite(targetEdge) || targetEdge <= 0 || targetEdge >= 1) {
-    return { error: "Target edge must be between 0 and 1 (exclusive)." };
+  // Soft targets the solver had to loosen. Filled in as we go; empty on a clean run.
+  const relaxations: ShapeWeightsRelaxation[] = [];
+
+  if (!(price > 0)) {
+    return {
+      error: "Price must be positive.",
+      limit: {
+        kind: "invalid-price",
+        detail: `Price must be a positive number; got ${price}.`,
+        suggestion: "Set a pack price greater than $0.",
+      },
+    };
   }
-  if (!Number.isFinite(targetWinRate) || targetWinRate < 0 || targetWinRate >= 1) {
-    return { error: "Target win-rate must be in [0, 1)." };
+  if (!Number.isFinite(targetEdge) || targetEdge <= 0 || targetEdge >= 1) {
+    return {
+      error: "Target edge must be between 0 and 1 (exclusive).",
+      limit: {
+        kind: "invalid-target-edge",
+        detail: `Target edge must lie strictly between 0 and 1; got ${targetEdge}.`,
+        suggestion: "Use a target edge like 0.1099 (10.99%).",
+      },
+    };
+  }
+  if (!Number.isFinite(requestedWinRate) || requestedWinRate < 0 || requestedWinRate >= 1) {
+    return {
+      error: "Target win-rate must be in [0, 1).",
+      limit: {
+        kind: "invalid-target-win-rate",
+        detail: `Target win-rate must lie in [0, 1); got ${requestedWinRate}.`,
+        suggestion: "Use a win-rate target like 0.2 (20%).",
+      },
+    };
   }
 
   // Index-preserving pool: drop value ≤ 0 and (if capped) value > cap.
@@ -389,7 +463,20 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   });
 
   if (slots.length === 0) {
-    return { error: "No usable cards after dropping non-positive / over-cap values." };
+    return {
+      error: "No usable cards after dropping non-positive / over-cap values.",
+      limit: {
+        kind: "empty-pool",
+        detail:
+          maxWinCap !== undefined
+            ? `Every card has value ≤ 0 or exceeds the max-win cap of $${maxWinCap.toFixed(2)}.`
+            : "Every card has a non-positive value.",
+        suggestion:
+          maxWinCap !== undefined
+            ? `Add at least one card priced above $0 and at or below the $${maxWinCap.toFixed(2)} cap (Builder/card editor).`
+            : "Add at least one card with a positive value (Builder/card editor).",
+      },
+    };
   }
 
   const grail = slots.filter((s) => s.band === "GRAIL");
@@ -404,66 +491,167 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   const feasibility: Record<string, unknown> = {
     price,
     targetEdge,
-    targetWinRate,
-    nearMissMin,
+    targetWinRate: requestedWinRate,
+    nearMissMin: requestedNearMissMin,
     evTarget,
     minValue,
     maxValue,
     bands: { grail: grail.length, win: win.length, nearMiss: nearMiss.length, dust: dust.length },
   };
 
-  // ── Feasibility gate (return BEFORE any weight assignment) ──────────
   const tol = 1e-9;
 
-  // 1. Need at least one win/grail card to make a win-rate.
+  // ── HARD limit 1: need at least one win/grail card to make ANY win-rate ──
   if (grail.length + win.length === 0) {
     return {
       error: "No win/grail cards (value ≥ price): cannot produce a non-zero win-rate.",
       feasibility,
+      limit: {
+        kind: "no-win-cards",
+        detail: `Pool has no card worth ≥ the $${price.toFixed(2)} price.`,
+        suggestion: `Add at least one card priced ≥ $${price.toFixed(2)} (Builder/card editor).`,
+      },
     };
   }
 
-  // 2. Required ev* must lie within the pool's value range (same bound logic as
-  //    computeOddsForTargetEv: a normalized mix can only land between min and max).
+  // ── HARD limit 2: a degenerate single-value pool cannot host an edge ──
+  // With every usable card at the same value, EV is pinned to that value: the
+  // distribution has zero spread, so the edge is fixed and cannot be shaped.
+  if (maxValue - minValue <= tol) {
+    return {
+      error: `Degenerate pool: every usable card is worth $${minValue.toFixed(2)}, so the edge is fixed and cannot be shaped.`,
+      feasibility,
+      limit: {
+        kind: "degenerate-pool",
+        detail: `All usable cards share the single value $${minValue.toFixed(2)}; there is no value spread to shape an edge.`,
+        suggestion: "Add cards at different values (a mix of cheap and win-priced cards) so the edge can be tuned.",
+      },
+    };
+  }
+
+  // ── HARD limit 3: required ev* must lie within the pool's value range ──
+  // (Same bound logic as computeOddsForTargetEv: a normalized mix can only land
+  // between the pool min and max — no choice of weights can escape that range.)
   if (evTarget < minValue - tol || evTarget > maxValue + tol) {
     return {
       error: `Target EV $${evTarget.toFixed(4)} is out of range; pool values span $${minValue.toFixed(2)}–$${maxValue.toFixed(2)}.`,
       feasibility,
+      limit: {
+        kind: "ev-out-of-range",
+        detail: `The ${(targetEdge * 100).toFixed(2)}% edge needs EV $${evTarget.toFixed(2)}, but pool values only span $${minValue.toFixed(2)}–$${maxValue.toFixed(2)}.`,
+        suggestion:
+          evTarget < minValue
+            ? `Add a cheaper card (value ≤ $${evTarget.toFixed(2)}) so the EV can be pulled down to the edge target.`
+            : `Add a higher-value card (value ≥ $${evTarget.toFixed(2)}) so the EV can reach the edge target.`,
+      },
     };
   }
 
-  // 3. A pack needs losing mass: win + near-miss can't already consume all mass.
-  if (targetWinRate + nearMissMin >= 1 - tol) {
-    return {
-      error: `targetWinRate (${targetWinRate}) + nearMissMin (${nearMissMin}) leave no dust mass for the house edge.`,
-      feasibility,
-    };
-  }
-
-  // 4. Near-miss mass requested but no near-miss cards to carry it.
+  // ── SOFT relaxation: near-miss floor ────────────────────────────────
+  // Near-miss is a feel dial, not a hard constraint. If the pool has NO
+  // near-miss cards [0.5·price, price), or the requested floor can't fit the
+  // mass budget, relax it down to the achievable maximum (possibly 0).
+  let nearMissMin = requestedNearMissMin;
   if (nearMissMin > tol && nearMiss.length === 0) {
-    return {
-      error: `nearMissMin ${nearMissMin} requested but the pool has no near-miss cards [0.5·price, price).`,
-      feasibility,
-    };
+    relaxations.push({
+      lever: "nearMiss",
+      requested: requestedNearMissMin,
+      applied: 0,
+      reason: "Pool has no near-miss cards in [0.5·price, price); near-miss mass relaxed to 0.",
+    });
+    nearMissMin = 0;
   }
 
-  // 5. Need dust cards to host the losing mass / EV slack.
+  // ── HARD limit 4: need dust cards to host the losing mass / EV slack ──
+  // The one-sided-up edge enforcement nudges the cheapest DUST card, so a dust
+  // card must exist to carry the losing mass and the post-quantize EV slack.
   if (dust.length === 0) {
     return {
       error: "No dust cards (value < 0.5·price): nothing to carry the losing mass / EV slack.",
       feasibility,
+      limit: {
+        kind: "no-dust-cards",
+        detail: `Pool has no card worth < $${(0.5 * price).toFixed(2)} (half the $${price.toFixed(2)} price) to carry the losing mass.`,
+        suggestion: `Add at least one cheap card worth < $${(0.5 * price).toFixed(2)} (Builder/card editor) so the house edge has somewhere to sit.`,
+      },
     };
+  }
+
+  // ── SOFT relaxation: win-rate vs the available mass budget ──────────
+  // A pack always needs SOME losing (dust) mass to carry the house edge. If win
+  // + near-miss would consume (nearly) all the probability mass, the win-rate is
+  // too high for this split — relax it DOWN to leave a small dust margin rather
+  // than erroring.
+  const MIN_DUST_MARGIN = 0.02; // keep ≥2% dust mass for the edge
+  const winMassCeiling = 1 - nearMissMin - MIN_DUST_MARGIN;
+  let targetWinRate = requestedWinRate;
+  if (targetWinRate > winMassCeiling) {
+    const applied = Math.max(0, winMassCeiling);
+    relaxations.push({
+      lever: "winRate",
+      requested: requestedWinRate,
+      applied,
+      reason: `Win-rate ${requestedWinRate} + near-miss ${nearMissMin} leave no dust mass for the house edge; relaxed to ${applied.toFixed(4)}.`,
+    });
+    targetWinRate = applied;
+  }
+
+  // ── SOFT relaxation: win-rate vs EV feasibility ─────────────────────
+  // Even within the mass budget, too much mass on win/grail cards (which pay
+  // ≥ price) pins the MINIMUM achievable EV above the edge target — a high
+  // win-rate is simply incompatible with a positive house edge. The minimum EV
+  // (every band skewed cheap, beta→HI) is linear in the win mass wr:
+  //   evMin(wr) = wr·winCheap + nmMass·nmCheap + (1−wr−nmMass)·dustCheap
+  // which RISES with wr (winCheap ≥ price > dustCheap). So the largest win mass
+  // that still admits the edge is the wr solving evMin(wr) = evTarget. If the
+  // requested win-rate exceeds that, relax DOWN to it rather than erroring.
+  {
+    const nmMassForBound = nearMiss.length > 0 ? nearMissMin : 0;
+    const winCheap = bandEvForBeta(
+      [...grail, ...win].map((s) => s.value),
+      BETA_HI,
+    );
+    const nmCheap = bandEvForBeta(nearMiss.map((s) => s.value), BETA_HI);
+    const dustCheap = bandEvForBeta(dust.map((s) => s.value), BETA_HI);
+    const denom = winCheap - dustCheap;
+    if (denom > tol) {
+      const wrMaxForEv =
+        (evTarget - nmMassForBound * nmCheap - (1 - nmMassForBound) * dustCheap) / denom;
+      // Clamp into the valid range; the mass-budget ceiling already applied above.
+      const wrCap = Math.max(0, Math.min(targetWinRate, wrMaxForEv));
+      if (targetWinRate > wrCap + tol) {
+        const existing = relaxations.find((r) => r.lever === "winRate");
+        if (existing) {
+          existing.applied = wrCap;
+          existing.reason = `Win-rate relaxed to ${wrCap.toFixed(4)} (requested ${requestedWinRate}); a higher win mass would pin EV above the ${(targetEdge * 100).toFixed(2)}% edge target.`;
+        } else {
+          relaxations.push({
+            lever: "winRate",
+            requested: requestedWinRate,
+            applied: wrCap,
+            reason: `Win-rate relaxed to ${wrCap.toFixed(4)}; a higher win mass would pin EV above the ${(targetEdge * 100).toFixed(2)}% edge target.`,
+          });
+        }
+        targetWinRate = wrCap;
+      }
+    }
   }
 
   // ── Band mass allocation ────────────────────────────────────────────
   const winMass = targetWinRate;
   const nearMissMass = nearMiss.length > 0 ? nearMissMin : 0;
   const dustMass = 1 - winMass - nearMissMass;
+  // Backstop: after the win-rate relaxation above, dustMass ≥ MIN_DUST_MARGIN by
+  // construction, so this never fires on the relaxed path — it's a NaN-safe guard.
   if (!(dustMass > tol)) {
     return {
       error: "No dust probability mass remains after win + near-miss allocation.",
       feasibility,
+      limit: {
+        kind: "no-dust-mass",
+        detail: "Win + near-miss allocation consumed all probability mass, leaving nothing to carry the house edge.",
+        suggestion: "Lower the win-rate or near-miss target so some losing (dust) mass remains.",
+      },
     };
   }
 
@@ -507,33 +695,45 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   let freeDust = dust;
   let freeDustValues = dustValues;
   let freeDustMass = dustMass;
-  if (floorRatioMin !== undefined) {
+  if (floorRatioMin !== undefined && floorRatioMin > 0) {
     const needFloor = floorRatioMin * price;
     const cand = dust.filter((s) => s.value >= needFloor - 1e-9);
+    // SOFT relaxation: if no dust card meets the floor ratio, drop the floor pin
+    // (applied 0) and proceed — the modal card falls out naturally.
     if (cand.length === 0) {
-      return {
-        error: `floorRatioMin ${floorRatioMin} needs a card ≥ $${needFloor.toFixed(2)}; none in the dust band.`,
-        feasibility: { ...feasibility, needFloor },
-      };
+      relaxations.push({
+        lever: "floor",
+        requested: floorRatioMin,
+        applied: 0,
+        reason: `No dust card worth ≥ $${needFloor.toFixed(2)} (floorRatioMin·price); floor pin dropped.`,
+      });
+    } else {
+      cand.sort((a, b) => a.value - b.value);
+      const pick = cand[0]!;
+      // Reserve enough mass that the floor card dominates any OTHER single card.
+      // Upper bound on any other single-card mass ≈ max(winMassTotal, nearMissMass,
+      // remaining dustMass). Give the floor a hair more, but never ≥ dustMass (it
+      // must leave room for the rest of the losing band) and never so much it kills
+      // the EV solve. We cap it at 60% of dust mass.
+      const otherMax = Math.max(winMassTotal, nearMissMass, dustMass);
+      const reserve = Math.min(dustMass * 0.6, otherMax * 1.05 + 1e-6);
+      // SOFT relaxation: if a dominant floor mass can't fit the dust band, drop
+      // the pin (applied 0) rather than erroring.
+      if (!(reserve > 0) || reserve >= dustMass) {
+        relaxations.push({
+          lever: "floor",
+          requested: floorRatioMin,
+          applied: 0,
+          reason: `Cannot reserve a dominant floor mass within the dust band (reserve ${reserve.toFixed(4)}, dustMass ${dustMass.toFixed(4)}); floor pin dropped.`,
+        });
+      } else {
+        floorSlot = pick;
+        floorMass = reserve;
+        freeDust = dust.filter((s) => s !== floorSlot);
+        freeDustValues = freeDust.map((s) => s.value);
+        freeDustMass = dustMass - floorMass;
+      }
     }
-    cand.sort((a, b) => a.value - b.value);
-    floorSlot = cand[0]!;
-    // Reserve enough mass that the floor card dominates any OTHER single card.
-    // Upper bound on any other single-card mass ≈ max(winMassTotal, nearMissMass,
-    // remaining dustMass). Give the floor a hair more, but never ≥ dustMass (it
-    // must leave room for the rest of the losing band) and never so much it kills
-    // the EV solve. We cap it at 60% of dust mass.
-    const otherMax = Math.max(winMassTotal, nearMissMass, dustMass);
-    floorMass = Math.min(dustMass * 0.6, otherMax * 1.05 + 1e-6);
-    if (!(floorMass > 0) || floorMass >= dustMass) {
-      return {
-        error: `Cannot reserve a dominant floor mass within the dust band (floorMass ${floorMass.toFixed(4)}, dustMass ${dustMass.toFixed(4)}).`,
-        feasibility: { ...feasibility, floorMass, dustMass },
-      };
-    }
-    freeDust = dust.filter((s) => s !== floorSlot);
-    freeDustValues = freeDust.map((s) => s.value);
-    freeDustMass = dustMass - floorMass;
   }
 
   // EV total for a shared beta, INCLUDING the reserved floor card's fixed share.
@@ -544,8 +744,6 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     freeDustMass * bandEvForBeta(freeDustValues, beta) +
     floorEvFixed;
 
-  const BETA_LO = -20; // skew expensive → max EV
-  const BETA_HI = 50; // skew cheap → min EV
   const evMax = totalEvForBeta(BETA_LO);
   const evMin = totalEvForBeta(BETA_HI);
 
@@ -558,6 +756,14 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         bands: { winMass: winMassTotal, nearMissMass, dustMass, floorMass },
         dustMin,
         dustMax,
+      },
+      limit: {
+        kind: "ev-unreachable-for-split",
+        detail: `The ${(targetEdge * 100).toFixed(2)}% edge needs EV $${evTarget.toFixed(2)}, but at the chosen win/near-miss split this pool can only produce EV $${evMin.toFixed(2)}–$${evMax.toFixed(2)}.`,
+        suggestion:
+          evTarget > evMax
+            ? `Add a higher-value win card, or lower the edge target, so EV can reach $${evTarget.toFixed(2)}.`
+            : `Add a cheaper dust card, or raise the edge target, so EV can drop to $${evTarget.toFixed(2)}.`,
       },
     };
   }
@@ -643,6 +849,11 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     return {
       error: `Could not reach edge ≥ ${(targetEdge * 100).toFixed(2)}% within ${MAX_BUMPS} weight bumps (achieved ${(risk.edge * 100).toFixed(2)}%).`,
       feasibility: { ...feasibility, achievedEdge: risk.edge, bumps },
+      limit: {
+        kind: "edge-unreachable",
+        detail: `Could not push the edge up to ${(targetEdge * 100).toFixed(2)}% within ${MAX_BUMPS} weight bumps (reached ${(risk.edge * 100).toFixed(2)}%).`,
+        suggestion: `Add a cheaper dust card (well below $${(0.5 * price).toFixed(2)}) so weighting it down can lift the edge to target.`,
+      },
     };
   }
 
@@ -660,15 +871,27 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   }
 
   // ── Win-rate re-check (after all integer adjustments) ───────────────
+  // Win-rate is a TARGET within tol — but if the pool genuinely could not land
+  // on it (the edge bumps moved mass around to keep edge ≥ target, or the pool
+  // can't host the requested win mass), we RELAX to the achieved value and
+  // record it rather than erroring. Edge ≥ target is already guaranteed above,
+  // so the result is still a valid, edge-correct pack.
   if (Math.abs(risk.winRate - targetWinRate) > winRateTol) {
-    return {
-      error: `Achieved win-rate ${(risk.winRate * 100).toFixed(2)}% misses target ${(targetWinRate * 100).toFixed(2)}% (±${(winRateTol * 100).toFixed(2)}%); near-miss ${(risk.nearMiss * 100).toFixed(2)}%, edge ${(risk.edge * 100).toFixed(2)}%.`,
-      feasibility: {
-        ...feasibility,
-        achieved: { winRate: risk.winRate, nearMiss: risk.nearMiss, edge: risk.edge },
-      },
-    };
+    const existing = relaxations.find((r) => r.lever === "winRate");
+    if (existing) {
+      // A win-rate relaxation was already recorded (mass-budget cap); refine its
+      // applied value + reason to reflect the actual achieved win-rate.
+      existing.applied = risk.winRate;
+      existing.reason = `Win-rate relaxed to the achievable ${(risk.winRate * 100).toFixed(2)}% (requested ${(requestedWinRate * 100).toFixed(2)}%); the pool could not host the full win mass while keeping edge ≥ target.`;
+    } else {
+      relaxations.push({
+        lever: "winRate",
+        requested: requestedWinRate,
+        applied: risk.winRate,
+        reason: `Pool could not land win-rate ${(targetWinRate * 100).toFixed(2)}% within ±${(winRateTol * 100).toFixed(2)}% while keeping edge ≥ target; relaxed to the achievable ${(risk.winRate * 100).toFixed(2)}%.`,
+      });
+    }
   }
 
-  return { weights, risk, ev: risk.ev, edge: risk.edge };
+  return { weights, risk, ev: risk.ev, edge: risk.edge, relaxations };
 }

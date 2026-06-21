@@ -480,20 +480,120 @@ check("shapeWeights: floor pin met when requested", () => {
   assert(r.risk.floorRatio >= floorRatioMin - 1e-9, `floorRatio ≥ min (${r.risk.floorRatio})`);
 });
 
-check("shapeWeights: error arm never carries a weights vector", () => {
-  // No win/grail cards → infeasible.
+check("shapeWeights: error arm never carries a weights vector, always carries a limit", () => {
+  // No win/grail cards → infeasible (HARD).
   const r1 = shapeWeights({ cards: [{ value: 1 }, { value: 2 }], price: 10, targetWinRate: 0.2 });
   assert(!isSuccess(r1), "no-win pool should error");
   assert(!("weights" in r1), "error must not carry weights");
-  // targetWinRate + nearMissMin ≥ 1 → infeasible.
-  const r2 = shapeWeights({
-    cards: [{ value: 1 }, { value: 20 }],
-    price: 10,
-    targetWinRate: 0.95,
-    nearMissMin: 0.1,
-  });
-  assert(!isSuccess(r2), "no-dust-mass should error");
-  assert(!("weights" in r2), "error must not carry weights");
+  assert("limit" in r1 && typeof r1.limit.kind === "string", "error must carry a structured limit");
+});
+
+// ── 6b. GRACEFUL RELAXATION: a pool with NO near-miss cards still succeeds ──
+check("shapeWeights: no near-miss cards → SUCCESS with a nearMiss relaxation (applied 0), edge ≥ target", () => {
+  // Pool spans DUST (< 0.5p) + WIN/GRAIL (≥ p) but has NO card in [0.5p, p):
+  // the near-miss band is empty. With nearMissMin = 0.1 requested, the solver
+  // must RELAX near-miss to 0 and still return a feasible, edge-correct pack —
+  // NOT an error.
+  const price = 10;
+  const cards = [
+    { value: 0.1 },
+    { value: 1 }, // dust
+    { value: 3 }, // dust (< 0.5·price = 5)
+    { value: 12 }, // win
+    { value: 60 }, // grail
+  ];
+  const r = shapeWeights({ cards, price, targetWinRate: 0.15, nearMissMin: 0.1 });
+  assert(isSuccess(r), `expected success, got error: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+  // Edge still lands ≥ target (one-sided-up promise survives relaxation).
+  assert(r.edge >= TARGET_HOUSE_EDGE - 1e-9, `edge ≥ target after relaxation (${r.edge})`);
+  // A nearMiss relaxation must be recorded, applied 0, requested 0.1.
+  const nm = r.relaxations.find((x) => x.lever === "nearMiss");
+  assert(nm !== undefined, "a nearMiss relaxation must be recorded");
+  if (nm) {
+    approx(nm.requested, 0.1, 1e-12, "nearMiss requested = 0.1");
+    approx(nm.applied, 0, 1e-12, "nearMiss applied = 0 (no near-miss cards)");
+    assert(typeof nm.reason === "string" && nm.reason.length > 0, "relaxation carries a reason");
+  }
+  // The success arm must NOT carry an error.
+  assert(!("error" in r), "success arm must not carry an error");
+  // Achieved near-miss mass is genuinely 0 (no near-miss cards exist).
+  approx(r.risk.nearMiss, 0, 1e-9, "achieved near-miss is 0");
+});
+
+// ── 6c. A clean feasible solve records NO relaxations ───────────────────
+check("shapeWeights: a clean feasible solve returns an empty relaxations array", () => {
+  const cards = [
+    { value: 0.1 },
+    { value: 0.5 },
+    { value: 1 },
+    { value: 3 },
+    { value: 6 }, // near-miss [0.5p, p)
+    { value: 12 },
+    { value: 25 },
+    { value: 80 },
+  ];
+  const r = shapeWeights({ cards, price: 10, targetWinRate: 0.2, nearMissMin: 0.1 });
+  assert(isSuccess(r), `expected success: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+  assert(Array.isArray(r.relaxations), "relaxations is an array");
+  assert(r.relaxations.length === 0, `no relaxations on a clean solve, got ${JSON.stringify(r.relaxations)}`);
+});
+
+// ── 6d. HARD limit: a no-win-card pool errors with a populated `limit` ──
+check("shapeWeights: no-win-card pool → error arm with a populated structured limit", () => {
+  // Every card is below price → cannot make ANY win-rate. This stays a HARD
+  // error (truly impossible), and must carry a structured limit.
+  const price = 10;
+  const r = shapeWeights({ cards: [{ value: 1 }, { value: 2 }, { value: 4 }], price, targetWinRate: 0.2 });
+  assert(!isSuccess(r), "no-win pool must error");
+  if (isSuccess(r)) return;
+  assert(!("weights" in r), "error must not carry weights");
+  assert("limit" in r, "error must carry a limit");
+  assert(r.limit.kind === "no-win-cards", `limit.kind = no-win-cards, got ${r.limit.kind}`);
+  assert(typeof r.limit.detail === "string" && r.limit.detail.length > 0, "limit.detail non-empty");
+  assert(
+    typeof r.limit.suggestion === "string" && r.limit.suggestion.length > 0,
+    "limit.suggestion non-empty",
+  );
+});
+
+// ── 6e. HARD limit: a degenerate single-value pool errors with a limit ──
+check("shapeWeights: single-value (degenerate) pool → error with degenerate-pool limit", () => {
+  // Every usable card shares one value → no spread → edge cannot be shaped.
+  const r = shapeWeights({ cards: [{ value: 10 }, { value: 10 }], price: 10, targetWinRate: 0.2 });
+  assert(!isSuccess(r), "degenerate pool must error");
+  if (isSuccess(r)) return;
+  assert(
+    "limit" in r && r.limit.kind === "degenerate-pool",
+    `degenerate-pool limit, got ${"limit" in r ? r.limit.kind : "none"}`,
+  );
+});
+
+// ── 6f. SOFT relaxation: an over-high win-rate is relaxed, not errored ──
+check("shapeWeights: win-rate too high for the mass budget → relaxed, success, edge ≥ target", () => {
+  // Win + near-miss would consume all the mass; the win-rate is relaxed DOWN to
+  // leave dust mass for the edge, and the result is still a valid pack. Win
+  // cards sit just at/above price so a high win mass can still hit the EV target.
+  const price = 10;
+  const cards = [
+    { value: 0.1 },
+    { value: 1 },
+    { value: 3 },
+    { value: 10 },
+    { value: 11 },
+    { value: 13 },
+  ];
+  const r = shapeWeights({ cards, price, targetWinRate: 0.95, nearMissMin: 0.1 });
+  assert(isSuccess(r), `expected success after relaxing an over-high win-rate: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+  assert(r.edge >= TARGET_HOUSE_EDGE - 1e-9, `edge ≥ target (${r.edge})`);
+  const wr = r.relaxations.find((x) => x.lever === "winRate");
+  assert(wr !== undefined, "a winRate relaxation must be recorded");
+  if (wr) {
+    approx(wr.requested, 0.95, 1e-12, "winRate requested = 0.95");
+    assert(wr.applied < 0.95, `winRate applied relaxed below request (${wr.applied})`);
+  }
 });
 
 // ── 7. THE SWEEP ────────────────────────────────────────────────────
@@ -558,6 +658,23 @@ check("sweep: feasible combos satisfy invariants; infeasible return error-no-vec
                     !("error" in r),
                     "success arm must not carry an error",
                   );
+                  // The relaxations field is always a well-formed array.
+                  assert(Array.isArray(r.relaxations), "success carries a relaxations array");
+                  for (const rx of r.relaxations) {
+                    assert(
+                      (rx.lever === "nearMiss" || rx.lever === "winRate" || rx.lever === "floor") &&
+                        Number.isFinite(rx.requested) &&
+                        Number.isFinite(rx.applied) &&
+                        typeof rx.reason === "string" &&
+                        rx.reason.length > 0,
+                      `well-formed relaxation (p=${price},k=${kind},n=${n}): ${JSON.stringify(rx)}`,
+                    );
+                    // Soft relaxation only ever loosens DOWNWARD.
+                    assert(
+                      rx.applied <= rx.requested + 1e-9 && rx.applied >= -1e-9,
+                      `relaxation applied ≤ requested & ≥ 0 (p=${price},k=${kind},n=${n}): ${JSON.stringify(rx)}`,
+                    );
+                  }
                   for (const w of r.weights) {
                     assert(
                       Number.isInteger(w) && w >= 0,
@@ -568,6 +685,7 @@ check("sweep: feasible combos satisfy invariants; infeasible return error-no-vec
                     cards: cards.map((c, i) => ({ value: c.value, weight: r.weights[i]! })),
                     price,
                   });
+                  // EDGE is HARD — it must always land ≥ target, relaxed or not.
                   assert(
                     recomputed.edge >= targetEdge - 1e-9,
                     `edge≥target (p=${price},k=${kind},n=${n},e=${targetEdge}): ${recomputed.edge}`,
@@ -576,10 +694,20 @@ check("sweep: feasible combos satisfy invariants; infeasible return error-no-vec
                     recomputed.edge - targetEdge <= 0.001 + 1e-9,
                     `edge−target≤0.001 (p=${price},k=${kind},n=${n},e=${targetEdge}): ${recomputed.edge - targetEdge}`,
                   );
+                  // WIN-RATE is a SOFT target: if relaxed, the achieved win-rate
+                  // matches the RELAXED (applied) value; otherwise the request.
+                  const wrRelax = r.relaxations.find((x) => x.lever === "winRate");
+                  const effectiveWinRate = wrRelax ? wrRelax.applied : targetWinRate;
                   assert(
-                    Math.abs(recomputed.winRate - targetWinRate) <= 0.02 + 1e-9,
-                    `winRate within tol (p=${price},k=${kind},n=${n},wr=${targetWinRate}): ${recomputed.winRate}`,
+                    Math.abs(recomputed.winRate - effectiveWinRate) <= 0.02 + 1e-9,
+                    `winRate within tol of effective target (p=${price},k=${kind},n=${n},wr=${effectiveWinRate}): ${recomputed.winRate}`,
                   );
+                  if (wrRelax) {
+                    assert(
+                      wrRelax.applied < targetWinRate + 1e-9,
+                      `relaxed win-rate ≤ requested (${wrRelax.applied} vs ${targetWinRate})`,
+                    );
+                  }
                   if (cap !== undefined) {
                     assert(
                       recomputed.maxWin <= cap + 1e-9,
@@ -594,11 +722,15 @@ check("sweep: feasible combos satisfy invariants; infeasible return error-no-vec
                       }
                     });
                   }
+                  // FLOOR is a SOFT pin: enforced only when NOT relaxed away.
                   if (floor !== undefined) {
-                    assert(
-                      recomputed.floorRatio >= floor - 1e-9,
-                      `floor met (p=${price},k=${kind},n=${n}): ${recomputed.floorRatio} < ${floor}`,
-                    );
+                    const floorRelax = r.relaxations.find((x) => x.lever === "floor");
+                    if (!floorRelax) {
+                      assert(
+                        recomputed.floorRatio >= floor - 1e-9,
+                        `floor met when not relaxed (p=${price},k=${kind},n=${n}): ${recomputed.floorRatio} < ${floor}`,
+                      );
+                    }
                   }
                 } else {
                   infeasible++;
@@ -609,6 +741,17 @@ check("sweep: feasible combos satisfy invariants; infeasible return error-no-vec
                   assert(
                     typeof r.error === "string" && r.error.length > 0,
                     "infeasible must carry a non-empty error message",
+                  );
+                  // Every error arm carries a structured, actionable limit.
+                  assert(
+                    "limit" in r &&
+                      typeof r.limit.kind === "string" &&
+                      r.limit.kind.length > 0 &&
+                      typeof r.limit.detail === "string" &&
+                      r.limit.detail.length > 0 &&
+                      typeof r.limit.suggestion === "string" &&
+                      r.limit.suggestion.length > 0,
+                    `infeasible carries a populated limit (p=${price},k=${kind},n=${n},e=${targetEdge},wr=${targetWinRate})`,
                   );
                 }
               }
