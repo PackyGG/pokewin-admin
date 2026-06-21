@@ -53,6 +53,7 @@ import { getCards, getRarities, getSets } from "@/lib/queries/cards";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
 import {
   autoRetuneTargets,
+  buildPackCompliance,
   readMaxWinCap,
   readMaxMultCeiling,
   type ResolvedAutoTargetCfg,
@@ -1462,6 +1463,44 @@ export async function applyPackRetune(
       ...(editedLivePackUnderCapability && { edited_live_pack_under_capability: true }),
     },
   });
+
+  // ── Refresh the pack's ADMIN-side risk row from the re-tune (ADMIN write) ──
+  // The MAIN weight write above is the source of truth for odds; the Pack
+  // Studio Doctor grid + Overview read their risk/compliance from the ADMIN
+  // `pack_risk_scores` snapshot table. Without this, a re-tune wouldn't surface
+  // until the next full snapshot run. `after` IS `computePackRisk` of the FRESH
+  // pool values + the NEW shaped weights (it's `shaped.risk`), so it's exactly
+  // the per-card risk the snapshot writer would compute — we reuse it and
+  // upsert the SAME row shape (`snapshotPackRisk` / `buildPackCompliance`,
+  // cap via the same `readMaxWinCap`). This keeps the Doctor + Overview in sync
+  // instantly without re-snapshotting every pack. ADMIN-DB write only; never
+  // touches MAIN. Failure here must NOT fail the (already-committed) retune —
+  // the MAIN odds change has succeeded — so it's best-effort + logged.
+  try {
+    const riskRow = {
+      edge: after.edge,
+      cv: after.cv,
+      win_rate: after.winRate,
+      near_miss: after.nearMiss,
+      max_win: after.maxWin,
+      max_mult: after.maxMult,
+      risk_score: after.riskScore0to100,
+      tier: after.tier,
+      compliance: buildPackCompliance(after, resolved.maxWinCap),
+      computed_at: new Date(),
+    };
+    await adminDb.pack_risk_scores.upsert({
+      where: { pack_id: packId },
+      update: riskRow,
+      create: { pack_id: packId, ...riskRow },
+    });
+    revalidateTag("pack-studio-overview");
+  } catch (err) {
+    // The retune itself succeeded (MAIN odds are written); only the ADMIN-side
+    // risk refresh failed. Surface in server logs but don't throw — the next
+    // snapshot run will reconcile the row.
+    console.error("applyPackRetune: pack_risk_scores refresh failed", err);
+  }
 
   reloadPacks();
   revalidatePath("/packs");

@@ -5,16 +5,11 @@ import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getPacksPoolComposition } from "@/lib/queries/packs";
-import {
-  computePackRiskFromAggregates,
-  type PackRisk,
-} from "@/app/(admin)/insights/edge-calc/risk";
+import { computePackRiskFromAggregates } from "@/app/(admin)/insights/edge-calc/risk";
 import {
   PACK_STUDIO_CASH_PACK_TYPES,
-  TARGET_PACK_EDGE,
-  ZERO_NEAR_MISS_FLOOR,
+  buildPackCompliance,
   readMaxWinCap,
-  type PackComplianceFlags,
 } from "../_lib/risk-config";
 
 /**
@@ -26,21 +21,6 @@ export type SnapshotResult = {
   /** ISO timestamp the snapshot completed (server clock). */
   computedAt: string;
 };
-
-/**
- * Build the per-pack compliance flag payload persisted in `pack_risk_scores.compliance`.
- * House-edge target + the win-cap come from `admin_settings.pack_system_config`
- * (cap resolved by `readMaxWinCap`, default 25000); everything else is derived
- * from the computed {@link PackRisk}.
- */
-function buildCompliance(risk: PackRisk, maxWinCap: number): PackComplianceFlags {
-  return {
-    belowTargetEdge: risk.edge < TARGET_PACK_EDGE,
-    overMaxWinCap: risk.maxWin > maxWinCap,
-    zeroNearMiss: risk.nearMiss < ZERO_NEAR_MISS_FLOOR,
-    overTier: risk.tier === "T5",
-  };
-}
 
 /**
  * Score EVERY active cash pack (official) and persist one risk row per pack into
@@ -78,6 +58,12 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
   // this cardinality — verified read-only EXPLAIN), matching the Foundation's
   // own composition query.
   const db = await getDb();
+  // SAFETY INVARIANT: `included` is built ONLY from `PACK_STUDIO_CASH_PACK_TYPES`,
+  // a hardcoded module constant of trusted string literals — never user input.
+  // This is the ONLY reason interpolating it into `$queryRawUnsafe` is safe. If
+  // this list is ever made dynamic/settings-derived, this becomes a SQL-injection
+  // vector with no compiler signal — switch to a parameterized `pack_type = ANY($1)`
+  // bind before doing so.
   const included = PACK_STUDIO_CASH_PACK_TYPES.map((t) => `'${t}'`).join(", ");
   const idRows = await db.$queryRawUnsafe<{ id: string }[]>(
     `SELECT id FROM packs
@@ -127,7 +113,7 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
       max_mult: risk.maxMult,
       risk_score: risk.riskScore0to100,
       tier: risk.tier,
-      compliance: buildCompliance(risk, maxWinCap),
+      compliance: buildPackCompliance(risk, maxWinCap),
       computed_at: computedAt,
     };
 

@@ -351,6 +351,9 @@ export async function planAllRetunes(): Promise<PlanAllRetunesResult> {
   // prisma/recommended-indexes.sql); `cards` is joined on its PK. Decimals cast
   // to text and re-parsed for serializable, JS-arithmetic-safe numbers.
   const db = await getDb();
+  // SAFE: the ONLY runtime value in this query is `packIds`, bound via the
+  // parameterized `$1::uuid[]` placeholder (each id is `isUuid`-filtered above).
+  // No string is interpolated into the SQL text — keep it that way.
   const rows = await db.$queryRawUnsafe<BatchedPoolRow[]>(
     `
       SELECT

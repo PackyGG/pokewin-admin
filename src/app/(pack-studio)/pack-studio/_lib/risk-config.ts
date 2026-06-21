@@ -1,4 +1,5 @@
 import { getAdminSetting } from "@/lib/admin-settings";
+import type { PackRisk } from "@/app/(admin)/insights/edge-calc/risk";
 // Pure auto-target API lives in the dep-free `./auto-targets` module (so the
 // no-DB risk-check harness can pin it). Imported locally (so `readMaxMultCeiling`
 // can reference the default) and re-exported below so existing import sites keep
@@ -40,11 +41,18 @@ export {
 /**
  * Pack types in scope for Pack-Studio risk scoring: the real-money "cash" packs
  * a player pays a sticker price to open. `reward` (free daily/welcome) and
- * `shard` (separate shard-cost model) are deliberately excluded — matching the
- * re-price tool's `official`-only scope. (There is no `custom` pack type; every
- * cash pack is just a pack.)
+ * `shard` (separate shard-cost model) are deliberately excluded.
+ *
+ * `official` is the live catalog; `custom` is the type the Pack Studio Builder
+ * (`buildPack`) creates for designed-from-scratch packs. Both are repriceable
+ * AND retunable (`REPRICE_OR_RETUNE_PACK_TYPES = ['official','custom']` in
+ * `packs/actions.ts`), so both are scored/monitored here — otherwise a drifted
+ * custom pack could sit below target edge unseen by the Doctor grid. (At the
+ * time of writing the live MAIN catalog has no `custom` rows yet — distinct
+ * pack_types in prod are official/reward/shard — but a Builder-created pack IS
+ * a `custom` pack, so it must be in scope the moment one exists.)
  */
-export const PACK_STUDIO_CASH_PACK_TYPES = ["official"] as const;
+export const PACK_STUDIO_CASH_PACK_TYPES = ["official", "custom"] as const;
 
 /** Default max single-win cap (USD) when `pack_system_config` is unset. */
 export const DEFAULT_MAX_WIN_CAP = 25000;
@@ -75,6 +83,27 @@ export type PackComplianceFlags = {
   /** Volatility tier is the highest bucket (T5). */
   overTier: boolean;
 };
+
+/**
+ * Build the per-pack compliance flag payload persisted in
+ * `pack_risk_scores.compliance`. The single source of truth for the compliance
+ * rule — both the snapshot writer (`snapshotPackRisk`) AND the post-retune
+ * risk re-write (`applyPackRetune`) call this so the two cannot drift. The
+ * house-edge target + zero-near-miss floor are module constants; the win-cap is
+ * resolved by the caller via `readMaxWinCap`; everything else is derived from
+ * the computed {@link PackRisk}.
+ */
+export function buildPackCompliance(
+  risk: PackRisk,
+  maxWinCap: number,
+): PackComplianceFlags {
+  return {
+    belowTargetEdge: risk.edge < TARGET_PACK_EDGE,
+    overMaxWinCap: risk.maxWin > maxWinCap,
+    zeroNearMiss: risk.nearMiss < ZERO_NEAR_MISS_FLOOR,
+    overTier: risk.tier === "T5",
+  };
+}
 
 /** Runtime guard: is an unknown JSON blob the {@link PackComplianceFlags} shape? */
 export function isPackComplianceFlags(v: unknown): v is PackComplianceFlags {

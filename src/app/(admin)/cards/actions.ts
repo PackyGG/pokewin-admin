@@ -477,7 +477,7 @@ type CardReferenceCheck = {
  *      an index lookup once the owner applies it).
  */
 async function checkCardReferences(
-  db: PrismaClient,
+  db: PrismaClient | Prisma.TransactionClient,
   ids: string[],
 ): Promise<CardReferenceCheck> {
   // De-dup defensively so counts/maps are keyed once per id.
@@ -729,25 +729,53 @@ export async function deleteCards(input: {
       );
     }
 
-    const result = await db.cards.deleteMany({
-      where: { id: { in: deletableIds } },
-    });
+    // TOCTOU guard: between the reference check above and the delete a card
+    // could gain a SOFT reference (a `user_inventory` row or a `provably_fair`
+    // record — neither is FK-backed, so the DB would NOT block deleting an
+    // in-window-referenced card and we'd orphan that reference). Re-run the
+    // reference check for the deletable subset INSIDE a serializable transaction
+    // immediately before `deleteMany`, and delete only the ids that are STILL
+    // unreferenced. FK-backed classes (pack_cards, upgrader) are already caught
+    // by their constraints; this closes the soft-ref window too. Ids that became
+    // referenced in the window are reported back as freshly blocked.
+    const { result, lateBlockedIds } = await db.$transaction(
+      async (tx) => {
+        const recheck = await checkCardReferences(tx, deletableIds);
+        const safeNow = recheck.deletableIds;
+        const lateBlocked = deletableIds.filter(
+          (id) => !recheck.deletableIds.includes(id),
+        );
+        if (safeNow.length === 0) {
+          return { result: { count: 0 }, lateBlockedIds: lateBlocked };
+        }
+        const r = await tx.cards.deleteMany({ where: { id: { in: safeNow } } });
+        return { result: r, lateBlockedIds: lateBlocked };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    // The ids actually removed (the deletable set minus any that became
+    // referenced inside the window).
+    const deletedIds = deletableIds.filter((id) => !lateBlockedIds.includes(id));
 
     await createAdminAuditEvent({
       adminUserId: session.userId,
       eventType: "cards_bulk_deleted",
       metadata: {
         deleted_count: result.count,
-        deleted_card_ids: deletableIds,
+        deleted_card_ids: deletedIds,
         blocked_count: blocked.length,
         blocked_card_ids: blocked.map((b) => b.id),
+        ...(lateBlockedIds.length > 0 && {
+          late_blocked_card_ids: lateBlockedIds,
+        }),
       },
     });
 
     revalidatePath("/cards");
     return ok({
       deletedCount: result.count,
-      deletedIds: deletableIds,
+      deletedIds,
       blocked,
     });
   } catch (err) {
