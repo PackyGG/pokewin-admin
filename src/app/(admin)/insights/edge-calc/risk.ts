@@ -1,0 +1,644 @@
+/**
+ * Pure, dependency-free pack RISK engine for the Edge Calc surface.
+ *
+ * Side-effect-free and dep-free (imports ONLY the dep-free math module) so the
+ * client scenario builder, the server-rendered panels, AND the snapshot job that
+ * scores EVERY pack can all call the same functions. No Decimal objects cross
+ * this boundary — every input/output is a primitive number so the React state
+ * machine stays serializable.
+ *
+ * Two consistent paths to the SAME `PackRisk` shape:
+ *   • computePackRisk            — per-card (one row per pool card; exact)
+ *   • computePackRiskFromAggregates — from SQL sums (the scalable snapshot path)
+ *
+ * Plus `shapeWeights` — an inverse solver that lays out per-card weights so a
+ * pack hits a target edge + win-rate (the design-a-pack direction), built on
+ * the SAME power-law template the math module's `computeOddsForTargetEv` uses.
+ */
+
+import { TARGET_HOUSE_EDGE } from "./math";
+
+// ─── Types ────────────────────────────────────────────────────────────
+
+/** A single pool card reduced to the only two facts the risk math needs. */
+export type CardLite = { value: number; weight: number };
+
+/**
+ * Coarse risk bucket derived from the coefficient of variation (CV). Higher
+ * tier = more volatile payout distribution (a "swingier" pack).
+ */
+export type RiskTier = "T1" | "T2" | "T3" | "T4" | "T5";
+
+export type PackRisk = {
+  /** Expected payout per open: SUM(p_i · v_i). */
+  ev: number;
+  /** Theoretical house edge = 1 − ev/price (0..1, clamped at 0 floor for >100% RTP). */
+  edge: number;
+  /** Coefficient of variation of the payout = stddev / ev (0 when ev ≤ 0). */
+  cv: number;
+  /** Probability mass on cards worth ≥ price (a "win" for the user). */
+  winRate: number;
+  /** Probability mass on cards worth [0.5·price, price) — a near-miss. */
+  nearMiss: number;
+  /** Highest single card value in the pool. */
+  maxWin: number;
+  /** maxWin / price — the headline "Nx" jackpot multiplier. */
+  maxMult: number;
+  /** Value of the single highest-weight (most-likely) card. */
+  floorValue: number;
+  /** floorValue / price — what the modal outcome returns vs the ticket. */
+  floorRatio: number;
+  /** Composite 0..100 risk score (CV-dominated, jackpot + floor adjusted). */
+  riskScore0to100: number;
+  /** CV-derived tier T1..T5. */
+  tier: RiskTier;
+};
+
+// ─── Tiering ──────────────────────────────────────────────────────────
+
+/**
+ * Upper-exclusive CV boundaries between the five tiers:
+ *   CV < 1.4 → T1, [1.4,3) → T2, [3,6) → T3, [6,12) → T4, ≥ 12 → T5.
+ * A boundary value lands in the HIGHER tier (e.g. CV 1.4 → T2) so the bounds
+ * read as "T1 is everything strictly below 1.4".
+ */
+export const CV_TIER_BOUNDS = [1.4, 3, 6, 12] as const;
+
+export function riskTier(cv: number): RiskTier {
+  if (!Number.isFinite(cv) || cv < CV_TIER_BOUNDS[0]) return "T1";
+  if (cv < CV_TIER_BOUNDS[1]) return "T2";
+  if (cv < CV_TIER_BOUNDS[2]) return "T3";
+  if (cv < CV_TIER_BOUNDS[3]) return "T4";
+  return "T5";
+}
+
+// ─── Internal numeric helpers ─────────────────────────────────────────
+
+function clamp01(x: number): number {
+  if (!Number.isFinite(x)) return 0;
+  if (x < 0) return 0;
+  if (x > 1) return 1;
+  return x;
+}
+
+/** A fully-zeroed risk record — used for the NaN-safe / empty-pool early out. */
+function zeroedRisk(): PackRisk {
+  return {
+    ev: 0,
+    edge: 0,
+    cv: 0,
+    winRate: 0,
+    nearMiss: 0,
+    maxWin: 0,
+    maxMult: 0,
+    floorValue: 0,
+    floorRatio: 0,
+    riskScore0to100: 0,
+    tier: "T1",
+  };
+}
+
+/**
+ * Assemble the final risk record from already-computed scalar moments. Shared by
+ * both the per-card and aggregate entry points so the score / tier / ratio
+ * derivations live in exactly ONE place and the two paths cannot drift.
+ */
+function buildRisk(input: {
+  price: number;
+  ev: number;
+  variance: number;
+  winRate: number;
+  nearMiss: number;
+  maxWin: number;
+  floorValue: number;
+}): PackRisk {
+  const { price, ev } = input;
+  const variance = Math.max(0, input.variance); // float-noise floor
+  const cv = ev > 0 ? Math.sqrt(variance) / ev : 0;
+  const edge = price > 0 ? Math.max(0, 1 - ev / price) : 0;
+  const maxMult = price > 0 ? input.maxWin / price : 0;
+  const floorRatio = price > 0 ? input.floorValue / price : 0;
+
+  const riskScore0to100 = Math.round(
+    100 *
+      (0.7 * clamp01(cv / 12) +
+        0.2 * clamp01(Math.log10(Math.max(maxMult, 1)) / 3) +
+        0.1 * clamp01(1 - floorRatio)),
+  );
+
+  return {
+    ev,
+    edge,
+    cv,
+    winRate: clamp01(input.winRate),
+    nearMiss: clamp01(input.nearMiss),
+    maxWin: input.maxWin,
+    maxMult,
+    floorValue: input.floorValue,
+    floorRatio,
+    riskScore0to100,
+    tier: riskTier(cv),
+  };
+}
+
+// ─── Per-card path ────────────────────────────────────────────────────
+
+/**
+ * Score a pack from its full card pool. Probabilities are weight-normalized
+ * draws (p_i = w_i / ΣW); EV / variance / win-rate / near-miss are the exact
+ * moments of that single-draw distribution.
+ *
+ * NaN-safe: a non-positive total weight or price returns a fully-zeroed record
+ * (tier T1, score 0) rather than emitting NaN/Infinity.
+ */
+export function computePackRisk(input: { cards: CardLite[]; price: number }): PackRisk {
+  const { cards, price } = input;
+
+  let totalWeight = 0;
+  for (const c of cards) {
+    if (Number.isFinite(c.weight) && c.weight > 0) totalWeight += c.weight;
+  }
+  if (!(totalWeight > 0) || !(price > 0)) return zeroedRisk();
+
+  // EV first (needed for the variance pass).
+  let ev = 0;
+  for (const c of cards) {
+    if (!(c.weight > 0)) continue;
+    ev += (c.weight / totalWeight) * c.value;
+  }
+
+  let variance = 0;
+  let winRate = 0;
+  let nearMiss = 0;
+  let maxWin = -Infinity;
+  let floorWeight = -Infinity;
+  let floorValue = 0;
+  const nearMissLo = 0.5 * price;
+
+  for (const c of cards) {
+    if (!(c.weight > 0)) continue;
+    const p = c.weight / totalWeight;
+    const d = c.value - ev;
+    variance += p * d * d;
+    if (c.value >= price) winRate += p;
+    else if (c.value >= nearMissLo) nearMiss += p;
+    if (c.value > maxWin) maxWin = c.value;
+    // Floor = highest-weight card; tie-break to the LOWEST value (the worst
+    // realistic modal outcome — most conservative read).
+    if (c.weight > floorWeight || (c.weight === floorWeight && c.value < floorValue)) {
+      floorWeight = c.weight;
+      floorValue = c.value;
+    }
+  }
+  if (!Number.isFinite(maxWin)) maxWin = 0;
+
+  return buildRisk({ price, ev, variance, winRate, nearMiss, maxWin, floorValue });
+}
+
+// ─── Aggregate path ───────────────────────────────────────────────────
+
+/**
+ * Score a pack from pre-aggregated SQL sums — the scalable snapshot path that
+ * scores every pack without materializing each card row. Produces the SAME
+ * `PackRisk` shape as `computePackRisk`; the two are kept consistent by sharing
+ * `buildRisk`.
+ *
+ *   ev       = weightedPriceSum / totalWeight
+ *   variance = weightedSqSum / totalWeight − ev²   (clamped ≥ 0 for float noise)
+ *   winRate  = winWeight / totalWeight
+ *   nearMiss = nearMissWeight / totalWeight
+ *   maxWin   = maxValue   (floorValue supplied directly)
+ *
+ * NaN-safe: non-positive totalWeight or price → fully-zeroed record (tier T1).
+ */
+export function computePackRiskFromAggregates(input: {
+  price: number;
+  totalWeight: number;
+  weightedPriceSum: number;
+  weightedSqSum: number;
+  winWeight: number;
+  nearMissWeight: number;
+  maxValue: number;
+  floorValue: number;
+}): PackRisk {
+  const { price, totalWeight } = input;
+  if (!(totalWeight > 0) || !(price > 0)) return zeroedRisk();
+
+  const ev = input.weightedPriceSum / totalWeight;
+  const variance = input.weightedSqSum / totalWeight - ev * ev;
+  const winRate = input.winWeight / totalWeight;
+  const nearMiss = input.nearMissWeight / totalWeight;
+
+  return buildRisk({
+    price,
+    ev,
+    variance,
+    winRate,
+    nearMiss,
+    maxWin: input.maxValue,
+    floorValue: input.floorValue,
+  });
+}
+
+// ─── Weight shaping (inverse solver) ──────────────────────────────────
+
+export type ShapeWeightsInput = {
+  cards: { value: number }[];
+  price: number;
+  /** Target house edge (0..1). Defaults to the house knob, 10.99%. */
+  targetEdge?: number;
+  /** Desired probability mass on win+grail cards (value ≥ price). */
+  targetWinRate: number;
+  /** Drop any card whose value exceeds this cap (jackpot ceiling). */
+  maxWinCap?: number;
+  /** If set, pin the floor (modal) card so floorValue/price ≥ this. */
+  floorRatioMin?: number;
+  /** Minimum probability mass on near-miss cards. Default 0.10. */
+  nearMissMin?: number;
+  /** Win-rate match tolerance. Default 0.02. */
+  winRateTol?: number;
+};
+
+export type ShapeWeightsSuccess = {
+  weights: number[];
+  risk: PackRisk;
+  ev: number;
+  edge: number;
+};
+
+export type ShapeWeightsError = {
+  error: string;
+  feasibility?: Record<string, unknown>;
+};
+
+export type ShapeWeightsResult = ShapeWeightsSuccess | ShapeWeightsError;
+
+type Band = "GRAIL" | "WIN" | "NEARMISS" | "DUST";
+
+/**
+ * Expected value of a single power-law-weighted band: w_i ∝ value_i^(−beta).
+ * The SAME mechanism `computeOddsForTargetEv` uses, replicated locally so it can
+ * run per band on raw values (not prices). Returns 0 for an empty band.
+ */
+function bandEvForBeta(values: readonly number[], beta: number): number {
+  if (values.length === 0) return 0;
+  const w = values.map((v) => Math.pow(v, -beta));
+  const sumW = w.reduce((a, b) => a + b, 0);
+  if (!(sumW > 0)) return 0;
+  const weighted = w.reduce((s, wi, i) => s + wi * values[i]!, 0);
+  return weighted / sumW;
+}
+
+/** Power-law weight template for a band, normalized to sum to `mass`. */
+function bandWeights(values: readonly number[], beta: number, mass: number): number[] {
+  if (values.length === 0) return [];
+  const w = values.map((v) => Math.pow(v, -beta));
+  const sumW = w.reduce((a, b) => a + b, 0);
+  if (!(sumW > 0)) return values.map(() => mass / values.length);
+  return w.map((wi) => (wi / sumW) * mass);
+}
+
+/** Greatest common divisor of two non-negative integers. */
+function gcd(a: number, b: number): number {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y !== 0) {
+    const t = y;
+    y = x % y;
+    x = t;
+  }
+  return x === 0 ? 1 : x;
+}
+
+/**
+ * Design a per-card weight vector so a pack lands on a target edge + win-rate.
+ *
+ * Direction is the inverse of scoring: given fixed card VALUES, choose weights.
+ * Banding (relative to price): GRAIL ≥ 5p, WIN [p,5p), NEARMISS [0.5p,p),
+ * DUST < 0.5p. Win-rate mass = grail+win; near-miss mass = NEARMISS; the
+ * remainder is DUST mass (which must be > 0 — a pack needs losing outcomes).
+ *
+ * Within each band, probability is power-law distributed by value^(−beta); the
+ * DUST band's beta is the free knob binary-searched (it is the most EV-elastic
+ * band) so the total EV lands exactly on ev* = price·(1 − targetEdge).
+ *
+ * Returns EITHER a success `{weights,risk,ev,edge}` (weights = positive ints,
+ * gcd-reduced) OR an error `{error,feasibility?}`. The two arms are DISJOINT —
+ * an error never carries a weights vector.
+ */
+export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
+  const price = input.price;
+  const targetEdge = input.targetEdge ?? TARGET_HOUSE_EDGE;
+  const targetWinRate = input.targetWinRate;
+  const nearMissMin = input.nearMissMin ?? 0.1;
+  const winRateTol = input.winRateTol ?? 0.02;
+  const maxWinCap = input.maxWinCap;
+  const floorRatioMin = input.floorRatioMin;
+
+  if (!(price > 0)) return { error: "Price must be positive." };
+  if (!Number.isFinite(targetEdge) || targetEdge <= 0 || targetEdge >= 1) {
+    return { error: "Target edge must be between 0 and 1 (exclusive)." };
+  }
+  if (!Number.isFinite(targetWinRate) || targetWinRate < 0 || targetWinRate >= 1) {
+    return { error: "Target win-rate must be in [0, 1)." };
+  }
+
+  // Index-preserving pool: drop value ≤ 0 and (if capped) value > cap.
+  type Slot = { idx: number; value: number; band: Band };
+  const slots: Slot[] = [];
+  input.cards.forEach((c, idx) => {
+    const v = c.value;
+    if (!(v > 0)) return;
+    if (maxWinCap !== undefined && v > maxWinCap) return;
+    let band: Band;
+    if (v >= 5 * price) band = "GRAIL";
+    else if (v >= price) band = "WIN";
+    else if (v >= 0.5 * price) band = "NEARMISS";
+    else band = "DUST";
+    slots.push({ idx, value: v, band });
+  });
+
+  if (slots.length === 0) {
+    return { error: "No usable cards after dropping non-positive / over-cap values." };
+  }
+
+  const grail = slots.filter((s) => s.band === "GRAIL");
+  const win = slots.filter((s) => s.band === "WIN");
+  const nearMiss = slots.filter((s) => s.band === "NEARMISS");
+  const dust = slots.filter((s) => s.band === "DUST");
+
+  const minValue = Math.min(...slots.map((s) => s.value));
+  const maxValue = Math.max(...slots.map((s) => s.value));
+  const evTarget = price * (1 - targetEdge);
+
+  const feasibility: Record<string, unknown> = {
+    price,
+    targetEdge,
+    targetWinRate,
+    nearMissMin,
+    evTarget,
+    minValue,
+    maxValue,
+    bands: { grail: grail.length, win: win.length, nearMiss: nearMiss.length, dust: dust.length },
+  };
+
+  // ── Feasibility gate (return BEFORE any weight assignment) ──────────
+  const tol = 1e-9;
+
+  // 1. Need at least one win/grail card to make a win-rate.
+  if (grail.length + win.length === 0) {
+    return {
+      error: "No win/grail cards (value ≥ price): cannot produce a non-zero win-rate.",
+      feasibility,
+    };
+  }
+
+  // 2. Required ev* must lie within the pool's value range (same bound logic as
+  //    computeOddsForTargetEv: a normalized mix can only land between min and max).
+  if (evTarget < minValue - tol || evTarget > maxValue + tol) {
+    return {
+      error: `Target EV $${evTarget.toFixed(4)} is out of range; pool values span $${minValue.toFixed(2)}–$${maxValue.toFixed(2)}.`,
+      feasibility,
+    };
+  }
+
+  // 3. A pack needs losing mass: win + near-miss can't already consume all mass.
+  if (targetWinRate + nearMissMin >= 1 - tol) {
+    return {
+      error: `targetWinRate (${targetWinRate}) + nearMissMin (${nearMissMin}) leave no dust mass for the house edge.`,
+      feasibility,
+    };
+  }
+
+  // 4. Near-miss mass requested but no near-miss cards to carry it.
+  if (nearMissMin > tol && nearMiss.length === 0) {
+    return {
+      error: `nearMissMin ${nearMissMin} requested but the pool has no near-miss cards [0.5·price, price).`,
+      feasibility,
+    };
+  }
+
+  // 5. Need dust cards to host the losing mass / EV slack.
+  if (dust.length === 0) {
+    return {
+      error: "No dust cards (value < 0.5·price): nothing to carry the losing mass / EV slack.",
+      feasibility,
+    };
+  }
+
+  // ── Band mass allocation ────────────────────────────────────────────
+  const winMass = targetWinRate;
+  const nearMissMass = nearMiss.length > 0 ? nearMissMin : 0;
+  const dustMass = 1 - winMass - nearMissMass;
+  if (!(dustMass > tol)) {
+    return {
+      error: "No dust probability mass remains after win + near-miss allocation.",
+      feasibility,
+    };
+  }
+
+  // The full win-rate mass sits on the combined WIN+GRAIL pool (all cards with
+  // value ≥ price). Keeping them as ONE band — rather than pinning grails to a
+  // tiny fixed slice — lets the shared beta below concentrate win mass on the
+  // jackpot when the EV target is high, or spread it toward cheaper wins when
+  // the EV target is low. (The GRAIL/WIN split still exists for banding/labels;
+  // it just doesn't fragment the win mass.)
+  const winMassTotal = winMass;
+  const winPoolSlots = [...grail, ...win];
+  const winPoolValues = winPoolSlots.map((s) => s.value);
+  const nearMissValues = nearMiss.map((s) => s.value);
+  const dustValues = dust.map((s) => s.value);
+
+  // ── Solve ONE shared beta across all four bands so total EV = evTarget ──
+  //
+  // Each band lays out its fixed probability MASS internally by value^(−beta).
+  // For a single shared beta, total EV is
+  //   E(beta) = Σ_band  mass_band · bandMean_band(beta)
+  // and bandMean is monotone DECREASING in beta, so E(beta) is monotone too.
+  // Therefore E ranges over [E(+50)  (all bands skewed cheap, min EV),
+  //                          E(−20)  (all bands skewed expensive, max EV)].
+  // If evTarget is inside that range it is reachable; bisect the shared beta.
+  // The DUST band is the most EV-elastic (widest value span at the cheap end),
+  // so it dominates the fine-tune — but binding all four to one beta guarantees
+  // monotonicity and a single feasibility test. (Dust still carries the slack;
+  // the post-quantize one-sided-up bump nudges the cheapest dust card.)
+  const dustMin = Math.min(...dustValues);
+  const dustMax = Math.max(...dustValues);
+
+  // ── Floor reservation (optional, done BEFORE the EV solve) ──────────
+  // If a floor ratio is required, pick the cheapest dust card meeting it and
+  // RESERVE a fixed probability mass on it up-front so it is the modal card.
+  // Reserving before the beta solve keeps EV exact (the solve targets the EV
+  // residual after the floor's contribution) — pinning it AFTER would distort EV
+  // and the up-only bump couldn't pull it back. The floor card is removed from
+  // the free dust template; the rest of dust carries (dustMass − floorMass).
+  let floorSlot: Slot | null = null;
+  let floorMass = 0;
+  let freeDust = dust;
+  let freeDustValues = dustValues;
+  let freeDustMass = dustMass;
+  if (floorRatioMin !== undefined) {
+    const needFloor = floorRatioMin * price;
+    const cand = dust.filter((s) => s.value >= needFloor - 1e-9);
+    if (cand.length === 0) {
+      return {
+        error: `floorRatioMin ${floorRatioMin} needs a card ≥ $${needFloor.toFixed(2)}; none in the dust band.`,
+        feasibility: { ...feasibility, needFloor },
+      };
+    }
+    cand.sort((a, b) => a.value - b.value);
+    floorSlot = cand[0]!;
+    // Reserve enough mass that the floor card dominates any OTHER single card.
+    // Upper bound on any other single-card mass ≈ max(winMassTotal, nearMissMass,
+    // remaining dustMass). Give the floor a hair more, but never ≥ dustMass (it
+    // must leave room for the rest of the losing band) and never so much it kills
+    // the EV solve. We cap it at 60% of dust mass.
+    const otherMax = Math.max(winMassTotal, nearMissMass, dustMass);
+    floorMass = Math.min(dustMass * 0.6, otherMax * 1.05 + 1e-6);
+    if (!(floorMass > 0) || floorMass >= dustMass) {
+      return {
+        error: `Cannot reserve a dominant floor mass within the dust band (floorMass ${floorMass.toFixed(4)}, dustMass ${dustMass.toFixed(4)}).`,
+        feasibility: { ...feasibility, floorMass, dustMass },
+      };
+    }
+    freeDust = dust.filter((s) => s !== floorSlot);
+    freeDustValues = freeDust.map((s) => s.value);
+    freeDustMass = dustMass - floorMass;
+  }
+
+  // EV total for a shared beta, INCLUDING the reserved floor card's fixed share.
+  const floorEvFixed = floorSlot ? floorMass * floorSlot.value : 0;
+  const totalEvForBeta = (beta: number): number =>
+    winMassTotal * bandEvForBeta(winPoolValues, beta) +
+    nearMissMass * bandEvForBeta(nearMissValues, beta) +
+    freeDustMass * bandEvForBeta(freeDustValues, beta) +
+    floorEvFixed;
+
+  const BETA_LO = -20; // skew expensive → max EV
+  const BETA_HI = 50; // skew cheap → min EV
+  const evMax = totalEvForBeta(BETA_LO);
+  const evMin = totalEvForBeta(BETA_HI);
+
+  if (evTarget < evMin - 1e-6 || evTarget > evMax + 1e-6) {
+    return {
+      error: `Edge target needs EV $${evTarget.toFixed(4)} but this band split can only reach $${evMin.toFixed(4)}–$${evMax.toFixed(4)}.`,
+      feasibility: {
+        ...feasibility,
+        evReachable: { min: evMin, max: evMax },
+        bands: { winMass: winMassTotal, nearMissMass, dustMass, floorMass },
+        dustMin,
+        dustMax,
+      },
+    };
+  }
+
+  // Bisect the shared beta on the monotone E(beta).
+  let lo = BETA_LO;
+  let hi = BETA_HI;
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    if (totalEvForBeta(mid) > evTarget) lo = mid;
+    else hi = mid;
+  }
+  const sharedBeta = (lo + hi) / 2;
+
+  const winPoolW = bandWeights(winPoolValues, sharedBeta, winMassTotal);
+  const nearMissW = bandWeights(nearMissValues, sharedBeta, nearMissMass);
+  const freeDustW = bandWeights(freeDustValues, sharedBeta, freeDustMass);
+
+  // Stitch the per-slot fractional weights back into slot order. Build a
+  // slot→position map once so we don't pay indexOf in a loop.
+  const slotPos = new Map<Slot, number>();
+  slots.forEach((s, i) => slotPos.set(s, i));
+  const frac = new Array<number>(slots.length).fill(0);
+  winPoolSlots.forEach((s, i) => {
+    frac[slotPos.get(s)!] = winPoolW[i]!;
+  });
+  nearMiss.forEach((s, i) => {
+    frac[slotPos.get(s)!] = nearMissW[i]!;
+  });
+  freeDust.forEach((s, i) => {
+    frac[slotPos.get(s)!] = freeDustW[i]!;
+  });
+  // The reserved floor card carries its fixed mass directly.
+  if (floorSlot) {
+    frac[slotPos.get(floorSlot)!] = floorMass;
+  }
+
+  // ── Integer quantize ────────────────────────────────────────────────
+  // Scale ×1e6 (not ×1e4) so every weight is large: this makes the +1 edge-
+  // correction bump below a TINY relative step, so the one-sided-up loop can
+  // land the edge just above target without overshooting past target+0.001. A
+  // single +1 on a small pool would otherwise be a coarse jump. We gcd-reduce
+  // only at the very END (after bumping) to keep weights minimal.
+  const QUANT = 1_000_000;
+  const weights = new Array<number>(input.cards.length).fill(0);
+  slots.forEach((s, i) => {
+    weights[s.idx] = Math.max(1, Math.round(frac[i]! * QUANT));
+  });
+
+  // ── One-sided-UP edge enforcement ───────────────────────────────────
+  // Quantization can nudge EV up (edge below target). Bumping the CHEAPEST dust
+  // card's weight is monotone: more mass on a cheap card lowers EV → raises edge.
+  // We step by an adaptive amount (halving on overshoot risk) so we converge to
+  // edge ∈ [target, target+0.001] quickly, capped at MAX_BUMPS iterations.
+  const cardsForRisk = (): CardLite[] =>
+    input.cards.map((c, i) => ({ value: c.value, weight: weights[i]! }));
+
+  const cheapestDustIdx = dust.reduce(
+    (best, s) => (s.value < input.cards[best]!.value ? s.idx : best),
+    dust[0]!.idx,
+  );
+
+  let risk = computePackRisk({ cards: cardsForRisk(), price });
+  let bumps = 0;
+  const MAX_BUMPS = 5000;
+  // Adaptive step: start large to cross the target fast, shrink near it so the
+  // final landing sits inside the [target, target+0.001] window.
+  let step = Math.max(1, Math.round(weights[cheapestDustIdx]! * 0.5));
+  while (risk.edge < targetEdge - 1e-9 && bumps < MAX_BUMPS) {
+    const prev = weights[cheapestDustIdx]!;
+    weights[cheapestDustIdx] = prev + step;
+    bumps += 1;
+    const next = computePackRisk({ cards: cardsForRisk(), price });
+    if (next.edge > targetEdge + 0.001 && step > 1) {
+      // Overshot the upper bound — undo and halve the step to refine.
+      weights[cheapestDustIdx] = prev;
+      step = Math.max(1, Math.floor(step / 2));
+      continue;
+    }
+    risk = next;
+  }
+  if (risk.edge < targetEdge - 1e-9) {
+    return {
+      error: `Could not reach edge ≥ ${(targetEdge * 100).toFixed(2)}% within ${MAX_BUMPS} weight bumps (achieved ${(risk.edge * 100).toFixed(2)}%).`,
+      feasibility: { ...feasibility, achievedEdge: risk.edge, bumps },
+    };
+  }
+
+  // ── gcd-reduce the final vector (after all bumps) ───────────────────
+  const present = weights.filter((w) => w > 0);
+  if (present.length > 0) {
+    let g = present[0]!;
+    for (let i = 1; i < present.length; i++) g = gcd(g, present[i]!);
+    if (g > 1) {
+      for (let i = 0; i < weights.length; i++) {
+        if (weights[i]! > 0) weights[i] = Math.round(weights[i]! / g);
+      }
+      risk = computePackRisk({ cards: cardsForRisk(), price });
+    }
+  }
+
+  // ── Win-rate re-check (after all integer adjustments) ───────────────
+  if (Math.abs(risk.winRate - targetWinRate) > winRateTol) {
+    return {
+      error: `Achieved win-rate ${(risk.winRate * 100).toFixed(2)}% misses target ${(targetWinRate * 100).toFixed(2)}% (±${(winRateTol * 100).toFixed(2)}%); near-miss ${(risk.nearMiss * 100).toFixed(2)}%, edge ${(risk.edge * 100).toFixed(2)}%.`,
+      feasibility: {
+        ...feasibility,
+        achieved: { winRate: risk.winRate, nearMiss: risk.nearMiss, edge: risk.edge },
+      },
+    };
+  }
+
+  return { weights, risk, ev: risk.ev, edge: risk.edge };
+}
