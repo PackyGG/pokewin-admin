@@ -1826,6 +1826,8 @@ export function FundsTab({
           <FundsTraceStreamed
             balances={data.balances}
             wagerProgressPromise={wagerProgressPromise}
+            userId={data.user.id}
+            canManage={data.sessionRole === "admin"}
           />
         </Suspense>
       ) : (
@@ -1838,9 +1840,13 @@ export function FundsTab({
 function FundsTraceStreamed({
   balances,
   wagerProgressPromise,
+  userId,
+  canManage,
 }: {
   balances: UserDetail["balances"];
   wagerProgressPromise: Promise<UserWagerProgress | null>;
+  userId: string;
+  canManage: boolean;
 }) {
   const wagerProgress = use(wagerProgressPromise);
 
@@ -1922,7 +1928,11 @@ function FundsTraceStreamed({
           contribution. Reuses the exact card the Account tab renders so the
           numbers can never drift between the two surfaces. */}
       <SectionHeading icon={TrendingUp} title="Which Wager It Carries" />
-      <UserWagerProgressCard data={wagerProgress} />
+      <UserWagerProgressCard
+        userId={userId}
+        data={wagerProgress}
+        canManage={canManage}
+      />
     </div>
   );
 }
@@ -2223,7 +2233,11 @@ export function AccountTab({
       <SectionHeading icon={TrendingUp} title="Wager Requirement Progress" />
       {wagerProgressPromise ? (
         <Suspense fallback={<SkeletonCard lines={3} />}>
-          <WagerProgressStreamed wagerProgressPromise={wagerProgressPromise} />
+          <WagerProgressStreamed
+            wagerProgressPromise={wagerProgressPromise}
+            userId={user.id}
+            canManage={data.sessionRole === "admin"}
+          />
         </Suspense>
       ) : (
         <SkeletonCard lines={3} />
@@ -2311,11 +2325,21 @@ function WagerRequirementStreamed({
 
 function WagerProgressStreamed({
   wagerProgressPromise,
+  userId,
+  canManage,
 }: {
   wagerProgressPromise: Promise<UserWagerProgress | null>;
+  userId: string;
+  canManage: boolean;
 }) {
   const wagerProgress = use(wagerProgressPromise);
-  return <UserWagerProgressCard data={wagerProgress} />;
+  return (
+    <UserWagerProgressCard
+      userId={userId}
+      data={wagerProgress}
+      canManage={canManage}
+    />
+  );
 }
 
 function BalanceWeightingStreamed({

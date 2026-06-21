@@ -9,6 +9,7 @@ import {
   getUserWagerRequirement,
   setUserWagerRequirement,
   clearUserWagerRequirement,
+  setUserWagerRemainingDebt,
 } from "@/lib/backend-api/wager-requirements";
 
 /**
@@ -113,6 +114,59 @@ export async function clearUserWagerRequirementAction(
     eventType: "user_wager_requirement_cleared",
     targetUserId: userId,
     metadata: { old_bps: oldBps ?? null },
+  });
+
+  revalidatePath(`/users/${userId}`);
+  return { success: true };
+}
+
+const SetRemainingDebtSchema = z.object({
+  userId: z.string().min(1),
+  amountUsd: z
+    .string()
+    .regex(/^[0-9]+(\.[0-9]+)?$/, "Must be a non-negative decimal number")
+    .refine((v) => parseFloat(v) >= 0, {
+      message: "Amount must be >= 0",
+    }),
+});
+
+/**
+ * Directly set the user's wager_requirement_remaining (the frozen debt
+ * counter). amountUsd = "0" clears the debt so the user can withdraw
+ * immediately.
+ */
+export async function setUserWagerRemainingAction(input: {
+  userId: string;
+  amountUsd: string;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  await requirePageAccess("/users");
+  const session = await requireAdmin();
+
+  const parsed = SetRemainingDebtSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+  const { userId, amountUsd } = parsed.data;
+
+  let result: { old_remaining_usd: string; new_remaining_usd: string };
+  try {
+    result = await setUserWagerRemainingDebt(userId, amountUsd);
+  } catch (err) {
+    return { success: false, error: friendlyError(err) };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "user_wager_remaining_adjusted",
+    targetUserId: userId,
+    metadata: {
+      amount_usd: amountUsd,
+      old_remaining_usd: result.old_remaining_usd,
+      new_remaining_usd: result.new_remaining_usd,
+    },
   });
 
   revalidatePath(`/users/${userId}`);

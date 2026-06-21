@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Per-user withdrawal wager-requirement standing (read-only display).
+ * Per-user withdrawal wager-requirement standing (read-only display) with
+ * optional admin controls to adjust or clear the frozen debt counter.
  *
  * Sibling to `user-wager-requirement-card.tsx` (which manages the per-user
  * override CONFIG). This card shows the user's actual standing against the
@@ -20,6 +21,9 @@
  * info → blue. Nothing is framed green (no user-POV "available = good").
  */
 
+import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   Wallet,
   Gauge,
@@ -29,8 +33,19 @@ import {
   Target,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { StatPanel, KpiTile } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
+import { setUserWagerRemainingAction } from "./wager-requirement-actions";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 
 const BPS_PER_X = 10000;
@@ -38,10 +53,30 @@ const formatX = (bps: number): string =>
   `${(bps / BPS_PER_X).toLocaleString("en-US", { maximumFractionDigits: 2 })}×`;
 
 export function UserWagerProgressCard({
+  userId,
   data,
+  canManage,
 }: {
+  userId: string;
   data: UserWagerProgress | null;
+  canManage: boolean;
 }) {
+  const router = useRouter();
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  const handleClearDebt = () => {
+    startTransition(async () => {
+      const result = await setUserWagerRemainingAction({ userId, amountUsd: "0" });
+      if (result.success) {
+        toast.success("Wager debt cleared — user can withdraw immediately");
+        router.refresh();
+      } else {
+        toast.error(result.error);
+      }
+    });
+  };
+
   if (!data) {
     return (
       <Card className="border-dashed">
@@ -265,6 +300,130 @@ export function UserWagerProgressCard({
             " The wager-weight backend config wasn't reachable, so the per-source weights are hidden — the gate figures above are still exact (read from the balance columns)."}
         </p>
       </StatPanel>
+
+      {/* Admin controls — only shown to admins (canManage). */}
+      {canManage && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setAdjustOpen(true)}
+          >
+            Adjust remaining debt
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleClearDebt}
+            disabled={isPending}
+          >
+            {isPending ? "Working…" : "Clear debt"}
+          </Button>
+        </div>
+      )}
+
+      <AdjustRemainingDialog
+        userId={userId}
+        currentRemainingUsd={remainingUsd}
+        open={adjustOpen}
+        onOpenChange={setAdjustOpen}
+      />
     </div>
+  );
+}
+
+function AdjustRemainingDialog({
+  userId,
+  currentRemainingUsd,
+  open,
+  onOpenChange,
+}: {
+  userId: string;
+  currentRemainingUsd: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const router = useRouter();
+  const [value, setValue] = useState(
+    currentRemainingUsd > 0 ? currentRemainingUsd.toFixed(2) : "",
+  );
+  const [isPending, startTransition] = useTransition();
+
+  // Reset the form whenever the dialog re-opens so a previous cancel
+  // doesn't leave stale input.
+  useEffect(() => {
+    if (open) {
+      setValue(currentRemainingUsd > 0 ? currentRemainingUsd.toFixed(2) : "");
+    }
+  }, [open, currentRemainingUsd]);
+
+  const handleSave = () => {
+    const trimmed = value.trim();
+    if (trimmed === "") {
+      toast.error("Enter an amount (0 to clear the debt entirely)");
+      return;
+    }
+    const num = Number(trimmed);
+    if (!Number.isFinite(num) || num < 0) {
+      toast.error("Amount must be a non-negative number");
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await setUserWagerRemainingAction({
+        userId,
+        amountUsd: num.toFixed(2),
+      });
+      if (result.success) {
+        toast.success("Wager remaining debt updated");
+        onOpenChange(false);
+        router.refresh();
+      } else {
+        toast.error(result.error);
+      }
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Adjust Wager Remaining</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              New remaining debt (USD)
+            </Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="e.g. 0 to clear debt entirely"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Sets the exact wager-remaining debt for this user.{" "}
+              <code className="font-mono">0</code> = user can withdraw
+              immediately.
+            </p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isPending}
+          >
+            Cancel
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={isPending}>
+            {isPending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

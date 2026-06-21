@@ -131,3 +131,25 @@ export const clearUserWagerRequirement = (userId: string) =>
   backendApi.delete<{ success: boolean; message: string }>(
     `/admin/users/${encodeURIComponent(userId)}/wager-requirement`,
   );
+
+/**
+ * Directly set the user's `balances.wager_requirement_remaining` (the frozen
+ * debt counter). `amountUsd` is a Decimal string — "0" clears the debt
+ * entirely so the user can withdraw immediately.
+ *
+ * Endpoint: PUT /admin/users/:userId/wager-requirement-remaining
+ * Body: { amount_usd: string }
+ */
+export async function setUserWagerRemainingDebt(
+  userId: string,
+  amountUsd: string,
+): Promise<{ user_id: string; old_remaining_usd: string; new_remaining_usd: string }> {
+  const res = await backendApi.put<{
+    success: boolean;
+    data: { user_id: string; old_remaining_usd: string; new_remaining_usd: string };
+  }>(
+    `/admin/users/${encodeURIComponent(userId)}/wager-requirement-remaining`,
+    { amount_usd: amountUsd },
+  );
+  return res.data;
+}
