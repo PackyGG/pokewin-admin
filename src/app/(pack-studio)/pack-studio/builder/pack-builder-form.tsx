@@ -40,8 +40,12 @@ import {
   computePackRisk,
   type RiskTier,
 } from "@/app/(admin)/insights/edge-calc/risk";
-import { TARGET_HOUSE_EDGE } from "@/app/(admin)/insights/edge-calc/math";
 import { buildPack } from "@/app/(admin)/packs/actions";
+import {
+  autoTargetEdge,
+  autoMaxWinCap,
+  type EdgeCurveConfig,
+} from "../_lib/auto-targets";
 import {
   SortableCardTable,
   type SortableCard,
@@ -197,12 +201,18 @@ export function PackBuilderForm({
   sets,
   rarities,
   defaultMaxWinCap,
+  maxMultCeiling,
+  edgeCurve,
   canBuild,
 }: {
   sets: { id: string; name: string }[];
   rarities: string[];
   /** Resolved `pack_system_config.maxWinCap` (fallback 25000) from the server. */
   defaultMaxWinCap: number;
+  /** Resolved `pack_system_config.maxMultCeiling` (fallback 100) — the price-relative jackpot bound. */
+  maxMultCeiling: number;
+  /** Resolved per-pack edge-curve config (floor + risk-premium coefficients). */
+  edgeCurve: EdgeCurveConfig;
   /** True iff the viewer is the owner (buildPack is owner-gated). */
   canBuild: boolean;
 }) {
@@ -233,6 +243,22 @@ export function PackBuilderForm({
   const targetWinRate = winRatePct / 100;
   const nearMissMin = nearMissPct / 100;
   const floorRatioMin = spiciness === "calmer" ? CALMER_FLOOR_RATIO : undefined;
+
+  // ── Per-pack target edge (edge curve: floor 10.99% + risk premium) ──
+  // This pack's OWN target edge — NOT a flat 10.99%. The premium rises with the
+  // pack's house risk (max-win $ exposure, then price), so a calm/cheap pack sits
+  // at the floor while a pricey/jackpot-heavy one targets a little above it. The
+  // max-win proxy mirrors the auto-retune contract: the cap the pack is allowed
+  // to carry (the operator's cap when set, else the auto cap = lesser of the
+  // global cap and price × the multiplier ceiling). Updates live as price/cap
+  // change; 0 until a positive price is entered.
+  const targetEdge = useMemo(() => {
+    if (!(packPrice > 0)) return edgeCurve.edgeFloor;
+    const maxWinProxy =
+      cap ??
+      autoMaxWinCap(packPrice, { globalCap: defaultMaxWinCap, maxMultCeiling });
+    return autoTargetEdge({ price: packPrice, maxWin: maxWinProxy }, edgeCurve);
+  }, [packPrice, cap, defaultMaxWinCap, maxMultCeiling, edgeCurve]);
 
   function handleNameChange(val: string) {
     setName(val);
@@ -268,13 +294,13 @@ export function PackBuilderForm({
     return shapeWeights({
       cards: cards.map((c) => ({ value: c.priceUsd })),
       price: packPrice,
-      targetEdge: TARGET_HOUSE_EDGE,
+      targetEdge,
       targetWinRate,
       maxWinCap: cap,
       floorRatioMin,
       nearMissMin,
     });
-  }, [cards, packPrice, targetWinRate, cap, floorRatioMin, nearMissMin]);
+  }, [cards, packPrice, targetEdge, targetWinRate, cap, floorRatioMin, nearMissMin]);
 
   const shapeError = shaped && "error" in shaped ? shaped.error : null;
   const shapeOk = shaped && "weights" in shaped ? shaped : null;
@@ -315,8 +341,8 @@ export function PackBuilderForm({
 
   // ── Compliance (within-phase) ────────────────────────────────────
   const edgePct = previewRisk ? previewRisk.edge * 100 : 0;
-  const targetEdgePct = TARGET_HOUSE_EDGE * 100;
-  const edgeHealthy = previewRisk ? previewRisk.edge >= TARGET_HOUSE_EDGE - 1e-6 : false;
+  const targetEdgePct = targetEdge * 100;
+  const edgeHealthy = previewRisk ? previewRisk.edge >= targetEdge - 1e-6 : false;
   const overCap =
     previewRisk && cap !== undefined ? previewRisk.maxWin > cap + 1e-9 : false;
   const compliant = Boolean(previewRisk) && edgeHealthy && !overCap;
@@ -387,6 +413,9 @@ export function PackBuilderForm({
           price: packPrice,
           cards: cards.map((c) => ({ cardId: c.cardId })),
           targets: {
+            // The pack's OWN per-pack target edge (edge curve), so the server
+            // re-shape matches the live preview — not a flat 10.99%.
+            targetEdge,
             targetWinRate,
             maxWinCap: cap,
             floorRatioMin,
@@ -461,8 +490,9 @@ export function PackBuilderForm({
                   step="0.01"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Weights are shaped to a {targetEdgePct.toFixed(2)}% house edge
-                  at this price.
+                  Weights are shaped to this pack&apos;s target edge —{" "}
+                  {targetEdgePct.toFixed(2)}% at this price &amp; max-win (rises
+                  from the 10.99% floor with house risk).
                 </p>
               </div>
               <div className="space-y-1.5">

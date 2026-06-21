@@ -122,11 +122,9 @@ function isTokenExpired(message: string): boolean {
 
 export function RetuneReview({
   proposals,
-  targetEdge,
   portfolio,
 }: {
   proposals: PlanAllProposal[];
-  targetEdge: number;
   portfolio: PortfolioProfileResult;
 }) {
   const router = useRouter();
@@ -492,7 +490,6 @@ export function RetuneReview({
                   item={current}
                   index={index}
                   total={total}
-                  targetEdge={targetEdge}
                   applying={applying}
                   portfolioMode={portfolioMode}
                   onApprove={onApprove}

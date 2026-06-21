@@ -16,7 +16,6 @@ import { getUserPermissions, sessionRoles } from "@/lib/dal";
 import { redirect } from "next/navigation";
 
 import { getPortfolioProfile, planAllRetunes } from "../doctor/retune-actions";
-import { TARGET_PACK_EDGE } from "../_lib/risk-config";
 import { RetuneReview } from "./retune-review";
 
 /**
@@ -60,11 +59,7 @@ async function ReviewLoader() {
 
   return (
     <FadeIn>
-      <RetuneReview
-        proposals={proposals}
-        targetEdge={TARGET_PACK_EDGE}
-        portfolio={portfolio}
-      />
+      <RetuneReview proposals={proposals} portfolio={portfolio} />
     </FadeIn>
   );
 }

@@ -9,7 +9,11 @@ import {
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
 import { isRepriceOwner } from "@/lib/reprice-access";
 import { getSets, getRarities } from "@/lib/queries/cards";
-import { readMaxWinCap } from "../_lib/risk-config";
+import {
+  readMaxWinCap,
+  readMaxMultCeiling,
+  readEdgeCurveConfig,
+} from "../_lib/risk-config";
 import { PackBuilderForm } from "./pack-builder-form";
 
 /**
@@ -38,19 +42,24 @@ export function BuilderSkeleton() {
 }
 
 async function BuilderBody({ canBuild }: { canBuild: boolean }) {
-  const [{ sets, rarities }, maxWinCap] = await Promise.all([
-    (async () => {
-      const [s, r] = await Promise.all([getSets(), getRarities()]);
-      return { sets: s, rarities: r.filter((x): x is string => x != null) };
-    })(),
-    readMaxWinCap(),
-  ]);
+  const [{ sets, rarities }, maxWinCap, maxMultCeiling, edgeCurve] =
+    await Promise.all([
+      (async () => {
+        const [s, r] = await Promise.all([getSets(), getRarities()]);
+        return { sets: s, rarities: r.filter((x): x is string => x != null) };
+      })(),
+      readMaxWinCap(),
+      readMaxMultCeiling(),
+      readEdgeCurveConfig(),
+    ]);
 
   return (
     <PackBuilderForm
       sets={sets}
       rarities={rarities}
       defaultMaxWinCap={maxWinCap}
+      maxMultCeiling={maxMultCeiling}
+      edgeCurve={edgeCurve}
       canBuild={canBuild}
     />
   );

@@ -85,7 +85,6 @@ export function ReviewCard({
   item,
   index,
   total,
-  targetEdge,
   applying,
   portfolioMode,
   onApprove,
@@ -97,7 +96,6 @@ export function ReviewCard({
   item: ReviewItem;
   index: number;
   total: number;
-  targetEdge: number;
   applying: boolean;
   /** True when system-balance mode is on (proposals are portfolio-targeted). */
   portfolioMode: boolean;
@@ -166,6 +164,10 @@ export function ReviewCard({
   }
 
   const { proposal } = item;
+  // The edge this pack is AIMED at — its own per-pack target off the edge curve
+  // (floor 10.99% + risk premium), NOT a flat headline edge. The AFTER tile reads
+  // emerald (House-POV healthy) only when the result lands at/above THIS target.
+  const targetEdge = proposal.autoTargets.targetEdge;
   const before = proposal.before;
   // The active "after": a local adjustment supersedes the server proposal.
   const after = active ? active.after : proposal.after;
