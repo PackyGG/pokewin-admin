@@ -205,7 +205,11 @@ export function ReviewCard({
 
         {/* Top weight movers */}
         {feasible && weightDiff && weightDiff.length > 0 && (
-          <TopMovers diff={weightDiff} cards={proposal.cards} />
+          <TopMovers
+            diff={weightDiff}
+            cards={proposal.cards}
+            price={proposal.price}
+          />
         )}
 
         {/* Adjust panel */}
@@ -485,13 +489,21 @@ function Stat({
  * The top weight movers — the cards whose draw weight changes the most (by
  * absolute share of pool weight), so the operator sees at a glance where the
  * odds shifted without scrolling the full pool.
+ *
+ * House-POV tint: the share change is colored by whether it moves EV toward the
+ * player, not by raw direction. A win card (value >= pack price) gaining weight
+ * — or a floor card (value < price) losing weight — raises player EV = BAD for
+ * the house → rose. The inverse (win card down, floor card up) lowers player EV
+ * = GOOD for the house → emerald.
  */
 function TopMovers({
   diff,
   cards,
+  price,
 }: {
   diff: { cardId: string; from: number; to: number }[];
   cards: { cardId: string; value: number }[];
+  price: number;
 }) {
   const valueById = React.useMemo(() => {
     const m = new Map<string, number>();
@@ -525,6 +537,12 @@ function TopMovers({
           const fromP = (m.from / fromTotal) * 100;
           const toP = (m.to / toTotal) * 100;
           const up = toP >= fromP;
+          // House-POV: a win card (value >= price) gaining weight, or a floor
+          // card (value < price) shedding weight, raises player EV = BAD for
+          // us → rose. Otherwise the move lowers player EV → emerald. Cards of
+          // unknown value fall back to raw direction (up = rose).
+          const isWinCard = v != null ? v >= price : true;
+          const playerFavorable = isWinCard === up;
           return (
             <div
               key={m.cardId}
@@ -539,7 +557,7 @@ function TopMovers({
                 <span
                   className={cn(
                     "font-medium",
-                    up
+                    playerFavorable
                       ? "text-rose-600 dark:text-rose-400"
                       : "text-emerald-600 dark:text-emerald-400",
                   )}

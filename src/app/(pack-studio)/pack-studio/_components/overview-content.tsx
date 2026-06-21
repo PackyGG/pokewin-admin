@@ -38,24 +38,27 @@ const TARGET_LABEL = pct(TARGET_PACK_EDGE);
 
 /**
  * One compliance-alert group rendered as a clickable card linking to the Pack
- * Doctor with the matching `?filter=` querystring. House-POV note: a margin
- * leak (packs under target) or a pack over the win cap is BAD for us, so those
- * alert cards are tinted rose. Near-miss / over-tier are play-feel / risk
- * signals (not money) → amber.
+ * Doctor with the matching querystring. `query` must be the exact param string
+ * the Doctor page consumes in `paramsToFilters` (e.g. `belowTarget=1`,
+ * `overCap=1`, `zeroNearMiss=1`, `tier=T5`) — NOT a `?filter=` value, which the
+ * Doctor page does not parse. House-POV note: a margin leak (packs under
+ * target) or a pack over the win cap is BAD for us, so those alert cards are
+ * tinted rose. Near-miss / over-tier are play-feel / risk signals (not money)
+ * → amber.
  */
 function AlertGroup({
   accent,
   icon: Icon,
   title,
   items,
-  filter,
+  query,
   describe,
 }: {
   accent: AccentColor;
   icon: React.ElementType;
   title: string;
   items: ComplianceAlert[];
-  filter: string;
+  query: string;
   describe: (a: ComplianceAlert) => string;
 }) {
   if (items.length === 0) return null;
@@ -67,7 +70,7 @@ function AlertGroup({
 
   return (
     <Link
-      href={`/pack-studio/doctor?filter=${filter}`}
+      href={`/pack-studio/doctor?${query}`}
       className={`group block rounded-xl border p-4 transition-colors ${tint}`}
     >
       <div className="flex items-start justify-between gap-3">
@@ -184,6 +187,16 @@ export async function PackStudioOverviewContent() {
             icon={Layers}
             accent="purple"
           />
+          {/* Open compliance alerts across all four groups — any open alert is
+              an unresolved risk = BAD for the house → rose when > 0, else
+              neutral blue (nothing outstanding). */}
+          <KpiTile
+            label="Open alerts"
+            value={formatNumber(totalAlerts)}
+            sub="Compliance flags"
+            icon={AlertTriangle}
+            accent={totalAlerts > 0 ? "rose" : "blue"}
+          />
         </div>
       </section>
 
@@ -258,7 +271,7 @@ export async function PackStudioOverviewContent() {
               icon={TrendingUp}
               title="Packs below target"
               items={data.alerts.belowTargetEdge}
-              filter="below-target"
+              query="belowTarget=1"
               describe={(a) => pct(a.edge)}
             />
             <AlertGroup
@@ -266,7 +279,7 @@ export async function PackStudioOverviewContent() {
               icon={ShieldAlert}
               title="Over max-win cap"
               items={data.alerts.overMaxWinCap}
-              filter="over-cap"
+              query="overCap=1"
               describe={(a) => formatCurrency(a.maxWin)}
             />
             <AlertGroup
@@ -274,7 +287,7 @@ export async function PackStudioOverviewContent() {
               icon={Sparkles}
               title="Zero near-miss"
               items={data.alerts.zeroNearMiss}
-              filter="zero-near-miss"
+              query="zeroNearMiss=1"
               describe={(a) => pct(a.nearMiss)}
             />
             <AlertGroup
@@ -282,7 +295,7 @@ export async function PackStudioOverviewContent() {
               icon={Target}
               title="Over tier (T5)"
               items={data.alerts.overTier}
-              filter="over-tier"
+              query="tier=T5"
               describe={(a) => a.tier}
             />
           </div>
