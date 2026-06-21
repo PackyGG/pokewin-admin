@@ -117,6 +117,7 @@ function mapFinancialLedgerRow(t: LedgerRow, instantRakebackIds?: Set<string>) {
     sponsorshipPercentage: null,
     battleId: null,
     battleMode: null,
+    battlePending: null,
     hasPassword: null,
     battleWinnings: null,
     upgraderResult: null,
@@ -819,6 +820,20 @@ export async function getUserTransactions(
         ? (battleModeMap.get(battleId) ?? null)
         : null;
 
+      // Is the linked battle still running (outcome not locked yet)?
+      // Pending = the live in-flight states ONLY (`animating` /
+      // `in_progress`); `waiting` (queued), `completed` and `cancelled`
+      // (settled) are NOT pending. Reuses the already-fetched
+      // battles.status from battleOutcomeMap — no extra query. Null on
+      // non-battle rows (or when the battle row couldn't be fetched).
+      const battleStatus = battleId
+        ? (battleOutcomeMap.get(battleId)?.status ?? null)
+        : null;
+      const battlePending =
+        battleStatus == null
+          ? null
+          : battleStatus === "animating" || battleStatus === "in_progress";
+
       // Boolean flag — does the linked battle have a password set?
       // Drives the "Copy Watch URL w/ password" affordance on the
       // gaming-tab Watch button + the password reveal row in the
@@ -986,6 +1001,7 @@ export async function getUserTransactions(
         sponsorshipPercentage,
         battleId,
         battleMode,
+        battlePending,
         hasPassword,
         battleWinnings,
         upgraderResult,

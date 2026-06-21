@@ -13,7 +13,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, ExternalLink, Gauge, Package } from "lucide-react";
+import { ChevronDown, ExternalLink, Gauge, Loader2, Package } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -305,6 +305,21 @@ export function TransactionDetailModal({
                 · {m}
               </span>
             ))}
+            {/* "Pending" chip — only while the linked battle is still
+                running (status animating / in_progress). Absent entirely
+                once the battle has settled (completed / cancelled) or is
+                merely queued (waiting), so a finished battle shows no
+                badge at all. Neutral amber treatment (in-flight state,
+                not a House-POV money value). */}
+            {t.battlePending === true && (
+              <Badge
+                variant="outline"
+                className="gap-1 border-amber-500/30 bg-amber-500/15 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+              >
+                <Loader2 className="size-3 motion-safe:animate-spin" />
+                Pending
+              </Badge>
+            )}
           </div>
         ),
       });

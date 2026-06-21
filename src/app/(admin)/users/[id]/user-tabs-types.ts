@@ -333,6 +333,20 @@ export type Transaction = {
    */
   battleMode: string | null;
   /**
+   * BOOLEAN — is the linked battle still running (not yet settled)?
+   *   • true  → battle status is `animating` or `in_progress` (the
+   *             outcome is not locked in yet) — drives the "Pending"
+   *             chip next to the Battle Mode row in the detail modal.
+   *   • false → battle is settled (`completed` / `cancelled`) or queued
+   *             (`waiting`); no chip is rendered.
+   *   • null  → not a battle row (or the battle row could not be fetched).
+   *
+   * "Pending" deliberately covers ONLY `animating` + `in_progress` — the
+   * states where the bet is live and the outcome can still change — to
+   * match how the battle surfaces treat an in-flight battle.
+   */
+  battlePending: boolean | null;
+  /**
    * BOOLEAN — does the linked battle have a password set?
    *   • true  → the row's Watch button offers a "copy URL with
    *             password" path and the transaction-detail modal
