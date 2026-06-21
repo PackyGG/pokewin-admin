@@ -286,6 +286,25 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inSidebar: false,
     inPalette: true,
   },
+  {
+    // Physical Withdrawals — real-world card-shipment availability controls
+    // (global withdrawals master switch + per-country physical toggle) and the
+    // fulfillment queue. The intended main page once physical withdrawals go
+    // live. Icon string `Package` is already registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (React #130); since `inPalette: true`,
+    // the id is also added to PALETTE_ORDER (lockstep).
+    id: "nav.physical",
+    group: "Overview",
+    label: "Physical",
+    href: "/physical",
+    pageKey: "/physical",
+    icon: "Package",
+    description: "Physical card-withdrawal availability & fulfillment",
+    keywords: ["physical", "shipping", "shipment", "fulfillment", "cards", "payout", "withdrawal"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
 
   // ── Insights (sidebar-only; absent from palette today) ─────────────────
   {
@@ -928,6 +947,7 @@ const PALETTE_ORDER: string[] = [
   "nav.crm",
   "nav.deposits",
   "nav.withdrawals",
+  "nav.physical",
   "nav.creators",
   "nav.creators.analytics",
   "nav.promo",

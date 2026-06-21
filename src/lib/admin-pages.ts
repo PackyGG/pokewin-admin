@@ -39,6 +39,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   // access still pass requirePageAccess on the legacy route; the
   // combined page itself gates on `/transactions/deposits`.
   { group: "Navigation", label: "Withdrawals (legacy)", key: "/withdrawals" },
+  // Physical Withdrawals — real-world card-shipment availability controls
+  // (global withdrawals master switch + per-country physical toggle) and the
+  // fulfillment queue. The intended landing page once physical withdrawals go
+  // live. Own grantable key; admins/owners bypass.
+  { group: "Navigation", label: "Physical", key: "/physical" },
   // Insights — cross-cutting analytical surfaces. Mirrors the sidebar
   // group sitting directly below Overview. Separate from the per-feature
   // analytics keys (e.g. /rewards/analytics) so role grants can be
