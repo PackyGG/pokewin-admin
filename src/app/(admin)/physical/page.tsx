@@ -79,7 +79,6 @@ export default async function PhysicalPage() {
 
 async function AvailabilitySection() {
   const fallback: PhysicalAvailability = {
-    withdrawalsEnabled: true,
     physicalCountriesAllowed: 0,
     totalCountries: 0,
   };

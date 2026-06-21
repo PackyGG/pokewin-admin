@@ -1,18 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
-import { getSiteConfigValues } from "./site-config";
-
-/**
- * Global "withdrawals on/off" master switch key in the MAIN-DB
- * `site_config` K/V store. Description in prod:
- * "Turn off all withdrawals if turned off". Owns ALL withdrawal methods
- * (crypto + balance + physical) — there is no physical-only global flag.
- */
-export const WITHDRAWALS_ENABLED_KEY = "withdrawals_enabled";
 
 export type PhysicalAvailability = {
-  /** `site_config.withdrawals_enabled` — defaults to ON when the row is absent. */
-  withdrawalsEnabled: boolean;
   /** Countries where `country_restrictions.physical_withdrawal` is true. */
   physicalCountriesAllowed: number;
   /** Total country rows in `country_restrictions`. */
@@ -20,23 +9,18 @@ export type PhysicalAvailability = {
 };
 
 /**
- * Read the physical-withdrawal availability levers the /physical page
- * surfaces: the global withdrawals master switch and the per-country
- * physical-withdrawal coverage. Read-only; request-scope (uncached) — the
- * two counts hit a ~250-row table so a seq scan is the optimal plan.
+ * Read the per-country physical-withdrawal coverage the /physical page
+ * surfaces. Read-only; request-scope (uncached) — the two counts hit a
+ * ~250-row table so a seq scan is the optimal plan.
  */
 export async function getPhysicalAvailability(): Promise<PhysicalAvailability> {
   const db = await getDb();
-  const [cfg, totalCountries, physicalCountriesAllowed] = await Promise.all([
-    getSiteConfigValues([WITHDRAWALS_ENABLED_KEY]),
+  const [totalCountries, physicalCountriesAllowed] = await Promise.all([
     db.country_restrictions.count(),
     db.country_restrictions.count({ where: { physical_withdrawal: true } }),
   ]);
 
   return {
-    // Absent row → treat as ON (the backend default). Only an explicit
-    // "false" disables withdrawals.
-    withdrawalsEnabled: cfg[WITHDRAWALS_ENABLED_KEY] !== "false",
     physicalCountriesAllowed,
     totalCountries,
   };
