@@ -14,6 +14,8 @@ import {
   Loader2,
   Receipt,
   Target,
+  TrendingDown,
+  Trophy,
   X,
 } from "lucide-react";
 import { revealBattlePassword } from "@/app/(admin)/battles/actions";
@@ -695,6 +697,50 @@ export const CategoryTransactionsTable = React.memo(
                         // team_number), surfaced as gameResult. null = the
                         // battle hasn't resolved yet.
                         if (t.gameResult === null) {
+                          // Battle not settled. While PENDING we can still
+                          // show the win/loss DIRECTION (winner_team vs the
+                          // user's team) even though the exact dollar amount
+                          // is not derivable yet and stays "resolving".
+                          // House-POV: user win = rose (our loss), user loss
+                          // = emerald (our gain).
+                          if (t.battleOutcomePending === "win") {
+                            return (
+                              <TableCell>
+                                <div className="flex items-center gap-1.5">
+                                  <Badge
+                                    variant="outline"
+                                    className="gap-1 border-rose-500/30 bg-rose-500/15 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+                                  >
+                                    <Trophy className="size-3" />
+                                    Winning
+                                  </Badge>
+                                  <span className="text-[11px] italic text-muted-foreground">
+                                    amount resolving…
+                                  </span>
+                                </div>
+                              </TableCell>
+                            );
+                          }
+                          if (t.battleOutcomePending === "loss") {
+                            return (
+                              <TableCell>
+                                <div className="flex items-center gap-1.5">
+                                  <Badge
+                                    variant="outline"
+                                    className="gap-1 border-emerald-500/30 bg-emerald-500/15 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+                                  >
+                                    <TrendingDown className="size-3" />
+                                    Losing
+                                  </Badge>
+                                  <span className="text-[11px] italic text-muted-foreground">
+                                    amount resolving…
+                                  </span>
+                                </div>
+                              </TableCell>
+                            );
+                          }
+                          // winner_team not materialized yet (in_progress)
+                          // → no fabricated direction.
                           return (
                             <TableCell className="text-xs italic text-muted-foreground">
                               Pending — battle still resolving

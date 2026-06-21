@@ -120,6 +120,7 @@ function mapFinancialLedgerRow(t: LedgerRow, instantRakebackIds?: Set<string>) {
     battlePending: null,
     hasPassword: null,
     battleWinnings: null,
+    battleOutcomePending: null,
     upgraderResult: null,
     upgraderWinnings: null,
     upgraderTargetMultiplier: null,
@@ -854,6 +855,14 @@ export async function getUserTransactions(
       //     with kept cards; null when not a resolved battle_bet.
       let battleResult: "win" | "lose" | null = null;
       let battleWinnings: number | null = null;
+      // Win/loss DIRECTION for a PENDING battle_bet (battle status
+      // animating / in_progress) — derived from battles.winner_team vs the
+      // user's team_number, the IDENTICAL comparison the settled
+      // battleResult uses. Only the direction is surfaced; the exact dollar
+      // AMOUNT is intentionally NOT derivable while pending and stays
+      // hidden ("resolving"). Null when not pending, or when winner_team is
+      // not yet materialized (in_progress can be null) → no fabricated side.
+      let battleOutcomePending: "win" | "loss" | null = null;
       if (t.type === "battle_bet") {
         const outcome = battleId ? battleOutcomeMap.get(battleId) : null;
         const userTeam = gs?.battle_participants?.team_number ?? null;
@@ -870,6 +879,13 @@ export async function getUserTransactions(
               ? battleWinningsByGsid.get(t.game_session_id) ?? 0
               : 0
             : 0;
+        }
+        const isPending =
+          outcome != null &&
+          (outcome.status === "animating" || outcome.status === "in_progress");
+        if (isPending && outcome.winnerTeam != null && userTeam != null) {
+          battleOutcomePending =
+            userTeam === outcome.winnerTeam ? "win" : "loss";
         }
       }
 
@@ -1004,6 +1020,7 @@ export async function getUserTransactions(
         battlePending,
         hasPassword,
         battleWinnings,
+        battleOutcomePending,
         upgraderResult,
         upgraderWinnings,
         upgraderTargetMultiplier,

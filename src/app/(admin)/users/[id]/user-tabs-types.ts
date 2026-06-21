@@ -372,6 +372,18 @@ export type Transaction = {
    */
   battleWinnings: number | null;
   /**
+   * Win/loss DIRECTION for a PENDING battle_bet row (battle status
+   * animating / in_progress), derived from battles.winner_team vs the
+   * user's battle_participants.team_number. The exact dollar AMOUNT is
+   * intentionally NOT derivable while pending and stays hidden — only the
+   * direction is shown.
+   *   - "win"  → user's team == winner_team (house loss → rose)
+   *   - "loss" → user's team != winner_team (house gain → emerald)
+   *   - null   → not a pending battle_bet, OR winner_team not yet
+   *              materialized (in_progress can be null) → "resolving"
+   */
+  battleOutcomePending: "win" | "loss" | null;
+  /**
    * Upgrader-only outcome derived from the presence of a matching
    * upgrader_payout row sharing this row's game_session_id.
    *   - "win"  → a payout row exists (upgraderWinnings = its value)

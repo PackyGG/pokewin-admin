@@ -13,7 +13,15 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronDown, ExternalLink, Gauge, Loader2, Package } from "lucide-react";
+import {
+  ChevronDown,
+  ExternalLink,
+  Gauge,
+  Loader2,
+  Package,
+  TrendingDown,
+  Trophy,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -320,6 +328,42 @@ export function TransactionDetailModal({
                 Pending
               </Badge>
             )}
+          </div>
+        ),
+      });
+    }
+    // Live outcome row — only while the battle is PENDING (animating /
+    // in_progress) AND the win/loss direction is known (winner_team is
+    // materialized vs the user's team). Shows the DIRECTION only; the exact
+    // dollar amount is not derivable yet so we surface a muted "exact amount
+    // resolving" note rather than a fabricated figure. House-POV colors:
+    // user winning = rose (our loss), user losing = emerald (our gain).
+    // Absent entirely when not pending or when the direction is unknown.
+    if (t.battlePending === true && t.battleOutcomePending != null) {
+      rows.push({
+        label: "Live outcome",
+        value: (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {t.battleOutcomePending === "win" ? (
+              <Badge
+                variant="outline"
+                className="gap-1 border-rose-500/30 bg-rose-500/15 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+              >
+                <Trophy className="size-3" />
+                User winning
+              </Badge>
+            ) : (
+              <Badge
+                variant="outline"
+                className="gap-1 border-emerald-500/30 bg-emerald-500/15 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+              >
+                <TrendingDown className="size-3" />
+                User losing
+              </Badge>
+            )}
+            <span className="text-xs text-muted-foreground">
+              · exact amount resolving
+            </span>
           </div>
         ),
       });
