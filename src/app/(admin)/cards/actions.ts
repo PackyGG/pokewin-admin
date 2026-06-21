@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { Prisma } from "@/generated/prisma/client";
+import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { getDb } from "@/lib/db";
 import { verifySession, requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -351,10 +351,21 @@ export async function deleteCard(cardId: string): Promise<void> {
 
   if (!card) throw new Error("Card not found");
 
+  // Keep the rich pack-names message (most common, most actionable case)…
   if (card.pack_cards.length > 0) {
     const packNames = card.pack_cards.map((pc) => pc.packs.name).join(", ");
     throw new Error(
       `Card is used in ${card.pack_cards.length} pack(s): ${packNames}. Remove it from those packs first.`,
+    );
+  }
+
+  // …and run the same full reference check the bulk delete uses, so a single
+  // delete can't orphan inventory / upgrader / provably-fair references either.
+  const check = await checkCardReferences(db, [cardId]);
+  const reason = check.blockedById.get(cardId);
+  if (reason) {
+    throw new Error(
+      `Card can't be deleted — it is ${BLOCKED_REASON_LABEL[reason]}.`,
     );
   }
 
@@ -386,14 +397,238 @@ const deleteCardsSchema = z.object({
     .max(BULK_DELETE_MAX, `Up to ${BULK_DELETE_MAX} cards at a time`),
 });
 
+/**
+ * Why a card can't be deleted. Each reason maps to a real reference that a
+ * raw `cards.delete()` would either break (orphan a soft reference) or be
+ * blocked on by a RESTRICT foreign key:
+ *
+ *   - `in_packs`           → `pack_cards.card_id` (FK, Cascade) — would rip the
+ *                            card out of a live pack pool.
+ *   - `in_inventory`       → `user_inventory.card_id` (soft ref, NO FK) —
+ *                            would orphan a user's held item.
+ *   - `in_upgrader_output` → `upgrader_output_cards.card_id` (FK, Cascade,
+ *                            UNIQUE) — would silently remove the card from the
+ *                            upgrader output pool.
+ *   - `in_upgrader_target` → `upgrader_games.target_card_id` (FK, RESTRICT —
+ *                            the relation has no onDelete, so Postgres blocks
+ *                            the delete with a constraint violation anyway).
+ *   - `in_provably_fair`   → referenced inside `provably_fair_results.
+ *                            result_metadata` (Json, soft ref) as the rolled
+ *                            `card_id` or the upgrader `target_card_id` —
+ *                            deleting the card would make the immutable
+ *                            fairness record point at a row that no longer
+ *                            resolves.
+ */
+type BlockedReason =
+  | "in_packs"
+  | "in_inventory"
+  | "in_upgrader_output"
+  | "in_upgrader_target"
+  | "in_provably_fair";
+
 /** Per-card reason a card was skipped instead of deleted. */
 type BlockedCard = {
   id: string;
   name: string;
-  reason: "in_packs" | "in_inventory";
+  reason: BlockedReason;
   packCount: number;
   inventoryCount: number;
 };
+
+/**
+ * Result of running every read-only reference check over a candidate set of
+ * card ids. `blockedById` carries the *first-matched* reason per card (checks
+ * are ordered most-actionable first: packs → inventory → upgrader → fairness),
+ * `blockedReasonsById` carries every reason that matched (so callers can show
+ * the full picture if they want).
+ */
+type CardReferenceCheck = {
+  /** ids that have NO reference of any kind → safe to delete. */
+  deletableIds: string[];
+  /** first-matched reason per blocked id. */
+  blockedById: Map<string, BlockedReason>;
+  /** all matched reasons per blocked id. */
+  blockedReasonsById: Map<string, BlockedReason[]>;
+  /** pack reference count per candidate id (0 when none). */
+  packCountById: Map<string, number>;
+  /** inventory holding count per candidate id (0 when none). */
+  inventoryCountById: Map<string, number>;
+};
+
+/**
+ * Run ALL five read-only reference checks over `ids` and return the safe set
+ * plus per-card reasons. This is the single source of truth for "is this card
+ * safe to delete" — both the bulk `deleteCards` and the single `deleteCard`
+ * (and the UI preview via `getDeletableCardIds`) go through it so the rules
+ * can never drift between callers.
+ *
+ * Every query here is a READ (SELECT/COUNT) on the MAIN production DB — nothing
+ * is mutated. Checks are issued concurrently and each is scoped to the
+ * candidate id set so no check ever scans more than it must.
+ *
+ * Reference shapes (see `BlockedReason` for the FK/onDelete details):
+ *   1. pack_cards.card_id            (typed relation, per-card count)
+ *   2. user_inventory.card_id        (soft ref, grouped count)
+ *   3. upgrader_output_cards.card_id (typed relation, unique)
+ *   4. upgrader_games.target_card_id (typed relation, grouped existence)
+ *   5. provably_fair_results.result_metadata->>'card_id' / 'target_card_id'
+ *      (Json soft ref — a single combined scan over the candidate set, see
+ *      `prisma/recommended-indexes.sql` for the GIN index that turns this into
+ *      an index lookup once the owner applies it).
+ */
+async function checkCardReferences(
+  db: PrismaClient,
+  ids: string[],
+): Promise<CardReferenceCheck> {
+  // De-dup defensively so counts/maps are keyed once per id.
+  const uniqueIds = Array.from(new Set(ids));
+
+  if (uniqueIds.length === 0) {
+    return {
+      deletableIds: [],
+      blockedById: new Map(),
+      blockedReasonsById: new Map(),
+      packCountById: new Map(),
+      inventoryCountById: new Map(),
+    };
+  }
+
+  const [
+    packGroups,
+    inventoryGroups,
+    upgraderOutputs,
+    upgraderTargetGroups,
+    provablyFairRows,
+  ] = await Promise.all([
+    // 1. pack_cards — count references per candidate card.
+    db.pack_cards.groupBy({
+      by: ["card_id"],
+      where: { card_id: { in: uniqueIds } },
+      _count: { _all: true },
+    }),
+    // 2. user_inventory — soft reference (no FK); count holdings per card.
+    db.user_inventory.groupBy({
+      by: ["card_id"],
+      where: { card_id: { in: uniqueIds } },
+      _count: { _all: true },
+    }),
+    // 3. upgrader_output_cards — card_id is UNIQUE, so just fetch the ids that
+    //    appear; presence ⇒ blocked.
+    db.upgrader_output_cards.findMany({
+      where: { card_id: { in: uniqueIds } },
+      select: { card_id: true },
+    }),
+    // 4. upgrader_games.target_card_id — RESTRICT FK; group so we know which
+    //    candidate ids are referenced as an upgrader target.
+    db.upgrader_games.groupBy({
+      by: ["target_card_id"],
+      where: { target_card_id: { in: uniqueIds } },
+      _count: { _all: true },
+    }),
+    // 5. provably_fair_results.result_metadata — Json soft reference. A card id
+    //    can sit at the top level as the rolled `card_id` OR (for upgrader
+    //    rolls) nested as `target_card_id`. One combined scan returns the
+    //    distinct candidate ids that appear in EITHER position. Uses jsonb
+    //    containment (`@>`) so it becomes index-eligible once the recommended
+    //    GIN index lands; correct on a seq scan today. `Prisma.join` safely
+    //    parameterises the id list (no string interpolation).
+    db.$queryRaw<{ card_id: string }[]>(Prisma.sql`
+      SELECT DISTINCT t.card_id FROM (
+        SELECT (result_metadata->>'card_id') AS card_id
+          FROM provably_fair_results
+         WHERE result_metadata->>'card_id' IN (${Prisma.join(uniqueIds)})
+        UNION ALL
+        SELECT (result_metadata->>'target_card_id') AS card_id
+          FROM provably_fair_results
+         WHERE result_metadata->>'target_card_id' IN (${Prisma.join(uniqueIds)})
+      ) t
+    `),
+  ]);
+
+  const packCountById = new Map<string, number>(
+    packGroups.map((g) => [g.card_id, g._count._all]),
+  );
+  const inventoryCountById = new Map<string, number>(
+    inventoryGroups.map((g) => [g.card_id, g._count._all]),
+  );
+  const upgraderOutputIds = new Set(upgraderOutputs.map((r) => r.card_id));
+  const upgraderTargetIds = new Set(
+    upgraderTargetGroups
+      .map((g) => g.target_card_id)
+      .filter((id): id is string => id != null),
+  );
+  const provablyFairIds = new Set(
+    provablyFairRows
+      .map((r) => r.card_id)
+      .filter((id): id is string => id != null),
+  );
+
+  const deletableIds: string[] = [];
+  const blockedById = new Map<string, BlockedReason>();
+  const blockedReasonsById = new Map<string, BlockedReason[]>();
+
+  for (const id of uniqueIds) {
+    const reasons: BlockedReason[] = [];
+    if ((packCountById.get(id) ?? 0) > 0) reasons.push("in_packs");
+    if ((inventoryCountById.get(id) ?? 0) > 0) reasons.push("in_inventory");
+    if (upgraderOutputIds.has(id)) reasons.push("in_upgrader_output");
+    if (upgraderTargetIds.has(id)) reasons.push("in_upgrader_target");
+    if (provablyFairIds.has(id)) reasons.push("in_provably_fair");
+
+    if (reasons.length === 0) {
+      deletableIds.push(id);
+    } else {
+      blockedById.set(id, reasons[0]);
+      blockedReasonsById.set(id, reasons);
+    }
+  }
+
+  return {
+    deletableIds,
+    blockedById,
+    blockedReasonsById,
+    packCountById,
+    inventoryCountById,
+  };
+}
+
+/** Human-readable label per blocked reason, reused in error messages. */
+const BLOCKED_REASON_LABEL: Record<BlockedReason, string> = {
+  in_packs: "used in pack(s)",
+  in_inventory: "held in user inventory",
+  in_upgrader_output: "in the upgrader output pool",
+  in_upgrader_target: "an upgrader target card",
+  in_provably_fair: "referenced by provably-fair records",
+};
+
+/**
+ * Read-only preview helper for a mass-delete: runs every reference check over
+ * `ids` and returns the safe set plus per-id reasons. ADMIN-ONLY — same gate as
+ * the destructive `deleteCards`, since it reads which cards are referenced
+ * across the platform. Nothing is mutated.
+ */
+export async function getDeletableCardIds(ids: string[]): Promise<{
+  deletable: string[];
+  blocked: { id: string; reason: BlockedReason }[];
+}> {
+  await requireAdmin();
+
+  const parsed = deleteCardsSchema.safeParse({ ids });
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid input");
+  }
+
+  const db = await getDb();
+  const check = await checkCardReferences(db, parsed.data.ids);
+
+  return {
+    deletable: check.deletableIds,
+    blocked: Array.from(check.blockedById.entries()).map(([id, reason]) => ({
+      id,
+      reason,
+    })),
+  };
+}
 
 /**
  * Bulk-delete cards selected on /cards. ADMIN-ONLY — `requireAdmin()` is the
@@ -441,70 +676,48 @@ export async function deleteCards(input: {
   const db = await getDb();
 
   try {
-    // Load each candidate with its pack-reference list (same shape the
-    // single-delete reads). Missing ids simply don't come back.
+    // Load the candidate cards (for their names in the blocked report). Missing
+    // ids simply don't come back; we only ever delete ids that still exist.
     const cards = await db.cards.findMany({
       where: { id: { in: ids } },
-      select: {
-        id: true,
-        name: true,
-        pack_cards: { select: { id: true } },
-      },
+      select: { id: true, name: true },
     });
 
     if (cards.length === 0) {
       return fail("None of the selected cards still exist.", "NOT_FOUND");
     }
 
-    // Inventory is a soft reference (no FK) — count holdings per card so we
-    // can block instead of orphaning. One grouped query over the candidate
-    // set, not an N+1.
-    const inventoryGroups = await db.user_inventory.groupBy({
-      by: ["card_id"],
-      where: { card_id: { in: cards.map((c) => c.id) } },
-      _count: { _all: true },
-    });
-    const inventoryCountByCard = new Map<string, number>(
-      inventoryGroups.map((g) => [g.card_id, g._count._all]),
-    );
+    const existingIds = cards.map((c) => c.id);
+    const nameById = new Map(cards.map((c) => [c.id, c.name]));
 
-    const blocked: BlockedCard[] = [];
-    const deletableIds: string[] = [];
-    for (const card of cards) {
-      const packCount = card.pack_cards.length;
-      const inventoryCount = inventoryCountByCard.get(card.id) ?? 0;
-      if (packCount > 0) {
-        blocked.push({
-          id: card.id,
-          name: card.name,
-          reason: "in_packs",
-          packCount,
-          inventoryCount,
-        });
-      } else if (inventoryCount > 0) {
-        blocked.push({
-          id: card.id,
-          name: card.name,
-          reason: "in_inventory",
-          packCount,
-          inventoryCount,
-        });
-      } else {
-        deletableIds.push(card.id);
-      }
-    }
+    // Single source of truth for every reference check (packs, inventory,
+    // upgrader output, upgrader target, provably-fair). Read-only.
+    const check = await checkCardReferences(db, existingIds);
+
+    const blocked: BlockedCard[] = Array.from(check.blockedById.entries()).map(
+      ([id, reason]) => ({
+        id,
+        name: nameById.get(id) ?? id,
+        reason,
+        packCount: check.packCountById.get(id) ?? 0,
+        inventoryCount: check.inventoryCountById.get(id) ?? 0,
+      }),
+    );
+    const deletableIds = check.deletableIds;
 
     if (deletableIds.length === 0) {
-      // Nothing safe to delete — surface a clear, specific reason rather than
-      // a silent no-op so the operator understands why.
-      const inPacks = blocked.filter((b) => b.reason === "in_packs").length;
-      const inInv = blocked.filter((b) => b.reason === "in_inventory").length;
-      const parts: string[] = [];
-      if (inPacks > 0)
-        parts.push(`${inPacks} still used in pack${inPacks === 1 ? "" : "s"}`);
-      if (inInv > 0) parts.push(`${inInv} held in user inventory`);
+      // Nothing safe to delete — surface a clear, specific breakdown rather than
+      // a silent no-op so the operator understands why. Count by first-matched
+      // reason (same precedence the per-card reason uses).
+      const counts = new Map<BlockedReason, number>();
+      for (const b of blocked) {
+        counts.set(b.reason, (counts.get(b.reason) ?? 0) + 1);
+      }
+      const parts = Array.from(counts.entries()).map(
+        ([reason, n]) => `${n} ${BLOCKED_REASON_LABEL[reason]}`,
+      );
       return fail(
-        `No cards deleted — ${parts.join(" and ")}. Remove them from packs first; cards held in any user's inventory can't be deleted.`,
+        `No cards deleted — ${parts.join(", ")}. Remove cards from packs first; cards held in inventory, used by the upgrader, or referenced by provably-fair records can't be deleted.`,
         "BLOCKED",
       );
     }
