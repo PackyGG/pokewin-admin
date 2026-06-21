@@ -453,8 +453,9 @@ export function RetuneReview({
       <div className="space-y-3">
         <SectionHeading icon={ShieldCheck} title="Review queue" />
 
-        {/* Progress + counts strip */}
-        <div className="rounded-xl border bg-card px-4 py-3">
+        {/* Progress + counts strip — sticks to the top while the (tall) card
+            scrolls beneath it, so the review position + counts stay in view. */}
+        <div className="sticky top-2 z-20 rounded-xl border bg-card/95 px-4 py-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-card/80">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3 text-sm">
               <span className="font-medium tabular-nums">
@@ -480,10 +481,13 @@ export function RetuneReview({
           </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
+        <div className="grid gap-4 lg:grid-cols-[260px_1fr] lg:items-start">
           <ReviewRail items={items} activeIndex={index} onJump={goTo} />
 
-          <div className="relative">
+          {/* Generous bottom padding so the card's Approve / Decline footer
+              never crowds the page edge — the card scrolls comfortably with
+              clear breathing room below the action controls. */}
+          <div className="relative pb-28">
             {current ? (
               <FadeIn key={current.proposal.packId}>
                 <ReviewCard

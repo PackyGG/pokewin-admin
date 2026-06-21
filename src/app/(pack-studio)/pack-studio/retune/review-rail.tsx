@@ -24,7 +24,7 @@ export function ReviewRail({
   return (
     <nav
       aria-label="Pack review queue"
-      className="max-h-[28rem] overflow-y-auto rounded-xl border bg-card p-1.5"
+      className="max-h-[28rem] overflow-y-auto rounded-xl border bg-card p-1.5 lg:sticky lg:top-20 lg:max-h-[calc(100vh-7rem)]"
     >
       <ul className="space-y-0.5">
         {items.map((item, i) => {
