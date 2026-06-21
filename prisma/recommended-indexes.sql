@@ -527,3 +527,42 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
 --                      'user_inventory', 'affiliate_code_usages',
 --                      'battles', 'provably_fair_results', 'game_sessions',
 --                      'user');
+
+-- =============================================================================
+-- pack_cards floor subquery (getPacksPoolComposition extension) — NO NEW INDEX NEEDED
+-- =============================================================================
+-- src/lib/queries/packs.ts getPacksPoolComposition was extended (additively)
+-- with weightedSqSum, winWeight, nearMissWeight, maxValue, and a correlated
+-- floorValue subquery:
+--   SELECT c2.price FROM pack_cards pc2 JOIN cards c2 ON c2.id = pc2.card_id
+--   WHERE pc2.pack_id = p.id ORDER BY pc2.weight DESC, c2.price ASC LIMIT 1
+--
+-- EXPLAIN (ANALYZE, BUFFERS) against MAIN (read-only, 2026-06-21) for the
+-- in-scope set (active official packs, price > 0; 183 packs, 2343 pack_cards
+-- rows, 50920 cards) shows the floor subquery is ALREADY index-served — it is
+-- NOT a seq scan on pack_cards:
+--
+--   SubPlan 1 -> Limit (cost=110.31..110.31 rows=1)
+--     -> Sort (Sort Key: pc2.weight DESC, c2.price)  [top-N heapsort, 10 rows]
+--       -> Nested Loop
+--         -> Bitmap Heap Scan on pack_cards pc2
+--              Recheck Cond: (pack_id = p.id)
+--           -> Bitmap Index Scan on pack_cards_pack_id_card_id_unique
+--                Index Cond: (pack_id = p.id)        <-- leading key of the
+--                                                        existing composite
+--                                                        unique index serves
+--                                                        the per-pack lookup
+--         -> Index Scan using cards_pkey on cards c2 (Index Cond: id = pc2.card_id)
+--
+-- Whole extended query Execution Time: ~37 ms. The main GROUP BY join still
+-- seq-scans pack_cards/cards (the pre-existing, unchanged LEFT-JOIN behaviour
+-- of the original query over the full small pool), which is optimal at this
+-- size — the planner reads the entire ~2.3k-row pack_cards table once anyway.
+--
+-- A dedicated CREATE INDEX CONCURRENTLY idx_pack_cards_pack_id_weight
+--   ON pack_cards (pack_id, weight DESC)
+-- would only let the floor subquery skip the ~10-row top-N heapsort per pack;
+-- with ~10 cards/pack across 183 packs that saves nothing measurable, and the
+-- existing (pack_id, card_id) unique index already covers the pack_id lookup.
+-- => No new index recommended. Re-evaluate only if pack_cards grows by orders
+--    of magnitude (e.g. > ~500k rows) or packs-per-scan rises sharply.

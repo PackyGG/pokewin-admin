@@ -488,6 +488,26 @@ export type PackPoolComposition = {
   totalWeight: number;
   /** SUM(weight × card price) across the pool (numerator). */
   weightedPriceSum: number;
+  /**
+   * SUM(weight × price²) across the pool — second raw moment numerator. Divide
+   * by `totalWeight` to get E[price²]; combined with EV gives the per-draw
+   * variance (E[price²] − EV²) of the card-value distribution.
+   */
+  weightedSqSum: number;
+  /** SUM of weights for cards priced at or above the sticker price (a "win" draw). */
+  winWeight: number;
+  /**
+   * SUM of weights for cards in the near-miss band: `0.5·price ≤ card < price`
+   * (got close to breaking even but didn't).
+   */
+  nearMissWeight: number;
+  /** MAX card price in the pool (the top obtainable card value). */
+  maxValue: number;
+  /**
+   * Value of the single highest-weight card in the pool (ties broken by lowest
+   * price) — the modal "floor" outcome a player most often draws.
+   */
+  floorValue: number;
 };
 
 /**
@@ -531,6 +551,11 @@ export async function getPacksPoolComposition(opts?: {
       cards_per_open: number;
       total_weight: string;
       weighted_price_sum: string;
+      weighted_sq_sum: string;
+      win_weight: string;
+      near_miss_weight: string;
+      max_value: string | null;
+      floor_value: string | null;
     }[]
   >(
     `
@@ -543,7 +568,22 @@ export async function getPacksPoolComposition(opts?: {
         p.price::text                                   AS price,
         p.cards_per_open,
         COALESCE(SUM(pc.weight), 0)::text               AS total_weight,
-        COALESCE(SUM(pc.weight * c.price), 0)::text     AS weighted_price_sum
+        COALESCE(SUM(pc.weight * c.price), 0)::text     AS weighted_price_sum,
+        COALESCE(SUM(pc.weight * c.price * c.price), 0)::text AS weighted_sq_sum,
+        COALESCE(SUM(pc.weight) FILTER (WHERE c.price >= p.price), 0)::text AS win_weight,
+        COALESCE(
+          SUM(pc.weight) FILTER (WHERE c.price >= 0.5 * p.price AND c.price < p.price),
+          0
+        )::text                                         AS near_miss_weight,
+        MAX(c.price)::text                              AS max_value,
+        (
+          SELECT c2.price
+          FROM pack_cards pc2
+          JOIN cards c2 ON c2.id = pc2.card_id
+          WHERE pc2.pack_id = p.id
+          ORDER BY pc2.weight DESC, c2.price ASC
+          LIMIT 1
+        )::text                                         AS floor_value
       FROM packs p
       LEFT JOIN pack_cards pc ON pc.pack_id = p.id
       LEFT JOIN cards c ON c.id = pc.card_id
@@ -564,6 +604,11 @@ export async function getPacksPoolComposition(opts?: {
     cardsPerOpen: Number(r.cards_per_open),
     totalWeight: Number(r.total_weight),
     weightedPriceSum: Number(r.weighted_price_sum),
+    weightedSqSum: Number(r.weighted_sq_sum),
+    winWeight: Number(r.win_weight),
+    nearMissWeight: Number(r.near_miss_weight),
+    maxValue: Number(r.max_value ?? 0),
+    floorValue: Number(r.floor_value ?? 0),
   }));
 }
 
