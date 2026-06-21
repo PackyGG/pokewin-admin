@@ -40,10 +40,12 @@ import {
 } from "@/app/(admin)/packs/actions";
 import {
   planAllRetunes,
+  applyPackEdit,
   type PlanAllProposal,
   type PlanAllWeightDiff,
   type PortfolioProfileResult,
 } from "../doctor/retune-actions";
+import type { EditorTargets } from "./pool-editor";
 import type { PortfolioSystemPlan } from "../_lib/portfolio";
 
 import { ReviewCard } from "./review-card";
@@ -97,6 +99,19 @@ export type AdjustedState = AdjustedTargets & {
 
 export type ReviewStatus = "pending" | "approved" | "declined";
 
+/** The explicit edited pool an "Edit pool" Approve hands up to be written. */
+export type EditApprovePayload = {
+  cards: {
+    cardId: string;
+    weight: number;
+    color?: string;
+    animation?: boolean;
+    order: number;
+  }[];
+  price?: number;
+  hasAddedCards: boolean;
+};
+
 export type ReviewItem = {
   proposal: PlanAllProposal;
   status: ReviewStatus;
@@ -121,6 +136,24 @@ function isTokenExpired(message: string): boolean {
   return message.includes("authorization expired");
 }
 
+/**
+ * Targets the inline pool editor's "Re-shape to targets" button shapes onto. The
+ * edge always comes from the pack's auto-target (the house-edge knob is not an
+ * operator lever); win-rate / cap / near-miss follow the active local adjustment
+ * when one exists, else the auto-targets — so a re-shape inside the editor honours
+ * any "Adjust" the owner already made.
+ */
+function editorTargetsFor(item: ReviewItem): EditorTargets {
+  const { autoTargets } = item.proposal;
+  const a = item.adjusted;
+  return {
+    targetEdge: autoTargets.targetEdge,
+    targetWinRate: a ? a.targetWinRate : autoTargets.targetWinRate,
+    maxWinCap: a ? a.maxWinCap : autoTargets.maxWinCap,
+    nearMissMin: a ? a.nearMissMin : autoTargets.nearMissMin,
+  };
+}
+
 export function RetuneReview({
   proposals,
   portfolio,
@@ -136,6 +169,8 @@ export function RetuneReview({
   const [index, setIndex] = React.useState(0);
   const [started, setStarted] = React.useState(false);
   const [applying, setApplying] = React.useState(false);
+  // The index whose inline pool editor is open (null = none). Reset on navigate.
+  const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
 
   // ── System-balance mode ─────────────────────────────────────────────
   // Off = per-pack auto-targets (the default load). On = portfolio mode: the
@@ -161,6 +196,12 @@ export function RetuneReview({
   const [isRetry, setIsRetry] = React.useState(false);
   // When set, a successful re-auth retries this pending approve index.
   const retryIndexRef = React.useRef<number | null>(null);
+  // When set, a successful re-auth retries this pending EDIT approve instead of a
+  // plain retune approve (the two write paths share the one 2FA token + dialog).
+  const retryEditRef = React.useRef<{
+    index: number;
+    payload: EditApprovePayload;
+  } | null>(null);
 
   const total = items.length;
   const approved = items.filter((i) => i.status === "approved").length;
@@ -172,11 +213,13 @@ export function RetuneReview({
   const goTo = React.useCallback(
     (i: number) => {
       if (i < 0 || i >= total) return;
+      setEditingIndex(null);
       setIndex(i);
     },
     [total],
   );
   const advance = React.useCallback(() => {
+    setEditingIndex(null);
     setIndex((i) => Math.min(i + 1, total - 1));
   }, [total]);
 
@@ -349,6 +392,59 @@ export function RetuneReview({
     advance();
   }, [applying, index, advance]);
 
+  // ── Approve an EXPLICIT edited pool (writes via applyPackEdit) ───────
+  // The inline pool editor hands up the exact pool it shows. This calls the
+  // paranoid, owner+2FA-token-guarded `applyPackEdit` (writes the verbatim
+  // weights/price, history-snapshotted). Token-expiry re-prompts 2FA and retries
+  // THIS edit on re-confirm (mirrors the plain-approve retry path).
+  const performEditApprove = React.useCallback(
+    async (i: number, payload: EditApprovePayload): Promise<void> => {
+      const token = tokenRef.current;
+      const item = items[i];
+      if (!item || !token) return;
+      setApplying(true);
+      try {
+        const res = await applyPackEdit(item.proposal.packId, token, {
+          cards: payload.cards,
+          ...(payload.price !== undefined ? { price: payload.price } : {}),
+        });
+        setItems((prev) => {
+          const next = [...prev];
+          if (next[i]) next[i] = { ...next[i]!, status: "approved" };
+          return next;
+        });
+        setEditingIndex(null);
+        toast.success(
+          `Edited ${res.name}: edge ${(res.after.edge * 100).toFixed(2)}% · win ${(res.after.winRate * 100).toFixed(2)}% · ${res.cardCountAfter} cards.`,
+        );
+        router.refresh();
+        advance();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Pool edit failed.";
+        if (isTokenExpired(message)) {
+          retryEditRef.current = { index: i, payload };
+          setIsRetry(true);
+          setTotp("");
+          setAuthOpen(true);
+          toast.message("2FA authorization expired — re-confirm to continue.");
+        } else {
+          toast.error(message);
+        }
+      } finally {
+        setApplying(false);
+      }
+    },
+    [items, router, advance],
+  );
+
+  const onApplyEdit = React.useCallback(
+    (payload: EditApprovePayload) => {
+      if (applying) return;
+      void performEditApprove(index, payload);
+    },
+    [applying, performEditApprove, index],
+  );
+
   // ── 2FA gate (Start review + token-expiry retry) ────────────────────
   const totpValid = /^\d{6}$/.test(totp.trim());
 
@@ -362,9 +458,14 @@ export function RetuneReview({
       setAuthOpen(false);
       setIsRetry(false);
       const retryIdx = retryIndexRef.current;
+      const retryEdit = retryEditRef.current;
       retryIndexRef.current = null;
-      if (retryIdx != null) {
-        // Resume the approve that hit the expired token.
+      retryEditRef.current = null;
+      if (retryEdit != null) {
+        // Resume the EDIT approve that hit the expired token.
+        void performEditApprove(retryEdit.index, retryEdit.payload);
+      } else if (retryIdx != null) {
+        // Resume the plain approve that hit the expired token.
         void performApprove(retryIdx);
       } else {
         toast.success("Review session authorized.");
@@ -378,6 +479,7 @@ export function RetuneReview({
 
   function openStartGate() {
     retryIndexRef.current = null;
+    retryEditRef.current = null;
     setIsRetry(false);
     setTotp("");
     setAuthOpen(true);
@@ -503,11 +605,16 @@ export function RetuneReview({
                   total={total}
                   applying={applying}
                   portfolioMode={portfolioMode}
+                  editorTargets={editorTargetsFor(current)}
+                  editing={editingIndex === index}
                   onApprove={onApprove}
                   onDecline={onDecline}
                   onBack={() => goTo(index - 1)}
                   onAdjust={(levers) => onAdjust(index, levers)}
                   onResetAdjust={() => onResetAdjust(index)}
+                  onOpenEditor={() => setEditingIndex(index)}
+                  onCloseEditor={() => setEditingIndex(null)}
+                  onApplyEdit={onApplyEdit}
                 />
               </FadeIn>
             ) : null}
@@ -542,6 +649,7 @@ export function RetuneReview({
             setAuthOpen(false);
             setIsRetry(false);
             retryIndexRef.current = null;
+            retryEditRef.current = null;
           }
         }}
       >
@@ -584,6 +692,7 @@ export function RetuneReview({
                 setAuthOpen(false);
                 setIsRetry(false);
                 retryIndexRef.current = null;
+                retryEditRef.current = null;
               }}
               disabled={authBusy}
               className="w-full sm:w-auto"

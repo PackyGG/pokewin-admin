@@ -14,6 +14,7 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
 import { getPacksPoolComposition } from "@/lib/queries/packs";
 import { getPackCardValues } from "@/lib/queries/pack-card-values";
+import { getSets, getRarities } from "@/lib/queries/cards";
 import { capturePackSnapshot } from "../_lib/pack-history";
 import { buildPackCompliance } from "../_lib/risk-config";
 import {
@@ -733,6 +734,29 @@ export async function getPortfolioProfile(): Promise<PortfolioProfileResult> {
     profile.totalMaxWinExposure <= sysCfg.exposureCapUsd;
 
   return { cfg: sysCfg, profile, withinBounds };
+}
+
+// ─── Card-picker filters for the inline pool editor (read-only) ───────────
+
+export type RetunePickerFilters = {
+  sets: { id: string; name: string }[];
+  rarities: string[];
+};
+
+/**
+ * READ-ONLY, Pack-Studio-gated: the set + rarity filter lists the inline
+ * pool editor's card picker needs. Loaded lazily (only when the owner opens the
+ * editor) so the review surface doesn't pay for them up front. Mirrors what the
+ * Builder page fetches for its `BuilderCardPicker` (`getSets` + `getRarities`),
+ * just behind a server action so the client can fetch on demand. Writes nothing.
+ */
+export async function getRetunePickerFilters(): Promise<RetunePickerFilters> {
+  await requireRetuneOwner();
+  const [sets, rarities] = await Promise.all([getSets(), getRarities()]);
+  return {
+    sets,
+    rarities: rarities.filter((r): r is string => r != null),
+  };
 }
 
 // ─── Inline pool editing (read the pool to edit + write an EXPLICIT edited pool) ─

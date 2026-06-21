@@ -166,11 +166,21 @@ export function RetuneReviewCardFixtureClient() {
         total={5}
         applying={false}
         portfolioMode={false}
+        editorTargets={{
+          targetEdge: item.proposal.autoTargets.targetEdge,
+          targetWinRate: item.proposal.autoTargets.targetWinRate,
+          maxWinCap: item.proposal.autoTargets.maxWinCap,
+          nearMissMin: item.proposal.autoTargets.nearMissMin,
+        }}
+        editing={false}
         onApprove={() => {}}
         onDecline={() => {}}
         onBack={() => {}}
         onAdjust={() => {}}
         onResetAdjust={() => {}}
+        onOpenEditor={() => {}}
+        onCloseEditor={() => {}}
+        onApplyEdit={() => {}}
       />
     </div>
   );

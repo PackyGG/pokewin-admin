@@ -10,6 +10,7 @@ import {
   Info,
   Layers,
   Loader2,
+  Pencil,
   RotateCcw,
   ShieldAlert,
   SlidersHorizontal,
@@ -32,7 +33,8 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import type { PackRisk, RiskTier } from "@/app/(admin)/insights/edge-calc/risk";
 
-import type { ReviewItem } from "./retune-review";
+import type { EditApprovePayload, ReviewItem } from "./retune-review";
+import { PoolEditor, type EditorTargets } from "./pool-editor";
 
 /**
  * The single review card — ONE pack's full BEFORE→AFTER comparison. A complete
@@ -144,11 +146,16 @@ export function ReviewCard({
   total,
   applying,
   portfolioMode,
+  editorTargets,
+  editing,
   onApprove,
   onDecline,
   onBack,
   onAdjust,
   onResetAdjust,
+  onOpenEditor,
+  onCloseEditor,
+  onApplyEdit,
 }: {
   item: ReviewItem;
   index: number;
@@ -156,6 +163,10 @@ export function ReviewCard({
   applying: boolean;
   /** True when system-balance mode is on (proposals are portfolio-targeted). */
   portfolioMode: boolean;
+  /** Targets the inline pool editor's "Re-shape to targets" shapes onto. */
+  editorTargets: EditorTargets;
+  /** True when this card's inline pool editor is open. */
+  editing: boolean;
   onApprove: () => void;
   onDecline: () => void;
   onBack: () => void;
@@ -166,6 +177,11 @@ export function ReviewCard({
     nearMissMin: number;
   }) => void;
   onResetAdjust: () => void;
+  /** Open / close the inline card-pool editor. */
+  onOpenEditor: () => void;
+  onCloseEditor: () => void;
+  /** Approve an explicit edited pool (writes via `applyPackEdit`). */
+  onApplyEdit: (payload: EditApprovePayload) => void;
 }) {
   const [showAdjust, setShowAdjust] = React.useState(false);
 
@@ -314,6 +330,19 @@ export function ReviewCard({
                   {limit.suggestion}
                 </span>
               </div>
+            )}
+            {/* Never a dead end — open the editor to add a card ≥ price / fix
+                the pool right here. */}
+            {!editing && (
+              <Button
+                size="sm"
+                onClick={onOpenEditor}
+                disabled={applying}
+                className="mt-0.5"
+              >
+                <Pencil className="mr-1 size-3.5" />
+                Edit pool / add a card ≥ {formatCurrency(proposal.price)}
+              </Button>
             )}
           </div>
         )}
@@ -520,6 +549,32 @@ export function ReviewCard({
           </>
         )}
 
+        {/* ── Edit pool (inline card-pool editor) ────────────────────── */}
+        {editing && (
+          <>
+            <Separator />
+            <section className="space-y-3">
+              <SectionHeading
+                icon={Pencil}
+                title={
+                  <span className="flex items-center gap-1.5">
+                    Edit pool
+                    <InfoHint text="Edit this pack's card pool by hand — re-weight, remove, reorder, or add cards — with a live after-preview. Approving here writes the EXACT pool shown (history-snapshotted) instead of an auto re-shape." />
+                  </span>
+                }
+              />
+              <PoolEditor
+                packId={proposal.packId}
+                price={proposal.price}
+                targets={editorTargets}
+                applying={applying}
+                onCancel={onCloseEditor}
+                onApprove={onApplyEdit}
+              />
+            </section>
+          </>
+        )}
+
         {/* ── Legend / glossary ──────────────────────────────────────── */}
         <Legend />
       </div>
@@ -544,6 +599,16 @@ export function ReviewCard({
         >
           <SlidersHorizontal className="mr-1 size-3.5" />
           {showAdjust ? "Hide adjust" : "Adjust"}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={editing ? onCloseEditor : onOpenEditor}
+          disabled={applying}
+          aria-pressed={editing}
+        >
+          <Pencil className="mr-1 size-3.5" />
+          {editing ? "Hide editor" : "Edit pool"}
         </Button>
         <div className="ml-auto flex gap-2">
           <Button
