@@ -1684,3 +1684,37 @@ model roadmap_linear_links {
   @@unique([item_id, linear_issue_id], map: "roadmap_linear_links_item_issue_key")
   @@index([item_id], map: "roadmap_linear_links_item_idx")
 }
+
+// ─── Pack risk scores (admin-computed pack analytics) ──────────────────────
+// One row per pack holding the latest computed risk/edge metrics for a pack.
+// Pure admin/product data derived from the (read-only) MAIN pack definition —
+// MAIN has no place to store these, so the computed snapshot lives here. The
+// upsert keys on the unique pack_id (one current score per pack). No real FK
+// to packs (separate Postgres clusters) — loose pack_id column only, matching
+// pack_set_assignments / admin_leaderboard_sponsorship.
+model pack_risk_scores {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // packy.gg packs.id (uuid string — separate system, not an FK). UNIQUE:
+  // one current risk score per pack; the writer upserts on this.
+  pack_id     String   @unique
+  // Pack edge (1 − EV/price), e.g. 0.1099 = 10.99%.
+  edge        Decimal  @db.Decimal(8, 4)
+  // Coefficient of variation of the pack's payout distribution.
+  cv          Decimal  @db.Decimal(8, 4)
+  // Probability a pull is a net win for the user.
+  win_rate    Decimal  @db.Decimal(6, 4)
+  // Probability of a "near miss" outcome.
+  near_miss   Decimal  @db.Decimal(6, 4)
+  // Largest single payout value (USD).
+  max_win     Decimal  @db.Decimal(20, 2)
+  // Largest payout as a multiple of the pack price.
+  max_mult    Decimal  @db.Decimal(12, 4)
+  // Composite 0–100 risk score.
+  risk_score  Int
+  // Risk tier label (e.g. 'low' | 'medium' | 'high'). Plain text so the set
+  // can change without a migration; validated at the writer boundary.
+  tier        String
+  // Compliance check payload (per-rule pass/fail + details).
+  compliance  Json
+  computed_at DateTime @default(now()) @db.Timestamptz(6)
+}
