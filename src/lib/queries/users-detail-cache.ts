@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import { readDbEnv } from "@/lib/db-env";
 import { getUserDetail, getUserHeader } from "./users-detail";
 import { getUserPnlBreakdown, type PnlBreakdown } from "./users-financial";
+import { getUserTransactions } from "./users-transactions";
 
 /**
  * Cross-request cache for the TWO heaviest per-user reads behind
@@ -39,7 +40,7 @@ import { getUserPnlBreakdown, type PnlBreakdown } from "./users-financial";
  * cache layer there is acceptable.
  */
 
-const REVALIDATE_SECONDS = 60;
+const REVALIDATE_SECONDS = 25;
 
 // `unstable_cache` also de-duplicates within a single render, so if two
 // code paths request the same user's detail in one pass they share the
@@ -99,6 +100,67 @@ export async function getUserPnlBreakdownCached(
   const env = await readDbEnv();
   if (env !== "prod") return getUserPnlBreakdown(userId);
   return cachedUserPnlBreakdown(userId);
+}
+
+/**
+ * Cross-request cache for the Gaming tab's FIRST-PAGE transaction read —
+ * the heaviest per-user feed on /users/[id].
+ *
+ * Why this is safe to cache (and Finances is NOT)
+ * ───────────────────────────────────────────────
+ * `getUserTransactions` runs an EXPENSIVE fan-out per page: the base
+ * `ledger_transactions` listing PLUS battle / pack / inventory / voucher /
+ * upgrader enrichment lookups. For the Gaming type set
+ * (pack_opening / battle_bet / battle_sponsorship / battle_refund /
+ * upgrader_bet / upgrader_payout) the result is VIEWER-INDEPENDENT: none of
+ * those types is `admin_balance_adjustment`, so the owner-only adjustment-
+ * visibility gate inside `getUserTransactions` cannot change a single row.
+ * That makes a viewer-agnostic cache key (userId + page + perPage + types)
+ * correct here. The Finances feed is deliberately NOT cached: its type set
+ * INCLUDES `admin_balance_adjustment`, whose rows are gated on the owner
+ * (`motha`) — and inside an `unstable_cache` callback `verifySession()`'s
+ * `cookies()` read throws, so the gate fails CLOSED to "not owner". Caching
+ * it would hide adjustments from the owner, so it stays live/uncached.
+ *
+ * Cache-safety of the cookie-scoped reads (same as the detail caches above):
+ * the callback runs OUTSIDE the request's dynamic scope, so both `getDb()`
+ * → `readDbEnv()` (falls back to prod) and `getUserTransactions`'
+ * `verifySession()` (caught → fail-closed non-owner, a no-op for gaming
+ * types) behave deterministically. We therefore cache ONLY on prod and run
+ * the query directly for a dev-toggled admin.
+ *
+ * This memoizes the whole fan-out for `REVALIDATE_SECONDS`, so the 60s
+ * AutoRefresh tick, the segment "Try again" retry, and a revisit within the
+ * window all resolve from the warmed entry instead of re-paying the scan —
+ * bridging the gap until the recommended `(user_id, created_at DESC)` index
+ * (prisma/recommended-indexes.sql #19) is applied. Pagination / filtering /
+ * load-more still go through the uncached `fetchUserTransactions` action, so
+ * only the streamed first page is cached. The `users-detail` tag means an
+ * admin balance wipe revalidates it alongside the detail aggregate.
+ */
+const cachedUserGamingTransactions = unstable_cache(
+  (userId: string, page: number, perPage: number, types: string[]) =>
+    getUserTransactions(userId, page, perPage, { types }),
+  ["users-detail-gaming-tx-v1"],
+  { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
+);
+
+/**
+ * Cached Gaming first-page transactions on prod; direct (uncached) on a
+ * dev-toggled admin so they see live dev data — see the doc above and the
+ * module-level DB-env note.
+ */
+export async function getUserGamingTransactionsCached(
+  userId: string,
+  page: number,
+  perPage: number,
+  types: string[],
+): Promise<Awaited<ReturnType<typeof getUserTransactions>>> {
+  const env = await readDbEnv();
+  if (env !== "prod") {
+    return getUserTransactions(userId, page, perPage, { types });
+  }
+  return cachedUserGamingTransactions(userId, page, perPage, types);
 }
 
 /**

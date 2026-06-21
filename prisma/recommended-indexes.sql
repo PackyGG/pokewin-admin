@@ -454,6 +454,67 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_inv_owned_by_user
   ON user_inventory (user_id)
   WHERE sold_at IS NULL AND exchanged_at IS NULL;
 
+-- #19 ----------------------------------------------------------------
+-- ledger_transactions (user_id, created_at DESC) — NON-PARTIAL, all statuses
+-- ===================================================================
+-- Added by the 2026-06-21 /users/[id] transaction-feed perf pass (top-traffic
+-- page). HIGH PRIORITY — directly fixes the "Gaming / Deposits transactions
+-- take ages" complaint for high-activity users.
+--
+-- The per-user transaction listings (src/lib/queries/users-transactions.ts
+-- getUserTransactions) run, for the Gaming / Finances / Overview tabs:
+--   SELECT * FROM ledger_transactions
+--   WHERE user_id = $1 AND type = ANY($2::ledger_transaction_type[])
+--   ORDER BY created_at DESC LIMIT n      -- NO status predicate
+-- (and a user_id-only variant for the unfiltered feed).
+--
+-- None of the EXISTING ledger indexes serve this:
+--   • #2  (user_id, type, status, created_at DESC) — orders by
+--     (type, status, created_at) WITHIN a user, so with type = ANY(4-6 vals)
+--     and ORDER BY created_at DESC the planner would have to gather + sort all
+--     matching rows; it estimates that as costlier than the global scan and
+--     skips it.
+--   • #11 (user_id, created_at DESC) WHERE status='completed' — PARTIAL, so it
+--     can only be used when the query pins status='completed'. These listings
+--     intentionally have NO status filter (they MUST show pending/failed rows,
+--     e.g. a pending withdrawal), so the partial index is not usable.
+--   • #12 (created_at DESC) — the global recency index. With a small LIMIT the
+--     planner PICKS THIS, then filters out every other user's rows.
+--
+-- EXPLAIN (ANALYZE, BUFFERS) against MAIN (read-only, 2026-06-21) for the
+-- highest-activity user (14,938 ledger rows; 14,937 completed, 1 failed):
+--   Gaming page-1 (current, no status, native enum):
+--     Index Scan using idx_ledger_tx_created_at
+--     Rows Removed by Filter: 187,424   Buffers: ~75k   Execution: 66 ms
+--   Finances page-1 (current):
+--     Index Scan using idx_ledger_tx_created_at
+--     Rows Removed by Filter: 188,228   Buffers: ~75k   Execution: 40 ms
+--   PROOF the (user_id, created_at DESC) SHAPE is the right one — the SAME
+--   queries WITH status='completed' (so the partial #11 becomes usable):
+--     Gaming page-1:  Index Scan using idx_ledger_tx_user_created_at_completed
+--                     Rows Removed by Filter: 1,231   Buffers: 598   Execution: 1.1 ms
+--     user_id-only:   Index Scan using idx_ledger_tx_user_created_at_completed
+--                     Buffers: 8   Execution: 0.04 ms
+--
+-- A NON-partial (user_id, created_at DESC) gives that same ~60-470x win to the
+-- real (no-status) listings: the planner walks ONLY this user's rows already in
+-- created_at order, filters type inline, and stops at LIMIT — instead of
+-- scanning ~187k newer rows from OTHER users. Warm it is the difference between
+-- 66 ms and ~1 ms; cold + under the MAIN max:3 pool with several /users/[id]
+-- tabs open it is the difference between "loads" and "takes ages / times out".
+--
+-- Until this is applied the listing is mitigated (not fixed): it streams behind
+-- <Suspense>, is safeQuery timeout-bounded, and the Gaming first page is now
+-- prod-only cached (25s) so repeat/auto-refresh loads skip the scan. The cold
+-- first load for a power user still pays the global-scan cost — APPLY THIS to
+-- close it.
+--
+-- Accelerates:
+--   • src/lib/queries/users-transactions.ts getUserTransactions (every tab)
+--   • the fetchUserTransactions server action (pagination / filtering / load-more)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_tx_user_created_at
+  ON ledger_transactions (user_id, created_at DESC);
+
 -- -------------------------------------------------------------------
 -- ADMIN DB (separate database — apply against ADMIN_DATABASE_URL, NOT
 -- the main game DB).

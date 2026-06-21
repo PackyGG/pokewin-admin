@@ -10,6 +10,7 @@ import {
 import {
   getUserDetailCached,
   getUserPnlBreakdownCached,
+  getUserGamingTransactionsCached,
 } from "@/lib/queries/users-detail-cache";
 import { resolveUserIdFromRouteKey } from "@/lib/queries/users-detail";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
@@ -398,11 +399,17 @@ async function UserDetailBody({
   const gamingTxPromise = wantsGamingTx
     ? safeQuery(
         // Gaming tab defaults to 25 rows; the Overview tab's compact gaming
-        // preview keeps the smaller 10-row page.
+        // preview keeps the smaller 10-row page. Prod-only cached (25s,
+        // viewer-independent — gaming types carry no owner-gated adjustment
+        // rows) so the 60s AutoRefresh tick + retries + revisits skip the
+        // heavy ledger+enrichment fan-out. See getUserGamingTransactionsCached.
         () =>
-          getUserTransactions(id, 1, initialTab === "gaming" ? 25 : 10, {
-            types: GAMING_TYPES,
-          }),
+          getUserGamingTransactionsCached(
+            id,
+            1,
+            initialTab === "gaming" ? 25 : 10,
+            GAMING_TYPES,
+          ),
         EMPTY_TX_PAGE,
         "users.detail.gamingTx",
         USER_DETAIL_QUERY_TIMEOUT_MS,
