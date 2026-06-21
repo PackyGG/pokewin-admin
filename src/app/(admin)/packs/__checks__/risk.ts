@@ -41,6 +41,8 @@ import {
   autoMaxWinCap,
   autoRetuneTargets,
   autoTargetEdge,
+  parsePackHitRate,
+  resolveTargetWinRate,
   TARGET_PACK_EDGE,
   DEFAULT_TARGET_WIN_RATE,
   DEFAULT_NEAR_MISS_MIN,
@@ -819,6 +821,7 @@ check("autoRetuneTargets = {per-pack edge, default win-rate/near-miss, autoMaxWi
   for (const price of [1, 5, 25, 100, 1000]) {
     const t = autoRetuneTargets(price, cfg);
     approx(t.targetWinRate, DEFAULT_TARGET_WIN_RATE, 1e-12, "targetWinRate default");
+    assert(t.intendedHitRate === null, "untagged (no name) → intendedHitRate null");
     approx(t.nearMissMin, DEFAULT_NEAR_MISS_MIN, 1e-12, "nearMissMin default");
     approx(t.maxWinCap, autoMaxWinCap(price, cfg), 1e-9, "maxWinCap = autoMaxWinCap");
     assert(t.maxWinCap >= price - 1e-9, `auto cap ≥ price (p=${price})`);
@@ -942,6 +945,111 @@ check("autoTargetEdge sweep: dense grid stays in band & jointly monotone", () =>
         assert(up >= base - 1e-12, `maxWin↑ non-decreasing (p=${prices[i]},m=${maxWins[j]}→${maxWins[j + 1]})`);
       }
     }
+  }
+});
+
+// ── 11. parsePackHitRate: leading-% tag → fraction; untagged → null ─────
+check("parsePackHitRate parses the leading percentage tag from a pack name", () => {
+  // Owner's canonical examples.
+  approx(parsePackHitRate("1% 18 PLUS")!, 0.01, 1e-12, "1% 18 PLUS → 0.01");
+  approx(parsePackHitRate("10% Divine Order")!, 0.1, 1e-12, "10% Divine Order → 0.10");
+  approx(parsePackHitRate("5% X")!, 0.05, 1e-12, "5% X → 0.05");
+  assert(parsePackHitRate("Supreme") === null, "Supreme (untagged) → null");
+
+  // Decimal tags + whitespace + a space before the % sign.
+  approx(parsePackHitRate("2.5% Mythic")!, 0.025, 1e-12, "2.5% → 0.025");
+  approx(parsePackHitRate("  15% Padded")!, 0.15, 1e-12, "leading whitespace tolerated");
+  approx(parsePackHitRate("10 % Spaced")!, 0.1, 1e-12, "space before % tolerated");
+  approx(parsePackHitRate("100% AllWin")!, 1, 1e-12, "100% → 1.0 (upper bound inclusive)");
+
+  // A `%` NOT at the start is not a tag.
+  assert(parsePackHitRate("Win 10% Bonus") === null, "non-leading % → null");
+  // Degenerate / out-of-range tags fall back to null (untagged default).
+  assert(parsePackHitRate("0% Impossible") === null, "0% (unshapeable) → null");
+  assert(parsePackHitRate("150% Malformed") === null, "> 100% (malformed) → null");
+  assert(parsePackHitRate("") === null, "empty string → null");
+  assert(parsePackHitRate("% NoNumber") === null, "bare % with no number → null");
+});
+
+// ── 12. autoRetuneTargets uses the NAME tag as the targetWinRate ─────────
+check("autoRetuneTargets: a tagged pack targets ITS tag win-rate; untagged → default", () => {
+  const cfg = { globalCap: 25000, maxMultCeiling: 100 };
+
+  // Tagged packs: targetWinRate === the parsed tag, intendedHitRate echoes it.
+  const tagged: [string, number][] = [
+    ["1% 18 PLUS", 0.01],
+    ["5% Blazing Light", 0.05],
+    ["10% Divine Order", 0.1],
+  ];
+  for (const [name, expected] of tagged) {
+    const t = autoRetuneTargets(50, cfg, name);
+    approx(t.targetWinRate, expected, 1e-12, `${name} → targetWinRate ${expected}`);
+    assert(t.intendedHitRate !== null, `${name} → intendedHitRate non-null`);
+    approx(t.intendedHitRate!, expected, 1e-12, `${name} → intendedHitRate ${expected}`);
+    // The spurious 20% flat relaxation must NOT apply to a tagged pack.
+    assert(
+      t.targetWinRate !== DEFAULT_TARGET_WIN_RATE || expected === DEFAULT_TARGET_WIN_RATE,
+      `${name} → NOT forced to the flat default 20%`,
+    );
+  }
+
+  // Untagged pack → the default 20%, intendedHitRate null.
+  const plain = autoRetuneTargets(50, cfg, "Supreme");
+  approx(plain.targetWinRate, DEFAULT_TARGET_WIN_RATE, 1e-12, "untagged name → default win-rate");
+  assert(plain.intendedHitRate === null, "untagged name → intendedHitRate null");
+
+  // A precomputed numeric hit-rate is honored verbatim (parse-once reuse path).
+  const numeric = autoRetuneTargets(50, cfg, 0.03);
+  approx(numeric.targetWinRate, 0.03, 1e-12, "precomputed 0.03 → targetWinRate 0.03");
+  approx(numeric.intendedHitRate!, 0.03, 1e-12, "precomputed 0.03 → intendedHitRate 0.03");
+
+  // An out-of-range numeric falls back to the untagged default.
+  const bad = autoRetuneTargets(50, cfg, 0);
+  approx(bad.targetWinRate, DEFAULT_TARGET_WIN_RATE, 1e-12, "0 hit-rate → default");
+  assert(bad.intendedHitRate === null, "0 hit-rate → intendedHitRate null");
+
+  // resolveTargetWinRate agrees with the embedded resolution.
+  approx(resolveTargetWinRate("10% Divine Order"), 0.1, 1e-12, "resolveTargetWinRate(name)");
+  approx(resolveTargetWinRate("Supreme"), DEFAULT_TARGET_WIN_RATE, 1e-12, "resolveTargetWinRate(untagged)");
+  approx(resolveTargetWinRate(0.07), 0.07, 1e-12, "resolveTargetWinRate(number)");
+  approx(resolveTargetWinRate(null), DEFAULT_TARGET_WIN_RATE, 1e-12, "resolveTargetWinRate(null)");
+
+  // The tagged win-rate is what gets FED to the shaper as targetWinRate — the
+  // whole point: a "1%" pack is shaped toward ~1% wins instead of the spurious
+  // flat 20%. We assert the WIRING (the value handed to shapeWeights is the tag,
+  // not 20%); the shaper's own feasibility at any (edge, win-rate, pool) combo is
+  // already swept exhaustively in check #7. On a feasible pool, shaping at the
+  // tagged rate yields a win-rate at/below the tag — never the 20% default.
+  const taggedWinRate = autoRetuneTargets(10, cfg, "1% Tagged").targetWinRate;
+  approx(taggedWinRate, 0.01, 1e-12, "the rate fed to the shaper is the 1% tag, not 20%");
+  assert(taggedWinRate < DEFAULT_TARGET_WIN_RATE, "tagged rate is below the flat default");
+
+  // A pool with low-win-rate mass that IS feasible at the tag shapes to ~the tag
+  // (not relaxed up to 20%). Win cards rich enough that a tiny win mass + dust
+  // can still reach the edge EV. Confirms the tag survives into the shaped risk.
+  const r = shapeWeights({
+    cards: [
+      { value: 0.2 }, // dust — losing mass
+      { value: 3 },
+      { value: 11 }, // win (just over price → cheap win mass)
+      { value: 13 },
+      { value: 16 },
+    ],
+    price: 10,
+    targetEdge: 0.0599, // a looser edge the low-win-rate pool can actually hit
+    targetWinRate: taggedWinRate,
+  });
+  if (isSuccess(r)) {
+    const wr = r.relaxations.find((x) => x.lever === "winRate");
+    const effective = wr ? wr.applied : taggedWinRate;
+    assert(
+      Math.abs(r.risk.winRate - effective) <= 0.02 + 1e-9,
+      `shaped win-rate ≈ effective tag target (${r.risk.winRate}, eff ${effective})`,
+    );
+    assert(
+      r.risk.winRate < DEFAULT_TARGET_WIN_RATE,
+      `shaped tagged pack is NOT pushed to the flat 20% default (${r.risk.winRate})`,
+    );
   }
 });
 

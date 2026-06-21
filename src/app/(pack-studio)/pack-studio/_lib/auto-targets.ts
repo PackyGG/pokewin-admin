@@ -169,8 +169,68 @@ export const DEFAULT_MAX_MULT_CEILING = 100;
  * Default target win-rate for an auto-retune: the probability mass on win+grail
  * cards (value ≥ price) the shaper aims for when the owner doesn't override it.
  * 20% wins matches the design baseline used across the risk checks/sweep.
+ *
+ * NOTE: this default is used ONLY for an UNTAGGED pack. A pack whose NAME starts
+ * with a percentage (e.g. "1% 18 PLUS", "10% Divine Order") is a TAGGED hit-rate
+ * pack — the leading X% is the INTENDED top-hit / gold-profit rate, so its target
+ * win-rate is parsed from the name via {@link parsePackHitRate}, NOT this default.
  */
 export const DEFAULT_TARGET_WIN_RATE = 0.2;
+
+/**
+ * Parse the INTENDED hit-rate (win-rate) from a pack NAME.
+ *
+ * Domain rule (owner): a pack whose name STARTS with a percentage — e.g.
+ * "1% 18 PLUS", "5% Blazing Light", "10% Divine Order" — is a TAGGED hit-rate
+ * pack. The leading `X%` is the DESIGNED top-hit / gold-profit rate: X% of opens
+ * are intended to hit a profit/gold card (value ≥ price). Because win-rate is
+ * exactly `P(card value ≥ price)` — the hit/profit rate — the tag maps DIRECTLY
+ * to a target win-rate: `1% → 0.01`, `5% → 0.05`, `10% → 0.10`.
+ *
+ * Returns the tag as a FRACTION in `(0, 1]`, or `null` when the name carries no
+ * leading percentage tag (an untagged pack keeps {@link DEFAULT_TARGET_WIN_RATE}).
+ *
+ * Pure + sync + dep-free. Matches a leading integer/decimal percentage with any
+ * leading whitespace and optional space before the `%` (`"  10 % …"` parses 0.10);
+ * a value of 0% or > 100% is rejected (returns `null`) since a hit-rate of 0 is
+ * unshapeable and a tag above 100% is malformed.
+ */
+export function parsePackHitRate(name: string): number | null {
+  if (typeof name !== "string") return null;
+  const m = /^\s*(\d+(?:\.\d+)?)\s*%/.exec(name);
+  if (!m) return null;
+  const pct = Number(m[1]);
+  if (!Number.isFinite(pct)) return null;
+  const frac = pct / 100;
+  // Clamp to a sane (0, 1] range: a 0% (or negative/NaN) tag is unshapeable, a
+  // > 100% tag is malformed — both fall back to the untagged default (null).
+  if (!(frac > 0) || frac > 1) return null;
+  return frac;
+}
+
+/**
+ * The target win-rate for a pack, tag-aware: the INTENDED hit-rate parsed from the
+ * pack NAME ({@link parsePackHitRate}) when the name carries a leading percentage
+ * tag, else {@link DEFAULT_TARGET_WIN_RATE} (0.20). Pure + sync.
+ *
+ * `nameOrHitRate` accepts EITHER the raw pack name (string → parsed) OR a
+ * precomputed intended hit-rate (number, already a fraction) OR `null`/`undefined`
+ * (no tag → default). Passing the precomputed number lets a caller parse the name
+ * ONCE and reuse it.
+ */
+export function resolveTargetWinRate(
+  nameOrHitRate: string | number | null | undefined,
+): number {
+  if (typeof nameOrHitRate === "number") {
+    return Number.isFinite(nameOrHitRate) && nameOrHitRate > 0 && nameOrHitRate <= 1
+      ? nameOrHitRate
+      : DEFAULT_TARGET_WIN_RATE;
+  }
+  if (typeof nameOrHitRate === "string") {
+    return parsePackHitRate(nameOrHitRate) ?? DEFAULT_TARGET_WIN_RATE;
+  }
+  return DEFAULT_TARGET_WIN_RATE;
+}
 
 /**
  * Default minimum near-miss probability mass for an auto-retune (cards in
@@ -220,6 +280,14 @@ export type AutoRetuneTargets = {
   targetWinRate: number;
   nearMissMin: number;
   maxWinCap: number;
+  /**
+   * The INTENDED hit-rate parsed from the pack NAME (the leading `X%` tag, e.g.
+   * "10% Divine Order" → 0.10), or `null` for an untagged pack. When non-null,
+   * `targetWinRate === intendedHitRate` (the pack targets ITS tag hit-rate); when
+   * null, `targetWinRate === DEFAULT_TARGET_WIN_RATE`. Exposed so the UI can show
+   * "1% pack → targeting 1% win-rate".
+   */
+  intendedHitRate: number | null;
 };
 
 /**
@@ -240,19 +308,38 @@ export type AutoRetuneTargets = {
  * `derivePortfolioTargets`/`computePortfolioProfile`, and — via
  * `resolveRetuneTargets` — `planPackRetune`/`applyPackRetune`/`planAllRetunes`)
  * therefore auto-inherits the per-pack edge through this one return shape.
+ *
+ * TAG-AWARE WIN-RATE: pass the pack NAME (or a precomputed intended hit-rate) as
+ * `nameOrHitRate`. A pack whose name starts with a percentage (e.g. "10% Divine
+ * Order") targets THAT hit-rate ({@link parsePackHitRate}: 10% → 0.10); an
+ * untagged pack keeps {@link DEFAULT_TARGET_WIN_RATE} (0.20). The parsed tag is
+ * also returned verbatim as `intendedHitRate` (null when untagged) so callers /
+ * the UI can show "1% pack → targeting 1% win-rate". Omitting the argument keeps
+ * the legacy behavior (default win-rate, `intendedHitRate: null`).
  */
 export function autoRetuneTargets(
   price: number,
   cfg: ResolvedAutoTargetCfg,
+  nameOrHitRate?: string | number | null,
 ): AutoRetuneTargets {
   const maxWinCap = autoMaxWinCap(price, cfg);
+  const intendedHitRate =
+    typeof nameOrHitRate === "string"
+      ? parsePackHitRate(nameOrHitRate)
+      : typeof nameOrHitRate === "number" &&
+          Number.isFinite(nameOrHitRate) &&
+          nameOrHitRate > 0 &&
+          nameOrHitRate <= 1
+        ? nameOrHitRate
+        : null;
   return {
     targetEdge: autoTargetEdge(
       { price, maxWin: maxWinCap },
       cfg.edgeCurve ?? DEFAULT_EDGE_CURVE,
     ),
-    targetWinRate: DEFAULT_TARGET_WIN_RATE,
+    targetWinRate: intendedHitRate ?? DEFAULT_TARGET_WIN_RATE,
     nearMissMin: DEFAULT_NEAR_MISS_MIN,
     maxWinCap,
+    intendedHitRate,
   };
 }

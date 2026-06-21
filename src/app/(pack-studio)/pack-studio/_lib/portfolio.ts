@@ -262,6 +262,12 @@ export function resolvePortfolioSystemConfig(
 export type PortfolioPackInput = {
   packId: string;
   price: number;
+  /**
+   * The pack NAME — threaded so the balancer's per-pack default targets are
+   * TAG-AWARE: a pack whose name starts with `X%` targets that hit-rate (see
+   * `parsePackHitRate`). Optional so legacy callers compile; omitted ⇒ untagged.
+   */
+  name?: string;
   /** Pool cards (values only — the same shape `shapeWeights` consumes). */
   cards: { value: number }[];
   /** The pack's risk AS IT IS NOW. */
@@ -386,10 +392,11 @@ export function derivePortfolioTargets(
   packs: PortfolioPackInput[],
   cfg: PortfolioSystemConfig,
 ): DerivePortfolioTargetsResult {
-  // 1. Default targets for every pack.
+  // 1. Default targets for every pack — TAG-AWARE: a pack whose name starts with
+  //    `X%` defaults to that hit-rate as its win-rate (else DEFAULT_TARGET_WIN_RATE).
   const targetsByPack = new Map<string, PortfolioPackTargets>();
   for (const p of packs) {
-    targetsByPack.set(p.packId, autoRetuneTargets(p.price, cfg.autoCfg));
+    targetsByPack.set(p.packId, autoRetuneTargets(p.price, cfg.autoCfg, p.name));
   }
 
   // 2. Profile at defaults.

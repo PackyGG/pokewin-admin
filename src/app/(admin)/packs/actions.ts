@@ -1269,6 +1269,12 @@ type ResolvedRetuneTargets = {
   nearMissMin: number;
   maxWinCap: number;
   floorRatioMin?: number;
+  /**
+   * The INTENDED hit-rate parsed from the pack NAME (its leading `X%` tag), or
+   * `null` for an untagged pack. When the caller didn't override `targetWinRate`,
+   * the resolved `targetWinRate` equals this (a tagged pack targets its tag).
+   */
+  intendedHitRate: number | null;
 };
 
 /**
@@ -1277,18 +1283,25 @@ type ResolvedRetuneTargets = {
  * so the drawer can fire a fully-automatic retune (`{}`) and still get a sane,
  * price-relative jackpot cap. Explicit caller values always win; `floorRatioMin`
  * has no auto-default (it's an opt-in floor pin), so it passes through as-is.
+ *
+ * TAG-AWARE WIN-RATE: `name` is the pack name — a pack whose name starts with
+ * `X%` (e.g. "10% Divine Order") gets THAT hit-rate as its auto win-rate
+ * (`parsePackHitRate`); an untagged pack keeps the default 20%. An explicit
+ * `targets.targetWinRate` still overrides the tag.
  */
 function resolveRetuneTargets(
   price: number,
   cfg: ResolvedAutoTargetCfg,
   targets: PackRetuneTargets,
+  name?: string,
 ): ResolvedRetuneTargets {
-  const auto = autoRetuneTargets(price, cfg);
+  const auto = autoRetuneTargets(price, cfg, name);
   return {
     targetWinRate: targets.targetWinRate ?? auto.targetWinRate,
     nearMissMin: targets.nearMissMin ?? auto.nearMissMin,
     maxWinCap: targets.maxWinCap ?? auto.maxWinCap,
     floorRatioMin: targets.floorRatioMin,
+    intendedHitRate: auto.intendedHitRate,
   };
 }
 
@@ -1301,6 +1314,14 @@ export type PackRetunePlan = {
   after: PackRisk | null;
   /** Per-card weight change (only cards whose weight would change). */
   weightDiff: { cardId: string; from: number; to: number }[];
+  /**
+   * The INTENDED hit-rate parsed from the pack NAME (its leading `X%` tag, e.g.
+   * "10% Divine Order" → 0.10), or `null` for an untagged pack — so the UI can
+   * show "1% pack → targeting 1% win-rate".
+   */
+  intendedHitRate: number | null;
+  /** The win-rate this retune was shaped to (the tag hit-rate, or the default). */
+  targetWinRate: number;
 };
 
 /**
@@ -1366,18 +1387,19 @@ export async function planPackRetune(
   const db = await getDb();
   const pack = await db.packs.findUnique({
     where: { id: packId },
-    select: { price: true },
+    select: { price: true, name: true },
   });
   if (!pack) throw new Error("Pack not found");
   const price = Number(pack.price.toString());
 
   // Resolve the auto-target config ONCE, then fill any field the caller omitted
   // (so the drawer can fire a fully-automatic retune without a hand-set cap).
+  // The pack NAME makes the auto win-rate TAG-AWARE (a "10%" pack targets 10%).
   const cfg: ResolvedAutoTargetCfg = {
     globalCap: await readMaxWinCap(),
     maxMultCeiling: await readMaxMultCeiling(),
   };
-  const resolved = resolveRetuneTargets(price, cfg, targets);
+  const resolved = resolveRetuneTargets(price, cfg, targets, pack.name);
 
   const pool = await getPackCardValues(packId);
   const before = computePackRisk({
@@ -1396,14 +1418,29 @@ export async function planPackRetune(
   });
 
   if ("error" in shaped) {
-    return { feasible: false, error: shaped.error, before, after: null, weightDiff: [] };
+    return {
+      feasible: false,
+      error: shaped.error,
+      before,
+      after: null,
+      weightDiff: [],
+      intendedHitRate: resolved.intendedHitRate,
+      targetWinRate: resolved.targetWinRate,
+    };
   }
 
   const weightDiff = pool
     .map((c, i) => ({ cardId: c.cardId, from: c.weight, to: shaped.weights[i]! }))
     .filter((d) => d.from !== d.to);
 
-  return { feasible: true, before, after: shaped.risk, weightDiff };
+  return {
+    feasible: true,
+    before,
+    after: shaped.risk,
+    weightDiff,
+    intendedHitRate: resolved.intendedHitRate,
+    targetWinRate: resolved.targetWinRate,
+  };
 }
 
 /**
@@ -1495,7 +1532,7 @@ export async function applyPackRetune(
     globalCap: await readMaxWinCap(),
     maxMultCeiling: await readMaxMultCeiling(),
   };
-  const resolved = resolveRetuneTargets(price, cfg, targets);
+  const resolved = resolveRetuneTargets(price, cfg, targets, pack.name);
 
   // pack_creator live-pack carve-out (same gate updatePack enforces).
   const editedLivePackUnderCapability = await enforcePackCreatorLiveGate(

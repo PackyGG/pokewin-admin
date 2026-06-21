@@ -360,6 +360,19 @@ export type PlanAllProposal = {
    * system-balanced targets (may carry a tightened cap / nudged win-rate).
    */
   autoTargets: PortfolioPackTargets;
+  /**
+   * The INTENDED hit-rate parsed from the pack NAME (its leading `X%` tag, e.g.
+   * "10% Divine Order" → 0.10), or `null` for an untagged pack. Surfaced at the
+   * top level so the UI can show "1% pack → targeting 1% win-rate" without
+   * reaching into `autoTargets`. Mirrors `autoTargets.intendedHitRate`.
+   */
+  intendedHitRate: number | null;
+  /**
+   * The win-rate this proposal was actually shaped to. For a TAGGED pack this is
+   * its tag hit-rate; for an untagged pack the default 20%; in portfolio mode a
+   * possibly-nudged value. Equals `autoTargets.targetWinRate`.
+   */
+  targetWinRate: number;
   /** Risk AS IT IS NOW. */
   before: PackRisk;
   /** Risk the pack WOULD have after the auto-retune (null when infeasible). */
@@ -509,11 +522,13 @@ export async function planAllRetunes(
     );
   }
 
-  // Default: every pack on its INDEPENDENT auto-targets. In portfolio mode the
-  // system balancer overrides the offenders' targets so the WHOLE catalog lands
-  // inside the system bounds; `systemPlan` explains the tightening.
+  // Default: every pack on its INDEPENDENT auto-targets. TAG-AWARE — a pack whose
+  // NAME starts with `X%` (e.g. "10% Divine Order") targets THAT hit-rate as its
+  // win-rate (`parsePackHitRate`); untagged packs keep the default 20%. In
+  // portfolio mode the system balancer overrides the offenders' targets so the
+  // WHOLE catalog lands inside the system bounds; `systemPlan` explains it.
   let targetsByPack: Map<string, PortfolioPackTargets> = new Map(
-    inScope.map((p) => [p.id, autoRetuneTargets(p.price, cfg)]),
+    inScope.map((p) => [p.id, autoRetuneTargets(p.price, cfg, p.name)]),
   );
   let systemPlan: PortfolioSystemPlan | null = null;
 
@@ -522,6 +537,7 @@ export async function planAllRetunes(
     const balancerInput: PortfolioPackInput[] = inScope.map((p) => ({
       packId: p.id,
       price: p.price,
+      name: p.name,
       cards: (cardsByPack.get(p.id) ?? []).map((c) => ({ value: c.value })),
       currentRisk: beforeByPack.get(p.id)!,
     }));
@@ -533,7 +549,7 @@ export async function planAllRetunes(
   const proposals: PlanAllProposal[] = inScope.map((p) => {
     const cards = cardsByPack.get(p.id) ?? [];
     const autoTargets: PortfolioPackTargets =
-      targetsByPack.get(p.id) ?? autoRetuneTargets(p.price, cfg);
+      targetsByPack.get(p.id) ?? autoRetuneTargets(p.price, cfg, p.name);
     const currentWeights = cards.map((c) => ({ cardId: c.cardId, weight: c.weight }));
 
     const before = beforeByPack.get(p.id)!;
@@ -549,6 +565,8 @@ export async function planAllRetunes(
         cards,
         currentWeights,
         autoTargets,
+        intendedHitRate: autoTargets.intendedHitRate,
+        targetWinRate: autoTargets.targetWinRate,
         before,
         after: null,
         weightDiff: null,
@@ -582,6 +600,8 @@ export async function planAllRetunes(
         cards,
         currentWeights,
         autoTargets,
+        intendedHitRate: autoTargets.intendedHitRate,
+        targetWinRate: autoTargets.targetWinRate,
         before,
         after: null,
         weightDiff: null,
@@ -604,6 +624,8 @@ export async function planAllRetunes(
       cards,
       currentWeights,
       autoTargets,
+      intendedHitRate: autoTargets.intendedHitRate,
+      targetWinRate: autoTargets.targetWinRate,
       before,
       after: shaped.risk,
       weightDiff,
