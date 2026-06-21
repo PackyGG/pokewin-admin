@@ -1,11 +1,21 @@
 "use server";
 
+import { revalidatePath, revalidateTag } from "next/cache";
 import { isUuid } from "@/lib/utils/ids";
 import { getDb } from "@/lib/db";
+import { adminDb } from "@/lib/admin-db";
+import { sessionHasRole } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
+import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { requirePackStudioAccess } from "@/lib/require-pack-studio-access";
 import { isRepriceOwner } from "@/lib/reprice-access";
+import { verifyRetuneToken } from "@/lib/reprice-token";
+import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { reloadPacks } from "@/app/(admin)/rewards/actions";
 import { getPacksPoolComposition } from "@/lib/queries/packs";
 import { getPackCardValues } from "@/lib/queries/pack-card-values";
+import { capturePackSnapshot } from "../_lib/pack-history";
+import { buildPackCompliance } from "../_lib/risk-config";
 import {
   computePackRisk,
   computePackRiskFromAggregates,
@@ -723,4 +733,417 @@ export async function getPortfolioProfile(): Promise<PortfolioProfileResult> {
     profile.totalMaxWinExposure <= sysCfg.exposureCapUsd;
 
   return { cfg: sysCfg, profile, withinBounds };
+}
+
+// ─── Inline pool editing (read the pool to edit + write an EXPLICIT edited pool) ─
+//
+// The retune review can also EDIT a pack's card pool by hand — add/remove cards
+// and set per-card weights — and Approve the EXACT pool it shows. Unlike a retune
+// (which re-shapes weights server-side via `shapeWeights` from a target), an edit
+// writes the operator's EXPLICIT weights verbatim. It carries the SAME paranoia as
+// `applyPackRetune` in `src/app/(admin)/packs/actions.ts`:
+//   • owner-only (`isRepriceOwner`) + `__can_update_pack` capability,
+//   • the SAME 2FA RETUNE token `authorizePackRetune` mints (`verifyRetuneToken`),
+//   • the pack_creator live-pack carve-out,
+//   • a FRESH MAIN read of price + scope right before the write (fail-closed),
+//   • a "edit" snapshot of the CURRENT state captured FIRST (revertable),
+//   • the SAME delete-all-then-createMany `pack_cards` transaction `updatePack` /
+//     `applyPackRetune` use, then audit + ADMIN risk-row refresh.
+//
+// MAIN stays read-only FOR THE AGENT — this is code the owner runs behind their
+// own 2FA via the existing owner-operated pack_cards transaction (existing tables,
+// no MAIN schema change). The agent never executes it against prod.
+
+/** Only `official` packs may be edited via the retune review (matches the
+ *  `REPRICE_OR_RETUNE_PACK_TYPES` scope the pack actions enforce). */
+const EDITABLE_PACK_TYPES: readonly string[] = ["official"];
+
+/** One pool card for the inline editor: identity + value + the editable knobs. */
+export type EditPoolCard = {
+  cardId: string;
+  name: string;
+  imageUrl: string;
+  /** `cards.price` — the item's value (a voucher is the same as a card). */
+  value: number;
+  weight: number;
+  color: string | null;
+  animation: boolean;
+  order: number;
+};
+
+export type EditPool = {
+  packId: string;
+  name: string;
+  slug: string;
+  packType: string;
+  active: boolean;
+  price: number;
+  /** Pool cards in `pack_cards.order`, with the metadata the editor round-trips. */
+  cards: EditPoolCard[];
+};
+
+/**
+ * READ-ONLY (MAIN), owner-gated: the pack's FULL current pool for the inline
+ * editor — price + per-card {value (cards.price), weight, color, animation,
+ * order, name, imageUrl}. Reads MAIN read-only (the pack identity + its
+ * pack_cards joined to cards for value/name/image). Writes nothing.
+ */
+export async function getPackEditPool(packId: string): Promise<EditPool> {
+  await requireRetuneOwner();
+  if (!isUuid(packId)) throw new Error("Invalid pack id");
+
+  const db = await getDb();
+  const pack = await db.packs.findUnique({
+    where: { id: packId },
+    select: {
+      name: true,
+      slug: true,
+      price: true,
+      active: true,
+      pack_type: true,
+      pack_cards: {
+        select: {
+          card_id: true,
+          weight: true,
+          color: true,
+          animation: true,
+          order: true,
+        },
+        orderBy: { order: "asc" },
+      },
+    },
+  });
+  if (!pack) throw new Error("Pack not found");
+
+  const cardIds = pack.pack_cards.map((pc) => pc.card_id);
+  // Identity + value for each pool card (read-only PK probe on `cards`).
+  const cardMeta = new Map<string, { name: string; imageUrl: string; value: number }>();
+  if (cardIds.length > 0) {
+    const cardRows = await db.cards.findMany({
+      where: { id: { in: cardIds } },
+      select: { id: true, name: true, image_url: true, price: true },
+    });
+    for (const r of cardRows) {
+      cardMeta.set(r.id, {
+        name: r.name,
+        imageUrl: r.image_url,
+        value: Number(r.price.toString()),
+      });
+    }
+  }
+
+  const cards: EditPoolCard[] = pack.pack_cards.map((pc) => {
+    const meta = cardMeta.get(pc.card_id);
+    return {
+      cardId: pc.card_id,
+      name: meta?.name ?? `${pc.card_id.slice(0, 8)}…`,
+      imageUrl: meta?.imageUrl ?? "",
+      value: meta?.value ?? 0,
+      weight: pc.weight,
+      color: pc.color,
+      animation: pc.animation,
+      order: pc.order,
+    };
+  });
+
+  return {
+    packId,
+    name: pack.name,
+    slug: pack.slug,
+    packType: pack.pack_type,
+    active: pack.active,
+    price: Number(pack.price.toString()),
+    cards,
+  };
+}
+
+/** One explicit card slot the operator approves — written verbatim. */
+export type EditPoolInputCard = {
+  cardId: string;
+  weight: number;
+  color?: string;
+  animation?: boolean;
+  order: number;
+};
+
+export type EditPoolInput = {
+  cards: EditPoolInputCard[];
+  /** Optional new pack price (USD). When omitted, the price is left unchanged. */
+  price?: number;
+};
+
+export type ApplyPackEditResult = {
+  packId: string;
+  name: string;
+  status: "edited";
+  cardCountBefore: number;
+  cardCountAfter: number;
+  priceBefore: number;
+  priceAfter: number;
+  /** Risk summary of the pack AS IT IS NOW vs. the explicit edited pool. */
+  before: { edge: number; winRate: number; maxWin: number };
+  after: { edge: number; winRate: number; maxWin: number };
+};
+
+/**
+ * The pack_creator live-pack carve-out, mirroring `applyPackRetune` /
+ * `updatePack`: a pack_creator may iterate on inactive (demo) packs but is
+ * blocked from rewriting an ACTIVE pack's pool unless granted
+ * `__can_edit_live_packs`. A real admin / owner short-circuits earlier in
+ * `requireCapability`, so this is only reached for non-admins. Returns true iff
+ * an active pack was edited under the explicit capability (for the audit flag).
+ */
+async function enforcePackCreatorLiveGate(
+  session: Awaited<ReturnType<typeof requirePackStudioAccess>>,
+  active: boolean,
+): Promise<boolean> {
+  if (!sessionHasRole(session, "pack_creator")) return false;
+  if (!active) return false;
+  const perms = await adminDb.admin_users.findUnique({
+    where: { id: session.userId },
+    select: { allowed_pages: true },
+  });
+  const canEditLive = perms
+    ? hasCapability(perms.allowed_pages, "__can_edit_live_packs")
+    : false;
+  if (!canEditLive) {
+    throw new Error(
+      "Live packs can only be edited by full admins or pack creators with the 'Edit Live Packs' capability. Ask an admin to grant the capability, or deactivate the pack first.",
+    );
+  }
+  return true;
+}
+
+/**
+ * Write an EXPLICIT edited card pool to MAIN. Owner-only AND requires a valid
+ * RETUNE token from `authorizePackRetune` (the SAME 2FA scope a retune carries)
+ * + `__can_update_pack` + the pack_creator live-pack carve-out.
+ *
+ * Unlike a retune, this writes the operator's explicit weights/color/animation/
+ * order verbatim (the client supplies the pool it approved). It still FAILS
+ * CLOSED before any write:
+ *   • token / owner / capability / scope (`official`) gate,
+ *   • non-empty pool, every weight a positive integer, no duplicate cardId,
+ *     every cardId a valid uuid, optional price > 0,
+ *   • every edited cardId must exist in the pack's CURRENT live pool — an edit
+ *     can re-weight / remove / reorder existing cards, but cannot inject a card
+ *     the pool never had (adding a brand-new card belongs in the full Builder,
+ *     which validates card identity; this keeps the retune-review edit honest
+ *     and read-verified against fresh MAIN truth).
+ *
+ * Captures an "edit" snapshot of the CURRENT state FIRST (revertable), then
+ * writes via the SAME delete-all-then-createMany `pack_cards` transaction
+ * `updatePack` / `applyPackRetune` use, audits "pack_edited_via_retune" with
+ * before/after card counts + a risk summary, and refreshes the ADMIN risk row.
+ */
+export async function applyPackEdit(
+  packId: string,
+  token: string,
+  input: EditPoolInput,
+): Promise<ApplyPackEditResult> {
+  const session = await requireRetuneOwner();
+  await requireCapability(session, "__can_update_pack", "edit packs");
+  if (!(await verifyRetuneToken(token, session.userId))) {
+    throw new Error("2FA authorization expired or missing — re-confirm to continue.");
+  }
+  if (!isUuid(packId)) throw new Error("Invalid pack id");
+
+  // ── Validate the explicit input (fail-closed BEFORE any read/write) ──────
+  if (!Array.isArray(input.cards) || input.cards.length === 0) {
+    throw new Error("Refused: the edited pool must contain at least one card.");
+  }
+  const seen = new Set<string>();
+  for (const c of input.cards) {
+    if (!isUuid(c.cardId)) throw new Error("Refused: a card id is invalid.");
+    if (seen.has(c.cardId)) {
+      throw new Error("Refused: the edited pool has a duplicate card.");
+    }
+    seen.add(c.cardId);
+    if (
+      !Number.isInteger(c.weight) ||
+      c.weight <= 0
+    ) {
+      throw new Error("Refused: every card weight must be a positive integer.");
+    }
+    if (!Number.isInteger(c.order) || c.order < 0) {
+      throw new Error("Refused: every card order must be a non-negative integer.");
+    }
+  }
+  const priceProvided = input.price !== undefined;
+  if (priceProvided && (!Number.isFinite(input.price) || input.price! <= 0)) {
+    throw new Error("Refused: price must be greater than 0.");
+  }
+
+  const db = await getDb();
+
+  // FRESH pack row: price + scope + the CURRENT live pool (so we can scope-check,
+  // verify every edited card already exists, and compute the before/after risk).
+  const pack = await db.packs.findUnique({
+    where: { id: packId },
+    select: {
+      price: true,
+      active: true,
+      pack_type: true,
+      name: true,
+      pack_cards: { select: { card_id: true } },
+    },
+  });
+  if (!pack) throw new Error("Pack not found");
+
+  if (!EDITABLE_PACK_TYPES.includes(pack.pack_type)) {
+    throw new Error(
+      `Out of scope: only official packs can be edited (this is '${pack.pack_type}').`,
+    );
+  }
+
+  const priceBefore = Number(pack.price.toString());
+  const priceAfter = priceProvided ? input.price! : priceBefore;
+  if (!(priceAfter > 0)) throw new Error("Refused: pack has no valid price.");
+
+  // pack_creator live-pack carve-out (same gate updatePack / applyPackRetune use).
+  const editedLivePackUnderCapability = await enforcePackCreatorLiveGate(
+    session,
+    pack.active,
+  );
+
+  // Every edited card must already be in the live pool — an edit re-weights /
+  // removes / reorders existing cards but never injects an unverified card.
+  const liveCardIds = new Set(pack.pack_cards.map((pc) => pc.card_id));
+  const unknown = input.cards.filter((c) => !liveCardIds.has(c.cardId));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Refused: ${unknown.length} edited card(s) are not in the pack's current pool — add new cards in the Builder, not the retune review.`,
+    );
+  }
+
+  // FRESH pool values (cards.price) for the before/after risk summary — never
+  // trust client-supplied values. Keyed by cardId.
+  const pool = await getPackCardValues(packId);
+  const valueByCard = new Map(pool.map((c) => [c.cardId, c.value]));
+
+  const before = computePackRisk({
+    cards: pool.map((c) => ({ value: c.value, weight: c.weight })),
+    price: priceBefore,
+  });
+  const after = computePackRisk({
+    cards: input.cards.map((c) => ({
+      value: valueByCard.get(c.cardId) ?? 0,
+      weight: c.weight,
+    })),
+    price: priceAfter,
+  });
+
+  // The explicit rows to write — operator's weights/color/animation/order verbatim.
+  const rows = input.cards.map((c) => ({
+    pack_id: packId,
+    card_id: c.cardId,
+    weight: c.weight,
+    color: c.color ?? null,
+    animation: c.animation ?? false,
+    order: c.order,
+  }));
+
+  // Capture the PRIOR state into the ADMIN change history BEFORE the write below,
+  // so this snapshot is the state the owner can revert TO. Best-effort: a snapshot
+  // failure must NOT fail the committed edit (the helper swallows + logs).
+  await capturePackSnapshot({
+    packId,
+    action: "edit",
+    capturedBy: session.userId,
+  });
+
+  // SAME delete-all-then-createMany pattern updatePack / applyPackRetune use.
+  await db.$transaction(async (tx) => {
+    await tx.packs.update({
+      where: { id: packId },
+      data: {
+        ...(priceProvided ? { price: priceAfter } : {}),
+        updated_at: new Date(),
+      },
+    });
+    await tx.pack_cards.deleteMany({ where: { pack_id: packId } });
+    if (rows.length > 0) {
+      await tx.pack_cards.createMany({ data: rows });
+    }
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "pack_edited_via_retune",
+    metadata: {
+      pack_id: packId,
+      name: pack.name,
+      card_count_before: liveCardIds.size,
+      card_count_after: rows.length,
+      price_before: priceBefore,
+      price_after: priceAfter,
+      price_changed: priceProvided && priceAfter !== priceBefore,
+      before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
+      after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
+      ...(editedLivePackUnderCapability && {
+        edited_live_pack_under_capability: true,
+      }),
+    },
+  });
+
+  // Refresh the ADMIN-side risk row from the edited pool (ADMIN write only). The
+  // cap here is the pack's actual post-edit max win — the edit has no target cap
+  // lever, so compliance is judged against the realized exposure. Best-effort:
+  // the MAIN write already committed, so an ADMIN-side failure must NOT fail the
+  // edit (the helper swallows + logs; the next snapshot run reconciles).
+  await refreshEditedPackRiskScore(packId, after);
+
+  reloadPacks();
+  revalidatePath("/packs");
+  revalidatePath(`/packs/${packId}`);
+
+  return {
+    packId,
+    name: pack.name,
+    status: "edited",
+    cardCountBefore: liveCardIds.size,
+    cardCountAfter: rows.length,
+    priceBefore,
+    priceAfter,
+    before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
+    after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
+  };
+}
+
+/**
+ * Mirror ONE pack's ADMIN-side risk row from an explicit edited pool's
+ * already-computed {@link PackRisk} (ADMIN write only — never MAIN), so the Pack
+ * Studio Doctor grid + Overview reflect the edit without waiting for the next
+ * snapshot run. Same row shape `refreshPackRiskScore` in the pack actions writes
+ * (`buildPackCompliance` + the resolved max-win cap). The edit has no target cap,
+ * so compliance is judged against the resolved global cap. Best-effort: swallows
+ * + logs (the MAIN write already committed; the next snapshot run reconciles).
+ */
+async function refreshEditedPackRiskScore(
+  packId: string,
+  risk: PackRisk,
+): Promise<void> {
+  try {
+    const maxWinCap = await readMaxWinCap();
+    const riskRow = {
+      edge: risk.edge,
+      cv: risk.cv,
+      win_rate: risk.winRate,
+      near_miss: risk.nearMiss,
+      max_win: risk.maxWin,
+      max_mult: risk.maxMult,
+      risk_score: risk.riskScore0to100,
+      tier: risk.tier,
+      compliance: buildPackCompliance(risk, maxWinCap),
+      computed_at: new Date(),
+    };
+    await adminDb.pack_risk_scores.upsert({
+      where: { pack_id: packId },
+      update: riskRow,
+      create: { pack_id: packId, ...riskRow },
+    });
+    revalidateTag("pack-studio-overview");
+  } catch (err) {
+    console.error("applyPackEdit: pack_risk_scores refresh failed", err);
+  }
 }
