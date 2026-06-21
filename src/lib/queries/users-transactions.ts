@@ -778,8 +778,17 @@ export async function getUserTransactions(
       let borrowedAmountUsd: number | null = null;
       if (gs) {
         const firstPf = gs.provably_fair_results[0];
+        // A PENDING battle (animating/in_progress) has no provably_fair_results
+        // rows yet (they're inserted round-by-round at resolution), so the
+        // PF-based lookup below would miss the borrow %. The battle is still
+        // linked via battle_participants, whose battle_id carries the same
+        // borrow_percentage, so resolve off it first. This makes the borrow
+        // badge render identically on pending and settled battle rows.
+        const participantBattleId = gs.battle_participants?.battle_id ?? null;
         if (firstPf?.battle_id) {
           borrowPercentage = battleBorrowMap.get(firstPf.battle_id) ?? null;
+        } else if (participantBattleId) {
+          borrowPercentage = battleBorrowMap.get(participantBattleId) ?? null;
         } else if (firstPf) {
           const m = firstPf.result_metadata as Record<string, unknown> | null;
           const raw = m?.borrow_percentage;
