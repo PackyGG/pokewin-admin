@@ -4,7 +4,6 @@ import * as React from "react";
 import {
   ArrowRight,
   Check,
-  Info,
   Loader2,
   TriangleAlert,
   Wand2,
@@ -394,18 +393,6 @@ export function PoolEditor({
           The pool is empty — add at least one card (including one worth ≥ the
           price) to make it a valid pack.
         </p>
-      )}
-
-      {hasAddedCards && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-          <Info className="mt-0.5 size-3.5 shrink-0" />
-          <span>
-            You added card(s) not in the pack&apos;s live pool. The preview +
-            re-shape work here, but the server may require brand-new cards to be
-            added via the full Builder — if Approve is refused, open the Builder
-            for this pack to add them, then return to re-tune.
-          </span>
-        </div>
       )}
 
       {/* Controls */}

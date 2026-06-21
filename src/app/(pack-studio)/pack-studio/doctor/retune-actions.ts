@@ -1030,13 +1030,25 @@ export async function applyPackEdit(
     pack.active,
   );
 
-  // Every edited card must already be in the live pool — an edit re-weights /
-  // removes / reorders existing cards but never injects an unverified card.
+  // Live pool ids — kept only for the before/after card-count audit (the gate
+  // below validates card IDENTITY against the cards table, not pool membership).
   const liveCardIds = new Set(pack.pack_cards.map((pc) => pc.card_id));
-  const unknown = input.cards.filter((c) => !liveCardIds.has(c.cardId));
+
+  // Every edited cardId must be a REAL card (exists in `cards`) so the
+  // pack_cards.card_id FK holds — but it need NOT already be in this pack's
+  // live pool. Adding a brand-new real card (e.g. one priced >= the pack price)
+  // is exactly how an infeasible "no-win-cards" pack gets fixed inline.
+  // READ-ONLY SELECT on MAIN — allowed.
+  const editedIds = [...seen];
+  const existingCards = await db.cards.findMany({
+    where: { id: { in: editedIds } },
+    select: { id: true },
+  });
+  const existingCardIds = new Set(existingCards.map((c) => c.id));
+  const unknown = input.cards.filter((c) => !existingCardIds.has(c.cardId));
   if (unknown.length > 0) {
     throw new Error(
-      `Refused: ${unknown.length} edited card(s) are not in the pack's current pool — add new cards in the Builder, not the retune review.`,
+      `Refused: ${unknown.length} edited card(s) do not exist as real cards.`,
     );
   }
 
