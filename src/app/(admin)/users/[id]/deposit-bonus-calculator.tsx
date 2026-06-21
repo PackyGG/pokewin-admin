@@ -61,26 +61,37 @@ export function DepositBonusCalculator({
     };
   }, [userId]);
 
-  const selectedSum = (deposits ?? [])
-    .filter((d) => selected.has(d.id))
-    .reduce((a, d) => a + d.amount, 0);
+  const selectedDeposits = (deposits ?? []).filter((d) => selected.has(d.id));
+  const selectedSum = selectedDeposits.reduce((a, d) => a + d.amount, 0);
+  // Bonus already credited for the selected deposits (cap-aware). The live
+  // system pays 5% but caps at $20/6h, so a whale's deposit may already have a
+  // partial bonus — a top-up must subtract it so we don't double-pay.
+  const bonusAlreadyPaid = round2(
+    selectedDeposits.reduce((a, d) => a + d.bonusPaid, 0),
+  );
   const pct = Number(percent);
   const validPct = percent.trim() !== "" && Number.isFinite(pct) && pct > 0;
-  const computed =
+  const gross =
     selectedSum > 0 && validPct ? round2(selectedSum * (pct / 100)) : 0;
+  const computed =
+    selectedSum > 0 && validPct
+      ? Math.max(0, round2(gross - bonusAlreadyPaid))
+      : 0;
 
   // Push the computed amount up whenever it changes to a valid figure, and
   // clear when it goes back to zero.
   useEffect(() => {
     if (computed > 0) {
-      onComputeRef.current(
-        computed,
-        `Deposit bonus: ${pct}% of ${formatCurrency(selectedSum)} (${selected.size} deposit${selected.size !== 1 ? "s" : ""})`,
-      );
+      const n = selected.size;
+      const reason =
+        bonusAlreadyPaid > 0
+          ? `Deposit bonus top-up: ${pct}% of ${formatCurrency(selectedSum)} = ${formatCurrency(gross)} − ${formatCurrency(bonusAlreadyPaid)} already paid (${n} deposit${n !== 1 ? "s" : ""})`
+          : `Deposit bonus: ${pct}% of ${formatCurrency(selectedSum)} (${n} deposit${n !== 1 ? "s" : ""})`;
+      onComputeRef.current(computed, reason);
     } else {
       onClearRef.current();
     }
-  }, [computed, pct, selectedSum, selected.size]);
+  }, [computed, gross, pct, selectedSum, bonusAlreadyPaid, selected.size]);
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -122,7 +133,12 @@ export function DepositBonusCalculator({
                     {formatRelative(d.createdAt)}
                   </span>
                 </span>
-                <span className="font-medium tabular-nums">
+                <span className="flex items-baseline gap-1.5 font-medium tabular-nums">
+                  {d.bonusPaid > 0 && (
+                    <span className="text-[10px] font-normal text-muted-foreground">
+                      · bonus {formatCurrency(d.bonusPaid)}
+                    </span>
+                  )}
                   {formatCurrency(d.amount)}
                 </span>
               </label>
@@ -162,13 +178,22 @@ export function DepositBonusCalculator({
             </div>
           </div>
 
-          <div className="flex items-center justify-between border-t pt-1 text-xs">
-            <span className="text-muted-foreground">
-              {selected.size} selected · {formatCurrency(selectedSum)}
-            </span>
-            <span className="font-semibold tabular-nums">
-              Bonus: {formatCurrency(computed)}
-            </span>
+          <div className="space-y-0.5 border-t pt-1 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">
+                {selected.size} selected · {formatCurrency(selectedSum)}
+              </span>
+              <span className="font-semibold tabular-nums">
+                Bonus: {formatCurrency(computed)}
+              </span>
+            </div>
+            {bonusAlreadyPaid > 0 && (
+              <div className="flex items-center justify-end gap-1 text-[10px] tabular-nums text-muted-foreground">
+                <span>{formatCurrency(gross)} gross</span>
+                <span>−</span>
+                <span>{formatCurrency(bonusAlreadyPaid)} already paid</span>
+              </div>
+            )}
           </div>
         </>
       )}

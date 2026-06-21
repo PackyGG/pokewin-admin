@@ -1742,6 +1742,7 @@ export type UserDepositRow = {
   id: string;
   amount: number;
   createdAt: string;
+  bonusPaid: number;
 };
 
 /**
@@ -1760,14 +1761,40 @@ export async function getUserDeposits(
       type: "deposit",
       status: "completed",
     },
-    select: { id: true, amount: true, created_at: true },
+    select: { id: true, amount: true, created_at: true, fireblocks_tx_id: true },
     orderBy: { created_at: "desc" },
     take: 50,
   });
+
+  // The live deposit-bonus system pays 5% per deposit but CAPS it at $20 per
+  // rolling 6h window, so the bonus already credited for a deposit can be less
+  // than the full %. To support a cap-aware top-up, sum the bonus already paid
+  // per deposit. The 1:1 link is deposit.fireblocks_tx_id (column) ===
+  // deposit_bonus.metadata->>'fireblocks_tx_id' (the bonus row's own
+  // fireblocks_tx_id column is NULL). Single-user, user_id-indexed read.
+  const bonusRows = await db.ledger_transactions.findMany({
+    where: {
+      user_id: userId,
+      type: "deposit_bonus",
+      status: "completed",
+    },
+    select: { amount: true, metadata: true },
+  });
+  const bonusByFb = new Map<string, number>();
+  for (const b of bonusRows) {
+    const meta = b.metadata as Record<string, unknown> | null;
+    const fb = meta?.fireblocks_tx_id;
+    if (typeof fb !== "string" || fb === "") continue;
+    bonusByFb.set(fb, (bonusByFb.get(fb) ?? 0) + Math.abs(Number(b.amount)));
+  }
+
   return rows.map((r) => ({
     id: r.id,
     amount: Math.abs(Number(r.amount)),
     createdAt: r.created_at.toISOString(),
+    bonusPaid: r.fireblocks_tx_id
+      ? Math.round((bonusByFb.get(r.fireblocks_tx_id) ?? 0) * 100) / 100
+      : 0,
   }));
 }
 
