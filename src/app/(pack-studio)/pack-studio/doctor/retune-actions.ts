@@ -8,6 +8,7 @@ import { getPacksPoolComposition } from "@/lib/queries/packs";
 import { getPackCardValues } from "@/lib/queries/pack-card-values";
 import {
   computePackRisk,
+  computePackRiskFromAggregates,
   shapeWeights,
   type PackRisk,
 } from "@/app/(admin)/insights/edge-calc/risk";
@@ -21,9 +22,19 @@ import {
   autoRetuneTargets,
   readMaxWinCap,
   readMaxMultCeiling,
-  type AutoRetuneTargets,
+  readPackSystemConfig,
   type ResolvedAutoTargetCfg,
 } from "../_lib/risk-config";
+import {
+  computePortfolioProfile,
+  derivePortfolioTargets,
+  resolvePortfolioSystemConfig,
+  type PortfolioProfile,
+  type PortfolioSystemConfig,
+  type PortfolioSystemPlan,
+  type PortfolioPackInput,
+  type PortfolioPackTargets,
+} from "../_lib/portfolio";
 
 /**
  * Read-only helpers backing the Pack Doctor re-tune UI. The authoritative WRITE
@@ -292,8 +303,12 @@ export type PlanAllProposal = {
   cards: PlanAllCard[];
   /** Current weights, mirrored out for convenient client re-shaping. */
   currentWeights: { cardId: string; weight: number }[];
-  /** The auto-targets this proposal was computed for. */
-  autoTargets: AutoRetuneTargets;
+  /**
+   * The targets this proposal was shaped to. In "per-pack" mode these are the
+   * pack's independent `autoRetuneTargets`; in "portfolio" mode they are the
+   * system-balanced targets (may carry a tightened cap / nudged win-rate).
+   */
+  autoTargets: PortfolioPackTargets;
   /** Risk AS IT IS NOW. */
   before: PackRisk;
   /** Risk the pack WOULD have after the auto-retune (null when infeasible). */
@@ -306,9 +321,28 @@ export type PlanAllProposal = {
   error?: string;
 };
 
+/**
+ * Mode for {@link planAllRetunes}:
+ *   • "per-pack"  — current behavior: every pack shaped to its INDEPENDENT
+ *                   `autoRetuneTargets` (flat house edge + default win-rate + auto
+ *                   cap). `systemPlan` is null.
+ *   • "portfolio" — system-level: targets are derived by `derivePortfolioTargets`
+ *                   so the WHOLE catalog lands inside the system bounds (spicy
+ *                   share + jackpot exposure). Each pack is shaped to its
+ *                   system-target; `systemPlan` explains what was tightened + why.
+ */
+export type PlanAllMode = "per-pack" | "portfolio";
+
 export type PlanAllRetunesResult = {
   /** The auto-target config resolved once for this run (for the header UI). */
   cfg: ResolvedAutoTargetCfg;
+  /** Which targeting mode produced these proposals. */
+  mode: PlanAllMode;
+  /**
+   * The system-level plan (before/after profile + tightened packs + why) when
+   * `mode === "portfolio"`; null in "per-pack" mode.
+   */
+  systemPlan: PortfolioSystemPlan | null;
   proposals: PlanAllProposal[];
 };
 
@@ -321,12 +355,19 @@ type BatchedPoolRow = {
 };
 
 /**
- * READ-ONLY: for ALL active official packs, return the auto-retune proposal
- * (current vs. proposed risk + weight diff at the house auto-targets). Owner +
- * Pack-Studio gated. One batched card-values read (no N+1), then pure compute.
- * Writes nothing.
+ * READ-ONLY: for ALL active official packs, return the retune proposal (current
+ * vs. proposed risk + weight diff). Owner + Pack-Studio gated. One batched
+ * card-values read (no N+1), then pure compute. Writes nothing.
+ *
+ *   • mode "per-pack" (default) — each pack shaped to its INDEPENDENT
+ *     `autoRetuneTargets`; `systemPlan` null (the current behavior, unchanged).
+ *   • mode "portfolio" — `derivePortfolioTargets` sets per-pack targets so the
+ *     WHOLE catalog lands inside the system bounds; each pack is shaped to its
+ *     system-target and `systemPlan` explains what was tightened + why.
  */
-export async function planAllRetunes(): Promise<PlanAllRetunesResult> {
+export async function planAllRetunes(
+  mode: PlanAllMode = "per-pack",
+): Promise<PlanAllRetunesResult> {
   await requireRetuneOwner();
 
   // Resolve the auto-target config ONCE for the whole run.
@@ -339,7 +380,9 @@ export async function planAllRetunes(): Promise<PlanAllRetunesResult> {
   // re-price dry-run sweeps). Gives us id/name/slug/price per pack.
   const comps = await getPacksPoolComposition();
   const inScope = comps.filter((p) => p.active && p.price > 0);
-  if (inScope.length === 0) return { cfg, proposals: [] };
+  if (inScope.length === 0) {
+    return { cfg, mode, systemPlan: null, proposals: [] };
+  }
 
   const packIds = inScope.map((p) => p.id);
 
@@ -384,15 +427,49 @@ export async function planAllRetunes(): Promise<PlanAllRetunesResult> {
     });
   }
 
+  // ── Resolve the per-pack TARGETS for this run ───────────────────────────
+  // "before" risk per pack first (shared by both modes + needed by the
+  // portfolio balancer), then the target set each pack will be shaped to.
+  const beforeByPack = new Map<string, PackRisk>();
+  for (const p of inScope) {
+    const cards = cardsByPack.get(p.id) ?? [];
+    beforeByPack.set(
+      p.id,
+      computePackRisk({
+        cards: cards.map((c) => ({ value: c.value, weight: c.weight })),
+        price: p.price,
+      }),
+    );
+  }
+
+  // Default: every pack on its INDEPENDENT auto-targets. In portfolio mode the
+  // system balancer overrides the offenders' targets so the WHOLE catalog lands
+  // inside the system bounds; `systemPlan` explains the tightening.
+  let targetsByPack: Map<string, PortfolioPackTargets> = new Map(
+    inScope.map((p) => [p.id, autoRetuneTargets(p.price, cfg)]),
+  );
+  let systemPlan: PortfolioSystemPlan | null = null;
+
+  if (mode === "portfolio") {
+    const sysCfg = await readPortfolioSystemConfigResolved(cfg);
+    const balancerInput: PortfolioPackInput[] = inScope.map((p) => ({
+      packId: p.id,
+      price: p.price,
+      cards: (cardsByPack.get(p.id) ?? []).map((c) => ({ value: c.value })),
+      currentRisk: beforeByPack.get(p.id)!,
+    }));
+    const derived = derivePortfolioTargets(balancerInput, sysCfg);
+    targetsByPack = derived.targetsByPack;
+    systemPlan = derived.systemPlan;
+  }
+
   const proposals: PlanAllProposal[] = inScope.map((p) => {
     const cards = cardsByPack.get(p.id) ?? [];
-    const autoTargets = autoRetuneTargets(p.price, cfg);
+    const autoTargets: PortfolioPackTargets =
+      targetsByPack.get(p.id) ?? autoRetuneTargets(p.price, cfg);
     const currentWeights = cards.map((c) => ({ cardId: c.cardId, weight: c.weight }));
 
-    const before = computePackRisk({
-      cards: cards.map((c) => ({ value: c.value, weight: c.weight })),
-      price: p.price,
-    });
+    const before = beforeByPack.get(p.id)!;
 
     // A pack with no cards can't be shaped — surface it as infeasible, never
     // throw (one bad pack must not sink the whole plan).
@@ -420,6 +497,7 @@ export async function planAllRetunes(): Promise<PlanAllRetunesResult> {
       targetWinRate: autoTargets.targetWinRate,
       maxWinCap: autoTargets.maxWinCap,
       nearMissMin: autoTargets.nearMissMin,
+      floorRatioMin: autoTargets.floorRatioMin,
     });
 
     if ("error" in shaped) {
@@ -458,5 +536,92 @@ export async function planAllRetunes(): Promise<PlanAllRetunesResult> {
     };
   });
 
-  return { cfg, proposals };
+  return { cfg, mode, systemPlan, proposals };
+}
+
+// ─── System-level portfolio profile (read-only header action) ─────────────
+
+/**
+ * Resolve the {@link PortfolioSystemConfig} for a run: read the raw config blob
+ * (ADMIN-DB, cookie-free) and fold in the already-resolved auto-target config.
+ * The blob's `reserves` drives the default exposure cap; explicit `maxSpicyShare`
+ * / `exposureCapUsd` / `defaultWinRate` override the documented defaults. Pure
+ * `resolvePortfolioSystemConfig` does the actual resolution so it stays testable.
+ */
+async function readPortfolioSystemConfigResolved(
+  autoCfg: ResolvedAutoTargetCfg,
+): Promise<PortfolioSystemConfig> {
+  const raw = await readPackSystemConfig();
+  if (!raw) return resolvePortfolioSystemConfig(null, autoCfg);
+
+  // `PackSystemConfig` types only the fields risk-config reads; the blob MAY
+  // carry the portfolio system-target fields too. Read them defensively as
+  // optional numbers (the pure resolver validates each one) without widening
+  // the shared `PackSystemConfig` type.
+  const blob = raw as Record<string, unknown>;
+  const num = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
+
+  return resolvePortfolioSystemConfig(
+    {
+      defaultWinRate: num(blob.defaultWinRate),
+      maxSpicyShare: num(blob.maxSpicyShare),
+      exposureCapUsd: num(blob.exposureCapUsd),
+      reserves: num(raw.reserves),
+    },
+    autoCfg,
+  );
+}
+
+export type PortfolioProfileResult = {
+  /** The resolved system-target config (bounds the profile is judged against). */
+  cfg: PortfolioSystemConfig;
+  /** The current catalog profile (every active official pack scored as-is). */
+  profile: PortfolioProfile;
+  /** True when the catalog is already inside BOTH system bounds. */
+  withinBounds: boolean;
+};
+
+/**
+ * READ-ONLY owner-gated header action: profile the WHOLE active-official-pack
+ * catalog (tier distribution, total jackpot exposure, aggregate CV, over-cap /
+ * below-target counts, spicy share) against the resolved system bounds. Reuses
+ * the SAME aggregated composition read as the re-price dry-run (`computePackRisk
+ * FromAggregates` over `getPacksPoolComposition` — no per-card read needed), then
+ * pure compute. Writes nothing.
+ */
+export async function getPortfolioProfile(): Promise<PortfolioProfileResult> {
+  await requireRetuneOwner();
+
+  const cfg: ResolvedAutoTargetCfg = {
+    globalCap: await readMaxWinCap(),
+    maxMultCeiling: await readMaxMultCeiling(),
+  };
+  const sysCfg = await readPortfolioSystemConfigResolved(cfg);
+
+  // Aggregated composition is enough for the profile — score each pack via the
+  // aggregate path (same engine, no per-card materialization).
+  const comps = await getPacksPoolComposition();
+  const inScope = comps.filter((p) => p.active && p.price > 0);
+
+  const packRisks = inScope.map((p) => ({
+    price: p.price,
+    risk: computePackRiskFromAggregates({
+      price: p.price,
+      totalWeight: p.totalWeight,
+      weightedPriceSum: p.weightedPriceSum,
+      weightedSqSum: p.weightedSqSum,
+      winWeight: p.winWeight,
+      nearMissWeight: p.nearMissWeight,
+      maxValue: p.maxValue,
+      floorValue: p.floorValue,
+    }),
+  }));
+
+  const profile = computePortfolioProfile(packRisks, cfg);
+  const withinBounds =
+    profile.spicyShare <= sysCfg.maxSpicyShare &&
+    profile.totalMaxWinExposure <= sysCfg.exposureCapUsd;
+
+  return { cfg: sysCfg, profile, withinBounds };
 }
