@@ -1,14 +1,13 @@
 "use client";
 
 /**
- * Per-user withdrawal wager-requirement override.
+ * Per-user withdrawal wager-requirement overrides.
  *
- * Resolution lives on the game backend: a per-user override (0 = EXEMPT
- * from the ENTIRE requirement, bonus part included) falls back to the
- * site-wide default. Everything is in basis points (10000 bps = 1×); the
- * UI shows ×-multipliers with the raw bps alongside.
+ * Shows a table of all 6 credit sources, each with its own per-user override.
+ * null = no override (uses site-wide global). 0 = exempt for that source.
+ * 10000 bps = 1× requirement.
  *
- * Admin-only — the underlying actions use requireAdmin(), so non-admins
+ * Admin-only — the underlying actions use requireAdmin(). Non-admins
  * (canManage=false) see read-only status with no buttons.
  *
  * `data === null` means the backend read failed (the wager-requirement
@@ -31,7 +30,6 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { InfoRow } from "./user-tabs-shared";
 import {
   setUserWagerRequirementAction,
   clearUserWagerRequirementAction,
@@ -45,10 +43,51 @@ function formatX(bps: number): string {
   return `${bps / BPS_PER_X}×`;
 }
 
-function overrideLabel(bps: number | null): string {
-  if (bps === null) return "None — uses site default";
-  if (bps === 0) return "EXEMPT (0×) — no requirement";
+function overrideCellLabel(bps: number | null): string {
+  if (bps === null) return "uses global";
+  if (bps === 0) return "EXEMPT (0×)";
   return `${formatX(bps)} (${bps} bps)`;
+}
+
+type SourceRow = {
+  label: string;
+  globalDefault: number | null; // null = not returned by API for this source
+  override: number | null;
+};
+
+function buildRows(data: UserWagerRequirement): SourceRow[] {
+  return [
+    {
+      label: "Deposit",
+      globalDefault: data.default_wager_requirement_bps,
+      override: data.wager_requirement_bps,
+    },
+    {
+      label: "Bonus / Leaderboard",
+      globalDefault: null,
+      override: data.bonus_wager_requirement_bps,
+    },
+    {
+      label: "Affiliate claims",
+      globalDefault: null,
+      override: data.affiliate_wager_requirement_bps,
+    },
+    {
+      label: "Rakeback claims",
+      globalDefault: null,
+      override: data.rakeback_wager_requirement_bps,
+    },
+    {
+      label: "Tips received",
+      globalDefault: null,
+      override: data.tips_wager_requirement_bps,
+    },
+    {
+      label: "Admin adjustments",
+      globalDefault: null,
+      override: data.admin_adjustment_wager_requirement_bps,
+    },
+  ];
 }
 
 export function UserWagerRequirementCard({
@@ -84,7 +123,8 @@ export function UserWagerRequirementCard({
     );
   }
 
-  const hasOverride = data.wager_requirement_bps !== null;
+  const rows = buildRows(data);
+  const hasAnyOverride = rows.some((r) => r.override !== null);
 
   const handleClear = () => {
     startTransition(async () => {
@@ -100,42 +140,85 @@ export function UserWagerRequirementCard({
 
   return (
     <Card>
-      <CardContent className="pt-6 space-y-3">
-        <div className="space-y-3">
-          <InfoRow
-            label="Site default"
-            value={`${formatX(data.default_wager_requirement_bps)} (${data.default_wager_requirement_bps} bps)`}
-          />
-          <InfoRow
-            label="Override"
-            value={overrideLabel(data.wager_requirement_bps)}
-          />
-          <InfoRow
-            label="Effective"
-            value={`${formatX(data.effective_wager_requirement_bps)} (${data.effective_wager_requirement_bps} bps)`}
-          />
-          <p className="text-xs text-muted-foreground">
-            The deposit-based multiplier a user must wager before withdrawing.
-            An override of <code className="font-mono">0×</code> fully exempts
-            the user (bonus requirement included). With no override the user
-            uses the site default from{" "}
-            <code className="font-mono">site_config</code>.
-          </p>
+      <CardContent className="pt-6 space-y-4">
+        {/* Source table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="text-left font-medium text-muted-foreground pb-2 pr-4">
+                  Source
+                </th>
+                <th className="text-left font-medium text-muted-foreground pb-2 pr-4">
+                  Global default
+                </th>
+                <th className="text-left font-medium text-muted-foreground pb-2 pr-4">
+                  Your override
+                </th>
+                <th className="text-left font-medium text-muted-foreground pb-2">
+                  Effective
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/50">
+              {rows.map((row) => {
+                const effective =
+                  row.override !== null
+                    ? row.override
+                    : row.globalDefault ?? null;
+                return (
+                  <tr key={row.label}>
+                    <td className="py-2 pr-4 font-medium text-foreground">
+                      {row.label}
+                    </td>
+                    <td className="py-2 pr-4 tabular-nums text-muted-foreground">
+                      {row.globalDefault !== null
+                        ? `${formatX(row.globalDefault)} (${row.globalDefault} bps)`
+                        : "—"}
+                    </td>
+                    <td className="py-2 pr-4 tabular-nums">
+                      {row.override !== null ? (
+                        <span className="font-medium text-foreground">
+                          {overrideCellLabel(row.override)}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">
+                          uses global
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 tabular-nums text-muted-foreground">
+                      {effective !== null
+                        ? `${formatX(effective)} (${effective} bps)`
+                        : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
 
+        <p className="text-xs text-muted-foreground">
+          Each source can be overridden independently.{" "}
+          <code className="font-mono">0×</code> fully exempts the user for that
+          source. Leaving an override blank means the user follows the
+          site-wide global setting for that source.
+        </p>
+
         {canManage && (
-          <div className="flex flex-wrap gap-2 pt-2">
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
-              {hasOverride ? "Edit override" : "Set custom override"}
+              {hasAnyOverride ? "Edit overrides" : "Set custom overrides"}
             </Button>
-            {hasOverride && (
+            {hasAnyOverride && (
               <Button
                 size="sm"
                 variant="ghost"
                 onClick={handleClear}
                 disabled={isPending}
               >
-                {isPending ? "Working…" : "Clear override"}
+                {isPending ? "Working…" : "Clear all overrides"}
               </Button>
             )}
           </div>
@@ -143,7 +226,7 @@ export function UserWagerRequirementCard({
 
         <UserWagerRequirementDialog
           userId={userId}
-          currentBps={data.wager_requirement_bps}
+          data={data}
           open={editOpen}
           onOpenChange={setEditOpen}
         />
@@ -152,52 +235,117 @@ export function UserWagerRequirementCard({
   );
 }
 
+type FieldKey =
+  | "wager_requirement_bps"
+  | "bonus_wager_requirement_bps"
+  | "affiliate_wager_requirement_bps"
+  | "rakeback_wager_requirement_bps"
+  | "tips_wager_requirement_bps"
+  | "admin_adjustment_wager_requirement_bps";
+
+type FormValues = Record<FieldKey, string>;
+
+function bpsToInputValue(bps: number | null): string {
+  if (bps === null) return "";
+  return String(bps);
+}
+
+function inputValueToBps(raw: string): number | null | undefined {
+  const trimmed = raw.trim();
+  if (trimmed === "") return undefined; // "leave blank = use global" — omit from payload
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return undefined;
+  return Math.min(MAX_BPS, Math.max(0, n));
+}
+
 function UserWagerRequirementDialog({
   userId,
-  currentBps,
+  data,
   open,
   onOpenChange,
 }: {
   userId: string;
-  currentBps: number | null;
+  data: UserWagerRequirement;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
-  const [value, setValue] = useState(
-    currentBps != null ? String(currentBps / BPS_PER_X) : "",
-  );
+  const [values, setValues] = useState<FormValues>(() => ({
+    wager_requirement_bps: bpsToInputValue(data.wager_requirement_bps),
+    bonus_wager_requirement_bps: bpsToInputValue(data.bonus_wager_requirement_bps),
+    affiliate_wager_requirement_bps: bpsToInputValue(data.affiliate_wager_requirement_bps),
+    rakeback_wager_requirement_bps: bpsToInputValue(data.rakeback_wager_requirement_bps),
+    tips_wager_requirement_bps: bpsToInputValue(data.tips_wager_requirement_bps),
+    admin_adjustment_wager_requirement_bps: bpsToInputValue(
+      data.admin_adjustment_wager_requirement_bps,
+    ),
+  }));
   const [isPending, startTransition] = useTransition();
 
-  // Reset the form whenever the dialog re-opens so a previous cancel
-  // doesn't leave stale input.
+  // Reset the form whenever the dialog re-opens.
   useEffect(() => {
     if (open) {
-      setValue(currentBps != null ? String(currentBps / BPS_PER_X) : "");
+      setValues({
+        wager_requirement_bps: bpsToInputValue(data.wager_requirement_bps),
+        bonus_wager_requirement_bps: bpsToInputValue(data.bonus_wager_requirement_bps),
+        affiliate_wager_requirement_bps: bpsToInputValue(
+          data.affiliate_wager_requirement_bps,
+        ),
+        rakeback_wager_requirement_bps: bpsToInputValue(
+          data.rakeback_wager_requirement_bps,
+        ),
+        tips_wager_requirement_bps: bpsToInputValue(data.tips_wager_requirement_bps),
+        admin_adjustment_wager_requirement_bps: bpsToInputValue(
+          data.admin_adjustment_wager_requirement_bps,
+        ),
+      });
     }
-  }, [open, currentBps]);
+  }, [open, data]);
 
-  const x = value.trim() === "" ? null : Number(value);
-  const bpsPreview =
-    x !== null && Number.isFinite(x) && x >= 0
-      ? Math.min(MAX_BPS, Math.max(0, Math.round(x * BPS_PER_X)))
-      : null;
+  const setField = (key: FieldKey, val: string) =>
+    setValues((prev) => ({ ...prev, [key]: val }));
 
   const handleSave = () => {
-    if (value.trim() === "") {
-      toast.error("Enter a multiplier (0 to exempt the user)");
+    // Build payload — only include fields where a non-empty value was entered.
+    // For source fields (non-deposit), an explicit null can be passed by the
+    // action but we never need to set null here because "clear" is done via
+    // the "Clear all overrides" button. Blank = omit from payload.
+    const depositBps = inputValueToBps(values.wager_requirement_bps);
+    const bonusBps = inputValueToBps(values.bonus_wager_requirement_bps);
+    const affiliateBps = inputValueToBps(values.affiliate_wager_requirement_bps);
+    const rakebackBps = inputValueToBps(values.rakeback_wager_requirement_bps);
+    const tipsBps = inputValueToBps(values.tips_wager_requirement_bps);
+    const adminAdjBps = inputValueToBps(values.admin_adjustment_wager_requirement_bps);
+
+    const payload: Parameters<typeof setUserWagerRequirementAction>[0] = {
+      userId,
+    };
+
+    if (depositBps !== undefined) payload.wager_requirement_bps = depositBps as number;
+    if (bonusBps !== undefined) payload.bonus_wager_requirement_bps = bonusBps;
+    if (affiliateBps !== undefined) payload.affiliate_wager_requirement_bps = affiliateBps;
+    if (rakebackBps !== undefined) payload.rakeback_wager_requirement_bps = rakebackBps;
+    if (tipsBps !== undefined) payload.tips_wager_requirement_bps = tipsBps;
+    if (adminAdjBps !== undefined)
+      payload.admin_adjustment_wager_requirement_bps = adminAdjBps;
+
+    const hasAnyField =
+      payload.wager_requirement_bps !== undefined ||
+      payload.bonus_wager_requirement_bps !== undefined ||
+      payload.affiliate_wager_requirement_bps !== undefined ||
+      payload.rakeback_wager_requirement_bps !== undefined ||
+      payload.tips_wager_requirement_bps !== undefined ||
+      payload.admin_adjustment_wager_requirement_bps !== undefined;
+
+    if (!hasAnyField) {
+      toast.error("Enter at least one value to save");
       return;
     }
-    if (x === null || !Number.isFinite(x) || x < 0) {
-      toast.error("Multiplier must be a non-negative number");
-      return;
-    }
-    const bps = Math.min(MAX_BPS, Math.max(0, Math.round(x * BPS_PER_X)));
 
     startTransition(async () => {
-      const result = await setUserWagerRequirementAction({ userId, bps });
+      const result = await setUserWagerRequirementAction(payload);
       if (result.success) {
-        toast.success("Wager requirement override saved");
+        toast.success("Wager requirement overrides saved");
         onOpenChange(false);
         router.refresh();
       } else {
@@ -206,38 +354,81 @@ function UserWagerRequirementDialog({
     });
   };
 
+  type FieldSpec = { key: FieldKey; label: string };
+
+  const depositField: FieldSpec = {
+    key: "wager_requirement_bps",
+    label: "Deposit",
+  };
+
+  const bonusFields: FieldSpec[] = [
+    { key: "bonus_wager_requirement_bps", label: "Bonus / Leaderboard" },
+    { key: "affiliate_wager_requirement_bps", label: "Affiliate claims" },
+    { key: "rakeback_wager_requirement_bps", label: "Rakeback claims" },
+    { key: "tips_wager_requirement_bps", label: "Tips received" },
+    { key: "admin_adjustment_wager_requirement_bps", label: "Admin adjustments" },
+  ];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Custom Wager Requirement</DialogTitle>
+          <DialogTitle>Custom Wager Requirements</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4 py-2">
-          <div className="space-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <Label className="text-xs text-muted-foreground">
-                Multiplier (×)
-              </Label>
-              <span className="text-[11px] tabular-nums text-muted-foreground">
-                {bpsPreview !== null ? `= ${bpsPreview} bps` : "= — bps"}
-              </span>
-            </div>
-            <Input
-              type="number"
-              step="0.05"
-              min="0"
-              placeholder="e.g. 1 for 1×, 0 to exempt"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Overrides the deposit-based requirement for this user.{" "}
-              <code className="font-mono">0</code> fully exempts them (bonus
-              requirement included). Clearing the override (from the card)
-              returns them to the site default.
+
+        <div className="space-y-5 py-2">
+          <p className="text-xs text-muted-foreground">
+            Leave blank to use the site-wide global setting. Enter{" "}
+            <code className="font-mono">0</code> to fully exempt. Enter{" "}
+            <code className="font-mono">10000</code> for 1× requirement. Values
+            are in basis points (bps).
+          </p>
+
+          {/* Deposit section */}
+          <div className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Deposit
             </p>
+            <div className="space-y-1.5">
+              <Label htmlFor={depositField.key} className="text-xs">
+                {depositField.label}
+              </Label>
+              <Input
+                id={depositField.key}
+                type="number"
+                step="1"
+                min="0"
+                placeholder="e.g. 0 = exempt, 10000 = 1×, blank = use global"
+                value={values[depositField.key]}
+                onChange={(e) => setField(depositField.key, e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Bonus sources section */}
+          <div className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Bonus Sources
+            </p>
+            {bonusFields.map((f) => (
+              <div key={f.key} className="space-y-1.5">
+                <Label htmlFor={f.key} className="text-xs">
+                  {f.label}
+                </Label>
+                <Input
+                  id={f.key}
+                  type="number"
+                  step="1"
+                  min="0"
+                  placeholder="e.g. 0 = exempt, 10000 = 1×, blank = use global"
+                  value={values[f.key]}
+                  onChange={(e) => setField(f.key, e.target.value)}
+                />
+              </div>
+            ))}
           </div>
         </div>
+
         <DialogFooter>
           <Button
             size="sm"

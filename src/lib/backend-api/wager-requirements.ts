@@ -80,11 +80,21 @@ export type UpdateWagerRequirementDefaultsInput =
 /** Per-user override + the resolved effective value. */
 export type UserWagerRequirement = {
   user_id: string;
-  /** Per-user override in bps; null = no override (site default applies). 0 = EXEMPT. */
+  /** Per-user deposit override in bps; null = no override (site default applies). 0 = EXEMPT. */
   wager_requirement_bps: number | null;
-  /** Current site default in bps. */
+  /** Per-user bonus/leaderboard override in bps; null = uses global default. */
+  bonus_wager_requirement_bps: number | null;
+  /** Per-user affiliate claims override in bps; null = uses global default. */
+  affiliate_wager_requirement_bps: number | null;
+  /** Per-user rakeback claims override in bps; null = uses global default. */
+  rakeback_wager_requirement_bps: number | null;
+  /** Per-user tips received override in bps; null = uses global default. */
+  tips_wager_requirement_bps: number | null;
+  /** Per-user admin adjustment override in bps; null = uses global default. */
+  admin_adjustment_wager_requirement_bps: number | null;
+  /** Current site default in bps (deposit source). */
   default_wager_requirement_bps: number;
-  /** Resolved value the backend enforces (override ?? default). */
+  /** Resolved value the backend enforces for deposits (override ?? default). */
   effective_wager_requirement_bps: number;
   created_at: string | null;
   updated_at: string | null;
@@ -115,16 +125,27 @@ export const getUserWagerRequirement = (userId: string) =>
     .then((r) => r.data);
 
 /**
- * Set a per-user override. `bps` is an int ≥ 0; 0 = user fully EXEMPT
- * (the entire requirement, bonus part included).
+ * Set per-user overrides for one or more wager-requirement sources.
+ * Pass only the fields you want to change. null clears an override (falls
+ * back to site global). 0 = fully exempt for that source. 10000 = 1×.
  */
-export const setUserWagerRequirement = (userId: string, bps: number) =>
-  backendApi
-    .put<Success<UserWagerRequirement>>(
-      `/admin/users/${encodeURIComponent(userId)}/wager-requirement`,
-      { wager_requirement_bps: bps },
-    )
-    .then((r) => r.data);
+export async function setUserWagerRequirement(
+  userId: string,
+  params: {
+    wager_requirement_bps?: number;
+    bonus_wager_requirement_bps?: number | null;
+    affiliate_wager_requirement_bps?: number | null;
+    rakeback_wager_requirement_bps?: number | null;
+    tips_wager_requirement_bps?: number | null;
+    admin_adjustment_wager_requirement_bps?: number | null;
+  },
+): Promise<UserWagerRequirement> {
+  const res = await backendApi.put<Success<UserWagerRequirement>>(
+    `/admin/users/${encodeURIComponent(userId)}/wager-requirement`,
+    params,
+  );
+  return res.data;
+}
 
 /** Remove a per-user override — user falls back to the site default. */
 export const clearUserWagerRequirement = (userId: string) =>

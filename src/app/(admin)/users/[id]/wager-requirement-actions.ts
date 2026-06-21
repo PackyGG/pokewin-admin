@@ -26,12 +26,17 @@ import {
  * server-only backend-api import stays scoped to this feature.
  */
 
-const Bps = z.number().int().min(0).max(1_000_000);
+const SourceBps = z.number().int().min(0).max(1_000_000).nullable().optional();
 
 const SetSchema = z.object({
   userId: z.string().min(1),
-  // 0 = user fully EXEMPT (the entire requirement, bonus part included).
-  bps: Bps,
+  // 0 = user fully EXEMPT for deposit source (the entire requirement, bonus part included).
+  wager_requirement_bps: z.number().int().min(0).max(1_000_000).optional(),
+  bonus_wager_requirement_bps: SourceBps,
+  affiliate_wager_requirement_bps: SourceBps,
+  rakeback_wager_requirement_bps: SourceBps,
+  tips_wager_requirement_bps: SourceBps,
+  admin_adjustment_wager_requirement_bps: SourceBps,
 });
 
 function friendlyError(err: unknown): string {
@@ -45,7 +50,12 @@ function friendlyError(err: unknown): string {
 
 export async function setUserWagerRequirementAction(input: {
   userId: string;
-  bps: number;
+  wager_requirement_bps?: number;
+  bonus_wager_requirement_bps?: number | null;
+  affiliate_wager_requirement_bps?: number | null;
+  rakeback_wager_requirement_bps?: number | null;
+  tips_wager_requirement_bps?: number | null;
+  admin_adjustment_wager_requirement_bps?: number | null;
 }): Promise<{ success: true } | { success: false; error: string }> {
   await requirePageAccess("/users");
   const session = await requireAdmin();
@@ -57,19 +67,26 @@ export async function setUserWagerRequirementAction(input: {
       error: parsed.error.issues[0]?.message ?? "Invalid input",
     };
   }
-  const { userId, bps } = parsed.data;
+  const { userId, ...fields } = parsed.data;
 
   // Read current for the audit old side (best-effort).
-  let oldBps: number | null | undefined;
+  let oldValues: Record<string, number | null | undefined> = {};
   try {
     const current = await getUserWagerRequirement(userId);
-    oldBps = current.wager_requirement_bps;
+    oldValues = {
+      wager_requirement_bps: current.wager_requirement_bps,
+      bonus_wager_requirement_bps: current.bonus_wager_requirement_bps,
+      affiliate_wager_requirement_bps: current.affiliate_wager_requirement_bps,
+      rakeback_wager_requirement_bps: current.rakeback_wager_requirement_bps,
+      tips_wager_requirement_bps: current.tips_wager_requirement_bps,
+      admin_adjustment_wager_requirement_bps: current.admin_adjustment_wager_requirement_bps,
+    };
   } catch {
-    oldBps = undefined;
+    oldValues = {};
   }
 
   try {
-    await setUserWagerRequirement(userId, bps);
+    await setUserWagerRequirement(userId, fields);
   } catch (err) {
     return { success: false, error: friendlyError(err) };
   }
@@ -78,7 +95,7 @@ export async function setUserWagerRequirementAction(input: {
     adminUserId: session.userId,
     eventType: "user_wager_requirement_updated",
     targetUserId: userId,
-    metadata: { old_bps: oldBps ?? null, new_bps: bps },
+    metadata: { old: oldValues, new: fields },
   });
 
   revalidatePath(`/users/${userId}`);
