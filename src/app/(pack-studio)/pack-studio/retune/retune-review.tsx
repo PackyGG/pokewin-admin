@@ -2,12 +2,19 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { KeyRound, Loader2, ShieldCheck } from "lucide-react";
+import {
+  KeyRound,
+  Loader2,
+  Scale,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -16,24 +23,32 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { SectionHeading } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 import { cn } from "@/lib/utils";
 import {
   computePackRisk,
   shapeWeights,
   type PackRisk,
+  type ShapeWeightsLimit,
+  type ShapeWeightsRelaxation,
 } from "@/app/(admin)/insights/edge-calc/risk";
 import {
   authorizePackRetune,
   applyPackRetune,
   type PackRetuneTargets,
 } from "@/app/(admin)/packs/actions";
-import type {
-  PlanAllProposal,
-  PlanAllWeightDiff,
+import {
+  planAllRetunes,
+  type PlanAllProposal,
+  type PlanAllWeightDiff,
+  type PortfolioProfileResult,
 } from "../doctor/retune-actions";
+import type { PortfolioSystemPlan } from "../_lib/portfolio";
 
 import { ReviewCard } from "./review-card";
 import { ReviewRail } from "./review-rail";
+import { SystemBalancePanel } from "./system-balance";
 
 /**
  * Bulk Re-tune Review orchestrator (owner-only, client). Drives the Tinder-style
@@ -47,6 +62,12 @@ import { ReviewRail } from "./review-rail";
  *      the adjusted levers on approve; BACK → revisit the previous pack.
  *   3. Token expiry — if a write returns the "authorization expired" error, the
  *      2FA dialog re-opens; on re-confirm the SAME approve is retried.
+ *
+ * SYSTEM BALANCE — a header panel (fed by `getPortfolioProfile`) profiles the
+ * WHOLE catalog (tier histogram, jackpot exposure vs cap, aggregate CV, spicy
+ * share). A "Balance whole system" toggle re-loads the proposals via
+ * `planAllRetunes("portfolio")` so the cross-pack balancer's system-targets drive
+ * every card, and shows the `systemPlan` (what got tightened + why).
  *
  * Nothing is persisted until APPROVE. Only approved packs ever write. The pure
  * client-safe `shapeWeights`/`computePackRisk` mirror the server's math, so the
@@ -66,7 +87,11 @@ export type AdjustedState = AdjustedTargets & {
   feasible: boolean;
   after: PackRisk | null;
   weightDiff: PlanAllWeightDiff[] | null;
+  /** Soft targets the local solver relaxed (empty when nothing relaxed). */
+  relaxations: ShapeWeightsRelaxation[];
   error?: string;
+  /** Structured hard limit when the local re-shape is infeasible. */
+  limit: ShapeWeightsLimit | null;
 };
 
 export type ReviewStatus = "pending" | "approved" | "declined";
@@ -98,9 +123,11 @@ function isTokenExpired(message: string): boolean {
 export function RetuneReview({
   proposals,
   targetEdge,
+  portfolio,
 }: {
   proposals: PlanAllProposal[];
   targetEdge: number;
+  portfolio: PortfolioProfileResult;
 }) {
   const router = useRouter();
 
@@ -110,6 +137,17 @@ export function RetuneReview({
   const [index, setIndex] = React.useState(0);
   const [started, setStarted] = React.useState(false);
   const [applying, setApplying] = React.useState(false);
+
+  // ── System-balance mode ─────────────────────────────────────────────
+  // Off = per-pack auto-targets (the default load). On = portfolio mode: the
+  // proposals are re-loaded via `planAllRetunes("portfolio")` so the cross-pack
+  // balancer's system-targets drive every card; `systemPlan` explains the
+  // tightening.
+  const [portfolioMode, setPortfolioMode] = React.useState(false);
+  const [systemPlan, setSystemPlan] = React.useState<PortfolioSystemPlan | null>(
+    null,
+  );
+  const [reloading, setReloading] = React.useState(false);
 
   // The session retune token (kept in a ref so the approve loop reads the
   // latest after a re-mint without a stale closure).
@@ -143,6 +181,46 @@ export function RetuneReview({
     setIndex((i) => Math.min(i + 1, total - 1));
   }, [total]);
 
+  // ── System-balance toggle ───────────────────────────────────────────
+  // Re-load every proposal in the requested mode. Approved/declined verdicts and
+  // any local adjustments are reset (the underlying auto-targets change), so we
+  // confirm-via-toast and rebuild the queue from the fresh proposals. READ-ONLY:
+  // `planAllRetunes` writes nothing — it's a dry-run, like the initial load.
+  const onToggleSystemBalance = React.useCallback(
+    async (next: boolean) => {
+      if (reloading) return;
+      setReloading(true);
+      try {
+        const res = await planAllRetunes(next ? "portfolio" : "per-pack");
+        setItems(
+          res.proposals.map((p) => ({
+            proposal: p,
+            status: "pending" as ReviewStatus,
+            adjusted: null,
+          })),
+        );
+        setSystemPlan(res.systemPlan);
+        setPortfolioMode(next);
+        setIndex(0);
+        if (next) {
+          const tightened = res.systemPlan?.tightened.length ?? 0;
+          toast.success(
+            tightened > 0
+              ? `System balance on — ${tightened} pack${tightened === 1 ? "" : "s"} tightened to fit the catalog bounds.`
+              : "System balance on — the catalog already fits its bounds; no packs tightened.",
+          );
+        } else {
+          toast.success("System balance off — every pack back on its own auto-targets.");
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to re-load proposals.");
+      } finally {
+        setReloading(false);
+      }
+    },
+    [reloading],
+  );
+
   // ── Local re-shape (Adjust) ─────────────────────────────────────────
   const onAdjust = React.useCallback(
     (i: number, levers: AdjustedTargets) => {
@@ -161,7 +239,15 @@ export function RetuneReview({
         });
         let adjusted: AdjustedState;
         if ("error" in shaped) {
-          adjusted = { ...levers, feasible: false, after: null, weightDiff: null, error: shaped.error };
+          adjusted = {
+            ...levers,
+            feasible: false,
+            after: null,
+            weightDiff: null,
+            relaxations: [],
+            error: shaped.error,
+            limit: shaped.limit,
+          };
         } else {
           // Re-derive the per-card weight diff from the locally shaped vector
           // (mirrors the server proposal's `weightDiff` shape) so Top Movers +
@@ -178,7 +264,15 @@ export function RetuneReview({
             })),
             price: proposal.price,
           });
-          adjusted = { ...levers, feasible: true, after, weightDiff, error: undefined };
+          adjusted = {
+            ...levers,
+            feasible: true,
+            after,
+            weightDiff,
+            relaxations: shaped.relaxations,
+            error: undefined,
+            limit: null,
+          };
         }
         next[i] = { ...item, adjusted };
         return next;
@@ -327,71 +421,107 @@ export function RetuneReview({
   const progressPct = total > 0 ? Math.round(((approved + declined) / total) * 100) : 0;
 
   return (
-    <div className="space-y-4">
-      {/* Progress + counts strip */}
-      <div className="rounded-xl border bg-card px-4 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3 text-sm">
-            <span className="font-medium tabular-nums">
-              {index + 1} / {total}
-            </span>
-            <span className="text-muted-foreground">·</span>
-            <CountChip label="Approved" value={approved} tone="emerald" />
-            <CountChip label="Declined" value={declined} tone="muted" />
-            <CountChip label="Pending" value={pending} tone="blue" />
-          </div>
-          {!started && (
-            <Button size="sm" onClick={openStartGate}>
-              <ShieldCheck className="mr-1 size-3.5" />
-              Start review
-            </Button>
-          )}
-        </div>
-        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full rounded-full bg-primary motion-safe:transition-all motion-safe:duration-300 motion-safe:ease-out"
-            style={{ width: `${progressPct}%` }}
-          />
-        </div>
+    <div className="space-y-6">
+      {/* ── System Balance ─────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <SectionHeading
+          icon={Scale}
+          title="System balance"
+          action={
+            <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-muted-foreground">
+              {reloading ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="size-3.5 text-primary" />
+              )}
+              Balance whole system
+              <Switch
+                checked={portfolioMode}
+                onCheckedChange={(v) => void onToggleSystemBalance(v)}
+                disabled={reloading || applying}
+                aria-label="Balance whole system"
+              />
+            </label>
+          }
+        />
+        <SystemBalancePanel
+          portfolio={portfolio}
+          systemPlan={portfolioMode ? systemPlan : null}
+          portfolioMode={portfolioMode}
+        />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
-        <ReviewRail items={items} activeIndex={index} onJump={goTo} />
+      {/* ── Review queue ───────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <SectionHeading icon={ShieldCheck} title="Review queue" />
 
-        <div className="relative">
-          {current ? (
-            <ReviewCard
-              key={current.proposal.packId}
-              item={current}
-              index={index}
-              total={total}
-              targetEdge={targetEdge}
-              applying={applying}
-              onApprove={onApprove}
-              onDecline={onDecline}
-              onBack={() => goTo(index - 1)}
-              onAdjust={(levers) => onAdjust(index, levers)}
-              onResetAdjust={() => onResetAdjust(index)}
-            />
-          ) : null}
-
-          {/* Pre-start overlay — the stack is inert until the token is minted. */}
-          {!started && (
-            <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-background/70 backdrop-blur-[1px]">
-              <div className="max-w-xs rounded-xl border bg-card px-5 py-4 text-center shadow-sm">
-                <KeyRound className="mx-auto mb-2 size-5 text-muted-foreground" />
-                <p className="text-sm font-medium">Authorize to review</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Start the review to mint a 2FA-authorized session. Nothing is
-                  written until you approve a pack.
-                </p>
-                <Button size="sm" className="mt-3" onClick={openStartGate}>
-                  <ShieldCheck className="mr-1 size-3.5" />
-                  Start review
-                </Button>
-              </div>
+        {/* Progress + counts strip */}
+        <div className="rounded-xl border bg-card px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3 text-sm">
+              <span className="font-medium tabular-nums">
+                {index + 1} / {total}
+              </span>
+              <span className="text-muted-foreground">·</span>
+              <CountChip label="Approved" value={approved} tone="emerald" />
+              <CountChip label="Declined" value={declined} tone="muted" />
+              <CountChip label="Pending" value={pending} tone="blue" />
             </div>
-          )}
+            {!started && (
+              <Button size="sm" onClick={openStartGate}>
+                <ShieldCheck className="mr-1 size-3.5" />
+                Start review
+              </Button>
+            )}
+          </div>
+          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary motion-safe:transition-all motion-safe:duration-500 motion-safe:ease-out"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
+          <ReviewRail items={items} activeIndex={index} onJump={goTo} />
+
+          <div className="relative">
+            {current ? (
+              <FadeIn key={current.proposal.packId}>
+                <ReviewCard
+                  item={current}
+                  index={index}
+                  total={total}
+                  targetEdge={targetEdge}
+                  applying={applying}
+                  portfolioMode={portfolioMode}
+                  onApprove={onApprove}
+                  onDecline={onDecline}
+                  onBack={() => goTo(index - 1)}
+                  onAdjust={(levers) => onAdjust(index, levers)}
+                  onResetAdjust={() => onResetAdjust(index)}
+                />
+              </FadeIn>
+            ) : null}
+
+            {/* Pre-start overlay — the stack is inert until the token is minted. */}
+            {!started && (
+              <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-background/70 backdrop-blur-[1px]">
+                <div className="max-w-xs rounded-xl border bg-card px-5 py-4 text-center shadow-sm">
+                  <KeyRound className="mx-auto mb-2 size-5 text-muted-foreground" />
+                  <p className="text-sm font-medium">Authorize to review</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Start the review to mint a 2FA-authorized session. Nothing is
+                    written until you approve a pack.
+                  </p>
+                  <Button size="sm" className="mt-3" onClick={openStartGate}>
+                    <ShieldCheck className="mr-1 size-3.5" />
+                    Start review
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

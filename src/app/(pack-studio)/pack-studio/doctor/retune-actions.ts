@@ -11,6 +11,8 @@ import {
   computePackRiskFromAggregates,
   shapeWeights,
   type PackRisk,
+  type ShapeWeightsRelaxation,
+  type ShapeWeightsLimit,
 } from "@/app/(admin)/insights/edge-calc/risk";
 import {
   planPackReprice,
@@ -317,8 +319,24 @@ export type PlanAllProposal = {
   weightDiff: PlanAllWeightDiff[] | null;
   /** Whether `shapeWeights` produced a usable vector at the auto-targets. */
   feasible: boolean;
+  /**
+   * Soft targets the solver had to RELAX to reach this (feasible) result —
+   * empty when nothing was relaxed. Only present on a feasible proposal; an
+   * infeasible one carries a `limit` instead. Each entry says which lever was
+   * loosened, what was requested, what was applied, and why — so the UI can
+   * show a friendly "near-miss relaxed 10% → 0% — this pool has no near-miss
+   * cards" banner instead of silently dropping the target.
+   */
+  relaxations: ShapeWeightsRelaxation[];
   /** The solver's error verbatim when infeasible. */
   error?: string;
+  /**
+   * Structured HARD limit when the pack is genuinely infeasible (the error
+   * arm): a kind + human-readable detail + a concrete suggestion, so an
+   * infeasible pack shows a clear "why + how to fix" message rather than a dead
+   * end. Null on a feasible proposal.
+   */
+  limit: ShapeWeightsLimit | null;
 };
 
 /**
@@ -486,7 +504,13 @@ export async function planAllRetunes(
         after: null,
         weightDiff: null,
         feasible: false,
+        relaxations: [],
         error: "Pack has no cards to retune.",
+        limit: {
+          kind: "empty-pool",
+          detail: "This pack has no cards in its pool, so there is nothing to retune.",
+          suggestion: "Add cards to the pack in the Builder before retuning it.",
+        },
       };
     }
 
@@ -513,7 +537,9 @@ export async function planAllRetunes(
         after: null,
         weightDiff: null,
         feasible: false,
+        relaxations: [],
         error: shaped.error,
+        limit: shaped.limit,
       };
     }
 
@@ -533,6 +559,8 @@ export async function planAllRetunes(
       after: shaped.risk,
       weightDiff,
       feasible: true,
+      relaxations: shaped.relaxations,
+      limit: null,
     };
   });
 

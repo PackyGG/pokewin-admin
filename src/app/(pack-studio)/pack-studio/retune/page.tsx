@@ -15,7 +15,7 @@ import { getDefaultRouteForRoles } from "@/lib/admin-roles";
 import { getUserPermissions, sessionRoles } from "@/lib/dal";
 import { redirect } from "next/navigation";
 
-import { planAllRetunes } from "../doctor/retune-actions";
+import { getPortfolioProfile, planAllRetunes } from "../doctor/retune-actions";
 import { TARGET_PACK_EDGE } from "../_lib/risk-config";
 import { RetuneReview } from "./retune-review";
 
@@ -38,8 +38,13 @@ import { RetuneReview } from "./retune-review";
  */
 
 async function ReviewLoader() {
-  // READ-ONLY dry-run for every in-scope pack (no MAIN write).
-  const { proposals } = await planAllRetunes();
+  // READ-ONLY dry-run for every in-scope pack (no MAIN write) + the catalog-level
+  // system risk profile for the "System Balance" header. Both are owner-gated,
+  // read-only reads; fetched together so the surface paints in one pass.
+  const [{ proposals }, portfolio] = await Promise.all([
+    planAllRetunes(),
+    getPortfolioProfile(),
+  ]);
 
   if (proposals.length === 0) {
     return (
@@ -55,7 +60,11 @@ async function ReviewLoader() {
 
   return (
     <FadeIn>
-      <RetuneReview proposals={proposals} targetEdge={TARGET_PACK_EDGE} />
+      <RetuneReview
+        proposals={proposals}
+        targetEdge={TARGET_PACK_EDGE}
+        portfolio={portfolio}
+      />
     </FadeIn>
   );
 }
