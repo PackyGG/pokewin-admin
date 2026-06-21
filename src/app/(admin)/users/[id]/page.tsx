@@ -399,7 +399,7 @@ async function UserDetailBody({
   const gamingTxPromise = wantsGamingTx
     ? safeQuery(
         // Gaming tab defaults to 25 rows; the Overview tab's compact gaming
-        // preview keeps the smaller 10-row page. Prod-only cached (25s,
+        // preview keeps the smaller 10-row page. Prod-only cached (15s,
         // viewer-independent — gaming types carry no owner-gated adjustment
         // rows) so the 60s AutoRefresh tick + retries + revisits skip the
         // heavy ledger+enrichment fan-out. See getUserGamingTransactionsCached.

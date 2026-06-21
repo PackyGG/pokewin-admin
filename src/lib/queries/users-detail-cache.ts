@@ -42,6 +42,14 @@ import { getUserTransactions } from "./users-transactions";
 
 const REVALIDATE_SECONDS = 25;
 
+// The Gaming transaction feed gets a SHORTER TTL than the detail/balances
+// aggregate: it's the feed an operator watches update during an
+// investigation, so it should be the freshest of the cached per-user reads.
+// The underlying query is now index-served (sub-ms — idx_ledger_tx_user_created_at),
+// so this cache exists only to skip the repeated enrichment fan-out, not for
+// raw speed; 15s keeps it well inside the 60s AutoRefresh tick.
+const GAMING_TX_REVALIDATE_SECONDS = 15;
+
 // `unstable_cache` also de-duplicates within a single render, so if two
 // code paths request the same user's detail in one pass they share the
 // single underlying query. The cached callbacks always run against prod
@@ -129,7 +137,7 @@ export async function getUserPnlBreakdownCached(
  * types) behave deterministically. We therefore cache ONLY on prod and run
  * the query directly for a dev-toggled admin.
  *
- * This memoizes the whole fan-out for `REVALIDATE_SECONDS`, so the 60s
+ * This memoizes the whole fan-out for `GAMING_TX_REVALIDATE_SECONDS` (15s), so the 60s
  * AutoRefresh tick, the segment "Try again" retry, and a revisit within the
  * window all resolve from the warmed entry instead of re-paying the scan —
  * bridging the gap until the recommended `(user_id, created_at DESC)` index
@@ -142,7 +150,7 @@ const cachedUserGamingTransactions = unstable_cache(
   (userId: string, page: number, perPage: number, types: string[]) =>
     getUserTransactions(userId, page, perPage, { types }),
   ["users-detail-gaming-tx-v1"],
-  { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
+  { revalidate: GAMING_TX_REVALIDATE_SECONDS, tags: ["users-detail"] },
 );
 
 /**

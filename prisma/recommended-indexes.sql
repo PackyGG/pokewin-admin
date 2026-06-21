@@ -503,11 +503,17 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_inv_owned_by_user
 -- 66 ms and ~1 ms; cold + under the MAIN max:3 pool with several /users/[id]
 -- tabs open it is the difference between "loads" and "takes ages / times out".
 --
--- Until this is applied the listing is mitigated (not fixed): it streams behind
--- <Suspense>, is safeQuery timeout-bounded, and the Gaming first page is now
--- prod-only cached (25s) so repeat/auto-refresh loads skip the scan. The cold
--- first load for a power user still pays the global-scan cost — APPLY THIS to
--- close it.
+-- The Gaming first page is ALSO prod-only cached (15s) so repeat/auto-refresh
+-- loads skip the enrichment fan-out, but the index is what makes the cold
+-- first load cheap rather than merely infrequent.
+--
+-- APPLIED (2026-06-21, valid) — owner applied this index; re-verified
+-- read-only against prod (same highest-activity user): all three real
+-- listings now run `Index Scan using idx_ledger_tx_user_created_at`:
+--   Gaming page-1 (no status):  Rows Removed by Filter: 64    Buffers: 53   Execution: 0.46 ms
+--   Finances page-1 (no status):Rows Removed by Filter: 1,583 Buffers: 831  Execution: 2.0 ms
+--   user_id-only page-1:        Buffers: 8                    Execution: 0.06 ms
+-- (was 66 / 40 / 18.9 ms with ~75k/75k/31k buffers and 187k/188k rows filtered.)
 --
 -- Accelerates:
 --   • src/lib/queries/users-transactions.ts getUserTransactions (every tab)
