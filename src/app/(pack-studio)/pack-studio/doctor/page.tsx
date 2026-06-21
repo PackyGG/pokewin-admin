@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/empty-state";
 import { TableSkeleton } from "@/components/loading-skeletons";
 import { FadeIn } from "@/components/fade-in";
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
+import { isOwner } from "@/lib/owners";
 import {
   getPackRiskRows,
   type PackRiskFilters,
@@ -19,6 +20,7 @@ import { TARGET_PACK_EDGE } from "../_lib/risk-config";
 import { SnapshotButton } from "./snapshot-button";
 import { DoctorFilters } from "./doctor-filters";
 import { DoctorTable } from "./doctor-table";
+import { RepinCustomButton } from "./repin-custom-button";
 
 /**
  * Pack Studio — Pack Doctor. Read-only scored grid of every active cash pack's
@@ -86,7 +88,13 @@ function hasActiveFilters(f: PackRiskFilters): boolean {
   );
 }
 
-async function DoctorGrid({ filters }: { filters: PackRiskFilters }) {
+async function DoctorGrid({
+  filters,
+  owner,
+}: {
+  filters: PackRiskFilters;
+  owner: boolean;
+}) {
   const rows = await getPackRiskRows(filters);
 
   // No rows AND no filters applied → there is no snapshot yet (or no in-scope
@@ -106,9 +114,20 @@ async function DoctorGrid({ filters }: { filters: PackRiskFilters }) {
 
   return (
     <FadeIn>
-      <DoctorTable rows={rows} targetEdge={TARGET_PACK_EDGE} />
+      <DoctorTable rows={rows} targetEdge={TARGET_PACK_EDGE} isOwner={owner} />
     </FadeIn>
   );
+}
+
+/**
+ * Owner-only "Re-pin custom packs" hero action. Reads the below-target CUSTOM
+ * packs from the SAME persisted snapshot the grid renders (no MAIN write), so
+ * the candidate set always matches what the operator sees. Streamed behind its
+ * own boundary so it never blocks the hero's first paint.
+ */
+async function RepinAction() {
+  const customBelow = await getPackRiskRows({ type: "custom", belowTarget: true });
+  return <RepinCustomButton candidateIds={customBelow.map((r) => r.packId)} />;
 }
 
 export default async function PackDoctorPage({
@@ -116,7 +135,8 @@ export default async function PackDoctorPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  await requirePackStudioPageAccess();
+  const session = await requirePackStudioPageAccess();
+  const owner = isOwner(session);
 
   const sp = await searchParams;
   const filters = paramsToFilters(sp);
@@ -142,7 +162,16 @@ export default async function PackDoctorPage({
           accent="purple"
           title="Pack Doctor"
           subtitle="Diagnose pack edge, EV, and risk health across every cash pack."
-          action={<SnapshotButton />}
+          action={
+            <div className="flex flex-wrap items-center gap-2">
+              {owner && (
+                <Suspense fallback={null}>
+                  <RepinAction />
+                </Suspense>
+              )}
+              <SnapshotButton />
+            </div>
+          }
         />
       </PageHero>
 
@@ -156,7 +185,7 @@ export default async function PackDoctorPage({
           key={suspenseKey}
           fallback={<TableSkeleton rows={8} columns={10} />}
         >
-          <DoctorGrid filters={filters} />
+          <DoctorGrid filters={filters} owner={owner} />
         </Suspense>
       </div>
     </div>

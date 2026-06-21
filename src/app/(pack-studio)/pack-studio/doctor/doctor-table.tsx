@@ -1,12 +1,13 @@
 "use client";
 
+import * as React from "react";
 import {
   type ColumnDef,
   flexRender,
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { Stethoscope } from "lucide-react";
+import { SlidersHorizontal, Stethoscope } from "lucide-react";
 
 import {
   Table,
@@ -17,11 +18,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { EmptyState } from "@/components/empty-state";
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import type { PackRiskRow } from "../_queries/doctor";
+import { RetuneDrawer } from "./retune-drawer";
+import { BulkRetuneButton } from "./bulk-retune-button";
 
 /**
  * Pack Doctor scored grid (read-only). Renders the persisted risk rows in a
@@ -93,8 +98,48 @@ function FlagBadges({ row }: { row: PackRiskRow }) {
   );
 }
 
-function buildColumns(targetEdge: number): ColumnDef<PackRiskRow>[] {
-  return [
+/** Owner-only controls injected into the column set (selection + re-tune). */
+type OwnerControls = {
+  selected: Set<string>;
+  toggle: (packId: string) => void;
+  toggleAll: (packIds: string[], on: boolean) => void;
+  allOnPage: string[];
+  onRetune: (packId: string) => void;
+};
+
+function buildColumns(
+  targetEdge: number,
+  owner: OwnerControls | null,
+): ColumnDef<PackRiskRow>[] {
+  const cols: ColumnDef<PackRiskRow>[] = [];
+
+  if (owner) {
+    const allSelected =
+      owner.allOnPage.length > 0 &&
+      owner.allOnPage.every((id) => owner.selected.has(id));
+    const someSelected =
+      owner.allOnPage.some((id) => owner.selected.has(id)) && !allSelected;
+    cols.push({
+      id: "select",
+      header: () => (
+        <Checkbox
+          checked={allSelected}
+          indeterminate={someSelected}
+          onCheckedChange={(checked) => owner.toggleAll(owner.allOnPage, checked === true)}
+          aria-label="Select all packs"
+        />
+      ),
+      cell: ({ row }) => (
+        <Checkbox
+          checked={owner.selected.has(row.original.packId)}
+          onCheckedChange={() => owner.toggle(row.original.packId)}
+          aria-label={`Select ${row.original.name}`}
+        />
+      ),
+    });
+  }
+
+  cols.push(
     {
       accessorKey: "name",
       header: () => <DataTableColumnHeader title="Pack" sortKey="name" />,
@@ -223,25 +268,128 @@ function buildColumns(targetEdge: number): ColumnDef<PackRiskRow>[] {
       header: "Flags",
       cell: ({ row }) => <FlagBadges row={row.original} />,
     },
-  ];
+  );
+
+  if (owner) {
+    cols.push({
+      id: "retune",
+      header: () => <span className="sr-only">Re-tune</span>,
+      cell: ({ row }) => (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 px-2"
+          onClick={() => owner.onRetune(row.original.packId)}
+        >
+          <SlidersHorizontal className="size-3.5" />
+          Re-tune
+        </Button>
+      ),
+    });
+  }
+
+  return cols;
 }
 
 export function DoctorTable({
   rows,
   targetEdge,
+  isOwner = false,
 }: {
   rows: PackRiskRow[];
   targetEdge: number;
+  /** Owner-only: renders the selection column, the per-row + bulk re-tune UI. */
+  isOwner?: boolean;
 }) {
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [retuneId, setRetuneId] = React.useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
+
+  const nameById = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rows) m.set(r.packId, r.name);
+    return m;
+  }, [rows]);
+
+  // Drop any selected id that's no longer in the current (filtered) row set so
+  // the bulk count + payload never reference a row the operator can't see.
+  React.useEffect(() => {
+    setSelected((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) if (nameById.has(id)) next.add(id);
+      return next.size === prev.size ? prev : next;
+    });
+  }, [nameById]);
+
+  const toggle = React.useCallback((packId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(packId)) next.delete(packId);
+      else next.add(packId);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = React.useCallback((packIds: string[], on: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of packIds) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const onRetune = React.useCallback((packId: string) => {
+    setRetuneId(packId);
+    setDrawerOpen(true);
+  }, []);
+
+  const allOnPage = React.useMemo(() => rows.map((r) => r.packId), [rows]);
+
+  const owner: OwnerControls | null = React.useMemo(
+    () =>
+      isOwner
+        ? { selected, toggle, toggleAll, allOnPage, onRetune }
+        : null,
+    [isOwner, selected, toggle, toggleAll, allOnPage, onRetune],
+  );
+
+  const columns = React.useMemo(
+    () => buildColumns(targetEdge, owner),
+    [targetEdge, owner],
+  );
+
   const table = useReactTable({
     data: rows,
-    columns: buildColumns(targetEdge),
+    columns,
     getCoreRowModel: getCoreRowModel(),
   });
   const columnCount = table.getAllColumns().length;
 
+  const selectedRows = React.useMemo(
+    () =>
+      Array.from(selected)
+        .filter((id) => nameById.has(id))
+        .map((id) => ({ packId: id, name: nameById.get(id)! })),
+    [selected, nameById],
+  );
+
   return (
-    <div className="rounded-md border overflow-x-auto">
+    <div className="space-y-3">
+      {isOwner && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-muted-foreground">
+            {selectedRows.length > 0
+              ? `${selectedRows.length} selected`
+              : "Select packs to bulk re-tune, or re-tune a single pack from its row."}
+          </p>
+          <BulkRetuneButton selected={selectedRows} />
+        </div>
+      )}
+
+      <div className="rounded-md border overflow-x-auto">
       <Table>
         <TableHeader>
           {table.getHeaderGroups().map((hg) => (
@@ -284,6 +432,18 @@ export function DoctorTable({
           )}
         </TableBody>
       </Table>
+      </div>
+
+      {isOwner && (
+        <RetuneDrawer
+          packId={retuneId}
+          open={drawerOpen}
+          onOpenChange={(o) => {
+            setDrawerOpen(o);
+            if (!o) setRetuneId(null);
+          }}
+        />
+      )}
     </div>
   );
 }
