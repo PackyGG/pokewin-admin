@@ -9,6 +9,7 @@ import {
   Wand2,
   Layers,
   Sparkles,
+  History,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -53,6 +54,16 @@ const STUDIO_NAV: StudioNavItem[] = [
   { label: "Bulk Retune", href: "/pack-studio/retune", icon: Sparkles },
   { label: "Pack Builder", href: "/pack-studio/builder", icon: Wand2 },
   { label: "Card Editor", href: "/pack-studio/cards", icon: Layers },
+];
+
+/**
+ * Owner-only nav entries — appended after the shared workspace nav when the
+ * layout reports the viewer is an owner. The Pack Change History + revert page
+ * is owner-gated server-side (`requirePackStudioPageAccess` + owner check), so
+ * the nav link is hidden for non-owners to avoid a click that just bounces.
+ */
+const STUDIO_OWNER_NAV: StudioNavItem[] = [
+  { label: "History", href: "/pack-studio/history", icon: History },
 ];
 
 function StudioNavMenu({
@@ -100,9 +111,12 @@ function StudioNavMenu({
   );
 }
 
-export function PackStudioSidebar() {
+export function PackStudioSidebar({ isOwner = false }: { isOwner?: boolean }) {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
+
+  // Owner-only entries (History) append after the shared workspace nav.
+  const navItems = isOwner ? [...STUDIO_NAV, ...STUDIO_OWNER_NAV] : STUDIO_NAV;
 
   // Close the mobile drawer on a navigation tap (same UX the main sidebar
   // applies — otherwise the new page renders behind the still-open sheet).
@@ -184,7 +198,7 @@ export function PackStudioSidebar() {
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarGroupContent>
             <StudioNavMenu
-              items={STUDIO_NAV}
+              items={navItems}
               pathname={pathname}
               onNavTap={handleNavTap}
             />

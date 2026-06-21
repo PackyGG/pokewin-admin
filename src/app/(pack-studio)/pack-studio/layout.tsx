@@ -25,6 +25,7 @@ import {
   type PackStudioAccessSettings,
 } from "@/lib/pack-studio-access";
 import { adminDb } from "@/lib/admin-db";
+import { isOwner } from "@/lib/owners";
 import { getAdminPreferences } from "@/lib/admin-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
@@ -215,8 +216,11 @@ export default async function PackStudioLayout({
         <Suspense fallback={null}>
           <TopProgressBar />
         </Suspense>
-        {/* The swapped nav — Pack Studio's own sidebar replaces AppSidebar. */}
-        <PackStudioSidebar />
+        {/* The swapped nav — Pack Studio's own sidebar replaces AppSidebar.
+            `isOwner` reveals the owner-only History entry (the page itself is
+            owner-gated server-side, so this just hides a link non-owners can't
+            use). */}
+        <PackStudioSidebar isOwner={isOwner(session)} />
         <SidebarInset className="min-w-0">
           {dbEnv === "dev" && <DevDbBanner />}
           <AdminHeader
