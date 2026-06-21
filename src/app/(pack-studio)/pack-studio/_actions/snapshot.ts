@@ -100,10 +100,14 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
 
   const computedAt = new Date();
 
-  // Upsert one risk row per pack. Sequential await keeps the connection
-  // footprint flat (the set is small); each row is independent so a single
-  // bad pack can't poison the rest of the batch beyond its own throw.
-  for (const c of compositions) {
+  // Build one upsert per pack, then commit them in a SINGLE batched
+  // round-trip. The previous version awaited each upsert sequentially —
+  // ~one network round-trip per pack to the remote ADMIN DB — which, across
+  // every active cash pack, could exceed the serverless function budget and
+  // surface to the operator as a "timed out" snapshot. `$transaction([...])`
+  // sends the whole batch in one round-trip (and is atomic: a single bad
+  // pack rolls the batch back rather than leaving a half-written snapshot).
+  const upserts = compositions.map((c) => {
     const risk = computePackRiskFromAggregates({
       price: c.price,
       totalWeight: c.totalWeight,
@@ -115,37 +119,27 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
       floorValue: c.floorValue,
     });
 
-    const compliance = buildCompliance(risk, maxWinCap);
+    const row = {
+      edge: risk.edge,
+      cv: risk.cv,
+      win_rate: risk.winRate,
+      near_miss: risk.nearMiss,
+      max_win: risk.maxWin,
+      max_mult: risk.maxMult,
+      risk_score: risk.riskScore0to100,
+      tier: risk.tier,
+      compliance: buildCompliance(risk, maxWinCap),
+      computed_at: computedAt,
+    };
 
-    await adminDb.pack_risk_scores.upsert({
+    return adminDb.pack_risk_scores.upsert({
       where: { pack_id: c.id },
-      update: {
-        edge: risk.edge,
-        cv: risk.cv,
-        win_rate: risk.winRate,
-        near_miss: risk.nearMiss,
-        max_win: risk.maxWin,
-        max_mult: risk.maxMult,
-        risk_score: risk.riskScore0to100,
-        tier: risk.tier,
-        compliance,
-        computed_at: computedAt,
-      },
-      create: {
-        pack_id: c.id,
-        edge: risk.edge,
-        cv: risk.cv,
-        win_rate: risk.winRate,
-        near_miss: risk.nearMiss,
-        max_win: risk.maxWin,
-        max_mult: risk.maxMult,
-        risk_score: risk.riskScore0to100,
-        tier: risk.tier,
-        compliance,
-        computed_at: computedAt,
-      },
+      update: row,
+      create: { pack_id: c.id, ...row },
     });
-  }
+  });
+
+  await adminDb.$transaction(upserts);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
