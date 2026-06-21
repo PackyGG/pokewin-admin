@@ -9,10 +9,15 @@ import {
   DEFAULT_MAX_MULT_CEILING,
   DEFAULT_TARGET_WIN_RATE,
   DEFAULT_NEAR_MISS_MIN,
+  DEFAULT_EDGE_FLOOR,
+  DEFAULT_EDGE_CEILING,
+  DEFAULT_EDGE_CURVE,
   autoMaxWinCap,
   autoRetuneTargets,
+  autoTargetEdge,
   type ResolvedAutoTargetCfg,
   type AutoRetuneTargets,
+  type EdgeCurveConfig,
 } from "./auto-targets";
 
 /**
@@ -32,10 +37,15 @@ export {
   DEFAULT_MAX_MULT_CEILING,
   DEFAULT_TARGET_WIN_RATE,
   DEFAULT_NEAR_MISS_MIN,
+  DEFAULT_EDGE_FLOOR,
+  DEFAULT_EDGE_CEILING,
+  DEFAULT_EDGE_CURVE,
   autoMaxWinCap,
   autoRetuneTargets,
+  autoTargetEdge,
   type ResolvedAutoTargetCfg,
   type AutoRetuneTargets,
+  type EdgeCurveConfig,
 };
 
 /**
@@ -134,6 +144,12 @@ export type PackSystemConfig = {
   phase?: string;
   /** Reserve capital (USD) backing the current ramp phase. */
   reserves?: number;
+  /**
+   * Optional overrides for the per-pack edge curve (floor / ceiling / premium
+   * coefficients). Any field omitted falls back to {@link DEFAULT_EDGE_CURVE}.
+   * Read + validated by {@link readEdgeCurveConfig}.
+   */
+  edgeCurve?: Partial<EdgeCurveConfig>;
 };
 
 /** ADMIN-DB settings key holding the pack-system config JSON blob. */
@@ -177,4 +193,60 @@ export async function readMaxMultCeiling(): Promise<number> {
   const m = cfg?.maxMultCeiling;
   if (typeof m === "number" && Number.isFinite(m) && m > 0) return m;
   return DEFAULT_MAX_MULT_CEILING;
+}
+
+/** Keep only the positive-finite overrides from a partial edge-curve blob. */
+function sanitizeEdgeCurveOverride(
+  o: Partial<EdgeCurveConfig> | undefined,
+): EdgeCurveConfig {
+  const merged: EdgeCurveConfig = { ...DEFAULT_EDGE_CURVE };
+  if (!o || typeof o !== "object") return merged;
+  const keys: (keyof EdgeCurveConfig)[] = [
+    "edgeFloor",
+    "edgeCeiling",
+    "maxWinCoef",
+    "priceCoef",
+    "maxWinBase",
+    "maxWinRef",
+    "priceBase",
+    "priceRef",
+  ];
+  for (const k of keys) {
+    const v = o[k];
+    // Accept only positive finite numbers; coefficients may be 0 (no premium
+    // from that driver), so those two allow ≥ 0.
+    const allowZero = k === "maxWinCoef" || k === "priceCoef";
+    if (typeof v === "number" && Number.isFinite(v) && (allowZero ? v >= 0 : v > 0)) {
+      merged[k] = v;
+    }
+  }
+  // Guard the invariant the curve relies on: floor ≤ ceiling, ref > base. If an
+  // override breaks either, fall back to the default for the offending pair so
+  // `autoTargetEdge` can never produce a degenerate (NaN / inverted) band.
+  if (!(merged.edgeFloor <= merged.edgeCeiling)) {
+    merged.edgeFloor = DEFAULT_EDGE_CURVE.edgeFloor;
+    merged.edgeCeiling = DEFAULT_EDGE_CURVE.edgeCeiling;
+  }
+  if (!(merged.maxWinRef > merged.maxWinBase)) {
+    merged.maxWinBase = DEFAULT_EDGE_CURVE.maxWinBase;
+    merged.maxWinRef = DEFAULT_EDGE_CURVE.maxWinRef;
+  }
+  if (!(merged.priceRef > merged.priceBase)) {
+    merged.priceBase = DEFAULT_EDGE_CURVE.priceBase;
+    merged.priceRef = DEFAULT_EDGE_CURVE.priceRef;
+  }
+  return merged;
+}
+
+/**
+ * Resolve the per-pack edge-curve config: the {@link DEFAULT_EDGE_CURVE}
+ * coefficients with any positive-finite overrides from
+ * `pack_system_config.edgeCurve` merged in. Used to fill
+ * {@link ResolvedAutoTargetCfg.edgeCurve} so `autoRetuneTargets` /
+ * `autoTargetEdge` tune off the same source-of-truth blob as the cap config.
+ * Always returns a complete, invariant-safe config (never throws, never NaN).
+ */
+export async function readEdgeCurveConfig(): Promise<EdgeCurveConfig> {
+  const cfg = await readPackSystemConfig();
+  return sanitizeEdgeCurveOverride(cfg?.edgeCurve);
 }

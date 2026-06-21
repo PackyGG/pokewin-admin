@@ -40,9 +40,13 @@ import { TARGET_HOUSE_EDGE } from "../../insights/edge-calc/math";
 import {
   autoMaxWinCap,
   autoRetuneTargets,
+  autoTargetEdge,
   TARGET_PACK_EDGE,
   DEFAULT_TARGET_WIN_RATE,
   DEFAULT_NEAR_MISS_MIN,
+  DEFAULT_EDGE_FLOOR,
+  DEFAULT_EDGE_CEILING,
+  DEFAULT_EDGE_CURVE,
 } from "../../../(pack-studio)/pack-studio/_lib/auto-targets";
 
 let passes = 0;
@@ -809,17 +813,135 @@ check("autoMaxWinCap = min(global, price·ceiling) and always ≥ price", () => 
   }
 });
 
-// ── 9. autoRetuneTargets wires the auto-cap + house defaults ────────────
-check("autoRetuneTargets = {house edge, default win-rate/near-miss, autoMaxWinCap}", () => {
+// ── 9. autoRetuneTargets wires the per-pack edge + auto-cap + house defaults ──
+check("autoRetuneTargets = {per-pack edge, default win-rate/near-miss, autoMaxWinCap}", () => {
   const cfg = { globalCap: 25000, maxMultCeiling: 100 };
   for (const price of [1, 5, 25, 100, 1000]) {
     const t = autoRetuneTargets(price, cfg);
-    approx(t.targetEdge, TARGET_PACK_EDGE, 1e-12, "targetEdge = house edge");
-    approx(t.targetEdge, TARGET_HOUSE_EDGE, 1e-12, "house edge identity");
     approx(t.targetWinRate, DEFAULT_TARGET_WIN_RATE, 1e-12, "targetWinRate default");
     approx(t.nearMissMin, DEFAULT_NEAR_MISS_MIN, 1e-12, "nearMissMin default");
     approx(t.maxWinCap, autoMaxWinCap(price, cfg), 1e-9, "maxWinCap = autoMaxWinCap");
     assert(t.maxWinCap >= price - 1e-9, `auto cap ≥ price (p=${price})`);
+    // targetEdge = autoTargetEdge using the pack's intended cap as the max-win
+    // proxy (pre-shape) — never below the floor, always within the band.
+    approx(
+      t.targetEdge,
+      autoTargetEdge({ price, maxWin: t.maxWinCap }),
+      1e-12,
+      "targetEdge = autoTargetEdge(price, autoMaxWinCap)",
+    );
+    assert(t.targetEdge >= DEFAULT_EDGE_FLOOR - 1e-12, `targetEdge ≥ floor (p=${price})`);
+    assert(t.targetEdge <= DEFAULT_EDGE_CEILING + 1e-12, `targetEdge ≤ ceiling (p=${price})`);
+  }
+  // A calm cheap pack (tiny cap ⇒ tiny max-win proxy, low price) sits at the floor.
+  const calm = autoRetuneTargets(1, { globalCap: 25000, maxMultCeiling: 100 });
+  // price 1, cap = min(25000, 100) = 100 < maxWinBase(500) and price < priceBase(2)
+  // ⇒ both drivers 0 ⇒ exactly the floor (= TARGET_PACK_EDGE = TARGET_HOUSE_EDGE).
+  approx(calm.targetEdge, TARGET_PACK_EDGE, 1e-12, "calm cheap pack → floor");
+  approx(calm.targetEdge, TARGET_HOUSE_EDGE, 1e-12, "floor = house edge identity");
+});
+
+// ── 10. autoTargetEdge: floor / ceiling / monotonicity / calibration ────
+check("autoTargetEdge ∈ [floor, ceiling], NEVER below 0.1099, finite", () => {
+  // Floor identity.
+  approx(DEFAULT_EDGE_FLOOR, 0.1099, 1e-12, "floor is 10.99%");
+  approx(DEFAULT_EDGE_FLOOR, TARGET_PACK_EDGE, 1e-12, "floor = TARGET_PACK_EDGE");
+  approx(DEFAULT_EDGE_CEILING, 0.115, 1e-12, "ceiling is 11.50%");
+  // Wide sweep over the live-catalog ranges (and beyond) — clamp invariants.
+  for (const price of [0, 0.15, 1, 2, 5, 12, 25, 100, 250, 766, 1300, 5000, 1e6]) {
+    for (const maxWin of [0, 12, 100, 300, 500, 1000, 5000, 24000, 50000, 1e7]) {
+      const e = autoTargetEdge({ price, maxWin });
+      assert(Number.isFinite(e), `finite (p=${price},m=${maxWin}), got ${e}`);
+      assert(e >= DEFAULT_EDGE_FLOOR - 1e-12, `≥ floor (p=${price},m=${maxWin}): ${e}`);
+      assert(e <= DEFAULT_EDGE_CEILING + 1e-12, `≤ ceiling (p=${price},m=${maxWin}): ${e}`);
+      assert(e >= 0.1099 - 1e-12, `NEVER below 0.1099 (p=${price},m=${maxWin}): ${e}`);
+    }
+  }
+  // Non-finite inputs are treated as 0 ⇒ floor (NaN-safe contract).
+  approx(autoTargetEdge({ price: NaN, maxWin: NaN }), DEFAULT_EDGE_FLOOR, 1e-12, "NaN inputs → floor");
+  approx(autoTargetEdge({ price: -5, maxWin: -5 }), DEFAULT_EDGE_FLOOR, 1e-12, "negative inputs → floor");
+  approx(autoTargetEdge({ price: Infinity, maxWin: Infinity }), DEFAULT_EDGE_FLOOR, 1e-12, "Inf inputs → floor");
+});
+
+check("autoTargetEdge non-decreasing in maxWin and in price", () => {
+  // Non-decreasing in maxWin (price held fixed across several fixed prices).
+  for (const price of [0.5, 2, 12, 100, 766, 2000]) {
+    let prev = -1;
+    for (const maxWin of [0, 100, 300, 500, 800, 1500, 5000, 12000, 24000, 60000, 1e6]) {
+      const e = autoTargetEdge({ price, maxWin });
+      assert(e >= prev - 1e-12, `maxWin-monotone (p=${price}): ${prev} → ${e} @ m=${maxWin}`);
+      prev = e;
+    }
+  }
+  // Non-decreasing in price (maxWin held fixed across several fixed max-wins).
+  for (const maxWin of [50, 500, 2400, 11000, 24000, 50000]) {
+    let prev = -1;
+    for (const price of [0, 1, 2, 5, 12, 50, 150, 400, 766, 1300, 5000, 1e6]) {
+      const e = autoTargetEdge({ price, maxWin });
+      assert(e >= prev - 1e-12, `price-monotone (m=${maxWin}): ${prev} → ${e} @ p=${price}`);
+      prev = e;
+    }
+  }
+});
+
+check("autoTargetEdge: calm pool → exactly the floor; top-of-catalog → ≈11.10%", () => {
+  // A cheap/calm pack: price ≤ priceBase AND maxWin ≤ maxWinBase ⇒ both drivers
+  // contribute 0 ⇒ exactly the floor.
+  approx(
+    autoTargetEdge({ price: DEFAULT_EDGE_CURVE.priceBase, maxWin: DEFAULT_EDGE_CURVE.maxWinBase }),
+    DEFAULT_EDGE_FLOOR,
+    1e-12,
+    "price=priceBase, maxWin=maxWinBase → floor",
+  );
+  approx(autoTargetEdge({ price: 0.15, maxWin: 300 }), DEFAULT_EDGE_FLOOR, 1e-12, "cheap real pack (Trash) → floor");
+  approx(autoTargetEdge({ price: 0.45, maxWin: 12.32 }), DEFAULT_EDGE_FLOOR, 1e-12, "cheap real pack (Snack) → floor");
+
+  // Top-of-catalog reference pack ($766 price, ~$24k top card — Divine Order):
+  // both drivers ≈ 1.0 ⇒ premium ≈ maxWinCoef + priceCoef ⇒ edge ≈ 11.10%.
+  // Tolerance ±0.0003 (±0.03pp): the log-norm is ≈1.0 at the reference but the
+  // live values aren't EXACTLY at priceRef/maxWinRef.
+  const divine = autoTargetEdge({ price: 766.92, maxWin: 24265.42 });
+  approx(divine, 0.1110, 0.0003, "Divine Order ($766/$24k) ≈ 11.10% (owner target)");
+  assert(divine > DEFAULT_EDGE_FLOOR, "top pack edge strictly above floor");
+  assert(divine < DEFAULT_EDGE_CEILING, "top pack edge well under ceiling");
+
+  // A mid calm pack (~$12, modest jackpot just over base) sits near 11.00%.
+  const mid = autoTargetEdge({ price: 12.55, maxWin: 547.63 });
+  assert(mid >= DEFAULT_EDGE_FLOOR, "mid ≥ floor");
+  assert(mid < 0.1102 + 1e-9, `mid pack ≈11.00% (got ${(mid * 100).toFixed(4)}%)`);
+
+  // A hypothetical extreme pushes toward — but never past — the ceiling.
+  const extreme = autoTargetEdge({ price: 1e6, maxWin: 1e7 });
+  assert(extreme > 0.1120, `extreme approaches 11.20%+ (got ${(extreme * 100).toFixed(4)}%)`);
+  assert(extreme <= DEFAULT_EDGE_CEILING + 1e-12, "extreme capped at ceiling");
+});
+
+check("autoTargetEdge sweep: dense grid stays in band & jointly monotone", () => {
+  const prices = [0, 0.5, 1, 2, 5, 12, 30, 80, 200, 500, 766, 1500, 4000, 20000];
+  const maxWins = [0, 50, 300, 500, 900, 2400, 6000, 11000, 18000, 24000, 40000, 120000];
+  // Band invariant over the whole grid.
+  for (const p of prices) {
+    for (const m of maxWins) {
+      const e = autoTargetEdge({ price: p, maxWin: m });
+      assert(
+        e >= DEFAULT_EDGE_FLOOR - 1e-12 && e <= DEFAULT_EDGE_CEILING + 1e-12,
+        `grid in band (p=${p},m=${m}): ${e}`,
+      );
+    }
+  }
+  // Joint monotonicity: raising EITHER axis never lowers the edge.
+  for (let i = 0; i < prices.length; i++) {
+    for (let j = 0; j < maxWins.length; j++) {
+      const base = autoTargetEdge({ price: prices[i]!, maxWin: maxWins[j]! });
+      if (i + 1 < prices.length) {
+        const up = autoTargetEdge({ price: prices[i + 1]!, maxWin: maxWins[j]! });
+        assert(up >= base - 1e-12, `price↑ non-decreasing (p=${prices[i]}→${prices[i + 1]},m=${maxWins[j]})`);
+      }
+      if (j + 1 < maxWins.length) {
+        const up = autoTargetEdge({ price: prices[i]!, maxWin: maxWins[j + 1]! });
+        assert(up >= base - 1e-12, `maxWin↑ non-decreasing (p=${prices[i]},m=${maxWins[j]}→${maxWins[j + 1]})`);
+      }
+    }
   }
 });
 

@@ -17,6 +17,146 @@ import { TARGET_HOUSE_EDGE } from "@/app/(admin)/insights/edge-calc/math";
 /** Target house edge a compliant cash pack must hit (10.99%). */
 export const TARGET_PACK_EDGE = TARGET_HOUSE_EDGE;
 
+// ─── Per-pack edge curve (floor + risk premium) ─────────────────────────
+//
+// The target edge is NO LONGER a flat 10.99% for every pack. Instead each pack
+// targets `EDGE_FLOOR + a gentle risk premium` — the premium rises with the
+// pack's HOUSE RISK (primarily its max-win $ exposure, secondarily its price).
+// The curve is ONE-DIRECTIONAL: it only ever pushes a pack's target UP from the
+// floor, never below it. A calm/cheap pack sits exactly at the floor; the
+// spiciest packs the house carries (high price + a five-figure top card) target
+// a little above it, hard-capped well short of anything punitive.
+//
+// WHY (house economics): a higher max-win $ jackpot and a higher ticket price
+// both raise the variance + worst-case drawdown the bankroll must absorb on that
+// pack. Charging a slightly fatter edge on exactly those packs is a risk premium
+// — it funds the extra reserve those packs tie up — while the bulk of the
+// catalog (cheap, calm packs) stays at the headline 10.99%.
+
+/**
+ * Hard floor on a pack's target edge (10.99%). NO pack ever targets below this
+ * — the curve is one-directional (premium ≥ 0), so the floor is also the target
+ * for any cheap/calm pack. Equals {@link TARGET_PACK_EDGE} by construction.
+ */
+export const DEFAULT_EDGE_FLOOR = TARGET_PACK_EDGE;
+
+/**
+ * Hard ceiling on a pack's target edge (11.50%). A safety cap that almost
+ * nothing reaches — only a hypothetical extreme (a pack far pricier / far more
+ * jackpot-heavy than anything in the live catalog) approaches it. The real
+ * top-of-catalog packs (e.g. a $766 / $24k-top pack) land around 11.10%, well
+ * under this cap.
+ */
+export const DEFAULT_EDGE_CEILING = 0.115;
+
+/**
+ * Curve coefficients + log-scale anchors driving the risk premium. CALIBRATED
+ * against the live official-pack catalog (read-only prod probe of active
+ * `pack_type='official'` packs: their price + the max obtainable card value),
+ * so the catalog lands as the owner specified:
+ *
+ *   • a cheap / calm pack (≤ ~$2, low max-win)        → the floor (10.99%)
+ *   • a mid pack (~$10–20, calm jackpot)              → ~11.00%
+ *   • a top-of-catalog pack ($766 price / ~$24k top)  → ~11.10%  (the target)
+ *   • only a hypothetical extreme                     → approaches 11.20%+,
+ *                                                       hard-capped at 11.50%
+ *
+ * The premium is the sum of two log-scaled drivers, each normalised to 0 at a
+ * "calm baseline" and to ~1.0 at the top-of-catalog reference:
+ *
+ *   premium = maxWinCoef · logNorm(maxWin, maxWinBase, maxWinRef)
+ *           + priceCoef  · logNorm(price,  priceBase,  priceRef)
+ *
+ * `logNorm(x, base, ref) = clamp₀(ln(x/base) / ln(ref/base))` — 0 at/below the
+ * base, rising log-scaled to 1.0 at the reference (and beyond, so an extreme can
+ * push past the references toward the ceiling). Because `ln` is monotone and the
+ * coefficients are non-negative, the premium — and therefore the target edge —
+ * is monotone NON-DECREASING in both `maxWin` and `price`.
+ *
+ * maxWin is the PRIMARY driver (coef 0.0008) and price the SECONDARY (coef
+ * 0.0003): at the top-of-catalog reference both drivers ≈ 1.0, so the premium ≈
+ * 0.0011 → 10.99% + 0.11pp ≈ 11.10%, exactly the owner's target for that pack.
+ * The baselines ($500 max-win, $2 price) sit at/below the calm end of the live
+ * distribution so the bulk of cheap/calm packs contribute zero premium and stay
+ * on the floor. Constants are tunable via `pack_system_config` (see
+ * `readEdgeCurveConfig` in `risk-config`).
+ */
+export type EdgeCurveConfig = {
+  /** Hard floor on the target edge (default {@link DEFAULT_EDGE_FLOOR}). */
+  edgeFloor: number;
+  /** Hard ceiling on the target edge (default {@link DEFAULT_EDGE_CEILING}). */
+  edgeCeiling: number;
+  /** Premium weight on the (log-scaled) max-win driver — the PRIMARY driver. */
+  maxWinCoef: number;
+  /** Premium weight on the (log-scaled) price driver — the SECONDARY driver. */
+  priceCoef: number;
+  /** Max-win ($) at/below which the max-win driver contributes 0. */
+  maxWinBase: number;
+  /** Max-win ($) reference where the max-win driver's log-norm ≈ 1.0. */
+  maxWinRef: number;
+  /** Price ($) at/below which the price driver contributes 0. */
+  priceBase: number;
+  /** Price ($) reference where the price driver's log-norm ≈ 1.0. */
+  priceRef: number;
+};
+
+/** Default (calibrated) edge-curve coefficients — see {@link EdgeCurveConfig}. */
+export const DEFAULT_EDGE_CURVE: EdgeCurveConfig = {
+  edgeFloor: DEFAULT_EDGE_FLOOR,
+  edgeCeiling: DEFAULT_EDGE_CEILING,
+  maxWinCoef: 0.0008,
+  priceCoef: 0.0003,
+  maxWinBase: 500,
+  maxWinRef: 24000,
+  priceBase: 2,
+  priceRef: 766,
+};
+
+/**
+ * Log-scaled, clamped-at-0 normalisation: 0 for `x ≤ base`, rising as
+ * `ln(x/base) / ln(ref/base)` (≈ 1.0 at `x = ref`, and > 1.0 beyond it so an
+ * extreme can push the premium toward the ceiling). NaN-/non-positive-safe:
+ * a non-finite or ≤-base input contributes 0.
+ */
+function logNorm(x: number, base: number, ref: number): number {
+  if (!Number.isFinite(x) || !(x > base) || !(ref > base)) return 0;
+  const v = Math.log(x / base) / Math.log(ref / base);
+  return v > 0 ? v : 0;
+}
+
+/**
+ * The per-pack target house edge: {@link EdgeCurveConfig.edgeFloor} plus a gentle,
+ * log-scaled risk premium driven primarily by the pack's max-win $ exposure and
+ * secondarily by its price, clamped into `[edgeFloor, edgeCeiling]`. Pure + sync
+ * + dep-free (no DB, no Decimal) so the risk-check harness, the targets reader
+ * and any client preview share ONE implementation.
+ *
+ * Invariants (pinned in `packs/__checks__/risk.ts`):
+ *   • result ∈ [edgeFloor, edgeCeiling] — NEVER below the floor (10.99%).
+ *   • monotone non-decreasing in `maxWin` and in `price`.
+ *   • a cheap/calm pack (price ≤ priceBase, maxWin ≤ maxWinBase) → exactly the floor.
+ *   • a top-of-catalog pack (≈ priceRef / maxWinRef) → ≈ floor + (maxWinCoef +
+ *     priceCoef) ≈ 11.10%.
+ *
+ * `maxWin` is the pack's max obtainable single-card value (the jackpot exposure).
+ * For TARGET derivation (pre-shape) the actual maxWin isn't known yet, so callers
+ * pass the pack's intended cap (`autoMaxWinCap(price, …)`) — see
+ * {@link autoRetuneTargets}.
+ */
+export function autoTargetEdge(
+  input: { price: number; maxWin: number },
+  cfg: EdgeCurveConfig = DEFAULT_EDGE_CURVE,
+): number {
+  const price = Number.isFinite(input.price) && input.price > 0 ? input.price : 0;
+  const maxWin = Number.isFinite(input.maxWin) && input.maxWin > 0 ? input.maxWin : 0;
+  const premium =
+    cfg.maxWinCoef * logNorm(maxWin, cfg.maxWinBase, cfg.maxWinRef) +
+    cfg.priceCoef * logNorm(price, cfg.priceBase, cfg.priceRef);
+  const edge = cfg.edgeFloor + (premium > 0 ? premium : 0);
+  // Clamp into [floor, ceiling]; the premium is ≥ 0 so this only ever caps UP.
+  return Math.min(cfg.edgeCeiling, Math.max(cfg.edgeFloor, edge));
+}
+
 /**
  * Default ceiling on a single card's payout expressed as a MULTIPLE of the pack
  * price, used when `pack_system_config.maxMultCeiling` is unset. A 100× cap on a
@@ -45,6 +185,14 @@ export type ResolvedAutoTargetCfg = {
   globalCap: number;
   /** Single-win cap as a multiple of price (from `readMaxMultCeiling`). */
   maxMultCeiling: number;
+  /**
+   * The per-pack edge-curve config (floor / ceiling / coefficients). Optional so
+   * existing callers that only resolve the cap config keep compiling; when
+   * omitted, {@link DEFAULT_EDGE_CURVE} is used. The DB reader
+   * (`readEdgeCurveConfig` in `risk-config`) fills this from
+   * `pack_system_config` overrides.
+   */
+  edgeCurve?: EdgeCurveConfig;
 };
 
 /**
@@ -75,19 +223,36 @@ export type AutoRetuneTargets = {
 };
 
 /**
- * The default retune targets for a pack at `price`: the house edge target, the
- * default win-rate + near-miss floors, and the auto-resolved jackpot cap. Pure +
- * sync — the caller resolves `cfg` once (via `readMaxWinCap` +
- * `readMaxMultCeiling`) and reuses it across packs.
+ * The default retune targets for a pack at `price`: the PER-PACK house edge
+ * target (from {@link autoTargetEdge} — floor 10.99% + a gentle risk premium),
+ * the default win-rate + near-miss floors, and the auto-resolved jackpot cap.
+ * Pure + sync — the caller resolves `cfg` once (via `readMaxWinCap` +
+ * `readMaxMultCeiling` + `readEdgeCurveConfig`) and reuses it across packs.
+ *
+ * `targetEdge` uses the pack's intended jackpot cap (`autoMaxWinCap(price, cfg)`)
+ * as the max-win input: pre-shape the pack's ACTUAL max obtainable card value
+ * isn't known yet (the shaper decides which cards survive the cap), so the cap —
+ * the worst-case top-card exposure the pack is allowed to carry — is the right,
+ * deterministic proxy for the pack's house-risk premium. Once shaped, the actual
+ * top card is ≤ this cap, so the cap is a conservative (upper-bound) premium.
+ *
+ * Every existing consumer of `autoRetuneTargets` (`portfolio.ts`'s
+ * `derivePortfolioTargets`/`computePortfolioProfile`, and — via
+ * `resolveRetuneTargets` — `planPackRetune`/`applyPackRetune`/`planAllRetunes`)
+ * therefore auto-inherits the per-pack edge through this one return shape.
  */
 export function autoRetuneTargets(
   price: number,
   cfg: ResolvedAutoTargetCfg,
 ): AutoRetuneTargets {
+  const maxWinCap = autoMaxWinCap(price, cfg);
   return {
-    targetEdge: TARGET_PACK_EDGE,
+    targetEdge: autoTargetEdge(
+      { price, maxWin: maxWinCap },
+      cfg.edgeCurve ?? DEFAULT_EDGE_CURVE,
+    ),
     targetWinRate: DEFAULT_TARGET_WIN_RATE,
     nearMissMin: DEFAULT_NEAR_MISS_MIN,
-    maxWinCap: autoMaxWinCap(price, cfg),
+    maxWinCap,
   };
 }
