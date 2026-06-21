@@ -31,19 +31,17 @@ import {
 } from "./retune-progress-dialog";
 
 /**
- * "Re-pin custom packs to ≥ target" (owner-only). Custom (pack-builder) cash
- * packs drift below the house target as card prices move; this round-up-only
- * re-prices every below-target CUSTOM pack back onto target. It reuses the
- * EXISTING re-price flow end to end — only the price moves, card odds are never
- * touched — and is scoped to custom packs (the per-pack write already accepts
- * `custom`):
+ * "Re-pin below-target packs to ≥ target" (owner-only). Cash packs drift below
+ * the house target as card prices move; this round-up-only re-prices every
+ * below-target pack back onto target. It reuses the EXISTING re-price flow end
+ * to end — only the price moves, card odds are never touched:
  *
  *   1. `planCustomRepin(ids, target)` — READ-ONLY dry-run (round-up plan).
  *   2. type-to-confirm + 2FA once (`authorizeReprice` mints a run token).
  *   3. per-pack `repricePackToTargetEdge(id, token, target)` in the same
  *      stoppable progress loop as the global re-price tool.
  *
- * The candidate ids are the below-target customs the doctor grid already
+ * The candidate ids are the below-target packs the doctor grid already
  * surfaced; the dry-run re-derives each price from FRESH DB truth, so a stale
  * grid can't force a bad write (out-of-scope / on-target packs drop out).
  */
@@ -61,7 +59,7 @@ function pct(edge: number | null): string {
 export function RepinCustomButton({
   candidateIds,
 }: {
-  /** Below-target custom pack ids from the current doctor snapshot. */
+  /** Below-target pack ids from the current doctor snapshot. */
   candidateIds: string[];
 }) {
   const router = useRouter();
@@ -175,7 +173,7 @@ export function RepinCustomButton({
     } else if (failed > 0) {
       toast.warning(`Re-priced ${done} · ${failed} failed — see details.`);
     } else {
-      toast.success(`Re-pinned ${done} custom pack${done === 1 ? "" : "s"} to ~${targetPct}%.`);
+      toast.success(`Re-pinned ${done} pack${done === 1 ? "" : "s"} to ~${targetPct}%.`);
     }
     router.refresh();
   }
@@ -197,7 +195,7 @@ export function RepinCustomButton({
     <>
       <Button size="sm" onClick={openAndPlan} disabled={disabled}>
         <Pin className="mr-1 size-3.5" />
-        Re-pin custom packs ≥ {DEFAULT_TARGET_PCT}%
+        Re-pin below-target packs ≥ {DEFAULT_TARGET_PCT}%
         {candidateIds.length > 0 ? ` (${candidateIds.length})` : ""}
       </Button>
 
@@ -215,10 +213,10 @@ export function RepinCustomButton({
             <AlertDialogMedia className="bg-rose-500/10 text-rose-600 dark:text-rose-400">
               <TriangleAlert />
             </AlertDialogMedia>
-            <AlertDialogTitle>Re-pin below-target custom packs</AlertDialogTitle>
+            <AlertDialogTitle>Re-pin below-target packs</AlertDialogTitle>
             <AlertDialogDescription>
-              Round-up re-prices every below-target <strong>custom</strong> pack back to the
-              house target. Only the pack <strong>price</strong> changes —{" "}
+              Round-up re-prices every below-target pack back to the house
+              target. Only the pack <strong>price</strong> changes —{" "}
               <strong>card odds are never touched</strong>. Each pack is written one at a
               time and the run is stoppable. Type{" "}
               <code className="rounded bg-muted px-1 py-0.5 font-mono">{CONFIRM_PHRASE}</code>{" "}
@@ -244,7 +242,7 @@ export function RepinCustomButton({
 
                 <p className="text-xs text-muted-foreground">
                   Target {pct(plan.target)} · written only within {pct(plan.acceptMin)}–
-                  {pct(plan.acceptMax)}. Custom packs that can&apos;t hit it (1¢ step too
+                  {pct(plan.acceptMax)}. Packs that can&apos;t hit it (1¢ step too
                   coarse) are skipped.
                 </p>
 
@@ -326,7 +324,7 @@ export function RepinCustomButton({
                   </div>
                 ) : (
                   <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                    Nothing to re-pin — every below-target custom pack is already on target
+                    Nothing to re-pin — every below-target pack is already on target
                     or can&apos;t be brought into the band.
                   </p>
                 )}
@@ -355,7 +353,7 @@ export function RepinCustomButton({
       <RetuneProgressDialog
         open={progressOpen}
         running={phase === "running"}
-        title={phase === "running" ? "Re-pinning custom packs…" : "Re-pin complete"}
+        title={phase === "running" ? "Re-pinning below-target packs…" : "Re-pin complete"}
         runningLabel="Writing one pack at a time. You can stop after the current pack."
         verb="Re-pinned"
         processed={processed}

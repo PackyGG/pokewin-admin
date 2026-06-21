@@ -60,7 +60,6 @@ function readOne(v: string | string[] | undefined): string | undefined {
  */
 function paramsToFilters(sp: SearchParams): PackRiskFilters {
   const tier = readOne(sp.tier);
-  const type = readOne(sp.type);
   const rawSortBy = readOne(sp.sortBy);
   const sortBy =
     rawSortBy && VALID_SORT_KEYS.has(rawSortBy as PackRiskSortKey)
@@ -72,7 +71,6 @@ function paramsToFilters(sp: SearchParams): PackRiskFilters {
     tier: tier === "T1" || tier === "T2" || tier === "T3" || tier === "T4" || tier === "T5"
       ? tier
       : undefined,
-    type: type === "official" || type === "custom" ? type : undefined,
     belowTarget: readOne(sp.belowTarget) === "1",
     overCap: readOne(sp.overCap) === "1",
     zeroNearMiss: readOne(sp.zeroNearMiss) === "1",
@@ -83,9 +81,7 @@ function paramsToFilters(sp: SearchParams): PackRiskFilters {
 
 /** Are any filters (not sort) active? Drives the no-snapshot vs no-match copy. */
 function hasActiveFilters(f: PackRiskFilters): boolean {
-  return Boolean(
-    f.tier || f.type || f.belowTarget || f.overCap || f.zeroNearMiss,
-  );
+  return Boolean(f.tier || f.belowTarget || f.overCap || f.zeroNearMiss);
 }
 
 async function DoctorGrid({
@@ -120,14 +116,14 @@ async function DoctorGrid({
 }
 
 /**
- * Owner-only "Re-pin custom packs" hero action. Reads the below-target CUSTOM
+ * Owner-only "Re-pin below-target packs" hero action. Reads the below-target
  * packs from the SAME persisted snapshot the grid renders (no MAIN write), so
  * the candidate set always matches what the operator sees. Streamed behind its
  * own boundary so it never blocks the hero's first paint.
  */
 async function RepinAction() {
-  const customBelow = await getPackRiskRows({ type: "custom", belowTarget: true });
-  return <RepinCustomButton candidateIds={customBelow.map((r) => r.packId)} />;
+  const below = await getPackRiskRows({ belowTarget: true });
+  return <RepinCustomButton candidateIds={below.map((r) => r.packId)} />;
 }
 
 export default async function PackDoctorPage({
@@ -146,7 +142,6 @@ export default async function PackDoctorPage({
   // rows during the re-read.
   const suspenseKey = [
     filters.tier ?? "",
-    filters.type ?? "",
     filters.belowTarget ? "1" : "0",
     filters.overCap ? "1" : "0",
     filters.zeroNearMiss ? "1" : "0",

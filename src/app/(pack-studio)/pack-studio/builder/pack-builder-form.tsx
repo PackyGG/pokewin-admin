@@ -56,7 +56,7 @@ import type { BuilderCardItem } from "./actions";
  * (a) Identity: name / slug / image / price.
  * (b) Card pool: reuse the Pack-Studio card picker (value + inPacks + liability).
  * (c) Dials: ONE win-rate slider (default 0.20), optional max-win cap (default
- *     from admin_settings `pack_system_config`, fallback 1750 — passed in), a
+ *     from admin_settings `pack_system_config`, fallback 25000 — passed in), a
  *     near-miss floor (default 0.10), and one calmer↔spicier nudge that pins /
  *     releases the modal floor.
  *
@@ -201,7 +201,7 @@ export function PackBuilderForm({
 }: {
   sets: { id: string; name: string }[];
   rarities: string[];
-  /** Resolved `pack_system_config.maxWinCap` (fallback 1750) from the server. */
+  /** Resolved `pack_system_config.maxWinCap` (fallback 25000) from the server. */
   defaultMaxWinCap: number;
   /** True iff the viewer is the owner (buildPack is owner-gated). */
   canBuild: boolean;

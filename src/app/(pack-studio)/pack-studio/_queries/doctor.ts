@@ -53,8 +53,6 @@ export type PackRiskFilters = {
   overCap?: boolean;
   /** Only packs with (near-)zero near-miss mass. */
   zeroNearMiss?: boolean;
-  /** Restrict to a pack_type ("official" | "custom"). */
-  type?: string;
   /** Sort column (default "riskScore"). */
   sortBy?: PackRiskSortKey;
   /** Sort direction (default "desc"). */
@@ -139,9 +137,6 @@ async function fetchRows(filters?: PackRiskFilters): Promise<PackRiskRow[]> {
   if (filters?.tier) {
     rows = rows.filter((r) => r.tier === filters.tier);
   }
-  if (filters?.type) {
-    rows = rows.filter((r) => r.packType === filters.type);
-  }
   if (filters?.belowTarget) {
     rows = rows.filter((r) => r.compliance?.belowTargetEdge === true);
   }
@@ -172,7 +167,6 @@ export async function getPackRiskRows(
 ): Promise<PackRiskRow[]> {
   const keyParts = [
     filters?.tier ?? "",
-    filters?.type ?? "",
     filters?.belowTarget ? "1" : "0",
     filters?.overCap ? "1" : "0",
     filters?.zeroNearMiss ? "1" : "0",

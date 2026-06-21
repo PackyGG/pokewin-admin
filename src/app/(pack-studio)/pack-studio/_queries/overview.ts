@@ -43,9 +43,6 @@ export type PackStudioOverview = {
   activeTotal: number;
   /** Average pack edge across all scored packs (0..1). */
   avgEdge: number;
-  /** Average edge split by pack_type (null when that bucket has no packs). */
-  avgEdgeOfficial: number | null;
-  avgEdgeCustom: number | null;
   /** Count of packs flagged `belowTargetEdge`. */
   countBelowTarget: number;
   /** Count of packs flagged `overMaxWinCap`. */
@@ -70,8 +67,6 @@ const EMPTY_OVERVIEW: PackStudioOverview = {
   lastComputedAt: null,
   activeTotal: 0,
   avgEdge: 0,
-  avgEdgeOfficial: null,
-  avgEdgeCustom: null,
   countBelowTarget: 0,
   countOverCap: 0,
   nearMissCoverage: 0,
@@ -89,11 +84,7 @@ const EMPTY_OVERVIEW: PackStudioOverview = {
  * Compute the Pack-Studio overview KPIs from the persisted `pack_risk_scores`
  * rows (ADMIN DB) plus a single batched pack-meta read from MAIN.
  *
- * SPLIT APPROACH (documented per the task): the score row deliberately does NOT
- * persist `pack_type` (keeping the ADMIN schema as-is). To split avg-edge by
- * official vs custom we batch-read `pack_type` from MAIN keyed by the snapshot
- * pack ids (`getPackMetaByIds`, ONE `id = ANY(...)` query). This is the simplest
- * correct approach: no schema change, no per-pack read, and it also doubles as
+ * The pack-meta read (`getPackMetaByIds`, ONE `id = ANY(...)` query) doubles as
  * the freshness/active check + the name/slug source for the alert lists.
  */
 async function computeOverview(): Promise<PackStudioOverview> {
@@ -164,17 +155,6 @@ async function computeOverview(): Promise<PackStudioOverview> {
   const avgEdge =
     scored.reduce((s, r) => s + r.edge, 0) / activeTotal;
 
-  const official = scored.filter((r) => r.packType === "official");
-  const custom = scored.filter((r) => r.packType === "custom");
-  const avgEdgeOfficial =
-    official.length > 0
-      ? official.reduce((s, r) => s + r.edge, 0) / official.length
-      : null;
-  const avgEdgeCustom =
-    custom.length > 0
-      ? custom.reduce((s, r) => s + r.edge, 0) / custom.length
-      : null;
-
   const countBelowTarget = scored.filter((r) => r.flags?.belowTargetEdge).length;
   const countOverCap = scored.filter((r) => r.flags?.overMaxWinCap).length;
 
@@ -224,8 +204,6 @@ async function computeOverview(): Promise<PackStudioOverview> {
     lastComputedAt,
     activeTotal,
     avgEdge,
-    avgEdgeOfficial,
-    avgEdgeCustom,
     countBelowTarget,
     countOverCap,
     nearMissCoverage,

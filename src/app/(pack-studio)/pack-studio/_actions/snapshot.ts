@@ -30,7 +30,7 @@ export type SnapshotResult = {
 /**
  * Build the per-pack compliance flag payload persisted in `pack_risk_scores.compliance`.
  * House-edge target + the win-cap come from `admin_settings.pack_system_config`
- * (cap resolved by `readMaxWinCap`, default 1750); everything else is derived
+ * (cap resolved by `readMaxWinCap`, default 25000); everything else is derived
  * from the computed {@link PackRisk}.
  */
 function buildCompliance(risk: PackRisk, maxWinCap: number): PackComplianceFlags {
@@ -43,8 +43,8 @@ function buildCompliance(risk: PackRisk, maxWinCap: number): PackComplianceFlags
 }
 
 /**
- * Score EVERY active cash pack (official + custom) and persist one risk row per
- * pack into the ADMIN DB.
+ * Score EVERY active cash pack (official) and persist one risk row per pack into
+ * the ADMIN DB.
  *
  * Data flow (respects the strict dual-DB boundary):
  *   • READS the MAIN game DB read-only — a tiny `id` SELECT for active cash
@@ -61,7 +61,7 @@ function buildCompliance(risk: PackRisk, maxWinCap: number): PackComplianceFlags
  * surface a toast.
  *
  * The win-cap used for the `overMaxWinCap` flag is read once up-front from
- * `admin_settings.pack_system_config` (default 1750).
+ * `admin_settings.pack_system_config` (default 25000).
  */
 export async function snapshotPackRisk(): Promise<SnapshotResult> {
   const session = await requirePackStudioAccess(
@@ -71,9 +71,8 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
   const maxWinCap = await readMaxWinCap();
 
   // ── Resolve in-scope pack ids (active cash packs) from MAIN, read-only ──
-  // The no-arg `getPacksPoolComposition()` is hardcoded to `official` only
-  // (the re-price tool's scope); Pack Studio also wants `custom`. We resolve
-  // the id set here, then feed it to the SAME scalable aggregate path via the
+  // Active `official` cash packs (`PACK_STUDIO_CASH_PACK_TYPES`). We resolve the
+  // id set here, then feed it to the SAME scalable aggregate path via the
   // `packIds` overload. The `packs` table is small (~hundreds of rows) so this
   // filtered id read is a cheap seq scan (the planner declines an index at
   // this cardinality — verified read-only EXPLAIN), matching the Foundation's

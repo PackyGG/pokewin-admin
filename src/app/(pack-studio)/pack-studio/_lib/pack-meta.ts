@@ -4,10 +4,10 @@ import { toNumber } from "@/lib/utils/decimal";
 /**
  * Minimal pack identity the risk surfaces need from the MAIN game DB but the
  * ADMIN-DB `pack_risk_scores` row does NOT carry: display name/slug, the
- * authoritative current price, and the pack_type (used for the official-vs-
- * custom split). `computePackRiskFromAggregates` is pure math and intentionally
- * doesn't know these — so we batch-read them here rather than widen the engine
- * or the persisted score row.
+ * authoritative current price, and the pack_type.
+ * `computePackRiskFromAggregates` is pure math and intentionally doesn't know
+ * these — so we batch-read them here rather than widen the engine or the
+ * persisted score row.
  */
 export type PackMeta = {
   name: string;

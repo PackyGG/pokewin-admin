@@ -10,17 +10,17 @@ import { TARGET_HOUSE_EDGE } from "@/app/(admin)/insights/edge-calc/math";
 /**
  * Pack types in scope for Pack-Studio risk scoring: the real-money "cash" packs
  * a player pays a sticker price to open. `reward` (free daily/welcome) and
- * `shard` (separate shard-cost model) are deliberately excluded, matching the
- * re-price tool's `official`-only scope but ADDING `custom` (operator-built
- * cash packs) per the Pack-Studio spec.
+ * `shard` (separate shard-cost model) are deliberately excluded — matching the
+ * re-price tool's `official`-only scope. (There is no `custom` pack type; every
+ * cash pack is just a pack.)
  */
-export const PACK_STUDIO_CASH_PACK_TYPES = ["official", "custom"] as const;
+export const PACK_STUDIO_CASH_PACK_TYPES = ["official"] as const;
 
 /** Target house edge a compliant cash pack must hit (10.99%). */
 export const TARGET_PACK_EDGE = TARGET_HOUSE_EDGE;
 
 /** Default max single-win cap (USD) when `pack_system_config` is unset. */
-export const DEFAULT_MAX_WIN_CAP = 1750;
+export const DEFAULT_MAX_WIN_CAP = 25000;
 
 /**
  * Below this near-miss probability a pack is flagged `zeroNearMiss` — it offers

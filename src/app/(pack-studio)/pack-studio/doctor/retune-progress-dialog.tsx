@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * Shared stoppable progress dialog for the bulk Pack-Doctor write loops (bulk
- * re-tune + custom re-pin). Mirrors the global re-price tool's progress modal:
+ * re-tune + below-target re-pin). Mirrors the global re-price tool's progress modal:
  * a non-dismissable bar while running, a per-pack "current" line, done/failed
  * tallies, an aborted-run banner, and a collapsible per-pack failure list.
  *

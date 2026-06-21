@@ -26,8 +26,8 @@ import { readMaxWinCap } from "../_lib/risk-config";
  *   • getPackRetunePool — a pack's card pool (id/name/value/weight) joined to
  *     fresh identity, plus the current `computePackRisk` breakdown and the
  *     resolved max-win cap, for the re-tune drawer's "card pool + risk" view.
- *   • planCustomRepin   — a READ-ONLY dry-run for the "Re-pin custom packs to
- *     ≥ target" action: re-derives each below-target CUSTOM pack's round-up
+ *   • planCustomRepin   — a READ-ONLY dry-run for the "Re-pin below-target packs
+ *     to ≥ target" action: re-derives each below-target pack's round-up
  *     price/edge via the SAME `planPackReprice` the global re-price uses.
  *
  * Both are owner-gated AND Pack-Studio-gated, READ-ONLY (MAIN is read-only here;
@@ -159,17 +159,17 @@ export type CustomRepinPlan = {
 };
 
 /**
- * READ-ONLY dry-run for the "Re-pin custom packs to ≥ target" action. Given the
- * candidate CUSTOM pack ids (the below-target customs the doctor grid already
+ * READ-ONLY dry-run for the "Re-pin below-target packs to ≥ target" action. Given
+ * the candidate pack ids (the below-target packs the doctor grid already
  * surfaced), re-read each pack's FRESH composition from MAIN and re-derive its
  * round-up price/edge via the SAME `planPackReprice` the global re-price uses
- * (round-up scope: a custom pack only ever moves its price UP to reach target).
+ * (round-up scope: a pack only ever moves its price UP to reach target).
  *
  * Writes nothing — the operator confirms, then the existing
  * `authorizeReprice` + `repricePackToTargetEdge` loop performs the per-pack
- * 2FA-guarded writes (that single-pack write already accepts `custom` packs).
- * Out-of-scope ids (a pack that's no longer custom/active, or now on target)
- * surface as skipped/unchanged so a stale grid can't force a bad write.
+ * 2FA-guarded writes. Out-of-scope ids (a pack that's no longer active, has no
+ * price, or is now on target) surface as skipped/unchanged so a stale grid can't
+ * force a bad write.
  */
 export async function planCustomRepin(
   packIds: string[],
@@ -187,7 +187,7 @@ export async function planCustomRepin(
   const rows: CustomRepinRow[] = comps.map((p) => {
     // Defense-in-depth: the per-pack write re-checks scope anyway, but skip
     // here too so the preview never promises a write the action would reject.
-    if (p.packType !== "custom" || !p.active || !(p.price > 0)) {
+    if (!p.active || !(p.price > 0)) {
       return {
         packId: p.id,
         name: p.name,
@@ -199,9 +199,7 @@ export async function planCustomRepin(
         action: "skip" as RepriceAction,
         reason: !p.active
           ? "Out of scope: pack is not active."
-          : p.packType !== "custom"
-            ? `Out of scope: not a custom pack ('${p.packType}').`
-            : "Out of scope: pack has no price.",
+          : "Out of scope: pack has no price.",
       };
     }
     const plan = planPackReprice({

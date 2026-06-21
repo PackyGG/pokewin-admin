@@ -34,19 +34,14 @@ function pct(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
 }
 
-/** Format an optional 0..1 edge fraction, falling back to an em dash. */
-function pctOrDash(value: number | null): string {
-  return value === null ? "—" : pct(value);
-}
-
 const TARGET_LABEL = pct(TARGET_PACK_EDGE);
 
 /**
  * One compliance-alert group rendered as a clickable card linking to the Pack
  * Doctor with the matching `?filter=` querystring. House-POV note: a margin
- * leak (custom packs under target) or a pack over the win cap is BAD for us,
- * so those alert cards are tinted rose. Near-miss / over-tier are play-feel /
- * risk signals (not money) → amber.
+ * leak (packs under target) or a pack over the win cap is BAD for us, so those
+ * alert cards are tinted rose. Near-miss / over-tier are play-feel / risk
+ * signals (not money) → amber.
  */
 function AlertGroup({
   accent,
@@ -158,13 +153,6 @@ export async function PackStudioOverviewContent() {
             icon={Percent}
             accent="blue"
           />
-          <KpiTile
-            label="Official vs custom"
-            value={pctOrDash(data.avgEdgeOfficial)}
-            sub={`Custom ${pctOrDash(data.avgEdgeCustom)}`}
-            icon={Layers}
-            accent="cyan"
-          />
           {/* A pack below the 10.99% target is a margin leak = BAD for the
               house → rose. */}
           <KpiTile
@@ -268,7 +256,7 @@ export async function PackStudioOverviewContent() {
             <AlertGroup
               accent="rose"
               icon={TrendingUp}
-              title="Custom packs below target"
+              title="Packs below target"
               items={data.alerts.belowTargetEdge}
               filter="below-target"
               describe={(a) => pct(a.edge)}

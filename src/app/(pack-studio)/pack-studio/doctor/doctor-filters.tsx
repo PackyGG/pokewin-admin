@@ -40,7 +40,6 @@ export function DoctorFilters() {
   const searchParams = useSearchParams();
 
   const tier = searchParams.get("tier") ?? ALL;
-  const type = searchParams.get("type") ?? ALL;
 
   const push = useCallback(
     (params: URLSearchParams) => {
@@ -77,14 +76,11 @@ export function DoctorFilters() {
   );
 
   const hasAnyFilter =
-    tier !== ALL ||
-    type !== ALL ||
-    BOOL_FILTERS.some((f) => searchParams.get(f.key) === "1");
+    tier !== ALL || BOOL_FILTERS.some((f) => searchParams.get(f.key) === "1");
 
   function clearAll() {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("tier");
-    params.delete("type");
     for (const f of BOOL_FILTERS) params.delete(f.key);
     push(params);
   }
@@ -102,17 +98,6 @@ export function DoctorFilters() {
               {t}
             </SelectItem>
           ))}
-        </SelectContent>
-      </Select>
-
-      <Select value={type} onValueChange={(v) => setParam("type", v)}>
-        <SelectTrigger className="h-8 w-[130px]" aria-label="Filter by pack type">
-          <SelectValue placeholder="All types" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL}>All types</SelectItem>
-          <SelectItem value="official">Official</SelectItem>
-          <SelectItem value="custom">Custom</SelectItem>
         </SelectContent>
       </Select>
 
