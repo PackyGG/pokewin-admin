@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidateTag } from "next/cache";
 import { requirePackStudioAccess } from "@/lib/require-pack-studio-access";
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
@@ -77,6 +78,10 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
       eventType: "pack_risk_snapshot",
       metadata: { count: 0 },
     });
+    // Bust the Pack Studio Doctor + Overview caches so the post-snapshot
+    // refresh reflects current state (mirrors applyPackRetune /
+    // refreshPackRiskScore). Harmless when no rows changed.
+    revalidateTag("pack-studio-overview");
     return { count: 0, computedAt: new Date().toISOString() };
   }
 
@@ -131,6 +136,12 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
     eventType: "pack_risk_snapshot",
     metadata: { count: compositions.length },
   });
+
+  // Bust the Pack Studio Doctor + Overview caches (tag "pack-studio-overview",
+  // 60s revalidate) so the post-snapshot router.refresh() reads the fresh rows
+  // immediately instead of stale cached scores. Mirrors applyPackRetune /
+  // refreshPackRiskScore.
+  revalidateTag("pack-studio-overview");
 
   return { count: compositions.length, computedAt: computedAt.toISOString() };
 }
