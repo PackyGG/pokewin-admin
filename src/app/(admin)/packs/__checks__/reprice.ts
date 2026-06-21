@@ -202,6 +202,95 @@ check("sweep: reprice always in band; skips never expose a price", () => {
   assert(repriced > 0, "sweep should produce repriceable packs");
 });
 
+// ── 10. ROUND-UP MODE: never below target, never overcharge ─────────
+check("round-up: edge always ≥ target, 'up' price ≥ 'nearest', overshoot→skip", () => {
+  let upRepriced = 0;
+  let upSkipped = 0;
+  let upUnchanged = 0;
+  for (const target of [0.1099, 0.15, 0.05, 0.2]) {
+    for (const cardsPerOpen of [1, 5]) {
+      for (let cents = 5; cents <= 20000; cents++) {
+        const ev = cents / 100;
+        const pool = {
+          currentPrice: ev,
+          cardsPerOpen,
+          totalWeight: cardsPerOpen,
+          weightedPriceSum: ev, // expectedCardValue = ev/cpo → EV = ev
+          targetEdge: target,
+        };
+        const up = planPackReprice({ ...pool, roundingMode: "up" });
+        const near = planPackReprice({ ...pool, roundingMode: "nearest" });
+
+        if (up.action === "reprice" || up.action === "unchanged") {
+          if (up.action === "reprice") upRepriced++;
+          else upUnchanged++;
+          const edge = up.newEdge ?? NaN;
+          assert(
+            up.newPrice !== null && up.newPrice > 0,
+            `up needs a positive price (ev=${ev}, t=${target})`,
+          );
+          // NEVER below target (the whole point of round-up): edge ≥ target,
+          // allowing a tiny ACCEPT-sized float slack on the low side only.
+          assert(
+            edge >= target - REPRICE_ACCEPT_TOLERANCE,
+            `up edge ${edge} below target ${target} (ev=${ev})`,
+          );
+          // Still inside the accept band (never overshoot a written price).
+          assert(
+            Math.abs(edge - target) <= REPRICE_ACCEPT_TOLERANCE,
+            `up edge ${edge} outside accept of ${target} (ev=${ev})`,
+          );
+          assert(
+            repriceEdgeWithinHardBand(edge, target),
+            `up edge ${edge} outside HARD band of ${target} (ev=${ev})`,
+          );
+        } else {
+          upSkipped++;
+          assert(
+            up.newPrice === null,
+            `up skip must not expose a price (ev=${ev}, t=${target})`,
+          );
+        }
+
+        // 'up' price is always ≥ 'nearest' price when both produce a price
+        // (round-up never picks a cheaper cent than round-to-nearest).
+        const upPrice = up.newPrice;
+        const nearPrice = near.newPrice;
+        if (upPrice !== null && nearPrice !== null) {
+          assert(
+            Math.round(upPrice * 100) >= Math.round(nearPrice * 100),
+            `up price ${upPrice} < nearest price ${nearPrice} (ev=${ev}, t=${target})`,
+          );
+        }
+      }
+    }
+  }
+  console.log(
+    `      up-swept pools → ${upRepriced} reprice / ${upUnchanged} unchanged / ${upSkipped} skip`,
+  );
+  assert(upRepriced > 0, "round-up sweep should produce repriceable packs");
+  assert(upSkipped > 0, "round-up sweep should produce skips (overshoot cases)");
+});
+
+// ── 11. ROUND-UP defaults to legacy 'nearest' when mode omitted ──────
+check("round-up: omitting roundingMode === explicit 'nearest' (legacy untouched)", () => {
+  for (const ev of [8.901, 1.1153, 8.5, 0.5, 123.45]) {
+    const a = planPackReprice(poolForEv(ev, ev));
+    const b = planPackReprice({ ...poolForEv(ev, ev), roundingMode: "nearest" });
+    assert(a.action === b.action, `action mismatch at ev=${ev}: ${a.action} vs ${b.action}`);
+    assert(a.newPrice === b.newPrice, `newPrice mismatch at ev=${ev}`);
+  }
+});
+
+// ── 12. ROUND-UP concrete overshoot → skip (the '1% 18 PLUS' shape) ──
+check("round-up: $1.25/EV $1.1153 → skip (ceil cent $1.26→11.48% overshoots)", () => {
+  // ideal = 1.1153/0.8901 = $1.2530 → ceil = $1.26 → 11.48%, which overshoots
+  // the 10.99% target beyond ±0.05% → round-up must skip, not overcharge.
+  const plan = planPackReprice({ ...poolForEv(1.1153, 1.25), roundingMode: "up" });
+  assert(plan.action === "skip", `expected skip, got ${plan.action}`);
+  assert(plan.newPrice === null, `skip must not expose a price, got ${plan.newPrice}`);
+});
+
 // ── Summary ─────────────────────────────────────────────────────────
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} re-price check(s) failed:`);

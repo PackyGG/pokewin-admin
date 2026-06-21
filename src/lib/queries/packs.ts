@@ -465,15 +465,15 @@ export async function getPacksListStats(
 }
 
 /**
- * Pack types IN SCOPE for the global "re-price all to 10.99%" tool. Owner rule
- * (2026-06-13): ONLY `official` packs — never promo / custom / reward / shard.
- * Reward is the free daily/welcome type (no real sticker price), shard uses the
- * separate shard-cost model, and promo/custom are intentionally left out too —
- * the tool touches none of them. The tool ALSO only ever adjusts the pack
- * `price`; it never changes card odds. Hardcoded trusted literals (no user
- * input) — safe to interpolate into SQL.
+ * Pack types IN SCOPE for the global re-price tool. Owner update (2026-06-21):
+ * `official` AND `custom` — the 79 custom packs had drifted off-target, so they
+ * now enter reprice scope alongside official. Still EXCLUDED: `promo`, `reward`
+ * (free daily/welcome type, no real sticker price), and `shard` (separate
+ * shard-cost model). The tool ALSO only ever adjusts the pack `price`; it never
+ * changes card odds. Hardcoded trusted literals (no user input) — safe to
+ * interpolate into SQL.
  */
-export const REPRICE_INCLUDED_PACK_TYPES = ["official"] as const;
+export const REPRICE_INCLUDED_PACK_TYPES = ["official", "custom"] as const;
 
 export type PackPoolComposition = {
   id: string;

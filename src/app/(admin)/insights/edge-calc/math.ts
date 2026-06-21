@@ -157,6 +157,21 @@ export type PackReprisePlan = {
  * `floor`/`ceil` of the ideal cents; we evaluate both (plus `round`) and pick
  * whichever lands the resulting edge closest to the target.
  *
+ * `roundingMode` (default `'nearest'`) selects which whole-cent prices are
+ * considered:
+ *   • "nearest" → floor/round/ceil of the ideal cents; pick whichever lands the
+ *                 resulting edge CLOSEST to the target (legacy behavior — every
+ *                 existing caller and check relies on this).
+ *   • "up"      → only ceil(idealCents) and ceil(idealCents)+1 (never floor, so
+ *                 the price is never below the ideal). The edge is monotone in
+ *                 price, so ceil is the SMALLEST whole cent whose edge ≥ target.
+ *                 Accept the smallest such cent whose edge is within ±ACCEPT of
+ *                 the target; if even that smallest qualifying cent overshoots
+ *                 beyond accept tolerance, SKIP — never overcharge. This mode
+ *                 guarantees edge ≥ target (we never round a price DOWN below
+ *                 the target edge), at the cost of occasionally skipping a pack
+ *                 that 'nearest' would have repriced just under target.
+ *
  * Returns `action`:
  *   • "reprice"   → write `newPrice` (edge within ±ACCEPT of target, ≠ current)
  *   • "unchanged" → already at the target cent, write nothing
@@ -170,8 +185,10 @@ export function planPackReprice(input: {
   totalWeight: number;
   weightedPriceSum: number;
   targetEdge?: number;
+  roundingMode?: "nearest" | "up";
 }): PackReprisePlan {
   const { currentPrice, cardsPerOpen, totalWeight, weightedPriceSum } = input;
+  const roundingMode = input.roundingMode ?? "nearest";
   const targetEdge = clampRepriceTarget(input.targetEdge ?? REPRICE_TARGET_DEFAULT);
 
   const ev = computePackEv({
@@ -197,21 +214,66 @@ export function planPackReprice(input: {
   const ideal = evPerOpen / (1 - targetEdge);
   const idealCents = ideal * 100;
   const edgeAtCents = (cents: number) => 1 - evPerOpen / (cents / 100);
-  const candidateCents = [
-    Math.floor(idealCents),
-    Math.round(idealCents),
-    Math.ceil(idealCents),
-  ];
 
   let best: { price: number; edge: number; dist: number } | null = null;
-  const seen = new Set<number>();
-  for (const cent of candidateCents) {
-    if (cent <= 0 || seen.has(cent)) continue;
-    seen.add(cent);
-    const price = cent / 100;
-    const edge = 1 - evPerOpen / price;
-    const dist = Math.abs(edge - targetEdge);
-    if (best === null || dist < best.dist) best = { price, edge, dist };
+
+  if (roundingMode === "up") {
+    // Never round DOWN below the ideal: only ceil and ceil+1 are candidates.
+    // Edge is monotone increasing in price, so ceil is the SMALLEST cent whose
+    // edge ≥ target. Accept the smallest qualifying cent (edge ≥ target AND
+    // within ±ACCEPT). If the smallest such cent overshoots beyond accept,
+    // SKIP — never overcharge. (ceil+1 is only there to handle the rare case
+    // where ceil(idealCents) === idealCents lands exactly on target and the
+    // next cent stays in-band; it is never preferred over a qualifying ceil.)
+    const ceilCents = Math.ceil(idealCents);
+    const candidateCents = [ceilCents, ceilCents + 1];
+    const seen = new Set<number>();
+    for (const cent of candidateCents) {
+      if (cent <= 0 || seen.has(cent)) continue;
+      seen.add(cent);
+      const price = cent / 100;
+      const edge = 1 - evPerOpen / price;
+      // Require edge ≥ target (within ±ACCEPT) so we never price BELOW target.
+      if (edge < targetEdge - REPRICE_ACCEPT_TOLERANCE) continue;
+      if (edge - targetEdge > REPRICE_ACCEPT_TOLERANCE) continue;
+      const dist = Math.abs(edge - targetEdge);
+      // Smallest qualifying cent wins (candidates ascend; take the first hit).
+      best = { price, edge, dist };
+      break;
+    }
+    if (best === null) {
+      // The least price that meets target overshoots beyond ACCEPT — skip
+      // rather than overcharge. Show the ceil cent + its edge so the operator
+      // sees WHY (e.g. $1.26→11.48% when the 10.99% target wanted $1.2533).
+      const tgtPct = (targetEdge * 100).toFixed(2);
+      const bracket =
+        ceilCents > 0
+          ? ` — $${(ceilCents / 100).toFixed(2)}→${(edgeAtCents(ceilCents) * 100).toFixed(2)}%`
+          : "";
+      return {
+        evPerOpen,
+        currentEdge,
+        newPrice: null,
+        newEdge: ceilCents > 0 ? edgeAtCents(ceilCents) : null,
+        action: "skip",
+        reason: `No round-up cent hits ${tgtPct}% (±${(REPRICE_ACCEPT_TOLERANCE * 100).toFixed(2)}%) without overshooting${bracket}.`,
+      };
+    }
+  } else {
+    const candidateCents = [
+      Math.floor(idealCents),
+      Math.round(idealCents),
+      Math.ceil(idealCents),
+    ];
+    const seen = new Set<number>();
+    for (const cent of candidateCents) {
+      if (cent <= 0 || seen.has(cent)) continue;
+      seen.add(cent);
+      const price = cent / 100;
+      const edge = 1 - evPerOpen / price;
+      const dist = Math.abs(edge - targetEdge);
+      if (best === null || dist < best.dist) best = { price, edge, dist };
+    }
   }
 
   if (best === null) {
