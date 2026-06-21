@@ -102,6 +102,13 @@ function zeroedRisk(): PackRisk {
  * Assemble the final risk record from already-computed scalar moments. Shared by
  * both the per-card and aggregate entry points so the score / tier / ratio
  * derivations live in exactly ONE place and the two paths cannot drift.
+ *
+ * NaN-safe for ALL inputs: if any incoming moment (ev / variance / maxWin /
+ * floorValue) is non-finite — e.g. a card carried a NaN or Infinity value that
+ * propagated into the sums — the whole record falls back to `zeroedRisk()`
+ * rather than emitting NaN/Infinity into the returned shape (which would render
+ * as null/NaN downstream). The degenerate weight/price guards in the two entry
+ * points cover the documented cases; this is the final backstop for the rest.
  */
 function buildRisk(input: {
   price: number;
@@ -113,6 +120,17 @@ function buildRisk(input: {
   floorValue: number;
 }): PackRisk {
   const { price, ev } = input;
+  // Final non-finite sweep: a NaN/Infinity in any moment poisons the derived
+  // record, so zero it out instead of leaking a non-finite number downstream.
+  if (
+    !Number.isFinite(price) ||
+    !Number.isFinite(ev) ||
+    !Number.isFinite(input.variance) ||
+    !Number.isFinite(input.maxWin) ||
+    !Number.isFinite(input.floorValue)
+  ) {
+    return zeroedRisk();
+  }
   const variance = Math.max(0, input.variance); // float-noise floor
   const cv = ev > 0 ? Math.sqrt(variance) / ev : 0;
   const edge = price > 0 ? Math.max(0, 1 - ev / price) : 0;
@@ -149,21 +167,30 @@ function buildRisk(input: {
  * moments of that single-draw distribution.
  *
  * NaN-safe: a non-positive total weight or price returns a fully-zeroed record
- * (tier T1, score 0) rather than emitting NaN/Infinity.
+ * (tier T1, score 0). A card whose VALUE is non-finite (NaN/Infinity) is skipped
+ * entirely — including from the total weight — so one poisoned row can't drag
+ * the whole pool's ev/edge/cv to NaN or Infinity (the buildRisk backstop catches
+ * anything that still slips through).
  */
 export function computePackRisk(input: { cards: CardLite[]; price: number }): PackRisk {
   const { cards, price } = input;
 
+  // A card only counts if BOTH its weight and value are finite & the weight is
+  // positive. Skipping non-finite values here (not just weights) keeps the
+  // probabilities normalized over the usable cards only.
+  const usable = (c: CardLite): boolean =>
+    Number.isFinite(c.weight) && c.weight > 0 && Number.isFinite(c.value);
+
   let totalWeight = 0;
   for (const c of cards) {
-    if (Number.isFinite(c.weight) && c.weight > 0) totalWeight += c.weight;
+    if (usable(c)) totalWeight += c.weight;
   }
   if (!(totalWeight > 0) || !(price > 0)) return zeroedRisk();
 
   // EV first (needed for the variance pass).
   let ev = 0;
   for (const c of cards) {
-    if (!(c.weight > 0)) continue;
+    if (!usable(c)) continue;
     ev += (c.weight / totalWeight) * c.value;
   }
 
@@ -176,7 +203,7 @@ export function computePackRisk(input: { cards: CardLite[]; price: number }): Pa
   const nearMissLo = 0.5 * price;
 
   for (const c of cards) {
-    if (!(c.weight > 0)) continue;
+    if (!usable(c)) continue;
     const p = c.weight / totalWeight;
     const d = c.value - ev;
     variance += p * d * d;
@@ -210,6 +237,9 @@ export function computePackRisk(input: { cards: CardLite[]; price: number }): Pa
  *   maxWin   = maxValue   (floorValue supplied directly)
  *
  * NaN-safe: non-positive totalWeight or price → fully-zeroed record (tier T1).
+ * If the supplied sums are themselves non-finite (a NaN/Infinity value leaked
+ * into the SQL aggregation), the shared `buildRisk` backstop zeroes the record
+ * rather than returning NaN/Infinity moments.
  */
 export function computePackRiskFromAggregates(input: {
   price: number;

@@ -263,6 +263,133 @@ check("riskScore in [0,100] and monotone non-decreasing in CV", () => {
   }
 });
 
+// ── 4b. STRICT score-monotonicity in CV alone (maxMult + floor fixed) ──
+check("riskScore strictly monotone in CV with maxMult & floorRatio held fixed", () => {
+  // Isolate the CV term with a clean two-point pool: a floor (modal) card of
+  // value 0 at a DOMINANT fixed weight, and a jackpot of FIXED value J carrying
+  // a probability mass q. Because the floor value is 0 and the jackpot value J
+  // are both pinned, floorValue (0), floorRatio (0), maxWin (J) and maxMult
+  // (J/price) are CONSTANT across the whole family — only the spread moves.
+  //
+  // For this two-point pool EV = q·J and CV = sqrt((1−q)/q), so CV is strictly
+  // DECREASING in q. Sweeping q downward therefore raises CV monotonically with
+  // every other score input held fixed, isolating pure CV-monotonicity. The
+  // jackpot mass q stays < 0.5 so the value-0 card remains the modal/floor card.
+  const price = 10;
+  const J = 500; // fixed jackpot → fixed maxWin (=J) / maxMult (=J/price)
+  const base = 1_000_000; // weight scale so q maps to integ-ish weights
+  let prevScore = -1;
+  let prevCv = -1;
+  let prevMaxMult = -1;
+  let prevFloorRatio = -1;
+  // q descending → CV ascending. All q < 0.5 so value-0 stays the modal card.
+  for (const q of [0.4, 0.3, 0.2, 0.1, 0.05, 0.02, 0.01, 0.004]) {
+    const cards: CardLite[] = [
+      { value: 0, weight: Math.round((1 - q) * base) },
+      { value: J, weight: Math.round(q * base) },
+    ];
+    const r = computePackRisk({ cards, price });
+    // maxMult & floorRatio must be invariant across the whole family.
+    assert(r.floorValue === 0, `floor card is value 0 (q=${q}), got ${r.floorValue}`);
+    if (prevMaxMult >= 0) {
+      approx(r.maxMult, prevMaxMult, 1e-9, `maxMult fixed (q=${q})`);
+      approx(r.floorRatio, prevFloorRatio, 1e-9, `floorRatio fixed (q=${q})`);
+    }
+    assert(r.cv > prevCv - 1e-12, `cv should rise as q falls (q=${q}): ${prevCv} → ${r.cv}`);
+    // With ONLY the CV term moving, the score must be STRICTLY non-decreasing,
+    // and STRICTLY increasing wherever the CV term isn't already saturated
+    // (cv/12 clamped at 1). Below saturation we demand a strict rise.
+    if (prevScore >= 0 && prevCv < 12 && r.cv < 12) {
+      assert(
+        r.riskScore0to100 > prevScore,
+        `score strictly monotone in CV alone (q=${q}): ${prevScore} → ${r.riskScore0to100}`,
+      );
+    } else {
+      assert(
+        r.riskScore0to100 >= prevScore,
+        `score non-decreasing in CV (q=${q}): ${prevScore} → ${r.riskScore0to100}`,
+      );
+    }
+    prevScore = r.riskScore0to100;
+    prevCv = r.cv;
+    prevMaxMult = r.maxMult;
+    prevFloorRatio = r.floorRatio;
+  }
+});
+
+// ── 4c. Non-finite card VALUES never poison the record (NaN-safe contract) ──
+check("non-finite card values are skipped; record stays finite (NaN-safe)", () => {
+  const price = 10;
+  // A NaN-valued card must be ignored, leaving the clean cards to score exactly
+  // as if the bad row weren't there.
+  const withNaN = computePackRisk({
+    cards: [
+      { value: NaN, weight: 10 },
+      { value: 5, weight: 10 },
+      { value: 12, weight: 5 },
+    ],
+    price,
+  });
+  const clean = computePackRisk({
+    cards: [
+      { value: 5, weight: 10 },
+      { value: 12, weight: 5 },
+    ],
+    price,
+  });
+  for (const [k, v] of Object.entries(withNaN)) {
+    if (typeof v === "number") assert(Number.isFinite(v), `withNaN.${k} finite, got ${v}`);
+  }
+  approx(withNaN.ev, clean.ev, 1e-9, "NaN card skipped → ev matches clean pool");
+  approx(withNaN.edge, clean.edge, 1e-9, "edge matches");
+  approx(withNaN.maxWin, clean.maxWin, 1e-9, "maxWin matches (12, not NaN)");
+
+  // An Infinity-valued card must NOT silently report maxWin 0 — it is skipped,
+  // so maxWin is the largest FINITE card and every field stays finite.
+  const withInf = computePackRisk({
+    cards: [
+      { value: Infinity, weight: 3 },
+      { value: 7, weight: 10 },
+      { value: 0.5, weight: 50 },
+    ],
+    price,
+  });
+  for (const [k, v] of Object.entries(withInf)) {
+    if (typeof v === "number") assert(Number.isFinite(v), `withInf.${k} finite, got ${v}`);
+  }
+  assert(withInf.maxWin === 7, `Infinity card skipped → maxWin is finite max (7), got ${withInf.maxWin}`);
+  assert(withInf.ev > 0, `ev positive from the finite cards, got ${withInf.ev}`);
+
+  // A pool whose ONLY cards are non-finite collapses to the zeroed record.
+  const allBad = computePackRisk({
+    cards: [
+      { value: NaN, weight: 5 },
+      { value: Infinity, weight: 5 },
+    ],
+    price,
+  });
+  for (const [k, v] of Object.entries(allBad)) {
+    if (typeof v === "number") assert(v === 0, `allBad.${k} must be 0, got ${v}`);
+  }
+  assert(allBad.tier === "T1", "all-non-finite pool → tier T1");
+
+  // The aggregate path's buildRisk backstop also zeroes on a non-finite sum.
+  const aggBad = computePackRiskFromAggregates({
+    price,
+    totalWeight: 10,
+    weightedPriceSum: NaN,
+    weightedSqSum: NaN,
+    winWeight: 1,
+    nearMissWeight: 1,
+    maxValue: Infinity,
+    floorValue: 0,
+  });
+  for (const [k, v] of Object.entries(aggBad)) {
+    if (typeof v === "number") assert(v === 0, `aggBad.${k} must be 0, got ${v}`);
+  }
+  assert(aggBad.tier === "T1", "non-finite aggregate sums → zeroed record, tier T1");
+});
+
 // ── 5. Tier boundaries land exactly at CV 1.4 / 3 / 6 / 12 ───────────
 check("tier boundaries exact at CV 1.4 / 3 / 6 / 12 (boundary → higher tier)", () => {
   assert(riskTier(0) === "T1", "cv 0 → T1");
