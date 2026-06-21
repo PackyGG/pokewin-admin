@@ -6,14 +6,24 @@ import { requirePackStudioAccess } from "@/lib/require-pack-studio-access";
 import { isRepriceOwner } from "@/lib/reprice-access";
 import { getPacksPoolComposition } from "@/lib/queries/packs";
 import { getPackCardValues } from "@/lib/queries/pack-card-values";
-import { computePackRisk, type PackRisk } from "@/app/(admin)/insights/edge-calc/risk";
+import {
+  computePackRisk,
+  shapeWeights,
+  type PackRisk,
+} from "@/app/(admin)/insights/edge-calc/risk";
 import {
   planPackReprice,
   REPRICE_ACCEPT_TOLERANCE,
   REPRICE_HARD_TOLERANCE,
   type RepriceAction,
 } from "@/app/(admin)/insights/edge-calc/math";
-import { readMaxWinCap } from "../_lib/risk-config";
+import {
+  autoRetuneTargets,
+  readMaxWinCap,
+  readMaxMultCeiling,
+  type AutoRetuneTargets,
+  type ResolvedAutoTargetCfg,
+} from "../_lib/risk-config";
 
 /**
  * Read-only helpers backing the Pack Doctor re-tune UI. The authoritative WRITE
@@ -242,4 +252,208 @@ export async function planCustomRepin(
     unchanged,
     skipped,
   };
+}
+
+// ─── Plan-all auto-retune (READ-ONLY dry-run for EVERY in-scope pack) ──────
+//
+// The "re-tune everything to the house auto-targets" preview: for ALL active
+// official packs, compute the CURRENT risk and the proposed shaped weights at
+// the auto-targets (house edge + default win-rate/near-miss + price-relative
+// jackpot cap). One batched MAIN read of every in-scope pack's card values
+// (a single SELECT joining pack_cards->cards for all in-scope pack_ids — NOT an
+// N+1 per pack), then pure compute per pack. Writes NOTHING — the owner reviews,
+// then the per-pack apply loop (`authorizePackRetune` + `applyPackRetune`) does
+// the 2FA-guarded writes. Card values + current weights are returned so the
+// client can re-shape locally during an "Adjust" pass without a round-trip
+// (card values are public sticker prices, not secret).
+
+/** One pool card of a plan-all proposal: id + value + the CURRENT weight. */
+export type PlanAllCard = {
+  cardId: string;
+  /** `cards.price` (the item value; a voucher is the same as a card). */
+  value: number;
+  /** Current `pack_cards.weight`. */
+  weight: number;
+};
+
+/** Per-card weight change a plan-all proposal would apply (only changed cards). */
+export type PlanAllWeightDiff = {
+  cardId: string;
+  from: number;
+  to: number;
+};
+
+export type PlanAllProposal = {
+  packId: string;
+  name: string;
+  slug: string;
+  price: number;
+  /** Pool cards (id/value/current weight), pool order. */
+  cards: PlanAllCard[];
+  /** Current weights, mirrored out for convenient client re-shaping. */
+  currentWeights: { cardId: string; weight: number }[];
+  /** The auto-targets this proposal was computed for. */
+  autoTargets: AutoRetuneTargets;
+  /** Risk AS IT IS NOW. */
+  before: PackRisk;
+  /** Risk the pack WOULD have after the auto-retune (null when infeasible). */
+  after: PackRisk | null;
+  /** Per-card weight change (null when infeasible). */
+  weightDiff: PlanAllWeightDiff[] | null;
+  /** Whether `shapeWeights` produced a usable vector at the auto-targets. */
+  feasible: boolean;
+  /** The solver's error verbatim when infeasible. */
+  error?: string;
+};
+
+export type PlanAllRetunesResult = {
+  /** The auto-target config resolved once for this run (for the header UI). */
+  cfg: ResolvedAutoTargetCfg;
+  proposals: PlanAllProposal[];
+};
+
+/** One batched MAIN read of every in-scope pack's card values + weights. */
+type BatchedPoolRow = {
+  pack_id: string;
+  card_id: string;
+  value: string | null;
+  weight: number;
+};
+
+/**
+ * READ-ONLY: for ALL active official packs, return the auto-retune proposal
+ * (current vs. proposed risk + weight diff at the house auto-targets). Owner +
+ * Pack-Studio gated. One batched card-values read (no N+1), then pure compute.
+ * Writes nothing.
+ */
+export async function planAllRetunes(): Promise<PlanAllRetunesResult> {
+  await requireRetuneOwner();
+
+  // Resolve the auto-target config ONCE for the whole run.
+  const cfg: ResolvedAutoTargetCfg = {
+    globalCap: await readMaxWinCap(),
+    maxMultCeiling: await readMaxMultCeiling(),
+  };
+
+  // In-scope set: ACTIVE official packs with price > 0 (same scope the global
+  // re-price dry-run sweeps). Gives us id/name/slug/price per pack.
+  const comps = await getPacksPoolComposition();
+  const inScope = comps.filter((p) => p.active && p.price > 0);
+  if (inScope.length === 0) return { cfg, proposals: [] };
+
+  const packIds = inScope.map((p) => p.id);
+
+  // ── ONE batched read of every in-scope pack's card values + weights ──────
+  // Single SELECT joining pack_cards -> cards for ALL in-scope pack_ids (no
+  // N+1). The `pack_id = ANY(...)` predicate is served by the existing
+  // `pack_cards_pack_id_card_id_unique` composite index (leading column
+  // pack_id, Bitmap Index Scan — verified for the per-pack lookup in
+  // prisma/recommended-indexes.sql); `cards` is joined on its PK. Decimals cast
+  // to text and re-parsed for serializable, JS-arithmetic-safe numbers.
+  const db = await getDb();
+  const rows = await db.$queryRawUnsafe<BatchedPoolRow[]>(
+    `
+      SELECT
+        pc.pack_id      AS pack_id,
+        pc.card_id      AS card_id,
+        c.price::text   AS value,
+        pc.weight       AS weight
+      FROM pack_cards pc
+      JOIN cards c ON c.id = pc.card_id
+      WHERE pc.pack_id = ANY($1::uuid[])
+      ORDER BY pc.pack_id, pc.order ASC
+    `,
+    packIds,
+  );
+
+  // Group rows by pack, preserving pool order.
+  const cardsByPack = new Map<string, PlanAllCard[]>();
+  for (const r of rows) {
+    let list = cardsByPack.get(r.pack_id);
+    if (!list) {
+      list = [];
+      cardsByPack.set(r.pack_id, list);
+    }
+    list.push({
+      cardId: r.card_id,
+      value: Number(r.value ?? 0),
+      weight: Number(r.weight),
+    });
+  }
+
+  const proposals: PlanAllProposal[] = inScope.map((p) => {
+    const cards = cardsByPack.get(p.id) ?? [];
+    const autoTargets = autoRetuneTargets(p.price, cfg);
+    const currentWeights = cards.map((c) => ({ cardId: c.cardId, weight: c.weight }));
+
+    const before = computePackRisk({
+      cards: cards.map((c) => ({ value: c.value, weight: c.weight })),
+      price: p.price,
+    });
+
+    // A pack with no cards can't be shaped — surface it as infeasible, never
+    // throw (one bad pack must not sink the whole plan).
+    if (cards.length === 0) {
+      return {
+        packId: p.id,
+        name: p.name,
+        slug: p.slug,
+        price: p.price,
+        cards,
+        currentWeights,
+        autoTargets,
+        before,
+        after: null,
+        weightDiff: null,
+        feasible: false,
+        error: "Pack has no cards to retune.",
+      };
+    }
+
+    const shaped = shapeWeights({
+      cards: cards.map((c) => ({ value: c.value })),
+      price: p.price,
+      targetEdge: autoTargets.targetEdge,
+      targetWinRate: autoTargets.targetWinRate,
+      maxWinCap: autoTargets.maxWinCap,
+      nearMissMin: autoTargets.nearMissMin,
+    });
+
+    if ("error" in shaped) {
+      return {
+        packId: p.id,
+        name: p.name,
+        slug: p.slug,
+        price: p.price,
+        cards,
+        currentWeights,
+        autoTargets,
+        before,
+        after: null,
+        weightDiff: null,
+        feasible: false,
+        error: shaped.error,
+      };
+    }
+
+    const weightDiff = cards
+      .map((c, i) => ({ cardId: c.cardId, from: c.weight, to: shaped.weights[i]! }))
+      .filter((d) => d.from !== d.to);
+
+    return {
+      packId: p.id,
+      name: p.name,
+      slug: p.slug,
+      price: p.price,
+      cards,
+      currentWeights,
+      autoTargets,
+      before,
+      after: shaped.risk,
+      weightDiff,
+      feasible: true,
+    };
+  });
+
+  return { cfg, proposals };
 }

@@ -1,11 +1,41 @@
 import { getAdminSetting } from "@/lib/admin-settings";
-import { TARGET_HOUSE_EDGE } from "@/app/(admin)/insights/edge-calc/math";
+// Pure auto-target API lives in the dep-free `./auto-targets` module (so the
+// no-DB risk-check harness can pin it). Imported locally (so `readMaxMultCeiling`
+// can reference the default) and re-exported below so existing import sites keep
+// importing the whole auto-target surface from `risk-config`.
+import {
+  TARGET_PACK_EDGE,
+  DEFAULT_MAX_MULT_CEILING,
+  DEFAULT_TARGET_WIN_RATE,
+  DEFAULT_NEAR_MISS_MIN,
+  autoMaxWinCap,
+  autoRetuneTargets,
+  type ResolvedAutoTargetCfg,
+  type AutoRetuneTargets,
+} from "./auto-targets";
 
 /**
  * Shared Pack-Studio risk-compliance configuration — the single source of truth
  * for the thresholds the snapshot writer flags on AND the overview/doctor reads
  * re-derive, so the two cannot drift.
+ *
+ * The PURE auto-target helpers (`autoMaxWinCap`, `autoRetuneTargets`) and their
+ * tunables live in the dep-free `./auto-targets` module; they're re-exported here
+ * so existing import sites keep importing from `risk-config`. The DB-coupled
+ * config READS (`readMaxWinCap`, `readMaxMultCeiling`) stay in this module.
  */
+
+// Re-export the pure auto-target API (single source of truth in ./auto-targets).
+export {
+  TARGET_PACK_EDGE,
+  DEFAULT_MAX_MULT_CEILING,
+  DEFAULT_TARGET_WIN_RATE,
+  DEFAULT_NEAR_MISS_MIN,
+  autoMaxWinCap,
+  autoRetuneTargets,
+  type ResolvedAutoTargetCfg,
+  type AutoRetuneTargets,
+};
 
 /**
  * Pack types in scope for Pack-Studio risk scoring: the real-money "cash" packs
@@ -15,9 +45,6 @@ import { TARGET_HOUSE_EDGE } from "@/app/(admin)/insights/edge-calc/math";
  * cash pack is just a pack.)
  */
 export const PACK_STUDIO_CASH_PACK_TYPES = ["official"] as const;
-
-/** Target house edge a compliant cash pack must hit (10.99%). */
-export const TARGET_PACK_EDGE = TARGET_HOUSE_EDGE;
 
 /** Default max single-win cap (USD) when `pack_system_config` is unset. */
 export const DEFAULT_MAX_WIN_CAP = 25000;
@@ -70,6 +97,13 @@ export function isPackComplianceFlags(v: unknown): v is PackComplianceFlags {
 export type PackSystemConfig = {
   /** Max single-card win cap (USD). */
   maxWinCap?: number;
+  /**
+   * Ceiling on a single card's payout as a MULTIPLE of the pack price (e.g.
+   * 100 = "no card may pay more than 100× the ticket"). Combined with
+   * `maxWinCap` by {@link autoMaxWinCap} (the per-pack cap is the lesser of the
+   * two). Unset → {@link DEFAULT_MAX_MULT_CEILING}.
+   */
+  maxMultCeiling?: number;
   /** Ramp phase label (e.g. "phase1"). */
   phase?: string;
   /** Reserve capital (USD) backing the current ramp phase. */
@@ -105,4 +139,16 @@ export async function readMaxWinCap(): Promise<number> {
   const cap = cfg?.maxWinCap;
   if (typeof cap === "number" && Number.isFinite(cap) && cap > 0) return cap;
   return DEFAULT_MAX_WIN_CAP;
+}
+
+/**
+ * Resolve the max-multiple ceiling: the `maxMultCeiling` field of the pack-system
+ * config blob if present and a positive finite number, else
+ * {@link DEFAULT_MAX_MULT_CEILING}.
+ */
+export async function readMaxMultCeiling(): Promise<number> {
+  const cfg = await readPackSystemConfig();
+  const m = cfg?.maxMultCeiling;
+  if (typeof m === "number" && Number.isFinite(m) && m > 0) return m;
+  return DEFAULT_MAX_MULT_CEILING;
 }

@@ -51,6 +51,12 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
 import { getCards, getRarities, getSets } from "@/lib/queries/cards";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
+import {
+  autoRetuneTargets,
+  readMaxWinCap,
+  readMaxMultCeiling,
+  type ResolvedAutoTargetCfg,
+} from "@/app/(pack-studio)/pack-studio/_lib/risk-config";
 import type { pack_tag } from "@/generated/prisma/enums";
 
 /**
@@ -1099,12 +1105,19 @@ export async function repricePackToTargetEdge(
 //      asserts, then write the new weights via the SAME delete-all-then-
 //      createMany pack_cards transaction `updatePack` uses.
 
-/** The retune levers (mirror `ShapeWeightsInput`'s tunable knobs). */
+/**
+ * The retune levers (mirror `ShapeWeightsInput`'s tunable knobs). EVERY field is
+ * optional: any field the caller omits is filled from `autoRetuneTargets(price)`
+ * (the house edge target, the default win-rate + near-miss floors, and the
+ * auto-resolved jackpot cap derived from the pack price). So the per-pack drawer
+ * can pass `{}` for a fully-automatic re-tune, or override just the knobs it
+ * cares about — it no longer has to supply a max-win cap by hand.
+ */
 export type PackRetuneTargets = {
   /** Target house edge (0..1). Defaults to the house knob (10.99%). */
   targetEdge?: number;
   /** Desired probability mass on win+grail cards (value ≥ price). */
-  targetWinRate: number;
+  targetWinRate?: number;
   /** Drop any card whose value exceeds this cap (jackpot ceiling). */
   maxWinCap?: number;
   /** If set, pin the floor (modal) card so floorValue/price ≥ this. */
@@ -1112,6 +1125,35 @@ export type PackRetuneTargets = {
   /** Minimum probability mass on near-miss cards. */
   nearMissMin?: number;
 };
+
+/** Target set with the auto-defaults applied (used internally by plan/apply). */
+type ResolvedRetuneTargets = {
+  targetWinRate: number;
+  nearMissMin: number;
+  maxWinCap: number;
+  floorRatioMin?: number;
+};
+
+/**
+ * Fill any target field the caller omitted from the auto-defaults for `price`.
+ * `cfg` is resolved ONCE per call (via `readMaxWinCap()` + `readMaxMultCeiling()`)
+ * so the drawer can fire a fully-automatic retune (`{}`) and still get a sane,
+ * price-relative jackpot cap. Explicit caller values always win; `floorRatioMin`
+ * has no auto-default (it's an opt-in floor pin), so it passes through as-is.
+ */
+function resolveRetuneTargets(
+  price: number,
+  cfg: ResolvedAutoTargetCfg,
+  targets: PackRetuneTargets,
+): ResolvedRetuneTargets {
+  const auto = autoRetuneTargets(price, cfg);
+  return {
+    targetWinRate: targets.targetWinRate ?? auto.targetWinRate,
+    nearMissMin: targets.nearMissMin ?? auto.nearMissMin,
+    maxWinCap: targets.maxWinCap ?? auto.maxWinCap,
+    floorRatioMin: targets.floorRatioMin,
+  };
+}
 
 export type PackRetunePlan = {
   feasible: boolean;
@@ -1192,6 +1234,14 @@ export async function planPackRetune(
   if (!pack) throw new Error("Pack not found");
   const price = Number(pack.price.toString());
 
+  // Resolve the auto-target config ONCE, then fill any field the caller omitted
+  // (so the drawer can fire a fully-automatic retune without a hand-set cap).
+  const cfg: ResolvedAutoTargetCfg = {
+    globalCap: await readMaxWinCap(),
+    maxMultCeiling: await readMaxMultCeiling(),
+  };
+  const resolved = resolveRetuneTargets(price, cfg, targets);
+
   const pool = await getPackCardValues(packId);
   const before = computePackRisk({
     cards: pool.map((c) => ({ value: c.value, weight: c.weight })),
@@ -1202,10 +1252,10 @@ export async function planPackRetune(
     cards: pool.map((c) => ({ value: c.value })),
     price,
     targetEdge,
-    targetWinRate: targets.targetWinRate,
-    maxWinCap: targets.maxWinCap,
-    floorRatioMin: targets.floorRatioMin,
-    nearMissMin: targets.nearMissMin,
+    targetWinRate: resolved.targetWinRate,
+    maxWinCap: resolved.maxWinCap,
+    floorRatioMin: resolved.floorRatioMin,
+    nearMissMin: resolved.nearMissMin,
   });
 
   if ("error" in shaped) {
@@ -1302,6 +1352,14 @@ export async function applyPackRetune(
   const price = Number(pack.price.toString());
   if (!(price > 0)) throw new Error("Out of scope: pack has no price.");
 
+  // Resolve the auto-target config ONCE, then fill any target field the caller
+  // omitted (the drawer sends no max-win cap → it's auto-set from the price).
+  const cfg: ResolvedAutoTargetCfg = {
+    globalCap: await readMaxWinCap(),
+    maxMultCeiling: await readMaxMultCeiling(),
+  };
+  const resolved = resolveRetuneTargets(price, cfg, targets);
+
   // pack_creator live-pack carve-out (same gate updatePack enforces).
   const editedLivePackUnderCapability = await enforcePackCreatorLiveGate(
     db,
@@ -1323,10 +1381,10 @@ export async function applyPackRetune(
     cards: pool.map((c) => ({ value: c.value })),
     price,
     targetEdge,
-    targetWinRate: targets.targetWinRate,
-    maxWinCap: targets.maxWinCap,
-    floorRatioMin: targets.floorRatioMin,
-    nearMissMin: targets.nearMissMin,
+    targetWinRate: resolved.targetWinRate,
+    maxWinCap: resolved.maxWinCap,
+    floorRatioMin: resolved.floorRatioMin,
+    nearMissMin: resolved.nearMissMin,
     winRateTol,
   });
 
@@ -1340,14 +1398,14 @@ export async function applyPackRetune(
       `Refused: resulting edge ${(after.edge * 100).toFixed(2)}% is below the target ${(targetEdge * 100).toFixed(2)}%.`,
     );
   }
-  if (targets.maxWinCap !== undefined && after.maxWin > targets.maxWinCap + 1e-9) {
+  if (after.maxWin > resolved.maxWinCap + 1e-9) {
     throw new Error(
-      `Refused: resulting max win $${after.maxWin.toFixed(2)} exceeds the cap $${targets.maxWinCap.toFixed(2)}.`,
+      `Refused: resulting max win $${after.maxWin.toFixed(2)} exceeds the cap $${resolved.maxWinCap.toFixed(2)}.`,
     );
   }
-  if (Math.abs(after.winRate - targets.targetWinRate) > winRateTol + 1e-9) {
+  if (Math.abs(after.winRate - resolved.targetWinRate) > winRateTol + 1e-9) {
     throw new Error(
-      `Refused: resulting win-rate ${(after.winRate * 100).toFixed(2)}% misses target ${(targets.targetWinRate * 100).toFixed(2)}% (±${(winRateTol * 100).toFixed(2)}%).`,
+      `Refused: resulting win-rate ${(after.winRate * 100).toFixed(2)}% misses target ${(resolved.targetWinRate * 100).toFixed(2)}% (±${(winRateTol * 100).toFixed(2)}%).`,
     );
   }
 
@@ -1387,10 +1445,17 @@ export async function applyPackRetune(
       name: pack.name,
       target: {
         targetEdge,
-        targetWinRate: targets.targetWinRate,
-        maxWinCap: targets.maxWinCap ?? null,
-        floorRatioMin: targets.floorRatioMin ?? null,
-        nearMissMin: targets.nearMissMin ?? null,
+        targetWinRate: resolved.targetWinRate,
+        maxWinCap: resolved.maxWinCap,
+        floorRatioMin: resolved.floorRatioMin ?? null,
+        nearMissMin: resolved.nearMissMin,
+      },
+      // Whether the cap/win-rate were auto-derived (caller omitted them) — so an
+      // audit review can tell an auto-tune from a hand-tuned one.
+      auto_targets: {
+        maxWinCap: targets.maxWinCap === undefined,
+        targetWinRate: targets.targetWinRate === undefined,
+        nearMissMin: targets.nearMissMin === undefined,
       },
       before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
       after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },

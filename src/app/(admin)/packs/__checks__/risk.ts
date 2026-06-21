@@ -35,6 +35,15 @@ import {
   type ShapeWeightsSuccess,
 } from "../../insights/edge-calc/risk";
 import { TARGET_HOUSE_EDGE } from "../../insights/edge-calc/math";
+// Pure auto-target helpers — live in the dep-free `auto-targets` module (NOT the
+// DB-coupled `risk-config`) precisely so this no-DB harness can import them.
+import {
+  autoMaxWinCap,
+  autoRetuneTargets,
+  TARGET_PACK_EDGE,
+  DEFAULT_TARGET_WIN_RATE,
+  DEFAULT_NEAR_MISS_MIN,
+} from "../../../(pack-studio)/pack-studio/_lib/auto-targets";
 
 let passes = 0;
 const failures: string[] = [];
@@ -486,6 +495,62 @@ check("sweep: feasible combos satisfy invariants; infeasible return error-no-vec
   console.log(`      swept combos → ${feasible} feasible / ${infeasible} infeasible`);
   assert(feasible > 0, "sweep should produce feasible combos");
   assert(infeasible > 0, "sweep should exercise infeasible combos too");
+});
+
+// ── 8. autoMaxWinCap = min(global, price·ceiling), never below price ────
+check("autoMaxWinCap = min(global, price·ceiling) and always ≥ price", () => {
+  const globalCap = 25000;
+  const maxMultCeiling = 100;
+  const cfg = { globalCap, maxMultCeiling };
+
+  // Cheap pack: price·ceiling ($5·100 = $500) < global ($25k) → MULTIPLIER bound.
+  const cheap = autoMaxWinCap(5, cfg);
+  assert(cheap === 500, `cheap pack capped by multiplier (5·100=500), got ${cheap}`);
+  assert(cheap === Math.min(globalCap, 5 * maxMultCeiling), "cheap = min(global, mult)");
+  assert(cheap >= 5, "cheap cap ≥ price");
+
+  // Premium pack: price·ceiling ($1000·100 = $100k) > global ($25k) → GLOBAL bound.
+  const premium = autoMaxWinCap(1000, cfg);
+  assert(premium === globalCap, `premium pack capped by global ($25k), got ${premium}`);
+  assert(premium === Math.min(globalCap, 1000 * maxMultCeiling), "premium = min(global, mult)");
+  assert(premium >= 1000, "premium cap ≥ price");
+
+  // Exact crossover: price where price·ceiling == global ($250·100 = $25k).
+  const cross = autoMaxWinCap(250, cfg);
+  assert(cross === globalCap, `crossover equals global, got ${cross}`);
+
+  // Degenerate: a global cap BELOW price must still never strip the ticket —
+  // the cap floors at price so every win/grail card survives the shaper.
+  const tiny = autoMaxWinCap(100, { globalCap: 10, maxMultCeiling: 100 });
+  assert(tiny === 100, `cap never below price (floored to price), got ${tiny}`);
+
+  // Sweep: the min(global, mult) ⊓ floor-at-price invariant over many inputs.
+  for (const price of [0.5, 1, 5, 25, 100, 250, 1000, 25000]) {
+    for (const ceiling of [1, 10, 100, 1000]) {
+      for (const cap of [10, 500, 25000, 1_000_000]) {
+        const got = autoMaxWinCap(price, { globalCap: cap, maxMultCeiling: ceiling });
+        const expected = Math.max(Math.min(cap, price * ceiling), price);
+        approx(got, expected, 1e-9, `autoMaxWinCap(${price},{${cap},${ceiling}})`);
+        assert(got >= price - 1e-9, `cap ≥ price (p=${price})`);
+        // A cap at the auto value must be a valid shapeWeights ceiling (≥ price
+        // means at least the ticket-priced card can carry win mass).
+      }
+    }
+  }
+});
+
+// ── 9. autoRetuneTargets wires the auto-cap + house defaults ────────────
+check("autoRetuneTargets = {house edge, default win-rate/near-miss, autoMaxWinCap}", () => {
+  const cfg = { globalCap: 25000, maxMultCeiling: 100 };
+  for (const price of [1, 5, 25, 100, 1000]) {
+    const t = autoRetuneTargets(price, cfg);
+    approx(t.targetEdge, TARGET_PACK_EDGE, 1e-12, "targetEdge = house edge");
+    approx(t.targetEdge, TARGET_HOUSE_EDGE, 1e-12, "house edge identity");
+    approx(t.targetWinRate, DEFAULT_TARGET_WIN_RATE, 1e-12, "targetWinRate default");
+    approx(t.nearMissMin, DEFAULT_NEAR_MISS_MIN, 1e-12, "nearMissMin default");
+    approx(t.maxWinCap, autoMaxWinCap(price, cfg), 1e-9, "maxWinCap = autoMaxWinCap");
+    assert(t.maxWinCap >= price - 1e-9, `auto cap ≥ price (p=${price})`);
+  }
 });
 
 // ── Summary ─────────────────────────────────────────────────────────
