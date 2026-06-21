@@ -13,6 +13,7 @@ import {
   KeyRound,
   Loader2,
   Receipt,
+  RefreshCw,
   Target,
   TrendingDown,
   Trophy,
@@ -370,6 +371,15 @@ export const CategoryTransactionsTable = React.memo(
       load(1, undefined, { to: value });
     }
 
+    // Manual refresh — re-fetches the CURRENT page with the CURRENT filters
+    // via the uncached `fetchUserTransactions` server action (NOT the
+    // page-level cached read), so the click pulls the freshest rows
+    // immediately instead of a cache-warmed snapshot. Preserves the admin's
+    // page position and filters.
+    function handleRefresh() {
+      load(txData.page);
+    }
+
     const hasFilters =
       typeFilter !== "all" ||
       statusFilter !== "all" ||
@@ -482,6 +492,23 @@ export const CategoryTransactionsTable = React.memo(
                 value={dateTo}
                 onChange={(e) => handleToChange(e.target.value)}
               />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">&nbsp;</Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={handleRefresh}
+                disabled={isPending}
+                title="Refresh — fetch the latest transactions now"
+              >
+                <RefreshCw
+                  className={cn("size-3.5", isPending && "animate-spin")}
+                />
+                Refresh
+              </Button>
             </div>
             {hasFilters && (
               <Button
