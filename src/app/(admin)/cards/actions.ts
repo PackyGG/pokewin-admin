@@ -638,6 +638,63 @@ export async function getDeletableCardIds(ids: string[]): Promise<{
 }
 
 /**
+ * Per-card usage flag set — the full-flag-set twin of `getDeletableCardIds`.
+ *
+ * Where `getDeletableCardIds` surfaces only the FIRST-matched blocking reason
+ * (enough to explain a skip), this returns one boolean PER reference class so a
+ * UI can show EVERY place a card is used at once (a pack, the upgrader, user
+ * inventory, provably-fair history) plus a single "safe to delete" sign.
+ *
+ * It reuses the SAME `checkCardReferences` single batched pass — no extra
+ * queries, the `@>` GIN provably-fair form intact — so `safeToDelete` here is
+ * the exact same notion (`check.deletableIds`, i.e. zero reasons) that
+ * `getDeletableCardIds` / `deleteCards` use. Single source of truth, no drift.
+ *
+ * ADMIN-ONLY — same gate as `getDeletableCardIds`, since it reads which cards
+ * are referenced across the platform. Read-only: nothing is mutated, no audit
+ * event (it's a preview read, mirroring `getDeletableCardIds`).
+ */
+export async function getCardUsageFlags(ids: string[]): Promise<
+  {
+    id: string;
+    inPacks: boolean;
+    inInventory: boolean;
+    inUpgrader: boolean;
+    inProvablyFair: boolean;
+    safeToDelete: boolean;
+  }[]
+> {
+  await requireAdmin();
+
+  const parsed = deleteCardsSchema.safeParse({ ids });
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid input");
+  }
+
+  const db = await getDb();
+  const check = await checkCardReferences(db, parsed.data.ids);
+
+  const deletable = new Set(check.deletableIds);
+  // De-dup so each id appears once (mirrors checkCardReferences' own de-dup).
+  const uniqueIds = Array.from(new Set(parsed.data.ids));
+
+  return uniqueIds.map((id) => {
+    const reasons = check.blockedReasonsById.get(id) ?? [];
+    return {
+      id,
+      inPacks: reasons.includes("in_packs"),
+      inInventory: reasons.includes("in_inventory"),
+      // Output OR target merged — both mean "used by the upgrader".
+      inUpgrader:
+        reasons.includes("in_upgrader_output") ||
+        reasons.includes("in_upgrader_target"),
+      inProvablyFair: reasons.includes("in_provably_fair"),
+      safeToDelete: deletable.has(id),
+    };
+  });
+}
+
+/**
  * Bulk-delete cards selected on /cards. ADMIN-ONLY — `requireAdmin()` is the
  * hard server-side gate (the client toolbar also hides the button for
  * non-admins, but the server never trusts that).

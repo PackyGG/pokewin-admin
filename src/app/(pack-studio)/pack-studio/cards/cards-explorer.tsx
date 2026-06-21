@@ -3,10 +3,13 @@
 import * as React from "react";
 import {
   ShieldCheck,
-  ShieldAlert,
   SearchX,
   Trash2,
   HelpCircle,
+  Package,
+  ArrowUpCircle,
+  Boxes,
+  BadgeCheck,
 } from "lucide-react";
 import { CardTile, TileDataRow } from "@/components/card-tile";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -28,8 +31,8 @@ import {
 } from "@/components/entity-surface";
 import type { CardListItem } from "@/lib/queries/cards";
 import {
-  getCardSafety,
-  type CardBlockedReason,
+  getCardUsageFlagsForCards,
+  type CardUsageFlags,
 } from "./_actions";
 import { DeleteUnusedDialog } from "./delete-all-unused-dialog";
 
@@ -62,23 +65,52 @@ import { DeleteUnusedDialog } from "./delete-all-unused-dialog";
  * through the audited server action.
  */
 
-const BLOCKED_REASON_LABEL: Record<CardBlockedReason, string> = {
-  in_packs: "In a pack",
-  in_inventory: "Held in inventory",
-  in_upgrader_output: "Upgrader output",
-  in_upgrader_target: "Upgrader target",
-  in_provably_fair: "Provably-fair ref",
-};
-
-/** Resolved per-card safety state for the visible page. */
+/** Resolved per-card usage state for the visible page. */
 type SafetyState =
   | { kind: "loading" }
   | { kind: "unavailable" }
   | {
       kind: "ready";
+      /** ids with NO usage of any kind → safe to delete. Single source of truth. */
       deletable: Set<string>;
-      blockedReason: Map<string, CardBlockedReason>;
+      /** full usage flags per card (which categories it appears in). */
+      flags: Map<string, CardUsageFlags>;
     };
+
+/**
+ * One usage category to render as its own scannable badge. Neutral catalog
+ * state (no money), so house-neutral muted chips — NOT the red/green money
+ * palette. The icon is distinct from the emerald `ShieldCheck` safe badge.
+ */
+const USAGE_CATEGORIES: {
+  key: keyof Pick<
+    CardUsageFlags,
+    "inPacks" | "inUpgrader" | "inInventory" | "inProvablyFair"
+  >;
+  label: string;
+  Icon: typeof Package;
+  title: string;
+}[] = [
+  { key: "inPacks", label: "Pack", Icon: Package, title: "Used in at least one pack" },
+  {
+    key: "inUpgrader",
+    label: "Upgrader",
+    Icon: ArrowUpCircle,
+    title: "Used by the upgrader (output pool or target)",
+  },
+  {
+    key: "inInventory",
+    label: "Inventory",
+    Icon: Boxes,
+    title: "Held in at least one user's inventory",
+  },
+  {
+    key: "inProvablyFair",
+    label: "PF",
+    Icon: BadgeCheck,
+    title: "Referenced by provably-fair history",
+  },
+];
 
 export type CardsFilter = {
   search?: string;
@@ -122,19 +154,21 @@ export function CardsExplorer({
       setSafety({
         kind: "ready",
         deletable: new Set(),
-        blockedReason: new Map(),
+        flags: new Map(),
       });
       return;
     }
     setSafety({ kind: "loading" });
-    getCardSafety(visibleIds)
+    getCardUsageFlagsForCards(visibleIds)
       .then((res) => {
         if (cancelled) return;
-        const deletable = new Set(res.deletable);
-        const blockedReason = new Map<string, CardBlockedReason>(
-          res.blocked.map((b) => [b.id, b.reason]),
+        const flags = new Map<string, CardUsageFlags>(
+          res.map((f) => [f.id, f]),
         );
-        setSafety({ kind: "ready", deletable, blockedReason });
+        const deletable = new Set(
+          res.filter((f) => f.safeToDelete).map((f) => f.id),
+        );
+        setSafety({ kind: "ready", deletable, flags });
       })
       .catch(() => {
         if (!cancelled) setSafety({ kind: "unavailable" });
@@ -244,6 +278,34 @@ export function CardsExplorer({
 
 // ─── Safety badge ────────────────────────────────────────────────────────────
 
+/** One neutral muted category chip — house-neutral, never the money palette. */
+function UsageChip({
+  label,
+  Icon,
+  title,
+}: {
+  label: string;
+  Icon: typeof Package;
+  title: string;
+}) {
+  return (
+    <span
+      title={title}
+      className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-xs font-medium text-muted-foreground"
+    >
+      <Icon className="size-3" />
+      {label}
+    </span>
+  );
+}
+
+/**
+ * Per-card usage display: an emerald "Safe to delete" badge when the card is in
+ * NONE of the reference classes, otherwise a compact cluster of one neutral chip
+ * per category the card is actually in (Pack / Upgrader / Inventory / PF). The
+ * `safeToDelete` notion comes from the shared reference check — the same one the
+ * "Unused only" filter + delete flow use.
+ */
 function SafetyBadge({
   id,
   inPacks,
@@ -259,10 +321,11 @@ function SafetyBadge({
     );
   }
   if (safety.kind === "unavailable") {
+    // Reference read is admin-only — usage (`inPacks`) still shows elsewhere.
     return (
       <span
         className="inline-flex items-center gap-1 text-xs text-muted-foreground/70"
-        title="The safety check is admin-only — usage is still shown."
+        title="The usage check is admin-only — pack usage is still shown."
       >
         <HelpCircle className="size-3" />
         Unknown
@@ -270,29 +333,42 @@ function SafetyBadge({
     );
   }
   if (safety.deletable.has(id)) {
-    // Safe to delete = unreferenced. From the house POV this is a neutral
-    // catalog-hygiene state (no money), so the affirmative emerald reads as
-    // "good to clean up".
+    // Safe to delete = unreferenced. Neutral catalog-hygiene state (no money),
+    // so the affirmative emerald reads as "good to clean up".
     return (
       <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
         <ShieldCheck className="size-3" />
-        Unused
+        Safe to delete
       </span>
     );
   }
-  const reason = safety.blockedReason.get(id);
+  const flags = safety.flags.get(id);
+  const active = flags
+    ? USAGE_CATEGORIES.filter((cat) => flags[cat.key])
+    : [];
+  if (active.length === 0) {
+    // Defensive: not deletable but no flag resolved — keep a clear "in use" sign.
+    return (
+      <span className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+        In use
+      </span>
+    );
+  }
   return (
-    <span
-      className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-xs font-medium text-muted-foreground"
-      title={
-        reason
-          ? `Can't delete — ${BLOCKED_REASON_LABEL[reason]}${inPacks > 0 ? ` (${formatNumber(inPacks)} pack${inPacks === 1 ? "" : "s"})` : ""}`
-          : "In use"
-      }
-    >
-      <ShieldAlert className="size-3" />
-      {reason ? BLOCKED_REASON_LABEL[reason] : "In use"}
-    </span>
+    <div className="flex flex-wrap items-center justify-end gap-1">
+      {active.map((cat) => (
+        <UsageChip
+          key={cat.key}
+          label={cat.label}
+          Icon={cat.Icon}
+          title={
+            cat.key === "inPacks" && inPacks > 0
+              ? `${cat.title} (${formatNumber(inPacks)} pack${inPacks === 1 ? "" : "s"})`
+              : cat.title
+          }
+        />
+      ))}
+    </div>
   );
 }
 
