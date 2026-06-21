@@ -88,96 +88,95 @@ function compareRows(
   }
 }
 
+/** Plain, JSON-safe score row (numbers/strings only) — what the cache stores. */
+type CachedScore = Omit<PackRiskRow, "name" | "slug" | "packType" | "price">;
+
 /**
- * Build the Pack Doctor grid rows: read all persisted `pack_risk_scores`
- * (ADMIN), batch-join pack identity from MAIN keyed by the score pack ids
- * (`getPackMetaByIds`, ONE `id = ANY(...)` read), then filter + sort in memory.
- *
- * A score row whose pack no longer exists on MAIN is dropped (stale score).
- * Filtering/sorting is done in JS rather than SQL because the joined fields
- * (name/price/type) live in MAIN, the dataset is small (one row per active cash
- * pack), and the compliance predicates read a JSON blob — a single grouped read
- * + in-memory shaping is the simplest correct path here.
+ * Cached raw scores (ADMIN DB ONLY — no cookies, so safe inside `unstable_cache`).
+ * Mapped to plain primitives INSIDE the cache so the JSON round-trip on a cache
+ * hit can't hand back a Decimal/Date that later breaks `.toISOString()`. The MAIN
+ * pack-meta join is deliberately NOT here: `getPackMetaByIds` → `getDb()` reads
+ * the `admin_db_env` cookie, and calling `cookies()` inside `unstable_cache`
+ * throws ("Server Components render" error). The join happens in the caller below.
  */
-async function fetchRows(filters?: PackRiskFilters): Promise<PackRiskRow[]> {
-  const scores = await adminDb.pack_risk_scores.findMany();
-  if (scores.length === 0) return [];
-
-  const meta = await getPackMetaByIds(scores.map((s) => s.pack_id));
-
-  let rows: PackRiskRow[] = scores
-    .map((s) => {
-      const m = meta.get(s.pack_id);
-      if (!m) return null;
-      const compliance: PackComplianceFlags | null = isPackComplianceFlags(
-        s.compliance,
-      )
-        ? s.compliance
-        : null;
-      return {
-        packId: s.pack_id,
-        name: m.name,
-        slug: m.slug,
-        packType: m.packType,
-        price: m.price,
-        edge: toNumber(s.edge),
-        cv: toNumber(s.cv),
-        winRate: toNumber(s.win_rate),
-        nearMiss: toNumber(s.near_miss),
-        maxWin: toNumber(s.max_win),
-        maxMult: toNumber(s.max_mult),
-        riskScore: s.risk_score,
-        tier: s.tier,
-        compliance,
-        computedAt: s.computed_at.toISOString(),
-      };
-    })
-    .filter((x): x is PackRiskRow => x !== null);
-
-  if (filters?.tier) {
-    rows = rows.filter((r) => r.tier === filters.tier);
-  }
-  if (filters?.belowTarget) {
-    rows = rows.filter((r) => r.compliance?.belowTargetEdge === true);
-  }
-  if (filters?.overCap) {
-    rows = rows.filter((r) => r.compliance?.overMaxWinCap === true);
-  }
-  if (filters?.zeroNearMiss) {
-    rows = rows.filter((r) => r.compliance?.zeroNearMiss === true);
-  }
-
-  const sortBy = filters?.sortBy ?? "riskScore";
-  const dir = filters?.sortDir ?? "desc";
-  rows.sort((a, b) => {
-    const cmp = compareRows(a, b, sortBy);
-    return dir === "asc" ? cmp : -cmp;
-  });
-
-  return rows;
-}
+const getCachedScores = unstable_cache(
+  async (): Promise<CachedScore[]> => {
+    const scores = await adminDb.pack_risk_scores.findMany();
+    return scores.map((s) => ({
+      packId: s.pack_id,
+      edge: toNumber(s.edge),
+      cv: toNumber(s.cv),
+      winRate: toNumber(s.win_rate),
+      nearMiss: toNumber(s.near_miss),
+      maxWin: toNumber(s.max_win),
+      maxMult: toNumber(s.max_mult),
+      riskScore: s.risk_score,
+      tier: s.tier,
+      compliance: isPackComplianceFlags(s.compliance) ? s.compliance : null,
+      computedAt: s.computed_at.toISOString(),
+    }));
+  },
+  ["pack-studio-doctor-scores-v2"],
+  { revalidate: 60, tags: ["pack-studio-overview"] },
+);
 
 /**
- * Cached Pack Doctor rows (60s), keyed on the normalized filter set so distinct
- * filter combinations cache independently. Wrapped in `safeQuery` so a read
- * failure degrades to an empty grid instead of crashing the page.
+ * Build the Pack Doctor grid rows: read the cached `pack_risk_scores` (ADMIN),
+ * then batch-join pack identity from MAIN (`getPackMetaByIds`, ONE `id = ANY(...)`
+ * read) OUTSIDE the cache, then filter + sort in memory. A score row whose pack
+ * no longer exists on MAIN is dropped (stale score). Any read failure degrades to
+ * an empty grid rather than crashing the page.
  */
 export async function getPackRiskRows(
   filters?: PackRiskFilters,
 ): Promise<PackRiskRow[]> {
-  const keyParts = [
-    filters?.tier ?? "",
-    filters?.belowTarget ? "1" : "0",
-    filters?.overCap ? "1" : "0",
-    filters?.zeroNearMiss ? "1" : "0",
-    filters?.sortBy ?? "riskScore",
-    filters?.sortDir ?? "desc",
-  ];
-  const cached = unstable_cache(
-    () => fetchRows(filters),
-    ["pack-studio-doctor-rows-v1", ...keyParts],
-    { revalidate: 60, tags: ["pack-studio-overview"] },
-  );
-  const { data } = await safeQuery(() => cached(), [], "pack-studio.doctor");
-  return data;
+  try {
+    const { data: scores } = await safeQuery(
+      () => getCachedScores(),
+      [] as CachedScore[],
+      "pack-studio.doctor",
+    );
+    if (scores.length === 0) return [];
+
+    // MAIN pack-meta join OUTSIDE the cache (getDb reads the db-env cookie).
+    const meta = await getPackMetaByIds(scores.map((s) => s.packId));
+
+    let rows: PackRiskRow[] = scores
+      .map((s) => {
+        const m = meta.get(s.packId);
+        if (!m) return null;
+        return {
+          ...s,
+          name: m.name,
+          slug: m.slug,
+          packType: m.packType,
+          price: m.price,
+        };
+      })
+      .filter((x): x is PackRiskRow => x !== null);
+
+    if (filters?.tier) {
+      rows = rows.filter((r) => r.tier === filters.tier);
+    }
+    if (filters?.belowTarget) {
+      rows = rows.filter((r) => r.compliance?.belowTargetEdge === true);
+    }
+    if (filters?.overCap) {
+      rows = rows.filter((r) => r.compliance?.overMaxWinCap === true);
+    }
+    if (filters?.zeroNearMiss) {
+      rows = rows.filter((r) => r.compliance?.zeroNearMiss === true);
+    }
+
+    const sortBy = filters?.sortBy ?? "riskScore";
+    const dir = filters?.sortDir ?? "desc";
+    rows.sort((a, b) => {
+      const cmp = compareRows(a, b, sortBy);
+      return dir === "asc" ? cmp : -cmp;
+    });
+
+    return rows;
+  } catch {
+    return [];
+  }
 }

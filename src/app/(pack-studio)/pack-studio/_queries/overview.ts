@@ -9,6 +9,7 @@ import {
   DEFAULT_MAX_WIN_CAP,
   NEAR_MISS_COVERAGE_MIN,
   type PackComplianceFlags,
+  type PackSystemConfig,
 } from "../_lib/risk-config";
 import { getPackMetaByIds } from "../_lib/pack-meta";
 
@@ -80,28 +81,64 @@ const EMPTY_OVERVIEW: PackStudioOverview = {
   },
 };
 
+/** Plain, JSON-safe score row (numbers/strings only) — what the cache stores. */
+type CachedScoreLite = {
+  packId: string;
+  edge: number;
+  nearMiss: number;
+  maxWin: number;
+  tier: string;
+  flags: PackComplianceFlags | null;
+  /** ISO string (already serialized so a cache hit can't hand back a Date). */
+  computedAt: string;
+};
+
 /**
- * Compute the Pack-Studio overview KPIs from the persisted `pack_risk_scores`
- * rows (ADMIN DB) plus a single batched pack-meta read from MAIN.
- *
- * The pack-meta read (`getPackMetaByIds`, ONE `id = ANY(...)` query) doubles as
- * the freshness/active check + the name/slug source for the alert lists.
+ * Cached cookie-free base: the ADMIN `pack_risk_scores` rows (mapped to plain
+ * primitives INSIDE the cache so the JSON round-trip is safe) + the
+ * `pack_system_config` blob (also ADMIN-only). The MAIN pack-meta join is NOT
+ * here — `getPackMetaByIds` → `getDb()` reads the `admin_db_env` cookie, and
+ * `cookies()` inside `unstable_cache` throws ("Server Components render" error).
+ */
+const getCachedOverviewBase = unstable_cache(
+  async (): Promise<{ scores: CachedScoreLite[]; cfg: PackSystemConfig | null }> => {
+    const [rows, cfg] = await Promise.all([
+      adminDb.pack_risk_scores.findMany({
+        select: {
+          pack_id: true,
+          edge: true,
+          near_miss: true,
+          max_win: true,
+          tier: true,
+          compliance: true,
+          computed_at: true,
+        },
+      }),
+      readPackSystemConfig(),
+    ]);
+    const scores: CachedScoreLite[] = rows.map((r) => ({
+      packId: r.pack_id,
+      edge: toNumber(r.edge),
+      nearMiss: toNumber(r.near_miss),
+      maxWin: toNumber(r.max_win),
+      tier: r.tier,
+      flags: isPackComplianceFlags(r.compliance) ? r.compliance : null,
+      computedAt: r.computed_at.toISOString(),
+    }));
+    return { scores, cfg };
+  },
+  ["pack-studio-overview-base-v2"],
+  { revalidate: 60, tags: ["pack-studio-overview"] },
+);
+
+/**
+ * Compute the Pack-Studio overview KPIs from the cached `pack_risk_scores` base
+ * plus a single batched pack-meta read from MAIN (done OUTSIDE the cache, since
+ * `getDb()` reads a cookie). The pack-meta read doubles as the freshness/active
+ * check + the name/slug source for the alert lists.
  */
 async function computeOverview(): Promise<PackStudioOverview> {
-  const [rows, cfg] = await Promise.all([
-    adminDb.pack_risk_scores.findMany({
-      select: {
-        pack_id: true,
-        edge: true,
-        near_miss: true,
-        max_win: true,
-        tier: true,
-        compliance: true,
-        computed_at: true,
-      },
-    }),
-    readPackSystemConfig(),
-  ]);
+  const { scores: rawScores, cfg } = await getCachedOverviewBase();
 
   const ramp: RampConfig = {
     phase: typeof cfg?.phase === "string" ? cfg.phase : null,
@@ -117,32 +154,29 @@ async function computeOverview(): Promise<PackStudioOverview> {
         : DEFAULT_MAX_WIN_CAP,
   };
 
-  if (rows.length === 0) {
+  if (rawScores.length === 0) {
     return { ...EMPTY_OVERVIEW, ramp };
   }
 
-  const meta = await getPackMetaByIds(rows.map((r) => r.pack_id));
+  const meta = await getPackMetaByIds(rawScores.map((r) => r.packId));
 
   // Only count score rows whose pack still exists + is active on MAIN — a pack
   // deleted/deactivated after its score was written shouldn't skew the KPIs.
-  const scored = rows
+  const scored = rawScores
     .map((r) => {
-      const m = meta.get(r.pack_id);
+      const m = meta.get(r.packId);
       if (!m || !m.active) return null;
-      const flags: PackComplianceFlags | null = isPackComplianceFlags(r.compliance)
-        ? r.compliance
-        : null;
       return {
-        packId: r.pack_id,
+        packId: r.packId,
         name: m.name,
         slug: m.slug,
         packType: m.packType,
-        edge: toNumber(r.edge),
-        nearMiss: toNumber(r.near_miss),
-        maxWin: toNumber(r.max_win),
+        edge: r.edge,
+        nearMiss: r.nearMiss,
+        maxWin: r.maxWin,
         tier: r.tier,
-        flags,
-        computedAt: r.computed_at,
+        flags: r.flags,
+        computedAt: r.computedAt,
       };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -152,8 +186,7 @@ async function computeOverview(): Promise<PackStudioOverview> {
   }
 
   const activeTotal = scored.length;
-  const avgEdge =
-    scored.reduce((s, r) => s + r.edge, 0) / activeTotal;
+  const avgEdge = scored.reduce((s, r) => s + r.edge, 0) / activeTotal;
 
   const countBelowTarget = scored.filter((r) => r.flags?.belowTargetEdge).length;
   const countOverCap = scored.filter((r) => r.flags?.overMaxWinCap).length;
@@ -192,12 +225,11 @@ async function computeOverview(): Promise<PackStudioOverview> {
     overTier: scored.filter((r) => r.flags?.overTier).map(toAlert),
   };
 
-  const lastComputedAt = scored
-    .reduce(
-      (max, r) => (r.computedAt > max ? r.computedAt : max),
-      scored[0]!.computedAt,
-    )
-    .toISOString();
+  // `computedAt` is already an ISO-8601 string; lexicographic max == chronological max.
+  const lastComputedAt = scored.reduce(
+    (max, r) => (r.computedAt > max ? r.computedAt : max),
+    scored[0]!.computedAt,
+  );
 
   return {
     hasSnapshot: true,
@@ -214,18 +246,14 @@ async function computeOverview(): Promise<PackStudioOverview> {
 }
 
 /**
- * Cached Pack-Studio overview (60s). Wrapped in `safeQuery` so a read failure
- * degrades to the empty overview shape rather than crashing the page; the cache
- * key is static (the snapshot is a single global dataset, no per-period split).
+ * Pack-Studio overview. Wrapped in `safeQuery` so a read failure degrades to the
+ * empty overview shape rather than crashing the page. Only the cookie-free base
+ * read is cached ({@link getCachedOverviewBase}); the MAIN pack-meta join runs
+ * fresh each call (cheap indexed PK read) because it reads the db-env cookie.
  */
 export async function getPackStudioOverview(): Promise<PackStudioOverview> {
-  const cached = unstable_cache(
-    () => computeOverview(),
-    ["pack-studio-overview-v1"],
-    { revalidate: 60, tags: ["pack-studio-overview"] },
-  );
   const { data } = await safeQuery(
-    () => cached(),
+    () => computeOverview(),
     EMPTY_OVERVIEW,
     "pack-studio.overview",
   );
