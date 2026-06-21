@@ -90,14 +90,9 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
 
   const computedAt = new Date();
 
-  // Build one upsert per pack, then commit them in a SINGLE batched
-  // round-trip. The previous version awaited each upsert sequentially —
-  // ~one network round-trip per pack to the remote ADMIN DB — which, across
-  // every active cash pack, could exceed the serverless function budget and
-  // surface to the operator as a "timed out" snapshot. `$transaction([...])`
-  // sends the whole batch in one round-trip (and is atomic: a single bad
-  // pack rolls the batch back rather than leaving a half-written snapshot).
-  const upserts = compositions.map((c) => {
+  // Score every pack first (pure math, no DB I/O) so the transaction below
+  // only holds the connection for the DB writes, not the CPU work.
+  const scoredRows = compositions.map((c) => {
     const risk = computePackRiskFromAggregates({
       price: c.price,
       totalWeight: c.totalWeight,
@@ -109,7 +104,8 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
       floorValue: c.floorValue,
     });
 
-    const row = {
+    return {
+      pack_id: c.id,
       edge: risk.edge,
       cv: risk.cv,
       win_rate: risk.winRate,
@@ -121,15 +117,41 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
       compliance: buildPackCompliance(risk, maxWinCap),
       computed_at: computedAt,
     };
-
-    return adminDb.pack_risk_scores.upsert({
-      where: { pack_id: c.id },
-      update: row,
-      create: { pack_id: c.id, ...row },
-    });
   });
 
-  await adminDb.$transaction(upserts);
+  // Commit every upsert in a SINGLE atomic transaction (a single bad pack
+  // rolls the whole batch back rather than leaving a half-written snapshot).
+  //
+  // ⚠️ This is an *interactive* transaction, NOT one network round-trip:
+  // Prisma runs the N upserts sequentially inside one DB transaction, so the
+  // wall-clock cost is ~N × (round-trip to the remote ADMIN DB). Prisma's
+  // DEFAULT interactive-transaction timeout is 5000 ms — and on Vercel
+  // serverless (cold connection pool + remote ADMIN DB latency) scoring every
+  // active cash pack blew past it, producing a `P2028` ("rollback cannot be
+  // executed on an expired transaction") that crashed the snapshot render
+  // (captured in production: ~5257 ms > 5000 ms). The interactive (callback)
+  // form is required because the batch/array form does NOT accept `timeout`.
+  // The raised `timeout`/`maxWait` give the batch room to finish; the route's
+  // `maxDuration` (see ../doctor/page.tsx) gives the underlying serverless
+  // function matching budget so we never trade one timeout for another.
+  await adminDb.$transaction(
+    async (tx) => {
+      for (const { pack_id, ...row } of scoredRows) {
+        await tx.pack_risk_scores.upsert({
+          where: { pack_id },
+          update: row,
+          create: { pack_id, ...row },
+        });
+      }
+    },
+    {
+      // Raise the ceiling well above Prisma's 5s default so the batch can't
+      // trip P2028. `maxWait` is how long Prisma waits to acquire a pooled
+      // connection before starting the tx.
+      timeout: 120_000,
+      maxWait: 15_000,
+    },
+  );
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

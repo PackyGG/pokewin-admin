@@ -33,6 +33,14 @@ import { RepinCustomButton } from "./repin-custom-button";
  * milestone is the read-only grid plus the snapshot button only. No MAIN writes.
  */
 
+// The "Snapshot now" server action (POST handled by this route's function)
+// scores every active cash pack and upserts one ADMIN-DB row per pack inside a
+// single interactive transaction. Against the remote ADMIN DB on Vercel that
+// batch can run well past the platform's default function budget, so give the
+// route headroom — matching the raised Prisma transaction timeout in
+// `../_actions/snapshot.ts`. (The read render itself is fast and cached.)
+export const maxDuration = 120;
+
 const VALID_SORT_KEYS: ReadonlySet<PackRiskSortKey> = new Set<PackRiskSortKey>([
   "name",
   "price",
