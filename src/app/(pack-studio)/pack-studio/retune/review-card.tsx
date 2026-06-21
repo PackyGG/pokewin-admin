@@ -349,7 +349,7 @@ export function ReviewCard({
             title={
               <span className="flex items-center gap-1.5">
                 House edge
-                <InfoHint text="The house's margin per open: 1 − (expected payout ÷ price). Higher = the house keeps more. Each pack has its own target — a 10.99% floor plus a small risk premium for pricier / jackpot-heavy packs." />
+                <InfoHint text="The house's margin per open: 1 − (expected payout ÷ price). Higher = the house keeps more. Each pack has its own target — a 10.99% floor plus a small risk premium for pricier / jackpot-heavy packs. Emerald = at or above target (good for you); rose = below target (you're giving away margin)." />
               </span>
             }
           />
@@ -956,7 +956,7 @@ function KeyMetrics({
       />
       <MetricRow
         term="Max multiplier"
-        tip="The jackpot as a multiple of the ticket price (max win ÷ price) — the headline 'Nx' a lucky open can return. Higher = a juicier top prize for the player, so a rise tints rose."
+        tip="The jackpot as a multiple of the ticket price (max win ÷ price) — the headline 'Nx' a lucky open can return, bounded by the pack's max-multiplier cap. Higher = a juicier top prize for the player, so a rise tints rose."
         beforeVal={before.maxMult}
         afterVal={after?.maxMult ?? null}
         kind="mult"

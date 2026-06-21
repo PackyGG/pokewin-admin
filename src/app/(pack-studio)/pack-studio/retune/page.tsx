@@ -1,11 +1,7 @@
 import { Suspense } from "react";
 import { Layers } from "lucide-react";
 
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { EmptyState } from "@/components/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FadeIn } from "@/components/fade-in";
@@ -85,19 +81,19 @@ export default async function PackRetuneReviewPage() {
         />
       </PageHero>
 
-      <div className="space-y-3">
-        <SectionHeading icon={Layers} title="Review queue" />
-        <Suspense
-          fallback={
-            <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
-              <Skeleton className="hidden h-[28rem] rounded-xl lg:block" />
-              <Skeleton className="h-[28rem] rounded-xl" />
-            </div>
-          }
-        >
-          <ReviewLoader />
-        </Suspense>
-      </div>
+      {/* No section heading here — the loaded review renders its own "System
+          balance" + "Review queue" headings (see retune-review.tsx). A heading
+          at this level would duplicate the "Review queue" title. */}
+      <Suspense
+        fallback={
+          <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
+            <Skeleton className="hidden h-[28rem] rounded-xl lg:block" />
+            <Skeleton className="h-[28rem] rounded-xl" />
+          </div>
+        }
+      >
+        <ReviewLoader />
+      </Suspense>
     </div>
   );
 }

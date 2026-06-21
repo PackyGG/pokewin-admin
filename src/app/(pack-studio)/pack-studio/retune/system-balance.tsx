@@ -6,6 +6,7 @@ import { Layers, Coins, Activity, Flame, ArrowRight } from "lucide-react";
 import { KpiTile, type AccentColor } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { AnimatedNumber } from "@/components/animated-number";
+import { InfoHint } from "@/app/(admin)/creators/_components/info-hint";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import type { PortfolioProfileResult } from "../doctor/retune-actions";
@@ -66,6 +67,12 @@ export function SystemBalancePanel({
           icon={Coins}
           accent={exposureOver ? "rose" : "emerald"}
           sub={`${exposurePct.toFixed(0)}% of ${formatCurrency(cfg.exposureCapUsd)} cap`}
+          action={
+            <InfoHint
+              side="left"
+              text={`Max-win exposure = the sum of each pack's single biggest possible payout (the top card value in every pack), added across all packs — the theoretical total if every pack paid its top prize at once. Here that's ${formatCurrency(profile.totalMaxWinExposure)} across ${formatNumber(profile.packCount)} packs, or ${exposurePct.toFixed(0)}% of the ${formatCurrency(cfg.exposureCapUsd)} bankroll cap. If it exceeds the cap, your catalog's combined jackpot ceiling is larger than your hot wallet.`}
+            />
+          }
         />
         <KpiTile
           label="Aggregate CV"

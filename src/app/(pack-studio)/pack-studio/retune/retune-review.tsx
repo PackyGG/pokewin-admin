@@ -49,6 +49,7 @@ import type { PortfolioSystemPlan } from "../_lib/portfolio";
 import { ReviewCard } from "./review-card";
 import { ReviewRail } from "./review-rail";
 import { SystemBalancePanel } from "./system-balance";
+import { RetuneGuide, RetuneGlossary } from "./retune-guide";
 
 /**
  * Bulk Re-tune Review orchestrator (owner-only, client). Drives the Tinder-style
@@ -420,6 +421,12 @@ export function RetuneReview({
 
   return (
     <div className="space-y-6">
+      {/* ── Explanation layer (default-closed): flow guide + glossary ─ */}
+      <div className="space-y-3">
+        <RetuneGuide />
+        <RetuneGlossary />
+      </div>
+
       {/* ── System Balance ─────────────────────────────────────────── */}
       <div className="space-y-3">
         <SectionHeading
