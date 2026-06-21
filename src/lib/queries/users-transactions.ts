@@ -186,7 +186,20 @@ export async function getUserTransactions(
   userId: string,
   page: number = 1,
   perPage: number = 20,
-  filters?: { type?: string; types?: string[]; status?: string; dateFrom?: string; dateTo?: string }
+  filters?: { type?: string; types?: string[]; status?: string; dateFrom?: string; dateTo?: string },
+  // Adjustment-visibility owner gate, RESOLVED BY THE CALLER.
+  //
+  // Normally this function resolves the owner gate itself via verifySession()
+  // + isAdjustmentVisibilityOwner() (see the security block below). That
+  // session read CANNOT run inside an `unstable_cache` callback (cookies()
+  // throws → it would fail-closed and hide adjustments from the owner), which
+  // is why the Finances feed couldn't be cached. A trusted server caller that
+  // has ALREADY resolved the same gate on the request (via the very same
+  // isAdjustmentVisibilityOwner helper) may pass the result here to skip the
+  // in-function session read — security-equivalent, just resolved outside the
+  // cache. When `undefined` (every existing caller, incl. the
+  // fetchUserTransactions action) the in-function resolution is used unchanged.
+  viewerIsOwnerOverride?: boolean,
 ) {
   const db = await getDb();
   const where: Prisma.ledger_transactionsWhereInput = {
@@ -265,13 +278,18 @@ export async function getUserTransactions(
   // both the rows and the `count` (page totals) omit adjustments entirely —
   // a non-owner can't even infer one exists via a count or an empty page.
   let viewerIsOwner = false;
-  try {
-    const session = await verifySession();
-    viewerIsOwner = await isAdjustmentVisibilityOwner(session.userId);
-  } catch {
-    // No resolvable session → fail closed (hide adjustments). This path is
-    // not expected: every caller runs inside an authenticated admin request.
-    viewerIsOwner = false;
+  if (viewerIsOwnerOverride !== undefined) {
+    // Caller already resolved the gate on the request (outside cache scope).
+    viewerIsOwner = viewerIsOwnerOverride;
+  } else {
+    try {
+      const session = await verifySession();
+      viewerIsOwner = await isAdjustmentVisibilityOwner(session.userId);
+    } catch {
+      // No resolvable session → fail closed (hide adjustments). This path is
+      // not expected: every caller runs inside an authenticated admin request.
+      viewerIsOwner = false;
+    }
   }
   if (!viewerIsOwner) {
     const hideAdjustments: Prisma.ledger_transactionsWhereInput = {

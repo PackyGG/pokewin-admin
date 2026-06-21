@@ -50,6 +50,13 @@ const REVALIDATE_SECONDS = 25;
 // raw speed; 15s keeps it well inside the 60s AutoRefresh tick.
 const GAMING_TX_REVALIDATE_SECONDS = 15;
 
+// The Finances / Overview feed (Deposits & Withdrawals) is cached too, but it
+// carries owner-gated admin_balance_adjustment rows, so its cache key includes
+// the resolved viewer-owner flag (see getUserFinancialTransactionsCached). A
+// slightly longer TTL than gaming — these rows change less often than gaming
+// activity during an investigation.
+const FINANCIAL_TX_REVALIDATE_SECONDS = 30;
+
 // `unstable_cache` also de-duplicates within a single render, so if two
 // code paths request the same user's detail in one pass they share the
 // single underlying query. The cached callbacks always run against prod
@@ -114,8 +121,8 @@ export async function getUserPnlBreakdownCached(
  * Cross-request cache for the Gaming tab's FIRST-PAGE transaction read —
  * the heaviest per-user feed on /users/[id].
  *
- * Why this is safe to cache (and Finances is NOT)
- * ───────────────────────────────────────────────
+ * Why this is safe to cache with a VIEWER-AGNOSTIC key
+ * ────────────────────────────────────────────────────
  * `getUserTransactions` runs an EXPENSIVE fan-out per page: the base
  * `ledger_transactions` listing PLUS battle / pack / inventory / voucher /
  * upgrader enrichment lookups. For the Gaming type set
@@ -124,11 +131,9 @@ export async function getUserPnlBreakdownCached(
  * those types is `admin_balance_adjustment`, so the owner-only adjustment-
  * visibility gate inside `getUserTransactions` cannot change a single row.
  * That makes a viewer-agnostic cache key (userId + page + perPage + types)
- * correct here. The Finances feed is deliberately NOT cached: its type set
- * INCLUDES `admin_balance_adjustment`, whose rows are gated on the owner
- * (`motha`) — and inside an `unstable_cache` callback `verifySession()`'s
- * `cookies()` read throws, so the gate fails CLOSED to "not owner". Caching
- * it would hide adjustments from the owner, so it stays live/uncached.
+ * correct here. The Finances feed needs an EXTRA key dimension instead (the
+ * resolved owner flag) because its type set includes admin_balance_adjustment
+ * — see getUserFinancialTransactionsCached below.
  *
  * Cache-safety of the cookie-scoped reads (same as the detail caches above):
  * the callback runs OUTSIDE the request's dynamic scope, so both `getDb()`
@@ -169,6 +174,65 @@ export async function getUserGamingTransactionsCached(
     return getUserTransactions(userId, page, perPage, { types });
   }
   return cachedUserGamingTransactions(userId, page, perPage, types);
+}
+
+/**
+ * Cross-request cache for the Finances / Overview feed's FIRST-PAGE read
+ * (the Deposits & Withdrawals tab + the Overview financial preview).
+ *
+ * Why this one needs a viewer-keyed cache
+ * ───────────────────────────────────────
+ * The Finances type set includes `admin_balance_adjustment`, whose rows are
+ * visible ONLY to the owner (`motha`). `getUserTransactions` normally resolves
+ * that gate itself via verifySession() — which CANNOT run inside an
+ * `unstable_cache` callback (cookies() throws → it would fail-closed and hide
+ * adjustments from the owner). So the caller resolves the SAME gate on the
+ * request (isAdjustmentVisibilityOwner, the value the page already computes for
+ * the dedicated adjustments block) and we pass it BOTH as a cache-key dimension
+ * AND as `viewerIsOwnerOverride`. Owner and non-owner therefore get SEPARATE
+ * cached entries — the non-owner entry (the common case) can never leak an
+ * adjustment row, and the owner's entry always includes them. Without the gate
+ * needing a live session read, the fan-out is now cacheable.
+ *
+ * Same prod-only rule and `users-detail` revalidation tag as the gaming cache.
+ */
+const cachedUserFinancialTransactions = unstable_cache(
+  (
+    userId: string,
+    page: number,
+    perPage: number,
+    types: string[],
+    viewerIsOwner: boolean,
+  ) => getUserTransactions(userId, page, perPage, { types }, viewerIsOwner),
+  ["users-detail-financial-tx-v1"],
+  { revalidate: FINANCIAL_TX_REVALIDATE_SECONDS, tags: ["users-detail"] },
+);
+
+/**
+ * Cached Finances/Overview first-page transactions on prod; direct (uncached)
+ * on a dev-toggled admin. `viewerIsOwner` MUST be resolved by the caller on the
+ * request (via isAdjustmentVisibilityOwner) — it both keys the cache and gates
+ * adjustment-row visibility, so passing the wrong value would mis-scope the
+ * owner-only rows. See the doc above.
+ */
+export async function getUserFinancialTransactionsCached(
+  userId: string,
+  page: number,
+  perPage: number,
+  types: string[],
+  viewerIsOwner: boolean,
+): Promise<Awaited<ReturnType<typeof getUserTransactions>>> {
+  const env = await readDbEnv();
+  if (env !== "prod") {
+    return getUserTransactions(userId, page, perPage, { types }, viewerIsOwner);
+  }
+  return cachedUserFinancialTransactions(
+    userId,
+    page,
+    perPage,
+    types,
+    viewerIsOwner,
+  );
 }
 
 /**

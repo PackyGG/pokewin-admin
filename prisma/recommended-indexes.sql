@@ -521,6 +521,34 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_inv_owned_by_user
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_tx_user_created_at
   ON ledger_transactions (user_id, created_at DESC);
 
+-- ===================================================================
+-- FINDING (2026-06-22, read-only EXPLAIN sweep) — getUserDetail aggregate:
+-- NO MISSING INDEX. Documented here so a future pass doesn't re-investigate.
+-- ===================================================================
+-- Profiled every heavy leg of getUserDetail + calculateUserPnl + getUserTips
+-- against MAIN (read-only) for the highest-activity user (14,938 ledger rows).
+-- ALL legs already hit an index and run sub-millisecond — there is nothing to
+-- add an index for:
+--   • user_inventory count (user_id, sold_at IS NULL, exchanged_at IS NULL)
+--       → Index Only Scan idx_user_inv_owned_by_user           0.045 ms
+--   • user_inventory P&L (3-null + role<>'creator' semijoin)
+--       → Bitmap idx_user_inv_open_by_user + user_pkey semijoin 0.40 ms
+--   • vouchers unclaimed (user_id, claimed_at IS NULL)
+--       → Index Scan idx_vouchers_unclaimed_by_user            0.12 ms
+--   • card_withdrawal_requests aggregate (user_id, status IN …)
+--       → Bitmap idx_cwr_user_id_status                        0.40 ms
+--   • affiliate live aggregate (UPPER(code) IN owned-codes)
+--       → Index Scans idx_acu_upper_code + idx_affiliate_codes_user_created_at  0.34 ms
+--   • creator_tip feed (user_id, type, ORDER BY created_at DESC)
+--       → Bitmap idx_ledger_tx_user_type_status_created_at      0.57 ms
+-- CONCLUSION: the aggregate's perceived "slow first load" is NOT a query/index
+-- problem — it is the COUNT of round-trips (~34 tiny queries across the three
+-- helpers) funnelled through the MAIN max:3 connection pool on a cold cache.
+-- The 25s detail cache (getUserDetailCached) absorbs this on repeat loads. The
+-- only remaining lever is a MEASURED pool-size increase (db.ts max:3) — an
+-- owner decision, deliberately NOT changed here. Adding any further index
+-- would be cargo-culting; these legs are already optimal.
+
 -- -------------------------------------------------------------------
 -- ADMIN DB (separate database — apply against ADMIN_DATABASE_URL, NOT
 -- the main game DB).
