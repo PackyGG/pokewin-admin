@@ -5,8 +5,10 @@ import { safeQuery } from "@/lib/errors/safe-query";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   isPackComplianceFlags,
+  readEdgeCurveConfig,
   type PackComplianceFlags,
 } from "../_lib/risk-config";
+import { autoTargetEdge } from "../_lib/auto-targets";
 import { getPackMetaByIds } from "../_lib/pack-meta";
 
 /**
@@ -21,6 +23,15 @@ export type PackRiskRow = {
   /** Current sticker price (USD) from MAIN. */
   price: number;
   edge: number;
+  /**
+   * This pack's OWN target house edge from the per-pack edge curve
+   * (`autoTargetEdge`): floor 10.99% + a gentle, log-scaled risk premium driven
+   * by the pack's max-win $ exposure and price (clamped ≤ 11.50%). Computed here
+   * in the meta-join step (OUTSIDE the cache) since `autoTargetEdge` is pure —
+   * the row's `maxWin` is the jackpot exposure, `price` comes from MAIN meta.
+   * "Below target" is judged against THIS, not a flat 10.99%.
+   */
+  targetEdge: number;
   cv: number;
   winRate: number;
   nearMiss: number;
@@ -88,8 +99,16 @@ function compareRows(
   }
 }
 
-/** Plain, JSON-safe score row (numbers/strings only) — what the cache stores. */
-type CachedScore = Omit<PackRiskRow, "name" | "slug" | "packType" | "price">;
+/**
+ * Plain, JSON-safe score row (numbers/strings only) — what the cache stores.
+ * `targetEdge` is NOT here: it's derived from the per-pack curve in the
+ * post-cache meta-join (alongside `price`), so it's omitted like the MAIN-meta
+ * fields.
+ */
+type CachedScore = Omit<
+  PackRiskRow,
+  "name" | "slug" | "packType" | "price" | "targetEdge"
+>;
 
 /**
  * Cached raw scores (ADMIN DB ONLY — no cookies, so safe inside `unstable_cache`).
@@ -139,7 +158,13 @@ export async function getPackRiskRows(
     if (scores.length === 0) return [];
 
     // MAIN pack-meta join OUTSIDE the cache (getDb reads the db-env cookie).
-    const meta = await getPackMetaByIds(scores.map((s) => s.packId));
+    // The per-pack edge curve is also resolved here (ADMIN-only, cookie-free)
+    // so every row carries its OWN target edge — `autoTargetEdge` is pure, so
+    // it's safe to run in this post-cache step. Resolved ONCE for the batch.
+    const [meta, edgeCurve] = await Promise.all([
+      getPackMetaByIds(scores.map((s) => s.packId)),
+      readEdgeCurveConfig(),
+    ]);
 
     let rows: PackRiskRow[] = scores
       .map((s) => {
@@ -151,6 +176,12 @@ export async function getPackRiskRows(
           slug: m.slug,
           packType: m.packType,
           price: m.price,
+          // Per-pack target from the curve: max-win $ exposure (primary driver)
+          // + price (secondary), floor 10.99%, capped 11.50%.
+          targetEdge: autoTargetEdge(
+            { price: m.price, maxWin: s.maxWin },
+            edgeCurve,
+          ),
         };
       })
       .filter((x): x is PackRiskRow => x !== null);

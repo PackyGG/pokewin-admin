@@ -36,9 +36,13 @@ import { BulkRetuneButton } from "./bulk-retune-button";
  *
  * House-POV coloring — these surfaces report risk to the HOUSE, so a metric
  * that favors the player reads as a warning:
- *   • edge below target            → rose  (house giving away margin)
- *   • edge at/above target         → emerald (healthy house margin)
- *   • win-rate higher than typical → rose-leaning amber as it climbs
+ *   • edge below the pack's OWN target → rose  (house giving away margin)
+ *   • edge at/above its own target     → emerald (healthy house margin)
+ *   • win-rate higher than typical     → rose-leaning amber as it climbs
+ *
+ * The edge target is a PER-PACK curve (floor 10.99% + a risk premium up to
+ * 11.50%), carried on each row as `targetEdge`, so "below target" is judged
+ * against the pack's own curve — not a flat 10.99%.
  * Everything else stays neutral tabular-nums; the per-pack compliance flags
  * render as warning badges.
  *
@@ -108,7 +112,6 @@ type OwnerControls = {
 };
 
 function buildColumns(
-  targetEdge: number,
   owner: OwnerControls | null,
 ): ColumnDef<PackRiskRow>[] {
   const cols: ColumnDef<PackRiskRow>[] = [];
@@ -159,21 +162,27 @@ function buildColumns(
       accessorKey: "edge",
       header: () => <DataTableColumnHeader title="Edge" sortKey="edge" />,
       cell: ({ row }) => {
-        const edge = row.original.edge;
-        // House-POV: edge below the target = house giving away margin → rose;
-        // at/above target = healthy house margin → emerald.
+        const { edge, targetEdge } = row.original;
+        // House-POV: edge below the pack's OWN curve target = house giving away
+        // margin → rose; at/above its own target = healthy house margin →
+        // emerald. The target is per-pack (floor 10.99% + risk premium).
         const healthy = edge >= targetEdge;
         return (
-          <span
-            className={cn(
-              "tabular-nums font-medium",
-              healthy
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "text-rose-600 dark:text-rose-400",
-            )}
-          >
-            {pct(edge)}
-          </span>
+          <div className="leading-tight">
+            <span
+              className={cn(
+                "tabular-nums font-medium",
+                healthy
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400",
+              )}
+            >
+              {pct(edge)}
+            </span>
+            <span className="block text-[10px] text-muted-foreground tabular-nums">
+              target {pct(targetEdge)}
+            </span>
+          </div>
         );
       },
     },
@@ -293,11 +302,9 @@ function buildColumns(
 
 export function DoctorTable({
   rows,
-  targetEdge,
   isOwner = false,
 }: {
   rows: PackRiskRow[];
-  targetEdge: number;
   /** Owner-only: renders the selection column, the per-row + bulk re-tune UI. */
   isOwner?: boolean;
 }) {
@@ -356,10 +363,7 @@ export function DoctorTable({
     [isOwner, selected, toggle, toggleAll, allOnPage, onRetune],
   );
 
-  const columns = React.useMemo(
-    () => buildColumns(targetEdge, owner),
-    [targetEdge, owner],
-  );
+  const columns = React.useMemo(() => buildColumns(owner), [owner]);
 
   const table = useReactTable({
     data: rows,

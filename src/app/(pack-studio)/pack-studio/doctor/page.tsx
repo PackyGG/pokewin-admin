@@ -16,7 +16,6 @@ import {
   type PackRiskFilters,
   type PackRiskSortKey,
 } from "../_queries/doctor";
-import { TARGET_PACK_EDGE } from "../_lib/risk-config";
 import { SnapshotButton } from "./snapshot-button";
 import { DoctorFilters } from "./doctor-filters";
 import { DoctorTable } from "./doctor-table";
@@ -118,7 +117,7 @@ async function DoctorGrid({
 
   return (
     <FadeIn>
-      <DoctorTable rows={rows} targetEdge={TARGET_PACK_EDGE} isOwner={owner} />
+      <DoctorTable rows={rows} isOwner={owner} />
     </FadeIn>
   );
 }

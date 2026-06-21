@@ -26,7 +26,10 @@ import {
   getPackStudioOverview,
   type ComplianceAlert,
 } from "../_queries/overview";
-import { TARGET_PACK_EDGE } from "../_lib/risk-config";
+import {
+  DEFAULT_EDGE_CEILING,
+  DEFAULT_EDGE_FLOOR,
+} from "../_lib/risk-config";
 import { TierDistributionChart } from "./tier-distribution-chart";
 
 /** Format a 0..1 edge fraction as a percent string (e.g. 0.1099 → "10.99%"). */
@@ -34,15 +37,20 @@ function pct(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
 }
 
-const TARGET_LABEL = pct(TARGET_PACK_EDGE);
+// The edge target is no longer flat: each pack targets its OWN point on a curve
+// — floor 10.99% (no pack targets below it) up to a 11.50% safety cap, the
+// premium rising with the pack's house risk (max-win $ exposure + price). A pack
+// is flagged "below target" when its edge falls under that floor.
+const EDGE_FLOOR_LABEL = pct(DEFAULT_EDGE_FLOOR);
+const EDGE_BAND_LABEL = `${pct(DEFAULT_EDGE_FLOOR)}–${pct(DEFAULT_EDGE_CEILING)}`;
 
 /**
  * One compliance-alert group rendered as a clickable card linking to the Pack
  * Doctor with the matching querystring. `query` must be the exact param string
  * the Doctor page consumes in `paramsToFilters` (e.g. `belowTarget=1`,
  * `overCap=1`, `zeroNearMiss=1`, `tier=T5`) — NOT a `?filter=` value, which the
- * Doctor page does not parse. House-POV note: a margin leak (packs under
- * target) or a pack over the win cap is BAD for us, so those alert cards are
+ * Doctor page does not parse. House-POV note: a margin leak (packs under the
+ * edge floor) or a pack over the win cap is BAD for us, so those alert cards are
  * tinted rose. Near-miss / over-tier are play-feel / risk signals (not money)
  * → amber.
  */
@@ -152,14 +160,15 @@ export async function PackStudioOverviewContent() {
           <KpiTile
             label="Avg edge"
             value={pct(data.avgEdge)}
-            sub={`Target ${TARGET_LABEL}`}
+            sub={`Target curve ${EDGE_BAND_LABEL}`}
             icon={Percent}
             accent="blue"
           />
-          {/* A pack below the 10.99% target is a margin leak = BAD for the
-              house → rose. */}
+          {/* A pack below the 10.99% edge floor is a margin leak = BAD for the
+              house → rose. The target is a per-pack curve, but the floor is the
+              one line no pack may fall under. */}
           <KpiTile
-            label={`Below ${TARGET_LABEL}`}
+            label={`Below ${EDGE_FLOOR_LABEL} floor`}
             value={formatNumber(data.countBelowTarget)}
             sub="Margin leak"
             icon={TrendingUp}
@@ -260,7 +269,8 @@ export async function PackStudioOverviewContent() {
             <div>
               <p className="text-sm font-medium">All packs compliant</p>
               <p className="text-xs text-muted-foreground">
-                No packs below target, over cap, zero near-miss, or over tier.
+                No packs below the {EDGE_FLOOR_LABEL} floor, over cap, zero
+                near-miss, or over tier.
               </p>
             </div>
           </div>
@@ -269,7 +279,7 @@ export async function PackStudioOverviewContent() {
             <AlertGroup
               accent="rose"
               icon={TrendingUp}
-              title="Packs below target"
+              title={`Packs below ${EDGE_FLOOR_LABEL} floor`}
               items={data.alerts.belowTargetEdge}
               query="belowTarget=1"
               describe={(a) => pct(a.edge)}
