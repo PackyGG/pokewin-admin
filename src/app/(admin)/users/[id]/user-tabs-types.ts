@@ -324,6 +324,15 @@ export type Transaction = {
    */
   battleId: string | null;
   /**
+   * Raw battle-mode enum string for the linked battle — one of
+   * "normal" | "jackpot" | "group" | "hp_rush" | "lowest". Surfaced as a
+   * structured "Battle Mode" row in the transaction-detail modal (which
+   * maps it to a readable label and appends any borrow/sponsorship
+   * modifier). Null on non-battle rows or when the battle row could not
+   * be fetched.
+   */
+  battleMode: string | null;
+  /**
    * BOOLEAN — does the linked battle have a password set?
    *   • true  → the row's Watch button offers a "copy URL with
    *             password" path and the transaction-detail modal

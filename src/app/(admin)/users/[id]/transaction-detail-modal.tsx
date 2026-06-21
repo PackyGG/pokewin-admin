@@ -36,6 +36,17 @@ import { BattlePasswordReveal } from "@/components/battle-password-reveal";
 import type { WagerRequirementSummary } from "@/lib/queries/users-wager-progress-shared";
 import type { Transaction, GameSessionDetails } from "./user-tabs-types";
 
+// Readable labels for the battle_mode enum — kept in sync with the battles
+// list filter (src/app/(admin)/battles/page.tsx) so the admin sees the same
+// mode names everywhere. Unknown values fall back to the raw enum string.
+const BATTLE_MODE_LABELS: Record<string, string> = {
+  normal: "Normal",
+  jackpot: "Jackpot",
+  group: "Group",
+  hp_rush: "HP Rush",
+  lowest: "Lowest",
+};
+
 const RARITY_COLORS: Record<string, string> = {
   common: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
   uncommon: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
@@ -261,6 +272,33 @@ export function TransactionDetailModal({
         </a>
       ),
     });
+    // Battle Mode row — only when a mode value resolved for the linked
+    // battle. Neutral info (no House-POV color). Appends borrow/sponsorship
+    // modifiers when present so "90% Borrow" / "100% Sponsored" reads at a
+    // glance instead of only living in the free-text description.
+    if (t.battleMode) {
+      const modeLabel = BATTLE_MODE_LABELS[t.battleMode] ?? t.battleMode;
+      const modifiers: string[] = [];
+      if (t.borrowPercentage != null && t.borrowPercentage > 0) {
+        modifiers.push(`${t.borrowPercentage}% Borrow`);
+      }
+      if (t.sponsorshipPercentage != null && t.sponsorshipPercentage > 0) {
+        modifiers.push(`${t.sponsorshipPercentage}% Sponsored`);
+      }
+      rows.push({
+        label: "Battle Mode",
+        value: (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="outline">{modeLabel}</Badge>
+            {modifiers.map((m) => (
+              <span key={m} className="text-xs text-muted-foreground">
+                · {m}
+              </span>
+            ))}
+          </div>
+        ),
+      });
+    }
     // Battle Password row — admins only, only when the linked battle
     // has a password set. Reuses the shared BattlePasswordReveal which
     // fetches the plaintext on demand via revealBattlePassword

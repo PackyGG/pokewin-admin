@@ -116,6 +116,7 @@ function mapFinancialLedgerRow(t: LedgerRow, instantRakebackIds?: Set<string>) {
     borrowedAmountUsd: null,
     sponsorshipPercentage: null,
     battleId: null,
+    battleMode: null,
     hasPassword: null,
     battleWinnings: null,
     upgraderResult: null,
@@ -388,12 +389,17 @@ export async function getUserTransactions(
   // into the SSR payload on every transactions-tab paint. Same SSR-safe
   // pattern getBattleDetail uses (see ce56eb6).
   const battleHasPasswordMap = new Map<string, boolean>();
+  // battle id → raw mode enum string ("normal" | "jackpot" | "group" |
+  // "hp_rush" | "lowest"). Surfaced as a structured "Battle Mode" row in
+  // the transaction-detail modal; the human-readable label is applied there.
+  const battleModeMap = new Map<string, string>();
   if (battleIdsToFetch.size > 0) {
     try {
       const battleRows = await db.battles.findMany({
         where: { id: { in: [...battleIdsToFetch] } },
         select: {
           id: true,
+          mode: true,
           borrow_percentage: true,
           sponsorship_percentage: true,
           winner_team: true,
@@ -406,6 +412,7 @@ export async function getUserTransactions(
       for (const b of battleRows) {
         battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
         battleSponsorshipMap.set(b.id, b.sponsorship_percentage ?? 0);
+        battleModeMap.set(b.id, b.mode);
         battleOutcomeMap.set(b.id, {
           winnerTeam: b.winner_team,
           status: b.status,
@@ -805,6 +812,13 @@ export async function getUserTransactions(
         ? (battleSponsorshipMap.get(battleId) ?? null)
         : null;
 
+      // Raw battle-mode enum string for the linked battle (the
+      // transaction-detail modal maps it to a readable label and appends
+      // any borrow/sponsorship modifier). Null on non-battle rows.
+      const battleMode = battleId
+        ? (battleModeMap.get(battleId) ?? null)
+        : null;
+
       // Boolean flag — does the linked battle have a password set?
       // Drives the "Copy Watch URL w/ password" affordance on the
       // gaming-tab Watch button + the password reveal row in the
@@ -971,6 +985,7 @@ export async function getUserTransactions(
         borrowedAmountUsd,
         sponsorshipPercentage,
         battleId,
+        battleMode,
         hasPassword,
         battleWinnings,
         upgraderResult,
