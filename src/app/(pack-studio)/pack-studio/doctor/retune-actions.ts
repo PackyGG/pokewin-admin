@@ -16,15 +16,20 @@ import {
 } from "@/app/(admin)/insights/edge-calc/risk";
 import {
   planPackReprice,
+  clampRepriceTarget,
   REPRICE_ACCEPT_TOLERANCE,
   REPRICE_HARD_TOLERANCE,
   type RepriceAction,
 } from "@/app/(admin)/insights/edge-calc/math";
 import {
   autoRetuneTargets,
+  autoTargetEdge,
+  DEFAULT_EDGE_CURVE,
+  readEdgeCurveConfig,
   readMaxWinCap,
   readMaxMultCeiling,
   readPackSystemConfig,
+  type EdgeCurveConfig,
   type ResolvedAutoTargetCfg,
 } from "../_lib/risk-config";
 import {
@@ -162,13 +167,23 @@ export type CustomRepinRow = {
   priceAfter: number | null;
   edgeBefore: number;
   edgeAfter: number | null;
+  /** THIS pack's target edge fraction (its per-pack curve target). */
+  target: number;
   action: RepriceAction;
   reason: string;
 };
 
 export type CustomRepinPlan = {
-  /** The target edge fraction this plan was computed for. */
-  target: number;
+  /**
+   * How the plan's targets were chosen: `"per-pack"` (each pack to ITS edge-curve
+   * target — floor 10.99% + risk premium) or a flat number (every pack to the
+   * SAME edge). The write loop passes this same selector to
+   * `repricePackToTargetEdge` so the dry-run and the write can't drift.
+   */
+  target: number | "per-pack";
+  /** The edge FLOOR (10.99%) — the lowest target any pack can carry. Shown in UI. */
+  targetFloor: number;
+  /** Tolerances are RELATIVE to each pack's own target; these are at the floor. */
   acceptMin: number;
   acceptMax: number;
   hardMin: number;
@@ -182,32 +197,56 @@ export type CustomRepinPlan = {
 };
 
 /**
- * READ-ONLY dry-run for the "Re-pin below-target packs to ≥ target" action. Given
- * the candidate pack ids (the below-target packs the doctor grid already
- * surfaced), re-read each pack's FRESH composition from MAIN and re-derive its
- * round-up price/edge via the SAME `planPackReprice` the global re-price uses
- * (round-up scope: a pack only ever moves its price UP to reach target).
+ * READ-ONLY dry-run for the "Re-pin packs to their target edge" action. Given the
+ * candidate pack ids (the below-target packs the doctor grid already surfaced),
+ * re-read each pack's FRESH composition from MAIN and re-derive its round-up
+ * price/edge via the SAME `planPackReprice` the global re-price uses.
  *
- * Writes nothing — the operator confirms, then the existing
- * `authorizeReprice` + `repricePackToTargetEdge` loop performs the per-pack
- * 2FA-guarded writes. Out-of-scope ids (a pack that's no longer active, has no
- * price, or is now on target) surface as skipped/unchanged so a stale grid can't
- * force a bad write.
+ * `target` selects how each pack's target is chosen:
+ *   • `"per-pack"` (default) — each pack targets ITS OWN edge-curve target
+ *     ({@link autoTargetEdge}: floor 10.99% + a gentle risk premium driven by the
+ *     pack's max-win $ exposure + price). Different packs get different targets.
+ *   • a flat number — every pack targets the SAME edge (legacy/explicit).
+ *
+ * The SAME selector is returned in the plan and re-passed to
+ * `repricePackToTargetEdge`, so the dry-run and the authoritative write derive
+ * each pack's target identically (no drift). Writes nothing — the operator
+ * confirms, then the existing `authorizeReprice` + `repricePackToTargetEdge` loop
+ * performs the per-pack 2FA-guarded writes. Out-of-scope ids (a pack that's no
+ * longer active, has no price, or is now on target) surface as skipped/unchanged
+ * so a stale grid can't force a bad write.
  */
 export async function planCustomRepin(
   packIds: string[],
-  target: number,
+  target: number | "per-pack" = "per-pack",
 ): Promise<CustomRepinPlan> {
   await requireRetuneOwner();
 
-  if (!Number.isFinite(target) || target <= 0 || target >= 1) {
+  if (target !== "per-pack" && (!Number.isFinite(target) || target <= 0 || target >= 1)) {
     throw new Error("Invalid target edge.");
   }
+
+  // The edge-curve config (floor / ceiling / coefficients) resolved ONCE for the
+  // whole run, so every pack's per-pack target derives off the same source-of-
+  // truth blob — matches what `repricePackToTargetEdge` reads on the write side.
+  const edgeCurve: EdgeCurveConfig =
+    target === "per-pack" ? await readEdgeCurveConfig() : DEFAULT_EDGE_CURVE;
+
+  /** This pack's target: its curve target in per-pack mode, else the flat one. */
+  const targetFor = (p: { price: number; maxWin: number }): number =>
+    target === "per-pack"
+      ? clampRepriceTarget(autoTargetEdge({ price: p.price, maxWin: p.maxWin }, edgeCurve))
+      : target;
 
   const ids = packIds.filter((id) => isUuid(id));
   const comps = ids.length > 0 ? await getPacksPoolComposition({ packIds: ids }) : [];
 
+  // The floor target (10.99% in per-pack mode, or the flat target) — used for the
+  // header band display. Per-pack bands are RELATIVE to each pack's own target.
+  const targetFloor = target === "per-pack" ? edgeCurve.edgeFloor : target;
+
   const rows: CustomRepinRow[] = comps.map((p) => {
+    const packTarget = targetFor({ price: p.price, maxWin: p.maxValue });
     // Defense-in-depth: the per-pack write re-checks scope anyway, but skip
     // here too so the preview never promises a write the action would reject.
     if (!p.active || !(p.price > 0)) {
@@ -219,6 +258,7 @@ export async function planCustomRepin(
         priceAfter: null,
         edgeBefore: 0,
         edgeAfter: null,
+        target: packTarget,
         action: "skip" as RepriceAction,
         reason: !p.active
           ? "Out of scope: pack is not active."
@@ -230,7 +270,7 @@ export async function planCustomRepin(
       cardsPerOpen: p.cardsPerOpen,
       totalWeight: p.totalWeight,
       weightedPriceSum: p.weightedPriceSum,
-      targetEdge: target,
+      targetEdge: packTarget,
     });
     return {
       packId: p.id,
@@ -240,6 +280,7 @@ export async function planCustomRepin(
       priceAfter: plan.newPrice,
       edgeBefore: plan.currentEdge,
       edgeAfter: plan.newEdge,
+      target: packTarget,
       action: plan.action,
       reason: plan.reason,
     };
@@ -257,10 +298,11 @@ export async function planCustomRepin(
 
   return {
     target,
-    acceptMin: target - REPRICE_ACCEPT_TOLERANCE,
-    acceptMax: target + REPRICE_ACCEPT_TOLERANCE,
-    hardMin: target - REPRICE_HARD_TOLERANCE,
-    hardMax: target + REPRICE_HARD_TOLERANCE,
+    targetFloor,
+    acceptMin: targetFloor - REPRICE_ACCEPT_TOLERANCE,
+    acceptMax: targetFloor + REPRICE_ACCEPT_TOLERANCE,
+    hardMin: targetFloor - REPRICE_HARD_TOLERANCE,
+    hardMax: targetFloor + REPRICE_HARD_TOLERANCE,
     toReprice,
     unchanged,
     skipped,

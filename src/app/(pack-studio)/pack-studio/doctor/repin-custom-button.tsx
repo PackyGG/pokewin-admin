@@ -31,15 +31,20 @@ import {
 } from "./retune-progress-dialog";
 
 /**
- * "Re-pin below-target packs to ≥ target" (owner-only). Cash packs drift below
- * the house target as card prices move; this round-up-only re-prices every
- * below-target pack back onto target. It reuses the EXISTING re-price flow end
- * to end — only the price moves, card odds are never touched:
+ * "Re-pin packs to their target edge (≥ 10.99%)" (owner-only). Cash packs drift
+ * below their house target as card prices move; this re-prices every below-target
+ * pack back onto ITS PER-PACK target edge — the edge curve's floor (10.99%) plus
+ * a gentle risk premium that rises with the pack's max-win $ exposure + price, so
+ * a calm/cheap pack lands at 10.99% while a pricey high-jackpot pack lands a
+ * touch above it. It reuses the EXISTING re-price flow end to end — only the
+ * price moves, card odds are never touched:
  *
- *   1. `planCustomRepin(ids, target)` — READ-ONLY dry-run (round-up plan).
+ *   1. `planCustomRepin(ids, "per-pack")` — READ-ONLY dry-run (per-pack targets).
  *   2. type-to-confirm + 2FA once (`authorizeReprice` mints a run token).
- *   3. per-pack `repricePackToTargetEdge(id, token, target)` in the same
- *      stoppable progress loop as the global re-price tool.
+ *   3. per-pack `repricePackToTargetEdge(id, token, "per-pack")` in the same
+ *      stoppable progress loop as the global re-price tool — the write derives
+ *      each pack's curve target server-side from fresh DB truth (never trusts
+ *      the dry-run's number).
  *
  * The candidate ids are the below-target packs the doctor grid already
  * surfaced; the dry-run re-derives each price from FRESH DB truth, so a stale
@@ -47,7 +52,8 @@ import {
  */
 
 const CONFIRM_PHRASE = "REPRICE";
-const DEFAULT_TARGET_PCT = "10.99";
+/** The edge FLOOR every pack targets at minimum (the curve only goes UP from here). */
+const FLOOR_TARGET_PCT = "10.99";
 
 type Phase = "idle" | "planning" | "ready" | "running" | "done";
 
@@ -95,7 +101,7 @@ export function RepinCustomButton({
     setPhase("planning");
     setConfirmOpen(true);
     try {
-      const p = await planCustomRepin(candidateIds, 0.1099);
+      const p = await planCustomRepin(candidateIds, "per-pack");
       setPlan(p);
       setPhase("ready");
     } catch (err) {
@@ -108,6 +114,9 @@ export function RepinCustomButton({
   async function run() {
     if (!plan || total === 0) return;
     const rows = plan.toReprice;
+    // Re-pass the SAME target selector the dry-run used ("per-pack" here) so the
+    // write derives each pack's curve target identically — never the dry-run's
+    // number. The server re-reads fresh price + max-win per pack.
     const runTarget = plan.target;
 
     let token: string;
@@ -171,7 +180,7 @@ export function RepinCustomButton({
     } else if (failed > 0) {
       toast.warning(`Re-priced ${done} · ${failed} failed — see details.`);
     } else {
-      toast.success(`Re-pinned ${done} pack${done === 1 ? "" : "s"} to ~${DEFAULT_TARGET_PCT}%.`);
+      toast.success(`Re-pinned ${done} pack${done === 1 ? "" : "s"} to their target edge (≥ ${FLOOR_TARGET_PCT}%).`);
     }
     router.refresh();
   }
@@ -193,7 +202,7 @@ export function RepinCustomButton({
     <>
       <Button size="sm" onClick={openAndPlan} disabled={disabled}>
         <Pin className="mr-1 size-3.5" />
-        Re-pin below-target packs ≥ {DEFAULT_TARGET_PCT}%
+        Re-pin packs to their target edge (≥ {FLOOR_TARGET_PCT}%)
         {candidateIds.length > 0 ? ` (${candidateIds.length})` : ""}
       </Button>
 
@@ -211,10 +220,12 @@ export function RepinCustomButton({
             <AlertDialogMedia className="bg-rose-500/10 text-rose-600 dark:text-rose-400">
               <TriangleAlert />
             </AlertDialogMedia>
-            <AlertDialogTitle>Re-pin below-target packs</AlertDialogTitle>
+            <AlertDialogTitle>Re-pin packs to their target edge</AlertDialogTitle>
             <AlertDialogDescription>
-              Round-up re-prices every below-target pack back to the house
-              target. Only the pack <strong>price</strong> changes —{" "}
+              Re-prices every below-target pack back to <strong>its own</strong>{" "}
+              target edge — the floor {FLOOR_TARGET_PCT}% plus a gentle risk
+              premium for pricier, higher-jackpot packs. Only the pack{" "}
+              <strong>price</strong> changes —{" "}
               <strong>card odds are never touched</strong>. Each pack is written one at a
               time and the run is stoppable. Type{" "}
               <code className="rounded bg-muted px-1 py-0.5 font-mono">{CONFIRM_PHRASE}</code>{" "}
@@ -239,9 +250,10 @@ export function RepinCustomButton({
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Target {pct(plan.target)} · written only within {pct(plan.acceptMin)}–
-                  {pct(plan.acceptMax)}. Packs that can&apos;t hit it (1¢ step too
-                  coarse) are skipped.
+                  Each pack targets its own curve edge (floor{" "}
+                  {pct(plan.targetFloor)}, rising for pricier / higher-jackpot
+                  packs). Written only within ±0.05% of that pack&apos;s target;
+                  packs that can&apos;t hit it (1¢ step too coarse) are skipped.
                 </p>
 
                 {plan.toReprice.length > 0 && (

@@ -54,9 +54,13 @@ import { getCards, getRarities, getSets } from "@/lib/queries/cards";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
 import {
   autoRetuneTargets,
+  autoTargetEdge,
   buildPackCompliance,
+  DEFAULT_EDGE_CURVE,
+  readEdgeCurveConfig,
   readMaxWinCap,
   readMaxMultCeiling,
+  type EdgeCurveConfig,
   type ResolvedAutoTargetCfg,
 } from "@/app/(pack-studio)/pack-studio/_lib/risk-config";
 import type { pack_tag } from "@/generated/prisma/enums";
@@ -829,6 +833,38 @@ function resolveRepriceTarget(target: number | undefined): number {
   return clampRepriceTarget(t);
 }
 
+/**
+ * Sentinel for the re-price target: either an explicit owner-chosen FLAT edge
+ * fraction (the global re-price-all tool — every pack to the SAME edge the owner
+ * typed), or `"per-pack"` — derive each pack's target from the per-pack edge
+ * curve ({@link autoTargetEdge}: floor 10.99% + a gentle risk premium that rises
+ * with the pack's max-win $ exposure + price). The Pack-Doctor "re-pin to target
+ * edge" flow uses `"per-pack"`; the global tool passes a number.
+ */
+export type RepriceTarget = number | "per-pack";
+
+/**
+ * Resolve the actual target edge for ONE pack. For an explicit number it's the
+ * validated/clamped flat target (unchanged behavior). For `"per-pack"` it's the
+ * pack's curve target — `autoTargetEdge({ price, maxWin })` clamped into the
+ * re-price band — using the pack's FRESH price + max obtainable card value
+ * (`maxValue` from its aggregate composition) and the edge-curve config resolved
+ * once per run. `clampRepriceTarget` keeps it inside the tool's [1%, 50%] band;
+ * the curve already caps at 11.50% so this is a defensive no-op for the curve.
+ */
+function resolvePerPackOrFlatTarget(
+  target: RepriceTarget,
+  pack: { price: number; maxWin: number },
+  edgeCurve: EdgeCurveConfig,
+): number {
+  if (target === "per-pack") {
+    return clampRepriceTarget(
+      autoTargetEdge({ price: pack.price, maxWin: pack.maxWin }, edgeCurve),
+    );
+  }
+  return resolveRepriceTarget(target);
+}
+
 export type RepricePlanRow = {
   packId: string;
   name: string;
@@ -965,14 +1001,23 @@ export type RepriceResult = {
 };
 
 /**
- * Re-price ONE pack to `targetEdge` (default 10.99%). The client loops over the
- * dry-run's `toReprice` ids, calling this per pack so the run is visible,
- * stoppable, and each pack is its own audited write.
+ * Re-price ONE pack to its target edge. The client loops over the dry-run's
+ * `toReprice` ids, calling this per pack so the run is visible, stoppable, and
+ * each pack is its own audited write.
+ *
+ * `targetEdge` selects the target:
+ *   • a number — an explicit owner-chosen FLAT edge (the global re-price-all
+ *     tool: every pack to the SAME edge the owner typed). Default 10.99%.
+ *   • `"per-pack"` — derive each pack's target from the per-pack edge CURVE
+ *     ({@link autoTargetEdge}: floor 10.99% + a gentle risk premium driven by the
+ *     pack's max-win $ exposure + price). The Pack-Doctor "re-pin to target edge"
+ *     flow passes this so each pack lands on ITS curve target, not a flat one.
  *
  * Authoritative & paranoid:
  *   - Owner-only, AND requires a valid 2FA token from `authorizeReprice`.
  *   - Re-fetches the pack's pool FRESH from the DB — the client supplies only an
- *     id + the token + the target, never a price.
+ *     id + the token + the target SELECTOR, never a price (and, in per-pack mode,
+ *     never the curve edge — it's derived here from fresh price + max-win).
  *   - Re-validates scope server-side (active / official / price) independently
  *     of the dry-run filter.
  *   - HARD-asserts the resulting edge is within the hard tolerance of the target
@@ -982,7 +1027,7 @@ export type RepriceResult = {
 export async function repricePackToTargetEdge(
   packId: string,
   token: string,
-  targetEdge?: number,
+  targetEdge: RepriceTarget = REPRICE_TARGET_DEFAULT,
 ): Promise<RepriceResult> {
   const session = await requirePageAccess("/packs");
   if (!isRepriceOwner(session)) {
@@ -994,7 +1039,12 @@ export async function repricePackToTargetEdge(
   if (!(await verifyRepriceToken(token, session.userId))) {
     throw new Error("2FA authorization expired or missing — re-confirm to continue.");
   }
-  const target = resolveRepriceTarget(targetEdge);
+  // For an explicit flat target, validate it UP FRONT (a bad owner override must
+  // abort the whole run, not silently per-pack-skip). The per-pack curve target
+  // is derived inside the try, once the pack's fresh price + max-win are known.
+  const edgeCurve =
+    targetEdge === "per-pack" ? await readEdgeCurveConfig() : DEFAULT_EDGE_CURVE;
+  if (targetEdge !== "per-pack") resolveRepriceTarget(targetEdge);
 
   // Everything pack-specific is wrapped so ONE pack's failure surfaces its REAL
   // message — a value returned from a server action is NOT masked the way a
@@ -1042,6 +1092,15 @@ export async function repricePackToTargetEdge(
     if (!(comp.price > 0)) {
       return skip("Out of scope: pack has no price.");
     }
+
+    // Resolve THIS pack's target now that its fresh price + max-win are known:
+    // an explicit flat edge stays flat; `"per-pack"` derives the curve target
+    // from the pack's own price + max obtainable card value (`maxValue`).
+    const target = resolvePerPackOrFlatTarget(
+      targetEdge,
+      { price: comp.price, maxWin: comp.maxValue },
+      edgeCurve,
+    );
 
     const plan = planPackReprice({
       currentPrice: comp.price,
