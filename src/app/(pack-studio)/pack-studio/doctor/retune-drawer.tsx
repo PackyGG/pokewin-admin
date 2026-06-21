@@ -91,8 +91,13 @@ export function RetuneDrawer({
   // Retune levers (percent strings for edge/win-rate/near-miss, USD for cap).
   const [targetEdgePct, setTargetEdgePct] = React.useState("10.99");
   const [targetWinRatePct, setTargetWinRatePct] = React.useState("20");
-  const [maxWinCapUsd, setMaxWinCapUsd] = React.useState("");
   const [nearMissMinPct, setNearMissMinPct] = React.useState("10");
+
+  // Max-win cap is auto by default (server fills it from autoRetuneTargets(price)).
+  // The auto value is pulled from the pool (`pool.maxWinCap`) and shown read-only.
+  // An optional, collapsed override lets the owner pin a custom cap — default off.
+  const [capOverride, setCapOverride] = React.useState(false);
+  const [maxWinCapUsd, setMaxWinCapUsd] = React.useState("");
 
   const [plan, setPlan] = React.useState<PackRetunePlan | null>(null);
   const [confirmText, setConfirmText] = React.useState("");
@@ -108,11 +113,14 @@ export function RetuneDrawer({
     setPlan(null);
     setConfirmText("");
     setTotp("");
+    setCapOverride(false);
     (async () => {
       try {
         const p = await getPackRetunePool(packId);
         if (cancelled) return;
         setPool(p);
+        // Seed the (collapsed) override field from the auto cap so, if the owner
+        // flips override on, it starts from the auto value they'd otherwise get.
         setMaxWinCapUsd(String(p.maxWinCap));
         // Seed the win-rate lever from the pack's current win-rate so the first
         // preview is a near-no-op the operator can nudge from.
@@ -134,6 +142,10 @@ export function RetuneDrawer({
   const maxWinCap = parseUsd(maxWinCapUsd);
   const nearMissMin = parsePct(nearMissMinPct);
 
+  // The cap only constrains the plan when the owner explicitly overrides it.
+  // Otherwise it stays undefined and the server fills the auto cap.
+  const overrideCapValid = !capOverride || maxWinCap != null;
+
   const targetsValid =
     targetEdge != null &&
     targetEdge > 0 &&
@@ -141,7 +153,7 @@ export function RetuneDrawer({
     targetWinRate != null &&
     targetWinRate >= 0 &&
     targetWinRate < 1 &&
-    (maxWinCapUsd.trim() === "" || maxWinCap != null) &&
+    overrideCapValid &&
     nearMissMin != null &&
     nearMissMin >= 0 &&
     nearMissMin < 1;
@@ -150,7 +162,8 @@ export function RetuneDrawer({
     return {
       targetEdge: targetEdge ?? undefined,
       targetWinRate: targetWinRate!,
-      maxWinCap: maxWinCap ?? undefined,
+      // Omit the cap unless overriding → server defaults to the auto cap.
+      maxWinCap: capOverride ? (maxWinCap ?? undefined) : undefined,
       nearMissMin: nearMissMin ?? undefined,
     };
   }
@@ -281,19 +294,44 @@ export function RetuneDrawer({
                   }
                 />
                 <LeverInput
-                  id="rt-cap"
-                  label="Max-win cap ($, optional)"
-                  value={maxWinCapUsd}
-                  onChange={setMaxWinCapUsd}
-                  invalid={maxWinCapUsd.trim() !== "" && maxWinCap == null}
-                />
-                <LeverInput
                   id="rt-nm"
                   label="Near-miss floor (%)"
                   value={nearMissMinPct}
                   onChange={setNearMissMinPct}
                   invalid={nearMissMin == null || nearMissMin < 0 || nearMissMin >= 1}
                 />
+              </div>
+
+              {/* Max-win cap — auto by default (server fills it from the price).
+                  Shown read-only; an optional collapsed override pins a custom cap. */}
+              <div className="rounded-lg border bg-muted/20 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    Max-win cap (auto):{" "}
+                    <span className="font-medium tabular-nums text-foreground">
+                      {formatCurrency(pool.maxWinCap)}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCapOverride((v) => !v)}
+                    disabled={busy}
+                    className="text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+                  >
+                    {capOverride ? "Use auto" : "Override"}
+                  </button>
+                </div>
+                {capOverride && (
+                  <div className="mt-2">
+                    <LeverInput
+                      id="rt-cap"
+                      label="Custom max-win cap ($)"
+                      value={maxWinCapUsd}
+                      onChange={setMaxWinCapUsd}
+                      invalid={maxWinCap == null}
+                    />
+                  </div>
+                )}
               </div>
 
               <Button

@@ -8,6 +8,7 @@ import {
   Stethoscope,
   Wand2,
   Layers,
+  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -49,6 +50,7 @@ type StudioNavItem = {
 const STUDIO_NAV: StudioNavItem[] = [
   { label: "Overview", href: "/pack-studio", icon: LayoutDashboard },
   { label: "Pack Doctor", href: "/pack-studio/doctor", icon: Stethoscope },
+  { label: "Bulk Retune", href: "/pack-studio/retune", icon: Sparkles },
   { label: "Pack Builder", href: "/pack-studio/builder", icon: Wand2 },
   { label: "Card Editor", href: "/pack-studio/cards", icon: Layers },
 ];
