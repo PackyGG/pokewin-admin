@@ -24,6 +24,7 @@ import {
   ManualWithdrawalDialog,
   XpAdjustDialog,
 } from "./user-tabs-dialogs";
+import { refreshUserDetailCache } from "./actions";
 import type {
   UserDetail,
   PnlBreakdown,
@@ -207,10 +208,16 @@ export function ModernBalancePanel({
   // the rest of the page DOM stays intact while the balance numbers
   // re-fetch. useTransition wraps the call so the icon can show a
   // pending spinner without blocking the rest of the UI.
+  //
+  // CACHE-BUST FIRST: the balance reads are unstable_cache'd (25s, tagged
+  // "users-detail"), so a bare router.refresh() would replay the cached
+  // snapshot within the TTL. We invalidate that tag server-side first, so
+  // router.refresh() re-queries Postgres LIVE — the click is always fresh.
   const router = useRouter();
   const [refreshing, startRefresh] = useTransition();
   const handleRefresh = () => {
-    startRefresh(() => {
+    startRefresh(async () => {
+      await refreshUserDetailCache();
       router.refresh();
     });
   };

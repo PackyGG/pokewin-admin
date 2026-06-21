@@ -3228,6 +3228,22 @@ export async function fetchUserTransactions(
   return getUserTransactions(userId, safePage, safePerPage, filters);
 }
 
+/**
+ * Force the next /users/[id] render to query LIVE (cache-busting refresh).
+ *
+ * The Balances panel's refresh icon calls router.refresh(), which re-runs the
+ * page's server components — but the per-user reads are unstable_cache'd
+ * (getUserDetailCached / getUserPnlBreakdownCached / the gaming + financial
+ * feeds, ALL tagged "users-detail"), so within their TTL a plain
+ * router.refresh() just replays the same cached snapshot. Invalidating the tag
+ * here drops those entries so the subsequent router.refresh() re-queries
+ * Postgres live — the manual refresh is then always instant AND fresh.
+ */
+export async function refreshUserDetailCache(): Promise<void> {
+  await requirePageAccess("/users");
+  revalidateTag("users-detail");
+}
+
 export async function fetchProvablyFairResults(
   userId: string,
   page: number,
