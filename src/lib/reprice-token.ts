@@ -41,3 +41,39 @@ export async function verifyRepriceToken(
     return false;
   }
 }
+
+/**
+ * Short-lived, signed authorization for a pack RETUNE — a DISTINCT scope from
+ * the re-price token above.
+ *
+ * Why a separate scope: a re-price only moves a pack's sticker `price`; a retune
+ * rewrites the pack's per-card WEIGHTS (the odds themselves). They are different
+ * blast radii, so a token minted for one must never authorize the other. Same
+ * mechanics as the re-price token (signed with SESSION_SECRET, scoped to one
+ * user, 15-minute TTL) but its own `RETUNE_SCOPE`, so `verifyRetuneToken` will
+ * reject a re-price token and vice-versa.
+ */
+const RETUNE_SCOPE = "retune";
+
+/** Mint a pack-retune authorization token for `userId` (call AFTER verifying TOTP). */
+export async function signRetuneToken(userId: string): Promise<string> {
+  return new SignJWT({ scope: RETUNE_SCOPE, uid: userId })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime(TTL)
+    .sign(key());
+}
+
+/** True iff `token` is a valid, unexpired pack-retune token for `userId`. */
+export async function verifyRetuneToken(
+  token: string,
+  userId: string,
+): Promise<boolean> {
+  if (!token) return false;
+  try {
+    const { payload } = await jwtVerify(token, key(), { algorithms: ["HS256"] });
+    return payload.scope === RETUNE_SCOPE && payload.uid === userId;
+  } catch {
+    return false;
+  }
+}
