@@ -616,6 +616,28 @@ export type GameSessionDetails = {
     ticket: number;
     resultHash: string;
   }[];
+  /**
+   * Per-roll pack → picked-card mapping for this game session, derived from
+   * each provably_fair row's `result_metadata` (pack_id / pack_name / card_id /
+   * round_id) joined to packs + cards. One entry per round for a battle (the
+   * leg the user kept wins; otherwise the card they pulled), or one entry per
+   * pull for a plain pack opening. `kept` is true when the picked card landed
+   * in the user's inventory (vs. redistributed to an opponent in borrow modes).
+   * Empty when no PF row references a pack (older sessions / non-pack games).
+   */
+  packsOpened: {
+    key: string;
+    roundIndex: number | null;
+    nonce: number;
+    kept: boolean;
+    pack: { id: string; name: string; imageUrl: string | null };
+    card: {
+      name: string;
+      imageUrl: string | null;
+      rarity: string | null;
+      valueUsd: number;
+    } | null;
+  }[];
   createdAt: string;
 };
 

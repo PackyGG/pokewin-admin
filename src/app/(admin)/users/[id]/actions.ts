@@ -2502,6 +2502,139 @@ export async function getGameSessionDetails(
     resultHash: r.result_hash,
   }));
 
+  // ── "Packs opened" — per-roll pack → picked-card mapping ──────────────
+  //
+  // Every provably_fair_results row stores, in its result_metadata JSON, the
+  // exact pack it opened (`pack_id` / `pack_name`) and — for BATTLE sessions —
+  // the card pulled from it (`card_id`, plus a `round_id` for ordering). A
+  // battle opens one pack per round; each round contributes one PF roll the
+  // user kept (inventory_item_id set) plus, in borrow/redistribution modes, a
+  // second roll for the leg sent elsewhere. We collapse to ONE entry per round
+  // and surface the card the USER actually pulled, preferring the kept-leg row.
+  //
+  // For a plain pack_opening the metadata carries pack_id/pack_name but NO
+  // card_id (the card lives only on the inventory row), so we fall back to the
+  // PF row's own inventory_item_id → card. This makes the section render
+  // consistently for both pack_opening and battle_bet, with no fabrication:
+  // both fields are read straight off the same provably_fair row.
+  type PfRow = (typeof session.provably_fair_results)[number];
+  const metaOf = (r: PfRow): Record<string, unknown> =>
+    r.result_metadata && typeof r.result_metadata === "object"
+      ? (r.result_metadata as Record<string, unknown>)
+      : {};
+  const asStr = (v: unknown): string | null =>
+    typeof v === "string" && v.length > 0 ? v : null;
+  // round_id is stored as a JSON number (e.g. 13), so a string-only coerce
+  // would drop it. asInt accepts both number and numeric-string forms.
+  const asInt = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  };
+
+  // Group PF rows by round (battle) or by PF row id (pack_opening, which has no
+  // round_id). Within a round, prefer the leg the user kept so the displayed
+  // card matches what landed in their inventory.
+  const roundGroups = new Map<string, PfRow[]>();
+  for (const r of session.provably_fair_results) {
+    const meta = metaOf(r);
+    // Only rows that actually reference a pack belong in this section.
+    if (!asStr(meta.pack_id)) continue;
+    const roundId = asInt(meta.round_id);
+    const roundKey = roundId != null ? `round:${roundId}` : `pf:${r.id}`;
+    const arr = roundGroups.get(roundKey);
+    if (arr) arr.push(r);
+    else roundGroups.set(roundKey, [r]);
+  }
+
+  // Resolve all referenced pack + card ids in two batched lookups (PK reads).
+  const packIdSet = new Set<string>();
+  const metaCardIdSet = new Set<string>();
+  for (const rows of roundGroups.values()) {
+    for (const r of rows) {
+      const meta = metaOf(r);
+      const pid = asStr(meta.pack_id);
+      if (pid) packIdSet.add(pid);
+      const cid = asStr(meta.card_id);
+      if (cid) metaCardIdSet.add(cid);
+    }
+  }
+  // The inventory-linked cards were already resolved into `cardMap` above; only
+  // the metadata-only card ids (battle pulls not in `cardMap`) need fetching.
+  const missingCardIds = [...metaCardIdSet].filter((id) => !cardMap.has(id));
+  const [packsOpenedRows, extraCards] = await Promise.all([
+    packIdSet.size > 0
+      ? db.packs.findMany({
+          where: { id: { in: [...packIdSet] } },
+          select: { id: true, name: true, image_url: true },
+        })
+      : Promise.resolve([] as { id: string; name: string; image_url: string | null }[]),
+    missingCardIds.length > 0
+      ? db.cards.findMany({
+          where: { id: { in: missingCardIds } },
+          select: { id: true, name: true, image_url: true, rarity: true, price: true },
+        })
+      : Promise.resolve([] as { id: string; name: string; image_url: string; rarity: string | null; price: Prisma.Decimal }[]),
+  ]);
+  const packMap = new Map(packsOpenedRows.map((p) => [p.id, p]));
+  const fullCardMap = new Map(cardMap);
+  for (const cd of extraCards) fullCardMap.set(cd.id, cd);
+
+  const packsOpened = [...roundGroups.entries()]
+    .map(([roundKey, rows]) => {
+      // Prefer the leg the user kept (inventory_item_id set), else first row.
+      const primary = rows.find((r) => r.inventory_item_id) ?? rows[0]!;
+      const meta = metaOf(primary);
+      const packId = asStr(meta.pack_id)!;
+      const packRow = packMap.get(packId);
+      const packName = packRow?.name ?? asStr(meta.pack_name) ?? "Unknown pack";
+
+      // Picked card: the inventory card (pack_opening + kept battle leg) wins;
+      // otherwise the metadata card_id (battle leg the user pulled but didn't
+      // keep). Either way it's the card pulled from THIS pack on THIS roll.
+      const invItem = primary.inventory_item_id
+        ? inventoryItems.find((i) => i.id === primary.inventory_item_id)
+        : null;
+      const cardId = invItem?.card_id ?? asStr(meta.card_id);
+      const card = cardId ? fullCardMap.get(cardId) : undefined;
+      // Value: the inventory's value_at_obtained when the user kept the card
+      // (cent-exact at pull time), else the card's catalogue price.
+      const keptValue = invItem
+        ? Number(invItem.value_at_obtained)
+        : null;
+
+      const roundIndex = asInt(meta.round_id);
+
+      return {
+        key: roundKey,
+        roundIndex,
+        nonce: primary.nonce,
+        kept: Boolean(primary.inventory_item_id),
+        pack: {
+          id: packId,
+          name: packName,
+          imageUrl: packRow?.image_url ?? null,
+        },
+        card: card
+          ? {
+              name: card.name,
+              imageUrl: card.image_url,
+              rarity: card.rarity,
+              valueUsd: keptValue ?? Number(card.price),
+            }
+          : null,
+      };
+    })
+    // Stable order: battle rounds by round index, pack_opening by nonce.
+    .sort((a, b) => {
+      if (a.roundIndex != null && b.roundIndex != null)
+        return a.roundIndex - b.roundIndex;
+      return a.nonce - b.nonce;
+    });
+
   return {
     id: session.id,
     gameType: session.game_type,
@@ -2510,6 +2643,7 @@ export async function getGameSessionDetails(
     pack,
     items,
     pfResults,
+    packsOpened,
     createdAt: session.created_at.toISOString(),
   };
 }

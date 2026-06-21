@@ -13,7 +13,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, Gauge } from "lucide-react";
+import { ChevronDown, ExternalLink, Gauge, Package } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -22,6 +22,11 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import {
@@ -90,6 +95,10 @@ export function TransactionDetailModal({
     null,
   );
   const [loadingSession, setLoadingSession] = useState(false);
+  // Provably Fair section is collapsed by default (it's long). Reset to
+  // collapsed whenever a different transaction's session is (re)loaded so it
+  // never opens pre-expanded on the next row.
+  const [pfOpen, setPfOpen] = useState(false);
   // A rejected getGameSessionDetails used to be UNHANDLED (then/finally
   // with no catch) — surface it as an inline row instead, distinguishable
   // from the legitimate "Game session not found" null result.
@@ -104,6 +113,7 @@ export function TransactionDetailModal({
     setLoadingSession(true);
     setGameSession(null);
     setSessionError(false);
+    setPfOpen(false);
     // Pass the URL's userId through so the server can verify ownership
     // before returning provably_fair_results (server-seed leak guard).
     getGameSessionDetails(transaction.gameSessionId, userId)
@@ -573,11 +583,103 @@ export function TransactionDetailModal({
                     </div>
                   )}
 
-                  {gameSession.pfResults.length > 0 && (
-                    <div className="border-t pt-3 space-y-2">
+                  {gameSession.packsOpened.length > 0 && (
+                    <div className="border-t pt-3 space-y-3">
                       <p className="text-xs text-muted-foreground">
-                        Provably Fair
+                        Packs opened ({gameSession.packsOpened.length})
                       </p>
+                      <div className="space-y-2">
+                        {gameSession.packsOpened.map((entry) => (
+                          <div
+                            key={entry.key}
+                            className="flex items-center gap-3 rounded-lg border bg-muted/30 p-2.5"
+                          >
+                            {/* Pack — image + name, same size as the card */}
+                            <div className="flex flex-1 items-center gap-2.5 min-w-0">
+                              {entry.pack.imageUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={entry.pack.imageUrl}
+                                  alt={entry.pack.name}
+                                  className="h-16 w-16 shrink-0 rounded-lg object-contain drop-shadow"
+                                />
+                              ) : (
+                                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                                  <Package className="size-5" />
+                                </div>
+                              )}
+                              <Link
+                                href={`/packs/${entry.pack.id}`}
+                                className="min-w-0 text-sm font-medium text-blue-400 hover:underline"
+                              >
+                                <span className="block truncate">
+                                  {entry.pack.name}
+                                </span>
+                                {entry.roundIndex != null && (
+                                  <span className="block text-[10px] font-normal text-muted-foreground">
+                                    Round {entry.roundIndex + 1}
+                                  </span>
+                                )}
+                              </Link>
+                            </div>
+
+                            <span className="shrink-0 text-muted-foreground">
+                              →
+                            </span>
+
+                            {/* Picked card — image + name, SAME size as pack */}
+                            <div className="flex flex-1 items-center justify-end gap-2.5 min-w-0">
+                              {entry.card ? (
+                                <>
+                                  <div className="min-w-0 text-right">
+                                    <span className="block truncate text-sm font-medium">
+                                      {entry.card.name}
+                                    </span>
+                                    <span className="block text-[10px] text-muted-foreground">
+                                      {formatCurrency(entry.card.valueUsd)}
+                                      {!entry.kept && " · redistributed"}
+                                    </span>
+                                  </div>
+                                  {entry.card.imageUrl ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={entry.card.imageUrl}
+                                      alt={entry.card.name}
+                                      className="h-16 w-16 shrink-0 rounded-lg object-contain drop-shadow"
+                                    />
+                                  ) : (
+                                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-muted/50 text-xs text-muted-foreground">
+                                      ?
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">
+                                  No card
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {gameSession.pfResults.length > 0 && (
+                    <Collapsible
+                      open={pfOpen}
+                      onOpenChange={setPfOpen}
+                      className="border-t pt-3"
+                    >
+                      <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 text-left">
+                        <span className="text-xs text-muted-foreground">
+                          Provably Fair ({gameSession.pfResults.length})
+                        </span>
+                        <ChevronDown
+                          className={`size-4 text-muted-foreground transition-transform duration-200 ${pfOpen ? "" : "-rotate-90"}`}
+                        />
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-2 pt-2">
                       {gameSession.pfResults.map((pf, i) => (
                         <div
                           key={pf.id}
@@ -642,7 +744,8 @@ export function TransactionDetailModal({
                           </div>
                         </div>
                       ))}
-                    </div>
+                      </CollapsibleContent>
+                    </Collapsible>
                   )}
                 </>
               ) : (
