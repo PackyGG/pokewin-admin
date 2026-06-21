@@ -38,6 +38,8 @@
   "exclude": [
     "node_modules",
     "admin-frontend",
-    "e2e"
+    "e2e",
+    "**/*.test.ts",
+    "**/*.test.tsx"
   ]
 }
