@@ -66,6 +66,18 @@ export type BattleListItem = {
    * smaller). Null for non-completed battles or zero-bet edge cases.
    */
   hitMultiplier: number | null;
+  /**
+   * True when this row is a PENDING battle (`in_progress` / `animating`)
+   * whose outcome is already materialized in the DB — i.e. `winner_team`
+   * and `total_unpacked` are populated even though the on-site animation
+   * hasn't settled and the provably_fair_results rows aren't written yet.
+   * For these rows `totalPotUsd` / `houseEdge` / `hitMultiplier` / payout
+   * are sourced from `total_unpacked` (the PF-sum path is empty while
+   * animating). Lets the UI flag the row as "outcome locked / settling"
+   * vs a true no-outcome-yet row. Always false for completed / waiting /
+   * cancelled battles.
+   */
+  outcomeLocked: boolean;
 };
 
 /**
@@ -380,6 +392,30 @@ export async function getBattles(params: {
     const hitMultiplier =
       betAmount > 0 ? totalCardValue / betAmount : 0;
 
+    // ── Pre-resolved (pending) outcome ───────────────────────────────
+    // While a battle is `in_progress` / `animating` the provably_fair_
+    // results rows aren't written yet, so the PF-sum path above yields 0.
+    // But `winner_team` + `total_unpacked` are ALREADY populated in the
+    // DB (the outcome is materialized before the on-site animation
+    // settles). So for pending rows we source the Hit from
+    // `total_unpacked` — the same number that equals the settled PF-sum
+    // on completed battles — and compute the house edge / multiplier /
+    // creator payout off it. `outcomeLocked` flags these so the UI can
+    // mark them "settling" instead of showing "—".
+    const isPending = b.status === "in_progress" || b.status === "animating";
+    const pendingHit =
+      isPending && b.total_unpacked != null ? toNumber(b.total_unpacked) : null;
+    const outcomeLocked = isPending && pendingHit != null;
+    const pendingHouseEdge =
+      totalWagered > 0 && pendingHit != null
+        ? ((totalWagered - pendingHit) / totalWagered) * 100
+        : null;
+    const pendingHitMultiplier =
+      betAmount > 0 && pendingHit != null ? pendingHit / betAmount : null;
+    // Creator payout for pending uses the SAME winner_team logic — it's
+    // set while animating, so `creatorWon` is already correct above.
+    const pendingCreatorPayout = creatorWon ? pendingHit : 0;
+
     return {
       id: b.id,
       userId: b.user_id,
@@ -392,15 +428,33 @@ export async function getBattles(params: {
       winnerTeam: b.winner_team,
       regionCode: b.region_code,
       createdAt: b.created_at.toISOString(),
-      totalPayout: b.status === "completed" ? creatorPayout : null,
-      houseEdge: b.status === "completed" ? houseEdge : null,
+      totalPayout: b.status === "completed"
+        ? creatorPayout
+        : outcomeLocked
+          ? pendingCreatorPayout
+          : null,
+      houseEdge: b.status === "completed"
+        ? houseEdge
+        : outcomeLocked
+          ? pendingHouseEdge
+          : null,
       borrowPercentage: borrowPct,
       sponsorshipPercentage: b.sponsorship_percentage ?? 0,
       borrowedAmountUsd,
-      // Total pot = sum of all cards regardless of who won. Only set
-      // for completed battles (no payout exists for waiting/cancelled).
-      totalPotUsd: b.status === "completed" ? totalCardValue : null,
-      hitMultiplier: b.status === "completed" ? hitMultiplier : null,
+      // Total pot = sum of all cards regardless of who won. Set for
+      // completed battles (PF-sum) and pre-resolved pending battles
+      // (from total_unpacked); null for waiting/cancelled (no outcome).
+      totalPotUsd: b.status === "completed"
+        ? totalCardValue
+        : outcomeLocked
+          ? pendingHit
+          : null,
+      hitMultiplier: b.status === "completed"
+        ? hitMultiplier
+        : outcomeLocked
+          ? pendingHitMultiplier
+          : null,
+      outcomeLocked,
     };
   });
 
@@ -646,6 +700,14 @@ export async function getBattleDetail(id: string) {
     status: battle.status,
     betAmount: toNumber(battle.bet_amount),
     winnerTeam: battle.winner_team,
+    // Total card value paid out across the whole battle, materialized in
+    // the DB the moment the outcome is determined — i.e. populated while
+    // the battle is still `in_progress` / `animating`, BEFORE the
+    // provably_fair_results rows (which `teamsData` derives from) exist.
+    // The detail page uses this to surface the House P&L on a pending
+    // battle, since the teamsData-derived total is 0 until PF rows land.
+    // On completed battles it equals the teamsData sum (verified).
+    totalUnpacked: battle.total_unpacked != null ? toNumber(battle.total_unpacked) : null,
     serverSeedHash: battle.server_seed_hash,
     eosBlockHash: battle.eos_block_hash,
     regionCode: battle.region_code,

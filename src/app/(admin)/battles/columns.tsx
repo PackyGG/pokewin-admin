@@ -96,12 +96,27 @@ export const columns: ColumnDef<BattleListItem>[] = [
     cell: ({ row }) => {
       const p = row.original.totalPotUsd;
       const m = row.original.hitMultiplier;
+      const locked = row.original.outcomeLocked;
       if (p == null) return <span className="text-muted-foreground">—</span>;
       return (
         <div className="flex flex-col items-start gap-0.5">
-          <span className="text-rose-600 dark:text-rose-400">
-            {formatCurrency(p)}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-rose-600 dark:text-rose-400">
+              {formatCurrency(p)}
+            </span>
+            {/* Pre-resolved pending battle: outcome is locked in the DB
+                but the on-site animation hasn't settled yet. Neutral
+                marker (status, not money) so admins can tell it apart
+                from a finalized Hit. */}
+            {locked && (
+              <Badge
+                variant="outline"
+                className="px-1 py-0 text-[9px] font-medium uppercase tracking-wide text-muted-foreground"
+              >
+                settling
+              </Badge>
+            )}
+          </div>
           {m != null && m > 0 && (
             <span className="text-[10px] tabular-nums text-muted-foreground">
               {formatHitMultiplier(m)}

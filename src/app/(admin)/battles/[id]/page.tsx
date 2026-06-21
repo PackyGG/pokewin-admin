@@ -105,7 +105,21 @@ export default async function BattleDetailPage({
   const cardsPerPlayer = data.teamsData[0]?.players[0]?.cards.length ?? 0;
   const totalPacksOpened = totalParticipants * cardsPerPlayer;
   const totalWagered = data.betAmount * totalParticipants;
-  const totalCardValue = data.teamsData.reduce((s, t) => s + t.teamTotalValue, 0);
+
+  // Pre-resolved (pending) battle: outcome is materialized in the DB
+  // (`winner_team` + `total_unpacked`) before the on-site animation
+  // settles, but the provably_fair_results rows that `teamsData` derives
+  // from aren't written yet — so the teamsData total card value is 0
+  // while pending. Source the Hit from `total_unpacked` for these rows.
+  const isPending = data.status === "in_progress" || data.status === "animating";
+  const pendingHit = data.totalUnpacked;
+  // Show the House P&L strip for completed battles (as before) AND for
+  // pending battles whose outcome is already locked in.
+  const showKpiStrip = data.status === "completed" || (isPending && pendingHit != null);
+  const totalCardValue =
+    isPending && pendingHit != null
+      ? pendingHit
+      : data.teamsData.reduce((s, t) => s + t.teamTotalValue, 0);
   const houseProfit = totalWagered - totalCardValue;
   const houseEdgePct = totalWagered > 0 ? (houseProfit / totalWagered) * 100 : 0;
 
@@ -130,12 +144,28 @@ export default async function BattleDetailPage({
         />
       </PageHero>
 
-      {/* KPI strip - completed battles only */}
-      {data.status === "completed" && (
+      {/* Pre-resolved pending battle: outcome is locked in the DB but the
+          on-site animation hasn't settled yet. Make that explicit so the
+          admin reads the KPI strip below as a determined-but-settling
+          result, not a finalized one. */}
+      {showKpiStrip && isPending && (
+        <Badge
+          variant="outline"
+          className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30"
+        >
+          Outcome locked — settling
+        </Badge>
+      )}
+
+      {/* KPI strip - completed battles + pre-resolved pending battles */}
+      {showKpiStrip && (
         <div className="grid gap-2.5 sm:gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
           <KpiTile
             label="Packs Opened"
-            value={String(totalPacksOpened)}
+            // PF result rows aren't written while a battle is animating,
+            // so the per-player card counts aren't known yet — show "—"
+            // rather than a fabricated 0. Resolves once the battle settles.
+            value={isPending ? "—" : String(totalPacksOpened)}
             icon={Package}
             accent="cyan"
           />
