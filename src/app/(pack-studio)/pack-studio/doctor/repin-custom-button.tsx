@@ -68,7 +68,6 @@ export function RepinCustomButton({
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [progressOpen, setProgressOpen] = React.useState(false);
   const [plan, setPlan] = React.useState<CustomRepinPlan | null>(null);
-  const [targetPct, setTargetPct] = React.useState(DEFAULT_TARGET_PCT);
   const [confirmText, setConfirmText] = React.useState("");
   const [totp, setTotp] = React.useState("");
 
@@ -93,7 +92,6 @@ export function RepinCustomButton({
     setPlan(null);
     setConfirmText("");
     setTotp("");
-    setTargetPct(DEFAULT_TARGET_PCT);
     setPhase("planning");
     setConfirmOpen(true);
     try {
@@ -173,7 +171,7 @@ export function RepinCustomButton({
     } else if (failed > 0) {
       toast.warning(`Re-priced ${done} · ${failed} failed — see details.`);
     } else {
-      toast.success(`Re-pinned ${done} pack${done === 1 ? "" : "s"} to ~${targetPct}%.`);
+      toast.success(`Re-pinned ${done} pack${done === 1 ? "" : "s"} to ~${DEFAULT_TARGET_PCT}%.`);
     }
     router.refresh();
   }

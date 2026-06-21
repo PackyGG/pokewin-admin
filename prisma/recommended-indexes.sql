@@ -597,14 +597,17 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
 -- issues a per-id query), so this is one ~1s read at the moment an admin
 -- confirms a delete — acceptable but not ideal on a 3.4M-row prod table.
 --
--- RECOMMENDED — a jsonb_path_ops GIN index lets the containment form
--- (result_metadata @> '{"card_id":"…"}') become an index lookup. Apply both:
+-- APPLIED (2026-06-21, valid) — a jsonb_path_ops GIN index lets the containment
+-- form (result_metadata @> '{"card_id":"…"}') become an index lookup:
 --
 --   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pf_result_metadata_gin
 --     ON provably_fair_results USING gin (result_metadata jsonb_path_ops);
 --
 -- jsonb_path_ops is the smaller/faster GIN opclass and supports @> containment,
 -- which covers BOTH the top-level card_id and the nested target_card_id lookups
--- (each issued as one @> probe per id). Until this index exists the reference
--- check is correct but runs as the ~1s seq scan documented above; the action is
--- written so it degrades gracefully (single scan, admin-gated, one-shot).
+-- (each issued as one @> probe per id). The owner applied this index (2026-06-21,
+-- valid) and `checkCardReferences()` now issues the `@>` containment form, so the
+-- card-delete reference check is served by this GIN (Bitmap Index Scan) instead
+-- of the ~1s Parallel Seq Scan documented above (kept here as historical context
+-- for why the index exists). The action still degrades gracefully if the index is
+-- ever dropped (single scan, admin-gated, one-shot).

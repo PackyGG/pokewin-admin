@@ -42,6 +42,7 @@ import { getPackCardValues } from "@/lib/queries/pack-card-values";
 import {
   shapeWeights,
   computePackRisk,
+  computePackRiskFromAggregates,
   type PackRisk,
 } from "@/app/(admin)/insights/edge-calc/risk";
 import { TARGET_HOUSE_EDGE } from "@/app/(admin)/insights/edge-calc/math";
@@ -767,13 +768,55 @@ export async function quickUpdatePack(
 
 /**
  * Pack types eligible for the single-pack re-price write AND the retune tools:
- * `official` (the global re-price set) plus `custom` (pack-builder output). Both
- * are real cash packs; reward / shard / promo stay excluded. Kept here (not in
- * the query module's `REPRICE_INCLUDED_PACK_TYPES`, which still scopes the
- * GLOBAL dry-run/loop to official-only) so widening the single-pack write scope
- * doesn't change what the "re-price ALL packs" plan sweeps.
+ * `official` only. There is no `custom` pack type — every cash pack is an
+ * `official` pack — so this matches the query module's
+ * `REPRICE_INCLUDED_PACK_TYPES` (which scopes the GLOBAL dry-run/loop). Reward /
+ * shard / promo stay excluded.
  */
-const REPRICE_OR_RETUNE_PACK_TYPES: readonly string[] = ["official", "custom"];
+const REPRICE_OR_RETUNE_PACK_TYPES: readonly string[] = ["official"];
+
+/**
+ * Refresh ONE pack's ADMIN-side risk row from an already-computed {@link PackRisk}
+ * (ADMIN write only — never touches MAIN). The Pack Studio Doctor grid + Overview
+ * read their risk/compliance from the ADMIN `pack_risk_scores` snapshot table, so
+ * after a MAIN odds/price write we mirror the SAME row shape the snapshot writer
+ * persists (`buildPackCompliance` + the same resolved `maxWinCap`) and bust the
+ * overview cache — otherwise the change wouldn't surface until the next full
+ * snapshot run. Shared by `applyPackRetune` (post-weight-write) and
+ * `repricePackToTargetEdge` (post-price-write).
+ *
+ * BEST-EFFORT BY CONTRACT: the MAIN write has already committed when this is
+ * called, so an ADMIN-side failure must NOT fail the caller — it's swallowed and
+ * logged, and the next snapshot run reconciles the row.
+ */
+async function refreshPackRiskScore(
+  packId: string,
+  risk: PackRisk,
+  maxWinCap: number,
+): Promise<void> {
+  try {
+    const riskRow = {
+      edge: risk.edge,
+      cv: risk.cv,
+      win_rate: risk.winRate,
+      near_miss: risk.nearMiss,
+      max_win: risk.maxWin,
+      max_mult: risk.maxMult,
+      risk_score: risk.riskScore0to100,
+      tier: risk.tier,
+      compliance: buildPackCompliance(risk, maxWinCap),
+      computed_at: new Date(),
+    };
+    await adminDb.pack_risk_scores.upsert({
+      where: { pack_id: packId },
+      update: riskRow,
+      create: { pack_id: packId, ...riskRow },
+    });
+    revalidateTag("pack-studio-overview");
+  } catch (err) {
+    console.error("refreshPackRiskScore: pack_risk_scores refresh failed", err);
+  }
+}
 
 /** Validate + normalize a target edge fraction; throws on out-of-range input. */
 function resolveRepriceTarget(target: number | undefined): number {
@@ -986,13 +1029,12 @@ export async function repricePackToTargetEdge(
       edgeAfter: null,
       reason,
     });
-    // Scope: official packs (the default global-reprice set) PLUS custom packs
-    // (built via the pack builder, pack_type 'custom'). Both are real cash packs
-    // whose price is a house-edge lever; every other type (reward / shard /
-    // promo) is still excluded. Every other guard (owner, token, price>0,
-    // hard-band) is unchanged.
+    // Scope: official packs only (there is no custom pack type — every cash pack
+    // is an official pack whose price is a house-edge lever). Every other type
+    // (reward / shard / promo) is excluded. Every other guard (owner, token,
+    // price>0, hard-band) is unchanged.
     if (!REPRICE_OR_RETUNE_PACK_TYPES.includes(comp.packType)) {
-      return skip(`Out of scope: only official and custom packs are re-priced (this is '${comp.packType}').`);
+      return skip(`Out of scope: only official packs are re-priced (this is '${comp.packType}').`);
     }
     if (!comp.active) {
       return skip("Out of scope: only active packs are re-priced.");
@@ -1059,6 +1101,29 @@ export async function repricePackToTargetEdge(
         edge_after: plan.newEdge,
       },
     });
+
+    // ── Refresh the pack's ADMIN-side risk row from the new price (ADMIN write) ──
+    // The re-price moved ONLY the sticker price; card odds (weights/values) are
+    // unchanged. So the pack's new risk is the SAME fresh aggregate composition
+    // (`comp`, just read read-only from MAIN) scored at the NEW price — exactly
+    // what the snapshot writer computes via `computePackRiskFromAggregates`. We
+    // recompute it here and upsert the ADMIN `pack_risk_scores` row through the
+    // shared `refreshPackRiskScore` helper (same row shape + `buildPackCompliance`
+    // + the same `readMaxWinCap` the snapshot uses) so the Doctor grid + Overview
+    // reflect the new edge instantly instead of showing a stale row until the next
+    // snapshot run. Best-effort by contract: the MAIN price write has already
+    // committed, so an ADMIN-side failure must NOT fail this reprice.
+    const repricedRisk = computePackRiskFromAggregates({
+      price: plan.newPrice,
+      totalWeight: comp.totalWeight,
+      weightedPriceSum: comp.weightedPriceSum,
+      weightedSqSum: comp.weightedSqSum,
+      winWeight: comp.winWeight,
+      nearMissWeight: comp.nearMissWeight,
+      maxValue: comp.maxValue,
+      floorValue: comp.floorValue,
+    });
+    await refreshPackRiskScore(packId, repricedRisk, await readMaxWinCap());
 
     reloadPacks();
     revalidatePath("/packs");
@@ -1347,7 +1412,7 @@ export async function applyPackRetune(
 
   if (!REPRICE_OR_RETUNE_PACK_TYPES.includes(pack.pack_type)) {
     throw new Error(
-      `Out of scope: only official and custom packs can be retuned (this is '${pack.pack_type}').`,
+      `Out of scope: only official packs can be retuned (this is '${pack.pack_type}').`,
     );
   }
   const price = Number(pack.price.toString());
@@ -1470,37 +1535,13 @@ export async function applyPackRetune(
   // `pack_risk_scores` snapshot table. Without this, a re-tune wouldn't surface
   // until the next full snapshot run. `after` IS `computePackRisk` of the FRESH
   // pool values + the NEW shaped weights (it's `shaped.risk`), so it's exactly
-  // the per-card risk the snapshot writer would compute — we reuse it and
-  // upsert the SAME row shape (`snapshotPackRisk` / `buildPackCompliance`,
-  // cap via the same `readMaxWinCap`). This keeps the Doctor + Overview in sync
-  // instantly without re-snapshotting every pack. ADMIN-DB write only; never
-  // touches MAIN. Failure here must NOT fail the (already-committed) retune —
-  // the MAIN odds change has succeeded — so it's best-effort + logged.
-  try {
-    const riskRow = {
-      edge: after.edge,
-      cv: after.cv,
-      win_rate: after.winRate,
-      near_miss: after.nearMiss,
-      max_win: after.maxWin,
-      max_mult: after.maxMult,
-      risk_score: after.riskScore0to100,
-      tier: after.tier,
-      compliance: buildPackCompliance(after, resolved.maxWinCap),
-      computed_at: new Date(),
-    };
-    await adminDb.pack_risk_scores.upsert({
-      where: { pack_id: packId },
-      update: riskRow,
-      create: { pack_id: packId, ...riskRow },
-    });
-    revalidateTag("pack-studio-overview");
-  } catch (err) {
-    // The retune itself succeeded (MAIN odds are written); only the ADMIN-side
-    // risk refresh failed. Surface in server logs but don't throw — the next
-    // snapshot run will reconcile the row.
-    console.error("applyPackRetune: pack_risk_scores refresh failed", err);
-  }
+  // the per-card risk the snapshot writer would compute — we reuse it and upsert
+  // the SAME row shape through the shared `refreshPackRiskScore` helper
+  // (`buildPackCompliance`, cap via the resolved `maxWinCap`). Best-effort by
+  // contract: the MAIN odds change has already committed, so an ADMIN-side
+  // failure must NOT fail this retune — the helper swallows + logs it and the
+  // next snapshot run reconciles the row.
+  await refreshPackRiskScore(packId, after, resolved.maxWinCap);
 
   reloadPacks();
   revalidatePath("/packs");

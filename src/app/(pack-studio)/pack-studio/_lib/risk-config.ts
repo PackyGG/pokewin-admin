@@ -43,16 +43,13 @@ export {
  * a player pays a sticker price to open. `reward` (free daily/welcome) and
  * `shard` (separate shard-cost model) are deliberately excluded.
  *
- * `official` is the live catalog; `custom` is the type the Pack Studio Builder
- * (`buildPack`) creates for designed-from-scratch packs. Both are repriceable
- * AND retunable (`REPRICE_OR_RETUNE_PACK_TYPES = ['official','custom']` in
- * `packs/actions.ts`), so both are scored/monitored here — otherwise a drifted
- * custom pack could sit below target edge unseen by the Doctor grid. (At the
- * time of writing the live MAIN catalog has no `custom` rows yet — distinct
- * pack_types in prod are official/reward/shard — but a Builder-created pack IS
- * a `custom` pack, so it must be in scope the moment one exists.)
+ * There is NO `custom` pack type — every cash pack is just an `official` pack.
+ * (The Pack Studio Builder produces `official` packs; the distinct pack_types in
+ * prod are official/reward/shard, and a read-only prod probe confirms zero
+ * `custom` rows.) So the cash-pack scope is `official` only — the single set the
+ * snapshot writer scores AND the re-price/re-tune tools mutate.
  */
-export const PACK_STUDIO_CASH_PACK_TYPES = ["official", "custom"] as const;
+export const PACK_STUDIO_CASH_PACK_TYPES = ["official"] as const;
 
 /** Default max single-win cap (USD) when `pack_system_config` is unset. */
 export const DEFAULT_MAX_WIN_CAP = 25000;
