@@ -490,11 +490,11 @@ export async function adjustBalance(data: {
   const ledgerTxId = crypto.randomUUID();
 
   // Resolve the admin-adjustment wager requirement (FROZEN per credit, exactly
-  // the model deposits/bonuses use on the backend). Read straight from the
-  // game-DB `site_config` row the /security "Admin-adjustment requirement" knob
-  // writes — no backend round-trip. Missing/invalid → 1× (10000), matching the
-  // backend's `getNumber(key, 10_000)` default. Only positive credits to
-  // AVAILABLE balance accrue debt; removals and locked-balance ops never do.
+  // the model deposits/bonuses use on the backend). Read the global site_config
+  // knob first, then check for a per-user override in user_wager_requirements —
+  // matching resolveSourceWagerBps() on the backend. Per-user wins if set.
+  // Missing/invalid → 1× (10000). Only positive credits to AVAILABLE balance
+  // accrue debt; removals and locked-balance ops never do.
   let adminAdjustmentWagerBps = 10_000;
   try {
     const cfg = await db.site_config.findUnique({
@@ -507,8 +507,23 @@ export async function adjustBalance(data: {
       }
     }
   } catch {
-    // Keep the 1× default if the config row can't be read — fail safe toward
-    // requiring a wager rather than allowing instant withdrawal.
+    // Keep the 1× default if the config row can't be read.
+  }
+  // Per-user override: admin_adjustment_wager_requirement_bps in
+  // user_wager_requirements takes precedence over the global config.
+  try {
+    const rows = await db.$queryRaw<{ admin_adjustment_wager_requirement_bps: number | null }[]>`
+      SELECT admin_adjustment_wager_requirement_bps
+      FROM user_wager_requirements
+      WHERE user_id = ${parsed.userId}
+      LIMIT 1`;
+    const override = rows[0]?.admin_adjustment_wager_requirement_bps;
+    if (override !== null && override !== undefined && Number.isFinite(override) && override >= 0) {
+      adminAdjustmentWagerBps = Math.round(override);
+    }
+  } catch {
+    // If user_wager_requirements doesn't have this column yet (pre-migration),
+    // fall back to the global bps already resolved above.
   }
   const accruesWagerDebt =
     !affectsLockedBalance && parsed.amount > 0 && adminAdjustmentWagerBps > 0;
