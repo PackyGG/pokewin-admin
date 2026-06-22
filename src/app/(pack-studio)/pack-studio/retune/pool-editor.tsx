@@ -111,6 +111,11 @@ function gcd(a: number, b: number): number {
   return x === 0 ? 1 : x;
 }
 
+/** Round an odds-% to 4 decimal places — the OddsInput's display precision. */
+function round4(n: number): number {
+  return Math.round((Number.isFinite(n) ? n : 0) * 10000) / 10000;
+}
+
 /** Compute the live risk of the edited rows (odds% → weights → engine). */
 function previewRisk(rows: EditRow[], price: number): PackRisk | null {
   if (rows.length === 0) return null;
@@ -277,20 +282,37 @@ export function PoolEditor({
   const addCard = React.useCallback((item: BuilderCardItem) => {
     setRows((prev) => {
       if (prev.some((r) => r.cardId === item.id)) return prev;
+      // Give the new card a FAIR share of the pool so the KPI preview shifts
+      // VISIBLY on add — not just a hair. We allocate the new card 100/N% (its
+      // equal share among the now-N rows) and scale existing rows down by the
+      // complementary factor (N-1)/N so the total stays at 100%. This is the
+      // owner-friendly default: adding a $810 jackpot to a 100% pool now moves
+      // the edge/EV/maxWin tiles meaningfully (the new card has presence), and
+      // the "Total odds" chip stays exactly 100% so the OddsTotalChip stays
+      // green. The owner can still hand-tune any row afterwards, or click
+      // "Re-shape to targets" to drop onto the auto curve. Without this, a
+      // hard-coded `odds: 1` next to existing rows summing to ~100% gives the
+      // new card ~1% of the share — KPIs barely budge and the owner thinks
+      // the preview is frozen.
+      const nextLen = prev.length + 1;
+      const newOdds = nextLen > 0 ? round4(100 / nextLen) : 100;
+      const scale = (nextLen - 1) / nextLen;
+      const scaled = prev.map((r) => ({
+        ...r,
+        odds: round4((Number.isFinite(r.odds) ? r.odds : 0) * scale),
+      }));
       // Insert the new card and re-sort by price DESC so the pool stays
       // ordered most-expensive-first regardless of pick order. The Builder's
       // table reads top-down, so a $0.72 add lands above a $0.08 dust card
       // and below an $810 jackpot — never appended to the bottom.
       return sortByPriceDesc([
-        ...prev,
+        ...scaled,
         {
           cardId: item.id,
           name: item.name,
           imageUrl: item.imageUrl,
           priceUsd: item.priceUsd,
-          // A sensible default odds so the new card has presence; the owner
-          // can re-weight or run "Re-shape to targets".
-          odds: 1,
+          odds: newOdds,
           color: null,
           animation: false,
           added: true,
