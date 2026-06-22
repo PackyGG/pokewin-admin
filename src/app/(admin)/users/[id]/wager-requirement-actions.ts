@@ -34,6 +34,7 @@ const SetSchema = z.object({
   wager_requirement_bps: z.number().int().min(0).max(1_000_000).optional(),
   bonus_wager_requirement_bps: SourceBps,
   affiliate_wager_requirement_bps: SourceBps,
+  affiliate_leaderboard_wager_requirement_bps: SourceBps,
   rakeback_wager_requirement_bps: SourceBps,
   tips_wager_requirement_bps: SourceBps,
   admin_adjustment_wager_requirement_bps: SourceBps,
@@ -53,6 +54,7 @@ export async function setUserWagerRequirementAction(input: {
   wager_requirement_bps?: number;
   bonus_wager_requirement_bps?: number | null;
   affiliate_wager_requirement_bps?: number | null;
+  affiliate_leaderboard_wager_requirement_bps?: number | null;
   rakeback_wager_requirement_bps?: number | null;
   tips_wager_requirement_bps?: number | null;
   admin_adjustment_wager_requirement_bps?: number | null;
@@ -77,6 +79,7 @@ export async function setUserWagerRequirementAction(input: {
       wager_requirement_bps: current.wager_requirement_bps,
       bonus_wager_requirement_bps: current.bonus_wager_requirement_bps,
       affiliate_wager_requirement_bps: current.affiliate_wager_requirement_bps,
+      affiliate_leaderboard_wager_requirement_bps: current.affiliate_leaderboard_wager_requirement_bps,
       rakeback_wager_requirement_bps: current.rakeback_wager_requirement_bps,
       tips_wager_requirement_bps: current.tips_wager_requirement_bps,
       admin_adjustment_wager_requirement_bps: current.admin_adjustment_wager_requirement_bps,

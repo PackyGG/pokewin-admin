@@ -3,7 +3,7 @@
 /**
  * Per-user withdrawal wager-requirement overrides.
  *
- * Shows a table of all 6 credit sources, each with its own per-user override.
+ * Shows a table of all 7 credit sources, each with its own per-user override.
  * null = no override (uses site-wide global). 0 = exempt for that source.
  * 10000 bps = 1× requirement.
  *
@@ -71,6 +71,11 @@ function buildRows(data: UserWagerRequirement): SourceRow[] {
       label: "Affiliate claims",
       globalDefault: null,
       override: data.affiliate_wager_requirement_bps,
+    },
+    {
+      label: "Affiliate leaderboard",
+      globalDefault: null,
+      override: data.affiliate_leaderboard_wager_requirement_bps,
     },
     {
       label: "Rakeback claims",
@@ -239,6 +244,7 @@ type FieldKey =
   | "wager_requirement_bps"
   | "bonus_wager_requirement_bps"
   | "affiliate_wager_requirement_bps"
+  | "affiliate_leaderboard_wager_requirement_bps"
   | "rakeback_wager_requirement_bps"
   | "tips_wager_requirement_bps"
   | "admin_adjustment_wager_requirement_bps";
@@ -287,6 +293,9 @@ function UserWagerRequirementDialog({
     wager_requirement_bps: bpsToInputValue(data.wager_requirement_bps),
     bonus_wager_requirement_bps: bpsToInputValue(data.bonus_wager_requirement_bps),
     affiliate_wager_requirement_bps: bpsToInputValue(data.affiliate_wager_requirement_bps),
+    affiliate_leaderboard_wager_requirement_bps: bpsToInputValue(
+      data.affiliate_leaderboard_wager_requirement_bps,
+    ),
     rakeback_wager_requirement_bps: bpsToInputValue(data.rakeback_wager_requirement_bps),
     tips_wager_requirement_bps: bpsToInputValue(data.tips_wager_requirement_bps),
     admin_adjustment_wager_requirement_bps: bpsToInputValue(
@@ -303,6 +312,9 @@ function UserWagerRequirementDialog({
         bonus_wager_requirement_bps: bpsToInputValue(data.bonus_wager_requirement_bps),
         affiliate_wager_requirement_bps: bpsToInputValue(
           data.affiliate_wager_requirement_bps,
+        ),
+        affiliate_leaderboard_wager_requirement_bps: bpsToInputValue(
+          data.affiliate_leaderboard_wager_requirement_bps,
         ),
         rakeback_wager_requirement_bps: bpsToInputValue(
           data.rakeback_wager_requirement_bps,
@@ -326,6 +338,10 @@ function UserWagerRequirementDialog({
       { key: "wager_requirement_bps", label: "Deposit" },
       { key: "bonus_wager_requirement_bps", label: "Bonus / Leaderboard" },
       { key: "affiliate_wager_requirement_bps", label: "Affiliate claims" },
+      {
+        key: "affiliate_leaderboard_wager_requirement_bps",
+        label: "Affiliate leaderboard",
+      },
       { key: "rakeback_wager_requirement_bps", label: "Rakeback claims" },
       { key: "tips_wager_requirement_bps", label: "Tips received" },
       {
@@ -377,6 +393,10 @@ function UserWagerRequirementDialog({
   const bonusFields: FieldSpec[] = [
     { key: "bonus_wager_requirement_bps", label: "Bonus / Leaderboard" },
     { key: "affiliate_wager_requirement_bps", label: "Affiliate claims" },
+    {
+      key: "affiliate_leaderboard_wager_requirement_bps",
+      label: "Affiliate leaderboard",
+    },
     { key: "rakeback_wager_requirement_bps", label: "Rakeback claims" },
     { key: "tips_wager_requirement_bps", label: "Tips received" },
     { key: "admin_adjustment_wager_requirement_bps", label: "Admin adjustments" },

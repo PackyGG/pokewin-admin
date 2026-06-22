@@ -49,6 +49,8 @@ export type WagerRequirementDefaults = {
   bonus_wager_requirement_bps: number;
   /** Requirement on lifetime affiliate commission claims, in bps (10000 = 1×, 0 = disabled). */
   affiliate_wager_requirement_bps: number;
+  /** Requirement on affiliate leaderboard prize claims, in bps (10000 = 1×, 0 = disabled). */
+  affiliate_leaderboard_wager_requirement_bps: number;
   /** Requirement on lifetime rakeback claims, in bps (10000 = 1×, 0 = disabled). */
   rakeback_wager_requirement_bps: number;
   /** Requirement on lifetime tips received, in bps (10000 = 1×, 0 = disabled). */
@@ -86,6 +88,8 @@ export type UserWagerRequirement = {
   bonus_wager_requirement_bps: number | null;
   /** Per-user affiliate claims override in bps; null = uses global default. */
   affiliate_wager_requirement_bps: number | null;
+  /** Per-user affiliate leaderboard prize override in bps; null = uses global default. */
+  affiliate_leaderboard_wager_requirement_bps: number | null;
   /** Per-user rakeback claims override in bps; null = uses global default. */
   rakeback_wager_requirement_bps: number | null;
   /** Per-user tips received override in bps; null = uses global default. */
@@ -135,6 +139,7 @@ export async function setUserWagerRequirement(
     wager_requirement_bps?: number;
     bonus_wager_requirement_bps?: number | null;
     affiliate_wager_requirement_bps?: number | null;
+    affiliate_leaderboard_wager_requirement_bps?: number | null;
     rakeback_wager_requirement_bps?: number | null;
     tips_wager_requirement_bps?: number | null;
     admin_adjustment_wager_requirement_bps?: number | null;
