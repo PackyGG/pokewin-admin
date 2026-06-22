@@ -95,6 +95,21 @@ export const CAPABILITIES: CapabilityDef[] = [
       "Set or remove user tags (Contacted VIP, Confirmed VIP, Wager Abuser) on user profiles. Tags are admin-internal CRM metadata — never visible to the user themselves.",
     group: "User Management",
   },
+  {
+    // Granular VIEW gate for admin_balance_adjustment ledger rows on the
+    // user-detail Finances / Deposits & Withdrawals section. By default
+    // these rows are owner-gated (see src/lib/users/owner-adjustments-
+    // visibility.ts) — granting this capability lets a non-owner admin
+    // (or any role) SEE the rows + the type-filter dropdown option without
+    // being promoted to owner. EDITING adjustments stays on the separate
+    // motha-only gate (canEditBalanceAdjustments). Owners always pass
+    // regardless of this flag.
+    key: "__can_view_balance_adjustments",
+    label: "View Balance Adjustments",
+    description:
+      "See admin balance-adjustment ledger rows on the user-detail Finances tab (rows, dropdown filter option, dedicated adjustments block). Owners always see these; this capability extends visibility to a non-owner admin without granting owner power.",
+    group: "User Management",
+  },
 
   // ── User Notes ───────────────────────────────────────────────────────
   {
