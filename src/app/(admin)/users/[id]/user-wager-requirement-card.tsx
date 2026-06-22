@@ -245,17 +245,30 @@ type FieldKey =
 
 type FormValues = Record<FieldKey, string>;
 
+// Seed the input from stored bps as a ×-multiplier (admins think in ×).
 function bpsToInputValue(bps: number | null): string {
   if (bps === null) return "";
-  return String(bps);
+  return String(bps / BPS_PER_X);
 }
 
+// Parse a ×-multiplier input into bps for the backend.
+//   undefined = blank → omit from payload (user keeps the global default)
+//   null      = invalid (non-numeric / negative) → caller surfaces an error
+//   number    = bps (multiplier × 10000, clamped 0..MAX_BPS)
 function inputValueToBps(raw: string): number | null | undefined {
   const trimmed = raw.trim();
-  if (trimmed === "") return undefined; // "leave blank = use global" — omit from payload
-  const n = Number(trimmed);
-  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return undefined;
-  return Math.min(MAX_BPS, Math.max(0, n));
+  if (trimmed === "") return undefined;
+  const x = Number(trimmed);
+  if (!Number.isFinite(x) || x < 0) return null;
+  return Math.min(MAX_BPS, Math.max(0, Math.round(x * BPS_PER_X)));
+}
+
+// Live "= N bps" hint shown next to a multiplier input.
+function bpsHint(raw: string): string {
+  const bps = inputValueToBps(raw);
+  if (bps === undefined) return "= use global";
+  if (bps === null) return "= — bps";
+  return `= ${bps} bps`;
 }
 
 function UserWagerRequirementDialog({
@@ -306,36 +319,36 @@ function UserWagerRequirementDialog({
     setValues((prev) => ({ ...prev, [key]: val }));
 
   const handleSave = () => {
-    // Build payload — only include fields where a non-empty value was entered.
-    // For source fields (non-deposit), an explicit null can be passed by the
-    // action but we never need to set null here because "clear" is done via
-    // the "Clear all overrides" button. Blank = omit from payload.
-    const depositBps = inputValueToBps(values.wager_requirement_bps);
-    const bonusBps = inputValueToBps(values.bonus_wager_requirement_bps);
-    const affiliateBps = inputValueToBps(values.affiliate_wager_requirement_bps);
-    const rakebackBps = inputValueToBps(values.rakeback_wager_requirement_bps);
-    const tipsBps = inputValueToBps(values.tips_wager_requirement_bps);
-    const adminAdjBps = inputValueToBps(values.admin_adjustment_wager_requirement_bps);
+    // Each field is a ×-multiplier. Parse → bps; blank = omit (keep global),
+    // invalid = error. "Clear all overrides" (separate button) handles reset,
+    // so we never send an explicit null from here.
+    const allFields: { key: FieldKey; label: string }[] = [
+      { key: "wager_requirement_bps", label: "Deposit" },
+      { key: "bonus_wager_requirement_bps", label: "Bonus / Leaderboard" },
+      { key: "affiliate_wager_requirement_bps", label: "Affiliate claims" },
+      { key: "rakeback_wager_requirement_bps", label: "Rakeback claims" },
+      { key: "tips_wager_requirement_bps", label: "Tips received" },
+      {
+        key: "admin_adjustment_wager_requirement_bps",
+        label: "Admin adjustments",
+      },
+    ];
 
     const payload: Parameters<typeof setUserWagerRequirementAction>[0] = {
       userId,
     };
+    let hasAnyField = false;
 
-    if (depositBps !== undefined) payload.wager_requirement_bps = depositBps as number;
-    if (bonusBps !== undefined) payload.bonus_wager_requirement_bps = bonusBps;
-    if (affiliateBps !== undefined) payload.affiliate_wager_requirement_bps = affiliateBps;
-    if (rakebackBps !== undefined) payload.rakeback_wager_requirement_bps = rakebackBps;
-    if (tipsBps !== undefined) payload.tips_wager_requirement_bps = tipsBps;
-    if (adminAdjBps !== undefined)
-      payload.admin_adjustment_wager_requirement_bps = adminAdjBps;
-
-    const hasAnyField =
-      payload.wager_requirement_bps !== undefined ||
-      payload.bonus_wager_requirement_bps !== undefined ||
-      payload.affiliate_wager_requirement_bps !== undefined ||
-      payload.rakeback_wager_requirement_bps !== undefined ||
-      payload.tips_wager_requirement_bps !== undefined ||
-      payload.admin_adjustment_wager_requirement_bps !== undefined;
+    for (const f of allFields) {
+      const bps = inputValueToBps(values[f.key]);
+      if (bps === undefined) continue; // blank → keep the global default
+      if (bps === null) {
+        toast.error(`${f.label}: multiplier must be a non-negative number`);
+        return;
+      }
+      payload[f.key] = bps;
+      hasAnyField = true;
+    }
 
     if (!hasAnyField) {
       toast.error("Enter at least one value to save");
@@ -378,10 +391,11 @@ function UserWagerRequirementDialog({
 
         <div className="space-y-5 py-2">
           <p className="text-xs text-muted-foreground">
-            Leave blank to use the site-wide global setting. Enter{" "}
-            <code className="font-mono">0</code> to fully exempt. Enter{" "}
-            <code className="font-mono">10000</code> for 1× requirement. Values
-            are in basis points (bps).
+            Values are multipliers (×). Leave blank to use the site-wide global
+            setting. Enter <code className="font-mono">0</code> to fully exempt.
+            Enter <code className="font-mono">1</code> for 1× (the user must
+            wager the credited amount once); <code className="font-mono">1.5</code>{" "}
+            for 1.5×.
           </p>
 
           {/* Deposit section */}
@@ -390,15 +404,20 @@ function UserWagerRequirementDialog({
               Deposit
             </p>
             <div className="space-y-1.5">
-              <Label htmlFor={depositField.key} className="text-xs">
-                {depositField.label}
-              </Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor={depositField.key} className="text-xs">
+                  {depositField.label} (×)
+                </Label>
+                <span className="text-[11px] tabular-nums text-muted-foreground">
+                  {bpsHint(values[depositField.key])}
+                </span>
+              </div>
               <Input
                 id={depositField.key}
                 type="number"
-                step="1"
+                step="0.05"
                 min="0"
-                placeholder="e.g. 0 = exempt, 10000 = 1×, blank = use global"
+                placeholder="e.g. 1 = 1×, 0 = exempt, blank = use global"
                 value={values[depositField.key]}
                 onChange={(e) => setField(depositField.key, e.target.value)}
               />
@@ -412,15 +431,20 @@ function UserWagerRequirementDialog({
             </p>
             {bonusFields.map((f) => (
               <div key={f.key} className="space-y-1.5">
-                <Label htmlFor={f.key} className="text-xs">
-                  {f.label}
-                </Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor={f.key} className="text-xs">
+                    {f.label} (×)
+                  </Label>
+                  <span className="text-[11px] tabular-nums text-muted-foreground">
+                    {bpsHint(values[f.key])}
+                  </span>
+                </div>
                 <Input
                   id={f.key}
                   type="number"
-                  step="1"
+                  step="0.05"
                   min="0"
-                  placeholder="e.g. 0 = exempt, 10000 = 1×, blank = use global"
+                  placeholder="e.g. 1 = 1×, 0 = exempt, blank = use global"
                   value={values[f.key]}
                   onChange={(e) => setField(f.key, e.target.value)}
                 />
