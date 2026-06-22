@@ -251,3 +251,75 @@ export async function getPackSnapshot(
   });
   return row ? mapSnapshotRow(row) : null;
 }
+
+/** Minimal card identity surfaced to the expand-row drawer in the history UI. */
+export type HistoryCardMeta = {
+  /** Display name from the live `cards` row, or null when the card is gone. */
+  name: string | null;
+  /** `cards.image_url` for the thumbnail, or null when the card is gone. */
+  imageUrl: string | null;
+  /** The card's CURRENT live value (USD) — used for EV at view-time. */
+  value: number;
+};
+
+/**
+ * READ-ONLY (MAIN): batch-read `cards.{name, image_url, price}` for the union
+ * of card ids surfaced by a history view, keyed by card_id. Absent ids are
+ * simply missing from the map (the card was deleted since the snapshot was
+ * captured) so the UI can render a "card no longer exists" fallback row.
+ *
+ * Index path: PK probe on `cards.id` via `id = ANY($1)` (no seq-scan).
+ *
+ * NOTE: the snapshot does NOT persist per-card value (Q8 in the audit). The
+ * value returned here is the LIVE current value. If `cards.price` has drifted
+ * since capture, the EV-at-snapshot display reflects today's value, not
+ * capture-time value. This matches how the rest of the risk surfaces score a
+ * historical pool.
+ */
+export async function getHistoryCardMeta(
+  cardIds: string[],
+): Promise<Map<string, HistoryCardMeta>> {
+  const out = new Map<string, HistoryCardMeta>();
+  if (cardIds.length === 0) return out;
+  const db = await getDb();
+  const rows = await db.cards.findMany({
+    where: { id: { in: cardIds } },
+    select: { id: true, name: true, image_url: true, price: true },
+  });
+  for (const r of rows) {
+    out.set(r.id, {
+      name: r.name,
+      imageUrl: r.image_url,
+      value: Number(r.price.toString()),
+    });
+  }
+  return out;
+}
+
+/** One live pool entry surfaced to the "DIFF vs current" comparison. */
+export type LivePoolCard = {
+  cardId: string;
+  weight: number;
+  value: number;
+};
+
+/**
+ * READ-ONLY (MAIN): the live pack's current pool as `{cardId, value, weight}`,
+ * matching the snapshot's per-card unit so the UI can diff them apples-to-apples.
+ * Returns `[]` for a pack that no longer exists.
+ *
+ * Caller is responsible for auth (the only call site is the history page's
+ * server action, which already runs through `requirePackStudioPageAccess` +
+ * owner check).
+ */
+export async function getLivePackPool(
+  packId: string,
+): Promise<LivePoolCard[]> {
+  if (!isUuid(packId)) return [];
+  const pool = await getPackCardValues(packId);
+  return pool.map((c) => ({
+    cardId: c.cardId,
+    weight: c.weight,
+    value: c.value,
+  }));
+}

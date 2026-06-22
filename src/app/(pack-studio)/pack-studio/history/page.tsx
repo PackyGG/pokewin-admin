@@ -13,9 +13,14 @@ import { FadeIn } from "@/components/fade-in";
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
 import { isOwner } from "@/lib/owners";
 import { isUuid } from "@/lib/utils/ids";
-import { getPackHistory } from "../_lib/pack-history";
+import { adminDb } from "@/lib/admin-db";
+import { getPackHistory, getHistoryCardMeta } from "../_lib/pack-history";
 import { getPackMetaByIds } from "../_lib/pack-meta";
-import { HistoryTimeline, type HistoryRow } from "./history-timeline";
+import {
+  HistoryTimeline,
+  type HistoryRow,
+  type HistoryCardRow,
+} from "./history-timeline";
 import { HistoryPackFilter, type PackOption } from "./history-pack-filter";
 
 /**
@@ -113,8 +118,58 @@ async function HistoryStream({ packId }: { packId: string | undefined }) {
     );
   }
 
+  // Batched ADMIN read: resolve every captured_by id → display name/email so the
+  // timeline shows WHO captured each row instead of a raw UUID slug. Same
+  // pattern as src/lib/queries/changelog.ts:106 / src/lib/balance-limits.ts:146.
+  const capturedByIds = Array.from(
+    new Set(snapshots.map((s) => s.capturedBy)),
+  );
+  const adminMap = new Map<
+    string,
+    { username: string; displayUsername: string | null; email: string }
+  >();
+  if (capturedByIds.length > 0) {
+    const admins = await adminDb.admin_users.findMany({
+      where: { id: { in: capturedByIds } },
+      select: {
+        id: true,
+        username: true,
+        display_username: true,
+        email: true,
+      },
+    });
+    for (const a of admins) {
+      adminMap.set(a.id, {
+        username: a.username,
+        displayUsername: a.display_username,
+        email: a.email,
+      });
+    }
+  }
+
+  // Batched MAIN read: card identity for the union of every card_id across all
+  // visible snapshots. One PK probe (`id = ANY(...)`) — same shape as the
+  // doctor's batch read (retune-actions.ts:847) — so the expand drawer renders
+  // per-card name + image + value without N+1 lookups per row.
+  const cardIds = Array.from(
+    new Set(snapshots.flatMap((s) => s.cards.map((c) => c.card_id))),
+  );
+  const cardMeta = await getHistoryCardMeta(cardIds);
+
   const rows: HistoryRow[] = snapshots.map((s) => {
     const m = meta.get(s.packId);
+    const admin = adminMap.get(s.capturedBy);
+    // Per-card rows for the expand drawer — already shape-resolved server-side.
+    const cards: HistoryCardRow[] = s.cards.map((c) => {
+      const cm = cardMeta.get(c.card_id);
+      return {
+        cardId: c.card_id,
+        name: cm?.name ?? null,
+        imageUrl: cm?.imageUrl ?? null,
+        value: cm?.value ?? 0,
+        weight: c.weight,
+      };
+    });
     return {
       id: s.id,
       packId: s.packId,
@@ -126,8 +181,14 @@ async function HistoryStream({ packId }: { packId: string | undefined }) {
       action: s.action,
       capturedAt: s.capturedAt,
       capturedBy: s.capturedBy,
+      capturedByLabel:
+        admin?.displayUsername ||
+        admin?.username ||
+        admin?.email ||
+        null,
       price: s.price,
       cardCount: s.cards.length,
+      cards,
       note: s.note,
       risk: s.risk
         ? {
