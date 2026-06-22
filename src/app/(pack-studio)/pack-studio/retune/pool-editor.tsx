@@ -6,6 +6,7 @@ import {
   Check,
   Info,
   Loader2,
+  Sparkles,
   TriangleAlert,
   Wand2,
   X,
@@ -16,6 +17,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { AnimatedNumber } from "@/components/animated-number";
 import { InfoHint } from "@/app/(admin)/creators/_components/info-hint";
 import { formatCurrency } from "@/lib/utils/format";
@@ -113,6 +120,33 @@ function previewRisk(rows: EditRow[], price: number): PackRisk | null {
   });
 }
 
+/** The verbatim edited-pool payload — owner odds become integer weights. */
+export type VerbatimApprovePayload = {
+  mode: "verbatim";
+  cards: {
+    cardId: string;
+    weight: number;
+    color?: string;
+    animation?: boolean;
+    order: number;
+  }[];
+  price?: number;
+  hasAddedCards: boolean;
+};
+
+/** The staged-pool payload — server picks the weights via `shapeWeights`. */
+export type AutoTuneApprovePayload = {
+  mode: "auto-tune";
+  cards: {
+    cardId: string;
+    color?: string;
+    animation?: boolean;
+    order: number;
+  }[];
+  price?: number;
+  hasAddedCards: boolean;
+};
+
 export function PoolEditor({
   packId,
   price: packPrice,
@@ -120,6 +154,7 @@ export function PoolEditor({
   applying,
   onCancel,
   onApprove,
+  onApproveAutoTune,
 }: {
   packId: string;
   /** The pack's current price (USD) — the editable starting price. */
@@ -129,21 +164,18 @@ export function PoolEditor({
   applying: boolean;
   onCancel: () => void;
   /**
-   * Approve the explicit edited pool. `cards` carries every row (cardId + odds%
-   * + color + animation + order); the parent converts to weights and calls
-   * `applyPackEdit`. `price` is included only when the owner changed it.
+   * Approve the VERBATIM edited pool (advanced — writes the owner's exact
+   * weights). `cards` carries every row (cardId + odds% + color + animation +
+   * order); the parent converts to weights and calls `applyPackEdit`. `price`
+   * is included only when the owner changed it.
    */
-  onApprove: (payload: {
-    cards: {
-      cardId: string;
-      weight: number;
-      color?: string;
-      animation?: boolean;
-      order: number;
-    }[];
-    price?: number;
-    hasAddedCards: boolean;
-  }) => void;
+  onApprove: (payload: VerbatimApprovePayload) => void;
+  /**
+   * Approve the STAGED pool with server-side auto-tune (the safe path). The
+   * server runs `shapeWeights` on the staged identity/order + price + targets
+   * and writes optimized weights in ONE transaction. No client odds are sent.
+   */
+  onApproveAutoTune: (payload: AutoTuneApprovePayload) => void;
 }) {
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
@@ -288,11 +320,12 @@ export function PoolEditor({
     }
   }, [rows, price, targets]);
 
-  // ── Approve the explicit edited pool ────────────────────────────────
+  // ── Approve the explicit edited pool (VERBATIM — advanced) ───────────
   const approve = React.useCallback(() => {
     if (!feasible || !priceValid || applying) return;
     const weights = oddsToWeights(rows.map((r) => r.odds));
     onApprove({
+      mode: "verbatim",
       cards: rows.map((r, i) => ({
         cardId: r.cardId,
         weight: weights[i]!,
@@ -309,6 +342,31 @@ export function PoolEditor({
     applying,
     rows,
     onApprove,
+    priceChanged,
+    price,
+    hasAddedCards,
+  ]);
+
+  // ── Approve via AUTO-TUNE (SAFE PATH — server shapes weights) ────────
+  const approveAutoTune = React.useCallback(() => {
+    if (!feasible || !priceValid || applying) return;
+    onApproveAutoTune({
+      mode: "auto-tune",
+      cards: rows.map((r, i) => ({
+        cardId: r.cardId,
+        color: r.color ?? undefined,
+        animation: r.animation,
+        order: i,
+      })),
+      price: priceChanged ? price : undefined,
+      hasAddedCards,
+    });
+  }, [
+    feasible,
+    priceValid,
+    applying,
+    rows,
+    onApproveAutoTune,
     priceChanged,
     price,
     hasAddedCards,
@@ -431,7 +489,7 @@ export function PoolEditor({
           )}
           Re-shape to targets
         </Button>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
             size="sm"
             variant="ghost"
@@ -441,17 +499,49 @@ export function PoolEditor({
             <X className="mr-1 size-3.5" />
             Cancel edit
           </Button>
+          {/* VERBATIM (advanced) — outline + warning tooltip. Writes the owner's
+              exact odds to MAIN; no shaping. Kept as an escape hatch. */}
+          <TooltipProvider delay={150}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={approve}
+                    disabled={!feasible || !priceValid || applying}
+                  >
+                    {applying ? (
+                      <Loader2 className="mr-1 size-3.5 animate-spin" />
+                    ) : (
+                      <Check className="mr-1 size-3.5" />
+                    )}
+                    Approve edited pool
+                  </Button>
+                }
+              />
+              <TooltipContent side="top" className="max-w-xs text-xs">
+                Advanced: writes your exact weights verbatim. Does NOT optimize.
+                Use Auto-tune for the safe path — it lets the server pick weights
+                that clear the pack&apos;s targets.
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          {/* AUTO-TUNE (PRIMARY, safe path) — server runs shapeWeights on the
+              staged identity + targets and writes optimized weights. Rose tint
+              signals "prod write" (same tone the confirm gate uses). */}
           <Button
             size="sm"
-            onClick={approve}
+            onClick={approveAutoTune}
             disabled={!feasible || !priceValid || applying}
+            className="bg-rose-600 text-white hover:bg-rose-600/90 dark:bg-rose-600 dark:hover:bg-rose-600/90"
           >
             {applying ? (
               <Loader2 className="mr-1 size-3.5 animate-spin" />
             ) : (
-              <Check className="mr-1 size-3.5" />
+              <Sparkles className="mr-1 size-3.5" />
             )}
-            Approve edited pool
+            Auto-tune &amp; push to production
           </Button>
         </div>
       </div>

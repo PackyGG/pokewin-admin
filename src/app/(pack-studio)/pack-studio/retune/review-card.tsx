@@ -581,6 +581,7 @@ export function ReviewCard({
                 applying={applying}
                 onCancel={onCloseEditor}
                 onApprove={onApplyEdit}
+                onApproveAutoTune={onApplyEdit}
               />
             </section>
           </>

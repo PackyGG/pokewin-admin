@@ -52,6 +52,7 @@ import {
 import {
   planAllRetunes,
   applyPackEdit,
+  applyStagedPackEditAndRetune,
   type PlanAllProposal,
   type PlanAllWeightDiff,
   type PortfolioProfileResult,
@@ -110,18 +111,39 @@ export type AdjustedState = AdjustedTargets & {
 
 export type ReviewStatus = "pending" | "approved" | "declined";
 
-/** The explicit edited pool an "Edit pool" Approve hands up to be written. */
-export type EditApprovePayload = {
-  cards: {
-    cardId: string;
-    weight: number;
-    color?: string;
-    animation?: boolean;
-    order: number;
-  }[];
-  price?: number;
-  hasAddedCards: boolean;
-};
+/**
+ * What an "Edit pool" Approve hands up. Discriminated by `mode`:
+ *  • "verbatim" — the owner's exact odds become positive-integer weights and
+ *    are written via `applyPackEdit` (advanced escape hatch — no shaping).
+ *  • "auto-tune" — only the pool IDENTITY (cards + order + color/animation +
+ *    optional new price) is sent. The server runs `shapeWeights` against the
+ *    pack's auto-targets and writes optimized weights via the new
+ *    `applyStagedPackEditAndRetune` action. This is the SAFE path.
+ */
+export type EditApprovePayload =
+  | {
+      mode: "verbatim";
+      cards: {
+        cardId: string;
+        weight: number;
+        color?: string;
+        animation?: boolean;
+        order: number;
+      }[];
+      price?: number;
+      hasAddedCards: boolean;
+    }
+  | {
+      mode: "auto-tune";
+      cards: {
+        cardId: string;
+        color?: string;
+        animation?: boolean;
+        order: number;
+      }[];
+      price?: number;
+      hasAddedCards: boolean;
+    };
 
 export type ReviewItem = {
   proposal: PlanAllProposal;
@@ -197,7 +219,16 @@ export function RetuneReview({
   // re-opening the gate (the gate sits at the entry points, not inside perform*).
   type PendingWrite =
     | { kind: "retune"; index: number }
-    | { kind: "edit"; index: number; payload: EditApprovePayload };
+    | {
+        kind: "edit";
+        index: number;
+        payload: Extract<EditApprovePayload, { mode: "verbatim" }>;
+      }
+    | {
+        kind: "edit-and-retune";
+        index: number;
+        payload: Extract<EditApprovePayload, { mode: "auto-tune" }>;
+      };
   const [pendingWrite, setPendingWrite] = React.useState<PendingWrite | null>(
     null,
   );
@@ -230,10 +261,21 @@ export function RetuneReview({
   const retryIndexRef = React.useRef<number | null>(null);
   // When set, a successful re-auth retries this pending EDIT approve instead of a
   // plain retune approve (the two write paths share the one 2FA token + dialog).
-  const retryEditRef = React.useRef<{
-    index: number;
-    payload: EditApprovePayload;
-  } | null>(null);
+  // `kind` discriminates the verbatim-edit retry from the auto-tune retry, so
+  // the resume calls the right server action with the right payload type.
+  const retryEditRef = React.useRef<
+    | {
+        kind: "edit";
+        index: number;
+        payload: Extract<EditApprovePayload, { mode: "verbatim" }>;
+      }
+    | {
+        kind: "edit-and-retune";
+        index: number;
+        payload: Extract<EditApprovePayload, { mode: "auto-tune" }>;
+      }
+    | null
+  >(null);
 
   const total = items.length;
   const approved = items.filter((i) => i.status === "approved").length;
@@ -433,7 +475,10 @@ export function RetuneReview({
   // weights/price, history-snapshotted). Token-expiry re-prompts 2FA and retries
   // THIS edit on re-confirm (mirrors the plain-approve retry path).
   const performEditApprove = React.useCallback(
-    async (i: number, payload: EditApprovePayload): Promise<void> => {
+    async (
+      i: number,
+      payload: Extract<EditApprovePayload, { mode: "verbatim" }>,
+    ): Promise<void> => {
       const token = tokenRef.current;
       const item = items[i];
       if (!item || !token) return;
@@ -457,7 +502,67 @@ export function RetuneReview({
       } catch (err) {
         const message = err instanceof Error ? err.message : "Pool edit failed.";
         if (isTokenExpired(message)) {
-          retryEditRef.current = { index: i, payload };
+          retryEditRef.current = { kind: "edit", index: i, payload };
+          setIsRetry(true);
+          setTotp("");
+          setAuthOpen(true);
+          toast.message("2FA authorization expired — re-confirm to continue.");
+        } else {
+          toast.error(message);
+        }
+      } finally {
+        setApplying(false);
+      }
+    },
+    [items, router, advance],
+  );
+
+  // ── Approve a STAGED pool with SERVER-SIDE auto-tune (SAFE PATH) ─────
+  // The inline pool editor hands up just the pool IDENTITY (no client weights).
+  // This calls the paranoid, owner+2FA-token-guarded
+  // `applyStagedPackEditAndRetune` — the server resolves the pack's auto-targets
+  // (tag-aware win-rate + edge curve + cap), runs `shapeWeights` on the staged
+  // identity, asserts the `EDIT_EDGE_FLOOR` + edge/cap/win-rate guards, and
+  // writes optimized weights in ONE transaction with a snapshot first.
+  // Token-expiry re-prompts 2FA and retries THIS approve on re-confirm.
+  const performEditAndRetuneApprove = React.useCallback(
+    async (
+      i: number,
+      payload: Extract<EditApprovePayload, { mode: "auto-tune" }>,
+    ): Promise<void> => {
+      const token = tokenRef.current;
+      const item = items[i];
+      if (!item || !token) return;
+      setApplying(true);
+      try {
+        // Send the pack's auto-targets (the same ones the per-pack Approve
+        // path uses) so the server shapes against the SAME goals the review
+        // card explains.
+        const t = buildTargets(item);
+        const res = await applyStagedPackEditAndRetune(
+          item.proposal.packId,
+          token,
+          {
+            cards: payload.cards,
+            ...(payload.price !== undefined ? { price: payload.price } : {}),
+          },
+          t,
+        );
+        setItems((prev) => {
+          const next = [...prev];
+          if (next[i]) next[i] = { ...next[i]!, status: "approved" };
+          return next;
+        });
+        setEditingIndex(null);
+        toast.success(
+          `Auto-tuned ${res.name}: edge ${(res.after.edge * 100).toFixed(2)}% · win ${(res.after.winRate * 100).toFixed(2)}% · ${res.cardCountAfter} cards.`,
+        );
+        router.refresh();
+        advance();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Auto-tune failed.";
+        if (isTokenExpired(message)) {
+          retryEditRef.current = { kind: "edit-and-retune", index: i, payload };
           setIsRetry(true);
           setTotp("");
           setAuthOpen(true);
@@ -473,11 +578,17 @@ export function RetuneReview({
   );
 
   // Edit-approve also opens the two-step confirm gate — the pending edit write
-  // only fires from the gate's final "Push to production".
+  // only fires from the gate's final "Push to production". Routes both the
+  // verbatim AND the auto-tune payload through the same gate, discriminated by
+  // the payload's `mode`.
   const onApplyEdit = React.useCallback(
     (payload: EditApprovePayload) => {
       if (applying) return;
-      setPendingWrite({ kind: "edit", index, payload });
+      if (payload.mode === "auto-tune") {
+        setPendingWrite({ kind: "edit-and-retune", index, payload });
+      } else {
+        setPendingWrite({ kind: "edit", index, payload });
+      }
       setConfirmStep(1);
     },
     [applying, index],
@@ -500,8 +611,14 @@ export function RetuneReview({
       retryIndexRef.current = null;
       retryEditRef.current = null;
       if (retryEdit != null) {
-        // Resume the EDIT approve that hit the expired token.
-        void performEditApprove(retryEdit.index, retryEdit.payload);
+        // Resume the EDIT approve that hit the expired token. Dispatch on the
+        // retry's `kind` so the verbatim and auto-tune paths each resume into
+        // the matching perform* function.
+        if (retryEdit.kind === "edit-and-retune") {
+          void performEditAndRetuneApprove(retryEdit.index, retryEdit.payload);
+        } else {
+          void performEditApprove(retryEdit.index, retryEdit.payload);
+        }
       } else if (retryIdx != null) {
         // Resume the plain approve that hit the expired token.
         void performApprove(retryIdx);
@@ -761,12 +878,19 @@ export function RetuneReview({
         const name = item.proposal.name;
         const priceBefore = item.proposal.price;
         const priceAfter =
-          pendingWrite.kind === "edit"
+          pendingWrite.kind === "edit" || pendingWrite.kind === "edit-and-retune"
             ? pendingWrite.payload.price ?? item.proposal.price
             : item.proposal.price; // retune never changes price
         const edgeBefore = item.proposal.before.edge;
         const edgeAfter = (item.adjusted?.after ?? item.proposal.after)?.edge;
         const feasible = item.adjusted?.feasible ?? item.proposal.feasible;
+        const isAutoTune = pendingWrite.kind === "edit-and-retune";
+        const title1 = isAutoTune
+          ? "Auto-tune and push to production?"
+          : "Push this pack live?";
+        const title2 = isAutoTune
+          ? "100% sure — auto-tune & push"
+          : "100% sure — push to production";
         const cancel = () => {
           setConfirmStep(0);
           setPendingWrite(null);
@@ -785,10 +909,22 @@ export function RetuneReview({
                   <AlertDialogMedia className="bg-rose-500/10 text-rose-600 dark:text-rose-400">
                     <TriangleAlert />
                   </AlertDialogMedia>
-                  <AlertDialogTitle>Push this pack live?</AlertDialogTitle>
+                  <AlertDialogTitle>{title1}</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This writes <strong>{name}</strong> to the live game database.
-                    Review the change below, then confirm once more.
+                    {isAutoTune ? (
+                      <>
+                        The server will pick optimized weights for the staged
+                        pool of <strong>{name}</strong> and write them to the
+                        live game database. Review the change below, then
+                        confirm once more.
+                      </>
+                    ) : (
+                      <>
+                        This writes <strong>{name}</strong> to the live game
+                        database. Review the change below, then confirm once
+                        more.
+                      </>
+                    )}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
 
@@ -842,12 +978,21 @@ export function RetuneReview({
                   <AlertDialogMedia className="bg-rose-500/10 text-rose-600 dark:text-rose-400">
                     <TriangleAlert />
                   </AlertDialogMedia>
-                  <AlertDialogTitle>
-                    100% sure — push to production
-                  </AlertDialogTitle>
+                  <AlertDialogTitle>{title2}</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Final confirmation. This writes <strong>{name}</strong> to the
-                    live game database now. There is no undo from here.
+                    Final confirmation.{" "}
+                    {isAutoTune ? (
+                      <>
+                        The server will write the auto-tuned pool for{" "}
+                        <strong>{name}</strong> to the live game database now.
+                      </>
+                    ) : (
+                      <>
+                        This writes <strong>{name}</strong> to the live game
+                        database now.
+                      </>
+                    )}{" "}
+                    There is no undo from here.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
 
@@ -866,7 +1011,9 @@ export function RetuneReview({
                       setConfirmStep(0);
                       setPendingWrite(null);
                       if (!p) return;
-                      if (p.kind === "edit") {
+                      if (p.kind === "edit-and-retune") {
+                        void performEditAndRetuneApprove(p.index, p.payload);
+                      } else if (p.kind === "edit") {
                         void performEditApprove(p.index, p.payload);
                       } else {
                         void performApprove(p.index);
@@ -875,7 +1022,7 @@ export function RetuneReview({
                     disabled={applying}
                     className="w-full bg-rose-600 text-white hover:bg-rose-600/90 sm:w-auto"
                   >
-                    Push to production
+                    {isAutoTune ? "Auto-tune & push" : "Push to production"}
                   </Button>
                 </AlertDialogFooter>
               </AlertDialogContent>

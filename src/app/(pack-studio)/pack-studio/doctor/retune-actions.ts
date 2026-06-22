@@ -1190,9 +1190,10 @@ export async function applyPackEdit(
 async function refreshEditedPackRiskScore(
   packId: string,
   risk: PackRisk,
+  maxWinCapOverride?: number,
 ): Promise<void> {
   try {
-    const maxWinCap = await readMaxWinCap();
+    const maxWinCap = maxWinCapOverride ?? (await readMaxWinCap());
     const riskRow = {
       edge: risk.edge,
       cv: risk.cv,
@@ -1214,4 +1215,344 @@ async function refreshEditedPackRiskScore(
   } catch (err) {
     console.error("applyPackEdit: pack_risk_scores refresh failed", err);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  STAGED EDIT + AUTO-RETUNE
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//  `applyStagedPackEditAndRetune` is the SAFE PATH for the inline pool editor:
+//  the owner picks the pool IDENTITY (which cards, in what order, with which
+//  color/animation), and the SERVER picks the weights via `shapeWeights` so the
+//  result is guaranteed to clear the pack's auto-targets (edge curve + tag
+//  win-rate + near-miss + cap) — no hand-typed odds can land on prod with bad
+//  weights.
+//
+//  Differences from `applyPackEdit` (the legacy verbatim writer):
+//    • the client supplies cards WITHOUT a `weight` — the server shapes them.
+//    • the staged pool may include brand-new real cards (read against `cards`),
+//      so fixing an infeasible no-win pack by adding a card ≥ price works
+//      inline (was already the behavior in `applyPackEdit` since the f64d81dc
+//      identity check landed).
+//    • same FAIL-CLOSED asserts as `applyPackRetune` (edge ≥ target, max-win
+//      ≤ cap, |winRate − target| ≤ tol) PLUS the `EDIT_EDGE_FLOOR` backstop.
+//    • snapshot action `"edit"` (the existing label — `pack_history`'s action
+//      enum hasn't been extended for "edit_and_retune" and the change captures
+//      the prior pool exactly like a hand-edit, so the revert path is identical).
+//    • audit event `pack_edited_and_retuned`, so an audit review can separate
+//      this safe path from the verbatim `pack_edited_via_retune` calls.
+
+/** One staged pool card the OWNER picked. No weight — the SERVER shapes it. */
+export type StagedPoolInputCard = {
+  cardId: string;
+  color?: string;
+  animation?: boolean;
+  order: number;
+};
+
+export type StagedPoolInput = {
+  cards: StagedPoolInputCard[];
+  /** Optional new pack price (USD). When omitted, the price is left unchanged. */
+  price?: number;
+};
+
+export type ApplyStagedRetuneResult = {
+  packId: string;
+  name: string;
+  status: "edited_and_retuned";
+  cardCountBefore: number;
+  cardCountAfter: number;
+  priceBefore: number;
+  priceAfter: number;
+  before: { edge: number; winRate: number; maxWin: number };
+  after: { edge: number; winRate: number; maxWin: number };
+};
+
+/**
+ * Write a STAGED card pool to MAIN with SERVER-SHAPED weights — the safe inline
+ * editor approve path. Owner-only AND requires a valid RETUNE token from
+ * `authorizePackRetune` (the SAME 2FA scope every retune/edit carries) +
+ * `__can_update_pack` + the pack_creator live-pack carve-out.
+ *
+ * The owner picks the pool IDENTITY (cards + order + color/animation + optional
+ * new price); the SERVER picks the WEIGHTS via `shapeWeights` against the pack's
+ * auto-targets (edge curve + tag-aware win-rate + near-miss + cap), so the
+ * shipped pool is guaranteed to clear targets — there is no path for hand-typed
+ * odds to land on prod with bad weights from this entry point.
+ *
+ * FAILS CLOSED before any write:
+ *   • token / owner / capability / scope (`official`) gate,
+ *   • non-empty pool, no duplicate cardId, every cardId a valid uuid, every
+ *     `order` a non-negative integer, optional price > 0,
+ *   • REAL-card identity check: every cardId must exist in `cards` (so the
+ *     pack_cards.card_id FK holds — but a brand-new real card can be added,
+ *     exactly how an infeasible no-win pack gets fixed inline),
+ *   • `shapeWeights` error arm,
+ *   • resulting edge below target, max-win above cap, win-rate outside tol,
+ *   • resulting edge below `EDIT_EDGE_FLOOR` (mirror of the `applyPackEdit`
+ *     backstop — practically unreachable because the asserts above are tighter,
+ *     kept as belt-and-suspenders so a future refactor can't sneak past).
+ *
+ * Captures an "edit" snapshot of the CURRENT state FIRST (revertable), then
+ * writes via the SAME delete-all-then-createMany `pack_cards` transaction
+ * `updatePack` / `applyPackRetune` / `applyPackEdit` use, audits
+ * `pack_edited_and_retuned` with before/after card counts + a risk summary, and
+ * refreshes the ADMIN risk row.
+ */
+export async function applyStagedPackEditAndRetune(
+  packId: string,
+  token: string,
+  input: StagedPoolInput,
+  targets: { targetEdge?: number; targetWinRate?: number; maxWinCap?: number; nearMissMin?: number },
+): Promise<ApplyStagedRetuneResult> {
+  const session = await requireRetuneOwner();
+  await requireCapability(session, "__can_update_pack", "edit packs");
+  if (!(await verifyRetuneToken(token, session.userId))) {
+    throw new Error("2FA authorization expired or missing — re-confirm to continue.");
+  }
+  if (!isUuid(packId)) throw new Error("Invalid pack id");
+
+  // ── Validate the staged input (fail-closed BEFORE any read/write) ────────
+  if (!Array.isArray(input.cards) || input.cards.length === 0) {
+    throw new Error("Refused: the staged pool must contain at least one card.");
+  }
+  const seen = new Set<string>();
+  for (const c of input.cards) {
+    if (!isUuid(c.cardId)) throw new Error("Refused: a card id is invalid.");
+    if (seen.has(c.cardId)) {
+      throw new Error("Refused: the staged pool has a duplicate card.");
+    }
+    seen.add(c.cardId);
+    if (!Number.isInteger(c.order) || c.order < 0) {
+      throw new Error("Refused: every card order must be a non-negative integer.");
+    }
+  }
+  const priceProvided = input.price !== undefined;
+  if (priceProvided && (!Number.isFinite(input.price) || input.price! <= 0)) {
+    throw new Error("Refused: price must be greater than 0.");
+  }
+
+  const db = await getDb();
+
+  // FRESH pack row: price + scope + the CURRENT live pool (for before-risk +
+  // card-count audit). Same select shape as `applyPackEdit`.
+  const pack = await db.packs.findUnique({
+    where: { id: packId },
+    select: {
+      price: true,
+      active: true,
+      pack_type: true,
+      name: true,
+      pack_cards: { select: { card_id: true } },
+    },
+  });
+  if (!pack) throw new Error("Pack not found");
+
+  if (!EDITABLE_PACK_TYPES.includes(pack.pack_type)) {
+    throw new Error(
+      `Out of scope: only official packs can be edited (this is '${pack.pack_type}').`,
+    );
+  }
+
+  const priceBefore = Number(pack.price.toString());
+  const priceAfter = priceProvided ? input.price! : priceBefore;
+  if (!(priceAfter > 0)) throw new Error("Refused: pack has no valid price.");
+
+  // pack_creator live-pack carve-out (same gate `applyPackEdit` enforces).
+  const editedLivePackUnderCapability = await enforcePackCreatorLiveGate(
+    session,
+    pack.active,
+  );
+
+  const liveCardIds = new Set(pack.pack_cards.map((pc) => pc.card_id));
+
+  // REAL-card identity check + fresh value lookup in ONE select (we need both
+  // here — `getPackCardValues` only returns cards already in the live pool,
+  // which a staged pool may extend with brand-new cards).
+  const editedIds = [...seen];
+  const cardRows = await db.cards.findMany({
+    where: { id: { in: editedIds } },
+    select: { id: true, price: true },
+  });
+  const cardValueById = new Map<string, number>();
+  for (const r of cardRows) {
+    cardValueById.set(r.id, Number(r.price.toString()));
+  }
+  const unknown = input.cards.filter((c) => !cardValueById.has(c.cardId));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Refused: ${unknown.length} staged card(s) do not exist as real cards.`,
+    );
+  }
+
+  // BEFORE risk uses the LIVE pool (fresh) so the audit + return reflect the
+  // actual prior state — never the staged identities.
+  const livePool = await getPackCardValues(packId);
+  const before = computePackRisk({
+    cards: livePool.map((c) => ({ value: c.value, weight: c.weight })),
+    price: priceBefore,
+  });
+
+  // ── Resolve auto-targets for the AFTER-price + the pack name (tag-aware) ──
+  const cfg: ResolvedAutoTargetCfg = {
+    globalCap: await readMaxWinCap(),
+    maxMultCeiling: await readMaxMultCeiling(),
+    edgeCurve: await readEdgeCurveConfig(),
+  };
+  const auto = autoRetuneTargets(priceAfter, cfg, pack.name);
+  const targetEdge = targets.targetEdge ?? auto.targetEdge;
+  const targetWinRate = targets.targetWinRate ?? auto.targetWinRate;
+  const maxWinCap = targets.maxWinCap ?? auto.maxWinCap;
+  const nearMissMin = targets.nearMissMin ?? auto.nearMissMin;
+  const winRateTol = 0.02; // matches shapeWeights' default + applyPackRetune.
+
+  // The staged value vector in input ORDER. The shaper picks one weight per slot.
+  const stagedValues = input.cards.map((c) => ({
+    value: cardValueById.get(c.cardId)!,
+  }));
+  const shaped = shapeWeights({
+    cards: stagedValues,
+    price: priceAfter,
+    targetEdge,
+    targetWinRate,
+    maxWinCap,
+    nearMissMin,
+    winRateTol,
+  });
+
+  // ── FAIL-CLOSED asserts (throw → no write) ──
+  if ("error" in shaped) {
+    throw new Error(`Auto-tune infeasible: ${shaped.error}`);
+  }
+  const after = shaped.risk;
+  if (after.edge < targetEdge - 1e-9) {
+    throw new Error(
+      `Refused: resulting edge ${(after.edge * 100).toFixed(2)}% is below the target ${(targetEdge * 100).toFixed(2)}%.`,
+    );
+  }
+  if (after.maxWin > maxWinCap + 1e-9) {
+    throw new Error(
+      `Refused: resulting max win $${after.maxWin.toFixed(2)} exceeds the cap $${maxWinCap.toFixed(2)}.`,
+    );
+  }
+  if (Math.abs(after.winRate - targetWinRate) > winRateTol + 1e-9) {
+    throw new Error(
+      `Refused: resulting win-rate ${(after.winRate * 100).toFixed(2)}% misses target ${(targetWinRate * 100).toFixed(2)}% (±${(winRateTol * 100).toFixed(2)}%).`,
+    );
+  }
+  // Belt-and-suspenders backstop — mirrors `applyPackEdit` + `applyPackRetune`.
+  // Cannot trip if the asserts above hold (targetEdge ≥ EDIT_EDGE_FLOOR per the
+  // edge-curve floor), kept for refactor safety + uniform refusal audit.
+  if (after.edge < EDIT_EDGE_FLOOR) {
+    try {
+      await createAdminAuditEvent({
+        adminUserId: session.userId,
+        eventType: "pack_edit_refused_edge_floor",
+        metadata: {
+          pack_id: packId,
+          name: pack.name,
+          source: "applyStagedPackEditAndRetune",
+          attempted_edge: after.edge,
+          floor: EDIT_EDGE_FLOOR,
+          attempted_max_win: after.maxWin,
+          target_edge: targetEdge,
+        },
+      });
+    } catch {
+      /* best-effort — never block the refusal */
+    }
+    throw new Error(
+      `Refused: shaped pool produces ${(after.edge * 100).toFixed(2)}% house edge, below the ${(EDIT_EDGE_FLOOR * 100).toFixed(0)}% safety floor.`,
+    );
+  }
+
+  // The rows to write — server-shaped weights paired with the OWNER's chosen
+  // color/animation/order for each staged slot (NOT the live pack_cards row
+  // metadata, since a staged pool may include brand-new cards).
+  const rows = input.cards.map((c, i) => ({
+    pack_id: packId,
+    card_id: c.cardId,
+    weight: shaped.weights[i]!,
+    color: c.color ?? null,
+    animation: c.animation ?? false,
+    order: c.order,
+  }));
+
+  // Capture the PRIOR state into the ADMIN change history BEFORE the write.
+  // The action label is "edit" (same as `applyPackEdit`) — the snapshot
+  // captures the prior pool exactly like a hand-edit, so the revert path is
+  // unchanged; the discriminator for "auto-tuned vs verbatim" lives in the
+  // audit event (`pack_edited_and_retuned` vs `pack_edited_via_retune`).
+  await capturePackSnapshot({
+    packId,
+    action: "edit",
+    capturedBy: session.userId,
+  });
+
+  // SAME delete-all-then-createMany pattern used by every other writer.
+  await db.$transaction(async (tx) => {
+    await tx.packs.update({
+      where: { id: packId },
+      data: {
+        ...(priceProvided ? { price: priceAfter } : {}),
+        updated_at: new Date(),
+      },
+    });
+    await tx.pack_cards.deleteMany({ where: { pack_id: packId } });
+    if (rows.length > 0) {
+      await tx.pack_cards.createMany({ data: rows });
+    }
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "pack_edited_and_retuned",
+    metadata: {
+      pack_id: packId,
+      name: pack.name,
+      card_count_before: liveCardIds.size,
+      card_count_after: rows.length,
+      price_before: priceBefore,
+      price_after: priceAfter,
+      price_changed: priceProvided && priceAfter !== priceBefore,
+      target: {
+        targetEdge,
+        targetWinRate,
+        maxWinCap,
+        nearMissMin,
+      },
+      auto_targets: {
+        targetEdge: targets.targetEdge === undefined,
+        targetWinRate: targets.targetWinRate === undefined,
+        maxWinCap: targets.maxWinCap === undefined,
+        nearMissMin: targets.nearMissMin === undefined,
+      },
+      before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
+      after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
+      ...(editedLivePackUnderCapability && {
+        edited_live_pack_under_capability: true,
+      }),
+    },
+  });
+
+  // Refresh the ADMIN-side risk row from the shaped pool (ADMIN write only).
+  // The cap here is the RESOLVED target cap (the same cap `shapeWeights` shaped
+  // against), so compliance is judged against the budget the auto-tune ran on.
+  await refreshEditedPackRiskScore(packId, after, maxWinCap);
+
+  reloadPacks();
+  revalidatePath("/packs");
+  revalidatePath(`/packs/${packId}`);
+
+  return {
+    packId,
+    name: pack.name,
+    status: "edited_and_retuned",
+    cardCountBefore: liveCardIds.size,
+    cardCountAfter: rows.length,
+    priceBefore,
+    priceAfter,
+    before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
+    after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
+  };
 }
