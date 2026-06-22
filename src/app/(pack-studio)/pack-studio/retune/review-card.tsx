@@ -11,6 +11,7 @@ import {
   Layers,
   Loader2,
   Pencil,
+  Plus,
   RotateCcw,
   ShieldAlert,
   SlidersHorizontal,
@@ -60,6 +61,19 @@ import { PoolEditor, type EditorTargets } from "./pool-editor";
 function pct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return `${(v * 100).toFixed(2)}%`;
+}
+
+/**
+ * Render a `{ min, max }` USD range for the "+ Add a card in $X–$Y" button.
+ * Mirrors `formatCurrency`'s decimal style without forcing the symbol twice
+ * (`$1.25–$6.25`). A `min` of 0 collapses to "$0–$Y" rather than printing
+ * "$0.00–$Y" so the bound for ev-too-low / no-dust hints reads naturally.
+ */
+function formatRange(range: { min: number; max: number }): string {
+  const lo =
+    range.min <= 0 ? "$0" : formatCurrency(range.min);
+  const hi = formatCurrency(range.max);
+  return `${lo}–${hi}`;
 }
 
 /** Parse a percent string ("10.99") to a fraction (0.1099), or null if invalid. */
@@ -186,6 +200,23 @@ export function ReviewCard({
 }) {
   const [showAdjust, setShowAdjust] = React.useState(false);
 
+  // Programmatic control over the inline pool editor's BuilderCardPicker. The
+  // "+ Add a card in $X–$Y range" button below the infeasibility error opens
+  // the editor (if not already open) AND the picker, with the suggested range
+  // pre-filled. `pendingPickerRange` is the range we want the picker to show;
+  // we apply it on the open transition rather than continuously, so the owner
+  // can edit the Min/Max filter once it's open without us clobbering them.
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [pickerRange, setPickerRange] = React.useState<
+    { min: number; max: number } | null
+  >(null);
+
+  // Reset the picker control when the card changes (a new pack).
+  React.useEffect(() => {
+    setPickerOpen(false);
+    setPickerRange(null);
+  }, [item.proposal.packId]);
+
   // Lever inputs seeded from the proposal's auto-targets (or the active
   // adjustment when one exists). Local string state for the controls.
   const auto = item.proposal.autoTargets;
@@ -224,6 +255,20 @@ export function ReviewCard({
     nearMissMin < 1;
 
   const winRateNum = Math.round((winRate ?? auto.targetWinRate) * 100);
+
+  /**
+   * One-click handler for the "Add a card in $X–$Y range" button on the
+   * infeasibility error. Opens the inline pool editor (if not already open)
+   * AND the card picker, with the suggested range pre-filled. The pool editor
+   * then forwards the range to `<BuilderCardPicker initialPriceMin/Max>` and
+   * the controlled `open` flag, so the dialog opens straight into a filtered
+   * list of candidates — no manual range entry by the owner.
+   */
+  function openPickerWithRange(range: { min: number; max: number }) {
+    setPickerRange(range);
+    if (!editing) onOpenEditor();
+    setPickerOpen(true);
+  }
 
   // Apply the CURRENT field values to a fresh local re-shape.
   function applyAdjust() {
@@ -342,9 +387,28 @@ export function ReviewCard({
                 </span>
               </div>
             )}
+            {/* One-click "Add a card in $X–$Y range" — only shows when the
+                limit carries an explicit `suggestedRange` (no-win-cards,
+                no-win-band-card, ev-out-of-range, no-dust-cards). Opens the
+                pool editor + the card picker pre-filtered to the band, so the
+                owner doesn't have to parse the suggestion text and re-enter
+                the range by hand. House-POV emerald: actively fixing the
+                infeasibility is the healthy direction (out of the rose-tinted
+                "can't retune" state into a feasible pool). */}
+            {limit?.suggestedRange && (
+              <Button
+                size="sm"
+                onClick={() => openPickerWithRange(limit.suggestedRange!)}
+                disabled={applying}
+                className="mt-0.5 bg-emerald-600 text-white hover:bg-emerald-600/90 dark:bg-emerald-600 dark:hover:bg-emerald-600/90"
+              >
+                <Plus className="mr-1 size-3.5" />
+                Add a card in {formatRange(limit.suggestedRange)} range
+              </Button>
+            )}
             {/* Never a dead end — open the editor to add a card ≥ price / fix
                 the pool right here. */}
-            {!editing && (
+            {!editing && !limit?.suggestedRange && (
               <Button
                 size="sm"
                 onClick={onOpenEditor}
@@ -582,6 +646,10 @@ export function ReviewCard({
                 onCancel={onCloseEditor}
                 onApprove={onApplyEdit}
                 onApproveAutoTune={onApplyEdit}
+                pickerOpen={pickerOpen}
+                onPickerOpenChange={setPickerOpen}
+                pickerInitialPriceMin={pickerRange?.min}
+                pickerInitialPriceMax={pickerRange?.max}
               />
             </section>
           </>

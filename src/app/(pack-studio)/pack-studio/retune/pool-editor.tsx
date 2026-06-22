@@ -168,6 +168,10 @@ export function PoolEditor({
   onCancel,
   onApprove,
   onApproveAutoTune,
+  pickerOpen,
+  onPickerOpenChange,
+  pickerInitialPriceMin,
+  pickerInitialPriceMax,
 }: {
   packId: string;
   /** The pack's current price (USD) — the editable starting price. */
@@ -189,6 +193,19 @@ export function PoolEditor({
    * and writes optimized weights in ONE transaction. No client odds are sent.
    */
   onApproveAutoTune: (payload: AutoTuneApprovePayload) => void;
+  /**
+   * Optional controlled-open for the embedded card picker. When set, the
+   * parent (review-card.tsx) can pop the picker open programmatically from a
+   * "+ Add a card in this range" button on an infeasibility error — without
+   * the owner having to click the "Add cards…" trigger themselves. Both props
+   * must be set together to control the picker; pass `undefined` to leave it
+   * uncontrolled.
+   */
+  pickerOpen?: boolean;
+  onPickerOpenChange?: (open: boolean) => void;
+  /** Optional Min/Max seeds for the picker's price filter (suggested range). */
+  pickerInitialPriceMin?: number;
+  pickerInitialPriceMax?: number;
 }) {
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
@@ -470,6 +487,10 @@ export function PoolEditor({
               sets={filters.sets}
               rarities={filters.rarities}
               price={price}
+              open={pickerOpen}
+              onOpenChange={onPickerOpenChange}
+              initialPriceMin={pickerInitialPriceMin}
+              initialPriceMax={pickerInitialPriceMax}
             />
           </div>
         )}

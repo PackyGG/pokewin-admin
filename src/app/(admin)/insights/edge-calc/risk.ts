@@ -377,6 +377,18 @@ export type ShapeWeightsLimit = {
   kind: string;
   detail: string;
   suggestion: string;
+  /**
+   * Optional price range derived from the limit's suggestion. When present, the
+   * UI can wire a one-click "Add a card in this range" button that opens the
+   * card picker pre-filtered to `[min, max]` instead of forcing the owner to
+   * parse the suggestion text and re-enter the range by hand.
+   *
+   * Emitted for the limit kinds whose `suggestion` already names an explicit
+   * USD band — `no-win-cards`, `no-win-band-card`, `ev-out-of-range`, and
+   * `no-dust-cards`. Other kinds (degenerate-pool, empty-pool, invalid-*) leave
+   * this `undefined`.
+   */
+  suggestedRange?: { min: number; max: number };
 };
 
 export type ShapeWeightsError = {
@@ -1306,6 +1318,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
           kind: "no-win-cards",
           detail: `Auto-cap filter removed ${capDroppedCount} card(s) above $${maxWinCap.toFixed(2)}. After filtering, pool has no card worth ≥ $${price.toFixed(2)} (the WIN/GRAIL bands are empty).`,
           suggestion: `Either add a card priced between $${price.toFixed(2)} and $${maxWinCap.toFixed(2)} (a small-win card to host the win mass), OR raise the pack's max-win cap so the stripped jackpot card(s) can stay.`,
+          suggestedRange: { min: price, max: maxWinCap },
         },
       };
     }
@@ -1316,6 +1329,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         kind: "no-win-cards",
         detail: `Pool has no card priced at or above $${price.toFixed(2)} (the WIN and GRAIL bands are empty). The win mass has nowhere to land.`,
         suggestion: `Add at least one card priced between $${price.toFixed(2)} and $${winHi.toFixed(2)} (a small-win card to host the win mass).`,
+        suggestedRange: { min: price, max: winHi },
       },
     };
   }
@@ -1354,6 +1368,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
           kind: "no-win-band-card",
           detail: `Pool has ${grail.length} jackpot card(s) ≥ $${winHi.toFixed(2)} but no small-win card in $${winLo.toFixed(2)}–$${winHi.toFixed(2)}. With a ${(requestedWinRate * 100).toFixed(2)}% target win-rate, the math can't simultaneously hit the target edge ${(targetEdge * 100).toFixed(2)}% — even the cheapest jackpot (≈$${cheapestGrail.toFixed(2)}) carries too much value for the ${(requestedWinRate * 100).toFixed(2)}% win-rate.`,
           suggestion: `Add 1-2 cards priced between $${winLo.toFixed(2)} and $${winHi.toFixed(2)} (e.g. one around $${exampleA.toFixed(2)} and one around $${exampleB.toFixed(2)}). The retune will distribute weights for you.`,
+          suggestedRange: { min: winLo, max: winHi },
         },
       };
     }
@@ -1390,6 +1405,9 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         suggestion: tooLow
           ? `Add cheaper cards in the DUST band (< $${dustHi.toFixed(2)}) so the EV can be pulled down to $${evTarget.toFixed(2)}.`
           : `Add higher-value cards in the WIN band ($${winLo.toFixed(2)}–$${winHi.toFixed(2)}) or GRAIL band (≥ $${winHi.toFixed(2)}) so the EV can reach $${evTarget.toFixed(2)}.`,
+        suggestedRange: tooLow
+          ? { min: 0, max: dustHi }
+          : { min: winLo, max: winHi },
       },
     };
   }
@@ -1420,6 +1438,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         kind: "no-dust-cards",
         detail: `Pool has no DUST card (< $${dustHi.toFixed(2)}, half the $${price.toFixed(2)} price). The losing mass has nowhere to sit, so the house edge can't be shaped.`,
         suggestion: `Add one or more low-value cards priced under $${dustHi.toFixed(2)} (Builder/card editor) so the house edge has somewhere to sit.`,
+        suggestedRange: { min: 0, max: dustHi },
       },
     };
   }

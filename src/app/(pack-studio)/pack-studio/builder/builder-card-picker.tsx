@@ -53,6 +53,18 @@ const RARITY_COLORS: Record<string, string> = {
  *   - else             → low exposure (muted).
  * When no price is set yet we fall back to a neutral note.
  */
+/**
+ * Format a numeric range bound for the Min/Max price inputs. The picker's
+ * `<Input type="number">` accepts a string; we want a clean "5" / "1.25" /
+ * "0.50" with no trailing zeros for integers, two decimals for fractional
+ * values. `0` becomes an empty string so the lower bound of a "0 – $0.50"
+ * suggestion doesn't force the user to clear it before searching.
+ */
+function formatRangeValue(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "";
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
 function liabilityHint(value: number, price: number): { label: string; className: string } {
   if (!(price > 0)) {
     return { label: "set a price to gauge exposure", className: "text-muted-foreground" };
@@ -82,6 +94,10 @@ export function BuilderCardPicker({
   sets,
   rarities,
   price,
+  open: openProp,
+  onOpenChange,
+  initialPriceMin,
+  initialPriceMax,
 }: {
   selectedIds: string[];
   onSelect: (card: BuilderCardItem) => void;
@@ -89,17 +105,56 @@ export function BuilderCardPicker({
   rarities: string[];
   /** Current pack price — drives the per-card liability hint. */
   price: number;
+  /**
+   * Optional controlled-open mode. When `open` is provided, the picker becomes
+   * a controlled `Dialog`: the parent owns the open state and is notified via
+   * `onOpenChange`. Used by the retune review's "Add a card in $X–$Y range"
+   * button, which opens the picker programmatically. When omitted, the picker
+   * stays uncontrolled and uses its own internal open state (the historical
+   * behavior).
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /**
+   * Optional seed values for the Min/Max price filter. When provided, the
+   * filter inputs start pre-filled with this range so the operator can act on a
+   * "suggested range" without re-typing the bounds. Re-applied every time the
+   * dialog opens (so opening it again with a NEW range resets the filter).
+   */
+  initialPriceMin?: number;
+  initialPriceMax?: number;
 }) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = openProp ?? internalOpen;
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (openProp === undefined) setInternalOpen(next);
+      onOpenChange?.(next);
+    },
+    [openProp, onOpenChange],
+  );
   const [isPending, startTransition] = useTransition();
 
   const [search, setSearch] = useState("");
   const [rarity, setRarity] = useState("all");
   const [setId, setSetId] = useState("all");
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
+  const [minPrice, setMinPrice] = useState(
+    initialPriceMin !== undefined ? formatRangeValue(initialPriceMin) : "",
+  );
+  const [maxPrice, setMaxPrice] = useState(
+    initialPriceMax !== undefined ? formatRangeValue(initialPriceMax) : "",
+  );
   const [page, setPage] = useState(1);
   const perPage = 40;
+
+  // Re-apply the suggested range every time the dialog opens. Owner workflow:
+  // close → click a different "+ Add a card in $A–$B" button → re-open. Each
+  // open should reflect the LATEST suggestion, not the previous filter state.
+  useEffect(() => {
+    if (!open) return;
+    if (initialPriceMin !== undefined) setMinPrice(formatRangeValue(initialPriceMin));
+    if (initialPriceMax !== undefined) setMaxPrice(formatRangeValue(initialPriceMax));
+  }, [open, initialPriceMin, initialPriceMax]);
 
   const [cards, setCards] = useState<BuilderCardItem[]>([]);
   const [total, setTotal] = useState(0);
