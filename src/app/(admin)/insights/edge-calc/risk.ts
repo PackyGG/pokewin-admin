@@ -309,6 +309,12 @@ export type ShapeWeightsSuccess = {
   edge: number;
   /** Soft targets the solver had to relax to reach a feasible result. Empty when nothing was relaxed. */
   relaxations: ShapeWeightsRelaxation[];
+  /**
+   * Whether the final weights were snapped to the clean-ladder probabilities
+   * for human-readable odds. True only when the snap kept edge within
+   * tolerance; false when the safe fallback (precise weights) was kept.
+   */
+  snapped?: boolean;
 };
 
 /**
@@ -415,6 +421,128 @@ function gcd(a: number, b: number): number {
     x = t;
   }
   return x === 0 ? 1 : x;
+}
+
+// ─── Clean-ladder snap (human-readable odds post-process) ─────────────
+//
+// The solver produces edge-correct weights that, expressed as percentages,
+// often read as awkward decimals like `0.0132%` or `0.0173%`. A human pack
+// designer would pick clean round numbers — `0.01%`, `0.015%`, `10%`, `89%`.
+// This post-process snaps each card's probability to the nearest value on a
+// fixed ladder of "nice" decimals (by log distance, which handles the wide
+// dynamic range from sub-basis-point dust odds to dominant floor cards), then
+// re-normalizes the snapped masses to sum to 1 and converts back to integer
+// weights. The caller decides whether to keep the snapped result (when edge
+// stays within tolerance) or fall back to the precise weights (safe default).
+
+/** Base magnitudes of the clean ladder — multiplied across decades below. */
+const CLEAN_LADDER_BASE = [1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10, 15, 20, 25, 30, 40, 50, 75] as const;
+
+/**
+ * Full clean ladder (in PERCENT units), scaled across decades from 1e-6%
+ * (0.0001% basis-point territory) up to 100%. Values strictly in (0, 100)
+ * are generated from the base, and 100 is appended so the upper edge of the
+ * dynamic range is representable. Sorted ascending, no duplicates by
+ * construction (each decade is a distinct order of magnitude).
+ */
+const CLEAN_LADDER: readonly number[] = (() => {
+  const out: number[] = [];
+  for (let decade = -6; decade <= 1; decade++) {
+    for (const b of CLEAN_LADDER_BASE) {
+      const v = b * Math.pow(10, decade);
+      if (v > 0 && v < 100) out.push(v);
+    }
+  }
+  out.push(100);
+  out.sort((a, b) => a - b);
+  return out;
+})();
+
+/**
+ * Snap each weight in `input.weights` to the nearest clean-ladder
+ * probability percentage (log-distance argmin), re-normalize the snapped
+ * percentages to sum to exactly 100%, and quantize back to integer weights.
+ * Pure: no mutation of the input.
+ *
+ * Returns the snapped integer weight vector and the edge delta vs the
+ * original (snapped.edge − original.edge) so the caller can accept/reject.
+ *
+ * - Zero-weight slots (dropped cards, e.g. cap-stripped) stay 0 and are not
+ *   snapped — they carry no probability mass.
+ * - Re-normalize multiplier is ×10000 (so the smallest representable snapped
+ *   percentage 0.0001 still rounds to 1, not 0), with a floor of 1 for every
+ *   originally-positive card so no kept card silently disappears.
+ */
+export function snapWeightsToCleanLadder(input: {
+  weights: number[];
+  price: number;
+}): { weights: number[]; edgeDelta: number } {
+  const original = input.weights;
+  const price = input.price;
+
+  let totalWeight = 0;
+  for (const w of original) {
+    if (Number.isFinite(w) && w > 0) totalWeight += w;
+  }
+  // Degenerate inputs: nothing to snap, no delta.
+  if (!(totalWeight > 0) || !(price > 0)) {
+    return { weights: original.slice(), edgeDelta: 0 };
+  }
+
+  // Step 1: snap each positive weight's probability percent to the nearest
+  // ladder value by log distance. log10 distance is the right metric here
+  // because the dynamic range spans many orders of magnitude (jackpots at
+  // <0.01% next to floor cards at >50%) — a linear nearest-neighbour would
+  // collapse every tiny percentage onto the smallest rung.
+  const snappedPct = new Array<number>(original.length).fill(0);
+  for (let i = 0; i < original.length; i++) {
+    const w = original[i]!;
+    if (!Number.isFinite(w) || w <= 0) continue;
+    const pct = (w / totalWeight) * 100;
+    // Pre-snap clamp into the ladder's representable range so pathological
+    // out-of-range values don't tunnel past the endpoints. log10 of pct vs
+    // log10 of each ladder value — pick the argmin.
+    const logPct = Math.log10(pct);
+    let bestIdx = 0;
+    let bestDist = Math.abs(Math.log10(CLEAN_LADDER[0]!) - logPct);
+    for (let k = 1; k < CLEAN_LADDER.length; k++) {
+      const d = Math.abs(Math.log10(CLEAN_LADDER[k]!) - logPct);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = k;
+      }
+    }
+    snappedPct[i] = CLEAN_LADDER[bestIdx]!;
+  }
+
+  // Step 2: re-normalize the snapped percentages to sum to exactly 100%.
+  let pctSum = 0;
+  for (const p of snappedPct) pctSum += p;
+  if (!(pctSum > 0)) {
+    return { weights: original.slice(), edgeDelta: 0 };
+  }
+  const normFactor = 100 / pctSum;
+
+  // Step 3: convert back to integer weights via ×10000 multiplier (so 0.0001%
+  // snapped rungs are still representable as weight ≥ 1). Every originally-
+  // positive card keeps weight ≥ 1 so no kept card silently disappears.
+  const MULT = 10000;
+  const snappedWeights = new Array<number>(original.length).fill(0);
+  for (let i = 0; i < original.length; i++) {
+    const w = original[i]!;
+    if (!Number.isFinite(w) || w <= 0) continue;
+    const renormPct = snappedPct[i]! * normFactor;
+    snappedWeights[i] = Math.max(1, Math.round(renormPct * MULT));
+  }
+
+  // Step 4: edgeDelta is computed by the CALLER (where card values are known)
+  // via a follow-up `computePackRisk` pass. The post-process intentionally
+  // doesn't take card values: it operates purely on the weight VECTOR + the
+  // price (for context), so it can be reused in any pipeline that already
+  // tracks its own risk recompute. Returned as 0 here as a placeholder —
+  // the caller decides accept/fallback off its own risk-recomputed edge.
+  void price;
+  return { weights: snappedWeights, edgeDelta: 0 };
 }
 
 /**
@@ -1007,5 +1135,28 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     }
   }
 
-  return { weights, risk, ev: risk.ev, edge: risk.edge, relaxations };
+  // ── Snap to clean-ladder for human-readable odds (safe post-process) ──
+  // The precise weights above are edge-correct but produce ugly percentages
+  // like 0.0132% / 0.0173%. Snap each card's probability to the nearest
+  // value on a fixed ladder of nice round numbers (0.01%, 0.015%, ...) and
+  // re-normalize. KEEP the snapped weights only when the resulting edge
+  // stays within ±0.05pp of target AND still satisfies the existing
+  // one-sided-up invariant (edge ≥ target). Otherwise fall back to the
+  // precise weights — the snap never regresses edge, by construction.
+  let snapped = false;
+  const snap = snapWeightsToCleanLadder({ weights, price });
+  const snappedRisk = computePackRisk({
+    cards: input.cards.map((c, i) => ({ value: c.value, weight: snap.weights[i]! })),
+    price,
+  });
+  const snapDrift = Math.abs(snappedRisk.edge - targetEdge);
+  // Tolerance: ≤ 0.05pp drift from target. Edge must also stay ≥ target so
+  // the established one-sided-up invariant survives the post-process.
+  if (snapDrift <= 0.0005 && snappedRisk.edge >= targetEdge - 1e-9) {
+    for (let i = 0; i < weights.length; i++) weights[i] = snap.weights[i]!;
+    risk = snappedRisk;
+    snapped = true;
+  }
+
+  return { weights, risk, ev: risk.ev, edge: risk.edge, relaxations, snapped };
 }

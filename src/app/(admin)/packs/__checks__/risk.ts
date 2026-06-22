@@ -29,6 +29,7 @@ import {
   computePackRiskFromAggregates,
   riskTier,
   shapeWeights,
+  snapWeightsToCleanLadder,
   CV_TIER_BOUNDS,
   type CardLite,
   type ShapeWeightsResult,
@@ -1299,6 +1300,132 @@ check("autoMaxWinCap is hit-rate-aware: loosens for lottery packs, unchanged for
       shapedOld.risk.maxWin <= 125 + 1e-9,
       `plain $125 cap guts the jackpot to ≤ $125 (${shapedOld.risk.maxWin})`,
     );
+  }
+});
+
+// ── 14. Clean-ladder snap post-process ──────────────────────────────
+//
+// The snap converts the precise solver weights into human-readable round
+// odds. It is a SAFE post-process: the integration only keeps the snapped
+// weights when the resulting edge stays within ±0.05pp of target — otherwise
+// it falls back to the precise weights. Two complementary cases:
+//   (a) A pool where snapping holds → returned pcts are near ladder rungs +
+//       edge is in tol + the `snapped` flag is true.
+//   (b) A pool where snapping would crash edge → safety fallback keeps the
+//       precise weights + edge is still in tol + the `snapped` flag is false.
+
+// Build the same ladder as risk.ts uses, for the per-pct nearness check.
+const CLEAN_LADDER_BASE = [1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10, 15, 20, 25, 30, 40, 50, 75];
+const CLEAN_LADDER: number[] = [];
+for (let decade = -6; decade <= 1; decade++) {
+  for (const b of CLEAN_LADDER_BASE) {
+    const v = b * Math.pow(10, decade);
+    if (v > 0 && v < 100) CLEAN_LADDER.push(v);
+  }
+}
+CLEAN_LADDER.push(100);
+CLEAN_LADDER.sort((a, b) => a - b);
+
+function nearestLadderLogDist(pct: number): number {
+  if (!(pct > 0)) return 0;
+  const logP = Math.log10(pct);
+  let bestD = Infinity;
+  for (const v of CLEAN_LADDER) {
+    const d = Math.abs(Math.log10(v) - logP);
+    if (d < bestD) bestD = d;
+  }
+  return bestD;
+}
+
+check("snap (a): snap-accept pool returns ladder-near pcts + edge in tol + snapped flag true", () => {
+  // A small bimodal pool whose solver weights happen to renorm cleanly close
+  // to ladder rungs after the snap. Found by sweeping random pools — picked
+  // for being small, reproducible, and demonstrating the snap path.
+  const cards = [{ value: 4.92 }, { value: 17.10 }, { value: 52.17 }];
+  const price = 10;
+  const targetEdge = 0.1099;
+  const r = shapeWeights({ cards, price, targetEdge, targetWinRate: 0.152 });
+  assert(isSuccess(r), `expected success: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+  assert(r.snapped === true, `snap should be applied for this crafted pool, got snapped=${r.snapped}`);
+  // Edge must be within ±0.05pp of target (the integration accept tolerance).
+  assert(
+    Math.abs(r.edge - targetEdge) <= 0.0005 + 1e-9,
+    `edge within ±0.05pp of target (got ${r.edge}, target ${targetEdge})`,
+  );
+  // Each returned pct must be close to a ladder rung — log10 distance ≤ 0.05.
+  // (The renorm shifts each rung by a single multiplicative factor; the
+  // tolerance accounts for that shift plus integer-quantization rounding.)
+  const total = r.weights.reduce((a, b) => a + b, 0);
+  const pcts = r.weights.map((w) => (w / total) * 100);
+  for (const p of pcts) {
+    if (p <= 0) continue;
+    const d = nearestLadderLogDist(p);
+    assert(d <= 0.05, `pct ${p.toFixed(4)}% within log-dist 0.05 of a ladder rung (got ${d.toFixed(4)})`);
+  }
+});
+
+check("snap (b): a snap that would crash edge falls back to precise weights, edge still in tol", () => {
+  // The "1% 18 PLUS" pool from check #13 — the snapping shifts so much mass
+  // onto the jackpot rungs that edge would crash from ~11% to ~5%. The
+  // integration must REJECT the snap and keep the precise weights.
+  const pool = [
+    { value: 810.07 }, { value: 508.45 }, { value: 118.21 }, { value: 114.0 },
+    { value: 75.47 }, { value: 64.76 }, { value: 60.25 }, { value: 1.3 },
+    { value: 0.08 }, { value: 0.05 }, { value: 0.02 },
+  ];
+  const price = 1.25;
+  const targetEdge = 0.1099;
+  const r = shapeWeights({
+    cards: pool,
+    price,
+    targetEdge,
+    targetWinRate: 0.01,
+    maxWinCap: 2500,
+    nearMissMin: 0.1,
+  });
+  assert(isSuccess(r), `expected success: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+  // Snap must NOT have been applied — it would have crashed the edge.
+  assert(r.snapped === false, `snap must NOT be applied (crashes edge), got snapped=${r.snapped}`);
+  // The safety fallback keeps edge ≥ target (one-sided-up invariant) AND
+  // within the existing 0.001 ceiling.
+  assert(r.edge >= targetEdge - 1e-9, `edge ≥ target after fallback (${r.edge})`);
+  assert(r.edge - targetEdge <= 0.001 + 1e-9, `edge − target ≤ 0.001 after fallback (${r.edge - targetEdge})`);
+
+  // Direct probe: confirm the snap function ITSELF would push the edge below
+  // tolerance for this pool — so the integration's rejection is correct.
+  const snap = snapWeightsToCleanLadder({ weights: r.weights, price });
+  const snapRisk = computePackRisk({
+    cards: pool.map((c, i) => ({ value: c.value, weight: snap.weights[i]! })),
+    price,
+  });
+  assert(
+    Math.abs(snapRisk.edge - targetEdge) > 0.0005,
+    `snap (had it been applied) would exceed the ±0.05pp tolerance (would-be edge ${snapRisk.edge}, drift ${Math.abs(snapRisk.edge - targetEdge)})`,
+  );
+
+  // Print the SNAPPED percentages this pool WOULD have produced — the user
+  // can see "clean" values (0.05%, 10%, 89%, ...) vs the ugly "0.0132%" the
+  // precise solver returns. The fallback keeps the precise weights for safety.
+  const snapTotal = snap.weights.reduce((a, b) => a + b, 0);
+  const snappedPctList = pool.map((c, i) => {
+    const w = snap.weights[i]!;
+    const pct = (w / snapTotal) * 100;
+    return `$${c.value.toFixed(2).padStart(7)} → ${pct.toFixed(4)}%`;
+  });
+  console.log(`      [1% 18 PLUS snapped pcts (NOT applied — safety fallback)]`);
+  for (const line of snappedPctList) console.log(`        ${line}`);
+  console.log(`        snapped edge would be ${(snapRisk.edge * 100).toFixed(4)}% (target ${(targetEdge * 100).toFixed(2)}%) — rejected`);
+
+  // Also print the PRECISE percentages the user actually gets — the ugly
+  // ones that motivated the snap feature. The contrast is the point.
+  const preciseTotal = r.weights.reduce((a, b) => a + b, 0);
+  console.log(`      [1% 18 PLUS precise pcts (returned by shapeWeights)]`);
+  for (let i = 0; i < pool.length; i++) {
+    const w = r.weights[i]!;
+    const pct = (w / preciseTotal) * 100;
+    console.log(`        $${pool[i]!.value.toFixed(2).padStart(7)} → ${pct.toFixed(6)}%`);
   }
 });
 
