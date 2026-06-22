@@ -187,6 +187,35 @@ function previewRisk(rows: EditRow[], price: number): PackRisk | null {
   });
 }
 
+/**
+ * The before/after view of the staged pool, used by the orchestrator's confirm
+ * gate to render the Step 1 KPI grid + per-card diff dropdown WITHOUT having to
+ * recompute anything from the proposal. Built from the editor's own state at
+ * approve-time, so the table matches exactly what the editor showed.
+ *
+ * For verbatim the `toWeight` is the integer weight the server will write. For
+ * auto-tune it is the locally shaped weight (the server re-shapes against the
+ * SAME targets, so the preview matches what the server lands on).
+ *
+ * `fromWeight === null` means the card was ADDED via the picker (no live
+ * baseline). Removed cards aren't in `cards` — they're listed in `removed`
+ * (cardId + value + the live weight that goes away).
+ */
+export type EditPreview = {
+  after: PackRisk | null;
+  /** New pack price when the owner changed it, else null. */
+  newPrice: number | null;
+  cards: {
+    cardId: string;
+    value: number;
+    name: string;
+    fromWeight: number | null;
+    toWeight: number;
+    added: boolean;
+  }[];
+  removed: { cardId: string; value: number; name: string; fromWeight: number }[];
+};
+
 /** The verbatim edited-pool payload — owner odds become integer weights. */
 export type VerbatimApprovePayload = {
   mode: "verbatim";
@@ -199,6 +228,8 @@ export type VerbatimApprovePayload = {
   }[];
   price?: number;
   hasAddedCards: boolean;
+  /** Local before/after for the confirm-gate KPI grid + per-card diff. */
+  preview: EditPreview;
 };
 
 /** The staged-pool payload — server picks the weights via `shapeWeights`. */
@@ -219,6 +250,8 @@ export type AutoTuneApprovePayload = {
    * "Allow price adjustment" checkbox in the editor.
    */
   allowPriceSearch?: boolean;
+  /** Local before/after for the confirm-gate KPI grid + per-card diff. */
+  preview: EditPreview;
 };
 
 export function PoolEditor({
@@ -289,6 +322,14 @@ export function PoolEditor({
   // Card-picker filters, loaded lazily on first open (server action).
   const [filters, setFilters] = React.useState<RetunePickerFilters | null>(null);
 
+  // The pack's live pool at editor-open — kept verbatim so the confirm-gate's
+  // per-card diff can show `fromWeight` for kept cards (and surface removed
+  // cards: present here, absent from `rows`). Read-only after seed.
+  const baselineRef = React.useRef<Map<
+    string,
+    { weight: number; name: string; value: number }
+  > | null>(null);
+
   // Seed the editor from a fresh read of the pack's current pool on first open.
   React.useEffect(() => {
     let cancelled = false;
@@ -301,6 +342,21 @@ export function PoolEditor({
           getRetunePickerFilters(),
         ]);
         if (cancelled) return;
+        // Snapshot the live pool BEFORE seeding the editable rows — the
+        // confirm-gate diff reads from this to label "removed" cards and to
+        // pull `fromWeight` for cards the owner kept.
+        const baseline = new Map<
+          string,
+          { weight: number; name: string; value: number }
+        >();
+        for (const c of pool.cards) {
+          baseline.set(c.cardId, {
+            weight: c.weight,
+            name: c.name,
+            value: c.value,
+          });
+        }
+        baselineRef.current = baseline;
         setRows(seedRows(pool));
         setPriceText(String(pool.price));
         setFilters(picker);
@@ -457,6 +513,79 @@ export function PoolEditor({
     }
   }, [rows, price, targets]);
 
+  // Build the EditPreview the confirm gate reads — same data for both modes:
+  //  • `cards`     — every staged row with its baseline weight (null for added)
+  //                  and the post-approve weight (verbatim → owner's integer
+  //                  weights; auto-tune → client-side `shapeWeights` mirror of
+  //                  what the server will produce against the SAME targets).
+  //  • `removed`   — baseline cards the owner took out (cardId+name+value+
+  //                  fromWeight) so the diff dropdown can mark them with "−".
+  //  • `after`     — `PackRisk` over the post-approve weights for the KPI row.
+  const buildPreview = React.useCallback(
+    (mode: "verbatim" | "auto-tune"): EditPreview => {
+      const baseline = baselineRef.current ?? new Map();
+      let toWeights: number[];
+      if (mode === "auto-tune") {
+        // Mirror what the server will write: shape locally against the SAME
+        // targets `applyStagedPackEditAndRetune` uses. On a (rare) infeasible
+        // local shape, fall back to the owner's odds so the gate still
+        // renders — the server will error out itself if it's truly infeasible.
+        const shaped = shapeWeights({
+          cards: rows.map((r) => ({ value: r.priceUsd })),
+          price,
+          targetEdge: targets.targetEdge,
+          targetWinRate: targets.targetWinRate,
+          maxWinCap: targets.maxWinCap,
+          nearMissMin: targets.nearMissMin,
+        });
+        toWeights = "error" in shaped
+          ? oddsToWeights(rows.map((r) => r.odds))
+          : shaped.weights;
+      } else {
+        toWeights = oddsToWeights(rows.map((r) => r.odds));
+      }
+      const afterRisk = rows.length > 0
+        ? computePackRisk({
+            cards: rows.map((r, i) => ({
+              value: r.priceUsd,
+              weight: toWeights[i]!,
+            })),
+            price,
+          })
+        : null;
+      const cards = rows.map((r, i) => {
+        const base = baseline.get(r.cardId);
+        return {
+          cardId: r.cardId,
+          value: r.priceUsd,
+          name: r.name,
+          fromWeight: base ? base.weight : null,
+          toWeight: toWeights[i]!,
+          added: r.added,
+        };
+      });
+      const keptIds = new Set(rows.map((r) => r.cardId));
+      const removed: EditPreview["removed"] = [];
+      for (const [cardId, base] of baseline.entries()) {
+        if (!keptIds.has(cardId)) {
+          removed.push({
+            cardId,
+            value: base.value,
+            name: base.name,
+            fromWeight: base.weight,
+          });
+        }
+      }
+      return {
+        after: afterRisk,
+        newPrice: priceChanged ? price : null,
+        cards,
+        removed,
+      };
+    },
+    [rows, price, priceChanged, targets],
+  );
+
   // ── Approve the explicit edited pool (VERBATIM — advanced) ───────────
   const approve = React.useCallback(() => {
     if (!feasible || !priceValid || applying) return;
@@ -472,6 +601,7 @@ export function PoolEditor({
       })),
       price: priceChanged ? price : undefined,
       hasAddedCards,
+      preview: buildPreview("verbatim"),
     });
   }, [
     feasible,
@@ -482,6 +612,7 @@ export function PoolEditor({
     priceChanged,
     price,
     hasAddedCards,
+    buildPreview,
   ]);
 
   // ── Approve via AUTO-TUNE (SAFE PATH — server shapes weights) ────────
@@ -498,6 +629,7 @@ export function PoolEditor({
       price: priceChanged ? price : undefined,
       hasAddedCards,
       ...(allowPriceSearch ? { allowPriceSearch: true } : {}),
+      preview: buildPreview("auto-tune"),
     });
   }, [
     feasible,
@@ -509,6 +641,7 @@ export function PoolEditor({
     price,
     hasAddedCards,
     allowPriceSearch,
+    buildPreview,
   ]);
 
   if (loading) {

@@ -3,6 +3,8 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import {
+  ArrowRight,
+  ChevronDown,
   KeyRound,
   Loader2,
   Scale,
@@ -33,10 +35,16 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { DEFAULT_MAX_MULT_CEILING } from "@/app/(pack-studio)/pack-studio/_lib/auto-targets";
 import {
   computePackRisk,
   shapeWeights,
@@ -57,7 +65,7 @@ import {
   type PlanAllWeightDiff,
   type PortfolioProfileResult,
 } from "../doctor/retune-actions";
-import type { EditorTargets } from "./pool-editor";
+import type { EditorTargets, EditPreview } from "./pool-editor";
 import type { PortfolioSystemPlan } from "../_lib/portfolio";
 
 import { ReviewCard } from "./review-card";
@@ -132,6 +140,8 @@ export type EditApprovePayload =
       }[];
       price?: number;
       hasAddedCards: boolean;
+      /** Local before/after for the confirm-gate KPI grid + per-card diff. */
+      preview: EditPreview;
     }
   | {
       mode: "auto-tune";
@@ -149,6 +159,8 @@ export type EditApprovePayload =
        * lever in `applyStagedPackEditAndRetune`). Defaults undefined/false.
        */
       allowPriceSearch?: boolean;
+      /** Local before/after for the confirm-gate KPI grid + per-card diff. */
+      preview: EditPreview;
     };
 
 export type ReviewItem = {
@@ -899,15 +911,7 @@ export function RetuneReview({
         if (confirmStep === 0 || !pendingWrite) return null;
         const item = items[pendingWrite.index];
         if (!item) return null;
-        const name = item.proposal.name;
-        const priceBefore = item.proposal.price;
-        const priceAfter =
-          pendingWrite.kind === "edit" || pendingWrite.kind === "edit-and-retune"
-            ? pendingWrite.payload.price ?? item.proposal.price
-            : item.proposal.price; // retune never changes price
-        const edgeBefore = item.proposal.before.edge;
-        const edgeAfter = (item.adjusted?.after ?? item.proposal.after)?.edge;
-        const feasible = item.adjusted?.feasible ?? item.proposal.feasible;
+        const summary = buildConfirmSummary(item, pendingWrite);
         const isAutoTune = pendingWrite.kind === "edit-and-retune";
         // The owner only sees the "price may shift" note when the editor
         // checkbox flowed through into the pending payload — pure UI surface
@@ -935,7 +939,7 @@ export function RetuneReview({
             }}
           >
             {confirmStep === 1 ? (
-              <AlertDialogContent className="sm:max-w-md">
+              <AlertDialogContent className="sm:max-w-xl">
                 <AlertDialogHeader>
                   <AlertDialogMedia className="bg-rose-500/10 text-rose-600 dark:text-rose-400">
                     <TriangleAlert />
@@ -945,15 +949,15 @@ export function RetuneReview({
                     {isAutoTune ? (
                       <>
                         The server will pick optimized weights for the staged
-                        pool of <strong>{name}</strong> and write them to the
-                        live game database. Review the change below, then
+                        pool of <strong>{summary.name}</strong> and write them
+                        to the live game database. Review the change below, then
                         confirm once more.
                       </>
                     ) : (
                       <>
-                        This writes <strong>{name}</strong> to the live game
-                        database. Review the change below, then confirm once
-                        more.
+                        This writes <strong>{summary.name}</strong> to the live
+                        game database. Review the change below, then confirm
+                        once more.
                       </>
                     )}
                   </AlertDialogDescription>
@@ -966,31 +970,7 @@ export function RetuneReview({
                   </div>
                 )}
 
-                <div className="space-y-2 rounded-lg border bg-muted/10 p-3 text-sm">
-                  <SummaryRow
-                    label="Price"
-                    before={formatCurrency(priceBefore)}
-                    after={formatCurrency(priceAfter)}
-                  />
-                  <SummaryRow
-                    label="House edge"
-                    before={pct(edgeBefore)}
-                    after={pct(edgeAfter)}
-                  />
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-muted-foreground">Feasible</span>
-                    <span
-                      className={cn(
-                        "font-medium tabular-nums",
-                        feasible
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-rose-600 dark:text-rose-400",
-                      )}
-                    >
-                      {feasible ? "Yes" : "No"}
-                    </span>
-                  </div>
-                </div>
+                <ConfirmGateSummary summary={summary} />
 
                 <AlertDialogFooter>
                   <Button
@@ -1003,7 +983,7 @@ export function RetuneReview({
                   </Button>
                   <Button
                     onClick={() => setConfirmStep(2)}
-                    disabled={applying}
+                    disabled={applying || !summary.feasible}
                     className="w-full sm:w-auto"
                   >
                     Continue
@@ -1022,12 +1002,13 @@ export function RetuneReview({
                     {isAutoTune ? (
                       <>
                         The server will write the auto-tuned pool for{" "}
-                        <strong>{name}</strong> to the live game database now.
+                        <strong>{summary.name}</strong> to the live game
+                        database now.
                       </>
                     ) : (
                       <>
-                        This writes <strong>{name}</strong> to the live game
-                        database now.
+                        This writes <strong>{summary.name}</strong> to the live
+                        game database now.
                       </>
                     )}{" "}
                     There is no undo from here.
@@ -1072,28 +1053,6 @@ export function RetuneReview({
   );
 }
 
-/** A before → after summary row in the confirm gate. */
-function SummaryRow({
-  label,
-  before,
-  after,
-}: {
-  label: string;
-  before: string;
-  after: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="flex items-center gap-1.5 tabular-nums">
-        <span className="text-muted-foreground">{before}</span>
-        <span className="text-muted-foreground">→</span>
-        <span className="font-medium">{after}</span>
-      </span>
-    </div>
-  );
-}
-
 function CountChip({
   label,
   value,
@@ -1117,5 +1076,579 @@ function CountChip({
       </span>
       <span className="text-xs text-muted-foreground">{label}</span>
     </span>
+  );
+}
+
+// ─── Confirm-gate Step 1 summary ─────────────────────────────────────
+// Builds a unified before/after snapshot for ALL three write paths (plain
+// retune · verbatim edit · edit-and-retune) so Step 1 renders a single,
+// consistent KPI grid + per-card diff dropdown. The diff table mirrors the
+// review card's `AllCardChanges` House-POV colouring rule (win card gaining
+// share = rose = player-favorable; non-win card gaining share = emerald =
+// house-favorable; added cards = rose with "+"; removed cards = emerald with
+// "−" — both deltas to the player are surfaced from the house's side).
+
+type ConfirmWriteInput =
+  | { kind: "retune"; index: number }
+  | {
+      kind: "edit";
+      index: number;
+      payload: Extract<EditApprovePayload, { mode: "verbatim" }>;
+    }
+  | {
+      kind: "edit-and-retune";
+      index: number;
+      payload: Extract<EditApprovePayload, { mode: "auto-tune" }>;
+    };
+
+/** A single row in the per-card diff dropdown. */
+type ConfirmDiffRow = {
+  cardId: string;
+  /** Card display name when known (edit modes); falls back to a value tag. */
+  name: string | null;
+  value: number;
+  /** Probability share BEFORE the write (0..1). Null for an added card. */
+  fromP: number | null;
+  /** Probability share AFTER the write (0..1). Null for a removed card. */
+  toP: number | null;
+  /** Signed delta in % points. NaN-safe; +0 for unchanged. */
+  delta: number;
+  state: "kept" | "added" | "removed";
+  isWinCard: boolean;
+};
+
+type ConfirmSummary = {
+  name: string;
+  mode: "retune" | "edit" | "edit-and-retune";
+  modeLabel: string;
+  /** Lottery tag info — null for an untagged pack. */
+  tag: { tagPct: string; capActual: number; capBaseline: number } | null;
+  priceBefore: number;
+  priceAfter: number;
+  priceChanged: boolean;
+  edgeBefore: number;
+  edgeAfter: number | null;
+  /** True when auto-tune (or verbatim) is the write that's about to fire. */
+  isAutoTune: boolean;
+  winRateBefore: number;
+  winRateAfter: number | null;
+  maxWinBefore: number;
+  maxWinAfter: number | null;
+  cardCountBefore: number;
+  cardCountAfter: number;
+  feasible: boolean;
+  /** Per-card diff sorted by |Δ| desc; removed/added bubble up by magnitude. */
+  diff: ConfirmDiffRow[];
+  diffChangedCount: number;
+};
+
+function buildConfirmSummary(
+  item: ReviewItem,
+  write: ConfirmWriteInput,
+): ConfirmSummary {
+  const { proposal } = item;
+  const tag = (() => {
+    const ihr = proposal.intendedHitRate;
+    if (ihr == null || ihr > 0.1) return null;
+    const tagPct = (ihr * 100).toFixed(ihr < 0.01 ? 2 : 0);
+    const capBaseline = proposal.price * DEFAULT_MAX_MULT_CEILING;
+    const capActual = proposal.autoTargets.maxWinCap;
+    return { tagPct, capActual, capBaseline };
+  })();
+  // Common before — every mode starts from the live pack's PackRisk + pool.
+  const before = proposal.before;
+  const cardCountBefore = proposal.cards.length;
+
+  if (write.kind === "retune") {
+    // Adjusted-or-proposed after; same pool identity, just re-weighted.
+    const after = item.adjusted?.after ?? proposal.after;
+    const weightDiff = item.adjusted?.weightDiff ?? proposal.weightDiff;
+    const feasible = item.adjusted?.feasible ?? proposal.feasible;
+    const diff = buildRetuneDiffRows(proposal, weightDiff);
+    return {
+      name: proposal.name,
+      mode: "retune",
+      modeLabel: "Auto re-tune (per-pack targets)",
+      tag,
+      priceBefore: proposal.price,
+      priceAfter: proposal.price,
+      priceChanged: false,
+      edgeBefore: before.edge,
+      edgeAfter: after?.edge ?? null,
+      isAutoTune: false,
+      winRateBefore: before.winRate,
+      winRateAfter: after?.winRate ?? null,
+      maxWinBefore: before.maxWin,
+      maxWinAfter: after?.maxWin ?? null,
+      cardCountBefore,
+      cardCountAfter: cardCountBefore,
+      feasible,
+      diff,
+      diffChangedCount: diff.filter((r) => r.state !== "kept" || r.delta !== 0)
+        .length,
+    };
+  }
+
+  // Edit modes — staged pool. Use the editor-supplied preview.
+  const preview = write.payload.preview;
+  const newPrice = preview.newPrice;
+  const priceAfter = newPrice ?? proposal.price;
+  const after = preview.after;
+  const isAutoTune = write.kind === "edit-and-retune";
+  const diff = buildEditDiffRows(preview, priceAfter);
+  // Feasibility for an edit: the editor refuses to send a non-win pool, so
+  // `after` is null only on a (rare) infeasible local shape — surface as rose.
+  const feasible = after != null;
+  return {
+    name: proposal.name,
+    mode: isAutoTune ? "edit-and-retune" : "edit",
+    modeLabel: isAutoTune
+      ? "Edited pool + server auto-tune"
+      : "Verbatim pool edit (no auto-shaping)",
+    tag,
+    priceBefore: proposal.price,
+    priceAfter,
+    priceChanged: newPrice != null,
+    edgeBefore: before.edge,
+    edgeAfter: after?.edge ?? null,
+    isAutoTune,
+    winRateBefore: before.winRate,
+    winRateAfter: after?.winRate ?? null,
+    maxWinBefore: before.maxWin,
+    maxWinAfter: after?.maxWin ?? null,
+    cardCountBefore,
+    cardCountAfter: preview.cards.length,
+    feasible,
+    diff,
+    diffChangedCount: diff.filter((r) => r.state !== "kept" || r.delta !== 0)
+      .length,
+  };
+}
+
+/** Build the per-card diff for a plain retune. Pool identity unchanged. */
+function buildRetuneDiffRows(
+  proposal: ReviewItem["proposal"],
+  weightDiff: { cardId: string; from: number; to: number }[] | null,
+): ConfirmDiffRow[] {
+  const toByCard = new Map<string, number>();
+  if (weightDiff) {
+    for (const d of weightDiff) toByCard.set(d.cardId, d.to);
+  }
+  const fromTotal =
+    proposal.cards.reduce((s, c) => s + (c.weight > 0 ? c.weight : 0), 0) || 1;
+  const afterWeights = proposal.cards.map((c) =>
+    toByCard.has(c.cardId) ? toByCard.get(c.cardId)! : c.weight,
+  );
+  const toTotal = afterWeights.reduce((s, w) => s + (w > 0 ? w : 0), 0) || 1;
+  const rows: ConfirmDiffRow[] = proposal.cards.map((c, i) => {
+    const fromP = c.weight / fromTotal;
+    const toP = afterWeights[i]! / toTotal;
+    return {
+      cardId: c.cardId,
+      // The plain-retune proposal carries no card name (privacy of the
+      // `cards.name` PII isn't relevant here, the type just doesn't include
+      // it). Show the value as the label.
+      name: null,
+      value: c.value,
+      fromP,
+      toP,
+      delta: (toP - fromP) * 100,
+      state: "kept",
+      isWinCard: c.value >= proposal.price,
+    };
+  });
+  return sortDiffRows(rows);
+}
+
+/** Build the per-card diff for an edit (verbatim or auto-tune). */
+function buildEditDiffRows(
+  preview: EditPreview,
+  priceAfter: number,
+): ConfirmDiffRow[] {
+  const fromTotal =
+    preview.cards.reduce(
+      (s, c) => s + (c.fromWeight != null && c.fromWeight > 0 ? c.fromWeight : 0),
+      0,
+    ) +
+      preview.removed.reduce(
+        (s, c) => s + (c.fromWeight > 0 ? c.fromWeight : 0),
+        0,
+      ) || 1;
+  const toTotal =
+    preview.cards.reduce((s, c) => s + (c.toWeight > 0 ? c.toWeight : 0), 0) ||
+    1;
+  const kept: ConfirmDiffRow[] = preview.cards.map((c) => {
+    const fromP = c.fromWeight != null ? c.fromWeight / fromTotal : null;
+    const toP = c.toWeight / toTotal;
+    const fromPct = fromP ?? 0;
+    return {
+      cardId: c.cardId,
+      name: c.name,
+      value: c.value,
+      fromP,
+      toP,
+      delta: (toP - fromPct) * 100,
+      state: c.added ? "added" : "kept",
+      isWinCard: c.value >= priceAfter,
+    };
+  });
+  const removed: ConfirmDiffRow[] = preview.removed.map((c) => {
+    const fromP = c.fromWeight / fromTotal;
+    return {
+      cardId: c.cardId,
+      name: c.name,
+      value: c.value,
+      fromP,
+      toP: null,
+      delta: (0 - fromP) * 100,
+      state: "removed",
+      isWinCard: c.value >= priceAfter,
+    };
+  });
+  return sortDiffRows([...kept, ...removed]);
+}
+
+/** Sort biggest movers first; added/removed bubble up by magnitude. */
+function sortDiffRows(rows: ConfirmDiffRow[]): ConfirmDiffRow[] {
+  return [...rows].sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+}
+
+/** Render the KPI grid + lottery chip + expandable per-card diff. */
+function ConfirmGateSummary({ summary }: { summary: ConfirmSummary }) {
+  const [diffOpen, setDiffOpen] = React.useState(false);
+  return (
+    <div className="space-y-3">
+      {/* Header strip — pack name + mode badge + tag chip */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold">{summary.name}</span>
+        <span className="rounded-full border bg-muted/30 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          {summary.modeLabel}
+        </span>
+        {summary.tag && (
+          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+            {summary.tag.tagPct}% lottery
+          </span>
+        )}
+      </div>
+
+      {/* Price-changed callout — only when auto-tune adjusted the price */}
+      {summary.priceChanged && summary.isAutoTune && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+          <Sparkles className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            Price adjusted from{" "}
+            <span className="font-medium tabular-nums">
+              {formatCurrency(summary.priceBefore)}
+            </span>{" "}
+            to{" "}
+            <span className="font-medium tabular-nums">
+              {formatCurrency(summary.priceAfter)}
+            </span>{" "}
+            for cleaner odds + monotonic shape.
+          </span>
+        </div>
+      )}
+      {summary.priceChanged && !summary.isAutoTune && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            Pack price will change from{" "}
+            <span className="font-medium tabular-nums">
+              {formatCurrency(summary.priceBefore)}
+            </span>{" "}
+            to{" "}
+            <span className="font-medium tabular-nums">
+              {formatCurrency(summary.priceAfter)}
+            </span>{" "}
+            — players will see the new price after push.
+          </span>
+        </div>
+      )}
+
+      {/* Lottery acknowledgment — only for ≤10% tagged packs */}
+      {summary.tag && (
+        <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400">
+          <Sparkles className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            Lottery pack — jackpot preserved. Cap{" "}
+            <span className="font-medium tabular-nums">
+              {formatCurrency(summary.tag.capActual)}
+            </span>
+            {summary.tag.capActual > summary.tag.capBaseline + 1e-6 ? (
+              <>
+                {" "}
+                (loosened from baseline{" "}
+                <span className="font-medium tabular-nums">
+                  {formatCurrency(summary.tag.capBaseline)}
+                </span>
+                ).
+              </>
+            ) : (
+              <> (baseline cap is already permissive enough).</>
+            )}
+          </span>
+        </div>
+      )}
+
+      {/* KPI grid — 2 columns on sm+, stacks on narrow phones */}
+      <div className="grid gap-2 rounded-lg border bg-muted/10 p-3 text-sm sm:grid-cols-2">
+        <KpiRow
+          label="Price"
+          before={formatCurrency(summary.priceBefore)}
+          after={formatCurrency(summary.priceAfter)}
+          changed={summary.priceChanged}
+        />
+        <KpiRow
+          label="House edge"
+          before={pct(summary.edgeBefore)}
+          after={pct(summary.edgeAfter)}
+          changed={summary.edgeAfter != null && summary.edgeAfter !== summary.edgeBefore}
+          // Edge: rising = good for the house (emerald), falling = giving away
+          // margin (rose). House-POV.
+          tone={edgeTone(summary.edgeBefore, summary.edgeAfter)}
+        />
+        <KpiRow
+          label="Win rate"
+          before={pct(summary.winRateBefore)}
+          after={pct(summary.winRateAfter)}
+          changed={
+            summary.winRateAfter != null &&
+            summary.winRateAfter !== summary.winRateBefore
+          }
+          // Win-rate: rising = more frequent player wins = bad for house (rose).
+          tone={winRateTone(summary.winRateBefore, summary.winRateAfter)}
+        />
+        <KpiRow
+          label="Max win"
+          before={formatCurrency(summary.maxWinBefore)}
+          after={
+            summary.maxWinAfter != null
+              ? formatCurrency(summary.maxWinAfter)
+              : "—"
+          }
+          changed={
+            summary.maxWinAfter != null &&
+            summary.maxWinAfter !== summary.maxWinBefore
+          }
+          // Max win: rising = bigger jackpot exposure = bad for house (rose).
+          tone={maxWinTone(summary.maxWinBefore, summary.maxWinAfter)}
+        />
+        <KpiRow
+          label="Card count"
+          before={String(summary.cardCountBefore)}
+          after={String(summary.cardCountAfter)}
+          changed={summary.cardCountAfter !== summary.cardCountBefore}
+        />
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-muted-foreground">Feasible</span>
+          <span
+            className={cn(
+              "rounded-full px-2 py-0.5 text-xs font-medium",
+              summary.feasible
+                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                : "bg-rose-500/15 text-rose-700 dark:text-rose-400",
+            )}
+          >
+            {summary.feasible ? "Yes" : "No"}
+          </span>
+        </div>
+      </div>
+
+      {/* Expandable card-level diff dropdown — default closed */}
+      <Collapsible open={diffOpen} onOpenChange={setDiffOpen}>
+        <CollapsibleTrigger
+          render={
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-2 rounded-lg border bg-muted/10 px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-muted/20"
+            >
+              <span>
+                Show card-level changes
+                {summary.diffChangedCount > 0 && (
+                  <span className="ml-1.5 text-muted-foreground tabular-nums">
+                    ({summary.diffChangedCount} card
+                    {summary.diffChangedCount === 1 ? "" : "s"} moved)
+                  </span>
+                )}
+              </span>
+              <ChevronDown
+                className={cn(
+                  "size-3.5 text-muted-foreground transition-transform",
+                  diffOpen && "rotate-180",
+                )}
+              />
+            </button>
+          }
+        />
+        <CollapsibleContent>
+          <div className="mt-2 overflow-hidden rounded-lg border">
+            <div className="flex items-center justify-between gap-2 border-b bg-muted/20 px-3 py-1.5">
+              <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                {summary.diff.length} card
+                {summary.diff.length === 1 ? "" : "s"}
+              </span>
+              <span className="hidden text-[10px] text-muted-foreground sm:inline">
+                card · before → after · Δ
+              </span>
+            </div>
+            <div className="max-h-72 overflow-y-auto">
+              <table className="w-full text-xs">
+                <tbody>
+                  {summary.diff.map((r) => (
+                    <ConfirmDiffRowItem key={r.cardId} row={r} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
+  );
+}
+
+/** Compute the House-POV tone for a KPI delta. */
+function edgeTone(
+  before: number,
+  after: number | null,
+): "emerald" | "rose" | "neutral" {
+  if (after == null || after === before) return "neutral";
+  // Edge up = house keeps more = good for house = emerald.
+  return after > before ? "emerald" : "rose";
+}
+function winRateTone(
+  before: number,
+  after: number | null,
+): "emerald" | "rose" | "neutral" {
+  if (after == null || after === before) return "neutral";
+  // Win-rate up = players win more often = bad for house = rose.
+  return after > before ? "rose" : "emerald";
+}
+function maxWinTone(
+  before: number,
+  after: number | null,
+): "emerald" | "rose" | "neutral" {
+  if (after == null || after === before) return "neutral";
+  // Max-win up = bigger jackpot exposure = bad for house = rose.
+  return after > before ? "rose" : "emerald";
+}
+
+/** A single before → after KPI row with House-POV tone on the "after" cell. */
+function KpiRow({
+  label,
+  before,
+  after,
+  changed,
+  tone = "neutral",
+}: {
+  label: string;
+  before: string;
+  after: string;
+  changed: boolean;
+  tone?: "emerald" | "rose" | "neutral";
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="flex items-center gap-1.5 tabular-nums">
+        <span className="text-muted-foreground">{before}</span>
+        <ArrowRight className="size-3 text-muted-foreground" />
+        <span
+          className={cn(
+            "font-medium",
+            !changed && "text-muted-foreground",
+            changed && tone === "emerald" && "text-emerald-700 dark:text-emerald-400",
+            changed && tone === "rose" && "text-rose-700 dark:text-rose-400",
+            changed && tone === "neutral" && "text-foreground",
+          )}
+        >
+          {after}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/** One row of the per-card diff dropdown. */
+function ConfirmDiffRowItem({ row }: { row: ConfirmDiffRow }) {
+  // House-POV: a win card gaining share, or a non-win card losing share,
+  // raises player EV = BAD for the house → rose. The inverse → emerald. An
+  // ADDED card is treated as gaining all its share (player change), a REMOVED
+  // card as losing all of it.
+  const up = row.delta > 0;
+  const playerFavorable =
+    row.state === "added"
+      ? row.isWinCard
+      : row.state === "removed"
+        ? !row.isWinCard
+        : row.isWinCard === up;
+  const tone =
+    row.delta === 0 && row.state === "kept"
+      ? "text-muted-foreground"
+      : playerFavorable
+        ? "text-rose-600 dark:text-rose-400"
+        : "text-emerald-600 dark:text-emerald-400";
+  const bgTone =
+    row.state === "added"
+      ? "bg-rose-500/5"
+      : row.state === "removed"
+        ? "bg-emerald-500/5"
+        : "";
+  return (
+    <tr className={cn("border-b last:border-b-0", bgTone)}>
+      <td className="whitespace-nowrap px-3 py-1.5">
+        <span className="flex items-center gap-1.5 tabular-nums">
+          {row.state === "added" && (
+            <span
+              className="inline-flex size-4 items-center justify-center rounded-full bg-rose-500/15 text-[10px] font-bold text-rose-600 dark:text-rose-400"
+              title="Card added — gives the player a new winning row"
+            >
+              +
+            </span>
+          )}
+          {row.state === "removed" && (
+            <span
+              className="inline-flex size-4 items-center justify-center rounded-full bg-emerald-500/15 text-[10px] font-bold text-emerald-600 dark:text-emerald-400"
+              title="Card removed — drops a player payout slot"
+            >
+              −
+            </span>
+          )}
+          <span className="font-medium">{formatCurrency(row.value)}</span>
+          {row.name && (
+            <span className="truncate text-muted-foreground" title={row.name}>
+              {row.name}
+            </span>
+          )}
+          {row.isWinCard && (
+            <span
+              className="inline-block size-1.5 rounded-full bg-amber-500"
+              title="Profit card (value ≥ price)"
+            />
+          )}
+        </span>
+      </td>
+      <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
+        {row.fromP != null ? `${(row.fromP * 100).toFixed(2)}%` : "—"}
+      </td>
+      <td className="px-1 py-1.5 text-center">
+        <ArrowRight className="inline size-3 text-muted-foreground" />
+      </td>
+      <td className="px-3 py-1.5 text-right">
+        <span className={cn("font-medium tabular-nums", tone)}>
+          {row.toP != null ? `${(row.toP * 100).toFixed(2)}%` : "—"}
+        </span>
+      </td>
+      <td className="w-16 px-3 py-1.5 text-right">
+        {row.delta === 0 ? (
+          <span className="text-muted-foreground">·</span>
+        ) : (
+          <span className={cn("tabular-nums", tone)}>
+            {row.delta > 0 ? "+" : "−"}
+            {Math.abs(row.delta).toFixed(2)}
+          </span>
+        )}
+      </td>
+    </tr>
   );
 }
