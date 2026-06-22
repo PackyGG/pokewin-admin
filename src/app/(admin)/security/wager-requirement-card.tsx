@@ -83,6 +83,18 @@ const FIELDS: {
     ),
   },
   {
+    key: "affiliate_leaderboard_wager_requirement_bps",
+    label: "Affiliate-leaderboard requirement",
+    help: (
+      <>
+        Multiplier frozen onto each affiliate leaderboard prize when it&apos;s
+        claimed. Applied per claim, not on a lifetime total; editing it only
+        affects future claims. Default 1×. <code>0×</code> lets winners
+        withdraw their prize immediately.
+      </>
+    ),
+  },
+  {
     key: "rakeback_wager_requirement_bps",
     label: "Rakeback requirement",
     help: (
