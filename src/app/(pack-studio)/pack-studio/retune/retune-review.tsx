@@ -143,6 +143,12 @@ export type EditApprovePayload =
       }[];
       price?: number;
       hasAddedCards: boolean;
+      /**
+       * Owner opt-in: when true the server may nudge the pack price by up to
+       * ±25% around the staged price to land cleaner odds (the price-search
+       * lever in `applyStagedPackEditAndRetune`). Defaults undefined/false.
+       */
+      allowPriceSearch?: boolean;
     };
 
 export type ReviewItem = {
@@ -537,7 +543,9 @@ export function RetuneReview({
       try {
         // Send the pack's auto-targets (the same ones the per-pack Approve
         // path uses) so the server shapes against the SAME goals the review
-        // card explains.
+        // card explains. `allowPriceSearch` is the owner's explicit opt-in for
+        // the ±25% price-search lever; it flows from the editor checkbox
+        // through the gate and lands on the server action's `targets` param.
         const t = buildTargets(item);
         const res = await applyStagedPackEditAndRetune(
           item.proposal.packId,
@@ -546,7 +554,12 @@ export function RetuneReview({
             cards: payload.cards,
             ...(payload.price !== undefined ? { price: payload.price } : {}),
           },
-          t,
+          {
+            ...t,
+            ...(payload.allowPriceSearch === true
+              ? { allowPriceSearch: true }
+              : {}),
+          },
         );
         setItems((prev) => {
           const next = [...prev];
@@ -554,6 +567,17 @@ export function RetuneReview({
           return next;
         });
         setEditingIndex(null);
+        // Surface the price adjustment when the server moved off the staged
+        // price (owner opted-in to the search AND it landed on a non-base
+        // candidate). Otherwise the standard auto-tune confirmation only.
+        const adjusted =
+          res.priceSearch?.attempted === true &&
+          res.priceSearch.chosen !== res.priceSearch.base;
+        if (adjusted && res.priceSearch) {
+          toast.success(
+            `Price adjusted from ${formatCurrency(res.priceSearch.base)} to ${formatCurrency(res.priceSearch.chosen)} for cleaner odds.`,
+          );
+        }
         toast.success(
           `Auto-tuned ${res.name}: edge ${(res.after.edge * 100).toFixed(2)}% · win ${(res.after.winRate * 100).toFixed(2)}% · ${res.cardCountAfter} cards.`,
         );
@@ -885,6 +909,13 @@ export function RetuneReview({
         const edgeAfter = (item.adjusted?.after ?? item.proposal.after)?.edge;
         const feasible = item.adjusted?.feasible ?? item.proposal.feasible;
         const isAutoTune = pendingWrite.kind === "edit-and-retune";
+        // The owner only sees the "price may shift" note when the editor
+        // checkbox flowed through into the pending payload — pure UI surface
+        // of the same `allowPriceSearch` flag the server reads.
+        const willSearchPrice =
+          isAutoTune &&
+          pendingWrite.kind === "edit-and-retune" &&
+          pendingWrite.payload.allowPriceSearch === true;
         const title1 = isAutoTune
           ? "Auto-tune and push to production?"
           : "Push this pack live?";
@@ -927,6 +958,13 @@ export function RetuneReview({
                     )}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
+
+                {willSearchPrice && (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    Server may adjust price by up to ±25% to clean the odds.
+                    Final price will be shown below after auto-tune.
+                  </div>
+                )}
 
                 <div className="space-y-2 rounded-lg border bg-muted/10 p-3 text-sm">
                   <SummaryRow

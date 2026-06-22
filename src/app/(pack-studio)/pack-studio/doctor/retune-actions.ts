@@ -21,6 +21,7 @@ import {
   computePackRisk,
   computePackRiskFromAggregates,
   shapeWeights,
+  searchBestPriceForCleanSnap,
   type PackRisk,
   type ShapeWeightsRelaxation,
   type ShapeWeightsLimit,
@@ -1266,6 +1267,20 @@ export type ApplyStagedRetuneResult = {
   priceAfter: number;
   before: { edge: number; winRate: number; maxWin: number };
   after: { edge: number; winRate: number; maxWin: number };
+  /**
+   * Price-search trace — only populated when the caller passed
+   * `allowPriceSearch: true`. The `chosen` price equals `priceAfter`; the
+   * `base` is the price the search started from (typically the staged price
+   * or the unchanged pack price). Used by the UI to show a "price adjusted
+   * from $X.XX to $Y.YY for cleaner odds" toast.
+   */
+  priceSearch: {
+    attempted: boolean;
+    base: number;
+    chosen: number;
+    candidates: number;
+    fellBackToBase: boolean;
+  } | null;
 };
 
 /**
@@ -1303,7 +1318,21 @@ export async function applyStagedPackEditAndRetune(
   packId: string,
   token: string,
   input: StagedPoolInput,
-  targets: { targetEdge?: number; targetWinRate?: number; maxWinCap?: number; nearMissMin?: number },
+  targets: {
+    targetEdge?: number;
+    targetWinRate?: number;
+    maxWinCap?: number;
+    nearMissMin?: number;
+    /**
+     * When TRUE the server runs `searchBestPriceForCleanSnap` around the staged
+     * price (default ±25%, cent-stepped, max 50 candidates) and picks the
+     * candidate whose `shapeWeights` result keeps `snapped=true` while staying
+     * closest to the staged price. The chosen candidate becomes the final
+     * `priceAfter` written to `packs.price` (so the writer's `priceProvided`
+     * path applies it cleanly). Defaults to FALSE — current behavior unchanged.
+     */
+    allowPriceSearch?: boolean;
+  },
 ): Promise<ApplyStagedRetuneResult> {
   const session = await requireRetuneOwner();
   await requireCapability(session, "__can_update_pack", "edit packs");
@@ -1355,8 +1384,12 @@ export async function applyStagedPackEditAndRetune(
   }
 
   const priceBefore = Number(pack.price.toString());
-  const priceAfter = priceProvided ? input.price! : priceBefore;
-  if (!(priceAfter > 0)) throw new Error("Refused: pack has no valid price.");
+  // The staged price the operator approved. The price-search lever (below) may
+  // bump this by up to ±25% to land cleaner odds; the FINAL `priceAfter` is
+  // assigned after the shape step, and is what gets written to `packs.price`.
+  const priceStaged = priceProvided ? input.price! : priceBefore;
+  if (!(priceStaged > 0)) throw new Error("Refused: pack has no valid price.");
+  let priceAfter = priceStaged;
 
   // pack_creator live-pack carve-out (same gate `applyPackEdit` enforces).
   const editedLivePackUnderCapability = await enforcePackCreatorLiveGate(
@@ -1394,12 +1427,16 @@ export async function applyStagedPackEditAndRetune(
   });
 
   // ── Resolve auto-targets for the AFTER-price + the pack name (tag-aware) ──
+  // Targets are resolved off the STAGED price (the operator's chosen price). If
+  // the price-search lever lands on a slightly different price, the same
+  // targets still apply — the edge curve / cap derive from the price the
+  // operator explicitly picked, not the search's nudge.
   const cfg: ResolvedAutoTargetCfg = {
     globalCap: await readMaxWinCap(),
     maxMultCeiling: await readMaxMultCeiling(),
     edgeCurve: await readEdgeCurveConfig(),
   };
-  const auto = autoRetuneTargets(priceAfter, cfg, pack.name);
+  const auto = autoRetuneTargets(priceStaged, cfg, pack.name);
   const targetEdge = targets.targetEdge ?? auto.targetEdge;
   const targetWinRate = targets.targetWinRate ?? auto.targetWinRate;
   const maxWinCap = targets.maxWinCap ?? auto.maxWinCap;
@@ -1410,15 +1447,49 @@ export async function applyStagedPackEditAndRetune(
   const stagedValues = input.cards.map((c) => ({
     value: cardValueById.get(c.cardId)!,
   }));
-  const shaped = shapeWeights({
-    cards: stagedValues,
-    price: priceAfter,
-    targetEdge,
-    targetWinRate,
-    maxWinCap,
-    nearMissMin,
-    winRateTol,
-  });
+
+  // ── Optional price-search lever ───────────────────────────────────────
+  // When the operator opts in (`allowPriceSearch: true`), the server sweeps
+  // cent-stepped candidate prices around the staged price (default ±25%, max
+  // 50 candidates) and picks the one whose `shapeWeights` result lands every
+  // card on a clean ladder rung (snapped=true) while staying closest to the
+  // staged price. The chosen price becomes the FINAL `priceAfter` written to
+  // `packs.price` (the existing writer already updates the price when it
+  // differs from `priceBefore`). Defaults to disabled — current behavior is
+  // byte-for-byte unchanged.
+  const allowPriceSearch = targets.allowPriceSearch === true;
+  let shaped;
+  let priceSearchMeta: ApplyStagedRetuneResult["priceSearch"] = null;
+  if (allowPriceSearch) {
+    const search = searchBestPriceForCleanSnap({
+      cards: stagedValues,
+      basePrice: priceStaged,
+      targetEdge,
+      targetWinRate,
+      maxWinCap,
+      nearMissMin,
+      winRateTol,
+    });
+    shaped = search.bestResult;
+    priceAfter = search.bestPrice;
+    priceSearchMeta = {
+      attempted: true,
+      base: priceStaged,
+      chosen: search.bestPrice,
+      candidates: search.searched,
+      fellBackToBase: search.fellBackToBase,
+    };
+  } else {
+    shaped = shapeWeights({
+      cards: stagedValues,
+      price: priceAfter,
+      targetEdge,
+      targetWinRate,
+      maxWinCap,
+      nearMissMin,
+      winRateTol,
+    });
+  }
 
   // ── FAIL-CLOSED asserts (throw → no write) ──
   if ("error" in shaped) {
@@ -1489,12 +1560,17 @@ export async function applyStagedPackEditAndRetune(
     capturedBy: session.userId,
   });
 
+  // Whether the writer should persist a new price: either the operator
+  // explicitly supplied one, OR the price search nudged it off the staged
+  // price (in which case the nudge is meaningless unless it lands in the DB).
+  const shouldWritePrice = priceProvided || priceAfter !== priceBefore;
+
   // SAME delete-all-then-createMany pattern used by every other writer.
   await db.$transaction(async (tx) => {
     await tx.packs.update({
       where: { id: packId },
       data: {
-        ...(priceProvided ? { price: priceAfter } : {}),
+        ...(shouldWritePrice ? { price: priceAfter } : {}),
         updated_at: new Date(),
       },
     });
@@ -1514,7 +1590,7 @@ export async function applyStagedPackEditAndRetune(
       card_count_after: rows.length,
       price_before: priceBefore,
       price_after: priceAfter,
-      price_changed: priceProvided && priceAfter !== priceBefore,
+      price_changed: priceAfter !== priceBefore,
       target: {
         targetEdge,
         targetWinRate,
@@ -1527,6 +1603,13 @@ export async function applyStagedPackEditAndRetune(
         maxWinCap: targets.maxWinCap === undefined,
         nearMissMin: targets.nearMissMin === undefined,
       },
+      ...(priceSearchMeta && {
+        price_search_attempted: priceSearchMeta.attempted,
+        price_search_base: priceSearchMeta.base,
+        price_search_chosen: priceSearchMeta.chosen,
+        price_search_candidates: priceSearchMeta.candidates,
+        price_search_fell_back: priceSearchMeta.fellBackToBase,
+      }),
       before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
       after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
       ...(editedLivePackUnderCapability && {
@@ -1554,5 +1637,6 @@ export async function applyStagedPackEditAndRetune(
     priceAfter,
     before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
     after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
+    priceSearch: priceSearchMeta,
   };
 }

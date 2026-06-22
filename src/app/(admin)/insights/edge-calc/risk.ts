@@ -1893,3 +1893,217 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
 
   return { weights, risk, ev: risk.ev, edge: risk.edge, relaxations, snapped, lotterySkewApplied };
 }
+
+// ─── Price search wrapper around shapeWeights ─────────────────────────
+//
+// The auto-retune normally holds the pack PRICE constant and only adjusts
+// weights. On some pools this forces the clean-ladder snap to fall back to
+// ugly precise weights (e.g. 0.0458% / 0.0879%) because no combination of
+// rungs lands on a clean total. A tiny price bump (e.g. $1.25 → $1.27) often
+// lets every card sit on a ladder rung.
+//
+// `searchBestPriceForCleanSnap` is a pure deterministic wrapper around the
+// existing `shapeWeights`: it sweeps candidate prices around `basePrice` in
+// 1-cent steps up to ±`maxPriceChangePct` (default ±25%), runs the FULL
+// `shapeWeights` pipeline at each candidate, and picks the candidate that
+// keeps `snapped=true` AND `lotterySkewApplied` matching the base run AND
+// stays closest to `basePrice` AND closest to `targetEdge`. The base price
+// is always tried first and preferred whenever it produces a snapped result
+// — the search only deviates when it must.
+//
+// Does NOT modify `shapeWeights`. Bounded at 50 candidates so big-priced
+// packs don't pay an unbounded cost. `maxPriceChangePct = 0` short-circuits
+// the search and returns the base-price result (backward-compat).
+
+export type SearchBestPriceResult = {
+  bestPrice: number;
+  bestResult: ShapeWeightsResult;
+  /** How many price candidates were evaluated (includes the base run). */
+  searched: number;
+  /** True when no candidate beat the base price's outcome. */
+  fellBackToBase: boolean;
+};
+
+export function searchBestPriceForCleanSnap(input: {
+  cards: { value: number }[];
+  basePrice: number;
+  targetEdge: number;
+  targetWinRate: number;
+  maxWinCap?: number;
+  nearMissMin?: number;
+  winRateTol?: number;
+  /** ±range as a fraction of basePrice (default 0.25 = ±25%). 0 disables the search. */
+  maxPriceChangePct?: number;
+}): SearchBestPriceResult {
+  const {
+    cards,
+    basePrice,
+    targetEdge,
+    targetWinRate,
+    maxWinCap,
+    nearMissMin,
+    winRateTol,
+  } = input;
+  const maxPriceChangePct = input.maxPriceChangePct ?? 0.25;
+
+  // Single-call passthrough for the degenerate / disabled cases. Mirrors the
+  // backward-compat contract: callers can wire this in unconditionally and
+  // disable search with `maxPriceChangePct: 0`.
+  const runAt = (price: number): ShapeWeightsResult =>
+    shapeWeights({
+      cards,
+      price,
+      targetEdge,
+      targetWinRate,
+      maxWinCap,
+      nearMissMin,
+      winRateTol,
+    });
+
+  if (cards.length === 0 || !(basePrice > 0) || !(maxPriceChangePct > 0)) {
+    // The disabled / degenerate paths run a single shape and report whether
+    // the base produced a clean snap (`fellBackToBase=false` — base was good)
+    // or did NOT snap (`fellBackToBase=true` — we returned base only because
+    // search was disabled / impossible).
+    const baseResult = runAt(basePrice);
+    const baseClean =
+      isShapeWeightsSuccess(baseResult) && baseResult.snapped === true;
+    return {
+      bestPrice: basePrice,
+      bestResult: baseResult,
+      searched: 1,
+      fellBackToBase: !baseClean,
+    };
+  }
+
+  // ── Build the candidate list ────────────────────────────────────────
+  // basePrice first, then ±1¢, ±2¢, ... up to ±(basePrice · maxPriceChangePct).
+  // Each candidate is cent-rounded. Deduplicate via a Set keyed on cents.
+  // Cap at 50 candidates so a big-priced pack stays bounded; the per-cent
+  // step keeps the densest coverage near the base price (where it matters).
+  const MAX_CANDIDATES = 50;
+  const centsAtBase = Math.round(basePrice * 100);
+  const maxDeltaCents = Math.max(0, Math.floor(basePrice * maxPriceChangePct * 100));
+  const seenCents = new Set<number>();
+  const candidates: number[] = [];
+  const pushCents = (cents: number): void => {
+    if (cents <= 0) return;
+    if (seenCents.has(cents)) return;
+    if (candidates.length >= MAX_CANDIDATES) return;
+    seenCents.add(cents);
+    candidates.push(Math.round(cents) / 100);
+  };
+  pushCents(centsAtBase);
+  for (let d = 1; d <= maxDeltaCents; d++) {
+    pushCents(centsAtBase + d);
+    if (candidates.length >= MAX_CANDIDATES) break;
+    pushCents(centsAtBase - d);
+    if (candidates.length >= MAX_CANDIDATES) break;
+  }
+
+  // ── Evaluate the base price first (anchor for the "prefer base" rule) ──
+  const baseResult = runAt(basePrice);
+  let searched = 1;
+
+  // Determine the base run's lotterySkewApplied state — we PIN this so the
+  // search doesn't accidentally flip lottery skew on/off across candidates
+  // (changing the within-grail distribution shape is a separate decision).
+  const baseSkew =
+    isShapeWeightsSuccess(baseResult) && baseResult.lotterySkewApplied === true;
+
+  // Score function: smaller is better.
+  //   Tier 1 (most significant): snapped (1 = snapped, 0 = not) — INVERTED so
+  //                              snapped < not-snapped. Tied — go to tier 2.
+  //   Tier 2: |candidate − basePrice| in cents (prefer the base price).
+  //   Tier 3: |edge − targetEdge| (smaller drift better).
+  // A non-snapped success ranks below a snapped success but above an error.
+  // Errors get the worst possible tier-1 score so they only win if literally
+  // every other candidate failed.
+  type Scored = {
+    price: number;
+    result: ShapeWeightsResult;
+    snapPriority: number; // 0 = snapped + skew matches base, 1 = snapped wrong skew, 2 = not snapped, 3 = error
+    centsDist: number;
+    edgeDrift: number;
+  };
+  const scoreOf = (price: number, result: ShapeWeightsResult): Scored => {
+    let snapPriority: number;
+    let edgeDrift: number;
+    if (isShapeWeightsSuccess(result)) {
+      const isSnapped = result.snapped === true;
+      const skewMatchesBase =
+        (result.lotterySkewApplied === true) === baseSkew;
+      if (isSnapped && skewMatchesBase) snapPriority = 0;
+      else if (isSnapped) snapPriority = 1;
+      else snapPriority = 2;
+      edgeDrift = Math.abs(result.edge - targetEdge);
+    } else {
+      snapPriority = 3;
+      edgeDrift = Infinity;
+    }
+    return {
+      price,
+      result,
+      snapPriority,
+      centsDist: Math.abs(Math.round(price * 100) - centsAtBase),
+      edgeDrift,
+    };
+  };
+
+  let best: Scored = scoreOf(basePrice, baseResult);
+
+  // If the base price already produced a snapped (and skew-matching) result,
+  // PREFER it — never deviate without reason. Skip the sweep entirely. The
+  // base wasn't a fallback here — it was the winner on its own merits, so
+  // `fellBackToBase: false`.
+  if (best.snapPriority === 0) {
+    return {
+      bestPrice: basePrice,
+      bestResult: baseResult,
+      searched: 1,
+      fellBackToBase: false,
+    };
+  }
+
+  // Evaluate the remaining candidates (skip the base, already scored). The
+  // candidate list is built deterministically (basePrice, then ±1¢, ±2¢, ...)
+  // so iteration order is stable across runs.
+  for (let i = 0; i < candidates.length; i++) {
+    const price = candidates[i]!;
+    if (Math.abs(Math.round(price * 100) - centsAtBase) === 0) continue; // already done
+    const result = runAt(price);
+    searched += 1;
+    const scored = scoreOf(price, result);
+    // Lexicographic comparator: snapPriority < centsDist < edgeDrift.
+    if (
+      scored.snapPriority < best.snapPriority ||
+      (scored.snapPriority === best.snapPriority &&
+        scored.centsDist < best.centsDist) ||
+      (scored.snapPriority === best.snapPriority &&
+        scored.centsDist === best.centsDist &&
+        scored.edgeDrift < best.edgeDrift)
+    ) {
+      best = scored;
+    }
+  }
+
+  // `fellBackToBase` semantic: TRUE only when the chosen price equals the base
+  // AND the chosen result was NOT a clean snap (we couldn't find anything
+  // better, so we returned base as a degraded fallback). When the search
+  // PICKED base for its own merits (clean snap) we returned earlier with
+  // `fellBackToBase: false`; this is the "nothing snapped" tail.
+  const chosenSnapped =
+    isShapeWeightsSuccess(best.result) && best.result.snapped === true;
+  const fellBackToBase = best.centsDist === 0 && !chosenSnapped;
+  return {
+    bestPrice: best.price,
+    bestResult: best.result,
+    searched,
+    fellBackToBase,
+  };
+}
+
+/** Narrow a `ShapeWeightsResult` to its success arm. */
+function isShapeWeightsSuccess(r: ShapeWeightsResult): r is ShapeWeightsSuccess {
+  return "weights" in r;
+}

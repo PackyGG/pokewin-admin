@@ -14,6 +14,7 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -145,6 +146,13 @@ export type AutoTuneApprovePayload = {
   }[];
   price?: number;
   hasAddedCards: boolean;
+  /**
+   * Owner opt-in: allow the server to nudge the pack price by up to ±25%
+   * around the staged price to land cleaner odds. Defaults to false; only
+   * passed to the auto-tune action when the owner explicitly ticks the
+   * "Allow price adjustment" checkbox in the editor.
+   */
+  allowPriceSearch?: boolean;
 };
 
 export function PoolEditor({
@@ -182,6 +190,10 @@ export function PoolEditor({
   const [rows, setRows] = React.useState<EditRow[]>([]);
   const [priceText, setPriceText] = React.useState(String(packPrice));
   const [reshaping, setReshaping] = React.useState(false);
+  // Owner opt-in: when checked, the auto-tune action sends `allowPriceSearch`
+  // so the server may nudge the pack price by up to ±25% around the staged
+  // price to land cleaner odds. Default OFF so today's behavior is unchanged.
+  const [allowPriceSearch, setAllowPriceSearch] = React.useState(false);
 
   // Card-picker filters, loaded lazily on first open (server action).
   const [filters, setFilters] = React.useState<RetunePickerFilters | null>(null);
@@ -364,6 +376,7 @@ export function PoolEditor({
       })),
       price: priceChanged ? price : undefined,
       hasAddedCards,
+      ...(allowPriceSearch ? { allowPriceSearch: true } : {}),
     });
   }, [
     feasible,
@@ -374,6 +387,7 @@ export function PoolEditor({
     priceChanged,
     price,
     hasAddedCards,
+    allowPriceSearch,
   ]);
 
   if (loading) {
@@ -477,6 +491,37 @@ export function PoolEditor({
       {/* Mirror of the odds-total chip right above the action buttons, so the
           owner sees the same total regardless of scroll position. */}
       <OddsTotalChip total={oddsTotal} hasRows={rows.length > 0} />
+
+      {/* Price-search opt-in — when checked, the auto-tune action sweeps a
+          ±25% price band (cent-stepped) on the server and picks the candidate
+          whose `shapeWeights` result lands every card on a clean ladder rung.
+          Default off so today's behavior matches; the owner opts in
+          explicitly. */}
+      <label
+        htmlFor={`allow-price-search-${packId}`}
+        className="flex cursor-pointer items-start gap-2 rounded-lg border bg-card/40 px-3 py-2"
+      >
+        <Checkbox
+          id={`allow-price-search-${packId}`}
+          checked={allowPriceSearch}
+          onCheckedChange={(checked) =>
+            setAllowPriceSearch(checked === true)
+          }
+          disabled={applying}
+          className="mt-0.5"
+        />
+        <div className="flex-1 space-y-0.5">
+          <span className="flex items-center gap-1.5 text-xs font-medium">
+            Allow price adjustment (±25%) for cleaner odds
+            <InfoHint text="When ticked, the server may nudge the pack price by up to ±25% (cent-stepped) around the staged price to land every card on a clean odds rung (e.g. 0.01%, 0.1%, 25%). The exact chosen price is shown after the auto-tune runs." />
+          </span>
+          <p className="text-[11px] text-muted-foreground">
+            Auto-tune holds the price by default. Tick this if you&apos;d rather
+            the server pick a nearby price that lets the odds snap onto a
+            clean ladder.
+          </p>
+        </div>
+      </label>
 
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-2 pt-1">

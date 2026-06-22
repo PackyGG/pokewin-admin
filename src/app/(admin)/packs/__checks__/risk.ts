@@ -30,6 +30,7 @@ import {
   riskTier,
   shapeWeights,
   snapWeightsToCleanLadder,
+  searchBestPriceForCleanSnap,
   CV_TIER_BOUNDS,
   type CardLite,
   type ShapeWeightsResult,
@@ -1741,6 +1742,142 @@ check("lottery skew: normal 20%-win pack is byte-for-byte unchanged (no-op)", ()
   assert(r.edge >= targetEdge - 1e-9, `edge ≥ target (${r.edge})`);
   assert(r.edge - targetEdge <= 0.001 + 1e-9, `edge − target ≤ 0.001 (got ${r.edge - targetEdge})`);
   assert(Math.abs(r.risk.winRate - targetWinRate) <= 0.02 + 1e-9, `win-rate within tol (${r.risk.winRate})`);
+});
+
+// ── 16. searchBestPriceForCleanSnap ─────────────────────────────────────
+//
+// The price-search wrapper sweeps cent-stepped candidate prices around the
+// base (default ±25%, max 50 candidates) and returns the candidate whose
+// `shapeWeights` result keeps `snapped=true` while staying closest to the
+// base price. Two pinned invariants:
+//
+//   (a) When the base price fails to snap cleanly but a nearby price DOES,
+//       the wrapper returns the nearby price with snapped=true (and the
+//       chosen price differs from the base, so the search delivered the
+//       cleaner odds the price lever exists to find).
+//   (b) When the base price already snaps cleanly, the wrapper picks the
+//       base (no unnecessary deviation) and reports `fellBackToBase: false`
+//       (base was the winner on its own merits, not a degraded fallback).
+//
+// Both checks bind the wrapper's CONTRACT (snap-prefer, base-prefer,
+// degradation-aware fellBackToBase). The exact pool that surfaces (a) is
+// search-discovered — the test scans a couple of pools and asserts that AT
+// LEAST one demonstrates the snap improvement (so the test isn't brittle to
+// future `shapeWeights` tweaks).
+check("searchBestPriceForCleanSnap (a): a pool that snaps cleaner at a nearby price → chosen ≠ base, snapped=true", () => {
+  // A grid of pools at $1.00. The wrapper sweeps cent-stepped candidates
+  // around the base and reports `searched`. The contract: AT LEAST one pool
+  // in this grid must demonstrate the snap improvement (chosen price ≠
+  // basePrice, result is snapped). If `shapeWeights` ever evolves so EVERY
+  // grid pool snaps cleanly at the base, the assertion below will surface a
+  // clear failure rather than silently noop.
+  const pools: { value: number }[][] = [
+    // Mix of nominally awkward grail/win values + a thin dust at $1.00.
+    [{ value: 0.07 }, { value: 1.13 }, { value: 2.17 }, { value: 4.29 }, { value: 9.41 }, { value: 17.83 }],
+    [{ value: 0.09 }, { value: 0.62 }, { value: 1.11 }, { value: 2.37 }, { value: 4.78 }, { value: 11.27 }, { value: 23.89 }],
+    [{ value: 0.04 }, { value: 0.55 }, { value: 1.07 }, { value: 3.29 }, { value: 6.41 }, { value: 13.83 }],
+    [{ value: 0.11 }, { value: 0.83 }, { value: 1.19 }, { value: 2.51 }, { value: 5.07 }, { value: 9.91 }, { value: 19.73 }],
+  ];
+  const basePrice = 1.0;
+  const targetEdge = 0.1099;
+  const targetWinRate = 0.2;
+
+  let foundImprovement = false;
+  let firstImprovementCents: number | null = null;
+  for (const cards of pools) {
+    const baseShaped = shapeWeights({ cards, price: basePrice, targetEdge, targetWinRate });
+    const baseSnapped = isSuccess(baseShaped) && baseShaped.snapped === true;
+    if (baseSnapped) continue; // not a candidate for the (a) invariant
+
+    const result = searchBestPriceForCleanSnap({
+      cards,
+      basePrice,
+      targetEdge,
+      targetWinRate,
+    });
+    // Search must have evaluated at least one candidate.
+    assert(result.searched >= 1, `searched ≥ 1, got ${result.searched}`);
+    // If the search found a cleaner price, the contract pins both legs.
+    if (isSuccess(result.bestResult) && result.bestResult.snapped === true) {
+      assert(
+        result.bestPrice !== basePrice,
+        `(a) found snap at base price unexpectedly — pool was supposed to fail at base; price ${result.bestPrice}`,
+      );
+      assert(result.fellBackToBase === false, `(a) fellBackToBase must be false when search succeeded`);
+      // Sanity: the chosen price must be within the ±25% band.
+      const maxCents = Math.floor(basePrice * 0.25 * 100);
+      const distCents = Math.abs(Math.round(result.bestPrice * 100) - Math.round(basePrice * 100));
+      assert(
+        distCents <= maxCents,
+        `(a) chosen price within ±25% (${distCents}¢ ≤ ${maxCents}¢)`,
+      );
+      foundImprovement = true;
+      firstImprovementCents = distCents;
+      break;
+    }
+  }
+  assert(
+    foundImprovement,
+    `(a) expected at least one pool where the price search finds a cleaner snap; none did. (Confirms the snap is now too strict to demonstrate the lever — review pool fixtures or shapeWeights regressions.)`,
+  );
+  // Logged for the harness output so a future regression in either direction
+  // (snap got stricter or snap got looser) shows up as a value change.
+  console.log(
+    `      └─ (a) discovered snap improvement at ${firstImprovementCents}¢ from base`,
+  );
+});
+
+check("searchBestPriceForCleanSnap (b): a pool already clean at base → picks basePrice, fellBackToBase=false", () => {
+  // The same "normal-edge $5 pack" used by harness check 14a — a
+  // documented clean-snapping pool. `shapeWeights` returns `snapped=true`
+  // here, so the wrapper must KEEP the base price (no unnecessary
+  // deviation) and report `fellBackToBase=false` (base was the winner on
+  // its own merits, not a degraded fallback).
+  const cards = [
+    { value: 0.5 },
+    { value: 20.25 },
+    { value: 40.0 },
+  ];
+  const basePrice = 5;
+  const targetEdge = 0.1099;
+  const targetWinRate = 0.15;
+
+  // Pre-check: the base must actually be a clean snap for the (b) invariant
+  // to apply. If a future regression breaks this assumption the test surfaces
+  // a clear failure here instead of silently asserting the wrong thing.
+  const baseShaped = shapeWeights({ cards, price: basePrice, targetEdge, targetWinRate });
+  assert(isSuccess(baseShaped), `(b) base must be feasible: ${"error" in baseShaped ? baseShaped.error : ""}`);
+  if (!isSuccess(baseShaped)) return;
+  assert(
+    baseShaped.snapped === true,
+    `(b) base must snap cleanly for the "pick base" invariant; snapped=${baseShaped.snapped}. Update the fixture if shapeWeights gets stricter.`,
+  );
+
+  const result = searchBestPriceForCleanSnap({
+    cards,
+    basePrice,
+    targetEdge,
+    targetWinRate,
+  });
+
+  // The wrapper must short-circuit on a clean base (no sweep needed).
+  assert(
+    result.bestPrice === basePrice,
+    `(b) chosen price = basePrice, got ${result.bestPrice}`,
+  );
+  assert(
+    result.fellBackToBase === false,
+    `(b) fellBackToBase=false when base snaps cleanly (was ${result.fellBackToBase})`,
+  );
+  assert(
+    isSuccess(result.bestResult) && result.bestResult.snapped === true,
+    `(b) returned result must be a snapped success`,
+  );
+  // Short-circuit semantics: only the base candidate was evaluated.
+  assert(
+    result.searched === 1,
+    `(b) searched=1 (short-circuit on clean base), got ${result.searched}`,
+  );
 });
 
 // ── Summary ─────────────────────────────────────────────────────────
