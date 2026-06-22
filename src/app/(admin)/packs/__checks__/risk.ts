@@ -1302,6 +1302,134 @@ check("autoMaxWinCap is hit-rate-aware: loosens for lottery packs, unchanged for
   }
 });
 
+// ── 14. LOTTERY SKEW: low-hit-rate packs get a steep within-grail value^(−2) shape ──
+//
+// On a tagged lottery pack (targetWinRate ≤ 5%), the precise solver's
+// shared-beta layout flattens the within-grail distribution too much: the most
+// expensive grail ends up only ~4× rarer than the cheapest. The `applyLotterySkew`
+// post-process re-shapes the GRAIL band internally with value^(−2) so the
+// jackpot stays genuinely rare (cheap-vs-expensive ratio ≥ 10×, owner's intent
+// is ~190×) and edge stays inside accept tolerance. Falls back safely to the
+// precise solver weights when EV rebalance can't pull edge back to target.
+check("lottery skew: '1% 18 PLUS' pool produces a steep within-grail distribution + edge in accept tolerance", () => {
+  // The owner's real "1% 18 PLUS" pool — $1.25 pack, $0.08 dust + win/near-miss
+  // + 16 grail jackpots from $60.25 to $810.07. Owner's design intuition:
+  // $810 ≈ 0.001%, $60 ≈ 0.19%, ratio ≈ 190×.
+  const price = 1.25;
+  const pool = [
+    { value: 0.08 }, // dust
+    { value: 0.95 }, // near-miss [0.5p, p)
+    { value: 1.7 },  // win-band card (≥ price)
+    { value: 60.25 },
+    { value: 64.76 },
+    { value: 75.47 },
+    { value: 114.0 },
+    { value: 118.21 },
+    { value: 125.94 },
+    { value: 145.5 },
+    { value: 155.99 },
+    { value: 183.25 },
+    { value: 208.09 },
+    { value: 231.89 },
+    { value: 238.6 },
+    { value: 259.45 },
+    { value: 375.84 },
+    { value: 508.45 },
+    { value: 810.07 },
+  ];
+  const targetEdge = 0.1099;
+  const targetWinRate = 0.01;
+  const r = shapeWeights({
+    cards: pool,
+    price,
+    targetEdge,
+    targetWinRate,
+    maxWinCap: 2500, // hit-rate-aware cap (see check #13)
+  });
+  assert(isSuccess(r), `expected success: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+
+  // The post-process flag MUST be true: the pack is below the 5% threshold AND
+  // has > 1 grail card, so the skew runs and the edge rebalance succeeds.
+  assert(r.lotterySkewApplied === true, `lotterySkewApplied must be true on this pool, got ${r.lotterySkewApplied}`);
+
+  // Edge inside the ±0.0005 accept window (the post-process's own check) AND
+  // still ≥ target (the one-sided-up invariant survives).
+  assert(r.edge >= targetEdge - 1e-9, `edge ≥ target (${r.edge})`);
+  assert(
+    Math.abs(r.edge - targetEdge) <= 0.0005 + 1e-9,
+    `edge inside ±0.0005 accept window (got |${r.edge} − ${targetEdge}| = ${Math.abs(r.edge - targetEdge).toFixed(8)})`,
+  );
+
+  // Per-card probabilities for the grail band.
+  const totalW = r.weights.reduce((a, b) => a + b, 0);
+  const rows = pool.map((c, i) => ({ value: c.value, weight: r.weights[i]!, p: r.weights[i]! / totalW }));
+
+  // Print the grail-band probabilities so the owner can eyeball the steep shape.
+  console.log("      grail-band probabilities after lottery skew (descending by value):");
+  const grailRows = rows.filter((row) => row.value >= 5 * price).sort((a, b) => b.value - a.value);
+  for (const row of grailRows) {
+    console.log(`         $${row.value.toFixed(2).padStart(8)}   p = ${(row.p * 100).toFixed(6)}%`);
+  }
+
+  const cheap = grailRows.reduce((a, b) => (a.value < b.value ? a : b));
+  const exp = grailRows.reduce((a, b) => (a.value > b.value ? a : b));
+  console.log(
+    `      grail ratio: $${cheap.value} (${(cheap.p * 100).toFixed(6)}%) vs $${exp.value} (${(exp.p * 100).toFixed(6)}%) — ratio ${(cheap.p / exp.p).toFixed(2)}×`,
+  );
+
+  // The big jackpot must be at least 10× rarer than the cheapest grail (owner's
+  // direction; the design intuition is ~190× and value^(−2) over a 13.5× value
+  // range mathematically lands ~180×).
+  assert(
+    cheap.p >= exp.p * 10,
+    `cheapest grail ($${cheap.value}, p=${(cheap.p * 100).toFixed(6)}%) must be ≥ 10× more likely than the jackpot ($${exp.value}, p=${(exp.p * 100).toFixed(6)}%); got ratio ${(cheap.p / exp.p).toFixed(2)}×`,
+  );
+
+  // The $810 jackpot survived the cap (not gutted to a cheap grail).
+  approx(r.risk.maxWin, 810.07, 1e-6, "the $810 jackpot is the max-win after skew");
+
+  // Recompute from the returned vector to confirm consistency.
+  const recomputed = computePackRisk({
+    cards: pool.map((c, i) => ({ value: c.value, weight: r.weights[i]! })),
+    price,
+  });
+  approx(recomputed.edge, r.edge, 1e-9, "returned edge matches recomputed");
+});
+
+// ── 15. NORMAL packs: lottery skew is SKIPPED (lotterySkewApplied = false) ──
+//
+// A normal-hit-rate pack (≥ 5% win-rate, the cutoff is targetWinRate ≤ 0.05 to
+// engage skew) must NOT trigger the lottery skew. Existing behavior unchanged.
+check("lottery skew is SKIPPED on a normal 20%-win-rate pack (lotterySkewApplied = false)", () => {
+  // The same rich pool from check #6 ($10 pack with cards spanning all bands).
+  const cards = [
+    { value: 0.1 },
+    { value: 0.5 },
+    { value: 1 },
+    { value: 3 },
+    { value: 7 }, // near-miss
+    { value: 12 },
+    { value: 25 },
+    { value: 80 },
+  ];
+  const price = 10;
+  const targetEdge = TARGET_HOUSE_EDGE;
+  const targetWinRate = 0.2; // > 0.05 threshold → skew skipped
+  const r = shapeWeights({ cards, price, targetEdge, targetWinRate });
+  assert(isSuccess(r), `expected success: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+  assert(
+    r.lotterySkewApplied === false,
+    `normal pack must NOT trigger lottery skew, got ${r.lotterySkewApplied}`,
+  );
+  // Edge invariants from check #6 still hold byte-for-byte (no change to the
+  // precise solver for non-lottery packs).
+  assert(r.edge >= targetEdge - 1e-9, `edge ≥ target (${r.edge})`);
+  assert(r.edge - targetEdge <= 0.001 + 1e-9, `edge − target ≤ 0.001 (got ${r.edge - targetEdge})`);
+  assert(Math.abs(r.risk.winRate - targetWinRate) <= 0.02 + 1e-9, `win-rate within tol (${r.risk.winRate})`);
+});
+
 // ── Summary ─────────────────────────────────────────────────────────
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} risk check(s) failed:`);

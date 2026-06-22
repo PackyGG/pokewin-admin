@@ -309,6 +309,15 @@ export type ShapeWeightsSuccess = {
   edge: number;
   /** Soft targets the solver had to relax to reach a feasible result. Empty when nothing was relaxed. */
   relaxations: ShapeWeightsRelaxation[];
+  /**
+   * True iff the post-process `applyLotterySkew` re-shaped the GRAIL band into
+   * a steep value^(-β) distribution (lottery packs only — targetWinRate ≤ 0.05).
+   * Lets the UI label the result so the operator knows "$810 is genuinely rare".
+   * False on normal packs (skew skipped) AND on lottery packs where the skew
+   * drifted EV out of accept tolerance and the safe-fallback to the precise
+   * solver weights kicked in.
+   */
+  lotterySkewApplied: boolean;
 };
 
 /**
@@ -971,6 +980,146 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     };
   }
 
+  // ── Lottery skew (tagged lottery packs only) ────────────────────────
+  // For low-hit-rate packs (≤ 5%: 1% / 2% / 3% / 5% tags), the precise solver's
+  // shared-beta layout flattens the within-GRAIL distribution too much: on a $1.25
+  // 1%-tag pool with grails from $60 to $810, the jackpot ends up only ~4× rarer
+  // than the cheapest grail, instead of the ~190× ratio the owner's hand-tune
+  // intended. That blows up short-term house variance — the $810 card hits more
+  // often than design.
+  //
+  // Fix: re-shape the GRAIL band's INTERNAL probability with a steep power-law
+  // value^(-β), β = 2, while keeping the WIN / NEARMISS / DUST band weights at
+  // their precise-solver values. Two-step rebalance so edge still lands inside
+  // the accept window:
+  //   step 1 — re-spread grail mass internally by value^(−2) at the SAME mass
+  //            the solver had. Cheap-skew the band → grail EV drops → edge
+  //            over-shoots target (often far, because grail can carry most of
+  //            EV on a low-hit-rate pack).
+  //   step 2 — re-tune EDGE by adjusting the CHEAPEST-DUST card's weight. The
+  //            cheapest-dust card already serves as the solver's edge knob (the
+  //            one-sided-up bump loop above), so reusing it keeps the EV slack
+  //            in the same place. Lowering its weight raises every other p
+  //            proportionally → grail EV rises → total EV rises → edge falls
+  //            back toward target. This is a bidirectional refinement (the
+  //            solver's bump loop is one-sided up; this loop also handles down
+  //            via mass reduction on the cheapest dust card).
+  // If even after the rebalance edge can't be pulled into the ±0.0005 accept
+  // window, KEEP the precise solver weights (safe fallback; never regress edge).
+  let lotterySkewApplied = false;
+  const LOTTERY_THRESHOLD = 0.05;
+  const LOTTERY_BETA = 2.0;
+  const LOTTERY_ACCEPT_TOL = 0.0005;
+  if (requestedWinRate <= LOTTERY_THRESHOLD && grail.length > 1) {
+    // Snapshot the precise-solver weights so we can roll back on EV drift.
+    const preSkew = weights.slice();
+    const preSkewRisk = risk;
+
+    // Current total weight (sum of integer weights) — we re-spread the grail
+    // mass against the same denominator so the cross-band probability mass
+    // stays unchanged at step 1.
+    let totalW = 0;
+    for (const w of weights) totalW += w;
+
+    // Mass currently on the grail band.
+    let grailW = 0;
+    for (const s of grail) grailW += weights[s.idx]!;
+    const grailMass = totalW > 0 ? grailW / totalW : 0;
+
+    if (grailMass > 0) {
+      // Step 1: power-law shape inside grail.
+      const grailVals = grail.map((s) => s.value);
+      const grailFrac = bandWeights(grailVals, LOTTERY_BETA, grailMass);
+      const skewedWeights = weights.slice();
+      grail.forEach((s, i) => {
+        skewedWeights[s.idx] = Math.max(1, Math.round(grailFrac[i]! * QUANT));
+      });
+
+      // Step 2: rebalance edge via cheapest-dust weight (binary search up/down).
+      // The dust band already exists (HARD limit checked above), so the index is
+      // safe. We bisect the cheapest-dust weight to bring edge as close to target
+      // as possible — capped to integer weights ≥ 1.
+      const recomputeWith = (w: number[]) =>
+        computePackRisk({
+          cards: input.cards.map((c, i) => ({ value: c.value, weight: w[i]! })),
+          price,
+        });
+      let skewedRisk = recomputeWith(skewedWeights);
+
+      // Bisect on cheapest-dust weight.
+      // - if edge > target → LOWER cheapest-dust weight (mass shifts to others,
+      //   grail EV rises, total EV rises, edge falls).
+      // - if edge < target → RAISE cheapest-dust weight (mass shifts to dust,
+      //   grail EV falls, total EV falls, edge rises).
+      // Bracket bounds: 1 (min integer) and a generous upper bound proportional
+      // to the current solver's cheapest-dust weight (×100, more than enough to
+      // pull edge well past target if the solver had it close).
+      const cdIdx = cheapestDustIdx;
+      const cdSeed = Math.max(1, skewedWeights[cdIdx]!);
+      let wLo = 1;
+      let wHi = Math.max(cdSeed * 100, 100_000_000);
+
+      // Quick monotonicity check: lowering cheapest-dust weight raises edge?
+      // (It SHOULD — but the bisection only works if the function is monotone
+      // over the search range. The math guarantees it: cheapest-dust has the
+      // lowest value in the pool, so reducing its mass raises mean value → EV
+      // up → edge down. Wait — that's the OPPOSITE direction. Reducing dust
+      // mass RAISES EV (because mean shifts up toward the kept high-value cards)
+      // → edge FALLS. So: cheapest-dust weight ↑ ⇒ edge ↑; weight ↓ ⇒ edge ↓.)
+      // For bisection on edge(w) monotone INCREASING in w, we want edge ≈ target.
+
+      for (let iter = 0; iter < 80; iter++) {
+        const wMid = Math.max(1, Math.floor((wLo + wHi) / 2));
+        const trial = skewedWeights.slice();
+        trial[cdIdx] = wMid;
+        const trialRisk = recomputeWith(trial);
+        if (trialRisk.edge > targetEdge) {
+          // edge too high → need to lower the cheapest-dust weight further.
+          wHi = wMid;
+        } else {
+          // edge at/below target → raise the cheapest-dust weight.
+          wLo = wMid;
+        }
+        if (wHi - wLo <= 1) break;
+      }
+      // Pick the integer weight whose edge lands at or just above target.
+      const trialA = skewedWeights.slice();
+      trialA[cdIdx] = Math.max(1, wLo);
+      const riskA = recomputeWith(trialA);
+      const trialB = skewedWeights.slice();
+      trialB[cdIdx] = Math.max(1, wHi);
+      const riskB = recomputeWith(trialB);
+      // Prefer the one with the smallest |edge − target| inside the accept band.
+      let chosenW = trialA;
+      let chosenRisk = riskA;
+      if (
+        Math.abs(riskB.edge - targetEdge) < Math.abs(riskA.edge - targetEdge) ||
+        // If A undershoots and B overshoots by less, pick B (edge ≥ target preferred).
+        (riskA.edge < targetEdge - 1e-9 && riskB.edge >= targetEdge - 1e-9)
+      ) {
+        chosenW = trialB;
+        chosenRisk = riskB;
+      }
+      skewedRisk = chosenRisk;
+
+      // Accept only if the rebalanced edge sits inside the ±0.0005 window AND
+      // stays ≥ target (the one-sided-up promise survives).
+      if (
+        Math.abs(skewedRisk.edge - targetEdge) <= LOTTERY_ACCEPT_TOL &&
+        skewedRisk.edge >= targetEdge - 1e-9
+      ) {
+        for (let i = 0; i < weights.length; i++) weights[i] = chosenW[i]!;
+        risk = skewedRisk;
+        lotterySkewApplied = true;
+      } else {
+        // Rebalance couldn't pull edge into the accept window — fall back to the
+        // precise solver weights (never regress edge accuracy).
+        for (let i = 0; i < weights.length; i++) weights[i] = preSkew[i]!;
+        risk = preSkewRisk;
+      }
+    }
+  }
+
   // ── gcd-reduce the final vector (after all bumps) ───────────────────
   const present = weights.filter((w) => w > 0);
   if (present.length > 0) {
@@ -1007,5 +1156,5 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     }
   }
 
-  return { weights, risk, ev: risk.ev, edge: risk.edge, relaxations };
+  return { weights, risk, ev: risk.ev, edge: risk.edge, relaxations, lotterySkewApplied };
 }
