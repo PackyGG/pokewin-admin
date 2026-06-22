@@ -1544,9 +1544,18 @@ check("snap (d): sweep snap-acceptance rate is significantly higher than the nai
   }
   const rate = feasible > 0 ? snappedCount / feasible : 0;
   console.log(`      snap-acceptance rate: ${snappedCount}/${feasible} = ${(rate * 100).toFixed(2)}%`);
+  // Threshold lowered from 20% to 5% after monotonicity invariants landed
+  // (`repairSnapMonotonicity`): the snap now ALSO enforces within-band pct
+  // ascends-as-value-descends, plus strict rarity at the GRAIL top. Both are
+  // owner-facing designer rules that the naive snap never respected. The
+  // tighter constraint drops the sweep rate to ~5-10% — that's correct: a
+  // snap that violates monotonicity is unacceptable to the owner, so we
+  // intentionally reject more candidates. Floor stays well above the naive
+  // baseline (0.15%) — anything lower would be a regression in the snap
+  // itself, not just the constraint.
   assert(
-    rate >= 0.2,
-    `snap-acceptance rate ≥ 20% (got ${(rate * 100).toFixed(2)}%) — the buffer-residual rewrite must beat the naive baseline`,
+    rate >= 0.05,
+    `snap-acceptance rate ≥ 5% (got ${(rate * 100).toFixed(2)}%) — monotonicity-aware snap must still clear the naive baseline by an order of magnitude`,
   );
 });
 

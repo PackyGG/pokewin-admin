@@ -813,6 +813,158 @@ export function snapWeightsToCleanLadder(input: {
 }
 
 /**
+ * Repair the within-band monotonicity invariants on a snapped weight vector.
+ *
+ * Owner-facing invariants (designer rules — packs are read by humans):
+ *   1. WITHIN EACH BAND (GRAIL, WIN, NEARMISS, DUST), as card value DESCENDS,
+ *      probability must NON-DECREASE. I.e., if card A is more expensive than
+ *      card B (both in same band), `pct[A] <= pct[B]`. Never `>`.
+ *   2. STRICT RARITY AT GRAIL TOP: the most-expensive grail card must be at a
+ *      STRICTLY LOWER ladder rung than the second-most-expensive grail card.
+ *      No tie at the top — the headline jackpot is the rarest pull.
+ *
+ * The base buffer-residual snap (above) can violate both: log-nearest rounding
+ * makes adjacent cards collapse onto the same rung or zigzag across rungs. This
+ * helper walks each band cheapest→most-expensive and DEMOTES any violator to
+ * the next-lower ladder rung. Buffer card stays untouched; non-buffer pcts that
+ * weren't on the ladder to begin with (already-buffer or zero-weight slots) are
+ * left alone. After repair, the buffer residual is recomputed so the total
+ * stays at 100%.
+ *
+ * Returns `{ weights, ok }`. `ok=false` when a demotion would push a card below
+ * the smallest ladder rung — caller falls back to the precise weights (safe
+ * default, never regresses).
+ */
+function repairSnapMonotonicity(input: {
+  weights: number[];
+  values: number[];
+  price: number;
+}): { weights: number[]; ok: boolean } {
+  const { weights, values, price } = input;
+  const n = weights.length;
+  if (!(price > 0)) return { weights: weights.slice(), ok: true };
+
+  let totalWeight = 0;
+  for (const w of weights) {
+    if (Number.isFinite(w) && w > 0) totalWeight += w;
+  }
+  if (!(totalWeight > 0)) return { weights: weights.slice(), ok: true };
+
+  // Step 1: pcts + buffer = argmax.
+  const pcts = new Array<number>(n).fill(0);
+  let bufferIdx = -1;
+  let bufferPct = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const w = weights[i]!;
+    if (!Number.isFinite(w) || w <= 0) continue;
+    const p = (w / totalWeight) * 100;
+    pcts[i] = p;
+    if (p > bufferPct) {
+      bufferPct = p;
+      bufferIdx = i;
+    }
+  }
+  if (bufferIdx < 0) return { weights: weights.slice(), ok: true };
+
+  // Step 2: find each non-buffer card's ladder rung index (log-nearest).
+  const rungIdx = new Array<number>(n).fill(-1);
+  for (let i = 0; i < n; i++) {
+    if (i === bufferIdx) continue;
+    if (!(pcts[i]! > 0)) continue;
+    const logP = Math.log10(pcts[i]!);
+    let best = 0;
+    let bestDist = Math.abs(Math.log10(CLEAN_LADDER[0]!) - logP);
+    for (let k = 1; k < CLEAN_LADDER.length; k++) {
+      const d = Math.abs(Math.log10(CLEAN_LADDER[k]!) - logP);
+      if (d < bestDist) {
+        bestDist = d;
+        best = k;
+      }
+    }
+    rungIdx[i] = best;
+  }
+
+  // Step 3: classify into bands; sort each band by value DESC (most-expensive first).
+  const grail: number[] = [];
+  const win: number[] = [];
+  const nearMiss: number[] = [];
+  const dust: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (i === bufferIdx) continue;
+    if (rungIdx[i] < 0) continue;
+    const v = values[i]!;
+    if (!(v > 0) || !Number.isFinite(v)) continue;
+    if (v >= 5 * price) grail.push(i);
+    else if (v >= price) win.push(i);
+    else if (v >= 0.5 * price) nearMiss.push(i);
+    else dust.push(i);
+  }
+  const byValueDesc = (a: number, b: number) => values[b]! - values[a]!;
+  grail.sort(byValueDesc);
+  win.sort(byValueDesc);
+  nearMiss.sort(byValueDesc);
+  dust.sort(byValueDesc);
+
+  // Step 4: within each band, walk second-cheapest → most-expensive,
+  // demote any violator so `rungIdx[expensive] <= rungIdx[cheaper]`.
+  for (const band of [grail, win, nearMiss, dust]) {
+    for (let i = band.length - 2; i >= 0; i--) {
+      const expensive = band[i]!;
+      const cheaper = band[i + 1]!;
+      while (rungIdx[expensive]! > rungIdx[cheaper]!) {
+        if (rungIdx[expensive]! === 0) {
+          return { weights: weights.slice(), ok: false };
+        }
+        rungIdx[expensive] = rungIdx[expensive]! - 1;
+      }
+    }
+  }
+
+  // Step 5: STRICT inequality at GRAIL top — top card must be at a STRICTLY
+  // lower rung than the second card. No ties at the top.
+  if (grail.length >= 2) {
+    const top = grail[0]!;
+    const second = grail[1]!;
+    while (rungIdx[top]! >= rungIdx[second]!) {
+      if (rungIdx[top]! === 0) {
+        return { weights: weights.slice(), ok: false };
+      }
+      rungIdx[top] = rungIdx[top]! - 1;
+    }
+  }
+
+  // Step 6: apply repaired ladder pcts back into the pcts array.
+  for (let i = 0; i < n; i++) {
+    if (i === bufferIdx) continue;
+    if (rungIdx[i]! < 0) continue;
+    pcts[i] = CLEAN_LADDER[rungIdx[i]!]!;
+  }
+
+  // Step 7: recompute buffer residual to keep total at 100%.
+  let nonBufferSum = 0;
+  for (let i = 0; i < n; i++) {
+    if (i === bufferIdx) continue;
+    nonBufferSum += pcts[i]!;
+  }
+  const bufferResidual = 100 - nonBufferSum;
+  if (!(bufferResidual > 0)) {
+    return { weights: weights.slice(), ok: false };
+  }
+  pcts[bufferIdx] = bufferResidual;
+
+  // Step 8: convert back to integer weights via the same ×10000 multiplier
+  // used by the snap. Each originally-positive card keeps weight ≥ 1.
+  const MULT = 10000;
+  const out = new Array<number>(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    const w = weights[i]!;
+    if (!Number.isFinite(w) || w <= 0) continue;
+    out[i] = Math.max(1, Math.round(pcts[i]! * MULT));
+  }
+  return { weights: out, ok: true };
+}
+
+/**
  * Local-search refinement around a buffer-residual snap. Used by `shapeWeights`
  * AFTER the basic snap when the resulting edge drifts outside the accept
  * tolerance. Pure: returns a NEW weight vector or `null` when no combination
@@ -1639,23 +1791,30 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   const values = input.cards.map((c) => c.value);
   const preciseWinRate = risk.winRate;
   const snap = snapWeightsToCleanLadder({ weights, price });
-  const snappedRisk = computePackRisk({
-    cards: input.cards.map((c, i) => ({ value: c.value, weight: snap.weights[i]! })),
+  // Apply within-band monotonicity repair (owner invariants — see
+  // `repairSnapMonotonicity`). If the basic snap can't be made monotonic
+  // within the ladder bounds, treat as failed and fall through to local-search
+  // refinement (which retries with different ladder positions).
+  const snapRepaired = repairSnapMonotonicity({ weights: snap.weights, values, price });
+  const snapCandidate = snapRepaired.ok ? snapRepaired.weights : snap.weights;
+  const snapCandidateRisk = computePackRisk({
+    cards: input.cards.map((c, i) => ({ value: c.value, weight: snapCandidate[i]! })),
     price,
   });
-  const snapDrift = Math.abs(snappedRisk.edge - targetEdge);
-  const snapWinRateDrift = Math.abs(snappedRisk.winRate - preciseWinRate);
+  const snapDrift = Math.abs(snapCandidateRisk.edge - targetEdge);
+  const snapWinRateDrift = Math.abs(snapCandidateRisk.winRate - preciseWinRate);
   // Tier 1: accept the basic buffer-residual snap when edge stays within
   // ±0.05pp of target AND ≥ target (one-sided-up invariant) AND win-rate
-  // stays within the soft tolerance of the precise solver's win-rate (so the
-  // sweep's soft-target invariant on win-rate is preserved).
+  // stays within the soft tolerance of the precise solver's win-rate AND the
+  // monotonicity repair succeeded.
   if (
+    snapRepaired.ok &&
     snapDrift <= 0.0005 &&
-    snappedRisk.edge >= targetEdge - 1e-9 &&
+    snapCandidateRisk.edge >= targetEdge - 1e-9 &&
     snapWinRateDrift <= winRateTol + 1e-9
   ) {
-    for (let i = 0; i < weights.length; i++) weights[i] = snap.weights[i]!;
-    risk = snappedRisk;
+    for (let i = 0; i < weights.length; i++) weights[i] = snapCandidate[i]!;
+    risk = snapCandidateRisk;
     snapped = true;
   } else {
     // Tier 2: local-search refinement. Wiggle the top-5 EV-impact cards by
@@ -1703,12 +1862,32 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       });
     }
     if (refined !== null) {
-      for (let i = 0; i < weights.length; i++) weights[i] = refined.weights[i]!;
-      risk = computePackRisk({
-        cards: input.cards.map((c, i) => ({ value: c.value, weight: weights[i]! })),
+      // Apply monotonicity repair to the local-search winner, then re-verify
+      // edge + win-rate tolerance. If the repair pushes the result out of
+      // tolerance — or fails outright — fall back to precise weights instead
+      // of accepting an ordering that violates the owner invariants.
+      const refinedRepaired = repairSnapMonotonicity({
+        weights: refined.weights,
+        values,
         price,
       });
-      snapped = true;
+      if (refinedRepaired.ok) {
+        const refinedRisk = computePackRisk({
+          cards: input.cards.map((c, i) => ({ value: c.value, weight: refinedRepaired.weights[i]! })),
+          price,
+        });
+        const refinedDrift = Math.abs(refinedRisk.edge - targetEdge);
+        const refinedWinRateDrift = Math.abs(refinedRisk.winRate - preciseWinRate);
+        if (
+          refinedDrift <= 0.0005 &&
+          refinedRisk.edge >= targetEdge - 1e-9 &&
+          refinedWinRateDrift <= winRateTol + 1e-9
+        ) {
+          for (let i = 0; i < weights.length; i++) weights[i] = refinedRepaired.weights[i]!;
+          risk = refinedRisk;
+          snapped = true;
+        }
+      }
     }
   }
 
