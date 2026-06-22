@@ -31,6 +31,7 @@ import {
   shapeWeights,
   snapWeightsToCleanLadder,
   searchBestPriceForCleanSnap,
+  TAGGED_WINRATE_TOLERANCE,
   CV_TIER_BOUNDS,
   type CardLite,
   type ShapeWeightsResult,
@@ -1879,6 +1880,200 @@ check("searchBestPriceForCleanSnap (b): a pool already clean at base → picks b
     `(b) searched=1 (short-circuit on clean base), got ${result.searched}`,
   );
 });
+
+// ── 16c. searchBestPriceForCleanSnap — TAGGED 1% pack lands on tag ─────
+//
+// Owner spec (2026-06-22): a pack tagged "X%" in its name MUST achieve EXACTLY
+// X% win-rate — within 0.01pp, not 1.6% or 1.95%. The lottery-skew dust-scale
+// EV-compensation drifts the achieved win-rate above the tag at the base
+// price, so the price-search must elevate strict win-rate accuracy ABOVE
+// snap-cleanness as the primary scoring criterion when `taggedWinRate` is
+// passed.
+//
+// This designed 1% pool (3 grails + a 30-card dust ladder) has enough dust
+// granularity that the lottery skew has real slack to land win-rate exactly
+// on the 1% tag at SOME price in the ±25% band — verified by the test
+// assertion. The chosen price always stays within ±25% of base.
+check(
+  "searchBestPriceForCleanSnap (c): tagged 1% pack — winRate lands within 0.01pp of tag",
+  () => {
+    const pool: { value: number }[] = [
+      { value: 100 },
+      { value: 200 },
+      { value: 500 },
+      ...Array.from({ length: 30 }, (_, i) => ({ value: 0.5 - i * 0.015 })).filter(
+        (c) => c.value > 0,
+      ),
+    ];
+    const basePrice = 1.25;
+    const targetEdge = 0.1099;
+    const targetWinRate = 0.01;
+
+    const result = searchBestPriceForCleanSnap({
+      cards: pool,
+      basePrice,
+      targetEdge,
+      targetWinRate,
+      nearMissMin: 0.05,
+      taggedWinRate: targetWinRate, // tagged-mode activation
+    });
+
+    assert(
+      isSuccess(result.bestResult),
+      `(c) chosen result must be a success arm: ${
+        "error" in result.bestResult ? result.bestResult.error : ""
+      }`,
+    );
+    if (!isSuccess(result.bestResult)) return;
+
+    assert(
+      result.taggedAccuracyHit === true,
+      `(c) taggedAccuracyHit must be true (got ${result.taggedAccuracyHit}); achieved winRate ${(result.bestResult.risk.winRate * 100).toFixed(4)}% vs tag 1%`,
+    );
+    assert(
+      Math.abs(result.bestResult.risk.winRate - targetWinRate) <=
+        TAGGED_WINRATE_TOLERANCE + 1e-12,
+      `(c) winRate within 0.01pp of 1% tag (achieved ${(result.bestResult.risk.winRate * 100).toFixed(4)}%, delta ${(Math.abs(result.bestResult.risk.winRate - targetWinRate) * 100).toFixed(4)}pp)`,
+    );
+
+    // Edge still hits target (the underlying shapeWeights enforces this).
+    assert(
+      result.bestResult.edge >= targetEdge - 1e-9,
+      `(c) edge ≥ target (${result.bestResult.edge}, target ${targetEdge})`,
+    );
+
+    // Chosen price stays within ±25% of base.
+    const priceDelta = Math.abs(result.bestPrice - basePrice) / basePrice;
+    assert(
+      priceDelta <= 0.25 + 1e-9,
+      `(c) chosen price ${result.bestPrice.toFixed(2)} within ±25% of base ${basePrice.toFixed(2)} (delta ${(priceDelta * 100).toFixed(2)}%)`,
+    );
+
+    console.log(
+      `      [tagged 1% — winner $${result.bestPrice.toFixed(2)}  wr=${(result.bestResult.risk.winRate * 100).toFixed(4)}%  edge=${(result.bestResult.edge * 100).toFixed(4)}%]`,
+    );
+  },
+);
+
+// ── 16d. searchBestPriceForCleanSnap — TAGGED 5% pack lands on tag ─────
+//
+// Same Owner-spec accuracy gate at the 5% tag. The designed pool (3 grails,
+// a single win-band card at $2, a 9-card dust ladder) was found via a
+// fan-out scan: with the lottery skew + clean-snap pipeline, $0.94 lands the
+// achieved win-rate exactly on the 5% ladder rung (delta 0).
+check(
+  "searchBestPriceForCleanSnap (d): tagged 5% pack — winRate lands within 0.01pp of tag",
+  () => {
+    const pool: { value: number }[] = [
+      { value: 50 },
+      { value: 100 },
+      { value: 200 },
+      { value: 2 }, // single win-band card
+      { value: 0.6 },
+      { value: 0.5 },
+      { value: 0.4 },
+      { value: 0.3 },
+      { value: 0.2 },
+      { value: 0.1 },
+      { value: 0.05 },
+      { value: 0.02 },
+      { value: 0.01 },
+    ];
+    const basePrice = 1.25;
+    const targetEdge = 0.1099;
+    const targetWinRate = 0.05;
+
+    const result = searchBestPriceForCleanSnap({
+      cards: pool,
+      basePrice,
+      targetEdge,
+      targetWinRate,
+      nearMissMin: 0.05,
+      taggedWinRate: targetWinRate,
+    });
+
+    assert(
+      isSuccess(result.bestResult),
+      `(d) chosen result must be a success arm: ${
+        "error" in result.bestResult ? result.bestResult.error : ""
+      }`,
+    );
+    if (!isSuccess(result.bestResult)) return;
+
+    assert(
+      result.taggedAccuracyHit === true,
+      `(d) taggedAccuracyHit must be true (got ${result.taggedAccuracyHit}); achieved winRate ${(result.bestResult.risk.winRate * 100).toFixed(4)}% vs tag 5%`,
+    );
+    assert(
+      Math.abs(result.bestResult.risk.winRate - targetWinRate) <=
+        TAGGED_WINRATE_TOLERANCE + 1e-12,
+      `(d) winRate within 0.01pp of 5% tag (achieved ${(result.bestResult.risk.winRate * 100).toFixed(4)}%, delta ${(Math.abs(result.bestResult.risk.winRate - targetWinRate) * 100).toFixed(4)}pp)`,
+    );
+
+    assert(
+      result.bestResult.edge >= targetEdge - 1e-9,
+      `(d) edge ≥ target (${result.bestResult.edge}, target ${targetEdge})`,
+    );
+
+    const priceDelta = Math.abs(result.bestPrice - basePrice) / basePrice;
+    assert(
+      priceDelta <= 0.25 + 1e-9,
+      `(d) chosen price ${result.bestPrice.toFixed(2)} within ±25% of base ${basePrice.toFixed(2)} (delta ${(priceDelta * 100).toFixed(2)}%)`,
+    );
+
+    console.log(
+      `      [tagged 5% — winner $${result.bestPrice.toFixed(2)}  wr=${(result.bestResult.risk.winRate * 100).toFixed(4)}%  edge=${(result.bestResult.edge * 100).toFixed(4)}%]`,
+    );
+  },
+);
+
+// ── 16e. Untagged default mode unchanged ───────────────────────────────
+// Sanity pin: when `taggedWinRate` is omitted the wrapper runs the legacy
+// snap-first scoring — `taggedAccuracyHit` must be `null` and the existing
+// behavior is preserved for normal 20%-win packs.
+check(
+  "searchBestPriceForCleanSnap (e): untagged mode (no taggedWinRate) — taggedAccuracyHit is null",
+  () => {
+    const pool: { value: number }[] = [
+      { value: 0.1 },
+      { value: 0.5 },
+      { value: 1 },
+      { value: 3 },
+      { value: 7 },
+      { value: 12 },
+      { value: 25 },
+      { value: 80 },
+    ];
+    const basePrice = 10;
+    const targetEdge = TARGET_HOUSE_EDGE;
+    const targetWinRate = 0.2;
+
+    const result = searchBestPriceForCleanSnap({
+      cards: pool,
+      basePrice,
+      targetEdge,
+      targetWinRate,
+      // No `taggedWinRate` — default mode.
+    });
+
+    assert(
+      result.taggedAccuracyHit === null,
+      `(e) taggedAccuracyHit must be null when not in tagged mode (got ${result.taggedAccuracyHit})`,
+    );
+    assert(isSuccess(result.bestResult), "(e) winner shape is a success arm");
+    if (!isSuccess(result.bestResult)) return;
+    // Edge still hits target.
+    assert(
+      result.bestResult.edge >= targetEdge - 1e-9,
+      `(e) edge ≥ target (${result.bestResult.edge}, target ${targetEdge})`,
+    );
+    // Win-rate within the SOFT default tolerance (0.02) — the existing contract.
+    assert(
+      Math.abs(result.bestResult.risk.winRate - targetWinRate) <= 0.02 + 1e-9,
+      `(e) win-rate within ±2pp of target (${result.bestResult.risk.winRate})`,
+    );
+  },
+);
 
 // ── Summary ─────────────────────────────────────────────────────────
 if (failures.length > 0) {

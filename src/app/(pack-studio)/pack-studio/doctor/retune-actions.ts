@@ -38,6 +38,7 @@ import {
   autoTargetEdge,
   DEFAULT_EDGE_CURVE,
   EDIT_EDGE_FLOOR,
+  parsePackHitRate,
   readEdgeCurveConfig,
   readMaxWinCap,
   readMaxMultCeiling,
@@ -1280,6 +1281,14 @@ export type ApplyStagedRetuneResult = {
     chosen: number;
     candidates: number;
     fellBackToBase: boolean;
+    /**
+     * Tagged-pack accuracy result — populated when the search ran in tagged
+     * mode (pack name carries an X% tag AND the caller did not override the
+     * win-rate target). `true` when the chosen candidate landed within 0.01pp
+     * of the tag, `false` when no candidate could; `null` when tagged mode
+     * was not active (untagged pack OR caller pinned a custom win-rate).
+     */
+    taggedAccuracyHit: boolean | null;
   } | null;
 };
 
@@ -1453,11 +1462,32 @@ export async function applyStagedPackEditAndRetune(
   // cent-stepped candidate prices around the staged price (default ±25%, max
   // 50 candidates) and picks the one whose `shapeWeights` result lands every
   // card on a clean ladder rung (snapped=true) while staying closest to the
-  // staged price. The chosen price becomes the FINAL `priceAfter` written to
-  // `packs.price` (the existing writer already updates the price when it
-  // differs from `priceBefore`). Defaults to disabled — current behavior is
-  // byte-for-byte unchanged.
+  // staged price.
+  //
+  // TAGGED LOTTERY PACKS: when the pack name carries an "X%" tag (e.g.
+  // "1% 18 PLUS") AND the caller hasn't pinned a custom win-rate target, the
+  // scoring elevates STRICT win-rate accuracy ABOVE clean-snap. The owner's
+  // hard requirement is that a tagged X% pack achieves EXACTLY X% win-rate
+  // (within 0.01pp); the lottery-skew dust-scale EV-compensation drifts the
+  // achieved win-rate above the tag at the base price, so the search re-bands
+  // the pool to find a price that delivers BOTH targets simultaneously.
+  //
+  // The chosen price becomes the FINAL `priceAfter` written to `packs.price`
+  // (the existing writer already updates the price when it differs from
+  // `priceBefore`). Defaults to disabled — current behavior is byte-for-byte
+  // unchanged.
   const allowPriceSearch = targets.allowPriceSearch === true;
+  const intendedHitRate = parsePackHitRate(pack.name);
+  const callerPinnedWinRate = targets.targetWinRate !== undefined;
+  // Tagged-pack mode triggers only when the parsed name tag matches the
+  // resolved targetWinRate (the auto-resolved target IS the tag) AND the
+  // caller hasn't pinned an override — otherwise we'd hold the wrong target
+  // to the 0.01pp accuracy gate.
+  const taggedSearchActive =
+    allowPriceSearch &&
+    intendedHitRate !== null &&
+    !callerPinnedWinRate &&
+    Math.abs(intendedHitRate - targetWinRate) < 1e-6;
   let shaped;
   let priceSearchMeta: ApplyStagedRetuneResult["priceSearch"] = null;
   if (allowPriceSearch) {
@@ -1469,6 +1499,7 @@ export async function applyStagedPackEditAndRetune(
       maxWinCap,
       nearMissMin,
       winRateTol,
+      ...(taggedSearchActive ? { taggedWinRate: targetWinRate } : {}),
     });
     shaped = search.bestResult;
     priceAfter = search.bestPrice;
@@ -1478,6 +1509,7 @@ export async function applyStagedPackEditAndRetune(
       chosen: search.bestPrice,
       candidates: search.searched,
       fellBackToBase: search.fellBackToBase,
+      taggedAccuracyHit: search.taggedAccuracyHit,
     };
   } else {
     shaped = shapeWeights({
@@ -1609,6 +1641,9 @@ export async function applyStagedPackEditAndRetune(
         price_search_chosen: priceSearchMeta.chosen,
         price_search_candidates: priceSearchMeta.candidates,
         price_search_fell_back: priceSearchMeta.fellBackToBase,
+        // Tagged-pack accuracy: null = tagged-mode not active; true/false =
+        // whether the chosen candidate landed within 0.01pp of the tag.
+        price_search_tagged_accuracy_hit: priceSearchMeta.taggedAccuracyHit,
       }),
       before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
       after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },

@@ -1924,15 +1924,42 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
 // `searchBestPriceForCleanSnap` is a pure deterministic wrapper around the
 // existing `shapeWeights`: it sweeps candidate prices around `basePrice` in
 // 1-cent steps up to ±`maxPriceChangePct` (default ±25%), runs the FULL
-// `shapeWeights` pipeline at each candidate, and picks the candidate that
-// keeps `snapped=true` AND `lotterySkewApplied` matching the base run AND
-// stays closest to `basePrice` AND closest to `targetEdge`. The base price
-// is always tried first and preferred whenever it produces a snapped result
-// — the search only deviates when it must.
+// `shapeWeights` pipeline at each candidate, and picks the best candidate.
+//
+// SCORING — backward-compatible default (no `taggedWinRate`):
+//   Tier 1: snapPriority (snapped + skew matches base < snapped < not snapped < error)
+//   Tier 2: centsDist (closer to basePrice wins)
+//   Tier 3: edgeDrift (smaller |edge − target| wins)
+//   ─ The base price is preferred whenever it produces a clean snap matching
+//     the base lottery-skew state (early return).
+//
+// SCORING — TAGGED-PACK mode (`taggedWinRate` set):
+//   When the pack name carries an "X%" tag (e.g. "1% 18 PLUS"), the owner
+//   wants the achieved win-rate to be EXACTLY X% — not 1.6% or 1.95%. The
+//   lottery skew's dust-scale EV-compensation drifts the achieved win-rate
+//   above the tag at the base price. The search re-bands the pool (price /
+//   0.5·price / 5·price boundaries shift) at every candidate so the solver
+//   can land BOTH the target edge AND the exact tag win-rate. New tiers:
+//   Tier 0 (PRIMARY):  winRateInTol — |winRate − taggedWinRate| ≤
+//                       {@link TAGGED_WINRATE_TOLERANCE} (0.01pp) BEATS not.
+//   Tier 1 (SECONDARY): snapPriority (same scale as the default mode).
+//   Tier 2 (TERTIARY):  centsDist (closer to basePrice wins).
+//   Tier 3 (QUATERNARY): edgeDrift (smaller |edge − target| wins).
+//   ─ The base price's early return (clean snap + skew matches) is REPLACED
+//     by a tagged-aware early return: prefer base ONLY if it both clean-snaps
+//     AND lands within the win-rate tolerance. Otherwise the full sweep runs.
 //
 // Does NOT modify `shapeWeights`. Bounded at 50 candidates so big-priced
 // packs don't pay an unbounded cost. `maxPriceChangePct = 0` short-circuits
 // the search and returns the base-price result (backward-compat).
+
+/**
+ * Strict tolerance for the tagged-pack win-rate accuracy gate: 0.01pp = 0.0001
+ * as a fraction. The owner's spec for tagged "X%" packs requires the achieved
+ * win-rate to land within this tolerance of the tag — much tighter than the
+ * solver's default ±2pp soft tolerance.
+ */
+export const TAGGED_WINRATE_TOLERANCE = 0.0001;
 
 export type SearchBestPriceResult = {
   bestPrice: number;
@@ -1941,6 +1968,12 @@ export type SearchBestPriceResult = {
   searched: number;
   /** True when no candidate beat the base price's outcome. */
   fellBackToBase: boolean;
+  /**
+   * Tagged-mode only (`taggedWinRate` was provided): did the chosen candidate
+   * satisfy the strict {@link TAGGED_WINRATE_TOLERANCE} gate? `null` when the
+   * search ran in default mode (no `taggedWinRate`).
+   */
+  taggedAccuracyHit: boolean | null;
 };
 
 export function searchBestPriceForCleanSnap(input: {
@@ -1953,6 +1986,17 @@ export function searchBestPriceForCleanSnap(input: {
   winRateTol?: number;
   /** ±range as a fraction of basePrice (default 0.25 = ±25%). 0 disables the search. */
   maxPriceChangePct?: number;
+  /**
+   * Tagged-pack mode: when set, the scoring elevates a STRICT win-rate
+   * accuracy criterion (|winRate − taggedWinRate| ≤
+   * {@link TAGGED_WINRATE_TOLERANCE} = 0.01pp) ABOVE snap-cleanness as the
+   * primary tier. Pass the tag value (e.g. 0.01 for a "1% 18 PLUS" pack); the
+   * search will pick the candidate whose `shapeWeights` result lands BOTH
+   * edge ≥ target AND winRate within 0.01pp of `taggedWinRate`. Omit (or
+   * leave undefined) to run the legacy snap-first scoring — existing callers
+   * stay byte-for-byte unchanged.
+   */
+  taggedWinRate?: number;
 }): SearchBestPriceResult {
   const {
     cards,
@@ -1964,6 +2008,8 @@ export function searchBestPriceForCleanSnap(input: {
     winRateTol,
   } = input;
   const maxPriceChangePct = input.maxPriceChangePct ?? 0.25;
+  const taggedWinRate = input.taggedWinRate;
+  const tagged = typeof taggedWinRate === "number" && Number.isFinite(taggedWinRate);
 
   // Single-call passthrough for the degenerate / disabled cases. Mirrors the
   // backward-compat contract: callers can wire this in unconditionally and
@@ -1979,28 +2025,47 @@ export function searchBestPriceForCleanSnap(input: {
       winRateTol,
     });
 
+  // Tagged-mode helper: did this shape land within 0.01pp of the tag?
+  const isWithinTaggedTol = (r: ShapeWeightsResult): boolean => {
+    if (!tagged) return false;
+    if (!isShapeWeightsSuccess(r)) return false;
+    return Math.abs(r.risk.winRate - taggedWinRate!) <= TAGGED_WINRATE_TOLERANCE;
+  };
+
   if (cards.length === 0 || !(basePrice > 0) || !(maxPriceChangePct > 0)) {
     // The disabled / degenerate paths run a single shape and report whether
     // the base produced a clean snap (`fellBackToBase=false` — base was good)
     // or did NOT snap (`fellBackToBase=true` — we returned base only because
-    // search was disabled / impossible).
+    // search was disabled / impossible). In tagged mode, "base was good"
+    // also requires within-tol on win-rate.
     const baseResult = runAt(basePrice);
-    const baseClean =
+    const baseSnapped =
       isShapeWeightsSuccess(baseResult) && baseResult.snapped === true;
+    const baseAccuracy = tagged ? isWithinTaggedTol(baseResult) : true;
     return {
       bestPrice: basePrice,
       bestResult: baseResult,
       searched: 1,
-      fellBackToBase: !baseClean,
+      fellBackToBase: !(baseSnapped && baseAccuracy),
+      taggedAccuracyHit: tagged ? baseAccuracy : null,
     };
   }
 
   // ── Build the candidate list ────────────────────────────────────────
   // basePrice first, then ±1¢, ±2¢, ... up to ±(basePrice · maxPriceChangePct).
   // Each candidate is cent-rounded. Deduplicate via a Set keyed on cents.
-  // Cap at 50 candidates so a big-priced pack stays bounded; the per-cent
-  // step keeps the densest coverage near the base price (where it matters).
-  const MAX_CANDIDATES = 50;
+  //
+  // Cap-per-mode:
+  //   • Default mode (legacy clean-snap): 50 candidates — bounded cost; the
+  //     densest coverage near the base price is what matters for an "ugly
+  //     odds → clean odds" nudge.
+  //   • TAGGED MODE: the Owner spec is explicit ±25% of basePrice, so the
+  //     cap is raised to cover the full requested band even for expensive
+  //     packs (e.g. $5 base → 125¢ deviation → ~250 candidates). The strict
+  //     win-rate accuracy gate is the whole point of tagged mode; clipping
+  //     the band would silently fail the accuracy requirement on costly
+  //     packs.
+  const MAX_CANDIDATES = tagged ? 320 : 50;
   const centsAtBase = Math.round(basePrice * 100);
   const maxDeltaCents = Math.max(0, Math.floor(basePrice * maxPriceChangePct * 100));
   const seenCents = new Set<number>();
@@ -2031,16 +2096,26 @@ export function searchBestPriceForCleanSnap(input: {
     isShapeWeightsSuccess(baseResult) && baseResult.lotterySkewApplied === true;
 
   // Score function: smaller is better.
-  //   Tier 1 (most significant): snapped (1 = snapped, 0 = not) — INVERTED so
-  //                              snapped < not-snapped. Tied — go to tier 2.
-  //   Tier 2: |candidate − basePrice| in cents (prefer the base price).
-  //   Tier 3: |edge − targetEdge| (smaller drift better).
-  // A non-snapped success ranks below a snapped success but above an error.
-  // Errors get the worst possible tier-1 score so they only win if literally
-  // every other candidate failed.
+  //
+  // DEFAULT MODE (`tagged === false`):
+  //   Tier 0: always 0 (inactive — the tagged tier is collapsed).
+  //   Tier 1: snapPriority (snapped + skew matches base < snapped < not snapped < error)
+  //   Tier 2: centsDist (closer to basePrice wins).
+  //   Tier 3: edgeDrift (smaller |edge − target| wins).
+  //
+  // TAGGED MODE (`tagged === true`):
+  //   Tier 0: winRateTier — 0 = within {@link TAGGED_WINRATE_TOLERANCE} of
+  //           the tag, 1 = outside tol but still a success, 2 = error.
+  //   Tier 1: snapPriority (same as default).
+  //   Tier 2: centsDist.
+  //   Tier 3: edgeDrift.
+  //
+  // The tagged tier 0 is the OWNER's hard requirement — a tagged pack must
+  // hit its tag, full stop. Snap-cleanness is the secondary preference.
   type Scored = {
     price: number;
     result: ShapeWeightsResult;
+    winRateTier: number; // tagged mode only; always 0 in default mode
     snapPriority: number; // 0 = snapped + skew matches base, 1 = snapped wrong skew, 2 = not snapped, 3 = error
     centsDist: number;
     edgeDrift: number;
@@ -2048,6 +2123,7 @@ export function searchBestPriceForCleanSnap(input: {
   const scoreOf = (price: number, result: ShapeWeightsResult): Scored => {
     let snapPriority: number;
     let edgeDrift: number;
+    let winRateTier: number;
     if (isShapeWeightsSuccess(result)) {
       const isSnapped = result.snapped === true;
       const skewMatchesBase =
@@ -2056,13 +2132,17 @@ export function searchBestPriceForCleanSnap(input: {
       else if (isSnapped) snapPriority = 1;
       else snapPriority = 2;
       edgeDrift = Math.abs(result.edge - targetEdge);
+      // Tagged-mode tier 0: within-tol = 0, outside-but-ok = 1.
+      winRateTier = tagged ? (isWithinTaggedTol(result) ? 0 : 1) : 0;
     } else {
       snapPriority = 3;
       edgeDrift = Infinity;
+      winRateTier = tagged ? 2 : 0;
     }
     return {
       price,
       result,
+      winRateTier,
       snapPriority,
       centsDist: Math.abs(Math.round(price * 100) - centsAtBase),
       edgeDrift,
@@ -2071,16 +2151,22 @@ export function searchBestPriceForCleanSnap(input: {
 
   let best: Scored = scoreOf(basePrice, baseResult);
 
-  // If the base price already produced a snapped (and skew-matching) result,
-  // PREFER it — never deviate without reason. Skip the sweep entirely. The
-  // base wasn't a fallback here — it was the winner on its own merits, so
-  // `fellBackToBase: false`.
-  if (best.snapPriority === 0) {
+  // ── Base-prefer early return ─────────────────────────────────────────
+  // DEFAULT MODE: if the base price already produced a snapped (and
+  // skew-matching) result, prefer it — never deviate without reason.
+  // TAGGED MODE: ALSO require base to satisfy the 0.01pp win-rate gate.
+  // Otherwise the sweep MUST run — the owner's accuracy requirement is
+  // the hard primary.
+  const baseQualifiesForEarlyReturn = tagged
+    ? best.winRateTier === 0 && best.snapPriority === 0
+    : best.snapPriority === 0;
+  if (baseQualifiesForEarlyReturn) {
     return {
       bestPrice: basePrice,
       bestResult: baseResult,
       searched: 1,
       fellBackToBase: false,
+      taggedAccuracyHit: tagged ? true : null,
     };
   }
 
@@ -2093,12 +2179,17 @@ export function searchBestPriceForCleanSnap(input: {
     const result = runAt(price);
     searched += 1;
     const scored = scoreOf(price, result);
-    // Lexicographic comparator: snapPriority < centsDist < edgeDrift.
+    // Lexicographic comparator: winRateTier < snapPriority < centsDist < edgeDrift.
+    // In default mode winRateTier is always 0 → effectively starts at snapPriority.
     if (
-      scored.snapPriority < best.snapPriority ||
-      (scored.snapPriority === best.snapPriority &&
+      scored.winRateTier < best.winRateTier ||
+      (scored.winRateTier === best.winRateTier &&
+        scored.snapPriority < best.snapPriority) ||
+      (scored.winRateTier === best.winRateTier &&
+        scored.snapPriority === best.snapPriority &&
         scored.centsDist < best.centsDist) ||
-      (scored.snapPriority === best.snapPriority &&
+      (scored.winRateTier === best.winRateTier &&
+        scored.snapPriority === best.snapPriority &&
         scored.centsDist === best.centsDist &&
         scored.edgeDrift < best.edgeDrift)
     ) {
@@ -2114,11 +2205,15 @@ export function searchBestPriceForCleanSnap(input: {
   const chosenSnapped =
     isShapeWeightsSuccess(best.result) && best.result.snapped === true;
   const fellBackToBase = best.centsDist === 0 && !chosenSnapped;
+  const taggedAccuracyHit = tagged
+    ? isWithinTaggedTol(best.result)
+    : null;
   return {
     bestPrice: best.price,
     bestResult: best.result,
     searched,
     fellBackToBase,
+    taggedAccuracyHit,
   };
 }
 
