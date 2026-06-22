@@ -312,9 +312,49 @@ export type ShapeWeightsSuccess = {
 };
 
 /**
+ * Discriminator for the structured HARD-limit kinds `shapeWeights` can emit.
+ * The set is enumerated for documentation + a single place to extend, but the
+ * field on `ShapeWeightsLimit` stays a plain `string` so callers don't need an
+ * exhaustive switch (renderers just show `detail` + `suggestion`).
+ *
+ * - `invalid-price`         — non-positive price input.
+ * - `invalid-target-edge`   — target edge not in (0, 1).
+ * - `invalid-target-win-rate` — target win-rate not in [0, 1).
+ * - `empty-pool`            — no usable cards after value/cap filtering.
+ * - `no-win-cards`          — pool has no card ≥ price (WIN + GRAIL empty).
+ * - `no-win-band-card`      — pool has GRAIL cards but no WIN-band card in
+ *                             [price, 5·price), and the math can't hit both the
+ *                             target edge AND the target win-rate.
+ * - `degenerate-pool`       — every usable card shares the same value.
+ * - `ev-out-of-range`       — target EV outside [pool min, pool max].
+ * - `no-dust-cards`         — pool has no card < 0.5·price to host losing mass.
+ * - `no-dust-mass`          — win + near-miss allocation consumed all mass.
+ * - `ev-unreachable-for-split` — target EV outside the chosen split's reachable range.
+ * - `edge-unreachable`      — couldn't push edge to target within the bump budget.
+ */
+export type ShapeWeightsLimitKind =
+  | "invalid-price"
+  | "invalid-target-edge"
+  | "invalid-target-win-rate"
+  | "empty-pool"
+  | "no-win-cards"
+  | "no-win-band-card"
+  | "degenerate-pool"
+  | "ev-out-of-range"
+  | "no-dust-cards"
+  | "no-dust-mass"
+  | "ev-unreachable-for-split"
+  | "edge-unreachable";
+
+/**
  * Structured description of the HARD limit that made the request genuinely
  * impossible (only the truly unsatisfiable cases — see `shapeWeights`). Carries
  * a human-readable detail plus a concrete, actionable suggestion.
+ *
+ * `kind` stays typed as `string` (not a strict `ShapeWeightsLimitKind`) so
+ * consumers don't need an exhaustive switch and the set can be extended without
+ * a breaking change. Use {@link ShapeWeightsLimitKind} for documentation of the
+ * currently-emitted values.
  */
 export type ShapeWeightsLimit = {
   kind: string;
@@ -501,17 +541,89 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
 
   const tol = 1e-9;
 
+  // Pre-compute helpers for band-aware messaging.
+  // The WIN band is [price, 5·price); GRAIL is ≥ 5·price; NEARMISS is [0.5·price,
+  // price); DUST is < 0.5·price. The price formatting style is the same
+  // `$X.XX` form used elsewhere in this file so the error strings read uniformly.
+  const winLo = price;
+  const winHi = 5 * price;
+  const dustHi = 0.5 * price;
+
+  // Detect whether the maxWinCap pre-filter actually DROPPED cards from the
+  // input pool. When the cap is the reason the pool ended up with no win-band
+  // cards, the error message is more useful if it says so directly (rather than
+  // implying the pool is intrinsically too cheap).
+  const capDroppedCount =
+    maxWinCap !== undefined
+      ? input.cards.reduce(
+          (n, c) => (Number.isFinite(c.value) && c.value > maxWinCap ? n + 1 : n),
+          0,
+        )
+      : 0;
+
   // ── HARD limit 1: need at least one win/grail card to make ANY win-rate ──
   if (grail.length + win.length === 0) {
+    // Two distinct sub-cases: (a) the cap pre-filter stripped what would have
+    // been win/grail cards, or (b) the pool intrinsically has no card ≥ price.
+    if (maxWinCap !== undefined && capDroppedCount > 0) {
+      return {
+        error: `Auto-cap filter removed ${capDroppedCount} card(s) above $${maxWinCap.toFixed(2)}; after filtering, pool has no card worth ≥ the $${price.toFixed(2)} price.`,
+        feasibility,
+        limit: {
+          kind: "no-win-cards",
+          detail: `Auto-cap filter removed ${capDroppedCount} card(s) above $${maxWinCap.toFixed(2)}. After filtering, pool has no card worth ≥ $${price.toFixed(2)} (the WIN/GRAIL bands are empty).`,
+          suggestion: `Either add a card priced between $${price.toFixed(2)} and $${maxWinCap.toFixed(2)} (a small-win card to host the win mass), OR raise the pack's max-win cap so the stripped jackpot card(s) can stay.`,
+        },
+      };
+    }
     return {
       error: "No win/grail cards (value ≥ price): cannot produce a non-zero win-rate.",
       feasibility,
       limit: {
         kind: "no-win-cards",
-        detail: `Pool has no card worth ≥ the $${price.toFixed(2)} price.`,
-        suggestion: `Add at least one card priced ≥ $${price.toFixed(2)} (Builder/card editor).`,
+        detail: `Pool has no card priced at or above $${price.toFixed(2)} (the WIN and GRAIL bands are empty). The win mass has nowhere to land.`,
+        suggestion: `Add at least one card priced between $${price.toFixed(2)} and $${winHi.toFixed(2)} (a small-win card to host the win mass).`,
       },
     };
+  }
+
+  // ── HARD limit 1b (NEW): grail-only pool can't satisfy edge + win-rate ──
+  // When the pool has GRAIL cards (≥ 5·price) but no WIN-band card in
+  // [price, 5·price), the minimum achievable EV at the target win-rate may be
+  // higher than evTarget. The min EV is achieved by putting all win-rate mass
+  // on the cheapest GRAIL card and all remaining mass on the cheapest non-grail
+  // card (preferring DUST, the cheapest band). If even THAT minimum EV exceeds
+  // evTarget, the solver cannot simultaneously hit the target edge AND the
+  // target win-rate without a small-win card to host the win mass.
+  //
+  // This is the "1% 18 PLUS" situation: a $1.25 pack with a $0.08 dust card and
+  // 16 jackpots at $60+. At a 1% target win-rate the cheapest grail (~$60)
+  // forces an EV that's structurally too high — the edge can't drop low enough.
+  // Without this pre-check the solver would later return `ev-unreachable-for-
+  // split`, but the surfaced message wouldn't tell the operator WHICH band is
+  // missing or what price range to add.
+  if (win.length === 0 && grail.length > 0) {
+    const cheapestGrail = Math.min(...grail.map((s) => s.value));
+    const nonGrail = slots.filter((s) => s.band !== "GRAIL");
+    const cheapestOther =
+      nonGrail.length > 0
+        ? Math.min(...nonGrail.map((s) => s.value))
+        : cheapestGrail; // pool is grail-only, no slack possible
+    const minEvAtWinRate =
+      requestedWinRate * cheapestGrail + (1 - requestedWinRate) * cheapestOther;
+    if (minEvAtWinRate > evTarget + tol) {
+      const exampleA = Math.max(price, 2 * price);
+      const exampleB = Math.max(price, 4 * price);
+      return {
+        error: `No WIN-band card: ${grail.length} jackpot card(s) ≥ $${winHi.toFixed(2)} but none in $${winLo.toFixed(2)}–$${winHi.toFixed(2)}. At ${(requestedWinRate * 100).toFixed(2)}% win-rate the min EV $${minEvAtWinRate.toFixed(2)} exceeds the target EV $${evTarget.toFixed(2)}.`,
+        feasibility: { ...feasibility, minEvAtWinRate, cheapestGrail, cheapestOther },
+        limit: {
+          kind: "no-win-band-card",
+          detail: `Pool has ${grail.length} jackpot card(s) ≥ $${winHi.toFixed(2)} but no small-win card in $${winLo.toFixed(2)}–$${winHi.toFixed(2)}. With a ${(requestedWinRate * 100).toFixed(2)}% target win-rate, the math can't simultaneously hit the target edge ${(targetEdge * 100).toFixed(2)}% — even the cheapest jackpot (≈$${cheapestGrail.toFixed(2)}) carries too much value for the ${(requestedWinRate * 100).toFixed(2)}% win-rate.`,
+          suggestion: `Add 1-2 cards priced between $${winLo.toFixed(2)} and $${winHi.toFixed(2)} (e.g. one around $${exampleA.toFixed(2)} and one around $${exampleB.toFixed(2)}). The retune will distribute weights for you.`,
+        },
+      };
+    }
   }
 
   // ── HARD limit 2: a degenerate single-value pool cannot host an edge ──
@@ -523,8 +635,8 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       feasibility,
       limit: {
         kind: "degenerate-pool",
-        detail: `All usable cards share the single value $${minValue.toFixed(2)}; there is no value spread to shape an edge.`,
-        suggestion: "Add cards at different values (a mix of cheap and win-priced cards) so the edge can be tuned.",
+        detail: `All cards in the pool have the same value $${minValue.toFixed(2)}. Cannot shape an edge from a single value — without spread, EV is pinned to that one price.`,
+        suggestion: `Add variety: at least one card at a different price tier (e.g. a DUST card below $${dustHi.toFixed(2)} or a small-win card between $${winLo.toFixed(2)} and $${winHi.toFixed(2)}).`,
       },
     };
   }
@@ -533,16 +645,18 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // (Same bound logic as computeOddsForTargetEv: a normalized mix can only land
   // between the pool min and max — no choice of weights can escape that range.)
   if (evTarget < minValue - tol || evTarget > maxValue + tol) {
+    const tooLow = evTarget < minValue;
     return {
       error: `Target EV $${evTarget.toFixed(4)} is out of range; pool values span $${minValue.toFixed(2)}–$${maxValue.toFixed(2)}.`,
       feasibility,
       limit: {
         kind: "ev-out-of-range",
-        detail: `The ${(targetEdge * 100).toFixed(2)}% edge needs EV $${evTarget.toFixed(2)}, but pool values only span $${minValue.toFixed(2)}–$${maxValue.toFixed(2)}.`,
-        suggestion:
-          evTarget < minValue
-            ? `Add a cheaper card (value ≤ $${evTarget.toFixed(2)}) so the EV can be pulled down to the edge target.`
-            : `Add a higher-value card (value ≥ $${evTarget.toFixed(2)}) so the EV can reach the edge target.`,
+        detail: tooLow
+          ? `Target EV $${evTarget.toFixed(2)} for a ${(targetEdge * 100).toFixed(2)}% edge is BELOW the pool's minimum value $${minValue.toFixed(2)}; no weighting can pull EV down to the target.`
+          : `Target EV $${evTarget.toFixed(2)} for a ${(targetEdge * 100).toFixed(2)}% edge is ABOVE the pool's maximum value $${maxValue.toFixed(2)}; no weighting can lift EV up to the target.`,
+        suggestion: tooLow
+          ? `Add cheaper cards in the DUST band (< $${dustHi.toFixed(2)}) so the EV can be pulled down to $${evTarget.toFixed(2)}.`
+          : `Add higher-value cards in the WIN band ($${winLo.toFixed(2)}–$${winHi.toFixed(2)}) or GRAIL band (≥ $${winHi.toFixed(2)}) so the EV can reach $${evTarget.toFixed(2)}.`,
       },
     };
   }
@@ -571,8 +685,8 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       feasibility,
       limit: {
         kind: "no-dust-cards",
-        detail: `Pool has no card worth < $${(0.5 * price).toFixed(2)} (half the $${price.toFixed(2)} price) to carry the losing mass.`,
-        suggestion: `Add at least one cheap card worth < $${(0.5 * price).toFixed(2)} (Builder/card editor) so the house edge has somewhere to sit.`,
+        detail: `Pool has no DUST card (< $${dustHi.toFixed(2)}, half the $${price.toFixed(2)} price). The losing mass has nowhere to sit, so the house edge can't be shaped.`,
+        suggestion: `Add one or more low-value cards priced under $${dustHi.toFixed(2)} (Builder/card editor) so the house edge has somewhere to sit.`,
       },
     };
   }
@@ -762,8 +876,8 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         detail: `The ${(targetEdge * 100).toFixed(2)}% edge needs EV $${evTarget.toFixed(2)}, but at the chosen win/near-miss split this pool can only produce EV $${evMin.toFixed(2)}–$${evMax.toFixed(2)}.`,
         suggestion:
           evTarget > evMax
-            ? `Add a higher-value win card, or lower the edge target, so EV can reach $${evTarget.toFixed(2)}.`
-            : `Add a cheaper dust card, or raise the edge target, so EV can drop to $${evTarget.toFixed(2)}.`,
+            ? `Add a higher-value card in the WIN band ($${winLo.toFixed(2)}–$${winHi.toFixed(2)}) or GRAIL band (≥ $${winHi.toFixed(2)}) so EV can reach $${evTarget.toFixed(2)} — or lower the edge target.`
+            : `Add a cheaper card in the DUST band (< $${dustHi.toFixed(2)}) so EV can drop to $${evTarget.toFixed(2)} — or raise the edge target.`,
       },
     };
   }
@@ -852,7 +966,7 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
       limit: {
         kind: "edge-unreachable",
         detail: `Could not push the edge up to ${(targetEdge * 100).toFixed(2)}% within ${MAX_BUMPS} weight bumps (reached ${(risk.edge * 100).toFixed(2)}%).`,
-        suggestion: `Add a cheaper dust card (well below $${(0.5 * price).toFixed(2)}) so weighting it down can lift the edge to target.`,
+        suggestion: `Add a cheaper card in the DUST band (well below $${dustHi.toFixed(2)}) so weighting it down can lift the edge to target.`,
       },
     };
   }

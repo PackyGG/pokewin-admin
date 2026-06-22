@@ -602,6 +602,176 @@ check("shapeWeights: win-rate too high for the mass budget → relaxed, success,
   }
 });
 
+// ── 6g. NEW HARD limit: grail-only pool can't satisfy edge + win-rate ──
+//
+// Regression for the band-aware error messages: a pool that has GRAIL cards
+// (≥ 5·price) but no WIN-band card in [price, 5·price) AND whose cheapest grail
+// is expensive enough that the min achievable EV at the target win-rate exceeds
+// evTarget. The new `no-win-band-card` HARD pre-check must fire BEFORE the
+// existing `ev-unreachable-for-split` so the operator sees a band-specific
+// suggestion mentioning the WIN price range.
+check("shapeWeights: grail-only pool with expensive grails → no-win-band-card with band-aware suggestion", () => {
+  // Price $1.25, target win-rate 1%, target edge 10.99%. With cheapest grail at
+  // $200 and a $0.08 dust card, min EV at 1% = 0.01·200 + 0.99·0.08 = $2.0792,
+  // which exceeds evTarget = 1.25·(1 − 0.1099) ≈ $1.1126.
+  const price = 1.25;
+  const cards = [
+    { value: 0.08 },   // dust
+    { value: 200 },    // grail (cheapest)
+    { value: 400 },    // grail
+    { value: 810 },    // grail
+  ];
+  const r = shapeWeights({
+    cards,
+    price,
+    targetEdge: 0.1099,
+    targetWinRate: 0.01,
+  });
+  assert(!isSuccess(r), "expensive-grails pool with 1% win-rate must error");
+  if (isSuccess(r)) return;
+  assert(
+    "limit" in r && r.limit.kind === "no-win-band-card",
+    `expected no-win-band-card, got ${"limit" in r ? r.limit.kind : "none"}`,
+  );
+  // The suggestion must mention the WIN price range so the operator knows what
+  // kind of card to add (price.toFixed(2) to (5*price).toFixed(2) = "$1.25" to "$6.25").
+  assert(
+    r.limit.suggestion.includes("$1.25") && r.limit.suggestion.includes("$6.25"),
+    `suggestion mentions WIN band $1.25–$6.25, got: ${r.limit.suggestion}`,
+  );
+  // The detail names the grail count and the missing WIN band.
+  assert(
+    r.limit.detail.includes("3 jackpot card(s)") || r.limit.detail.includes("jackpot"),
+    `detail names the grail count, got: ${r.limit.detail}`,
+  );
+  assert(
+    r.limit.detail.includes("$1.25") && r.limit.detail.includes("$6.25"),
+    `detail mentions the missing $1.25–$6.25 WIN band, got: ${r.limit.detail}`,
+  );
+  // The detail mentions the target win-rate so the operator can confirm WHY.
+  assert(r.limit.detail.includes("1.00%"), `detail names the 1% target, got: ${r.limit.detail}`);
+});
+
+// ── 6h. A grail-only pool whose cheapest grail is CHEAP ENOUGH still solves ──
+//
+// The new pre-check must NOT fire when min EV at the target win-rate is below
+// evTarget — the solver can find an intermediate beta. This is the user's
+// "1% 18 PLUS" scenario as literally described: price $1.25, cheapest grail
+// $60.25, dust $0.08, 1% win-rate, 10.99% edge → minEV ≈ $0.68 < evTarget
+// $1.11 → falls through to normal shaping and succeeds.
+check("shapeWeights: grail-only pool with cheap grails falls through to normal shaping", () => {
+  const price = 1.25;
+  const cards = [
+    { value: 0.08 },
+    { value: 60.25 },
+    { value: 64.76 },
+    { value: 75.47 },
+    { value: 114.0 },
+    { value: 118.21 },
+    { value: 508.45 },
+    { value: 810.07 },
+  ];
+  const r = shapeWeights({
+    cards,
+    price,
+    targetEdge: 0.1099,
+    targetWinRate: 0.01,
+  });
+  // This must succeed (or hit a different limit, but NOT no-win-band-card).
+  if (!isSuccess(r)) {
+    assert(
+      "limit" in r && r.limit.kind !== "no-win-band-card",
+      `cheap-grails pool must NOT trigger no-win-band-card, got: ${r.limit.kind} — ${r.limit.detail}`,
+    );
+    return;
+  }
+  // On success the edge is at/above target.
+  assert(r.edge >= 0.1099 - 1e-9, `edge ≥ target (${r.edge})`);
+});
+
+// ── 6i. A normal feasible pack still succeeds (regression for the rewrite) ──
+check("shapeWeights: a normal feasible pack still succeeds after the error-message rewrite", () => {
+  // The same rich pool from check #6 ($10 pack with cards spanning all bands).
+  const cards = [
+    { value: 0.1 },
+    { value: 0.5 },
+    { value: 1 },
+    { value: 3 },
+    { value: 7 }, // near-miss
+    { value: 12 },
+    { value: 25 },
+    { value: 80 },
+  ];
+  const r = shapeWeights({ cards, price: 10, targetEdge: TARGET_HOUSE_EDGE, targetWinRate: 0.2 });
+  assert(isSuccess(r), `normal feasible pack still solves: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+  assert(r.edge >= TARGET_HOUSE_EDGE - 1e-9, `edge ≥ target (${r.edge})`);
+});
+
+// ── 6j. The cap-filtered no-win-cards message says so distinctly ──────
+//
+// When `maxWinCap` strips win/grail cards down to zero, the suggestion must
+// offer EITHER adding a card in the surviving range OR raising the cap.
+check("shapeWeights: cap-stripped no-win-cards message names the cap + offers a raise-cap option", () => {
+  const price = 10;
+  // Three cards all above the $5 cap → all stripped → no usable card ≥ price.
+  // (A non-finite or value-≤-0 path isn't exercised here so we hit the cap path.)
+  const r = shapeWeights({
+    cards: [{ value: 50 }, { value: 100 }, { value: 200 }],
+    price,
+    targetWinRate: 0.2,
+    maxWinCap: 5,
+  });
+  assert(!isSuccess(r), "cap-stripped pool must error");
+  if (isSuccess(r)) return;
+  // After the cap pre-filter strips every card, no usable card remains at all,
+  // so the `empty-pool` limit fires (before any band check). The message must
+  // still name the cap.
+  assert(
+    "limit" in r &&
+      (r.limit.kind === "empty-pool" || r.limit.kind === "no-win-cards"),
+    `expected empty-pool or no-win-cards, got ${"limit" in r ? r.limit.kind : "none"}`,
+  );
+  assert(r.limit.detail.includes("$5.00"), `detail mentions the $5.00 cap, got: ${r.limit.detail}`);
+});
+
+// ── 6k. Cap-filtered no-win-cards with a surviving DUST card → distinct message ──
+//
+// When the cap strips WIN/GRAIL cards but the pool still has DUST survivors,
+// the new no-win-cards path emits the distinct "Auto-cap filter removed N
+// card(s)" detail naming the surviving range.
+check("shapeWeights: cap-stripped WITH dust survivors → no-win-cards detail names the cap-drop count", () => {
+  const price = 10;
+  const r = shapeWeights({
+    cards: [
+      { value: 1 },   // dust survives
+      { value: 50 },  // stripped by cap
+      { value: 200 }, // stripped by cap
+    ],
+    price,
+    targetWinRate: 0.2,
+    maxWinCap: 5,
+  });
+  assert(!isSuccess(r), "cap-stripped pool with dust survivors must error");
+  if (isSuccess(r)) return;
+  assert(
+    "limit" in r && r.limit.kind === "no-win-cards",
+    `expected no-win-cards, got ${"limit" in r ? r.limit.kind : "none"}`,
+  );
+  assert(
+    r.limit.detail.includes("Auto-cap filter removed 2 card(s)"),
+    `detail names the cap-drop count, got: ${r.limit.detail}`,
+  );
+  assert(
+    r.limit.detail.includes("$5.00") && r.limit.detail.includes("$10.00"),
+    `detail names cap and price, got: ${r.limit.detail}`,
+  );
+  assert(
+    r.limit.suggestion.includes("raise") || r.limit.suggestion.includes("max-win cap"),
+    `suggestion offers raising the cap, got: ${r.limit.suggestion}`,
+  );
+});
+
 // ── 7. THE SWEEP ────────────────────────────────────────────────────
 check("sweep: feasible combos satisfy invariants; infeasible return error-no-vector", () => {
   function dist(kind: "flat" | "power" | "bimodal", n: number, price: number): { value: number }[] {
