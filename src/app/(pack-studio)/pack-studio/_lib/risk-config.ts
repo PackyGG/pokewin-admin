@@ -77,6 +77,21 @@ export const ZERO_NEAR_MISS_FLOOR = 0.005;
 export const NEAR_MISS_COVERAGE_MIN = 0.05;
 
 /**
+ * Server-side fail-closed safety floor for any direct pool write that bypasses
+ * the auto-retune shaper (`applyPackEdit` writes operator weights verbatim;
+ * `applyPackRetune` writes shaped weights). No matter what the operator
+ * approved client-side, the server refuses to commit a pool whose computed
+ * house edge lands below this fraction. 5% is intentionally generous vs. the
+ * 10.99% edge-curve target (`TARGET_PACK_EDGE`) — the curve is the TARGET,
+ * this is the absolute "never ship below this" guard rail. The client-side
+ * double-confirm in the retune review is a UX defense and was demonstrably
+ * bypassed once by a stale browser bundle; this server constant is the
+ * backstop a stale client can never talk us out of. Lift only with deliberate
+ * follow-up.
+ */
+export const EDIT_EDGE_FLOOR = 0.05;
+
+/**
  * Per-pack compliance flags persisted in `pack_risk_scores.compliance` (JSON)
  * by the snapshot writer and read back by the overview/doctor surfaces.
  */

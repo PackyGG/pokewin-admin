@@ -36,6 +36,7 @@ import {
   autoRetuneTargets,
   autoTargetEdge,
   DEFAULT_EDGE_CURVE,
+  EDIT_EDGE_FLOOR,
   readEdgeCurveConfig,
   readMaxWinCap,
   readMaxMultCeiling,
@@ -1068,6 +1069,37 @@ export async function applyPackEdit(
     })),
     price: priceAfter,
   });
+
+  // ── HARD SERVER-SIDE FLOOR (fail-closed; no write may sneak past) ────────
+  // The client-side double-confirm in the retune review is a UX defense and
+  // was demonstrably bypassed once by a stale browser bundle. This server
+  // guard is the absolute backstop: any edited pool whose computed edge falls
+  // below `EDIT_EDGE_FLOOR` is refused BEFORE the snapshot and BEFORE the MAIN
+  // transaction, so nothing reaches `pack_cards`. Audit the refusal as a
+  // best-effort side-effect so the attempt is on record either way.
+  if (after.edge < EDIT_EDGE_FLOOR) {
+    try {
+      await createAdminAuditEvent({
+        adminUserId: session.userId,
+        eventType: "pack_edit_refused_edge_floor",
+        metadata: {
+          pack_id: packId,
+          name: pack.name,
+          attempted_edge: after.edge,
+          floor: EDIT_EDGE_FLOOR,
+          attempted_max_win: after.maxWin,
+          price_before: priceBefore,
+          price_after: priceAfter,
+          card_count_attempted: input.cards.length,
+        },
+      });
+    } catch {
+      /* best-effort — never block the refusal */
+    }
+    throw new Error(
+      `Refused: edited pool produces ${(after.edge * 100).toFixed(2)}% house edge, below the ${(EDIT_EDGE_FLOOR * 100).toFixed(0)}% safety floor. Adjust the odds so the house keeps at least ${(EDIT_EDGE_FLOOR * 100).toFixed(0)}% margin, then re-approve.`,
+    );
+  }
 
   // The explicit rows to write — operator's weights/color/animation/order verbatim.
   const rows = input.cards.map((c) => ({

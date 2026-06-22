@@ -57,6 +57,7 @@ import {
   autoTargetEdge,
   buildPackCompliance,
   DEFAULT_EDGE_CURVE,
+  EDIT_EDGE_FLOOR,
   readEdgeCurveConfig,
   readMaxWinCap,
   readMaxMultCeiling,
@@ -1601,6 +1602,33 @@ export async function applyPackRetune(
   if (Math.abs(after.winRate - resolved.targetWinRate) > winRateTol + 1e-9) {
     throw new Error(
       `Refused: resulting win-rate ${(after.winRate * 100).toFixed(2)}% misses target ${(resolved.targetWinRate * 100).toFixed(2)}% (±${(winRateTol * 100).toFixed(2)}%).`,
+    );
+  }
+  // Belt-and-suspenders: `shapeWeights` already fails closed below `targetEdge`,
+  // and `targetEdge` is clamped to ≥ the edge-curve floor — so in practice this
+  // can only trip if a future refactor weakens those guards. Cheap explicit
+  // backstop that matches the `applyPackEdit` floor exactly, and audited the
+  // same way so a refusal here is on record.
+  if (after.edge < EDIT_EDGE_FLOOR) {
+    try {
+      await createAdminAuditEvent({
+        adminUserId: session.userId,
+        eventType: "pack_edit_refused_edge_floor",
+        metadata: {
+          pack_id: packId,
+          name: pack.name,
+          source: "applyPackRetune",
+          attempted_edge: after.edge,
+          floor: EDIT_EDGE_FLOOR,
+          attempted_max_win: after.maxWin,
+          target_edge: targetEdge,
+        },
+      });
+    } catch {
+      /* best-effort — never block the refusal */
+    }
+    throw new Error(
+      `Refused: edited pool produces ${(after.edge * 100).toFixed(2)}% house edge, below the ${(EDIT_EDGE_FLOOR * 100).toFixed(0)}% safety floor. Adjust the odds so the house keeps at least ${(EDIT_EDGE_FLOOR * 100).toFixed(0)}% margin, then re-approve.`,
     );
   }
 
