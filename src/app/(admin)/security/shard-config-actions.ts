@@ -24,8 +24,10 @@ import {
  */
 
 // Mirror the backend's UsdPerShard: positive, max 100_000.
+// shard_earning_mode mirrors the backend's optional enum (omitted = unchanged).
 const InputSchema = z.object({
   usd_per_shard: z.number().positive().max(100_000),
+  shard_earning_mode: z.enum(["wager", "wagerloss"]).optional(),
 });
 
 export async function updateShardConfigAction(

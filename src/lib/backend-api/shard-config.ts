@@ -24,15 +24,29 @@ import { backendApi } from "./client";
  * callers degrade gracefully.
  */
 
+/**
+ * Earning basis for shards.
+ *   "wager"     — shards earned at bet time on weighted wager (legacy default).
+ *   "wagerloss" — shards earned at settlement on net loss max(0, wager - payout).
+ * Always present on GET responses; optional on PUT.
+ */
+export type ShardEarningMode = "wager" | "wagerloss";
+
 /** Shard economy config. `usd_per_shard` is USD of weighted wager per shard. */
 export type ShardConfig = {
   /** USD of shard-weighted wager required to earn one shard (default 10). */
   usd_per_shard: number;
+  /** Whether shards accrue on wager (at bet) or wager-loss (at settlement). */
+  shard_earning_mode: ShardEarningMode;
 };
 
-/** PUT payload — the backend requires usd_per_shard (positive, max 100000). */
+/**
+ * PUT payload — the backend requires usd_per_shard (positive, max 100000).
+ * `shard_earning_mode` is optional (omitted = unchanged).
+ */
 export type UpdateShardConfigInput = {
   usd_per_shard: number;
+  shard_earning_mode?: ShardEarningMode;
 };
 
 type Success<T> = { success: boolean; data: T };
