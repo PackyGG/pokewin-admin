@@ -1,33 +1,27 @@
-import { getEffectiveRoles, type AdminRole } from "@/lib/admin-roles";
+import { type AdminRole } from "@/lib/admin-roles";
 import type { SessionPayload } from "@/lib/session";
 import { getAdminSetting } from "@/lib/admin-settings";
-import { isOwner } from "@/lib/owners";
+import { isMainOwner } from "@/lib/owners";
 
 /**
  * Pack-Studio access control (security-sensitive).
  *
- * Pack Studio is a self-contained sub-app (a sibling to the Creator Hub).
- * RIGHT NOW it is reachable ONLY by an owner account, PLUS — once an admin
- * flips a toggle — by everyone holding the `admin` role. The per-role
- * on/off switch lives in the ADMIN DB (`admin_settings` key/value store),
- * DEFAULT OFF:
- *
- *   • `pack_studio_access_admin_enabled` — lets every `admin` in.
+ * HARD-LOCKED to the MAIN owner (motha) only — no role toggles, no
+ * promoted-owner access, no admins. This is the strictest posture: the
+ * pack-tuning surfaces (catalog re-shape, lottery skew, history revert)
+ * touch real-money packs, so the access set is the single account that
+ * the platform's source of truth (`MAIN_OWNER_USERNAME = "motha"`)
+ * recognises as root.
  *
  * Effective rule (single source of truth for BOTH the portal button
  * visibility in the sidebar AND the /pack-studio route guard):
  *
- *   canAccess = isOwner(session)
- *               OR settings[<each of the viewer's effective roles>] === true
+ *   canAccess = isMainOwner(session)   // username === "motha"
  *
- * With the toggle false, ONLY owners see the portal and can load the
- * Studio — every other user (including non-owner admins) is blocked. This
- * is the default, hardened, fail-closed posture: any unknown role, a
- * missing `admin_settings` table, or a transient DB read failure all
- * collapse to "not allowed" (except the owner bypass, which never depends
- * on the DB toggle).
- *
- * Modeled 1:1 on `@/lib/creator-hub-access`.
+ * The role-toggle plumbing below is kept dormant for any future re-broadening
+ * — flipping a toggle currently has NO effect because `canAccessPackStudio`
+ * ignores them. To re-enable roles later, restore the role-OR branch in
+ * `canAccessPackStudio` below.
  */
 
 /**
@@ -81,22 +75,17 @@ export async function getPackStudioAccessSettings(): Promise<PackStudioAccessSet
 /**
  * THE access decision. Pure + synchronous so it can be unit-reasoned and
  * reused verbatim by the sidebar (server-computed prop) and the route
- * guard. Pass the verified session + the loaded toggle settings.
+ * guard.
  *
- * An owner always passes (DB-independent bypass). Otherwise the viewer
- * passes iff at least one of their effective roles has its toggle enabled.
+ * HARD-LOCKED to the MAIN owner (motha) only. The `settings` parameter is
+ * retained for callsite compatibility (and for future role-toggle reuse),
+ * but is currently IGNORED — no other account passes, ever, regardless of
+ * role, `is_owner` flag, or any DB toggle. Username is checked
+ * DB-independently so the root account can never lock itself out.
  */
 export function canAccessPackStudio(
   session: Pick<SessionPayload, "username" | "role" | "roles" | "isOwner">,
-  settings: PackStudioAccessSettings,
+  _settings: PackStudioAccessSettings,
 ): boolean {
-  if (isOwner(session)) {
-    return true;
-  }
-  const roles = getEffectiveRoles(session.role, session.roles);
-  return roles.some(
-    (role) =>
-      (PACK_STUDIO_TOGGLE_ROLES as readonly string[]).includes(role) &&
-      settings[role as PackStudioToggleRole] === true,
-  );
+  return isMainOwner(session);
 }
