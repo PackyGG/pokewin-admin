@@ -558,7 +558,7 @@ function OddsTotalChip({
   );
 }
 
-/** The live AFTER edge + win-rate + max-win, animated. House-POV colors. */
+/** The live AFTER edge + EV/open + win-rate + max-win, animated. House-POV colors. */
 function EditorPreview({
   after,
   price,
@@ -579,8 +579,20 @@ function EditorPreview({
   const edgeTone = healthy
     ? "text-emerald-600 dark:text-emerald-400"
     : "text-rose-600 dark:text-rose-400";
+  // House-POV color for EV: target EV = price · (1 − targetEdge). Below target
+  // means the house gives back less than budgeted → emerald (healthy); above
+  // target means the house gives back more → rose; equal is neutral. Mirrors
+  // the rule "rose = player wins more, emerald = house healthy".
+  const targetEv = price * (1 - targetEdge);
+  const evDelta = after.ev - targetEv;
+  const evTone =
+    evDelta < -1e-9
+      ? "text-emerald-600 dark:text-emerald-400"
+      : evDelta > 1e-9
+        ? "text-rose-600 dark:text-rose-400"
+        : "";
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
       <PreviewTile
         label="House edge"
         valueNode={
@@ -589,6 +601,15 @@ function EditorPreview({
           </span>
         }
         note={`target ${(targetEdge * 100).toFixed(2)}%`}
+      />
+      <PreviewTile
+        label="EV / open"
+        valueNode={
+          <span className={cn("font-bold", evTone)}>
+            <AnimatedNumber value={after.ev} format="currency" />
+          </span>
+        }
+        note={`${formatCurrency(targetEv)} target at ${(targetEdge * 100).toFixed(2)}% edge`}
       />
       <PreviewTile
         label="Win rate"
