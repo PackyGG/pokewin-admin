@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   ArrowRight,
   Check,
+  Info,
   Loader2,
   TriangleAlert,
   Wand2,
@@ -197,6 +198,17 @@ export function PoolEditor({
   const feasible = rows.length > 0 && hasWinCard && after != null;
   const hasAddedCards = rows.some((r) => r.added);
 
+  // Live sum of the per-card odds-% inputs. Mirrors `approve`'s pre-scale view
+  // (`rows.map((r) => r.odds)`) so what the owner sees matches what
+  // `oddsToWeights` then turns into the integer weights for `applyPackEdit`.
+  // The auto-retune renormalizes, but inputs should sum to ~100% so the owner
+  // can reason about each row as a true probability.
+  const oddsTotal = React.useMemo(
+    () =>
+      rows.reduce((s, r) => s + (Number.isFinite(r.odds) ? r.odds : 0), 0),
+    [rows],
+  );
+
   // ── Table handlers (mirror the Builder) ─────────────────────────────
   const onReorder = React.useCallback((next: SortableCard[]) => {
     setRows((prev) => {
@@ -365,6 +377,11 @@ export function PoolEditor({
         )}
       </div>
 
+      {/* Live total of the per-card odds inputs (mirrored above the action
+          buttons below). Owner sets these by hand; renormalization happens on
+          apply, but a visible total prevents accidental 102% / 98% mistakes. */}
+      <OddsTotalChip total={oddsTotal} hasRows={rows.length > 0} />
+
       {/* Live AFTER preview + feasibility */}
       <EditorPreview after={after} price={price} targetEdge={targets.targetEdge} />
 
@@ -394,6 +411,10 @@ export function PoolEditor({
           price) to make it a valid pack.
         </p>
       )}
+
+      {/* Mirror of the odds-total chip right above the action buttons, so the
+          owner sees the same total regardless of scroll position. */}
+      <OddsTotalChip total={oddsTotal} hasRows={rows.length > 0} />
 
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -460,6 +481,81 @@ function seedRows(pool: EditPool): EditRow[] {
       animation: c.animation,
       added: false,
     }));
+}
+
+/**
+ * Always-visible running total of the per-card odds-% inputs. Rendered TWICE
+ * inside the editor (near the top + just above the Approve buttons) so the
+ * owner can't miss it regardless of scroll position. Three states:
+ *
+ * - Exactly 100% (±0.005)    → emerald, check icon — input matches a probability.
+ * - Below 100%                → amber, info icon — informational under-total.
+ * - Above 100%                → rose, BOLD + LARGER, triangle-alert — over-total,
+ *                               the case the owner just hit (102%) without
+ *                               noticing. Approve is NOT disabled (the
+ *                               auto-retune renormalizes), but the chip makes
+ *                               the mistake impossible to miss.
+ */
+function OddsTotalChip({
+  total,
+  hasRows,
+}: {
+  total: number;
+  hasRows: boolean;
+}) {
+  if (!hasRows) return null;
+  // ±0.005 tolerance — anything that prints "100.00%" at two decimals counts
+  // as exactly 100, so the chip and the displayed number agree.
+  const exact = Math.abs(total - 100) <= 0.005;
+  const over = !exact && total > 100;
+  const tone = exact
+    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+    : over
+      ? "border-rose-500/40 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+      : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400";
+  const Icon = exact ? Check : over ? TriangleAlert : Info;
+  const label = exact
+    ? "Total odds match 100%"
+    : over
+      ? "Over 100% — fix this before approving"
+      : "Under 100%";
+  return (
+    <div
+      className={cn(
+        "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2",
+        tone,
+      )}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-center gap-2">
+        <Icon
+          className={cn("shrink-0", over ? "size-4" : "size-3.5")}
+          aria-hidden
+        />
+        <span
+          className={cn(
+            "tabular-nums",
+            over ? "text-base font-bold sm:text-lg" : "text-sm font-semibold",
+          )}
+        >
+          Total odds: {total.toFixed(2)}% / 100%
+        </span>
+        <span
+          className={cn(
+            "text-xs font-medium",
+            over ? "font-bold uppercase tracking-wider" : "opacity-90",
+          )}
+        >
+          {label}
+        </span>
+      </div>
+      <p className="basis-full text-[11px] opacity-75">
+        Odds must sum to 100% — the auto-retune will renormalize, but your
+        inputs should reflect what you want.
+      </p>
+    </div>
+  );
 }
 
 /** The live AFTER edge + win-rate + max-win, animated. House-POV colors. */
