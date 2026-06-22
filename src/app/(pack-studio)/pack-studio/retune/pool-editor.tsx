@@ -80,6 +80,67 @@ type EditRow = SortableCard & {
   added: boolean;
 };
 
+/**
+ * Auto-pick color + animation for a new pack_card, mirroring the convention
+ * used by existing cards (derived from live pack_cards data, 2026-06-22).
+ *
+ * Rule of thumb: color is a function of card_value / pack_price. The thresholds
+ * below match the medians of each color band in production and reproduce ~80–90%
+ * of curated cards exactly; the rest are off-by-one tier, matching the same
+ * curator-tolerance the existing pool exhibits.
+ *
+ *   ratio >= 10  -> gold   (animated)   — top-band jackpot, ~98% animated live
+ *   ratio >= 3   -> red    (animated)   — high-value, ~94% animated live
+ *   ratio >= 1.5 -> purple                — profitable
+ *   ratio >= 0.75 -> blue                 — near-price / break-even
+ *   ratio >= 0.2 -> green                 — sub-price
+ *   else         -> white                 — dust
+ *
+ * Animation = true iff color is gold or red (rule of thumb from the audit;
+ * other colors are animated <2% of the time live, so always-false is the
+ * convention-matching default for the lower tiers).
+ *
+ * Guard: a non-finite or non-positive price -> white/false (safe default that
+ * never auto-promotes a card to gold on a degenerate input).
+ */
+function autoColorAndAnimation(
+  cardValue: number,
+  packPrice: number,
+): { color: string | null; animation: boolean } {
+  if (
+    !Number.isFinite(cardValue) ||
+    !Number.isFinite(packPrice) ||
+    packPrice <= 0
+  ) {
+    return { color: "white", animation: false };
+  }
+  const ratio = cardValue / packPrice;
+  if (ratio >= 10) return { color: "gold", animation: true };
+  if (ratio >= 3) return { color: "red", animation: true };
+  if (ratio >= 1.5) return { color: "purple", animation: false };
+  if (ratio >= 0.75) return { color: "blue", animation: false };
+  if (ratio >= 0.2) return { color: "green", animation: false };
+  return { color: "white", animation: false };
+}
+
+/** Human-readable summary of an auto-pick, used for the inline hint. */
+function describeAutoPick(color: string | null, animation: boolean): string {
+  const colorLabel = color ?? "none";
+  const band =
+    color === "gold"
+      ? "top-band jackpot"
+      : color === "red"
+        ? "high-value win"
+        : color === "purple"
+          ? "profitable"
+          : color === "blue"
+            ? "near-price"
+            : color === "green"
+              ? "sub-price"
+              : "dust";
+  return `Auto: ${colorLabel}${animation ? " + animated" : ""} (${band})`;
+}
+
 /** The pack targets the "Re-shape to targets" button shapes onto. */
 export type EditorTargets = {
   targetEdge: number;
@@ -216,6 +277,14 @@ export function PoolEditor({
   // so the server may nudge the pack price by up to ±25% around the staged
   // price to land cleaner odds. Default OFF so today's behavior is unchanged.
   const [allowPriceSearch, setAllowPriceSearch] = React.useState(false);
+  // Short-lived description of the latest auto-pick, shown next to the table so
+  // the owner can immediately see what color/animation was chosen for the newly
+  // added card (and that they can flip it by hand in the row controls).
+  const [lastAutoHint, setLastAutoHint] = React.useState<{
+    cardName: string;
+    color: string | null;
+    animation: boolean;
+  } | null>(null);
 
   // Card-picker filters, loaded lazily on first open (server action).
   const [filters, setFilters] = React.useState<RetunePickerFilters | null>(null);
@@ -296,47 +365,60 @@ export function PoolEditor({
     setRows((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  const addCard = React.useCallback((item: BuilderCardItem) => {
-    setRows((prev) => {
-      if (prev.some((r) => r.cardId === item.id)) return prev;
-      // Give the new card a FAIR share of the pool so the KPI preview shifts
-      // VISIBLY on add — not just a hair. We allocate the new card 100/N% (its
-      // equal share among the now-N rows) and scale existing rows down by the
-      // complementary factor (N-1)/N so the total stays at 100%. This is the
-      // owner-friendly default: adding a $810 jackpot to a 100% pool now moves
-      // the edge/EV/maxWin tiles meaningfully (the new card has presence), and
-      // the "Total odds" chip stays exactly 100% so the OddsTotalChip stays
-      // green. The owner can still hand-tune any row afterwards, or click
-      // "Re-shape to targets" to drop onto the auto curve. Without this, a
-      // hard-coded `odds: 1` next to existing rows summing to ~100% gives the
-      // new card ~1% of the share — KPIs barely budge and the owner thinks
-      // the preview is frozen.
-      const nextLen = prev.length + 1;
-      const newOdds = nextLen > 0 ? round4(100 / nextLen) : 100;
-      const scale = (nextLen - 1) / nextLen;
-      const scaled = prev.map((r) => ({
-        ...r,
-        odds: round4((Number.isFinite(r.odds) ? r.odds : 0) * scale),
-      }));
-      // Insert the new card and re-sort by price DESC so the pool stays
-      // ordered most-expensive-first regardless of pick order. The Builder's
-      // table reads top-down, so a $0.72 add lands above a $0.08 dust card
-      // and below an $810 jackpot — never appended to the bottom.
-      return sortByPriceDesc([
-        ...scaled,
-        {
-          cardId: item.id,
-          name: item.name,
-          imageUrl: item.imageUrl,
-          priceUsd: item.priceUsd,
-          odds: newOdds,
-          color: null,
-          animation: false,
-          added: true,
-        },
-      ]);
-    });
-  }, []);
+  const addCard = React.useCallback(
+    (item: BuilderCardItem) => {
+      // Seed color + animation from the convention-matching auto-pick (see
+      // `autoColorAndAnimation` above). The owner can still flip either field
+      // by hand in the row controls below — auto only applies to brand-new
+      // adds; rows seeded from the live pool keep their existing color/anim.
+      const auto = autoColorAndAnimation(item.priceUsd, price);
+      setRows((prev) => {
+        if (prev.some((r) => r.cardId === item.id)) return prev;
+        // Give the new card a FAIR share of the pool so the KPI preview shifts
+        // VISIBLY on add — not just a hair. We allocate the new card 100/N% (its
+        // equal share among the now-N rows) and scale existing rows down by the
+        // complementary factor (N-1)/N so the total stays at 100%. This is the
+        // owner-friendly default: adding a $810 jackpot to a 100% pool now moves
+        // the edge/EV/maxWin tiles meaningfully (the new card has presence), and
+        // the "Total odds" chip stays exactly 100% so the OddsTotalChip stays
+        // green. The owner can still hand-tune any row afterwards, or click
+        // "Re-shape to targets" to drop onto the auto curve. Without this, a
+        // hard-coded `odds: 1` next to existing rows summing to ~100% gives the
+        // new card ~1% of the share — KPIs barely budge and the owner thinks
+        // the preview is frozen.
+        const nextLen = prev.length + 1;
+        const newOdds = nextLen > 0 ? round4(100 / nextLen) : 100;
+        const scale = (nextLen - 1) / nextLen;
+        const scaled = prev.map((r) => ({
+          ...r,
+          odds: round4((Number.isFinite(r.odds) ? r.odds : 0) * scale),
+        }));
+        // Insert the new card and re-sort by price DESC so the pool stays
+        // ordered most-expensive-first regardless of pick order. The Builder's
+        // table reads top-down, so a $0.72 add lands above a $0.08 dust card
+        // and below an $810 jackpot — never appended to the bottom.
+        return sortByPriceDesc([
+          ...scaled,
+          {
+            cardId: item.id,
+            name: item.name,
+            imageUrl: item.imageUrl,
+            priceUsd: item.priceUsd,
+            odds: newOdds,
+            color: auto.color,
+            animation: auto.animation,
+            added: true,
+          },
+        ]);
+      });
+      setLastAutoHint({
+        cardName: item.name,
+        color: auto.color,
+        animation: auto.animation,
+      });
+    },
+    [price],
+  );
 
   // ── Re-shape to targets (pure shapeWeights on the edited values) ─────
   const reshape = React.useCallback(() => {
@@ -515,6 +597,30 @@ export function PoolEditor({
           </span>
         </div>
       )}
+
+      {/* Inline hint for the most-recent auto-pick — non-intrusive note that
+          color + animation were seeded by the heuristic and can still be
+          flipped by hand in the row controls. Cleared when the picked card is
+          removed from the pool. */}
+      {lastAutoHint &&
+        rows.some((r) => r.name === lastAutoHint.cardName && r.added) && (
+          <div
+            className="flex items-start gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300"
+            role="status"
+            aria-live="polite"
+          >
+            <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <span>
+              <span className="font-medium">{lastAutoHint.cardName}</span>
+              {" — "}
+              {describeAutoPick(lastAutoHint.color, lastAutoHint.animation)}.{" "}
+              <span className="opacity-80">
+                Change it in the row controls below if you want a different
+                look.
+              </span>
+            </span>
+          </div>
+        )}
 
       {/* The editable card table (reused from the Builder) */}
       {rows.length > 0 ? (
