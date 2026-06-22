@@ -52,7 +52,7 @@ import {
   DEFAULT_EDGE_FLOOR,
   DEFAULT_EDGE_CEILING,
   DEFAULT_EDGE_CURVE,
-} from "../../../(pack-studio)/pack-studio/_lib/auto-targets";
+} from "../_lib/auto-targets";
 
 let passes = 0;
 const failures: string[] = [];

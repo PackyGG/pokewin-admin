@@ -262,7 +262,6 @@ export function AppSidebar({
   username,
   dbEnv,
   canEnterCreatorHub = false,
-  canEnterPackStudio = false,
   isOwner = false,
 }: {
   role: string;
@@ -281,13 +280,6 @@ export function AppSidebar({
   // prop never reveals the portal. With both toggles off only `motha` gets
   // `true`.
   canEnterCreatorHub?: boolean;
-  // Whether to show the "Switch to Pack Studio" portal button. Computed
-  // SERVER-SIDE by the layout (it depends on ADMIN-DB access toggles the
-  // client can't read) via `canAccessPackStudio`, and matched 1:1 to the
-  // /pack-studio route guard. Defaults to false (fail-closed) so a missing
-  // prop never reveals the portal. With the toggle off only an owner gets
-  // `true`.
-  canEnterPackStudio?: boolean;
   // OWNER / ultra-admin flag, computed SERVER-SIDE by the layout from the
   // DB-fresh session. An owner bypasses the `usernameAllowlist` cosmetic gate
   // (so the owner-only nav items — Salaries, Excluded Users, the Insights group
@@ -435,40 +427,6 @@ export function AppSidebar({
               </span>
             </span>
             <ArrowRight className="size-4 shrink-0 text-pink-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/portal:translate-x-0.5" />
-          </Link>
-        </div>
-      )}
-      {/* Pack Studio portal — sits directly beside the Creator Hub portal, a
-          second "switch to a sub-app" affordance with its own violet accent.
-          Visibility is decided SERVER-SIDE (canEnterPackStudio prop): an owner
-          OR a per-role ADMIN-DB toggle (default off), identical to the
-          /pack-studio route guard. The route itself is independently gated
-          regardless. In icon-collapsed mode it shrinks to a centered violet
-          mark with a hover tooltip. */}
-      {canEnterPackStudio && (
-        <div className="px-2 pt-2 group-data-[collapsible=icon]:px-0">
-          <Link
-            href="/pack-studio"
-            onClick={handleNavTap}
-            title="Switch to Pack Studio"
-            className={cn(
-              "group/studio relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-violet-500/30 bg-gradient-to-r from-violet-500/15 via-violet-500/10 to-transparent px-3 py-2.5 outline-none",
-              "transition-colors hover:border-violet-500/50 hover:from-violet-500/25 hover:via-violet-500/15 focus-visible:ring-2 focus-visible:ring-violet-500/40",
-              "group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-0",
-            )}
-          >
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-500/20 text-violet-600 ring-1 ring-inset ring-violet-500/30 dark:text-violet-400 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:rounded-lg">
-              <Package className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-              <span className="block truncate text-xs font-semibold text-violet-600 dark:text-violet-300">
-                Switch to Pack Studio
-              </span>
-              <span className="block truncate text-[11px] text-muted-foreground">
-                Pack design workspace
-              </span>
-            </span>
-            <ArrowRight className="size-4 shrink-0 text-violet-500 transition-transform group-data-[collapsible=icon]:hidden motion-safe:group-hover/studio:translate-x-0.5" />
           </Link>
         </div>
       )}

@@ -308,9 +308,9 @@ export type LivePoolCard = {
  * matching the snapshot's per-card unit so the UI can diff them apples-to-apples.
  * Returns `[]` for a pack that no longer exists.
  *
- * Caller is responsible for auth (the only call site is the history page's
- * server action, which already runs through `requirePackStudioPageAccess` +
- * owner check).
+ * Caller is responsible for auth — every consumer in (admin)/packs/actions.ts
+ * already runs through `requirePageAccess("/packs")` + `require2FA()` +
+ * an owner / repricer check before invoking these helpers.
  */
 export async function getLivePackPool(
   packId: string,

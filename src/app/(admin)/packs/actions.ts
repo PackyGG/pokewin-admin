@@ -63,13 +63,13 @@ import {
   readMaxMultCeiling,
   type EdgeCurveConfig,
   type ResolvedAutoTargetCfg,
-} from "@/app/(pack-studio)/pack-studio/_lib/risk-config";
+} from "@/app/(admin)/packs/_lib/risk-config";
 import type { pack_tag } from "@/generated/prisma/enums";
 import {
   capturePackSnapshot,
   getPackSnapshot,
   type SnapshotCard,
-} from "@/app/(pack-studio)/pack-studio/_lib/pack-history";
+} from "@/app/(admin)/packs/_lib/pack-history";
 
 /**
  * Persists a pack's `shard_cost` via raw SQL. The column is on the dev schema
@@ -828,7 +828,6 @@ async function refreshPackRiskScore(
       update: riskRow,
       create: { pack_id: packId, ...riskRow },
     });
-    revalidateTag("pack-studio-overview");
   } catch (err) {
     console.error("refreshPackRiskScore: pack_risk_scores refresh failed", err);
   }
