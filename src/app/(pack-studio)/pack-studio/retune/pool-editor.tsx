@@ -265,7 +265,11 @@ export function PoolEditor({
   const addCard = React.useCallback((item: BuilderCardItem) => {
     setRows((prev) => {
       if (prev.some((r) => r.cardId === item.id)) return prev;
-      return [
+      // Insert the new card and re-sort by price DESC so the pool stays
+      // ordered most-expensive-first regardless of pick order. The Builder's
+      // table reads top-down, so a $0.72 add lands above a $0.08 dust card
+      // and below an $810 jackpot — never appended to the bottom.
+      return sortByPriceDesc([
         ...prev,
         {
           cardId: item.id,
@@ -279,7 +283,7 @@ export function PoolEditor({
           animation: false,
           added: true,
         },
-      ];
+      ]);
     });
   }, []);
 
@@ -555,10 +559,12 @@ function seedRows(pool: EditPool): EditRow[] {
     (s, c) => s + (c.weight > 0 ? c.weight : 0),
     0,
   );
-  return pool.cards
-    .slice()
-    .sort((a, b) => a.order - b.order)
-    .map((c) => ({
+  // Sort by price DESC on seed too, so the initial view matches the invariant
+  // the editor enforces from here on out (and matches what the owner will see
+  // after any add). The stored `order` is rewritten on Approve from the row
+  // index, so display order = write order = sorted-by-price order.
+  return sortByPriceDesc(
+    pool.cards.map((c) => ({
       cardId: c.cardId,
       name: c.name,
       imageUrl: c.imageUrl || null,
@@ -570,7 +576,30 @@ function seedRows(pool: EditPool): EditRow[] {
       color: c.color,
       animation: c.animation,
       added: false,
-    }));
+    })),
+  );
+}
+
+/**
+ * Sort the editor rows by card price DESCENDING — most expensive at index 0,
+ * cheapest at the end. Used for the initial seed AND every time a card is
+ * added, so the pool always reads top-down from jackpot to dust. Stable on
+ * ties (preserves insertion order) so the owner's manual reordering of equal-
+ * priced cards isn't shuffled. Not used in `onReorder` — manual DnD overrides
+ * the price sort intentionally, so the owner can still hand-place same-price
+ * variants. New adds go through this helper, so a fresh pick always lands in
+ * its price-sorted position rather than being appended to the bottom.
+ */
+function sortByPriceDesc<T extends { priceUsd: number }>(rows: T[]): T[] {
+  // Use index-tagged sort for stability — Array#sort isn't guaranteed stable
+  // pre-ES2019 in every JS engine, and we lean on stability for equal prices.
+  return rows
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => {
+      if (b.r.priceUsd !== a.r.priceUsd) return b.r.priceUsd - a.r.priceUsd;
+      return a.i - b.i;
+    })
+    .map(({ r }) => r);
 }
 
 /**
