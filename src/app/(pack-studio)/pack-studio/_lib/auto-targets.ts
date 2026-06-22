@@ -263,12 +263,35 @@ export type ResolvedAutoTargetCfg = {
  *
  *   cheap pack  → bounded by the multiplier   (price · maxMultCeiling < globalCap)
  *   premium pack→ bounded by the global cap    (globalCap < price · maxMultCeiling)
+ *
+ * HIT-RATE-AWARE (lottery packs): a LOW-hit-rate pack ("1% …", "5% …") needs a
+ * BIG jackpot to hold the house edge — a low win probability only balances out
+ * when the rare win pays a lot. So the price-relative multiplier scales INVERSELY
+ * with the intended hit-rate, anchored at the default win-rate (0.20) so a
+ * normal pack is UNCHANGED:
+ *
+ *   scale = max(1, DEFAULT_TARGET_WIN_RATE / hitRate)
+ *           → 1 at the default (0.20), 4 at 5%, 20 at 1%
+ *
+ * `Math.max(1, …)` is the load-bearing guard: a pack with a HIGHER-than-default
+ * hit-rate never gets a TIGHTER cap than the plain 100×. The cap is only ever
+ * LOOSENED for low hit-rate, never tightened. The absolute `globalCap` clamp is
+ * preserved, so the loosened multiplier can never breach the absolute ceiling.
+ *
+ * `hitRate` is the pack's INTENDED hit-rate (a fraction in (0,1], e.g. from
+ * {@link parsePackHitRate}). Omitted / non-positive ⇒ the default win-rate ⇒ no
+ * scale (existing callers stay byte-for-byte unchanged).
  */
 export function autoMaxWinCap(
   price: number,
   cfg: ResolvedAutoTargetCfg,
+  hitRate?: number,
 ): number {
-  const multBound = price * cfg.maxMultCeiling;
+  const effHitRate = hitRate && hitRate > 0 ? hitRate : DEFAULT_TARGET_WIN_RATE;
+  // scale ≥ 1 always: 1 at the default win-rate, larger as hit-rate drops below
+  // it. NEVER below 1 — a higher-than-default hit-rate keeps the plain 100×.
+  const scale = Math.max(1, DEFAULT_TARGET_WIN_RATE / effHitRate);
+  const multBound = price * cfg.maxMultCeiling * scale;
   const cap = Math.min(cfg.globalCap, multBound);
   // Never cap below the ticket price (would strip all win/grail cards).
   return Math.max(cap, price);
@@ -297,12 +320,15 @@ export type AutoRetuneTargets = {
  * Pure + sync — the caller resolves `cfg` once (via `readMaxWinCap` +
  * `readMaxMultCeiling` + `readEdgeCurveConfig`) and reuses it across packs.
  *
- * `targetEdge` uses the pack's intended jackpot cap (`autoMaxWinCap(price, cfg)`)
- * as the max-win input: pre-shape the pack's ACTUAL max obtainable card value
- * isn't known yet (the shaper decides which cards survive the cap), so the cap —
- * the worst-case top-card exposure the pack is allowed to carry — is the right,
- * deterministic proxy for the pack's house-risk premium. Once shaped, the actual
- * top card is ≤ this cap, so the cap is a conservative (upper-bound) premium.
+ * `targetEdge` uses the pack's intended jackpot cap (`autoMaxWinCap(price, cfg,
+ * intendedHitRate)`) as the max-win input: pre-shape the pack's ACTUAL max
+ * obtainable card value isn't known yet (the shaper decides which cards survive
+ * the cap), so the cap — the worst-case top-card exposure the pack is allowed to
+ * carry — is the right, deterministic proxy for the pack's house-risk premium.
+ * Once shaped, the actual top card is ≤ this cap, so the cap is a conservative
+ * (upper-bound) premium. For a tagged LOTTERY pack the hit-rate-aware cap is
+ * larger, so its edge target is nudged up a hair (more jackpot exposure ⇒ a
+ * slightly fatter risk premium) — still clamped under `edgeCeiling` (11.50%).
  *
  * Every existing consumer of `autoRetuneTargets` (`portfolio.ts`'s
  * `derivePortfolioTargets`/`computePortfolioProfile`, and — via
@@ -322,7 +348,6 @@ export function autoRetuneTargets(
   cfg: ResolvedAutoTargetCfg,
   nameOrHitRate?: string | number | null,
 ): AutoRetuneTargets {
-  const maxWinCap = autoMaxWinCap(price, cfg);
   const intendedHitRate =
     typeof nameOrHitRate === "string"
       ? parsePackHitRate(nameOrHitRate)
@@ -332,6 +357,10 @@ export function autoRetuneTargets(
           nameOrHitRate <= 1
         ? nameOrHitRate
         : null;
+  // HIT-RATE-AWARE cap: a tagged lottery pack ("1% …") gets a LOOSENED jackpot
+  // ceiling so its big top card survives the shaper (a low hit-rate needs a big
+  // jackpot to hold the edge). Untagged ⇒ intendedHitRate null ⇒ the plain cap.
+  const maxWinCap = autoMaxWinCap(price, cfg, intendedHitRate ?? undefined);
   return {
     targetEdge: autoTargetEdge(
       { price, maxWin: maxWinCap },

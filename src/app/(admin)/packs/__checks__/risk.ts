@@ -1053,6 +1053,85 @@ check("autoRetuneTargets: a tagged pack targets ITS tag win-rate; untagged → d
   }
 });
 
+// ── 13. HIT-RATE-AWARE CAP: a low-hit-rate lottery pack keeps its jackpot ───
+//
+// Regression for the real "1% 18 PLUS" lottery case: a $1.25 pack whose pool
+// carries an $810 jackpot. Under the PLAIN 100× cap the auto cap is $125, which
+// strips the $810 (and every card over $125) → the jackpot is gutted and a true
+// 1% pack can even go infeasible. The hit-rate-aware cap LOOSENS the multiplier
+// inversely with the intended hit-rate (scale = max(1, 0.20/hitRate)) so the big
+// top card survives, while a normal (default-win-rate) pack is byte-for-byte
+// unchanged.
+check("autoMaxWinCap is hit-rate-aware: loosens for lottery packs, unchanged for normal packs", () => {
+  const cfg = { globalCap: 25000, maxMultCeiling: 100 };
+
+  // (a) Default / undefined / at-the-default-win-rate ⇒ the plain 100× cap.
+  approx(autoMaxWinCap(1.25, cfg), 125, 1e-9, "undefined hitRate → plain 100× ($125)");
+  approx(autoMaxWinCap(1.25, cfg, DEFAULT_TARGET_WIN_RATE), 125, 1e-9, "hitRate=default → plain 100×");
+
+  // (b) Scale is max(1, default/hitRate): 4× at 5%, 20× at 1%.
+  approx(autoMaxWinCap(1.25, cfg, 0.05), 500, 1e-9, "5% → 4× → $500");
+  approx(autoMaxWinCap(1.25, cfg, 0.01), 2500, 1e-9, "1% → 20× → $2500 (admits an $810 card)");
+  assert(autoMaxWinCap(1.25, cfg, 0.01) >= 810, "1% cap admits the $810 jackpot");
+
+  // (c) NEVER tighter than 100× for a higher-than-default hit-rate (scale clamps ≥ 1).
+  approx(autoMaxWinCap(1.25, cfg, 0.5), 125, 1e-9, "50% hitRate → still 100× (never tighter)");
+  approx(autoMaxWinCap(1.25, cfg, 1.0), 125, 1e-9, "100% hitRate → still 100×");
+
+  // (d) The absolute global cap clamp is preserved even with the loosened scale.
+  approx(autoMaxWinCap(1000, cfg, 0.01), 25000, 1e-9, "loosened mult still clamped by globalCap");
+
+  // (e) A normal untagged pack's whole target set is UNCHANGED by the new param.
+  const normal = autoRetuneTargets(10, cfg); // untagged
+  approx(normal.maxWinCap, autoMaxWinCap(10, cfg), 1e-9, "untagged cap = plain cap");
+  approx(normal.maxWinCap, 1000, 1e-9, "untagged $10 pack cap = $1000");
+  assert(normal.intendedHitRate === null, "untagged → intendedHitRate null");
+
+  // (f) END-TO-END: the real $1.25 1% pool — FEASIBLE with the hit-rate-aware cap,
+  //     edge ≥ target, and a REAL jackpot (the $810 card survives, not ~$118).
+  const pool = [
+    { value: 810.07 }, { value: 508.45 }, { value: 118.21 }, { value: 114.0 },
+    { value: 75.47 }, { value: 64.76 }, { value: 60.25 }, { value: 1.3 },
+    { value: 0.08 }, { value: 0.05 }, { value: 0.02 },
+  ];
+  const t = autoRetuneTargets(1.25, cfg, "1% 18 PLUS");
+  approx(t.targetWinRate, 0.01, 1e-12, "1% pack targets 1% win-rate");
+  approx(t.maxWinCap, 2500, 1e-9, "1% pack auto cap = $2500 (loosened)");
+  assert(t.targetEdge <= DEFAULT_EDGE_CEILING + 1e-12, "edge target stays under the ceiling");
+
+  const shaped = shapeWeights({
+    cards: pool,
+    price: 1.25,
+    targetEdge: t.targetEdge,
+    targetWinRate: 0.01,
+    maxWinCap: t.maxWinCap,
+    nearMissMin: t.nearMissMin,
+  });
+  assert(isSuccess(shaped), "1% lottery pool is FEASIBLE under the hit-rate-aware cap");
+  if (isSuccess(shaped)) {
+    assert(shaped.edge >= t.targetEdge - 1e-3, `edge ≥ target (${shaped.edge} ≥ ${t.targetEdge})`);
+    assert(shaped.risk.maxWin > 500, `maxWin is a real jackpot, not gutted (${shaped.risk.maxWin})`);
+    approx(shaped.risk.maxWin, 810.07, 1e-6, "the $810 jackpot survives the cap");
+  }
+
+  // (g) CONTROL: the SAME pool under the OLD plain $125 cap guts the jackpot to
+  //     the cheapest card ≤ $125 (here $118.21) — proving the bug the fix closes.
+  const shapedOld = shapeWeights({
+    cards: pool,
+    price: 1.25,
+    targetEdge: t.targetEdge,
+    targetWinRate: 0.01,
+    maxWinCap: 125,
+    nearMissMin: t.nearMissMin,
+  });
+  if (isSuccess(shapedOld)) {
+    assert(
+      shapedOld.risk.maxWin <= 125 + 1e-9,
+      `plain $125 cap guts the jackpot to ≤ $125 (${shapedOld.risk.maxWin})`,
+    );
+  }
+});
+
 // ── Summary ─────────────────────────────────────────────────────────
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} risk check(s) failed:`);

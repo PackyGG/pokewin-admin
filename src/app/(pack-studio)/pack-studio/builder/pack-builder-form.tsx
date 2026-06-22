@@ -44,6 +44,7 @@ import { buildPack } from "@/app/(admin)/packs/actions";
 import {
   autoTargetEdge,
   autoMaxWinCap,
+  parsePackHitRate,
   type EdgeCurveConfig,
 } from "../_lib/auto-targets";
 import {
@@ -254,11 +255,18 @@ export function PackBuilderForm({
   // change; 0 until a positive price is entered.
   const targetEdge = useMemo(() => {
     if (!(packPrice > 0)) return edgeCurve.edgeFloor;
+    // TAG-AWARE auto cap: a lottery pack ("1% …") gets the hit-rate-loosened
+    // jackpot ceiling so the live edge preview matches the retune's cap.
+    const intendedHitRate = parsePackHitRate(name) ?? undefined;
     const maxWinProxy =
       cap ??
-      autoMaxWinCap(packPrice, { globalCap: defaultMaxWinCap, maxMultCeiling });
+      autoMaxWinCap(
+        packPrice,
+        { globalCap: defaultMaxWinCap, maxMultCeiling },
+        intendedHitRate,
+      );
     return autoTargetEdge({ price: packPrice, maxWin: maxWinProxy }, edgeCurve);
-  }, [packPrice, cap, defaultMaxWinCap, maxMultCeiling, edgeCurve]);
+  }, [packPrice, cap, defaultMaxWinCap, maxMultCeiling, edgeCurve, name]);
 
   function handleNameChange(val: string) {
     setName(val);

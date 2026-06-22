@@ -28,6 +28,8 @@
 import type { PackRisk, RiskTier } from "@/app/(admin)/insights/edge-calc/risk";
 import {
   autoRetuneTargets,
+  autoMaxWinCap,
+  parsePackHitRate,
   DEFAULT_TARGET_WIN_RATE,
   DEFAULT_NEAR_MISS_MIN,
   TARGET_PACK_EDGE,
@@ -481,10 +483,24 @@ export function derivePortfolioTargets(
     // Lower the jackpot cap toward TIGHTENED_MAX_MULT × price (never above the
     // pack's existing default cap, never below the ticket price — a cap below
     // price would strip every win card, mirroring `autoMaxWinCap`'s floor).
-    const tightenedCap = Math.max(
-      p.price,
-      Math.min(maxWinCapBefore, p.price * TIGHTENED_MAX_MULT),
-    );
+    //
+    // FEASIBILITY + JACKPOT FLOOR — the tightening must NEVER make a pack
+    // infeasible or gut a tagged lottery pack's jackpot:
+    //   • minWinCard — the CHEAPEST win card (value ≥ price). A cap below it
+    //     would strip EVERY win card → the pack goes infeasible ("no-win-cards").
+    //     So the cap can never drop below the cheapest win card the pool carries.
+    //   • jackpotFloor — for a tagged lottery pack ("1% …"), the hit-rate-aware
+    //     auto cap (big, so the rare jackpot survives); `price` for an untagged
+    //     pack (no extra floor → normal packs tighten exactly as before).
+    // The floor is the MAX of these (and price); the proposed tightened cap can
+    // only pull DOWN to that floor, never below it.
+    const winValues = p.cards.map((c) => c.value).filter((v) => v >= p.price);
+    const minWinCard = winValues.length ? Math.min(...winValues) : p.price;
+    const hr = parsePackHitRate(p.name ?? "");
+    const jackpotFloor = hr ? autoMaxWinCap(p.price, cfg.autoCfg, hr) : p.price;
+    const floor = Math.max(p.price, minWinCard, jackpotFloor);
+    const proposed = Math.min(maxWinCapBefore, p.price * TIGHTENED_MAX_MULT);
+    const tightenedCap = Math.max(proposed, floor);
 
     // Nudge win-rate up: each step lowers projected CV/tier. Number of steps
     // scales with how spicy the pack is (T5 gets the full budget, T4 fewer),
