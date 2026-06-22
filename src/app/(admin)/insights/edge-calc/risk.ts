@@ -459,19 +459,45 @@ const CLEAN_LADDER: readonly number[] = (() => {
 })();
 
 /**
- * Snap each weight in `input.weights` to the nearest clean-ladder
- * probability percentage (log-distance argmin), re-normalize the snapped
- * percentages to sum to exactly 100%, and quantize back to integer weights.
- * Pure: no mutation of the input.
+ * Snap each weight in `input.weights` to the nearest clean-ladder probability
+ * percentage (log-distance argmin), using a **buffer-card residual** scheme to
+ * keep the total at exactly 100% without re-normalizing every rung. Pure: no
+ * mutation of the input.
  *
- * Returns the snapped integer weight vector and the edge delta vs the
- * original (snapped.edge − original.edge) so the caller can accept/reject.
+ * Algorithm — why buffer-residual instead of "snap-then-renormalize":
  *
- * - Zero-weight slots (dropped cards, e.g. cap-stripped) stay 0 and are not
- *   snapped — they carry no probability mass.
- * - Re-normalize multiplier is ×10000 (so the smallest representable snapped
- *   percentage 0.0001 still rounds to 1, not 0), with a floor of 1 for every
- *   originally-positive card so no kept card silently disappears.
+ *   The previous naive approach snapped EVERY card to a rung, then multiplied
+ *   by `100 / pctSum` to renormalize. That multiplier is rarely exactly 1, so
+ *   a "clean" 0.05% rung came out as 0.0521% — defeating the entire purpose.
+ *
+ *   The buffer scheme picks ONE card — the card carrying the largest mass
+ *   (typically the dust card) — and treats it as the residual. Every OTHER
+ *   card is snapped to a clean rung, and the buffer card takes whatever is
+ *   left so the total stays exactly 100%. This way N-1 cards land on
+ *   genuinely-clean numbers (0.05%, 0.1%, 10%, 25%, ...), and the single
+ *   buffer card absorbs the rounding into its (already large) share. From
+ *   a human-readability standpoint the buffer's pct is the LEAST important
+ *   to be "clean" — it's the dust that swallows the house edge.
+ *
+ * Steps:
+ *   1. Convert weights → percentages.
+ *   2. Identify the BUFFER index = argmax(pct).
+ *   3. For every non-buffer card, snap pct to the nearest CLEAN_LADDER rung
+ *      via log10-distance argmin (handles the wide dynamic range).
+ *   4. Buffer pct = 100 − sum(non-buffer snapped pcts). NOT snapped — exact
+ *      residual.
+ *   5. Convert all pcts → integer weights via ×10000 (so 0.0001% rungs are
+ *      still representable as weight ≥ 1). Every originally-positive card
+ *      keeps weight ≥ 1 so none silently disappears.
+ *
+ * Returns the snapped integer weight vector. `edgeDelta` is left at 0 — the
+ * caller already recomputes risk via `computePackRisk` to decide accept/reject,
+ * and the snap intentionally doesn't take card values so it can be reused.
+ *
+ * Safety fallback: if the buffer residual would go negative (the snapped
+ * non-buffer pcts already sum to ≥ 100%) or any other degeneracy, the original
+ * weights are returned unchanged. The caller's accept/reject pass then keeps
+ * the precise weights — no regression possible from the snap itself.
  */
 export function snapWeightsToCleanLadder(input: {
   weights: number[];
@@ -489,41 +515,62 @@ export function snapWeightsToCleanLadder(input: {
     return { weights: original.slice(), edgeDelta: 0 };
   }
 
-  // Step 1: snap each positive weight's probability percent to the nearest
-  // ladder value by log distance. log10 distance is the right metric here
-  // because the dynamic range spans many orders of magnitude (jackpots at
-  // <0.01% next to floor cards at >50%) — a linear nearest-neighbour would
-  // collapse every tiny percentage onto the smallest rung.
-  const snappedPct = new Array<number>(original.length).fill(0);
+  // Step 1: compute percentages + identify the buffer index (argmax pct).
+  // Slots with non-positive weights stay at pct=0 and are NEVER eligible as the
+  // buffer (they carry no mass to absorb the residual).
+  const pcts = new Array<number>(original.length).fill(0);
+  let bufferIdx = -1;
+  let bufferPct = -Infinity;
   for (let i = 0; i < original.length; i++) {
     const w = original[i]!;
     if (!Number.isFinite(w) || w <= 0) continue;
-    const pct = (w / totalWeight) * 100;
-    // Pre-snap clamp into the ladder's representable range so pathological
-    // out-of-range values don't tunnel past the endpoints. log10 of pct vs
-    // log10 of each ladder value — pick the argmin.
-    const logPct = Math.log10(pct);
+    const p = (w / totalWeight) * 100;
+    pcts[i] = p;
+    if (p > bufferPct) {
+      bufferPct = p;
+      bufferIdx = i;
+    }
+  }
+  if (bufferIdx < 0) {
+    // No positive-weight slot found (defensive: totalWeight > 0 above already
+    // guarantees at least one such slot exists).
+    return { weights: original.slice(), edgeDelta: 0 };
+  }
+
+  // Step 2: snap each non-buffer slot's pct to the nearest ladder rung.
+  // log10-distance is the right metric across the wide dynamic range (sub-
+  // basis-point jackpots next to >50% dust). A linear nearest-neighbour would
+  // collapse every tiny pct onto the smallest rung.
+  const snappedPct = new Array<number>(original.length).fill(0);
+  let nonBufferSum = 0;
+  for (let i = 0; i < original.length; i++) {
+    if (i === bufferIdx) continue;
+    const p = pcts[i]!;
+    if (!(p > 0)) continue;
+    const logP = Math.log10(p);
     let bestIdx = 0;
-    let bestDist = Math.abs(Math.log10(CLEAN_LADDER[0]!) - logPct);
+    let bestDist = Math.abs(Math.log10(CLEAN_LADDER[0]!) - logP);
     for (let k = 1; k < CLEAN_LADDER.length; k++) {
-      const d = Math.abs(Math.log10(CLEAN_LADDER[k]!) - logPct);
+      const d = Math.abs(Math.log10(CLEAN_LADDER[k]!) - logP);
       if (d < bestDist) {
         bestDist = d;
         bestIdx = k;
       }
     }
     snappedPct[i] = CLEAN_LADDER[bestIdx]!;
+    nonBufferSum += snappedPct[i]!;
   }
 
-  // Step 2: re-normalize the snapped percentages to sum to exactly 100%.
-  let pctSum = 0;
-  for (const p of snappedPct) pctSum += p;
-  if (!(pctSum > 0)) {
+  // Step 3: buffer pct = 100 − sum(non-buffer). Exact residual, NOT snapped.
+  // If the non-buffer cards already sum to ≥ 100% the buffer would go ≤ 0 —
+  // safety fallback: return the original weights unchanged.
+  const bufferResidual = 100 - nonBufferSum;
+  if (!(bufferResidual > 0)) {
     return { weights: original.slice(), edgeDelta: 0 };
   }
-  const normFactor = 100 / pctSum;
+  snappedPct[bufferIdx] = bufferResidual;
 
-  // Step 3: convert back to integer weights via ×10000 multiplier (so 0.0001%
+  // Step 4: convert back to integer weights via ×10000 multiplier (so 0.0001%
   // snapped rungs are still representable as weight ≥ 1). Every originally-
   // positive card keeps weight ≥ 1 so no kept card silently disappears.
   const MULT = 10000;
@@ -531,18 +578,200 @@ export function snapWeightsToCleanLadder(input: {
   for (let i = 0; i < original.length; i++) {
     const w = original[i]!;
     if (!Number.isFinite(w) || w <= 0) continue;
-    const renormPct = snappedPct[i]! * normFactor;
-    snappedWeights[i] = Math.max(1, Math.round(renormPct * MULT));
+    snappedWeights[i] = Math.max(1, Math.round(snappedPct[i]! * MULT));
   }
 
-  // Step 4: edgeDelta is computed by the CALLER (where card values are known)
-  // via a follow-up `computePackRisk` pass. The post-process intentionally
-  // doesn't take card values: it operates purely on the weight VECTOR + the
-  // price (for context), so it can be reused in any pipeline that already
-  // tracks its own risk recompute. Returned as 0 here as a placeholder —
-  // the caller decides accept/fallback off its own risk-recomputed edge.
+  // edgeDelta is computed by the CALLER (it has card values for the risk
+  // recompute). The post-process intentionally doesn't take card values, so it
+  // can be reused in any pipeline. Returned as 0 here as a placeholder.
   void price;
   return { weights: snappedWeights, edgeDelta: 0 };
+}
+
+/**
+ * Local-search refinement around a buffer-residual snap. Used by `shapeWeights`
+ * AFTER the basic snap when the resulting edge drifts outside the accept
+ * tolerance. Pure: returns a NEW weight vector or `null` when no combination
+ * lands within tolerance.
+ *
+ * Strategy:
+ *   1. Convert weights → snapped pcts (via the same buffer-residual snap).
+ *   2. Identify the N non-buffer cards whose snap delta moved the most EV
+ *      (|deltaPct · value|). These are the cards to wiggle.
+ *   3. For the TOP `searchTop` cards (default 5), enumerate the 3 ladder
+ *      positions (one rung DOWN / SAME / one rung UP) — 3^searchTop combos
+ *      (default 243). For each combo: recompute the buffer residual, build
+ *      the weight vector, recompute the risk, and track the combo with the
+ *      smallest |edge − targetEdge| that still satisfies edge ≥ targetEdge.
+ *   4. Return the winning weight vector if its drift is within `tolerance`
+ *      (default 0.0005 = 0.05pp); otherwise `null` (caller falls back to the
+ *      precise weights — never regresses).
+ */
+function snapLocalSearchRefine(input: {
+  weights: number[];
+  values: number[];
+  price: number;
+  targetEdge: number;
+  tolerance?: number;
+  searchTop?: number;
+  /** Per-card ladder-offset radius (e.g. 1 = wiggle ±1 rung; 2 = ±2 rungs). */
+  searchRadius?: number;
+  /** Win-rate of the precise solution — the snap must stay within `winRateTol`. */
+  preciseWinRate?: number;
+  winRateTol?: number;
+}): { weights: number[]; edge: number; winRate: number } | null {
+  const { weights: original, values, price, targetEdge } = input;
+  const tolerance = input.tolerance ?? 0.0005;
+  const searchTop = input.searchTop ?? 5;
+  const searchRadius = input.searchRadius ?? 1;
+  const preciseWinRate = input.preciseWinRate;
+  const winRateTol = input.winRateTol ?? 0.02;
+
+  let totalWeight = 0;
+  for (const w of original) {
+    if (Number.isFinite(w) && w > 0) totalWeight += w;
+  }
+  if (!(totalWeight > 0) || !(price > 0)) return null;
+
+  // Identify the buffer (argmax-pct) slot.
+  const pcts = new Array<number>(original.length).fill(0);
+  let bufferIdx = -1;
+  let bufferPct = -Infinity;
+  for (let i = 0; i < original.length; i++) {
+    const w = original[i]!;
+    if (!Number.isFinite(w) || w <= 0) continue;
+    const p = (w / totalWeight) * 100;
+    pcts[i] = p;
+    if (p > bufferPct) {
+      bufferPct = p;
+      bufferIdx = i;
+    }
+  }
+  if (bufferIdx < 0) return null;
+
+  // For each non-buffer slot, find its log-nearest ladder index. The local
+  // search wiggles each of the top-N cards by ±1 ladder index around that base.
+  type Slot = {
+    idx: number;
+    baseLadderIdx: number;
+    value: number;
+    deltaEvImpact: number; // |deltaPct · value| — proxy for EV sensitivity
+  };
+  const nonBuffer: Slot[] = [];
+  for (let i = 0; i < original.length; i++) {
+    if (i === bufferIdx) continue;
+    const p = pcts[i]!;
+    if (!(p > 0)) continue;
+    const logP = Math.log10(p);
+    let bestIdx = 0;
+    let bestDist = Math.abs(Math.log10(CLEAN_LADDER[0]!) - logP);
+    for (let k = 1; k < CLEAN_LADDER.length; k++) {
+      const d = Math.abs(Math.log10(CLEAN_LADDER[k]!) - logP);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = k;
+      }
+    }
+    const v = values[i] ?? 0;
+    const snappedP = CLEAN_LADDER[bestIdx]!;
+    nonBuffer.push({
+      idx: i,
+      baseLadderIdx: bestIdx,
+      value: v,
+      deltaEvImpact: Math.abs(snappedP - p) * v,
+    });
+  }
+
+  // Sort by EV impact desc; the top-N cards are the ones we wiggle.
+  nonBuffer.sort((a, b) => b.deltaEvImpact - a.deltaEvImpact);
+  const wiggleSlots = nonBuffer.slice(0, Math.min(searchTop, nonBuffer.length));
+  const fixedSlots = nonBuffer.slice(wiggleSlots.length);
+
+  // Sum of non-wiggle, non-buffer snapped pcts is constant across combos.
+  let fixedSum = 0;
+  for (const s of fixedSlots) fixedSum += CLEAN_LADDER[s.baseLadderIdx]!;
+
+  // Enumerate B^N combos where B = 2·searchRadius + 1 (offsets {−r..+r} per
+  // wiggle). Each combo defines: pct[wiggleSlots[k]] = CLEAN_LADDER[base + offset].
+  // Compute buffer = 100 − fixedSum − Σ wigglePcts. Reject if ≤ 0 (degenerate).
+  const OFFSETS: number[] = [];
+  for (let r = -searchRadius; r <= searchRadius; r++) OFFSETS.push(r);
+  const B = OFFSETS.length;
+  const N = wiggleSlots.length;
+  const totalCombos = Math.pow(B, N);
+  const MULT = 10000;
+
+  let bestEdge = NaN;
+  let bestWinRate = NaN;
+  let bestDrift = Infinity;
+  let bestWeights: number[] | null = null;
+
+  // Pre-fill the constant fixed-slot weights into a reusable buffer.
+  const weightsTemplate = new Array<number>(original.length).fill(0);
+  for (const s of fixedSlots) {
+    const p = CLEAN_LADDER[s.baseLadderIdx]!;
+    weightsTemplate[s.idx] = Math.max(1, Math.round(p * MULT));
+  }
+  // Also copy any originally-positive slots that are NOT non-buffer + NOT
+  // buffer — defensive: shouldn't happen (pcts covers all positive), but a
+  // zero-pct slot can exist for a value-skipped row. Keep them at 0.
+
+  for (let combo = 0; combo < totalCombos; combo++) {
+    let wiggleSum = 0;
+    let degenerate = false;
+    // Decode combo digits in base-B.
+    let c = combo;
+    const wigglePcts = new Array<number>(N);
+    for (let k = 0; k < N; k++) {
+      const digit = c % B;
+      c = Math.floor(c / B);
+      const ladderIdx = wiggleSlots[k]!.baseLadderIdx + OFFSETS[digit]!;
+      if (ladderIdx < 0 || ladderIdx >= CLEAN_LADDER.length) {
+        degenerate = true;
+        break;
+      }
+      const p = CLEAN_LADDER[ladderIdx]!;
+      wigglePcts[k] = p;
+      wiggleSum += p;
+    }
+    if (degenerate) continue;
+
+    const bufferResidual = 100 - fixedSum - wiggleSum;
+    if (!(bufferResidual > 0)) continue;
+
+    // Build the weight vector for this combo.
+    const w = weightsTemplate.slice();
+    for (let k = 0; k < N; k++) {
+      const s = wiggleSlots[k]!;
+      w[s.idx] = Math.max(1, Math.round(wigglePcts[k]! * MULT));
+    }
+    w[bufferIdx] = Math.max(1, Math.round(bufferResidual * MULT));
+
+    // Recompute the edge via the canonical scorer.
+    const cards: CardLite[] = values.map((v, i) => ({ value: v, weight: w[i]! }));
+    const risk = computePackRisk({ cards, price });
+    const drift = Math.abs(risk.edge - targetEdge);
+
+    // Prefer combos that satisfy edge ≥ target (the one-sided-up invariant)
+    // AND keep win-rate within tol of the precise solver's result (the snap
+    // must not drift win-rate outside the soft-target window — check #7's
+    // sweep asserts this). Among satisfying combos, smaller edge-drift wins.
+    const edgeOk = risk.edge >= targetEdge - 1e-9;
+    const winRateOk =
+      preciseWinRate === undefined ||
+      Math.abs(risk.winRate - preciseWinRate) <= winRateTol + 1e-9;
+    if (edgeOk && winRateOk && drift < bestDrift) {
+      bestDrift = drift;
+      bestEdge = risk.edge;
+      bestWinRate = risk.winRate;
+      bestWeights = w;
+    }
+  }
+
+  if (bestWeights !== null && bestDrift <= tolerance) {
+    return { weights: bestWeights, edge: bestEdge, winRate: bestWinRate };
+  }
+  return null;
 }
 
 /**
@@ -1137,25 +1366,97 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
 
   // ── Snap to clean-ladder for human-readable odds (safe post-process) ──
   // The precise weights above are edge-correct but produce ugly percentages
-  // like 0.0132% / 0.0173%. Snap each card's probability to the nearest
-  // value on a fixed ladder of nice round numbers (0.01%, 0.015%, ...) and
-  // re-normalize. KEEP the snapped weights only when the resulting edge
-  // stays within ±0.05pp of target AND still satisfies the existing
-  // one-sided-up invariant (edge ≥ target). Otherwise fall back to the
-  // precise weights — the snap never regresses edge, by construction.
+  // like 0.0458% / 0.0879%. The snap is a buffer-residual scheme: N-1 cards
+  // are placed on clean ladder rungs (0.05%, 0.1%, 10%, 25%, ...) and ONE
+  // buffer card (the largest mass, typically the dust card) absorbs the
+  // residual so the total stays at 100% without re-normalizing every rung
+  // (which is what made the old approach produce ugly 0.0521% rather than
+  // 0.05%).
+  //
+  // Acceptance is two-tiered:
+  //   1. Try the basic buffer-residual snap. If edge stays within ±0.05pp
+  //      AND ≥ target → ACCEPT.
+  //   2. Otherwise, run a local-search refinement over the top-5 EV-impact
+  //      cards (3 ladder positions each = 3^5 = 243 combos), pick the combo
+  //      with smallest drift that still satisfies edge ≥ target. If that
+  //      combo's drift is within tolerance → ACCEPT.
+  //   3. Otherwise → safety fallback: keep the precise weights. The snap
+  //      never regresses edge, by construction.
   let snapped = false;
+  const values = input.cards.map((c) => c.value);
+  const preciseWinRate = risk.winRate;
   const snap = snapWeightsToCleanLadder({ weights, price });
   const snappedRisk = computePackRisk({
     cards: input.cards.map((c, i) => ({ value: c.value, weight: snap.weights[i]! })),
     price,
   });
   const snapDrift = Math.abs(snappedRisk.edge - targetEdge);
-  // Tolerance: ≤ 0.05pp drift from target. Edge must also stay ≥ target so
-  // the established one-sided-up invariant survives the post-process.
-  if (snapDrift <= 0.0005 && snappedRisk.edge >= targetEdge - 1e-9) {
+  const snapWinRateDrift = Math.abs(snappedRisk.winRate - preciseWinRate);
+  // Tier 1: accept the basic buffer-residual snap when edge stays within
+  // ±0.05pp of target AND ≥ target (one-sided-up invariant) AND win-rate
+  // stays within the soft tolerance of the precise solver's win-rate (so the
+  // sweep's soft-target invariant on win-rate is preserved).
+  if (
+    snapDrift <= 0.0005 &&
+    snappedRisk.edge >= targetEdge - 1e-9 &&
+    snapWinRateDrift <= winRateTol + 1e-9
+  ) {
     for (let i = 0; i < weights.length; i++) weights[i] = snap.weights[i]!;
     risk = snappedRisk;
     snapped = true;
+  } else {
+    // Tier 2: local-search refinement. Wiggle the top-5 EV-impact cards by
+    // ±1 ladder rung; recompute the buffer residual for each combo; pick the
+    // combo whose edge lands closest to target while still ≥ target and
+    // win-rate stays within tol of the precise win-rate.
+    // Try escalating searches: 3^5=243 → 5^4=625 → 3^7=2187. Cheap-then-broad
+    // keeps the common case fast while still catching pools where the rungs
+    // are far from the precise pcts.
+    let refined = snapLocalSearchRefine({
+      weights,
+      values,
+      price,
+      targetEdge,
+      tolerance: 0.0005,
+      searchTop: 5,
+      searchRadius: 1,
+      preciseWinRate,
+      winRateTol,
+    });
+    if (refined === null) {
+      refined = snapLocalSearchRefine({
+        weights,
+        values,
+        price,
+        targetEdge,
+        tolerance: 0.0005,
+        searchTop: 4,
+        searchRadius: 2,
+        preciseWinRate,
+        winRateTol,
+      });
+    }
+    if (refined === null) {
+      refined = snapLocalSearchRefine({
+        weights,
+        values,
+        price,
+        targetEdge,
+        tolerance: 0.0005,
+        searchTop: 7,
+        searchRadius: 1,
+        preciseWinRate,
+        winRateTol,
+      });
+    }
+    if (refined !== null) {
+      for (let i = 0; i < weights.length; i++) weights[i] = refined.weights[i]!;
+      risk = computePackRisk({
+        cards: input.cards.map((c, i) => ({ value: c.value, weight: weights[i]! })),
+        price,
+      });
+      snapped = true;
+    }
   }
 
   return { weights, risk, ev: risk.ev, edge: risk.edge, relaxations, snapped };

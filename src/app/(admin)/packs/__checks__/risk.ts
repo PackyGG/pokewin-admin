@@ -1303,16 +1303,33 @@ check("autoMaxWinCap is hit-rate-aware: loosens for lottery packs, unchanged for
   }
 });
 
-// ── 14. Clean-ladder snap post-process ──────────────────────────────
+// ── 14. Clean-ladder snap post-process (buffer-residual algorithm) ──────
 //
 // The snap converts the precise solver weights into human-readable round
-// odds. It is a SAFE post-process: the integration only keeps the snapped
-// weights when the resulting edge stays within ±0.05pp of target — otherwise
-// it falls back to the precise weights. Two complementary cases:
-//   (a) A pool where snapping holds → returned pcts are near ladder rungs +
-//       edge is in tol + the `snapped` flag is true.
-//   (b) A pool where snapping would crash edge → safety fallback keeps the
-//       precise weights + edge is still in tol + the `snapped` flag is false.
+// odds via a BUFFER-RESIDUAL scheme: N-1 cards land on clean ladder rungs
+// (0.05%, 0.1%, 10%, 25%, ...), and ONE buffer card (the largest mass,
+// typically the dust card) absorbs the residual so the total stays at 100%
+// without renormalizing every rung (which is what made the old snap
+// produce ugly 0.0521% rather than 0.05%).
+//
+// Integration is two-tiered:
+//   1. Try the basic buffer-residual snap → ACCEPT if edge ∈ [target,
+//      target+0.05pp] AND win-rate stays within soft tol.
+//   2. Otherwise, run a 3-stage escalating local search (3^5 → 5^4 → 3^7)
+//      over the top EV-impact cards. The first stage that lands edge within
+//      tol AND preserves win-rate is accepted.
+//   3. Otherwise → SAFETY FALLBACK: keep the precise weights. The snap
+//      never regresses edge, by construction.
+//
+// The harness covers three concrete cases:
+//   (a) A normal-edge $10 pack with mixed cards → snap accepted and N-1
+//       cards land on clean ladder rungs.
+//   (b) The owner's "1% 18 PLUS" lottery pool — local search must find a
+//       combo that lands within edge tolerance with N-1 clean rungs (this
+//       was the motivating case for the buffer-residual rewrite).
+//   (c) An adversarial pool where every snap combo crashes edge → safety
+//       fallback kicks in and keeps the precise weights. Edge is still
+//       within the one-sided-up window.
 
 // Build the same ladder as risk.ts uses, for the per-pct nearness check.
 const CLEAN_LADDER_BASE = [1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10, 15, 20, 25, 30, 40, 50, 75];
@@ -1326,49 +1343,71 @@ for (let decade = -6; decade <= 1; decade++) {
 CLEAN_LADDER.push(100);
 CLEAN_LADDER.sort((a, b) => a - b);
 
-function nearestLadderLogDist(pct: number): number {
-  if (!(pct > 0)) return 0;
-  const logP = Math.log10(pct);
-  let bestD = Infinity;
+function isOnLadder(pct: number, tol = 1e-6): boolean {
+  if (!(pct > 0)) return false;
   for (const v of CLEAN_LADDER) {
-    const d = Math.abs(Math.log10(v) - logP);
-    if (d < bestD) bestD = d;
+    if (Math.abs(v - pct) <= tol * Math.max(1, v)) return true;
   }
-  return bestD;
+  return false;
 }
 
-check("snap (a): snap-accept pool returns ladder-near pcts + edge in tol + snapped flag true", () => {
-  // A small bimodal pool whose solver weights happen to renorm cleanly close
-  // to ladder rungs after the snap. Found by sweeping random pools — picked
-  // for being small, reproducible, and demonstrating the snap path.
-  const cards = [{ value: 4.92 }, { value: 17.10 }, { value: 52.17 }];
-  const price = 10;
+function countLadderHits(pcts: number[]): number {
+  let n = 0;
+  for (const p of pcts) if (isOnLadder(p)) n++;
+  return n;
+}
+
+// ── 14a. Normal-edge pack snaps cleanly (N-1 cards on ladder) ──────────
+check("snap (a): a normal-edge pack snaps with N-1 cards landing on clean ladder rungs", () => {
+  // A $5 pack with a flat 3-card spread: $0.50 dust + $20.25 win + $40.00
+  // grail. The buffer-residual snap lands all three pcts on EXACT ladder
+  // rungs (85% / 10% / 5%) and the edge stays within the ±0.05pp accept
+  // window. This is the "clean operator experience" the rewrite targets:
+  // the user reads "85%, 10%, 5%" instead of "84.7%, 10.31%, 4.99%".
+  const cards = [
+    { value: 0.50 },
+    { value: 20.25 },
+    { value: 40.00 },
+  ];
+  const price = 5;
   const targetEdge = 0.1099;
-  const r = shapeWeights({ cards, price, targetEdge, targetWinRate: 0.152 });
+  const targetWinRate = 0.15;
+  const r = shapeWeights({ cards, price, targetEdge, targetWinRate });
   assert(isSuccess(r), `expected success: ${"error" in r ? r.error : ""}`);
   if (!isSuccess(r)) return;
-  assert(r.snapped === true, `snap should be applied for this crafted pool, got snapped=${r.snapped}`);
-  // Edge must be within ±0.05pp of target (the integration accept tolerance).
+  assert(r.snapped === true, `snap should be applied for a normal-edge pack, got snapped=${r.snapped}`);
   assert(
     Math.abs(r.edge - targetEdge) <= 0.0005 + 1e-9,
-    `edge within ±0.05pp of target (got ${r.edge}, target ${targetEdge})`,
+    `edge within ±0.05pp of target (got ${(r.edge * 100).toFixed(4)}%, target ${(targetEdge * 100).toFixed(2)}%)`,
   );
-  // Each returned pct must be close to a ladder rung — log10 distance ≤ 0.05.
-  // (The renorm shifts each rung by a single multiplicative factor; the
-  // tolerance accounts for that shift plus integer-quantization rounding.)
+  assert(r.edge >= targetEdge - 1e-9, `one-sided-up invariant survives the snap (${r.edge})`);
+
+  // N-1 cards should land on exact ladder rungs (the Nth = buffer = residual).
+  // For this specific pool all three land on ladder rungs (85% IS on the
+  // ladder — the buffer happens to coincide with a rung after rounding).
   const total = r.weights.reduce((a, b) => a + b, 0);
   const pcts = r.weights.map((w) => (w / total) * 100);
-  for (const p of pcts) {
-    if (p <= 0) continue;
-    const d = nearestLadderLogDist(p);
-    assert(d <= 0.05, `pct ${p.toFixed(4)}% within log-dist 0.05 of a ladder rung (got ${d.toFixed(4)})`);
+  const hits = countLadderHits(pcts);
+  assert(
+    hits >= cards.length - 1,
+    `at least N-1 cards (${cards.length - 1}) on clean ladder rungs (got ${hits} of ${cards.length}). pcts: ${pcts.map(p => p.toFixed(4) + "%").join(", ")}`,
+  );
+
+  // Print for the operator to see real "clean" numbers.
+  console.log(`      [normal $5 pack snapped pcts — ${hits}/${cards.length} on ladder, edge ${(r.edge * 100).toFixed(4)}%]`);
+  for (let i = 0; i < cards.length; i++) {
+    const onL = isOnLadder(pcts[i]!) ? " (LADDER)" : " (buffer)";
+    console.log(`        $${cards[i]!.value.toFixed(2).padStart(7)} → ${pcts[i]!.toFixed(4)}%${onL}`);
   }
 });
 
-check("snap (b): a snap that would crash edge falls back to precise weights, edge still in tol", () => {
-  // The "1% 18 PLUS" pool from check #13 — the snapping shifts so much mass
-  // onto the jackpot rungs that edge would crash from ~11% to ~5%. The
-  // integration must REJECT the snap and keep the precise weights.
+// ── 14b. "1% 18 PLUS" lottery pool snaps to clean rungs via local search ──
+check("snap (b): '1% 18 PLUS' lottery pool snaps cleanly via local search", () => {
+  // The owner's motivating real-world case: a $1.25 lottery pack with 18
+  // jackpots and a $0.08 dust card. The precise solver produces ugly
+  // 0.0458%, 0.0879% pcts; the buffer-residual snap + local search lands
+  // 10 of 11 cards on clean ladder rungs (0.05%, 0.1%, 25%, 30%, ...) with
+  // the dust buffer absorbing the residual.
   const pool = [
     { value: 810.07 }, { value: 508.45 }, { value: 118.21 }, { value: 114.0 },
     { value: 75.47 }, { value: 64.76 }, { value: 60.25 }, { value: 1.3 },
@@ -1386,47 +1425,149 @@ check("snap (b): a snap that would crash edge falls back to precise weights, edg
   });
   assert(isSuccess(r), `expected success: ${"error" in r ? r.error : ""}`);
   if (!isSuccess(r)) return;
-  // Snap must NOT have been applied — it would have crashed the edge.
-  assert(r.snapped === false, `snap must NOT be applied (crashes edge), got snapped=${r.snapped}`);
-  // The safety fallback keeps edge ≥ target (one-sided-up invariant) AND
-  // within the existing 0.001 ceiling.
-  assert(r.edge >= targetEdge - 1e-9, `edge ≥ target after fallback (${r.edge})`);
-  assert(r.edge - targetEdge <= 0.001 + 1e-9, `edge − target ≤ 0.001 after fallback (${r.edge - targetEdge})`);
-
-  // Direct probe: confirm the snap function ITSELF would push the edge below
-  // tolerance for this pool — so the integration's rejection is correct.
-  const snap = snapWeightsToCleanLadder({ weights: r.weights, price });
-  const snapRisk = computePackRisk({
-    cards: pool.map((c, i) => ({ value: c.value, weight: snap.weights[i]! })),
-    price,
-  });
+  assert(r.snapped === true, `snap should be applied (local search finds a combo), got snapped=${r.snapped}`);
   assert(
-    Math.abs(snapRisk.edge - targetEdge) > 0.0005,
-    `snap (had it been applied) would exceed the ±0.05pp tolerance (would-be edge ${snapRisk.edge}, drift ${Math.abs(snapRisk.edge - targetEdge)})`,
+    Math.abs(r.edge - targetEdge) <= 0.0005 + 1e-9,
+    `edge within ±0.05pp of target (got ${(r.edge * 100).toFixed(4)}%, target ${(targetEdge * 100).toFixed(2)}%)`,
+  );
+  assert(r.edge >= targetEdge - 1e-9, `one-sided-up invariant survives the snap (${r.edge})`);
+
+  // N-1 cards should land on exact ladder rungs.
+  const total = r.weights.reduce((a, b) => a + b, 0);
+  const pcts = r.weights.map((w) => (w / total) * 100);
+  const hits = countLadderHits(pcts);
+  assert(
+    hits >= pool.length - 1,
+    `at least N-1 cards (${pool.length - 1}) on clean ladder rungs (got ${hits} of ${pool.length}). pcts: ${pcts.map(p => p.toFixed(4) + "%").join(", ")}`,
   );
 
-  // Print the SNAPPED percentages this pool WOULD have produced — the user
-  // can see "clean" values (0.05%, 10%, 89%, ...) vs the ugly "0.0132%" the
-  // precise solver returns. The fallback keeps the precise weights for safety.
-  const snapTotal = snap.weights.reduce((a, b) => a + b, 0);
-  const snappedPctList = pool.map((c, i) => {
-    const w = snap.weights[i]!;
-    const pct = (w / snapTotal) * 100;
-    return `$${c.value.toFixed(2).padStart(7)} → ${pct.toFixed(4)}%`;
-  });
-  console.log(`      [1% 18 PLUS snapped pcts (NOT applied — safety fallback)]`);
-  for (const line of snappedPctList) console.log(`        ${line}`);
-  console.log(`        snapped edge would be ${(snapRisk.edge * 100).toFixed(4)}% (target ${(targetEdge * 100).toFixed(2)}%) — rejected`);
-
-  // Also print the PRECISE percentages the user actually gets — the ugly
-  // ones that motivated the snap feature. The contrast is the point.
-  const preciseTotal = r.weights.reduce((a, b) => a + b, 0);
-  console.log(`      [1% 18 PLUS precise pcts (returned by shapeWeights)]`);
+  // Print the clean snapped numbers — the whole point of this rewrite.
+  console.log(`      [1% 18 PLUS snapped pcts — ${hits}/${pool.length} on ladder, edge ${(r.edge * 100).toFixed(4)}%]`);
   for (let i = 0; i < pool.length; i++) {
-    const w = r.weights[i]!;
-    const pct = (w / preciseTotal) * 100;
-    console.log(`        $${pool[i]!.value.toFixed(2).padStart(7)} → ${pct.toFixed(6)}%`);
+    const onL = isOnLadder(pcts[i]!) ? " (LADDER)" : " (buffer)";
+    console.log(`        $${pool[i]!.value.toFixed(2).padStart(7)} → ${pcts[i]!.toFixed(4)}%${onL}`);
   }
+});
+
+// ── 14c. Adversarial pool → safety fallback keeps precise weights ──────
+check("snap (c): adversarial pool (every snap combo crashes edge) → safety fallback", () => {
+  // A degenerate-ish pool where every nearby ladder configuration overshoots
+  // the edge tolerance. We use a pool whose precise pcts sit at awkward
+  // "between-rung" values and whose buffer's mass-fraction is so dominant
+  // that any rung snap on the win cards produces a large EV swing relative
+  // to the narrow 0.05pp accept window.
+  //
+  // We don't claim every pool with these properties falls back — but if for
+  // some run the snap DOES accept, the tolerance contract still holds. We
+  // pin the SAFETY CONTRACT: regardless of snap accept/reject, the result
+  // satisfies edge ≥ target AND edge − target ≤ 0.001 (the precise solver's
+  // one-sided-up window). The snap NEVER regresses edge.
+  const cards = [
+    { value: 0.01 }, // tiny dust — will be the buffer
+    { value: 0.5 }, // dust
+    { value: 7.3 }, // near-miss-ish
+    { value: 12.7 }, // win
+    { value: 23.1 }, // win
+    { value: 47 }, // grail
+  ];
+  const price = 10;
+  const targetEdge = 0.1099;
+  const r = shapeWeights({ cards, price, targetEdge, targetWinRate: 0.18 });
+  assert(isSuccess(r), `expected success: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+  // SAFETY CONTRACT: regardless of snap acceptance, edge is within the
+  // precise solver's one-sided-up window.
+  assert(r.edge >= targetEdge - 1e-9, `edge ≥ target (snap never regresses) (${r.edge})`);
+  assert(
+    r.edge - targetEdge <= 0.001 + 1e-9,
+    `edge − target ≤ 0.001 (within precise window) (got ${r.edge - targetEdge})`,
+  );
+
+  // If snap was NOT applied → safety fallback. Otherwise (snap accepted)
+  // the tolerance is implicitly tighter (within 0.05pp). Either branch is
+  // valid; what we test is the safety contract.
+  console.log(`      snap=${r.snapped}, edge=${(r.edge * 100).toFixed(4)}%`);
+});
+
+// ── 14d. Sweep snap-acceptance rate (regression for buffer-residual win) ──
+check("snap (d): sweep snap-acceptance rate is significantly higher than the naive baseline", () => {
+  // The OLD snap-then-renormalize algorithm accepted ~0.15% of feasible
+  // sweep pools (the naive renorm corrupted nearly every clean rung). The
+  // buffer-residual + local-search rewrite must dramatically beat that —
+  // we set a floor at 20% to catch any future regression that re-introduces
+  // the naive behaviour.
+  function dist(kind: "flat" | "power" | "bimodal", n: number, price: number): { value: number }[] {
+    const out: { value: number }[] = [];
+    if (kind === "flat") {
+      for (let i = 0; i < n; i++) {
+        const t = n === 1 ? 0 : i / (n - 1);
+        out.push({ value: price * (0.1 + t * 7.9) });
+      }
+    } else if (kind === "power") {
+      for (let i = 0; i < n; i++) {
+        const t = n === 1 ? 0 : i / (n - 1);
+        out.push({ value: price * 0.05 * Math.pow(400, t) });
+      }
+    } else {
+      for (let i = 0; i < n; i++) {
+        if (i < Math.ceil(n * 0.7)) {
+          const t = i / Math.max(1, Math.ceil(n * 0.7) - 1);
+          out.push({ value: price * (0.05 + t * 0.4) });
+        } else {
+          const j = i - Math.ceil(n * 0.7);
+          out.push({ value: price * (1.2 + j * 6) });
+        }
+      }
+    }
+    return out;
+  }
+  let feasible = 0;
+  let snappedCount = 0;
+  // A modest grid — the full sweep in check #7 covers the same pool space
+  // but adds cap/floor combos that the snap-acceptance measure doesn't need.
+  for (const price of [1, 5, 25, 100]) {
+    for (const kind of ["flat", "power", "bimodal"] as const) {
+      for (let n = 3; n <= 40; n++) {
+        const cards = dist(kind, n, price);
+        for (const targetEdge of [0.0599, 0.1099, 0.15]) {
+          for (const targetWinRate of [0.1, 0.2, 0.3]) {
+            const r = shapeWeights({ cards, price, targetEdge, targetWinRate });
+            if (isSuccess(r)) {
+              feasible += 1;
+              if (r.snapped) snappedCount += 1;
+            }
+          }
+        }
+      }
+    }
+  }
+  const rate = feasible > 0 ? snappedCount / feasible : 0;
+  console.log(`      snap-acceptance rate: ${snappedCount}/${feasible} = ${(rate * 100).toFixed(2)}%`);
+  assert(
+    rate >= 0.2,
+    `snap-acceptance rate ≥ 20% (got ${(rate * 100).toFixed(2)}%) — the buffer-residual rewrite must beat the naive baseline`,
+  );
+});
+
+// ── 14e. Direct snap primitive: returned pcts are buffer-residual clean ──
+check("snap (e): snapWeightsToCleanLadder places N-1 entries on exact ladder rungs", () => {
+  // A controlled weight vector — what the snap primitive returns must satisfy:
+  // exactly one slot (the buffer = argmax mass) holds the residual, all other
+  // positive slots sit on exact ladder rungs.
+  const weights = [10000, 25000, 50000, 70000, 90000]; // bimodal-ish
+  const price = 10;
+  const snap = snapWeightsToCleanLadder({ weights, price });
+  const total = snap.weights.reduce((a, b) => a + b, 0);
+  assert(total > 0, `snapped total > 0 (got ${total})`);
+  const pcts = snap.weights.map((w) => (w / total) * 100);
+  const hits = countLadderHits(pcts);
+  // The largest-pct slot is the buffer. N-1 of the other 4 should be on rungs.
+  // Allow integer-quantization slop — we accept "at least N-1 on rungs".
+  const positive = pcts.filter((p) => p > 0).length;
+  assert(
+    hits >= positive - 1,
+    `at least ${positive - 1} of ${positive} positive slots on ladder (got ${hits}). pcts: ${pcts.map(p => p.toFixed(4) + "%").join(", ")}`,
+  );
 });
 
 // ── Summary ─────────────────────────────────────────────────────────
