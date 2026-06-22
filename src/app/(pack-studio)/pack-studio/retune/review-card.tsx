@@ -32,6 +32,7 @@ import { InfoHint } from "@/app/(admin)/creators/_components/info-hint";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import type { PackRisk, RiskTier } from "@/app/(admin)/insights/edge-calc/risk";
+import { DEFAULT_MAX_MULT_CEILING } from "@/app/(pack-studio)/pack-studio/_lib/auto-targets";
 
 import type { EditApprovePayload, ReviewItem } from "./retune-review";
 import { PoolEditor, type EditorTargets } from "./pool-editor";
@@ -293,6 +294,16 @@ export function ReviewCard({
             </p>
           </div>
         </div>
+        {/* Lottery-pack explainer: visible whenever a tagged pack has a hit-rate
+            ≤ 10% (1% / 5% / 10%). Makes the auto-retune's intentional jackpot
+            preservation visible to the owner — what was loosened, why, and how
+            to change it — rather than silently keeping a huge top card. */}
+        <LotteryAcknowledgment
+          intendedHitRate={intendedHitRate}
+          price={proposal.price}
+          actualCap={proposal.autoTargets.maxWinCap}
+          maxWin={(after ?? before).maxWin}
+        />
         {/* One plain-English line describing the pack + what we're targeting. */}
         <p className="text-xs leading-relaxed text-muted-foreground">
           {describePack({
@@ -676,6 +687,89 @@ function TagChip({
       <Target className="size-3" />
       Standard pack — default {(targetWinRate * 100).toFixed(0)}% win-rate
     </Badge>
+  );
+}
+
+/**
+ * The lottery-pack acknowledgment panel — only renders for a TAGGED pack with a
+ * hit-rate ≤ 10% (1% / 5% / 10% packs). Makes the auto-retune's intentional
+ * jackpot preservation visible to the owner: the leading `X%` tag in the pack
+ * name is what tells the tool to LOOSEN the max-win cap so the big top card
+ * survives the shaper (a low hit-rate needs a big jackpot to hold ~11% edge —
+ * the math requires it). Without this panel the tool silently keeps the
+ * jackpot; with it the owner can see the recognition + the loosened cap + the
+ * top card it preserved, and how to revert if they want a normal pack.
+ *
+ * House-POV: emerald — preserving the lottery-style jackpot is the INTENDED
+ * design (not a warning), matching the existing colour rule for "good for the
+ * house / acting as designed".
+ */
+function LotteryAcknowledgment({
+  intendedHitRate,
+  price,
+  actualCap,
+  maxWin,
+}: {
+  intendedHitRate: number | null;
+  price: number;
+  /** The hit-rate-aware cap from `autoMaxWinCap(price, cfg, hitRate)`. */
+  actualCap: number;
+  /** The pack's actual top card value (max-win), before or after shaping. */
+  maxWin: number;
+}) {
+  if (intendedHitRate == null || intendedHitRate > 0.10) return null;
+  const tagPct = (intendedHitRate * 100).toFixed(
+    intendedHitRate < 0.01 ? 2 : 0,
+  );
+  // Baseline cap = price × 100× (the untagged default, `DEFAULT_MAX_MULT_CEILING`).
+  const baselineCap = price * DEFAULT_MAX_MULT_CEILING;
+  const loosened = actualCap > baselineCap + 1e-6;
+  return (
+    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-xs text-emerald-700 dark:text-emerald-400">
+      <div className="flex items-start gap-2">
+        <Sparkles className="mt-0.5 size-3.5 shrink-0" />
+        <div className="min-w-0 space-y-1.5">
+          <p className="font-semibold">
+            Lottery pack detected — jackpot preserved
+          </p>
+          <p className="leading-relaxed">
+            Name tag <span className="font-medium">{tagPct}%</span> → tool keeps
+            the max-win cap loosened to allow your top card.
+          </p>
+          <p className="leading-relaxed tabular-nums">
+            {loosened ? (
+              <>
+                Baseline cap (untagged):{" "}
+                <span className="font-medium">{formatCurrency(baselineCap)}</span>{" "}
+                · Lottery cap (in use):{" "}
+                <span className="font-medium">{formatCurrency(actualCap)}</span>{" "}
+                · Top card kept:{" "}
+                <span className="font-medium">{formatCurrency(maxWin)}</span>
+              </>
+            ) : (
+              <>
+                Cap unchanged (already permissive enough): baseline{" "}
+                <span className="font-medium">{formatCurrency(baselineCap)}</span>{" "}
+                = lottery cap{" "}
+                <span className="font-medium">{formatCurrency(actualCap)}</span>{" "}
+                · Top card kept:{" "}
+                <span className="font-medium">{formatCurrency(maxWin)}</span>
+              </>
+            )}
+          </p>
+          <p className="leading-relaxed">
+            A <span className="font-medium">{tagPct}%</span> win-rate needs a big
+            jackpot to hit ~11% edge — math requires it. Without the loosened cap
+            this pack would go infeasible.
+          </p>
+          <p className="text-[11px] leading-relaxed text-emerald-700/80 dark:text-emerald-400/80">
+            To make it a normal pack: remove the{" "}
+            <span className="font-medium">{tagPct}%</span> from the name. To pick
+            a custom max-win: edit the cap in the pack edit form.
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 
