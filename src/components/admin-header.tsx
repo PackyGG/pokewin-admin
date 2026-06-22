@@ -49,7 +49,12 @@ import type { AdminPreferences } from "@/lib/admin-preferences-types";
 
 function getBreadcrumbs(pathname: string) {
   const segments = pathname.split("/").filter(Boolean);
-  return segments.map((seg) => seg.charAt(0).toUpperCase() + seg.slice(1));
+  // Only title-case real route slugs (lowercase letters/hyphens). Dynamic id
+  // segments (user ids etc. are case-sensitive nanoid/cuid strings) are shown
+  // verbatim — capitalizing their first char corrupts the displayed id.
+  return segments.map((seg) =>
+    /^[a-z][a-z-]*$/.test(seg) ? seg.charAt(0).toUpperCase() + seg.slice(1) : seg,
+  );
 }
 
 /**
