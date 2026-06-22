@@ -8,6 +8,7 @@ import {
   Scale,
   ShieldCheck,
   Sparkles,
+  TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -23,8 +24,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import {
   computePackRisk,
@@ -136,6 +147,12 @@ function isTokenExpired(message: string): boolean {
   return message.includes("authorization expired");
 }
 
+/** Format a fraction as a 2-dp percent (mirrors the review card's `pct`). */
+function pct(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${(v * 100).toFixed(2)}%`;
+}
+
 /**
  * Targets the inline pool editor's "Re-shape to targets" button shapes onto. The
  * edge always comes from the pack's auto-target (the house-edge knob is not an
@@ -171,6 +188,21 @@ export function RetuneReview({
   const [applying, setApplying] = React.useState(false);
   // The index whose inline pool editor is open (null = none). Reset on navigate.
   const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
+
+  // ── Two-step confirm gate before any prod write ─────────────────────
+  // Both Approve paths (plain retune + edited-pool) route through this gate: a
+  // first "push this live?" dialog, then a final hard "100% sure" confirm. Only
+  // the final confirm fires the write. The 2FA token (separate) still guards the
+  // server action; a token-expiry retry re-enters the perform* fns WITHOUT
+  // re-opening the gate (the gate sits at the entry points, not inside perform*).
+  type PendingWrite =
+    | { kind: "retune"; index: number }
+    | { kind: "edit"; index: number; payload: EditApprovePayload };
+  const [pendingWrite, setPendingWrite] = React.useState<PendingWrite | null>(
+    null,
+  );
+  // 0 = closed, 1 = first dialog, 2 = final hard confirm.
+  const [confirmStep, setConfirmStep] = React.useState<0 | 1 | 2>(0);
 
   // ── System-balance mode ─────────────────────────────────────────────
   // Off = per-pack auto-targets (the default load). On = portfolio mode: the
@@ -377,10 +409,13 @@ export function RetuneReview({
     [items, router, advance],
   );
 
+  // Approve opens the two-step confirm gate instead of writing directly — the
+  // pending retune write only fires from the gate's final "Push to production".
   const onApprove = React.useCallback(() => {
     if (applying) return;
-    void performApprove(index);
-  }, [applying, performApprove, index]);
+    setPendingWrite({ kind: "retune", index });
+    setConfirmStep(1);
+  }, [applying, index]);
 
   const onDecline = React.useCallback(() => {
     if (applying) return;
@@ -437,12 +472,15 @@ export function RetuneReview({
     [items, router, advance],
   );
 
+  // Edit-approve also opens the two-step confirm gate — the pending edit write
+  // only fires from the gate's final "Push to production".
   const onApplyEdit = React.useCallback(
     (payload: EditApprovePayload) => {
       if (applying) return;
-      void performEditApprove(index, payload);
+      setPendingWrite({ kind: "edit", index, payload });
+      setConfirmStep(1);
     },
-    [applying, performEditApprove, index],
+    [applying, index],
   );
 
   // ── 2FA gate (Start review + token-expiry retry) ────────────────────
@@ -489,10 +527,11 @@ export function RetuneReview({
   React.useEffect(() => {
     if (!started) return;
     function onKey(e: KeyboardEvent) {
-      // Ignore when typing in an input / the 2FA dialog is open.
+      // Ignore when typing in an input / the 2FA dialog or confirm gate is open.
       const t = e.target as HTMLElement | null;
       if (
         authOpen ||
+        confirmStep > 0 ||
         applying ||
         (t &&
           (t.tagName === "INPUT" ||
@@ -517,7 +556,7 @@ export function RetuneReview({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [started, authOpen, applying, advance, goTo, index, onApprove, onDecline]);
+  }, [started, authOpen, confirmStep, applying, advance, goTo, index, onApprove, onDecline]);
 
   const progressPct = total > 0 ? Math.round(((approved + declined) / total) * 100) : 0;
 
@@ -710,6 +749,162 @@ export function RetuneReview({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Two-step "push live" confirm gate ───────────────────────────
+          Sits in front of BOTH prod-write Approve paths. Step 1 summarizes the
+          write; Step 2 is a final hard confirm. The write only fires from Step 2
+          (the 2FA token still guards the server action separately). */}
+      {(() => {
+        if (confirmStep === 0 || !pendingWrite) return null;
+        const item = items[pendingWrite.index];
+        if (!item) return null;
+        const name = item.proposal.name;
+        const priceBefore = item.proposal.price;
+        const priceAfter =
+          pendingWrite.kind === "edit"
+            ? pendingWrite.payload.price ?? item.proposal.price
+            : item.proposal.price; // retune never changes price
+        const edgeBefore = item.proposal.before.edge;
+        const edgeAfter = (item.adjusted?.after ?? item.proposal.after)?.edge;
+        const feasible = item.adjusted?.feasible ?? item.proposal.feasible;
+        const cancel = () => {
+          setConfirmStep(0);
+          setPendingWrite(null);
+        };
+        return (
+          <AlertDialog
+            open
+            onOpenChange={(o) => {
+              if (applying) return;
+              if (!o) cancel();
+            }}
+          >
+            {confirmStep === 1 ? (
+              <AlertDialogContent className="sm:max-w-md">
+                <AlertDialogHeader>
+                  <AlertDialogMedia className="bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                    <TriangleAlert />
+                  </AlertDialogMedia>
+                  <AlertDialogTitle>Push this pack live?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This writes <strong>{name}</strong> to the live game database.
+                    Review the change below, then confirm once more.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+
+                <div className="space-y-2 rounded-lg border bg-muted/10 p-3 text-sm">
+                  <SummaryRow
+                    label="Price"
+                    before={formatCurrency(priceBefore)}
+                    after={formatCurrency(priceAfter)}
+                  />
+                  <SummaryRow
+                    label="House edge"
+                    before={pct(edgeBefore)}
+                    after={pct(edgeAfter)}
+                  />
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">Feasible</span>
+                    <span
+                      className={cn(
+                        "font-medium tabular-nums",
+                        feasible
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-rose-600 dark:text-rose-400",
+                      )}
+                    >
+                      {feasible ? "Yes" : "No"}
+                    </span>
+                  </div>
+                </div>
+
+                <AlertDialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={cancel}
+                    disabled={applying}
+                    className="w-full sm:w-auto"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() => setConfirmStep(2)}
+                    disabled={applying}
+                    className="w-full sm:w-auto"
+                  >
+                    Continue
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            ) : (
+              <AlertDialogContent className="sm:max-w-md">
+                <AlertDialogHeader>
+                  <AlertDialogMedia className="bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                    <TriangleAlert />
+                  </AlertDialogMedia>
+                  <AlertDialogTitle>
+                    100% sure — push to production
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Final confirmation. This writes <strong>{name}</strong> to the
+                    live game database now. There is no undo from here.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+
+                <AlertDialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setConfirmStep(1)}
+                    disabled={applying}
+                    className="w-full sm:w-auto"
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      const p = pendingWrite;
+                      setConfirmStep(0);
+                      setPendingWrite(null);
+                      if (!p) return;
+                      if (p.kind === "edit") {
+                        void performEditApprove(p.index, p.payload);
+                      } else {
+                        void performApprove(p.index);
+                      }
+                    }}
+                    disabled={applying}
+                    className="w-full bg-rose-600 text-white hover:bg-rose-600/90 sm:w-auto"
+                  >
+                    Push to production
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            )}
+          </AlertDialog>
+        );
+      })()}
+    </div>
+  );
+}
+
+/** A before → after summary row in the confirm gate. */
+function SummaryRow({
+  label,
+  before,
+  after,
+}: {
+  label: string;
+  before: string;
+  after: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="flex items-center gap-1.5 tabular-nums">
+        <span className="text-muted-foreground">{before}</span>
+        <span className="text-muted-foreground">→</span>
+        <span className="font-medium">{after}</span>
+      </span>
     </div>
   );
 }
