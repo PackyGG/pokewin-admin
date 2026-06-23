@@ -15,6 +15,7 @@ import {
   ShieldAlert,
   Calculator,
   History,
+  Receipt,
   Settings,
   Tv,
   UserSearch,
@@ -96,6 +97,11 @@ const HUB_NAV: HubNavItem[] = [
     label: "Profitability",
     href: "/creator-hub/profitability",
     icon: TrendingUp,
+  },
+  {
+    label: "Audit Spend",
+    href: "/creator-hub/audit-spend",
+    icon: Receipt,
   },
   {
     label: "ROI Calculator",
