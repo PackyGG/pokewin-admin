@@ -17,10 +17,11 @@ import { CH_DB, chDateTime, toNumber } from "../_shared";
  * ─── What is replicated (the cent/count-exact, scalar-diffable core) ─────────
  *   • position           — 1-based rank by wager DESC (same ORDER + LIMIT as PG).
  *   • userId / username / email — joined from public_user.
- *   • totalWageredUsd    — Σ affiliate_code_usages.wager_amount_usd attributed
- *                          to the leaderboard's code(s) in [start,end), grouped
- *                          per referred user (one usage_type='wager' row per
- *                          wager). Money kept Decimal end-to-end.
+ *   • totalWageredUsd    — Σ coalesce(weighted_wager_amount_usd, wager_amount_usd)
+ *                          attributed to the leaderboard's code(s) in [start,end),
+ *                          grouped per referred user (one usage_type='wager' row
+ *                          per wager). The WEIGHTED amount mirrors the PG twin +
+ *                          backend. Money kept Decimal end-to-end.
  *   • prizeUsd           — matched from the caller-supplied prize tiers by exact
  *                          position, IDENTICALLY to the PG twin (pure TS), so it
  *                          is parity-exact whenever the positions match.
@@ -158,7 +159,7 @@ export async function getAffiliateLeaderboardRankingsFromClickHouse(
       acu.referred_user_id AS user_id,
       u.username AS username,
       u.email AS email,
-      toString(sum(acu.wager_amount_usd)) AS total_wagered
+      toString(sum(coalesce(acu.weighted_wager_amount_usd, acu.wager_amount_usd))) AS total_wagered
     FROM ${CH_DB}.public_affiliate_code_usages AS acu FINAL
     INNER JOIN real_users AS u ON u.id = acu.referred_user_id
     WHERE acu._peerdb_is_deleted = 0
@@ -168,8 +169,8 @@ export async function getAffiliateLeaderboardRankingsFromClickHouse(
       AND acu.created_at <  {end:DateTime64(6)}
       ${codeFallback ? "AND acu.affiliate_user_id IN {creators:Array(String)}" : ""}
     GROUP BY acu.referred_user_id, u.username, u.email
-    HAVING sum(acu.wager_amount_usd) > 0
-    ORDER BY sum(acu.wager_amount_usd) DESC
+    HAVING sum(coalesce(acu.weighted_wager_amount_usd, acu.wager_amount_usd)) > 0
+    ORDER BY sum(coalesce(acu.weighted_wager_amount_usd, acu.wager_amount_usd)) DESC
     LIMIT {lim:UInt32}`;
 
   const rows = await clickhouseRead.query<StandingRow>({

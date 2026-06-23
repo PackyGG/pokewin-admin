@@ -4,8 +4,6 @@ import { unstable_cache } from "next/cache";
 
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { CREATOR_COST_CACHE_TTL_SECONDS } from "./_cost-cache";
 
 /**
@@ -17,18 +15,18 @@ import { CREATOR_COST_CACHE_TTL_SECONDS } from "./_cost-cache";
  *
  * The leaderboard DETAIL page (`/creators/leaderboards/[id]`) renders
  * per-user standings via `getAffiliateLeaderboardRankings`, whose wager
- * column is `SUM(acu.wager_amount_usd)` over `affiliate_code_usages`
- * rows with `usage_type = 'wager'`, scoped to the board's code(s) inside
- * its `[start_date, end_date)` window, excluding staff + blacklisted
- * users. The board's TOTAL wager is simply that same sum WITHOUT the
+ * column is `SUM(COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd))`
+ * over `affiliate_code_usages` rows with `usage_type = 'wager'`, scoped to
+ * the board's code(s) inside its `[start_date, end_date)` window, excluding
+ * only staff. The board's TOTAL wager is simply that same sum WITHOUT the
  * per-user GROUP BY — the sum of every standing's `totalWageredUsd`.
  *
- * `acu.wager_amount_usd` is the canonical creator-wager column used
- * across every creator surface (the ranking query, the list-card
- * `getCodeAndWagerByUser`, etc.) — any borrow-correction is already
- * baked into it at write time, so this introduces no new wager
- * definition. Casing + the "all codes" fallback are handled identically
- * to the ranking query (see methodology notes inline).
+ * The WEIGHTED amount (per-game leaderboard weight frozen at insert time,
+ * falling back to raw for pre-feature rows) is used so this card matches the
+ * backend leaderboard + the detail-page standings exactly. Blacklisted users
+ * are intentionally NOT filtered out here — the standings include them (the
+ * view mirrors the real packy.gg leaderboard), so the total must too. Casing +
+ * the "all codes" fallback are handled identically to the ranking query.
  *
  * ─── WHY BATCHED (one scan for the whole card, not N) ───────────────
  *
@@ -63,45 +61,54 @@ export type LeaderboardWagerInput = {
   endDate: Date;
 };
 
-type WagerRow = { leaderboard_id: string; total_wagered: string };
+type WagerRow = {
+  leaderboard_id: string;
+  raw_wagered: string;
+  weighted_wagered: string;
+};
+
+/** Per-board wager totals: raw (unweighted) + leaderboard-weighted. */
+export type WagerBreakdown = { raw: number; weighted: number };
 
 /**
  * Compute total wager per leaderboard for a (small, card-sized) set of
  * boards in a single aggregate scan. Returns a Map keyed by leaderboard
- * id → total wagered USD. Boards with no qualifying wager activity are
+ * id → { raw, weighted } USD. Boards with no qualifying wager activity are
  * absent from the map (callers default to 0 / hide the figure).
+ *
+ * Both figures come from ONE scan over the immutable `affiliate_code_usages`
+ * rows: `raw` = Σ wager_amount_usd, `weighted` = Σ COALESCE(weighted, raw).
+ * For SETTLED boards the weighted figure is overridden with the authoritative
+ * `affiliate_leaderboard_snapshots` total (what was actually paid); raw still
+ * comes from the scan (snapshots don't store it).
  */
 async function computeCreatorLeaderboardWagerMap(
   boards: LeaderboardWagerInput[],
-): Promise<Map<string, number>> {
-  const result = new Map<string, number>();
+): Promise<Map<string, WagerBreakdown>> {
+  const result = new Map<string, WagerBreakdown>();
   if (boards.length === 0) return result;
 
   const db = await getDb();
 
-  // ── Settled boards: use the authoritative weighted snapshot total ──
-  // Per-game wager weights (packs / battles / upgrader) are applied at
-  // wager time and frozen into affiliate_leaderboard_snapshots when a board
-  // settles. Raw affiliate_code_usages.wager_amount_usd is UNWEIGHTED, so
-  // for any board that has a snapshot we sum the snapshot instead — keeping
-  // this card consistent with the (weighted) detail-page standings. Only
-  // boards WITHOUT a snapshot fall through to the live raw scan below.
+  // ── Settled boards: authoritative weighted snapshot total ──
+  // Per-game wager weights (packs / battles / upgrader) are applied at wager
+  // time and frozen into affiliate_leaderboard_snapshots when a board settles.
+  // We OVERRIDE the scanned weighted figure with the snapshot for settled
+  // boards so it matches exactly what was paid. `raw` always comes from the
+  // scan below (snapshots don't carry an unweighted total).
   const boardIds = boards.map((b) => b.id);
   const snapSums = await db.affiliate_leaderboard_snapshots.groupBy({
     by: ["leaderboard_id"],
     where: { leaderboard_id: { in: boardIds } },
     _sum: { total_wagered_usd: true },
   });
-  const settledBoardIds = new Set<string>();
+  const settledWeightedById = new Map<string, number>();
   for (const s of snapSums) {
-    settledBoardIds.add(s.leaderboard_id);
-    result.set(s.leaderboard_id, toNumber(s._sum.total_wagered_usd ?? 0));
+    settledWeightedById.set(
+      s.leaderboard_id,
+      toNumber(s._sum.total_wagered_usd ?? 0),
+    );
   }
-  const liveBoards = boards.filter((b) => !settledBoardIds.has(b.id));
-  if (liveBoards.length === 0) return result;
-
-  const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
   // Resolve the code set for any board that didn't name explicit codes.
   // Same "all codes for the participating creators" fallback the ranking
@@ -110,7 +117,7 @@ async function computeCreatorLeaderboardWagerMap(
   // to its owner so the per-board fallback can keep the
   // transferred-code guard (acu.affiliate_user_id ∈ that board's
   // participating creators).
-  const fallbackBoards = liveBoards.filter((b) => b.affiliateCodes.length === 0);
+  const fallbackBoards = boards.filter((b) => b.affiliateCodes.length === 0);
   let codesByOwner = new Map<string, string[]>();
   if (fallbackBoards.length > 0) {
     const ownerIds = Array.from(
@@ -157,7 +164,7 @@ async function computeCreatorLeaderboardWagerMap(
     creatorIds: string[];
   };
   const tuples: Tuple[] = [];
-  for (const b of liveBoards) {
+  for (const b of boards) {
     const participating = [
       b.creatorUserId,
       ...b.coCreatorUserIds.filter((id) => id && id !== b.creatorUserId),
@@ -208,7 +215,8 @@ async function computeCreatorLeaderboardWagerMap(
         ${valuesRows}
      )
      SELECT bc.leaderboard_id AS leaderboard_id,
-            SUM(acu.wager_amount_usd::numeric)::text AS total_wagered
+            SUM(acu.wager_amount_usd::numeric)::text AS raw_wagered,
+            SUM(COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric)::text AS weighted_wagered
        FROM board_codes bc
        JOIN affiliate_code_usages acu
          ON UPPER(acu.code) = bc.code
@@ -217,13 +225,27 @@ async function computeCreatorLeaderboardWagerMap(
         AND acu.created_at <  bc.end_ts
         AND (NOT bc.restrict_creator OR acu.affiliate_user_id = ANY(bc.creator_ids))
        JOIN "user" u ON u.id = acu.referred_user_id
-      WHERE u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+      WHERE u.role NOT IN ('admin', 'support')
       GROUP BY bc.leaderboard_id`,
     ...params,
   );
 
   for (const row of rows) {
-    result.set(row.leaderboard_id, toNumber(row.total_wagered));
+    const raw = toNumber(row.raw_wagered);
+    // Settled boards: prefer the authoritative snapshot weighted total;
+    // otherwise use the scanned weighted sum.
+    const weighted =
+      settledWeightedById.get(row.leaderboard_id) ??
+      toNumber(row.weighted_wagered);
+    result.set(row.leaderboard_id, { raw, weighted });
+  }
+
+  // A settled board whose participants produced no scan row (e.g. all now
+  // staff, or "all codes" with none currently owned) would otherwise drop its
+  // authoritative snapshot total. Backfill weighted from the snapshot; raw is
+  // unknown without scan rows, so it stays 0.
+  for (const [id, weighted] of settledWeightedById) {
+    if (!result.has(id)) result.set(id, { raw: 0, weighted });
   }
   return result;
 }
@@ -264,32 +286,48 @@ const cachedCreatorLeaderboardWagerMap = unstable_cache(
   // is passed through as the second arg the compute actually consumes.
   async (_signature: string, boards: LeaderboardWagerInput[]) =>
     computeCreatorLeaderboardWagerMapAsEntries(boards),
-  ["creators-detail-leaderboard-wager-v1"],
+  // v2: cached value shape changed from `[id, number]` to `[id, {raw,weighted}]`.
+  ["creators-detail-leaderboard-wager-v2"],
   { revalidate: CREATOR_COST_CACHE_TTL_SECONDS },
 );
 
 // unstable_cache serialises the cached value to JSON, which can't round-
-// trip a Map — store/return plain [id, usd] entries and rebuild the Map
-// at the boundary.
+// trip a Map — store/return plain [id, {raw,weighted}] entries and rebuild
+// the Map at the boundary.
 async function computeCreatorLeaderboardWagerMapAsEntries(
   boards: LeaderboardWagerInput[],
-): Promise<[string, number][]> {
+): Promise<[string, WagerBreakdown][]> {
   const map = await computeCreatorLeaderboardWagerMap(boards);
   return Array.from(map.entries());
 }
 
 /**
- * Public entry — total wager per leaderboard for the card's board set,
- * batched + cached. Returns a Map keyed by leaderboard id → total
- * wagered USD (boards with no qualifying wager are absent).
+ * Public entry — raw + weighted wager per leaderboard for the card's board
+ * set, batched + cached. Returns a Map keyed by leaderboard id →
+ * { raw, weighted } USD (boards with no qualifying wager are absent).
  */
-export async function getCreatorLeaderboardWagerMap(
+export async function getCreatorLeaderboardWagerBreakdownMap(
   boards: LeaderboardWagerInput[],
-): Promise<Map<string, number>> {
+): Promise<Map<string, WagerBreakdown>> {
   if (boards.length === 0) return new Map();
   const entries = await cachedCreatorLeaderboardWagerMap(
     boardSignature(boards),
     boards,
   );
   return new Map(entries);
+}
+
+/**
+ * Backward-compatible entry returning ONLY the weighted total per board
+ * (the canonical "total wager", matching the backend leaderboard + settled
+ * snapshots). Callers that want both figures use
+ * {@link getCreatorLeaderboardWagerBreakdownMap}.
+ */
+export async function getCreatorLeaderboardWagerMap(
+  boards: LeaderboardWagerInput[],
+): Promise<Map<string, number>> {
+  const breakdown = await getCreatorLeaderboardWagerBreakdownMap(boards);
+  return new Map(
+    Array.from(breakdown, ([id, b]) => [id, b.weighted] as [string, number]),
+  );
 }

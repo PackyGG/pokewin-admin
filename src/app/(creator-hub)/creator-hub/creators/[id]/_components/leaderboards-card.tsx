@@ -10,7 +10,10 @@ import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
 import { getCreatorLeaderboardCost } from "../../../../../(admin)/creators/[userId]/_queries/leaderboard-cost-by-creator";
-import { getCreatorLeaderboardWagerMap } from "../../../../../(admin)/creators/[userId]/_queries/leaderboard-wager-by-board";
+import {
+  getCreatorLeaderboardWagerBreakdownMap,
+  type WagerBreakdown,
+} from "../../../../../(admin)/creators/[userId]/_queries/leaderboard-wager-by-board";
 import { getLeaderboardSponsorshipMap } from "../../../../../(admin)/creators/_queries/leaderboard-sponsorship";
 import {
   getLeaderboardsPreviewCached,
@@ -140,7 +143,7 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
   // of each prize pool). The sponsorship map defaults a board to 100% when
   // un-annotated — same convention as the cost aggregates above.
   const [wagerMap, sponsorshipMap] = await Promise.all([
-    getCreatorLeaderboardWagerMap(
+    getCreatorLeaderboardWagerBreakdownMap(
       rows.map((r) => ({
         id: r.id,
         creatorUserId: r.creator_user_id,
@@ -152,7 +155,7 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
     ).catch((e) => {
       console.error("[creator-hub.creators.leaderboards] wager map failed:", e);
       wagerFailed = true;
-      return new Map<string, number>();
+      return new Map<string, WagerBreakdown>();
     }),
     getLeaderboardSponsorshipMap(rows.map((r) => r.id)).catch((e) => {
       console.error(
@@ -208,6 +211,7 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
             <div className="space-y-2">
               {rows.map((r) => {
                 const wagered = wagerMap.get(r.id);
+                const hasWager = wagered != null && wagered.raw > 0;
                 // House-funded share: admin sponsored % (default 100% when
                 // un-annotated) × the prize pool. This is what we actually
                 // pay off the board → rose (house spend).
@@ -228,9 +232,10 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                       <span className="truncate text-sm font-medium">
                         {r.title}
                       </span>
-                      {wagered != null && wagered > 0 && (
+                      {hasWager && (
                         <span className="shrink-0 text-xs tabular-nums text-emerald-600 dark:text-emerald-400">
-                          · {formatCurrency(wagered)} wagered
+                          · {formatCurrency(wagered.raw)} wagered ·{" "}
+                          {formatCurrency(wagered.weighted)} weighted
                         </span>
                       )}
                       {r.is_sponsored && (

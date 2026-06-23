@@ -2,7 +2,6 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { calculateUsersBoundedWindowedPnlBatch } from "./pnl";
-import { blacklistNotInClause } from "./_blacklist";
 
 export type LeaderboardRanking = {
   position: number;
@@ -17,6 +16,14 @@ export type LeaderboardRanking = {
   prizeUsd: number | null;
   /** When the user first crossed into their current place (UTC). */
   positionReachedAt: string | null;
+  /**
+   * True when the user is on the admin excluded-users blacklist. The
+   * standings deliberately still INCLUDE them (so this view mirrors the
+   * real, user-facing leaderboard on packy.gg) and just flag them so an
+   * operator can tell they're excluded from analytics aggregates.
+   * Optional — the ClickHouse comparison twin doesn't populate it.
+   */
+  excluded?: boolean;
 };
 
 export type LeaderboardStandings = {
@@ -28,11 +35,13 @@ export type LeaderboardStandings = {
    *     ended. These already carry the per-game wager WEIGHTING (packs /
    *     battles / upgrader count at different rates toward leaderboards),
    *     so they match what was actually paid out.
-   *   • "live"    — recomputed live from raw `affiliate_code_usages`
-   *     (`wager_amount_usd` is the UNWEIGHTED wager). Used while a board is
-   *     still active and no snapshot exists yet. This is an estimate: it
-   *     does NOT apply the leaderboard weighting, so order / prize tiers can
-   *     differ from the final settled standings.
+   *   • "live"    — recomputed live from `affiliate_code_usages` using the
+   *     same WEIGHTED amount as the backend leaderboard + the settled
+   *     snapshots: COALESCE(weighted_wager_amount_usd, wager_amount_usd).
+   *     Used while a board is still active and no snapshot exists yet. It
+   *     can still drift slightly from the final settled standings as late
+   *     wagers land, but the weighting matches so order / prize tiers agree
+   *     with what packy.gg shows live.
    */
   source: "settled" | "live";
 };
@@ -102,6 +111,14 @@ export async function getAffiliateLeaderboardRankings(opts: {
 
   const db = await getDb();
 
+  // Excluded-users blacklist — used only to FLAG rows now, never to drop
+  // them. This view must mirror the real packy.gg leaderboard (a blacklisted
+  // user who's actually #1 has to show as #1 here too); the badge tells the
+  // operator they're excluded from analytics. Fail-soft to no flags.
+  const excludedSet = new Set(
+    await getExcludedUserIds().catch(() => [] as string[]),
+  );
+
   // ── Settled standings: prefer the authoritative weighted snapshot ──
   // The game applies per-game wager WEIGHTS (packs / battles / upgrader
   // count at different rates toward leaderboards). Those weights are
@@ -160,14 +177,12 @@ export async function getAffiliateLeaderboardRankings(opts: {
             // raw running-total estimate wouldn't line up with the weighted
             // positions — leave it blank for settled standings.
             positionReachedAt: null,
+            excluded: excludedSet.has(s.user_id),
           };
         }),
       };
     }
   }
-
-  const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
   // Resolve the code set this leaderboard is scoped to. Empty array
   // on the input = "all codes this creator owns" (matches what the
@@ -228,23 +243,29 @@ export async function getAffiliateLeaderboardRankings(opts: {
   // many wager rows into a single standing. usage_type is compared via
   // ::text because the dev DB's enum can lag the schema (enum-drift
   // guard, same convention as the rest of the queries layer).
+  // Rank by the leaderboard-WEIGHTED wager (per-game weight frozen at insert
+  // time), matching the backend's live leaderboard + the settled snapshots
+  // exactly: COALESCE(weighted_wager_amount_usd, wager_amount_usd) — pre-feature
+  // rows have NULL weighted values and count at full weight. Summing raw
+  // wager_amount_usd here used to mis-rank/mis-total any board with non-1×
+  // game weights vs what packy.gg actually shows.
   const rows = await db.$queryRawUnsafe<Row[]>(
     `SELECT
        acu.referred_user_id AS user_id,
        u.username,
        u.email,
-       SUM(acu.wager_amount_usd::numeric)::text AS total_wagered
+       SUM(COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric)::text AS total_wagered
      FROM affiliate_code_usages acu
      JOIN "user" u ON u.id = acu.referred_user_id
      WHERE acu.usage_type::text = 'wager'
        AND UPPER(acu.code) = ANY($1::text[])
        AND acu.created_at >= $2
        AND acu.created_at <  $3
-       AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+       AND u.role NOT IN ('admin', 'support')
        ${whereExtra}
      GROUP BY acu.referred_user_id, u.username, u.email
-     HAVING SUM(acu.wager_amount_usd::numeric) > 0
-     ORDER BY SUM(acu.wager_amount_usd::numeric) DESC
+     HAVING SUM(COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric) > 0
+     ORDER BY SUM(COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric) DESC
      LIMIT ${limit}`,
     ...params,
   );
@@ -295,6 +316,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
       housePnlUsd: pnlByUser.get(r.user_id) ?? 0,
       prizeUsd: prizeByPosition.get(position) ?? null,
       positionReachedAt: reached ? reached.toISOString() : null,
+      excluded: excludedSet.has(r.user_id),
     };
   });
   return { rankings, source: "live" };
@@ -402,7 +424,7 @@ async function getPositionReachedAtBatch(
       SELECT
         acu.referred_user_id AS user_id,
         acu.created_at,
-        SUM(acu.wager_amount_usd::numeric) OVER (
+        SUM(COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric) OVER (
           PARTITION BY acu.referred_user_id
           ORDER BY acu.created_at ASC, acu.id ASC
           ROWS UNBOUNDED PRECEDING

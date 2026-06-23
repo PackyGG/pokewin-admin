@@ -16,7 +16,10 @@ import { InlineSponsoredPercentage } from "../leaderboards/_components/inline-sp
 import { InlineCreatorPaid } from "../leaderboards/_components/inline-creator-paid";
 import { getLeaderboardSponsorshipMap } from "../_queries/leaderboard-sponsorship";
 import { getLeaderboardCreatorPaidMap } from "../_queries/leaderboard-creator-paid";
-import { getCreatorLeaderboardWagerMap } from "./_queries/leaderboard-wager-by-board";
+import {
+    getCreatorLeaderboardWagerBreakdownMap,
+    type WagerBreakdown,
+} from "./_queries/leaderboard-wager-by-board";
 
 type ApprovalStatus = "pending" | "approved" | "rejected";
 type TimeStatus = "upcoming" | "active" | "ended";
@@ -136,7 +139,7 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
         getLeaderboardCreatorPaidMap(rows.map((r) => r.id)).catch(
             () => new Map<string, boolean>(),
         ),
-        getCreatorLeaderboardWagerMap(
+        getCreatorLeaderboardWagerBreakdownMap(
             rows.map((r) => ({
                 id: r.id,
                 creatorUserId: r.creator_user_id,
@@ -145,7 +148,7 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                 startDate: new Date(r.start_date),
                 endDate: new Date(r.end_date),
             })),
-        ).catch(() => new Map<string, number>()),
+        ).catch(() => new Map<string, WagerBreakdown>()),
     ]);
 
     return (
@@ -218,9 +221,10 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                                     <div className="min-w-0 sm:flex-1">
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <span className="font-medium text-sm truncate">{r.title}</span>
-                                            {wagered != null && (
+                                            {wagered != null && wagered.raw > 0 && (
                                                 <span className="text-xs tabular-nums text-emerald-600 dark:text-emerald-400 shrink-0">
-                                                    · {formatCurrency(wagered)} wagered
+                                                    · {formatCurrency(wagered.raw)} wagered ·{" "}
+                                                    {formatCurrency(wagered.weighted)} weighted
                                                 </span>
                                             )}
                                             {r.is_sponsored && (

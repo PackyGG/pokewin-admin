@@ -61,7 +61,7 @@ export function LeaderboardStandingsPanel({
                             >
                                 {source === "settled"
                                     ? "Settled · weighted"
-                                    : "Live estimate · unweighted"}
+                                    : "Live · weighted"}
                             </span>
                         )}
                     </div>
@@ -75,11 +75,10 @@ export function LeaderboardStandingsPanel({
                 </div>
                 {showLiveEstimateNote && (
                     <div className="border-b bg-amber-500/5 px-5 py-2.5 text-xs text-muted-foreground">
-                        Live estimate from raw wager volume — the per-game
-                        leaderboard wager weights aren&apos;t applied here, so the
-                        order and prize tiers can differ from the final settled
-                        standings. Weighted standings are locked in when the board
-                        ends.
+                        Live weighted standings — the per-game leaderboard wager
+                        weights are applied, so this matches what packy.gg shows
+                        live. Figures can still shift as late wagers land; final
+                        standings are locked into a snapshot when the board ends.
                     </div>
                 )}
                 <Table>
@@ -154,17 +153,27 @@ export function LeaderboardStandingsPanel({
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            <Link
-                                                href={userHref(r.userId)}
-                                                className={cn(
-                                                    "hover:underline",
-                                                    isMedal && "font-semibold",
+                                            <span className="inline-flex items-center gap-1.5">
+                                                <Link
+                                                    href={userHref(r.userId)}
+                                                    className={cn(
+                                                        "hover:underline",
+                                                        isMedal && "font-semibold",
+                                                    )}
+                                                >
+                                                    {r.username ??
+                                                        r.email ??
+                                                        r.userId.slice(0, 8)}
+                                                </Link>
+                                                {r.excluded && (
+                                                    <span
+                                                        title="Marked by an admin (on the excluded-users list) — shown here to mirror the real leaderboard, but excluded from analytics aggregates."
+                                                        className="rounded-full border border-zinc-500/30 bg-zinc-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-600 dark:text-zinc-400"
+                                                    >
+                                                        marked by admin
+                                                    </span>
                                                 )}
-                                            >
-                                                {r.username ??
-                                                    r.email ??
-                                                    r.userId.slice(0, 8)}
-                                            </Link>
+                                            </span>
                                             {r.email && r.username && (
                                                 <p className="text-xs text-muted-foreground truncate">
                                                     {r.email}
