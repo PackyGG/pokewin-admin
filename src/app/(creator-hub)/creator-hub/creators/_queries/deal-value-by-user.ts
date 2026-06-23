@@ -27,11 +27,21 @@ import { getLeaderboard2wkCostByUser } from "../../../../(admin)/creators/_queri
  *                     value the legacy roster surfaces as the LB leg, so the
  *                     house-% weighting the plan demands is applied here by
  *                     construction.
- *   • tipSponsorUsd — the deal's house-funded per-stream tip + sponsorship
- *                     ALLOWANCE (`max_tip_per_stream_usd` +
- *                     `max_sponsorship_per_stream_usd`). These are the
- *                     deal's stated per-stream house-funded ceilings (the
- *                     tip/sponsor allowance the owner says MUST be counted).
+ *   • tipSponsorUsd — the deal's house-funded tip + sponsorship allowance
+ *                     for the FULL weekly deal window, NOT just one fill.
+ *                     `(max_tip_per_stream_usd + max_sponsorship_per_stream_usd)
+ *                     × fills_allowed` — every fill the deal grants in its
+ *                     weekly window can spend up to the per-stream caps, so
+ *                     the deal's weekly tip+sponsor ceiling is per-stream ×
+ *                     fills (mirrors `weeklyTipSponsorAllowanceFromDeal` in
+ *                     the Forecast tab + the admin Deals tab's "/ wk" math).
+ *                     Owner directive 2026-06-23: the per-stream allowance
+ *                     RECURS every active fill — collapsing it to a single
+ *                     stream undercounted deal cost on /profitability +
+ *                     /creators/[id] (a 7-fill deal showed $30 instead of
+ *                     $210). The Profitability board further scales this
+ *                     weekly figure across multi-week leaderboard frames
+ *                     (same way cap is `weeklyCap × dealWeeks`).
  *
  * dealValueUsd = capUsd + leaderboardUsd + tipSponsorUsd.
  *
@@ -53,7 +63,13 @@ export type CreatorDealValue = {
   capUsd: number;
   /** Upcoming leaderboard house cost (USD), already × house share %. */
   leaderboardUsd: number;
-  /** Per-stream house-funded tip + sponsorship allowance (USD). */
+  /**
+   * House-funded tip + sponsorship allowance for the deal's WEEKLY window:
+   * `(perStreamTip + perStreamSponsor) × fills_allowed`. NOT per-stream —
+   * the per-stream caps recur for every fill the deal grants. The
+   * Profitability board further scales this across multi-week frames; the
+   * roster / compare surfaces use this weekly figure directly.
+   */
   tipSponsorUsd: number;
   /** capUsd + leaderboardUsd + tipSponsorUsd — the full deal value (rose). */
   dealValueUsd: number;
@@ -93,14 +109,24 @@ const cachedDealCapTipEntries = (deals: { userId: string; dealId: string }[]) =>
         const userId = deals[i].userId;
         if (outcome.status === "fulfilled") {
           const deal = outcome.value;
+          // Per-stream tip + sponsor caps × fills_allowed = the deal's
+          // WEEKLY tip/sponsor ceiling. The per-stream caps recur for every
+          // fill the deal grants — collapsing them to a single stream
+          // undercounted the deal cost (bug pre-2026-06-23: a 7-fill
+          // weekly deal showed $30 instead of $210 of tip/sponsor). Floor
+          // `fills_allowed` at 0 (typed `number`, defensive) so a malformed
+          // deal contributes 0 instead of producing a negative figure.
+          const perStreamTip = toFiniteNumber(deal.max_tip_per_stream_usd);
+          const perStreamSponsor = toFiniteNumber(
+            deal.max_sponsorship_per_stream_usd,
+          );
+          const fillsAllowed = Math.max(0, deal.fills_allowed ?? 0);
           entries.push([
             userId,
             {
               capUsd: toFiniteNumber(deal.total_withdraw_cap_usd),
-              // Per-stream house-funded tip + sponsorship allowance.
               tipSponsorUsd:
-                toFiniteNumber(deal.max_tip_per_stream_usd) +
-                toFiniteNumber(deal.max_sponsorship_per_stream_usd),
+                (perStreamTip + perStreamSponsor) * fillsAllowed,
             },
           ]);
         } else {
@@ -112,7 +138,10 @@ const cachedDealCapTipEntries = (deals: { userId: string; dealId: string }[]) =>
       });
       return entries;
     },
-    ["creators-deal-cap-tip-v1", ...deals.map((d) => `${d.userId}:${d.dealId}`)],
+    // v2 (2026-06-23): tipSponsorUsd now multiplies by `fills_allowed` —
+    // bump key so cached v1 entries (single-stream allowance) don't get
+    // served stale while the new formula takes over.
+    ["creators-deal-cap-tip-v2", ...deals.map((d) => `${d.userId}:${d.dealId}`)],
     { revalidate: 300, tags: ["creators-deal-cap"] },
   );
 

@@ -23,12 +23,17 @@ import { getFrameAffiliatePnlByUser } from "./frame-affiliate-pnl-by-user";
  * is always compared against the wager driven in the same window.
  *
  *   dealCost      = (per-week withdraw cap × deal-length weeks) + this
- *                   board's sponsored-weighted house cost + tip/sponsor
- *                   allowance (house cost, rose POV). The deal length is
- *                   the leaderboard frame length, so a 2-week (bi-weekly)
- *                   board counts the weekly withdraw cap twice. The LB leg
- *                   is the WHOLE board's cost (already spans the frame), so
- *                   it is not re-multiplied.
+ *                   board's sponsored-weighted house cost + (weekly
+ *                   tip/sponsor allowance × deal-length weeks). The deal
+ *                   length is the leaderboard frame length, so a 2-week
+ *                   (bi-weekly) board counts the weekly withdraw cap AND
+ *                   the weekly tip/sponsor allowance twice — both legs
+ *                   recur every week the deal runs (owner directive
+ *                   2026-06-23). The LB leg is the WHOLE board's cost
+ *                   (already spans the frame), so it is not re-multiplied.
+ *                   The weekly tip/sponsor allowance from
+ *                   `getDealValueByUser` already includes `× fills_allowed`
+ *                   (per-stream caps recur for every fill in the week).
  *   expectedWager = dealCost / house edge (7.5%).
  *   actualWager   = code-cohort wager inside [frame start, min(now, end)];
  *                   0 for a not-yet-started (upcoming) frame.
@@ -79,6 +84,19 @@ export type CreatorProfitabilityRow = {
   /** Total withdraw cap over the deal length (`weeklyCapUsd × dealWeeks`). */
   capUsd: number;
   leaderboardUsd: number;
+  /**
+   * Per-week tip + sponsor allowance from the deal
+   * (`(perStreamTip + perStreamSponsor) × fills_allowed`). The per-fill
+   * caps recur for every fill the deal grants in the weekly window — this
+   * is the weekly ceiling before frame-scaling.
+   */
+  weeklyTipSponsorUsd: number;
+  /**
+   * Total tip + sponsor allowance over the deal length
+   * (`weeklyTipSponsorUsd × dealWeeks`). Scales by frame weeks the same
+   * way `capUsd` does: a 2-week (bi-weekly) board counts the weekly
+   * allowance twice (owner directive 2026-06-23).
+   */
   tipSponsorUsd: number;
   dealCost: number;
   expectedWager: number;
@@ -258,7 +276,12 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
     const weeklyCapUsd = dv?.capUsd ?? 0;
     const dealWeeks = frameWeeks(fr.startMs, fr.endMs);
     const capUsd = weeklyCapUsd * dealWeeks;
-    const tipSponsorUsd = dv?.tipSponsorUsd ?? 0;
+    // `dv.tipSponsorUsd` is the weekly ceiling
+    // (`(perStreamTip + perStreamSponsor) × fills_allowed`) from
+    // `getDealValueByUser`. Scale across the deal frame's weeks so a
+    // 2-week board counts it twice — same way cap is scaled.
+    const weeklyTipSponsorUsd = dv?.tipSponsorUsd ?? 0;
+    const tipSponsorUsd = weeklyTipSponsorUsd * dealWeeks;
     const leaderboardUsd = fr.board?.houseCostUsd ?? 0;
     const dealCost = capUsd + leaderboardUsd + tipSponsorUsd;
     const expectedWager = dealCost / HOUSE_EDGE;
@@ -280,6 +303,7 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
       dealWeeks,
       capUsd,
       leaderboardUsd,
+      weeklyTipSponsorUsd,
       tipSponsorUsd,
       dealCost,
       expectedWager,

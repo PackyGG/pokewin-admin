@@ -125,9 +125,19 @@ function ProfitabilityRow({ row }: { row: CreatorProfitabilityRow }) {
           row.weeklyCapUsd,
         )}/wk × ${row.dealWeeks})`
       : `Cap ${formatCurrency(row.capUsd)}`;
+  // Tip+sponsor recurs every fill the deal grants in its weekly window,
+  // and the weekly figure scales across the leaderboard frame the same
+  // way cap does (owner directive 2026-06-23). Show the weekly × weeks
+  // multiplication for multi-week frames so the math is auditable.
+  const tipLabel =
+    row.dealWeeks > 1 && row.weeklyTipSponsorUsd > 0
+      ? `Tip+Sponsor ${formatCurrency(row.tipSponsorUsd)} (${formatCurrency(
+          row.weeklyTipSponsorUsd,
+        )}/wk × ${row.dealWeeks})`
+      : `Tip+Sponsor ${formatCurrency(row.tipSponsorUsd)}`;
   const breakdown = `${capLabel} · LB ${formatCurrency(
     row.leaderboardUsd,
-  )} · Tips ${formatCurrency(row.tipSponsorUsd)}`;
+  )} · ${tipLabel}`;
 
   return (
     <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
