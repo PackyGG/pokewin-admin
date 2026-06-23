@@ -1,27 +1,24 @@
-import { type AdminRole } from "@/lib/admin-roles";
+import { getEffectiveRoles, type AdminRole } from "@/lib/admin-roles";
 import type { SessionPayload } from "@/lib/session";
 import { getAdminSetting } from "@/lib/admin-settings";
-import { isMainOwner } from "@/lib/owners";
+import { isOwner } from "@/lib/owners";
 
 /**
  * Pack-Studio access control (security-sensitive).
  *
- * HARD-LOCKED to the MAIN owner (motha) only — no role toggles, no
- * promoted-owner access, no admins. This is the strictest posture: the
- * pack-tuning surfaces (catalog re-shape, lottery skew, history revert)
- * touch real-money packs, so the access set is the single account that
- * the platform's source of truth (`MAIN_OWNER_USERNAME = "motha"`)
- * recognises as root.
+ * Open to: the MAIN owner (motha) + any super-owner (admin_users.is_owner)
+ * + any account with the `admin` role. Lower-tier roles (support, marketing,
+ * creator, pack_creator) are blocked.
  *
  * Effective rule (single source of truth for BOTH the portal button
  * visibility in the sidebar AND the /pack-studio route guard):
  *
- *   canAccess = isMainOwner(session)   // username === "motha"
+ *   canAccess = isOwner(session)                              // motha + super owners
+ *               OR getEffectiveRoles(session).includes("admin")
  *
- * The role-toggle plumbing below is kept dormant for any future re-broadening
- * — flipping a toggle currently has NO effect because `canAccessPackStudio`
- * ignores them. To re-enable roles later, restore the role-OR branch in
- * `canAccessPackStudio` below.
+ * The role-toggle plumbing below is kept for any future per-role broadening
+ * but is currently IGNORED — the gate uses the role-based rule above directly,
+ * so admins are in by default without needing any admin_settings flag flipped.
  */
 
 /**
@@ -77,15 +74,18 @@ export async function getPackStudioAccessSettings(): Promise<PackStudioAccessSet
  * reused verbatim by the sidebar (server-computed prop) and the route
  * guard.
  *
- * HARD-LOCKED to the MAIN owner (motha) only. The `settings` parameter is
- * retained for callsite compatibility (and for future role-toggle reuse),
- * but is currently IGNORED — no other account passes, ever, regardless of
- * role, `is_owner` flag, or any DB toggle. Username is checked
- * DB-independently so the root account can never lock itself out.
+ * Open to: owners (motha, plus any account flagged `is_owner` in the
+ * admin DB) AND accounts whose effective roles include "admin". Lower-tier
+ * roles (support, marketing, creator, pack_creator) are blocked.
+ *
+ * The `settings` parameter is retained for callsite compatibility (and for
+ * future per-role broadening) but is currently IGNORED — admins are in by
+ * default without any admin_settings toggle.
  */
 export function canAccessPackStudio(
   session: Pick<SessionPayload, "username" | "role" | "roles" | "isOwner">,
   _settings: PackStudioAccessSettings,
 ): boolean {
-  return isMainOwner(session);
+  if (isOwner(session)) return true;
+  return getEffectiveRoles(session.role, session.roles).includes("admin");
 }
