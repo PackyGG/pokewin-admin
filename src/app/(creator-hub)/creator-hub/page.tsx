@@ -25,6 +25,7 @@ import {
   DASHBOARD_PERIOD_LABELS,
   type DashboardPeriod,
 } from "@/lib/queries/dashboard-period";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 import { AddCreatorDialogV2 } from "./creators/_components/add-creator-dialog-v2";
@@ -41,10 +42,18 @@ import { HubWagerBreakdownPopover } from "./_components/hub-wager-breakdown-popo
 import { HubTopCreators } from "./_components/hub-top-creators";
 import { HubTopCreatorsPeriodSelector } from "./_components/hub-top-creators-period-selector";
 import { HubSignupsFtdsChart } from "./_components/hub-signups-ftds-chart";
+import {
+  HubCreatorCostChart,
+  type CreatorCostChartPoint,
+} from "./_components/hub-creator-cost-chart";
 import { HubPeriodSelector } from "./_components/hub-period-selector";
 import { getHubDashboardOverview } from "./_queries/dashboard-overview";
 import { getHubTopCreatorsByDeposits } from "./_queries/hub-top-creators-query";
 import { getTopSignupLeaders } from "./_queries/hub-top-creator-meta";
+import {
+  getHubCreatorCostSeries,
+  padCreatorCostSeries,
+} from "./_queries/hub-creator-cost-series";
 import {
   parseTopCreatorsPeriod,
   type TopCreatorsPeriod,
@@ -417,8 +426,68 @@ async function OverviewSection({
         />
       </div>
 
+      {/* Creator-cost time series (active timeframe only). Streams behind
+          its own Suspense boundary keyed on `period`, so the surrounding
+          KPIs and the 3-up row paint immediately and the chart hydrates
+          when its data lands. The KPI box still holds the breakdown
+          popover — this chart adds the OVER-TIME view (what the box's
+          total looks like spread across the active window). */}
+      <div className="space-y-3">
+        <SectionHeading
+          icon={Coins}
+          title={`Creator costs over time · ${windowLabel}`}
+        />
+        <Suspense
+          key={`creator-cost-${period}`}
+          fallback={<Skeleton className="h-[300px] rounded-2xl" />}
+        >
+          <CreatorCostSeriesSection period={period} />
+        </Suspense>
+      </div>
+
       <HubSignupsFtdsChart data={data.dailySignupsFtds} />
     </FadeIn>
+  );
+}
+
+// ─── Creator-cost series (data-bearing, streamed via Suspense) ─────
+//
+// Hits `getHubCreatorCostSeries(period)` which is `unstable_cache`'d and
+// wired through `resolveAdminRead` (PG twin = canonical; CH twin dormant
+// until parity proven). Wrapped in `safeQueryOrNull` so a query failure
+// degrades to a friendly "Backend unavailable" placeholder instead of
+// crashing the dashboard shell. Decimal-safe money throughout.
+async function CreatorCostSeriesSection({ period }: { period: DashboardPeriod }) {
+  const { data, error } = await safeQueryOrNull(
+    () => getHubCreatorCostSeries(period),
+    "creator-hub.creatorCostSeries",
+    8_000,
+  );
+
+  if (!data) {
+    return (
+      <div className="rounded-2xl border bg-card p-6 text-sm text-muted-foreground">
+        {error ?? "Backend unavailable."}
+      </div>
+    );
+  }
+
+  const padded = padCreatorCostSeries(data, period);
+  const hourly = data.granularity === "hour";
+  const chartData: CreatorCostChartPoint[] = padded.map((b) => ({
+    bucket: hourly
+      ? b.bucketIso.slice(11, 16) // "HH:MM"
+      : b.bucketIso.slice(0, 10), // "YYYY-MM-DD"
+    cost: b.costUsd,
+  }));
+
+  return (
+    <HubCreatorCostChart
+      data={chartData}
+      title={hourly ? "Creator costs (hourly)" : "Creator costs"}
+      subtitle="Converted deal payouts · House-funded tips · Leaderboard prize gross"
+      hourlyXAxis={hourly}
+    />
   );
 }
 
@@ -442,6 +511,9 @@ function OverviewSkeleton() {
           <Skeleton key={i} className="h-[260px] rounded-2xl" />
         ))}
       </div>
+      {/* Creator-cost time series. */}
+      <Skeleton className="h-[300px] rounded-2xl" />
+      {/* Sign-ups & FTDs (30 days). */}
       <Skeleton className="h-[300px] rounded-2xl" />
     </div>
   );

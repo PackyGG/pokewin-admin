@@ -37,6 +37,8 @@ export default function CreatorHubDashboardLoading() {
               <Skeleton key={i} className="h-[260px] rounded-2xl" />
             ))}
           </div>
+          {/* Creator-costs time-series chart. */}
+          <Skeleton className="h-[300px] rounded-2xl" />
         </div>
       </div>
     </div>
