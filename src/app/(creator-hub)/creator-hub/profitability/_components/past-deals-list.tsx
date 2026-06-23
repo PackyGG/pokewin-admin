@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 
 import { cn } from "@/lib/utils";
@@ -13,6 +15,23 @@ import type { PastDealRow } from "../_queries/past-deals";
  * `ProfitabilityList`, just keyed by board (one row per past leaderboard
  * = one row per past deal). House-POV colours: deal cost = rose; actual
  * wager = emerald; conversion ≥ 1× = emerald.
+ *
+ * CLIENT COMPONENT. Two reasons it must be `"use client"`:
+ *   1. `buttonVariants()` is exported from a `"use client"` module
+ *      (`src/components/ui/button.tsx`). Calling it from a server-rendered
+ *      tree throws the boundary error:
+ *        "Attempted to call buttonVariants() from the server but
+ *         buttonVariants is on the client."
+ *      That throw was the prod incident on `?tab=past` (Vercel error
+ *      digest `1881631599`, surfaced as the page-level 500 the owner saw
+ *      as digest `3304963582` after the route error boundary caught it).
+ *   2. `endedAgoLabel` reads `Date.now()` at render time. As a server
+ *      component the server snapshot disagrees with the client's clock on
+ *      hydration → a flash + a console "hydration mismatch". As a client
+ *      component both renders use the same clock.
+ *
+ * Mirrors the Active view's `ProfitabilityList`, which is also `"use client"`
+ * for the same shape. Props (`PastDealRow`) are plain serializable JSON.
  *
  * Pagination is SERVER-SIDE via `?page=`: the page link below switches the
  * URL param, the parent `<Suspense key={`past-${page}`}>` flips into the
