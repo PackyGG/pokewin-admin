@@ -34,6 +34,20 @@ import { RosterError } from "../creators/_components/roster-error";
 
 export const metadata = { title: "Profitability · Creator Hub" };
 
+/**
+ * The Past Deals leg can take ~30–55s on a cold-cache Vercel render — the
+ * per-board affiliate-PnL transaction is the heaviest read in the Creator
+ * Hub (a coverage-attributed scan across 25 board windows with a 55s
+ * `SET LOCAL statement_timeout`). Vercel's default 15s function budget
+ * cuts that off before the warm-fill completes, surfacing as a 500
+ * (the prod incident with digest 3304963582). Raising the function
+ * maxDuration to 120s matches the heavy admin pages already in the repo
+ * (`/users/[id]`: 300, pack-studio doctor: 120) so the cold scan can
+ * complete + warm the cache; subsequent loads serve the 5-min cached
+ * value in milliseconds.
+ */
+export const maxDuration = 120;
+
 type ProfitabilityTab = "active" | "past";
 
 const TAB_CHIPS = [
@@ -204,7 +218,37 @@ async function ActiveProfitabilitySection() {
 }
 
 async function PastDealsSection({ page }: { page: number }) {
-  const data = await getPastDeals(page);
+  // Hard error isolation: even though `getPastDeals` internally degrades on
+  // slow / failing legs (safeQuery + per-leg try/catch), an unexpected throw
+  // here (a Prisma connection drop, an Edge-Config read inside `resolveAdminRead`
+  // erroring, a Suspense child rejecting on a transient state) must NOT escape
+  // the section — otherwise the page hero + tab strip vanish behind the route
+  // error boundary. The bug class behind digest `3304963582` is exactly this
+  // kind of escape: the section throws, the (creator-hub)/error.tsx catches it,
+  // and the user loses the whole page. Catching here keeps the shell painted
+  // and degrades only the inner card to a friendly empty state.
+  let data: Awaited<ReturnType<typeof getPastDeals>>;
+  try {
+    data = await getPastDeals(page);
+  } catch (err) {
+    console.error("[creator-hub.past-deals] section threw — empty state:", err);
+    data = {
+      rows: [],
+      totals: {
+        totalEndedDeals: 0,
+        totalCost: 0,
+        totalAffiliatesMadeUs: 0,
+        totalActualPnl: 0,
+        totalExpectedWager: 0,
+        totalCreatorWager: 0,
+        avgConversionRate: 0,
+      },
+      totalCount: 0,
+      page: 1,
+      totalPages: 1,
+      backendUnavailable: true,
+    };
+  }
 
   // Page-scope PnL totals — the headline accent tracks the visible page so
   // the colour can't mislead vs. what the user sees in the rows. (Full-set

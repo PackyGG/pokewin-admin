@@ -7,6 +7,8 @@ import {
   affiliateLeaderboardsApi,
   type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
+import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { getLeaderboardSponsorshipMap } from "../../../../(admin)/creators/_queries/leaderboard-sponsorship";
 import {
   getCreatorLeaderboardWagerMap,
@@ -58,6 +60,33 @@ const HOUSE_EDGE = 0.075;
 const BACKEND_PAGE_SIZE = 100;
 /** Cold-walk safety cap (creator leaderboards are a small bounded set). */
 const FETCH_CAP = 2000;
+
+/**
+ * Per-leg timeout (ms) for the page-scoped heavy reads. Long enough that a
+ * healthy cold scan on prod-sized data completes (the per-board PnL scan
+ * uses a 55s `SET LOCAL statement_timeout` inside its own transaction); short
+ * enough that a pathological hang degrades to the empty-state card instead
+ * of running out the function budget on Vercel and surfacing as a 500.
+ * Mirrors the budget shape used by other heavy admin reads (`REWARD_QUERY_TIMEOUT_MS`,
+ * with extra headroom because the per-board PnL transaction is the heaviest
+ * read in the Creator Hub).
+ */
+const PAST_DEALS_LEG_TIMEOUT_MS = 60_000;
+
+/**
+ * `resolveAdminRead` surface key for the past-deals page-scoped compute.
+ *
+ * Sits in the dormant state (NOT in `CUTOVER_DEFAULT_CLICKHOUSE`): with no
+ * ClickHouse client provisioned the resolver returns `"off"` and the surface
+ * serves Postgres unchanged. Wiring the call through `resolveAdminRead`
+ * satisfies the Index-or-ClickHouse construct so a CH twin can later be
+ * dropped in without re-plumbing the page, and Edge Config / env-var
+ * overrides remain available for per-surface flips. The `ch` leg throws by
+ * design — it is unreachable today, and on a future flip without a built
+ * twin the resolver THROWS so the page's empty-state path is taken (the
+ * resolver MUST NOT silently re-run the heavy Postgres aggregate).
+ */
+const PAST_DEALS_SURFACE_KEY = "creator_hub_profitability_past_deals";
 
 export type PastDealRow = {
   /** Backend leaderboard id (= the past deal id, stable). */
@@ -270,9 +299,66 @@ export function parsePastDealsPage(raw: string | undefined): number {
  * (cheap, all in memory); heavy MAIN reads (wager + PnL) only run for the
  * 25 boards on the active page, mirroring the active-timeframe-only rule
  * (no eager scan of every past board's wager/PnL on every request).
+ *
+ * Routed through `resolveAdminRead` (Index-or-ClickHouse construct). With no
+ * ClickHouse twin built, the surface stays dormant; the resolver returns the
+ * `pg()` value (`computePastDealsFromPostgres` below). The `pg` leg itself
+ * uses `safeQuery` per heavy leg so a slow scan degrades the leg to its
+ * fallback value instead of taking down the whole request — the PageHero +
+ * tab strip always render via the page shell, the inner section degrades to
+ * an empty-state card.
  */
 export async function getPastDeals(page: number): Promise<PastDealsData> {
-  const base = await getEndedDealsBase();
+  // Final-mile safety: even though every internal leg is wrapped in
+  // `safeQuery`, unexpected throws (Edge Config error on
+  // `getAdminReadMode`, surprise import-time crash, etc.) must NOT blow up
+  // the request — the PageHero + tab strip must always render and the
+  // section must degrade to the "backendUnavailable" card.
+  try {
+    return await resolveAdminRead(PAST_DEALS_SURFACE_KEY, {
+      pg: () => computePastDealsFromPostgres(page),
+      ch: () => {
+        // No CH twin yet. The surface is intentionally NOT in
+        // `CUTOVER_DEFAULT_CLICKHOUSE`, and no CH client exists on prod today
+        // (dormant guard returns "off"), so this branch is unreachable in
+        // practice. Throwing keeps the resolver honest: a future flip to
+        // "clickhouse" without a built twin must degrade via the caller's
+        // error boundary, not silently re-run the heavy Postgres aggregate.
+        throw new Error(
+          "[past-deals] ClickHouse twin is not implemented for " +
+            PAST_DEALS_SURFACE_KEY,
+        );
+      },
+    });
+  } catch (err) {
+    console.error("[past-deals] hard failure — degrading to empty:", err);
+    return {
+      rows: [],
+      totals: EMPTY_TOTALS,
+      totalCount: 0,
+      page: 1,
+      totalPages: 1,
+      backendUnavailable: true,
+    };
+  }
+}
+
+/**
+ * The Postgres serve path for {@link getPastDeals}. Resilient: each heavy
+ * leg is wrapped in `safeQuery` with a wall-clock timeout, so a slow scan
+ * degrades to an empty / zero-filled fallback instead of failing the
+ * page. Failures are logged via the safeQuery logger, never re-thrown.
+ */
+async function computePastDealsFromPostgres(
+  page: number,
+): Promise<PastDealsData> {
+  const baseResult = await safeQuery(
+    () => getEndedDealsBase(),
+    { rows: [], backendUnavailable: true },
+    "creator-hub.past-deals.base",
+    PAST_DEALS_LEG_TIMEOUT_MS,
+  );
+  const base = baseResult.data;
 
   if (base.backendUnavailable) {
     return {
@@ -319,12 +405,42 @@ export async function getPastDeals(page: number): Promise<PastDealsData> {
   }
 
   // Hydrate the page: usernames + per-board wager + per-board PnL. Each
-  // helper is best-effort — a failure leaves the leg blank rather than
-  // sinking the whole page.
+  // helper is best-effort — wrapped in `safeQuery` with a wall-clock timeout
+  // so a slow scan degrades the leg to its empty fallback (rows show id /
+  // wager 0 / PnL 0) instead of sinking the whole page. Failures are logged
+  // by the safeQuery wrapper, never re-thrown.
   const ownerIds = Array.from(new Set(pageBase.map((r) => r.userId)));
-  const [creatorMap, wagerMap, pnlMap] = await Promise.all([
-    (async () => {
-      try {
+  const wagerInputs: LeaderboardWagerInput[] = pageBase.map((r) => ({
+    id: r.boardId,
+    creatorUserId: r.userId,
+    coCreatorUserIds: r.coCreatorUserIds,
+    affiliateCodes: r.affiliateCodes,
+    startDate: new Date(r.frameStartMs),
+    endDate: new Date(r.frameEndMs),
+  }));
+  const pnlInputs = pageBase.map((r) => ({
+    boardId: r.boardId,
+    creatorUserId: r.userId,
+    startIso: new Date(r.frameStartMs).toISOString(),
+    endIso: new Date(r.frameEndMs).toISOString(),
+  }));
+
+  type PnlEntry = {
+    affiliatesMadeUs: number;
+    deposits: number;
+    cardWithdrawals: number;
+    affiliateClaims: number;
+  };
+  const emptyCreatorMap = new Map<
+    string,
+    { username: string | null; image: string | null }
+  >();
+  const emptyWagerMap = new Map<string, number>();
+  const emptyPnlMap = new Map<string, PnlEntry>();
+
+  const [creatorRes, wagerRes, pnlRes] = await Promise.all([
+    safeQuery(
+      async () => {
         const db = await getDb();
         const creators = await db.user.findMany({
           where: { id: { in: ownerIds } },
@@ -336,54 +452,27 @@ export async function getPastDeals(page: number): Promise<PastDealsData> {
             { username: c.username ?? null, image: c.image ?? null },
           ]),
         );
-      } catch (e) {
-        console.error(
-          "[past-deals] username/image hydration failed (rows show id):",
-          e,
-        );
-        return new Map<string, { username: string | null; image: string | null }>();
-      }
-    })(),
-    (async () => {
-      const inputs: LeaderboardWagerInput[] = pageBase.map((r) => ({
-        id: r.boardId,
-        creatorUserId: r.userId,
-        coCreatorUserIds: r.coCreatorUserIds,
-        affiliateCodes: r.affiliateCodes,
-        startDate: new Date(r.frameStartMs),
-        endDate: new Date(r.frameEndMs),
-      }));
-      try {
-        return await getCreatorLeaderboardWagerMap(inputs);
-      } catch (e) {
-        console.error("[past-deals] wager map failed (showing 0):", e);
-        return new Map<string, number>();
-      }
-    })(),
-    (async () => {
-      try {
-        return await getBoardAffiliatePnl(
-          pageBase.map((r) => ({
-            boardId: r.boardId,
-            creatorUserId: r.userId,
-            startIso: new Date(r.frameStartMs).toISOString(),
-            endIso: new Date(r.frameEndMs).toISOString(),
-          })),
-        );
-      } catch (e) {
-        console.error("[past-deals] PnL fetch failed (showing 0):", e);
-        return new Map<
-          string,
-          {
-            affiliatesMadeUs: number;
-            deposits: number;
-            cardWithdrawals: number;
-            affiliateClaims: number;
-          }
-        >();
-      }
-    })(),
+      },
+      emptyCreatorMap,
+      "creator-hub.past-deals.username",
+      PAST_DEALS_LEG_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getCreatorLeaderboardWagerMap(wagerInputs),
+      emptyWagerMap,
+      "creator-hub.past-deals.wager",
+      PAST_DEALS_LEG_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getBoardAffiliatePnl(pnlInputs),
+      emptyPnlMap,
+      "creator-hub.past-deals.pnl",
+      PAST_DEALS_LEG_TIMEOUT_MS,
+    ),
   ]);
+  const creatorMap = creatorRes.data;
+  const wagerMap = wagerRes.data;
+  const pnlMap = pnlRes.data;
 
   const rows: PastDealRow[] = pageBase.map((r) => {
     const creator = creatorMap.get(r.userId);
