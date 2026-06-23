@@ -41,12 +41,15 @@ function parsePage(raw: string | undefined): number {
 /**
  * Creator Hub — Audit Spend.
  *
- * Lifetime, per-event ledger of every creator-related cost the HOUSE
- * has paid out. One row per event, sorted DESC by date.
+ * Lifetime ledger of every creator-related cashflow event. One row per
+ * event, sorted DESC by date.
  *
  * Sources:
- *   • MAIN ledger_transactions (creator_fill_*, creator_deal_fill_grant,
- *     creator_multiplier_*, affiliate_leaderboard_creation/prize)
+ *   • MAIN ledger_transactions (creator_multiplier_*,
+ *     affiliate_leaderboard_creation/prize)
+ *   • MAIN vouchers (creator_fill_conversion grouped per (day, fill)
+ *     — surfaces the RETURN-SIDE of every fill, owner directive
+ *     2026-06-23. Activation/spend cost rows are intentionally hidden.)
  *   • ADMIN expenses (creator/marketing-categorized)
  *
  * Shell-first: hero + filter chips paint immediately, the table loads
@@ -71,7 +74,7 @@ export default async function CreatorHubAuditSpendPage({
           icon={Receipt}
           accent="rose"
           title="Audit Spend"
-          subtitle="Lifetime ledger of every creator-related cost the house has paid out — one row per event."
+          subtitle="Lifetime ledger of every creator cashflow — leaderboard payouts, multiplier deals, expenses, and per-fill conversions as they realize."
         />
       </PageHero>
 
@@ -103,35 +106,51 @@ async function AuditSpendSection({
   const labeledBucket =
     bucket === "all" ? null : (bucket as Exclude<SpendBucketKey, "all">);
 
+  // Fill bucket = the only INFLOW bucket (return-side of the fill cost).
+  // Adapt the KPI / section copy so it doesn't read as "spend" / "cost"
+  // on that surface — and switch the lifetime KPI to emerald to match
+  // the row colors. Other buckets are unchanged.
+  const isFill = bucket === "fill";
+  const lifetimeLabel = isFill ? "Lifetime converted" : "Lifetime spend";
+  const lifetimeAccent: "rose" | "emerald" = isFill ? "emerald" : "rose";
+  const lifetimeSub = isFill
+    ? "Sum of every fill conversion voucher"
+    : labeledBucket == null
+      ? "All creator-cost events"
+      : `${spendBucketLabel(labeledBucket)} events`;
+  const totalEventsLabel = isFill ? "Conversion rows" : "Total events";
+  const totalEventsSub = isFill
+    ? "One per (day, fill) — DESC"
+    : labeledBucket == null
+      ? "Across every source"
+      : `In ${spendBucketLabel(labeledBucket).toLowerCase()}`;
+  const sectionTitle = isFill
+    ? "Fill conversions per day"
+    : labeledBucket == null
+      ? "All spend events"
+      : `${spendBucketLabel(labeledBucket)} events`;
+
   return (
     <FadeIn className="space-y-6">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <HubKpiBox
-          label="Lifetime spend"
+          label={lifetimeLabel}
           icon={Coins}
-          accent="rose"
+          accent={lifetimeAccent}
           value={
             data.lifetimeTotalUsd == null
               ? "—"
               : formatCurrency(data.lifetimeTotalUsd)
           }
-          sub={
-            labeledBucket == null
-              ? "All creator-cost events"
-              : `${spendBucketLabel(labeledBucket)} events`
-          }
+          sub={lifetimeSub}
           placeholder={data.lifetimeTotalUsd == null}
         />
         <HubKpiBox
-          label="Total events"
+          label={totalEventsLabel}
           icon={ListOrdered}
           accent="blue"
           value={formatNumber(data.total)}
-          sub={
-            labeledBucket == null
-              ? "Across every source"
-              : `In ${spendBucketLabel(labeledBucket).toLowerCase()}`
-          }
+          sub={totalEventsSub}
         />
         <HubKpiBox
           label="On this page"
@@ -143,14 +162,7 @@ async function AuditSpendSection({
       </div>
 
       <div className="space-y-3">
-        <SectionHeading
-          icon={Receipt}
-          title={
-            labeledBucket == null
-              ? "All spend events"
-              : `${spendBucketLabel(labeledBucket)} events`
-          }
-        />
+        <SectionHeading icon={Receipt} title={sectionTitle} />
         <SpendTable
           bucket={bucket}
           data={data}

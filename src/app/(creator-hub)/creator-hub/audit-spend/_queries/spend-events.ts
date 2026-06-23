@@ -7,6 +7,12 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 
+import {
+  getFillConversionsPage,
+  getFillConversionsLeadingWindow,
+  type FillConversionRow,
+} from "./fill-conversions";
+
 /**
  * Creator Hub — Audit Spend.
  *
@@ -38,12 +44,21 @@ import { withTiming } from "@/lib/observability/query-timings";
 /** All `ledger_transaction_type` values that represent a HOUSE payout to /
  *  on behalf of creators. `creator_tip` is excluded — that's a regular
  *  user-to-creator transfer (sender pays from their own balance, not
- *  ours). Direction-aware fill legs are deduped to the SENT side. */
+ *  ours). Direction-aware fill legs are deduped to the SENT side.
+ *
+ *  NOTE (2026-06-23, owner directive): the FILL bucket no longer surfaces
+ *  activation/spend/grant ledger rows. The fill experience is rendered
+ *  from the conversion-vouchers source (see `fill-conversions.ts`) — one
+ *  row per (day, fill) showing how much each fill brought BACK to the
+ *  house. The legacy fill ledger types stay enumerated here only because
+ *  this constant is exported for documentation / future use; they are NOT
+ *  included in any `SPEND_EVENT_BUCKETS` bucket below. */
 export const HOUSE_CREATOR_COST_TX_TYPES = [
   // Affiliate leaderboard pool — house seeds + winners get paid out.
   "affiliate_leaderboard_creation",
   "affiliate_leaderboard_prize",
-  // Fill program — house-funded session pot.
+  // Fill program — house-funded session pot. (Excluded from audit-spend
+  // buckets — see file header.)
   "creator_fill_activation",
   "creator_fill_spend_tip",
   "creator_fill_spend_battle",
@@ -61,20 +76,32 @@ export type SpendTxType = (typeof HOUSE_CREATOR_COST_TX_TYPES)[number];
 
 /** Event-type filter chips on the page. Maps a UI bucket to the set of
  *  raw `ledger_transaction_type` rows that belong to it. `expense` is a
- *  virtual source (ADMIN-DB `expenses`, not a ledger leg). */
+ *  virtual source (ADMIN-DB `expenses`, not a ledger leg). `fill` is a
+ *  virtual source (MAIN-DB `vouchers` aggregated by day+session, see
+ *  `fill-conversions.ts`) — it has NO ledger types in this map.
+ *
+ *  The `all` bucket = leaderboard ⊕ multiplier ledger events ONLY. Fill
+ *  conversion rows are surfaced through the dedicated `fill` chip; they
+ *  are intentionally NOT merged into `all` to keep the two row shapes
+ *  (per-event vs per-(day,fill)) cleanly separated. */
 export const SPEND_EVENT_BUCKETS = {
-  all: [...HOUSE_CREATOR_COST_TX_TYPES],
+  all: [
+    "affiliate_leaderboard_creation",
+    "affiliate_leaderboard_prize",
+    "creator_multiplier_platform_credit",
+    "creator_multiplier_settlement_payout",
+    "creator_multiplier_spend_tip",
+    "creator_multiplier_spend_battle",
+    "creator_multiplier_spend_wager",
+  ] as SpendTxType[],
   leaderboard: [
     "affiliate_leaderboard_creation",
     "affiliate_leaderboard_prize",
   ] as SpendTxType[],
-  fill: [
-    "creator_fill_activation",
-    "creator_fill_spend_tip",
-    "creator_fill_spend_battle",
-    "creator_fill_conversion",
-    "creator_deal_fill_grant",
-  ] as SpendTxType[],
+  // Empty — the Fill bucket is rendered from the conversion-vouchers
+  // source, not from ledger rows. The chip still exists and is keyed off
+  // `fill`; page.tsx routes it to the conversions query.
+  fill: [] as SpendTxType[],
   multiplier: [
     "creator_multiplier_platform_credit",
     "creator_multiplier_settlement_payout",
@@ -95,19 +122,29 @@ export const SPEND_BUCKET_KEYS: SpendBucketKey[] = [
 ];
 
 /** One row in the audit list. Source-agnostic so the table can render
- *  both ledger legs and admin expenses through the same component. */
+ *  ledger legs, admin expenses, AND fill-conversion-per-day groups
+ *  through the same component. */
 export type SpendEventRow = {
-  /** Stable per-source key: `ledger:<uuid>` or `expense:<uuid>`. */
+  /** Stable per-source key: `ledger:<uuid>` or `expense:<uuid>` or
+   *  `fillconv:<day>:<session>:<user>`. */
   key: string;
-  /** ISO instant of the event (DESC order key). */
+  /** ISO instant of the event (DESC order key). For fill-conversion rows
+   *  this is the latest conversion in that (day, fill) group. */
   occurredAt: string;
   /** Event-type bucket — drives the badge color + label. */
   bucket: Exclude<SpendBucketKey, "all">;
-  /** Raw `ledger_transaction_type` (for ledger rows) or "expense". */
+  /** Raw `ledger_transaction_type` (for ledger rows), "expense", or
+   *  "creator_fill_conversion" for the fill conversion-per-day rows. */
   rawType: string;
-  /** Pre-formatted USD amount, always positive. House POV — this is what
-   *  WE paid out, so the table renders it rose. */
+  /** Pre-formatted USD amount, always positive. House POV is encoded via
+   *  `direction`: outflow → rose (house paid out), inflow → emerald
+   *  (house got back, e.g. fill-conversion realization). */
   amountUsd: number;
+  /** House cashflow direction. `outflow` = house cost (rose),
+   *  `inflow` = house gain (emerald). Set to `inflow` for fill-conversion
+   *  rows (owner directive 2026-06-23: conversion is the return-side of
+   *  the fill cost, not a cost itself). */
+  direction: "outflow" | "inflow";
   /** Receiving / impacted user, if known (creator or fill recipient). */
   user: {
     id: string;
@@ -120,7 +157,7 @@ export type SpendEventRow = {
    *  hub when one exists (creator profile, deal-tracker, leaderboard). */
   href: string | null;
   /** Source system, for the small label on the right. */
-  source: "ledger" | "expense";
+  source: "ledger" | "expense" | "fill_conversion";
 };
 
 export type SpendEventsPage = {
@@ -240,9 +277,12 @@ function inListSql(types: readonly string[]): string {
 }
 
 function bucketTypes(bucket: SpendBucketKey): readonly string[] {
-  if (bucket === "all" || bucket === "expense") {
-    return HOUSE_CREATOR_COST_TX_TYPES;
+  if (bucket === "expense" || bucket === "fill") {
+    // expense → admin DB, fill → conversion-vouchers source (separate query).
+    // Neither pulls from `ledger_transactions`.
+    return [];
   }
+  // `all` and the other named ledger buckets all carry their own type list.
   return SPEND_EVENT_BUCKETS[bucket];
 }
 
@@ -251,9 +291,10 @@ async function queryLedgerSlice(
   offset: number,
   limit: number,
 ): Promise<LedgerRowRaw[]> {
-  if (bucket === "expense") return [];
+  if (bucket === "expense" || bucket === "fill") return [];
   const db = await getDb();
   const types = bucketTypes(bucket);
+  if (types.length === 0) return [];
   const rows = await db.$queryRawUnsafe<LedgerRowRaw[]>(
     `SELECT id,
             type::text AS type,
@@ -273,9 +314,10 @@ async function queryLedgerSlice(
 }
 
 async function queryLedgerCount(bucket: SpendBucketKey): Promise<number> {
-  if (bucket === "expense") return 0;
+  if (bucket === "expense" || bucket === "fill") return 0;
   const db = await getDb();
   const types = bucketTypes(bucket);
+  if (types.length === 0) return 0;
   const rows = await db.$queryRawUnsafe<{ n: string | number | bigint }[]>(
     `SELECT COUNT(*)::text AS n
        FROM ledger_transactions
@@ -287,9 +329,10 @@ async function queryLedgerCount(bucket: SpendBucketKey): Promise<number> {
 }
 
 async function queryLedgerLifetimeTotal(bucket: SpendBucketKey): Promise<number> {
-  if (bucket === "expense") return 0;
+  if (bucket === "expense" || bucket === "fill") return 0;
   const db = await getDb();
   const types = bucketTypes(bucket);
+  if (types.length === 0) return 0;
   const rows = await db.$queryRawUnsafe<{ s: string | null }[]>(
     `SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS s
        FROM ledger_transactions
@@ -524,6 +567,7 @@ function ledgerRowToEvent(
     bucket,
     rawType,
     amountUsd: toNumber(raw.amount),
+    direction: "outflow",
     user: userLite,
     context,
     href,
@@ -538,6 +582,7 @@ function expenseRowToEvent(raw: ExpenseRow): SpendEventRow {
     bucket: "expense",
     rawType: "expense",
     amountUsd: toNumber(raw.amount.toString()),
+    direction: "outflow",
     user: null,
     context: raw.description
       ? `${raw.category} · ${raw.description}`
@@ -550,6 +595,50 @@ function expenseRowToEvent(raw: ExpenseRow): SpendEventRow {
 function shortId(s: string): string {
   if (s.length <= 10) return s;
   return `${s.slice(0, 6)}…${s.slice(-4)}`;
+}
+
+/** Adapter — turn a `FillConversionRow` (per (day, fill) group) into a
+ *  `SpendEventRow` so the same table component can render it alongside
+ *  ledger / expense rows in the `all` feed and the dedicated `fill` view.
+ *
+ *  `direction: "inflow"` = the table paints it EMERALD (owner directive
+ *  2026-06-23: conversion is the return-side of a fill cost, NOT a cost).
+ *  `bucket: "fill"` keeps the chip + badge styling aligned with the Fill
+ *  filter on the page. */
+function fillConversionRowToEvent(r: FillConversionRow): SpendEventRow {
+  // Context line: short fill ref + how the fill resolved. The activation
+  // amount, when known, gives a quick "$X fill" anchor; the voucher count
+  // disambiguates the rare same-day multi-conversion case.
+  const sessionShort = r.sessionId ? shortId(r.sessionId) : "unknown session";
+  const parts: string[] = [`fill ${sessionShort}`];
+  if (r.activation) {
+    parts.push(`from $${r.activation.amountUsd.toLocaleString()} fill`);
+  }
+  if (r.voucherCount > 1) {
+    parts.push(`${r.voucherCount} conversions`);
+  }
+  const context = parts.join(" · ");
+
+  // Drill-in: prefer the deal-tracker pin if we have a deal id, else the
+  // creator's hub page. Both stay in the creator-hub.
+  const href = r.dealId
+    ? `/creator-hub/deal-tracker?deal=${r.dealId}`
+    : r.user
+      ? `/creator-hub/creators/${r.user.id}`
+      : null;
+
+  return {
+    key: r.key,
+    occurredAt: r.dayIso,
+    bucket: "fill",
+    rawType: "creator_fill_conversion",
+    amountUsd: r.amountUsd,
+    direction: "inflow",
+    user: r.user,
+    context,
+    href,
+    source: "fill_conversion",
+  };
 }
 
 async function computeSpendEventsPage(
@@ -579,10 +668,80 @@ async function computeSpendEventsPage(
       };
     }
 
-    // Ledger-only buckets (all / leaderboard / fill / multiplier). We do
-    // NOT merge expenses into the ledger pages — they have different
-    // ordering granularity (date vs timestamp) and different shapes; the
-    // dedicated `expense` chip surfaces them on their own.
+    // Fill bucket = vouchers conversion-per-day-per-fill source. The
+    // dedicated query already paginates / lifetime-totals correctly; we
+    // adapt its rows into the shared SpendEventRow shape so the existing
+    // table renders them. Owner directive 2026-06-23: the audit-spend
+    // Fill view shows the realized conversion side of every fill, NOT
+    // the activation / spend cost legs.
+    if (bucket === "fill") {
+      const fillPage = await getFillConversionsPage(page);
+      return {
+        rows: fillPage.rows.map(fillConversionRowToEvent),
+        page: fillPage.page,
+        perPage: fillPage.perPage,
+        total: fillPage.total,
+        totalPages: fillPage.totalPages,
+        lifetimeTotalUsd: fillPage.lifetimeTotalUsd,
+        countDegraded: false,
+      };
+    }
+
+    // `all` bucket = ledger non-fill events ⊕ fill conversion-per-day
+    // rows interleaved by date. Owner directive 2026-06-23: "Default
+    // view (no bucket filter) should still include conversion-per-day
+    // rows for the Fill domain". Both sources are index-served (see
+    // `fill-conversions.ts` + the file header here). We fetch the
+    // leading window from each in parallel — `page * perPage` is the
+    // exact upper bound (even if every prior merged row came from one
+    // source, that many is enough to fill the slice) — then merge by
+    // `occurredAt DESC` and slice. Lifetime totals + counts sum across
+    // both sources so the KPI strip reflects the union accurately.
+    if (bucket === "all") {
+      const window = page * perPage;
+      const [ledgerSlice, ledgerCount, ledgerLifetime, fillWindow] =
+        await Promise.all([
+          queryLedgerSlice(bucket, 0, window),
+          queryLedgerCount(bucket),
+          queryLedgerLifetimeTotal(bucket),
+          getFillConversionsLeadingWindow(window),
+        ]);
+
+      const userIds = ledgerSlice
+        .map((r) => r.user_id)
+        .filter((x): x is string => typeof x === "string");
+      const userLookup = await fetchUserLookup(userIds);
+      const ledgerRows = ledgerSlice.map((r) =>
+        ledgerRowToEvent(r, userLookup),
+      );
+      const fillRows = fillWindow.rows.map(fillConversionRowToEvent);
+
+      // Merge by date DESC, then slice the page.
+      const merged = [...ledgerRows, ...fillRows].sort((a, b) =>
+        a.occurredAt < b.occurredAt
+          ? 1
+          : a.occurredAt > b.occurredAt
+            ? -1
+            : 0,
+      );
+      const sliced = merged.slice(offset, offset + perPage);
+
+      const total = ledgerCount + fillWindow.total;
+      const lifetimeTotal = ledgerLifetime + fillWindow.lifetimeTotalUsd;
+
+      return {
+        rows: sliced,
+        page,
+        perPage,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / perPage)),
+        lifetimeTotalUsd: lifetimeTotal,
+        countDegraded: false,
+      };
+    }
+
+    // Single-source ledger buckets (leaderboard / multiplier). Unchanged
+    // pagination — direct LIMIT/OFFSET against the index-served slice.
     const [sliceRaw, totalRaw, lifetimeTotalRaw] = await Promise.all([
       queryLedgerSlice(bucket, offset, perPage),
       queryLedgerCount(bucket),

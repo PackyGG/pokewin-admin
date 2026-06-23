@@ -21,6 +21,10 @@ import {
 } from "../_queries/spend-events";
 import { SpendPagination } from "./spend-pagination";
 
+// Badge color tracks the underlying cashflow direction (House POV):
+//   • leaderboard / multiplier / expense → house OUTFLOW → rose
+//   • fill → house INFLOW (conversion = return-side of the fill cost,
+//     owner directive 2026-06-23) → emerald
 const BUCKET_BADGE: Record<
   Exclude<SpendBucketKey, "all">,
   { icon: LucideIcon; classes: string }
@@ -33,7 +37,7 @@ const BUCKET_BADGE: Record<
   fill: {
     icon: Wallet,
     classes:
-      "bg-rose-500/15 text-rose-600 dark:text-rose-300 border-rose-500/30",
+      "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border-emerald-500/30",
   },
   multiplier: {
     icon: Sparkles,
@@ -93,8 +97,23 @@ function UserCell({ row }: { row: SpendEventRow }) {
   );
 }
 
-function RowAmount({ amount }: { amount: number }) {
-  // House POV — every cost on this page = the house paid out = rose.
+function RowAmount({
+  amount,
+  direction,
+}: {
+  amount: number;
+  direction: SpendEventRow["direction"];
+}) {
+  // House POV:
+  //   outflow → house paid out → rose with `−` prefix
+  //   inflow  → house got back (fill conversion return) → emerald with `+`
+  if (direction === "inflow") {
+    return (
+      <span className="tabular-nums text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+        +{formatCurrency(amount)}
+      </span>
+    );
+  }
   return (
     <span className="tabular-nums text-sm font-semibold text-rose-600 dark:text-rose-400">
       −{formatCurrency(amount)}
@@ -102,15 +121,29 @@ function RowAmount({ amount }: { amount: number }) {
   );
 }
 
+function sourceLabel(source: SpendEventRow["source"]): string {
+  switch (source) {
+    case "ledger":
+      return "Ledger";
+    case "expense":
+      return "Admin expense";
+    case "fill_conversion":
+      return "Fill conversion";
+  }
+}
+
 function SpendRow({ row }: { row: SpendEventRow }) {
   const dateStr = formatDateTime(new Date(row.occurredAt));
   const typeLabel = spendTypeLabel(row.rawType);
+  const isInflow = row.direction === "inflow";
+  // Hover tint tracks the row direction so an emerald conversion row
+  // doesn't flash rose on hover.
+  const linkClasses = isInflow
+    ? "group flex flex-col gap-2 rounded-2xl border border-border/60 bg-background/40 p-3 transition-colors hover:border-emerald-500/40 hover:bg-emerald-500/[0.04] sm:flex-row sm:items-center sm:gap-3"
+    : "group flex flex-col gap-2 rounded-2xl border border-border/60 bg-background/40 p-3 transition-colors hover:border-rose-500/40 hover:bg-rose-500/[0.04] sm:flex-row sm:items-center sm:gap-3";
   const RowWrap = ({ children }: { children: React.ReactNode }) =>
     row.href ? (
-      <Link
-        href={row.href}
-        className="group flex flex-col gap-2 rounded-2xl border border-border/60 bg-background/40 p-3 transition-colors hover:border-rose-500/40 hover:bg-rose-500/[0.04] sm:flex-row sm:items-center sm:gap-3"
-      >
+      <Link href={row.href} className={linkClasses}>
         {children}
       </Link>
     ) : (
@@ -144,9 +177,9 @@ function SpendRow({ row }: { row: SpendEventRow }) {
 
       {/* Right — amount + source */}
       <div className="flex shrink-0 items-center justify-between gap-3 sm:flex-col sm:items-end sm:justify-center sm:gap-1">
-        <RowAmount amount={row.amountUsd} />
+        <RowAmount amount={row.amountUsd} direction={row.direction} />
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
-          {row.source === "ledger" ? "Ledger" : "Admin expense"}
+          {sourceLabel(row.source)}
         </span>
       </div>
     </RowWrap>

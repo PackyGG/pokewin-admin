@@ -15,7 +15,7 @@ export default function Loading() {
           icon={Receipt}
           accent="rose"
           title="Audit Spend"
-          subtitle="Lifetime ledger of every creator-related cost the house has paid out — one row per event."
+          subtitle="Lifetime ledger of every creator cashflow — leaderboard payouts, multiplier deals, expenses, and per-fill conversions as they realize."
         />
       </PageHero>
 
