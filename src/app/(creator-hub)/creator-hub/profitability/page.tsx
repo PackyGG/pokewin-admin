@@ -3,6 +3,7 @@ import {
   Activity,
   Coins,
   Handshake,
+  History,
   LineChart,
   Percent,
   TrendingUp,
@@ -16,27 +17,59 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { TabChips } from "@/components/ux";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 import { getCreatorProfitability } from "./_queries/deal-profitability";
+import {
+  getPastDeals,
+  parsePastDealsPage,
+} from "./_queries/past-deals";
 import { HubKpiBox } from "../_components/hub-kpi-box";
 import { HubKpiInfoPopover } from "../_components/hub-kpi-info-popover";
 import { ProfitabilityList } from "./_components/profitability-list";
+import { PastDealsList } from "./_components/past-deals-list";
 import { RosterError } from "../creators/_components/roster-error";
 
 export const metadata = { title: "Profitability · Creator Hub" };
 
+type ProfitabilityTab = "active" | "past";
+
+const TAB_CHIPS = [
+  { value: "active", label: "Active" },
+  { value: "past", label: "Past Deals" },
+] as const;
+
+function parseTab(raw: string | undefined): ProfitabilityTab {
+  return raw === "past" ? "past" : "active";
+}
+
+const TAB_SUBTITLES: Record<ProfitabilityTab, string> = {
+  active: "Per-creator deal cost vs the wager driven in the current deal frame.",
+  past: "Final stats and conversion for every ended creator deal.",
+};
+
 /**
  * Creator Hub — Profitability.
  *
- * Costs out every creator with a current deal over the frame of their
- * active leaderboard cycle, and checks it against the wager driven INSIDE
- * that frame. Shell-first: the hero paints instantly; the costed roster
- * streams behind Suspense.
+ * Shell-first: the hero + tab strip paint instantly; the active tab's
+ * data section streams behind Suspense. Only the active tab loads on
+ * each render (Active-Timeframe-Only). The Active tab keeps the existing
+ * roster-walk view; the Past Deals tab lists every ENDED leaderboard
+ * (= past deal under the "leaderboard frame IS the deal" model) with
+ * server-side pagination (25/page, `?page=`).
  */
-export default async function CreatorHubProfitabilityPage() {
+export default async function CreatorHubProfitabilityPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
   await requireCreatorHubPageAccess();
+
+  const sp = await searchParams;
+  const tab = parseTab(sp.tab);
+  const page = parsePastDealsPage(sp.page);
 
   return (
     <div className="space-y-6">
@@ -45,21 +78,40 @@ export default async function CreatorHubProfitabilityPage() {
           icon={TrendingUp}
           accent="emerald"
           title="Profitability"
-          subtitle="Per-creator deal cost vs the wager driven in the current deal frame."
+          subtitle={TAB_SUBTITLES[tab]}
         />
       </PageHero>
 
       <div className="space-y-3">
-        <SectionHeading icon={Coins} title="Deal economics" />
-        <Suspense fallback={<ProfitabilitySkeleton />}>
-          <ProfitabilitySection />
+        <div className="flex items-center justify-between gap-2">
+          <SectionHeading
+            icon={tab === "past" ? History : Coins}
+            title={tab === "past" ? "Past deals" : "Deal economics"}
+          />
+          <TabChips
+            items={TAB_CHIPS}
+            current={tab}
+            paramKey="tab"
+            defaultValue="active"
+          />
+        </div>
+        {/* Keyed Suspense so flipping tab/page shows skeleton, not stale data. */}
+        <Suspense
+          key={tab === "past" ? `past-${page}` : "active"}
+          fallback={<ProfitabilitySkeleton />}
+        >
+          {tab === "past" ? (
+            <PastDealsSection page={page} />
+          ) : (
+            <ActiveProfitabilitySection />
+          )}
         </Suspense>
       </div>
     </div>
   );
 }
 
-async function ProfitabilitySection() {
+async function ActiveProfitabilitySection() {
   const { rows, totals, rosterUnavailable } = await getCreatorProfitability();
 
   if (rosterUnavailable) {
@@ -146,6 +198,99 @@ async function ProfitabilitySection() {
           inside their current leaderboard cycle (the active deal frame).
         </p>
         <ProfitabilityList rows={rows} />
+      </div>
+    </FadeIn>
+  );
+}
+
+async function PastDealsSection({ page }: { page: number }) {
+  const data = await getPastDeals(page);
+
+  // Page-scope PnL totals — the headline accent tracks the visible page so
+  // the colour can't mislead vs. what the user sees in the rows. (Full-set
+  // wager/PnL aggregates would force an unbounded scan — Active-Timeframe-Only.)
+  const pnlAccent = data.totals.totalActualPnl < 0 ? "rose" : "emerald";
+  const affiliatesAccent =
+    data.totals.totalAffiliatesMadeUs < 0 ? "rose" : "emerald";
+
+  return (
+    <FadeIn className="space-y-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
+        <HubKpiBox
+          label="Ended Deals"
+          icon={History}
+          accent="blue"
+          value={formatNumber(data.totals.totalEndedDeals)}
+          sub="Past leaderboard cycles"
+        />
+        <HubKpiBox
+          label="Total Cost"
+          icon={Coins}
+          accent="rose"
+          value={formatCurrency(data.totals.totalCost)}
+          sub="House share · all past"
+        />
+        <HubKpiBox
+          label="Page Actual PNL"
+          icon={LineChart}
+          accent={pnlAccent}
+          value={formatCurrency(data.totals.totalActualPnl)}
+          sub="Affiliates made us − cost · page"
+        />
+        <HubKpiBox
+          label="Affiliates Made Us"
+          icon={Users}
+          accent={affiliatesAccent}
+          value={formatCurrency(data.totals.totalAffiliatesMadeUs)}
+          sub="Deposits − withdrawals · page"
+          info={
+            <HubKpiInfoPopover
+              title="Affiliates Made Us (page)"
+              description="Sum of the visible page's affiliate-PnL legs. Per row = coverage-attributed cohort deposits − card withdrawals − the creator's own affiliate_claim earnings, measured strictly inside that board's window. Page-scoped so the heavy MAIN scan stays bounded to 25 boards per request (Active-Timeframe-Only)."
+              footer={{
+                label: "Page total",
+                value: formatCurrency(data.totals.totalAffiliatesMadeUs),
+                tone: data.totals.totalAffiliatesMadeUs < 0 ? "rose" : "emerald",
+              }}
+            />
+          }
+        />
+        <HubKpiBox
+          label="Expected Wager"
+          icon={TrendingUp}
+          accent="blue"
+          value={formatCurrency(data.totals.totalExpectedWager)}
+          sub="To cover past cost"
+        />
+        <HubKpiBox
+          label="Page Wager"
+          icon={Activity}
+          accent="emerald"
+          value={formatCurrency(data.totals.totalCreatorWager)}
+          sub="Actual · this page"
+        />
+        <HubKpiBox
+          label="Avg Conversion"
+          icon={Percent}
+          accent="blue"
+          value={`${data.totals.avgConversionRate.toFixed(2)}x`}
+          sub="Page average"
+        />
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-[11px] text-muted-foreground">
+          Each row is one ended leaderboard cycle (a past deal). Stats are
+          computed over the board&apos;s own window. Sorted by most recently
+          ended first.
+        </p>
+        <PastDealsList
+          rows={data.rows}
+          page={data.page}
+          totalPages={data.totalPages}
+          totalCount={data.totalCount}
+          backendUnavailable={data.backendUnavailable}
+        />
       </div>
     </FadeIn>
   );
