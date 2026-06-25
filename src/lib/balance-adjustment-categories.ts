@@ -65,6 +65,7 @@ import { Prisma } from "@/generated/prisma/browser";
  */
 export const BALANCE_ADJUSTMENT_CATEGORY_KEYS = [
   "deposit_problem",
+  "withdrawal_failed",
   "giveaway",
   "bonus",
   "deposit_bonus",
@@ -244,6 +245,13 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     label: "Deposit problem",
     costLabel: "Deposit-problem credits",
     why: "Balance credited to fix a stuck / under-credited deposit (coin type + on-chain tx hash recorded). A house cost — the user got balance they were owed.",
+    counted: true,
+  },
+  withdrawal_failed: {
+    key: "withdrawal_failed",
+    label: "Withdrawal failed",
+    costLabel: "Withdrawal-failed refunds",
+    why: "Balance refunded to a user after a declined / failed withdrawal that the backend didn't auto-refund (the operator manually credits the user back). A house cost — the user got balance they were owed.",
     counted: true,
   },
   giveaway: {

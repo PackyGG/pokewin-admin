@@ -47,6 +47,7 @@ export function daysForRewardsPeriod(period: RewardsPeriod): number | null {
  */
 const COUNTED_ADJ_CATEGORY_KEYS = [
   "deposit_problem",
+  "withdrawal_failed",
   "giveaway",
   "bonus",
   "deposit_bonus",

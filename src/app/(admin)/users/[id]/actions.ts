@@ -272,6 +272,13 @@ function validateAdjustmentCategory(
       // No required inputs.
       return { ok: true, meta: base };
     }
+    case "withdrawal_failed": {
+      // Optional note — the operator usually pastes the failed withdrawal id
+      // (or a short reference), but no minimum length is enforced: picking
+      // the category itself is the signal, the note is just context.
+      const reasonText = (d.reasonText ?? "").trim();
+      return { ok: true, meta: { ...base, reasonText: reasonText || null } };
+    }
     case "deposit_bonus": {
       // Optional reason — the dialog auto-fills a descriptive reason when
       // the amount is calculated from selected deposits (e.g. "Deposit

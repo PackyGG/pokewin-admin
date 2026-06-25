@@ -105,6 +105,7 @@ const REWARD_PAYOUT_TYPES_SQL = ledgerTypesToSqlList(REWARD_PAYOUT_TYPES);
  */
 const COUNTED_ADJ_CATEGORY_KEYS = [
   "deposit_problem",
+  "withdrawal_failed",
   "giveaway",
   "bonus",
   "deposit_bonus",

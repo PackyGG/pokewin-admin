@@ -144,6 +144,7 @@ const REWARD_PAYOUT_TYPES_SQL = ledgerTypesToSqlList(REWARD_PAYOUT_TYPES);
 // dashboard-cashflow.ts and the metric layer use to stay client-safe).
 const COUNTED_ADJ_CATEGORY_KEYS = [
   "deposit_problem",
+  "withdrawal_failed",
   "giveaway",
   "bonus",
   "deposit_bonus",

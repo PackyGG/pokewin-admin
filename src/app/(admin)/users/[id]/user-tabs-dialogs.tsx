@@ -170,7 +170,8 @@ export function BalanceAdjustDialog({
       cat === "bugs" ||
       cat === "other" ||
       cat === "remove_locked_balance" ||
-      cat === "fraud_abuse"
+      cat === "fraud_abuse" ||
+      cat === "withdrawal_failed"
     ) {
       const t = reasonText.trim();
       return t.length > 0 ? `${label}: ${t}` : label;
@@ -293,7 +294,8 @@ export function BalanceAdjustDialog({
               category === "remove_locked_balance" ||
               category === "fraud_abuse" ||
               category === "lossback" ||
-              category === "deposit_bonus"
+              category === "deposit_bonus" ||
+              category === "withdrawal_failed"
                 ? reasonText.trim() || undefined
                 : undefined,
             lossbackPercent: lossbackPercentNum,
@@ -599,6 +601,24 @@ export function BalanceAdjustDialog({
                   onChange={(e) => setTxHash(e.target.value)}
                   autoComplete="off"
                 />
+              </div>
+            )}
+
+            {/* Withdrawal failed: optional note — typically the failed
+                withdrawal id or short reference. No minimum length: picking
+                the category is the signal. */}
+            {category === "withdrawal_failed" && (
+              <div className="mt-2 space-y-1">
+                <Textarea
+                  placeholder="Optional — withdrawal id or short reference..."
+                  value={reasonText}
+                  onChange={(e) => setReasonText(e.target.value)}
+                  rows={2}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Optional. Use this to refund a user after a declined /
+                  failed withdrawal that wasn&apos;t auto-refunded.
+                </p>
               </div>
             )}
 
