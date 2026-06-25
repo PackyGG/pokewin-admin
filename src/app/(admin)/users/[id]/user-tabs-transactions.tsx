@@ -61,6 +61,7 @@ import { EmptyState } from "@/components/empty-state";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { battleUrl } from "@/lib/utils/main-site";
 import { fetchUserTransactions } from "./actions";
+import { WithdrawalDeclineButton } from "./withdrawal-decline-button";
 import type { WagerRequirementSummary } from "@/lib/queries/users-wager-progress-shared";
 import type {
   Transaction,
@@ -1129,6 +1130,7 @@ function CardWithdrawalsSubTable({
             <TableHead>Tracking</TableHead>
             <TableHead>Status</TableHead>
             <TableHead>Date</TableHead>
+            <TableHead>Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -1167,6 +1169,15 @@ function CardWithdrawalsSubTable({
               </TableCell>
               <TableCell className="text-xs text-muted-foreground">
                 {formatRelative(w.requestedAt)}
+              </TableCell>
+              <TableCell>
+                <div onClick={(e) => e.stopPropagation()}>
+                  <WithdrawalDeclineButton
+                    withdrawalId={w.id}
+                    status={w.status}
+                    method={w.method}
+                  />
+                </div>
               </TableCell>
             </TableRow>
           ))}
