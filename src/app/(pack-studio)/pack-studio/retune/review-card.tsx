@@ -12,6 +12,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  RefreshCw,
   RotateCcw,
   ShieldAlert,
   SlidersHorizontal,
@@ -171,6 +172,8 @@ export function ReviewCard({
   onOpenEditor,
   onCloseEditor,
   onApplyEdit,
+  onReload,
+  reloadPending,
 }: {
   item: ReviewItem;
   index: number;
@@ -197,6 +200,13 @@ export function ReviewCard({
   onCloseEditor: () => void;
   /** Approve an explicit edited pool (writes via `applyPackEdit`). */
   onApplyEdit: (payload: EditApprovePayload) => void;
+  /** Re-fetch the server proposals (clears the infeasibility banner if the
+   *  operator's edits resolved the limit). Triggered manually via the
+   *  "Recheck pool" button on the error AND automatically when the editor's
+   *  card picker closes after cards were added during the session. */
+  onReload: () => void;
+  /** True while a `onReload` re-fetch is in-flight (drives the spinner). */
+  reloadPending: boolean;
 }) {
   const [showAdjust, setShowAdjust] = React.useState(false);
 
@@ -419,6 +429,26 @@ export function ReviewCard({
                 Edit pool / add a card ≥ {formatCurrency(proposal.price)}
               </Button>
             )}
+            {/* Manual re-check — re-runs the server `planAllRetunes` dry-run so
+                the infeasibility banner reflects the latest live pool. Useful
+                after the operator added cards via the popup but the page
+                hasn't auto-refreshed (e.g. the picker close handler didn't
+                fire, or the operator wants to force a fresh evaluation). */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onReload}
+              disabled={reloadPending || applying}
+              className="mt-0.5"
+              aria-label="Recheck pool"
+            >
+              {reloadPending ? (
+                <Loader2 className="mr-1 size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-1 size-3.5" />
+              )}
+              {reloadPending ? "Re-checking…" : "Recheck pool"}
+            </Button>
           </div>
         )}
 
@@ -650,6 +680,7 @@ export function ReviewCard({
                 onPickerOpenChange={setPickerOpen}
                 pickerInitialPriceMin={pickerRange?.min}
                 pickerInitialPriceMax={pickerRange?.max}
+                onCardsAdded={onReload}
               />
             </section>
           </>

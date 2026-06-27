@@ -266,6 +266,7 @@ export function PoolEditor({
   onPickerOpenChange,
   pickerInitialPriceMin,
   pickerInitialPriceMax,
+  onCardsAdded,
 }: {
   packId: string;
   /** The pack's current price (USD) — the editable starting price. */
@@ -300,6 +301,14 @@ export function PoolEditor({
   /** Optional Min/Max seeds for the picker's price filter (suggested range). */
   pickerInitialPriceMin?: number;
   pickerInitialPriceMax?: number;
+  /**
+   * Fires once after the picker dialog closes if the operator added at least
+   * one card during that picker session. Used by the parent to re-run the
+   * server `planAllRetunes` dry-run so the infeasibility banner reflects the
+   * latest live pool (auto-recheck). No-ops when the picker is closed without
+   * additions.
+   */
+  onCardsAdded?: () => void;
 }) {
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
@@ -321,6 +330,14 @@ export function PoolEditor({
 
   // Card-picker filters, loaded lazily on first open (server action).
   const [filters, setFilters] = React.useState<RetunePickerFilters | null>(null);
+
+  // Tracks whether the operator added at least one card during the CURRENT
+  // picker-open session. Reset every time the picker opens; consumed (and
+  // reset) when the picker closes — if true we fire `onCardsAdded` so the
+  // parent can re-run the server proposal dry-run (auto-recheck). Stored in
+  // a ref to avoid re-renders on every add (the picker is the consumer, not
+  // any rendered child).
+  const pickerAddedRef = React.useRef(false);
 
   // The pack's live pool at editor-open — kept verbatim so the confirm-gate's
   // per-card diff can show `fromWeight` for kept cards (and surface removed
@@ -428,6 +445,12 @@ export function PoolEditor({
       // by hand in the row controls below — auto only applies to brand-new
       // adds; rows seeded from the live pool keep their existing color/anim.
       const auto = autoColorAndAnimation(item.priceUsd, price);
+      // Mark the picker session dirty so the auto-recheck fires on close.
+      // Set BEFORE the setRows updater so a dup-no-op below still implies the
+      // operator intended to add; the close handler then re-runs the server
+      // proposal regardless. (A dup is rare — the grid disables already-added
+      // tiles — but we'd rather over-refresh than miss a real add.)
+      pickerAddedRef.current = true;
       setRows((prev) => {
         if (prev.some((r) => r.cardId === item.id)) return prev;
         // Give the new card a FAIR share of the pool so the KPI preview shifts
@@ -703,7 +726,20 @@ export function PoolEditor({
               rarities={filters.rarities}
               price={price}
               open={pickerOpen}
-              onOpenChange={onPickerOpenChange}
+              onOpenChange={(open) => {
+                // Forward the open-state to the parent's controlled prop AND,
+                // on a close-after-additions, fire `onCardsAdded` so the
+                // proposal dry-run re-runs. Reset the dirty-ref on open so
+                // each picker session is tracked independently; consume it on
+                // close so a follow-up reopen-without-adds doesn't re-trigger.
+                onPickerOpenChange?.(open);
+                if (open) {
+                  pickerAddedRef.current = false;
+                } else if (pickerAddedRef.current) {
+                  pickerAddedRef.current = false;
+                  onCardsAdded?.();
+                }
+              }}
               initialPriceMin={pickerInitialPriceMin}
               initialPriceMax={pickerInitialPriceMax}
             />

@@ -425,6 +425,24 @@ export function RetuneReview({
     });
   }, []);
 
+  // ── Reload proposals (re-run the server `planAllRetunes` dry-run) ────
+  // Used by the "Recheck pool" button on the infeasibility error AND by the
+  // pool editor's picker after the operator added at least one card during the
+  // open session. `router.refresh()` re-mounts the Server Component shell so
+  // every proposal is re-evaluated against the latest live pool — if the
+  // operator's edits resolved the no-win-band-card limit, the rose banner
+  // clears on the next paint. In-flight local state (active adjustment, open
+  // editor) is reset by the remount; that's an intentional trade-off the
+  // owner explicitly accepted in the ask (a manual + auto re-check).
+  const [reloadPending, startReloadTransition] = React.useTransition();
+  const onReload = React.useCallback(() => {
+    if (reloadPending) return;
+    startReloadTransition(() => {
+      router.refresh();
+    });
+    toast.message("Re-checking pool…");
+  }, [reloadPending, router]);
+
   // ── Approve (write) ─────────────────────────────────────────────────
   const performApprove = React.useCallback(
     async (i: number): Promise<void> => {
@@ -807,6 +825,8 @@ export function RetuneReview({
                   onOpenEditor={() => setEditingIndex(index)}
                   onCloseEditor={() => setEditingIndex(null)}
                   onApplyEdit={onApplyEdit}
+                  onReload={onReload}
+                  reloadPending={reloadPending}
                 />
               </FadeIn>
             ) : null}
