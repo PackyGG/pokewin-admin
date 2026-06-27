@@ -151,10 +151,24 @@ export async function getUserPnlBreakdownCached(
  * only the streamed first page is cached. The `users-detail` tag means an
  * admin balance wipe revalidates it alongside the detail aggregate.
  */
+// Keypart bumped across deploys to FORCE-DISCARD stale cached entries when the
+// underlying `getUserTransactions` output shape/values change — same
+// force-invalidate-on-code-change pattern as cachedUserPnlBreakdown above. The
+// Vercel data cache persists `unstable_cache` entries ACROSS deployments under
+// the same key, so a value-changing fix needs a fresh namespace; otherwise the
+// pre-fix entry keeps getting served (stale-while-revalidate) until something
+// else evicts it — exactly the bug that hid commit a87aae37 from live.
+//   • v1 → v2: commit a87aae37 (2026-06-27) — `battleWinningsByGsid` now folds
+//     in the paired `battle_excess_to_voucher` voucher leg (Voucher == Card),
+//     so a winning battle bet's `battleWinnings` jumped from the cards-only
+//     value to cards+voucher (e.g. $144 → $327.03). Pre-fix v1 entries kept
+//     rendering the wrong P&L (e.g. +$9.69 emerald instead of −$173.34 rose);
+//     bump so the fixed code path's values replace any stale v1 entries
+//     immediately instead of stale-while-revalidate.
 const cachedUserGamingTransactions = unstable_cache(
   (userId: string, page: number, perPage: number, types: string[]) =>
     getUserTransactions(userId, page, perPage, { types }),
-  ["users-detail-gaming-tx-v1"],
+  ["users-detail-gaming-tx-v2"],
   { revalidate: GAMING_TX_REVALIDATE_SECONDS, tags: ["users-detail"] },
 );
 
