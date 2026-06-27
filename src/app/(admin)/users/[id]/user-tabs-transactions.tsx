@@ -44,6 +44,7 @@ import { STATUS_COLORS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import {
   formatCurrency,
+  formatDateTime,
   formatRelative,
 } from "@/lib/utils/format";
 import {
@@ -961,8 +962,11 @@ export const CategoryTransactionsTable = React.memo(
                       <span className="truncate block">{t.description}</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {formatRelative(t.createdAt)}
+                  <TableCell
+                    className="text-xs text-muted-foreground whitespace-nowrap"
+                    title={formatRelative(t.createdAt)}
+                  >
+                    {formatDateTime(t.createdAt)}
                   </TableCell>
                 </TableRow>
               ))}
@@ -1167,8 +1171,11 @@ function CardWithdrawalsSubTable({
                   {w.status}
                 </Badge>
               </TableCell>
-              <TableCell className="text-xs text-muted-foreground">
-                {formatRelative(w.requestedAt)}
+              <TableCell
+                className="text-xs text-muted-foreground whitespace-nowrap"
+                title={formatRelative(w.requestedAt)}
+              >
+                {formatDateTime(w.requestedAt)}
               </TableCell>
               <TableCell>
                 <div onClick={(e) => e.stopPropagation()}>
