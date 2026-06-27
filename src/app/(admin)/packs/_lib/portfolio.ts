@@ -505,14 +505,28 @@ export function derivePortfolioTargets(
     // Nudge win-rate up: each step lowers projected CV/tier. Number of steps
     // scales with how spicy the pack is (T5 gets the full budget, T4 fewer),
     // capped by MAX_WIN_RATE_NUDGES and the hard win-rate ceiling.
+    //
+    // TAGGED LOTTERY PACKS (hit-rate ≤ 10%): a name tag like "1% …" / "5% …" /
+    // "10% …" is the pack's INTENDED hit-rate contract — the operator chose it
+    // by name. Nudging the win-rate up (e.g. 1% → 6%) breaks that contract AND
+    // forces the shaper to a target the math can't simultaneously hit at the
+    // pack's edge target with the existing pool (the cheapest jackpot ≥ 5·price
+    // overshoots the EV budget when the win-rate isn't tiny). Lottery packs
+    // therefore keep `targetWinRate = winRateBefore` (the tag rate); only the
+    // cap can tighten, and the `jackpotFloor` above protects the top card.
+    const isLotteryTag = hr !== null && hr <= 0.10;
     const spicyDepth = isSpicyTier(proj.tier)
       ? tierIndex(proj.tier) - tierIndex("T3") // T4→1, T5→2
       : 1;
-    const nudges = Math.min(MAX_WIN_RATE_NUDGES, Math.max(1, spicyDepth));
-    const tightenedWinRate = Math.min(
-      MAX_TIGHTENED_WIN_RATE,
-      winRateBefore + nudges * WIN_RATE_NUDGE_STEP,
-    );
+    const nudges = isLotteryTag
+      ? 0
+      : Math.min(MAX_WIN_RATE_NUDGES, Math.max(1, spicyDepth));
+    const tightenedWinRate = isLotteryTag
+      ? winRateBefore
+      : Math.min(
+          MAX_TIGHTENED_WIN_RATE,
+          winRateBefore + nudges * WIN_RATE_NUDGE_STEP,
+        );
 
     // Persist the tightened targets.
     targetsByPack.set(p.packId, {

@@ -30,6 +30,7 @@ import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import {
   computePackRisk,
+  searchBestPriceForCleanSnap,
   shapeWeights,
   type PackRisk,
 } from "@/app/(admin)/insights/edge-calc/risk";
@@ -317,8 +318,10 @@ export function PoolEditor({
   const [reshaping, setReshaping] = React.useState(false);
   // Owner opt-in: when checked, the auto-tune action sends `allowPriceSearch`
   // so the server may nudge the pack price by up to ±25% around the staged
-  // price to land cleaner odds. Default OFF so today's behavior is unchanged.
-  const [allowPriceSearch, setAllowPriceSearch] = React.useState(false);
+  // price to land cleaner odds. DEFAULT ON (Owner, 2026-06-28): the owner is
+  // fine with up to ±25% nudge to get clean odds; the operator can untick to
+  // hold the staged price exactly for packs that need a hard-pinned price.
+  const [allowPriceSearch, setAllowPriceSearch] = React.useState(true);
   // Short-lived description of the latest auto-pick, shown next to the table so
   // the owner can immediately see what color/animation was chosen for the newly
   // added card (and that they can flip it by hand in the row controls).
@@ -500,18 +503,35 @@ export function PoolEditor({
   );
 
   // ── Re-shape to targets (pure shapeWeights on the edited values) ─────
+  // When `allowPriceSearch` is on (the default) we route through the price-
+  // search wrapper so the editor PREVIEW matches what the server's
+  // `applyStagedPackEditAndRetune` will produce — the search picks the nearby
+  // price (±25%, cent-stepped) whose `shapeWeights` result lands every card
+  // on a clean ladder rung (e.g. 0.05% / 0.1% / 25%). Without price search the
+  // shaper falls back to raw weights at the staged price (e.g. 0.0075% /
+  // 2.3346% / 94.0055%); with it on, the odds the operator sees here are the
+  // clean odds the server will write on approve.
   const reshape = React.useCallback(() => {
     if (rows.length === 0) return;
     setReshaping(true);
     try {
-      const shaped = shapeWeights({
-        cards: rows.map((r) => ({ value: r.priceUsd })),
-        price,
-        targetEdge: targets.targetEdge,
-        targetWinRate: targets.targetWinRate,
-        maxWinCap: targets.maxWinCap,
-        nearMissMin: targets.nearMissMin,
-      });
+      const shaped = allowPriceSearch
+        ? searchBestPriceForCleanSnap({
+            cards: rows.map((r) => ({ value: r.priceUsd })),
+            basePrice: price,
+            targetEdge: targets.targetEdge,
+            targetWinRate: targets.targetWinRate,
+            maxWinCap: targets.maxWinCap,
+            nearMissMin: targets.nearMissMin,
+          }).bestResult
+        : shapeWeights({
+            cards: rows.map((r) => ({ value: r.priceUsd })),
+            price,
+            targetEdge: targets.targetEdge,
+            targetWinRate: targets.targetWinRate,
+            maxWinCap: targets.maxWinCap,
+            nearMissMin: targets.nearMissMin,
+          });
       if ("error" in shaped) {
         toast.error(shaped.limit?.detail ?? shaped.error);
         return;
@@ -534,7 +554,7 @@ export function PoolEditor({
     } finally {
       setReshaping(false);
     }
-  }, [rows, price, targets]);
+  }, [rows, price, targets, allowPriceSearch]);
 
   // Build the EditPreview the confirm gate reads — same data for both modes:
   //  • `cards`     — every staged row with its baseline weight (null for added)
@@ -550,17 +570,30 @@ export function PoolEditor({
       let toWeights: number[];
       if (mode === "auto-tune") {
         // Mirror what the server will write: shape locally against the SAME
-        // targets `applyStagedPackEditAndRetune` uses. On a (rare) infeasible
-        // local shape, fall back to the owner's odds so the gate still
-        // renders — the server will error out itself if it's truly infeasible.
-        const shaped = shapeWeights({
-          cards: rows.map((r) => ({ value: r.priceUsd })),
-          price,
-          targetEdge: targets.targetEdge,
-          targetWinRate: targets.targetWinRate,
-          maxWinCap: targets.maxWinCap,
-          nearMissMin: targets.nearMissMin,
-        });
+        // targets `applyStagedPackEditAndRetune` uses. When the owner has
+        // `allowPriceSearch` on (the default) we route through the same
+        // price-search wrapper the server uses, so the preview weights match
+        // what `applyStagedPackEditAndRetune` will pick — clean ladder odds
+        // at the nearby ±25% price. On a (rare) infeasible local shape, fall
+        // back to the owner's odds so the gate still renders — the server
+        // will error out itself if it's truly infeasible.
+        const shaped = allowPriceSearch
+          ? searchBestPriceForCleanSnap({
+              cards: rows.map((r) => ({ value: r.priceUsd })),
+              basePrice: price,
+              targetEdge: targets.targetEdge,
+              targetWinRate: targets.targetWinRate,
+              maxWinCap: targets.maxWinCap,
+              nearMissMin: targets.nearMissMin,
+            }).bestResult
+          : shapeWeights({
+              cards: rows.map((r) => ({ value: r.priceUsd })),
+              price,
+              targetEdge: targets.targetEdge,
+              targetWinRate: targets.targetWinRate,
+              maxWinCap: targets.maxWinCap,
+              nearMissMin: targets.nearMissMin,
+            });
         toWeights = "error" in shaped
           ? oddsToWeights(rows.map((r) => r.odds))
           : shaped.weights;
@@ -606,7 +639,7 @@ export function PoolEditor({
         removed,
       };
     },
-    [rows, price, priceChanged, targets],
+    [rows, price, priceChanged, targets, allowPriceSearch],
   );
 
   // ── Approve the explicit edited pool (VERBATIM — advanced) ───────────
@@ -747,11 +780,6 @@ export function PoolEditor({
         )}
       </div>
 
-      {/* Live total of the per-card odds inputs (mirrored above the action
-          buttons below). Owner sets these by hand; renormalization happens on
-          apply, but a visible total prevents accidental 102% / 98% mistakes. */}
-      <OddsTotalChip total={oddsTotal} hasRows={rows.length > 0} />
-
       {/* Live AFTER preview + feasibility */}
       <EditorPreview after={after} price={price} targetEdge={targets.targetEdge} />
 
@@ -806,15 +834,19 @@ export function PoolEditor({
         </p>
       )}
 
-      {/* Mirror of the odds-total chip right above the action buttons, so the
-          owner sees the same total regardless of scroll position. */}
+      {/* Live total of the per-card odds inputs — placed right above the
+          action buttons so it's visible at decision time. Owner sets the per-
+          row odds by hand; renormalization happens on apply, but a visible
+          total prevents accidental 102% / 98% mistakes. */}
       <OddsTotalChip total={oddsTotal} hasRows={rows.length > 0} />
 
       {/* Price-search opt-in — when checked, the auto-tune action sweeps a
           ±25% price band (cent-stepped) on the server and picks the candidate
           whose `shapeWeights` result lands every card on a clean ladder rung.
-          Default off so today's behavior matches; the owner opts in
-          explicitly. */}
+          DEFAULT ON (2026-06-28, Owner): the owner is fine with a ±25% nudge
+          for clean odds; untick to hard-pin the staged price (cleanliness
+          then depends on whether the staged price happens to land on the
+          ladder). */}
       <label
         htmlFor={`allow-price-search-${packId}`}
         className="flex cursor-pointer items-start gap-2 rounded-lg border bg-card/40 px-3 py-2"
@@ -834,9 +866,9 @@ export function PoolEditor({
             <InfoHint text="When ticked, the server may nudge the pack price by up to ±25% (cent-stepped) around the staged price to land every card on a clean odds rung (e.g. 0.01%, 0.1%, 25%). The exact chosen price is shown after the auto-tune runs." />
           </span>
           <p className="text-[11px] text-muted-foreground">
-            Auto-tune holds the price by default. Tick this if you&apos;d rather
-            the server pick a nearby price that lets the odds snap onto a
-            clean ladder.
+            On by default: auto-tune picks a nearby price (±25%, cent-stepped)
+            so the odds snap onto a clean ladder (e.g. 0.05% / 0.1% / 25%).
+            Untick to hold the staged price exactly.
           </p>
         </div>
       </label>
@@ -966,9 +998,10 @@ function sortByPriceDesc<T extends { priceUsd: number }>(rows: T[]): T[] {
 }
 
 /**
- * Always-visible running total of the per-card odds-% inputs. Rendered TWICE
- * inside the editor (near the top + just above the Approve buttons) so the
- * owner can't miss it regardless of scroll position. Three states:
+ * Always-visible running total of the per-card odds-% inputs. Rendered ONCE
+ * just above the Approve buttons so the owner sees it at decision time (a
+ * previous version rendered the chip twice — top + bottom — but the duplicate
+ * was distracting and the bottom placement is what matters). Three states:
  *
  * - Exactly 100% (±0.005)    → emerald, check icon — input matches a probability.
  * - Below 100%                → amber, info icon — informational under-total.

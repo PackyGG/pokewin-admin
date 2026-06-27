@@ -33,7 +33,12 @@ import { SectionHeading } from "@/components/modern-panels";
 import { InfoHint } from "@/app/(admin)/creators/_components/info-hint";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import type { PackRisk, RiskTier } from "@/app/(admin)/insights/edge-calc/risk";
+import {
+  computePackRisk,
+  shapeWeights,
+  type PackRisk,
+  type RiskTier,
+} from "@/app/(admin)/insights/edge-calc/risk";
 import { DEFAULT_MAX_MULT_CEILING } from "@/app/(admin)/packs/_lib/auto-targets";
 
 import type { EditApprovePayload, ReviewItem } from "./retune-review";
@@ -145,6 +150,50 @@ function riskSeverity(score: number): {
     tone: "text-rose-600 dark:text-rose-400",
     bar: "bg-rose-500",
   };
+}
+
+/**
+ * Best-effort hypothetical "After" risk when the authoritative re-shape is
+ * infeasible. The owner wants to SEE the number even when retune is blocked —
+ * not "No after". Strategy: re-run the shaper with the soft levers fully
+ * relaxed (win-rate tolerance opened to 100%, near-miss floor dropped to 0)
+ * so the only HARD failures left are the truly impossible cases (empty pool,
+ * no win cards, EV genuinely outside the pool's value range). When even that
+ * fails, returns null and the UI falls back to the clearer "Infeasible at
+ * current pool — fix limit above to compute" text.
+ *
+ * This NEVER affects the authoritative `feasible` / `after` carried by the
+ * proposal — it's a display-only preview, badged "infeasible — preview only"
+ * in the UI to make the relaxation visible. The actual approve path still
+ * uses the strict server-side `shapeWeights` + asserts.
+ */
+function hypotheticalAfter(
+  cards: { value: number; weight: number }[],
+  price: number,
+  targets: {
+    targetEdge: number;
+    targetWinRate: number;
+    maxWinCap: number | undefined;
+  },
+): PackRisk | null {
+  const shaped = shapeWeights({
+    cards: cards.map((c) => ({ value: c.value })),
+    price,
+    targetEdge: targets.targetEdge,
+    targetWinRate: targets.targetWinRate,
+    maxWinCap: targets.maxWinCap,
+    // Drop the soft levers entirely so only HARD limits can block the preview.
+    nearMissMin: 0,
+    winRateTol: 1,
+  });
+  if ("error" in shaped) return null;
+  return computePackRisk({
+    cards: cards.map((c, i) => ({
+      value: c.value,
+      weight: shaped.weights[i]!,
+    })),
+    price,
+  });
 }
 
 /** Plain-English one-liner for a coefficient-of-variation value. */
@@ -304,6 +353,34 @@ export function ReviewCard({
   const relaxations = active ? active.relaxations : proposal.relaxations;
   const weightDiff = active ? active.weightDiff : proposal.weightDiff;
   const canApprove = feasible && after != null && item.status !== "approved";
+
+  // Display-only hypothetical preview when the strict retune is infeasible —
+  // re-shape with the soft levers fully relaxed so the owner sees a number
+  // rather than "No after". Falls through to null (clearer text in EdgeCompare)
+  // when even the relaxed shape can't run. Memoized on the inputs that drive
+  // it; not in scope when `after` is non-null (the authoritative number wins).
+  const hypotheticalActiveWinRate =
+    active?.targetWinRate ?? proposal.autoTargets.targetWinRate;
+  const hypothetical = React.useMemo<PackRisk | null>(() => {
+    if (after != null) return null;
+    return hypotheticalAfter(
+      proposal.cards.map((c) => ({ value: c.value, weight: c.weight })),
+      proposal.price,
+      {
+        targetEdge,
+        targetWinRate: hypotheticalActiveWinRate,
+        maxWinCap: active?.maxWinCap ?? proposal.autoTargets.maxWinCap,
+      },
+    );
+  }, [
+    after,
+    proposal.cards,
+    proposal.price,
+    proposal.autoTargets.maxWinCap,
+    targetEdge,
+    hypotheticalActiveWinRate,
+    active?.maxWinCap,
+  ]);
 
   return (
     <div className="flex flex-col rounded-xl border bg-card shadow-sm">
@@ -487,7 +564,12 @@ export function ReviewCard({
               </span>
             }
           />
-          <EdgeCompare before={before} after={after} targetEdge={targetEdge} />
+          <EdgeCompare
+            before={before}
+            after={after}
+            hypothetical={hypothetical}
+            targetEdge={targetEdge}
+          />
         </section>
 
         {/* ── Risk profile: the "new risk system", made unmissable ────── */}
@@ -906,10 +988,18 @@ function describePack({
 function EdgeCompare({
   before,
   after,
+  hypothetical,
   targetEdge,
 }: {
   before: PackRisk;
   after: PackRisk | null;
+  /**
+   * Best-effort "After" computed with the soft levers fully relaxed
+   * (`hypotheticalAfter`). Used ONLY when `after` is null — gives the owner a
+   * preview number to look at instead of "No after". Display-only; the
+   * authoritative `after` + `feasible` are unchanged.
+   */
+  hypothetical: PackRisk | null;
   targetEdge: number;
 }) {
   return (
@@ -920,9 +1010,17 @@ function EdgeCompare({
       </div>
       {after ? (
         <EdgeTile label="After" risk={after} targetEdge={targetEdge} animate />
+      ) : hypothetical ? (
+        <EdgeTile
+          label="After"
+          risk={hypothetical}
+          targetEdge={targetEdge}
+          animate
+          previewBadge
+        />
       ) : (
         <div className="flex items-center justify-center rounded-xl border border-dashed bg-muted/20 px-3 py-6 text-center text-xs text-muted-foreground">
-          No after — see the limit above
+          Infeasible at current pool — fix limit above to compute
         </div>
       )}
     </div>
@@ -935,11 +1033,19 @@ function EdgeTile({
   risk,
   targetEdge,
   animate,
+  previewBadge,
 }: {
   label: string;
   risk: PackRisk;
   targetEdge: number;
   animate?: boolean;
+  /**
+   * When true, the tile carries a small "infeasible — preview only" badge.
+   * Used for the hypothetical-after fallback so the owner can see a number
+   * while still knowing the strict retune path is blocked (see the limit
+   * banner above) and the displayed value is from a relaxed shape.
+   */
+  previewBadge?: boolean;
 }) {
   // House-POV: edge ≥ target = healthy margin = emerald; below = rose.
   const healthy = risk.edge >= targetEdge - 1e-9;
@@ -953,9 +1059,19 @@ function EdgeTile({
     : "bg-muted/20";
   return (
     <div className={cn("rounded-xl border p-3.5", bg)}>
-      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-        {label} · house edge
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          {label} · house edge
+        </p>
+        {previewBadge && (
+          <Badge
+            variant="outline"
+            className="h-5 shrink-0 border-amber-500/30 bg-amber-500/15 px-1.5 text-[10px] text-amber-600 dark:text-amber-400"
+          >
+            infeasible — preview only
+          </Badge>
+        )}
+      </div>
       <p
         className={cn(
           "mt-1 text-3xl font-bold tracking-tight tabular-nums",
