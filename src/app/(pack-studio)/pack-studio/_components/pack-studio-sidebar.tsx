@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeft,
+  ClipboardEdit,
   LayoutDashboard,
   Stethoscope,
   Wand2,
@@ -54,6 +55,16 @@ const STUDIO_NAV: StudioNavItem[] = [
   { label: "Bulk Retune", href: "/pack-studio/retune", icon: Sparkles },
   { label: "Pack Builder", href: "/pack-studio/builder", icon: Wand2 },
   { label: "Card Editor", href: "/pack-studio/cards", icon: Layers },
+];
+
+/**
+ * Retune-operator-only nav entries — appended for owners and the hard-coded
+ * Pack-Studio retune operator allowlist (`isPackStudioRetuneOperator`). The
+ * Drafts page itself is gated server-side; this just hides the link for
+ * non-operators so a click never bounces.
+ */
+const STUDIO_OPERATOR_NAV: StudioNavItem[] = [
+  { label: "Drafts", href: "/pack-studio/drafts", icon: ClipboardEdit },
 ];
 
 /**
@@ -111,12 +122,29 @@ function StudioNavMenu({
   );
 }
 
-export function PackStudioSidebar({ isOwner = false }: { isOwner?: boolean }) {
+export function PackStudioSidebar({
+  isOwner = false,
+  isRetuneOperator = false,
+}: {
+  isOwner?: boolean;
+  /**
+   * True iff the viewer can use the staging draft tools — owners + the
+   * hard-coded retune operator allowlist (`isPackStudioRetuneOperator`).
+   * Reveals the "Drafts" nav entry; the page is gated server-side too.
+   */
+  isRetuneOperator?: boolean;
+}) {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
 
-  // Owner-only entries (History) append after the shared workspace nav.
-  const navItems = isOwner ? [...STUDIO_NAV, ...STUDIO_OWNER_NAV] : STUDIO_NAV;
+  // Append owner-only (History) and operator-only (Drafts) entries after the
+  // shared workspace nav. Owners are implicitly retune-operators, but the prop
+  // is the explicit signal so the layout's contract is symmetric.
+  const navItems = [
+    ...STUDIO_NAV,
+    ...(isRetuneOperator ? STUDIO_OPERATOR_NAV : []),
+    ...(isOwner ? STUDIO_OWNER_NAV : []),
+  ];
 
   // Close the mobile drawer on a navigation tap (same UX the main sidebar
   // applies — otherwise the new page renders behind the still-open sheet).

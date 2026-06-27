@@ -1760,3 +1760,114 @@ model pack_state_snapshots {
 
   @@index([pack_id, captured_at(sort: Desc)], map: "pack_state_snapshots_pack_captured_idx")
 }
+
+// ─── Pack Studio — Retune / Edit / Reprice DRAFTS (staging layer) ─────────
+// One pending DRAFT per source pack — the operator stages a retune / edit /
+// reprice on a draft, then "Push to prod" wraps the existing paranoid
+// `applyPackEdit` (`src/app/(pack-studio)/pack-studio/doctor/retune-actions.ts`)
+// so EVERY server-side guard still fires (fresh re-read of MAIN, every cardId
+// validated against `cards`, EDIT_EDGE_FLOOR backstop, pack_state_snapshots
+// capture, transactional delete-all-then-createMany write to pack_cards, audit
+// `pack_edited_via_retune`, ADMIN risk-row refresh).
+//
+// Strict scope: ADMIN-DB only — the draft itself NEVER touches MAIN. Only
+// `pushDraftToProd` writes to MAIN, and it does so via the existing live
+// writer. NO 2FA on this surface (per owner request 2026-06-27): the operator
+// allowlist (`isPackStudioRetuneOperator` in `src/lib/reprice-access.ts` →
+// owners + demee) is the gate. The push path mints a synthetic retune token
+// internally to satisfy `verifyRetuneToken` inside `applyPackEdit` without
+// requiring a TOTP code from the operator.
+//
+// At most ONE pending draft per pack — enforced by a PARTIAL UNIQUE INDEX
+// (`pack_retune_drafts_one_pending_per_pack`) created via `prisma db execute`
+// alongside `db push` (Prisma can't model partial uniques). Pushed / discarded
+// rows STAY in this table as a lightweight audit ("what did demee push last
+// week?") and don't collide with a fresh draft for the same pack.
+//
+// Provisioned via `prisma db push --schema=prisma/admin/schema.prisma
+// --config=prisma/admin/prisma.config.ts` (admin DB is db-push-managed; NEVER
+// `migrate deploy` / `migrate dev` on it — would force a destructive reset).
+model pack_retune_drafts {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  // packy.gg packs.id (uuid string — separate Postgres cluster, not an FK;
+  // same convention as pack_risk_scores / pack_state_snapshots).
+  pack_id             String   @db.Uuid
+
+  // Lifecycle: 'draft' | 'pushed' | 'discarded'. Plain text (no Prisma enum)
+  // so the set can grow without a migration; validated at the action boundary.
+  status              String   @default("draft")
+
+  // The proposed new sticker price. Decimal(20,2) matches packs.price and
+  // every money column in this DB (pack_state_snapshots.price, …). For a
+  // pure pool-edit draft this is the source pack's price at seed time (NOT
+  // null) so a push always carries a resolved price — `applyPackEdit` treats
+  // `price: undefined` as "leave unchanged"; writing the same number is a
+  // no-op equivalent. Keeping it non-null keeps the type one shape.
+  proposed_price      Decimal  @db.Decimal(20, 2)
+
+  // The full proposed card pool. JSONB array of
+  //   { cardId: uuid, weight: int>0, color: string|null, animation: bool, order: int>=0 }
+  // — byte-identical to `applyPackEdit`'s EditPoolInput shape. Weights are
+  // positive INTEGERs (matches the pack_cards.weight INT4 column + the
+  // Number.isInteger validation in applyPackEdit / shapeWeights). Zod-validated
+  // on every write so a buggy client payload can't write malformed JSON.
+  proposed_pool       Json     @db.JsonB
+
+  // PackRisk shape (computePackRisk output) for the proposed pool at
+  // proposed_price. Cached so the list / diff page renders without re-running
+  // math; recomputed on every updateDraftPool / applyAutoRetuneToDraft call so
+  // it can never drift from proposed_pool / proposed_price.
+  computed_risk       Json     @db.JsonB
+
+  // Snapshot of the source MAIN pack at draft-creation time:
+  //   { price: number, pool: EditPoolCard[], risk: PackRisk | null,
+  //     name: string, slug: string, packType: string, active: boolean }
+  // Lets the BEFORE side of the diff render from admin DB only (no MAIN read
+  // on the drafts page). At push time `applyPackEdit` re-reads fresh MAIN
+  // (defense in depth); this snapshot is purely for the diff UI and for
+  // optional drift detection.
+  source_snapshot     Json     @db.JsonB
+
+  // Free-text operator note (why this draft exists, what's being tested).
+  notes               String?
+
+  // Provenance. admin_users.id of the operator who seeded vs. last edited.
+  // Loose UUID columns — no Prisma relation on admin_users (same convention
+  // as pack_state_snapshots.captured_by) so adding this table doesn't perturb
+  // the admin_users model. NOT nullable on create; if the admin user is
+  // later deleted, attribution dangles (same trade-off pack_state_snapshots
+  // accepts).
+  created_by          String   @db.Uuid
+  last_edited_by      String   @db.Uuid
+
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  last_edited_at      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  // Push lifecycle. Set when pushDraftToProd succeeds (status → 'pushed').
+  pushed_at           DateTime? @db.Timestamptz(6)
+  pushed_by           String?   @db.Uuid
+
+  // Discard lifecycle. Set when discardDraft runs (status → 'discarded').
+  discarded_at        DateTime? @db.Timestamptz(6)
+  discarded_by        String?   @db.Uuid
+
+  // Indexes:
+  //   • pack_id alone — every lookup keys off it (seed / push / edit /
+  //     diff-by-pack). Frequent point lookup.
+  //   • (status, last_edited_at DESC) — drives the /pack-studio/drafts list
+  //     query (`WHERE status='draft' ORDER BY last_edited_at DESC`,
+  //     Active-Timeframe-Only: only pending drafts on the list page; pushed
+  //     / discarded rows live behind a separate History tab).
+  //   • created_at DESC — bare recency for audit/history view.
+  //
+  // NOTE: the "at most one PENDING draft per pack" rule is enforced by a
+  // PARTIAL UNIQUE INDEX (`pack_retune_drafts_one_pending_per_pack` ON
+  // (pack_id) WHERE status = 'draft') created via `prisma db execute`
+  // alongside `db push`. Prisma can't model partial uniques, so the action
+  // layer catches P2002 on seed to surface "a pending draft already exists
+  // for this pack" cleanly.
+  @@index([pack_id], map: "pack_retune_drafts_pack_id_idx")
+  @@index([status, last_edited_at(sort: Desc)], map: "pack_retune_drafts_status_edited_idx")
+  @@index([created_at(sort: Desc)], map: "pack_retune_drafts_created_at_idx")
+}
