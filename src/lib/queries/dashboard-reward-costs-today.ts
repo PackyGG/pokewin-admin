@@ -631,7 +631,7 @@ export async function getRaceWinClaimants(): Promise<RaceWinClaimantsBreakdown> 
        WHERE lt.status = 'completed'
          AND lt.type::text = 'race_prize'
          AND lt.user_id IN ${scope.userScopeSql}
-         AND ${scope.notInCreatorSession("user_id", "created_at")}
+         AND ${scope.notInCreatorSession("lt.user_id", "lt.created_at")}
          AND lt.created_at >= ${sinceSql}
        ORDER BY ABS(lt.amount::numeric) DESC, lt.created_at DESC`,
     );
@@ -721,7 +721,7 @@ export async function getPromoBalanceCreditClaimants(): Promise<PromoBalanceCred
          WHERE lt.status = 'completed'
            AND (${countedAdj})
            AND lt.user_id IN ${scope.userScopeSql}
-           AND ${scope.notInCreatorSession("user_id", "created_at")}
+           AND ${scope.notInCreatorSession("lt.user_id", "lt.created_at")}
            AND lt.created_at >= ${sinceSql}
          ORDER BY ABS(lt.amount::numeric) DESC, lt.created_at DESC`,
       );
