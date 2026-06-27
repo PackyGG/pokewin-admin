@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidateTag } from "next/cache";
+import { Prisma } from "@/generated/admin-prisma/client";
 import { requirePackStudioAccess } from "@/lib/require-pack-studio-access";
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
@@ -14,6 +15,11 @@ import {
   autoTargetEdge,
   readEdgeCurveConfig,
 } from "@/app/(admin)/packs/_lib/risk-config";
+
+// NOTE: `export const maxDuration = …` is NOT valid in a `"use server"` file —
+// only async functions may be exported. The function budget for this action
+// comes from the calling route segment (`../doctor/page.tsx` sets
+// `maxDuration = 120`). Don't add a top-level `maxDuration` export here.
 
 /**
  * Result of a successful snapshot run — surfaced back to the operator UI.
@@ -137,39 +143,77 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
     };
   });
 
-  // Commit every upsert in a SINGLE atomic transaction (a single bad pack
-  // rolls the whole batch back rather than leaving a half-written snapshot).
+  // Commit every score row in a SINGLE round-trip via `INSERT … ON CONFLICT
+  // (pack_id) DO UPDATE` — atomic by definition (one statement), no Prisma
+  // transaction overhead, no interactive-transaction timeout to trip.
   //
-  // ⚠️ This is an *interactive* transaction, NOT one network round-trip:
-  // Prisma runs the N upserts sequentially inside one DB transaction, so the
-  // wall-clock cost is ~N × (round-trip to the remote ADMIN DB). Prisma's
-  // DEFAULT interactive-transaction timeout is 5000 ms — and on Vercel
-  // serverless (cold connection pool + remote ADMIN DB latency) scoring every
-  // active cash pack blew past it, producing a `P2028` ("rollback cannot be
-  // executed on an expired transaction") that crashed the snapshot render
-  // (captured in production: ~5257 ms > 5000 ms). The interactive (callback)
-  // form is required because the batch/array form does NOT accept `timeout`.
-  // The raised `timeout`/`maxWait` give the batch room to finish; the route's
-  // `maxDuration` (see ../doctor/page.tsx) gives the underlying serverless
-  // function matching budget so we never trade one timeout for another.
-  await adminDb.$transaction(
-    async (tx) => {
-      for (const { pack_id, ...row } of scoredRows) {
-        await tx.pack_risk_scores.upsert({
-          where: { pack_id },
-          update: row,
-          create: { pack_id, ...row },
-        });
-      }
-    },
-    {
-      // Raise the ceiling well above Prisma's 5s default so the batch can't
-      // trip P2028. `maxWait` is how long Prisma waits to acquire a pooled
-      // connection before starting the tx.
-      timeout: 120_000,
-      maxWait: 15_000,
-    },
-  );
+  // The history of this loop is a chain of timeouts the previous shapes kept
+  // hitting on Vercel serverless against the remote ADMIN DB:
+  //   1) Sequential `await upsert(...)` → ~one network round-trip per pack.
+  //      With ~180 active cash packs and ~50–100ms RTT from a cold serverless
+  //      pool, the cumulative wall-clock outran the platform's default
+  //      function budget and surfaced as a "timed out" snapshot.
+  //   2) `$transaction([...arrayOfUpserts])` → batched into one round-trip
+  //      but Prisma's array form does NOT accept `timeout`.
+  //   3) `$transaction(async (tx) => { for(...) await tx.upsert(...) }, {
+  //      timeout })` → back to N round-trips inside one interactive tx;
+  //      Prisma's default 5s tx timeout produced `P2028` in prod
+  //      (~5257ms > 5000ms), which surfaced as the user-visible
+  //      "An error occurred in the Server Components render" digest.
+  //
+  // The right shape is the one Postgres was built for: a multi-row `INSERT`
+  // with `ON CONFLICT (pack_id) DO UPDATE` and parameter arrays. ONE
+  // statement, ONE round-trip, ONE connection slot — independent of N.
+  // No `$transaction` wrapper, no timeout knobs to keep tuned.
+  //
+  // The `array_length` defensive bail-out is unreachable in practice
+  // (we already returned at `packIds.length === 0` above), but guards
+  // against a future caller path that could pass an empty `scoredRows`.
+  if (scoredRows.length > 0) {
+    const packIdArr = scoredRows.map((r) => r.pack_id);
+    const edgeArr = scoredRows.map((r) => r.edge);
+    const cvArr = scoredRows.map((r) => r.cv);
+    const winRateArr = scoredRows.map((r) => r.win_rate);
+    const nearMissArr = scoredRows.map((r) => r.near_miss);
+    const maxWinArr = scoredRows.map((r) => r.max_win);
+    const maxMultArr = scoredRows.map((r) => r.max_mult);
+    const riskScoreArr = scoredRows.map((r) => r.risk_score);
+    const tierArr = scoredRows.map((r) => r.tier);
+    // `compliance` is a JSON column; serialize each row's flag object to a
+    // JSON string and let `unnest(... text[])` + `::jsonb` cast on insert do
+    // the rest. Avoids any per-row `Json` typing dance.
+    const complianceArr = scoredRows.map((r) => JSON.stringify(r.compliance));
+
+    await adminDb.$executeRaw(Prisma.sql`
+      INSERT INTO pack_risk_scores (
+        pack_id, edge, cv, win_rate, near_miss, max_win, max_mult,
+        risk_score, tier, compliance, computed_at
+      )
+      SELECT
+        unnest(${packIdArr}::text[]),
+        unnest(${edgeArr}::numeric[]),
+        unnest(${cvArr}::numeric[]),
+        unnest(${winRateArr}::numeric[]),
+        unnest(${nearMissArr}::numeric[]),
+        unnest(${maxWinArr}::numeric[]),
+        unnest(${maxMultArr}::numeric[]),
+        unnest(${riskScoreArr}::int[]),
+        unnest(${tierArr}::text[]),
+        unnest(${complianceArr}::text[])::jsonb,
+        ${computedAt}::timestamptz
+      ON CONFLICT (pack_id) DO UPDATE SET
+        edge        = EXCLUDED.edge,
+        cv          = EXCLUDED.cv,
+        win_rate    = EXCLUDED.win_rate,
+        near_miss   = EXCLUDED.near_miss,
+        max_win     = EXCLUDED.max_win,
+        max_mult    = EXCLUDED.max_mult,
+        risk_score  = EXCLUDED.risk_score,
+        tier        = EXCLUDED.tier,
+        compliance  = EXCLUDED.compliance,
+        computed_at = EXCLUDED.computed_at
+    `);
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
