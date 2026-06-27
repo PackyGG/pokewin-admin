@@ -21,8 +21,10 @@ import { getEffectiveRoles, getDefaultRouteForRoles } from "@/lib/admin-roles";
 import {
   canAccessPackStudio,
   getPackStudioAccessSettings,
+  getPackStudioUserAccess,
   PACK_STUDIO_TOGGLE_ROLES,
   type PackStudioAccessSettings,
+  type PackStudioUserAccess,
 } from "@/lib/pack-studio-access";
 import { adminDb } from "@/lib/admin-db";
 import { isOwner } from "@/lib/owners";
@@ -140,6 +142,25 @@ async function loadPackStudioAccessSettings(): Promise<PackStudioAccessSettings>
   }
 }
 
+/**
+ * Per-username allow/deny override read. On error we fall back to empty
+ * lists (= role-based default), which keeps owners in (their bypass is
+ * DB-independent) and admins in (their role default still passes) — the
+ * safest middle ground when the override read blips.
+ */
+async function loadPackStudioUserAccess(): Promise<PackStudioUserAccess> {
+  try {
+    return await getPackStudioUserAccess();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[pack-studio-layout] loadPackStudioUserAccess failed, falling back to role default:",
+      err,
+    );
+    return { allowlist: [], denylist: [] };
+  }
+}
+
 async function loadPreferences(userId: string) {
   try {
     return await getAdminPreferences(userId);
@@ -187,8 +208,11 @@ export default async function PackStudioLayout({
   // landing route. We resolve the redirect the same way the DAL does so a
   // non-eligible user lands somewhere they can actually use.
   const roles = sessionRoles(session);
-  const studioAccessSettings = await loadPackStudioAccessSettings();
-  if (!canAccessPackStudio(session, studioAccessSettings)) {
+  const [studioAccessSettings, studioUserAccess] = await Promise.all([
+    loadPackStudioAccessSettings(),
+    loadPackStudioUserAccess(),
+  ]);
+  if (!canAccessPackStudio(session, studioAccessSettings, studioUserAccess)) {
     const allowedPages = await loadUserPermissions(session.userId);
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }

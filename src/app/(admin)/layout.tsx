@@ -27,8 +27,10 @@ import {
 import {
   canAccessPackStudio,
   getPackStudioAccessSettings,
+  getPackStudioUserAccess,
   PACK_STUDIO_TOGGLE_ROLES,
   type PackStudioAccessSettings,
+  type PackStudioUserAccess,
 } from "@/lib/pack-studio-access";
 import { adminDb } from "@/lib/admin-db";
 import { getAdminPreferences } from "@/lib/admin-preferences";
@@ -200,6 +202,24 @@ async function loadPackStudioAccessSettings(): Promise<PackStudioAccessSettings>
 }
 
 /**
+ * Per-username allow/deny override read for the sidebar portal visibility.
+ * On error we fall back to empty lists (= role-based default) — owners stay
+ * in via their DB-independent bypass, admins stay in via the role default.
+ */
+async function loadPackStudioUserAccess(): Promise<PackStudioUserAccess> {
+  try {
+    return await getPackStudioUserAccess();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[admin-layout] loadPackStudioUserAccess failed, falling back to role default:",
+      err,
+    );
+    return { allowlist: [], denylist: [] };
+  }
+}
+
+/**
  * Resilient wrapper around `verifySession()`. The session check itself is
  * cookie-only (cheap, can't throw for connectivity reasons), but the
  * DB-side `is_active` / role re-read inside it can throw if adminDb has a
@@ -256,6 +276,7 @@ export default async function AdminLayout({
     tzCookie,
     hubAccessSettings,
     studioAccessSettings,
+    studioUserAccess,
   ] = await Promise.all([
     loadUserPermissions(session.userId),
     loadHeaderProfile(session.userId),
@@ -268,6 +289,7 @@ export default async function AdminLayout({
     readTzCookie(),
     loadCreatorHubAccessSettings(),
     loadPackStudioAccessSettings(),
+    loadPackStudioUserAccess(),
   ]);
   // Only surface the switcher to admins on servers where a dev DB is
   // actually configured; otherwise the toggle would be a dead option.
@@ -284,7 +306,11 @@ export default async function AdminLayout({
   // Computed server-side (it depends on ADMIN-DB toggles) and matched 1:1 to
   // the /pack-studio route guard so the button never appears for a user who
   // would be redirected out of the Studio. Default (toggle off): only owners.
-  const canEnterPackStudio = canAccessPackStudio(session, studioAccessSettings);
+  const canEnterPackStudio = canAccessPackStudio(
+    session,
+    studioAccessSettings,
+    studioUserAccess,
+  );
 
   // OWNER / ultra-admin flag for the sidebar. Computed server-side from the
   // DB-fresh session (verifySession populated `session.isOwner`); the permanent

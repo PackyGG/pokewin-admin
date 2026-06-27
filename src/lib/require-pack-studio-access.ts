@@ -10,8 +10,10 @@ import { adminDb } from "@/lib/admin-db";
 import {
   canAccessPackStudio,
   getPackStudioAccessSettings,
+  getPackStudioUserAccess,
   PACK_STUDIO_TOGGLE_ROLES,
   type PackStudioAccessSettings,
+  type PackStudioUserAccess,
 } from "@/lib/pack-studio-access";
 import type { SessionPayload } from "@/lib/session";
 import { isNextControlFlowError } from "@/lib/utils/action-error";
@@ -38,6 +40,27 @@ async function loadSettingsFailClosed(): Promise<PackStudioAccessSettings> {
   }
 }
 
+/**
+ * Per-username allow/deny override read. A read failure must NOT silently
+ * widen access (so default to empty allowlist) and must NOT silently restore
+ * access for someone the owner has explicitly revoked (so default to empty
+ * denylist on read failure means a DB blip cannot turn a deny into an
+ * allow). Net effect: fall back to the role-only default + owner bypass —
+ * the safest middle ground.
+ */
+async function loadUserAccessFailClosed(): Promise<PackStudioUserAccess> {
+  try {
+    return await getPackStudioUserAccess();
+  } catch (err) {
+    if (isNextControlFlowError(err)) throw err;
+    console.error(
+      "[require-pack-studio-access] getPackStudioUserAccess failed, falling back to role default:",
+      err,
+    );
+    return { allowlist: [], denylist: [] };
+  }
+}
+
 async function resolveLiveSession(): Promise<{
   session: SessionPayload;
   username: string | null;
@@ -61,7 +84,10 @@ async function isPackStudioAllowed(
   active: boolean,
 ): Promise<boolean> {
   if (!active || !username) return false;
-  const settings = await loadSettingsFailClosed();
+  const [settings, userAccess] = await Promise.all([
+    loadSettingsFailClosed(),
+    loadUserAccessFailClosed(),
+  ]);
   return canAccessPackStudio(
     {
       username,
@@ -70,6 +96,7 @@ async function isPackStudioAllowed(
       isOwner: session.isOwner,
     },
     settings,
+    userAccess,
   );
 }
 

@@ -5,7 +5,9 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { SectionHeadingSkeleton } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
+import { sessionIsOwner } from "@/lib/dal";
 import { PackStudioOverviewContent } from "./_components/overview-content";
+import { PackStudioUserAccessSection } from "./_components/pack-studio-user-access-section";
 import { readPackSystemConfig } from "@/app/(admin)/packs/_lib/risk-config";
 
 /**
@@ -17,7 +19,8 @@ import { readPackSystemConfig } from "@/app/(admin)/packs/_lib/risk-config";
  * <Suspense> boundary whose fallback reuses the route loading skeleton.
  */
 export default async function PackStudioOverviewPage() {
-  await requirePackStudioPageAccess();
+  const session = await requirePackStudioPageAccess();
+  const isOwner = sessionIsOwner(session);
 
   // Cheap single-row ADMIN read (admin_settings) — used only to label the
   // hero badge; the heavy overview read happens inside the Suspense child.
@@ -41,9 +44,29 @@ export default async function PackStudioOverviewPage() {
         />
       </PageHero>
 
+      {/* Owner-only per-username access toggle. Lets the owner grant or
+          revoke Pack Studio access for a specific admin (e.g. demee) in one
+          click without touching their role. Hidden for everyone else (the
+          server action behind it is also owner-gated). */}
+      {isOwner && (
+        <Suspense fallback={<UserAccessFallback />}>
+          <PackStudioUserAccessSection />
+        </Suspense>
+      )}
+
       <Suspense fallback={<OverviewFallback />}>
         <PackStudioOverviewContent />
       </Suspense>
+    </div>
+  );
+}
+
+/** Skeleton for the owner-only access card while its ADMIN-DB reads resolve. */
+function UserAccessFallback() {
+  return (
+    <div className="space-y-3">
+      <SectionHeadingSkeleton titleWidth={180} />
+      <Skeleton className="h-[200px] rounded-2xl" />
     </div>
   );
 }
