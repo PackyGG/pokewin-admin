@@ -1841,6 +1841,11 @@ export async function getUserJoinedSponsoredBattles(
       winnings: string;
     }[]
   >(
+    // Winnings per Voucher=Card invariant: kept cards (user_inventory) PLUS the
+    // paired battle_excess_to_voucher voucher leg (vouchers.origin_id = the
+    // battle's game_session_id). Same fix pattern as commit a87aae37 applied to
+    // getUserTransactions — without the voucher leg, a sponsored battle that
+    // paid out mostly as a voucher reads as a near-zero win.
     `SELECT bp.battle_id,
             bp.game_session_id,
             bp.team_number,
@@ -1849,13 +1854,22 @@ export async function getUserJoinedSponsoredBattles(
             b.bet_amount::text AS bet_amount,
             b.sponsorship_percentage,
             gs.created_at,
-            COALESCE((
-              SELECT SUM(ui.value_at_obtained::numeric)
-              FROM user_inventory ui
-              WHERE ui.user_id = bp.user_id
-                AND ui.source_type::text = 'battle'
-                AND ui.source_id = bp.game_session_id
-            ), 0)::text AS winnings
+            (
+              COALESCE((
+                SELECT SUM(ui.value_at_obtained::numeric)
+                FROM user_inventory ui
+                WHERE ui.user_id = bp.user_id
+                  AND ui.source_type::text = 'battle'
+                  AND ui.source_id = bp.game_session_id
+              ), 0)
+              + COALESCE((
+                SELECT SUM(v.value::numeric)
+                FROM vouchers v
+                WHERE v.user_id = bp.user_id
+                  AND v.origin::text = 'battle_excess_to_voucher'
+                  AND v.origin_id = bp.game_session_id
+              ), 0)
+            )::text AS winnings
        FROM battle_participants bp
        JOIN battles b ON b.id = bp.battle_id
        JOIN game_sessions gs ON gs.id = bp.game_session_id
