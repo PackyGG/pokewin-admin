@@ -7,7 +7,7 @@ import {
   KpiStripSkeleton,
 } from "@/components/loading-skeletons";
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
-import { isRepriceOwner } from "@/lib/reprice-access";
+import { isPackStudioRetuneOperator } from "@/lib/reprice-access";
 import { getSets, getRarities } from "@/lib/queries/cards";
 import {
   readMaxWinCap,
@@ -67,7 +67,9 @@ async function BuilderBody({ canBuild }: { canBuild: boolean }) {
 
 export default async function PackBuilderPage() {
   const session = await requirePackStudioPageAccess();
-  const canBuild = isRepriceOwner(session);
+  // `canBuild` matches the server-side `buildPack` gate: owners plus the
+  // hard-coded Pack-Studio retune operator allowlist (see `reprice-access.ts`).
+  const canBuild = isPackStudioRetuneOperator(session);
 
   return (
     <div className="space-y-6">

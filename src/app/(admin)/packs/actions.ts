@@ -8,7 +8,11 @@ import { getPackSetAssignment } from "@/lib/queries/pack-set-assignments";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess, sessionHasRole } from "@/lib/dal";
-import { isRepriceOwner } from "@/lib/reprice-access";
+import {
+  isRepriceOwner,
+  isPackStudioRetuneOperator,
+  isPackStudioRetuneOperatorNonOwner,
+} from "@/lib/reprice-access";
 import { requireCapability } from "@/lib/require-capability";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import {
@@ -990,17 +994,42 @@ export async function planRepriceAllPacks(
 /**
  * Verify the owner's 2FA ONCE and mint a short-lived token authorizing a
  * re-price run. The client passes this token to each per-pack write so TOTP
- * isn't re-prompted per pack (and a long run can't expire mid-way). Owner-only.
+ * isn't re-prompted per pack (and a long run can't expire mid-way).
+ *
+ * Open to owners and to the hard-coded Pack-Studio retune operator allowlist
+ * (`isPackStudioRetuneOperator`). Operators on that allowlist bypass the TOTP
+ * verification (mint a valid token without proving 2FA) — the audit event for
+ * this mint records `via_no_2fa_allowlist: true` so the bypass is traceable.
+ * Owners stay on the 2FA path.
  */
 export async function authorizeReprice(
   totpCode: string,
 ): Promise<{ token: string }> {
   const session = await requirePageAccess("/packs");
-  if (!isRepriceOwner(session)) {
-    throw new Error("The global re-price tool is restricted to the owner.");
+  if (!isPackStudioRetuneOperator(session)) {
+    throw new Error("The re-price tool is restricted to authorized operators.");
   }
-  // Throws "Invalid TOTP code" / "2FA not enabled" / "code required" verbatim.
-  await require2FA(session.userId, totpCode);
+  const bypass2fa = isPackStudioRetuneOperatorNonOwner(session);
+  if (!bypass2fa) {
+    // Throws "Invalid TOTP code" / "2FA not enabled" / "code required" verbatim.
+    await require2FA(session.userId, totpCode);
+  }
+  // Audit the mint either way so every authorization is on record; flag the
+  // bypass when it applied so a review can separate operator no-2FA mints from
+  // owner-with-2FA mints. Best-effort: never block the mint on an audit-write
+  // failure (the mint is intentionally observable + the per-pack write itself
+  // is also audited).
+  try {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "pack_reprice_authorized",
+      metadata: bypass2fa
+        ? { via_no_2fa_allowlist: true }
+        : { via_2fa: true },
+    });
+  } catch {
+    /* swallow — mint must not depend on audit availability */
+  }
   return { token: await signRepriceToken(session.userId) };
 }
 
@@ -1045,8 +1074,8 @@ export async function repricePackToTargetEdge(
   targetEdge: RepriceTarget = REPRICE_TARGET_DEFAULT,
 ): Promise<RepriceResult> {
   const session = await requirePageAccess("/packs");
-  if (!isRepriceOwner(session)) {
-    throw new Error("The global re-price tool is restricted to the owner.");
+  if (!isPackStudioRetuneOperator(session)) {
+    throw new Error("The re-price tool is restricted to authorized operators.");
   }
   await requireCapability(session, "__can_update_pack", "update packs");
   // 2FA gate: the run must carry a valid token minted by `authorizeReprice`.
@@ -1398,8 +1427,8 @@ export async function planPackRetune(
   targets: PackRetuneTargets,
 ): Promise<PackRetunePlan> {
   const session = await requirePageAccess("/packs");
-  if (!isRepriceOwner(session)) {
-    throw new Error("The pack retune tool is restricted to the owner.");
+  if (!isPackStudioRetuneOperator(session)) {
+    throw new Error("The pack retune tool is restricted to authorized operators.");
   }
   if (!isUuid(packId)) throw new Error("Invalid pack id");
 
@@ -1465,20 +1494,43 @@ export async function planPackRetune(
 }
 
 /**
- * Verify the owner's 2FA ONCE and mint a short-lived RETUNE token. Owner +
- * `__can_update_pack` gated; the token's scope is `retune` (distinct from the
+ * Verify the owner's 2FA ONCE and mint a short-lived RETUNE token.
+ * `__can_update_pack`-gated; the token's scope is `retune` (distinct from the
  * re-price scope) so it can only authorize `applyPackRetune`.
+ *
+ * Open to owners and to the hard-coded Pack-Studio retune operator allowlist
+ * (`isPackStudioRetuneOperator`). Operators on that allowlist bypass the TOTP
+ * verification (mint a valid token without proving 2FA) — the audit event for
+ * this mint records `via_no_2fa_allowlist: true` so the bypass is traceable.
+ * Owners stay on the 2FA path.
  */
 export async function authorizePackRetune(
   totpCode: string,
 ): Promise<{ token: string }> {
   const session = await requirePageAccess("/packs");
-  if (!isRepriceOwner(session)) {
-    throw new Error("The pack retune tool is restricted to the owner.");
+  if (!isPackStudioRetuneOperator(session)) {
+    throw new Error("The pack retune tool is restricted to authorized operators.");
   }
   await requireCapability(session, "__can_update_pack", "retune packs");
-  // Throws "Invalid TOTP code" / "2FA not enabled" / "code required" verbatim.
-  await require2FA(session.userId, totpCode);
+  const bypass2fa = isPackStudioRetuneOperatorNonOwner(session);
+  if (!bypass2fa) {
+    // Throws "Invalid TOTP code" / "2FA not enabled" / "code required" verbatim.
+    await require2FA(session.userId, totpCode);
+  }
+  // Audit the mint either way; flag the bypass when it applied. Best-effort
+  // (the per-pack apply is itself audited; the mint audit is a belt-and-
+  // suspenders trail for an operator-no-2FA review).
+  try {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "pack_retune_authorized",
+      metadata: bypass2fa
+        ? { via_no_2fa_allowlist: true }
+        : { via_2fa: true },
+    });
+  } catch {
+    /* swallow — mint must not depend on audit availability */
+  }
   return { token: await signRetuneToken(session.userId) };
 }
 
@@ -1510,8 +1562,8 @@ export async function applyPackRetune(
   targets: PackRetuneTargets,
 ): Promise<PackRetuneResult> {
   const session = await requirePageAccess("/packs");
-  if (!isRepriceOwner(session)) {
-    throw new Error("The pack retune tool is restricted to the owner.");
+  if (!isPackStudioRetuneOperator(session)) {
+    throw new Error("The pack retune tool is restricted to authorized operators.");
   }
   await requireCapability(session, "__can_update_pack", "retune packs");
   if (!(await verifyRetuneToken(token, session.userId))) {
@@ -1692,6 +1744,12 @@ export async function applyPackRetune(
       before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
       after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
       ...(editedLivePackUnderCapability && { edited_live_pack_under_capability: true }),
+      // Flag operator-allowlist 2FA-bypass writes so an audit review can split
+      // operator no-2FA retunes from owner-with-2FA retunes (the token mint
+      // also audits the same flag — this is the per-pack write's mirror).
+      ...(isPackStudioRetuneOperatorNonOwner(session) && {
+        via_no_2fa_allowlist: true,
+      }),
     },
   });
 
@@ -1766,8 +1824,8 @@ export async function revertPackToSnapshot(
   token: string,
 ): Promise<RevertPackResult> {
   const session = await requirePageAccess("/packs");
-  if (!isRepriceOwner(session)) {
-    throw new Error("The pack revert tool is restricted to the owner.");
+  if (!isPackStudioRetuneOperator(session)) {
+    throw new Error("The pack revert tool is restricted to authorized operators.");
   }
   await requireCapability(session, "__can_update_pack", "revert packs");
   if (!(await verifyRetuneToken(token, session.userId))) {
@@ -1882,6 +1940,9 @@ export async function revertPackToSnapshot(
       restored_card_count: rows.length,
       skipped_card_ids: skippedCardIds,
       ...(editedLivePackUnderCapability && { edited_live_pack_under_capability: true }),
+      ...(isPackStudioRetuneOperatorNonOwner(session) && {
+        via_no_2fa_allowlist: true,
+      }),
     },
   });
 
@@ -1964,8 +2025,8 @@ export type BuildPackResult =
  */
 export async function buildPack(input: BuildPackInput): Promise<BuildPackResult> {
   const session = await requirePageAccess("/packs");
-  if (!isRepriceOwner(session)) {
-    throw new Error("The pack builder is restricted to the owner.");
+  if (!isPackStudioRetuneOperator(session)) {
+    throw new Error("The pack builder is restricted to authorized operators.");
   }
   await requireCapability(session, "__can_create_pack", "create packs");
 

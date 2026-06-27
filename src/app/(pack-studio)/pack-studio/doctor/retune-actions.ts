@@ -8,7 +8,10 @@ import { sessionHasRole } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { requirePackStudioAccess } from "@/lib/require-pack-studio-access";
-import { isRepriceOwner } from "@/lib/reprice-access";
+import {
+  isPackStudioRetuneOperator,
+  isPackStudioRetuneOperatorNonOwner,
+} from "@/lib/reprice-access";
 import { verifyRetuneToken } from "@/lib/reprice-token";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
@@ -77,13 +80,20 @@ import {
  * existing, paranoid, 2FA-token-guarded pack actions.
  */
 
-/** Owner + Pack-Studio gate shared by every read in this module. */
+/**
+ * Operator + Pack-Studio gate shared by every read in this module.
+ *
+ * Open to owners and to the hard-coded Pack-Studio retune operator allowlist
+ * (`isPackStudioRetuneOperator`) — operators on that list reach these read-only
+ * dry-runs without owner status, and the matching write actions on the same
+ * surface bypass 2FA for them (see `src/lib/reprice-access.ts` for the rationale).
+ */
 async function requireRetuneOwner() {
   const session = await requirePackStudioAccess(
     "Not authorized to access the pack re-tune tools.",
   );
-  if (!isRepriceOwner(session)) {
-    throw new Error("The pack re-tune tools are restricted to the owner.");
+  if (!isPackStudioRetuneOperator(session)) {
+    throw new Error("The pack re-tune tools are restricted to authorized operators.");
   }
   return session;
 }
@@ -769,7 +779,7 @@ export async function getRetunePickerFilters(): Promise<RetunePickerFilters> {
 // (which re-shapes weights server-side via `shapeWeights` from a target), an edit
 // writes the operator's EXPLICIT weights verbatim. It carries the SAME paranoia as
 // `applyPackRetune` in `src/app/(admin)/packs/actions.ts`:
-//   • owner-only (`isRepriceOwner`) + `__can_update_pack` capability,
+//   • operator-only (`isPackStudioRetuneOperator`) + `__can_update_pack` capability,
 //   • the SAME 2FA RETUNE token `authorizePackRetune` mints (`verifyRetuneToken`),
 //   • the pack_creator live-pack carve-out,
 //   • a FRESH MAIN read of price + scope right before the write (fail-closed),
@@ -1152,6 +1162,9 @@ export async function applyPackEdit(
       after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
       ...(editedLivePackUnderCapability && {
         edited_live_pack_under_capability: true,
+      }),
+      ...(isPackStudioRetuneOperatorNonOwner(session) && {
+        via_no_2fa_allowlist: true,
       }),
     },
   });
@@ -1649,6 +1662,9 @@ export async function applyStagedPackEditAndRetune(
       after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
       ...(editedLivePackUnderCapability && {
         edited_live_pack_under_capability: true,
+      }),
+      ...(isPackStudioRetuneOperatorNonOwner(session) && {
+        via_no_2fa_allowlist: true,
       }),
     },
   });

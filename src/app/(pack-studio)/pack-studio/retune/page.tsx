@@ -6,7 +6,7 @@ import { EmptyState } from "@/components/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FadeIn } from "@/components/fade-in";
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
-import { isOwner } from "@/lib/owners";
+import { isPackStudioRetuneOperator } from "@/lib/reprice-access";
 import { getDefaultRouteForRoles } from "@/lib/admin-roles";
 import { getUserPermissions, sessionRoles } from "@/lib/dal";
 import { redirect } from "next/navigation";
@@ -63,9 +63,11 @@ async function ReviewLoader() {
 export default async function PackRetuneReviewPage() {
   const session = await requirePackStudioPageAccess();
 
-  // Owner-only surface: a non-owner Pack-Studio viewer is bounced to their
-  // landing route (the same contract the re-price / doctor write tools use).
-  if (!isOwner(session)) {
+  // Operator-only surface: a non-operator Pack-Studio viewer is bounced to
+  // their landing route (the same contract the re-price / doctor write tools
+  // use). Owners always pass; the hard-coded Pack-Studio retune operator
+  // allowlist (`isPackStudioRetuneOperator`) also passes.
+  if (!isPackStudioRetuneOperator(session)) {
     const allowedPages = await getUserPermissions(session.userId);
     redirect(getDefaultRouteForRoles(sessionRoles(session), allowedPages));
   }

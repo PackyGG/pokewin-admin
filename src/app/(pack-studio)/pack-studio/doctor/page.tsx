@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/empty-state";
 import { TableSkeleton } from "@/components/loading-skeletons";
 import { FadeIn } from "@/components/fade-in";
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
-import { isOwner } from "@/lib/owners";
+import { isPackStudioRetuneOperator } from "@/lib/reprice-access";
 import {
   getPackRiskRows,
   type PackRiskFilters,
@@ -139,7 +139,13 @@ export default async function PackDoctorPage({
   searchParams: Promise<SearchParams>;
 }) {
   const session = await requirePackStudioPageAccess();
-  const owner = isOwner(session);
+  // The local `owner` flag controls visibility of the per-row Re-tune action +
+  // the hero "Re-pin below-target packs" button. We grant it to owners AND to
+  // the hard-coded Pack-Studio retune operator allowlist so an operator (e.g.
+  // `demee`) sees the same controls — the server-side write actions enforce
+  // the same predicate, so hiding-or-showing the button isn't security on its
+  // own; this just keeps the UI consistent with what the server accepts.
+  const owner = isPackStudioRetuneOperator(session);
 
   const sp = await searchParams;
   const filters = paramsToFilters(sp);
