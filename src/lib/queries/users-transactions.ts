@@ -706,6 +706,21 @@ export async function getUserTransactions(
     }
   }
 
+  // Battle winnings = kept cards (user_inventory) PLUS the paired
+  // battle_excess_to_voucher voucher leg. Per the house "Voucher == Card"
+  // rule, a battle win can pay out as cards + a leftover voucher (e.g.
+  // $144 in cards + $183.03 voucher = $327.03 total). The voucher row
+  // lives in `vouchers` with `origin = 'battle_excess_to_voucher'` and
+  // `origin_id = game_sessions.id` (confirmed via probe — the ledger
+  // `battle_excess_to_voucher` row carries `game_session_id = NULL`, so
+  // joining through `vouchers.origin_id` is the only reliable link).
+  // Without this leg, a real house LOSS gets mis-rendered as a small
+  // house WIN because the merged P&L cell only sees the cards.
+  //
+  // `voucherValueByGameSession` is already built above (line ~639) from
+  // `allVouchers` and KEYED on `vouchers.origin_id` — for a winning
+  // battle bet that's the same `game_session_id` the bet row is keyed on,
+  // so we can fold it in without a second query.
   const battleWinningsByGsid = new Map<string, number>();
   if (wonGameSessionIds.length > 0) {
     try {
@@ -731,6 +746,18 @@ export async function getUserTransactions(
         "[getUserTransactions] battle winnings (inventory) lookup failed (non-fatal):",
         e,
       );
+    }
+    // Fold in the voucher leg of the win (Voucher == Card). Any won gsid
+    // that produced a battle_excess_to_voucher voucher gets its value
+    // added; gsids with no voucher (cards-only win) are unchanged.
+    for (const gsid of wonGameSessionIds) {
+      const voucherValue = voucherValueByGameSession.get(gsid);
+      if (voucherValue && voucherValue > 0) {
+        battleWinningsByGsid.set(
+          gsid,
+          (battleWinningsByGsid.get(gsid) ?? 0) + voucherValue,
+        );
+      }
     }
   }
 
