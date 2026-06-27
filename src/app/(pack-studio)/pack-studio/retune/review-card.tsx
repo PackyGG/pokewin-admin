@@ -1415,29 +1415,57 @@ function MetricRow({
 
 type CardRow = {
   cardId: string;
+  name: string;
+  imageUrl: string;
   value: number;
   fromP: number;
   toP: number;
-  /** Absolute share move (for sorting). */
+  /** Signed share move in percentage points (toP − fromP). */
+  delta: number;
+  /** Absolute share move (for the bar scale). */
   move: number;
+  /**
+   * Impact score = `|delta| × value`. Used as the primary sort key — a 0.07pp
+   * shift on a $810 card matters more than the same shift on a $0.08 card.
+   */
+  impact: number;
   changed: boolean;
   /** True when this is a win/profit card (value ≥ price). */
   isWinCard: boolean;
 };
 
 /**
- * The FULL list of every card's weight change — replaces the old "top 5 movers".
- * Builds before% / after% per card from the current weights + the (changed-only)
- * weight diff, sorts by biggest absolute move, and renders a scrollable table
- * with House-POV coloring. Unchanged cards still appear (muted) so the operator
- * sees the whole pool, with a caption naming the count.
+ * The FULL list of every card's weight change — replaces the old plain text rows.
+ *
+ * Layout per row: tiny thumbnail · card name + price subtitle · before% → after%
+ * monospace numbers · centered horizontal delta bar scaled to the biggest move
+ * in the list (left = decrease, right = increase) · big signed delta number.
+ *
+ * Sort: **most impactful first** — primary key is `|delta_pp| × cardValue` DESC
+ * (a small probability shift on a high-value card moves EV more than the same
+ * shift on dust). Unchanged cards fall to the bottom, muted.
+ *
+ * House-POV color (CLAUDE.md): tone is by the sign of `delta × cardValue` — a
+ * positive shift on a high-value card raises player EV → rose; a positive shift
+ * on dust saves the house → emerald. Same rule for negatives, inverted. The
+ * existing rose/emerald CSS-variable pair from the page's house-POV convention.
+ *
+ * A "Top 3 most impactful" highlight strip sits above the list — same data,
+ * picked from the sorted rows, so the operator's eye lands on what actually
+ * moves money before scanning the full list.
  */
 function AllCardChanges({
   cards,
   weightDiff,
   price,
 }: {
-  cards: { cardId: string; value: number; weight: number }[];
+  cards: {
+    cardId: string;
+    value: number;
+    weight: number;
+    name: string;
+    imageUrl: string;
+  }[];
   weightDiff: { cardId: string; from: number; to: number }[] | null;
   price: number;
 }) {
@@ -1460,94 +1488,286 @@ function AllCardChanges({
       .map((c, i): CardRow => {
         const fromP = (c.weight / fromTotal) * 100;
         const toP = (afterWeights[i]! / toTotal) * 100;
+        const delta = toP - fromP;
+        const move = Math.abs(delta);
         return {
           cardId: c.cardId,
+          name: c.name,
+          imageUrl: c.imageUrl,
           value: c.value,
           fromP,
           toP,
-          move: Math.abs(toP - fromP),
-          changed: Math.abs(toP - fromP) > 1e-6,
+          delta,
+          move,
+          impact: move * c.value,
+          changed: move > 1e-6,
           isWinCard: c.value >= price,
         };
       })
-      .sort((a, b) => b.move - a.move);
+      .sort((a, b) => {
+        // Changed rows always above unchanged.
+        if (a.changed !== b.changed) return a.changed ? -1 : 1;
+        // Primary: |delta| × cardValue DESC (most-impactful first).
+        if (b.impact !== a.impact) return b.impact - a.impact;
+        // Tiebreak: bigger absolute pp move first.
+        if (b.move !== a.move) return b.move - a.move;
+        // Final tiebreak: higher-value card first (stable, readable).
+        return b.value - a.value;
+      });
   }, [cards, weightDiff, price]);
 
-  const changedCount = rows.filter((r) => r.changed).length;
+  // Scale the delta bar to the biggest move in the list so the visual
+  // magnitude is comparable across rows in the same pack. A tiny epsilon keeps
+  // a list of all-unchanged rows from dividing by zero.
+  const maxMove = Math.max(...rows.map((r) => r.move), 1e-6);
+  const changedRows = rows.filter((r) => r.changed);
+  const changedCount = changedRows.length;
+  const top3 = changedRows.slice(0, 3);
 
   return (
-    <div className="overflow-hidden rounded-xl border">
-      <div className="flex items-center justify-between gap-2 border-b bg-muted/20 px-3 py-2">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-          All {rows.length} cards · {changedCount} change
-          {changedCount === 1 ? "" : "s"}
-        </span>
-        <span className="hidden text-[11px] text-muted-foreground sm:inline">
-          card value · before → after probability
+    <div className="space-y-3">
+      {/* Top-3 most impactful — quick-scan card before the full list. */}
+      {top3.length > 0 && (
+        <div className="rounded-xl border bg-muted/10 p-3">
+          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            <Sparkles className="size-3" />
+            Top {top3.length} most impactful change{top3.length === 1 ? "" : "s"}
+          </p>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {top3.map((r) => (
+              <TopImpactChip key={r.cardId} row={r} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Full list — same rows, sorted by impact DESC. */}
+      <div className="overflow-hidden rounded-xl border">
+        <div className="flex items-center justify-between gap-2 border-b bg-muted/20 px-3 py-2">
+          <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            All {rows.length} cards · {changedCount} change
+            {changedCount === 1 ? "" : "s"}
+          </span>
+          <span className="hidden text-[11px] text-muted-foreground sm:inline">
+            sorted by impact (|Δ| × card value)
+          </span>
+        </div>
+        {/* Scrollable so a big pool stays comfortable. */}
+        <div className="max-h-[28rem] divide-y overflow-y-auto">
+          {rows.map((r) => (
+            <WeightChangeRow key={r.cardId} row={r} maxMove={maxMove} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Tone for one card-weight change row. Reuses the same house-POV rule as the
+ * rest of the page: a win card gaining share, or a dust card losing share,
+ * raises player EV → rose; the inverse → emerald. Driven by the SIGN of
+ * `delta × value` so both cases collapse to one expression.
+ */
+function houseToneForRow(row: CardRow): {
+  text: string;
+  bg: string;
+  border: string;
+  bar: string;
+} {
+  if (!row.changed) {
+    return {
+      text: "text-muted-foreground",
+      bg: "bg-muted/40",
+      border: "border-border",
+      bar: "bg-muted-foreground/40",
+    };
+  }
+  const up = row.delta > 0;
+  const playerFavorable = row.isWinCard === up;
+  return playerFavorable
+    ? {
+        text: "text-rose-600 dark:text-rose-400",
+        bg: "bg-rose-500/10",
+        border: "border-rose-500/25",
+        bar: "bg-rose-500",
+      }
+    : {
+        text: "text-emerald-600 dark:text-emerald-400",
+        bg: "bg-emerald-500/10",
+        border: "border-emerald-500/25",
+        bar: "bg-emerald-500",
+      };
+}
+
+/** Format a card's display name with a graceful fallback. */
+function cardNameLabel(row: CardRow): string {
+  const t = (row.name ?? "").trim();
+  return t.length > 0 ? t : "Unnamed card";
+}
+
+/** One row in the full weight-change list. */
+function WeightChangeRow({
+  row,
+  maxMove,
+}: {
+  row: CardRow;
+  maxMove: number;
+}) {
+  const tone = houseToneForRow(row);
+  // Half-width on each side; we anchor the bar at the centerline of the track
+  // and let it grow left (negative delta) or right (positive delta).
+  const widthPct = Math.min(100, (row.move / maxMove) * 100);
+  const isUp = row.delta > 0;
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 px-3 py-2.5 sm:gap-4",
+        !row.changed && "opacity-60",
+      )}
+    >
+      {/* Thumbnail + identity */}
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <CardThumb row={row} />
+        <div className="min-w-0 flex-1">
+          <p
+            className="truncate text-sm font-medium text-foreground"
+            title={cardNameLabel(row)}
+          >
+            {cardNameLabel(row)}
+          </p>
+          <p className="flex items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground">
+            <span>{formatCurrency(row.value)}</span>
+            {row.isWinCard && (
+              <span
+                className="inline-block size-1.5 rounded-full bg-amber-500"
+                title="Profit card (value ≥ price)"
+              />
+            )}
+          </p>
+        </div>
+      </div>
+
+      {/* Before → after probability */}
+      <div className="hidden shrink-0 items-center gap-1.5 text-xs tabular-nums sm:flex">
+        <span className="text-muted-foreground">{row.fromP.toFixed(2)}%</span>
+        <ArrowRight className="size-3 text-muted-foreground" />
+        <span className={cn("font-semibold", tone.text)}>
+          {row.toP.toFixed(2)}%
         </span>
       </div>
-      {/* Scrollable so a big pool stays comfortable. */}
-      <div className="max-h-72 overflow-y-auto">
-        <table className="w-full text-xs">
-          <tbody>
-            {rows.map((r) => {
-              // House-POV: a win card gaining share, or a non-win card losing
-              // share, raises player EV = BAD for the house → rose. The inverse
-              // → emerald. Unchanged rows stay muted.
-              const up = r.toP > r.fromP;
-              const playerFavorable = r.isWinCard === up;
-              const tone = !r.changed
-                ? "text-muted-foreground"
-                : playerFavorable
-                  ? "text-rose-600 dark:text-rose-400"
-                  : "text-emerald-600 dark:text-emerald-400";
-              const delta = r.toP - r.fromP;
-              return (
-                <tr
-                  key={r.cardId}
-                  className={cn(
-                    "border-b last:border-b-0",
-                    r.changed ? "" : "opacity-60",
-                  )}
-                >
-                  <td className="whitespace-nowrap px-3 py-1.5">
-                    <span className="flex items-center gap-1.5 tabular-nums">
-                      {formatCurrency(r.value)}
-                      {r.isWinCard && (
-                        <span
-                          className="inline-block size-1.5 rounded-full bg-amber-500"
-                          title="Profit card (value ≥ price)"
-                        />
-                      )}
-                    </span>
-                  </td>
-                  <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
-                    {r.fromP.toFixed(2)}%
-                  </td>
-                  <td className="px-1 py-1.5 text-center">
-                    <ArrowRight className="inline size-3 text-muted-foreground" />
-                  </td>
-                  <td className="px-3 py-1.5 text-right">
-                    <span className={cn("font-medium tabular-nums", tone)}>
-                      {r.toP.toFixed(2)}%
-                    </span>
-                  </td>
-                  <td className="w-16 px-3 py-1.5 text-right">
-                    {r.changed ? (
-                      <span className={cn("tabular-nums", tone)}>
-                        {delta > 0 ? "+" : "−"}
-                        {Math.abs(delta).toFixed(2)}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">·</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+
+      {/* Delta bar — centered, grows L or R. Shrinks gracefully on narrow. */}
+      <div className="hidden w-32 shrink-0 lg:block">
+        <div className="relative h-2 w-full rounded-full bg-muted">
+          {/* Centerline tick */}
+          <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border" />
+          {row.changed && (
+            <div
+              className={cn(
+                "absolute top-0 h-2 rounded-full motion-safe:transition-all motion-safe:duration-500 motion-safe:ease-out",
+                tone.bar,
+              )}
+              style={
+                isUp
+                  ? { left: "50%", width: `${widthPct / 2}%` }
+                  : { right: "50%", width: `${widthPct / 2}%` }
+              }
+            />
+          )}
+        </div>
       </div>
+
+      {/* Big signed delta — primary visual weight on the right. */}
+      <div className="w-20 shrink-0 text-right sm:w-24">
+        {row.changed ? (
+          <span
+            className={cn(
+              "text-base font-semibold tabular-nums sm:text-lg",
+              tone.text,
+            )}
+          >
+            {isUp ? "+" : "−"}
+            {row.move.toFixed(2)}
+            <span className="ml-0.5 text-[10px] font-normal text-muted-foreground">
+              pp
+            </span>
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">unchanged</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A small square thumbnail for the card. Falls back to a tinted placeholder
+ * tile with the card's first letter when the `image_url` is missing — packs
+ * shouldn't ship without one, but we keep the row readable either way.
+ */
+function CardThumb({ row }: { row: CardRow }) {
+  const src = (row.imageUrl ?? "").trim();
+  if (src.length === 0) {
+    const initial = cardNameLabel(row).charAt(0).toUpperCase();
+    return (
+      <div
+        aria-hidden="true"
+        className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted text-[11px] font-semibold text-muted-foreground"
+      >
+        {initial}
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      className="size-9 shrink-0 rounded-md border bg-muted object-contain"
+    />
+  );
+}
+
+/** The top-3-impact chip — a denser thumb + name + delta tile. */
+function TopImpactChip({ row }: { row: CardRow }) {
+  const tone = houseToneForRow(row);
+  const isUp = row.delta > 0;
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2.5 rounded-lg border px-2.5 py-2",
+        tone.bg,
+        tone.border,
+      )}
+    >
+      <CardThumb row={row} />
+      <div className="min-w-0 flex-1">
+        <p
+          className="truncate text-xs font-medium text-foreground"
+          title={cardNameLabel(row)}
+        >
+          {cardNameLabel(row)}
+        </p>
+        <p className="text-[10px] tabular-nums text-muted-foreground">
+          {formatCurrency(row.value)} · {row.fromP.toFixed(2)}% →{" "}
+          {row.toP.toFixed(2)}%
+        </p>
+      </div>
+      <span
+        className={cn(
+          "shrink-0 text-sm font-bold tabular-nums",
+          tone.text,
+        )}
+      >
+        {isUp ? "+" : "−"}
+        {row.move.toFixed(2)}
+        <span className="ml-0.5 text-[9px] font-normal text-muted-foreground">
+          pp
+        </span>
+      </span>
     </div>
   );
 }

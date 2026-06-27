@@ -360,6 +360,10 @@ export type PlanAllCard = {
   value: number;
   /** Current `pack_cards.weight`. */
   weight: number;
+  /** `cards.name` — surfaced so the review UI can label each row by item. */
+  name: string;
+  /** `cards.image_url` — surfaced so the review UI can show a thumbnail. */
+  imageUrl: string;
 };
 
 /** Per-card weight change a plan-all proposal would apply (only changed cards). */
@@ -456,6 +460,8 @@ type BatchedPoolRow = {
   card_id: string;
   value: string | null;
   weight: number;
+  name: string;
+  image_url: string;
 };
 
 /**
@@ -507,7 +513,9 @@ export async function planAllRetunes(
         pc.pack_id      AS pack_id,
         pc.card_id      AS card_id,
         c.price::text   AS value,
-        pc.weight       AS weight
+        pc.weight       AS weight,
+        c.name          AS name,
+        c.image_url     AS image_url
       FROM pack_cards pc
       JOIN cards c ON c.id = pc.card_id
       WHERE pc.pack_id = ANY($1::uuid[])
@@ -528,6 +536,8 @@ export async function planAllRetunes(
       cardId: r.card_id,
       value: Number(r.value ?? 0),
       weight: Number(r.weight),
+      name: r.name ?? "",
+      imageUrl: r.image_url ?? "",
     });
   }
 
