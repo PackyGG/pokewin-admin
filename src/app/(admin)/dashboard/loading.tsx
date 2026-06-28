@@ -18,7 +18,8 @@ import { ChartRowSkeleton, UpgraderPanelSkeleton } from "./dashboard-skeletons";
  *     under the hero).
  *   • Primary KPI strip (4 tiles) + secondary KPI snapshot strip (8 tiles).
  *   • Upgrader Stats panel + Wager Attribution chart (paired 50/50, min-h-400).
- *   • Trends section: two 3-up chart rows.
+ *   • Trends section: two 3-up chart rows
+ *     (Wagers · Deposits · Signups & FTDs / Daily P&L · Cash P&L · Depositors).
  *
  * The whole tree is wrapped in a SkeletonBoundary so assistive tech hears a
  * single polite "Loading dashboard…" instead of reading every shimmer box.
@@ -54,15 +55,16 @@ export default function DashboardLoading() {
         <SkeletonChart height={400} className="h-full min-h-[400px] rounded-xl" />
       </div>
 
-      {/* Trends — 3-up row (Wager · Deposits · Signups & FTDs merged) +
-          2-up row (Daily P&L · Daily Cash P&L) + 1-up row (Active Depositors).
-          The merged Signups & FTDs chart replaces the prior standalone FTDs
-          card. */}
+      {/* Trends — two 3-up rows:
+            Row 1: Wagers · Deposits · Signups & FTDs (merged).
+            Row 2: Daily P&L · Daily Cash P&L · Active Depositors.
+          The merged Signups & FTDs chart replaces the prior standalone
+          FTDs card; Active Depositors now sits in row 2 instead of its
+          own full-width row, keeping the grid as two clean 3-ups. */}
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={80} />
         <ChartRowSkeleton count={3} height={300} />
-        <ChartRowSkeleton count={2} height={300} />
-        <ChartRowSkeleton count={1} height={300} />
+        <ChartRowSkeleton count={3} height={300} />
       </div>
     </SkeletonBoundary>
   );

@@ -221,14 +221,14 @@ export default async function DashboardPage() {
       <div className="space-y-3">
         <SectionHeading icon={LineChart} title="Trends" />
         {/* Row 1 (3-up): Wagers · Deposits · Signups & FTDs (merged).
-            Row 2 (2-up): Daily P&L · Daily Cash P&L.
-            Row 3 (1-up): Active Depositors.
+            Row 2 (3-up): Daily P&L · Daily Cash P&L · Active Depositors.
 
             Signups and FTDs share one card so the funnel reads in one
             place — the merge happens at the page level (dailySignups +
             dailyFtds joined by date), so neither query changes shape.
-            With the FTDs card folded into Signups, Active Depositors no
-            longer has a 3-up partner and gets its own full-width row.
+            With the FTDs card folded into Signups the Trends grid is
+            two clean 3-up rows: customer-acquisition / volume on top,
+            money + retention on the bottom.
 
             The four cached-stats charts (everything EXCEPT the two P&L
             charts) are backed by the React-cached getDashboardStats —
@@ -238,7 +238,8 @@ export default async function DashboardPage() {
             getDailyPnl leg, streamed behind a nested <Suspense> in row 2
             so neither blocks the cached row(s); the Suspense returns a
             2-cell fragment, so both P&L charts paint side-by-side once
-            the lifetime scan resolves.
+            the lifetime scan resolves, and Active Depositors (a cached
+            chart) renders immediately as the third cell of row 2.
 
             Not period-keyed: the trend charts stay on screen during refresh
             rather than flashing skeletons. The skeleton is for the cold load
@@ -248,8 +249,7 @@ export default async function DashboardPage() {
           fallback={
             <>
               <ChartRowSkeleton count={3} height={300} />
-              <ChartRowSkeleton count={2} height={300} />
-              <ChartRowSkeleton count={1} height={300} />
+              <ChartRowSkeleton count={3} height={300} />
             </>
           }
         >
@@ -737,22 +737,23 @@ async function DashboardActiveRain() {
 }
 
 /**
- * Trend charts in three rows:
- *   Row 1 (3): Wagers · Deposits · FTDs              — cached getDashboardStats
- *   Row 2 (2): Daily P&L · Daily Cash P&L            — both from getDailyPnl
- *   Row 3 (2): Signups · Depositors                  — cached getDashboardStats
+ * Trend charts in two 3-up rows:
+ *   Row 1: Wagers · Deposits · Signups & FTDs (merged) — cached getDashboardStats
+ *   Row 2: Daily P&L · Daily Cash P&L · Active Depositors
  *
- * The five getDashboardStats-backed charts read from the React-cached aggregate
- * the KPI strips already triggered — so this component awaits ONLY that (the
- * call dedupes; it's effectively free here) and paints them as soon as it's
- * ready. The two Daily-P&L charts (canonical P&L + Cash P&L) BOTH derive from
- * the one heavy lifetime-scan getDailyPnl, so they stream together behind a
- * single nested <Suspense> (DashboardDailyPnlChart, which emits a 2-cell
- * Fragment) at row 2 — the slow P&L scan can't hold back the five fast charts
- * either above or below it. The nested Suspense fallback mirrors the two-cell
- * shape so the grid never shifts. Cash P&L is a derived view of the same
- * DailyPnlPoint rows (deposits − withdrawals per day), so it adds NO extra
- * query — same canonical formula as the "P&L Today" tile's Cash-P&L badge.
+ * The cached-stats charts (Wagers, Deposits, Signups&FTDs, Active Depositors)
+ * read from the React-cached getDashboardStats the KPI strips already
+ * triggered — so this component awaits ONLY that (the call dedupes; it's
+ * effectively free here) and paints them as soon as it's ready. The two
+ * Daily-P&L charts (canonical P&L + Cash P&L) BOTH derive from the one heavy
+ * lifetime-scan getDailyPnl, so they stream together behind a single nested
+ * <Suspense> (DashboardDailyPnlChart, which emits a 2-cell Fragment) inside
+ * row 2's grid — the slow P&L scan can't hold back the cached charts beside
+ * it. Active Depositors is also cached-stats and renders immediately as the
+ * third cell of row 2, while the two P&L cells show chart skeletons until the
+ * lifetime scan resolves. Cash P&L is a derived view of the same DailyPnlPoint
+ * rows (deposits − withdrawals per day), so it adds NO extra query — same
+ * canonical formula as the "P&L Today" tile's Cash-P&L badge.
  *
  * The Wager Attribution chart used to live as a third full-width row here; it
  * was promoted next to the Upgrader Stats section.
@@ -805,18 +806,22 @@ async function DashboardCharts() {
         <DepositsChart data={stats.dailyDeposits} />
         <SignupsChart data={signupsAndFtdsSeries} />
       </div>
-      <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-2">
+      <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
         {/* Daily P&L (canonical) + Daily Cash P&L (raw deposits −
             withdrawals) — its own nested Suspense so the heavy getDailyPnl
-            lifetime scan streams independently of the five cached-stats
-            charts. Both bars come from the SAME getDailyPnl rows (cached
-            via unstable_cache), so no extra query is added by the second
-            chart — it's a derived view. The Suspense returns a 2-cell
-            Fragment, so the row paints both charts side-by-side once the
+            lifetime scan streams independently of the cached-stats charts.
+            Both bars come from the SAME getDailyPnl rows (cached via
+            unstable_cache), so no extra query is added by the second chart
+            — it's a derived view. The Suspense returns a 2-cell Fragment,
+            so the first two cells of this row paint side-by-side once the
             P&L scan resolves; the fallback mirrors that with two chart
             skeletons so the grid never shifts. Not period-keyed
             (getDailyPnl is period-independent), so neither chart re-
-            suspends on a chip change. */}
+            suspends on a chip change.
+
+            Active Depositors fills the third cell of the row — it's
+            cached-stats, so it paints immediately without waiting on the
+            P&L lifetime scan beside it. */}
         <Suspense
           fallback={
             <>
@@ -827,8 +832,6 @@ async function DashboardCharts() {
         >
           <DashboardDailyPnlChart />
         </Suspense>
-      </div>
-      <div className="grid gap-3 sm:gap-4 md:grid-cols-1">
         <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
       </div>
     </FadeIn>

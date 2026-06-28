@@ -184,6 +184,18 @@ function formatChartXTick(value: string, hourlyXAxis: boolean): string {
   return hourlyXAxis ? value : value.slice(5);
 }
 
+// Compact integer formatter for count-based YAxis ticks (Signups, FTDs,
+// Depositors). Mirrors formatCompactUsd's K/M tier but without the $ sign so
+// the Wagers/Deposits ($-axis) and the count charts stay visually consistent
+// in the same row while reading the right unit per axis.
+function formatCompactInt(v: number): string {
+  const sign = v < 0 ? "-" : "";
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)}K`;
+  return `${sign}${abs.toFixed(0)}`;
+}
+
 export function WagerChart({
   data,
   title = "Wagers (30 days)",
@@ -445,6 +457,13 @@ function SignupsFtdsTooltip({
  * Joined by date upstream in `page.tsx` (`mergeSignupsAndFtds`) so missing
  * days are zero-filled on both sides — the padded series are already
  * date-aligned by the dashboard query layer.
+ *
+ * Visual structure mirrors WagerChart (same Card chrome, same
+ * `aspect-auto h-[220px]...` ChartContainer, same axis treatment with a
+ * fixed-width YAxis carrying a compact tick formatter) so this card reads
+ * as a sibling of the Wagers chart sitting beside it in row 1, not a
+ * different system. The unit on the YAxis is a count (not USD), so it
+ * uses `formatCompactInt` instead of `formatCompactUsd`.
  */
 export function SignupsChart({
   data,
@@ -467,7 +486,10 @@ export function SignupsChart({
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={signupsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
+        <ChartContainer
+          config={signupsConfig}
+          className="aspect-auto h-[220px] w-full md:h-[260px] lg:h-[300px]"
+        >
           <BarChart data={data} accessibilityLayer>
             <CartesianGrid vertical={false} />
             <XAxis
@@ -477,8 +499,19 @@ export function SignupsChart({
               tickMargin={8}
               tickFormatter={(v) => formatChartXTick(v, hourlyXAxis)}
             />
-            <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+            <YAxis
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              width={70}
+              tickFormatter={formatCompactInt}
+            />
             <ChartTooltip content={<SignupsFtdsTooltip />} />
+            {/* Grouped (side-by-side) bars: Signups in emerald-500,
+                FTDs in emerald-300. Both get the same rounded-top
+                radius so each pair reads as a matched siblings
+                (Wagers uses radius on the top stack segment only;
+                here both bars are tops because they aren't stacked). */}
             <Bar
               dataKey="signups"
               fill="var(--color-signups)"
