@@ -594,7 +594,12 @@ export function ReviewCard({
               </span>
             }
           />
-          <RiskProfile before={before} after={after} />
+          <RiskProfile
+            before={before}
+            after={after}
+            price={proposal.price}
+            intendedHitRate={intendedHitRate}
+          />
         </section>
 
         {/* ── Key metrics: explained before→after rows ───────────────── */}
@@ -1110,20 +1115,48 @@ function EdgeTile({
 // ─── Risk profile panel (the "new risk system") ───────────────────────
 
 /**
- * The prominent, explained risk panel. Three blocks: a risk-score gauge
- * (0–100 progress bar, before → after), the CV before→after, and the tier
- * before→after — each with a one-line plain-English explainer. This is what the
- * owner said they "couldn't see" — built as a real visual block, not tiny rows.
+ * The prominent, explained risk panel. Always renders the risk-score gauge
+ * (0–100 progress bar, before → after). For NON-lottery packs it also renders
+ * CV before→after and the tier before→after — each with a one-line plain-English
+ * explainer that names concrete payout signal (expected per open, best case,
+ * jackpot multiplier) instead of vague "swingy" copy. For LOTTERY-tagged packs
+ * (hit-rate ≤ 10%) the CV + tier tiles are HIDDEN — the dedicated tag chip and
+ * the lottery acknowledgment above already convey the design (mirrors the
+ * `isLotteryTag = hr <= 0.10` predicate used in portfolio.ts).
  */
 function RiskProfile({
   before,
   after,
+  price,
+  intendedHitRate,
 }: {
   before: PackRisk;
   after: PackRisk | null;
+  price: number;
+  intendedHitRate: number | null;
 }) {
   const sevB = riskSeverity(before.riskScore0to100);
   const sevA = after ? riskSeverity(after.riskScore0to100) : null;
+  const isLotteryTag =
+    intendedHitRate != null && intendedHitRate <= 0.10;
+  // The active risk we describe in the CV/tier blurbs — the "After" if shaped,
+  // otherwise the "Before" (matches how the existing blurbs picked which row).
+  const active: PackRisk = after ?? before;
+  const evStr = formatCurrency(active.ev);
+  const maxWinStr = formatCurrency(active.maxWin);
+  const maxMultStr = Number.isFinite(active.maxMult)
+    ? `${active.maxMult.toFixed(active.maxMult >= 100 ? 0 : 1)}×`
+    : "—";
+  const winPctStr = `${(active.winRate * 100).toFixed(
+    active.winRate < 0.01 ? 2 : 1,
+  )}%`;
+  // "1 in N" framing for the win rate (the operator-friendly read).
+  const oneInN =
+    active.winRate > 0 ? Math.round(1 / active.winRate) : null;
+  const oneInStr =
+    oneInN != null && Number.isFinite(oneInN) && oneInN > 0
+      ? `~1 in ${formatNumber(oneInN)} opens`
+      : null;
   return (
     <div className="space-y-3 rounded-xl border bg-card p-3.5">
       {/* Risk score gauge */}
@@ -1172,63 +1205,78 @@ function RiskProfile({
         </p>
       </div>
 
-      <Separator />
-
-      {/* CV + Tier side by side */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <RiskFact
-          label="Coefficient of variation (CV)"
-          beforeNode={
-            <span className="font-medium tabular-nums">
-              {before.cv.toFixed(2)}
-            </span>
-          }
-          afterNode={
-            after ? (
-              <span className="font-semibold tabular-nums">
-                {after.cv.toFixed(2)}
-              </span>
-            ) : null
-          }
-          blurb={
-            after
-              ? `CV ${after.cv.toFixed(2)} — ${cvBlurb(after.cv)}.`
-              : `CV ${before.cv.toFixed(2)} — ${cvBlurb(before.cv)}.`
-          }
-        />
-        <RiskFact
-          label="Volatility tier"
-          beforeNode={
-            <Badge
-              variant="outline"
-              className={cn(
-                "h-5 px-1.5 text-[10px] font-semibold",
-                TIER_BG[before.tier],
-              )}
-            >
-              {before.tier}
-            </Badge>
-          }
-          afterNode={
-            after ? (
-              <Badge
-                variant="outline"
-                className={cn(
-                  "h-5 px-1.5 text-[10px] font-semibold",
-                  TIER_BG[after.tier],
-                )}
-              >
-                {after.tier}
-              </Badge>
-            ) : null
-          }
-          blurb={
-            after
-              ? `Tier ${after.tier} — ${TIER_BLURB[after.tier]}.`
-              : `Tier ${before.tier} — ${TIER_BLURB[before.tier]}.`
-          }
-        />
-      </div>
+      {/* CV + Tier side by side — hidden for lottery-tagged packs (≤ 10% hit
+          rate): the tag chip + lottery acknowledgment above already convey the
+          design, and the cv/tier numbers are noise for that case. Operator
+          still sees the risk-score gauge above and the key-metrics block
+          below for the actionable signal. */}
+      {!isLotteryTag && (
+        <>
+          <Separator />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <RiskFact
+              label="Coefficient of variation (CV)"
+              beforeNode={
+                <span className="font-medium tabular-nums">
+                  {before.cv.toFixed(2)}
+                </span>
+              }
+              afterNode={
+                after ? (
+                  <span className="font-semibold tabular-nums">
+                    {after.cv.toFixed(2)}
+                  </span>
+                ) : null
+              }
+              blurb={
+                // Concrete payout signal instead of vague "swingy" copy:
+                // expected payout per open + best case + jackpot multiplier.
+                // Higher CV = wider spread around the same EV.
+                `Expected payout per open: ${evStr} on a ${formatCurrency(price)} ticket. Best case: ${maxWinStr} (${maxMultStr}). Worst case: $0. ${
+                  cvBlurb(active.cv).charAt(0).toUpperCase() +
+                  cvBlurb(active.cv).slice(1)
+                } around that average.`
+              }
+            />
+            <RiskFact
+              label="Volatility tier"
+              beforeNode={
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "h-5 px-1.5 text-[10px] font-semibold",
+                    TIER_BG[before.tier],
+                  )}
+                >
+                  {before.tier}
+                </Badge>
+              }
+              afterNode={
+                after ? (
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "h-5 px-1.5 text-[10px] font-semibold",
+                      TIER_BG[after.tier],
+                    )}
+                  >
+                    {after.tier}
+                  </Badge>
+                ) : null
+              }
+              blurb={
+                // Lead with the operator-actionable read: how often the user
+                // wins something worth at least the ticket. The TIER_BLURB is
+                // kept as a short qualifier so the tier label still makes
+                // sense at a glance.
+                oneInStr
+                  ? `${oneInStr} return ≥ ticket (${winPctStr} win-rate). Top card ${maxWinStr} (${maxMultStr}). ${TIER_BLURB[active.tier].replace(/ —.*$/, "")}.`
+                  : `Top card ${maxWinStr} (${maxMultStr}). ${TIER_BLURB[active.tier].replace(/ —.*$/, "")}.`
+              }
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }
