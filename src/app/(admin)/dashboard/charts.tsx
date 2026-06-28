@@ -8,7 +8,7 @@ import {
   Wallet,
   Box,
   Ticket,
-  Bitcoin,
+  Coins,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -557,7 +557,6 @@ function PnlTooltip({
       inventoryChange: number;
       voucherChange: number;
       creatorCost?: number;
-      cryptoFeeProfit?: number;
     };
   }>;
 }) {
@@ -565,7 +564,12 @@ function PnlTooltip({
   const p = payload[0].payload;
   const up = p.pnl >= 0;
   const creatorCost = p.creatorCost ?? 0;
-  const cryptoFeeProfit = p.cryptoFeeProfit ?? 0;
+  // Cash P&L = deposits − withdrawals (raw crypto cash flow only, no
+  // balance / inventory / voucher terms). Mirrors the dashboard "P&L Today"
+  // tile's RawCashPnlBadge / TodayPnlInfoPopover wording — same definition,
+  // bucketed per day. House-POV: positive = house cash in → emerald;
+  // negative = house cash out → rose.
+  const cashPnl = p.deposits - p.withdrawals;
   // Signed contribution to house P&L. Deposits add; every other term
   // subtracts (so a positive liability delta — a liability that GREW —
   // becomes a negative contribution, and a shrinking liability a positive
@@ -615,22 +619,30 @@ function PnlTooltip({
           {formatCurrency(Math.abs(p.pnl))}
         </span>
       </div>
-      {/* Informational only — crypto-fee profit (estimated house-side
-          exchange-rate margin on completed crypto deposits + withdrawals)
-          sits ALONGSIDE the canonical P&L (it doesn't move on-site
-          balances, so it isn't a separate term inside the windowed-delta
-          formula). House-POV: a positive figure is house GAIN → emerald.
-          Rendered ABOVE the creator-cost row per the dashboard ordering
-          (gain line first, cost line second). Shown only on days with a
-          non-zero fee profit. */}
-      {cryptoFeeProfit > 0 && (
+      {/* Informational only — Cash P&L = deposits − withdrawals (raw crypto
+          cash flow only). Same definition as the dashboard's "P&L Today" tile
+          Cash-P&L badge / popover, bucketed per day. Sits ALONGSIDE the
+          canonical P&L (which adds balance / inventory / voucher terms on
+          top), not inside it. House-POV: positive = cash flowed INTO the
+          house → emerald; negative = cash flowed OUT → rose. Rendered ABOVE
+          the creator-cost row per the dashboard ordering. Hidden on
+          zero-cash-flow days to keep the tooltip terse. */}
+      {cashPnl !== 0 && (
         <div className="flex items-center justify-between gap-3 border-t border-dashed border-border/40 pt-1.5 text-[11px]">
           <span className="flex items-center gap-1 text-muted-foreground">
-            <Bitcoin className="size-3 shrink-0" />
-            Crypto P&amp;L
+            <Coins className="size-3 shrink-0" />
+            Cash P&amp;L
           </span>
-          <span className="font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-            +{formatCurrency(cryptoFeeProfit)}
+          <span
+            className={cn(
+              "font-mono tabular-nums",
+              cashPnl > 0
+                ? "text-emerald-600 dark:text-emerald-400"
+                : "text-rose-600 dark:text-rose-400",
+            )}
+          >
+            {cashPnl > 0 ? "+" : "−"}
+            {formatCurrency(Math.abs(cashPnl))}
           </span>
         </div>
       )}
@@ -860,13 +872,6 @@ export function PnlChart({
     voucherChange: number;
     /** Informational per-day creator cost (already inside P&L; hover-only). */
     creatorCost?: number;
-    /**
-     * Informational per-day house crypto-fee profit (estimated exchange-rate
-     * margin on completed crypto deposits + withdrawals since the counter
-     * anchor; sits alongside P&L, not inside the windowed-delta formula).
-     * Hover-only — rendered above the creator-cost row in the tooltip.
-     */
-    cryptoFeeProfit?: number;
   }[];
 }) {
   // The clicked day's YYYY-MM-DD key — drives the drilldown modal. null when
