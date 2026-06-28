@@ -3,6 +3,7 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { isLiveLedgerTxType } from "@/lib/queries/_ledger-tx-types";
+import { USERS_DETAIL_GLOBAL_TAG, userDetailTag } from "./users-detail-cache";
 
 /**
  * Per-user XP PURCHASES — the XP a single user bought by spending their own
@@ -166,12 +167,20 @@ async function queryUserXpPurchases(
 // /users/[id] cache layer (`users-detail-cache.ts`).
 const REVALIDATE_SECONDS = 60;
 
-const cachedUserXpPurchases = unstable_cache(
-  (userId: string): Promise<UserXpPurchasesResult> =>
-    queryUserXpPurchases(userId),
-  ["users-xp-purchases-v1"],
-  { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
-);
+// Per-user tags: tags depend on the userId, so the wrapper is created per
+// call. `unstable_cache` identifies the entry by `keyParts` (which already
+// carry the userId), not by closure identity. See
+// `users-detail-cache.ts` for the canonical pattern + tag helpers.
+function cachedUserXpPurchases(userId: string): Promise<UserXpPurchasesResult> {
+  return unstable_cache(
+    (): Promise<UserXpPurchasesResult> => queryUserXpPurchases(userId),
+    ["users-xp-purchases-v1", userId],
+    {
+      revalidate: REVALIDATE_SECONDS,
+      tags: [USERS_DETAIL_GLOBAL_TAG, userDetailTag(userId)],
+    },
+  )();
+}
 
 /**
  * Public entry point — a single user's XP-purchase summary + recent list for

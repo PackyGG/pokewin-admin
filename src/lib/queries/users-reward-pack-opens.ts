@@ -3,6 +3,7 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
+import { USERS_DETAIL_GLOBAL_TAG, userDetailTag } from "./users-detail-cache";
 
 /**
  * Per-user REWARD / SIGN-UP PACK OPENS — the provenance trail for cards a
@@ -231,11 +232,20 @@ async function queryUserRewardPackOpens(
 // the query directly so they always see live dev data. The cached payload is
 // JSON-serialisable (openedAt is already an ISO string, no Date to re-coerce
 // on a cache hit).
-const cachedByUser = unstable_cache(
-  queryUserRewardPackOpens,
-  ["users-reward-pack-opens-v1"],
-  { revalidate: 60, tags: ["users-detail"] },
-);
+// Per-user tags: tags depend on the userId, so the wrapper is created per
+// call. `unstable_cache` identifies the entry by `keyParts` (which already
+// carry the userId via the function arg), not by closure identity. See
+// `users-detail-cache.ts` for the canonical pattern + tag helpers.
+function cachedByUser(userId: string): Promise<UserRewardPackOpensResult> {
+  return unstable_cache(
+    (): Promise<UserRewardPackOpensResult> => queryUserRewardPackOpens(userId),
+    ["users-reward-pack-opens-v1", userId],
+    {
+      revalidate: 60,
+      tags: [USERS_DETAIL_GLOBAL_TAG, userDetailTag(userId)],
+    },
+  )();
+}
 
 /**
  * Public entry point. Returns the user's reward / sign-up pack opens and the

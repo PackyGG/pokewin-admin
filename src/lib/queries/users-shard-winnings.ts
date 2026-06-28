@@ -2,6 +2,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
+import { USERS_DETAIL_GLOBAL_TAG, userDetailTag } from "./users-detail-cache";
 
 /**
  * Per-user SHARD/COIN WINNINGS — the secondary-currency wins a single user
@@ -288,11 +289,22 @@ function aggregate(
 // query directly so they always see live dev data. Identical reasoning to
 // shard-stats.ts / users-detail-cache.ts.
 
-const cachedByUser = unstable_cache(
-  queryUserShardWinnings,
-  ["users-shard-winnings-v1"],
-  { revalidate: 60, tags: ["users-shard-winnings"] },
-);
+// Per-user tags: tags depend on the userId, so the wrapper is created per
+// call. The `users-detail-${userId}` tag means the /users/[id] refresh
+// button (and any per-user mutation that calls `invalidateUserCaches`)
+// also busts this entry, so the Gaming tab's shard chips stay in lockstep
+// with the rest of the per-user reads. The legacy `users-shard-winnings`
+// global tag is retained for shard-system-wide flushes.
+function cachedByUser(userId: string): Promise<ShardWinningsResult> {
+  return unstable_cache(
+    (): Promise<ShardWinningsResult> => queryUserShardWinnings(userId),
+    ["users-shard-winnings-v1", userId],
+    {
+      revalidate: 60,
+      tags: ["users-shard-winnings", USERS_DETAIL_GLOBAL_TAG, userDetailTag(userId)],
+    },
+  )();
+}
 
 /**
  * Public entry point. Returns the per-user shard winnings tagged by source.
@@ -477,11 +489,17 @@ async function queryUserShardPackOpens(
   };
 }
 
-const cachedOpensByUser = unstable_cache(
-  queryUserShardPackOpens,
-  ["users-shard-pack-opens-v1"],
-  { revalidate: 60, tags: ["users-shard-pack-opens"] },
-);
+// Per-user tags (same reasoning as cachedByUser above).
+function cachedOpensByUser(userId: string): Promise<ShardPackOpensResult> {
+  return unstable_cache(
+    (): Promise<ShardPackOpensResult> => queryUserShardPackOpens(userId),
+    ["users-shard-pack-opens-v1", userId],
+    {
+      revalidate: 60,
+      tags: ["users-shard-pack-opens", USERS_DETAIL_GLOBAL_TAG, userDetailTag(userId)],
+    },
+  )();
+}
 
 /**
  * Public entry point for a user's shard-pack OPENS (shards spent + value

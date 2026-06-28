@@ -1,6 +1,16 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+
+/**
+ * Bust BOTH the route segment AND the per-user `unstable_cache` entries.
+ * `revalidatePath` alone does NOT drop unstable_cache entries — see
+ * `users/[id]/actions.ts` invalidateUserCaches for the full rationale.
+ */
+function invalidateUserCaches(userId: string): void {
+  revalidatePath(`/users/${userId}`);
+  revalidateTag(`users-detail-${userId}`);
+}
 import { z } from "zod";
 import { requirePageAccess, requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -101,7 +111,7 @@ export async function setUserWagerRequirementAction(input: {
     metadata: { old: oldValues, new: fields },
   });
 
-  revalidatePath(`/users/${userId}`);
+  invalidateUserCaches(userId);
   return { success: true };
 }
 
@@ -136,7 +146,7 @@ export async function clearUserWagerRequirementAction(
     metadata: { old_bps: oldBps ?? null },
   });
 
-  revalidatePath(`/users/${userId}`);
+  invalidateUserCaches(userId);
   return { success: true };
 }
 
@@ -189,6 +199,6 @@ export async function setUserWagerRemainingAction(input: {
     },
   });
 
-  revalidatePath(`/users/${userId}`);
+  invalidateUserCaches(userId);
   return { success: true };
 }

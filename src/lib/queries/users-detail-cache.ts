@@ -5,6 +5,29 @@ import { getUserPnlBreakdown, type PnlBreakdown } from "./users-financial";
 import { getUserTransactions } from "./users-transactions";
 
 /**
+ * Canonical cache tags for the /users/[id] route. Every `unstable_cache`
+ * entry that backs a per-user detail read MUST carry BOTH:
+ *   • USERS_DETAIL_GLOBAL_TAG — busts all per-user caches in one go
+ *     (preserved so list-level mutations + the legacy refresh path keep
+ *     working).
+ *   • `userDetailTag(userId)` — busts ONLY this user's caches, so a
+ *     refresh on user A doesn't nuke unrelated users' warmed entries and
+ *     so per-user mutations (balance adjust, identity edit, ban, lock,
+ *     etc.) can target exactly the affected user.
+ *
+ * Exported so server actions across `users/[id]/*` and admin balance /
+ * gift-card / voucher flows can call `revalidateTag(userDetailTag(id))`
+ * after writes without re-deriving the string.
+ */
+export const USERS_DETAIL_GLOBAL_TAG = "users-detail";
+export function userDetailTag(userId: string): string {
+  return `users-detail-${userId}`;
+}
+function userDetailTags(userId: string): string[] {
+  return [USERS_DETAIL_GLOBAL_TAG, userDetailTag(userId)];
+}
+
+/**
  * Cross-request cache for the TWO heaviest per-user reads behind
  * /users/[id] — the detail aggregate (~19 Main-DB round-trips + the
  * canonical P&L helper) and the Platform-P&L breakdown (multiple ledger
@@ -66,11 +89,21 @@ const FINANCIAL_TX_REVALIDATE_SECONDS = 30;
 // + signup-usage .catch(() => null); wager breakdown via the LIVE enum
 // filter). Pre-fix v1 entries can hold the rejected/zeroed shapes — a fresh
 // namespace guarantees the fixed code path's output isn't shadowed.
-const cachedUserDetail = unstable_cache(
-  (userId: string) => getUserDetail(userId),
-  ["users-detail-aggregate-v2"],
-  { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
-);
+//
+// Per-user tags: tags are passed PER CALL via a per-userId wrapper so
+// `revalidateTag(userDetailTag(userId))` busts ONLY this user's entry.
+// `unstable_cache` identifies an entry by `keyParts`, NOT by the closure
+// identity — so re-wrapping inside the call still hits the same cache
+// entry while letting the tags depend on the userId. The global
+// "users-detail" tag is preserved so list-level + legacy bulk flushes
+// (refreshUserDetailCache, admin balance wipes) keep working.
+function cachedUserDetail(userId: string) {
+  return unstable_cache(
+    () => getUserDetail(userId),
+    ["users-detail-aggregate-v2", userId],
+    { revalidate: REVALIDATE_SECONDS, tags: userDetailTags(userId) },
+  )();
+}
 
 // Keypart bumped across 2026-06-03 deploys to FORCE-DISCARD stale cached
 // rolling-P&L values, because the Vercel data cache persists `unstable_cache`
@@ -92,11 +125,13 @@ const cachedUserDetail = unstable_cache(
 //     22P02 (live enum lacks the upgrader members) and the breakdown degraded
 //     to all-zeros — bump so the fixed query's real numbers replace any
 //     zeroed v5 entries immediately instead of stale-while-revalidate.
-const cachedUserPnlBreakdown = unstable_cache(
-  (userId: string): Promise<PnlBreakdown> => getUserPnlBreakdown(userId),
-  ["users-detail-pnl-v6"],
-  { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
-);
+function cachedUserPnlBreakdown(userId: string): Promise<PnlBreakdown> {
+  return unstable_cache(
+    (): Promise<PnlBreakdown> => getUserPnlBreakdown(userId),
+    ["users-detail-pnl-v6", userId],
+    { revalidate: REVALIDATE_SECONDS, tags: userDetailTags(userId) },
+  )();
+}
 
 /** Cached `getUserDetail` on prod; direct (uncached) on a dev-toggled
  * admin so they see live dev data — see module doc. */
@@ -116,6 +151,8 @@ export async function getUserPnlBreakdownCached(
   if (env !== "prod") return getUserPnlBreakdown(userId);
   return cachedUserPnlBreakdown(userId);
 }
+
+
 
 /**
  * Cross-request cache for the Gaming tab's FIRST-PAGE transaction read —
@@ -165,12 +202,18 @@ export async function getUserPnlBreakdownCached(
 //     rendering the wrong P&L (e.g. +$9.69 emerald instead of −$173.34 rose);
 //     bump so the fixed code path's values replace any stale v1 entries
 //     immediately instead of stale-while-revalidate.
-const cachedUserGamingTransactions = unstable_cache(
-  (userId: string, page: number, perPage: number, types: string[]) =>
-    getUserTransactions(userId, page, perPage, { types }),
-  ["users-detail-gaming-tx-v2"],
-  { revalidate: GAMING_TX_REVALIDATE_SECONDS, tags: ["users-detail"] },
-);
+function cachedUserGamingTransactions(
+  userId: string,
+  page: number,
+  perPage: number,
+  types: string[],
+) {
+  return unstable_cache(
+    () => getUserTransactions(userId, page, perPage, { types }),
+    ["users-detail-gaming-tx-v2", userId, String(page), String(perPage), types.join(",")],
+    { revalidate: GAMING_TX_REVALIDATE_SECONDS, tags: userDetailTags(userId) },
+  )();
+}
 
 /**
  * Cached Gaming first-page transactions on prod; direct (uncached) on a
@@ -210,17 +253,26 @@ export async function getUserGamingTransactionsCached(
  *
  * Same prod-only rule and `users-detail` revalidation tag as the gaming cache.
  */
-const cachedUserFinancialTransactions = unstable_cache(
-  (
-    userId: string,
-    page: number,
-    perPage: number,
-    types: string[],
-    viewerIsOwner: boolean,
-  ) => getUserTransactions(userId, page, perPage, { types }, viewerIsOwner),
-  ["users-detail-financial-tx-v1"],
-  { revalidate: FINANCIAL_TX_REVALIDATE_SECONDS, tags: ["users-detail"] },
-);
+function cachedUserFinancialTransactions(
+  userId: string,
+  page: number,
+  perPage: number,
+  types: string[],
+  viewerIsOwner: boolean,
+) {
+  return unstable_cache(
+    () => getUserTransactions(userId, page, perPage, { types }, viewerIsOwner),
+    [
+      "users-detail-financial-tx-v1",
+      userId,
+      String(page),
+      String(perPage),
+      types.join(","),
+      viewerIsOwner ? "owner" : "non-owner",
+    ],
+    { revalidate: FINANCIAL_TX_REVALIDATE_SECONDS, tags: userDetailTags(userId) },
+  )();
+}
 
 /**
  * Cached Finances/Overview first-page transactions on prod; direct (uncached)

@@ -39,6 +39,24 @@ import {
 } from "@/lib/balance-adjustment-edit/motha-gate";
 
 /**
+ * Bust BOTH the route segment AND the per-user `unstable_cache` entries for
+ * a /users/[id] write. `revalidatePath` alone does NOT drop unstable_cache
+ * entries (it only invalidates the Next.js route segment / RSC response),
+ * so without this helper a mutation leaves the cached `getUserDetailCached`
+ * / `getUserPnlBreakdownCached` / gaming-tx / financial-tx / xp / reward-
+ * pack-open entries serving stale numbers until their TTL expires (15–60s).
+ *
+ * Every per-user cache in `users-detail-cache.ts` / `users-xp-purchases.ts`
+ * / `users-reward-pack-opens.ts` carries the `users-detail-${userId}` tag,
+ * so this single call invalidates them all atomically — without touching
+ * unrelated users' cached entries (no global `users-detail` flush).
+ */
+function invalidateUserCaches(userId: string): void {
+  revalidatePath(`/users/${userId}`);
+  revalidateTag(`users-detail-${userId}`);
+}
+
+/**
  * Map an unexpected balance-adjustment exception to a SAFE, category-
  * distinguishing client message. The real exception (with stack, query
  * text, and any embedded connection detail) is logged server-side by the
@@ -802,7 +820,7 @@ export async function adjustBalance(data: {
       );
     });
 
-  revalidatePath(`/users/${parsed.userId}`);
+  invalidateUserCaches(parsed.userId);
   return { success: true };
 }
 
@@ -1134,7 +1152,7 @@ export async function updateBalanceAdjustmentMeta(data: {
     },
   });
 
-  revalidatePath(`/users/${parsed.targetUserId}`);
+  invalidateUserCaches(parsed.targetUserId);
   return { success: true };
 }
 
@@ -1255,7 +1273,7 @@ export async function moveBalanceToVault(
     metadata: { amount: available, instant: true },
   });
 
-  revalidatePath(`/users/${userId}`);
+  invalidateUserCaches(userId);
   return { success: true, movedAmount: available };
 }
 
@@ -1466,7 +1484,7 @@ export async function recordManualWithdrawal(data: {
     },
   });
 
-  revalidatePath(`/users/${parsed.userId}`);
+  invalidateUserCaches(parsed.userId);
   return { success: true };
 }
 
@@ -1507,7 +1525,7 @@ export async function changeRole(userId: string, newRole: string, totpCode: stri
     metadata: { prev_role: prevRole, new_role: newRole },
   });
 
-  revalidatePath(`/users/${userId}`);
+  invalidateUserCaches(userId);
 }
 
 /**
@@ -1578,7 +1596,7 @@ export async function forceResetCreatorToUser(
     },
   });
 
-  revalidatePath(`/users/${userId}`);
+  invalidateUserCaches(userId);
   revalidatePath("/creators");
   return { success: true, backendDemoted, backendError };
 }
@@ -1661,10 +1679,12 @@ export async function updateUserIdentity(
     metadata,
   });
 
-  revalidatePath(`/users/${userId}`);
+  invalidateUserCaches(userId);
   revalidatePath("/users");
   // revalidatePath does NOT drop unstable_cache entries — flush the
   // /users list caches so the renamed identity shows there immediately.
+  // (`invalidateUserCaches` already busts the per-user `users-detail-*`
+  // tag for this user — these two are list-scoped.)
   revalidateTag("users-list");
   revalidateTag("users-list-stats");
   return { success: true };
@@ -2109,7 +2129,7 @@ export async function deleteUserVoucher(data: {
     },
   });
 
-  revalidatePath(`/users/${parsed.data.userId}`);
+  invalidateUserCaches(parsed.data.userId);
   return { success: true };
 }
 
@@ -2217,7 +2237,7 @@ export async function deleteUserInventoryItem(data: {
     return { success: false, error: result.error };
   }
 
-  revalidatePath(`/users/${parsed.data.userId}`);
+  invalidateUserCaches(parsed.data.userId);
   return { success: true };
 }
 
@@ -2465,7 +2485,7 @@ export async function bulkDeleteUserInventoryItems(data: {
     }
   }
 
-  revalidatePath(`/users/${parsed.data.userId}`);
+  invalidateUserCaches(parsed.data.userId);
 
   if (deleted === 0) {
     return {
@@ -2762,7 +2782,7 @@ export async function updateWithdrawalLimits(data: {
     },
   });
 
-  revalidatePath(`/users/${parsed.userId}`);
+  invalidateUserCaches(parsed.userId);
 }
 
 export async function fetchCreatorClicks(
@@ -2854,9 +2874,9 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
       },
     });
 
-    revalidatePath(`/users/${userId}`);
+    invalidateUserCaches(userId);
     revalidateTag(`user-attribution-${userId}`);
-    if (currentUser?.referred_by) revalidatePath(`/users/${currentUser.referred_by}`);
+    if (currentUser?.referred_by) invalidateUserCaches(currentUser.referred_by);
     return { success: true };
   }
 
@@ -2915,8 +2935,8 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
     metadata: { affiliateCode: affiliateCode.trim(), affiliateOwnerId: codeRecord.user_id },
   });
 
-  revalidatePath(`/users/${userId}`);
-  revalidatePath(`/users/${codeRecord.user_id}`);
+  invalidateUserCaches(userId);
+  invalidateUserCaches(codeRecord.user_id);
   return { success: true };
 }
 
@@ -3009,7 +3029,7 @@ export async function createAffiliateCode(
     metadata: { code: trimmed },
   });
 
-  revalidatePath(`/users/${userId}`);
+  invalidateUserCaches(userId);
   revalidatePath(`/creators/${userId}`);
   return { success: true };
 }
@@ -3158,8 +3178,8 @@ export async function transferAffiliateCode(args: {
     },
   });
 
-  revalidatePath(`/users/${args.toUserId}`);
-  revalidatePath(`/users/${previousOwnerId}`);
+  invalidateUserCaches(args.toUserId);
+  invalidateUserCaches(previousOwnerId);
   return { success: true, replacementCode, previousOwnerId };
 }
 
@@ -3210,7 +3230,7 @@ export async function adjustXp(data: {
     metadata: { amount: parsed.amount, previousXp: currentXp, newXp, reason: parsed.reason },
   });
 
-  revalidatePath(`/users/${parsed.userId}`);
+  invalidateUserCaches(parsed.userId);
 }
 
 // The rows-per-page values the transactions table's selector offers. The
@@ -3255,14 +3275,35 @@ export async function fetchUserTransactions(
  * The Balances panel's refresh icon calls router.refresh(), which re-runs the
  * page's server components — but the per-user reads are unstable_cache'd
  * (getUserDetailCached / getUserPnlBreakdownCached / the gaming + financial
- * feeds, ALL tagged "users-detail"), so within their TTL a plain
- * router.refresh() just replays the same cached snapshot. Invalidating the tag
- * here drops those entries so the subsequent router.refresh() re-queries
- * Postgres live — the manual refresh is then always instant AND fresh.
+ * feeds + the XP-purchase + reward-pack-open caches, ALL tagged both
+ * "users-detail" AND `users-detail-${userId}`). Within their TTL a plain
+ * router.refresh() just replays the same cached snapshot. We invalidate
+ * BOTH:
+ *   • `users-detail-${userId}` — drops THIS user's cache entries only, so a
+ *     refresh on user A doesn't nuke unrelated users' warmed entries.
+ *   • the route segment via `revalidatePath(.../page)` — drops the Next.js
+ *     route-segment + RSC response cache for this specific page so the
+ *     follow-up router.refresh() actually re-renders from scratch instead
+ *     of replaying the cached RSC payload.
+ *
+ * Subsequent router.refresh() then re-queries Postgres live — the manual
+ * refresh is always fresh.
+ *
+ * `userId` is optional for backwards compatibility (an undefined value falls
+ * back to busting the GLOBAL `users-detail` tag, matching the legacy bulk-
+ * flush behaviour). Always pass it when known.
  */
-export async function refreshUserDetailCache(): Promise<void> {
+export async function refreshUserDetailCache(userId?: string): Promise<void> {
   await requirePageAccess("/users");
-  revalidateTag("users-detail");
+  if (userId) {
+    revalidateTag(`users-detail-${userId}`);
+    // The route-segment cache is independent of unstable_cache — busting it
+    // here ensures the follow-up router.refresh() re-renders the page
+    // server-side instead of replaying the cached RSC response.
+    revalidatePath(`/users/${userId}`, "page");
+  } else {
+    revalidateTag("users-detail");
+  }
 }
 
 export async function fetchProvablyFairResults(
@@ -3360,7 +3401,7 @@ export async function updateUserBattleLimits(data: {
     },
   });
 
-  revalidatePath(`/users/${parsed.userId}`);
+  invalidateUserCaches(parsed.userId);
   return { success: true };
 }
 
@@ -3391,7 +3432,7 @@ export async function clearUserBattleLimits(
     metadata: {},
   });
 
-  revalidatePath(`/users/${userId}`);
+  invalidateUserCaches(userId);
   return { success: true };
 }
 
@@ -3470,7 +3511,7 @@ export async function setUserTag(
     metadata: { tag: parsed.data.tag },
   });
 
-  revalidatePath(`/users/${parsed.data.userId}`);
+  invalidateUserCaches(parsed.data.userId);
   revalidatePath("/creator-hub/wager-abusers");
   return { success: true };
 }
@@ -3520,7 +3561,7 @@ export async function removeUserTag(
     return { success: false, error: "Failed to remove tag" };
   }
 
-  revalidatePath(`/users/${parsed.data.userId}`);
+  invalidateUserCaches(parsed.data.userId);
   revalidatePath("/creator-hub/wager-abusers");
   return { success: true };
 }
