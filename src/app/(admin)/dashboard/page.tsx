@@ -46,6 +46,7 @@ import {
   SignupsChart,
   FtdsChart,
   PnlChart,
+  CashPnlChart,
   ActiveDepositorsChart,
 } from "./charts";
 // RecentActivity moved into the admin shell layout (DockedRecentActivity).
@@ -241,7 +242,8 @@ export default async function DashboardPage() {
           fallback={
             <>
               <ChartRowSkeleton count={3} height={300} />
-              <ChartRowSkeleton count={3} height={300} />
+              <ChartRowSkeleton count={2} height={300} />
+              <ChartRowSkeleton count={2} height={300} />
             </>
           }
         >
@@ -729,19 +731,22 @@ async function DashboardActiveRain() {
 }
 
 /**
- * Trend charts in two rows:
+ * Trend charts in three rows:
  *   Row 1 (3): Wagers · Deposits · FTDs              — cached getDashboardStats
- *   Row 2 (3): Daily P&L · Signups · Depositors      — P&L from getDailyPnl
+ *   Row 2 (2): Daily P&L · Daily Cash P&L            — both from getDailyPnl
+ *   Row 3 (2): Signups · Depositors                  — cached getDashboardStats
  *
- * The five non-P&L charts read from the React-cached getDashboardStats — the
- * SAME aggregate the KPI strips already triggered — so this component awaits
- * ONLY that (the call dedupes; it's effectively free here) and paints all
- * five charts as soon as it's ready. The Daily P&L chart is the one heavy leg
- * (its own lifetime-scan getDailyPnl), so it is NO LONGER awaited here: it
- * streams behind its own nested <Suspense> (DashboardDailyPnlChart) at row 2 /
- * col 1, so the slow P&L scan can't hold back the five fast charts. The
- * nested Suspense fallback is a single chart-card skeleton occupying exactly
- * that one grid cell, so the row layout never shifts.
+ * The five getDashboardStats-backed charts read from the React-cached aggregate
+ * the KPI strips already triggered — so this component awaits ONLY that (the
+ * call dedupes; it's effectively free here) and paints them as soon as it's
+ * ready. The two Daily-P&L charts (canonical P&L + Cash P&L) BOTH derive from
+ * the one heavy lifetime-scan getDailyPnl, so they stream together behind a
+ * single nested <Suspense> (DashboardDailyPnlChart, which emits a 2-cell
+ * Fragment) at row 2 — the slow P&L scan can't hold back the five fast charts
+ * either above or below it. The nested Suspense fallback mirrors the two-cell
+ * shape so the grid never shifts. Cash P&L is a derived view of the same
+ * DailyPnlPoint rows (deposits − withdrawals per day), so it adds NO extra
+ * query — same canonical formula as the "P&L Today" tile's Cash-P&L badge.
  *
  * The Wager Attribution chart used to live as a third full-width row here; it
  * was promoted next to the Upgrader Stats section.
@@ -778,18 +783,30 @@ async function DashboardCharts() {
         <DepositsChart data={stats.dailyDeposits} />
         <FtdsChart data={stats.dailyFtds} />
       </div>
-      <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {/* Daily P&L — its own nested Suspense so the heavy getDailyPnl
+      <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-2">
+        {/* Daily P&L (canonical) + Daily Cash P&L (raw deposits −
+            withdrawals) — its own nested Suspense so the heavy getDailyPnl
             lifetime scan streams independently of the five cached-stats
-            charts. Fallback is a single chart-card skeleton sized to this
-            one grid cell, so the row holds its shape while P&L loads. Not
-            period-keyed (getDailyPnl is period-independent), so it never
-            re-suspends on a chip change. */}
+            charts. Both bars come from the SAME getDailyPnl rows (cached
+            via unstable_cache), so no extra query is added by the second
+            chart — it's a derived view. The Suspense returns a 2-cell
+            Fragment, so the row paints both charts side-by-side once the
+            P&L scan resolves; the fallback mirrors that with two chart
+            skeletons so the grid never shifts. Not period-keyed
+            (getDailyPnl is period-independent), so neither chart re-
+            suspends on a chip change. */}
         <Suspense
-          fallback={<SkeletonChart height={300} className="rounded-xl" />}
+          fallback={
+            <>
+              <SkeletonChart height={300} className="rounded-xl" />
+              <SkeletonChart height={300} className="rounded-xl" />
+            </>
+          }
         >
           <DashboardDailyPnlChart />
         </Suspense>
+      </div>
+      <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
         <SignupsChart data={stats.dailySignups} />
         <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
       </div>
@@ -846,7 +863,22 @@ async function DashboardDailyPnlChart() {
     ...d,
     creatorCost: creatorCostByDate.get(d.date) ?? 0,
   }));
-  return <PnlChart data={merged} />;
+  // Cash P&L = deposits − withdrawals per day (raw crypto cash flow only —
+  // same canonical formula as the "P&L Today" tile's `rawCashPnl`). Derived
+  // from the same DailyPnlPoint rows so no extra query is needed; the
+  // CashPnlChart sits beside Daily P&L in the Trends grid as a separate cell.
+  const cash = data.map((d) => ({
+    date: d.date,
+    deposits: d.deposits,
+    withdrawals: d.withdrawals,
+    cashPnl: d.deposits - d.withdrawals,
+  }));
+  return (
+    <>
+      <PnlChart data={merged} />
+      <CashPnlChart data={cash} />
+    </>
+  );
 }
 
 /**

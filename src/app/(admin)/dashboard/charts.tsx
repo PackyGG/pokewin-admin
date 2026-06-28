@@ -947,3 +947,157 @@ export function PnlChart({
     </Card>
   );
 }
+
+// Same ChartContainer config shape as `pnlConfig` — cells override the per-bar
+// fill by sign, but ChartContainer still requires a config entry for the
+// `cashPnl` dataKey so the legend / tooltip context wire up cleanly.
+const cashPnlConfig = {
+  cashPnl: { label: "Cash P&L" },
+} satisfies ChartConfig;
+
+/**
+ * Hover for the Daily Cash P&L chart — per-day deposits, withdrawals, and the
+ * resulting Cash P&L (deposits − withdrawals). This is the same canonical
+ * `rawCashPnl` formula the "P&L Today" tile surfaces (today-pnl-stat-card.tsx),
+ * bucketed per day. Mirrors the Deposits/Wager tooltip styling so the dashboard
+ * tooltips stay visually consistent. House-POV coloring on the Cash P&L line:
+ * cash flowed INTO the house → emerald, OUT → rose.
+ */
+function CashPnlTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    payload: {
+      date: string;
+      deposits: number;
+      withdrawals: number;
+      cashPnl: number;
+    };
+  }>;
+}) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  const up = p.cashPnl > 0;
+  const down = p.cashPnl < 0;
+  return (
+    <div className="grid min-w-48 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs shadow-xl">
+      <span className="font-medium text-foreground">{p.date}</span>
+      <div className="grid gap-1">
+        <div className="flex items-center justify-between gap-3">
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <ArrowDownToLine className="size-3 shrink-0" />
+            Deposits
+          </span>
+          <span className="font-mono font-medium tabular-nums text-foreground">
+            {formatCurrency(p.deposits)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <ArrowUpFromLine className="size-3 shrink-0" />
+            Withdrawals
+          </span>
+          <span className="font-mono font-medium tabular-nums text-foreground">
+            {formatCurrency(p.withdrawals)}
+          </span>
+        </div>
+      </div>
+      <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border/50 pt-1.5">
+        <span className="flex items-center gap-1.5 font-semibold text-foreground">
+          <Coins className="size-3 shrink-0" />
+          Cash P&amp;L
+        </span>
+        <span
+          className={cn(
+            "font-mono font-bold tabular-nums",
+            up && "text-emerald-600 dark:text-emerald-400",
+            down && "text-rose-600 dark:text-rose-400",
+            !up && !down && "text-muted-foreground",
+          )}
+        >
+          {up ? "+" : down ? "−" : ""}
+          {formatCurrency(Math.abs(p.cashPnl))}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Daily Cash P&L (30 days) — STANDALONE chart that visualizes the per-day
+ * raw crypto cash flow (deposits − withdrawals). Separate from the canonical
+ * Daily P&L chart (which adds balance/inventory/voucher terms on top). House-
+ * POV per-bar coloring: emerald when we actually made real crypto money that
+ * day, rose when more cash flowed out than in, muted on zero-flow days.
+ *
+ * Reuses the same getDailyPnl data the Daily P&L chart consumes — no new
+ * query — by deriving `cashPnl = deposits - withdrawals` on the page before
+ * handing the rows down. Sizing/animation mirror PnlChart so the two charts
+ * read as a pair when placed beside each other in the Trends grid.
+ */
+export function CashPnlChart({
+  data,
+}: {
+  data: { date: string; deposits: number; withdrawals: number; cashPnl: number }[];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">
+          Daily Cash P&amp;L (30 days)
+        </CardTitle>
+        <CardDescription className="text-xs">
+          Deposits − withdrawals per day. Green = actual crypto inflow.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ChartContainer config={cashPnlConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
+          <BarChart data={data} accessibilityLayer>
+            <CartesianGrid vertical={false} />
+            <XAxis
+              dataKey="date"
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={(v) => v.slice(5)}
+            />
+            <YAxis
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              width={70}
+              tickFormatter={formatCompactUsd}
+            />
+            <ChartTooltip content={<CashPnlTooltip />} />
+            <Bar
+              dataKey="cashPnl"
+              radius={[4, 4, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
+            >
+              {data.map((d) => (
+                <Cell
+                  key={d.date}
+                  // Per-bar fill by sign — same House-POV convention the
+                  // canonical Daily P&L chart uses (PNL_UP / PNL_DOWN). A
+                  // zero-flow day reads muted so it doesn't visually claim
+                  // a win/loss it didn't represent.
+                  fill={
+                    d.cashPnl > 0
+                      ? PNL_UP
+                      : d.cashPnl < 0
+                        ? PNL_DOWN
+                        : "var(--color-muted-foreground)"
+                  }
+                  className="transition-opacity hover:opacity-80"
+                />
+              ))}
+            </Bar>
+          </BarChart>
+        </ChartContainer>
+      </CardContent>
+    </Card>
+  );
+}
