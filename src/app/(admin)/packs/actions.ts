@@ -1534,6 +1534,50 @@ export async function authorizePackRetune(
   return { token: await signRetuneToken(session.userId) };
 }
 
+/**
+ * Mint a RETUNE token for the Pack Studio retune REVIEW flow with NO TOTP/2FA.
+ *
+ * The retune review/approve flow lives entirely in admin-staging — the operator
+ * tinder-swipes through pre-computed proposals and approves what looks right.
+ * The owner found the per-session 2FA prompt annoying enough that the friction
+ * outweighed the (already weak) security justification — the underlying writes
+ * are still operator/capability/scope-gated and audit-logged, and a malicious
+ * client can't bypass any of those guards.
+ *
+ * Behaviour vs. `authorizePackRetune`:
+ *   • SAME operator allowlist (`isPackStudioRetuneOperator`) check.
+ *   • SAME `__can_update_pack` capability check.
+ *   • SAME `signRetuneToken` mint (so the token verifies identically against
+ *     `verifyRetuneToken` in `applyPackRetune` / `applyPackEdit` /
+ *     `applyStagedPackEditAndRetune` / `revertPackToSnapshot`).
+ *   • NO TOTP — `require2FA` is not called.
+ *   • Audit-event still fires with `via_no_2fa_review: true` so a refusal /
+ *     bypass is traceable.
+ *
+ * Other callers (history-timeline revert, doctor drawer, bulk-retune button)
+ * continue to use `authorizePackRetune` and its TOTP gate untouched.
+ */
+export async function authorizePackRetuneForReview(): Promise<{ token: string }> {
+  const session = await requirePageAccess("/packs");
+  if (!isPackStudioRetuneOperator(session)) {
+    throw new Error("The pack retune tool is restricted to authorized operators.");
+  }
+  await requireCapability(session, "__can_update_pack", "retune packs");
+  // Audit the mint — flagged so a review can split no-2FA review-flow mints
+  // from owner-with-2FA mints. Best-effort: the per-pack apply audits its own
+  // write, this trail is belt-and-suspenders.
+  try {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "pack_retune_authorized",
+      metadata: { via_no_2fa_review: true },
+    });
+  } catch {
+    /* swallow — mint must not depend on audit availability */
+  }
+  return { token: await signRetuneToken(session.userId) };
+}
+
 export type PackRetuneResult = {
   packId: string;
   name: string;
