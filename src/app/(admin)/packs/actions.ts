@@ -45,6 +45,7 @@ import {
 import { getPackCardValues } from "@/lib/queries/pack-card-values";
 import {
   shapeWeights,
+  searchBestPriceForCleanSnap,
   computePackRisk,
   computePackRiskFromAggregates,
   type PackRisk,
@@ -1311,6 +1312,26 @@ export type PackRetuneTargets = {
   floorRatioMin?: number;
   /** Minimum probability mass on near-miss cards. */
   nearMissMin?: number;
+  /**
+   * When TRUE, run `searchBestPriceForCleanSnap` around the live ticket price
+   * (default ±25% band) and pick the candidate whose `shapeWeights` result
+   * lands every card on a clean ladder rung. When the operator nudged the
+   * edge target UP via the chip-strip (`targetEdge` > pack baseline), the
+   * search ALSO extends the upward band so the ticket can RISE as far as
+   * needed to simultaneously hit (raised edge + clean odds + win-rate).
+   * The chosen price becomes the FINAL `priceAfter` written to `packs.price`.
+   * Defaults to FALSE — legacy behavior preserved for callers that don't opt
+   * in (so the pack-detail drawer's direct retune still holds price fixed).
+   */
+  allowPriceSearch?: boolean;
+  /**
+   * Upward price-search extension as a fraction of the live ticket price
+   * (e.g. `2.0` = up to 3× base) — only used when `allowPriceSearch` is true.
+   * Owner's chip-strip path passes a non-zero value when the edge floor is
+   * nudged above baseline so the solver can climb past the +25% ceiling.
+   * Defaults to 0 (use only the symmetric ±25% band).
+   */
+  upwardPriceExtensionPct?: number;
 };
 
 /** Target set with the auto-defaults applied (used internally by plan/apply). */
@@ -1582,6 +1603,17 @@ export type PackRetuneResult = {
   packId: string;
   name: string;
   status: "retuned";
+  /** Ticket price BEFORE the retune (USD). */
+  priceBefore: number;
+  /**
+   * Ticket price AFTER the retune (USD). Equal to `priceBefore` unless the
+   * caller opted into `allowPriceSearch` AND the clean-snap search picked a
+   * different price (typically a small upward nudge for clean odds, or a
+   * larger upward push when the operator raised the edge target via the
+   * chip-strip). When `priceAfter !== priceBefore`, `packs.price` was
+   * REWRITTEN inside the same transaction as the weights.
+   */
+  priceAfter: number;
   before: { edge: number; winRate: number; maxWin: number };
   after: { edge: number; winRate: number; maxWin: number };
 };
@@ -1668,16 +1700,59 @@ export async function applyPackRetune(
     price,
   });
 
-  const shaped = shapeWeights({
-    cards: pool.map((c) => ({ value: c.value })),
-    price,
-    targetEdge,
-    targetWinRate: resolved.targetWinRate,
-    maxWinCap: resolved.maxWinCap,
-    floorRatioMin: resolved.floorRatioMin,
-    nearMissMin: resolved.nearMissMin,
-    winRateTol,
-  });
+  // Price-search lever (chip-strip path opts in):
+  //   • allowPriceSearch off → legacy: hold price fixed, raw `shapeWeights`.
+  //   • allowPriceSearch on  → route through `searchBestPriceForCleanSnap`.
+  //     The owner explicitly asked for this:
+  //       "u can change the price of the pack to keep the edge better or
+  //        chances … none of these odds is clean, all dirty shit numbers"
+  //     The default ±25% band catches the small "price nudge for clean odds"
+  //     case. When the operator raised the edge target via the chip-strip
+  //     (`upwardPriceExtensionPct` > 0), the search also extends UPWARD past
+  //     +25% so the ticket can RISE as far as needed to simultaneously hit
+  //     (raised edge target + clean ladder odds + tag/default win-rate).
+  //     The chosen price becomes the FINAL `priceAfter` written below.
+  const allowPriceSearch = targets.allowPriceSearch === true;
+  const upwardExtension = Math.max(0, targets.upwardPriceExtensionPct ?? 0);
+  // Tagged lottery packs get the strict 0.01pp win-rate accuracy gate (the
+  // tag IS the contract). Only active when the operator didn't pin an
+  // explicit `targetWinRate` AND the resolved targetWinRate matches the tag.
+  const taggedWinRate =
+    resolved.intendedHitRate !== null &&
+    targets.targetWinRate === undefined &&
+    Math.abs(resolved.intendedHitRate - resolved.targetWinRate) < 1e-9
+      ? resolved.intendedHitRate
+      : undefined;
+
+  let priceAfter = price;
+  let shaped;
+  if (allowPriceSearch) {
+    const search = searchBestPriceForCleanSnap({
+      cards: pool.map((c) => ({ value: c.value })),
+      basePrice: price,
+      targetEdge,
+      targetWinRate: resolved.targetWinRate,
+      maxWinCap: resolved.maxWinCap,
+      nearMissMin: resolved.nearMissMin,
+      winRateTol,
+      maxPriceChangePct: 0.25,
+      upwardPriceExtensionPct: upwardExtension,
+      ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
+    });
+    shaped = search.bestResult;
+    priceAfter = search.bestPrice;
+  } else {
+    shaped = shapeWeights({
+      cards: pool.map((c) => ({ value: c.value })),
+      price,
+      targetEdge,
+      targetWinRate: resolved.targetWinRate,
+      maxWinCap: resolved.maxWinCap,
+      floorRatioMin: resolved.floorRatioMin,
+      nearMissMin: resolved.nearMissMin,
+      winRateTol,
+    });
+  }
 
   // ── FAIL-CLOSED asserts (throw → no write) ──────────────────────────
   if ("error" in shaped) {
@@ -1756,9 +1831,17 @@ export async function applyPackRetune(
     capturedBy: session.userId,
   });
 
-  // SAME delete-all-then-createMany pattern updatePack uses.
+  // SAME delete-all-then-createMany pattern updatePack uses. When the price-
+  // search lever picked a different price, write `packs.price` in the SAME
+  // transaction so weights + price always commit atomically.
+  const priceChanged = Math.abs(priceAfter - price) > 1e-9;
   await db.$transaction(async (tx) => {
-    await tx.packs.update({ where: { id: packId }, data: { updated_at: new Date() } });
+    await tx.packs.update({
+      where: { id: packId },
+      data: priceChanged
+        ? { updated_at: new Date(), price: priceAfter.toFixed(2) }
+        : { updated_at: new Date() },
+    });
     await tx.pack_cards.deleteMany({ where: { pack_id: packId } });
     if (rows.length > 0) {
       await tx.pack_cards.createMany({ data: rows });
@@ -1787,6 +1870,16 @@ export async function applyPackRetune(
       },
       before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
       after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
+      // Price-search trace — present only when the lever actually moved the
+      // ticket. Lets an audit review distinguish a fixed-price retune from a
+      // chip-strip nudge that raised the price for clean odds.
+      ...(priceChanged && {
+        price_search: {
+          before: price,
+          after: priceAfter,
+          allowed_extension_pct: upwardExtension,
+        },
+      }),
       ...(editedLivePackUnderCapability && { edited_live_pack_under_capability: true }),
       // Flag operator-allowlist 2FA-bypass writes so an audit review can split
       // operator no-2FA retunes from owner-with-2FA retunes (the token mint
@@ -1819,6 +1912,8 @@ export async function applyPackRetune(
     packId,
     name: pack.name,
     status: "retuned",
+    priceBefore: price,
+    priceAfter,
     before: { edge: before.edge, winRate: before.winRate, maxWin: before.maxWin },
     after: { edge: after.edge, winRate: after.winRate, maxWin: after.maxWin },
   };

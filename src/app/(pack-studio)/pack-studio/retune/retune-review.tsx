@@ -36,7 +36,7 @@ import { cn } from "@/lib/utils";
 import { DEFAULT_MAX_MULT_CEILING } from "@/app/(admin)/packs/_lib/auto-targets";
 import {
   computePackRisk,
-  shapeWeights,
+  searchBestPriceForCleanSnap,
   type PackRisk,
   type ShapeWeightsLimit,
   type ShapeWeightsRelaxation,
@@ -209,18 +209,33 @@ function effectiveTargetEdge(
   return baseline;
 }
 
-/** Build the `PackRetuneTargets` payload sent to `applyPackRetune` for an item. */
+/** Build the `PackRetuneTargets` payload sent to `applyPackRetune` for an item.
+ *
+ * ALWAYS opts the write into the clean-snap price-search path — the chip-strip
+ * preview the operator approved was already produced via the same search (see
+ * `planAllRetunes`), so the write must use the same lever or the displayed
+ * "after" weights won't match what lands in MAIN. When the operator nudged the
+ * edge target via the chip-strip (`edgeOverride !== null`), the upward search
+ * band is extended to +200% so the ticket can RISE as far as needed to land
+ * (raised edge + clean ladder odds + tag/default win-rate) simultaneously —
+ * matching the owner's spec: "u can change the price of the pack to keep the
+ * edge better or chances". A local adjust resets `edgeOverride` semantics: it
+ * still uses the price-search, but only at the symmetric ±25% band.
+ */
 function buildTargets(
   item: ReviewItem,
   edgeOverride: number | null,
 ): PackRetuneTargets {
   const { autoTargets } = item.proposal;
   const a = item.adjusted;
+  const edgeRaised = edgeOverride !== null && Number.isFinite(edgeOverride);
   return {
     targetEdge: effectiveTargetEdge(item, edgeOverride),
     targetWinRate: a ? a.targetWinRate : autoTargets.targetWinRate,
     maxWinCap: a ? a.maxWinCap : autoTargets.maxWinCap,
     nearMissMin: a ? a.nearMissMin : autoTargets.nearMissMin,
+    allowPriceSearch: true,
+    upwardPriceExtensionPct: edgeRaised ? 2.0 : 0,
   };
 }
 
@@ -436,6 +451,10 @@ export function RetuneReview({
   );
 
   // ── Local re-shape (Adjust) ─────────────────────────────────────────
+  // Routes through `searchBestPriceForCleanSnap` so the locally-previewed
+  // weights match what the server will (re-)shape against on approve — the
+  // chip-strip preview is already snapped, so the adjust panel must use the
+  // same lever or the per-card percentages would jump on approve.
   const onAdjust = React.useCallback(
     (i: number, levers: AdjustedTargets) => {
       setItems((prev) => {
@@ -443,16 +462,22 @@ export function RetuneReview({
         const item = next[i];
         if (!item) return prev;
         const { proposal } = item;
-        const shaped = shapeWeights({
+        const targetEdge = effectiveTargetEdge(item, edgeOverride);
+        const edgeRaised =
+          edgeOverride !== null && Number.isFinite(edgeOverride);
+        const search = searchBestPriceForCleanSnap({
           cards: proposal.cards.map((c) => ({ value: c.value })),
-          price: proposal.price,
+          basePrice: proposal.price,
           // Honour the per-session edge-target override so the locally-shaped
           // "after" matches what the server will (re-)shape against on approve.
-          targetEdge: effectiveTargetEdge(item, edgeOverride),
+          targetEdge,
           targetWinRate: levers.targetWinRate,
           maxWinCap: levers.maxWinCap,
           nearMissMin: levers.nearMissMin,
+          maxPriceChangePct: 0.25,
+          upwardPriceExtensionPct: edgeRaised ? 2.0 : 0,
         });
+        const shaped = search.bestResult;
         let adjusted: AdjustedState;
         if ("error" in shaped) {
           adjusted = {
@@ -550,7 +575,9 @@ export function RetuneReview({
           return next;
         });
         toast.success(
-          `Re-tuned ${res.name}: edge ${(res.after.edge * 100).toFixed(2)}% · win ${(res.after.winRate * 100).toFixed(2)}%.`,
+          res.priceAfter !== res.priceBefore
+            ? `Re-tuned ${res.name}: price $${res.priceBefore.toFixed(2)} → $${res.priceAfter.toFixed(2)} · edge ${(res.after.edge * 100).toFixed(2)}% · win ${(res.after.winRate * 100).toFixed(2)}%.`
+            : `Re-tuned ${res.name}: edge ${(res.after.edge * 100).toFixed(2)}% · win ${(res.after.winRate * 100).toFixed(2)}%.`,
         );
         router.refresh();
         advance();
@@ -573,7 +600,9 @@ export function RetuneReview({
               return next;
             });
             toast.success(
-              `Re-tuned ${retry.name}: edge ${(retry.after.edge * 100).toFixed(2)}% · win ${(retry.after.winRate * 100).toFixed(2)}%.`,
+              retry.priceAfter !== retry.priceBefore
+                ? `Re-tuned ${retry.name}: price $${retry.priceBefore.toFixed(2)} → $${retry.priceAfter.toFixed(2)} · edge ${(retry.after.edge * 100).toFixed(2)}% · win ${(retry.after.winRate * 100).toFixed(2)}%.`
+                : `Re-tuned ${retry.name}: edge ${(retry.after.edge * 100).toFixed(2)}% · win ${(retry.after.winRate * 100).toFixed(2)}%.`,
             );
             router.refresh();
             advance();
@@ -1366,23 +1395,32 @@ function buildConfirmSummary(
     // Precedence: a local `Adjust` already shaped against the override (woven
     // in via `onAdjust`); else, when an override is set, reshape here;
     // otherwise fall back to the proposal's original after.
+    //
+    // Both server-side shape paths (`planAllRetunes`, `applyPackRetune`) now
+    // route through `searchBestPriceForCleanSnap` — so this LOCAL preview MUST
+    // mirror the same lever or the gate would show the wrong odds/price.
     let after: PackRisk | null;
     let weightDiff: PlanAllWeightDiff[] | null;
     let feasible: boolean;
+    let priceAfter: number = proposal.priceAfter ?? proposal.price;
     if (item.adjusted) {
       after = item.adjusted.after;
       weightDiff = item.adjusted.weightDiff;
       feasible = item.adjusted.feasible;
     } else if (edgeOverride !== null) {
       const auto = proposal.autoTargets;
-      const reshaped = shapeWeights({
+      const search = searchBestPriceForCleanSnap({
         cards: proposal.cards.map((c) => ({ value: c.value })),
-        price: proposal.price,
+        basePrice: proposal.price,
         targetEdge: edgeOverride,
         targetWinRate: auto.targetWinRate,
         maxWinCap: auto.maxWinCap,
         nearMissMin: auto.nearMissMin,
+        maxPriceChangePct: 0.25,
+        upwardPriceExtensionPct: 2.0,
       });
+      const reshaped = search.bestResult;
+      priceAfter = search.bestPrice;
       if ("error" in reshaped) {
         after = null;
         weightDiff = null;
@@ -1402,16 +1440,18 @@ function buildConfirmSummary(
       after = proposal.after;
       weightDiff = proposal.weightDiff;
       feasible = proposal.feasible;
+      priceAfter = proposal.priceAfter ?? proposal.price;
     }
     const diff = buildRetuneDiffRows(proposal, weightDiff);
+    const priceChanged = Math.abs(priceAfter - proposal.price) > 1e-9;
     return {
       name: proposal.name,
       mode: "retune",
       modeLabel: "Auto re-tune (per-pack targets)",
       tag,
       priceBefore: proposal.price,
-      priceAfter: proposal.price,
-      priceChanged: false,
+      priceAfter,
+      priceChanged,
       edgeBefore: before.edge,
       edgeAfter: after?.edge ?? null,
       isAutoTune: false,

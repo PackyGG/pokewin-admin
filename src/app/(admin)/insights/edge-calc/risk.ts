@@ -1997,6 +1997,18 @@ export function searchBestPriceForCleanSnap(input: {
    * stay byte-for-byte unchanged.
    */
   taggedWinRate?: number;
+  /**
+   * Owner's edge-target nudge mode (chip-strip): when the operator selects a
+   * higher edge target than the pack's baseline, "raise the ticket price" is
+   * the right knob (higher price + same payouts = higher edge), so the search
+   * may push UP past the normal ±maxPriceChangePct band. Pass the upward
+   * extension as a fraction of basePrice — e.g. `1.0` lets price go up to
+   * +100% (2× basePrice) — `0` disables (legacy behavior). The downward band
+   * stays at `maxPriceChangePct`. Used by `planAllRetunes` /
+   * `applyPackRetune` when an `edgeFloorOverride` is active so the snap can
+   * actually land both clean odds AND the raised edge target.
+   */
+  upwardPriceExtensionPct?: number;
 }): SearchBestPriceResult {
   const {
     cards,
@@ -2008,6 +2020,7 @@ export function searchBestPriceForCleanSnap(input: {
     winRateTol,
   } = input;
   const maxPriceChangePct = input.maxPriceChangePct ?? 0.25;
+  const upwardPriceExtensionPct = Math.max(0, input.upwardPriceExtensionPct ?? 0);
   const taggedWinRate = input.taggedWinRate;
   const tagged = typeof taggedWinRate === "number" && Number.isFinite(taggedWinRate);
 
@@ -2032,7 +2045,11 @@ export function searchBestPriceForCleanSnap(input: {
     return Math.abs(r.risk.winRate - taggedWinRate!) <= TAGGED_WINRATE_TOLERANCE;
   };
 
-  if (cards.length === 0 || !(basePrice > 0) || !(maxPriceChangePct > 0)) {
+  if (
+    cards.length === 0 ||
+    !(basePrice > 0) ||
+    (!(maxPriceChangePct > 0) && !(upwardPriceExtensionPct > 0))
+  ) {
     // The disabled / degenerate paths run a single shape and report whether
     // the base produced a clean snap (`fellBackToBase=false` — base was good)
     // or did NOT snap (`fellBackToBase=true` — we returned base only because
@@ -2065,9 +2082,20 @@ export function searchBestPriceForCleanSnap(input: {
   //     win-rate accuracy gate is the whole point of tagged mode; clipping
   //     the band would silently fail the accuracy requirement on costly
   //     packs.
-  const MAX_CANDIDATES = tagged ? 320 : 50;
+  // When an upward price extension is active (operator nudging edge UP via the
+  // chip-strip), we widen the candidate cap so the upward search has room to
+  // climb past +25% and still leave budget for the snap+win-rate trade-off.
+  const upwardBoosted = upwardPriceExtensionPct > 0;
+  const MAX_CANDIDATES = upwardBoosted ? 800 : tagged ? 320 : 50;
   const centsAtBase = Math.round(basePrice * 100);
-  const maxDeltaCents = Math.max(0, Math.floor(basePrice * maxPriceChangePct * 100));
+  const downCents = Math.max(0, Math.floor(basePrice * maxPriceChangePct * 100));
+  // Upward span = the LARGER of the symmetric ±maxPriceChangePct band and the
+  // operator's explicit upwardPriceExtensionPct (a chip-strip nudge can push
+  // far past +25% to land both clean odds AND the raised edge target).
+  const upCents = Math.max(
+    downCents,
+    Math.floor(basePrice * upwardPriceExtensionPct * 100),
+  );
   const seenCents = new Set<number>();
   const candidates: number[] = [];
   const pushCents = (cents: number): void => {
@@ -2078,11 +2106,16 @@ export function searchBestPriceForCleanSnap(input: {
     candidates.push(Math.round(cents) / 100);
   };
   pushCents(centsAtBase);
-  for (let d = 1; d <= maxDeltaCents; d++) {
-    pushCents(centsAtBase + d);
-    if (candidates.length >= MAX_CANDIDATES) break;
-    pushCents(centsAtBase - d);
-    if (candidates.length >= MAX_CANDIDATES) break;
+  const maxDelta = Math.max(downCents, upCents);
+  for (let d = 1; d <= maxDelta; d++) {
+    if (d <= upCents) {
+      pushCents(centsAtBase + d);
+      if (candidates.length >= MAX_CANDIDATES) break;
+    }
+    if (d <= downCents) {
+      pushCents(centsAtBase - d);
+      if (candidates.length >= MAX_CANDIDATES) break;
+    }
   }
 
   // ── Evaluate the base price first (anchor for the "prefer base" rule) ──

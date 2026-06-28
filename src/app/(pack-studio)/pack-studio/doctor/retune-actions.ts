@@ -378,6 +378,16 @@ export type PlanAllProposal = {
   name: string;
   slug: string;
   price: number;
+  /**
+   * The PRICE the proposal would write (USD). Equals `price` when the clean-
+   * snap price-search didn't move the ticket. When the chip-strip edge override
+   * is active (or the snap needed a nearby price to land clean odds), the
+   * solver may PUSH THE TICKET PRICE UP to satisfy the (edge_target +
+   * clean_odds + win_rate) trio simultaneously — `priceAfter` is the new
+   * ticket. `applyPackRetune` writes this verbatim. Owner asked: "change the
+   * price of the pack to keep the edge better or chances".
+   */
+  priceAfter: number;
   /** Pool cards (id/value/current weight), pool order. */
   cards: PlanAllCard[];
   /** Current weights, mirrored out for convenient client re-shaping. */
@@ -631,6 +641,34 @@ export async function planAllRetunes(
     systemPlan = derived.systemPlan;
   }
 
+  // Per-pack price-search policy.
+  //
+  // The dry-run must show the OWNER what approve will actually write — the
+  // chip-strip table the owner sees is the AUTHORITATIVE preview. The legacy
+  // path called `shapeWeights` directly, which produced "dirty" odds like
+  // 0.0142% / 0.0656% (no clean-snap convergence) AND held the ticket price
+  // fixed even when the operator raised the edge target. The owner's explicit
+  // ask:
+  //   "i want the option to change the house edge … u can change the price of
+  //    the pack to keep the edge better or chances. last time i will say this
+  //    also none of these odds is clean, all dirty shit numbers. i said clean
+  //    and easy, change the price to get it done if needed"
+  // So every proposal now routes through `searchBestPriceForCleanSnap`:
+  //   • ±25% default band → catches the "small price nudge for clean odds" case
+  //     (e.g. $1.25 → $1.27) that holds the staged price near the original.
+  //   • When the operator has nudged the edge floor UP (`edgeFloorOverride`),
+  //     extend the upward search WAY past +25% so the solver can RAISE the
+  //     ticket price as far as needed to simultaneously hit (the raised edge,
+  //     clean ladder odds, the tag/default win-rate). The downward band stays
+  //     ±25%. Upper bound = +200% (3× basePrice) so a $1.25 lottery pack can
+  //     climb to ~$3.75 if that's what hits 11.20% + clean.
+  // The chosen price becomes `priceAfter` and is what `applyPackRetune` writes.
+  const edgeRaised =
+    opts?.edgeFloorOverride != null &&
+    Number.isFinite(opts.edgeFloorOverride) &&
+    opts.edgeFloorOverride > baseEdgeCurve.edgeFloor;
+  const upwardExtension = edgeRaised ? 2.0 : 0; // up to +200% when chip-strip nudged
+
   const proposals: PlanAllProposal[] = inScope.map((p) => {
     const cards = cardsByPack.get(p.id) ?? [];
     const autoTargets: PortfolioPackTargets =
@@ -647,6 +685,7 @@ export async function planAllRetunes(
         name: p.name,
         slug: p.slug,
         price: p.price,
+        priceAfter: p.price,
         cards,
         currentWeights,
         autoTargets,
@@ -666,15 +705,27 @@ export async function planAllRetunes(
       };
     }
 
-    const shaped = shapeWeights({
+    // Tagged lottery packs (untagged hit-rate === null) get the strict
+    // win-rate accuracy gate so 1%/5% packs land within 0.01pp of their tag.
+    const taggedWinRate =
+      autoTargets.intendedHitRate !== null &&
+      Math.abs(autoTargets.intendedHitRate - autoTargets.targetWinRate) < 1e-9
+        ? autoTargets.intendedHitRate
+        : undefined;
+
+    const search = searchBestPriceForCleanSnap({
       cards: cards.map((c) => ({ value: c.value })),
-      price: p.price,
+      basePrice: p.price,
       targetEdge: autoTargets.targetEdge,
       targetWinRate: autoTargets.targetWinRate,
       maxWinCap: autoTargets.maxWinCap,
       nearMissMin: autoTargets.nearMissMin,
-      floorRatioMin: autoTargets.floorRatioMin,
+      maxPriceChangePct: 0.25,
+      upwardPriceExtensionPct: upwardExtension,
+      ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
     });
+    const shaped = search.bestResult;
+    const priceAfter = search.bestPrice;
 
     if ("error" in shaped) {
       return {
@@ -682,6 +733,7 @@ export async function planAllRetunes(
         name: p.name,
         slug: p.slug,
         price: p.price,
+        priceAfter: p.price,
         cards,
         currentWeights,
         autoTargets,
@@ -706,6 +758,7 @@ export async function planAllRetunes(
       name: p.name,
       slug: p.slug,
       price: p.price,
+      priceAfter,
       cards,
       currentWeights,
       autoTargets,
