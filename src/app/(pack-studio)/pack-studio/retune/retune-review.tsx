@@ -165,12 +165,59 @@ export type ReviewItem = {
   adjusted: AdjustedState | null;
 };
 
+/**
+ * Per-review-session edge-target nudge presets. The baseline (11.02%) is what
+ * the auto-targets produce today (`autoTargetEdge` floor + the per-pack risk
+ * premium); the higher presets are pure operator nudges — the same lever the
+ * server's `applyPackRetune` / `applyStagedPackEditAndRetune` already honour
+ * via their optional `targetEdge` argument (validated to [1%, 50%] by
+ * `resolveRepriceTarget` / clamped to `auto.targetEdge` fallback). Selecting a
+ * preset here just threads its fraction into `buildTargets` + the local
+ * `shapeWeights` call so the on-screen "after" matches what the server will
+ * (re-)shape against.
+ */
+export const EDGE_TARGET_PRESETS = [
+  { label: "Baseline", pct: 11.02, value: 0.1102 },
+  { label: "+0.08pp", pct: 11.1, value: 0.111 },
+  { label: "+0.18pp", pct: 11.2, value: 0.112 },
+  { label: "+0.23pp", pct: 11.25, value: 0.1125 },
+  { label: "+0.28pp", pct: 11.3, value: 0.113 },
+] as const;
+
+/** The default (baseline) preset value — equals the standard auto-target edge. */
+export const EDGE_TARGET_BASELINE = EDGE_TARGET_PRESETS[0].value;
+
+/**
+ * Resolve the EFFECTIVE target edge for a review item.
+ *
+ * The proposal's `autoTargets.targetEdge` is already the authoritative target:
+ * when an `edgeOverride` is active, `planAllRetunes` was re-run with that
+ * override as the curve's edge floor, so every pack's `autoTargets.targetEdge`
+ * is already `≥ override`. We take `max(proposal target, override)` as a
+ * belt-and-braces guard so the local "after" preview never accidentally shapes
+ * below the operator's nudged floor (e.g. if a reload race left a stale
+ * proposal in the queue for one render).
+ */
+function effectiveTargetEdge(
+  item: ReviewItem,
+  edgeOverride: number | null,
+): number {
+  const baseline = item.proposal.autoTargets.targetEdge;
+  if (edgeOverride !== null && Number.isFinite(edgeOverride)) {
+    return Math.max(baseline, edgeOverride);
+  }
+  return baseline;
+}
+
 /** Build the `PackRetuneTargets` payload sent to `applyPackRetune` for an item. */
-function buildTargets(item: ReviewItem): PackRetuneTargets {
+function buildTargets(
+  item: ReviewItem,
+  edgeOverride: number | null,
+): PackRetuneTargets {
   const { autoTargets } = item.proposal;
   const a = item.adjusted;
   return {
-    targetEdge: autoTargets.targetEdge,
+    targetEdge: effectiveTargetEdge(item, edgeOverride),
     targetWinRate: a ? a.targetWinRate : autoTargets.targetWinRate,
     maxWinCap: a ? a.maxWinCap : autoTargets.maxWinCap,
     nearMissMin: a ? a.nearMissMin : autoTargets.nearMissMin,
@@ -195,11 +242,14 @@ function pct(v: number | null | undefined): string {
  * when one exists, else the auto-targets — so a re-shape inside the editor honours
  * any "Adjust" the owner already made.
  */
-function editorTargetsFor(item: ReviewItem): EditorTargets {
+function editorTargetsFor(
+  item: ReviewItem,
+  edgeOverride: number | null,
+): EditorTargets {
   const { autoTargets } = item.proposal;
   const a = item.adjusted;
   return {
-    targetEdge: autoTargets.targetEdge,
+    targetEdge: effectiveTargetEdge(item, edgeOverride),
     targetWinRate: a ? a.targetWinRate : autoTargets.targetWinRate,
     maxWinCap: a ? a.maxWinCap : autoTargets.maxWinCap,
     nearMissMin: a ? a.nearMissMin : autoTargets.nearMissMin,
@@ -249,6 +299,16 @@ export function RetuneReview({
   // 0 = closed, 1 = first dialog, 2 = final hard confirm.
   const [confirmStep, setConfirmStep] = React.useState<0 | 1 | 2>(0);
 
+  // ── Per-session edge-target override ────────────────────────────────
+  // Owner-chosen target-edge nudge that applies to EVERY approve write this
+  // session (until reset). `null` = use each pack's auto-target; a number =
+  // override every pack's targetEdge with this fraction. The chip strip is the
+  // only UI surface for this; the value flows through `buildTargets` (sent to
+  // `applyPackRetune` / `applyStagedPackEditAndRetune` — both already accept an
+  // optional `targetEdge`) and into the local `shapeWeights` call so the
+  // on-screen "after" matches what the server will (re-)shape against.
+  const [edgeOverride, setEdgeOverride] = React.useState<number | null>(null);
+
   // ── System-balance mode ─────────────────────────────────────────────
   // Off = per-pack auto-targets (the default load). On = portfolio mode: the
   // proposals are re-loaded via `planAllRetunes("portfolio")` so the cross-pack
@@ -293,12 +353,16 @@ export function RetuneReview({
   // any local adjustments are reset (the underlying auto-targets change), so we
   // confirm-via-toast and rebuild the queue from the fresh proposals. READ-ONLY:
   // `planAllRetunes` writes nothing — it's a dry-run, like the initial load.
+  // The active `edgeOverride` is threaded through so toggling system-balance
+  // doesn't silently revert the operator's chip-strip nudge.
   const onToggleSystemBalance = React.useCallback(
     async (next: boolean) => {
       if (reloading) return;
       setReloading(true);
       try {
-        const res = await planAllRetunes(next ? "portfolio" : "per-pack");
+        const res = await planAllRetunes(next ? "portfolio" : "per-pack", {
+          edgeFloorOverride: edgeOverride,
+        });
         setItems(
           res.proposals.map((p) => ({
             proposal: p,
@@ -325,7 +389,50 @@ export function RetuneReview({
         setReloading(false);
       }
     },
-    [reloading],
+    [reloading, edgeOverride],
+  );
+
+  // ── Edge-target nudge (chip strip on the review card) ───────────────
+  // Operator picks a higher house-edge floor (presets 11.02 / 11.10 / 11.20 /
+  // 11.25 / 11.30 %). Re-loads every proposal targeting that nudged floor via
+  // `planAllRetunes(mode, { edgeFloorOverride })` — the server's edge curve has
+  // its floor raised so every pack's per-pack target lands ≥ the nudge. The
+  // active local-adjust is reset (its `after` was shaped against the OLD
+  // target). `null` = baseline curve. READ-ONLY — no MAIN writes.
+  const onSelectEdgeTarget = React.useCallback(
+    async (value: number | null) => {
+      if (reloading) return;
+      // No-op if the operator clicks the already-selected chip.
+      if (value === edgeOverride) return;
+      setReloading(true);
+      try {
+        const res = await planAllRetunes(portfolioMode ? "portfolio" : "per-pack", {
+          edgeFloorOverride: value,
+        });
+        setItems(
+          res.proposals.map((p) => ({
+            proposal: p,
+            status: "pending" as ReviewStatus,
+            adjusted: null,
+          })),
+        );
+        setSystemPlan(res.systemPlan);
+        setEdgeOverride(value);
+        setIndex(0);
+        toast.success(
+          value == null
+            ? "Edge target back to baseline."
+            : `Edge target nudged to ${(value * 100).toFixed(2)}%.`,
+        );
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to re-shape at new edge target.",
+        );
+      } finally {
+        setReloading(false);
+      }
+    },
+    [reloading, edgeOverride, portfolioMode],
   );
 
   // ── Local re-shape (Adjust) ─────────────────────────────────────────
@@ -339,7 +446,9 @@ export function RetuneReview({
         const shaped = shapeWeights({
           cards: proposal.cards.map((c) => ({ value: c.value })),
           price: proposal.price,
-          targetEdge: proposal.autoTargets.targetEdge,
+          // Honour the per-session edge-target override so the locally-shaped
+          // "after" matches what the server will (re-)shape against on approve.
+          targetEdge: effectiveTargetEdge(item, edgeOverride),
           targetWinRate: levers.targetWinRate,
           maxWinCap: levers.maxWinCap,
           nearMissMin: levers.nearMissMin,
@@ -385,7 +494,7 @@ export function RetuneReview({
         return next;
       });
     },
-    [],
+    [edgeOverride],
   );
 
   const onResetAdjust = React.useCallback((i: number) => {
@@ -430,7 +539,11 @@ export function RetuneReview({
       }
       setApplying(true);
       try {
-        const res = await applyPackRetune(item.proposal.packId, token, buildTargets(item));
+        const res = await applyPackRetune(
+          item.proposal.packId,
+          token,
+          buildTargets(item, edgeOverride),
+        );
         setItems((prev) => {
           const next = [...prev];
           if (next[i]) next[i] = { ...next[i]!, status: "approved" };
@@ -452,7 +565,7 @@ export function RetuneReview({
             const retry = await applyPackRetune(
               item.proposal.packId,
               fresh,
-              buildTargets(item),
+              buildTargets(item, edgeOverride),
             );
             setItems((prev) => {
               const next = [...prev];
@@ -476,7 +589,7 @@ export function RetuneReview({
         setApplying(false);
       }
     },
-    [items, router, advance],
+    [items, router, advance, edgeOverride],
   );
 
   // Approve opens the two-step confirm gate instead of writing directly — the
@@ -560,6 +673,8 @@ export function RetuneReview({
         setApplying(false);
       }
     },
+    // Verbatim edit: the server writes operator-typed weights as-is — the
+    // per-session edge-target override doesn't apply (no shaping happens).
     [items, router, advance],
   );
 
@@ -586,7 +701,7 @@ export function RetuneReview({
         // card explains. `allowPriceSearch` is the owner's explicit opt-in for
         // the ±25% price-search lever; it flows from the editor checkbox
         // through the gate and lands on the server action's `targets` param.
-        const t = buildTargets(item);
+        const t = buildTargets(item, edgeOverride);
         const res = await applyStagedPackEditAndRetune(
           item.proposal.packId,
           token,
@@ -629,7 +744,7 @@ export function RetuneReview({
           try {
             const { token: fresh } = await authorizePackRetuneForReview();
             tokenRef.current = fresh;
-            const t = buildTargets(item);
+            const t = buildTargets(item, edgeOverride);
             const retry = await applyStagedPackEditAndRetune(
               item.proposal.packId,
               fresh,
@@ -675,7 +790,7 @@ export function RetuneReview({
         setApplying(false);
       }
     },
-    [items, router, advance],
+    [items, router, advance, edgeOverride],
   );
 
   // Edit-approve also opens the two-step confirm gate — the pending edit write
@@ -821,6 +936,20 @@ export function RetuneReview({
               style={{ width: `${progressPct}%` }}
             />
           </div>
+
+          {/* ── Per-session edge-target chip strip ───────────────────────
+              Owner-only nudge: the active preset overrides every Approve's
+              targetEdge (plain retune + edit-and-retune) and the locally
+              shaped "after" preview. Baseline = 11.02% (the live auto-target
+              floor today); the higher presets are pure nudges. Persists for
+              the whole session until reset; resets on a system-balance
+              toggle (the proposals reload). */}
+          <EdgeTargetChipStrip
+            edgeOverride={edgeOverride}
+            onChange={(v) => void onSelectEdgeTarget(v)}
+            disabled={applying || reloading}
+            reloading={reloading}
+          />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[260px_1fr] lg:items-start">
@@ -838,7 +967,7 @@ export function RetuneReview({
                   total={total}
                   applying={applying}
                   portfolioMode={portfolioMode}
-                  editorTargets={editorTargetsFor(current)}
+                  editorTargets={editorTargetsFor(current, edgeOverride)}
                   editing={editingIndex === index}
                   onApprove={onApprove}
                   onDecline={onDecline}
@@ -892,7 +1021,7 @@ export function RetuneReview({
         if (confirmStep === 0 || !pendingWrite) return null;
         const item = items[pendingWrite.index];
         if (!item) return null;
-        const summary = buildConfirmSummary(item, pendingWrite);
+        const summary = buildConfirmSummary(item, pendingWrite, edgeOverride);
         const isAutoTune = pendingWrite.kind === "edit-and-retune";
         // The owner only sees the "price may shift" note when the editor
         // checkbox flowed through into the pending payload — pure UI surface
@@ -1060,6 +1189,95 @@ function CountChip({
   );
 }
 
+/**
+ * Per-session edge-target preset strip. Renders one chip per preset in
+ * {@link EDGE_TARGET_PRESETS}; the active chip is highlighted with the same
+ * primary/border treatment used by the rest of the retune review controls.
+ * Pressing the active chip again resets the override back to the per-pack
+ * auto-target (so the chip strip is also its own clear button). The numeric
+ * override flows up via `onChange` to `RetuneReview`, which threads it through
+ * `buildTargets` + the local `shapeWeights` call so both the server write and
+ * the on-screen "after" pick it up.
+ */
+function EdgeTargetChipStrip({
+  edgeOverride,
+  onChange,
+  disabled,
+  reloading,
+}: {
+  edgeOverride: number | null;
+  onChange: (next: number | null) => void;
+  disabled: boolean;
+  reloading: boolean;
+}) {
+  // The "Baseline" chip equals the live auto-target floor today — pressing it
+  // explicitly is the same as clearing the override (null), and that's how the
+  // strip displays its baseline state.
+  const activeIdx = (() => {
+    if (edgeOverride === null) return 0;
+    return EDGE_TARGET_PRESETS.findIndex(
+      (p) => Math.abs(p.value - edgeOverride) < 1e-9,
+    );
+  })();
+  const activeLabel =
+    edgeOverride === null
+      ? `${(EDGE_TARGET_BASELINE * 100).toFixed(2)}% (baseline)`
+      : `${(edgeOverride * 100).toFixed(2)}%`;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+      <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        {reloading ? (
+          <Loader2 className="size-3.5 animate-spin text-primary" />
+        ) : (
+          <Sparkles className="size-3.5 text-primary" />
+        )}
+        Target edge:{" "}
+        <span className="font-semibold tabular-nums text-foreground">
+          {activeLabel}
+        </span>
+      </span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {EDGE_TARGET_PRESETS.map((preset, i) => {
+          const isActive = i === activeIdx;
+          return (
+            <button
+              key={preset.value}
+              type="button"
+              disabled={disabled}
+              aria-pressed={isActive}
+              onClick={() => {
+                // Baseline preset clears the override (null) so the per-pack
+                // auto-target carries over to packs that have a non-floor
+                // target (the portfolio-balanced ones); a higher preset writes
+                // its exact fraction as the per-session override.
+                if (i === 0) {
+                  onChange(null);
+                } else {
+                  onChange(preset.value);
+                }
+              }}
+              className={cn(
+                "rounded-full border px-2.5 py-1 text-xs font-medium tabular-nums transition-colors",
+                "disabled:cursor-not-allowed disabled:opacity-50",
+                isActive
+                  ? "border-primary bg-primary/15 text-primary"
+                  : "border-border bg-card text-muted-foreground hover:border-primary/40 hover:bg-muted/50 hover:text-foreground",
+              )}
+              title={
+                i === 0
+                  ? `Baseline (${preset.pct.toFixed(2)}%) — uses each pack's per-pack auto-target.`
+                  : `Nudge target edge to ${preset.pct.toFixed(2)}% (${preset.label}).`
+              }
+            >
+              {preset.pct.toFixed(2)}%
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Confirm-gate Step 1 summary ─────────────────────────────────────
 // Builds a unified before/after snapshot for ALL three write paths (plain
 // retune · verbatim edit · edit-and-retune) so Step 1 renders a single,
@@ -1126,6 +1344,7 @@ type ConfirmSummary = {
 function buildConfirmSummary(
   item: ReviewItem,
   write: ConfirmWriteInput,
+  edgeOverride: number | null,
 ): ConfirmSummary {
   const { proposal } = item;
   const tag = (() => {
@@ -1141,10 +1360,49 @@ function buildConfirmSummary(
   const cardCountBefore = proposal.cards.length;
 
   if (write.kind === "retune") {
-    // Adjusted-or-proposed after; same pool identity, just re-weighted.
-    const after = item.adjusted?.after ?? proposal.after;
-    const weightDiff = item.adjusted?.weightDiff ?? proposal.weightDiff;
-    const feasible = item.adjusted?.feasible ?? proposal.feasible;
+    // Re-derive the "after" locally so the gate matches what the server will
+    // (re-)shape against — the proposal was shaped at the per-pack auto-target,
+    // but a per-session edge override (or a local Adjust) supersedes that.
+    // Precedence: a local `Adjust` already shaped against the override (woven
+    // in via `onAdjust`); else, when an override is set, reshape here;
+    // otherwise fall back to the proposal's original after.
+    let after: PackRisk | null;
+    let weightDiff: PlanAllWeightDiff[] | null;
+    let feasible: boolean;
+    if (item.adjusted) {
+      after = item.adjusted.after;
+      weightDiff = item.adjusted.weightDiff;
+      feasible = item.adjusted.feasible;
+    } else if (edgeOverride !== null) {
+      const auto = proposal.autoTargets;
+      const reshaped = shapeWeights({
+        cards: proposal.cards.map((c) => ({ value: c.value })),
+        price: proposal.price,
+        targetEdge: edgeOverride,
+        targetWinRate: auto.targetWinRate,
+        maxWinCap: auto.maxWinCap,
+        nearMissMin: auto.nearMissMin,
+      });
+      if ("error" in reshaped) {
+        after = null;
+        weightDiff = null;
+        feasible = false;
+      } else {
+        after = reshaped.risk;
+        weightDiff = proposal.cards
+          .map((c, i) => ({
+            cardId: c.cardId,
+            from: c.weight,
+            to: reshaped.weights[i]!,
+          }))
+          .filter((d) => d.from !== d.to);
+        feasible = true;
+      }
+    } else {
+      after = proposal.after;
+      weightDiff = proposal.weightDiff;
+      feasible = proposal.feasible;
+    }
     const diff = buildRetuneDiffRows(proposal, weightDiff);
     return {
       name: proposal.name,

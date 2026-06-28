@@ -441,6 +441,50 @@ export type PlanAllProposal = {
  */
 export type PlanAllMode = "per-pack" | "portfolio";
 
+/**
+ * Options for {@link planAllRetunes}. Currently only carries the operator's
+ * optional house-edge floor nudge from the Retune Review chip strip (presets
+ * 11.02 / 11.10 / 11.20 / 11.25 / 11.30 %). When set, the edge curve's floor
+ * (and, if needed, its ceiling) is raised to this value for the run — every
+ * pack's per-pack target lands ≥ the override. Null/undefined → baseline curve.
+ *
+ * SAFETY: the override is clamped into `[DEFAULT_EDGE_FLOOR, EDGE_TARGET_NUDGE_MAX]`
+ * (1.0% headroom above the 11.50% ceiling) before being applied; an out-of-range
+ * value falls back to the baseline. Read-only — this only changes the targets
+ * the dry-run shapes against; nothing is written to MAIN.
+ */
+export type PlanAllOpts = {
+  edgeFloorOverride?: number | null;
+};
+
+/** Hard ceiling on the operator's edge nudge — caps the chip strip presets. */
+const EDGE_TARGET_NUDGE_MAX = 0.125;
+
+/**
+ * Overlay an optional operator edge-floor nudge onto the resolved edge curve.
+ * Pure + sync. When `override` is null/undefined/non-finite/out-of-range, the
+ * curve is returned unchanged. When set, the floor is raised to the override
+ * (clamped into `[base.edgeFloor, EDGE_TARGET_NUDGE_MAX]`) AND the ceiling is
+ * pushed up to be ≥ the new floor so the invariant `edgeFloor ≤ edgeCeiling`
+ * the pure helpers rely on still holds. The premium-driven part of the curve
+ * (coefficients / bases / refs) is untouched — only the floor/ceiling band
+ * shifts up, so every pack still gets its tiny risk premium on top of the
+ * raised floor.
+ */
+function applyEdgeFloorOverride(
+  base: EdgeCurveConfig,
+  override: number | null | undefined,
+): EdgeCurveConfig {
+  if (override == null || !Number.isFinite(override)) return base;
+  if (!(override > base.edgeFloor)) return base; // nudging DOWN is not allowed.
+  const clamped = Math.min(EDGE_TARGET_NUDGE_MAX, override);
+  return {
+    ...base,
+    edgeFloor: clamped,
+    edgeCeiling: Math.max(base.edgeCeiling, clamped),
+  };
+}
+
 export type PlanAllRetunesResult = {
   /** The auto-target config resolved once for this run (for the header UI). */
   cfg: ResolvedAutoTargetCfg;
@@ -477,13 +521,20 @@ type BatchedPoolRow = {
  */
 export async function planAllRetunes(
   mode: PlanAllMode = "per-pack",
+  opts?: PlanAllOpts,
 ): Promise<PlanAllRetunesResult> {
   await requireRetuneOwner();
 
   // Resolve the auto-target config ONCE for the whole run.
+  // `edgeCurve` is always populated (using the DB blob + curve-overlay logic
+  // below) so `autoTargetEdge` shapes against a single source-of-truth curve
+  // — not the silent `DEFAULT_EDGE_CURVE` fallback inside the pure helper.
+  const baseEdgeCurve = await readEdgeCurveConfig();
+  const edgeCurve = applyEdgeFloorOverride(baseEdgeCurve, opts?.edgeFloorOverride);
   const cfg: ResolvedAutoTargetCfg = {
     globalCap: await readMaxWinCap(),
     maxMultCeiling: await readMaxMultCeiling(),
+    edgeCurve,
   };
 
   // In-scope set: ACTIVE official packs with price > 0 (same scope the global
