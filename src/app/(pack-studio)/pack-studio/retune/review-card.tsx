@@ -344,13 +344,24 @@ export function ReviewCard({
   const targetWinRate = proposal.autoTargets.targetWinRate;
   const intendedHitRate = proposal.intendedHitRate;
   const isTagged = intendedHitRate != null;
+  // Lottery-tagged packs (≤10% hit-rate, e.g. "1% 18 PLUS") are binary by
+  // design — jackpot or dust — and have no meaningful near-miss tier. Mirrors
+  // the `isLotteryTag` predicate in `packs/_lib/portfolio.ts` that skips the
+  // win-rate nudge for the same reason. We hide the "Near-miss relaxed" banner
+  // for these packs because relaxing to 0 is expected behavior, not noise.
+  const isLotteryTag = intendedHitRate !== null && intendedHitRate <= 0.10;
 
   const before = proposal.before;
   // The active "after": a local adjustment supersedes the server proposal.
   const after = active ? active.after : proposal.after;
   const feasible = active ? active.feasible : proposal.feasible;
   const limit = active ? active.limit : proposal.limit;
-  const relaxations = active ? active.relaxations : proposal.relaxations;
+  const rawRelaxations = active ? active.relaxations : proposal.relaxations;
+  // Drop the near-miss banner entirely on lottery-tagged packs (see comment
+  // above on `isLotteryTag`). Other levers (winRate, floor) still surface.
+  const relaxations = isLotteryTag
+    ? rawRelaxations.filter((r) => r.lever !== "nearMiss")
+    : rawRelaxations;
   const weightDiff = active ? active.weightDiff : proposal.weightDiff;
   const canApprove = feasible && after != null && item.status !== "approved";
 
