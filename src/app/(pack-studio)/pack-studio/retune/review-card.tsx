@@ -1505,14 +1505,14 @@ function AllCardChanges({
         };
       })
       .sort((a, b) => {
-        // Changed rows always above unchanged.
-        if (a.changed !== b.changed) return a.changed ? -1 : 1;
-        // Primary: |delta| × cardValue DESC (most-impactful first).
-        if (b.impact !== a.impact) return b.impact - a.impact;
+        // Primary: card value DESC — highest-priced card at the top, so the
+        // operator's eye lands on the rare jackpots first (pack-design
+        // invariant: high $ = low %).
+        if (b.value !== a.value) return b.value - a.value;
         // Tiebreak: bigger absolute pp move first.
         if (b.move !== a.move) return b.move - a.move;
-        // Final tiebreak: higher-value card first (stable, readable).
-        return b.value - a.value;
+        // Final tiebreak: name asc for stable, readable order.
+        return (a.name ?? "").localeCompare(b.name ?? "");
       });
   }, [cards, weightDiff, price]);
 
@@ -1522,7 +1522,15 @@ function AllCardChanges({
   const maxMove = Math.max(...rows.map((r) => r.move), 1e-6);
   const changedRows = rows.filter((r) => r.changed);
   const changedCount = changedRows.length;
-  const top3 = changedRows.slice(0, 3);
+  // Top-3 stays sorted by impact (|Δ| × value) — it's literally "most
+  // impactful". The main list above is now sorted by $ DESC, so we re-derive.
+  const top3 = [...changedRows]
+    .sort((a, b) => {
+      if (b.impact !== a.impact) return b.impact - a.impact;
+      if (b.move !== a.move) return b.move - a.move;
+      return b.value - a.value;
+    })
+    .slice(0, 3);
 
   return (
     <div className="space-y-3">
@@ -1549,7 +1557,7 @@ function AllCardChanges({
             {changedCount === 1 ? "" : "s"}
           </span>
           <span className="hidden text-[11px] text-muted-foreground sm:inline">
-            sorted by impact (|Δ| × card value)
+            sorted by card value
           </span>
         </div>
         {/* Scrollable so a big pool stays comfortable. */}
@@ -1561,6 +1569,56 @@ function AllCardChanges({
       </div>
     </div>
   );
+}
+
+/**
+ * Format a probability percentage with meaningful precision regardless of
+ * scale. Rule:
+ *   - `v ≥ 1`  → 2 decimals (e.g. `99.00%`, `12.34%`)
+ *   - `v < 1`  → enough decimals for 4 significant digits, so a 0.0075% odds
+ *     still renders as `0.0075%` instead of a misleading `0.00%`. Trailing
+ *     zeros are trimmed so the number doesn't lie about its precision
+ *     (`0.0075` → `0.0075%`, NOT `0.007500%`).
+ *   - `v == 0` → `0%` (no decimals — clearer than `0.0000%`).
+ *
+ * `v` is the percentage value (e.g. 0.0075 for 0.0075%), NOT a 0–1 fraction.
+ */
+function formatPercent(v: number): string {
+  if (v === 0) return "0%";
+  if (v >= 1) return `${v.toFixed(2)}%`;
+  // 4 significant digits: 10^floor(log10(v)) gives the leading digit's place,
+  // so digits-after-decimal = 4 − (floor(log10(v)) + 1) = 3 − floor(log10(v)).
+  const mag = Math.floor(Math.log10(v));
+  const decimals = Math.min(10, Math.max(2, 3 - mag));
+  return `${trimZeros(v.toFixed(decimals), 2)}%`;
+}
+
+/**
+ * Format a signed pp delta with the same precision rule as `formatPercent`,
+ * so a tiny shift (e.g. 0.0007pp on a $810 card) doesn't collapse to
+ * `+0.00pp`. Returns the numeric body only — the caller prepends sign + "pp".
+ */
+function formatDeltaPp(absMove: number): string {
+  if (absMove === 0) return "0";
+  if (absMove >= 1) return absMove.toFixed(2);
+  const mag = Math.floor(Math.log10(absMove));
+  const decimals = Math.min(10, Math.max(2, 3 - mag));
+  return trimZeros(absMove.toFixed(decimals), 2);
+}
+
+/**
+ * Strip trailing zeros after the decimal, but always keep at least `minDecimals`
+ * digits (so `12.30` doesn't become `12.3` when the column expects 2 decimals).
+ * Drops a dangling decimal point.
+ */
+function trimZeros(s: string, minDecimals: number): string {
+  const dot = s.indexOf(".");
+  if (dot === -1) return s;
+  const minLen = dot + 1 + minDecimals;
+  let end = s.length;
+  while (end > minLen && s.charCodeAt(end - 1) === 48 /* '0' */) end--;
+  if (s.charCodeAt(end - 1) === 46 /* '.' */) end--;
+  return s.slice(0, end);
 }
 
 /**
@@ -1650,10 +1708,10 @@ function WeightChangeRow({
 
       {/* Before → after probability */}
       <div className="hidden shrink-0 items-center gap-1.5 text-xs tabular-nums sm:flex">
-        <span className="text-muted-foreground">{row.fromP.toFixed(2)}%</span>
+        <span className="text-muted-foreground">{formatPercent(row.fromP)}</span>
         <ArrowRight className="size-3 text-muted-foreground" />
         <span className={cn("font-semibold", tone.text)}>
-          {row.toP.toFixed(2)}%
+          {formatPercent(row.toP)}
         </span>
       </div>
 
@@ -1688,7 +1746,7 @@ function WeightChangeRow({
             )}
           >
             {isUp ? "+" : "−"}
-            {row.move.toFixed(2)}
+            {formatDeltaPp(row.move)}
             <span className="ml-0.5 text-[10px] font-normal text-muted-foreground">
               pp
             </span>
@@ -1752,8 +1810,8 @@ function TopImpactChip({ row }: { row: CardRow }) {
           {cardNameLabel(row)}
         </p>
         <p className="text-[10px] tabular-nums text-muted-foreground">
-          {formatCurrency(row.value)} · {row.fromP.toFixed(2)}% →{" "}
-          {row.toP.toFixed(2)}%
+          {formatCurrency(row.value)} · {formatPercent(row.fromP)} →{" "}
+          {formatPercent(row.toP)}
         </p>
       </div>
       <span
@@ -1763,7 +1821,7 @@ function TopImpactChip({ row }: { row: CardRow }) {
         )}
       >
         {isUp ? "+" : "−"}
-        {row.move.toFixed(2)}
+        {formatDeltaPp(row.move)}
         <span className="ml-0.5 text-[9px] font-normal text-muted-foreground">
           pp
         </span>
