@@ -8,6 +8,7 @@ import {
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
 import { getDailyCreatorCost } from "@/lib/queries/dashboard-daily-creator-cost";
+import { getDailyCryptoFeeProfit } from "@/lib/queries/dashboard-daily-crypto-fee-profit";
 import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
 import { getAvgPnl7d } from "@/lib/queries/dashboard-avg-pnl-7d";
 import { getRealizedPnlSnapshot } from "@/lib/queries/_realized-pnl";
@@ -805,20 +806,30 @@ async function DashboardCharts() {
  * to a single-cell TileErrorFallback (the other charts still render).
  */
 async function DashboardDailyPnlChart() {
-  // P&L (the bars) and the informational per-day creator cost (the hover-only
-  // line) are independent reads — fetch them in parallel. Creator cost is a
-  // SEPARATE series merged here at the page level; it never touches
-  // DailyPnlPoint or the dashboard_daily_pnl ClickHouse twin (so the P&L
-  // parity harness is unaffected) and is NOT summed into the P&L total.
+  // P&L (the bars) and the informational per-day creator cost + crypto-fee
+  // profit (the hover-only lines) are independent reads — fetch them in
+  // parallel. Both informational series are SEPARATE from DailyPnlPoint and
+  // the dashboard_daily_pnl ClickHouse twin (so the P&L parity harness is
+  // unaffected) and are NOT summed into the P&L total — they surface
+  // existing components already inside (creator cost) or alongside (crypto
+  // fee, an estimated house-side exchange-rate margin that doesn't move
+  // on-site balances) the daily P&L number.
   const [
     { data, error, kind },
     { data: creatorCostPoints },
+    { data: cryptoFeeProfitPoints },
   ] = await Promise.all([
     safeQuery(() => getDailyPnl(), [], "dashboard.dailyPnl", REWARD_QUERY_TIMEOUT_MS),
     safeQuery(
       () => getDailyCreatorCost(),
       [],
       "dashboard.dailyCreatorCost",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getDailyCryptoFeeProfit(),
+      [],
+      "dashboard.dailyCryptoFeeProfit",
       REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
@@ -839,9 +850,13 @@ async function DashboardDailyPnlChart() {
   const creatorCostByDate = new Map(
     creatorCostPoints.map((p) => [p.date, p.creatorCost]),
   );
+  const cryptoFeeProfitByDate = new Map(
+    cryptoFeeProfitPoints.map((p) => [p.date, p.cryptoFeeProfit]),
+  );
   const merged = data.map((d) => ({
     ...d,
     creatorCost: creatorCostByDate.get(d.date) ?? 0,
+    cryptoFeeProfit: cryptoFeeProfitByDate.get(d.date) ?? 0,
   }));
   return <PnlChart data={merged} />;
 }

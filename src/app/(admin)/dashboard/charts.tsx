@@ -8,6 +8,7 @@ import {
   Wallet,
   Box,
   Ticket,
+  Bitcoin,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -556,6 +557,7 @@ function PnlTooltip({
       inventoryChange: number;
       voucherChange: number;
       creatorCost?: number;
+      cryptoFeeProfit?: number;
     };
   }>;
 }) {
@@ -563,6 +565,7 @@ function PnlTooltip({
   const p = payload[0].payload;
   const up = p.pnl >= 0;
   const creatorCost = p.creatorCost ?? 0;
+  const cryptoFeeProfit = p.cryptoFeeProfit ?? 0;
   // Signed contribution to house P&L. Deposits add; every other term
   // subtracts (so a positive liability delta — a liability that GREW —
   // becomes a negative contribution, and a shrinking liability a positive
@@ -612,6 +615,25 @@ function PnlTooltip({
           {formatCurrency(Math.abs(p.pnl))}
         </span>
       </div>
+      {/* Informational only — crypto-fee profit (estimated house-side
+          exchange-rate margin on completed crypto deposits + withdrawals)
+          sits ALONGSIDE the canonical P&L (it doesn't move on-site
+          balances, so it isn't a separate term inside the windowed-delta
+          formula). House-POV: a positive figure is house GAIN → emerald.
+          Rendered ABOVE the creator-cost row per the dashboard ordering
+          (gain line first, cost line second). Shown only on days with a
+          non-zero fee profit. */}
+      {cryptoFeeProfit > 0 && (
+        <div className="flex items-center justify-between gap-3 border-t border-dashed border-border/40 pt-1.5 text-[11px]">
+          <span className="flex items-center gap-1 text-muted-foreground">
+            <Bitcoin className="size-3 shrink-0" />
+            Crypto P&amp;L
+          </span>
+          <span className="font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+            +{formatCurrency(cryptoFeeProfit)}
+          </span>
+        </div>
+      )}
       {/* Informational only — creator cost (converted payouts + leaderboard
           prizes) is ALREADY inside the balance/voucher deltas above, so it is
           NOT re-subtracted here. The "(in P&L)" note flags that. House-POV:
@@ -838,6 +860,13 @@ export function PnlChart({
     voucherChange: number;
     /** Informational per-day creator cost (already inside P&L; hover-only). */
     creatorCost?: number;
+    /**
+     * Informational per-day house crypto-fee profit (estimated exchange-rate
+     * margin on completed crypto deposits + withdrawals since the counter
+     * anchor; sits alongside P&L, not inside the windowed-delta formula).
+     * Hover-only — rendered above the creator-cost row in the tooltip.
+     */
+    cryptoFeeProfit?: number;
   }[];
 }) {
   // The clicked day's YYYY-MM-DD key — drives the drilldown modal. null when
