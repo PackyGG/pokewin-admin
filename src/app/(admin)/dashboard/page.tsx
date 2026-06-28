@@ -44,7 +44,6 @@ import {
   WagerAttributionChart,
   DepositsChart,
   SignupsChart,
-  FtdsChart,
   PnlChart,
   CashPnlChart,
   ActiveDepositorsChart,
@@ -221,18 +220,25 @@ export default async function DashboardPage() {
           section, so Trends is now two 3-up rows. */}
       <div className="space-y-3">
         <SectionHeading icon={LineChart} title="Trends" />
-        {/* Row 1: Wagers · Deposits · FTDs.
-            Row 2: Daily P&L · Signups · Depositors.
+        {/* Row 1 (3-up): Wagers · Deposits · Signups & FTDs (merged).
+            Row 2 (2-up): Daily P&L · Daily Cash P&L.
+            Row 3 (1-up): Active Depositors.
 
-            The five cached-stats charts (everything EXCEPT Daily P&L) are
-            backed by the React-cached getDashboardStats — which the KPI
-            strips already triggered — so this outer boundary resolves as
-            soon as that shared aggregate is ready and paints all five
-            charts together. The Daily P&L chart is the single heavy leg
-            (its own lifetime-scan getDailyPnl), so it streams behind its
-            OWN nested <Suspense> INSIDE the grid (row 2, col 1): the five
-            fast charts no longer wait on the slow P&L scan, and the P&L
-            cell shows a chart skeleton until getDailyPnl resolves.
+            Signups and FTDs share one card so the funnel reads in one
+            place — the merge happens at the page level (dailySignups +
+            dailyFtds joined by date), so neither query changes shape.
+            With the FTDs card folded into Signups, Active Depositors no
+            longer has a 3-up partner and gets its own full-width row.
+
+            The four cached-stats charts (everything EXCEPT the two P&L
+            charts) are backed by the React-cached getDashboardStats —
+            which the KPI strips already triggered — so this outer
+            boundary resolves as soon as that shared aggregate is ready
+            and paints them together. The two P&L charts share the heavy
+            getDailyPnl leg, streamed behind a nested <Suspense> in row 2
+            so neither blocks the cached row(s); the Suspense returns a
+            2-cell fragment, so both P&L charts paint side-by-side once
+            the lifetime scan resolves.
 
             Not period-keyed: the trend charts stay on screen during refresh
             rather than flashing skeletons. The skeleton is for the cold load
@@ -243,7 +249,7 @@ export default async function DashboardPage() {
             <>
               <ChartRowSkeleton count={3} height={300} />
               <ChartRowSkeleton count={2} height={300} />
-              <ChartRowSkeleton count={2} height={300} />
+              <ChartRowSkeleton count={1} height={300} />
             </>
           }
         >
@@ -776,12 +782,28 @@ async function DashboardCharts() {
     );
   }
   const stats = statsResult.data;
+  // Merge the signups + FTD series for the combined Signups & FTDs chart.
+  // Both arrays come back date-padded by the dashboard chart helpers
+  // (`padDashboardCountSeries` / `padDashboardFtdSeries`) so missing days are
+  // zero-filled on either side and the union of dates is the same on both —
+  // a Map keyed by date is the safe join (handles any future ordering drift).
+  const ftdByDate = new Map(stats.dailyFtds.map((d) => [d.date, d]));
+  const signupsAndFtdsSeries = stats.dailySignups.map((s) => {
+    const f = ftdByDate.get(s.date);
+    return {
+      date: s.date,
+      signups: s.count,
+      ftds: f?.count ?? 0,
+      ftdTotal: f?.total ?? 0,
+      ftdAvg: f?.avg ?? 0,
+    };
+  });
   return (
     <FadeIn className="space-y-3 sm:space-y-4">
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
         <WagerChart data={stats.dailyWagers} />
         <DepositsChart data={stats.dailyDeposits} />
-        <FtdsChart data={stats.dailyFtds} />
+        <SignupsChart data={signupsAndFtdsSeries} />
       </div>
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-2">
         {/* Daily P&L (canonical) + Daily Cash P&L (raw deposits −
@@ -806,8 +828,7 @@ async function DashboardCharts() {
           <DashboardDailyPnlChart />
         </Suspense>
       </div>
-      <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
-        <SignupsChart data={stats.dailySignups} />
+      <div className="grid gap-3 sm:gap-4 md:grid-cols-1">
         <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
       </div>
     </FadeIn>

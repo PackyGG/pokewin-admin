@@ -747,6 +747,12 @@ const cachedDailyUpgrader = unstable_cache(
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 
+// Bot-prevention filter: `is_locked = true` with `locked_reason = 'bot prevention'`
+// flags signups the runtime threw out as automated registrations (Jun 11 had
+// 4,141 of 4,205 same-day signups locked as bots). Dropping `is_locked = true`
+// rows here brings the chart back to real-customer signups (~75/day baseline)
+// without hard-coded date caps or a separate blacklist. The flag is set by the
+// signup pipeline itself, so it is the canonical bot signal on this table.
 const cachedDailySignups = unstable_cache(
   async (blacklistIdNotIn: string) => {
     const db = await getDb();
@@ -755,11 +761,12 @@ const cachedDailySignups = unstable_cache(
       FROM "user"
       WHERE created_at >= NOW() - INTERVAL '30 days'
         AND role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        AND is_locked = false
       GROUP BY DATE(created_at)
       ORDER BY date
     `;
   },
-  ["dashboard-daily-signups-v1"],
+  ["dashboard-daily-signups-v2"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 

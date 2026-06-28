@@ -214,6 +214,10 @@ async function fetchTrendSeries(
     ORDER BY bucket`;
 
   // ── 3. Signups ───────────────────────────────────────────────────────
+  // `is_locked = 0` matches the PG twin's bot-prevention drop: the signup
+  // pipeline locks automated registrations server-side (Jun 11 had 4,141 of
+  // 4,205 same-day signups locked with `locked_reason = 'bot prevention'`).
+  // Must stay in sync with the PG signups CTE so comparison-mode parity holds.
   const signupSql = `
     SELECT
       ${userBucket} AS bucket,
@@ -221,6 +225,7 @@ async function fetchTrendSeries(
     FROM ${CH_DB}.public_user AS u FINAL
     WHERE u._peerdb_is_deleted = 0
       AND u.role NOT IN ('admin','support')
+      AND u.is_locked = 0
       ${hasBlacklist ? "AND u.id NOT IN {blacklist:Array(String)}" : ""}
       AND u.created_at >= {cutoff:DateTime64(6)}
     GROUP BY bucket

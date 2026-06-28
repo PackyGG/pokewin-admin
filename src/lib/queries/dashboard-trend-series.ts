@@ -153,11 +153,16 @@ async function fetchTrendSeriesPg(
            ORDER BY 1`
       : Promise.resolve([] as UpgraderBucketRow[]),
 
+    // Bot-prevention drop (`is_locked = true` with `locked_reason = 'bot prevention'`):
+    // the signup pipeline locks automated registrations server-side. Jun 11 had
+    // 4,141 of 4,205 same-day signups locked as bots — without this filter the
+    // chart shows the raw spike instead of the ~75/day real-customer baseline.
     db.$queryRaw<CountBucketRow[]>`
       SELECT ${Prisma.raw(bucketUser)} AS bucket, COUNT(*)::text AS value
         FROM "user"
        WHERE created_at >= ${cutoff}
          AND role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+         AND is_locked = false
        GROUP BY 1
        ORDER BY 1`,
 

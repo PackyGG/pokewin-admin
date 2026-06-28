@@ -65,22 +65,25 @@ const depositsConfig = {
   },
 } satisfies ChartConfig;
 
+// Merged Signups+FTDs chart — two emerald shades so both series read as
+// House-POV growth (signups + first-time deposits are neutral/growth events,
+// never user-POV red/green). Grouped (not stacked) because FTDs are a STRICT
+// subset of signups: every FTD is also a signup on the same day or later, and
+// stacking would visually double-count. Grouped pairs make the conversion
+// gap obvious at a glance.
 const signupsConfig = {
-  count: {
+  signups: {
     label: "Signups",
-    color: "var(--color-chart-1)",
+    color: "#10b981", // emerald-500
   },
-} satisfies ChartConfig;
-
-const ftdsConfig = {
-  count: {
+  ftds: {
     label: "FTDs",
-    color: "var(--color-chart-5)",
+    color: "#6ee7b7", // emerald-300
   },
 } satisfies ChartConfig;
 
-// Active Depositors uses a hex (cyan-500) rather than a chart-N var so
-// it stays visually distinct from the Signups chart in the same row.
+// Active Depositors uses a hex (cyan-500) so it stays visually distinct
+// from the Signups & FTDs chart (both emerald shades) in the same row.
 const activeDepositorsConfig = {
   count: {
     label: "Depositors",
@@ -344,12 +347,117 @@ function DepositsTooltipContent({
   );
 }
 
+/**
+ * Tooltip for the merged Signups + FTDs chart — labels both series with
+ * their daily counts plus the day's FTD total/average (carried on the FTD
+ * row so the hover still surfaces the same numbers the standalone FTD card
+ * used to show). Conversion percentage (FTD/signup) is appended when both
+ * are non-zero so the day's signup-to-deposit funnel reads at a glance.
+ *
+ * Styling mirrors ChartTooltipContent's container so it lines up with the
+ * other dashboard tooltips.
+ */
+function SignupsFtdsTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    dataKey?: string | number;
+    value?: number | string;
+    color?: string;
+    payload?: { signups?: number; ftds?: number; ftdTotal?: number; ftdAvg?: number };
+  }>;
+  label?: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const row = payload[0]?.payload ?? {};
+  const signups = Number(row.signups ?? 0);
+  const ftds = Number(row.ftds ?? 0);
+  const ftdTotal = Number(row.ftdTotal ?? 0);
+  const ftdAvg = Number(row.ftdAvg ?? 0);
+  const conversion = signups > 0 ? (ftds / signups) * 100 : 0;
+  const labelByKey: Record<string, string> = {
+    signups: "Signups",
+    ftds: "FTDs",
+  };
+  return (
+    <div className="grid min-w-44 items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+      {label && <div className="font-medium">{label}</div>}
+      <div className="grid gap-1.5">
+        {payload.map((item) => {
+          const key = String(item.dataKey ?? "");
+          const value = Number(item.value ?? 0);
+          return (
+            <div key={key} className="flex items-center gap-2">
+              <div
+                className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                style={{ background: item.color }}
+              />
+              <div className="flex flex-1 items-center justify-between leading-none">
+                <span className="text-muted-foreground">
+                  {labelByKey[key] ?? key}
+                </span>
+                <span className="font-mono font-medium tabular-nums text-foreground">
+                  {value}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {ftds > 0 && (
+        <div className="mt-0.5 grid gap-0.5 border-t border-border/50 pt-1.5 text-[11px] text-muted-foreground">
+          <div className="flex items-center justify-between">
+            <span>FTD total</span>
+            <span className="font-mono tabular-nums text-foreground">
+              {formatCurrency(ftdTotal)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span>FTD avg</span>
+            <span className="font-mono tabular-nums text-foreground">
+              {formatCurrency(ftdAvg)}
+            </span>
+          </div>
+          {signups > 0 && (
+            <div className="flex items-center justify-between">
+              <span>Conversion</span>
+              <span className="font-mono tabular-nums text-foreground">
+                {conversion.toFixed(1)}%
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Merged Signups + FTDs daily chart — grouped (side-by-side) bars in two
+ * emerald shades. Replaces the prior single-series Signups chart AND the
+ * standalone FTDs card so the funnel reads in one place: a tall emerald-500
+ * signup bar next to a short emerald-300 FTD bar shows the conversion gap
+ * per day. Both series are House-POV neutral growth (no red/green semantics).
+ *
+ * Joined by date upstream in `page.tsx` (`mergeSignupsAndFtds`) so missing
+ * days are zero-filled on both sides — the padded series are already
+ * date-aligned by the dashboard query layer.
+ */
 export function SignupsChart({
   data,
-  title = "Signups (30 days)",
+  title = "Signups & FTDs (30 days)",
   hourlyXAxis = false,
 }: {
-  data: { date: string; count: number }[];
+  data: {
+    date: string;
+    signups: number;
+    ftds: number;
+    ftdTotal: number;
+    ftdAvg: number;
+  }[];
   title?: string;
   hourlyXAxis?: boolean;
 }) {
@@ -370,10 +478,17 @@ export function SignupsChart({
               tickFormatter={(v) => formatChartXTick(v, hourlyXAxis)}
             />
             <YAxis tickLine={false} axisLine={false} tickMargin={8} />
-            <ChartTooltip content={<ChartTooltipContent />} />
+            <ChartTooltip content={<SignupsFtdsTooltip />} />
             <Bar
-              dataKey="count"
-              fill="var(--color-count)"
+              dataKey="signups"
+              fill="var(--color-signups)"
+              radius={[4, 4, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
+            />
+            <Bar
+              dataKey="ftds"
+              fill="var(--color-ftds)"
               radius={[4, 4, 0, 0]}
               animationDuration={700}
               animationEasing="ease-out"
@@ -412,75 +527,6 @@ export function ActiveDepositorsChart({
             />
             <YAxis tickLine={false} axisLine={false} tickMargin={8} />
             <ChartTooltip content={<ChartTooltipContent />} />
-            <Bar
-              dataKey="count"
-              fill="var(--color-count)"
-              radius={[4, 4, 0, 0]}
-              animationDuration={700}
-              animationEasing="ease-out"
-            />
-          </BarChart>
-        </ChartContainer>
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Custom hover for the FTDs chart — the bar shows the daily count, and the
- * tooltip adds the total first-deposit value and the average. Recharts
- * clones this element with `active`/`payload`, so we read the day's row off
- * payload[0].payload. Styling mirrors ChartTooltipContent's container.
- */
-function FtdsTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: Array<{ payload: { count: number; total: number; avg: number } }>;
-}) {
-  if (!active || !payload?.length) return null;
-  const p = payload[0].payload;
-  return (
-    <div className="grid min-w-32 gap-0.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
-      <span className="font-medium text-foreground">
-        {p.count} {p.count === 1 ? "FTD" : "FTDs"}
-      </span>
-      <span className="text-muted-foreground">
-        Total {formatCurrency(p.total)}
-      </span>
-      <span className="text-muted-foreground">Avg {formatCurrency(p.avg)}</span>
-    </div>
-  );
-}
-
-export function FtdsChart({
-  data,
-  title = "FTDs (30 days)",
-  hourlyXAxis = false,
-}: {
-  data: { date: string; count: number; total: number; avg: number }[];
-  title?: string;
-  hourlyXAxis?: boolean;
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ChartContainer config={ftdsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
-          <BarChart data={data} accessibilityLayer>
-            <CartesianGrid vertical={false} />
-            <XAxis
-              dataKey="date"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              tickFormatter={(v) => formatChartXTick(v, hourlyXAxis)}
-            />
-            <YAxis tickLine={false} axisLine={false} tickMargin={8} />
-            <ChartTooltip content={<FtdsTooltip />} />
             <Bar
               dataKey="count"
               fill="var(--color-count)"

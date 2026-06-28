@@ -54,11 +54,15 @@ export default function DashboardLoading() {
         <SkeletonChart height={400} className="h-full min-h-[400px] rounded-xl" />
       </div>
 
-      {/* Trends — two 3-up chart rows. */}
+      {/* Trends — 3-up row (Wager · Deposits · Signups & FTDs merged) +
+          2-up row (Daily P&L · Daily Cash P&L) + 1-up row (Active Depositors).
+          The merged Signups & FTDs chart replaces the prior standalone FTDs
+          card. */}
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={80} />
         <ChartRowSkeleton count={3} height={300} />
-        <ChartRowSkeleton count={3} height={300} />
+        <ChartRowSkeleton count={2} height={300} />
+        <ChartRowSkeleton count={1} height={300} />
       </div>
     </SkeletonBoundary>
   );
