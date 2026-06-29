@@ -43,6 +43,7 @@ import { DEFAULT_MAX_MULT_CEILING } from "@/app/(admin)/packs/_lib/auto-targets"
 
 import type { EditApprovePayload, ReviewItem } from "./retune-review";
 import { PoolEditor, type EditorTargets } from "./pool-editor";
+import { formatDeltaPp, formatPercent } from "./format-percent";
 
 /**
  * The single review card — ONE pack's full BEFORE→AFTER comparison. A complete
@@ -1628,56 +1629,6 @@ function AllCardChanges({
       </div>
     </div>
   );
-}
-
-/**
- * Format a probability percentage with meaningful precision regardless of
- * scale. Rule:
- *   - `v ≥ 1`  → 2 decimals (e.g. `99.00%`, `12.34%`)
- *   - `v < 1`  → enough decimals for 4 significant digits, so a 0.0075% odds
- *     still renders as `0.0075%` instead of a misleading `0.00%`. Trailing
- *     zeros are trimmed so the number doesn't lie about its precision
- *     (`0.0075` → `0.0075%`, NOT `0.007500%`).
- *   - `v == 0` → `0%` (no decimals — clearer than `0.0000%`).
- *
- * `v` is the percentage value (e.g. 0.0075 for 0.0075%), NOT a 0–1 fraction.
- */
-function formatPercent(v: number): string {
-  if (v === 0) return "0%";
-  if (v >= 1) return `${v.toFixed(2)}%`;
-  // 4 significant digits: 10^floor(log10(v)) gives the leading digit's place,
-  // so digits-after-decimal = 4 − (floor(log10(v)) + 1) = 3 − floor(log10(v)).
-  const mag = Math.floor(Math.log10(v));
-  const decimals = Math.min(10, Math.max(2, 3 - mag));
-  return `${trimZeros(v.toFixed(decimals), 2)}%`;
-}
-
-/**
- * Format a signed pp delta with the same precision rule as `formatPercent`,
- * so a tiny shift (e.g. 0.0007pp on a $810 card) doesn't collapse to
- * `+0.00pp`. Returns the numeric body only — the caller prepends sign + "pp".
- */
-function formatDeltaPp(absMove: number): string {
-  if (absMove === 0) return "0";
-  if (absMove >= 1) return absMove.toFixed(2);
-  const mag = Math.floor(Math.log10(absMove));
-  const decimals = Math.min(10, Math.max(2, 3 - mag));
-  return trimZeros(absMove.toFixed(decimals), 2);
-}
-
-/**
- * Strip trailing zeros after the decimal, but always keep at least `minDecimals`
- * digits (so `12.30` doesn't become `12.3` when the column expects 2 decimals).
- * Drops a dangling decimal point.
- */
-function trimZeros(s: string, minDecimals: number): string {
-  const dot = s.indexOf(".");
-  if (dot === -1) return s;
-  const minLen = dot + 1 + minDecimals;
-  let end = s.length;
-  while (end > minLen && s.charCodeAt(end - 1) === 48 /* '0' */) end--;
-  if (s.charCodeAt(end - 1) === 46 /* '.' */) end--;
-  return s.slice(0, end);
 }
 
 /**

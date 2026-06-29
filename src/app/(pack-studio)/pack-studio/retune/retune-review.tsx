@@ -61,6 +61,7 @@ import { ReviewCard } from "./review-card";
 import { ReviewRail } from "./review-rail";
 import { SystemBalancePanel } from "./system-balance";
 import { RetuneGuide, RetuneGlossary } from "./retune-guide";
+import { formatDeltaPp, formatPercent } from "./format-percent";
 
 /**
  * Bulk Re-tune Review orchestrator (operator-only, client). Drives the Tinder-
@@ -1908,14 +1909,14 @@ function ConfirmDiffRowItem({ row }: { row: ConfirmDiffRow }) {
         </span>
       </td>
       <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
-        {row.fromP != null ? `${(row.fromP * 100).toFixed(2)}%` : "—"}
+        {row.fromP != null ? formatPercent(row.fromP * 100) : "—"}
       </td>
       <td className="px-1 py-1.5 text-center">
         <ArrowRight className="inline size-3 text-muted-foreground" />
       </td>
       <td className="px-3 py-1.5 text-right">
         <span className={cn("font-medium tabular-nums", tone)}>
-          {row.toP != null ? `${(row.toP * 100).toFixed(2)}%` : "—"}
+          {row.toP != null ? formatPercent(row.toP * 100) : "—"}
         </span>
       </td>
       <td className="w-16 px-3 py-1.5 text-right">
@@ -1924,7 +1925,7 @@ function ConfirmDiffRowItem({ row }: { row: ConfirmDiffRow }) {
         ) : (
           <span className={cn("tabular-nums", tone)}>
             {row.delta > 0 ? "+" : "−"}
-            {Math.abs(row.delta).toFixed(2)}
+            {formatDeltaPp(Math.abs(row.delta))}
           </span>
         )}
       </td>
