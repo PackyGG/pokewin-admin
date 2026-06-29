@@ -137,7 +137,11 @@ export function TodayPnlStatCard({
             className="col-span-2"
           />
         </div>
-        <p className="text-[10px] leading-snug text-muted-foreground">
+        {/* Bumped 10px → 11px — the prior 10px caption was effectively
+            illegible on the dark theme even after the muted-foreground
+            bump; 11px keeps the secondary rank vs the chip values
+            above without being a smudge. */}
+        <p className="text-[11px] leading-snug text-muted-foreground">
           Full P&amp;L includes balance, inventory, and voucher movement — see
           the{" "}
           <span className="font-medium text-foreground/80">info</span> icon.
@@ -171,8 +175,11 @@ function RawCashPnlBadge({ pnl }: { pnl: number }) {
   return (
     <span
       title={`Raw cash flow today (since 00:00 UTC): completed deposits minus card + manual withdrawals. No balance, inventory, or voucher movement — the plain crypto in/out figure.`}
+      // Bumped 10px → 11px to match the rest of the card's
+      // post-readability-pass labels — the badge sits next to the
+      // hero number, so the prior 10px text was lost beside it.
       className={cn(
-        "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums leading-none",
+        "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] font-semibold tabular-nums leading-none",
         up &&
           "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
         down &&
@@ -225,10 +232,14 @@ function TodayComponentChip({
       )}
       title={hint}
     >
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
+      {/* Label bumped 10px → 11px, value bumped text-xs → text-[13px]
+          to match the dashboard's PanelChip — keeps both component
+          chips visually identical so the eye doesn't try to assign
+          different meaning to a 1-pixel size delta. */}
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground truncate">
         {label}
       </p>
-      <p className={cn("text-xs font-semibold tabular-nums truncate", valueColor)}>
+      <p className={cn("text-[13px] font-semibold tabular-nums truncate", valueColor)}>
         <AnimatedNumber value={value} format="currency" />
       </p>
     </div>
@@ -335,7 +346,9 @@ function TodayPnlInfoPopover({
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             P&amp;L today · breakdown
           </p>
-          <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+          {/* Bumped 10px → 11px so the popover description is readable
+              alongside the breakdown rows below it. */}
+          <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
             Since 00:00 today (UTC) — <strong>{dayLabel}</strong> — not a
             rolling 24h window. House P&amp;L ={" "}
             <span className="font-mono">
@@ -418,8 +431,11 @@ function TodayBreakdownRow({
   const amountColor = positive
     ? "text-emerald-600 dark:text-emerald-400"
     : "text-rose-600 dark:text-rose-400";
+  // Row bumped 11px → text-xs (12px) and description 10px → 11px —
+  // at the prior sizes the popover felt like a tooltip the user had
+  // to squint at; now it reads as a proper breakdown table.
   return (
-    <li className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/40">
+    <li className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-xs hover:bg-muted/40">
       <span className="flex min-w-0 items-center gap-1.5">
         <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
           <Icon className="size-3" />
@@ -428,7 +444,7 @@ function TodayBreakdownRow({
           <span className="block truncate font-medium text-foreground/90">
             {label}
           </span>
-          <span className="block truncate text-[10px] text-muted-foreground">
+          <span className="block truncate text-[11px] text-muted-foreground">
             {description}
           </span>
         </span>

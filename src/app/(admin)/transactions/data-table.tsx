@@ -164,7 +164,10 @@ export function TransactionsDataTable({
 
       {/* Desktop table (>=lg) */}
       <div className="hidden rounded-md border overflow-x-auto lg:block">
-        <Table>
+        {/* Zebra striping — transactions list runs hundreds of rows
+            with similar shape (id / user / type / amount / timestamp),
+            so an alternating row tint is the cheapest scan aid. */}
+        <Table zebra>
           <TableHeader>
             {table.getHeaderGroups().map((hg) => (
               <TableRow key={hg.id}>

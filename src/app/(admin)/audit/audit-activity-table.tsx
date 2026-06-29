@@ -514,7 +514,10 @@ export function AuditActivityTable({ data }: { data: AuditListItem[] }) {
 
       {/* Desktop table (>=lg) */}
       <div className="hidden rounded-md border overflow-x-auto lg:block">
-        <Table>
+        {/* Zebra striping — the audit log is the densest table in the
+            admin and rows often differ only by event-type chip; an
+            alternating tint is essential for left-to-right scanning. */}
+        <Table zebra>
           <TableHeader>
             <TableRow>
               <TableHead>Event</TableHead>

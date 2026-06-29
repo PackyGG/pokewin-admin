@@ -384,14 +384,19 @@ export function KpiTile({
       </div>
       <p
         className={cn(
-          "relative mt-1 truncate text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl",
+          "relative mt-1.5 truncate text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl",
           colors.text,
         )}
       >
         {value}
       </p>
       {sub && (
-        <p className="relative mt-0.5 truncate text-[11px] text-muted-foreground">
+        // Bumped 11px → 12px (text-xs) so the sub line is readable
+        // without leaning in, and given a hair more breathing room
+        // (mt-0.5 → mt-1) so it stops touching the value's baseline.
+        // Still secondary (muted-foreground) so the hierarchy stays
+        // value > label > sub.
+        <p className="relative mt-1 truncate text-xs text-muted-foreground">
           {sub}
         </p>
       )}
@@ -446,14 +451,17 @@ export function MetricTile({
       </div>
       <p
         className={cn(
-          "relative mt-1 truncate text-2xl font-bold tracking-tight tabular-nums sm:text-3xl",
+          "relative mt-1.5 truncate text-2xl font-bold tracking-tight tabular-nums sm:text-3xl",
           colors.text,
         )}
       >
         {value}
       </p>
       {sub && (
-        <p className="relative mt-0.5 truncate text-[11px] text-muted-foreground">
+        // Same readability bump as KpiTile — 11px → 12px (text-xs)
+        // and a hair more space above so the sub line clears the
+        // value baseline.
+        <p className="relative mt-1 truncate text-xs text-muted-foreground">
           {sub}
         </p>
       )}

@@ -241,14 +241,17 @@ function DualHero({
 }) {
   return (
     <div className="min-w-0">
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
+      {/* Label bumped 10px → 11px so the eye can grip "Total" vs
+          "Organic" without zoom. Value stays at text-lg/text-xl, hint
+          bumped 10px → 11px to match. */}
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground truncate">
         {label}
       </p>
       <div className="truncate text-lg font-bold tabular-nums text-foreground sm:text-xl">
         <AnimatedNumber value={value} format="currency" />
       </div>
       {hint && (
-        <p className="text-[10px] leading-tight text-muted-foreground truncate">
+        <p className="text-[11px] leading-tight text-muted-foreground truncate">
           {hint}
         </p>
       )}
@@ -284,10 +287,13 @@ function PanelChip({
     <div
       className={cn("rounded-md border bg-background/40 px-2 py-1.5 min-w-0", border)}
     >
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
+      {/* Label bumped 10px → 11px and value bumped text-xs → text-[13px]
+          so each breakdown chip reads cleanly at a glance — at 10px/12px
+          the chip text was a smudge next to the hero number above it. */}
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground truncate">
         {label}
       </p>
-      <p className={cn("text-xs font-semibold tabular-nums truncate", valueColor)}>
+      <p className={cn("text-[13px] font-semibold tabular-nums truncate", valueColor)}>
         <AnimatedNumber value={value} format={format} />
       </p>
     </div>
@@ -584,7 +590,9 @@ export function DashboardKpiSection({
                     tone="emerald"
                   />
                 </div>
-                <p className="text-[10px] leading-tight text-muted-foreground">
+                {/* Bumped 10px → 11px so the bps caption is readable
+                    next to the chip values it explains. */}
+                <p className="text-[11px] leading-snug text-muted-foreground">
                   avg ~{formatBpsPct(cryptoFee.depositBps)} deposits · ~
                   {formatBpsPct(cryptoFee.withdrawalBps)} withdrawals
                 </p>

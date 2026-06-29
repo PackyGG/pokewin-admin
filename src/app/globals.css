@@ -103,7 +103,12 @@
   --secondary-foreground: oklch(0.97 0 0);
 
   --muted: oklch(0.21 0.025 250);
-  --muted-foreground: oklch(0.58 0.03 240);
+  /* Bumped 0.58 → 0.66 for better readability on the dark navy theme.
+     The old value sat at the WCAG AA edge for body copy on bg-card;
+     0.66 clears AA comfortably (~5:1) for the secondary labels used in
+     KPI tiles, panel chips, table meta rows, and breakdown footers
+     across the admin without losing the secondary visual rank. */
+  --muted-foreground: oklch(0.66 0.025 240);
 
   --accent: oklch(0.21 0.025 250);
   --accent-foreground: oklch(0.97 0 0);
@@ -173,10 +178,22 @@
   .text-page-title { @apply text-xl font-bold sm:text-2xl; }
   .text-card-title { @apply text-xs font-medium sm:text-sm; }
   .text-stat-value { @apply text-lg font-bold sm:text-xl md:text-2xl; }
-  .text-stat-label { @apply text-[11px] text-muted-foreground sm:text-xs; }
+  /* Bumped from text-[11px]/text-xs to text-xs/text-[13px] — the prior
+     11px lower bound was unreadable on the dashboard's panel footers and
+     KPI sub-lines once the chrome got dense. text-xs (12px) is the
+     readable floor; sm+ steps up to 13px (between text-xs and text-sm)
+     so a panel footer never has to compete with the hero number for
+     attention but still scans without leaning in. */
+  .text-stat-label { @apply text-xs text-muted-foreground sm:text-[13px]; }
   .text-description { @apply text-sm text-muted-foreground; }
   .text-meta { @apply text-xs text-muted-foreground; }
-  .text-tiny { @apply text-[10px] text-muted-foreground; }
+  /* Bumped from text-[10px] to text-[11px] — at 10px the dashboard's
+     date stamps, "since …" labels, and load-time indicator fell below
+     readable on the dark theme even after the muted-foreground bump.
+     11px keeps the secondary rank vs text-xs (12px) labels but is
+     legible without zoom. Only 11 sites use this utility so the visual
+     diff is contained and intentional. */
+  .text-tiny { @apply text-[11px] text-muted-foreground; }
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -217,6 +234,24 @@
    stay completely static (no zoom, no lift, no shadow change) per
    request. Left as a class hook so existing className references stay
    valid; .surface-sheen still provides the static lifted edge. */
+
+/* ──────────────────────────────────────────────────────────────
+   Table zebra striping (opt-in)
+   ──────────────────────────────────────────────────────────────
+   Long admin lists (withdrawals, deposits, transactions, audit) are
+   easier to scan when every other row carries a hairline tint that
+   contrasts with the card background. Hover/selection still win over
+   the stripe because they use a stronger token (muted/50, primary/10).
+
+   Opt in by adding `data-zebra` to the <Table> wrapper — the rule
+   targets every odd direct-descendant <tr> in <tbody>. Scoped to the
+   data-slot so it can't leak into nested tables. The tint is the
+   same `muted` token shadcn uses for the hover state, dialled down
+   to ~30% so it reads as alternating rhythm rather than a hover
+   afterglow. */
+[data-zebra="true"] tbody [data-slot="table-row"]:nth-child(odd) {
+  background-color: color-mix(in oklch, var(--muted) 30%, transparent);
+}
 
 /* react-datasheet-grid theme overrides */
 .dsg-container {

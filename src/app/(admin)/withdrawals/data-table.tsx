@@ -130,7 +130,10 @@ export function WithdrawalsDataTable<T>({ columns, data }: WithdrawalsDataTableP
 
       {/* Desktop table (>=lg) */}
       <div className="hidden rounded-md border overflow-x-auto lg:block">
-        <Table>
+        {/* Zebra striping makes the dense Withdrawals row set easier to
+            scan across the 8 columns — hover still wins because it uses
+            muted/50 vs the stripe's muted/30. */}
+        <Table zebra>
           <TableHeader>
             {table.getHeaderGroups().map((hg) => (
               <TableRow key={hg.id}>
