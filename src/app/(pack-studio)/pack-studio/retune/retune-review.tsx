@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   ChevronDown,
+  DollarSign,
   Loader2,
+  RotateCcw,
   Scale,
   ShieldCheck,
   Sparkles,
@@ -14,6 +16,7 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
@@ -226,6 +229,7 @@ function effectiveTargetEdge(
 function buildTargets(
   item: ReviewItem,
   edgeOverride: number | null,
+  priceOverride: number | null,
 ): PackRetuneTargets {
   const { autoTargets } = item.proposal;
   const a = item.adjusted;
@@ -237,6 +241,9 @@ function buildTargets(
     nearMissMin: a ? a.nearMissMin : autoTargets.nearMissMin,
     allowPriceSearch: true,
     upwardPriceExtensionPct: edgeRaised ? 2.0 : 0,
+    ...(priceOverride !== null && Number.isFinite(priceOverride) && priceOverride > 0
+      ? { priceOverride }
+      : {}),
   };
 }
 
@@ -325,6 +332,20 @@ export function RetuneReview({
   // on-screen "after" matches what the server will (re-)shape against.
   const [edgeOverride, setEdgeOverride] = React.useState<number | null>(null);
 
+  // ── Per-session price-target override ───────────────────────────────
+  // Operator-pinned absolute ticket price (USD). `null` = each pack searches
+  // around its OWN live price; a number = the search re-anchors on this USD
+  // value for every pack this session. Threads through `planAllRetunes`'s
+  // `priceOverride` opt AND `buildTargets`'s `priceOverride` field so both
+  // the dry-run preview (chip-strip table) and the eventual server write
+  // (`applyPackRetune`) share the same anchor. Same UX pattern as the
+  // chip-strip: re-running on change, reset on system-balance toggle.
+  //
+  // SAFETY: when an anchor is active, the search runs in `preferHigherEdge`
+  // mode so a lower anchor doesn't silently give up edge — the scorer will
+  // still pick the candidate with the highest achievable house edge ≥ target.
+  const [priceOverride, setPriceOverride] = React.useState<number | null>(null);
+
   // ── System-balance mode ─────────────────────────────────────────────
   // Off = per-pack auto-targets (the default load). On = portfolio mode: the
   // proposals are re-loaded via `planAllRetunes("portfolio")` so the cross-pack
@@ -378,6 +399,7 @@ export function RetuneReview({
       try {
         const res = await planAllRetunes(next ? "portfolio" : "per-pack", {
           edgeFloorOverride: edgeOverride,
+          priceOverride,
         });
         setItems(
           res.proposals.map((p) => ({
@@ -405,7 +427,7 @@ export function RetuneReview({
         setReloading(false);
       }
     },
-    [reloading, edgeOverride],
+    [reloading, edgeOverride, priceOverride],
   );
 
   // ── Edge-target nudge (chip strip on the review card) ───────────────
@@ -424,6 +446,7 @@ export function RetuneReview({
       try {
         const res = await planAllRetunes(portfolioMode ? "portfolio" : "per-pack", {
           edgeFloorOverride: value,
+          priceOverride,
         });
         setItems(
           res.proposals.map((p) => ({
@@ -448,7 +471,49 @@ export function RetuneReview({
         setReloading(false);
       }
     },
-    [reloading, edgeOverride, portfolioMode],
+    [reloading, edgeOverride, portfolioMode, priceOverride],
+  );
+
+  // ── Per-session price-target override input ───────────────────────────
+  // Operator commits an absolute USD anchor (or clears via null) → re-plan
+  // every proposal with that anchor. Same reset semantics as the chip strip:
+  // active local-adjust is reset (its `after` was shaped against the OLD
+  // anchor). `null` (or 0) = no anchor. READ-ONLY dry-run, no MAIN writes.
+  const onSetPriceOverride = React.useCallback(
+    async (value: number | null) => {
+      if (reloading) return;
+      // No-op if the value didn't actually change (avoid a redundant re-plan).
+      if (value === priceOverride) return;
+      setReloading(true);
+      try {
+        const res = await planAllRetunes(portfolioMode ? "portfolio" : "per-pack", {
+          edgeFloorOverride: edgeOverride,
+          priceOverride: value,
+        });
+        setItems(
+          res.proposals.map((p) => ({
+            proposal: p,
+            status: "pending" as ReviewStatus,
+            adjusted: null,
+          })),
+        );
+        setSystemPlan(res.systemPlan);
+        setPriceOverride(value);
+        setIndex(0);
+        toast.success(
+          value == null
+            ? "Target price cleared — every pack searches around its live price."
+            : `Target price set to $${value.toFixed(2)} — every pack re-anchored.`,
+        );
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to re-shape at new target price.",
+        );
+      } finally {
+        setReloading(false);
+      }
+    },
+    [reloading, priceOverride, edgeOverride, portfolioMode],
   );
 
   // ── Local re-shape (Adjust) ─────────────────────────────────────────
@@ -466,9 +531,19 @@ export function RetuneReview({
         const targetEdge = effectiveTargetEdge(item, edgeOverride);
         const edgeRaised =
           edgeOverride !== null && Number.isFinite(edgeOverride);
+        const priceAnchor =
+          priceOverride !== null &&
+          Number.isFinite(priceOverride) &&
+          priceOverride > 0
+            ? priceOverride
+            : null;
+        const preferHigherEdge = edgeRaised || priceAnchor !== null;
         const search = searchBestPriceForCleanSnap({
           cards: proposal.cards.map((c) => ({ value: c.value })),
-          basePrice: proposal.price,
+          // Re-anchor the search on the operator's pinned target price when
+          // set; else on the pack's live price. Keeps the local preview in
+          // lockstep with `planAllRetunes` (server uses same anchor).
+          basePrice: priceAnchor ?? proposal.price,
           // Honour the per-session edge-target override so the locally-shaped
           // "after" matches what the server will (re-)shape against on approve.
           targetEdge,
@@ -477,6 +552,7 @@ export function RetuneReview({
           nearMissMin: levers.nearMissMin,
           maxPriceChangePct: 0.25,
           upwardPriceExtensionPct: edgeRaised ? 2.0 : 0,
+          preferHigherEdge,
         });
         const shaped = search.bestResult;
         let adjusted: AdjustedState;
@@ -520,7 +596,7 @@ export function RetuneReview({
         return next;
       });
     },
-    [edgeOverride],
+    [edgeOverride, priceOverride],
   );
 
   const onResetAdjust = React.useCallback((i: number) => {
@@ -568,7 +644,7 @@ export function RetuneReview({
         const res = await applyPackRetune(
           item.proposal.packId,
           token,
-          buildTargets(item, edgeOverride),
+          buildTargets(item, edgeOverride, priceOverride),
         );
         setItems((prev) => {
           const next = [...prev];
@@ -593,7 +669,7 @@ export function RetuneReview({
             const retry = await applyPackRetune(
               item.proposal.packId,
               fresh,
-              buildTargets(item, edgeOverride),
+              buildTargets(item, edgeOverride, priceOverride),
             );
             setItems((prev) => {
               const next = [...prev];
@@ -619,7 +695,7 @@ export function RetuneReview({
         setApplying(false);
       }
     },
-    [items, router, advance, edgeOverride],
+    [items, router, advance, edgeOverride, priceOverride],
   );
 
   // Approve opens the two-step confirm gate instead of writing directly — the
@@ -731,7 +807,7 @@ export function RetuneReview({
         // card explains. `allowPriceSearch` is the owner's explicit opt-in for
         // the ±25% price-search lever; it flows from the editor checkbox
         // through the gate and lands on the server action's `targets` param.
-        const t = buildTargets(item, edgeOverride);
+        const t = buildTargets(item, edgeOverride, priceOverride);
         const res = await applyStagedPackEditAndRetune(
           item.proposal.packId,
           token,
@@ -774,7 +850,7 @@ export function RetuneReview({
           try {
             const { token: fresh } = await authorizePackRetuneForReview();
             tokenRef.current = fresh;
-            const t = buildTargets(item, edgeOverride);
+            const t = buildTargets(item, edgeOverride, priceOverride);
             const retry = await applyStagedPackEditAndRetune(
               item.proposal.packId,
               fresh,
@@ -820,7 +896,7 @@ export function RetuneReview({
         setApplying(false);
       }
     },
-    [items, router, advance, edgeOverride],
+    [items, router, advance, edgeOverride, priceOverride],
   );
 
   // Edit-approve also opens the two-step confirm gate — the pending edit write
@@ -980,6 +1056,21 @@ export function RetuneReview({
             disabled={applying || reloading}
             reloading={reloading}
           />
+          {/* ── Per-session target-price input ───────────────────────────
+              Advanced operator override: pin an ABSOLUTE USD anchor for the
+              clean-snap price search. When set, every pack re-anchors on
+              this price instead of its live ticket. Same UX pattern as the
+              chip strip (re-runs on commit; reset = clear input + Apply).
+              Persists for the whole session; resets on a system-balance
+              toggle. SAFETY: when an anchor is active the search runs in
+              `preferHigherEdge` mode so an anchor that lowers the price
+              doesn't silently give up house edge. */}
+          <TargetPriceInput
+            priceOverride={priceOverride}
+            onChange={(v) => void onSetPriceOverride(v)}
+            disabled={applying || reloading}
+            reloading={reloading}
+          />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[260px_1fr] lg:items-start">
@@ -1051,7 +1142,12 @@ export function RetuneReview({
         if (confirmStep === 0 || !pendingWrite) return null;
         const item = items[pendingWrite.index];
         if (!item) return null;
-        const summary = buildConfirmSummary(item, pendingWrite, edgeOverride);
+        const summary = buildConfirmSummary(
+          item,
+          pendingWrite,
+          edgeOverride,
+          priceOverride,
+        );
         const isAutoTune = pendingWrite.kind === "edit-and-retune";
         // The owner only sees the "price may shift" note when the editor
         // checkbox flowed through into the pending payload — pure UI surface
@@ -1308,6 +1404,132 @@ function EdgeTargetChipStrip({
   );
 }
 
+/**
+ * Per-session target-price input. Advanced operator override: pin an absolute
+ * USD anchor for the clean-snap price search. Compact input + Apply button:
+ * the operator types a number, hits Apply (or Enter), and the search re-anchors
+ * every proposal on that price. Empty + Apply clears the override (the search
+ * goes back to centering on each pack's live price). The active anchor is
+ * shown next to the input as `Active: $X.XX` so it's visible at a glance.
+ *
+ * UX: small, less prominent than the chip strip — this is an advanced lever.
+ * Same disabled-while-reloading / spinner semantics as the chip strip. Pressing
+ * Enter in the input commits, matching the operator-friendly muscle memory.
+ */
+function TargetPriceInput({
+  priceOverride,
+  onChange,
+  disabled,
+  reloading,
+}: {
+  priceOverride: number | null;
+  onChange: (next: number | null) => void;
+  disabled: boolean;
+  reloading: boolean;
+}) {
+  // Controlled local string state so the input doesn't fight the operator's
+  // typing (number input + the parent's null state would flip a typed "1.2"
+  // back to "" on every render). Committed via Apply / Enter only.
+  const [raw, setRaw] = React.useState<string>(
+    priceOverride !== null ? priceOverride.toFixed(2) : "",
+  );
+  // Re-seed when the parent clears the override (e.g. a system-balance toggle
+  // reset). Avoid clobbering operator-in-progress typing by only re-syncing
+  // when the parent's value differs from the parsed input value.
+  React.useEffect(() => {
+    const current = parseFloat(raw);
+    const same =
+      priceOverride !== null && Number.isFinite(current) && current === priceOverride;
+    if (!same && priceOverride === null) setRaw("");
+    if (!same && priceOverride !== null) setRaw(priceOverride.toFixed(2));
+    // raw intentionally omitted — we only want to react to parent changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priceOverride]);
+
+  const trimmed = raw.trim();
+  const parsed = trimmed === "" ? null : parseFloat(trimmed);
+  const valid =
+    trimmed === "" || (parsed !== null && Number.isFinite(parsed) && parsed > 0);
+
+  const commit = () => {
+    if (!valid) return;
+    onChange(parsed); // null when blank → clears the override
+  };
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+      <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        {reloading ? (
+          <Loader2 className="size-3.5 animate-spin text-primary" />
+        ) : (
+          <DollarSign className="size-3.5 text-primary" />
+        )}
+        Target price:
+        <span className="font-semibold tabular-nums text-foreground">
+          {priceOverride !== null ? `$${priceOverride.toFixed(2)}` : "auto"}
+        </span>
+      </span>
+      <div className="flex items-center gap-1.5">
+        <Input
+          type="number"
+          step="0.01"
+          min="0"
+          inputMode="decimal"
+          placeholder="e.g. 1.27"
+          value={raw}
+          onChange={(e) => setRaw(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit();
+            }
+          }}
+          disabled={disabled}
+          aria-invalid={!valid}
+          aria-label="Target ticket price"
+          className="h-7 w-24 text-xs"
+        />
+        <button
+          type="button"
+          onClick={commit}
+          disabled={disabled || !valid}
+          className={cn(
+            "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+            "disabled:cursor-not-allowed disabled:opacity-50",
+            "border-primary bg-primary/15 text-primary hover:bg-primary/25",
+          )}
+          title={
+            trimmed === ""
+              ? "Apply to clear the target price (back to each pack's live price)."
+              : `Apply a $${parsed?.toFixed(2) ?? "?"} target — every pack re-anchors.`
+          }
+        >
+          Apply
+        </button>
+        {priceOverride !== null && (
+          <button
+            type="button"
+            onClick={() => {
+              setRaw("");
+              onChange(null);
+            }}
+            disabled={disabled}
+            className="flex items-center gap-1 rounded-full border border-border bg-card px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-50"
+            title="Clear the target-price override (back to each pack's live price)."
+          >
+            <RotateCcw className="size-3" />
+            Reset
+          </button>
+        )}
+      </div>
+      <span className="text-[10px] text-muted-foreground">
+        Solver anchors every pack on this price (still searches ±25% for a
+        clean snap; higher price = higher edge).
+      </span>
+    </div>
+  );
+}
+
 // ─── Confirm-gate Step 1 summary ─────────────────────────────────────
 // Builds a unified before/after snapshot for ALL three write paths (plain
 // retune · verbatim edit · edit-and-retune) so Step 1 renders a single,
@@ -1375,6 +1597,7 @@ function buildConfirmSummary(
   item: ReviewItem,
   write: ConfirmWriteInput,
   edgeOverride: number | null,
+  priceOverride: number | null,
 ): ConfirmSummary {
   const { proposal } = item;
   const tag = (() => {
@@ -1404,21 +1627,29 @@ function buildConfirmSummary(
     let weightDiff: PlanAllWeightDiff[] | null;
     let feasible: boolean;
     let priceAfter: number = proposal.priceAfter ?? proposal.price;
+    const priceAnchor =
+      priceOverride !== null &&
+      Number.isFinite(priceOverride) &&
+      priceOverride > 0
+        ? priceOverride
+        : null;
     if (item.adjusted) {
       after = item.adjusted.after;
       weightDiff = item.adjusted.weightDiff;
       feasible = item.adjusted.feasible;
-    } else if (edgeOverride !== null) {
+    } else if (edgeOverride !== null || priceAnchor !== null) {
       const auto = proposal.autoTargets;
       const search = searchBestPriceForCleanSnap({
         cards: proposal.cards.map((c) => ({ value: c.value })),
-        basePrice: proposal.price,
-        targetEdge: edgeOverride,
+        // Same anchor as `onAdjust` + the server: pinned override OR pack price.
+        basePrice: priceAnchor ?? proposal.price,
+        targetEdge: edgeOverride ?? auto.targetEdge,
         targetWinRate: auto.targetWinRate,
         maxWinCap: auto.maxWinCap,
         nearMissMin: auto.nearMissMin,
         maxPriceChangePct: 0.25,
-        upwardPriceExtensionPct: 2.0,
+        upwardPriceExtensionPct: edgeOverride !== null ? 2.0 : 0,
+        preferHigherEdge: true,
       });
       const reshaped = search.bestResult;
       priceAfter = search.bestPrice;

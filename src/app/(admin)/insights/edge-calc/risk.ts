@@ -2009,6 +2009,20 @@ export function searchBestPriceForCleanSnap(input: {
    * actually land both clean odds AND the raised edge target.
    */
   upwardPriceExtensionPct?: number;
+  /**
+   * When TRUE, the scoring elevates the achieved HOUSE EDGE above clean-snap
+   * cleanness. Without this, the search picks the candidate with the cleanest
+   * ladder snap that just satisfies `edge ≥ targetEdge` — which can mean
+   * LOWERING the price (lower price + same payouts = lower edge, still ≥ target
+   * only if the pool barely clears it). The owner reported this on a 1%-tagged
+   * pack ($1.25 → $1.00 with edge dropping). With `preferHigherEdge=true` the
+   * scoring buckets candidates by edge in 0.1pp bins (higher = better) BEFORE
+   * the snap-priority tier, so a candidate giving up cleanness for ≥ 0.1pp
+   * more edge wins. Used by `planAllRetunes` / `applyPackRetune` whenever the
+   * operator has nudged the edge floor UP via the chip-strip OR pinned an
+   * explicit price anchor (both paths want "edge first").
+   */
+  preferHigherEdge?: boolean;
 }): SearchBestPriceResult {
   const {
     cards,
@@ -2023,6 +2037,7 @@ export function searchBestPriceForCleanSnap(input: {
   const upwardPriceExtensionPct = Math.max(0, input.upwardPriceExtensionPct ?? 0);
   const taggedWinRate = input.taggedWinRate;
   const tagged = typeof taggedWinRate === "number" && Number.isFinite(taggedWinRate);
+  const preferHigherEdge = input.preferHigherEdge === true;
 
   // Single-call passthrough for the degenerate / disabled cases. Mirrors the
   // backward-compat contract: callers can wire this in unconditionally and
@@ -2130,8 +2145,9 @@ export function searchBestPriceForCleanSnap(input: {
 
   // Score function: smaller is better.
   //
-  // DEFAULT MODE (`tagged === false`):
+  // DEFAULT MODE (`tagged === false`, `preferHigherEdge === false`):
   //   Tier 0: always 0 (inactive — the tagged tier is collapsed).
+  //   Tier 0b: always 0 (inactive — edgeBand only active under preferHigherEdge).
   //   Tier 1: snapPriority (snapped + skew matches base < snapped < not snapped < error)
   //   Tier 2: centsDist (closer to basePrice wins).
   //   Tier 3: edgeDrift (smaller |edge − target| wins).
@@ -2139,9 +2155,21 @@ export function searchBestPriceForCleanSnap(input: {
   // TAGGED MODE (`tagged === true`):
   //   Tier 0: winRateTier — 0 = within {@link TAGGED_WINRATE_TOLERANCE} of
   //           the tag, 1 = outside tol but still a success, 2 = error.
+  //   Tier 0b: edgeBand if preferHigherEdge, else inactive.
   //   Tier 1: snapPriority (same as default).
   //   Tier 2: centsDist.
   //   Tier 3: edgeDrift.
+  //
+  // PREFER-HIGHER-EDGE MODE (`preferHigherEdge === true`):
+  //   The owner reported the search lowering a 1%-tagged pack from $1.25 →
+  //   $1.00 — a price drop that hurts edge — because the $1.00 candidate's
+  //   snap was cleaner. When the operator has nudged the edge floor up via
+  //   the chip strip OR pinned a specific anchor price, edge becomes the
+  //   PRIMARY optimization (after winRate-tier for tagged). The `edgeBand`
+  //   tier buckets each successful candidate by its achieved edge in 0.1pp
+  //   bins (-floor(edge * 1000)) so a candidate giving up snap-cleanness for
+  //   ≥0.1pp more edge wins. Within a band, snap-cleanness still breaks ties.
+  //   Failed candidates (no edge) land in the worst band.
   //
   // The tagged tier 0 is the OWNER's hard requirement — a tagged pack must
   // hit its tag, full stop. Snap-cleanness is the secondary preference.
@@ -2149,6 +2177,7 @@ export function searchBestPriceForCleanSnap(input: {
     price: number;
     result: ShapeWeightsResult;
     winRateTier: number; // tagged mode only; always 0 in default mode
+    edgeBand: number; // preferHigherEdge only; always 0 otherwise. Smaller = higher edge.
     snapPriority: number; // 0 = snapped + skew matches base, 1 = snapped wrong skew, 2 = not snapped, 3 = error
     centsDist: number;
     edgeDrift: number;
@@ -2157,6 +2186,7 @@ export function searchBestPriceForCleanSnap(input: {
     let snapPriority: number;
     let edgeDrift: number;
     let winRateTier: number;
+    let edgeBand: number;
     if (isShapeWeightsSuccess(result)) {
       const isSnapped = result.snapped === true;
       const skewMatchesBase =
@@ -2167,15 +2197,22 @@ export function searchBestPriceForCleanSnap(input: {
       edgeDrift = Math.abs(result.edge - targetEdge);
       // Tagged-mode tier 0: within-tol = 0, outside-but-ok = 1.
       winRateTier = tagged ? (isWithinTaggedTol(result) ? 0 : 1) : 0;
+      // Edge band: bucketize achieved edge in 0.1pp bins; negate so higher
+      // edge = lower (better) score. Only active under preferHigherEdge.
+      edgeBand = preferHigherEdge ? -Math.floor(result.edge * 1000) : 0;
     } else {
       snapPriority = 3;
       edgeDrift = Infinity;
       winRateTier = tagged ? 2 : 0;
+      // Failed candidates land in the worst (largest positive) band so they
+      // lose to every success.
+      edgeBand = preferHigherEdge ? Number.MAX_SAFE_INTEGER : 0;
     }
     return {
       price,
       result,
       winRateTier,
+      edgeBand,
       snapPriority,
       centsDist: Math.abs(Math.round(price * 100) - centsAtBase),
       edgeDrift,
@@ -2188,11 +2225,15 @@ export function searchBestPriceForCleanSnap(input: {
   // DEFAULT MODE: if the base price already produced a snapped (and
   // skew-matching) result, prefer it — never deviate without reason.
   // TAGGED MODE: ALSO require base to satisfy the 0.01pp win-rate gate.
+  // PREFER-HIGHER-EDGE MODE: the sweep MUST run — even if base snaps cleanly,
+  //   a HIGHER-priced candidate may give the operator the edge they asked for.
   // Otherwise the sweep MUST run — the owner's accuracy requirement is
   // the hard primary.
-  const baseQualifiesForEarlyReturn = tagged
-    ? best.winRateTier === 0 && best.snapPriority === 0
-    : best.snapPriority === 0;
+  const baseQualifiesForEarlyReturn = preferHigherEdge
+    ? false
+    : tagged
+      ? best.winRateTier === 0 && best.snapPriority === 0
+      : best.snapPriority === 0;
   if (baseQualifiesForEarlyReturn) {
     return {
       bestPrice: basePrice,
@@ -2212,16 +2253,21 @@ export function searchBestPriceForCleanSnap(input: {
     const result = runAt(price);
     searched += 1;
     const scored = scoreOf(price, result);
-    // Lexicographic comparator: winRateTier < snapPriority < centsDist < edgeDrift.
-    // In default mode winRateTier is always 0 → effectively starts at snapPriority.
+    // Lexicographic comparator: winRateTier < edgeBand < snapPriority < centsDist < edgeDrift.
+    // In default mode winRateTier + edgeBand are always 0 → effectively starts at snapPriority.
     if (
       scored.winRateTier < best.winRateTier ||
       (scored.winRateTier === best.winRateTier &&
+        scored.edgeBand < best.edgeBand) ||
+      (scored.winRateTier === best.winRateTier &&
+        scored.edgeBand === best.edgeBand &&
         scored.snapPriority < best.snapPriority) ||
       (scored.winRateTier === best.winRateTier &&
+        scored.edgeBand === best.edgeBand &&
         scored.snapPriority === best.snapPriority &&
         scored.centsDist < best.centsDist) ||
       (scored.winRateTier === best.winRateTier &&
+        scored.edgeBand === best.edgeBand &&
         scored.snapPriority === best.snapPriority &&
         scored.centsDist === best.centsDist &&
         scored.edgeDrift < best.edgeDrift)

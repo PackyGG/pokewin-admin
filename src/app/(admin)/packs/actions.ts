@@ -1332,6 +1332,21 @@ export type PackRetuneTargets = {
    * Defaults to 0 (use only the symmetric ±25% band).
    */
   upwardPriceExtensionPct?: number;
+  /**
+   * Operator-pinned target ticket price (USD) — ANCHOR for the clean-snap
+   * price search. When set (non-null, > 0), the search re-centers around this
+   * absolute USD anchor rather than the pack's live price, so the operator
+   * can opt: "shape this pack to a $X ticket". The chosen `priceAfter` will
+   * cluster near the anchor (still nudged ±25% / +200% in the chip-strip-
+   * nudged case to land a clean snap that satisfies edge + win-rate). Only
+   * meaningful when `allowPriceSearch` is true; ignored otherwise. Null /
+   * undefined = use the live `packs.price` (default).
+   *
+   * SAFETY: when an anchor is active, the search runs in `preferHigherEdge`
+   * mode so an anchor that lowers the price doesn't silently give up house
+   * edge (the scorer ranks higher achieved edge above cleaner snap).
+   */
+  priceOverride?: number | null;
 };
 
 /** Target set with the auto-defaults applied (used internally by plan/apply). */
@@ -1714,6 +1729,22 @@ export async function applyPackRetune(
   //     The chosen price becomes the FINAL `priceAfter` written below.
   const allowPriceSearch = targets.allowPriceSearch === true;
   const upwardExtension = Math.max(0, targets.upwardPriceExtensionPct ?? 0);
+  // Operator-pinned absolute price anchor (USD). When set + > 0, the search
+  // re-centers around this anchor instead of `price`. Only meaningful when
+  // `allowPriceSearch` is true. Activating an anchor also flips the search
+  // into `preferHigherEdge` mode so an anchor that lowers the price doesn't
+  // silently give up edge (owner-reported $1.25 → $1.00 regression).
+  const priceAnchor =
+    targets.priceOverride != null &&
+    Number.isFinite(targets.priceOverride) &&
+    targets.priceOverride > 0
+      ? targets.priceOverride
+      : null;
+  // Same `preferHigherEdge` gate as `planAllRetunes`: on whenever the operator
+  // pushed the edge target up via the chip strip (upwardExtension > 0) OR
+  // pinned an explicit price anchor. Keeps the write's chosen price in sync
+  // with the on-screen preview produced by `planAllRetunes`.
+  const preferHigherEdge = upwardExtension > 0 || priceAnchor !== null;
   // Tagged lottery packs get the strict 0.01pp win-rate accuracy gate (the
   // tag IS the contract). Only active when the operator didn't pin an
   // explicit `targetWinRate` AND the resolved targetWinRate matches the tag.
@@ -1727,9 +1758,10 @@ export async function applyPackRetune(
   let priceAfter = price;
   let shaped;
   if (allowPriceSearch) {
+    const searchBasePrice = priceAnchor ?? price;
     const search = searchBestPriceForCleanSnap({
       cards: pool.map((c) => ({ value: c.value })),
-      basePrice: price,
+      basePrice: searchBasePrice,
       targetEdge,
       targetWinRate: resolved.targetWinRate,
       maxWinCap: resolved.maxWinCap,
@@ -1737,6 +1769,7 @@ export async function applyPackRetune(
       winRateTol,
       maxPriceChangePct: 0.25,
       upwardPriceExtensionPct: upwardExtension,
+      preferHigherEdge,
       ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
     });
     shaped = search.bestResult;

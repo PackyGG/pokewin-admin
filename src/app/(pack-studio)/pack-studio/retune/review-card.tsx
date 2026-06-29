@@ -6,6 +6,7 @@ import {
   ArrowRight,
   Check,
   ChevronLeft,
+  DollarSign,
   Gauge,
   Info,
   Layers,
@@ -429,9 +430,32 @@ export function ReviewCard({
             />
           </div>
           <div className="shrink-0 text-right text-xs text-muted-foreground">
-            <p className="font-medium tabular-nums text-foreground">
-              {formatCurrency(proposal.price)}
-            </p>
+            {/* Header price chip — shows the live price PLUS a small "→ $X" hint
+                when the auto-search would move the ticket. Per-pack so the
+                operator sees per-pack price drift during a batched review. */}
+            {feasible &&
+            after != null &&
+            Math.abs(proposal.priceAfter - proposal.price) > 1e-9 ? (
+              <p className="font-medium tabular-nums">
+                <span className="text-muted-foreground">
+                  {formatCurrency(proposal.price)}
+                </span>
+                <span className="mx-1 text-muted-foreground">→</span>
+                <span
+                  className={cn(
+                    proposal.priceAfter > proposal.price
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-rose-600 dark:text-rose-400",
+                  )}
+                >
+                  {formatCurrency(proposal.priceAfter)}
+                </span>
+              </p>
+            ) : (
+              <p className="font-medium tabular-nums text-foreground">
+                {formatCurrency(proposal.price)}
+              </p>
+            )}
             <p className="tabular-nums">{proposal.cards.length} cards</p>
             <p className="tabular-nums">
               {index + 1} / {total}
@@ -581,6 +605,31 @@ export function ReviewCard({
             after={after}
             hypothetical={hypothetical}
             targetEdge={targetEdge}
+          />
+        </section>
+
+        {/* ── Pack price: BEFORE → AFTER (auto price-search may have moved it) ─
+            Surfaces the price-search result the operator otherwise would not
+            see — commit 7f9eb7fa added the `searchBestPriceForCleanSnap` lever
+            that can BUMP the ticket price to land clean odds (e.g. $1.25 →
+            $1.27) or, when the operator nudges the edge target up via the
+            chip strip, push the ticket much further up to clear the raised
+            edge floor. House-POV: a higher price = more take per open = good
+            for the house = emerald; a lower price = giving away margin =
+            rose. Equal price = neutral muted "—". */}
+        <section className="space-y-3">
+          <SectionHeading
+            icon={DollarSign}
+            title={
+              <span className="flex items-center gap-1.5">
+                Pack price
+                <InfoHint text="The ticket price players pay per open. The auto price-search may BUMP this to land cleaner odds, or — when the operator nudges the edge target up — push it higher so the math can clear the raised edge floor. Emerald = price went up (good for the house); rose = price went down (giving away margin)." />
+              </span>
+            }
+          />
+          <PriceCompare
+            priceBefore={proposal.price}
+            priceAfter={feasible && after != null ? proposal.priceAfter : null}
           />
         </section>
 
@@ -1109,6 +1158,109 @@ function EdgeTile({
           </span>
         ) : null}
       </p>
+    </div>
+  );
+}
+
+// ─── Pack price BEFORE → AFTER ────────────────────────────────────────
+
+/**
+ * Compact before → after price comparison. Two side-by-side tiles, same shape
+ * as `EdgeCompare`. The "After" tile carries a House-POV tone (price up =
+ * emerald, down = rose) and a small delta caption so the operator sees the
+ * dollar move at a glance. When the proposal is infeasible (no `priceAfter`
+ * to compute against), the "After" tile collapses to a dashed placeholder —
+ * the operator still sees the live price.
+ */
+function PriceCompare({
+  priceBefore,
+  priceAfter,
+}: {
+  priceBefore: number;
+  priceAfter: number | null;
+}) {
+  return (
+    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-[1fr_auto_1fr] sm:items-stretch">
+      <PriceTile label="Before" price={priceBefore} />
+      <div className="hidden items-center justify-center sm:flex">
+        <ArrowRight className="size-5 text-muted-foreground" />
+      </div>
+      {priceAfter != null ? (
+        <PriceTile
+          label="After"
+          price={priceAfter}
+          comparedTo={priceBefore}
+          animate
+        />
+      ) : (
+        <div className="flex items-center justify-center rounded-xl border border-dashed bg-muted/20 px-3 py-6 text-center text-xs text-muted-foreground">
+          Price unchanged — infeasible at current pool
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A single price tile. `comparedTo` drives the House-POV tone + delta caption. */
+function PriceTile({
+  label,
+  price,
+  comparedTo,
+  animate,
+}: {
+  label: string;
+  price: number;
+  /** When set, the tile is the "After" and is colored vs. this baseline. */
+  comparedTo?: number;
+  animate?: boolean;
+}) {
+  const changed =
+    comparedTo !== undefined && Math.abs(price - comparedTo) > 1e-9;
+  // House-POV: a HIGHER price = more take per open = healthy = emerald;
+  // a LOWER price = giving away margin = rose. Unchanged = neutral muted.
+  const up = changed && comparedTo !== undefined && price > comparedTo;
+  const tone = !changed
+    ? "text-muted-foreground"
+    : up
+      ? "text-emerald-600 dark:text-emerald-400"
+      : "text-rose-600 dark:text-rose-400";
+  const bg = animate
+    ? !changed
+      ? "bg-muted/20"
+      : up
+        ? "bg-emerald-500/10 border-emerald-500/25"
+        : "bg-rose-500/10 border-rose-500/25"
+    : "bg-muted/20";
+  const delta =
+    comparedTo !== undefined && changed ? price - comparedTo : null;
+  return (
+    <div className={cn("rounded-xl border p-3.5", bg)}>
+      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label} · ticket price
+      </p>
+      <p
+        className={cn(
+          "mt-1 text-3xl font-bold tracking-tight tabular-nums",
+          tone,
+        )}
+      >
+        {formatCurrency(price)}
+      </p>
+      {animate ? (
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          {delta == null ? (
+            <>unchanged</>
+          ) : (
+            <span className={cn("font-medium", tone)}>
+              {delta > 0 ? "+" : "−"}
+              {formatCurrency(Math.abs(delta))}
+              <span className="ml-1 font-normal">
+                · {up ? "more take per open" : "less take per open"}
+              </span>
+            </span>
+          )}
+        </p>
+      ) : null}
     </div>
   );
 }

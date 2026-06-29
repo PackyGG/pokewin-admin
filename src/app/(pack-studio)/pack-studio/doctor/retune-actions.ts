@@ -465,6 +465,22 @@ export type PlanAllMode = "per-pack" | "portfolio";
  */
 export type PlanAllOpts = {
   edgeFloorOverride?: number | null;
+  /**
+   * Operator-pinned target ticket price (USD) — ANCHOR for the clean-snap price
+   * search. When set (non-null, > 0), the search re-centers around this anchor
+   * rather than the live pack price, so the operator can say "shape every pack
+   * to land at $X" and have `priceAfter` cluster around that value (the search
+   * still nudges ±25% / +200% in the chip-strip-nudged case to find a clean
+   * snap that satisfies edge + win-rate). Per-pack ticket-price differences
+   * (a $1.25 pack and a $5 pack in the same review session) are preserved
+   * relative to their own anchor — this is a per-pack absolute anchor, not a
+   * batch override. Null/undefined = use each pack's live `price` (default).
+   *
+   * SAFETY: when an anchor is active, the search runs in `preferHigherEdge`
+   * mode (edge ranks above snap-cleanness) so an anchor that lowers the price
+   * doesn't silently give up house edge.
+   */
+  priceOverride?: number | null;
 };
 
 /** Hard ceiling on the operator's edge nudge — caps the chip strip presets. */
@@ -667,7 +683,23 @@ export async function planAllRetunes(
     opts?.edgeFloorOverride != null &&
     Number.isFinite(opts.edgeFloorOverride) &&
     opts.edgeFloorOverride > baseEdgeCurve.edgeFloor;
+  // Operator-pinned price anchor (optional). When set, every pack's search
+  // re-centers on this absolute USD anchor instead of the pack's live price.
+  // We also activate `preferHigherEdge` whenever an anchor OR an edge-floor
+  // nudge is active so the scorer ranks higher achieved edge above cleaner
+  // snap — the owner's report on a 1%-tagged pack ($1.25 → $1.00 search)
+  // showed snap-first scoring giving away edge when the operator wanted the
+  // opposite. Anchors that lower the price still must clear the targetEdge
+  // hard floor inside `shapeWeights`; the preferHigherEdge bias picks the
+  // candidate that BEATS target by the most.
+  const priceAnchor =
+    opts?.priceOverride != null &&
+    Number.isFinite(opts.priceOverride) &&
+    opts.priceOverride > 0
+      ? opts.priceOverride
+      : null;
   const upwardExtension = edgeRaised ? 2.0 : 0; // up to +200% when chip-strip nudged
+  const preferHigherEdge = edgeRaised || priceAnchor !== null;
 
   const proposals: PlanAllProposal[] = inScope.map((p) => {
     const cards = cardsByPack.get(p.id) ?? [];
@@ -713,15 +745,21 @@ export async function planAllRetunes(
         ? autoTargets.intendedHitRate
         : undefined;
 
+    // Anchor the search on the operator's pinned target price when set; else
+    // on the pack's current live price. `preferHigherEdge` is on whenever an
+    // anchor OR an edge nudge is active so the scorer prefers higher achieved
+    // edge over snap-cleanness (owner-reported $1.25 → $1.00 regression).
+    const searchBasePrice = priceAnchor ?? p.price;
     const search = searchBestPriceForCleanSnap({
       cards: cards.map((c) => ({ value: c.value })),
-      basePrice: p.price,
+      basePrice: searchBasePrice,
       targetEdge: autoTargets.targetEdge,
       targetWinRate: autoTargets.targetWinRate,
       maxWinCap: autoTargets.maxWinCap,
       nearMissMin: autoTargets.nearMissMin,
       maxPriceChangePct: 0.25,
       upwardPriceExtensionPct: upwardExtension,
+      preferHigherEdge,
       ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
     });
     const shaped = search.bestResult;
