@@ -51,6 +51,7 @@ import {
 } from "@/app/(admin)/packs/actions";
 import {
   planAllRetunes,
+  planSingleRetune,
   applyPackEdit,
   applyStagedPackEditAndRetune,
   type PlanAllProposal,
@@ -357,6 +358,29 @@ export function RetuneReview({
   );
   const [reloading, setReloading] = React.useState(false);
 
+  // ── Stale-on-nudge tracker (single-pack-on-demand chip recompute) ───
+  // A chip-strip nudge OR a target-price change used to call
+  // `planAllRetunes(mode, { ... })`, which recomputes ALL ~183 packs server-
+  // side: at 800 `searchBestPriceForCleanSnap` candidates per pack under an
+  // edge nudge, that's ~146k shapeWeights calls and times out at the Vercel
+  // gateway (owner-reported ~3-min stall). The fix: recompute ONLY the pack
+  // the operator is reviewing on click (≈100ms), mark the others as stale,
+  // and lazily recompute each one as the operator navigates to it. The other
+  // packs keep their pre-nudge proposal until approached — they're stale-
+  // but-displayable.
+  //
+  // `staleIds` carries pack ids whose proposal is older than the current
+  // (edgeOverride, priceOverride). The current pack is always recomputed
+  // synchronously by the chip handler so the operator sees the new shape
+  // immediately; navigating to a stale pack triggers a background recompute
+  // (see the `goTo` / `advance` effect below) without blocking the UI.
+  const [staleIds, setStaleIds] = React.useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  // True while a single-pack recompute (chip click OR background nav-lazy)
+  // is in flight. Drives the chip-strip + price-input spinners.
+  const [recomputingSingle, setRecomputingSingle] = React.useState(false);
+
   // The session retune token (kept in a ref so the approve loop reads the
   // latest after a re-mint without a stale closure). The token is minted by
   // the "Start review" button (no 2FA prompt for this flow) and silently
@@ -411,6 +435,9 @@ export function RetuneReview({
         setSystemPlan(res.systemPlan);
         setPortfolioMode(next);
         setIndex(0);
+        // The full plan-all reload re-shaped every proposal with the current
+        // overrides, so nothing is stale anymore.
+        setStaleIds(new Set());
         if (next) {
           const tightened = res.systemPlan?.tightened.length ?? 0;
           toast.success(
@@ -430,91 +457,157 @@ export function RetuneReview({
     [reloading, edgeOverride, priceOverride],
   );
 
+  // ── Single-pack recompute primitive (chip-strip + price-input) ──────
+  // Recomputes ONE pack's proposal with the given nudge and swaps it in. Used
+  // by both nudge handlers AND the nav-lazy effect. Returns true on success so
+  // the caller can clear the stale flag; returns false on error (the pack
+  // keeps its prior proposal — a stale display is better than a missing one).
+  // The cached server action makes a return-visit instant (same key tuple).
+  const recomputeOne = React.useCallback(
+    async (
+      i: number,
+      edge: number | null,
+      price: number | null,
+    ): Promise<boolean> => {
+      const item = items[i];
+      if (!item) return false;
+      const packId = item.proposal.packId;
+      try {
+        const next = await planSingleRetune(packId, {
+          edgeFloorOverride: edge,
+          priceOverride: price,
+        });
+        if (!next) return false;
+        setItems((prev) => {
+          const arr = [...prev];
+          // Re-find by packId — `i` may be stale if the queue was rebuilt.
+          const idx = arr.findIndex((it) => it.proposal.packId === packId);
+          if (idx < 0) return prev;
+          arr[idx] = { ...arr[idx]!, proposal: next, adjusted: null };
+          return arr;
+        });
+        setStaleIds((prev) => {
+          if (!prev.has(packId)) return prev;
+          const out = new Set(prev);
+          out.delete(packId);
+          return out;
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [items],
+  );
+
   // ── Edge-target nudge (chip strip on the review card) ───────────────
   // Operator picks a higher house-edge floor (presets 11.02 / 11.10 / 11.20 /
-  // 11.25 / 11.30 %). Re-loads every proposal targeting that nudged floor via
-  // `planAllRetunes(mode, { edgeFloorOverride })` — the server's edge curve has
-  // its floor raised so every pack's per-pack target lands ≥ the nudge. The
-  // active local-adjust is reset (its `after` was shaped against the OLD
-  // target). `null` = baseline curve. READ-ONLY — no MAIN writes.
+  // 11.25 / 11.30 %). Recomputes ONLY the current proposal synchronously via
+  // `planSingleRetune` (≈100ms) and marks the rest as stale; the nav-lazy
+  // effect recomputes each one on demand. `null` = baseline curve.
+  // READ-ONLY — no MAIN writes.
   const onSelectEdgeTarget = React.useCallback(
     async (value: number | null) => {
-      if (reloading) return;
+      if (reloading || recomputingSingle) return;
       // No-op if the operator clicks the already-selected chip.
       if (value === edgeOverride) return;
-      setReloading(true);
+      setRecomputingSingle(true);
       try {
-        const res = await planAllRetunes(portfolioMode ? "portfolio" : "per-pack", {
-          edgeFloorOverride: value,
-          priceOverride,
-        });
-        setItems(
-          res.proposals.map((p) => ({
-            proposal: p,
-            status: "pending" as ReviewStatus,
-            adjusted: null,
-          })),
-        );
-        setSystemPlan(res.systemPlan);
+        // Adopt the new override BEFORE recomputing so the nav-lazy effect
+        // observes the matching value if the operator navigates immediately.
         setEdgeOverride(value);
-        setIndex(0);
+        // Mark every other proposal stale — they were shaped against the OLD
+        // override. The current pack is recomputed synchronously below, so
+        // its id never appears in the stale set.
+        const currentPackId = items[index]?.proposal.packId ?? null;
+        setStaleIds(
+          new Set(
+            items
+              .map((it) => it.proposal.packId)
+              .filter((id) => id !== currentPackId),
+          ),
+        );
+        // Recompute the current pack with the new override.
+        const ok = await recomputeOne(index, value, priceOverride);
+        if (!ok) {
+          toast.error("Failed to re-shape at new edge target.");
+          return;
+        }
         toast.success(
           value == null
             ? "Edge target back to baseline."
             : `Edge target nudged to ${(value * 100).toFixed(2)}%.`,
         );
-      } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Failed to re-shape at new edge target.",
-        );
       } finally {
-        setReloading(false);
+        setRecomputingSingle(false);
       }
     },
-    [reloading, edgeOverride, portfolioMode, priceOverride],
+    [reloading, recomputingSingle, edgeOverride, items, index, priceOverride, recomputeOne],
   );
 
   // ── Per-session price-target override input ───────────────────────────
-  // Operator commits an absolute USD anchor (or clears via null) → re-plan
-  // every proposal with that anchor. Same reset semantics as the chip strip:
-  // active local-adjust is reset (its `after` was shaped against the OLD
-  // anchor). `null` (or 0) = no anchor. READ-ONLY dry-run, no MAIN writes.
+  // Operator commits an absolute USD anchor (or clears via null) → recompute
+  // ONLY the current proposal synchronously, mark the rest as stale (nav-lazy
+  // recompute fills them in on demand). `null` (or 0) = no anchor.
+  // READ-ONLY dry-run, no MAIN writes.
   const onSetPriceOverride = React.useCallback(
     async (value: number | null) => {
-      if (reloading) return;
-      // No-op if the value didn't actually change (avoid a redundant re-plan).
+      if (reloading || recomputingSingle) return;
+      // No-op if the value didn't actually change.
       if (value === priceOverride) return;
-      setReloading(true);
+      setRecomputingSingle(true);
       try {
-        const res = await planAllRetunes(portfolioMode ? "portfolio" : "per-pack", {
-          edgeFloorOverride: edgeOverride,
-          priceOverride: value,
-        });
-        setItems(
-          res.proposals.map((p) => ({
-            proposal: p,
-            status: "pending" as ReviewStatus,
-            adjusted: null,
-          })),
-        );
-        setSystemPlan(res.systemPlan);
         setPriceOverride(value);
-        setIndex(0);
+        const currentPackId = items[index]?.proposal.packId ?? null;
+        setStaleIds(
+          new Set(
+            items
+              .map((it) => it.proposal.packId)
+              .filter((id) => id !== currentPackId),
+          ),
+        );
+        const ok = await recomputeOne(index, edgeOverride, value);
+        if (!ok) {
+          toast.error("Failed to re-shape at new target price.");
+          return;
+        }
         toast.success(
           value == null
             ? "Target price cleared — every pack searches around its live price."
             : `Target price set to $${value.toFixed(2)} — every pack re-anchored.`,
         );
-      } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Failed to re-shape at new target price.",
-        );
       } finally {
-        setReloading(false);
+        setRecomputingSingle(false);
       }
     },
-    [reloading, priceOverride, edgeOverride, portfolioMode],
+    [reloading, recomputingSingle, priceOverride, items, index, edgeOverride, recomputeOne],
   );
+
+  // ── Nav-lazy recompute ──────────────────────────────────────────────
+  // When the operator navigates to a pack whose proposal is stale (was not
+  // recomputed with the current edge/price override), kick off a background
+  // recompute. The chip-strip spinner stays visible until it lands, but the
+  // page is never blocked. The cached `planSingleRetune` makes a return
+  // visit to an already-recomputed pack instant.
+  React.useEffect(() => {
+    const item = items[index];
+    if (!item) return;
+    const packId = item.proposal.packId;
+    if (!staleIds.has(packId)) return;
+    if (recomputingSingle) return;
+    let cancelled = false;
+    setRecomputingSingle(true);
+    void (async () => {
+      try {
+        await recomputeOne(index, edgeOverride, priceOverride);
+      } finally {
+        if (!cancelled) setRecomputingSingle(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [index, items, staleIds, recomputingSingle, edgeOverride, priceOverride, recomputeOne]);
 
   // ── Local re-shape (Adjust) ─────────────────────────────────────────
   // Routes through `searchBestPriceForCleanSnap` so the locally-previewed
@@ -1053,8 +1146,8 @@ export function RetuneReview({
           <EdgeTargetChipStrip
             edgeOverride={edgeOverride}
             onChange={(v) => void onSelectEdgeTarget(v)}
-            disabled={applying || reloading}
-            reloading={reloading}
+            disabled={applying || reloading || recomputingSingle}
+            reloading={reloading || recomputingSingle}
           />
           {/* ── Per-session target-price input ───────────────────────────
               Advanced operator override: pin an ABSOLUTE USD anchor for the
@@ -1068,8 +1161,8 @@ export function RetuneReview({
           <TargetPriceInput
             priceOverride={priceOverride}
             onChange={(v) => void onSetPriceOverride(v)}
-            disabled={applying || reloading}
-            reloading={reloading}
+            disabled={applying || reloading || recomputingSingle}
+            reloading={reloading || recomputingSingle}
           />
         </div>
 

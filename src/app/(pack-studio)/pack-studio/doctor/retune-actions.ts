@@ -863,6 +863,249 @@ async function planAllRetunesUncached(
   return { cfg, mode, systemPlan, proposals };
 }
 
+// ─── Single-pack retune (chip-strip on-demand recompute) ──────────────────
+//
+// The chip-strip (edge floor nudge) and target-price input both used to call
+// `planAllRetunes` with the new override on every click. That re-runs the
+// per-pack `searchBestPriceForCleanSnap` × N=183 packs — at 800 candidates per
+// pack under an edge nudge, that's ~146k shapeWeights calls and times out at
+// the Vercel gateway. The fix: recompute ONLY the pack the operator is
+// currently reviewing on click; lazily recompute the others as the operator
+// navigates to them. The other 182 proposals keep their pre-nudge values until
+// approached — they're stale-but-displayable, and the chip-strip preset is
+// per-session state that follows the operator across packs.
+
+/**
+ * READ-ONLY single-pack version of {@link planAllRetunes}. Computes the
+ * proposal for ONE pack with the supplied nudge options (edge floor / price
+ * anchor). Owner-gated + Pack-Studio-gated. Writes nothing.
+ *
+ * Used by the Retune Review chip-strip + target-price input so a click
+ * recomputes only the pack the operator is reviewing (≈ 100ms) instead of all
+ * 183 packs (≈ 3 min, gateway timeout). Cached per (packId, mode, nudge) so
+ * navigating back to a previously-recomputed pack is instant; the same write
+ * paths that invalidate `planAllRetunes` (via PACK_STUDIO_RETUNE_CACHE_TAG)
+ * invalidate this too.
+ *
+ * `mode` is accepted for parity with `planAllRetunes` but only "per-pack" is
+ * meaningful for a single pack — portfolio mode is a cross-pack balance that
+ * can't be derived from one pack in isolation, so the single-pack flow always
+ * computes per-pack targets and the portfolio-mode tightenings fall through
+ * the next `planAllRetunes` reload. Callers should leave `mode` at "per-pack".
+ */
+export async function planSingleRetune(
+  packId: string,
+  opts?: PlanAllOpts,
+): Promise<PlanAllProposal | null> {
+  await requireRetuneOwner();
+  if (!isUuid(packId)) throw new Error("Invalid pack id");
+
+  return planSingleRetuneCached(
+    packId,
+    opts?.edgeFloorOverride ?? null,
+    opts?.priceOverride ?? null,
+  );
+}
+
+/**
+ * Cached single-pack proposal compute. Keyed on the cache-key tuple
+ * `(packId, edgeFloorOverride, priceOverride)` so navigating back to a
+ * previously-recomputed pack is an instant cache hit. Invalidated by the same
+ * tag as `planAllRetunes` — any write that affects the proposal blob clears
+ * this too.
+ *
+ * The cache key MUST be plain JSON-serializable scalars (`unstable_cache`
+ * hashes its key array). Bools/nulls/numbers are fine; we never put the full
+ * `opts` object in to keep the key bounded.
+ */
+const planSingleRetuneCached = unstable_cache(
+  async (
+    packId: string,
+    edgeFloorOverride: number | null,
+    priceOverride: number | null,
+  ): Promise<PlanAllProposal | null> => {
+    return planSingleRetuneUncached(packId, {
+      edgeFloorOverride,
+      priceOverride,
+    });
+  },
+  ["pack-studio.retune.plan-single.v1"],
+  {
+    revalidate: 60,
+    tags: [PACK_STUDIO_RETUNE_CACHE_TAG],
+  },
+);
+
+/**
+ * The actual single-pack work. Same compute shape as one iteration of
+ * `planAllRetunesUncached` — but reads ONE pack's composition (one batched
+ * read with `pack_id = $1`) and runs one `searchBestPriceForCleanSnap` call.
+ * Returns null when the pack is out of scope (inactive / no price / not
+ * found), so the client can keep the existing proposal instead of replacing
+ * it with garbage.
+ */
+async function planSingleRetuneUncached(
+  packId: string,
+  opts: PlanAllOpts,
+): Promise<PlanAllProposal | null> {
+  const baseEdgeCurve = await readEdgeCurveConfig();
+  const edgeCurve = applyEdgeFloorOverride(baseEdgeCurve, opts.edgeFloorOverride);
+  const cfg: ResolvedAutoTargetCfg = {
+    globalCap: await readMaxWinCap(),
+    maxMultCeiling: await readMaxMultCeiling(),
+    edgeCurve,
+  };
+
+  // Read ONE pack's identity + scope from the same composition view the
+  // sweep uses, so the scope predicate stays in lockstep.
+  const comps = await getPacksPoolComposition({ packIds: [packId] });
+  const p = comps[0];
+  if (!p || !p.active || !(p.price > 0)) return null;
+
+  // ── Read this pack's card values + weights (one row per card) ───────────
+  // Same SELECT shape as the batched sweep, just narrowed to one packId. The
+  // `pack_id = $1` predicate hits the same composite index as `= ANY($1)`.
+  const db = await getDb();
+  const rows = await db.$queryRawUnsafe<BatchedPoolRow[]>(
+    `
+      SELECT
+        pc.pack_id      AS pack_id,
+        pc.card_id      AS card_id,
+        c.price::text   AS value,
+        pc.weight       AS weight,
+        c.name          AS name,
+        c.image_url     AS image_url
+      FROM pack_cards pc
+      JOIN cards c ON c.id = pc.card_id
+      WHERE pc.pack_id = $1::uuid
+      ORDER BY pc.order ASC
+    `,
+    packId,
+  );
+
+  const cards: PlanAllCard[] = rows.map((r) => ({
+    cardId: r.card_id,
+    value: Number(r.value ?? 0),
+    weight: Number(r.weight),
+    name: r.name ?? "",
+    imageUrl: r.image_url ?? "",
+  }));
+
+  const autoTargets: PortfolioPackTargets = autoRetuneTargets(p.price, cfg, p.name);
+  const currentWeights = cards.map((c) => ({ cardId: c.cardId, weight: c.weight }));
+  const before = computePackRisk({
+    cards: cards.map((c) => ({ value: c.value, weight: c.weight })),
+    price: p.price,
+  });
+
+  if (cards.length === 0) {
+    return {
+      packId: p.id,
+      name: p.name,
+      slug: p.slug,
+      price: p.price,
+      priceAfter: p.price,
+      cards,
+      currentWeights,
+      autoTargets,
+      intendedHitRate: autoTargets.intendedHitRate,
+      targetWinRate: autoTargets.targetWinRate,
+      before,
+      after: null,
+      weightDiff: null,
+      feasible: false,
+      relaxations: [],
+      error: "Pack has no cards to retune.",
+      limit: {
+        kind: "empty-pool",
+        detail: "This pack has no cards in its pool, so there is nothing to retune.",
+        suggestion: "Add cards to the pack in the Builder before retuning it.",
+      },
+    };
+  }
+
+  // Same single-pack search policy as the sweep arm. When the edge floor is
+  // raised, the upward search extension is on; price anchor + edge nudge both
+  // enable `preferHigherEdge` (edge ranks above snap-cleanness).
+  const edgeRaised =
+    opts.edgeFloorOverride != null &&
+    Number.isFinite(opts.edgeFloorOverride) &&
+    opts.edgeFloorOverride > baseEdgeCurve.edgeFloor;
+  const priceAnchor =
+    opts.priceOverride != null &&
+    Number.isFinite(opts.priceOverride) &&
+    opts.priceOverride > 0
+      ? opts.priceOverride
+      : null;
+  const upwardExtension = edgeRaised ? 2.0 : 0;
+  const preferHigherEdge = edgeRaised || priceAnchor !== null;
+  const taggedWinRate =
+    autoTargets.intendedHitRate !== null &&
+    Math.abs(autoTargets.intendedHitRate - autoTargets.targetWinRate) < 1e-9
+      ? autoTargets.intendedHitRate
+      : undefined;
+
+  const search = searchBestPriceForCleanSnap({
+    cards: cards.map((c) => ({ value: c.value })),
+    basePrice: priceAnchor ?? p.price,
+    targetEdge: autoTargets.targetEdge,
+    targetWinRate: autoTargets.targetWinRate,
+    maxWinCap: autoTargets.maxWinCap,
+    nearMissMin: autoTargets.nearMissMin,
+    maxPriceChangePct: 0.25,
+    upwardPriceExtensionPct: upwardExtension,
+    preferHigherEdge,
+    ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
+  });
+  const shaped = search.bestResult;
+  const priceAfter = search.bestPrice;
+
+  if ("error" in shaped) {
+    return {
+      packId: p.id,
+      name: p.name,
+      slug: p.slug,
+      price: p.price,
+      priceAfter: p.price,
+      cards,
+      currentWeights,
+      autoTargets,
+      intendedHitRate: autoTargets.intendedHitRate,
+      targetWinRate: autoTargets.targetWinRate,
+      before,
+      after: null,
+      weightDiff: null,
+      feasible: false,
+      relaxations: [],
+      error: shaped.error,
+      limit: shaped.limit,
+    };
+  }
+
+  const weightDiff = cards
+    .map((c, i) => ({ cardId: c.cardId, from: c.weight, to: shaped.weights[i]! }))
+    .filter((d) => d.from !== d.to);
+
+  return {
+    packId: p.id,
+    name: p.name,
+    slug: p.slug,
+    price: p.price,
+    priceAfter,
+    cards,
+    currentWeights,
+    autoTargets,
+    intendedHitRate: autoTargets.intendedHitRate,
+    targetWinRate: autoTargets.targetWinRate,
+    before,
+    after: shaped.risk,
+    weightDiff,
+    feasible: true,
+    relaxations: shaped.relaxations,
+    limit: null,
+  };
+}
+
 // ─── System-level portfolio profile (read-only header action) ─────────────
 
 /**
