@@ -24,6 +24,7 @@ import {
   type PackSetFilter,
   type PackStats,
 } from "@/lib/queries/packs";
+import { PACK_STUDIO_RETUNE_CACHE_TAG } from "@/app/(pack-studio)/pack-studio/_actions/retune-cache-tag";
 import {
   planPackReprice,
   repriceEdgeWithinHardBand,
@@ -764,6 +765,9 @@ export async function quickUpdatePack(
 
   reloadPacks();
 
+  // Builder edits can re-shape the pool / change the price → the retune-review
+  // proposals depend on both, so invalidate the cached blob too.
+  revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
 }
@@ -1248,6 +1252,9 @@ export async function repricePackToTargetEdge(
     await refreshPackRiskScore(packId, repricedRisk, await readMaxWinCap());
 
     reloadPacks();
+    // Re-price changes a pack's price → the retune-review proposals shape
+    // off that price, so invalidate the cached blob too.
+    revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
     revalidatePath("/packs");
     revalidatePath(`/packs/${packId}`);
 
@@ -1938,6 +1945,9 @@ export async function applyPackRetune(
   await refreshPackRiskScore(packId, after, resolved.maxWinCap);
 
   reloadPacks();
+  // Invalidate the cached retune-review proposal blob so the next render of
+  // /pack-studio/retune reflects this retune instead of a 60s-stale dry-run.
+  revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
 

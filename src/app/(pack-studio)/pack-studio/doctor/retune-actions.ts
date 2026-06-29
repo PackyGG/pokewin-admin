@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath, revalidateTag } from "next/cache";
+import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
 import { isUuid } from "@/lib/utils/ids";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
@@ -59,6 +59,7 @@ import {
   type PortfolioPackInput,
   type PortfolioPackTargets,
 } from "@/app/(admin)/packs/_lib/portfolio";
+import { PACK_STUDIO_RETUNE_CACHE_TAG } from "../_actions/retune-cache-tag";
 
 /**
  * Read-only helpers backing the Pack Doctor re-tune UI. The authoritative WRITE
@@ -549,8 +550,56 @@ export async function planAllRetunes(
   mode: PlanAllMode = "per-pack",
   opts?: PlanAllOpts,
 ): Promise<PlanAllRetunesResult> {
+  // Auth FIRST — keep the session check OUTSIDE the cache (a cached `requireRetuneOwner`
+  // would skip the session lookup for the next caller). Cache scope is per-mode/opts,
+  // shared across operators since the dry-run is operator-agnostic once gated.
   await requireRetuneOwner();
 
+  // Default-opts loads (the page's initial render + any later refresh that
+  // doesn't carry chip-strip nudges) hit the shared 60s cache, so the heavy
+  // per-pack `searchBestPriceForCleanSnap` × N sweep (the page's dominant cost)
+  // only runs on a true cache miss. Operator nudge calls (a non-null
+  // `edgeFloorOverride` or `priceOverride`) bypass the cache entirely — they
+  // are interactive, per-operator, and infrequent.
+  const hasNudge =
+    (opts?.edgeFloorOverride != null && Number.isFinite(opts.edgeFloorOverride)) ||
+    (opts?.priceOverride != null && Number.isFinite(opts.priceOverride));
+  if (!hasNudge) {
+    return planAllRetunesCached(mode);
+  }
+  return planAllRetunesUncached(mode, opts);
+}
+
+/**
+ * Cached entry-point for the page's default render. Keyed on `mode` only (the
+ * uncached arm handles every nudged call), tagged so the retune/edit write paths
+ * can invalidate the proposal blob the moment a pack's pool / price changes.
+ *
+ * TTL 60s + tag-based invalidation: a stale proposal between writes can't show
+ * an edit that already shipped, because every write path calls
+ * `revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG)` (see `applyPackRetune`,
+ * `applyPackEdit`, `applyStagedPackEditAndRetune`).
+ */
+const planAllRetunesCached = unstable_cache(
+  async (mode: PlanAllMode): Promise<PlanAllRetunesResult> => {
+    return planAllRetunesUncached(mode, undefined);
+  },
+  ["pack-studio.retune.plan-all.v1"],
+  {
+    revalidate: 60,
+    tags: [PACK_STUDIO_RETUNE_CACHE_TAG],
+  },
+);
+
+/**
+ * The actual `planAllRetunes` work — extracted so the cached wrapper can call
+ * it without an auth check (the public `planAllRetunes` already gated the
+ * caller). Unchanged behavior vs. the previous inline implementation.
+ */
+async function planAllRetunesUncached(
+  mode: PlanAllMode,
+  opts: PlanAllOpts | undefined,
+): Promise<PlanAllRetunesResult> {
   // Resolve the auto-target config ONCE for the whole run.
   // `edgeCurve` is always populated (using the DB blob + curve-overlay logic
   // below) so `autoTargetEdge` shapes against a single source-of-truth curve
@@ -866,40 +915,60 @@ export type PortfolioProfileResult = {
  * pure compute. Writes nothing.
  */
 export async function getPortfolioProfile(): Promise<PortfolioProfileResult> {
+  // Auth OUTSIDE the cache (same pattern as `planAllRetunes`). The portfolio
+  // profile is operator-agnostic once gated, so a single shared cache entry
+  // serves every operator without leaking access.
   await requireRetuneOwner();
-
-  const cfg: ResolvedAutoTargetCfg = {
-    globalCap: await readMaxWinCap(),
-    maxMultCeiling: await readMaxMultCeiling(),
-  };
-  const sysCfg = await readPortfolioSystemConfigResolved(cfg);
-
-  // Aggregated composition is enough for the profile — score each pack via the
-  // aggregate path (same engine, no per-card materialization).
-  const comps = await getPacksPoolComposition();
-  const inScope = comps.filter((p) => p.active && p.price > 0);
-
-  const packRisks = inScope.map((p) => ({
-    price: p.price,
-    risk: computePackRiskFromAggregates({
-      price: p.price,
-      totalWeight: p.totalWeight,
-      weightedPriceSum: p.weightedPriceSum,
-      weightedSqSum: p.weightedSqSum,
-      winWeight: p.winWeight,
-      nearMissWeight: p.nearMissWeight,
-      maxValue: p.maxValue,
-      floorValue: p.floorValue,
-    }),
-  }));
-
-  const profile = computePortfolioProfile(packRisks, cfg);
-  const withinBounds =
-    profile.spicyShare <= sysCfg.maxSpicyShare &&
-    profile.totalMaxWinExposure <= sysCfg.exposureCapUsd;
-
-  return { cfg: sysCfg, profile, withinBounds };
+  return getPortfolioProfileCached();
 }
+
+/**
+ * Cached entry-point for the System Balance header. Pure DB-aggregate read
+ * (no `searchBestPriceForCleanSnap`-style sweep) but it still issues the same
+ * `getPacksPoolComposition` query as `planAllRetunes` — caching here drops
+ * the duplicate ~90ms DB hit per page render, and the same `revalidateTag`
+ * call on writes keeps the profile in sync with the proposal blob.
+ */
+const getPortfolioProfileCached = unstable_cache(
+  async (): Promise<PortfolioProfileResult> => {
+    const cfg: ResolvedAutoTargetCfg = {
+      globalCap: await readMaxWinCap(),
+      maxMultCeiling: await readMaxMultCeiling(),
+    };
+    const sysCfg = await readPortfolioSystemConfigResolved(cfg);
+
+    // Aggregated composition is enough for the profile — score each pack via the
+    // aggregate path (same engine, no per-card materialization).
+    const comps = await getPacksPoolComposition();
+    const inScope = comps.filter((p) => p.active && p.price > 0);
+
+    const packRisks = inScope.map((p) => ({
+      price: p.price,
+      risk: computePackRiskFromAggregates({
+        price: p.price,
+        totalWeight: p.totalWeight,
+        weightedPriceSum: p.weightedPriceSum,
+        weightedSqSum: p.weightedSqSum,
+        winWeight: p.winWeight,
+        nearMissWeight: p.nearMissWeight,
+        maxValue: p.maxValue,
+        floorValue: p.floorValue,
+      }),
+    }));
+
+    const profile = computePortfolioProfile(packRisks, cfg);
+    const withinBounds =
+      profile.spicyShare <= sysCfg.maxSpicyShare &&
+      profile.totalMaxWinExposure <= sysCfg.exposureCapUsd;
+
+    return { cfg: sysCfg, profile, withinBounds };
+  },
+  ["pack-studio.retune.portfolio-profile.v1"],
+  {
+    revalidate: 60,
+    tags: [PACK_STUDIO_RETUNE_CACHE_TAG],
+  },
+);
 
 // ─── Card-picker filters for the inline pool editor (read-only) ───────────
 
@@ -1329,6 +1398,9 @@ export async function applyPackEdit(
   await refreshEditedPackRiskScore(packId, after);
 
   reloadPacks();
+  // Invalidate the cached retune-review proposal blob so the next render of
+  // /pack-studio/retune reflects this edit instead of a 60s-stale dry-run.
+  revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
 
@@ -1827,6 +1899,9 @@ export async function applyStagedPackEditAndRetune(
   await refreshEditedPackRiskScore(packId, after, maxWinCap);
 
   reloadPacks();
+  // Invalidate the cached retune-review proposal blob so the next render of
+  // /pack-studio/retune reflects this auto-tune instead of a 60s-stale dry-run.
+  revalidateTag(PACK_STUDIO_RETUNE_CACHE_TAG);
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
 

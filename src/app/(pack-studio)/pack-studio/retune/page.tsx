@@ -10,9 +10,21 @@ import { isPackStudioRetuneOperator } from "@/lib/reprice-access";
 import { getDefaultRouteForRoles } from "@/lib/admin-roles";
 import { getUserPermissions, sessionRoles } from "@/lib/dal";
 import { redirect } from "next/navigation";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 
 import { getPortfolioProfile, planAllRetunes } from "../doctor/retune-actions";
 import { RetuneReview } from "./retune-review";
+
+/**
+ * Server-side budget for the initial proposal compute. The dry-run runs
+ * `searchBestPriceForCleanSnap` × 183 active packs — the CPU-bound work that
+ * dominates this page's wall-clock cost. The page-level cache (`unstable_cache`
+ * inside `planAllRetunes`) absorbs most subsequent loads; this longer ceiling
+ * exists for the cold-start miss so Vercel doesn't kill the request at the
+ * default 15s gateway timeout. Sized comfortably above the worst measured
+ * cold-render. The cache TTL makes a hot reload sub-second.
+ */
+export const maxDuration = 120;
 
 /**
  * Pack Studio — Bulk Re-tune Review. A "Tinder-style" card-stack flow: the
@@ -36,18 +48,45 @@ async function ReviewLoader() {
   // READ-ONLY dry-run for every in-scope pack (no MAIN write) + the catalog-level
   // system risk profile for the "System Balance" header. Both are owner-gated,
   // read-only reads; fetched together so the surface paints in one pass.
-  const [{ proposals }, portfolio] = await Promise.all([
-    planAllRetunes(),
-    getPortfolioProfile(),
+  //
+  // Both heavy reads degrade gracefully through `safeQueryOrNull` with a 90s
+  // wall-clock cap — a pathologically slow proposal compute (e.g. a chain of
+  // tagged-mode price searches that each sweep 320 candidates) returns the
+  // empty-state instead of hanging the segment until Vercel kills the
+  // request. The CPU work itself is bounded by the per-pack search cap;
+  // `unstable_cache` inside `planAllRetunes` makes hot loads sub-second.
+  const PROPOSAL_TIMEOUT_MS = 90_000;
+  const [proposalRes, portfolioRes] = await Promise.all([
+    safeQueryOrNull(
+      () => planAllRetunes(),
+      "pack-studio.retune.plan-all",
+      PROPOSAL_TIMEOUT_MS,
+    ),
+    safeQueryOrNull(
+      () => getPortfolioProfile(),
+      "pack-studio.retune.portfolio-profile",
+      PROPOSAL_TIMEOUT_MS,
+    ),
   ]);
 
-  if (proposals.length === 0) {
+  const proposals = proposalRes.data?.proposals ?? [];
+  const portfolio = portfolioRes.data;
+
+  if (proposals.length === 0 || portfolio == null) {
     return (
       <div className="rounded-md border">
         <EmptyState
           icon={Layers}
-          title="No packs to review"
-          description="There are no active cash packs in scope for a bulk re-tune right now."
+          title={
+            proposalRes.error || portfolioRes.error
+              ? "Could not load proposals"
+              : "No packs to review"
+          }
+          description={
+            proposalRes.error || portfolioRes.error
+              ? "The dry-run timed out or failed. Refresh to retry."
+              : "There are no active cash packs in scope for a bulk re-tune right now."
+          }
         />
       </div>
     );
