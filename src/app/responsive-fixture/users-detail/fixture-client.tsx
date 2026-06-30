@@ -32,6 +32,7 @@ import type {
 } from "@/lib/queries/users-shard-winnings";
 import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
+import type { UserDoubleDownHistory } from "@/lib/queries/double-down";
 
 /** Wrap a fixture value in the resolved success shape the page's
  *  SafeQueryResult band promises carry (reliability remake). */
@@ -303,6 +304,19 @@ export function UserDetailFixtureClient() {
       gamingTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       shardWinningsPromise={ok<ShardWinningsResult>({ available: false })}
       shardPackOpensPromise={ok<ShardPackOpensResult>({ available: false })}
+      doubleDownPromise={ok<UserDoubleDownHistory>({
+        summary: {
+          totalRounds: 0,
+          resolvedRounds: 0,
+          winCount: 0,
+          loseCount: 0,
+          winRate: null,
+          totalStaked: 0,
+          totalPaidOut: 0,
+          netStakedVsPaid: 0,
+        },
+        rows: [],
+      })}
       xpPurchasesPromise={ok<UserXpPurchasesResult>({
         count: 0,
         totalSpent: 0,

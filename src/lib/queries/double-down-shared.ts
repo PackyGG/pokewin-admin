@@ -1,0 +1,163 @@
+/**
+ * Double Down — CLIENT-SAFE shared pieces (period constants/helpers + the
+ * result/status/row TYPES). This module has NO server-only imports (no
+ * getDb / db-env / @prisma/client), so client components — the period chip
+ * strip, the badges, the log table — can import the period runtime values and
+ * the row types WITHOUT dragging the server query graph into the browser
+ * bundle (the exact build error that forced this split; same pattern as
+ * `insights-analytics/period`).
+ *
+ * The server module `double-down.ts` re-exports everything here so server
+ * call sites keep a single import path.
+ */
+
+// ── Periods (runtime values usable from client components) ────────────────────
+
+export type DoubleDownPeriod = "24h" | "7d" | "30d" | "90d" | "all";
+
+export const DOUBLE_DOWN_PERIODS: readonly DoubleDownPeriod[] = [
+  "24h",
+  "7d",
+  "30d",
+  "90d",
+  "all",
+] as const;
+
+export const DEFAULT_DOUBLE_DOWN_PERIOD: DoubleDownPeriod = "30d";
+
+export function parseDoubleDownPeriod(
+  value: string | undefined,
+): DoubleDownPeriod {
+  switch (value) {
+    case "24h":
+    case "7d":
+    case "30d":
+    case "90d":
+    case "all":
+      return value;
+    default:
+      return DEFAULT_DOUBLE_DOWN_PERIOD;
+  }
+}
+
+export function doubleDownPeriodLabel(p: DoubleDownPeriod): string {
+  switch (p) {
+    case "24h":
+      return "Last 24 hours";
+    case "7d":
+      return "Last 7 days";
+    case "30d":
+      return "Last 30 days";
+    case "90d":
+      return "Last 90 days";
+    case "all":
+      return "Lifetime";
+  }
+}
+
+/**
+ * Lifetime lookback cap (days). The `all` window resolves to this finite
+ * lower bound instead of an unbounded scan (CLAUDE.md "Performance &
+ * Daten-Laden" forbids unbounded lifetime scans). 365d mirrors
+ * INSIGHTS_LIFETIME_LOOKBACK_DAYS used by the reward sweeps and covers all
+ * currently-relevant Double Down activity (the feature is new).
+ */
+export const DOUBLE_DOWN_LIFETIME_LOOKBACK_DAYS = 365;
+
+/** Day count for a window; `all` resolves to the capped lifetime lookback. */
+export function daysForDoubleDownPeriodCapped(p: DoubleDownPeriod): number {
+  switch (p) {
+    case "24h":
+      return 1;
+    case "7d":
+      return 7;
+    case "30d":
+      return 30;
+    case "90d":
+      return 90;
+    case "all":
+      return DOUBLE_DOWN_LIFETIME_LOOKBACK_DAYS;
+  }
+}
+
+/** Cache TTL — short windows move fast, lifetime barely moves. */
+export function cacheTtlForDoubleDownPeriod(p: DoubleDownPeriod): number {
+  return p === "all" ? 300 : 60;
+}
+
+// ── Shapes (types — erased at compile time, safe anywhere) ────────────────────
+
+export type DoubleDownResult = "win" | "lose";
+export type DoubleDownStatus = "offered" | "accepted" | "resolved" | "expired";
+
+export type DoubleDownStats = {
+  /** Total rounds (offers) created in the window. */
+  totalRounds: number;
+  /** Rounds the user accepted (accepted + resolved). */
+  acceptedRounds: number;
+  /** Rounds offered but never accepted (offered + expired). */
+  notAcceptedRounds: number;
+  /** Resolved rounds (result is set). */
+  resolvedRounds: number;
+  winCount: number;
+  loseCount: number;
+  /** wins / resolved (0..1), null when nothing resolved yet. */
+  winRate: number | null;
+  /** Σ won_amount_usd over RESOLVED rounds — the total winnings staked. */
+  totalStaked: number;
+  /** Σ payout_amount_usd over WINS (house COST → rose). */
+  totalPaidOut: number;
+  /** Σ won_amount_usd over LOSES — winnings forfeited (house GAIN → emerald). */
+  totalForfeited: number;
+  /** Σ house_amount_usd over WINS — the 10% edge cut (house revenue → emerald). */
+  totalEdgeCut: number;
+  /** forfeited + edgeCut − paidOut. >0 = house up (emerald). */
+  netHousePnl: number;
+  /**
+   * Effective house edge over staked winnings: netHousePnl / totalStaked.
+   * Null when nothing has been staked yet.
+   */
+  houseEdgePct: number | null;
+};
+
+export type DoubleDownLogRow = {
+  id: string;
+  userId: string;
+  username: string | null;
+  battleId: string;
+  /** The staked battle winnings (won_amount_usd). */
+  stakedUsd: number;
+  result: DoubleDownResult | null;
+  status: DoubleDownStatus;
+  /** Payout to the user on a win (rose). 0 / null otherwise. */
+  payoutUsd: number | null;
+  /** House edge cut on a win (emerald). 0 / null otherwise. */
+  houseCutUsd: number | null;
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
+export type DoubleDownLog = {
+  rows: DoubleDownLogRow[];
+  total: number;
+  page: number;
+  perPage: number;
+  totalPages: number;
+};
+
+export type UserDoubleDownHistory = {
+  /** Per-user summary over ALL of this user's rounds. */
+  summary: {
+    totalRounds: number;
+    resolvedRounds: number;
+    winCount: number;
+    loseCount: number;
+    winRate: number | null;
+    totalStaked: number;
+    totalPaidOut: number;
+    /** netStakedVsPaid = totalStaked − totalPaidOut (house-kept on this user). */
+    netStakedVsPaid: number;
+  };
+  /** Recent rounds, newest first. */
+  rows: DoubleDownLogRow[];
+};

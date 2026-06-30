@@ -372,6 +372,23 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // Double Down — read-only tracking of the gamble-your-battle-winnings
+    // feature (accept rate, win/lose, House-POV P&L + full audit log). Icon
+    // `Dices` is registered in the ICONS map in
+    // `src/components/app-sidebar.tsx` (required — React #130 otherwise).
+    id: "nav.insights.double-down",
+    group: "Insights",
+    label: "Double Down",
+    href: "/insights/double-down",
+    pageKey: "/insights/double-down",
+    icon: "Dices",
+    description: "Track gamble-your-winnings rounds — who won / lost + P&L",
+    keywords: ["double", "down", "gamble", "battle", "winnings", "wager"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     id: "nav.insights.rewards.deposit-bonus",
     group: "Insights",
     label: "Deposit Bonus",

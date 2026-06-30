@@ -113,10 +113,12 @@ import type {
 } from "@/lib/queries/users-shard-winnings";
 import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
+import type { UserDoubleDownHistory } from "@/lib/queries/double-down";
 import {
   ShardWinningsSection,
   ShardPackOpensSection,
 } from "./shard-winnings-section";
+import { DoubleDownSection } from "./double-down-section";
 import { XpPurchasesSection } from "./xp-purchases-section";
 import { RewardPackOpensSection } from "./reward-pack-opens-section";
 import { BandError } from "./band-error";
@@ -787,6 +789,7 @@ export function GamingTab({
   gamingTxPromise,
   shardWinningsPromise,
   shardPackOpensPromise,
+  doubleDownPromise,
 }: {
   data: UserDetail;
   gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
@@ -798,6 +801,10 @@ export function GamingTab({
   // diamond-tagged. null = not kicked for the active tab. Self-hides when
   // the connected DB has no coin ledger or the user never opened a shard pack.
   shardPackOpensPromise: Promise<SafeQueryResult<ShardPackOpensResult>> | null;
+  // Per-user Double Down (gamble-your-battle-winnings) history. null = not
+  // kicked for the active tab (Active-Timeframe-Only). The section self-hides
+  // when the user has had no Double Down rounds.
+  doubleDownPromise: Promise<SafeQueryResult<UserDoubleDownHistory>> | null;
 }) {
   const { user } = data;
   // sessionRole drives the password-aware Watch button + password-reveal
@@ -836,6 +843,14 @@ export function GamingTab({
           the connected DB). */}
       <Suspense fallback={null}>
         <ShardWinningsSection shardWinningsPromise={shardWinningsPromise} />
+      </Suspense>
+
+      {/* Double Down (gamble-your-battle-winnings) history — this user's
+          rounds as a House-POV log + summary. Streamed so the indexed
+          per-user lookup never blocks the tables above; self-hides when the
+          user has had no Double Down rounds. */}
+      <Suspense fallback={null}>
+        <DoubleDownSection doubleDownPromise={doubleDownPromise} />
       </Suspense>
 
       {/* Sponsored / free battles joined — these have no battle_bet ledger

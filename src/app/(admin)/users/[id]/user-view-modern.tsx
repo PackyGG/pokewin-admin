@@ -78,6 +78,7 @@ import type {
   ShardWinningsResult,
   ShardPackOpensResult,
 } from "@/lib/queries/users-shard-winnings";
+import type { UserDoubleDownHistory } from "@/lib/queries/double-down";
 import type { UserXpPurchasesResult } from "@/lib/queries/users-xp-purchases";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
@@ -195,6 +196,7 @@ export function UserViewModern({
   gamingTxPromise,
   shardWinningsPromise,
   shardPackOpensPromise,
+  doubleDownPromise,
   xpPurchasesPromise,
   financialTxPromise,
   adjustmentsTxPromise,
@@ -239,6 +241,10 @@ export function UserViewModern({
   // Gaming tab only — per-user shard-PACK opens (shards spent + value won).
   // null = not kicked for the active tab (Active-Timeframe-Only).
   shardPackOpensPromise: Promise<SafeQueryResult<ShardPackOpensResult>> | null;
+  // Gaming tab only — this user's Double Down (gamble-your-winnings) history.
+  // null = not kicked for the active tab (Active-Timeframe-Only). The section
+  // self-hides when the user has had no rounds.
+  doubleDownPromise: Promise<SafeQueryResult<UserDoubleDownHistory>> | null;
   // Finances tab only — per-user XP purchases (USD balance spent to buy XP).
   // null = not kicked for the active tab (Active-Timeframe-Only).
   xpPurchasesPromise: Promise<SafeQueryResult<UserXpPurchasesResult>> | null;
@@ -830,6 +836,7 @@ export function UserViewModern({
             gamingTxPromise={gamingTxPromise}
             shardWinningsPromise={shardWinningsPromise}
             shardPackOpensPromise={shardPackOpensPromise}
+            doubleDownPromise={doubleDownPromise}
           />
         )}
 

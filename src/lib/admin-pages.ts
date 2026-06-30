@@ -69,6 +69,12 @@ export const ADMIN_PAGES: AdminPage[] = [
   // grantable key so it can be managed independently of the rewards
   // rollup; the whole /insights tree is additionally owner-gated.
   { group: "Insights", label: "Affiliate Codes", key: "/insights/affiliate-codes" },
+  // Double Down — read-only tracking of the gamble-your-battle-winnings
+  // feature: global House-POV KPI strip + the full round-by-round audit log
+  // (who won / lost, staked, paid out, house cut). Own grantable key so it
+  // can be managed independently of the rewards rollup; the whole /insights
+  // tree is additionally owner-gated.
+  { group: "Insights", label: "Double Down", key: "/insights/double-down" },
   // Legacy routes — thin redirects; keys retained for bookmark + role grants
   // so existing grants don't become "unknown". The pages were removed and
   // the routes 308-redirect to the Insights Overview (next.config.ts).

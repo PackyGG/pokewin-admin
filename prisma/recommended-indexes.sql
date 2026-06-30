@@ -761,3 +761,38 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
 -- rows, 2026-06-30) a Seq Scan for prefix is sub-millisecond, so this is
 -- low priority; it is flagged to keep the page strictly index-served and
 -- to let the prefix feature turn on cleanly once the table grows.
+
+-- #22 ----------------------------------------------------------------
+-- battle_double_down_offers.created_at — /insights/double-down windowed
+-- aggregate + audit log ORDER BY, and the per-user history time-sort
+-- ===================================================================
+-- Added by the 2026-06-30 Double Down tracking pages. The tables live ONLY
+-- on the live prod game DB (the local schema is stale; reads are hand-written
+-- read-only SELECTs via getDb()). EXPLAIN against prod (read-only) shows:
+--   • the per-user lookup `WHERE user_id = $1 ORDER BY created_at DESC`
+--     → Bitmap Index Scan on idx_battle_double_down_offers_user_status
+--       (the existing (user_id,status) index) — already INDEXED. ✓
+--   • the GLOBAL windowed aggregate `WHERE created_at >= $1` and the audit
+--     log `WHERE created_at >= $1 ORDER BY created_at DESC LIMIT/OFFSET`
+--     → Seq Scan + Sort. There is NO created_at index on the table
+--       (PK(id) · UNIQUE(battle_id,user_id) · (status,expires_at) ·
+--        (user_id,status) only).
+--
+-- At today's prod size (~14 rows, 2026-06-30 — the feature is brand new) the
+-- planner correctly chooses a Seq Scan and the page is instant; the global
+-- reads are ALSO cached (unstable_cache, period-keyed) + timeout-wrapped and
+-- the lifetime window is bounded (365d), so no unbounded scan ships. Per the
+-- Index-or-ClickHouse rule the missing index is flagged so the global
+-- window/log stays index-served as the table grows:
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_bdd_offers_created_at
+--     ON battle_double_down_offers (created_at DESC);
+--
+--   -- optional, narrows the status-filtered window/log variants:
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_bdd_offers_status_created_at
+--     ON battle_double_down_offers (status, created_at DESC);
+--
+-- NOT APPLIED — flagged only (MAIN is strictly read-only; agents never apply
+-- indexes). Apply the created_at index once the table grows past a few
+-- thousand rows so the windowed aggregate + audit-log ORDER BY stop
+-- seq-scanning under real volume.
