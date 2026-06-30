@@ -438,6 +438,22 @@ export type PlanAllProposal = {
    * end. Null on a feasible proposal.
    */
   limit: ShapeWeightsLimit | null;
+  /**
+   * Whether the proposed odds snapped to the clean ladder (human-readable round
+   * numbers like 0.05% / 10% / 25%) or fell back to the precise (ugly) weights.
+   * `true` = "odds snapped to clean ladder"; `false` = "couldn't fully snap —
+   * showing exact odds". A serializable boolean (NOT a function) for the review
+   * badge. Null on an infeasible proposal.
+   */
+  snapped: boolean | null;
+  /**
+   * Whether a win/grail card's odds had to rise above its CURRENT odds because
+   * its current rarity is so extreme no feasible decay matches it (mathematically
+   * unavoidable for this pool). `true` = the review surfaces "jackpot odds rose
+   * (unavoidable)"; `false`/null = the expensive tail stayed at/below its current
+   * odds (the normal case). Serializable boolean for the badge.
+   */
+  topInflationUnavoidable: boolean | null;
 };
 
 /**
@@ -783,6 +799,8 @@ async function planAllRetunesUncached(
           detail: "This pack has no cards in its pool, so there is nothing to retune.",
           suggestion: "Add cards to the pack in the Builder before retuning it.",
         },
+        snapped: null,
+        topInflationUnavoidable: null,
       };
     }
 
@@ -806,7 +824,16 @@ async function planAllRetunesUncached(
       targetWinRate: autoTargets.targetWinRate,
       maxWinCap: autoTargets.maxWinCap,
       nearMissMin: autoTargets.nearMissMin,
-      maxPriceChangePct: 0.25,
+      // Pass the pack's CURRENT weights so the engine enforces the anti-inflation
+      // anchor (no win/grail card's odds may exceed its current odds — the
+      // jackpot stays rare and raising the edge only trims the expensive tail).
+      currentWeights: currentWeights.map((c) => c.weight),
+      // Wider price band (±60%) so the exact-edge + clean-odds snap lands far more
+      // often — the owner's "change the price to get clean odds" lever. The higher-
+      // edge guard (`preferHigherEdge`/`upwardPriceExtensionPct`) still gates any
+      // upward push; this only widens the room the snap-search has to find a clean
+      // price near the base.
+      maxPriceChangePct: 0.6,
       upwardPriceExtensionPct: upwardExtension,
       preferHigherEdge,
       ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
@@ -833,6 +860,8 @@ async function planAllRetunesUncached(
         relaxations: [],
         error: shaped.error,
         limit: shaped.limit,
+        snapped: null,
+        topInflationUnavoidable: null,
       };
     }
 
@@ -857,6 +886,8 @@ async function planAllRetunesUncached(
       feasible: true,
       relaxations: shaped.relaxations,
       limit: null,
+      snapped: shaped.snapped ?? false,
+      topInflationUnavoidable: shaped.topInflationUnavoidable ?? false,
     };
   });
 
@@ -1021,6 +1052,8 @@ async function planSingleRetuneUncached(
         detail: "This pack has no cards in its pool, so there is nothing to retune.",
         suggestion: "Add cards to the pack in the Builder before retuning it.",
       },
+      snapped: null,
+      topInflationUnavoidable: null,
     };
   }
 
@@ -1052,7 +1085,11 @@ async function planSingleRetuneUncached(
     targetWinRate: autoTargets.targetWinRate,
     maxWinCap: autoTargets.maxWinCap,
     nearMissMin: autoTargets.nearMissMin,
-    maxPriceChangePct: 0.25,
+    // Anti-inflation anchor: never let a win/grail card's odds exceed its current
+    // odds (jackpot stays rare; raising edge only trims the expensive tail).
+    currentWeights: currentWeights.map((c) => c.weight),
+    // Wider ±60% band so the exact-edge + clean-odds snap lands far more often.
+    maxPriceChangePct: 0.6,
     upwardPriceExtensionPct: upwardExtension,
     preferHigherEdge,
     ...(taggedWinRate !== undefined ? { taggedWinRate } : {}),
@@ -1079,6 +1116,8 @@ async function planSingleRetuneUncached(
       relaxations: [],
       error: shaped.error,
       limit: shaped.limit,
+      snapped: null,
+      topInflationUnavoidable: null,
     };
   }
 
@@ -1103,6 +1142,8 @@ async function planSingleRetuneUncached(
     feasible: true,
     relaxations: shaped.relaxations,
     limit: null,
+    snapped: shaped.snapped ?? false,
+    topInflationUnavoidable: shaped.topInflationUnavoidable ?? false,
   };
 }
 
@@ -1984,6 +2025,18 @@ export async function applyStagedPackEditAndRetune(
     value: cardValueById.get(c.cardId)!,
   }));
 
+  // CURRENT weights aligned to the staged card ORDER — the anti-inflation anchor
+  // for the writer so the persisted odds NEVER let a win/grail card exceed its
+  // CURRENT (live-pool) odds. A card staged-IN that wasn't in the live pool has 0
+  // current weight (no cap → its odds may settle naturally); a card kept from the
+  // live pool carries its live weight. Mirrors the dry-run preview's anchor so
+  // the WRITTEN odds match what the operator saw.
+  const liveWeightByCardId = new Map<string, number>();
+  for (const c of livePool) liveWeightByCardId.set(c.cardId, c.weight);
+  const stagedCurrentWeights = input.cards.map(
+    (c) => liveWeightByCardId.get(c.cardId) ?? 0,
+  );
+
   // ── Optional price-search lever ───────────────────────────────────────
   // When the operator opts in (`allowPriceSearch: true`), the server sweeps
   // cent-stepped candidate prices around the staged price (default ±25%, max
@@ -2026,6 +2079,9 @@ export async function applyStagedPackEditAndRetune(
       maxWinCap,
       nearMissMin,
       winRateTol,
+      // Anti-inflation anchor (same as the dry-run preview): the WRITTEN odds may
+      // never let a win/grail card exceed its CURRENT (live-pool) odds.
+      currentWeights: stagedCurrentWeights,
       ...(taggedSearchActive ? { taggedWinRate: targetWinRate } : {}),
     });
     shaped = search.bestResult;
@@ -2047,6 +2103,8 @@ export async function applyStagedPackEditAndRetune(
       maxWinCap,
       nearMissMin,
       winRateTol,
+      // Anti-inflation anchor (no win/grail card's odds exceed its current odds).
+      currentWeights: stagedCurrentWeights,
     });
   }
 

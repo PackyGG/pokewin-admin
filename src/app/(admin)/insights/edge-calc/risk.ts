@@ -287,6 +287,31 @@ export type ShapeWeightsInput = {
   nearMissMin?: number;
   /** Win-rate match tolerance. Default 0.02. */
   winRateTol?: number;
+  /**
+   * The pack's CURRENT per-card weights (pool order, parallel to `cards`).
+   * OPTIONAL. When supplied, the solver enforces the owner's ANTI-INFLATION
+   * anchor (rule #1): no WIN/GRAIL card's resulting probability may EXCEED its
+   * current probability — raising the edge must only TRIM the expensive tail,
+   * never inflate it. The solver steepens the win-pool decay (and floats the
+   * win-rate up) until every win/grail card's odds sit at/below its current
+   * odds. When a card's current odds are SO low that not even the steepest
+   * feasible decay can match it (mathematically unavoidable for this pool), the
+   * inflation is allowed but FLAGGED via a `winRate`-lever relaxation entry so
+   * the proposal can surface it — never silently. Omit to skip the anchor
+   * (value-only shaping with the `BETA_WIN_FLOOR` baseline rarity).
+   */
+  currentWeights?: number[];
+  /**
+   * When TRUE, the `targetWinRate` is a HARD design target that must NOT drift —
+   * used for TAGGED lottery packs whose name carries an "X%" hit-rate tag (the
+   * tag IS the intended win-rate). With a hard win-rate the solver does NOT float
+   * the win-rate up to reach a high EV (owner rule #2's float-up is for soft /
+   * untagged packs only) and does NOT exempt the cheapest winner from its
+   * anti-inflation cap — so a "5% …" pack stays at ~5% wins, its big jackpots
+   * carrying the EV at the tag rate. Default FALSE: the win-rate is SOFT and
+   * floats UP rather than inflating the jackpot (the untagged-pack policy).
+   */
+  winRateIsHard?: boolean;
 };
 
 /**
@@ -326,6 +351,18 @@ export type ShapeWeightsSuccess = {
    * "lottery-skewed distribution" in reviews / changelogs.
    */
   lotterySkewApplied?: boolean;
+  /**
+   * ANTI-INFLATION anchor outcome (only meaningful when `currentWeights` was
+   * supplied — see {@link ShapeWeightsInput.currentWeights}). When the solver
+   * could NOT keep every WIN/GRAIL card's odds at/below its current odds — i.e.
+   * a card's current rarity is so extreme that no feasible decay matches it —
+   * the inflation is mathematically unavoidable for this pool. This flag is then
+   * `true` and a `winRate`-lever relaxation records the detail, so the proposal
+   * surfaces "jackpot odds had to rise (unavoidable)" instead of silently
+   * inflating. `false`/undefined = no win/grail card inflated vs current (the
+   * normal case), or the anchor wasn't requested.
+   */
+  topInflationUnavoidable?: boolean;
 };
 
 /**
@@ -424,6 +461,35 @@ function bandEvForBeta(values: readonly number[], beta: number): number {
  */
 const BETA_LO = -20; // skew expensive → max EV
 const BETA_HI = 50; // skew cheap → min EV
+
+/**
+ * Hard FLOOR on the beta used to lay out the WIN+GRAIL pool (cards worth
+ * ≥ price). Owner rule #1: for value ≥ price, probability must be STRICTLY
+ * DECREASING in value — the jackpot is always the rarest pull, and raising the
+ * edge must only ever TRIM the expensive tail, never inflate it.
+ *
+ * A power-law template `value^(−β)` is strictly decreasing in value iff β > 0.
+ * The legacy solver bisected a SINGLE shared β over [BETA_LO=−20, BETA_HI=50]
+ * across all four bands, and to reach a HIGH EV target (a low win-rate with a
+ * big payout budget) it drove β NEGATIVE — which skews the win pool toward the
+ * EXPENSIVE end and inflates the jackpot's odds (the $20.50 Charizard
+ * 0.15% → 0.75% bug). Flooring the win-pool β at a small POSITIVE value keeps
+ * the jackpot strictly the rarest winner regardless of the EV target. EV is
+ * instead reached by (a) the loss bands' β and (b) floating the win-RATE up
+ * (more cheap winners) — never by enlarging jackpot odds. See the EV solve.
+ *
+ * 1.5 is calibrated against the live catalog: on the real $20.50 / 12-card
+ * pack (Charizard $541.96), the win pool spans $20.53–$541.96 and the live
+ * jackpot odds are 0.15%. A flat β (≈0) at the 20% win-mass put 1.37% on the
+ * Charizard (the inflation bug); β=1.5 puts ~0.06% — comfortably BELOW the live
+ * 0.15%, so raising the edge TRIMS the jackpot instead of inflating it. β=1.5
+ * (value^−1.5) is the gentlest decay that keeps the expensive tail rare across
+ * the catalog's win-pool value spreads without over-steepening tight clusters
+ * (where all win cards sit close, the curve is still nearly flat). Tagged
+ * lottery packs steepen FURTHER via `applyLotterySkew` (β=2); this floor is the
+ * baseline rarity every pack's win pool must clear.
+ */
+const BETA_WIN_FLOOR = 1.5;
 
 /** Power-law weight template for a band, normalized to sum to `mass`. */
 function bandWeights(values: readonly number[], beta: number, mass: number): number[] {
@@ -1504,9 +1570,13 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   }
 
   // ── Band mass allocation ────────────────────────────────────────────
-  const winMass = targetWinRate;
+  // `winMass` and `dustMass` are NOT final here: the EV solve below may FLOAT
+  // the win-rate UP (shifting mass from dust → win) when the target EV can't be
+  // reached without it — the owner-mandated alternative to inflating jackpot
+  // odds (owner rule #2). `nearMissMass` stays fixed (it's a feel dial).
+  let winMass = targetWinRate;
   const nearMissMass = nearMiss.length > 0 ? nearMissMin : 0;
-  const dustMass = 1 - winMass - nearMissMass;
+  let dustMass = 1 - winMass - nearMissMass;
   // Backstop: after the win-rate relaxation above, dustMass ≥ MIN_DUST_MARGIN by
   // construction, so this never fires on the relaxed path — it's a NaN-safe guard.
   if (!(dustMass > tol)) {
@@ -1522,32 +1592,297 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   }
 
   // The full win-rate mass sits on the combined WIN+GRAIL pool (all cards with
-  // value ≥ price). Keeping them as ONE band — rather than pinning grails to a
-  // tiny fixed slice — lets the shared beta below concentrate win mass on the
-  // jackpot when the EV target is high, or spread it toward cheaper wins when
-  // the EV target is low. (The GRAIL/WIN split still exists for banding/labels;
-  // it just doesn't fragment the win mass.)
-  const winMassTotal = winMass;
+  // value ≥ price). The GRAIL/WIN split still exists for banding/labels; it just
+  // doesn't fragment the win mass. UNLIKE the legacy solver, the win pool's β is
+  // FLOORED at a positive value (`BETA_WIN_FLOOR`) so the within-win distribution
+  // is always strictly DECREASING in value — the jackpot can never be inflated to
+  // hit a high EV target (owner rule #1). `winMassTotal` tracks the (possibly
+  // floated-up) win mass.
   const winPoolSlots = [...grail, ...win];
   const winPoolValues = winPoolSlots.map((s) => s.value);
   const nearMissValues = nearMiss.map((s) => s.value);
   const dustValues = dust.map((s) => s.value);
-
-  // ── Solve ONE shared beta across all four bands so total EV = evTarget ──
-  //
-  // Each band lays out its fixed probability MASS internally by value^(−beta).
-  // For a single shared beta, total EV is
-  //   E(beta) = Σ_band  mass_band · bandMean_band(beta)
-  // and bandMean is monotone DECREASING in beta, so E(beta) is monotone too.
-  // Therefore E ranges over [E(+50)  (all bands skewed cheap, min EV),
-  //                          E(−20)  (all bands skewed expensive, max EV)].
-  // If evTarget is inside that range it is reachable; bisect the shared beta.
-  // The DUST band is the most EV-elastic (widest value span at the cheap end),
-  // so it dominates the fine-tune — but binding all four to one beta guarantees
-  // monotonicity and a single feasibility test. (Dust still carries the slack;
-  // the post-quantize one-sided-up bump nudges the cheapest dust card.)
   const dustMin = Math.min(...dustValues);
   const dustMax = Math.max(...dustValues);
+
+  // ── EV solve: ONE shared beta across the LOSS bands, win-pool beta FLOORED ──
+  //
+  // Each band lays out its probability MASS by value^(−β). The loss bands
+  // (NEARMISS + free DUST) share β directly; the WIN+GRAIL pool uses
+  // `max(β, BETA_WIN_FLOOR)` so its template is ALWAYS strictly decreasing in
+  // value (β ≥ floor > 0 ⇒ the jackpot is the rarest pull, never inflated).
+  // Each band mean is monotone DECREASING in β, and clamping the win β at a
+  // floor only flattens its term BELOW the floor — so total EV is still monotone
+  // non-increasing in β. We bisect β over [BETA_LO, BETA_HI].
+  //
+  // Owner rule #2 — when the FLOORED win pool can't reach a HIGH evTarget even
+  // at β = BETA_LO (the win mass is too small to lift EV without skewing the
+  // jackpot expensive, which we now forbid), we FLOAT THE WIN-RATE UP (shift
+  // mass dust → win) rather than inflate jackpot odds. More winners ⇒ higher EV.
+  // The float-up is computed up-front below (it changes the band masses the
+  // floor reservation + the β solve operate on).
+
+  // ── Win-pool distribution: steep base decay + per-card anti-inflation caps ──
+  //
+  // The win pool lays its mass out by a steep base power-law `value^(−BETA_WIN_FLOOR)`
+  // (β ≥ 1.5 ⇒ strictly decreasing in value ⇒ the jackpot is the rarest winner —
+  // owner rule #1's structural baseline). On top of that, when the caller supplies
+  // `currentWeights`, EACH win/grail card is CAPPED at its CURRENT odds: a card
+  // whose base-power-law share would EXCEED its live odds is held DOWN to the live
+  // odds, and the freed mass WATER-FILLS onto the still-uncapped (cheaper) winners.
+  // This is what a single β can't do: keep ultra-rare hand-tuned jackpots rare
+  // AND let the generous mid-tier winners carry the win mass (e.g. the $20.50 pack
+  // — Charizard pinned at ≤ 0.15%, the $46/$24/$20 winners absorb the rest). The
+  // result is a strictly-decreasing, never-inflating distribution that ISN'T a
+  // power law.
+  //
+  // EV is reached by FLOATING THE WIN-RATE UP (owner rule #2): more cheap winners
+  // raise EV without ever enlarging a jackpot's odds. We never skew the jackpot
+  // expensive to hit EV — that knob is gone.
+  const MIN_DUST_MASS_FLOAT = 0.02; // never float win mass past leaving 2% dust
+  const structuralCeil = 1 - nearMissMass - MIN_DUST_MASS_FLOAT;
+
+  const cur = input.currentWeights;
+  let curTotal = 0;
+  if (cur && cur.length === input.cards.length) {
+    for (const w of cur) if (Number.isFinite(w) && w > 0) curTotal += w;
+  }
+  const anchorActive = curTotal > 0 && winPoolSlots.length >= 1;
+  // CURRENT odds (fraction of the WHOLE pool) per win-pool card. The per-card
+  // cap: a win card's final pool-odds must not exceed this.
+  const beforeOddsWin = anchorActive
+    ? winPoolSlots.map((slot) => {
+        const w = cur![slot.idx];
+        return Number.isFinite(w) && w! > 0 ? w! / curTotal : 0;
+      })
+    : winPoolSlots.map(() => Infinity); // no anchor ⇒ no caps
+
+  // MONOTONE caps on the EXPENSIVE TAIL (owner rule #1). The owner's hard rule
+  // targets the JACKPOT / expensive tail: "raising the edge must only TRIM the
+  // expensive tail, never inflate it; the top card's odds must not increase." So
+  // we enforce a strictly-DECREASING, never-inflating cap profile on the GRAIL
+  // band (value ≥ 5·price — the jackpot tail): walking those cards value-ascending,
+  // `monoCap_i = min(beforeOdds_i, monoCap_of_next_cheaper_grail)`, a non-increasing
+  // profile so the water-fill can't invert the tail. The WIN band (price ≤ value
+  // < 5·price) keeps its OWN per-card before-odds cap WITHOUT the monotone tighten:
+  // real packs are deliberately NON-monotone there (e.g. the $20.50 pack — the
+  // cheap $20.53 winner rarer than the pricier, more-featured $24.43), and forcing
+  // strict monotonicity across the whole win band would discard the mid-tier EV
+  // those cards carry and make a third of the catalog infeasible. Every win card
+  // still never exceeds its own current odds (owner rule #1's "never inflate"),
+  // and the jackpot tail stays strictly rare — the actual flaw being fixed.
+  const grailThreshold = 5 * price;
+  const grailAsc = winPoolSlots
+    .map((s, i) => ({ i, v: s.value }))
+    .filter((x) => x.v >= grailThreshold)
+    .sort((a, b) => a.v - b.v);
+  const monoCap = beforeOddsWin.slice();
+  if (anchorActive && grailAsc.length > 0) {
+    let runningMin = Infinity;
+    for (const { i } of grailAsc) {
+      runningMin = Math.min(runningMin, beforeOddsWin[i]!);
+      monoCap[i] = runningMin;
+    }
+  }
+
+  // EV-BALANCE exemption for the CHEAPEST winner (SOFT-win-rate packs only).
+  // The never-inflate caps target the jackpot / expensive tail. The single
+  // CHEAPEST win/grail card is the OPPOSITE of a jackpot — making it more common
+  // LOWERS variance, never raises the house's drawdown — so it is the natural
+  // sink for the EV-balancing mass AND for the win-rate float-up. Capping it at
+  // its (possibly tiny) current odds is what made low-EV packs infeasible. We
+  // exempt it (its odds may rise) so the solver can concentrate win mass there to
+  // reach evTarget — keeping the expensive tail strictly rare and never-inflated.
+  //
+  // GATED on `winRateIsHard === false`: for a TAGGED pack the win-rate IS the
+  // designed hit-rate (the "X%" tag) and must NOT drift — its big jackpots carry
+  // the EV at the tag rate, so the live (capped) distribution is the right answer
+  // and the float-up must stay off. Exempting + floating there would push a "5% …"
+  // pack to ~25% wins. So tagged packs keep ALL caps (no exemption) and do NOT
+  // float (see the float-up gate below). Owner-safe either way: the top card and
+  // every pricier card stay capped.
+  const winRateIsHard = input.winRateIsHard === true;
+  if (anchorActive && winPoolSlots.length > 0 && !winRateIsHard) {
+    let cheapestWinIdx = 0;
+    let cheapestWinVal = Infinity;
+    for (let i = 0; i < winPoolSlots.length; i++) {
+      if (winPoolSlots[i]!.value < cheapestWinVal) {
+        cheapestWinVal = winPoolSlots[i]!.value;
+        cheapestWinIdx = i;
+      }
+    }
+    monoCap[cheapestWinIdx] = Infinity;
+  }
+
+  // SATURATION ceiling: the most win mass that fits UNDER the (monotone) per-card
+  // caps is their sum — beyond it, some card MUST inflate above its current odds.
+  // When anchored, the float-up is capped at this saturation point (clamped into
+  // the structural dust-margin ceiling, never below the requested win mass) so
+  // the float never runs away into the residual-spill (which would re-inflate the
+  // jackpot AND blow up win EV). Unanchored ⇒ the structural ceiling (legacy).
+  let capSum = 0;
+  if (anchorActive) for (const c of monoCap) capSum += c;
+  const winMassCeil = anchorActive
+    ? Math.min(structuralCeil, Math.max(winMass, capSum))
+    : Math.max(winMass, structuralCeil);
+
+  // The win pool's steepness β. Baseline `BETA_WIN_FLOOR`; the EV solve may
+  // STEEPEN it (raise β) to LOWER the win-pool EV when the fixed capped EV
+  // overshoots a low evTarget. Steepening only ever makes the jackpot RARER
+  // (more mass on the cheapest winners), so it never violates owner rule #1 —
+  // it's the one EV knob that's safe to keep. The cap on how steep: BETA_WIN_MAX.
+  const BETA_WIN_MAX = 12;
+  let winBeta = BETA_WIN_FLOOR;
+
+  // Distribute `wm` (the win mass) across the win pool by a value^(−β) power-law
+  // (β = `betaArg`), capping each card at its monotone cap (absolute pool-odds)
+  // and WATER-FILLING the overflow onto uncapped cards. Returns absolute per-card
+  // probabilities (summing to ≤ wm; any residual that can't fit under the caps is
+  // reported via `placed < wm` so the caller can flag unavoidable spillover).
+  let topInflationUnavoidable = false;
+  const winPoolProbsForBeta = (
+    wm: number,
+    betaArg: number,
+  ): { probs: number[]; placed: number } => {
+    const n = winPoolValues.length;
+    const raw = winPoolValues.map((v) => Math.pow(v, -betaArg));
+    const probs = new Array<number>(n).fill(0);
+    const capped = new Array<boolean>(n).fill(false);
+    let remaining = wm;
+    for (let round = 0; round < n + 1; round++) {
+      let rawSum = 0;
+      for (let i = 0; i < n; i++) if (!capped[i]) rawSum += raw[i]!;
+      if (!(rawSum > 0) || !(remaining > 1e-15)) break;
+      let cappedThisRound = false;
+      for (let i = 0; i < n; i++) {
+        if (capped[i]) continue;
+        const want = probs[i]! + (raw[i]! / rawSum) * remaining;
+        const cap = monoCap[i]!;
+        if (want > cap + 1e-15) {
+          remaining -= cap - probs[i]!;
+          probs[i] = cap;
+          capped[i] = true;
+          cappedThisRound = true;
+        }
+      }
+      if (!cappedThisRound) {
+        for (let i = 0; i < n; i++) {
+          if (capped[i]) continue;
+          probs[i] = probs[i]! + (raw[i]! / rawSum) * remaining;
+        }
+        remaining = 0;
+        break;
+      }
+    }
+    const placed = probs.reduce((a, b) => a + b, 0);
+    return { probs, placed };
+  };
+  const winPoolProbsFor = (wm: number) => winPoolProbsForBeta(wm, winBeta);
+
+  // EV from the win pool at win mass `wm` and steepness `winBeta`.
+  const winPoolEvAt = (wm: number): number => {
+    const { probs } = winPoolProbsFor(wm);
+    let ev = 0;
+    for (let i = 0; i < winPoolValues.length; i++) ev += probs[i]! * winPoolValues[i]!;
+    return ev;
+  };
+
+  // MAX EV the pool can produce at a given win mass without inflating the
+  // jackpot: win pool capped-distributed + loss bands skewed EXPENSIVE (BETA_LO).
+  const maxEvAtWinMass = (wm: number): number => {
+    const dm = 1 - wm - nearMissMass;
+    return (
+      winPoolEvAt(wm) +
+      nearMissMass * bandEvForBeta(nearMissValues, BETA_LO) +
+      Math.max(0, dm) * bandEvForBeta(dustValues, BETA_LO)
+    );
+  };
+
+  // Float the win-rate UP until the max (non-inflating) EV reaches evTarget.
+  // EV is monotone increasing in win mass (winners pay ≥ price > the dust they
+  // displace), so bisect. Capped at `winMassCeil` (2% dust margin). ONLY on the
+  // ANCHORED path (`anchorActive`) and when the win-rate is SOFT — the legacy
+  // value-only path keeps the original single-β solve (no float-up); tagged packs
+  // hit EV via their big jackpots at the tag rate, never by adding winners.
+  if (anchorActive && !winRateIsHard && maxEvAtWinMass(winMass) < evTarget - 1e-9 && winMassCeil > winMass) {
+    if (maxEvAtWinMass(winMassCeil) < evTarget - 1e-9) {
+      winMass = winMassCeil; // best effort; downstream feasibility check surfaces it
+    } else {
+      let wmLo = winMass;
+      let wmHi = winMassCeil;
+      for (let i = 0; i < 60; i++) {
+        const mid = (wmLo + wmHi) / 2;
+        if (maxEvAtWinMass(mid) < evTarget) wmLo = mid;
+        else wmHi = mid;
+      }
+      winMass = wmHi;
+    }
+  }
+  dustMass = 1 - winMass - nearMissMass;
+  if (winMass > targetWinRate + 1e-9) {
+    relaxations.push({
+      lever: "winRate",
+      requested: requestedWinRate,
+      applied: winMass,
+      reason: `Win-rate floated UP to ${(winMass * 100).toFixed(2)}% so the edge target is met by adding cheap winners instead of inflating jackpot odds (owner rule: keep the expensive tail rare).`,
+    });
+  }
+
+  // STEEPEN the win pool to LOWER its EV when the fixed capped EV overshoots a
+  // low evTarget. The win-pool EV is otherwise fixed (no β knob), so on a pool
+  // whose loss bands have little spread (e.g. a lottery pack with one dust card)
+  // the MINIMUM total EV — win-pool EV + loss bands skewed cheap (BETA_HI) — can
+  // sit just ABOVE evTarget, making it infeasible by a hair. Raising `winBeta`
+  // shifts win mass onto the CHEAPEST winners, lowering the win-pool EV (and
+  // making the jackpot even rarer — fully owner-rule-#1-safe). Bisect winBeta in
+  // [BETA_WIN_FLOOR, BETA_WIN_MAX] so the minimum total EV reaches evTarget.
+  const minTotalEvAt = (): number =>
+    winPoolEvAt(winMass) +
+    nearMissMass * bandEvForBeta(nearMissValues, BETA_HI) +
+    Math.max(0, dustMass) * bandEvForBeta(dustValues, BETA_HI);
+  if (anchorActive && minTotalEvAt() > evTarget + 1e-9) {
+    // winPoolEvAt is monotone DECREASING in winBeta (steeper ⇒ cheaper winners).
+    let bLo = BETA_WIN_FLOOR;
+    let bHi = BETA_WIN_MAX;
+    const evAtBeta = (b: number): number => {
+      winBeta = b;
+      return minTotalEvAt();
+    };
+    if (evAtBeta(BETA_WIN_MAX) <= evTarget + 1e-9) {
+      for (let i = 0; i < 60; i++) {
+        const mid = (bLo + bHi) / 2;
+        if (evAtBeta(mid) > evTarget) bLo = mid;
+        else bHi = mid;
+      }
+      winBeta = bHi; // steepest needed to bring min EV down to target (from above)
+    } else {
+      winBeta = BETA_WIN_MAX; // even the steepest can't reach — best effort
+    }
+  }
+
+  // Final win-pool probabilities at the chosen win mass + steepness + flag any
+  // spillover the per-card caps couldn't absorb (mathematically-unavoidable
+  // inflation).
+  const winSolved = winPoolProbsFor(winMass);
+  if (winSolved.placed < winMass - 1e-9) {
+    // The caps couldn't hold the whole win mass — some card MUST rise above its
+    // current odds. Spill the residual proportionally onto the win pool by the
+    // (current-steepness) power-law (keeps it strictly decreasing) and flag it.
+    topInflationUnavoidable = true;
+    const residual = winMass - winSolved.placed;
+    const spillRaw = winPoolValues.map((v) => Math.pow(v, -winBeta));
+    const rawSum = spillRaw.reduce((a, b) => a + b, 0);
+    if (rawSum > 0) {
+      for (let i = 0; i < winSolved.probs.length; i++) {
+        winSolved.probs[i] = winSolved.probs[i]! + (spillRaw[i]! / rawSum) * residual;
+      }
+    }
+  }
+  // Per-card win-pool FRACTIONAL weights (absolute pool-prob), used directly in
+  // the stitch below instead of a single-β power-law layout.
+  const winPoolProbs = winSolved.probs;
+
+  const winMassTotal = winMass;
 
   // ── Floor reservation (optional, done BEFORE the EV solve) ──────────
   // If a floor ratio is required, pick the cheapest dust card meeting it and
@@ -1602,10 +1937,28 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     }
   }
 
-  // EV total for a shared beta, INCLUDING the reserved floor card's fixed share.
+  // EV total for a shared loss-band beta, INCLUDING the reserved floor card's
+  // fixed share.
+  //
+  // ANCHORED path (`currentWeights` supplied): the WIN+GRAIL pool's EV is FIXED
+  // by the per-card-capped distribution above (it is no longer a β knob — that's
+  // how the jackpot stays rare regardless of the EV target); only the loss bands
+  // move with β. LEGACY value-only path (`!anchorActive`): the win pool laid out
+  // by the SAME shared β as the loss bands (the original behavior) — there are no
+  // current odds to protect, so the single-β solve is preserved unchanged for the
+  // scenario builder / harness. Loss-band (and, in the legacy case, win-pool)
+  // means are monotone DECREASING in β, so the total is monotone and the
+  // bisection below is valid.
+  const winPoolEvFixed = (() => {
+    let ev = 0;
+    for (let i = 0; i < winPoolValues.length; i++) ev += winPoolProbs[i]! * winPoolValues[i]!;
+    return ev;
+  })();
   const floorEvFixed = floorSlot ? floorMass * floorSlot.value : 0;
   const totalEvForBeta = (beta: number): number =>
-    winMassTotal * bandEvForBeta(winPoolValues, beta) +
+    (anchorActive
+      ? winPoolEvFixed
+      : winMassTotal * bandEvForBeta(winPoolValues, beta)) +
     nearMissMass * bandEvForBeta(nearMissValues, beta) +
     freeDustMass * bandEvForBeta(freeDustValues, beta) +
     floorEvFixed;
@@ -1644,7 +1997,13 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   }
   const sharedBeta = (lo + hi) / 2;
 
-  const winPoolW = bandWeights(winPoolValues, sharedBeta, winMassTotal);
+  // Win pool layout. ANCHORED: the PER-CARD-CAPPED distribution (strictly
+  // decreasing, jackpot rarest, never above current odds) — NOT a single-β power
+  // law. LEGACY value-only: the original single-β power law (`sharedBeta`). Loss
+  // bands always use the raw shared beta from the EV solve.
+  const winPoolW = anchorActive
+    ? winPoolProbs
+    : bandWeights(winPoolValues, sharedBeta, winMassTotal);
   const nearMissW = bandWeights(nearMissValues, sharedBeta, nearMissMass);
   const freeDustW = bandWeights(freeDustValues, sharedBeta, freeDustMass);
 
@@ -1767,14 +2126,23 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   // Total grail mass and WIN/NEARMISS/DUST weights are NEVER changed; this
   // function only re-shapes the GRAIL band. Safety: keep the skew only when
   // edge drift ≤ ±0.05pp AND edge ≥ target. Otherwise fall back.
+  //
+  // GATED on the LEGACY value-only path (no `currentWeights`): when the
+  // anti-inflation anchor is active, the core solver ALREADY lays the grail band
+  // out strictly-decreasing AND never above each card's current odds. Re-running
+  // the β=2 skew on top would re-INFLATE the rarest jackpots (their hand-tuned
+  // current odds are far below a value^(-2) curve), violating owner rule #1. So
+  // the skew only runs when there's no current-odds anchor to honor.
   let lotterySkewApplied = false;
-  const lottery = applyLotterySkew({
-    cards: input.cards,
-    weights,
-    price,
-    targetEdge,
-    targetWinRate: requestedWinRate,
-  });
+  const lottery = anchorActive
+    ? { weights, applied: false }
+    : applyLotterySkew({
+        cards: input.cards,
+        weights,
+        price,
+        targetEdge,
+        targetWinRate: requestedWinRate,
+      });
   if (lottery.applied) {
     const lotteryRisk = computePackRisk({
       cards: input.cards.map((c, i) => ({ value: c.value, weight: lottery.weights[i]! })),
@@ -1809,6 +2177,40 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
   let snapped = false;
   const values = input.cards.map((c) => c.value);
   const preciseWinRate = risk.winRate;
+
+  // ── Snap anti-inflation guard (expensive tail) ───────────────────────
+  // The precise solver weights never inflate a grail card above its current
+  // odds. The clean-ladder snap, however, rounds each card to the NEAREST rung —
+  // which can round a grail's odds UP (e.g. 0.35% → 0.50%), re-inflating the
+  // jackpot the solver kept rare. So a snap candidate is only acceptable if it
+  // keeps every GRAIL card's odds at/below its PRECISE (pre-snap) odds (a small
+  // epsilon for integer quantization). This makes "clean odds" yield to "never
+  // inflate the tail" — the snap may round a grail DOWN to a clean rung, never UP.
+  const preciseTotalW = weights.reduce((a, b) => a + (b > 0 ? b : 0), 0);
+  const precisePctOf = (i: number): number =>
+    preciseTotalW > 0 ? (weights[i]! / preciseTotalW) * 100 : 0;
+  const grailIdxForGuard: number[] = [];
+  for (let i = 0; i < values.length; i++) {
+    if (weights[i]! > 0 && values[i]! >= 5 * price) grailIdxForGuard.push(i);
+  }
+  const snapGrailNotInflated = (cand: number[]): boolean => {
+    // Only the ANCHORED path protects current odds; the legacy value-only path
+    // keeps the original snap acceptance (no grail-inflation guard) so the
+    // scenario builder / harness snap behavior is unchanged.
+    if (!anchorActive) return true;
+    if (grailIdxForGuard.length === 0) return true;
+    let total = 0;
+    for (const w of cand) total += w > 0 ? w : 0;
+    if (!(total > 0)) return true;
+    for (const i of grailIdxForGuard) {
+      const candPct = (cand[i]! / total) * 100;
+      // Allow a hair (0.002pp) for integer-quantization noise; otherwise the snap
+      // must not raise a grail above its precise odds.
+      if (candPct > precisePctOf(i) + 0.002) return false;
+    }
+    return true;
+  };
+
   const snap = snapWeightsToCleanLadder({ weights, price });
   // Apply within-band monotonicity repair (owner invariants — see
   // `repairSnapMonotonicity`). If the basic snap can't be made monotonic
@@ -1830,7 +2232,8 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     snapRepaired.ok &&
     snapDrift <= 0.0005 &&
     snapCandidateRisk.edge >= targetEdge - 1e-9 &&
-    snapWinRateDrift <= winRateTol + 1e-9
+    snapWinRateDrift <= winRateTol + 1e-9 &&
+    snapGrailNotInflated(snapCandidate)
   ) {
     for (let i = 0; i < weights.length; i++) weights[i] = snapCandidate[i]!;
     risk = snapCandidateRisk;
@@ -1900,7 +2303,8 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
         if (
           refinedDrift <= 0.0005 &&
           refinedRisk.edge >= targetEdge - 1e-9 &&
-          refinedWinRateDrift <= winRateTol + 1e-9
+          refinedWinRateDrift <= winRateTol + 1e-9 &&
+          snapGrailNotInflated(refinedRepaired.weights)
         ) {
           for (let i = 0; i < weights.length; i++) weights[i] = refinedRepaired.weights[i]!;
           risk = refinedRisk;
@@ -1910,7 +2314,31 @@ export function shapeWeights(input: ShapeWeightsInput): ShapeWeightsResult {
     }
   }
 
-  return { weights, risk, ev: risk.ev, edge: risk.edge, relaxations, snapped, lotterySkewApplied };
+  // ── Flag any UNAVOIDABLE jackpot inflation (anti-inflation anchor) ────
+  // If the anchor pass couldn't cap a win/grail card at its current odds even
+  // at the steepest allowed decay, the inflation is mathematically unavoidable
+  // for this pool — record it as a winRate-lever relaxation so the proposal
+  // surfaces it (never silent). Only emitted when `currentWeights` was supplied.
+  if (topInflationUnavoidable) {
+    relaxations.push({
+      lever: "winRate",
+      requested: requestedWinRate,
+      applied: risk.winRate,
+      reason:
+        "A win/grail card's current odds are so rare that no feasible decay matches them; its odds had to rise slightly (unavoidable for this pool).",
+    });
+  }
+
+  return {
+    weights,
+    risk,
+    ev: risk.ev,
+    edge: risk.edge,
+    relaxations,
+    snapped,
+    lotterySkewApplied,
+    topInflationUnavoidable,
+  };
 }
 
 // ─── Price search wrapper around shapeWeights ─────────────────────────
@@ -2023,6 +2451,15 @@ export function searchBestPriceForCleanSnap(input: {
    * explicit price anchor (both paths want "edge first").
    */
   preferHigherEdge?: boolean;
+  /**
+   * The pack's CURRENT per-card weights (pool order, parallel to `cards`).
+   * Forwarded verbatim to {@link shapeWeights} so the ANTI-INFLATION anchor
+   * (owner rule #1 — no win/grail card's odds may exceed its current odds) is
+   * enforced at EVERY candidate price. The anchor is price-relative (banding
+   * shifts with price), so passing it here keeps the "trim the tail, never
+   * inflate" guarantee across the whole price sweep. Omit to skip the anchor.
+   */
+  currentWeights?: number[];
 }): SearchBestPriceResult {
   const {
     cards,
@@ -2032,6 +2469,7 @@ export function searchBestPriceForCleanSnap(input: {
     maxWinCap,
     nearMissMin,
     winRateTol,
+    currentWeights,
   } = input;
   const maxPriceChangePct = input.maxPriceChangePct ?? 0.25;
   const upwardPriceExtensionPct = Math.max(0, input.upwardPriceExtensionPct ?? 0);
@@ -2051,6 +2489,12 @@ export function searchBestPriceForCleanSnap(input: {
       maxWinCap,
       nearMissMin,
       winRateTol,
+      ...(currentWeights !== undefined ? { currentWeights } : {}),
+      // A tagged pack's win-rate is a HARD design target — pin it (no float-up,
+      // no cheapest-winner cap exemption) so the achieved win-rate can land on
+      // the tag rather than drifting up while the price search hunts for a price
+      // that hits BOTH the tag win-rate and clean odds.
+      ...(tagged ? { winRateIsHard: true } : {}),
     });
 
   // Tagged-mode helper: did this shape land within 0.01pp of the tag?

@@ -422,6 +422,37 @@ export function ReviewCard({
                   System-targeted
                 </Badge>
               )}
+              {/* Snap-status badge — honest signal of whether the proposed odds
+                  landed on the clean ladder (round numbers) or fell back to the
+                  precise (ugly) weights. Serializable booleans on the proposal —
+                  no function props cross the RSC boundary. */}
+              {feasible && proposal.snapped === true && (
+                <Badge
+                  variant="outline"
+                  className="h-5 shrink-0 border-emerald-500/30 bg-emerald-500/15 px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400"
+                  title="Every card's odds landed on a clean ladder rung (one dust card absorbs the residual)."
+                >
+                  Clean odds
+                </Badge>
+              )}
+              {feasible && proposal.snapped === false && (
+                <Badge
+                  variant="outline"
+                  className="h-5 shrink-0 border-muted-foreground/30 bg-muted/40 px-1.5 text-[10px] text-muted-foreground"
+                  title="Couldn't fully snap to clean ladder numbers — showing the exact (edge-correct) odds instead."
+                >
+                  Exact odds
+                </Badge>
+              )}
+              {feasible && proposal.topInflationUnavoidable === true && (
+                <Badge
+                  variant="outline"
+                  className="h-5 shrink-0 border-rose-500/30 bg-rose-500/15 px-1.5 text-[10px] text-rose-600 dark:text-rose-400"
+                  title="A jackpot card's current odds are so rare that no feasible distribution matches them; its odds had to rise slightly (unavoidable for this pool)."
+                >
+                  Jackpot odds rose
+                </Badge>
+              )}
             </div>
             {/* Tag chip — the intended hit-rate parsed from the pack name. */}
             <TagChip

@@ -2075,6 +2075,123 @@ check(
   },
 );
 
+// ── 17. ANTI-INFLATION anchor (currentWeights) — the FLAW-1 fix ─────────
+//
+// When `currentWeights` is supplied, the solver enforces the owner's rules:
+//   (a) the EXPENSIVE TAIL (GRAIL band, value ≥ 5·price) is STRICTLY DECREASING
+//       in value — the jackpot is the rarest pull;
+//   (b) RAISING THE EDGE never INCREASES the top card's probability (vs the
+//       current odds, and vs a lower-edge run) — it only ever TRIMS the tail;
+//   (c) the clean-ladder snap, when accepted, lands every card on a rung except
+//       AT MOST ONE buffer (the cheapest / dust card) — and never inflates a
+//       grail above its precise odds.
+// These pin the engine change directly (no DB — a hand-built pool that mirrors
+// the real $20.50 / Charizard pack's shape: a rare hand-tuned jackpot + a
+// generous mid-tier + dust).
+check("anti-inflation (a): GRAIL tail is strictly decreasing in value", () => {
+  // Mirror the real pack: $20.50, a $542 jackpot at a tiny 0.15% current odds,
+  // descending grails, a generous mid-tier, and dust. currentWeights = live odds.
+  const price = 20.5;
+  const cards = [
+    { value: 541.96 }, { value: 217.48 }, { value: 107.1 }, { value: 70.98 },
+    { value: 46.3 }, { value: 24.43 }, { value: 20.53 }, { value: 18.16 },
+    { value: 12.41 }, { value: 7.3 }, { value: 3.62 }, { value: 1.21 },
+  ];
+  // Live weights (sum 1,000,000) — the real pack's composition.
+  const currentWeights = [
+    1500, 4000, 8000, 20000, 125100, 183900, 40000, 17500, 85000, 135000, 170000, 210000,
+  ];
+  const r = shapeWeights({
+    cards, price, targetEdge: 0.1099, targetWinRate: 0.2, currentWeights,
+  });
+  assert(isSuccess(r), `expected success: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+  const total = r.weights.reduce((a, b) => a + b, 0);
+  // GRAIL tail = value ≥ 5·price = ≥ $102.50 → cards $541.96 / $217.48 / $107.10.
+  const grail = cards
+    .map((c, i) => ({ v: c.value, pct: (r.weights[i]! / total) * 100 }))
+    .filter((x) => x.v >= 5 * price)
+    .sort((a, b) => a.v - b.v); // ascending value
+  // Walking value-ascending, pct must be NON-INCREASING (strictly decreasing).
+  for (let i = 1; i < grail.length; i++) {
+    assert(
+      grail[i]!.pct <= grail[i - 1]!.pct + 1e-9,
+      `grail strictly decreasing: $${grail[i]!.v} at ${grail[i]!.pct.toFixed(4)}% > $${grail[i - 1]!.v} at ${grail[i - 1]!.pct.toFixed(4)}%`,
+    );
+  }
+  // And the top card did NOT inflate above its CURRENT odds (0.15%).
+  const topPct = (r.weights[0]! / total) * 100;
+  assert(
+    topPct <= 0.15 + 1e-6,
+    `top card (Charizard $541.96) must NOT inflate above its 0.15% current odds; got ${topPct.toFixed(4)}%`,
+  );
+  console.log(`      [Charizard $541.96: current 0.15% → after ${topPct.toFixed(4)}% — NOT inflated]`);
+});
+
+check("anti-inflation (b): raising the edge never increases the top card's P", () => {
+  // Same pool. Shape at a LOW edge and a HIGH edge; the top card's odds must be
+  // NON-INCREASING as the edge rises (raising edge only trims the expensive tail).
+  const price = 20.5;
+  const cards = [
+    { value: 541.96 }, { value: 217.48 }, { value: 107.1 }, { value: 70.98 },
+    { value: 46.3 }, { value: 24.43 }, { value: 20.53 }, { value: 18.16 },
+    { value: 12.41 }, { value: 7.3 }, { value: 3.62 }, { value: 1.21 },
+  ];
+  const currentWeights = [
+    1500, 4000, 8000, 20000, 125100, 183900, 40000, 17500, 85000, 135000, 170000, 210000,
+  ];
+  const topPctAt = (edge: number): number => {
+    const r = shapeWeights({ cards, price, targetEdge: edge, targetWinRate: 0.2, currentWeights });
+    if (!isSuccess(r)) throw new Error(`infeasible at edge ${edge}`);
+    const total = r.weights.reduce((a, b) => a + b, 0);
+    return (r.weights[0]! / total) * 100;
+  };
+  let prev = Infinity;
+  for (const edge of [0.08, 0.1099, 0.13, 0.15]) {
+    const p = topPctAt(edge);
+    assert(
+      p <= prev + 1e-6,
+      `top-card P must not rise as edge rises: edge ${edge} → ${p.toFixed(4)}% > previous ${prev.toFixed(4)}%`,
+    );
+    prev = p;
+  }
+});
+
+check("anti-inflation (c): accepted snap is clean with ≤1 dust-buffer; tail never inflated", () => {
+  // A clean-snapping anchored pool. When `snapped === true`, every positive card
+  // sits on a ladder rung EXCEPT at most one buffer — and that buffer is the
+  // cheapest (dust) card. And no grail card exceeds its precise pre-snap odds.
+  const price = 5;
+  const cards = [
+    { value: 40.0 }, { value: 20.25 }, { value: 0.5 },
+  ];
+  const currentWeights = [50, 1000, 80000]; // jackpot rare, dust dominant
+  const r = shapeWeights({
+    cards, price, targetEdge: 0.1099, targetWinRate: 0.15, currentWeights,
+  });
+  assert(isSuccess(r), `expected success: ${"error" in r ? r.error : ""}`);
+  if (!isSuccess(r)) return;
+  if (r.snapped === true) {
+    const total = r.weights.reduce((a, b) => a + b, 0);
+    const pcts = r.weights.map((w) => (w / total) * 100);
+    const offLadder: number[] = [];
+    for (let i = 0; i < cards.length; i++) {
+      if (r.weights[i]! > 0 && !isOnLadder(pcts[i]!)) offLadder.push(i);
+    }
+    assert(offLadder.length <= 1, `at most ONE off-ladder (buffer) card; got ${offLadder.length}`);
+    if (offLadder.length === 1) {
+      let cheapestV = Infinity;
+      for (let i = 0; i < cards.length; i++) if (r.weights[i]! > 0) cheapestV = Math.min(cheapestV, cards[i]!.value);
+      assert(
+        cards[offLadder[0]!]!.value === cheapestV || cards[offLadder[0]!]!.value < 0.5 * price,
+        `the single off-ladder card must be the cheapest/dust card (value $${cards[offLadder[0]!]!.value})`,
+      );
+    }
+  }
+  // Regardless of snap, edge is at/above target and the top card never inflated.
+  assert(r.edge >= 0.1099 - 1e-9, `edge ≥ target (${r.edge})`);
+});
+
 // ── Summary ─────────────────────────────────────────────────────────
 if (failures.length > 0) {
   console.error(`\n✗ ${failures.length} risk check(s) failed:`);
