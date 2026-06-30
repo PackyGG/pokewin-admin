@@ -18,6 +18,7 @@ import {
   zeroAffiliateClaimBalance,
   transferAffiliateCodeToMotha,
   type AffiliateCodeActionResult,
+  type AffiliateCodeTransferResult,
 } from "./actions";
 
 /**
@@ -61,9 +62,13 @@ export function ManageAffiliateCodeDialog({
     setBusy(false);
   }
 
-  function handleResult(result: AffiliateCodeActionResult) {
+  function handleResult(
+    result: AffiliateCodeActionResult | AffiliateCodeTransferResult,
+  ) {
     if (result.success) {
-      toast.success(result.message);
+      // Transfer success carries the replacement code in `message`; show it
+      // for longer so the admin can note the previous owner's new code.
+      toast.success(result.message, { duration: 8000 });
       setOpen(false);
       reset();
     } else {
@@ -155,8 +160,9 @@ export function ManageAffiliateCodeDialog({
                     Transfer code to @motha
                   </span>
                   <span className="block text-xs text-muted-foreground">
-                    Re-points code ownership only. History &amp; earnings stay
-                    with the current owner.
+                    Moves ownership to @motha, issues the previous owner a
+                    replacement code, and ensures @motha&apos;s affiliate
+                    account. History &amp; earnings stay with the previous owner.
                   </span>
                 </span>
               </button>
@@ -206,13 +212,28 @@ export function ManageAffiliateCodeDialog({
                 Transfer code to @motha?
               </DialogTitle>
               <DialogDescription>
-                This re-points ownership of{" "}
-                <span className="font-mono">{code}</span> from{" "}
+                This transfers <span className="font-mono">{code}</span> from{" "}
                 <span className="font-medium text-foreground">{ownerLabel}</span>{" "}
-                to <span className="font-medium text-foreground">@motha</span>.
-                Only the code-ownership row moves — historical referrals and
-                earnings stay attributed to the previous owner. This action is
-                audited.
+                to <span className="font-medium text-foreground">@motha</span> in
+                one atomic step:
+                <span className="mt-2 block space-y-1">
+                  <span className="block">
+                    • Ownership of <span className="font-mono">{code}</span> moves
+                    to @motha (future commissions accrue to @motha).
+                  </span>
+                  <span className="block">
+                    • The previous owner is issued a new replacement code
+                    (shown after you confirm) so they are never left codeless.
+                  </span>
+                  <span className="block">
+                    • An affiliate account row is ensured for @motha.
+                  </span>
+                </span>
+                <span className="mt-2 block">
+                  Historical referrals and earnings stay attributed to the
+                  previous owner. This action is audited and cannot be undone
+                  from the UI.
+                </span>
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>

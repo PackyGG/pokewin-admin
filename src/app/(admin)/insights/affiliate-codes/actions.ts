@@ -7,6 +7,7 @@ import { requireAdmin } from "@/lib/dal";
 import { requireInsightsOwner } from "@/lib/insights/motha-gate";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { isMainOwnerUsername } from "@/lib/owners";
+import { generateRandomAffiliateCode } from "@/lib/affiliate/generate-code";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
   getRecentAffiliateUsages,
@@ -45,6 +46,21 @@ const zeroBalanceSchema = z.object({
 
 export type AffiliateCodeActionResult =
   | { success: true; message: string }
+  | { success: false; error: string };
+
+/**
+ * Transfer result — like AffiliateCodeActionResult but additionally carries
+ * the replacement code issued to the stripped previous owner so the UI can
+ * surface it (matching the sanctioned `transferAffiliateCode` return shape,
+ * which returns `replacementCode` + `previousOwnerId`).
+ */
+export type AffiliateCodeTransferResult =
+  | {
+      success: true;
+      message: string;
+      replacementCode: string;
+      previousOwnerId: string;
+    }
   | { success: false; error: string };
 
 /**
@@ -139,21 +155,33 @@ const transferSchema = z.object({
 /**
  * ACTION 2 — Transfer a code's ownership to @motha (the root owner).
  *
- * Resolves @motha by username (read-only; requires EXACTLY one match — a
- * not-found / ambiguous result errors instead of guessing). Re-points
- * `affiliate_codes.user_id` to motha + bumps `updated_at`. MINIMAL by
- * design: only the code-ownership row moves. Historical
- * `affiliate_code_usages` rows (keyed on the original `affiliate_user_id`)
- * and all earnings are deliberately left in place.
+ * Upgraded to MATCH the sanctioned `transferAffiliateCode`
+ * (src/app/(admin)/users/[id]/actions.ts) so the two flows behave
+ * identically — it reuses the SAME shared generator
+ * (`generateRandomAffiliateCode` from `@/lib/affiliate/generate-code`,
+ * which the sanctioned action now also imports) and the SAME atomic
+ * `$transaction` shape:
  *
- * Mirrors the spirit of the sanctioned `transferAffiliateCode`
- * (users/[id]/actions.ts), minus the previous-owner replacement-code step
- * (owner asked to keep this transfer MINIMAL). NOTE downstream effects are
- * flagged in the agent report.
+ *   1. Re-point `affiliate_codes.user_id` to @motha (+ bump updated_at) —
+ *      preserving the row's `created_at` / history.
+ *   2. Create a fresh `affiliate_codes` row for the stripped previous owner
+ *      with a unique random replacement code so they are never codeless.
+ *   3. Upsert an `affiliate_accounts` row for BOTH @motha and the previous
+ *      owner (`create: { user_id }`, `update: {}`) so future commissions
+ *      from the code actually accrue to @motha (matching the sanctioned
+ *      default field values — all other columns keep their schema defaults).
+ *
+ * All four writes run in ONE `db.$transaction([...])` (atomic). Resolves
+ * @motha by exact unique username (errors if not found — never guesses).
+ * Historical `affiliate_code_usages` rows (keyed on the original
+ * `affiliate_user_id`) and all earnings stay attributed to the previous
+ * owner. `user.affiliate_code` (the referral cookie) is deliberately
+ * untouched on both sides — code ownership lives entirely in
+ * `affiliate_codes`, exactly as the sanctioned transfer documents.
  */
 export async function transferAffiliateCodeToMotha(
   input: z.infer<typeof transferSchema>,
-): Promise<AffiliateCodeActionResult> {
+): Promise<AffiliateCodeTransferResult> {
   const parsed = transferSchema.safeParse(input);
   if (!parsed.success) {
     return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
@@ -203,11 +231,34 @@ export async function transferAffiliateCodeToMotha(
 
   const previousOwnerId = codeRow.user_id;
 
-  // MAIN write — re-point ownership only.
-  await db.affiliate_codes.update({
-    where: { id: codeId },
-    data: { user_id: motha.id, updated_at: new Date() },
-  });
+  // Pre-generate the replacement code (read-only uniqueness check via the
+  // shared helper) BEFORE the transaction so the $transaction array stays
+  // a set of independent writes (matching the sanctioned mechanism).
+  const replacementCode = await generateRandomAffiliateCode(db);
+
+  // MAIN writes — atomic. Mirrors the sanctioned transferAffiliateCode:
+  //   • move the code row to @motha,
+  //   • give the previous owner the replacement code,
+  //   • ensure BOTH sides have an affiliate_accounts row.
+  await db.$transaction([
+    db.affiliate_codes.update({
+      where: { id: codeId },
+      data: { user_id: motha.id, updated_at: new Date() },
+    }),
+    db.affiliate_codes.create({
+      data: { user_id: previousOwnerId, code: replacementCode },
+    }),
+    db.affiliate_accounts.upsert({
+      where: { user_id: motha.id },
+      create: { user_id: motha.id },
+      update: {},
+    }),
+    db.affiliate_accounts.upsert({
+      where: { user_id: previousOwnerId },
+      create: { user_id: previousOwnerId },
+      update: {},
+    }),
+  ]);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -219,13 +270,21 @@ export async function transferAffiliateCodeToMotha(
       previousOwnerId,
       newOwnerId: motha.id,
       newOwnerUsername: motha.username,
+      // Replacement code issued to the stripped previous owner so they are
+      // never left codeless (matches the sanctioned transfer).
+      replacementCode,
+      // Both accounts rows were ensured (upserted) in the same transaction
+      // so future commissions from the code accrue to @motha.
+      affiliateAccountsUpserted: [motha.id, previousOwnerId],
     },
   });
 
   revalidatePath("/insights/affiliate-codes");
   return {
     success: true,
-    message: `Transferred ${codeRow.code} to @${motha.username ?? "motha"}.`,
+    message: `Transferred ${codeRow.code} to @${motha.username ?? "motha"}. Previous owner's replacement code: ${replacementCode}.`,
+    replacementCode,
+    previousOwnerId,
   };
 }
 

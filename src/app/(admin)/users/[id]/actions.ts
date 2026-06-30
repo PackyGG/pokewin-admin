@@ -37,6 +37,7 @@ import {
   canEditBalanceAdjustments,
   requireBalanceAdjustmentEditAdmin,
 } from "@/lib/balance-adjustment-edit/motha-gate";
+import { generateRandomAffiliateCode } from "@/lib/affiliate/generate-code";
 
 /**
  * Bust BOTH the route segment AND the per-user `unstable_cache` entries for
@@ -3148,30 +3149,10 @@ export async function createAffiliateCode(
   return { success: true };
 }
 
-/**
- * Generate a unique random replacement affiliate code. Used by
- * `transferAffiliateCode` to give the previous owner a non-empty code
- * so they're never left without one. Uses confusable-free alphabet
- * (no I/L/O/0/1) and retries on the (extremely unlikely) collision.
- */
-async function generateRandomAffiliateCode(
-  db: Awaited<ReturnType<typeof getDb>>,
-): Promise<string> {
-  const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-  const length = 10;
-  for (let attempt = 0; attempt < 8; attempt++) {
-    let code = "";
-    for (let i = 0; i < length; i++) {
-      code += alphabet[crypto.randomInt(0, alphabet.length)];
-    }
-    const exists = await db.affiliate_codes.findUnique({
-      where: { code },
-      select: { user_id: true },
-    });
-    if (!exists) return code;
-  }
-  throw new Error("Could not generate a unique replacement affiliate code");
-}
+// `generateRandomAffiliateCode` now lives in the shared helper
+// `@/lib/affiliate/generate-code` so the Insights Affiliate Codes transfer
+// reuses the identical generation/uniqueness mechanism (no parallel
+// random-code logic). Imported at the top of this file.
 
 /**
  * Transfer ownership of an affiliate code from its current owner to
