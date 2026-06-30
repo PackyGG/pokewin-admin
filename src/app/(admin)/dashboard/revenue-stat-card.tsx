@@ -69,15 +69,15 @@ export function GgrBreakdownPopover({
   periodLabel: string;
   contributorScope: GgrContributorScope;
   /**
-   * Headline GGR (owner's definition: `deposits − withdrawals` for the
-   * window). Rendered at the TOP of the popover so the popover's hero
-   * matches the KPI tile's headline; the industry-GGR breakdown sits
-   * below as a secondary reference figure.
+   * Cash P&L (`deposits − withdrawals`) for the window. Surfaced as a
+   * SECONDARY figure inside the popover so an operator can see net cash
+   * kept (crypto-flow tracking) without leaving the tile — NOT the headline
+   * number (the tile's headline is the industry GGR).
    */
   cashGgr: number;
-  /** Window's deposit dollars — drives the `deposits − withdrawals` math. */
+  /** Window's deposit dollars — drives the secondary `deposits − withdrawals` math. */
   deposits: number;
-  /** Window's withdrawal dollars — drives the `deposits − withdrawals` math. */
+  /** Window's withdrawal dollars — drives the secondary `deposits − withdrawals` math. */
   withdrawals: number;
 }) {
   const cashIsProfit = cashGgr >= 0;
@@ -145,23 +145,82 @@ export function GgrBreakdownPopover({
         sideOffset={6}
         className="w-[360px] max-w-[calc(100vw-2rem)] space-y-2 p-3"
       >
-        {/* Headline cash GGR — the operator's definition that drives the
-            KPI tile. `deposits − withdrawals` capped at user net cash
-            flow. Shown FIRST so the popover header matches the tile's
-            headline number. House-POV color: positive → emerald, negative
-            → rose. The two cash legs are listed underneath so the math
-            reconciles line by line. */}
+        {/* Headline industry GGR — what the tile's headline number reflects.
+            Wager − (pack/battle wins + battle refunds + upgrader payout).
+            Shown FIRST so the popover header matches the tile. House-POV
+            colour on the final line (positive → emerald, negative → rose)
+            per CLAUDE.md. */}
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             GGR · {periodLabel}
           </p>
           <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
-            Headline GGR = deposits − withdrawals over the window. Capped at
-            user net cash flow — the maximum house gain is what came in
-            minus what went out.
+            Gross gaming margin (wager − payouts on packs, battles,
+            upgrader). Pre-rewards, pre-promo. Wins are valued from
+            inventory (the cards kept), not a ledger payout; upgrader
+            comes from its own table. Card/voucher conversions are
+            neutral and excluded. Real customers only (staff + excluded
+            users dropped, all creator play removed, borrow plays removed).
           </p>
         </div>
-        <div className="space-y-1">
+
+        {/* Wager-side rows. Section header carries the bucket total so
+            the admin can compare buckets at a glance without scrolling
+            to the bottom math. Muted-foreground tint — wagers aren't a
+            house gain on their own, just flow in. */}
+        <BreakdownSection
+          title="Wagers"
+          total={breakdown.wagersTotal}
+          rows={wagers}
+          tone="wager"
+        />
+
+        {/* Payout-side rows. Rose tint — money flowing OUT of the
+            house. The headline number's "negative" component is here. */}
+        <BreakdownSection
+          title="Payouts"
+          total={breakdown.payoutsTotal}
+          rows={payouts}
+          tone="payout"
+        />
+
+        {/* Bottom math: wagersTotal − payoutsTotal = ggr. House-POV
+            colour on the final line (positive → emerald, negative →
+            rose) per CLAUDE.md. The breakdown's ggr is used directly
+            (not the headline `ggr` prop) so this number matches the
+            row totals above by construction. */}
+        <div className="border-t border-border/60 pt-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold uppercase tracking-wider">
+              GGR
+            </span>
+            <span
+              className={cn(
+                "font-bold tabular-nums",
+                ggrIsProfit ? "text-emerald-400" : "text-rose-400",
+              )}
+            >
+              {ggrIsProfit ? "+" : "−"}
+              {formatCurrency(Math.abs(breakdown.ggr))}
+            </span>
+          </div>
+        </div>
+
+        {/* Secondary reference — Cash P&L (`deposits − withdrawals`).
+            Net cash kept after withdrawals — useful for crypto-flow
+            tracking. NOT the headline (the headline above is the gaming
+            margin); shown here so an operator doesn't have to leave the
+            popover to see net cash. */}
+        <div className="space-y-1 border-t border-border/60 pt-2">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Cash P&L (deposits − withdrawals)
+            </p>
+            <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+              Net cash kept after withdrawals — for crypto-flow tracking.
+              Not gaming margin.
+            </p>
+          </div>
           <div className="flex items-center justify-between rounded px-1 py-0.5 text-[11px]">
             <span className="text-muted-foreground">Deposits</span>
             <span className="tabular-nums text-emerald-400/90">
@@ -176,7 +235,7 @@ export function GgrBreakdownPopover({
           </div>
           <div className="flex items-center justify-between border-t border-border/60 px-1 pt-1.5 text-xs">
             <span className="font-semibold uppercase tracking-wider">
-              GGR (cash)
+              Cash P&L
             </span>
             <span
               className={cn(
@@ -187,71 +246,6 @@ export function GgrBreakdownPopover({
               {cashIsProfit ? "+" : "−"}
               {formatCurrency(Math.abs(cashGgr))}
             </span>
-          </div>
-        </div>
-
-        {/* Secondary reference — the industry definition of GGR
-            (wager − payouts). Surfaced INSIDE the popover so an operator
-            can still audit the per-leg gaming margin, but it is NO LONGER
-            the headline number on the tile. Carries an explicit
-            disclaimer because it double-counts recycled balance and is not
-            the same thing as cash captured. */}
-        <div className="space-y-2 border-t border-border/60 pt-2">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Industry GGR (wager − payouts)
-            </p>
-            <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
-              Includes recycled balance — informational only.{" "}
-              {periodLabel}. Wager − (pack/battle wins + battle refunds
-              + upgrader payout). Wins are valued from inventory (the
-              cards kept), not a ledger payout; upgrader comes from its
-              own table. Card/voucher conversions are neutral and
-              excluded. Real customers only (staff + excluded users
-              dropped, all creator play removed, borrow plays removed).
-            </p>
-          </div>
-
-          {/* Wager-side rows. Section header carries the bucket total so
-              the admin can compare buckets at a glance without scrolling
-              to the bottom math. Muted-foreground tint — wagers aren't a
-              house gain on their own, just flow in. */}
-          <BreakdownSection
-            title="Wagers"
-            total={breakdown.wagersTotal}
-            rows={wagers}
-            tone="wager"
-          />
-
-          {/* Payout-side rows. Rose tint — money flowing OUT of the
-              house. The headline number's "negative" component is here. */}
-          <BreakdownSection
-            title="Payouts"
-            total={breakdown.payoutsTotal}
-            rows={payouts}
-            tone="payout"
-          />
-
-          {/* Bottom math: wagersTotal − payoutsTotal = industry GGR. House-POV
-              colour on the final line (positive → emerald, negative →
-              rose) per CLAUDE.md. The breakdown's ggr is used directly
-              (not the headline `ggr` prop) so this number matches the
-              row totals above by construction. */}
-          <div className="border-t border-border/60 pt-2">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold uppercase tracking-wider">
-                Industry GGR
-              </span>
-              <span
-                className={cn(
-                  "font-bold tabular-nums",
-                  ggrIsProfit ? "text-emerald-400" : "text-rose-400",
-                )}
-              >
-                {ggrIsProfit ? "+" : "−"}
-                {formatCurrency(Math.abs(breakdown.ggr))}
-              </span>
-            </div>
           </div>
         </div>
 
@@ -403,15 +397,15 @@ function ContributorList({ rows }: { rows: GgrTopContributorRow[] }) {
                 <span className="truncate font-medium">{username}</span>
               </span>
               <span className="flex shrink-0 items-center gap-2 tabular-nums">
-                {/* D / W → deposits / withdrawals for the window. Headline
-                    GGR is `deposits − withdrawals`, so the per-user
-                    contributor sweep ranks users by the cash flow they
-                    contributed to the figure (positive → house cash
-                    gain). The two cash legs are surfaced here for audit
-                    so an admin can see why a user lands on the list. */}
+                {/* W / P → wager / payout for the window. Headline GGR is
+                    `wager − payouts` (industry), so the per-user
+                    contributor sweep ranks users by the gaming margin
+                    they contributed (positive → house gain, user lost).
+                    The two legs are surfaced here for audit so an admin
+                    can see why a user lands on the list. */}
                 <span className="text-muted-foreground/60">
-                  D {formatNumber(Math.round(r.wagerTotal))} ·{" "}
-                  W {formatNumber(Math.round(r.payoutTotal))}
+                  W {formatNumber(Math.round(r.wagerTotal))} ·{" "}
+                  P {formatNumber(Math.round(r.payoutTotal))}
                 </span>
                 <span
                   className={cn(

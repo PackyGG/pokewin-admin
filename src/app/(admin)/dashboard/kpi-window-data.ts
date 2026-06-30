@@ -39,21 +39,19 @@ export type KpiWindowPayload = {
 
   // ---- Period-bound box values ----
   /**
-   * HEADLINE GGR — operator definition (`deposits − withdrawals` for the
-   * window). The owner's mental model: the maximum house gain is capped at
-   * the user's net cash flow; we never owe more than what came in. This is
-   * the same formula as Cash P&L (`rawCashPnl` in today-pnl-stat-card.tsx)
-   * applied per-window. Positive (deposits > withdrawals) → house gain →
-   * emerald; negative → user net cash out → rose.
+   * HEADLINE GGR — industry definition (`wager − payouts`, inventory-delta
+   * sourced). "What we won from the games today (packs, battles, upgrader)" —
+   * the gaming margin, pre-rewards, pre-promo. Positive → house up → emerald;
+   * negative → house down → rose.
+   */
+  ggr: number;
+  /**
+   * SECONDARY: Cash P&L (`deposits − withdrawals`) for the window. Surfaced
+   * INSIDE the GGR popover alongside the headline so an operator can audit
+   * net cash kept (crypto-flow tracking) without leaving the tile. Not the
+   * headline number.
    */
   cashGgr: number;
-  /**
-   * INDUSTRY GGR — the empirical wager-margin definition
-   * (`wager − payouts`, inventory-delta sourced). Kept in the Info popover
-   * as a reference figure; not the headline anymore. Includes recycled
-   * balance so it overstates real money capture vs. cashGgr.
-   */
-  industryGgr: number;
   /** Customer wager (creator-on-stream sessions excluded) for the window. */
   wager: number;
   /** Packs / Battles / Upgrader split of `wager` (sums to it). */
@@ -122,24 +120,19 @@ export async function buildKpiWindowPayload(
     },
   );
 
-  // Owner's GGR redefinition (2026-06-30): the HEADLINE GGR tile on the
-  // dashboard is `deposits − withdrawals` for the window — the owner's
-  // mental model that house gain is capped at the user's net cash flow.
-  // This matches the Cash P&L formula used by the P&L Today tile
-  // (`rawCashPnl = deposits - withdrawals`). The classical industry GGR
-  // (wager − payouts) from `getWindowMetrics` is preserved as
-  // `industryGgr` and surfaced inside the breakdown popover as a
-  // reference figure only. NOTE: this redefinition is DASHBOARD-LOCAL —
-  // every other surface that reads `getWindowMetrics.ggr` (insights,
-  // /ggr breakdown page, creator analytics, etc.) keeps the industry
-  // definition unchanged.
+  // Owner reverted the GGR definition (2026-06-30 follow-up): the HEADLINE
+  // GGR tile reads the industry definition again (`wager − payouts`, what
+  // we won from the games today — packs, battles, upgrader). Cash P&L
+  // (`deposits − withdrawals`) is kept as a SECONDARY figure inside the
+  // popover so an operator can still see net cash kept (crypto-flow
+  // tracking) without leaving the tile, but it is no longer the headline.
   const cashGgr = cashflow.deposits - cashflow.withdrawals;
 
   return {
     window,
     windowLabel: stats.periodLabel,
+    ggr: stats.ggr,
     cashGgr,
-    industryGgr: stats.ggr,
     wager: stats.wagers,
     wagerBreakdown: stats.wagersBreakdown,
     wagerOrganic: stats.wagersOrganic,

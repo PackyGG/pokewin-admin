@@ -417,18 +417,17 @@ export function DashboardKpiSection({
           5 across at xl where there's width for all five (the wide Wager box
           included) without crushing. */}
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
-        {/* GGR — owner's headline definition: `deposits − withdrawals` for
-            the window (max house gain capped at user net cash flow). Same
-            formula as Cash P&L applied per-window. Cyan identity; Info
-            popover surfaces the secondary "industry GGR" (wager − payouts)
-            with its per-leg breakdown + lazy top-contributors, scoped to
-            the box's active window. House-POV: positive (deposits >
-            withdrawals) → house gain → emerald; negative → user net cash
-            out → rose (handled by SignedHero). */}
+        {/* GGR — industry definition (`wager − payouts`): what we won from
+            the games today (packs, battles, upgrader), pre-rewards,
+            pre-promo. Cyan identity; Info popover surfaces the per-leg
+            breakdown + lazy top-contributors + a secondary "Cash P&L"
+            (deposits − withdrawals) reference, scoped to the box's active
+            window. House-POV: positive → house gain → emerald; negative →
+            house loss → rose (handled by SignedHero). */}
         {(() => {
           const p = payloadFor("ggr");
           const mode = modeFor("ggr");
-          const isProfit = p.cashGgr >= 0;
+          const isProfit = p.ggr >= 0;
           return (
             <KpiPanel
               title="GGR"
@@ -452,13 +451,13 @@ export function DashboardKpiSection({
               }
               icon={isProfit ? TrendingUp : TrendingDown}
             >
-              <SignedHero value={p.cashGgr} />
-              {/* Subtitle/tooltip — explains the owner's GGR definition so an
-                  admin who knows the industry meaning of GGR isn't confused
-                  by the new headline. */}
+              <SignedHero value={p.ggr} />
+              {/* Subtitle/tooltip — restates the industry GGR definition so
+                  the headline number is unambiguous next to the popover's
+                  secondary Cash P&L figure. */}
               <p className="text-tiny text-muted-foreground leading-snug">
-                deposits − withdrawals over the window. Capped at user net
-                cash flow.
+                gross gaming margin (wager − payouts on packs, battles,
+                upgrader). Pre-rewards, pre-promo.
               </p>
             </KpiPanel>
           );
