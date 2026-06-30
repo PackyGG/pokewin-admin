@@ -12,6 +12,7 @@ import {
   type DoubleDownStats,
   type DoubleDownLogRow,
   type DoubleDownLog,
+  type DoubleDownDashboardStats,
   type UserDoubleDownHistory,
 } from "@/lib/queries/double-down-shared";
 
@@ -34,6 +35,7 @@ export type {
   DoubleDownStats,
   DoubleDownLogRow,
   DoubleDownLog,
+  DoubleDownDashboardStats,
   UserDoubleDownHistory,
 } from "@/lib/queries/double-down-shared";
 
@@ -404,4 +406,130 @@ export async function getUserDoubleDownHistory(
     },
     rows: rows.map(mapLogRow),
   };
+}
+
+// ── SURFACE 3: dashboard lifetime stats (DEV's canonical game_type method) ─────
+
+const EMPTY_DASHBOARD_STATS: DoubleDownDashboardStats = {
+  rounds: 0,
+  wins: 0,
+  loses: 0,
+  pending: 0,
+  uniquePlayers: 0,
+  winRate: null,
+  staked: 0,
+  forfeited: 0,
+  paidOut: 0,
+  edgeCut: 0,
+  netHousePnl: 0,
+  houseEdgePct: null,
+};
+
+async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
+  const db = await getDb();
+
+  // DEV's CANONICAL method (source of truth for the dashboard's game-type
+  // counting): start from game_sessions filtered to game_type
+  // 'battle_double_down', JOIN game_id → battle_double_down_offers. A
+  // game_session row exists ONLY for a PLAYED round (accepted → resolved), so
+  // this counts played rounds the same way the dashboard counts pack / battle /
+  // upgrader plays. Outcome is read from o.result + o.won_amount_usd; the win
+  // payout / house-edge come strictly from the paired payout VOUCHER
+  // (origin='battle_double_down_payout') — NOT from any ledger/balance row
+  // (there is no real ledger tx for these; voucher_redeemed is reconciliation
+  // only). A few win vouchers omit the metadata breakdown, so payout/edge fall
+  // back to the documented flat 90/10 split (COALESCE) so the win legs always
+  // reconcile (paid + edge == won; verified read-only on prod).
+  //
+  // Index path (EXPLAIN-proven read-only): the planner drives from the TINY
+  // battle_double_down_offers table (Seq Scan, dozens of rows) and probes the
+  // 653k-row game_sessions via idx_gs_game_id (Index Scan on game_id) — so the
+  // large table is index-served. No game_sessions(game_type) index is needed
+  // at this shape; flagged in recommended-indexes.sql only if the offers table
+  // grows large enough that game_type-first filtering becomes the better plan.
+  const rows = await db.$queryRaw<
+    {
+      rounds: bigint;
+      wins: bigint;
+      loses: bigint;
+      pending: bigint;
+      unique_players: bigint;
+      staked: string | null;
+      forfeited: string | null;
+      paid_out: string | null;
+      edge_cut: string | null;
+    }[]
+  >(Prisma.sql`
+    SELECT
+      count(*)                                                          AS rounds,
+      count(*) FILTER (WHERE o.result = 'win')                          AS wins,
+      count(*) FILTER (WHERE o.result = 'lose')                         AS loses,
+      count(*) FILTER (WHERE o.result IS NULL)                          AS pending,
+      count(DISTINCT gs.user_id)                                        AS unique_players,
+      sum(o.won_amount_usd) FILTER (WHERE o.result IS NOT NULL)         AS staked,
+      sum(o.won_amount_usd) FILTER (WHERE o.result = 'lose')            AS forfeited,
+      sum(COALESCE((v.metadata->>'payout_amount_usd')::numeric, o.won_amount_usd * 0.9))
+        FILTER (WHERE o.result = 'win')                                 AS paid_out,
+      sum(COALESCE((v.metadata->>'house_amount_usd')::numeric, o.won_amount_usd * 0.1))
+        FILTER (WHERE o.result = 'win')                                 AS edge_cut
+    FROM game_sessions gs
+    JOIN battle_double_down_offers o ON o.id = gs.game_id
+    LEFT JOIN vouchers v
+      ON v.id = o.won_voucher_id
+     AND v.origin = 'battle_double_down_payout'
+    WHERE gs.game_type = 'battle_double_down'
+  `);
+
+  const r = rows[0];
+  const wins = Number(r?.wins ?? 0);
+  const loses = Number(r?.loses ?? 0);
+  const resolved = wins + loses;
+  const staked = num(r?.staked ?? null) ?? 0;
+  const forfeited = num(r?.forfeited ?? null) ?? 0;
+  const paidOut = num(r?.paid_out ?? null) ?? 0;
+  const edgeCut = num(r?.edge_cut ?? null) ?? 0;
+  const netHousePnl = forfeited + edgeCut - paidOut;
+
+  return {
+    rounds: Number(r?.rounds ?? 0),
+    wins,
+    loses,
+    pending: Number(r?.pending ?? 0),
+    uniquePlayers: Number(r?.unique_players ?? 0),
+    winRate: resolved > 0 ? wins / resolved : null,
+    staked,
+    forfeited,
+    paidOut,
+    edgeCut,
+    netHousePnl,
+    houseEdgePct: staked > 0 ? netHousePnl / staked : null,
+  };
+}
+
+/**
+ * Lifetime Double Down stats for the /dashboard panel. Mirrors the upgrader
+ * panel's contract: lifetime aggregate, 5-minute cross-request cache (drifts
+ * slowly, invisible to operators, skips the scan on the 60s dashboard
+ * refresh), prod-only (a dev-DB-toggled admin reads live). Self-degrades to
+ * zeroed stats via the to_regclass guard so a pre-feature DB renders an empty
+ * panel instead of throwing 42P01.
+ */
+export async function getDoubleDownDashboardStats(): Promise<DoubleDownDashboardStats> {
+  const guarded = async () => {
+    const db = await getDb();
+    // to_regclass guard: on a DB without the table (e.g. an old snapshot) skip
+    // the read and return zeros rather than throwing 42P01 — matches how
+    // upgraderMetrics guards its table.
+    const exists = await db.$queryRaw<{ reg: string | null }[]>(
+      Prisma.sql`SELECT to_regclass('public.battle_double_down_offers')::text AS reg`,
+    );
+    if (!exists[0]?.reg) return EMPTY_DASHBOARD_STATS;
+    return computeDashboardStats();
+  };
+  const env = await readDbEnv();
+  if (env !== "prod") return guarded();
+  return unstable_cache(guarded, ["dashboard-double-down-lifetime-v1"], {
+    revalidate: 300,
+    tags: ["dashboard-lifetime", "double-down"],
+  })();
 }

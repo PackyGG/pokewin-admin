@@ -145,6 +145,38 @@ export type DoubleDownLog = {
   totalPages: number;
 };
 
+/**
+ * Dashboard lifetime stats for Double Down — counted the DEV's CANONICAL way:
+ * `game_sessions WHERE game_type='battle_double_down'` JOINed on game_id →
+ * battle_double_down_offers. A game_session row exists ONLY for a round that
+ * was actually PLAYED (accepted → resolved), so this counts PLAYED rounds —
+ * exactly how the dashboard counts pack / battle / upgrader game-plays — NOT
+ * the offered/expired rounds the Insights audit log also surfaces.
+ */
+export type DoubleDownDashboardStats = {
+  /** Played rounds (game_sessions of this game_type). */
+  rounds: number;
+  wins: number;
+  loses: number;
+  /** Unresolved plays (normally 0 — a session implies a resolved round). */
+  pending: number;
+  uniquePlayers: number;
+  /** wins / (wins+loses), null when nothing resolved. */
+  winRate: number | null;
+  /** Σ won_amount_usd over resolved plays — winnings staked. */
+  staked: number;
+  /** Σ won_amount_usd over LOSES — forfeited winnings (house GAIN → emerald). */
+  forfeited: number;
+  /** Σ payout_amount_usd over WINS — paid to winners (house COST → rose). */
+  paidOut: number;
+  /** Σ house_amount_usd over WINS — the edge cut (house revenue → emerald). */
+  edgeCut: number;
+  /** forfeited + edgeCut − paidOut. >0 = house up (emerald). */
+  netHousePnl: number;
+  /** netHousePnl / staked, null when nothing staked. */
+  houseEdgePct: number | null;
+};
+
 export type UserDoubleDownHistory = {
   /** Per-user summary over ALL of this user's rounds. */
   summary: {

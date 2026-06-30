@@ -6,6 +6,7 @@ import {
   getActiveRain,
 } from "@/lib/queries/dashboard";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
+import { getDoubleDownDashboardStats } from "@/lib/queries/double-down";
 import { getDailyPnl } from "@/lib/queries/pnl";
 import { getDailyCreatorCost } from "@/lib/queries/dashboard-daily-creator-cost";
 import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
@@ -53,6 +54,7 @@ import {
 // renders the in-page Activity card.
 // LiveMoneyChat also lives in the admin shell layout (same dock pattern).
 import { UpgraderStatsSection } from "./upgrader-stats";
+import { DoubleDownStatsSection } from "./double-down-stats";
 import { ActiveRainChip } from "./active-rain-chip";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -209,6 +211,20 @@ export default async function DashboardPage() {
           }
         >
           <DashboardWagerAttribution />
+        </Suspense>
+      </div>
+
+      {/* Double Down — gamble-your-battle-winnings game-type. Counted the
+          DEV's canonical way (game_sessions game_type='battle_double_down'
+          JOINed to battle_double_down_offers = PLAYED rounds), surfaced the
+          same way the Upgrader panel surfaces its game-type: a lifetime,
+          5-min-cached, House-POV panel that streams behind its own Suspense
+          so its scan never blocks the headline KPIs. Half-width to match the
+          Upgrader panel; left-aligned in a 2-up row (the right cell is free
+          headroom for a future paired panel, same as Upgrader started). */}
+      <div className="grid gap-3 sm:gap-4 lg:grid-cols-2 lg:items-stretch">
+        <Suspense fallback={<UpgraderPanelSkeleton />}>
+          <DashboardDoubleDownSection />
         </Suspense>
       </div>
 
@@ -495,6 +511,36 @@ async function DashboardUpgraderSection() {
   });
   // The panel is itself `h-full`, so it stretches to fill the 50/50 row cell.
   return <UpgraderStatsSection stats={stats} />;
+}
+
+/**
+ * Double Down stats panel — lifetime aggregate over the
+ * battle_double_down game-type (DEV's canonical game_sessions JOIN). Its own
+ * standalone query (getDoubleDownDashboardStats, 5-min cached + to_regclass
+ * guarded), wrapped in safeQuery so a slow/failed scan degrades this panel to
+ * a fallback instead of crashing the route. Lives in its own Suspense row
+ * below the Upgrader / Wager-Attribution pair so its scan never blocks the
+ * headline KPIs. House-POV money throughout.
+ */
+async function DashboardDoubleDownSection() {
+  const { data: stats, error, kind } = await safeQuery(
+    () => getDoubleDownDashboardStats(),
+    null,
+    "dashboard.doubleDown",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  if (error || !stats) {
+    return (
+      <TileErrorFallback
+        label="Double Down"
+        hint="The Double Down aggregate failed to load — other sections still rendered. Refresh to retry."
+        kind={kind ?? undefined}
+        size="panel"
+        className="h-full min-h-[400px]"
+      />
+    );
+  }
+  return <DoubleDownStatsSection stats={stats} />;
 }
 
 /**

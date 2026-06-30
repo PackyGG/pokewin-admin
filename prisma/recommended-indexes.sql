@@ -796,3 +796,17 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
 -- indexes). Apply the created_at index once the table grows past a few
 -- thousand rows so the windowed aggregate + audit-log ORDER BY stop
 -- seq-scanning under real volume.
+--
+-- DASHBOARD game-type aggregate (DEV's canonical method, added 2026-06-30):
+-- `game_sessions WHERE game_type='battle_double_down' JOIN game_id → offers`.
+-- EXPLAIN (read-only) shows the planner correctly drives from the TINY
+-- battle_double_down_offers table (Seq Scan, dozens of rows) and probes the
+-- ~653k-row game_sessions via the existing `idx_gs_game_id` (Index Scan on
+-- game_id) — so the LARGE table is already index-served and NO
+-- game_sessions(game_type) index is required at this shape. Reassess only if
+-- battle_double_down_offers grows large enough that filtering game_sessions by
+-- game_type FIRST becomes the better plan; in that case flag:
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_gs_game_type
+--     ON game_sessions (game_type);
+-- (NOT recommended yet — a low-cardinality game_type index on a 653k hot table
+-- is write-amplifying and the current offers-driven plan is optimal.)
