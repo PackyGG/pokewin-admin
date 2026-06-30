@@ -66,6 +66,18 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "User Management",
   },
   {
+    // Operator-controlled "soft remove" of a user's vault balance — extends
+    // `balances.unlock_at` to NOW + 10 years without moving money. Effectively
+    // freezes the vault pool (user can't withdraw until 2036) while the dollars
+    // stay in their account. MAIN-DB write, owner-authorized per the same
+    // precedent as `moveBalanceToVault`.
+    key: "__can_force_vault_unlock",
+    label: "Freeze Vault Balance",
+    description:
+      "Freeze a user's vault balance for 10 years by extending the unlock timer (no money is moved). Owner-authorized MAIN-DB write — same precedent as Move-to-Vault.",
+    group: "User Management",
+  },
+  {
     key: "__can_assign_affiliate",
     label: "Manage Affiliate Codes",
     description: "Assign or create affiliate codes for users",

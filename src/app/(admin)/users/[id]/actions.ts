@@ -1278,6 +1278,120 @@ export async function moveBalanceToVault(
 }
 
 // ---------------------------------------------------------------------------
+// Extend vault lock — operator-controlled "soft remove" (no money moves)
+// ---------------------------------------------------------------------------
+//
+// What it does: pushes `balances.unlock_at` to NOW + 10 years on a single
+// MAIN-DB UPDATE. Money stays put — `locked_balance` and `available_balance`
+// are NOT touched. The vault pool is effectively frozen (user can't withdraw
+// it until 2036) without writing a ledger row, because no balance moved.
+//
+// Owner-authorized MAIN write — same precedent as `moveBalanceToVault`
+// (legacy pre-policy code). Gated by capability + TOTP + admin audit.
+//
+// Returns the new ISO unlock timestamp + the locked amount at the moment of
+// the freeze so the dialog can show "Vault locked until <date>".
+export async function extendVaultLock(
+  userId: string,
+  totpCode: string,
+  reason?: string,
+): Promise<
+  | { success: true; new_unlock_at: string; locked_amount_usd: string }
+  | { success: false; error: string }
+> {
+  const db = await getDb();
+  const session = await requirePageAccess("/users");
+  // Capability gate — admins / owner bypass automatically inside
+  // requireCapability. Non-admins need the explicit
+  // `__can_force_vault_unlock` key on their role.
+  await requireCapability(
+    session,
+    "__can_force_vault_unlock",
+    "freeze vault balance",
+  );
+  await require2FA(session.userId, totpCode);
+
+  let previousUnlockAt: Date | null = null;
+  let newUnlockAt: Date | null = null;
+  let lockedAmount = 0;
+
+  try {
+    await db.$transaction(async (tx) => {
+      const b = await tx.balances.findUnique({ where: { user_id: userId } });
+      if (!b) throw new Error("User has no balance row");
+
+      lockedAmount = Number(b.locked_balance);
+      if (lockedAmount <= 0) {
+        throw new Error("No vault balance to freeze");
+      }
+
+      previousUnlockAt = b.unlock_at;
+      // NOW + 10 years computed server-side (clock-skew safe against the
+      // client — the action is the source of truth for the timestamp the
+      // admin_audit metadata records).
+      const stamp = new Date();
+      stamp.setUTCFullYear(stamp.getUTCFullYear() + 10);
+      newUnlockAt = stamp;
+
+      // Optimistic concurrency — bail if the row moved between read and
+      // write (e.g. a concurrent admin adjust / wager). Money columns are
+      // intentionally untouched: this action ONLY changes the timer.
+      const updated = await tx.balances.updateMany({
+        where: { user_id: userId, version: b.version },
+        data: {
+          unlock_at: stamp,
+          version: { increment: 1 },
+        },
+      });
+      if (updated.count !== 1) {
+        throw new Error("Balance changed concurrently — please retry");
+      }
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    if (
+      message === "User has no balance row" ||
+      message === "No vault balance to freeze" ||
+      message.includes("concurrently")
+    ) {
+      return { success: false, error: message };
+    }
+    console.error("[extendVaultLock] transaction failed:", err);
+    return {
+      success: false,
+      error: "Failed to freeze vault balance — please try again",
+    };
+  }
+
+  if (!newUnlockAt) {
+    // Defence: the tx returned without throwing but never set the stamp.
+    return { success: false, error: "Internal error — no unlock timestamp set" };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "vault_lock_extended",
+    targetUserId: userId,
+    metadata: {
+      user_id: userId,
+      locked_balance_at_time: lockedAmount,
+      previous_unlock_at: previousUnlockAt
+        ? (previousUnlockAt as Date).toISOString()
+        : null,
+      new_unlock_at: (newUnlockAt as Date).toISOString(),
+      reason: reason?.trim() || null,
+    },
+  });
+
+  invalidateUserCaches(userId);
+  return {
+    success: true,
+    new_unlock_at: (newUnlockAt as Date).toISOString(),
+    locked_amount_usd: lockedAmount.toFixed(2),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Manual withdrawal — admin records an off-platform payout
 // ---------------------------------------------------------------------------
 //

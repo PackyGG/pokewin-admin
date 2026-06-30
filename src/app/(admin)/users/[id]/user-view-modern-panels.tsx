@@ -9,6 +9,7 @@
 import * as React from "react";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   Wallet,
   TrendingUp,
@@ -20,12 +21,25 @@ import {
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   BalanceAdjustDialog,
   ManualWithdrawalDialog,
   XpAdjustDialog,
 } from "./user-tabs-dialogs";
-import { refreshUserDetailCache } from "./actions";
+import { extendVaultLock, refreshUserDetailCache } from "./actions";
 import type {
   UserDetail,
   PnlBreakdown,
@@ -245,16 +259,28 @@ function LockedRowWithRemove({
   valueClassName,
   sub,
   removeKind,
+  onRemoveClick,
 }: {
   label: string;
   amount: number;
   valueClassName?: string;
   sub?: string | null;
   removeKind: "vault" | "wager";
+  // Optional handler — when provided the Remove button is enabled and
+  // clicking it fires this callback (typically opens a confirm dialog).
+  // Wired for `removeKind="vault"` via the freeze-vault flow; the wager
+  // case still falls back to the disabled-button + tooltip explanation.
+  onRemoveClick?: () => void;
 }) {
-  const removeTitle =
-    removeKind === "vault"
-      ? "Force-unlock requires a server action not yet implemented (MAIN DB read-only — escalate to backend)"
+  // Vault: wired to the freeze-for-10-years flow when an onRemoveClick
+  // handler is supplied; otherwise (defensive fallback) shows the same
+  // disabled affordance as before. Wager: still no inline flow — pointer
+  // to the dedicated Wager Requirement card.
+  const enabled = removeKind === "vault" && typeof onRemoveClick === "function";
+  const removeTitle = enabled
+    ? "Freeze the user's vault balance for 10 years (effectively prevents unlock; money stays in the vault)"
+    : removeKind === "vault"
+      ? "Vault freeze action not available in this context"
       : "Clear wager debt via the dedicated Wager Requirement card (audit + 2FA flow); inline Remove not wired yet";
 
   // Mirrors the optional-sub variant of PanelRow so the Vault / Locked
@@ -268,10 +294,20 @@ function LockedRowWithRemove({
         <Button
           variant="ghost"
           size="sm"
-          disabled
-          className="h-5 px-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400"
+          disabled={!enabled}
+          onClick={enabled ? onRemoveClick : undefined}
+          className={cn(
+            "h-5 px-1.5 text-[10px] font-semibold uppercase tracking-wider",
+            enabled
+              ? "text-rose-600 hover:text-rose-600 hover:bg-rose-500/10 dark:text-rose-400 dark:hover:text-rose-400"
+              : "text-amber-600 dark:text-amber-400",
+          )}
           title={removeTitle}
-          aria-label={`Force unlock ${label.toLowerCase()} balance (not yet implemented)`}
+          aria-label={
+            enabled
+              ? `Freeze ${label.toLowerCase()} balance for 10 years`
+              : `Force unlock ${label.toLowerCase()} balance (not yet implemented)`
+          }
         >
           <Lock className="size-3 shrink-0" />
           Remove
@@ -321,6 +357,7 @@ export function ModernBalancePanel({
 }) {
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const [vaultFreezeOpen, setVaultFreezeOpen] = useState(false);
   // Soft-refresh the page server data when the admin clicks the icon —
   // re-runs the parent server components without a hard browser
   // reload, so the user keeps their tab focus / scroll position and
@@ -446,6 +483,11 @@ export function ModernBalancePanel({
           valueClassName="text-blue-600 dark:text-blue-400"
           sub={vaultSub}
           removeKind="vault"
+          onRemoveClick={
+            userId && balances.lockedBalance > 0
+              ? () => setVaultFreezeOpen(true)
+              : undefined
+          }
         />
         {/* Locked — wager-requirement debt (bonus dollars spendable on
             wagers but reserved from withdrawal until cleared). AMBER
@@ -509,7 +551,167 @@ export function ModernBalancePanel({
           onOpenChange={setManualOpen}
         />
       )}
+      {userId && balances.lockedBalance > 0 && (
+        <VaultFreezeDialog
+          userId={userId}
+          lockedBalance={balances.lockedBalance}
+          open={vaultFreezeOpen}
+          onOpenChange={setVaultFreezeOpen}
+        />
+      )}
     </StatPanel>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  VAULT FREEZE DIALOG
+// ───────────────────────────────────────────────────────────────────
+//
+// Operator-controlled "soft remove" of the vault pocket. Calls
+// `extendVaultLock` which pushes `balances.unlock_at` to NOW + 10 years
+// without moving any money. The user keeps the dollars in their vault
+// but can't withdraw them until 2036.
+//
+// Gated by capability + TOTP on the server (see `extendVaultLock` in
+// actions.ts) — this dialog only collects the operator's inputs and
+// surfaces the success/error toast.
+
+function VaultFreezeDialog({
+  userId,
+  lockedBalance,
+  open,
+  onOpenChange,
+}: {
+  userId: string;
+  lockedBalance: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  // Display the projected unlock date — computed client-side as a preview
+  // only. The server is the source of truth: it computes NOW+10y at the
+  // moment of the write and records that ISO timestamp in the audit row.
+  const projectedUnlock = React.useMemo(() => {
+    const d = new Date();
+    d.setUTCFullYear(d.getUTCFullYear() + 10);
+    return d.toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "UTC",
+    });
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleSubmit() {
+    if (!totpCode.trim()) {
+      toast.error("Please enter your 2FA code");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const result = await extendVaultLock(
+          userId,
+          totpCode.trim(),
+          reason.trim() || undefined,
+        );
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        const stamp = new Date(result.new_unlock_at).toLocaleString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          timeZone: "UTC",
+        });
+        toast.success(`Vault locked until ${stamp} UTC`);
+        setReason("");
+        setTotpCode("");
+        onOpenChange(false);
+        router.refresh();
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Failed to freeze vault balance",
+        );
+      }
+    });
+  }
+
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) {
+          // Reset transient form state on close so the next open starts clean
+          setReason("");
+          setTotpCode("");
+        }
+        onOpenChange(o);
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2">
+            <Lock className="size-4 text-rose-500" />
+            Freeze vault balance
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            <span className="font-semibold tabular-nums text-foreground">
+              {formatCurrency(lockedBalance)}
+            </span>{" "}
+            currently locked. This sets the unlock date to 10 years from now.
+            The money stays in the user&apos;s vault but they cannot withdraw it
+            until{" "}
+            <span className="font-mono text-foreground">
+              {projectedUnlock} UTC
+            </span>
+            .
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Reason (optional)
+            </Label>
+            <Textarea
+              placeholder="Why are you freezing this vault?"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={2}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">2FA Code</Label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              placeholder="Enter your 6-digit code"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              maxLength={6}
+              autoComplete="one-time-code"
+            />
+          </div>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleSubmit}
+            disabled={isPending || !totpCode.trim()}
+            className="bg-rose-500 hover:bg-rose-500/90 text-white"
+          >
+            {isPending ? "Freezing..." : "Freeze for 10 years"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
