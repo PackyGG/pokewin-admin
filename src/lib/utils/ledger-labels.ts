@@ -38,6 +38,15 @@ const LEDGER_TYPE_LABELS: Record<string, string> = {
   // as "leaderboard wins" (the dedicated Overview box uses the same term).
   // Direction / color stay house-POV via `ledgerDirection` (a house cost — rose).
   affiliate_leaderboard_prize: "Leaderboard win",
+  // Vault movements: user moves balance INTO the Fireblocks-locked vault
+  // product (available balance drops, vault grows) or BACK OUT (vault drops,
+  // available grows). User-internal transfer — no house P&L, colored neutral
+  // by `ledgerDirection`. Surfaced in the Deposits & Withdrawals feed so
+  // operators can trace a later withdrawal back to a long-locked deposit
+  // (otherwise a vault_unlock → balance_withdrawal sequence looks like the
+  // withdrawal materialized out of nowhere).
+  vault_lock: "Vault lock",
+  vault_unlock: "Vault unlock",
 };
 
 /** Humanize a raw ledger type: `card_withdrawal` → "Card withdrawal". */

@@ -263,7 +263,7 @@ function cachedUserFinancialTransactions(
   return unstable_cache(
     () => getUserTransactions(userId, page, perPage, { types }, viewerIsOwner),
     [
-      "users-detail-financial-tx-v1",
+      "users-detail-financial-tx-v2",
       userId,
       String(page),
       String(perPage),

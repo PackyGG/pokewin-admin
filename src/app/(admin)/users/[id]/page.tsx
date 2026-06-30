@@ -145,6 +145,14 @@ const FINANCIAL_TYPES = [
   // house gain). Same drift-safe intersection applies. Keep in sync with
   // FINANCIAL_TX_TYPES in user-tabs-types.ts.
   "xp_purchase",
+  // Vault movements — user-internal transfer between available balance and
+  // the Fireblocks-locked vault product (no house P&L, but the available-
+  // balance side moves, so an operator looking at a `balance_withdrawal`
+  // can trace it back to the unlock that funded it). Drift-safe via the
+  // LIVE-enum intersection in getUserTransactions. Keep in sync with
+  // FINANCIAL_TX_TYPES in user-tabs-types.ts.
+  "vault_lock",
+  "vault_unlock",
 ];
 // Admin balance adjustments get a DEDICATED, generously-sized fetch on top of
 // the shared FINANCIAL page. Reason: `admin_balance_adjustment` is just one of

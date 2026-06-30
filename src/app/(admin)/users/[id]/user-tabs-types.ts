@@ -725,6 +725,17 @@ export const FINANCIAL_TX_TYPES = [
   // movements. Drift-safe: getUserTransactions intersects the requested list
   // with the LIVE enum, so a DB without this member just drops it.
   "xp_purchase",
+  // Vault movements — user-internal transfer between available balance and
+  // the Fireblocks-locked vault product. Neutral for house P&L (the value
+  // never leaves the user's control), but the available-balance side moves
+  // on lock/unlock — which is exactly why operators NEED to see them next
+  // to deposits/withdrawals: a `vault_unlock` + `balance_withdrawal` pair
+  // is the trail for "where did this withdrawal come from?" otherwise the
+  // withdrawal appears to materialize out of nowhere. Drift-safe via the
+  // LIVE-enum intersection in getUserTransactions. Keep in sync with
+  // FINANCIAL_TYPES in page.tsx.
+  "vault_lock",
+  "vault_unlock",
 ] as const;
 // Deposit-side ledger types: the user funding their account. `deposit` is the
 // crypto/cash-in; `deposit_bonus` is the house top-up that rides on a deposit.

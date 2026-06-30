@@ -29,7 +29,6 @@ export function ledgerDirection(type: string): LedgerDirection {
     case "pack_opening":
     case "battle_bet":
     case "battle_sponsorship":
-    case "vault_lock":
     case "withdrawal_shipping_fee":
     // User spends their own (withdrawable) balance to buy XP — balance
     // shrinks, value flows to us. From the house POV every dollar the user
@@ -63,11 +62,21 @@ export function ledgerDirection(type: string): LedgerDirection {
     case "gift_card_redeemed":
     case "promo_code_redeemed":
     case "voucher_redeemed":
-    case "vault_unlock":
       return "house-loss";
 
     // ── Non-monetary signals ──────────────────────────────────────────
     case "signup":
+    // Vault movements are USER-INTERNAL transfers between available balance
+    // and the Fireblocks-locked vault product — neither side is realized
+    // cash leaving/entering the house. Available balance drops on lock,
+    // rises on unlock, but total user worth (cash + vault + inventory) is
+    // unchanged and the house P&L is zero. Color blue/neutral so they
+    // surface in the Deposits & Withdrawals feed for traceability
+    // (operators can see WHERE a later withdrawal came from) without being
+    // mis-labelled as a house gain/loss. Sign on the Amount column still
+    // comes from `balanceMovementSign` (available-side delta).
+    case "vault_lock":
+    case "vault_unlock":
       return "neutral";
 
     default:
