@@ -88,7 +88,6 @@ export function cacheTtlForDoubleDownPeriod(p: DoubleDownPeriod): number {
 // ── Shapes (types — erased at compile time, safe anywhere) ────────────────────
 
 export type DoubleDownResult = "win" | "lose";
-export type DoubleDownStatus = "offered" | "accepted" | "resolved" | "expired";
 
 export type DoubleDownStats = {
   /**
@@ -102,10 +101,9 @@ export type DoubleDownStats = {
   winCount: number;
   loseCount: number;
   /**
-   * wins / resolved (0..1), null when nothing resolved yet. This IS the edge
-   * indicator — the house edge lives in the win probability (~45% player /
-   * 55% house), NOT a per-round cut (owner clarification, 2026-06-30). Noisy
-   * at low volume.
+   * wins / resolved (0..1), null when nothing resolved yet. The house margin
+   * lives ENTIRELY in the win odds (~45% player / 55% site) — there is no
+   * per-round cut (owner clarification, 2026-06-30). Noisy at low volume.
    */
   winRate: number | null;
   /** Σ won_amount_usd over RESOLVED rounds — the total winnings staked. */
@@ -115,9 +113,9 @@ export type DoubleDownStats = {
   /** Σ won_amount_usd over LOSES — winnings forfeited (house GAIN → emerald). */
   totalForfeited: number;
   /**
-   * Net house P&L = forfeited − paidOut (real money flows ONLY — NO edge/
-   * house-cut term; the edge is in the win probability, adding a cut would
-   * double-count). >0 = house profit (emerald), <0 = house loss (rose).
+   * Net house P&L = forfeited − paidOut (real money flows ONLY — NO per-round
+   * cut; the house margin is in the win odds, adding a cut would double-count).
+   * >0 = house profit (emerald), <0 = house loss (rose).
    */
   netHousePnl: number;
 };
@@ -130,7 +128,6 @@ export type DoubleDownLogRow = {
   /** The staked battle winnings (won_amount_usd). */
   stakedUsd: number;
   result: DoubleDownResult | null;
-  status: DoubleDownStatus;
   /** Actual payout voucher value to the user on a win (rose). Null otherwise. */
   payoutUsd: number | null;
   createdAt: string;
@@ -162,9 +159,8 @@ export type DoubleDownDashboardStats = {
   pending: number;
   uniquePlayers: number;
   /**
-   * wins / (wins+loses), null when nothing resolved. The edge indicator
-   * (~45% player intended) — the house edge is in the win probability, not a
-   * per-round cut.
+   * wins / (wins+loses), null when nothing resolved. The house margin is in
+   * the win odds (~45% player / 55% site), not a per-round cut.
    */
   winRate: number | null;
   /** Σ won_amount_usd over resolved plays — winnings staked. */
@@ -174,8 +170,8 @@ export type DoubleDownDashboardStats = {
   /** Σ actual payout voucher value over WINS — paid to winners (house COST → rose). */
   paidOut: number;
   /**
-   * Net house P&L = forfeited − paidOut (real money flows ONLY — NO edge term;
-   * the edge is in the win probability). >0 = house profit (emerald).
+   * Net house P&L = forfeited − paidOut (real money flows ONLY — NO per-round
+   * cut; the house margin is in the win odds). >0 = house profit (emerald).
    */
   netHousePnl: number;
 };

@@ -13,10 +13,7 @@ import {
 } from "@/components/ui/table";
 import { buttonVariants } from "@/components/ui/button";
 import { RelativeTime } from "@/components/relative-time";
-import {
-  DoubleDownResultBadge,
-  DoubleDownStatusBadge,
-} from "@/components/double-down/dd-badges";
+import { DoubleDownResultBadge } from "@/components/double-down/dd-badges";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import type { DoubleDownLog } from "@/lib/queries/double-down-shared";
@@ -27,7 +24,7 @@ import type { DoubleDownLog } from "@/lib/queries/double-down-shared";
  * already the active server page; this only renders + paginates them).
  * House-POV money (CLAUDE.md): the payout to a winner = house cost (rose).
  * Staked is the neutral amount put up. There is NO "house cut" column — the
- * house edge is in the win probability, not a per-round cut.
+ * house margin is in the win odds, not a per-round cut.
  *
  * Only serializable props cross the RSC boundary (the row objects + a search
  * string); no function props.
@@ -64,14 +61,13 @@ export function DoubleDownLogTable({
               <TableHead className="text-right">Staked</TableHead>
               <TableHead>Result</TableHead>
               <TableHead className="text-right">Payout</TableHead>
-              <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={6}
                   className="py-10 text-center text-sm text-muted-foreground"
                 >
                   {search
@@ -121,9 +117,6 @@ export function DoubleDownLogTable({
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}
-                  </TableCell>
-                  <TableCell>
-                    <DoubleDownStatusBadge status={r.status} />
                   </TableCell>
                 </TableRow>
               ))

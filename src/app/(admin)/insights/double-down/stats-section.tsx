@@ -32,8 +32,8 @@ function pct(v: number | null): string {
  * rounds only (Double Down is OPTIONAL — offered/expired offers excluded).
  *
  * House P&L is the headline "did WE make money": net house P&L = forfeited −
- * payouts (paidOut/forfeited/edge stay computed internally to derive it, but
- * are NOT shown as their own tiles). House-POV color: site PROFIT (≥0) →
+ * payouts (paidOut/forfeited stay computed internally to derive it, but are
+ * NOT shown as their own tiles). House-POV color: site PROFIT (≥0) →
  * emerald, site LOSS (<0) → rose, with a clear sign + profit/loss label.
  *
  * Streamed behind its own <Suspense> from the page; cached + timeout-wrapped.

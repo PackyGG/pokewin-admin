@@ -21,8 +21,8 @@ import type { DoubleDownDashboardStats } from "@/lib/queries/double-down";
  * strictly from the paired payout voucher (no ledger/balance derivation).
  *
  * House P&L = the headline "did WE make money": net house P&L = forfeited −
- * payouts (paidOut/forfeited/edge stay computed internally to derive it, but
- * are NOT shown as their own tiles). House-POV color: site PROFIT (≥0) →
+ * payouts (paidOut/forfeited stay computed internally to derive it, but are
+ * NOT shown as their own tiles). House-POV color: site PROFIT (≥0) →
  * emerald, site LOSS (<0) → rose, with sign + profit/loss label. Win rate is
  * neutral (purple, matches the panel accent).
  *

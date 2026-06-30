@@ -19,10 +19,11 @@ const LOG_PER_PAGE = 25;
 /**
  * /insights/double-down — read-only tracking for the Double Down feature.
  *
- * Double Down lets a user gamble their battle winnings: on a WIN they keep 90%
- * (house takes a flat 10% edge), on a LOSE they forfeit the whole win. This
- * page shows the global picture (a House-POV KPI strip) and the FULL audit log
- * of every round (who won / lost, what was staked, what we paid out / kept).
+ * Double Down lets a user gamble their battle winnings: on a WIN they are paid
+ * a voucher, on a LOSE they forfeit the whole win. The house margin is in the
+ * win odds (~45% player / 55% site), not a per-round cut. This page shows the
+ * global picture (a House-POV KPI strip) and the FULL audit log of every
+ * started round (who won / lost, what was staked, what we paid out / kept).
  *
  * Backend rules (CLAUDE.md / BACKEND_QUERY_SYSTEM.md):
  *   - Reads come from ONE shared module `src/lib/queries/double-down.ts`

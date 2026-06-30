@@ -8,7 +8,6 @@ import {
   cacheTtlForDoubleDownPeriod,
   type DoubleDownPeriod,
   type DoubleDownResult,
-  type DoubleDownStatus,
   type DoubleDownStats,
   type DoubleDownLogRow,
   type DoubleDownLog,
@@ -31,7 +30,6 @@ export {
 export type {
   DoubleDownPeriod,
   DoubleDownResult,
-  DoubleDownStatus,
   DoubleDownStats,
   DoubleDownLogRow,
   DoubleDownLog,
@@ -43,8 +41,9 @@ export type {
  * Double Down — shared read layer for BOTH admin surfaces.
  *
  * Double Down is a live packy.gg feature: after WINNING a battle, a user may
- * gamble those winnings. On a WIN they keep 90% of the staked winnings (the
- * house takes a flat 10% edge); on a LOSE they forfeit the whole win.
+ * gamble those winnings. On a WIN they are paid a voucher; on a LOSE they
+ * forfeit the whole win. The house margin is in the win odds (~45% player /
+ * 55% site) — there is NO per-round cut.
  *
  * This module is the SINGLE source of truth for reading Double Down activity —
  * consumed by:
@@ -107,7 +106,6 @@ type RawLogRow = {
   battle_id: string;
   won_amount_usd: string;
   result: DoubleDownResult | null;
-  status: DoubleDownStatus;
   payout_amount_usd: string | null;
   created_at: Date;
   resolved_at: Date | null;
@@ -147,7 +145,6 @@ function mapLogRow(r: RawLogRow): DoubleDownLogRow {
     battleId: r.battle_id,
     stakedUsd: num(r.won_amount_usd) ?? 0,
     result: r.result,
-    status: r.status,
     payoutUsd: num(r.payout_amount_usd),
     createdAt: r.created_at.toISOString(),
     resolvedAt: r.resolved_at ? r.resolved_at.toISOString() : null,
@@ -248,12 +245,11 @@ const LOG_SELECT = Prisma.sql`
     o.battle_id,
     o.won_amount_usd,
     o.result,
-    o.status,
     -- On a win, surface the ACTUAL minted payout voucher value; if the voucher
     -- metadata omits it (a few rows do — verified on prod), fall back to the
     -- observed ~0.9 × won_amount so the row still shows a payout instead of a
-    -- blank. Non-win rows resolve to NULL → "—". House-edge/"house cut" is NOT
-    -- surfaced anywhere (the edge is in the win probability, not a per-round cut).
+    -- blank. Non-win rows resolve to NULL → "—". No "house cut" is surfaced
+    -- anywhere — the only edge is the win probability, not a per-round cut.
     CASE WHEN o.result = 'win'
       THEN COALESCE((v.metadata->>'payout_amount_usd')::numeric, o.won_amount_usd * 0.9)::text
     END AS payout_amount_usd,

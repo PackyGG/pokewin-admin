@@ -3,15 +3,15 @@
 /**
  * Double Down history section for the user-detail Gaming tab.
  *
- * Surfaces THIS user's Double Down rounds (gamble-your-battle-winnings) as a
- * log + a compact summary: rounds, win-rate, total staked vs paid out, and the
- * net the house kept on this user.
+ * Surfaces THIS user's started Double Down rounds (gamble-your-battle-winnings)
+ * as a log + a compact summary: started rounds, win rate, total wager, and the
+ * net House P&L on this user.
  *
  * House-POV (CLAUDE.md, STRICT): a round is colored from the HOUSE's view —
- *   • WIN  (user kept 90% of winnings) = house COST   → 🔴 rose (the payout)
- *   • LOSE (user forfeited winnings)    = house GAIN   → 🟢 emerald
- *   • the per-round house edge cut       = house revenue → 🟢 emerald
- *   • net staked − paid out (house-kept on this user) → emerald if ≥ 0.
+ *   • WIN  (the user is paid a voucher) = house COST → 🔴 rose (the payout)
+ *   • LOSE (the user forfeits the win)   = house GAIN → 🟢 emerald
+ *   • House P&L = forfeited − payouts (real money flows only; NO edge/"cut"
+ *     term — the only edge is the win probability, ~45% player / 55% site).
  *
  * Streamed-band contract (mirrors ShardWinningsSection):
  *   • null    → query not kicked for the active tab (Active-Timeframe-Only) →
@@ -30,10 +30,7 @@ import { SectionHeading, StatPanel } from "@/components/modern-panels";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { SkeletonCard } from "@/components/ux";
 import { RelativeTime } from "@/components/relative-time";
-import {
-  DoubleDownResultBadge,
-  DoubleDownStatusBadge,
-} from "@/components/double-down/dd-badges";
+import { DoubleDownResultBadge } from "@/components/double-down/dd-badges";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import type { UserDoubleDownHistory } from "@/lib/queries/double-down-shared";
@@ -92,8 +89,8 @@ function DoubleDownStreamed({
       <SectionHeading icon={Dices} title="Double Down" />
       <p className="-mt-1 text-[11px] text-muted-foreground">
         Gamble-your-battle-winnings rounds — a win pays out a voucher, a loss
-        forfeits the whole win. The house edge is in the win probability (~45%
-        player), not a per-round cut. Colors are House-POV.
+        forfeits the whole win. Win odds: ~45% player / 55% site. Colors are
+        House-POV.
       </p>
 
       <div className="grid gap-3 lg:grid-cols-2">
@@ -146,7 +143,6 @@ function DoubleDownStreamed({
                 >
                   <span className="flex min-w-0 flex-wrap items-center gap-1.5">
                     <DoubleDownResultBadge result={w.result} />
-                    <DoubleDownStatusBadge status={w.status} />
                     <span className="text-muted-foreground">
                       <RelativeTime date={w.createdAt} />
                     </span>
