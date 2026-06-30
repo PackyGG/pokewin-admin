@@ -69,19 +69,22 @@ export type {
  *
  *   Payout money (on a WIN): a voucher is created with
  *   origin='battle_double_down_payout', origin_id=offer.id, won_voucher_id set
- *   on the offer, metadata { payout_amount_usd, house_amount_usd,
- *   won_amount_usd, battle_id, ticket, offer_id }. We join vouchers by the
- *   offer's won_voucher_id to read per-round payout + house-edge cut.
- *   (payout = won − house; user keeps 90%, house takes the 10% edge.)
+ *   on the offer. We join vouchers by the offer's won_voucher_id and read the
+ *   ACTUAL minted payout from metadata->>'payout_amount_usd' (NOT a hardcoded
+ *   multiplier; fallback to the observed ~0.9 × won only when metadata omits
+ *   it). The voucher's house_amount_usd is NOT used (see below).
  *
  * ── House-POV money (CLAUDE.md, STRICT) ──────────────────────────────────────
  *   • payout to a WINNER  = house COST  → 🔴 rose
  *   • a LOSE / forfeit (staked winnings never paid out) = house GAIN → 🟢 emerald
- *   • the 10% house_amount_usd edge cut  = house revenue → 🟢 emerald
- *   • NET house P&L = forfeited + edgeCut − payouts.
+ *   • NET house P&L = forfeited − payouts. REAL money flows ONLY — there is NO
+ *     edge/"house cut" term (the house edge is in the WIN PROBABILITY, ~45%
+ *     player / 55% house, not a per-round cut; adding a cut would double-count).
+ *     The voucher's house_amount_usd is therefore intentionally ignored.
  *   Win-rate / probability is NOT stored — it is derived empirically from
- *   `result`. All money is Decimal-safe (numeric → string → Number, never
- *   summed as float in SQL beyond Postgres's own exact numeric SUM).
+ *   `result` (this IS the edge indicator; noisy at low volume). All money is
+ *   Decimal-safe (numeric → string → Number, never summed as float in SQL
+ *   beyond Postgres's own exact numeric SUM).
  *
  * ── Index-or-ClickHouse (CLAUDE.md, BACKEND_QUERY_SYSTEM.md) ──────────────────
  *   • Per-user lookup (getUserDoubleDownHistory) filters user_id → served by
