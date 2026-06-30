@@ -12,7 +12,10 @@ import { getUserPermissions, sessionRoles } from "@/lib/dal";
 import { redirect } from "next/navigation";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
 
-import { getPortfolioProfile, planAllRetunes } from "../doctor/retune-actions";
+import {
+  getPortfolioProfileFromProposals,
+  planAllRetunes,
+} from "../doctor/retune-actions";
 import { RetuneReview } from "./retune-review";
 
 /**
@@ -45,45 +48,35 @@ export const maxDuration = 120;
  */
 
 async function ReviewLoader() {
-  // READ-ONLY dry-run for every in-scope pack (no MAIN write) + the catalog-level
-  // system risk profile for the "System Balance" header. Both are owner-gated,
-  // read-only reads; fetched together so the surface paints in one pass.
+  // READ-ONLY dry-run for every in-scope pack (no MAIN write). This already
+  // reads every in-scope pack's card composition AND scores each pack's current
+  // `before` risk — so the "System Balance" catalog profile is derived from THIS
+  // result (`getPortfolioProfileFromProposals`) instead of re-running the same
+  // heavy `getPacksPoolComposition` MAIN scan + config reads a second time (the
+  // old `Promise.all([planAllRetunes(), getPortfolioProfile()])` double-scanned
+  // the catalog on every first paint).
   //
-  // Both heavy reads degrade gracefully through `safeQueryOrNull` with a 90s
-  // wall-clock cap — a pathologically slow proposal compute (e.g. a chain of
-  // tagged-mode price searches that each sweep 320 candidates) returns the
-  // empty-state instead of hanging the segment until Vercel kills the
-  // request. The CPU work itself is bounded by the per-pack search cap;
-  // `unstable_cache` inside `planAllRetunes` makes hot loads sub-second.
+  // Wrapped in `safeQueryOrNull` with a 90s wall-clock cap — a pathologically
+  // slow proposal compute (e.g. a chain of tagged-mode price searches that each
+  // sweep 320 candidates) returns the empty-state instead of hanging the segment
+  // until Vercel kills the request. The CPU work itself is bounded by the per-pack
+  // search cap; `unstable_cache` inside `planAllRetunes` makes hot loads
+  // sub-second.
   const PROPOSAL_TIMEOUT_MS = 90_000;
-  const [proposalRes, portfolioRes] = await Promise.all([
-    safeQueryOrNull(
-      () => planAllRetunes(),
-      "pack-studio.retune.plan-all",
-      PROPOSAL_TIMEOUT_MS,
-    ),
-    safeQueryOrNull(
-      () => getPortfolioProfile(),
-      "pack-studio.retune.portfolio-profile",
-      PROPOSAL_TIMEOUT_MS,
-    ),
-  ]);
+  const { data, error } = await safeQueryOrNull(
+    () => planAllRetunes(),
+    "pack-studio.retune.plan-all",
+    PROPOSAL_TIMEOUT_MS,
+  );
 
-  const proposals = proposalRes.data?.proposals ?? [];
-  const portfolio = portfolioRes.data;
-
-  if (proposals.length === 0 || portfolio == null) {
+  if (error || !data || data.proposals.length === 0) {
     return (
       <div className="rounded-md border">
         <EmptyState
           icon={Layers}
-          title={
-            proposalRes.error || portfolioRes.error
-              ? "Could not load proposals"
-              : "No packs to review"
-          }
+          title={error ? "Could not load proposals" : "No packs to review"}
           description={
-            proposalRes.error || portfolioRes.error
+            error
               ? "The dry-run timed out or failed. Refresh to retry."
               : "There are no active cash packs in scope for a bulk re-tune right now."
           }
@@ -91,6 +84,11 @@ async function ReviewLoader() {
       </div>
     );
   }
+
+  const { proposals } = data;
+  // Catalog-level system risk profile for the "System Balance" header — derived
+  // from the proposals above (no extra DB read; agrees per-card with the cards).
+  const portfolio = await getPortfolioProfileFromProposals(proposals);
 
   return (
     <FadeIn>

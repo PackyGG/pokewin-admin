@@ -81,7 +81,8 @@ import { formatDeltaPp, formatPercent } from "./format-percent";
  *   3. Token expiry — if a write returns the "authorization expired" error, a
  *      fresh token is minted silently and the SAME approve is retried.
  *
- * SYSTEM BALANCE — a header panel (fed by `getPortfolioProfile`) profiles the
+ * SYSTEM BALANCE — a header panel (fed by `getPortfolioProfileFromProposals`,
+ * derived from the loaded proposals — no extra DB read) profiles the
  * WHOLE catalog (tier histogram, jackpot exposure vs cap, aggregate CV, spicy
  * share). A "Balance whole system" toggle re-loads the proposals via
  * `planAllRetunes("portfolio")` so the cross-pack balancer's system-targets drive

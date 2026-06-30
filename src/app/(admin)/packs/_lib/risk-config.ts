@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { getAdminSetting } from "@/lib/admin-settings";
 import type { PackRisk } from "@/app/(admin)/insights/edge-calc/risk";
 // Pure auto-target API lives in the dep-free `./auto-targets` module (so the
@@ -176,18 +177,27 @@ export const PACK_SYSTEM_CONFIG_KEY = "pack_system_config";
  * Read + parse `admin_settings.pack_system_config`. Returns `null` if the key is
  * unset, the table is unmigrated (`getAdminSetting` returns null), or the value
  * isn't valid JSON — callers fall back to safe defaults rather than crash.
+ *
+ * Wrapped in React `cache` so the SAME render pass deduplicates the ADMIN-DB
+ * round-trip: a single page (e.g. the Pack-Studio retune review) resolves the
+ * blob through `readMaxWinCap` + `readMaxMultCeiling` + `readEdgeCurveConfig` +
+ * the portfolio resolver, which would otherwise hit `admin_settings` ~5× for the
+ * identical immutable blob. `cache` is REQUEST-scoped only (never cross-request),
+ * so write paths in other requests always read fresh — no staleness risk.
  */
-export async function readPackSystemConfig(): Promise<PackSystemConfig | null> {
-  const raw = await getAdminSetting(PACK_SYSTEM_CONFIG_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed === null || typeof parsed !== "object") return null;
-    return parsed as PackSystemConfig;
-  } catch {
-    return null;
-  }
-}
+export const readPackSystemConfig = cache(
+  async (): Promise<PackSystemConfig | null> => {
+    const raw = await getAdminSetting(PACK_SYSTEM_CONFIG_KEY);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed === null || typeof parsed !== "object") return null;
+      return parsed as PackSystemConfig;
+    } catch {
+      return null;
+    }
+  },
+);
 
 /**
  * Resolve the max-win cap (USD): the `maxWinCap` field of the pack-system config

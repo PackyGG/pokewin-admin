@@ -1171,6 +1171,12 @@ export async function getPortfolioProfile(): Promise<PortfolioProfileResult> {
  * `getPacksPoolComposition` query as `planAllRetunes` — caching here drops
  * the duplicate ~90ms DB hit per page render, and the same `revalidateTag`
  * call on writes keeps the profile in sync with the proposal blob.
+ *
+ * NOTE: the retune review page now derives the System Balance profile from the
+ * proposals it already loaded via {@link getPortfolioProfileFromProposals} (no
+ * second scan at all). This cached aggregate path is retained for any direct
+ * `getPortfolioProfile()` caller (operator allowlist surface contract) where the
+ * proposals aren't already in hand.
  */
 const getPortfolioProfileCached = unstable_cache(
   async (): Promise<PortfolioProfileResult> => {
@@ -1212,6 +1218,47 @@ const getPortfolioProfileCached = unstable_cache(
     tags: [PACK_STUDIO_RETUNE_CACHE_TAG],
   },
 );
+
+/**
+ * READ-ONLY owner-gated header action, derived from an ALREADY-COMPUTED
+ * {@link planAllRetunes} result — NO extra DB read.
+ *
+ * The retune review loads `planAllRetunes()` (which already reads every in-scope
+ * pack's composition and scores each pack's CURRENT `before` risk via
+ * `computePackRisk`) AND `getPortfolioProfile()` (which independently re-ran the
+ * SAME heavy `getPacksPoolComposition` MAIN scan + the SAME config blob reads
+ * just to score the catalog). That double scan is pure waste on first paint.
+ *
+ * This helper computes the identical {@link PortfolioProfileResult} from the
+ * proposals' per-pack `before` risks + prices — `computePortfolioProfile` takes
+ * exactly `{ price, risk }[]`, and the per-pack `before` IS the authoritative
+ * current risk (the same value each review card displays), so the System Balance
+ * header now agrees to the cent with the cards instead of drifting between the
+ * aggregate and per-card engines. The only DB touches are the two cheap ADMIN
+ * config reads (`readMaxWinCap`/`readMaxMultCeiling` via the system-config
+ * resolver), which the request-scoped `readPackSystemConfig` cache collapses onto
+ * the one round-trip `planAllRetunes` already paid for. Writes nothing.
+ */
+export async function getPortfolioProfileFromProposals(
+  proposals: Pick<PlanAllProposal, "price" | "before">[],
+): Promise<PortfolioProfileResult> {
+  await requireRetuneOwner();
+
+  const cfg: ResolvedAutoTargetCfg = {
+    globalCap: await readMaxWinCap(),
+    maxMultCeiling: await readMaxMultCeiling(),
+  };
+  const sysCfg = await readPortfolioSystemConfigResolved(cfg);
+
+  const packRisks = proposals.map((p) => ({ price: p.price, risk: p.before }));
+
+  const profile = computePortfolioProfile(packRisks, cfg);
+  const withinBounds =
+    profile.spicyShare <= sysCfg.maxSpicyShare &&
+    profile.totalMaxWinExposure <= sysCfg.exposureCapUsd;
+
+  return { cfg: sysCfg, profile, withinBounds };
+}
 
 // ─── Card-picker filters for the inline pool editor (read-only) ───────────
 
