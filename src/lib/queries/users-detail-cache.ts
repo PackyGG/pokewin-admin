@@ -89,6 +89,10 @@ const FINANCIAL_TX_REVALIDATE_SECONDS = 30;
 // + signup-usage .catch(() => null); wager breakdown via the LIVE enum
 // filter). Pre-fix v1 entries can hold the rejected/zeroed shapes — a fresh
 // namespace guarantees the fixed code path's output isn't shadowed.
+// v2 → v3: `balances` now carries `wagerLocked` + `wagerProgress` (frozen-rate
+// wager-requirement debt) so the balance breakdown can split the new "Vault"
+// (cooldown) line from the new "Locked" (wager-locked bonus) line. The shape
+// changed — bump so the new fields aren't `undefined` from a stale v2 entry.
 //
 // Per-user tags: tags are passed PER CALL via a per-userId wrapper so
 // `revalidateTag(userDetailTag(userId))` busts ONLY this user's entry.
@@ -100,7 +104,7 @@ const FINANCIAL_TX_REVALIDATE_SECONDS = 30;
 function cachedUserDetail(userId: string) {
   return unstable_cache(
     () => getUserDetail(userId),
-    ["users-detail-aggregate-v2", userId],
+    ["users-detail-aggregate-v3", userId],
     { revalidate: REVALIDATE_SECONDS, tags: userDetailTags(userId) },
   )();
 }

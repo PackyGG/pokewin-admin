@@ -142,11 +142,37 @@ export function PanelRow({
   label,
   value,
   valueClassName,
+  // Optional small subtitle line rendered beneath the label, e.g. for the
+  // Vault row's unlock-at timestamp or the Locked row's wager-progress hint.
+  // Kept optional + string-typed so the dozens of existing PanelRow call
+  // sites stay unchanged.
+  sub,
 }: {
   label: string;
   value: React.ReactNode;
   valueClassName?: string;
+  sub?: string | null;
 }) {
+  if (sub) {
+    return (
+      <div className="flex items-start justify-between gap-3 py-1 text-sm">
+        <div className="min-w-0">
+          <div className="text-muted-foreground">{label}</div>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 truncate">
+            {sub}
+          </div>
+        </div>
+        <span
+          className={cn(
+            "font-medium tabular-nums shrink-0",
+            valueClassName,
+          )}
+        >
+          {value}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center justify-between py-1 text-sm">
       <span className="text-muted-foreground">{label}</span>
@@ -252,8 +278,49 @@ export function ModernBalancePanel({
       </StatPanel>
     );
   }
+  // Total = spendable cash + vault cooldown + held items + voucher liability.
+  // The wager-locked debt (`wagerLocked`) is NOT added here — it's a portion
+  // of `availableBalance` reserved from withdrawal, not separate money, so
+  // including it would double-count. Vault IS separate from cash (different
+  // column), so it goes into the sum.
   const total =
-    balances.availableBalance + balances.inventoryValue + balances.vouchersValue;
+    balances.availableBalance +
+    balances.lockedBalance +
+    balances.inventoryValue +
+    balances.vouchersValue;
+  // Vault row — render unlock-at subtitle when the cooldown window has a
+  // timestamp. Past timestamp = the user can withdraw it now; future = how
+  // long until they can.
+  const vaultSub = (() => {
+    if (!balances.unlockAt) return null;
+    const t = Date.parse(balances.unlockAt);
+    if (!Number.isFinite(t)) return null;
+    const d = new Date(t);
+    const stamp = d.toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "UTC",
+    });
+    return t <= Date.now()
+      ? "Eligible to unlock now"
+      : `Unlocks ${stamp} UTC`;
+  })();
+  // Locked row — render only when the column exists on the connected DB
+  // (`wagerLocked != null`). With the column present we render even at $0
+  // so an operator can see the user has nothing wagered-locked right now;
+  // hiding-on-zero would create the wrong impression that the panel just
+  // forgot the line.
+  const showLocked = balances.wagerLocked != null;
+  const lockedSub = (() => {
+    if (!showLocked) return null;
+    const progress = balances.wagerProgress ?? 0;
+    const debt = balances.wagerLocked ?? 0;
+    if (debt <= 0) return `${formatCurrency(progress)} wagered · no debt`;
+    return `${formatCurrency(progress)} wagered · ${formatCurrency(debt)} to clear`;
+  })();
   const showAdjust = canAdjustBalance && Boolean(userId);
   // Show the manual-withdrawal button whenever the admin has the
   // capability — it's also useful at $0 balance for backfilling
@@ -276,7 +343,26 @@ export function ModernBalancePanel({
       </div>
       <div className="mt-4 space-y-0.5 border-t pt-3">
         <PanelRow label="Cash" value={formatCurrency(balances.availableBalance)} />
-        <PanelRow label="Locked" value={formatCurrency(balances.lockedBalance)} />
+        {/* Vault — cooldown-locked balance (user's own money, just not
+            spendable yet). BLUE/muted neutral: it IS the user's money. */}
+        <PanelRow
+          label="Vault"
+          value={formatCurrency(balances.lockedBalance)}
+          valueClassName="text-blue-600 dark:text-blue-400"
+          sub={vaultSub}
+        />
+        {/* Locked — wager-requirement debt (bonus dollars spendable on
+            wagers but reserved from withdrawal until cleared). AMBER
+            warning: spendable but not withdrawable. Hidden if the column
+            isn't on this DB. */}
+        {showLocked && (
+          <PanelRow
+            label="Locked"
+            value={formatCurrency(balances.wagerLocked ?? 0)}
+            valueClassName="text-amber-600 dark:text-amber-400"
+            sub={lockedSub}
+          />
+        )}
         <PanelRow label="Inventory" value={formatCurrency(balances.inventoryValue)} />
         <PanelRow label="Vouchers" value={formatCurrency(balances.vouchersValue)} />
       </div>

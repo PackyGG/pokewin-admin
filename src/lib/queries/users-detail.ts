@@ -413,6 +413,71 @@ async function fetchBalancePoints(db: Db, id: string): Promise<number> {
   return 0;
 }
 
+/**
+ * Reads the per-user wager-requirement debt + cleared progress, drift-safe
+ * across DBs that don't carry the columns yet.
+ *
+ * Source columns (added by backend migration 0130 — see
+ * `users-wager-progress.ts` for the full model docs):
+ *   • `balances.wager_requirement_remaining` — the FROZEN-RATE debt counter
+ *     that gates withdrawals. Bonus credits add to it (at the rate in effect
+ *     at credit time); weighted wagers burn it down. Surfaced as the new
+ *     "Locked" line in the balance breakdown — it's spendable on wagers but
+ *     reserves that many balance dollars from withdrawal until cleared.
+ *   • `balances.wager_requirement_progress` — lifetime weighted wager that's
+ *     already been cleared toward the requirement. Used for the row subtitle
+ *     ("$X cleared"). Drift-safe: if either column is absent on the connected
+ *     DB the row hides on null.
+ *
+ * The columns are probed via `information_schema.columns` BEFORE selecting
+ * so a missing column returns `null` instead of throwing 42703. Same pattern
+ * as the per-source weighting / wager-progress reads.
+ */
+async function fetchWagerLocked(
+  db: Db,
+  id: string,
+): Promise<{ wagerLocked: number | null; wagerProgress: number | null }> {
+  // Cheap indexed catalog read — runs once per detail load.
+  const colCheck = await db.$queryRaw<{ exists: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1
+        FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'balances'
+         AND column_name = 'wager_requirement_remaining'
+    ) AS exists`;
+  if (!colCheck[0]?.exists) {
+    return { wagerLocked: null, wagerProgress: null };
+  }
+  try {
+    const rows = await db.$queryRaw<
+      { wager_requirement_remaining: string | null; wager_requirement_progress: string | null }[]
+    >`
+      SELECT
+        wager_requirement_remaining::text  AS wager_requirement_remaining,
+        wager_requirement_progress::text   AS wager_requirement_progress
+      FROM balances
+      WHERE user_id = ${id}
+      LIMIT 1`;
+    const row = rows[0];
+    if (!row) return { wagerLocked: null, wagerProgress: null };
+    const num = (v: string | null): number => {
+      if (v == null) return 0;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+    return {
+      wagerLocked: num(row.wager_requirement_remaining),
+      wagerProgress: num(row.wager_requirement_progress),
+    };
+  } catch (e) {
+    // Defence-in-depth: the column probe already succeeded, but a single
+    // catch keeps the page rendering if a transient query failure hits.
+    console.error("[getUserDetail] fetchWagerLocked failed:", e);
+    return { wagerLocked: null, wagerProgress: null };
+  }
+}
+
 export async function getUserDetail(id: string) {
   const db = await getDb();
   // Everything is independent — one Promise.all instead of two serialized ones
@@ -481,6 +546,7 @@ export async function getUserDetail(id: string) {
     ownedCodeRows,
     tips,
     balancePoints,
+    wagerLockedAgg,
     liveAffiliateRows,
   ] = await Promise.all([
     db.user.findUnique({
@@ -585,6 +651,10 @@ export async function getUserDetail(id: string) {
     // Spendable points counter, read name-agnostically across the
     // bonus_points -> shards rename (see fetchBalancePoints).
     fetchBalancePoints(db, id),
+    // Wager-requirement debt + cleared progress for the new "Locked" line in
+    // the balance breakdown (see fetchWagerLocked). Drift-safe: returns nulls
+    // if the columns aren't on this DB → the row hides.
+    fetchWagerLocked(db, id),
     // LIVE affiliate aggregates — sourced from the canonical
     // affiliate_code_usages table the leaderboard reads (see
     // creators-leaderboards.ts:142-161). The denormalized
@@ -798,7 +868,15 @@ export async function getUserDetail(id: string) {
           // matches the server (the netted `availableBalance` above can be
           // inflated by official-stream credits that aren't real cash).
           availableBalanceRaw: toNumber(balances.available_balance),
+          // VAULT-COOLDOWN pocket — see balances type doc. Distinct from the
+          // bonus wager-locked debt (wagerLocked below): this is the user's
+          // own money, just inside the cooldown window paired with unlockAt.
           lockedBalance: toNumber(balances.locked_balance),
+          // FROZEN-RATE bonus debt that gates withdrawals — distinct from
+          // the vault cooldown (lockedBalance above). See fetchWagerLocked
+          // for source columns + drift handling.
+          wagerLocked: wagerLockedAgg.wagerLocked,
+          wagerProgress: wagerLockedAgg.wagerProgress,
           // P&L components come from the shared helper so this view can
           // never drift from users-list / dashboard.
           totalDeposited: userPnl.deposits,

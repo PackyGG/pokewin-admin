@@ -210,6 +210,8 @@ const DATA: UserDetail = {
     availableBalance: 1_234_567.89,
     availableBalanceRaw: 1_234_567.89,
     lockedBalance: 0,
+    wagerLocked: 0,
+    wagerProgress: 0,
     totalDeposited: 2_345_678.9,
     totalWithdrawn: 1_111_111.11,
     totalWagered: 9_876_543.21,

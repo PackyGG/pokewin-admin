@@ -81,7 +81,31 @@ export type UserDetail = {
      * the Adjust-Balance preview validates against THIS to match the server.
      */
     availableBalanceRaw: number;
+    /**
+     * Vault-cooldown balance — `balances.locked_balance`. Funds the user
+     * moved into vault that are still in the cooldown window (paired with
+     * `unlockAt`). This is the user's own money, just not spendable yet;
+     * NOT the same as `wagerLocked` (which is bonus money gated by a
+     * wager-requirement debt). The "Vault" line in the balance breakdown
+     * shows this.
+     */
     lockedBalance: number;
+    /**
+     * Wager-locked bonus debt — `balances.wager_requirement_remaining`
+     * (frozen-rate debt counter, see users-wager-progress.ts). This is
+     * spendable on wagers but reserves that many balance dollars from
+     * withdrawal until burned down by weighted wagers. The "Locked" line
+     * in the balance breakdown shows this. `null` when the connected DB
+     * lacks the column (schema drift) — the row hides on null.
+     */
+    wagerLocked: number | null;
+    /**
+     * Wagered cleared toward the requirement —
+     * `balances.wager_requirement_progress`. Paired with `wagerLocked` to
+     * show progress in the "Locked" row subtitle. `null` when the column
+     * isn't on the connected DB.
+     */
+    wagerProgress: number | null;
     totalDeposited: number;
     totalWithdrawn: number;
     totalWagered: number;
