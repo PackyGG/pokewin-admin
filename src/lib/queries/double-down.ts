@@ -67,23 +67,28 @@ export type {
  *     (user_id,status). NOTE: NO created_at index.
  *
  *   Payout money (on a WIN): a voucher is created with
- *   origin='battle_double_down_payout', origin_id=offer.id, won_voucher_id set
- *   on the offer. We join vouchers by the offer's won_voucher_id and read the
- *   ACTUAL minted payout from metadata->>'payout_amount_usd' (NOT a hardcoded
- *   multiplier; fallback to the observed ~0.9 × won only when metadata omits
- *   it). The voucher's house_amount_usd is NOT used (see below).
+ *   origin='battle_double_down_payout', won_voucher_id set on the offer. We
+ *   join vouchers by the offer's won_voucher_id and read the REAL credited
+ *   payout from the voucher's `value` column (which reconciles exactly to the
+ *   `voucher_redeemed` ledger amount, verified read-only on prod). NO
+ *   multiplier; the metadata->>'payout_amount_usd' key is MISSING on most wins
+ *   so it is NOT used (a prior 0.9× metadata-fallback FABRICATED a wrong lower
+ *   payout — e.g. a $24.76-stake win as $22.28 instead of the real $24.76 —
+ *   and was removed). `won_amount_usd` is the STAKE; on a win the payout
+ *   equals the stake (1.0×) in the current version (0.9× only in 4 early buggy
+ *   rounds, captured by reading the real value). The voucher's
+ *   house_amount_usd is NOT used.
  *
  * ── House-POV money (CLAUDE.md, STRICT) ──────────────────────────────────────
- *   • payout to a WINNER  = house COST  → 🔴 rose
- *   • a LOSE / forfeit (staked winnings never paid out) = house GAIN → 🟢 emerald
- *   • NET house P&L = forfeited − payouts. REAL money flows ONLY — there is NO
- *     edge/"house cut" term (the house edge is in the WIN PROBABILITY, ~45%
- *     player / 55% house, not a per-round cut; adding a cut would double-count).
- *     The voucher's house_amount_usd is therefore intentionally ignored.
- *   Win-rate / probability is NOT stored — it is derived empirically from
- *   `result` (this IS the edge indicator; noisy at low volume). All money is
- *   Decimal-safe (numeric → string → Number, never summed as float in SQL
- *   beyond Postgres's own exact numeric SUM).
+ *   • payout to a WINNER = house COST → 🔴 rose
+ *   • House P&L over RESOLVED rounds = total staked − total paid out: losers
+ *     forfeit their full stake (house keeps it), winners get their stake back.
+ *     POSITIVE = house PROFIT → 🟢 emerald. There is NO per-round cut — the
+ *     house margin is in the win odds (~45% player / 55% site).
+ *   "Started rounds" is the engagement count (all started rounds); the MONEY
+ *   (wager / payout / P&L) is over RESOLVED rounds so a still-pending accepted
+ *   round's stake doesn't inflate house profit. All money is Decimal-safe
+ *   (numeric → string → Number, exact Postgres SUM).
  *
  * ── Index-or-ClickHouse (CLAUDE.md, BACKEND_QUERY_SYSTEM.md) ──────────────────
  *   • Per-user lookup (getUserDoubleDownHistory) filters user_id → served by
@@ -159,10 +164,17 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
   // STARTED-only (owner rule): only rounds the user actually played
-  // (status IN accepted/resolved) — offered/expired offers are excluded
-  // entirely. One pass over the window: counts + exact numeric SUMs. The
-  // win-leg payout and house-edge cut come from the paired voucher. SUM(numeric)
-  // stays exact in Postgres; we stringify and parse.
+  // (status IN accepted/resolved) — offered/expired offers are excluded.
+  // "Started rounds" is the engagement count (all started rounds in the
+  // window); the MONEY (staked / paid / P&L) is over RESOLVED rounds so a
+  // still-pending accepted round's stake doesn't inflate house profit.
+  //
+  // PAYOUT SOURCE = the REAL credited amount = the paired payout voucher's
+  // `value` (reconciles exactly to the `voucher_redeemed` ledger amount,
+  // verified read-only on prod). The old metadata.payout_amount_usd key is
+  // MISSING on most wins and the previous 0.9× fallback FABRICATED a lower
+  // payout (e.g. a $24.76-stake win showed $22.28 instead of the real $24.76)
+  // — both deleted. We read v.value with NO multiplier. SUM(numeric) is exact.
   const rows = await db.$queryRaw<
     {
       total_rounds: bigint;
@@ -171,7 +183,6 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
       lose_count: bigint;
       total_staked: string | null;
       total_paid_out: string | null;
-      total_forfeited: string | null;
     }[]
   >(Prisma.sql`
     SELECT
@@ -179,14 +190,10 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
       count(*) FILTER (WHERE o.result IS NOT NULL)                      AS resolved_rounds,
       count(*) FILTER (WHERE o.result = 'win')                          AS win_count,
       count(*) FILTER (WHERE o.result = 'lose')                         AS lose_count,
+      -- Total wager = staked over RESOLVED rounds.
       sum(o.won_amount_usd) FILTER (WHERE o.result IS NOT NULL)         AS total_staked,
-      -- Win payout = the ACTUAL minted payout voucher value (NOT a hardcoded
-      -- multiplier). A few win vouchers omit the breakdown in metadata; for
-      -- those we fall back to the observed ~0.9 × won_amount (the actual
-      -- minted ratio on prod), so no win leg is silently dropped from the P&L.
-      sum(COALESCE((v.metadata->>'payout_amount_usd')::numeric, o.won_amount_usd * 0.9))
-        FILTER (WHERE o.result = 'win')                                 AS total_paid_out,
-      sum(o.won_amount_usd) FILTER (WHERE o.result = 'lose')            AS total_forfeited
+      -- Real payout = the paired payout voucher's value (no multiplier).
+      sum(v.value) FILTER (WHERE o.result = 'win')                      AS total_paid_out
     FROM battle_double_down_offers o
     LEFT JOIN vouchers v
       ON v.id = o.won_voucher_id
@@ -201,11 +208,10 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
   const loseCount = Number(r?.lose_count ?? 0);
   const totalStaked = num(r?.total_staked ?? null) ?? 0;
   const totalPaidOut = num(r?.total_paid_out ?? null) ?? 0;
-  const totalForfeited = num(r?.total_forfeited ?? null) ?? 0;
-  // Net house P&L = forfeited − payouts. Real money flows ONLY — the house
-  // edge is in the win probability, so NO edge/house-cut term is added (that
-  // would double-count).
-  const netHousePnl = totalForfeited - totalPaidOut;
+  // House P&L over RESOLVED rounds = total staked − total actually paid out.
+  // Losers forfeit their full stake (house keeps it); winners get their stake
+  // back (net ~0 in the fixed era). POSITIVE = house PROFIT (emerald).
+  const netHousePnl = totalStaked - totalPaidOut;
 
   return {
     totalRounds,
@@ -215,7 +221,6 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
     winRate: resolvedRounds > 0 ? winCount / resolvedRounds : null,
     totalStaked,
     totalPaidOut,
-    totalForfeited,
     netHousePnl,
   };
 }
@@ -245,14 +250,12 @@ const LOG_SELECT = Prisma.sql`
     o.battle_id,
     o.won_amount_usd,
     o.result,
-    -- On a win, surface the ACTUAL minted payout voucher value; if the voucher
-    -- metadata omits it (a few rows do — verified on prod), fall back to the
-    -- observed ~0.9 × won_amount so the row still shows a payout instead of a
-    -- blank. Non-win rows resolve to NULL → "—". No "house cut" is surfaced
-    -- anywhere — the only edge is the win probability, not a per-round cut.
-    CASE WHEN o.result = 'win'
-      THEN COALESCE((v.metadata->>'payout_amount_usd')::numeric, o.won_amount_usd * 0.9)::text
-    END AS payout_amount_usd,
+    -- Payout on a win = the paired payout voucher's REAL value (the actual
+    -- credited amount; reconciles to the voucher_redeemed ledger). NO
+    -- multiplier, NO metadata fallback — the old metadata key is missing on
+    -- most wins and the 0.9× fallback fabricated a wrong lower payout. Non-win
+    -- rows resolve to NULL → "—".
+    CASE WHEN o.result = 'win' THEN v.value::text END AS payout_amount_usd,
     o.created_at,
     o.resolved_at
   FROM battle_double_down_offers o
@@ -367,7 +370,6 @@ export async function getUserDoubleDownHistory(
         lose_count: bigint;
         total_staked: string | null;
         total_paid_out: string | null;
-        total_forfeited: string | null;
       }[]
     >(Prisma.sql`
       SELECT
@@ -376,12 +378,10 @@ export async function getUserDoubleDownHistory(
         count(*) FILTER (WHERE o.result = 'win')                    AS win_count,
         count(*) FILTER (WHERE o.result = 'lose')                   AS lose_count,
         sum(o.won_amount_usd) FILTER (WHERE o.result IS NOT NULL)   AS total_staked,
-        -- Actual minted payout voucher value on wins (fallback ~0.9 × won when
-        -- metadata is absent). No house-edge/"house cut" term — the edge is in
-        -- the win probability, not a per-round cut.
-        sum(COALESCE((v.metadata->>'payout_amount_usd')::numeric, o.won_amount_usd * 0.9))
-          FILTER (WHERE o.result = 'win')                           AS total_paid_out,
-        sum(o.won_amount_usd) FILTER (WHERE o.result = 'lose')      AS total_forfeited
+        -- Real payout = the paired payout voucher's value (the actual credited
+        -- amount; reconciles to the voucher_redeemed ledger). NO multiplier,
+        -- NO metadata fallback.
+        sum(v.value) FILTER (WHERE o.result = 'win')                AS total_paid_out
       FROM battle_double_down_offers o
       LEFT JOIN vouchers v
         ON v.id = o.won_voucher_id
@@ -401,7 +401,6 @@ export async function getUserDoubleDownHistory(
   const winCount = Number(s?.win_count ?? 0);
   const totalStaked = num(s?.total_staked ?? null) ?? 0;
   const totalPaidOut = num(s?.total_paid_out ?? null) ?? 0;
-  const totalForfeited = num(s?.total_forfeited ?? null) ?? 0;
 
   return {
     summary: {
@@ -413,9 +412,9 @@ export async function getUserDoubleDownHistory(
       totalStaked,
       totalPaidOut,
       netStakedVsPaid: totalStaked - totalPaidOut,
-      // Canonical House P&L on this user (matches Insights/dashboard):
-      // forfeited − payouts. Real money flows ONLY, NO edge term.
-      netHousePnl: totalForfeited - totalPaidOut,
+      // House P&L on this user (matches Insights/dashboard): total staked −
+      // total actually paid out, over RESOLVED rounds. >0 = house profit.
+      netHousePnl: totalStaked - totalPaidOut,
     },
     rows: rows.map(mapLogRow),
   };
@@ -431,7 +430,6 @@ const EMPTY_DASHBOARD_STATS: DoubleDownDashboardStats = {
   uniquePlayers: 0,
   winRate: null,
   staked: 0,
-  forfeited: 0,
   paidOut: 0,
   netHousePnl: 0,
 };
@@ -445,12 +443,12 @@ async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
   // game_session row exists ONLY for a PLAYED round (accepted → resolved), so
   // this counts played rounds the same way the dashboard counts pack / battle /
   // upgrader plays. Outcome is read from o.result + o.won_amount_usd; the win
-  // payout comes strictly from the paired payout VOUCHER's ACTUAL minted value
-  // (origin='battle_double_down_payout') — NOT from any ledger/balance row
-  // (there is no real ledger tx for these; voucher_redeemed is reconciliation
-  // only), and NOT a hardcoded multiplier. A few win vouchers omit the value in
-  // metadata, so payout falls back to the observed ~0.9 × won (COALESCE). There
-  // is NO house-edge/"house cut" term — the edge is in the win probability.
+  // payout comes strictly from the paired payout VOUCHER's REAL value
+  // (origin='battle_double_down_payout', v.value) — the actual credited amount,
+  // which reconciles to the voucher_redeemed ledger amount. NOT a hardcoded
+  // multiplier, NOT the (mostly-missing) metadata.payout_amount_usd key.
+  // House P&L = staked − paid (over RESOLVED rounds): losers forfeit their full
+  // stake (house keeps it), winners get their stake back → POSITIVE house P&L.
   //
   // Index path (EXPLAIN-proven read-only): the planner drives from the TINY
   // battle_double_down_offers table (Seq Scan, dozens of rows) and probes the
@@ -466,7 +464,6 @@ async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
       pending: bigint;
       unique_players: bigint;
       staked: string | null;
-      forfeited: string | null;
       paid_out: string | null;
     }[]
   >(Prisma.sql`
@@ -477,9 +474,7 @@ async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
       count(*) FILTER (WHERE o.result IS NULL)                          AS pending,
       count(DISTINCT gs.user_id)                                        AS unique_players,
       sum(o.won_amount_usd) FILTER (WHERE o.result IS NOT NULL)         AS staked,
-      sum(o.won_amount_usd) FILTER (WHERE o.result = 'lose')            AS forfeited,
-      sum(COALESCE((v.metadata->>'payout_amount_usd')::numeric, o.won_amount_usd * 0.9))
-        FILTER (WHERE o.result = 'win')                                 AS paid_out
+      sum(v.value) FILTER (WHERE o.result = 'win')                      AS paid_out
     FROM game_sessions gs
     JOIN battle_double_down_offers o ON o.id = gs.game_id
     LEFT JOIN vouchers v
@@ -493,10 +488,9 @@ async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
   const loses = Number(r?.loses ?? 0);
   const resolved = wins + loses;
   const staked = num(r?.staked ?? null) ?? 0;
-  const forfeited = num(r?.forfeited ?? null) ?? 0;
   const paidOut = num(r?.paid_out ?? null) ?? 0;
-  // Net house P&L = forfeited − payouts. Real money flows ONLY, NO edge term.
-  const netHousePnl = forfeited - paidOut;
+  // House P&L over RESOLVED rounds = staked − paid. >0 = house profit.
+  const netHousePnl = staked - paidOut;
 
   return {
     rounds: Number(r?.rounds ?? 0),
@@ -506,7 +500,6 @@ async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
     uniquePlayers: Number(r?.unique_players ?? 0),
     winRate: resolved > 0 ? wins / resolved : null,
     staked,
-    forfeited,
     paidOut,
     netHousePnl,
   };

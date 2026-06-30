@@ -106,16 +106,18 @@ export type DoubleDownStats = {
    * per-round cut (owner clarification, 2026-06-30). Noisy at low volume.
    */
   winRate: number | null;
-  /** Σ won_amount_usd over RESOLVED rounds — the total winnings staked. */
+  /** Σ won_amount_usd over RESOLVED rounds — the total wager (winnings staked). */
   totalStaked: number;
-  /** Σ actual payout voucher value over WINS (house COST → rose). */
-  totalPaidOut: number;
-  /** Σ won_amount_usd over LOSES — winnings forfeited (house GAIN → emerald). */
-  totalForfeited: number;
   /**
-   * Net house P&L = forfeited − paidOut (real money flows ONLY — NO per-round
-   * cut; the house margin is in the win odds, adding a cut would double-count).
-   * >0 = house profit (emerald), <0 = house loss (rose).
+   * Σ the paired payout voucher's REAL value over WINS (house COST → rose).
+   * The actual credited amount (reconciles to the voucher_redeemed ledger) —
+   * NO multiplier, NO metadata fallback.
+   */
+  totalPaidOut: number;
+  /**
+   * House P&L over RESOLVED rounds = totalStaked − totalPaidOut. Losers forfeit
+   * their full stake (house keeps it); winners get their stake back. >0 = house
+   * PROFIT (emerald), <0 = house loss (rose).
    */
   netHousePnl: number;
 };
@@ -163,15 +165,17 @@ export type DoubleDownDashboardStats = {
    * the win odds (~45% player / 55% site), not a per-round cut.
    */
   winRate: number | null;
-  /** Σ won_amount_usd over resolved plays — winnings staked. */
+  /** Σ won_amount_usd over RESOLVED plays — the total wager (winnings staked). */
   staked: number;
-  /** Σ won_amount_usd over LOSES — forfeited winnings (house GAIN → emerald). */
-  forfeited: number;
-  /** Σ actual payout voucher value over WINS — paid to winners (house COST → rose). */
+  /**
+   * Σ the paired payout voucher's REAL value over WINS — paid to winners
+   * (house COST → rose). Actual credited amount; NO multiplier/fallback.
+   */
   paidOut: number;
   /**
-   * Net house P&L = forfeited − paidOut (real money flows ONLY — NO per-round
-   * cut; the house margin is in the win odds). >0 = house profit (emerald).
+   * House P&L over RESOLVED rounds = staked − paidOut. Losers forfeit their
+   * full stake (house keeps it); winners get their stake back. >0 = house
+   * PROFIT (emerald).
    */
   netHousePnl: number;
 };

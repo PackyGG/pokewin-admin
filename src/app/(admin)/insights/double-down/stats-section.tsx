@@ -17,7 +17,6 @@ const EMPTY_STATS: DoubleDownStats = {
   winRate: null,
   totalStaked: 0,
   totalPaidOut: 0,
-  totalForfeited: 0,
   netHousePnl: 0,
 };
 
