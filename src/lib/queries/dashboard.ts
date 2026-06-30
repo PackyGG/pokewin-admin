@@ -268,7 +268,13 @@ const cachedKpiWindowMetrics = unstable_cache(
     void blacklistIdNotIn;
     return getWindowMetrics({ window: { since: new Date(cutoffIso) } });
   },
-  ["dashboard-window-metrics-kpi-v1"],
+  // Bumped v1 → v2 alongside the dashboard's GGR redefinition (2026-06-30):
+  // the canonical `getWindowMetrics.ggr` payload still feeds the popover's
+  // secondary "industry GGR" reference figure, but it is no longer the
+  // headline number. Forcing a fresh cache miss on the rollout guarantees
+  // the new label + secondary placement materialize on the first request
+  // (no carry-over of the pre-redefinition payload shape).
+  ["dashboard-window-metrics-kpi-v2"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -2470,35 +2476,171 @@ export async function getGgrTopContributors(
   period: DashboardPeriod,
   limit = 10,
 ): Promise<GgrTopContributorRow[]> {
-  // The "all" chip maps to the SAME bounded 365-day lookback the headline
-  // GGR uses (never an unbounded `{ since: null }`), so resolve via
-  // `periodToMetricWindow` and delegate to the cutoff-based core.
+  // Owner's GGR redefinition (2026-06-30): the dashboard's headline GGR is
+  // `deposits − withdrawals` for the window (cash GGR), so the contributors
+  // expander now ranks users by their per-user cash flow over the same
+  // window — the per-user counterparts that SUM to the headline tile's
+  // figure. The classical industry-GGR per-user sweep
+  // (`ggrTopContributorsForCutoff`) is preserved below for the `/ggr` page
+  // and any consumer that still needs it; the dashboard wires straight to
+  // the cash variant. The "all" chip maps to the SAME bounded 365-day
+  // lookback the headline cash GGR uses (never an unbounded `{ since: null }`).
   const cutoff = periodToMetricWindow(period, new Date()).since as Date;
-  return ggrTopContributorsForCutoff(cutoff, limit);
+  return ggrCashContributorsForCutoff(cutoff, limit);
 }
 
 /**
  * Per-user GGR contributors for the dashboard's today/24h KPI window —
  * the lazy "top contributors" expander inside the GgrStatCard popover when
- * a box is on the today/24h view. Reuses the SAME cutoff-based core as the
- * chip-enum {@link getGgrTopContributors}, so each user's `net` reconciles
- * with the today/24h headline GGR exactly as it does for the chip enum.
+ * a box is on the today/24h view. Reuses the SAME cutoff-based cash core as
+ * the chip-enum {@link getGgrTopContributors}, so each user's `net`
+ * reconciles with the today/24h headline GGR (`deposits − withdrawals`)
+ * exactly as it does for the chip enum.
  */
 export async function getGgrTopContributorsForKpiWindow(
   window: DashboardKpiWindow,
   limit = 10,
 ): Promise<GgrTopContributorRow[]> {
   const cutoff = kpiWindowToCutoff(window, new Date());
-  return ggrTopContributorsForCutoff(cutoff, limit);
+  return ggrCashContributorsForCutoff(cutoff, limit);
 }
 
 /**
- * Cutoff-based core for the per-user GGR contributor sweep. The single
- * heavy ledger+inventory+upgrader GROUP BY lives here; both the chip-enum
- * and the today/24h entry points resolve their own cutoff and delegate, so
- * the SQL is written once and the windows can't drift.
+ * Cutoff-based core for the per-user CASH GGR contributor sweep — drives
+ * the dashboard's GGR popover after the owner's redefinition (2026-06-30).
+ * Sums per-user deposit dollars (`ledger_transactions.amount` for
+ * `type = 'deposit'`) and per-user withdrawal dollars
+ * (`card_withdrawal_requests.total_value_usd` for completed/shipped),
+ * then ranks by ABS(deposits − withdrawals) so the operator sees both the
+ * biggest house-cash winners (deposits > withdrawals → positive net) and
+ * the biggest house-cash losers (withdrawals > deposits → negative net).
+ *
+ * Real-customer scope (staff + blacklist drop, creators KEPT) matches the
+ * scope used by the headline cashflow legs in `getPeriodAggregates` (its
+ * `withdrawals` CTE joins `real_users` with the same `role NOT IN
+ * ('admin','support')` + blacklist filter, so the per-user sums here
+ * reconcile with the tile's `deposits` and `withdrawals` totals).
+ *
+ * The `GgrTopContributorRow` shape is reused (`wagerTotal` → deposits,
+ * `payoutTotal` → withdrawals, `net` → deposits − withdrawals) so the
+ * existing client-side rendering keeps working — the popover's row UI
+ * relabels the two columns to "D" / "W" and the colour convention
+ * (positive net → emerald → house cash gain) stays identical because
+ * positive = deposits exceed withdrawals (house captured cash).
+ *
+ * NOT cached — the per-user join is heavier than the aggregate, the
+ * popover only loads it on click, and the user-set shifts continuously
+ * with new deposits / withdrawals.
  */
-async function ggrTopContributorsForCutoff(
+async function ggrCashContributorsForCutoff(
+  cutoff: Date,
+  limit = 10,
+): Promise<GgrTopContributorRow[]> {
+  // Defensive clamp — server actions take a number from the client, so
+  // an out-of-range value shouldn't blow up the query plan.
+  const safeLimit = Math.max(1, Math.min(limit, 50));
+  const db = await getDb();
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
+  // Per-user deposits (ledger) + per-user withdrawals (card_withdrawal_
+  // requests) for the window. Two CTEs joined on user_id so a user that
+  // has only deposits (or only withdrawals) still surfaces. Withdrawal
+  // amount is stored positive (total_value_usd) — Math.abs would be a
+  // no-op defensive guard; we sum as-is. The window is gated on the
+  // cashflow's effective timestamp:
+  //   • deposits: `created_at >= cutoff`
+  //   • withdrawals: `COALESCE(completed_at, shipped_at) >= cutoff`
+  // Same gates the headline `getPeriodAggregates` uses, so the per-user
+  // sums roll up to the tile's `deposits` and `withdrawals` totals
+  // exactly. Real-customer scope drops staff (admin/support) + blacklist
+  // and keeps creators — matching the cashflow legs (the cashflow CTEs
+  // do NOT carve out creator-on-session rows, so neither do we).
+  const rows = await db.$queryRaw<
+    {
+      user_id: string;
+      username: string | null;
+      deposits: string;
+      withdrawals: string;
+      net: string;
+    }[]
+  >`
+    WITH real_users AS (
+      SELECT id, username FROM "user"
+      WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+    ),
+    deposits_leg AS (
+      SELECT
+        lt.user_id,
+        COALESCE(SUM(lt.amount::numeric), 0) AS deposits_total
+      FROM ledger_transactions lt
+      JOIN real_users ru ON ru.id = lt.user_id
+      WHERE lt.type::text = 'deposit'
+        AND lt.status = 'completed'
+        AND lt.created_at >= ${cutoff}
+      GROUP BY lt.user_id
+    ),
+    withdrawals_leg AS (
+      SELECT
+        cwr.user_id,
+        COALESCE(SUM(cwr.total_value_usd::numeric), 0) AS withdrawals_total
+      FROM card_withdrawal_requests cwr
+      JOIN real_users ru ON ru.id = cwr.user_id
+      WHERE cwr.status IN ('completed', 'shipped')
+        AND (cwr.completed_at >= ${cutoff}
+             OR (cwr.completed_at IS NULL AND cwr.shipped_at >= ${cutoff}))
+      GROUP BY cwr.user_id
+    ),
+    per_user AS (
+      SELECT
+        ru.id AS user_id,
+        ru.username,
+        COALESCE(d.deposits_total, 0) AS deposits,
+        COALESCE(w.withdrawals_total, 0) AS withdrawals
+      FROM real_users ru
+      LEFT JOIN deposits_leg d ON d.user_id = ru.id
+      LEFT JOIN withdrawals_leg w ON w.user_id = ru.id
+      -- Keep any user with ANY cashflow in the window so a heavy-
+      -- withdrawer (net negative) can rank alongside heavy depositors.
+      WHERE COALESCE(d.deposits_total, 0) <> 0
+         OR COALESCE(w.withdrawals_total, 0) <> 0
+    )
+    SELECT
+      pu.user_id::text AS user_id,
+      pu.username,
+      pu.deposits::text   AS deposits,
+      pu.withdrawals::text AS withdrawals,
+      (pu.deposits - pu.withdrawals)::text AS net
+    FROM per_user pu
+    ORDER BY ABS(pu.deposits - pu.withdrawals) DESC
+    LIMIT ${safeLimit}
+  `;
+  return rows.map((r) => ({
+    userId: r.user_id,
+    username: r.username,
+    // Reuses the existing GgrTopContributorRow shape — see the doc above
+    // for the mapping (wagerTotal → deposits, payoutTotal → withdrawals).
+    wagerTotal: parseFloat(r.deposits) || 0,
+    payoutTotal: parseFloat(r.withdrawals) || 0,
+    net: parseFloat(r.net) || 0,
+  }));
+}
+
+/**
+ * Cutoff-based core for the per-user INDUSTRY GGR contributor sweep
+ * (wager − payouts, inventory-delta sourced). The single heavy
+ * ledger+inventory+upgrader GROUP BY lives here; both the chip-enum and
+ * the today/24h entry points USED to resolve their own cutoff and delegate.
+ *
+ * SUPERSEDED on the dashboard (2026-06-30): the dashboard's headline GGR
+ * was redefined to `deposits − withdrawals` (cash GGR), and the
+ * contributors expander was rewired to {@link ggrCashContributorsForCutoff}
+ * so each row's `net` reconciles with the new headline tile. This function
+ * is preserved (prefixed `_` to satisfy `varsIgnorePattern`) for the case a
+ * future surface needs the per-user industry-GGR sweep without rebuilding
+ * the inventory-delta SQL — the `/ggr` page has its own separate version
+ * in `ggr.ts` and does not import this one.
+ */
+async function _ggrTopContributorsForCutoff(
   cutoff: Date,
   limit = 10,
 ): Promise<GgrTopContributorRow[]> {

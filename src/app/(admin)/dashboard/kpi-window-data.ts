@@ -38,8 +38,22 @@ export type KpiWindowPayload = {
   windowLabel: string;
 
   // ---- Period-bound box values ----
-  /** Gaming margin (house POV; positive = house up) for the window. */
-  ggr: number;
+  /**
+   * HEADLINE GGR — operator definition (`deposits − withdrawals` for the
+   * window). The owner's mental model: the maximum house gain is capped at
+   * the user's net cash flow; we never owe more than what came in. This is
+   * the same formula as Cash P&L (`rawCashPnl` in today-pnl-stat-card.tsx)
+   * applied per-window. Positive (deposits > withdrawals) → house gain →
+   * emerald; negative → user net cash out → rose.
+   */
+  cashGgr: number;
+  /**
+   * INDUSTRY GGR — the empirical wager-margin definition
+   * (`wager − payouts`, inventory-delta sourced). Kept in the Info popover
+   * as a reference figure; not the headline anymore. Includes recycled
+   * balance so it overstates real money capture vs. cashGgr.
+   */
+  industryGgr: number;
   /** Customer wager (creator-on-stream sessions excluded) for the window. */
   wager: number;
   /** Packs / Battles / Upgrader split of `wager` (sums to it). */
@@ -54,6 +68,7 @@ export type KpiWindowPayload = {
   withdrawalCount: number;
 
   // ---- GGR breakdown legs (for the GGR box's Info popover) ----
+  /** Industry-GGR breakdown legs — secondary reference inside the popover. */
   ggrBreakdown: GgrBreakdown;
 };
 
@@ -107,10 +122,24 @@ export async function buildKpiWindowPayload(
     },
   );
 
+  // Owner's GGR redefinition (2026-06-30): the HEADLINE GGR tile on the
+  // dashboard is `deposits − withdrawals` for the window — the owner's
+  // mental model that house gain is capped at the user's net cash flow.
+  // This matches the Cash P&L formula used by the P&L Today tile
+  // (`rawCashPnl = deposits - withdrawals`). The classical industry GGR
+  // (wager − payouts) from `getWindowMetrics` is preserved as
+  // `industryGgr` and surfaced inside the breakdown popover as a
+  // reference figure only. NOTE: this redefinition is DASHBOARD-LOCAL —
+  // every other surface that reads `getWindowMetrics.ggr` (insights,
+  // /ggr breakdown page, creator analytics, etc.) keeps the industry
+  // definition unchanged.
+  const cashGgr = cashflow.deposits - cashflow.withdrawals;
+
   return {
     window,
     windowLabel: stats.periodLabel,
-    ggr: stats.ggr,
+    cashGgr,
+    industryGgr: stats.ggr,
     wager: stats.wagers,
     wagerBreakdown: stats.wagersBreakdown,
     wagerOrganic: stats.wagersOrganic,

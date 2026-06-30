@@ -417,13 +417,18 @@ export function DashboardKpiSection({
           5 across at xl where there's width for all five (the wide Wager box
           included) without crushing. */}
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
-        {/* GGR — gaming margin. Cyan identity; Info popover with the
-            wager/payout legs + lazy top-contributors, scoped to the box's
-            active window. */}
+        {/* GGR — owner's headline definition: `deposits − withdrawals` for
+            the window (max house gain capped at user net cash flow). Same
+            formula as Cash P&L applied per-window. Cyan identity; Info
+            popover surfaces the secondary "industry GGR" (wager − payouts)
+            with its per-leg breakdown + lazy top-contributors, scoped to
+            the box's active window. House-POV: positive (deposits >
+            withdrawals) → house gain → emerald; negative → user net cash
+            out → rose (handled by SignedHero). */}
         {(() => {
           const p = payloadFor("ggr");
           const mode = modeFor("ggr");
-          const isProfit = p.ggr >= 0;
+          const isProfit = p.cashGgr >= 0;
           return (
             <KpiPanel
               title="GGR"
@@ -433,6 +438,9 @@ export function DashboardKpiSection({
                   breakdown={p.ggrBreakdown}
                   periodLabel={p.windowLabel}
                   contributorScope={{ kind: "kpi", value: mode }}
+                  cashGgr={p.cashGgr}
+                  deposits={p.deposits}
+                  withdrawals={p.withdrawals}
                 />
               }
               headerRight={
@@ -444,7 +452,14 @@ export function DashboardKpiSection({
               }
               icon={isProfit ? TrendingUp : TrendingDown}
             >
-              <SignedHero value={p.ggr} />
+              <SignedHero value={p.cashGgr} />
+              {/* Subtitle/tooltip — explains the owner's GGR definition so an
+                  admin who knows the industry meaning of GGR isn't confused
+                  by the new headline. */}
+              <p className="text-tiny text-muted-foreground leading-snug">
+                deposits − withdrawals over the window. Capped at user net
+                cash flow.
+              </p>
             </KpiPanel>
           );
         })()}
