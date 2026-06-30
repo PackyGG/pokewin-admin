@@ -2,6 +2,7 @@
 
 import { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
+import { Lock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { UsersSortHeader } from "./sort-header";
@@ -20,6 +21,12 @@ export type UserRow = {
   country: string | null;
   countryCode: string | null;
   availableBalance: number;
+  /**
+   * `balances.locked_balance` — the user's vault / cooldown-locked cash
+   * (matches the per-user "Locked" line on /users/[id]). Drives the
+   * "Top vault/locked" toolbar shortcut and the dedicated column.
+   */
+  lockedBalance: number;
   inventoryValue: number;
   /** Cash + locked vault + open inventory — total on-site position. */
   netHoldings: number;
@@ -152,6 +159,36 @@ export const columns: ColumnDef<UserRow>[] = [
         {formatCurrency(row.original.availableBalance)}
       </span>
     ),
+  },
+  {
+    // Locked / Vault — `balances.locked_balance`. Highlighted in amber
+    // because every locked dollar is a direct house liability that the
+    // user can withdraw the moment the cooldown/wager-lock lifts (same
+    // amber language as Net for consistency). Zero values stay muted so
+    // the column doesn't visually shout on the typical row.
+    accessorKey: "lockedBalance",
+    header: () => (
+      <UsersSortHeader title="Vault / Locked" sortKey="lockedBalance" />
+    ),
+    cell: ({ row }) => {
+      const v = row.original.lockedBalance;
+      if (!(v > 0)) {
+        return (
+          <span className="tabular-nums text-muted-foreground/60">
+            {formatCurrency(0)}
+          </span>
+        );
+      }
+      return (
+        <span
+          className="inline-flex items-center gap-1 font-medium tabular-nums text-amber-600 dark:text-amber-400"
+          title="balances.locked_balance — cash parked in vault / wager-lock"
+        >
+          <Lock className="size-3 shrink-0 opacity-70" aria-hidden />
+          {formatCurrency(v)}
+        </span>
+      );
+    },
   },
   {
     accessorKey: "inventoryValue",

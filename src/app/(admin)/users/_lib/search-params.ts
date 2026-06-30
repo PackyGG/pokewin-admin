@@ -67,6 +67,10 @@ export const UsersSortBy = z.enum([
   "inventoryValue",
   "netHoldings",
   "depositCount",
+  // Vault / locked-pool ranking — sorts by balances.locked_balance via the
+  // filter-first ranking path so the toolbar can answer "who has the most
+  // stuck in vault/cooldown right now".
+  "lockedBalance",
 ]);
 export type UsersSortBy = z.infer<typeof UsersSortBy>;
 

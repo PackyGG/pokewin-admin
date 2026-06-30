@@ -14,6 +14,7 @@ import {
   TrendingUp,
   TrendingDown,
   Activity,
+  Lock,
   RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -208,6 +209,98 @@ function RollingPnlChip({ label, value }: { label: string; value: number }) {
   );
 }
 
+/**
+ * Vault / Locked balance row with a small inline "Remove" affordance.
+ *
+ * Both pockets show the same affordance but for different reasons (and
+ * both ship DISABLED today):
+ *
+ *   • Vault (`removeKind="vault"`) — the platform writes vault locks via
+ *     `moveBalanceToVault` (admin action → `vault_lock` ledger row, MAIN-DB
+ *     write). There is NO reverse action — no `moveBalanceFromVault`,
+ *     no `vault_unlock` writer. Per CLAUDE.md the MAIN GAME DB is
+ *     read-only and we don't ship a new MAIN write path without explicit
+ *     owner sign-off, so the button is rendered + disabled with a
+ *     tooltip explaining the gap.
+ *
+ *   • Locked (`removeKind="wager"`) — the bonus/wager-requirement debt is
+ *     cleared by `clearUserWagerRequirementAction`, which routes through
+ *     the backend HTTP API (not Prisma). That action exists but it's a
+ *     panel-wide action surfaced on the dedicated Wager Requirement card
+ *     (`user-wager-requirement-card.tsx`); reusing it from this row
+ *     would dilute the dialog UX that card carries (confirm copy +
+ *     audit row + toast). For now the row's inline Remove button stays
+ *     disabled and the tooltip points operators at the dedicated card —
+ *     same "show the affordance" reasoning as the vault case.
+ *
+ * When either action ships in a panel-friendly form (a confirm dialog +
+ * 2FA + audit row pattern matching `moveBalanceToVault`), wire it up here
+ * by replacing the disabled button with a click handler that opens the
+ * dialog. Don't add an `onClick` that fires a write straight from the
+ * row — confirm-dialog + audit-event is the panel standard.
+ */
+function LockedRowWithRemove({
+  label,
+  amount,
+  valueClassName,
+  sub,
+  removeKind,
+}: {
+  label: string;
+  amount: number;
+  valueClassName?: string;
+  sub?: string | null;
+  removeKind: "vault" | "wager";
+}) {
+  const removeTitle =
+    removeKind === "vault"
+      ? "Force-unlock requires a server action not yet implemented (MAIN DB read-only — escalate to backend)"
+      : "Clear wager debt via the dedicated Wager Requirement card (audit + 2FA flow); inline Remove not wired yet";
+
+  // Mirrors the optional-sub variant of PanelRow so the Vault / Locked
+  // rows stay visually aligned with every other row in the breakdown.
+  const valueNode = (
+    <div className="flex items-center gap-1.5 shrink-0">
+      <span className={cn("font-medium tabular-nums", valueClassName)}>
+        {formatCurrency(amount)}
+      </span>
+      {amount > 0 ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled
+          className="h-5 px-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400"
+          title={removeTitle}
+          aria-label={`Force unlock ${label.toLowerCase()} balance (not yet implemented)`}
+        >
+          <Lock className="size-3 shrink-0" />
+          Remove
+        </Button>
+      ) : null}
+    </div>
+  );
+
+  if (sub) {
+    return (
+      <div className="flex items-start justify-between gap-3 py-1 text-sm">
+        <div className="min-w-0">
+          <div className="text-muted-foreground">{label}</div>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 truncate">
+            {sub}
+          </div>
+        </div>
+        {valueNode}
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center justify-between py-1 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      {valueNode}
+    </div>
+  );
+}
+
 export function ModernBalancePanel({
   balances,
   userId,
@@ -344,23 +437,29 @@ export function ModernBalancePanel({
       <div className="mt-4 space-y-0.5 border-t pt-3">
         <PanelRow label="Cash" value={formatCurrency(balances.availableBalance)} />
         {/* Vault — cooldown-locked balance (user's own money, just not
-            spendable yet). BLUE/muted neutral: it IS the user's money. */}
-        <PanelRow
+            spendable yet). BLUE/muted neutral: it IS the user's money.
+            Trailing "Remove" affordance is shipped DISABLED — see
+            LockedRowWithRemove for why (no backend unlock action exists). */}
+        <LockedRowWithRemove
           label="Vault"
-          value={formatCurrency(balances.lockedBalance)}
+          amount={balances.lockedBalance}
           valueClassName="text-blue-600 dark:text-blue-400"
           sub={vaultSub}
+          removeKind="vault"
         />
         {/* Locked — wager-requirement debt (bonus dollars spendable on
             wagers but reserved from withdrawal until cleared). AMBER
             warning: spendable but not withdrawable. Hidden if the column
-            isn't on this DB. */}
+            isn't on this DB. Same DISABLED Remove affordance — clearing
+            wager-req debt goes through a backend-API path
+            (clearUserWagerRequirementAction) the panel doesn't own. */}
         {showLocked && (
-          <PanelRow
+          <LockedRowWithRemove
             label="Locked"
-            value={formatCurrency(balances.wagerLocked ?? 0)}
+            amount={balances.wagerLocked ?? 0}
             valueClassName="text-amber-600 dark:text-amber-400"
             sub={lockedSub}
+            removeKind="wager"
           />
         )}
         <PanelRow label="Inventory" value={formatCurrency(balances.inventoryValue)} />

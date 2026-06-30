@@ -706,3 +706,33 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
 -- of the ~1s Parallel Seq Scan documented above (kept here as historical context
 -- for why the index exists). The action still degrades gracefully if the index is
 -- ever dropped (single scan, admin-gated, one-shot).
+
+-- #20 ----------------------------------------------------------------
+-- balances.locked_balance — /users list "Top vault / locked" sort
+-- ===================================================================
+-- Added by the 2026-06-30 vault-features pass for the new
+-- `sortBy=lockedBalance` shortcut on /users (see SortByLockedBalanceButton
+-- + computeRankedUserIds → buildRankingOrderExpr branch).
+--
+-- The ranking CTE filter-firsts the `user` table into `filtered` (a few
+-- hundred to a few thousand ids), LEFT JOINs `balances`, and ORDER BYs
+-- `COALESCE(b.locked_balance::numeric, 0) DESC NULLS LAST` before LIMIT/
+-- OFFSET. The LEFT JOIN itself is served by the existing
+-- `balances_user_id_unique` constraint, so the join is index-served per
+-- row — no extra index is needed for the JOIN.
+--
+-- A partial index on locked_balance (WHERE locked_balance > 0) would
+-- accelerate the ORDER BY IF we ever moved this sort to a global scan
+-- instead of the filter-first CTE shape. Today the filter-first shape
+-- keeps the rows-to-sort tiny (≤ candidate cohort), so locked_balance
+-- ordering is essentially free; flagging the partial index here so the
+-- owner can apply it later if the user base grows past ~50k actives:
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_balances_locked_balance_nz
+--     ON balances (locked_balance DESC) WHERE locked_balance > 0;
+--
+-- NOT APPLIED — flagged only. At today's prod size (~761 users,
+-- 2026-06-11) the filter-first CTE measures ~11 ms; this index would
+-- shave milliseconds and is not worth the write-amplification on the hot
+-- `balances` table. Reassess if /users grows past ~50k or the cold
+-- "Top vault / locked" click becomes user-visible slow.

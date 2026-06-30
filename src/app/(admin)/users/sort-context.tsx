@@ -51,6 +51,10 @@ export const SERVER_RANKED_SORTS = new Set([
   "totalWithdrawn",
   "inventoryValue",
   "depositCount",
+  // lockedBalance also flows through the filter-first ranking CTE so the
+  // "Top vault/locked" toolbar shortcut returns the heaviest users across
+  // the entire base, not just the current page.
+  "lockedBalance",
 ]);
 
 const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
@@ -58,6 +62,7 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
     (a.username ?? a.email ?? "").localeCompare(b.username ?? b.email ?? ""),
   created_at: (a, b) => a.createdAt.localeCompare(b.createdAt),
   balance: (a, b) => a.availableBalance - b.availableBalance,
+  lockedBalance: (a, b) => a.lockedBalance - b.lockedBalance,
   totalDeposited: (a, b) => a.totalDeposited - b.totalDeposited,
   totalWithdrawn: (a, b) => a.totalWithdrawn - b.totalWithdrawn,
   totalWagered: (a, b) => a.totalWagered - b.totalWagered,

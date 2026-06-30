@@ -100,6 +100,116 @@ const CW_STATUS_COLORS: Record<string, string> = {
   cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
 };
 
+/**
+ * Pull a useful display string out of a ledger row's `metadata` blob
+ * without parsing every possible shape. Each lookup tries a small list
+ * of plausible keys (different backend events spell things differently —
+ * `unlock_at` vs `unlockAt`, `hours` vs `lock_hours` …) and returns the
+ * first plausible non-empty string. Returning null is the signal to skip
+ * the chip entirely so we never render an empty badge.
+ */
+function metaString(
+  meta: unknown,
+  keys: readonly string[],
+): string | null {
+  if (!meta || typeof meta !== "object") return null;
+  const obj = meta as Record<string, unknown>;
+  for (const k of keys) {
+    const v = obj[k];
+    if (typeof v === "string" && v.trim() !== "") return v;
+    if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  }
+  return null;
+}
+
+function metaNumber(meta: unknown, keys: readonly string[]): number | null {
+  if (!meta || typeof meta !== "object") return null;
+  const obj = meta as Record<string, unknown>;
+  for (const k of keys) {
+    const v = obj[k];
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = Number(v);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return null;
+}
+
+/** Truncate a long hex/blockchain identifier to `0xabcd…wxyz` shape. */
+function shortenAddress(s: string, head = 6, tail = 4): string {
+  if (s.length <= head + tail + 1) return s;
+  return `${s.slice(0, head)}…${s.slice(-tail)}`;
+}
+
+/**
+ * Inline "address / tx hash" chip rendered under the Description on
+ * crypto-bearing rows (deposits, crypto-balance withdrawals,
+ * card-shipping withdrawals, fireblocks-routed events). Shows ONE chip per
+ * useful identifier so the operator can spot the chain + address /
+ * transaction without opening the modal — same identifiers the modal
+ * already surfaces, just shorter and inline. Click-to-copy keeps the
+ * full string usable (the truncated form would be useless when copied).
+ *
+ * House-POV color is NOT applied here — these chips are neutral
+ * identifiers, not money values. The Amount column carries the money
+ * signal.
+ */
+function AddressChip({
+  label,
+  value,
+  full,
+}: {
+  label: string;
+  value: string;
+  /** Full string to write to the clipboard on click; defaults to `value`. */
+  full?: string;
+}) {
+  const fullStr = full ?? value;
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (typeof navigator !== "undefined" && navigator.clipboard) {
+          navigator.clipboard.writeText(fullStr).then(
+            () => toast.success(`${label} copied`),
+            () => toast.error(`Couldn't copy ${label}`),
+          );
+        }
+      }}
+      title={`${label} — click to copy ${fullStr}`}
+      className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+    >
+      <span className="text-[9px] font-semibold uppercase tracking-wider opacity-70">
+        {label}
+      </span>
+      <span className="truncate">{value}</span>
+    </button>
+  );
+}
+
+/**
+ * Format an absolute `unlock_at` timestamp as a compact "in 23h"-style
+ * remaining-time string. Past timestamps read "unlocked" — the vault has
+ * already become spendable but the ledger row stays around for history.
+ * Returns null on unparseable input so the chip can safely skip.
+ */
+function formatUnlockIn(iso: string): string | null {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const diffMs = t - Date.now();
+  if (diffMs <= 0) return "unlocked";
+  const sec = Math.floor(diffMs / 1000);
+  const min = Math.floor(sec / 60);
+  const hr = Math.floor(min / 60);
+  const day = Math.floor(hr / 24);
+  if (day >= 1) return `in ${day}d ${hr % 24}h`;
+  if (hr >= 1) return `in ${hr}h ${min % 60}m`;
+  if (min >= 1) return `in ${min}m`;
+  return "in <1m";
+}
+
 // Merged "P&L / Won" cell for the Gaming tab. Shows ONE number to read:
 //   main (large) = House Profit, house-POV color (house gain → emerald,
 //   house loss → rose, flat → muted) with its +/- sign;
@@ -936,7 +1046,7 @@ export const CategoryTransactionsTable = React.memo(
                       {t.status}
                     </Badge>
                   </TableCell>
-                  <TableCell className="max-w-[250px] text-xs text-muted-foreground">
+                  <TableCell className="max-w-[280px] text-xs text-muted-foreground">
                     {t.packName ? (
                       <Link
                         href={`/packs/${t.packId}`}
@@ -961,12 +1071,30 @@ export const CategoryTransactionsTable = React.memo(
                     ) : (
                       <span className="truncate block">{t.description}</span>
                     )}
+                    {/* Inline metadata chips — surface the most useful crypto /
+                        vault identifiers without opening the modal. House-POV
+                        coloring is intentionally NOT applied to these chips:
+                        they're neutral identifiers, not money values. */}
+                    <RowMetadataChips tx={t} />
                   </TableCell>
                   <TableCell
-                    className="text-xs text-muted-foreground whitespace-nowrap"
+                    className="whitespace-nowrap text-xs"
                     title={formatRelative(t.createdAt)}
                   >
-                    {formatDateTime(t.createdAt)}
+                    {/* Date+time deserves more weight than the muted run-on it
+                        used to be — operators scan this column to anchor every
+                        event in time. Foreground color + tabular-nums for clean
+                        column alignment; the muted relative-time line beneath
+                        keeps the "5 minutes ago" affordance without losing the
+                        absolute timestamp. */}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-medium tabular-nums text-foreground">
+                        {formatDateTime(t.createdAt)}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {formatRelative(t.createdAt)}
+                      </span>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -1366,5 +1494,158 @@ function WatchButton({
       )}
       Watch
     </button>
+  );
+}
+
+/**
+ * Inline metadata chips rendered under the Description cell. The chip set
+ * is type-aware so each row surfaces ONLY the identifiers that actually
+ * apply to that ledger event:
+ *
+ *   • deposit / deposit_bonus            → chain + source/destination address
+ *                                          + blockchain tx hash
+ *   • balance_withdrawal / card_withdrawal → destination address + chain
+ *                                          + blockchain tx hash + fireblocks id
+ *   • vault_lock / vault_unlock          → lock-duration label + unlock_at
+ *                                          countdown
+ *
+ * Each piece is read from the Transaction shape's top-level fields first
+ * (the query already projects cryptoAsset / blockchainTxHash / source /
+ * destination address / fireblocksTxId), then falls back to plausible
+ * metadata keys. We never invent values — if the field isn't on the row,
+ * nothing renders.
+ */
+function RowMetadataChips({ tx }: { tx: Transaction }) {
+  const chips: React.ReactNode[] = [];
+
+  // Crypto chain (e.g. ETH, BTC, SOL) — neutral identifier, not a money
+  // value. Use a plain badge with no House-POV coloring.
+  if (tx.cryptoAsset) {
+    chips.push(
+      <span
+        key="asset"
+        className="inline-flex items-center rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400"
+        title={`Crypto asset: ${tx.cryptoAsset}`}
+      >
+        {tx.cryptoAsset}
+      </span>,
+    );
+  }
+
+  // Source address (deposits — where the money came FROM).
+  if (tx.sourceAddress) {
+    chips.push(
+      <AddressChip
+        key="src"
+        label="From"
+        value={shortenAddress(tx.sourceAddress)}
+        full={tx.sourceAddress}
+      />,
+    );
+  }
+
+  // Destination address (withdrawals — where the money is being sent TO).
+  if (tx.destinationAddress) {
+    chips.push(
+      <AddressChip
+        key="dst"
+        label="To"
+        value={shortenAddress(tx.destinationAddress)}
+        full={tx.destinationAddress}
+      />,
+    );
+  }
+
+  // Blockchain transaction hash — on-chain receipt.
+  if (tx.blockchainTxHash) {
+    chips.push(
+      <AddressChip
+        key="hash"
+        label="Tx"
+        value={shortenAddress(tx.blockchainTxHash)}
+        full={tx.blockchainTxHash}
+      />,
+    );
+  }
+
+  // Fireblocks internal id — useful for support tickets that bridge to
+  // ops. Distinct namespace from the on-chain hash.
+  if (tx.fireblocksTxId) {
+    chips.push(
+      <AddressChip
+        key="fb"
+        label="FB"
+        value={shortenAddress(tx.fireblocksTxId)}
+        full={tx.fireblocksTxId}
+      />,
+    );
+  }
+
+  // Vault movements — surface the cooldown picked at lock time and the
+  // unlock countdown. Metadata key names vary across backend versions, so
+  // we probe a small set defensively (never invent the data — skip the
+  // chip when the row's metadata doesn't carry it).
+  if (tx.type === "vault_lock" || tx.type === "vault_unlock") {
+    const hours = metaNumber(tx.metadata, [
+      "hours",
+      "lock_hours",
+      "unlock_hours",
+      "duration_hours",
+    ]);
+    const unlockAt = metaString(tx.metadata, [
+      "unlock_at",
+      "unlockAt",
+      "unlocks_at",
+    ]);
+
+    if (hours != null) {
+      const label =
+        hours >= 24 && hours % 24 === 0
+          ? `${hours / 24}d`
+          : hours >= 1
+            ? `${hours}h`
+            : `${Math.round(hours * 60)}m`;
+      chips.push(
+        <span
+          key="vault-hours"
+          className="inline-flex items-center rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400"
+          title={`Vault lock window: ${hours}h`}
+        >
+          Lock {label}
+        </span>,
+      );
+    } else if (tx.type === "vault_lock") {
+      // moveBalanceToVault (admin action) writes `unlock_at: null` — surface
+      // that distinctly so operators see "instant unlock" vs "no cooldown set".
+      chips.push(
+        <span
+          key="vault-instant"
+          className="inline-flex items-center rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400"
+          title="No cooldown — admin parked the balance with `unlock_at: null`"
+        >
+          No cooldown
+        </span>,
+      );
+    }
+
+    if (unlockAt) {
+      const remaining = formatUnlockIn(unlockAt);
+      const absolute = formatDateTime(unlockAt);
+      chips.push(
+        <span
+          key="vault-unlock-at"
+          className="inline-flex items-center rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400"
+          title={`Unlocks at ${absolute}`}
+        >
+          {remaining ? `Unlocks ${remaining}` : `Unlocks ${absolute}`}
+        </span>,
+      );
+    }
+  }
+
+  if (chips.length === 0) return null;
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1">{chips}</div>
   );
 }

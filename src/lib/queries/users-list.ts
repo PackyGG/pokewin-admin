@@ -26,12 +26,20 @@ const USER_ROLES = new Set<string>(Object.values(user_role));
 // also has to JOIN-and-COUNT before the ORDER BY can read it. Defined at
 // module scope so both getUsers and the cached ranking helper share one
 // source of truth for which sorts take the heavy raw-SQL path.
+//
+// `lockedBalance` is here as a one-column raw-SQL sort even though it
+// reads ONLY from balances — it goes through the same filter-first ranking
+// CTE so the cache-key shape and degrade behaviour match the other
+// computed sorts, and so a "rank by who's stuck in vault/cooldown" sort
+// stays consistent with the future addition of unwagered-bonus columns
+// (if/when the schema grows them; see SORT_AGGREGATE_KEYS).
 const RAW_SQL_SORTS = new Set([
   "pnl",
   "totalWithdrawn",
   "inventoryValue",
   "netHoldings",
   "depositCount",
+  "lockedBalance",
 ]);
 
 /**
@@ -122,6 +130,11 @@ const SORT_AGGREGATE_KEYS: Record<string, readonly AggregateKey[]> = {
   totalWithdrawn: ["cw"],
   inventoryValue: ["inv"],
   depositCount: ["dc"],
+  // lockedBalance reads ONLY from balances (which is always LEFT JOIN'd by
+  // buildRankingJoins), so it needs no satellite aggregate CTE. Listing it
+  // explicitly keeps the routing table the single source of truth for
+  // which raw-SQL sorts exist.
+  lockedBalance: [],
 };
 
 function buildAggregateCtes(needs: readonly AggregateKey[]): string {
@@ -223,6 +236,15 @@ function buildRankingOrderExpr(sortBy: string): string {
   }
   if (sortBy === "depositCount") {
     return `COALESCE(dc.deposit_count, 0)`;
+  }
+  if (sortBy === "lockedBalance") {
+    // Vault/locked sort — the operator wants to see who has the most cash
+    // stuck in cooldown / wager-lock. `locked_balance` IS the vault balance
+    // (it's the single column the platform uses for both vault parking and
+    // any other locked-pool reasons — see actions.ts moveBalanceToVault).
+    // No unwagered_* columns exist in prod balances; this sums exactly what
+    // is currently lockable per row.
+    return `COALESCE(b.locked_balance::numeric, 0)`;
   }
   // netHoldings / pnl both net out the official_stream +
   // remove_locked_balance ledger carve-out (osrl) so the ORDER BY uses the
@@ -599,6 +621,14 @@ type UserListItem = {
   country: string | null;
   countryCode: string | null;
   availableBalance: number;
+  /**
+   * `balances.locked_balance` — the user's vault / cooldown-locked cash
+   * (the same column the per-user view shows as "Locked"). Surfaced as a
+   * dedicated column so an operator can spot at a glance who has cash
+   * parked in vault / wager-lock, and as the key for the `lockedBalance`
+   * sort (rank by who has the most stuck).
+   */
+  lockedBalance: number;
   inventoryValue: number;
   totalDeposited: number;
   totalWithdrawn: number;
@@ -720,6 +750,7 @@ async function hydrateUserListPage(
         country: u.country,
         countryCode: u.country_code,
         availableBalance,
+        lockedBalance,
         inventoryValue,
         netHoldings,
         totalDeposited,
