@@ -1,13 +1,4 @@
-import {
-  Dices,
-  Handshake,
-  Trophy,
-  Coins,
-  ArrowUpCircle,
-  ArrowDownCircle,
-  Scale,
-  Percent,
-} from "lucide-react";
+import { Dices, Trophy, Coins, Scale } from "lucide-react";
 import { KpiTile } from "@/components/modern-panels";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
@@ -27,9 +18,7 @@ const EMPTY_STATS: DoubleDownStats = {
   totalStaked: 0,
   totalPaidOut: 0,
   totalForfeited: 0,
-  totalEdgeCut: 0,
   netHousePnl: 0,
-  houseEdgePct: null,
 };
 
 function pct(v: number | null): string {
@@ -38,14 +27,14 @@ function pct(v: number | null): string {
 }
 
 /**
- * KPI strip for /insights/double-down. STARTED rounds only — Double Down is
- * OPTIONAL, so offered/expired (never-taken) offers are excluded from every
- * metric here (owner rule, 2026-06-30). House-POV colors (CLAUDE.md):
- *   - payout to a winner = house COST → rose
- *   - forfeited winnings (a lose) = house GAIN → emerald
- *   - the 10% edge cut = house revenue → emerald
- *   - NET house P&L positive → emerald, negative → rose
- *   - win-rate / counts are neutral (blue).
+ * KPI strip for /insights/double-down — EXACTLY four tiles (owner rule,
+ * 2026-06-30): Started rounds · Win rate · Total wager · House P&L. STARTED
+ * rounds only (Double Down is OPTIONAL — offered/expired offers excluded).
+ *
+ * House P&L is the headline "did WE make money": net house P&L = forfeited −
+ * payouts (paidOut/forfeited/edge stay computed internally to derive it, but
+ * are NOT shown as their own tiles). House-POV color: site PROFIT (≥0) →
+ * emerald, site LOSS (<0) → rose, with a clear sign + profit/loss label.
  *
  * Streamed behind its own <Suspense> from the page; cached + timeout-wrapped.
  */
@@ -71,11 +60,10 @@ export async function DoubleDownStatsSection({
   }
 
   const s = data;
-  const netAccent = s.netHousePnl >= 0 ? "emerald" : "rose";
+  const houseProfit = s.netHousePnl >= 0;
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-      {/* Volume + behaviour — neutral. Started rounds only. */}
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <KpiTile
         label="Started rounds"
         value={formatNumber(s.totalRounds)}
@@ -91,48 +79,20 @@ export async function DoubleDownStatsSection({
         accent="blue"
       />
       <KpiTile
-        label="Players' wins"
-        value={formatNumber(s.winCount)}
-        sub={`${formatNumber(s.loseCount)} loses`}
-        icon={Handshake}
-        accent="blue"
-      />
-      <KpiTile
-        label="Total staked"
+        label="Total wager"
         value={formatCurrency(s.totalStaked)}
-        sub="winnings put up (resolved)"
+        sub="winnings staked"
         icon={Coins}
         accent="blue"
       />
-
-      {/* House-POV money. */}
+      {/* House P&L — did WE make money? Positive = house profit (emerald),
+          negative = house loss (rose), with sign + label. */}
       <KpiTile
-        label="Paid out"
-        value={formatCurrency(s.totalPaidOut)}
-        sub="to winners — house cost"
-        icon={ArrowUpCircle}
-        accent="rose"
-      />
-      <KpiTile
-        label="Forfeited"
-        value={formatCurrency(s.totalForfeited)}
-        sub="winnings lost — house gain"
-        icon={ArrowDownCircle}
-        accent="emerald"
-      />
-      <KpiTile
-        label="Net house P&L"
-        value={formatCurrency(s.netHousePnl)}
-        sub={`incl. ${formatCurrency(s.totalEdgeCut)} edge cut`}
+        label="House P&L"
+        value={`${houseProfit ? "+" : "−"}${formatCurrency(Math.abs(s.netHousePnl))}`}
+        sub={houseProfit ? "house profit" : "house loss"}
         icon={Scale}
-        accent={netAccent}
-      />
-      <KpiTile
-        label="House edge"
-        value={pct(s.houseEdgePct)}
-        sub="net P&L ÷ staked"
-        icon={Percent}
-        accent={netAccent}
+        accent={houseProfit ? "emerald" : "rose"}
       />
     </div>
   );

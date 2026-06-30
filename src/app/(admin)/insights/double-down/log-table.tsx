@@ -22,11 +22,12 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import type { DoubleDownLog } from "@/lib/queries/double-down-shared";
 
 /**
- * Full Double Down audit log table for /insights/double-down — every round,
- * newest first. Server-driven pagination via `?page=` (the rows are already
- * the active server page; this only renders + paginates them). House-POV money
- * (CLAUDE.md): payout to a winner = house cost (rose); house cut = house
- * revenue (emerald). Staked is the neutral amount put up.
+ * Full Double Down audit log table for /insights/double-down — every started
+ * round, newest first. Server-driven pagination via `?page=` (the rows are
+ * already the active server page; this only renders + paginates them).
+ * House-POV money (CLAUDE.md): the payout to a winner = house cost (rose).
+ * Staked is the neutral amount put up. There is NO "house cut" column — the
+ * house edge is in the win probability, not a per-round cut.
  *
  * Only serializable props cross the RSC boundary (the row objects + a search
  * string); no function props.
@@ -63,7 +64,6 @@ export function DoubleDownLogTable({
               <TableHead className="text-right">Staked</TableHead>
               <TableHead>Result</TableHead>
               <TableHead className="text-right">Payout</TableHead>
-              <TableHead className="text-right">House cut</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
@@ -71,7 +71,7 @@ export function DoubleDownLogTable({
             {rows.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={8}
+                  colSpan={7}
                   className="py-10 text-center text-sm text-muted-foreground"
                 >
                   {search
@@ -117,16 +117,6 @@ export function DoubleDownLogTable({
                     {r.result === "win" && r.payoutUsd != null ? (
                       <span className="font-semibold text-rose-600 dark:text-rose-400">
                         {formatCurrency(r.payoutUsd)}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                  {/* House edge cut = house revenue → emerald. */}
-                  <TableCell className="text-right tabular-nums">
-                    {r.result === "win" && r.houseCutUsd != null ? (
-                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                        {formatCurrency(r.houseCutUsd)}
                       </span>
                     ) : (
                       <span className="text-muted-foreground">—</span>

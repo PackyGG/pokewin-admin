@@ -85,23 +85,24 @@ function DoubleDownStreamed({
   // stays focused on their actual activity.
   if (summary.totalRounds === 0) return null;
 
-  const netAccent = summary.netStakedVsPaid >= 0 ? "emerald" : "rose";
+  const houseProfit = summary.netHousePnl >= 0;
 
   return (
     <div className="space-y-3">
       <SectionHeading icon={Dices} title="Double Down" />
       <p className="-mt-1 text-[11px] text-muted-foreground">
-        Gamble-your-battle-winnings rounds — a win keeps 90% of the staked
-        winnings (house takes a 10% edge), a loss forfeits the whole win. Colors
-        are House-POV.
+        Gamble-your-battle-winnings rounds — a win pays out a voucher, a loss
+        forfeits the whole win. The house edge is in the win probability (~45%
+        player), not a per-round cut. Colors are House-POV.
       </p>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        {/* Summary — counts, win-rate, staked vs paid, net house-kept. */}
+        {/* Summary — the four headline metrics for this user: started rounds,
+            win rate, total wager, House P&L (did WE make money on them). */}
         <StatPanel title="Summary" icon={Dices} accent="purple">
           <div className="mb-3 flex items-baseline justify-between gap-3">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Rounds
+              Started rounds
             </span>
             <span className="text-2xl font-bold tabular-nums text-purple-600 dark:text-purple-400">
               {formatNumber(summary.totalRounds)}
@@ -113,21 +114,16 @@ function DoubleDownStreamed({
               value={`${pct(summary.winRate)} · ${formatNumber(summary.winCount)}W / ${formatNumber(summary.loseCount)}L`}
             />
             <SummaryRow
-              label="Total staked"
+              label="Total wager"
               value={formatCurrency(summary.totalStaked)}
             />
-            {/* Paid out to this user on wins = house cost → rose. */}
+            {/* House P&L on this user = forfeited − payouts. Profit → emerald,
+                loss → rose, with sign + label. */}
             <SummaryRow
-              label="Paid out"
-              value={formatCurrency(summary.totalPaidOut)}
-              valueClassName="text-rose-600 dark:text-rose-400"
-            />
-            {/* Net house-kept on this user (staked − paid). ≥0 = house up. */}
-            <SummaryRow
-              label="Net (house-kept)"
-              value={formatCurrency(summary.netStakedVsPaid)}
+              label="House P&L"
+              value={`${houseProfit ? "+" : "−"}${formatCurrency(Math.abs(summary.netHousePnl))} · ${houseProfit ? "profit" : "loss"}`}
               valueClassName={
-                netAccent === "emerald"
+                houseProfit
                   ? "text-emerald-600 dark:text-emerald-400"
                   : "text-rose-600 dark:text-rose-400"
               }

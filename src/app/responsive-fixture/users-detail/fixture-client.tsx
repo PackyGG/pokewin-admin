@@ -314,6 +314,7 @@ export function UserDetailFixtureClient() {
           totalStaked: 0,
           totalPaidOut: 0,
           netStakedVsPaid: 0,
+          netHousePnl: 0,
         },
         rows: [],
       })}

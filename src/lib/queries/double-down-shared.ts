@@ -101,23 +101,25 @@ export type DoubleDownStats = {
   resolvedRounds: number;
   winCount: number;
   loseCount: number;
-  /** wins / resolved (0..1), null when nothing resolved yet. */
+  /**
+   * wins / resolved (0..1), null when nothing resolved yet. This IS the edge
+   * indicator — the house edge lives in the win probability (~45% player /
+   * 55% house), NOT a per-round cut (owner clarification, 2026-06-30). Noisy
+   * at low volume.
+   */
   winRate: number | null;
   /** Σ won_amount_usd over RESOLVED rounds — the total winnings staked. */
   totalStaked: number;
-  /** Σ payout_amount_usd over WINS (house COST → rose). */
+  /** Σ actual payout voucher value over WINS (house COST → rose). */
   totalPaidOut: number;
   /** Σ won_amount_usd over LOSES — winnings forfeited (house GAIN → emerald). */
   totalForfeited: number;
-  /** Σ house_amount_usd over WINS — the 10% edge cut (house revenue → emerald). */
-  totalEdgeCut: number;
-  /** forfeited + edgeCut − paidOut. >0 = house up (emerald). */
-  netHousePnl: number;
   /**
-   * Effective house edge over staked winnings: netHousePnl / totalStaked.
-   * Null when nothing has been staked yet.
+   * Net house P&L = forfeited − paidOut (real money flows ONLY — NO edge/
+   * house-cut term; the edge is in the win probability, adding a cut would
+   * double-count). >0 = house profit (emerald), <0 = house loss (rose).
    */
-  houseEdgePct: number | null;
+  netHousePnl: number;
 };
 
 export type DoubleDownLogRow = {
@@ -129,10 +131,8 @@ export type DoubleDownLogRow = {
   stakedUsd: number;
   result: DoubleDownResult | null;
   status: DoubleDownStatus;
-  /** Payout to the user on a win (rose). 0 / null otherwise. */
+  /** Actual payout voucher value to the user on a win (rose). Null otherwise. */
   payoutUsd: number | null;
-  /** House edge cut on a win (emerald). 0 / null otherwise. */
-  houseCutUsd: number | null;
   createdAt: string;
   resolvedAt: string | null;
 };
@@ -161,20 +161,23 @@ export type DoubleDownDashboardStats = {
   /** Unresolved plays (normally 0 — a session implies a resolved round). */
   pending: number;
   uniquePlayers: number;
-  /** wins / (wins+loses), null when nothing resolved. */
+  /**
+   * wins / (wins+loses), null when nothing resolved. The edge indicator
+   * (~45% player intended) — the house edge is in the win probability, not a
+   * per-round cut.
+   */
   winRate: number | null;
   /** Σ won_amount_usd over resolved plays — winnings staked. */
   staked: number;
   /** Σ won_amount_usd over LOSES — forfeited winnings (house GAIN → emerald). */
   forfeited: number;
-  /** Σ payout_amount_usd over WINS — paid to winners (house COST → rose). */
+  /** Σ actual payout voucher value over WINS — paid to winners (house COST → rose). */
   paidOut: number;
-  /** Σ house_amount_usd over WINS — the edge cut (house revenue → emerald). */
-  edgeCut: number;
-  /** forfeited + edgeCut − paidOut. >0 = house up (emerald). */
+  /**
+   * Net house P&L = forfeited − paidOut (real money flows ONLY — NO edge term;
+   * the edge is in the win probability). >0 = house profit (emerald).
+   */
   netHousePnl: number;
-  /** netHousePnl / staked, null when nothing staked. */
-  houseEdgePct: number | null;
 };
 
 export type UserDoubleDownHistory = {
@@ -189,6 +192,14 @@ export type UserDoubleDownHistory = {
     totalPaidOut: number;
     /** netStakedVsPaid = totalStaked − totalPaidOut (house-kept on this user). */
     netStakedVsPaid: number;
+    /**
+     * Net house P&L on THIS user — the headline "did WE make money on them":
+     * forfeited (their loses) − payouts (their wins). Real money flows ONLY,
+     * NO edge term (same definition as the Insights / dashboard House P&L
+     * tile). Positive = house profit on this user (emerald), negative = loss
+     * (rose).
+     */
+    netHousePnl: number;
   };
   /** Recent rounds, newest first. */
   rows: DoubleDownLogRow[];

@@ -106,7 +106,6 @@ type RawLogRow = {
   result: DoubleDownResult | null;
   status: DoubleDownStatus;
   payout_amount_usd: string | null;
-  house_amount_usd: string | null;
   created_at: Date;
   resolved_at: Date | null;
 };
@@ -147,7 +146,6 @@ function mapLogRow(r: RawLogRow): DoubleDownLogRow {
     result: r.result,
     status: r.status,
     payoutUsd: num(r.payout_amount_usd),
-    houseCutUsd: num(r.house_amount_usd),
     createdAt: r.created_at.toISOString(),
     resolvedAt: r.resolved_at ? r.resolved_at.toISOString() : null,
   };
@@ -174,7 +172,6 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
       total_staked: string | null;
       total_paid_out: string | null;
       total_forfeited: string | null;
-      total_edge_cut: string | null;
     }[]
   >(Prisma.sql`
     SELECT
@@ -183,17 +180,13 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
       count(*) FILTER (WHERE o.result = 'win')                          AS win_count,
       count(*) FILTER (WHERE o.result = 'lose')                         AS lose_count,
       sum(o.won_amount_usd) FILTER (WHERE o.result IS NOT NULL)         AS total_staked,
-      -- payout / house edge come from the paired voucher's metadata when
-      -- present; a small number of win rows have a joined voucher whose
-      -- metadata blob omits the breakdown (verified read-only on prod). For
-      -- those we fall back to the DOCUMENTED flat split (winner keeps 90%,
-      -- house takes the 10% edge) so payout + edge always reconcile to
-      -- won_amount and the win legs are never silently dropped from the P&L.
+      -- Win payout = the ACTUAL minted payout voucher value (NOT a hardcoded
+      -- multiplier). A few win vouchers omit the breakdown in metadata; for
+      -- those we fall back to the observed ~0.9 × won_amount (the actual
+      -- minted ratio on prod), so no win leg is silently dropped from the P&L.
       sum(COALESCE((v.metadata->>'payout_amount_usd')::numeric, o.won_amount_usd * 0.9))
         FILTER (WHERE o.result = 'win')                                 AS total_paid_out,
-      sum(o.won_amount_usd) FILTER (WHERE o.result = 'lose')            AS total_forfeited,
-      sum(COALESCE((v.metadata->>'house_amount_usd')::numeric, o.won_amount_usd * 0.1))
-        FILTER (WHERE o.result = 'win')                                 AS total_edge_cut
+      sum(o.won_amount_usd) FILTER (WHERE o.result = 'lose')            AS total_forfeited
     FROM battle_double_down_offers o
     LEFT JOIN vouchers v
       ON v.id = o.won_voucher_id
@@ -209,8 +202,10 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
   const totalStaked = num(r?.total_staked ?? null) ?? 0;
   const totalPaidOut = num(r?.total_paid_out ?? null) ?? 0;
   const totalForfeited = num(r?.total_forfeited ?? null) ?? 0;
-  const totalEdgeCut = num(r?.total_edge_cut ?? null) ?? 0;
-  const netHousePnl = totalForfeited + totalEdgeCut - totalPaidOut;
+  // Net house P&L = forfeited − payouts. Real money flows ONLY — the house
+  // edge is in the win probability, so NO edge/house-cut term is added (that
+  // would double-count).
+  const netHousePnl = totalForfeited - totalPaidOut;
 
   return {
     totalRounds,
@@ -221,9 +216,7 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
     totalStaked,
     totalPaidOut,
     totalForfeited,
-    totalEdgeCut,
     netHousePnl,
-    houseEdgePct: totalStaked > 0 ? netHousePnl / totalStaked : null,
   };
 }
 
@@ -253,16 +246,14 @@ const LOG_SELECT = Prisma.sql`
     o.won_amount_usd,
     o.result,
     o.status,
-    -- On a win, surface the voucher's payout / house-edge breakdown; if the
-    -- voucher metadata omits it (a few rows do — verified on prod), fall back
-    -- to the documented flat 90/10 split so the row still shows a payout +
-    -- house cut instead of a blank. Non-win rows resolve to NULL → "—".
+    -- On a win, surface the ACTUAL minted payout voucher value; if the voucher
+    -- metadata omits it (a few rows do — verified on prod), fall back to the
+    -- observed ~0.9 × won_amount so the row still shows a payout instead of a
+    -- blank. Non-win rows resolve to NULL → "—". House-edge/"house cut" is NOT
+    -- surfaced anywhere (the edge is in the win probability, not a per-round cut).
     CASE WHEN o.result = 'win'
       THEN COALESCE((v.metadata->>'payout_amount_usd')::numeric, o.won_amount_usd * 0.9)::text
     END AS payout_amount_usd,
-    CASE WHEN o.result = 'win'
-      THEN COALESCE((v.metadata->>'house_amount_usd')::numeric, o.won_amount_usd * 0.1)::text
-    END AS house_amount_usd,
     o.created_at,
     o.resolved_at
   FROM battle_double_down_offers o
@@ -377,6 +368,7 @@ export async function getUserDoubleDownHistory(
         lose_count: bigint;
         total_staked: string | null;
         total_paid_out: string | null;
+        total_forfeited: string | null;
       }[]
     >(Prisma.sql`
       SELECT
@@ -385,10 +377,12 @@ export async function getUserDoubleDownHistory(
         count(*) FILTER (WHERE o.result = 'win')                    AS win_count,
         count(*) FILTER (WHERE o.result = 'lose')                   AS lose_count,
         sum(o.won_amount_usd) FILTER (WHERE o.result IS NOT NULL)   AS total_staked,
-        -- Same documented 90/10 fallback as computeStats: use the voucher
-        -- payout when present, else won_amount * 0.9 (winner keeps 90%).
+        -- Actual minted payout voucher value on wins (fallback ~0.9 × won when
+        -- metadata is absent). No house-edge/"house cut" term — the edge is in
+        -- the win probability, not a per-round cut.
         sum(COALESCE((v.metadata->>'payout_amount_usd')::numeric, o.won_amount_usd * 0.9))
-          FILTER (WHERE o.result = 'win')                           AS total_paid_out
+          FILTER (WHERE o.result = 'win')                           AS total_paid_out,
+        sum(o.won_amount_usd) FILTER (WHERE o.result = 'lose')      AS total_forfeited
       FROM battle_double_down_offers o
       LEFT JOIN vouchers v
         ON v.id = o.won_voucher_id
@@ -408,6 +402,7 @@ export async function getUserDoubleDownHistory(
   const winCount = Number(s?.win_count ?? 0);
   const totalStaked = num(s?.total_staked ?? null) ?? 0;
   const totalPaidOut = num(s?.total_paid_out ?? null) ?? 0;
+  const totalForfeited = num(s?.total_forfeited ?? null) ?? 0;
 
   return {
     summary: {
@@ -419,6 +414,9 @@ export async function getUserDoubleDownHistory(
       totalStaked,
       totalPaidOut,
       netStakedVsPaid: totalStaked - totalPaidOut,
+      // Canonical House P&L on this user (matches Insights/dashboard):
+      // forfeited − payouts. Real money flows ONLY, NO edge term.
+      netHousePnl: totalForfeited - totalPaidOut,
     },
     rows: rows.map(mapLogRow),
   };
@@ -436,9 +434,7 @@ const EMPTY_DASHBOARD_STATS: DoubleDownDashboardStats = {
   staked: 0,
   forfeited: 0,
   paidOut: 0,
-  edgeCut: 0,
   netHousePnl: 0,
-  houseEdgePct: null,
 };
 
 async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
@@ -450,12 +446,12 @@ async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
   // game_session row exists ONLY for a PLAYED round (accepted → resolved), so
   // this counts played rounds the same way the dashboard counts pack / battle /
   // upgrader plays. Outcome is read from o.result + o.won_amount_usd; the win
-  // payout / house-edge come strictly from the paired payout VOUCHER
+  // payout comes strictly from the paired payout VOUCHER's ACTUAL minted value
   // (origin='battle_double_down_payout') — NOT from any ledger/balance row
   // (there is no real ledger tx for these; voucher_redeemed is reconciliation
-  // only). A few win vouchers omit the metadata breakdown, so payout/edge fall
-  // back to the documented flat 90/10 split (COALESCE) so the win legs always
-  // reconcile (paid + edge == won; verified read-only on prod).
+  // only), and NOT a hardcoded multiplier. A few win vouchers omit the value in
+  // metadata, so payout falls back to the observed ~0.9 × won (COALESCE). There
+  // is NO house-edge/"house cut" term — the edge is in the win probability.
   //
   // Index path (EXPLAIN-proven read-only): the planner drives from the TINY
   // battle_double_down_offers table (Seq Scan, dozens of rows) and probes the
@@ -473,7 +469,6 @@ async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
       staked: string | null;
       forfeited: string | null;
       paid_out: string | null;
-      edge_cut: string | null;
     }[]
   >(Prisma.sql`
     SELECT
@@ -485,9 +480,7 @@ async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
       sum(o.won_amount_usd) FILTER (WHERE o.result IS NOT NULL)         AS staked,
       sum(o.won_amount_usd) FILTER (WHERE o.result = 'lose')            AS forfeited,
       sum(COALESCE((v.metadata->>'payout_amount_usd')::numeric, o.won_amount_usd * 0.9))
-        FILTER (WHERE o.result = 'win')                                 AS paid_out,
-      sum(COALESCE((v.metadata->>'house_amount_usd')::numeric, o.won_amount_usd * 0.1))
-        FILTER (WHERE o.result = 'win')                                 AS edge_cut
+        FILTER (WHERE o.result = 'win')                                 AS paid_out
     FROM game_sessions gs
     JOIN battle_double_down_offers o ON o.id = gs.game_id
     LEFT JOIN vouchers v
@@ -503,8 +496,8 @@ async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
   const staked = num(r?.staked ?? null) ?? 0;
   const forfeited = num(r?.forfeited ?? null) ?? 0;
   const paidOut = num(r?.paid_out ?? null) ?? 0;
-  const edgeCut = num(r?.edge_cut ?? null) ?? 0;
-  const netHousePnl = forfeited + edgeCut - paidOut;
+  // Net house P&L = forfeited − payouts. Real money flows ONLY, NO edge term.
+  const netHousePnl = forfeited - paidOut;
 
   return {
     rounds: Number(r?.rounds ?? 0),
@@ -516,9 +509,7 @@ async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
     staked,
     forfeited,
     paidOut,
-    edgeCut,
     netHousePnl,
-    houseEdgePct: staked > 0 ? netHousePnl / staked : null,
   };
 }
 
