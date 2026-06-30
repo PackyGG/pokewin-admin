@@ -22,9 +22,9 @@ import type { DoubleDownLog } from "@/lib/queries/double-down-shared";
  * Full Double Down audit log table for /insights/double-down — every started
  * round, newest first. Server-driven pagination via `?page=` (the rows are
  * already the active server page; this only renders + paginates them).
- * House-POV money (CLAUDE.md): the payout to a winner = house cost (rose).
- * Staked is the neutral amount put up. There is NO "house cut" column — the
- * house margin is in the win odds, not a per-round cut.
+ * Columns: Time · User · Battle · Staked · Result. Staked is the neutral
+ * amount put up. (The Payout column was removed; the payout value still feeds
+ * the House P&L math in the stats query via the voucher value.)
  *
  * Only serializable props cross the RSC boundary (the row objects + a search
  * string); no function props.
@@ -60,14 +60,13 @@ export function DoubleDownLogTable({
               <TableHead>Battle</TableHead>
               <TableHead className="text-right">Staked</TableHead>
               <TableHead>Result</TableHead>
-              <TableHead className="text-right">Payout</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={6}
+                  colSpan={5}
                   className="py-10 text-center text-sm text-muted-foreground"
                 >
                   {search
@@ -107,16 +106,6 @@ export function DoubleDownLogTable({
                   </TableCell>
                   <TableCell>
                     <DoubleDownResultBadge result={r.result} />
-                  </TableCell>
-                  {/* Payout to a winner = house COST → rose. */}
-                  <TableCell className="text-right tabular-nums">
-                    {r.result === "win" && r.payoutUsd != null ? (
-                      <span className="font-semibold text-rose-600 dark:text-rose-400">
-                        {formatCurrency(r.payoutUsd)}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
                   </TableCell>
                 </TableRow>
               ))

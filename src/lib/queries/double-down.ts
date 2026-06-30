@@ -11,6 +11,7 @@ import {
   type DoubleDownStats,
   type DoubleDownLogRow,
   type DoubleDownLog,
+  type DoubleDownTimeSeriesPoint,
   type DoubleDownDashboardStats,
   type UserDoubleDownHistory,
 } from "@/lib/queries/double-down-shared";
@@ -33,6 +34,7 @@ export type {
   DoubleDownStats,
   DoubleDownLogRow,
   DoubleDownLog,
+  DoubleDownTimeSeriesPoint,
   DoubleDownDashboardStats,
   UserDoubleDownHistory,
 } from "@/lib/queries/double-down-shared";
@@ -236,6 +238,71 @@ export async function getDoubleDownStats(
   return unstable_cache(
     (p: DoubleDownPeriod) => computeStats(p),
     ["double-down-stats-v1", period],
+    { revalidate: cacheTtlForDoubleDownPeriod(period), tags: ["double-down"] },
+  )(period);
+}
+
+// ── SURFACE 1: hourly time series (Usage + House P&L charts) ──────────────────
+
+async function computeTimeSeries(
+  period: DoubleDownPeriod,
+): Promise<DoubleDownTimeSeriesPoint[]> {
+  const db = await getDb();
+  const days = daysForDoubleDownPeriodCapped(period);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // HOURLY buckets (date_trunc('hour', …)). The feature is only a few days old
+  // with tiny volume — daily buckets collapse to 1 bar; hourly shows the trend.
+  // `started` = count of started rounds in the hour (Usage); `pnl` = net house
+  // P&L over RESOLVED rounds in the hour = Σ staked − Σ real voucher payout
+  // (same model as the KPI strip). Bounded by the period window (started-only).
+  // The table has no created_at index → this seq-scans the tiny table (fine at
+  // this volume; flagged in recommended-indexes.sql like the other reads).
+  const rows = await db.$queryRaw<
+    { bucket: Date; started: bigint; pnl: string | null }[]
+  >(Prisma.sql`
+    SELECT
+      date_trunc('hour', o.created_at)                            AS bucket,
+      count(*)                                                    AS started,
+      coalesce(sum(o.won_amount_usd) FILTER (WHERE o.result IS NOT NULL), 0)
+        - coalesce(sum(v.value) FILTER (WHERE o.result = 'win'), 0)  AS pnl
+    FROM battle_double_down_offers o
+    LEFT JOIN vouchers v
+      ON v.id = o.won_voucher_id
+     AND v.origin = 'battle_double_down_payout'
+    WHERE ${STARTED_STATUS} AND o.created_at >= ${since}
+    GROUP BY 1
+    ORDER BY 1
+  `);
+
+  // Build the running cumulative P&L and the "HH:00" UTC hour label.
+  let cum = 0;
+  return rows.map((r) => {
+    const pnl = num(r.pnl) ?? 0;
+    cum += pnl;
+    const hh = String(r.bucket.getUTCHours()).padStart(2, "0");
+    return {
+      bucket: `${hh}:00`,
+      started: Number(r.started ?? 0),
+      pnl,
+      cumPnl: cum,
+    };
+  });
+}
+
+/**
+ * Hourly time series for the /insights/double-down charts (Usage = round
+ * count per hour; House P&L = staked − real payout per hour, + a cumulative
+ * line). Cached on prod, keyed on period.
+ */
+export async function getDoubleDownTimeSeries(
+  period: DoubleDownPeriod,
+): Promise<DoubleDownTimeSeriesPoint[]> {
+  const env = await readDbEnv();
+  if (env !== "prod") return computeTimeSeries(period);
+  return unstable_cache(
+    (p: DoubleDownPeriod) => computeTimeSeries(p),
+    ["double-down-timeseries-v1", period],
     { revalidate: cacheTtlForDoubleDownPeriod(period), tags: ["double-down"] },
   )(period);
 }

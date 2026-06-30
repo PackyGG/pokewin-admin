@@ -145,6 +145,23 @@ export type DoubleDownLog = {
 };
 
 /**
+ * One time-bucket of Double Down activity for the /insights charts. The
+ * feature is only a few days old + tiny volume, so buckets are HOURLY (daily
+ * would collapse to 1 bar). Serializable row (no function props across RSC).
+ *   • bucket  — "HH:00" hour label (UTC) for the X axis.
+ *   • started — count of STARTED rounds in the hour (Usage chart).
+ *   • pnl     — net house P&L for the hour over RESOLVED rounds = staked −
+ *               real voucher payout (House-POV: >0 profit emerald, <0 rose).
+ *   • cumPnl  — running cumulative house P&L through this bucket (trend line).
+ */
+export type DoubleDownTimeSeriesPoint = {
+  bucket: string;
+  started: number;
+  pnl: number;
+  cumPnl: number;
+};
+
+/**
  * Dashboard lifetime stats for Double Down — counted the DEV's CANONICAL way:
  * `game_sessions WHERE game_type='battle_double_down'` JOINed on game_id →
  * battle_double_down_offers. A game_session row exists ONLY for a round that
