@@ -736,3 +736,28 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
 -- shave milliseconds and is not worth the write-amplification on the hot
 -- `balances` table. Reassess if /users grows past ~50k or the cold
 -- "Top vault / locked" click becomes user-visible slow.
+
+-- #21 ----------------------------------------------------------------
+-- affiliate_codes.code — /insights/affiliate-codes code-PREFIX search
+-- ===================================================================
+-- Added by the 2026-06-30 Affiliate Codes page. The page's primary code
+-- lookup is EXACT (`code = $1`), which already hits the existing
+-- `affiliate_codes_code_unique` btree (Index Scan, EXPLAIN-proven). But a
+-- code PREFIX search (`code LIKE 'ABC%'`) CANNOT use that default-collation
+-- index — EXPLAIN shows a Seq Scan. Per the Index-or-ClickHouse rule the
+-- prefix path is therefore DISABLED in code today
+-- (`CODE_PREFIX_INDEX_APPLIED = false` in
+-- src/lib/queries/affiliate-codes-lookup.ts); only exact-code + owner
+-- (username/email exact + username prefix, all already indexed) ship.
+--
+-- To enable code-prefix search, create a text_pattern_ops btree (the same
+-- shape `idx_user_lower_username_prefix` uses for username prefix), then
+-- flip CODE_PREFIX_INDEX_APPLIED to true:
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_code_prefix
+--     ON affiliate_codes (code text_pattern_ops);
+--
+-- NOT APPLIED — flagged only. At today's prod size (~1,006 affiliate_codes
+-- rows, 2026-06-30) a Seq Scan for prefix is sub-millisecond, so this is
+-- low priority; it is flagged to keep the page strictly index-served and
+-- to let the prefix feature turn on cleanly once the table grows.

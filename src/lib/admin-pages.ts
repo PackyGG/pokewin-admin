@@ -63,6 +63,12 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Active grantable key (the page still gates on it).
   { group: "Insights", label: "Cost Breakdown", key: "/insights/cost-breakdown" },
   { group: "Insights", label: "Rewards", key: "/insights/rewards" },
+  // Affiliate Codes — read-only lookup of an affiliate code or its owner
+  // (earnings / claimable balance / referrals) + two audited admin-only
+  // write actions (zero claimable balance, transfer code to @motha). Own
+  // grantable key so it can be managed independently of the rewards
+  // rollup; the whole /insights tree is additionally owner-gated.
+  { group: "Insights", label: "Affiliate Codes", key: "/insights/affiliate-codes" },
   // Legacy routes — thin redirects; keys retained for bookmark + role grants
   // so existing grants don't become "unknown". The pages were removed and
   // the routes 308-redirect to the Insights Overview (next.config.ts).

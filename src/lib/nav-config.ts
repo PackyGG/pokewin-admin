@@ -355,6 +355,23 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
   {
+    // Affiliate Codes — read-only lookup of an affiliate code or its owner
+    // (earnings / claimable balance / referrals) + two audited admin-only
+    // write actions. Icon `Ticket` is already registered in the ICONS map
+    // in `src/components/app-sidebar.tsx` (no React #130 risk).
+    id: "nav.insights.affiliate-codes",
+    group: "Insights",
+    label: "Affiliate Codes",
+    href: "/insights/affiliate-codes",
+    pageKey: "/insights/affiliate-codes",
+    icon: "Ticket",
+    description: "Look up an affiliate code or its owner",
+    keywords: ["affiliate", "code", "referral", "promo", "owner", "claim"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     id: "nav.insights.rewards.deposit-bonus",
     group: "Insights",
     label: "Deposit Bonus",
