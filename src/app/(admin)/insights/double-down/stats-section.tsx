@@ -20,8 +20,6 @@ import {
 
 const EMPTY_STATS: DoubleDownStats = {
   totalRounds: 0,
-  acceptedRounds: 0,
-  notAcceptedRounds: 0,
   resolvedRounds: 0,
   winCount: 0,
   loseCount: 0,
@@ -40,12 +38,14 @@ function pct(v: number | null): string {
 }
 
 /**
- * KPI strip for /insights/double-down. House-POV colors (CLAUDE.md):
+ * KPI strip for /insights/double-down. STARTED rounds only — Double Down is
+ * OPTIONAL, so offered/expired (never-taken) offers are excluded from every
+ * metric here (owner rule, 2026-06-30). House-POV colors (CLAUDE.md):
  *   - payout to a winner = house COST → rose
  *   - forfeited winnings (a lose) = house GAIN → emerald
  *   - the 10% edge cut = house revenue → emerald
  *   - NET house P&L positive → emerald, negative → rose
- *   - win-rate / accept-rate / counts are neutral (blue).
+ *   - win-rate / counts are neutral (blue).
  *
  * Streamed behind its own <Suspense> from the page; cached + timeout-wrapped.
  */
@@ -71,25 +71,16 @@ export async function DoubleDownStatsSection({
   }
 
   const s = data;
-  const acceptRate =
-    s.totalRounds > 0 ? s.acceptedRounds / s.totalRounds : null;
   const netAccent = s.netHousePnl >= 0 ? "emerald" : "rose";
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-      {/* Volume + behaviour — neutral. */}
+      {/* Volume + behaviour — neutral. Started rounds only. */}
       <KpiTile
-        label="Rounds"
+        label="Started rounds"
         value={formatNumber(s.totalRounds)}
         sub={`${formatNumber(s.resolvedRounds)} resolved`}
         icon={Dices}
-        accent="blue"
-      />
-      <KpiTile
-        label="Accept rate"
-        value={pct(acceptRate)}
-        sub={`${formatNumber(s.acceptedRounds)} accepted · ${formatNumber(s.notAcceptedRounds)} not`}
-        icon={Handshake}
         accent="blue"
       />
       <KpiTile
@@ -97,6 +88,13 @@ export async function DoubleDownStatsSection({
         value={pct(s.winRate)}
         sub={`${formatNumber(s.winCount)} win · ${formatNumber(s.loseCount)} lose`}
         icon={Trophy}
+        accent="blue"
+      />
+      <KpiTile
+        label="Players' wins"
+        value={formatNumber(s.winCount)}
+        sub={`${formatNumber(s.loseCount)} loses`}
+        icon={Handshake}
         accent="blue"
       />
       <KpiTile

@@ -118,6 +118,25 @@ function num(v: string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * STARTED-only predicate (owner rule, 2026-06-30): Double Down is OPTIONAL —
+ * the user is OFFERED the round and chooses whether to play. We only ever
+ * track/count rounds the user ACTUALLY STARTED, i.e. accepted/played:
+ * `status IN ('accepted','resolved')`. This EXCLUDES `offered` (pending, never
+ * clicked) and `expired` (offered, never taken) from EVERY surface.
+ *
+ * Verified read-only on prod: `status IN ('accepted','resolved')` exactly
+ * equals the set that has a `game_sessions` row with
+ * game_type='battle_double_down' (the dashboard's "played" definition), so all
+ * three surfaces agree. NOTE: `accepted_at` is NOT reliably populated on this
+ * DB (all NULL in the sample) — `status` is the authoritative signal, so we
+ * key off status, not accepted_at.
+ *
+ * An 'accepted'-but-not-yet-'resolved' round IS started (rare/transient — PF
+ * resolves fast) and is included; it reads as a pending RESULT.
+ */
+const STARTED_STATUS = Prisma.sql`o.status IN ('accepted','resolved')`;
+
 function mapLogRow(r: RawLogRow): DoubleDownLogRow {
   return {
     id: r.id,
@@ -141,15 +160,14 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
   const days = daysForDoubleDownPeriodCapped(period);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-  // One pass over the window: counts + exact numeric SUMs. The win-leg payout
-  // and house-edge cut come from the paired voucher (origin filter is redundant
-  // with the won_voucher_id join but keeps the join honest if a voucher is ever
-  // repurposed). SUM(numeric) stays exact in Postgres; we stringify and parse.
+  // STARTED-only (owner rule): only rounds the user actually played
+  // (status IN accepted/resolved) — offered/expired offers are excluded
+  // entirely. One pass over the window: counts + exact numeric SUMs. The
+  // win-leg payout and house-edge cut come from the paired voucher. SUM(numeric)
+  // stays exact in Postgres; we stringify and parse.
   const rows = await db.$queryRaw<
     {
       total_rounds: bigint;
-      accepted_rounds: bigint;
-      not_accepted_rounds: bigint;
       resolved_rounds: bigint;
       win_count: bigint;
       lose_count: bigint;
@@ -161,8 +179,6 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
   >(Prisma.sql`
     SELECT
       count(*)                                                          AS total_rounds,
-      count(*) FILTER (WHERE o.status IN ('accepted','resolved'))       AS accepted_rounds,
-      count(*) FILTER (WHERE o.status IN ('offered','expired'))         AS not_accepted_rounds,
       count(*) FILTER (WHERE o.result IS NOT NULL)                      AS resolved_rounds,
       count(*) FILTER (WHERE o.result = 'win')                          AS win_count,
       count(*) FILTER (WHERE o.result = 'lose')                         AS lose_count,
@@ -182,13 +198,11 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
     LEFT JOIN vouchers v
       ON v.id = o.won_voucher_id
      AND v.origin = 'battle_double_down_payout'
-    WHERE o.created_at >= ${since}
+    WHERE ${STARTED_STATUS} AND o.created_at >= ${since}
   `);
 
   const r = rows[0];
   const totalRounds = Number(r?.total_rounds ?? 0);
-  const acceptedRounds = Number(r?.accepted_rounds ?? 0);
-  const notAcceptedRounds = Number(r?.not_accepted_rounds ?? 0);
   const resolvedRounds = Number(r?.resolved_rounds ?? 0);
   const winCount = Number(r?.win_count ?? 0);
   const loseCount = Number(r?.lose_count ?? 0);
@@ -200,8 +214,6 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
 
   return {
     totalRounds,
-    acceptedRounds,
-    notAcceptedRounds,
     resolvedRounds,
     winCount,
     loseCount,
@@ -271,14 +283,16 @@ async function computeLog(args: {
   const days = daysForDoubleDownPeriodCapped(period);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-  // Optional username search (exact-or-prefix, case-insensitive, parameterized).
-  // The window filter alone seq-scans (no created_at index, flagged); the
-  // username predicate further narrows in the same scan.
+  // STARTED-only (owner rule): the audit log shows ONLY rounds the user
+  // actually played (status IN accepted/resolved) — offered/expired offers
+  // never appear. Optional username search (prefix, case-insensitive,
+  // parameterized). The window filter seq-scans (tiny table, no created_at
+  // index, flagged); the status + username predicates narrow the same scan.
   const trimmed = search.trim().toLowerCase();
   const searchClause = trimmed
     ? Prisma.sql`AND lower(u.username) LIKE ${trimmed + "%"}`
     : Prisma.empty;
-  const whereClause = Prisma.sql`WHERE o.created_at >= ${since} ${searchClause}`;
+  const whereClause = Prisma.sql`WHERE ${STARTED_STATUS} AND o.created_at >= ${since} ${searchClause}`;
 
   const offset = (page - 1) * perPage;
 
@@ -336,15 +350,17 @@ export async function getDoubleDownLog(args: {
 // ── SURFACE 2: per-user history (INDEXED lookup) ──────────────────────────────
 
 /**
- * This user's Double Down history — log rows + a compact summary. Filters
- * `user_id` so the planner serves it from the (user_id,status) index
+ * This user's Double Down history — log rows + a compact summary. STARTED-only
+ * (owner rule): only rounds the user actually played (status IN
+ * accepted/resolved) — a user with only expired offers shows nothing. Filters
+ * `user_id` + status so the planner serves it from the (user_id,status) index
  * (EXPLAIN → Bitmap Index Scan). Lazy-loaded by the /users/[id] Gaming tab
  * (kicked only when that tab is active — Active-Timeframe-Only). NOT cached:
  * it is a per-user operational read on an indexed lookup with a small LIMIT,
  * consistent with the other per-user Gaming-tab reads.
  *
  * `limit` bounds the row list; the summary aggregates ALL of this user's
- * rounds (also via the user_id index).
+ * STARTED rounds (also via the (user_id,status) index).
  */
 export async function getUserDoubleDownHistory(
   userId: string,
@@ -377,11 +393,11 @@ export async function getUserDoubleDownHistory(
       LEFT JOIN vouchers v
         ON v.id = o.won_voucher_id
        AND v.origin = 'battle_double_down_payout'
-      WHERE o.user_id = ${userId}
+      WHERE o.user_id = ${userId} AND ${STARTED_STATUS}
     `),
     db.$queryRaw<RawLogRow[]>(Prisma.sql`
       ${LOG_SELECT}
-      WHERE o.user_id = ${userId}
+      WHERE o.user_id = ${userId} AND ${STARTED_STATUS}
       ORDER BY o.created_at DESC
       LIMIT ${limit}
     `),

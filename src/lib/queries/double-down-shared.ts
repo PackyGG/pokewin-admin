@@ -91,12 +91,12 @@ export type DoubleDownResult = "win" | "lose";
 export type DoubleDownStatus = "offered" | "accepted" | "resolved" | "expired";
 
 export type DoubleDownStats = {
-  /** Total rounds (offers) created in the window. */
+  /**
+   * STARTED rounds in the window — rounds the user actually played
+   * (status IN accepted/resolved). Double Down is OPTIONAL, so offered/expired
+   * (never-taken) offers are NOT counted anywhere (owner rule, 2026-06-30).
+   */
   totalRounds: number;
-  /** Rounds the user accepted (accepted + resolved). */
-  acceptedRounds: number;
-  /** Rounds offered but never accepted (offered + expired). */
-  notAcceptedRounds: number;
   /** Resolved rounds (result is set). */
   resolvedRounds: number;
   winCount: number;
