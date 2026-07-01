@@ -3,9 +3,20 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertTriangle, Check, Pencil, Plus, Trash2, UserX, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  Lock,
+  LockOpen,
+  Pencil,
+  Plus,
+  Trash2,
+  UserX,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -39,6 +50,10 @@ import {
   removeExcludedUser,
   setExcludedUserBalanceV2,
 } from "./actions";
+import {
+  unlockUserWithdrawals,
+  relockUserWithdrawals,
+} from "@/app/(admin)/withdrawals/lock-actions";
 
 /**
  * Client wrapper for the excluded-users management page. Initial rows
@@ -52,6 +67,7 @@ import {
 export function ExcludedUsersClient({
   initial,
   balanceV2TableReady,
+  canManageWithdrawalLock,
 }: {
   initial: ExcludedUserRow[];
   // False if the underlying admin_excluded_user_balance_v2 table hasn't
@@ -59,6 +75,10 @@ export function ExcludedUsersClient({
   // banner above the table; the cells fall back to "—" and Save returns
   // a clean error instead of crashing.
   balanceV2TableReady: boolean;
+  // True only for motha (the root owner). Gates the withdrawal lock/unlock
+  // toggle — non-motha owners see the locked/unlocked STATE but no control.
+  // The server actions enforce the same motha-only check independently.
+  canManageWithdrawalLock: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -200,6 +220,7 @@ export function ExcludedUsersClient({
                   <TableHead>User ID</TableHead>
                   <TableHead className="text-right">Total Deposited</TableHead>
                   <TableHead className="text-right">Balance 2.0</TableHead>
+                  <TableHead>Withdrawals</TableHead>
                   <TableHead>Reason</TableHead>
                   <TableHead>Excluded by</TableHead>
                   <TableHead>Added</TableHead>
@@ -226,6 +247,13 @@ export function ExcludedUsersClient({
                         userId={row.userId}
                         value={row.balanceV2}
                         tableReady={balanceV2TableReady}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <WithdrawalLockControl
+                        userId={row.userId}
+                        unlocked={row.withdrawalUnlocked}
+                        canManage={canManageWithdrawalLock}
                       />
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
@@ -276,6 +304,14 @@ export function ExcludedUsersClient({
                     userId={row.userId}
                     value={row.balanceV2}
                     tableReady={balanceV2TableReady}
+                  />
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+                  <span className="text-muted-foreground">Withdrawals</span>
+                  <WithdrawalLockControl
+                    userId={row.userId}
+                    unlocked={row.withdrawalUnlocked}
+                    canManage={canManageWithdrawalLock}
                   />
                 </div>
                 {row.reason && (
@@ -517,6 +553,133 @@ function BalanceV2Cell({
           <Pencil className="size-3" />
         </Button>
       )}
+    </div>
+  );
+}
+
+/**
+ * Withdrawal lock/unlock control for one excluded user.
+ *
+ * Excluded users are withdrawal-LOCKED by default. Shows the current state as
+ * a badge (Locked = amber / held; Unlocked = rose because withdrawals can then
+ * move money out = house exposure). When `canManage` (motha only), a toggle
+ * button flips the per-user unlock override via the motha-only server actions;
+ * both actions re-check the motha gate server-side, so a non-motha viewer only
+ * ever sees the read-only badge. Each toggle is confirmed to avoid an
+ * accidental unlock.
+ */
+function WithdrawalLockControl({
+  userId,
+  unlocked,
+  canManage,
+}: {
+  userId: string;
+  unlocked: boolean;
+  canManage: boolean;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  const badge = unlocked ? (
+    <Badge
+      variant="outline"
+      className="gap-1 border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+    >
+      <LockOpen className="size-3" />
+      Unlocked
+    </Badge>
+  ) : (
+    <Badge
+      variant="outline"
+      className="gap-1 border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400"
+    >
+      <Lock className="size-3" />
+      Locked
+    </Badge>
+  );
+
+  // Non-motha viewers see the state only — no control.
+  if (!canManage) {
+    return badge;
+  }
+
+  function handleToggle() {
+    startTransition(async () => {
+      try {
+        const result = unlocked
+          ? await relockUserWithdrawals(userId)
+          : await unlockUserWithdrawals({ userId });
+        if (!result.success) {
+          toast.error(result.error);
+          setOpen(false);
+          return;
+        }
+        toast.success(
+          unlocked
+            ? "Withdrawals re-locked for this user"
+            : "Withdrawals unlocked for this user",
+        );
+        setOpen(false);
+        router.refresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to update lock");
+        setOpen(false);
+      }
+    });
+  }
+
+  return (
+    <div className="inline-flex items-center gap-2">
+      {badge}
+      <AlertDialog open={open} onOpenChange={setOpen}>
+        <AlertDialogTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={isPending}
+              className="size-7 text-muted-foreground hover:text-foreground"
+              aria-label={
+                unlocked ? "Re-lock withdrawals" : "Unlock withdrawals"
+              }
+            />
+          }
+        >
+          {unlocked ? (
+            <Lock className="size-3.5" />
+          ) : (
+            <LockOpen className="size-3.5" />
+          )}
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {unlocked
+                ? "Re-lock withdrawals?"
+                : "Unlock withdrawals?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              <span className="font-mono text-xs">{userId}</span>
+              <br />
+              {unlocked
+                ? "Their withdrawals will be blocked again — no admin can process, cancel, ship, complete, or fail them until you unlock again."
+                : "Their withdrawals will become processable again by admins. Only you (motha) can undo this."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleToggle} disabled={isPending}>
+              {isPending && <Spinner size={14} className="text-current" />}
+              {isPending
+                ? "Saving…"
+                : unlocked
+                  ? "Re-lock"
+                  : "Unlock"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

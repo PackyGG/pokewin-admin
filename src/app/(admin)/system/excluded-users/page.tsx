@@ -4,6 +4,7 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { getExcludedUsersForPage } from "@/lib/excluded-users/fetch";
 import { requireExcludedUsersAccess } from "@/lib/excluded-users/gate";
+import { isMainOwner } from "@/lib/owners";
 
 import { ExcludedUsersClient } from "./excluded-users-client";
 
@@ -23,7 +24,11 @@ export const metadata = { title: "Excluded Users" };
  * detail page would just add clicks.
  */
 export default async function ExcludedUsersPage() {
-  await requireExcludedUsersAccess();
+  const session = await requireExcludedUsersAccess();
+  // Withdrawal lock/unlock is MOTHA-ONLY (the root owner). The page admits any
+  // owner, so gate the unlock control on isMainOwner; the server actions
+  // enforce the same check independently.
+  const canManageWithdrawalLock = isMainOwner(session);
   const { rows, balanceV2TableReady } = await getExcludedUsersForPage();
 
   return (
@@ -63,6 +68,7 @@ export default async function ExcludedUsersPage() {
         <ExcludedUsersClient
           initial={rows}
           balanceV2TableReady={balanceV2TableReady}
+          canManageWithdrawalLock={canManageWithdrawalLock}
         />
       </FadeIn>
     </div>

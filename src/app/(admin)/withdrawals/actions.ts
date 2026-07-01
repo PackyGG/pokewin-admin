@@ -10,6 +10,11 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { backendApiRequest } from "@/lib/backend-api";
 import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 import { logError } from "@/lib/errors/logger";
+import {
+  assertWithdrawalNotLocked,
+  isWithdrawalLocked,
+  WITHDRAWAL_LOCKED_MESSAGE,
+} from "@/lib/withdrawal-lock/lock";
 
 /**
  * Process a pending withdrawal (pending → processing). For crypto
@@ -55,6 +60,12 @@ export async function processWithdrawal(
   });
   if (!withdrawal) {
     return fail("Withdrawal not found", "NOT_FOUND");
+  }
+  // Withdrawal lock: excluded users are locked by default; only a
+  // motha-granted unlock override lifts it. A locked user's withdrawal can
+  // never be processed through the admin panel. Fail-safe (see lock.ts).
+  if (await isWithdrawalLocked(withdrawal.user_id)) {
+    return fail(WITHDRAWAL_LOCKED_MESSAGE, "WITHDRAWAL_LOCKED");
   }
   if (withdrawal.status !== "pending") {
     return fail(
@@ -152,6 +163,9 @@ export async function shipWithdrawal(
   if (!withdrawal || withdrawal.status !== "processing") {
     throw new Error("Withdrawal not found or not in processing status");
   }
+  // Withdrawal lock: excluded users are locked by default (motha-only
+  // unlock). Blocks shipping a locked user's withdrawal.
+  await assertWithdrawalNotLocked(withdrawal.user_id);
   if (withdrawal.method !== "physical") {
     throw new Error("Only physical withdrawals can be shipped");
   }
@@ -197,6 +211,9 @@ export async function completeWithdrawal(withdrawalId: string) {
   if (!withdrawal || !["processing", "shipped"].includes(withdrawal.status)) {
     throw new Error("Withdrawal cannot be completed from current status");
   }
+  // Withdrawal lock: excluded users are locked by default (motha-only
+  // unlock). Blocks completing a locked user's withdrawal.
+  await assertWithdrawalNotLocked(withdrawal.user_id);
 
   await backendApiRequest("/admin/complete", {
     method: "POST",
@@ -261,6 +278,11 @@ export async function cancelWithdrawal(
   if (!withdrawal) {
     return fail("Withdrawal not found", "NOT_FOUND");
   }
+  // Withdrawal lock: a locked user's withdrawal cannot be actioned at all —
+  // process, cancel, ship, complete, or fail — until motha unlocks them.
+  if (await isWithdrawalLocked(withdrawal.user_id)) {
+    return fail(WITHDRAWAL_LOCKED_MESSAGE, "WITHDRAWAL_LOCKED");
+  }
   if (!["pending", "processing"].includes(withdrawal.status)) {
     return fail(
       "This withdrawal can no longer be cancelled — refresh and check its current status.",
@@ -320,6 +342,9 @@ export async function failWithdrawal(
   if (!withdrawal || withdrawal.status !== "shipped") {
     throw new Error("Only shipped withdrawals can be marked as failed");
   }
+  // Withdrawal lock: excluded users are locked by default (motha-only
+  // unlock). Blocks marking a locked user's withdrawal failed.
+  await assertWithdrawalNotLocked(withdrawal.user_id);
 
   await backendApiRequest("/admin/fail", {
     method: "POST",

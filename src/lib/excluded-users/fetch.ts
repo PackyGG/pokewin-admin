@@ -100,6 +100,12 @@ export type ExcludedUserRow = {
   balanceV2: number | null;
   balanceV2SetAt: string | null;
   balanceV2Notes: string | null;
+  // Withdrawal lock: excluded users are LOCKED by default. `withdrawalUnlocked`
+  // is true when motha has granted a per-user unlock override
+  // (admin_withdrawal_unlocks). When false, this user's withdrawals cannot be
+  // actioned through the admin panel.
+  withdrawalUnlocked: boolean;
+  withdrawalUnlockedAt: string | null;
 };
 
 export type ExcludedUsersPageData = {
@@ -190,8 +196,34 @@ export async function getExcludedUsersForPage(): Promise<ExcludedUsersPageData> 
     }
   }
 
+  // Withdrawal unlock overrides — the per-user unlocks motha has granted
+  // (admin_withdrawal_unlocks). Presence = that excluded user's withdrawals
+  // are UNLOCKED (actionable). Table-missing (pre-provision) degrades to "no
+  // overrides" so every excluded user shows as locked, matching the runtime
+  // enforcement in src/lib/withdrawal-lock/lock.ts.
+  const unlockByUserId = new Map<string, string>();
+  if (userIds.length > 0) {
+    try {
+      const unlockRows = await adminDb.admin_withdrawal_unlocks.findMany({
+        where: { target_user_id: { in: userIds } },
+        select: { target_user_id: true, unlocked_at: true },
+      });
+      for (const u of unlockRows) {
+        unlockByUserId.set(u.target_user_id, u.unlocked_at.toISOString());
+      }
+    } catch (err) {
+      if (!isTableMissing(err)) {
+        console.error(
+          "[excluded-users] failed to read admin_withdrawal_unlocks — treating as all locked:",
+          err,
+        );
+      }
+    }
+  }
+
   const mapped: ExcludedUserRow[] = rows.map((r) => {
     const v2 = balanceV2ByUserId.get(r.user_id) ?? null;
+    const unlockedAt = unlockByUserId.get(r.user_id) ?? null;
     return {
       userId: r.user_id,
       reason: r.reason,
@@ -201,6 +233,8 @@ export async function getExcludedUsersForPage(): Promise<ExcludedUsersPageData> 
       balanceV2: v2?.value ?? null,
       balanceV2SetAt: v2?.setAt ?? null,
       balanceV2Notes: v2?.notes ?? null,
+      withdrawalUnlocked: unlockedAt !== null,
+      withdrawalUnlockedAt: unlockedAt,
     };
   });
 

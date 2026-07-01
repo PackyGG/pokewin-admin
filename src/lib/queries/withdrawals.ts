@@ -9,6 +9,7 @@ import {
   card_withdrawal_method,
 } from "@/generated/prisma/enums";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { getWithdrawalUnlockedUserIds } from "@/lib/withdrawal-lock/lock";
 
 // Allowlists from the generated Prisma enums — validate user-supplied
 // filter values before they hit the query rather than blind-casting.
@@ -110,13 +111,15 @@ async function computeWithdrawals(
 
   const where: Prisma.card_withdrawal_requestsWhereInput = {};
 
-  // Admin-managed excluded-users blacklist: drop blacklisted users'
-  // withdrawals from BOTH the list and the count so a blacklisted user
-  // never surfaces on the Withdrawals tab (or /physical). `user_id` is a
-  // plain column on card_withdrawal_requests, so a `notIn` predicate is a
-  // simple index-friendly filter. Resolved OUTSIDE the cache and passed in
-  // as `blacklistKey` so it participates in the cache key (mirrors
-  // computeDepositTransactions). Empty key → no predicate added.
+  // Withdrawal-LOCKED users: drop their withdrawals from BOTH the list and
+  // the count so a locked user never surfaces on the Withdrawals tab (or
+  // /physical). The locked set = excluded_users blacklist MINUS the users
+  // motha has granted a per-user withdrawal unlock (admin_withdrawal_unlocks);
+  // an unlocked excluded user's withdrawals become visible + actionable again.
+  // `user_id` is a plain column on card_withdrawal_requests, so a `notIn`
+  // predicate is a simple index-friendly filter. Resolved OUTSIDE the cache
+  // and passed in as `blacklistKey` so it participates in the cache key
+  // (mirrors computeDepositTransactions). Empty key → no predicate added.
   const blacklistIds = blacklistKey ? blacklistKey.split(",") : [];
   if (blacklistIds.length > 0) {
     where.user_id = { notIn: blacklistIds };
@@ -244,12 +247,18 @@ export async function getWithdrawals(
   params: GetWithdrawalsParams,
 ): Promise<PaginatedResult<WithdrawalListItem>> {
   const env = await readDbEnv();
-  // Resolve the excluded-users blacklist HERE, in the request scope
-  // (getExcludedUserIds reads the admin DB; illegal inside
-  // `unstable_cache`), then thread a stable sorted key through so it
-  // participates in the cache key. Mirrors getDepositTransactions.
-  const excluded = await getExcludedUserIds();
-  const blacklistKey = [...excluded].sort().join(",");
+  // Resolve the withdrawal-LOCKED set HERE, in the request scope (both admin
+  // DB reads are illegal inside `unstable_cache`): the excluded_users
+  // blacklist minus the users motha has unlocked. Only genuinely locked users
+  // are dropped from the list; a motha-unlocked excluded user reappears so
+  // their withdrawals can be actioned. Thread a stable sorted key through so
+  // it participates in the cache key. Mirrors getDepositTransactions.
+  const [excluded, unlocked] = await Promise.all([
+    getExcludedUserIds(),
+    getWithdrawalUnlockedUserIds(),
+  ]);
+  const lockedIds = excluded.filter((id) => !unlocked.has(id));
+  const blacklistKey = [...lockedIds].sort().join(",");
   return cachedWithdrawals(env, blacklistKey, params);
 }
 

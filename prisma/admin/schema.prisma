@@ -107,6 +107,43 @@ model admin_users {
   giveaway_actions       admin_giveaway_actions[]
   user_tags              admin_user_tags[]
   passkeys               admin_passkeys[]
+  withdrawal_unlocks     admin_withdrawal_unlocks[]
+}
+
+/// Per-user withdrawal UNLOCK override.
+///
+/// Withdrawal-lock policy: every user on the `excluded_users` blacklist is
+/// withdrawal-LOCKED BY DEFAULT — their withdrawals cannot be processed,
+/// cancelled, shipped, completed, or failed through the admin panel (the
+/// withdrawal server actions call `assertWithdrawalNotLocked` first). The
+/// PRESENCE of a row here is a per-user UNLOCK override that ONLY the root
+/// owner (motha) can grant, re-enabling withdrawal actions for that single
+/// user. Absence of a row = locked (when the user is on the blacklist).
+///
+/// Notes:
+///   • `target_user_id` is the packy.gg user_id (better-auth nanoid, text) —
+///     the main DB lives in a separate cluster, so no cross-DB FK. It is NOT
+///     relation-linked to `excluded_users`: the unlock override can outlive an
+///     add/remove of the blacklist entry, and only takes effect while the user
+///     is actually excluded.
+///   • Primary key IS `target_user_id` — one unlock override per user.
+///   • `unlocked_by` references admin_users.id so the UI can show who granted
+///     the unlock. NULLABLE + ON DELETE SET NULL so deleting that admin keeps
+///     the override (provenance is secondary to the flag).
+///
+/// Runtime caveat: provisioned via `prisma db execute` of
+/// prisma/admin/sql/2026-07-01_add_withdrawal_unlocks.up.sql (the admin DB has
+/// drifted migration history — never `migrate deploy`). Runtime reads MUST
+/// fail-safe: a missing table degrades to "no unlock override" (excluded users
+/// stay locked), never crashing the withdrawal surface.
+model admin_withdrawal_unlocks {
+  target_user_id String       @id
+  unlocked_by    String?      @db.Uuid
+  unlocked_at    DateTime     @default(now()) @db.Timestamptz(6)
+  notes          String?
+  admin_user     admin_users? @relation(fields: [unlocked_by], references: [id], onDelete: SetNull)
+
+  @@index([unlocked_at(sort: Desc)], map: "admin_withdrawal_unlocks_unlocked_at_idx")
 }
 
 /// WebAuthn passkey credentials for admins, usable as an ALTERNATIVE to the

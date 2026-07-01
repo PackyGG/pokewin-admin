@@ -4,7 +4,7 @@ import { ArrowUpFromLine, Package, Ticket, Layers } from "lucide-react";
 import { getWithdrawalDetail } from "@/lib/queries/withdrawals";
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { isWithdrawalLocked } from "@/lib/withdrawal-lock/lock";
 import { Badge } from "@/components/ui/badge";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
@@ -47,14 +47,14 @@ export default async function WithdrawalDetailPage({
 
   if (!data) notFound();
 
-  // Blacklist gate: if the withdrawal's owning user is on the admin-managed
-  // excluded_users blacklist, treat the detail as non-existent (404) so a
-  // blacklisted user's withdrawal — amount, method, items, shipping/crypto
-  // details — is never viewable via a direct link. Generic membership check
-  // (getExcludedUserIds is the raw fail-closed set) — applies to everyone on
-  // the list, no per-user or per-admin override.
-  const excludedUserIds = await getExcludedUserIds();
-  if (excludedUserIds.includes(data.userId)) notFound();
+  // Withdrawal-lock gate: if the withdrawal's owning user is currently LOCKED
+  // (on the excluded_users blacklist AND not motha-unlocked), treat the detail
+  // as non-existent (404) so a locked user's withdrawal — amount, method,
+  // items, shipping/crypto details — is never viewable or actionable via a
+  // direct link. A motha-granted per-user unlock lifts the 404 so their
+  // withdrawal becomes viewable + actionable again. Fail-safe (see lock.ts):
+  // any admin-DB fault leaves an excluded user LOCKED.
+  if (await isWithdrawalLocked(data.userId)) notFound();
 
   const timelineSteps = [
     { label: "Pending", date: data.requestedAt, active: data.status === "pending" },
