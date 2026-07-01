@@ -79,6 +79,15 @@ export type NavEntry = {
   /** Username allowlist (case-insensitive) — sidebar-only cosmetic gate on
    *  top of the route's own server-side guard (e.g. Salaries, Excluded Users). */
   usernameAllowlist?: string[];
+  /**
+   * When true, the `usernameAllowlist` is STRICT: it is NOT bypassed by the
+   * generic owner flag (`isOwner`) in the sidebar. Only a username actually in
+   * the allowlist sees the item — every other owner does not. Used for the
+   * root-owner-only (`motha`) Excluded Users entry, whose route enforces
+   * `requireMainOwner` server-side. Default (undefined/false) keeps the legacy
+   * behaviour where any owner bypasses the allowlist.
+   */
+  strictUsernameAllowlist?: boolean;
   /** Renders a "NEW" badge in the sidebar. */
   isNew?: boolean;
   /** Surfaces in the sidebar. */
@@ -575,10 +584,12 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Excluded Users — sidebar-only, motha username-gated. Not in ADMIN_PAGES
+    // Excluded Users — sidebar-only, ROOT-OWNER-ONLY (motha). Not in ADMIN_PAGES
     // as the security boundary (page + actions enforce requireExcludedUsersAccess
-    // server-side); listed in ADMIN_PAGES only so the key isn't "unknown".
-    // pageKey set to "/system/excluded-users" preserves today's sidebar gate.
+    // → requireMainOwner server-side); listed in ADMIN_PAGES only so the key
+    // isn't "unknown". pageKey set to "/system/excluded-users" preserves the
+    // sidebar gate. `strictUsernameAllowlist` keeps the entry hidden from every
+    // NON-root owner too (the generic isOwner bypass does NOT apply here).
     id: "nav.system.excluded-users",
     group: "System",
     label: "Excluded Users",
@@ -586,6 +597,7 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     pageKey: "/system/excluded-users",
     icon: "Ban",
     usernameAllowlist: ["motha"],
+    strictUsernameAllowlist: true,
     inSidebar: true,
     inPalette: false,
   },

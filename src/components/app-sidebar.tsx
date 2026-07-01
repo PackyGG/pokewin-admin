@@ -166,6 +166,11 @@ type NavItem = {
   // server-side via requireMotha — this flag is purely cosmetic /
   // discoverability.
   usernameAllowlist?: string[];
+  // When true, the usernameAllowlist is STRICT: the generic owner
+  // bypass (isOwner) does NOT apply, so only a username actually in the
+  // allowlist sees the item. Used for the root-owner-only (motha)
+  // Excluded Users entry — every non-root owner is still hidden.
+  strictUsernameAllowlist?: boolean;
   // Renders a small "NEW" badge next to the label to surface a
   // recently-added page. Purely cosmetic — remove once the team has
   // discovered the page.
@@ -194,6 +199,7 @@ const NAV_FOOTER_ITEMS: NavItem[] = getSidebarFooterItems().map((e) => ({
   href: e.href,
   icon: e.sidebarIcon ?? e.icon,
   usernameAllowlist: e.usernameAllowlist,
+  strictUsernameAllowlist: e.strictUsernameAllowlist,
   isNew: e.isNew,
 }));
 
@@ -206,6 +212,7 @@ const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
     href: e.href,
     icon: e.sidebarIcon ?? e.icon,
     usernameAllowlist: e.usernameAllowlist,
+    strictUsernameAllowlist: e.strictUsernameAllowlist,
     isNew: e.isNew,
   })),
 }));
@@ -306,15 +313,20 @@ export function AppSidebar({
   const visibleFooterItems = useMemo(
     () =>
       NAV_FOOTER_ITEMS.filter((item) => {
-        // Owners bypass the username allowlist (they see every owner-only item).
-        if (
-          item.usernameAllowlist &&
-          !isOwner &&
-          !item.usernameAllowlist.some(
-            (u) => u.toLowerCase() === (username ?? "").toLowerCase(),
-          )
-        ) {
+        // Owners bypass the username allowlist (they see every owner-only item),
+        // UNLESS the item is strict — then only a username actually in the
+        // allowlist passes (used for the root-owner-only Excluded Users entry).
+        const ownerBypassesAllowlist = isOwner && !item.strictUsernameAllowlist;
+        const inAllowlist = item.usernameAllowlist?.some(
+          (u) => u.toLowerCase() === (username ?? "").toLowerCase(),
+        );
+        if (item.usernameAllowlist && !ownerBypassesAllowlist && !inAllowlist) {
           return false;
+        }
+        // A strict allowlist item is gated purely by the allowlist above — the
+        // admin/owner "see every page" shortcut must not re-reveal it.
+        if (item.strictUsernameAllowlist) {
+          return Boolean(inAllowlist);
         }
         // Owners + admins see every page.
         return isAdmin || isOwner || pageAccessGranted(allowedPages, item.href);
@@ -333,14 +345,21 @@ export function AppSidebar({
           // don't see it unless their username is in the list (or they
           // are an OWNER, who bypasses it). Used for /salaries + the
           // Insights group, owner-only entry-points. Case-insensitive.
-          if (
-            item.usernameAllowlist &&
-            !isOwner &&
-            !item.usernameAllowlist.some(
-              (u) => u.toLowerCase() === (username ?? "").toLowerCase(),
-            )
-          ) {
+          //
+          // A STRICT allowlist (strictUsernameAllowlist) is not bypassed by the
+          // generic owner flag — only a listed username passes. Used for the
+          // root-owner-only (motha) Excluded Users entry.
+          const ownerBypassesAllowlist = isOwner && !item.strictUsernameAllowlist;
+          const inAllowlist = item.usernameAllowlist?.some(
+            (u) => u.toLowerCase() === (username ?? "").toLowerCase(),
+          );
+          if (item.usernameAllowlist && !ownerBypassesAllowlist && !inAllowlist) {
             return false;
+          }
+          // A strict allowlist item is gated purely by the allowlist above — the
+          // admin/owner "see every page" shortcut must not re-reveal it.
+          if (item.strictUsernameAllowlist) {
+            return Boolean(inAllowlist);
           }
           // Owners + admins see every page.
           return isAdmin || isOwner || pageAccessGranted(allowedPages, item.href);

@@ -13,11 +13,12 @@ export const metadata = { title: "Excluded Users" };
 /**
  * /system/excluded-users — motha-only blacklist management.
  *
- * Server-side: the `requireExcludedUsersAccess()` gate redirects
- * non-motha admins to /dashboard. Even though the sidebar entry
- * already hides the link via `usernameAllowlist`, the page gate is
- * the actual security boundary (an admin could still navigate by
- * URL otherwise).
+ * Server-side: the `requireExcludedUsersAccess()` gate (now
+ * `requireMainOwner`) redirects anyone who is not the root `motha`
+ * account to /dashboard — NOT merely any owner. Even though the
+ * sidebar entry already hides the link, the page gate is the actual
+ * security boundary (a non-owner admin could still navigate by URL
+ * otherwise).
  *
  * UI is intentionally minimal — a hero, a single table, and an
  * inline form. The actions are simple enough that splitting into a
@@ -25,9 +26,10 @@ export const metadata = { title: "Excluded Users" };
  */
 export default async function ExcludedUsersPage() {
   const session = await requireExcludedUsersAccess();
-  // Withdrawal lock/unlock is MOTHA-ONLY (the root owner). The page admits any
-  // owner, so gate the unlock control on isMainOwner; the server actions
-  // enforce the same check independently.
+  // The whole page is MAIN-OWNER-ONLY (root `motha`), so the withdrawal
+  // lock/unlock control — itself motha-only — is always available here.
+  // Kept derived from isMainOwner(session) for an explicit, self-documenting
+  // gate; the server actions enforce the same check independently.
   const canManageWithdrawalLock = isMainOwner(session);
   const { rows, balanceV2TableReady } = await getExcludedUsersForPage();
 
