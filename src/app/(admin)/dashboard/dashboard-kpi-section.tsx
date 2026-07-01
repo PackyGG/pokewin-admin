@@ -543,13 +543,13 @@ export function DashboardKpiSection({
                   two legs visually distinct without a second card. */}
               <div className="space-y-2.5">
                 <div className="min-w-0">
-                  <div className="flex items-baseline justify-between gap-2">
+                  <div className="flex items-center justify-between gap-2">
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
                       Deposits
                     </p>
-                    <p className="text-[11px] font-medium tabular-nums text-muted-foreground shrink-0">
+                    <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
                       {formatNumber(p.depositCount)} tx
-                    </p>
+                    </span>
                   </div>
                   <div className="truncate text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400 sm:text-xl">
                     <AnimatedNumber value={p.deposits} format="currency" />
@@ -557,13 +557,13 @@ export function DashboardKpiSection({
                 </div>
                 <div className="border-t border-border/50" />
                 <div className="min-w-0">
-                  <div className="flex items-baseline justify-between gap-2">
+                  <div className="flex items-center justify-between gap-2">
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-rose-600 dark:text-rose-400">
                       Withdrawals
                     </p>
-                    <p className="text-[11px] font-medium tabular-nums text-muted-foreground shrink-0">
+                    <span className="shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-xs font-semibold tabular-nums text-rose-600 dark:text-rose-400">
                       {formatNumber(p.withdrawalCount)} tx
-                    </p>
+                    </span>
                   </div>
                   <div className="truncate text-lg font-bold tabular-nums text-rose-600 dark:text-rose-400 sm:text-xl">
                     <AnimatedNumber value={p.withdrawals} format="currency" />
