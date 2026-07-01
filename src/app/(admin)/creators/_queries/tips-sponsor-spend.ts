@@ -1,8 +1,28 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
+import { unstable_cache } from "next/cache";
+
+import { getDevDb, getProdDb } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
+
+/**
+ * Lifetime lookback cap (days) for the tips/sponsor scan. This is a
+ * lifetime, roster-wide aggregate with no period selector, so without a
+ * bound the scan reaches the entire `ledger_transactions` history once the
+ * `creator_fill_spend_*` enum members populate (they are absent from the
+ * prod enum today → the query matches zero rows). Bounding the scan to the
+ * last year keeps it tractable, matching the 365-day guard used on the
+ * heavy insights-rewards pairing scans (`LIFETIME_PAIRING_LOOKBACK_DAYS`).
+ *
+ * NOTE (money-exactness): once the fill system is live this changes the
+ * displayed figure from "all-time" to "last 365d" of tips/sponsor spend.
+ * That is the accepted trade-off for an otherwise-unbounded lifetime scan
+ * (Active-Timeframe-Only rule); flag for owner sign-off if a true all-time
+ * total is ever required on this tile.
+ */
+const TIPS_SPONSOR_LOOKBACK_DAYS = 365;
 
 /**
  * LIFETIME house spend on creator-given TIPS + battle SPONSORSHIPS — the
@@ -60,43 +80,77 @@ export type TipsSponsorSpend = {
   totalUsd: number;
 };
 
-export async function getTipsSponsorSpend(): Promise<TipsSponsorSpend> {
-  const db = await getDb();
+/**
+ * The lifetime tips/sponsor scan, wrapped in `unstable_cache` (300s — a
+ * lifetime, roster-wide house-cost figure; a ≤5-min staleness is fine and
+ * collapses concurrent /creators renders onto one warmed entry instead of
+ * re-scanning `ledger_transactions` on every load).
+ *
+ * Env + blacklist are request-scoped (the Main-DB env toggle reads the
+ * request cookie, the blacklist is an admin-DB read) and CANNOT be resolved
+ * inside an `unstable_cache` callback, so they are resolved OUTSIDE by the
+ * public wrapper and threaded in via this factory closure — the same
+ * handling `code-and-wager-by-user.ts` / `all-creators-net-pnl.ts` use.
+ * They are folded into the key parts so prod/dev and each distinct
+ * blacklist land in a separate slot.
+ */
+const cachedTipsSponsorSpend = (env: DbEnv, excludedIds: string[]) =>
+  unstable_cache(
+    async (): Promise<TipsSponsorSpend> => {
+      const db = env === "dev" ? getDevDb() : getProdDb();
 
-  // Blacklist gate: drop excluded (owner-locked) recipient ids so a
-  // blacklisted user who received a creator-funded tip/sponsorship never
-  // contributes — mirrors the `/dashboard` "Creators Costs (today)" twin.
-  // Guarded for the empty set so the SQL stays valid when nothing is
-  // excluded; inlined via the canonical pre-escaped id list.
-  const excluded = await getExcludedUserIds();
-  const blacklistClause =
-    excluded.length > 0
-      ? `AND lt.user_id NOT IN (${escapeBlacklistIds(excluded)})`
-      : "";
+      // Blacklist gate: drop excluded (owner-locked) recipient ids so a
+      // blacklisted user who received a creator-funded tip/sponsorship never
+      // contributes — mirrors the `/dashboard` "Creators Costs (today)" twin.
+      // Guarded for the empty set so the SQL stays valid when nothing is
+      // excluded; inlined via the canonical pre-escaped id list.
+      const blacklistClause =
+        excludedIds.length > 0
+          ? `AND lt.user_id NOT IN (${escapeBlacklistIds(excludedIds)})`
+          : "";
 
-  // `type::text IN (...)` — text comparison, never an enum-membership error
-  // if a `creator_fill_*` member is absent from the prod enum (see header).
-  const rows = await db.$queryRawUnsafe<{ type: string; total: string | null }[]>(
-    `SELECT lt.type::text AS type,
-           COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
-    FROM ledger_transactions lt
-    WHERE lt.status = 'completed'
-      AND lt.type::text IN ('creator_fill_spend_tip', 'creator_fill_spend_battle')
-      ${blacklistClause}
-    GROUP BY lt.type::text`,
+      // `type::text IN (...)` — text comparison, never an enum-membership
+      // error if a `creator_fill_*` member is absent from the prod enum (see
+      // header). Bounded to the last TIPS_SPONSOR_LOOKBACK_DAYS so a lifetime
+      // scan can't hit the whole `ledger_transactions` history once the fill
+      // enum populates.
+      const rows = await db.$queryRawUnsafe<
+        { type: string; total: string | null }[]
+      >(
+        `SELECT lt.type::text AS type,
+               COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
+        FROM ledger_transactions lt
+        WHERE lt.status = 'completed'
+          AND lt.type::text IN ('creator_fill_spend_tip', 'creator_fill_spend_battle')
+          AND lt.created_at >= NOW() - INTERVAL '${TIPS_SPONSOR_LOOKBACK_DAYS} days'
+          ${blacklistClause}
+        GROUP BY lt.type::text`,
+      );
+
+      let tipSpendUsd = 0;
+      let sponsorSpendUsd = 0;
+      for (const r of rows) {
+        const amt = Number(r.total ?? 0) || 0;
+        if (r.type === "creator_fill_spend_tip") tipSpendUsd = amt;
+        else if (r.type === "creator_fill_spend_battle") sponsorSpendUsd = amt;
+      }
+
+      return {
+        tipSpendUsd,
+        sponsorSpendUsd,
+        totalUsd: tipSpendUsd + sponsorSpendUsd,
+      };
+    },
+    ["creators-tips-sponsor-spend-v1", env, ...excludedIds],
+    { revalidate: 300, tags: ["creators-tips-sponsor-spend"] },
   );
 
-  let tipSpendUsd = 0;
-  let sponsorSpendUsd = 0;
-  for (const r of rows) {
-    const amt = Number(r.total ?? 0) || 0;
-    if (r.type === "creator_fill_spend_tip") tipSpendUsd = amt;
-    else if (r.type === "creator_fill_spend_battle") sponsorSpendUsd = amt;
-  }
-
-  return {
-    tipSpendUsd,
-    sponsorSpendUsd,
-    totalUsd: tipSpendUsd + sponsorSpendUsd,
-  };
+export async function getTipsSponsorSpend(): Promise<TipsSponsorSpend> {
+  // Resolve env + blacklist in REQUEST scope (cookie + admin-DB reads that
+  // can't run inside the unstable_cache callback) and thread them in so
+  // prod/dev and each blacklist land in a separate cache slot. The blacklist
+  // is sorted so the cache key is stable regardless of id order.
+  const env = await readDbEnv();
+  const excludedIds = [...(await getExcludedUserIds())].sort();
+  return cachedTipsSponsorSpend(env, excludedIds)();
 }

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import {
     Trophy,
@@ -24,6 +25,11 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { getAdminDisplayTimeZone } from "@/lib/timezone/server";
+import {
+    KpiStripSkeleton,
+    TableSkeleton,
+} from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 
 import { LeaderboardsTable } from "./_components/leaderboards-table";
 import { CreateDialog } from "./_components/create-dialog";
@@ -84,7 +90,6 @@ export default async function AffiliateLeaderboardsPage({
     searchParams: Promise<Record<string, string | undefined>>;
 }) {
     await requirePageAccess("/creators/leaderboards");
-    const timezone = await getAdminDisplayTimeZone();
     const params = await searchParams;
     const tab: StatusTab = STATUS_TABS.some((t) => t.value === params.status)
         ? (params.status as StatusTab)
@@ -102,6 +107,192 @@ export default async function AffiliateLeaderboardsPage({
     )
         ? Number(params.perPage)
         : DEFAULT_PER_PAGE;
+
+    // Sort-chip state: which field is active + the direction a click should
+    // move to next (first click → desc / latest-first, click again → asc).
+    const isStart = sort === "start_asc" || sort === "start_desc";
+    const isEnd = sort === "end_asc" || sort === "end_desc";
+    const nextStart: SortValue = sort === "start_desc" ? "start_asc" : "start_desc";
+    const nextEnd: SortValue = sort === "end_desc" ? "end_asc" : "end_desc";
+
+    // Persistent query params carried across every link/filter; each link
+    // overrides only what it changes. offset is intentionally omitted from
+    // the base so changing a filter / sort / page-size resets to page 1.
+    const baseParams = {
+        status: tab === "all" ? undefined : tab,
+        creator_user_id: creatorUserId,
+        include_cancelled: includeCancelled ? "1" : undefined,
+        sort,
+        perPage: perPage !== DEFAULT_PER_PAGE ? perPage : undefined,
+    };
+    const hrefWith = (
+        extra: Record<string, string | number | undefined | null> = {},
+    ) => `/creators/leaderboards${buildQueryString({ ...baseParams, ...extra })}`;
+
+    const chipClass = (active: boolean) =>
+        cn(
+            "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
+            active
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+        );
+
+    // Shell = hero + create button + static controls (status tabs, sort chips,
+    // cancelled toggle, creator filter) — all derived from searchParams alone,
+    // so they paint instantly. The KPI strip + table + pagination all depend
+    // on the backend walk (paged to FETCH_CAP) + creator hydration + KPI
+    // aggregation, which stream in ONE async child (so the walk runs once, not
+    // twice). Boundary is keyed on the full filter set so a filter/sort/page
+    // change re-streams the child.
+    const bodyKey = `${tab}|${creatorUserId ?? ""}|${includeCancelled ? 1 : 0}|${sort ?? ""}|${perPage}|${offset}`;
+
+    return (
+        <div className="space-y-6">
+            <PageHero>
+                <PageHeroIdentity
+                    icon={Trophy}
+                    title="Affiliate Leaderboards"
+                    subtitle="Create on behalf of any creator (site-funded), or manage existing entries."
+                    action={
+                        <CreateDialog
+                            trigger={
+                                <Button>
+                                    <Plus className="size-4 mr-1" /> Create a creator leaderboard
+                                </Button>
+                            }
+                        />
+                    }
+                />
+            </PageHero>
+
+            <div className="space-y-4">
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div className="flex gap-1 rounded-lg bg-muted p-1">
+                        {STATUS_TABS.map((s) => (
+                            <Link
+                                key={s.value}
+                                href={hrefWith({
+                                    status: s.value === "all" ? undefined : s.value,
+                                })}
+                                className={cn(
+                                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                                    tab === s.value
+                                        ? "bg-background text-foreground shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground",
+                                )}
+                            >
+                                {s.label}
+                            </Link>
+                        ))}
+                    </div>
+
+                    <div className="flex items-center gap-3 flex-wrap">
+                        {/* Sort by start / end date. The backend list API can't
+                            sort, so this drives the in-page sort over the full
+                            fetched set. First click on a field sorts descending
+                            (latest first); click the active field again to flip
+                            to ascending. "Default" clears back to backend order. */}
+                        <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+                            <span className="px-1.5 text-xs font-medium text-muted-foreground">
+                                Sort
+                            </span>
+                            <Link href={hrefWith({ sort: undefined })} className={chipClass(!sort)}>
+                                Default
+                            </Link>
+                            <Link href={hrefWith({ sort: nextStart })} className={chipClass(isStart)}>
+                                Start date
+                                {sort === "start_asc" && <ArrowUp className="size-3" />}
+                                {sort === "start_desc" && <ArrowDown className="size-3" />}
+                            </Link>
+                            <Link href={hrefWith({ sort: nextEnd })} className={chipClass(isEnd)}>
+                                End date
+                                {sort === "end_asc" && <ArrowUp className="size-3" />}
+                                {sort === "end_desc" && <ArrowDown className="size-3" />}
+                            </Link>
+                        </div>
+
+                        {/* Cancelled rows stay in the DB for refund/audit trail —
+                            toggle surfaces them when reviewing cancellations. */}
+                        <Link
+                            href={hrefWith({
+                                include_cancelled: includeCancelled ? undefined : "1",
+                            })}
+                            className={cn(
+                                "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                                includeCancelled
+                                    ? "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-muted",
+                            )}
+                        >
+                            {includeCancelled ? "✓ Showing cancelled" : "Show cancelled"}
+                        </Link>
+
+                        <form className="flex items-center gap-2" action="/creators/leaderboards" method="get">
+                            {tab !== "all" && <input type="hidden" name="status" value={tab} />}
+                            {includeCancelled && (
+                                <input type="hidden" name="include_cancelled" value="1" />
+                            )}
+                            {sort && <input type="hidden" name="sort" value={sort} />}
+                            {perPage !== DEFAULT_PER_PAGE && (
+                                <input type="hidden" name="perPage" value={perPage} />
+                            )}
+                            <Input
+                                name="creator_user_id"
+                                defaultValue={creatorUserId ?? ""}
+                                placeholder="Filter by creator user id..."
+                                className="w-full sm:flex-1 sm:min-w-[200px] sm:max-w-xs"
+                            />
+                        </form>
+                    </div>
+                </div>
+
+                <Suspense key={bodyKey} fallback={<LeaderboardsBodySkeleton />}>
+                    <LeaderboardsBody
+                        tab={tab}
+                        creatorUserId={creatorUserId}
+                        includeCancelled={includeCancelled}
+                        offset={offset}
+                        sort={sort}
+                        perPage={perPage}
+                        hrefWith={hrefWith}
+                    />
+                </Suspense>
+            </div>
+        </div>
+    );
+}
+
+/**
+ * Streamed body: the whole backend walk (paged to FETCH_CAP) + creator
+ * hydration + sponsorship map + KPI aggregation + the sorted/paginated
+ * slice. All of it runs off the request's dynamic scope behind the page's
+ * <Suspense> so the hero + controls paint instantly. Kept in ONE child on
+ * purpose — the KPI strip and table share the SAME `allRows` walk, so this
+ * runs the walk once instead of twice.
+ *
+ * `hrefWith` is a plain server→server closure prop (both this and the page
+ * are Server Components) — no RSC function-prop boundary is crossed.
+ */
+async function LeaderboardsBody({
+    tab,
+    creatorUserId,
+    includeCancelled,
+    offset,
+    sort,
+    perPage,
+    hrefWith,
+}: {
+    tab: StatusTab;
+    creatorUserId: string | undefined;
+    includeCancelled: boolean;
+    offset: number;
+    sort: SortValue | undefined;
+    perPage: number;
+    hrefWith: (
+        extra?: Record<string, string | number | undefined | null>,
+    ) => string;
+}) {
+    const timezone = await getAdminDisplayTimeZone();
 
     // Walk the whole filtered set in pages of BACKEND_PAGE_SIZE (the
     // backend rejects a larger limit), then sort + paginate in-page — the
@@ -211,54 +402,8 @@ export default async function AffiliateLeaderboardsPage({
     const hasNext = offset + perPage < sortedRows.length;
     const hasPrev = offset > 0;
 
-    // Sort-chip state: which field is active + the direction a click should
-    // move to next (first click → desc / latest-first, click again → asc).
-    const isStart = sort === "start_asc" || sort === "start_desc";
-    const isEnd = sort === "end_asc" || sort === "end_desc";
-    const nextStart: SortValue = sort === "start_desc" ? "start_asc" : "start_desc";
-    const nextEnd: SortValue = sort === "end_desc" ? "end_asc" : "end_desc";
-
-    // Persistent query params carried across every link/filter; each link
-    // overrides only what it changes. offset is intentionally omitted from
-    // the base so changing a filter / sort / page-size resets to page 1.
-    const baseParams = {
-        status: tab === "all" ? undefined : tab,
-        creator_user_id: creatorUserId,
-        include_cancelled: includeCancelled ? "1" : undefined,
-        sort,
-        perPage: perPage !== DEFAULT_PER_PAGE ? perPage : undefined,
-    };
-    const hrefWith = (
-        extra: Record<string, string | number | undefined | null> = {},
-    ) => `/creators/leaderboards${buildQueryString({ ...baseParams, ...extra })}`;
-
-    const chipClass = (active: boolean) =>
-        cn(
-            "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
-            active
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-        );
-
     return (
-        <div className="space-y-6">
-            <PageHero>
-                <PageHeroIdentity
-                    icon={Trophy}
-                    title="Affiliate Leaderboards"
-                    subtitle="Create on behalf of any creator (site-funded), or manage existing entries."
-                    action={
-                        <CreateDialog
-                            trigger={
-                                <Button>
-                                    <Plus className="size-4 mr-1" /> Create a creator leaderboard
-                                </Button>
-                            }
-                        />
-                    }
-                />
-            </PageHero>
-
+        <>
             {/* KPI strip — house cost + pools + the headline house-share
                 %, over the active status-tab's full fetched set. House-POV:
                 house spend is rose; the creator-funded off-site remainder
@@ -303,145 +448,85 @@ export default async function AffiliateLeaderboardsPage({
                 </div>
             </FadeIn>
 
-            <div className="space-y-4">
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                    <div className="flex gap-1 rounded-lg bg-muted p-1">
-                        {STATUS_TABS.map((s) => (
-                            <Link
-                                key={s.value}
-                                href={hrefWith({
-                                    status: s.value === "all" ? undefined : s.value,
-                                })}
-                                className={cn(
-                                    "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                                    tab === s.value
-                                        ? "bg-background text-foreground shadow-sm"
-                                        : "text-muted-foreground hover:text-foreground",
-                                )}
-                            >
-                                {s.label}
-                            </Link>
-                        ))}
-                    </div>
+            <FadeIn>
+                <LeaderboardsTable
+                    rows={rows}
+                    creatorMap={creatorMap}
+                    sponsorshipMap={sponsorshipMap}
+                    timezone={timezone}
+                />
+            </FadeIn>
 
-                    <div className="flex items-center gap-3 flex-wrap">
-                        {/* Sort by start / end date. The backend list API can't
-                            sort, so this drives the in-page sort over the full
-                            fetched set. First click on a field sorts descending
-                            (latest first); click the active field again to flip
-                            to ascending. "Default" clears back to backend order. */}
+            <div className="flex items-center justify-between gap-4 flex-wrap text-sm text-muted-foreground">
+                <div className="flex items-center gap-3 flex-wrap">
+                    <span>
+                        Showing {rows.length} of {total} {total === 1 ? "row" : "rows"}
+                    </span>
+                    {/* Rows-per-page selector. Changing it resets to page 1
+                        (offset is omitted from hrefWith's base params). */}
+                    <div className="flex items-center gap-1">
+                        <span className="text-xs">Show</span>
                         <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
-                            <span className="px-1.5 text-xs font-medium text-muted-foreground">
-                                Sort
-                            </span>
-                            <Link href={hrefWith({ sort: undefined })} className={chipClass(!sort)}>
-                                Default
-                            </Link>
-                            <Link href={hrefWith({ sort: nextStart })} className={chipClass(isStart)}>
-                                Start date
-                                {sort === "start_asc" && <ArrowUp className="size-3" />}
-                                {sort === "start_desc" && <ArrowDown className="size-3" />}
-                            </Link>
-                            <Link href={hrefWith({ sort: nextEnd })} className={chipClass(isEnd)}>
-                                End date
-                                {sort === "end_asc" && <ArrowUp className="size-3" />}
-                                {sort === "end_desc" && <ArrowDown className="size-3" />}
-                            </Link>
+                            {PER_PAGE_OPTIONS.map((n) => (
+                                <Link
+                                    key={n}
+                                    href={hrefWith({
+                                        perPage: n !== DEFAULT_PER_PAGE ? n : undefined,
+                                    })}
+                                    className={cn(
+                                        "rounded-md px-2 py-0.5 text-xs font-medium tabular-nums transition-colors",
+                                        perPage === n
+                                            ? "bg-background text-foreground shadow-sm"
+                                            : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                >
+                                    {n}
+                                </Link>
+                            ))}
                         </div>
-
-                        {/* Cancelled rows stay in the DB for refund/audit trail —
-                            toggle surfaces them when reviewing cancellations. */}
-                        <Link
-                            href={hrefWith({
-                                include_cancelled: includeCancelled ? undefined : "1",
-                            })}
-                            className={cn(
-                                "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
-                                includeCancelled
-                                    ? "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                                    : "text-muted-foreground hover:text-foreground hover:bg-muted",
-                            )}
-                        >
-                            {includeCancelled ? "✓ Showing cancelled" : "Show cancelled"}
-                        </Link>
-
-                        <form className="flex items-center gap-2" action="/creators/leaderboards" method="get">
-                            {tab !== "all" && <input type="hidden" name="status" value={tab} />}
-                            {includeCancelled && (
-                                <input type="hidden" name="include_cancelled" value="1" />
-                            )}
-                            {sort && <input type="hidden" name="sort" value={sort} />}
-                            {perPage !== DEFAULT_PER_PAGE && (
-                                <input type="hidden" name="perPage" value={perPage} />
-                            )}
-                            <Input
-                                name="creator_user_id"
-                                defaultValue={creatorUserId ?? ""}
-                                placeholder="Filter by creator user id..."
-                                className="w-full sm:flex-1 sm:min-w-[200px] sm:max-w-xs"
-                            />
-                        </form>
                     </div>
                 </div>
-
-                <FadeIn>
-                    <LeaderboardsTable
-                        rows={rows}
-                        creatorMap={creatorMap}
-                        sponsorshipMap={sponsorshipMap}
-                        timezone={timezone}
-                    />
-                </FadeIn>
-
-                <div className="flex items-center justify-between gap-4 flex-wrap text-sm text-muted-foreground">
-                    <div className="flex items-center gap-3 flex-wrap">
-                        <span>
-                            Showing {rows.length} of {total} {total === 1 ? "row" : "rows"}
-                        </span>
-                        {/* Rows-per-page selector. Changing it resets to page 1
-                            (offset is omitted from hrefWith's base params). */}
-                        <div className="flex items-center gap-1">
-                            <span className="text-xs">Show</span>
-                            <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
-                                {PER_PAGE_OPTIONS.map((n) => (
-                                    <Link
-                                        key={n}
-                                        href={hrefWith({
-                                            perPage: n !== DEFAULT_PER_PAGE ? n : undefined,
-                                        })}
-                                        className={cn(
-                                            "rounded-md px-2 py-0.5 text-xs font-medium tabular-nums transition-colors",
-                                            perPage === n
-                                                ? "bg-background text-foreground shadow-sm"
-                                                : "text-muted-foreground hover:text-foreground",
-                                        )}
-                                    >
-                                        {n}
-                                    </Link>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                    <div className="flex gap-2">
-                        {hasPrev && (
-                            <Link
-                                href={hrefWith({ offset: Math.max(0, offset - perPage) })}
-                                className="rounded-md border px-3 py-1 hover:bg-muted"
-                            >
-                                ← Previous
-                            </Link>
-                        )}
-                        {hasNext && (
-                            <Link
-                                href={hrefWith({ offset: offset + perPage })}
-                                className="rounded-md border px-3 py-1 hover:bg-muted"
-                            >
-                                Next →
-                            </Link>
-                        )}
-                    </div>
+                <div className="flex gap-2">
+                    {hasPrev && (
+                        <Link
+                            href={hrefWith({ offset: Math.max(0, offset - perPage) })}
+                            className="rounded-md border px-3 py-1 hover:bg-muted"
+                        >
+                            ← Previous
+                        </Link>
+                    )}
+                    {hasNext && (
+                        <Link
+                            href={hrefWith({ offset: offset + perPage })}
+                            className="rounded-md border px-3 py-1 hover:bg-muted"
+                        >
+                            Next →
+                        </Link>
+                    )}
                 </div>
             </div>
-        </div>
+        </>
+    );
+}
+
+/**
+ * Fallback for the streamed body — KPI strip (5 tiles) + the 10-column
+ * table + a pagination row, matching the real layout so the shell doesn't
+ * jump when the data streams in. Mirrors the route's loading.tsx below the
+ * controls row.
+ */
+function LeaderboardsBodySkeleton() {
+    return (
+        <>
+            <KpiStripSkeleton count={5} />
+            <TableSkeleton rows={10} columns={10} />
+            <div className="flex items-center justify-between text-sm">
+                <Skeleton className="h-4 w-32" />
+                <div className="flex gap-2">
+                    <Skeleton className="h-7 w-24 rounded-md" />
+                    <Skeleton className="h-7 w-24 rounded-md" />
+                </div>
+            </div>
+        </>
     );
 }

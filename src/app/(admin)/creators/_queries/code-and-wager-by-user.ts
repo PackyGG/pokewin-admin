@@ -110,6 +110,21 @@ const cachedCodeAndWagerEntries = (
           ? ` AND u.id NOT IN (${excludedIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
           : "";
 
+      // EXPLAIN (read-only, no ANALYZE, 2026-07-01) — all acu-keyed reads
+      // below hit an index, no seq-scan on affiliate_code_usages:
+      //   • FTD / deposits_3d / wagers reads → Bitmap Index Scan on
+      //     idx_affiliate_code_usages_affiliate_referred
+      //     (btree affiliate_user_id, referred_user_id) satisfies the
+      //     `affiliate_user_id = ANY($1)` predicate. `usage_type::text` and
+      //     `created_at >= NOW()-3d` are applied as post-index recheck/heap
+      //     filters (not indexed); the balances/"user" joins ride
+      //     balances_user_id_unique / user_pkey.
+      //   • codeRows → Bitmap Index Scan on idx_affiliate_codes_user_created_at.
+      // Path-1 satisfied. Index flag to consolidate (NOT applied here — MAIN
+      // is read-only): a composite/partial index carrying usage_type +
+      // created_at (e.g. (affiliate_user_id, usage_type, created_at)) would
+      // let the deposit/wager legs skip the recheck-filter step, but current
+      // cost is low and index-driven so it's an optimization, not a blocker.
       const [
         codeRows,
         signupRows,

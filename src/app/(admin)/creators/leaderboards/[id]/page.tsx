@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, Trophy } from "lucide-react";
@@ -9,11 +10,13 @@ import {
     affiliateLeaderboardsApi,
     type ApprovalStatus,
     type TimeStatus,
+    type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { BackendApiError } from "@/lib/backend-api/errors";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { Badge } from "@/components/ui/badge";
 import {
     Table,
@@ -27,6 +30,8 @@ import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { getAdminDisplayTimeZone } from "@/lib/timezone/server";
 import { timezoneLabel } from "@/lib/timezones";
 import { cn } from "@/lib/utils";
+import { StatPanelSkeleton } from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
     getAffiliateLeaderboardRankings,
     getAffiliateLeaderboardClaims,
@@ -34,7 +39,6 @@ import {
 import { getRewardExpiry } from "@/lib/backend-api/reward-expiry";
 import { computeLeaderboardClaimWindow } from "@/lib/reward-expiry/leaderboard-claim-window";
 import { compareCreatorsLeaderboards } from "@/lib/clickhouse/compare/creators-leaderboards";
-import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsorship";
 
 import { DetailActions } from "../_components/detail-actions";
 import { ManualPaymentPanel } from "../_components/manual-payment-panel";
@@ -65,125 +69,52 @@ export default async function AffiliateLeaderboardDetailPage({
     params: Promise<{ id: string }>;
 }) {
     await requirePageAccess("/creators/leaderboards");
-    const tz = await getAdminDisplayTimeZone();
-    const fmt = (iso: string) => formatDateTime(iso, tz);
     const { id } = await params;
     // Shape-check UUID before any DB / backend call — see src/lib/utils/ids.ts.
     if (!isUuid(id)) notFound();
 
-    let lb;
+    // Critical path = ONLY the leaderboard definition (the hero title + badges
+    // + actions render off this). A 404 → notFound(); a non-404 backend error
+    // is caught and rendered as a friendly in-page state below so it can't
+    // trip the whole route error boundary. Everything heavy (standings,
+    // claims, holds, sponsorship %, creator hydration) streams behind the
+    // <Suspense> boundary in <LeaderboardDetailBody>, so the hero paints
+    // instantly instead of blocking on the 6-way Promise.all.
+    let lb: LeaderboardAdminRow;
     try {
         lb = await affiliateLeaderboardsApi.get(id);
     } catch (err) {
         if (err instanceof BackendApiError && err.status === 404) {
             notFound();
         }
-        throw err;
-    }
-    const db = await getDb();
-    const participatingCreatorIds = [lb.creator_user_id, ...(lb.co_creator_user_ids ?? [])];
-    const [creators, standings, sponsorshipMap, claimHolds, claims, leaderboardExpiryDays] = await Promise.all([
-        // Hydrate the primary creator plus every co-creator in one query so we
-        // can render names alongside each id on the definition card.
-        // Best-effort — a failure just renders the raw ids (names omitted)
-        // instead of throwing the whole page via the Promise.all reject.
-        db.user
-            .findMany({
-                where: { id: { in: participatingCreatorIds } },
-                select: { id: true, username: true, email: true },
-            })
-            .catch((err) => {
-                console.error("[leaderboard] creator hydration query failed", err);
-                return [] as { id: string; username: string | null; email: string | null }[];
-            }),
-        // Standings — settled boards read the authoritative WEIGHTED
-        // snapshot (affiliate_leaderboard_snapshots); active boards with no
-        // snapshot yet fall back to a live UNWEIGHTED estimate from raw
-        // affiliate_code_usages (this backend exposes no /rankings endpoint).
-        // Wraps in a try/catch so a query error never breaks the page — the
-        // rest of the leaderboard config still renders.
-        getAffiliateLeaderboardRankings({
-            leaderboardId: lb.id,
-            creatorUserId: lb.creator_user_id,
-            coCreatorUserIds: lb.co_creator_user_ids ?? [],
-            affiliateCodes: lb.affiliate_codes,
-            startDate: new Date(lb.start_date),
-            endDate: new Date(lb.end_date),
-            prizeTiers: lb.prize_tiers,
-            limit: 100,
-        }).catch((err) => {
-            console.error("[leaderboard] rankings query failed", err);
-            return { rankings: [], source: "live" as const };
-        }),
-        // Admin-side sponsored % so the Edit dialog can pre-fill it.
-        // Best-effort — a failure just defaults the field to 100%.
-        getLeaderboardSponsorshipMap([id]).catch((err) => {
-            console.error("[leaderboard] sponsorship query failed", err);
-            return new Map<string, number>();
-        }),
-        // Active claim holds (freezes) so each standings row can show a
-        // Freeze / Unfreeze control. Best-effort — a failure just renders the
-        // standings without freeze state instead of throwing the whole page.
-        affiliateLeaderboardsApi.listClaimHolds(id).catch((err) => {
-            console.error("[leaderboard] claim holds query failed", err);
-            return [] as Awaited<ReturnType<typeof affiliateLeaderboardsApi.listClaimHolds>>;
-        }),
-        // Settled prize claims — who has already claimed (MAIN DB, indexed on
-        // leaderboard_id). Best-effort — a failure just renders an empty
-        // claimants list instead of throwing the whole page.
-        getAffiliateLeaderboardClaims(id).catch((err) => {
-            console.error("[leaderboard] claims query failed", err);
-            return [] as Awaited<ReturnType<typeof getAffiliateLeaderboardClaims>>;
-        }),
-        // Live claim-window length (days after the event ends; 0 = never).
-        // null on failure → the banner renders an "unavailable" state.
-        getRewardExpiry().then(
-            (e) => e.leaderboard_days,
-            () => null as number | null,
-        ),
-    ]);
-    const rankings = standings.rankings;
-    // "settled" → weighted snapshot (matches what was paid); "live" →
-    // unweighted live estimate for an active board with no snapshot yet.
-    const standingsSettled = standings.source === "settled";
-    const claimWindow = computeLeaderboardClaimWindow({
-        endIso: lb.end_date,
-        expiryDays: leaderboardExpiryDays,
-    });
-    // Map user_id → active hold so standings rows can render freeze state in O(1).
-    const holdByUserId = new Map(claimHolds.map((h) => [h.user_id, h]));
-    const creatorById = new Map(creators.map((c) => [c.id, c]));
-    const creator = creatorById.get(lb.creator_user_id) ?? null;
-    const coCreatorRows = (lb.co_creator_user_ids ?? []).map((id) => ({
-        id,
-        username: creatorById.get(id)?.username ?? null,
-        email: creatorById.get(id)?.email ?? null,
-    }));
-    const currentSponsoredPct = sponsorshipMap.get(id) ?? null;
-    const standingsHousePnlUsd = rankings.reduce(
-        (sum, r) => sum + r.housePnlUsd,
-        0,
-    );
-
-    // Fire-and-forget CQRS comparison (Phase 2B). No-op unless the
-    // `creators_leaderboards` surface is in comparison mode; the served value
-    // above is ALWAYS the Postgres `rankings`. Mirrors the same opts so the CH
-    // twin replicates the EXACT 2-role + blacklist scope. Only meaningful for
-    // the LIVE raw path — settled boards now serve the weighted snapshot,
-    // which the raw CH twin can't reproduce, so skip the comparison there.
-    if (!standingsSettled) {
-        void compareCreatorsLeaderboards(
-            lb.id,
-            {
-                creatorUserId: lb.creator_user_id,
-                coCreatorUserIds: lb.co_creator_user_ids ?? [],
-                affiliateCodes: lb.affiliate_codes,
-                startDate: new Date(lb.start_date),
-                endDate: new Date(lb.end_date),
-                prizeTiers: lb.prize_tiers,
-                limit: 100,
-            },
-            rankings,
+        // Non-404 (backend down / 5xx / network) — render the hero shell with a
+        // friendly error state instead of throwing to the route boundary.
+        return (
+            <div className="space-y-6">
+                <PageHero>
+                    <div className="flex items-start gap-3">
+                        <Link
+                            href="/creators/leaderboards"
+                            className="mt-1 flex size-9 items-center justify-center rounded-lg border hover:bg-muted"
+                        >
+                            <ArrowLeft className="size-4" />
+                        </Link>
+                        <div>
+                            <h1 className="text-2xl font-bold leading-tight">
+                                Affiliate leaderboard
+                            </h1>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                                Couldn&apos;t load this leaderboard.
+                            </p>
+                        </div>
+                    </div>
+                </PageHero>
+                <TileErrorFallback
+                    label="Leaderboard unavailable"
+                    hint="The leaderboard service didn't respond — refresh to retry."
+                    size="panel"
+                />
+            </div>
         );
     }
 
@@ -248,13 +179,150 @@ export default async function AffiliateLeaderboardDetailPage({
                             </div>
                         </div>
                     </div>
-                    <DetailActions
-                        row={lb}
-                        currentSponsoredPct={currentSponsoredPct}
-                    />
+                    {/* Actions render off the definition alone. The admin-side
+                        sponsored % (a single-row admin-DB read that only pre-fills
+                        the Edit dialog) streams in the body; until then the Edit
+                        dialog defaults to 100% — the same fallback the sponsorship
+                        query already documents. Keeping it off the hero critical
+                        path is what lets the hero paint instantly. */}
+                    <DetailActions row={lb} currentSponsoredPct={null} />
                 </div>
             </PageHero>
 
+            <Suspense fallback={<LeaderboardDetailBodySkeleton />}>
+                <LeaderboardDetailBody
+                    lb={lb}
+                    countdownMode={countdownMode}
+                    countdownEdgeIso={countdownEdgeIso}
+                    countdownInitialMs={countdownInitialMs}
+                />
+            </Suspense>
+        </div>
+    );
+}
+
+/**
+ * Streamed body: everything below the hero. Runs the 6-way batch (creator
+ * hydration + standings + sponsorship % + claim holds + claims + expiry)
+ * off the request's dynamic scope so it never blocks first paint. Each leg
+ * already best-effort-catches its own failure, so a single failing read
+ * degrades that section instead of the whole page.
+ */
+async function LeaderboardDetailBody({
+    lb,
+    countdownMode,
+    countdownEdgeIso,
+    countdownInitialMs,
+}: {
+    lb: LeaderboardAdminRow;
+    countdownMode: LeaderboardCountdownMode;
+    countdownEdgeIso: string;
+    countdownInitialMs: number;
+}) {
+    const tz = await getAdminDisplayTimeZone();
+    const fmt = (iso: string) => formatDateTime(iso, tz);
+    const db = await getDb();
+    const participatingCreatorIds = [lb.creator_user_id, ...(lb.co_creator_user_ids ?? [])];
+    const [creators, standings, claimHolds, claims, leaderboardExpiryDays] = await Promise.all([
+        // Hydrate the primary creator plus every co-creator in one query so we
+        // can render names alongside each id on the definition card.
+        // Best-effort — a failure just renders the raw ids (names omitted)
+        // instead of throwing the whole page via the Promise.all reject.
+        db.user
+            .findMany({
+                where: { id: { in: participatingCreatorIds } },
+                select: { id: true, username: true, email: true },
+            })
+            .catch((err) => {
+                console.error("[leaderboard] creator hydration query failed", err);
+                return [] as { id: string; username: string | null; email: string | null }[];
+            }),
+        // Standings — settled boards read the authoritative WEIGHTED
+        // snapshot (affiliate_leaderboard_snapshots); active boards with no
+        // snapshot yet fall back to a live UNWEIGHTED estimate from raw
+        // affiliate_code_usages (this backend exposes no /rankings endpoint).
+        // Wraps in a try/catch so a query error never breaks the page — the
+        // rest of the leaderboard config still renders.
+        getAffiliateLeaderboardRankings({
+            leaderboardId: lb.id,
+            creatorUserId: lb.creator_user_id,
+            coCreatorUserIds: lb.co_creator_user_ids ?? [],
+            affiliateCodes: lb.affiliate_codes,
+            startDate: new Date(lb.start_date),
+            endDate: new Date(lb.end_date),
+            prizeTiers: lb.prize_tiers,
+            limit: 100,
+        }).catch((err) => {
+            console.error("[leaderboard] rankings query failed", err);
+            return { rankings: [], source: "live" as const };
+        }),
+        // Active claim holds (freezes) so each standings row can show a
+        // Freeze / Unfreeze control. Best-effort — a failure just renders the
+        // standings without freeze state instead of throwing the whole page.
+        affiliateLeaderboardsApi.listClaimHolds(lb.id).catch((err) => {
+            console.error("[leaderboard] claim holds query failed", err);
+            return [] as Awaited<ReturnType<typeof affiliateLeaderboardsApi.listClaimHolds>>;
+        }),
+        // Settled prize claims — who has already claimed (MAIN DB, indexed on
+        // leaderboard_id). Best-effort — a failure just renders an empty
+        // claimants list instead of throwing the whole page.
+        getAffiliateLeaderboardClaims(lb.id).catch((err) => {
+            console.error("[leaderboard] claims query failed", err);
+            return [] as Awaited<ReturnType<typeof getAffiliateLeaderboardClaims>>;
+        }),
+        // Live claim-window length (days after the event ends; 0 = never).
+        // null on failure → the banner renders an "unavailable" state.
+        getRewardExpiry().then(
+            (e) => e.leaderboard_days,
+            () => null as number | null,
+        ),
+    ]);
+    const rankings = standings.rankings;
+    // "settled" → weighted snapshot (matches what was paid); "live" →
+    // unweighted live estimate for an active board with no snapshot yet.
+    const standingsSettled = standings.source === "settled";
+    const claimWindow = computeLeaderboardClaimWindow({
+        endIso: lb.end_date,
+        expiryDays: leaderboardExpiryDays,
+    });
+    // Map user_id → active hold so standings rows can render freeze state in O(1).
+    const holdByUserId = new Map(claimHolds.map((h) => [h.user_id, h]));
+    const creatorById = new Map(creators.map((c) => [c.id, c]));
+    const creator = creatorById.get(lb.creator_user_id) ?? null;
+    const coCreatorRows = (lb.co_creator_user_ids ?? []).map((cid) => ({
+        id: cid,
+        username: creatorById.get(cid)?.username ?? null,
+        email: creatorById.get(cid)?.email ?? null,
+    }));
+    const standingsHousePnlUsd = rankings.reduce(
+        (sum, r) => sum + r.housePnlUsd,
+        0,
+    );
+
+    // Fire-and-forget CQRS comparison (Phase 2B). No-op unless the
+    // `creators_leaderboards` surface is in comparison mode; the served value
+    // above is ALWAYS the Postgres `rankings`. Mirrors the same opts so the CH
+    // twin replicates the EXACT 2-role + blacklist scope. Only meaningful for
+    // the LIVE raw path — settled boards now serve the weighted snapshot,
+    // which the raw CH twin can't reproduce, so skip the comparison there.
+    if (!standingsSettled) {
+        void compareCreatorsLeaderboards(
+            lb.id,
+            {
+                creatorUserId: lb.creator_user_id,
+                coCreatorUserIds: lb.co_creator_user_ids ?? [],
+                affiliateCodes: lb.affiliate_codes,
+                startDate: new Date(lb.start_date),
+                endDate: new Date(lb.end_date),
+                prizeTiers: lb.prize_tiers,
+                limit: 100,
+            },
+            rankings,
+        );
+    }
+
+    return (
+        <>
             <div className="grid gap-6 md:grid-cols-2">
                 <FadeIn>
                     <div className="rounded-lg border p-5 space-y-3">
@@ -516,7 +584,28 @@ export default async function AffiliateLeaderboardDetailPage({
                     </Table>
                 </div>
             </FadeIn>
-        </div>
+        </>
+    );
+}
+
+/**
+ * Fallback for the streamed body — mirrors the 2x2 definition-card grid
+ * plus the claims / standings / prize-tiers stack so the layout doesn't
+ * jump when the real content swaps in.
+ */
+function LeaderboardDetailBodySkeleton() {
+    return (
+        <>
+            <div className="grid gap-6 md:grid-cols-2">
+                <Skeleton className="h-64 rounded-lg" />
+                <Skeleton className="h-40 rounded-lg" />
+                <Skeleton className="h-44 rounded-lg" />
+                <Skeleton className="h-64 rounded-lg" />
+            </div>
+            <StatPanelSkeleton rows={4} />
+            <StatPanelSkeleton rows={5} />
+            <Skeleton className="h-40 rounded-lg" />
+        </>
     );
 }
 
