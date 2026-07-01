@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import { usePathname } from "next/navigation";
-import { enter } from "@/components/ux";
 
 /**
  * ──────────────────────────────────────────────────────────────────────────
@@ -39,10 +38,11 @@ import { enter } from "@/components/ux";
  *     reserves no space and shifts no layout, so there is zero CLS.
  *
  * ── Reduced motion ────────────────────────────────────────────────────────
- *   Every class comes from the centralized `enter()` motion helper, which
- *   emits `motion-safe:`-gated variants only. Users with
- *   `prefers-reduced-motion: reduce` land on the final page state instantly
- *   with no fade and no slide — we never animate behind their back.
+ *   The animation is `motion-safe:`-gated (only `motion-safe:animate-in` is
+ *   applied; the `fade-in`/`slide-in-from-bottom-1`/`duration-150` utilities
+ *   are inert without it). Users with `prefers-reduced-motion: reduce` land on
+ *   the final page state instantly with no fade and no slide — we never
+ *   animate behind their back.
  *
  * ── Layout / docked-rail safety ───────────────────────────────────────────
  *   The wrapper is a bare `<div>` with no positioning, sizing, overflow, or
@@ -57,7 +57,10 @@ export function PageTransition({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
   return (
-    <div key={pathname} className={enter("slide-up", "fast")}>
+    <div
+      key={pathname}
+      className="motion-safe:animate-in fade-in slide-in-from-bottom-1 duration-150"
+    >
       {children}
     </div>
   );
