@@ -581,29 +581,27 @@ export type PackFullDetail = {
 };
 
 /**
- * Lazy-load the FULL pack detail for the big centered modal opened from a
- * /packs list row — the in-app replacement for navigating to /packs/[id]. It
- * returns exactly the data the full page renders: the pack detail (identity +
- * economics + complete card pool from `getPackDetail`) and the deferred chart
- * stats (`getPackStats`). Called on the modal's FIRST open per pack and cached
- * client-side, so the /packs list itself never eager-loads any pack's detail.
+ * Load the pack detail for the big centered modal / detail view — the in-app
+ * replacement for navigating to /packs/[id]. Returns the CORE detail (identity +
+ * economics + complete card pool from `getPackDetail`) with `stats: null` so the
+ * open NEVER runs the heavy chart stats (`getPackStats` — two
+ * `result_metadata->>'pack_id'` scans over provably_fair_results) up front.
+ * The client streams the stats separately behind their own skeleton once the
+ * detail is ready (the `statsAutoLoadedFor` effect in pack-detail-view.tsx →
+ * `loadPackStats`), so opening the pack shows detail + card pool immediately
+ * instead of blocking on the double PF-scan. This mirrors how the /packs/[id]
+ * page defers stats behind <PackStatsLazy>.
  *
  * Read-only + page-access gated (same `/packs` gate as the deep-link page).
  * Returns null when the pack is missing or its detail read failed, so the
- * modal can show a 404 / error state. The stats sub-fetch is wrapped in
- * safeQuery+timeout so a slow scan degrades that block alone — detail + the
- * card pool still render, mirroring the page's <PackStatsLazy> boundary.
- *
- * Prefer `loadPackFullDetail` from pack-detail-cache.ts on the client — it
- * dedupes in-flight requests so double-clicks don't double-query.
+ * caller can show a 404 / error state.
  */
 export async function fetchPackFullDetail(
   packId: string,
 ): Promise<PackFullDetail | null> {
   const detail = await fetchPackDetailCore(packId);
   if (!detail) return null;
-  const stats = await fetchPackDetailStats(packId, detail);
-  return { detail, stats };
+  return { detail, stats: null };
 }
 
 /**

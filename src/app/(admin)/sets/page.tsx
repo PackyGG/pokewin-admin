@@ -19,6 +19,7 @@ import {
   SectionHeading,
   KpiTile,
 } from "@/components/modern-panels";
+import { KpiStripSkeleton } from "@/components/loading-skeletons";
 import { FadeIn } from "@/components/fade-in";
 import { formatNumber } from "@/lib/utils/format";
 
@@ -74,6 +75,56 @@ async function SetsListContent({
   );
 }
 
+/**
+ * The KPI strip (catalog totals) streams behind its own <Suspense> so the
+ * `getSetsStats` aggregate never blocks first paint — the PageHero shell paints
+ * instantly and this fills in behind <KpiStripSkeleton>. safeQuery-wrapped so a
+ * failing aggregate degrades to a TileErrorFallback for this section alone
+ * instead of crashing the page (mirrors /cards).
+ */
+async function SetsKpiStrip() {
+  const { data: stats } = await safeQuery(
+    () => getSetsStats(),
+    null,
+    "sets.stats",
+  );
+
+  // When the stats aggregate query failed (safeQuery returned null) the strip
+  // collapses to a single TileErrorFallback row instead of crashing the page;
+  // the filter bar + list below are unaffected. (Mirrors /cards.)
+  if (!stats) {
+    return (
+      <TileErrorFallback
+        label="Catalog stats"
+        hint="The aggregate stats query failed. The sets list below is unaffected — refresh to retry."
+      />
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+      <KpiTile
+        label="Total Sets"
+        value={formatNumber(stats.total)}
+        icon={Library}
+        accent="blue"
+      />
+      <KpiTile
+        label="Series"
+        value={formatNumber(stats.totalSeries)}
+        icon={FolderTree}
+        accent="cyan"
+      />
+      <KpiTile
+        label="Total Cards"
+        value={formatNumber(stats.totalCards)}
+        icon={Layers}
+        accent="purple"
+      />
+    </div>
+  );
+}
+
 export default async function SetsPage({
   searchParams,
 }: {
@@ -84,14 +135,16 @@ export default async function SetsPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  // Both frame queries are safeQuery-wrapped so a failing aggregate degrades
-  // only its own section — the KPI strip collapses to a TileErrorFallback and
-  // the filter bar falls back to empty series options — instead of crashing
-  // the whole page to the route error boundary (mirrors /cards).
-  const [{ data: series }, { data: stats }] = await Promise.all([
-    safeQuery(() => getSeriesList(), [] as string[], "sets.series"),
-    safeQuery(() => getSetsStats(), null, "sets.stats"),
-  ]);
+  // Only the filter-bar series options are resolved in the page body — a small,
+  // safeQuery-wrapped read. The heavy KPI aggregate (`getSetsStats`) streams in
+  // its own <Suspense> child below so it never blocks first paint, and the list
+  // streams in its own boundary. (Falls back to empty series options on failure
+  // so the filter bar still renders.)
+  const { data: series } = await safeQuery(
+    () => getSeriesList(),
+    [] as string[],
+    "sets.series",
+  );
 
   const suspenseKey = `${page}|${perPage}|${params.search ?? ""}|${params.series ?? ""}|${params.sortBy ?? ""}|${params.sortOrder ?? ""}`;
 
@@ -117,37 +170,11 @@ export default async function SetsPage({
         />
       </PageHero>
 
-      {/* When the stats aggregate query failed (safeQuery returned null) the
-          strip collapses to a single TileErrorFallback row instead of crashing
-          the page; the filter bar + list below are unaffected. (Mirrors
-          /cards.) */}
-      {stats ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-          <KpiTile
-            label="Total Sets"
-            value={formatNumber(stats.total)}
-            icon={Library}
-            accent="blue"
-          />
-          <KpiTile
-            label="Series"
-            value={formatNumber(stats.totalSeries)}
-            icon={FolderTree}
-            accent="cyan"
-          />
-          <KpiTile
-            label="Total Cards"
-            value={formatNumber(stats.totalCards)}
-            icon={Layers}
-            accent="purple"
-          />
-        </div>
-      ) : (
-        <TileErrorFallback
-          label="Catalog stats"
-          hint="The aggregate stats query failed. The sets list below is unaffected — refresh to retry."
-        />
-      )}
+      {/* KPI strip streams behind its own boundary so the heavy stats
+          aggregate never blocks first paint. */}
+      <Suspense fallback={<KpiStripSkeleton count={3} />}>
+        <SetsKpiStrip />
+      </Suspense>
 
       <div className="space-y-3">
         <SectionHeading icon={Library} title="All Sets" />

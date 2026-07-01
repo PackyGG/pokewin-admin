@@ -29,10 +29,13 @@ import { PackStatsSection } from "./[id]/revenue-chart";
 import { PackCardsView, GamesTable } from "./[id]/pack-tabs";
 import { TogglePackButton } from "./[id]/toggle-pack-button";
 import { DeletePackButton } from "./[id]/delete-pack-button";
-import { fetchPackListSeed, type PackFullDetail } from "./actions";
+import {
+  fetchPackDetailCore,
+  fetchPackListSeed,
+  type PackFullDetail,
+} from "./actions";
 import {
   invalidatePackDetailCache,
-  loadPackFullDetail,
   loadPackGamesPage,
   loadPackStats,
 } from "./pack-detail-cache";
@@ -108,22 +111,33 @@ export function PackDetailView({
     (force = false) => {
       let cancelled = false;
       setState({ status: "loading" });
-      loadPackFullDetail(packId, { force })
-        .then((res) => {
+      // Load the CORE detail only (identity + economics + card pool) and paint
+      // ready immediately with `stats: null`. The heavy chart stats — two
+      // `getPackStats` scans over provably_fair_results — are NOT awaited here:
+      // the `statsAutoLoadedFor` effect below streams them in behind their own
+      // skeleton once detail is ready. Awaiting both up front (the old
+      // `loadPackFullDetail` path) forced BOTH the detail read AND the double
+      // PF-scan to finish before anything rendered, so opening the pack ran the
+      // heavy double scan blocking first paint. `force` is unused now (stats
+      // caching is handled per-fetch by `loadPackStats`); kept for signature
+      // stability with the retry/toggle callers.
+      void force;
+      fetchPackDetailCore(packId)
+        .then((detail) => {
           if (cancelled) return;
-          if (!res) {
+          if (!detail) {
             setState({ status: "notfound" });
             return;
           }
           setHeaderSeed({
-            id: res.detail.id,
-            name: res.detail.name,
-            slug: res.detail.slug,
-            imageUrl: res.detail.imageUrl,
-            active: res.detail.active,
-            priceUsd: res.detail.priceUsd,
+            id: detail.id,
+            name: detail.name,
+            slug: detail.slug,
+            imageUrl: detail.imageUrl,
+            active: detail.active,
+            priceUsd: detail.priceUsd,
           });
-          setState({ status: "ready", payload: res });
+          setState({ status: "ready", payload: { detail, stats: null } });
         })
         .catch(() => {
           if (!cancelled) setState({ status: "error" });
@@ -148,8 +162,15 @@ export function PackDetailView({
     return load(false);
   }, [packId, initialViewMode, load, initialPayload]);
 
+  // Seed the header identity from the lightweight list-seed lookup while the
+  // heavy detail streams in — but ONLY while there's no already-seeded header
+  // (and no resolved detail, which sets the seed via `load()`). The effect
+  // re-runs only when `packId` or `headerSeed` changes, so once a seed exists
+  // the `if (headerSeed) return` guard blocks any refetch; there's no
+  // string-name sentinel that could leak "Loading…" into the hero title — while
+  // the name is unknown the title renders a <Skeleton>.
   React.useEffect(() => {
-    if (headerSeed?.name !== "Loading…") return;
+    if (headerSeed) return;
     let cancelled = false;
     fetchPackListSeed(packId)
       .then((s) => {
@@ -167,23 +188,15 @@ export function PackDetailView({
     return () => {
       cancelled = true;
     };
-  }, [packId, headerSeed?.name]);
-
-  React.useEffect(() => {
-    if (headerSeed) return;
-    setHeaderSeed({
-      id: packId,
-      name: "Loading…",
-      slug: "",
-      imageUrl: null,
-      active: false,
-      priceUsd: 0,
-    });
   }, [packId, headerSeed]);
 
   const detail = state.status === "ready" ? state.payload.detail : null;
 
-  const title = detail?.name ?? headerSeed?.name ?? "Pack";
+  const resolvedName = detail?.name ?? headerSeed?.name ?? null;
+  // The name is still unknown (no detail, no seed yet) → show a skeleton in the
+  // title slot rather than a placeholder string.
+  const titlePending = resolvedName === null;
+  const title = resolvedName ?? "Pack";
   const slug = detail?.slug ?? headerSeed?.slug ?? "";
   const imageUrl = detail?.imageUrl ?? headerSeed?.imageUrl ?? null;
   const active = detail?.active ?? headerSeed?.active ?? false;
@@ -229,17 +242,19 @@ export function PackDetailView({
     if (!detail || statsRetrying) return;
     setStatsRetrying(true);
     try {
+      // Re-run ONLY the stats scans (force-bust the per-fetch stats cache) and
+      // splice them into the already-rendered detail. We never re-fetch the
+      // core detail here — it's already in state — so a stats retry can't
+      // re-trigger the detail read, and there's no full double-fetch round-trip.
       const nextStats = await loadPackStats(packId, detail, { force: true });
       setState((prev) =>
         prev.status === "ready"
           ? { status: "ready", payload: { ...prev.payload, stats: nextStats } }
           : prev,
       );
-      if (nextStats) {
-        invalidatePackDetailCache(packId);
-        const cached = await loadPackFullDetail(packId, { force: true });
-        if (cached) setState({ status: "ready", payload: cached });
-      }
+      // Drop any stale modal-cache payload for this pack so a later reopen
+      // re-fetches fresh stats instead of serving the timed-out null.
+      if (nextStats) invalidatePackDetailCache(packId);
     } finally {
       setStatsRetrying(false);
     }
@@ -273,7 +288,9 @@ export function PackDetailView({
       <PageHero>
         <PageHeroIdentity
           icon={Package}
-          title={title}
+          title={
+            titlePending ? <Skeleton className="h-6 w-40" /> : title
+          }
           subtitle={slug || "Pack detail"}
           action={
             showActions && detail ? (

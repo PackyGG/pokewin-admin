@@ -825,12 +825,15 @@ export type PackStats = {
 /**
  * The two heavy scans behind getPackStats — the daily opening breakdown
  * and the borrow/sponsor pie breakdown. Both filter
- * `provably_fair_results` on `result_metadata->>'pack_id'`, an unindexed
- * JSON predicate that forces a full scan, so they're cached cross-request
- * (60s) keyed on the pack id. The pack-detail page re-renders on every
- * `?packTab=` toggle (URL-driven Cards/Games tabs); without this cache
- * each toggle would re-pay for both scans even though only the hidden tab
- * changed. Only the raw scan rows are cached — the cheap per-call
+ * `provably_fair_results` on `result_metadata->>'pack_id'`. That JSON
+ * predicate IS index-served on prod: `idx_pf_result_metadata_pack_id_created_at`
+ * (btree on `((result_metadata->>'pack_id'), created_at DESC)`) turns both
+ * into a Bitmap Index Scan — never a seq-scan of the 3.3M+ row table
+ * (read-only EXPLAIN verified on prod, 2026-07-01). They're still cached
+ * cross-request (60s) keyed on the pack id because the pack-detail page
+ * re-renders on every `?packTab=` toggle (URL-driven Cards/Games tabs);
+ * without this cache each toggle would re-pay for both index scans even
+ * though only the hidden tab changed. Only the raw scan rows are cached — the cheap per-call
  * arithmetic (price × openings, RTP/edge normalisation) stays outside so
  * a price/total change reflects immediately. 60s revalidate mirrors
  * getPacksListStats; opening data is append-only so brief staleness only
@@ -1063,6 +1066,19 @@ export async function getPackGames(
     paramIdx++;
   }
   if (filters?.search) {
+    // Substring match on the joined `user` (username/email) + exact id. The
+    // leading-wildcard ILIKE is deliberately non-sargable, and that's fine here:
+    // the HEAVY table (`provably_fair_results`, 3.3M+ rows) is still fully
+    // index-served by the pack_id predicate above — read-only EXPLAIN on prod
+    // (2026-07-01) shows a Bitmap Index Scan on
+    // idx_pf_result_metadata_pack_id_created_at, then a hash join whose BUILD
+    // side is a Seq Scan of `user`. That seq-scan is on a ~15k-row table (est.
+    // ~4 matched rows), i.e. a negligible one-off filter — the query never
+    // seq-scans provably_fair_results. Resolving the user id first via the
+    // `lower()+text_pattern_ops` prefix indexes (idx_user_lower_username_prefix
+    // / idx_user_lower_email_prefix) would only accelerate PREFIX matches, so
+    // it would change these into prefix search and lose substring semantics.
+    // The current shape is the planner's optimal choice for substring search.
     conditions.push(`(u.username ILIKE $${paramIdx} OR u.email ILIKE $${paramIdx} OR u.id = $${paramIdx + 1})`);
     params.push(`%${filters.search}%`, filters.search);
     paramIdx += 2;
