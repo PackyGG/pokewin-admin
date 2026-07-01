@@ -12,6 +12,7 @@ import {
   getDashboardCashflowFromClickHouse,
   type DashboardCashflowCh,
 } from "@/lib/clickhouse/queries/dashboard-cashflow";
+import { getDashboardCashflowFromPostgres } from "@/lib/queries/dashboard-cashflow-pg";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
@@ -95,21 +96,30 @@ export async function buildKpiWindowPayload(
 
   // CQRS serve path for the `dashboard_cashflow` surface — a SUBSET cutover.
   // The shared `getDashboardKpiStats` aggregate above still runs (it produces
-  // the GGR / wager / breakdown boxes, which have no CH twin at this leg), so
-  // only the four cash-flow figures resolve through ClickHouse:
+  // the GGR / wager / breakdown boxes), but the four cash-flow figures now
+  // resolve through their OWN dedicated read:
   //   • clickhouse → serve the CH cash-flow twin (SOLE read for these 4 fields;
-  //     on failure THROWS so the page's render boundary degrades).
+  //     on failure resolveAdminRead degrades to the PG slice below).
   //   • comparison → serve the Postgres slice, fire-and-forget drift log.
   //   • off        → serve the Postgres slice (today's behavior).
+  //
+  // RECONCILIATION FIX (2026-07-02): the PG slice is NO LONGER the shared
+  // aggregate's `stats.deposits/withdrawals` (which scopes to the CUSTOMER
+  // population — CREATORS DROPPED — because that same query builds the
+  // customer-wager legs). That made the box read LOWER than the "P&L Today"
+  // tile, which uses the `calculateWindowedPnl` cash-flow definition (creators
+  // KEPT + manual admin-adjustment withdrawals). Both are labelled "today
+  // deposits / withdrawals", so they must agree. The dedicated
+  // `getDashboardCashflowFromPostgres` reproduces the P&L-Today cash-flow
+  // definition EXACTLY (creators kept, card + |manual| withdrawals), so the
+  // box and P&L Today reconcile by construction — without touching the frozen
+  // `calculateWindowedPnl` math or the creator-excluded wager / period-P&L
+  // boxes. The CH twin was aligned to the SAME definition, so PG↔CH parity is
+  // preserved.
   const cashflow = await resolveAdminRead<DashboardCashflowCh>(
     "dashboard_cashflow",
     {
-      pg: async () => ({
-        deposits: stats.deposits,
-        depositCount: stats.depositCountPeriod,
-        withdrawals: stats.withdrawals,
-        withdrawalCount: stats.withdrawalCountPeriod,
-      }),
+      pg: () => getDashboardCashflowFromPostgres(window),
       ch: async () => {
         const blacklist = await getExcludedUserIds();
         return getDashboardCashflowFromClickHouse(window, blacklist);
