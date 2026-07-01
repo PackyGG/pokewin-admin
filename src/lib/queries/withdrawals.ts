@@ -8,6 +8,7 @@ import {
   card_withdrawal_status,
   card_withdrawal_method,
 } from "@/generated/prisma/enums";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 // Allowlists from the generated Prisma enums — validate user-supplied
 // filter values before they hit the query rather than blind-casting.
@@ -99,6 +100,7 @@ type GetWithdrawalsParams = {
  */
 async function computeWithdrawals(
   env: DbEnv,
+  blacklistKey: string,
   params: GetWithdrawalsParams,
 ): Promise<PaginatedResult<WithdrawalListItem>> {
   const { page = 1, perPage = 20, status, statuses, method, search, minValue, maxValue } = params;
@@ -107,6 +109,18 @@ async function computeWithdrawals(
   const db = env === "dev" ? getDevDb() : getProdDb();
 
   const where: Prisma.card_withdrawal_requestsWhereInput = {};
+
+  // Admin-managed excluded-users blacklist: drop blacklisted users'
+  // withdrawals from BOTH the list and the count so a blacklisted user
+  // never surfaces on the Withdrawals tab (or /physical). `user_id` is a
+  // plain column on card_withdrawal_requests, so a `notIn` predicate is a
+  // simple index-friendly filter. Resolved OUTSIDE the cache and passed in
+  // as `blacklistKey` so it participates in the cache key (mirrors
+  // computeDepositTransactions). Empty key → no predicate added.
+  const blacklistIds = blacklistKey ? blacklistKey.split(",") : [];
+  if (blacklistIds.length > 0) {
+    where.user_id = { notIn: blacklistIds };
+  }
 
   if (statuses && statuses.length > 0) {
     const validStatuses = statuses.filter(
@@ -216,7 +230,7 @@ async function computeWithdrawals(
  */
 const cachedWithdrawals = unstable_cache(
   computeWithdrawals,
-  ["transactions-withdrawals-list-v1"],
+  ["transactions-withdrawals-list-v2"],
   { revalidate: 60, tags: [WITHDRAWALS_LIST_TAG] },
 );
 
@@ -230,7 +244,13 @@ export async function getWithdrawals(
   params: GetWithdrawalsParams,
 ): Promise<PaginatedResult<WithdrawalListItem>> {
   const env = await readDbEnv();
-  return cachedWithdrawals(env, params);
+  // Resolve the excluded-users blacklist HERE, in the request scope
+  // (getExcludedUserIds reads the admin DB; illegal inside
+  // `unstable_cache`), then thread a stable sorted key through so it
+  // participates in the cache key. Mirrors getDepositTransactions.
+  const excluded = await getExcludedUserIds();
+  const blacklistKey = [...excluded].sort().join(",");
+  return cachedWithdrawals(env, blacklistKey, params);
 }
 
 export async function getWithdrawalDetail(id: string) {

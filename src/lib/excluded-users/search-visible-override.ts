@@ -4,10 +4,14 @@ import { getExcludedUserIds } from "./fetch";
  * Blacklisted users who remain findable via /users search and CMD+K for
  * every admin. They stay excluded from analytics aggregates and from
  * unfiltered list browsing — only an active search bypasses the filter.
+ *
+ * Currently empty: every blacklisted user is fully hidden from search for
+ * ordinary admins (kartos / `vqsEpQYADwxZ421j2aCV87R2qyIkN6Zd` was removed
+ * per owner request 2026-07-01 — must not appear anywhere in the admin).
+ * The privileged-admin `includeAllBlacklisted` path in
+ * `getExcludedUserIdsForAdminSearch` is unrelated and unchanged.
  */
-export const SEARCH_VISIBLE_DESPITE_BLACKLIST = [
-  "vqsEpQYADwxZ421j2aCV87R2qyIkN6Zd",
-] as const;
+export const SEARCH_VISIBLE_DESPITE_BLACKLIST: readonly string[] = [] as const;
 
 const SEARCH_VISIBLE_SET = new Set<string>(SEARCH_VISIBLE_DESPITE_BLACKLIST);
 
