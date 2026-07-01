@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { AlertTriangle } from "lucide-react";
 import {
   getRaceLeaderboard,
   getRaceLeaderboardPeriods,
@@ -7,7 +8,9 @@ import {
   getRaceClaims,
   getRacePeriodsOverview,
   getRaceStandingsClaimWindow,
+  type RaceLeaderboardPeriod,
 } from "@/lib/queries/races";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import {
   TableSkeleton,
@@ -23,6 +26,32 @@ import { HistoryTable } from "./leaderboards/history-table";
 import { PeriodsTable } from "./leaderboards/periods-table";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPending } from "@/components/ux";
+
+/**
+ * Inline "couldn't load" band — mirrors the amber notice the Challenges tab
+ * renders when its safeQuery-wrapped read fails, so a slow / failing race read
+ * degrades to a per-sub-tab notice instead of throwing to the /rewards route
+ * error boundary.
+ */
+function LeaderboardsLoadErrorBand({ what }: { what: string }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+    >
+      <AlertTriangle
+        aria-hidden
+        className="mt-0.5 size-4 shrink-0 text-amber-500"
+      />
+      <p className="text-xs text-amber-700 dark:text-amber-300">
+        Couldn&apos;t load {what} — the query timed out or failed. This is a{" "}
+        <span className="font-medium">request error, not zero results</span>.
+        Refresh to retry.
+      </p>
+    </div>
+  );
+}
 
 /**
  * Leaderboards tab of the merged /rewards page (was the standalone
@@ -123,10 +152,17 @@ async function StandingsSubTab({
 
   // The selectable leaderboards come straight from the DB (the periods that
   // actually have snapshot rows for this race type) — no calendar guessing.
-  const periods =
-    raceType === "all"
-      ? []
-      : await getRaceLeaderboardPeriods({ raceType });
+  // safeQuery so a failing periods read degrades to an empty selector instead
+  // of throwing the whole /rewards page into the route error boundary.
+  const { data: periods } = await safeQuery(
+    () =>
+      raceType === "all"
+        ? Promise.resolve<RaceLeaderboardPeriod[]>([])
+        : getRaceLeaderboardPeriods({ raceType }),
+    [] as RaceLeaderboardPeriod[],
+    "races.leaderboardPeriods",
+    15_000,
+  );
   const effectivePeriod =
     raceType === "all"
       ? undefined
@@ -134,21 +170,38 @@ async function StandingsSubTab({
           periods.some((p) => p.periodStart === params.periodStart)
         ? params.periodStart
         : periods[0]?.periodStart;
-  const [result, claimWindow] = await Promise.all([
-    getRaceLeaderboard({
-      raceType,
-      periodStart: effectivePeriod,
-      search,
-      page,
-      perPage,
-    }),
-    raceType !== "all" && effectivePeriod
-      ? getRaceStandingsClaimWindow({
-          raceType,
-          periodStart: effectivePeriod,
-        })
-      : Promise.resolve(null),
-  ]);
+  // Wrap the standings + claim-window reads (getRaceStandingsClaimWindow also
+  // fans out to the reward-expiry backend API) so a slow / failing read shows
+  // the inline amber band + empty table rather than nuking the page.
+  const [{ data: result, error: standingsError }, { data: claimWindow }] =
+    await Promise.all([
+      safeQuery(
+        () =>
+          getRaceLeaderboard({
+            raceType,
+            periodStart: effectivePeriod,
+            search,
+            page,
+            perPage,
+          }),
+        { data: [], total: 0, page, perPage, totalPages: 1 },
+        "races.leaderboard",
+        15_000,
+      ),
+      raceType !== "all" && effectivePeriod
+        ? safeQuery(
+            () =>
+              getRaceStandingsClaimWindow({
+                raceType,
+                periodStart: effectivePeriod,
+              }),
+            null,
+            "races.standingsClaimWindow",
+            15_000,
+          )
+        : Promise.resolve({ data: null, error: null } as const),
+    ]);
+  const standingsFailed = standingsError !== null;
 
   return (
     <div className="space-y-4">
@@ -183,6 +236,7 @@ async function StandingsSubTab({
       <Suspense>
         <DataTableToolbar searchPlaceholder="Search by username, email, or ID..." />
       </Suspense>
+      {standingsFailed && <LeaderboardsLoadErrorBand what="standings" />}
       {claimWindow && (
         <RaceClaimExpiryBanner window={claimWindow} raceType={raceType} />
       )}
@@ -199,13 +253,22 @@ async function StandingsSubTab({
         totalPages={result.totalPages}
         total={result.total}
         perPage={result.perPage}
+        degraded={standingsFailed}
       />
     </div>
   );
 }
 
 async function TiersSubTab() {
-  const tiers = await getRacePrizeTiers();
+  const { data: tiers, error } = await safeQuery(
+    () => getRacePrizeTiers(),
+    [] as Awaited<ReturnType<typeof getRacePrizeTiers>>,
+    "races.prizeTiers",
+    15_000,
+  );
+  if (error !== null) {
+    return <LeaderboardsLoadErrorBand what="prize tiers" />;
+  }
   return (
     <FadeIn>
       <RaceTiersTable tiers={tiers} />
@@ -221,7 +284,13 @@ async function HistorySubTab({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
   const raceType = params.raceType;
-  const claims = await getRaceClaims({ page, perPage, raceType });
+  const { data: claims, error } = await safeQuery(
+    () => getRaceClaims({ page, perPage, raceType }),
+    { data: [], total: 0, page, perPage, totalPages: 1 },
+    "races.claims",
+    15_000,
+  );
+  const failed = error !== null;
 
   return (
     <div className="space-y-4">
@@ -242,6 +311,7 @@ async function HistorySubTab({
           </Link>
         ))}
       </div>
+      {failed && <LeaderboardsLoadErrorBand what="race history" />}
       <FadeIn>
         <HistoryTable data={claims.data} />
       </FadeIn>
@@ -250,16 +320,27 @@ async function HistorySubTab({
         totalPages={claims.totalPages}
         total={claims.total}
         perPage={claims.perPage}
+        degraded={failed}
       />
     </div>
   );
 }
 
 async function PeriodsSubTab() {
-  const { active, recent } = await getRacePeriodsOverview();
+  const { data, error } = await safeQuery(
+    () => getRacePeriodsOverview(),
+    { active: [], recent: [] } as Awaited<
+      ReturnType<typeof getRacePeriodsOverview>
+    >,
+    "races.periodsOverview",
+    15_000,
+  );
+  if (error !== null) {
+    return <LeaderboardsLoadErrorBand what="race periods" />;
+  }
   return (
     <FadeIn>
-      <PeriodsTable active={active} recent={recent} />
+      <PeriodsTable active={data.active} recent={data.recent} />
     </FadeIn>
   );
 }
