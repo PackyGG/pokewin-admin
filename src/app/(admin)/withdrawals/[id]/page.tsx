@@ -4,6 +4,7 @@ import { ArrowUpFromLine, Package, Ticket, Layers } from "lucide-react";
 import { getWithdrawalDetail } from "@/lib/queries/withdrawals";
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { Badge } from "@/components/ui/badge";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
@@ -45,6 +46,15 @@ export default async function WithdrawalDetailPage({
   const data = await getWithdrawalDetail(id);
 
   if (!data) notFound();
+
+  // Blacklist gate: if the withdrawal's owning user is on the admin-managed
+  // excluded_users blacklist, treat the detail as non-existent (404) so a
+  // blacklisted user's withdrawal — amount, method, items, shipping/crypto
+  // details — is never viewable via a direct link. Generic membership check
+  // (getExcludedUserIds is the raw fail-closed set) — applies to everyone on
+  // the list, no per-user or per-admin override.
+  const excludedUserIds = await getExcludedUserIds();
+  if (excludedUserIds.includes(data.userId)) notFound();
 
   const timelineSteps = [
     { label: "Pending", date: data.requestedAt, active: data.status === "pending" },

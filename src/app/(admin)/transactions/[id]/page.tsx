@@ -13,6 +13,7 @@ import {
 import { getTransactionDetail } from "@/lib/queries/transactions";
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
 import { STATUS_COLORS } from "@/lib/constants";
@@ -47,6 +48,18 @@ const VOUCHER_EXCESS_TYPES = new Set([
   "exchange_excess_to_voucher",
 ]);
 
+// Withdrawal-type ledger transactions. If a transaction of one of these types
+// belongs to a blacklisted user, the detail page 404s so the withdrawal
+// amount / crypto address / destination is never viewable via a direct link.
+// Scoped to withdrawal types only (not every tx type) — the task is closing
+// WITHDRAWAL-info leaks for blacklisted users, and blacklisted users' other
+// ledger rows aren't the target here.
+const WITHDRAWAL_LEDGER_TYPES = new Set([
+  "card_withdrawal",
+  "balance_withdrawal",
+  "withdrawal_shipping_fee",
+]);
+
 const RARITY_COLORS: Record<string, string> = {
   common: "bg-zinc-700/90 text-zinc-100",
   uncommon: "bg-emerald-700/90 text-emerald-100",
@@ -76,6 +89,19 @@ export default async function TransactionDetailPage({
   const data = await getTransactionDetail(id);
 
   if (!data) notFound();
+
+  // Blacklist gate: if this is a WITHDRAWAL-type ledger tx belonging to a
+  // user on the admin-managed excluded_users blacklist, 404 so the
+  // withdrawal amount / crypto destination is never viewable via a direct
+  // link. Generic membership check (getExcludedUserIds is the raw fail-closed
+  // set) — applies to everyone on the list, no per-user/per-admin override.
+  // Scoped to withdrawal-type txs (see WITHDRAWAL_LEDGER_TYPES); the related-
+  // transactions list on the page is keyed on game_session_id (pack/battle/
+  // upgrader sessions), so it can never surface a withdrawal row.
+  if (WITHDRAWAL_LEDGER_TYPES.has(data.type)) {
+    const excludedUserIds = await getExcludedUserIds();
+    if (excludedUserIds.includes(data.userId)) notFound();
+  }
 
   // House-POV direction for this ledger row — drives the Amount KPI and
   // inline amount COLOR so a deposit reads green, a withdrawal reads
