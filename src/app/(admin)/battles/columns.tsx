@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { BorrowBadge } from "@/components/borrow-badge";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 import type { BattleListItem } from "@/lib/queries/battles";
 import { InlineCancelBattleButton } from "./inline-cancel-button";
 
@@ -35,9 +36,12 @@ export const columns: ColumnDef<BattleListItem>[] = [
     accessorKey: "id",
     header: "ID",
     cell: ({ row }) => (
+      // Same battle-detail destination as the row click, but stop
+      // propagation so it's a single navigation, not a redundant double push.
       <Link
         href={`/battles/${row.original.id}`}
         className="font-mono text-xs hover:underline"
+        onClick={(e) => e.stopPropagation()}
       >
         {row.original.id.slice(0, 8)}...
       </Link>
@@ -46,8 +50,15 @@ export const columns: ColumnDef<BattleListItem>[] = [
   {
     accessorKey: "username",
     header: "Creator",
+    // Creator links to the USER, not the battle — stop the row-level click
+    // (which routes to /battles/[id]) so clicking the creator name lands on
+    // the user page as intended instead of being hijacked to the battle.
     cell: ({ row }) => (
-      <Link href={`/users/${row.original.userId}`} className="hover:underline">
+      <Link
+        href={`/users/${row.original.userId}`}
+        className="hover:underline"
+        onClick={(e) => e.stopPropagation()}
+      >
         {row.original.username ?? row.original.userId.slice(0, 8)}
       </Link>
     ),
@@ -84,7 +95,7 @@ export const columns: ColumnDef<BattleListItem>[] = [
   },
   {
     accessorKey: "totalPotUsd",
-    header: "Hit",
+    header: () => <div className="text-right">Hit</div>,
     // "Hit" = total card value paid out across the whole battle (sum
     // across every team, regardless of who won). This is the size of
     // the actual hit — what someone walked away with. House loss → rose.
@@ -97,9 +108,10 @@ export const columns: ColumnDef<BattleListItem>[] = [
       const p = row.original.totalPotUsd;
       const m = row.original.hitMultiplier;
       const locked = row.original.outcomeLocked;
-      if (p == null) return <span className="text-muted-foreground">—</span>;
+      if (p == null)
+        return <div className="text-right text-muted-foreground">—</div>;
       return (
-        <div className="flex flex-col items-start gap-0.5">
+        <div className="flex flex-col items-end gap-0.5 text-right tabular-nums">
           <div className="flex items-center gap-1.5">
             <span className="text-rose-600 dark:text-rose-400">
               {formatCurrency(p)}
@@ -128,15 +140,21 @@ export const columns: ColumnDef<BattleListItem>[] = [
   },
   {
     accessorKey: "houseEdge",
-    header: "House Edge",
+    header: () => <div className="text-right">House Edge</div>,
     // House edge negative = house lost money on this battle → rose.
     cell: ({ row }) => {
       const he = row.original.houseEdge;
-      if (he == null) return <span className="text-muted-foreground">—</span>;
+      if (he == null)
+        return <div className="text-right text-muted-foreground">—</div>;
       return (
-        <span className={he < 0 ? "text-rose-600 dark:text-rose-400" : ""}>
+        <div
+          className={cn(
+            "text-right tabular-nums",
+            he < 0 && "text-rose-600 dark:text-rose-400",
+          )}
+        >
           {he.toFixed(2)}%
-        </span>
+        </div>
       );
     },
   },

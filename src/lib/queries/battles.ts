@@ -3,6 +3,7 @@ import { getDb, dbForEnv } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { toNumber } from "@/lib/utils/decimal";
+import { isUuid } from "@/lib/utils/ids";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
 import { battle_status, battle_mode } from "@/generated/prisma/enums";
@@ -142,8 +143,15 @@ export async function getBattles(params: {
   }
 
   if (search) {
+    // `battles.id` is a Postgres `@db.Uuid` column — feeding a non-UUID
+    // search term (e.g. a username, the documented use) into an id-equality
+    // leg makes Postgres throw `22P02 invalid input syntax for type uuid`,
+    // which `safeQuery` degrades to the "Couldn't load the battles list"
+    // band, so username search never returns results. Only include the id
+    // leg when the term is actually UUID-shaped; otherwise search username
+    // only. Mirrors the `isUuid` guard in rain.ts / transactions.ts.
     where.OR = [
-      { id: search },
+      ...(isUuid(search) ? [{ id: search }] : []),
       { user: { username: { contains: search, mode: "insensitive" } } },
     ];
   }
@@ -307,8 +315,12 @@ export async function getBattles(params: {
                 AND: [
                   { id: { in: topIds } },
                   {
+                    // Same UUID guard as the main search path above — a
+                    // username search here would otherwise throw 22P02 on
+                    // the `id` leg (battles.id is @db.Uuid) and crash the
+                    // biggest-hit query. UUID-shaped terms keep the id leg.
                     OR: [
-                      { id: search },
+                      ...(isUuid(search) ? [{ id: search }] : []),
                       { user: { username: { contains: search, mode: "insensitive" } } },
                     ],
                   },

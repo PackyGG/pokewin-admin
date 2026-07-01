@@ -144,22 +144,30 @@ export default async function BattleDetailPage({
         />
       </PageHero>
 
-      {/* Pre-resolved pending battle: outcome is locked in the DB but the
-          on-site animation hasn't settled yet. Make that explicit so the
-          admin reads the KPI strip below as a determined-but-settling
-          result, not a finalized one. */}
-      {showKpiStrip && isPending && (
-        <Badge
-          variant="outline"
-          className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30"
-        >
-          Outcome locked — settling
-        </Badge>
-      )}
-
-      {/* KPI strip - completed battles + pre-resolved pending battles */}
+      {/* KPI strip - completed battles + pre-resolved pending battles.
+          The strip now leads with a header so the pending "settling"
+          state reads as a label on the P&L block itself rather than a
+          loose badge floating above it. For a pre-resolved pending battle
+          the outcome is already locked in the DB (winner_team +
+          total_unpacked) but the on-site animation hasn't settled — the
+          badge in the header makes that explicit. */}
       {showKpiStrip && (
-        <div className="grid gap-2.5 sm:gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+        <div className="space-y-3">
+          <SectionHeading
+            icon={TrendingUp}
+            title="House P&L"
+            action={
+              isPending ? (
+                <Badge
+                  variant="outline"
+                  className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30"
+                >
+                  Outcome locked — settling
+                </Badge>
+              ) : undefined
+            }
+          />
+          <div className="grid gap-2.5 sm:gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
           <KpiTile
             label="Packs Opened"
             // PF result rows aren't written while a battle is animating,
@@ -195,6 +203,7 @@ export default async function BattleDetailPage({
             icon={Percent}
             accent={houseEdgePct >= 0 ? "emerald" : "rose"}
           />
+          </div>
         </div>
       )}
 

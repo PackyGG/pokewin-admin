@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
 import {
   flexRender,
   getCoreRowModel,
@@ -21,6 +23,15 @@ import { columns } from "./columns";
 import type { BattleListItem } from "@/lib/queries/battles";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { InlineCancelBattleButton } from "./inline-cancel-button";
+
+// First-mount fade gate. The list page streams the table behind a keyed
+// <Suspense>, so switching tab / mode / sort / period remounts this client
+// component and would re-run the FadeIn every time — a distracting re-fade
+// on an otherwise-instant (cached) filter switch. This module-scoped flag
+// lets the table fade once when it first appears in the client session and
+// skip the fade on subsequent filter switches. A hard reload re-initialises
+// the module, so genuine fresh loads still fade.
+let hasFadedOnce = false;
 
 const BATTLE_STATUS_COLORS: Record<string, string> = {
   waiting:
@@ -103,14 +114,34 @@ function BattleMobileCard({ battle }: { battle: BattleListItem }) {
 }
 
 export function BattlesDataTable({ data }: { data: BattleListItem[] }) {
+  const router = useRouter();
   const table = useReactTable({
     data,
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
 
+  // Fade in only the first time the table appears in this client session.
+  // On cached filter switches (tab / mode / sort / period) the keyed
+  // <Suspense> remounts this component; without the gate the FadeIn would
+  // replay on every switch. Consulting + flipping the module flag inside a
+  // lazy useState initializer keeps it running exactly once per mount (no
+  // impure mutation during render), so the first mount fades and every
+  // later mount skips it. `motion-safe:` still yields the final state
+  // instantly for reduced-motion users; a hard reload re-fades.
+  const [shouldFade] = useState(() => {
+    if (hasFadedOnce) return false;
+    hasFadedOnce = true;
+    return true;
+  });
+
   return (
-    <>
+    <div
+      className={cn(
+        shouldFade &&
+          "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-300",
+      )}
+    >
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
@@ -150,9 +181,29 @@ export function BattlesDataTable({ data }: { data: BattleListItem[] }) {
           <TableBody>
             {table.getRowModel().rows.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id}>
+                // Full-row click affordance — parity with the mobile card,
+                // which already routes on tap. Clicking anywhere on the row
+                // opens the battle detail; the ID / Creator cells keep their
+                // own <Link> (native nav still works), and the inline cancel
+                // action stops propagation so cancelling never navigates.
+                <TableRow
+                  key={row.id}
+                  onClick={() => router.push(`/battles/${row.original.id}`)}
+                  className="cursor-pointer"
+                >
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
+                    <TableCell
+                      key={cell.id}
+                      // The actions column hosts the inline cancel button (an
+                      // AlertDialog). Stop row-click navigation there so
+                      // opening/confirming the dialog doesn't also push the
+                      // detail route out from under it.
+                      onClick={
+                        cell.column.id === "actions"
+                          ? (e) => e.stopPropagation()
+                          : undefined
+                      }
+                    >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}
@@ -173,6 +224,6 @@ export function BattlesDataTable({ data }: { data: BattleListItem[] }) {
           </TableBody>
         </Table>
       </div>
-    </>
+    </div>
   );
 }
