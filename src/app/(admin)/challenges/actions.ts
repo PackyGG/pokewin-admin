@@ -86,7 +86,7 @@ export async function searchItems(
   } = {},
 ): Promise<SearchItem[]> {
   const db = await getDb();
-  await requirePageAccess("/challenges");
+  await requirePageAccess("/rewards");
   const isUuid = UUID_RE.test(query);
 
   if (type === "pack") {
@@ -257,7 +257,7 @@ export async function getChallengeCardSummary(
   cardId: string,
 ): Promise<ChallengeCardSummary | null> {
   const db = await getDb();
-  await requirePageAccess("/challenges");
+  await requirePageAccess("/rewards");
 
   if (!UUID_RE.test(packId) || !UUID_RE.test(cardId)) {
     return null;
@@ -413,7 +413,7 @@ export type CreateChallengeData = {
 export async function createChallenge(
   data: CreateChallengeData,
 ): Promise<{ success: true; challengeId: string } | { success: false; error: string }> {
-  const session = await requirePageAccess("/challenges");
+  const session = await requirePageAccess("/rewards");
 
   const parseResult = createChallengeSchema.safeParse(data);
   if (!parseResult.success) {
@@ -484,7 +484,7 @@ export async function createChallenge(
     console.error("[createChallenge] Audit logging failed:", err);
   }
 
-  revalidatePath("/challenges");
+  revalidatePath("/rewards");
   return { success: true, challengeId: created.id };
 }
 
@@ -527,7 +527,7 @@ export async function updateChallenge(
   id: string,
   data: UpdateChallengeData,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const session = await requirePageAccess("/challenges");
+  const session = await requirePageAccess("/rewards");
 
   const parseResult = updateChallengeSchema.safeParse(data);
   if (!parseResult.success) {
@@ -576,7 +576,7 @@ export async function updateChallenge(
     console.error("[updateChallenge] Audit logging failed:", err);
   }
 
-  revalidatePath("/challenges");
+  revalidatePath("/rewards");
   return { success: true };
 }
 
@@ -588,7 +588,7 @@ export async function archiveChallenge(
   id: string,
   expectedVersion: number,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const session = await requirePageAccess("/challenges");
+  const session = await requirePageAccess("/rewards");
 
   if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {
     return { success: false, error: "Invalid version" };
@@ -620,6 +620,6 @@ export async function archiveChallenge(
     console.error("[archiveChallenge] Audit logging failed:", err);
   }
 
-  revalidatePath("/challenges");
+  revalidatePath("/rewards");
   return { success: true };
 }

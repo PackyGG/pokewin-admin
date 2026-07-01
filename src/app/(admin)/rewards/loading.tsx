@@ -1,30 +1,24 @@
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   PageHeroSkeleton,
-  KpiStripSkeleton,
   TabBarSkeleton,
   TableSkeleton,
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
 
 /**
- * Matches /rewards: hero, RewardsOverview (4 stat cards), 4 type tabs
- * (All / One Time / Daily / Balance) + Create button on the same row,
- * and an 8-column rewards table (Name / Slug / Type / Level / Cash /
- * Packs / Created / Actions). No toolbar — type filter is handled via
- * tabs.
+ * Matches the merged /rewards page: hero, the top-level Rain | Challenges tab
+ * switch (default Rain), and — for the default Rain / Instances view — a
+ * 9-column rain instances table (ID / Status / Base / Tips / Total Pool /
+ * Participants / Winner / Starts / Ends). The inner Rain sub-tabs and the
+ * search toolbar stream in behind their own boundaries.
  */
 export default function RewardsLoading() {
   return (
     <div className="space-y-6">
       <PageHeroSkeleton />
-      <KpiStripSkeleton count={4} />
       <div className="space-y-4">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <TabBarSkeleton count={4} />
-          <Skeleton className="h-9 w-32" />
-        </div>
-        <TableSkeleton rows={10} columns={8} />
+        <TabBarSkeleton count={2} />
+        <TableSkeleton rows={10} columns={9} />
         <PaginationSkeleton />
       </div>
     </div>

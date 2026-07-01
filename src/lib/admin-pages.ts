@@ -120,7 +120,13 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Promo Codes — moved here from the Marketing group so the role
   // editor mirrors the sidebar grouping. Permission key is unchanged.
   { group: "Rewards", label: "Promo Codes", key: "/promo-codes" },
-  { group: "Rewards", label: "Challenges", key: "/challenges" },
+  // The standalone /challenges CRUD page was merged into /rewards as its
+  // "Challenges" tab (the page now gates on /rewards); its own key was
+  // retired. Legacy /insights/challenges keeps its separate key below.
+  // Rain list was also merged into /rewards (its "Rain" tab), but the
+  // /rain KEY is retained — the /rain/[id] detail route still gates on it
+  // (requirePageAccess("/rain")). Only the sidebar/palette nav entry for the
+  // standalone list was removed.
   { group: "Rewards", label: "Rain", key: "/rain" },
   { group: "Rewards", label: "Leaderboards", key: "/rewards/leaderboards" },
   { group: "Rewards", label: "Level Up", key: "/rewards/level-up" },

@@ -1,65 +1,25 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Gift } from "lucide-react";
+import { CloudRain, Target } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
-import { getRakebackStats, getRewards } from "@/lib/queries/rewards";
-import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import {
   TableSkeleton,
   PaginationSkeleton,
-  StatPanelSkeleton,
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
-import { RewardsOverview } from "./rewards-overview";
-import { CreateRewardButton } from "./create-reward-button";
-import { RewardsTable } from "./rewards-table";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
-import { FadeIn } from "@/components/fade-in";
-import { LinkPending } from "@/components/ux";
-import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import { LinkPendingShell } from "@/components/ux";
+import { RainTab } from "./rain-tab";
+import { ChallengesTab } from "./challenges-tab";
 
 export const metadata = { title: "Rewards" };
 
-async function RewardsOverviewAsync() {
-  // Degrade gracefully: a thrown OR slow rakeback aggregate must not
-  // white-screen the whole /rewards page (the rewards table renders behind
-  // its own boundary). On failure/timeout the strip shows zeros instead.
-  const { data: stats } = await safeQuery(
-    () => getRakebackStats(),
-    { totalClaimed: 0, totalPending: 0, claimCount: 0, byType: [] },
-    "rewards.rakeback-stats",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
-  return <RewardsOverview stats={stats} />;
-}
+const TABS = [
+  { value: "rain", label: "Rain", icon: CloudRain },
+  { value: "challenges", label: "Challenges", icon: Target },
+] as const;
 
-async function RewardsTableAsync({
-  page,
-  perPage,
-  type,
-  search,
-}: {
-  page: number;
-  perPage: number;
-  type?: string;
-  search?: string;
-}) {
-  const rewards = await getRewards({ page, perPage, type, search });
-
-  return (
-    <>
-      <FadeIn>
-        <RewardsTable data={rewards.data} />
-      </FadeIn>
-      <DataTablePagination
-        page={rewards.page}
-        totalPages={rewards.totalPages}
-        total={rewards.total}
-        perPage={rewards.perPage}
-      />
-    </>
-  );
-}
+type TabValue = (typeof TABS)[number]["value"];
 
 export default async function RewardsPage({
   searchParams,
@@ -68,67 +28,58 @@ export default async function RewardsPage({
 }) {
   await requirePageAccess("/rewards");
   const params = await searchParams;
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
-  const type = params.type;
-  const search = params.search;
+  const tab: TabValue = (TABS.find((t) => t.value === params.tab) ?? TABS[0])
+    .value;
 
   return (
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={Gift}
+          icon={CloudRain}
+          accent="blue"
           title="Rewards"
-          subtitle="One-time, daily, and balance rewards — plus rakeback claim stats."
+          subtitle="Community rain instances and game challenges."
         />
       </PageHero>
 
-      {/* Rakeback overview and the rewards table are independent — render
-          each behind its own Suspense boundary so the table doesn't have
-          to wait on the rakeback aggregate, and vice versa. */}
-      <Suspense
-        fallback={
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <StatPanelSkeleton key={i} rows={2} />
-            ))}
-          </div>
-        }
-      >
-        <RewardsOverviewAsync />
-      </Suspense>
-
       <div className="space-y-4">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex gap-1 rounded-lg bg-muted p-1">
-            {["all", "one_time", "daily", "balance"].map((t) => (
+        <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
+            {TABS.map((t) => (
               <Link
-                key={t}
-                href={`/rewards?type=${t}`}
+                key={t.value}
+                href={`/rewards?tab=${t.value}`}
                 className={cn(
-                  "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                  (type || "all") === t
+                  "inline-flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  tab === t.value
                     ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                {t === "one_time" ? "One Time" : t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
-                <LinkPending size={13} />
+                <t.icon className="size-4" aria-hidden />
+                <LinkPendingShell spinnerSize={13}>
+                  {t.label}
+                </LinkPendingShell>
               </Link>
             ))}
           </div>
-          <CreateRewardButton />
         </div>
+
+        {/* Active-tab-only: only the selected tab's data component is rendered
+            and awaited. Switching tabs is a `?tab=` navigation that swaps the
+            child under a keyed Suspense boundary — the hidden tab never fires
+            its queries on first paint (CLAUDE.md Active-Timeframe-Only). */}
         <Suspense
-          key={`${page}|${perPage}|${type ?? ""}|${search ?? ""}`}
+          key={tab}
           fallback={
             <>
-              <TableSkeleton rows={10} columns={8} />
+              <TableSkeleton rows={12} columns={tab === "rain" ? 9 : 7} />
               <PaginationSkeleton />
             </>
           }
         >
-          <RewardsTableAsync page={page} perPage={perPage} type={type} search={search} />
+          {tab === "rain" && <RainTab params={params} />}
+          {tab === "challenges" && <ChallengesTab params={params} />}
         </Suspense>
       </div>
     </div>

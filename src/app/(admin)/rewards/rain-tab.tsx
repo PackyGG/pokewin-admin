@@ -1,9 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { CloudRain } from "lucide-react";
 import { getRains } from "@/lib/queries/rain";
 import { getSiteConfigValues } from "@/lib/queries/site-config";
-import { requirePageAccess } from "@/lib/dal";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,74 +10,67 @@ import {
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
-import { RainRangeFilters } from "./range-filters";
-import { RainsTable } from "./rains-table";
-import { RAIN_CONFIG_KEYS } from "./config-keys";
-import { RainConfigCard } from "./rain-config-card";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { RainRangeFilters } from "../rain/range-filters";
+import { RainsTable } from "../rain/rains-table";
+import { RAIN_CONFIG_KEYS } from "../rain/config-keys";
+import { RainConfigCard } from "../rain/rain-config-card";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPendingShell } from "@/components/ux";
 
-export const metadata = { title: "Rain" };
-
-const TABS = [
+/**
+ * Rain tab of the merged /rewards page (was the standalone /rain LIST page).
+ *
+ * The Rain tab has its OWN inner Instances/Config switch. To avoid colliding
+ * with the top-level Rain|Challenges switch (which drives `?tab=`), the inner
+ * switch drives `?rtab=` instead. Only the active inner sub-tab awaits its data
+ * (active-tab-only, CLAUDE.md).
+ *
+ * Rows still link to /rain/[id] (the detail route is unchanged).
+ */
+const RAIN_SUBTABS = [
   { value: "instances", label: "Instances" },
   { value: "config", label: "Config" },
 ] as const;
 
-type TabValue = (typeof TABS)[number]["value"];
+type RainSubTab = (typeof RAIN_SUBTABS)[number]["value"];
 
-export default async function RainPage({
-  searchParams,
+export function RainTab({
+  params,
 }: {
-  searchParams: Promise<Record<string, string | undefined>>;
+  params: Record<string, string | undefined>;
 }) {
-  await requirePageAccess("/rain");
-  const params = await searchParams;
-  const tab: TabValue = (
-    TABS.find((t) => t.value === params.tab) ?? TABS[0]
+  const subTab: RainSubTab = (
+    RAIN_SUBTABS.find((t) => t.value === params.rtab) ?? RAIN_SUBTABS[0]
   ).value;
 
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={CloudRain}
-          title="Rain"
-          subtitle="Community rain instances — pools, tips, and winners."
-        />
-      </PageHero>
-
-      <div className="space-y-4">
-        <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
-            {TABS.map((t) => (
-              <Link
-                key={t.value}
-                href={`/rain?tab=${t.value}`}
-                className={cn(
-                  "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                  tab === t.value
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <LinkPendingShell spinnerSize={13}>{t.label}</LinkPendingShell>
-              </Link>
-            ))}
-          </div>
+    <div className="space-y-4">
+      <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
+          {RAIN_SUBTABS.map((t) => (
+            <Link
+              key={t.value}
+              href={`/rewards?tab=rain&rtab=${t.value}`}
+              className={cn(
+                "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                subTab === t.value
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <LinkPendingShell spinnerSize={13}>{t.label}</LinkPendingShell>
+            </Link>
+          ))}
         </div>
-
-        {tab === "instances" && (
-          <InstancesTab params={params} />
-        )}
-        {tab === "config" && <ConfigTab />}
       </div>
+
+      {subTab === "instances" && <InstancesSubTab params={params} />}
+      {subTab === "config" && <ConfigSubTab />}
     </div>
   );
 }
 
-function InstancesTab({
+function InstancesSubTab({
   params,
 }: {
   params: Record<string, string | undefined>;
@@ -140,8 +131,12 @@ async function RainsTableAsync({
     maxTips: params.maxTips ? Number(params.maxTips) : undefined,
     minPool: params.minPool ? Number(params.minPool) : undefined,
     maxPool: params.maxPool ? Number(params.maxPool) : undefined,
-    minParticipants: params.minParticipants ? Number(params.minParticipants) : undefined,
-    maxParticipants: params.maxParticipants ? Number(params.maxParticipants) : undefined,
+    minParticipants: params.minParticipants
+      ? Number(params.minParticipants)
+      : undefined,
+    maxParticipants: params.maxParticipants
+      ? Number(params.maxParticipants)
+      : undefined,
   });
 
   return (
@@ -160,7 +155,7 @@ async function RainsTableAsync({
   );
 }
 
-async function ConfigTab() {
+async function ConfigSubTab() {
   // Read current values straight from site_config — empty strings /
   // missing rows mean "not configured yet" and the UI shows an empty
   // input so the admin can set them for the first time.
@@ -180,9 +175,7 @@ async function ConfigTab() {
   const defaultBaseAmountUsd = parseNumber(
     values[RAIN_CONFIG_KEYS.defaultBaseAmount],
   );
-  const liveBaseAmountUsd = parseNumber(
-    values[RAIN_CONFIG_KEYS.liveBaseAmount],
-  );
+  const liveBaseAmountUsd = parseNumber(values[RAIN_CONFIG_KEYS.liveBaseAmount]);
   const durationMinutes = parseNumber(values[RAIN_CONFIG_KEYS.durationMinutes]);
   const frequencyMs = parseNumber(values[RAIN_CONFIG_KEYS.frequencyMs]);
 

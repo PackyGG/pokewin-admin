@@ -92,7 +92,7 @@ export default async function RainDetailPage({
         <PageHeroIdentity
           icon={CloudRain}
           accent="blue"
-          backHref="/rain"
+          backHref="/rewards?tab=rain"
           title="Rain"
           badges={
             <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>

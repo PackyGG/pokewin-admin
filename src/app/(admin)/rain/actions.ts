@@ -45,7 +45,10 @@ export async function adjustRainBase(rainId: string, newBaseAmount: number) {
   // so the adjusted base + total pool surface immediately instead of
   // stale-while-revalidate. See src/lib/queries/rain-detail-cache.ts.
   revalidateTag("rain-detail");
-  revalidatePath("/rain");
+  // The rain LIST now lives under the merged /rewards page (Rain tab); the
+  // standalone /rain list route was removed. Revalidate /rewards so the
+  // instances table refreshes, plus the surviving /rain/[id] detail route.
+  revalidatePath("/rewards");
   revalidatePath(`/rain/${rainId}`);
 }
 
@@ -188,6 +191,7 @@ export async function updateRainConfig(input: {
   // already logs errors internally.
   await refreshSiteConfig();
 
-  revalidatePath("/rain");
+  // Rain config is edited from the /rewards Rain → Config sub-tab now.
+  revalidatePath("/rewards");
 }
 
