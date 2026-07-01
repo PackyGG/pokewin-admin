@@ -8,7 +8,8 @@
 
 ## CURRENT STATE
 
-- **HEAD:** `origin/main @ cc1810fe` (+ index-flag doc commit) · **Updated:** 2026-07-01 · **Active focus:** SHIPPED — full-app perf/crash/UI audit + fix (owner brief: "crashes/loading on the WHOLE webapp"). ~20 parallel worktree units, all gated (tsc+lint+build) + pushed to `main`; **final composed-`main` build verified GREEN**.
+- **HEAD:** `origin/main @ a7cecc3c` · **Updated:** 2026-07-01 · **Active focus:** SHIPPED — full-app perf/crash/UI audit + fix (owner brief: "crashes/loading on the WHOLE webapp"). ~30 parallel worktree units, all gated (tsc+lint+build) + pushed to `main`; **final composed-`main` build verified GREEN** at `a7cecc3c`.
+- **Creator-hub + pack-studio passes (owner explicitly named these):** creator-hub was already extensively hardened — closed 2 gaps (`settings/page.tsx` shell-first + guarded `899cfe3a`; docked Alerts panel de-jumped/optimistic). Pack-studio got its FIRST error boundaries (7 new `error.tsx`) + read crash-proofing `a7cecc3c`; its sanctioned MAIN-writers (push-to-prod/retune/snapshot/apply-edit) were left strictly untouched + never run.
 
 ### SESSION 2026-07-01 — full-app perf/crash/UI audit (~20 units, all live on `main`)
 
