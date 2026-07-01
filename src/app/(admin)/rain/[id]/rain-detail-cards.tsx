@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Pencil, Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,8 +21,19 @@ function EditableAmount({
 }) {
   const [editing, setEditing] = useState(false);
   const [inputValue, setInputValue] = useState(String(value));
+  // Optimistic display value — flips the moment the save resolves so the
+  // amount updates in place without a full-route router.refresh() (which
+  // re-runs every server component and loses the admin's scroll position).
+  // The server stays source of truth via the revalidateTag / revalidatePath
+  // the action fires; the effect re-syncs to a genuine prop change unless a
+  // save is mid-flight.
+  const [displayValue, setDisplayValue] = useState(value);
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
+
+  useEffect(() => {
+    if (isPending) return;
+    setDisplayValue(value);
+  }, [value, isPending]);
 
   function handleSave() {
     const num = parseFloat(inputValue);
@@ -31,20 +41,25 @@ function EditableAmount({
       toast.error("Please enter a valid amount");
       return;
     }
+    // Optimistic flip — instant, no reload.
+    const previous = displayValue;
+    setDisplayValue(num);
+    setEditing(false);
     startTransition(async () => {
       try {
         await adjustRainBase(rainId, num);
         toast.success("Base amount updated");
-        setEditing(false);
-        router.refresh();
       } catch (e) {
+        // Roll back to the last server-truth value and surface the error.
+        setDisplayValue(previous);
+        setInputValue(String(previous));
         toast.error(e instanceof Error ? e.message : "Failed to update");
       }
     });
   }
 
   function handleCancel() {
-    setInputValue(String(value));
+    setInputValue(String(displayValue));
     setEditing(false);
   }
 
@@ -90,13 +105,16 @@ function EditableAmount({
   return (
     <div className="flex items-center gap-2">
       <span className="text-sm text-muted-foreground">{label}:</span>
-      <span className="text-sm">{formatCurrency(value)}</span>
+      <span className="text-sm">{formatCurrency(displayValue)}</span>
       {isActive && (
         <Button
           variant="ghost"
           size="icon"
           className="size-6"
-          onClick={() => setEditing(true)}
+          onClick={() => {
+            setInputValue(String(displayValue));
+            setEditing(true);
+          }}
         >
           <Pencil className="size-3" />
         </Button>

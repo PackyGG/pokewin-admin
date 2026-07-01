@@ -1,7 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -29,26 +28,118 @@ import type { CountryRestrictionRow } from "@/lib/queries/geo-blocking";
  * (`toggleCountryRestriction` / `updateCountryRestrictionArray`) whose admin
  * guards/capabilities are unchanged. Only the labels were renamed from
  * "Country Restrictions" to "Geo Blocking".
+ *
+ * Scroll-fix: every toggle / multi-select updates a LOCAL optimistic copy of
+ * the rows in place and runs its action WITHOUT a router.refresh(). A full
+ * refresh re-fetched every server component and dumped the admin at a random
+ * scroll position on a page that can list hundreds of countries. The server
+ * stays source of truth via each action's revalidatePath; the effect below
+ * re-syncs the local rows to a genuine prop change unless a write is in
+ * flight, and a failed action rolls the specific field back + toasts.
  */
+
+// The two toggle-able boolean fields (5 of them) and the three array fields
+// this UI edits. Kept as string keys so the same handler serves every column.
+type BooleanField =
+  | "physical_withdrawal"
+  | "digital_withdrawal"
+  | "gift_card_deposit"
+  | "promo_code_deposit"
+  | "blocked";
+
+type ArrayField =
+  | "locked_deposits_crypto"
+  | "locked_deposits_fiat"
+  | "locked_withdrawals_crypto";
+
+// Map a boolean field key → the camelCase property on CountryRestrictionRow.
+const BOOL_PROP: Record<BooleanField, keyof CountryRestrictionRow> = {
+  physical_withdrawal: "physicalWithdrawal",
+  digital_withdrawal: "digitalWithdrawal",
+  gift_card_deposit: "giftCardDeposit",
+  promo_code_deposit: "promoCodeDeposit",
+  blocked: "blocked",
+};
+
+const ARRAY_PROP: Record<ArrayField, keyof CountryRestrictionRow> = {
+  locked_deposits_crypto: "lockedDepositsCrypto",
+  locked_deposits_fiat: "lockedDepositsFiat",
+  locked_withdrawals_crypto: "lockedWithdrawalsCrypto",
+};
+
 export function GeoBlockingContent({
   countryRestrictions,
 }: {
   countryRestrictions: CountryRestrictionRow[];
 }) {
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
+  // Local optimistic copy of the rows. Seeded from the server prop and kept
+  // in sync with genuine revalidations (see the effect), but flipped instantly
+  // on each toggle / multi-select so the control updates in place with no
+  // full-route refresh.
+  const [rows, setRows] = useState(countryRestrictions);
+
+  // Re-sync to the server-truth prop when a real revalidation streams new rows
+  // in — never while a write is mid-flight, so the stale pre-mutation prop
+  // can't clobber the optimistic value we just set.
+  useEffect(() => {
+    if (isPending) return;
+    setRows(countryRestrictions);
+  }, [countryRestrictions, isPending]);
+
+  function patchRow(
+    countryCode: string,
+    prop: keyof CountryRestrictionRow,
+    value: boolean | string[],
+  ) {
+    // Each caller pairs a boolean prop with a boolean value and an array prop
+    // with a string[] value (see BOOL_PROP / ARRAY_PROP), so the merge is
+    // sound at runtime; the single-key partial keeps the assignment typed.
+    const patch = { [prop]: value } as Partial<CountryRestrictionRow>;
+    setRows((prev) =>
+      prev.map((r) =>
+        r.countryCode === countryCode ? { ...r, ...patch } : r,
+      ),
+    );
+  }
 
   function handleCountryToggle(
     countryCode: string,
-    field: string,
+    field: BooleanField,
     currentValue: boolean,
   ) {
+    const next = !currentValue;
+    const prop = BOOL_PROP[field];
+    // Optimistic flip — instant, no reload.
+    patchRow(countryCode, prop, next);
     startTransition(async () => {
       try {
-        await toggleCountryRestriction(countryCode, field, !currentValue);
+        await toggleCountryRestriction(countryCode, field, next);
         toast.success("Restriction updated");
-        router.refresh();
       } catch (e) {
+        // Roll the field back to its previous value.
+        patchRow(countryCode, prop, currentValue);
+        toast.error(e instanceof Error ? e.message : "Failed");
+      }
+    });
+  }
+
+  function handleArrayChange(
+    countryCode: string,
+    field: ArrayField,
+    previousValues: string[],
+    newValues: string[],
+  ) {
+    const prop = ARRAY_PROP[field];
+    // Optimistic update — instant, no reload.
+    patchRow(countryCode, prop, newValues);
+    startTransition(async () => {
+      try {
+        await updateCountryRestrictionArray(countryCode, field, newValues);
+        toast.success("Restriction updated");
+      } catch (e) {
+        // Roll the field back to its previous values.
+        patchRow(countryCode, prop, previousValues);
         toast.error(e instanceof Error ? e.message : "Failed");
       }
     });
@@ -58,7 +149,7 @@ export function GeoBlockingContent({
     <div className="space-y-3">
       <SectionHeading icon={Globe} title="Geo Blocking" />
 
-      {countryRestrictions.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="rounded-xl border">
           <EmptyState
             icon={Globe}
@@ -88,7 +179,7 @@ export function GeoBlockingContent({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {countryRestrictions.map((c) => (
+                {rows.map((c) => (
                   <TableRow key={c.countryCode}>
                     <TableCell className="font-medium">{c.countryCode}</TableCell>
                     <TableCell>
@@ -133,8 +224,7 @@ export function GeoBlockingContent({
                         values={c.lockedDepositsCrypto}
                         options={CRYPTO_OPTIONS}
                         disabled={isPending}
-                        startTransition={startTransition}
-                        router={router}
+                        onChange={handleArrayChange}
                       />
                     </TableCell>
                     <TableCell>
@@ -144,8 +234,7 @@ export function GeoBlockingContent({
                         values={c.lockedDepositsFiat}
                         options={FIAT_OPTIONS}
                         disabled={isPending}
-                        startTransition={startTransition}
-                        router={router}
+                        onChange={handleArrayChange}
                       />
                     </TableCell>
                     <TableCell>
@@ -155,8 +244,7 @@ export function GeoBlockingContent({
                         values={c.lockedWithdrawalsCrypto}
                         options={CRYPTO_OPTIONS}
                         disabled={isPending}
-                        startTransition={startTransition}
-                        router={router}
+                        onChange={handleArrayChange}
                       />
                     </TableCell>
                   </TableRow>
@@ -170,7 +258,7 @@ export function GeoBlockingContent({
               admin-users mobile fallback: header + grouped toggle rows +
               the three currency multi-selects. */}
           <div className="space-y-2 md:hidden">
-            {countryRestrictions.map((c) => (
+            {rows.map((c) => (
               <div
                 key={c.countryCode}
                 className="rounded-xl border bg-card p-3"
@@ -242,8 +330,7 @@ export function GeoBlockingContent({
                         values={values}
                         options={options}
                         disabled={isPending}
-                        startTransition={startTransition}
-                        router={router}
+                        onChange={handleArrayChange}
                       />
                     </div>
                   ))}
@@ -276,30 +363,25 @@ function CurrencyMultiSelect({
   values,
   options,
   disabled,
-  startTransition,
-  router,
+  onChange,
 }: {
   countryCode: string;
-  field: string;
+  field: ArrayField;
   values: string[];
   options: { value: string; label: string }[];
   disabled: boolean;
-  startTransition: (fn: () => Promise<void>) => void;
-  router: ReturnType<typeof useRouter>;
+  onChange: (
+    countryCode: string,
+    field: ArrayField,
+    previousValues: string[],
+    newValues: string[],
+  ) => void;
 }) {
   function handleToggle(optionValue: string) {
     const newValues = values.includes(optionValue)
       ? values.filter((v) => v !== optionValue)
       : [...values, optionValue];
-    startTransition(async () => {
-      try {
-        await updateCountryRestrictionArray(countryCode, field, newValues);
-        toast.success("Restriction updated");
-        router.refresh();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed");
-      }
-    });
+    onChange(countryCode, field, values, newValues);
   }
 
   return (

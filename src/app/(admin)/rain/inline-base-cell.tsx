@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Pencil, Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,8 +19,22 @@ export function InlineBaseCell({
 }) {
   const [editing, setEditing] = useState(false);
   const [inputValue, setInputValue] = useState(String(value));
+  // Optimistic display value — flips the instant the save resolves so the
+  // cell shows the new base amount without a full-route router.refresh()
+  // (which re-fetches every server component and dumps the admin's scroll
+  // position). The server stays source of truth via the revalidateTag /
+  // revalidatePath the action fires; the effect below re-syncs to a genuine
+  // prop change (unless a save is mid-flight).
+  const [displayValue, setDisplayValue] = useState(value);
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
+
+  // Re-sync to the server-truth prop when a real revalidation streams a new
+  // value in — never while a save is in flight, so the stale pre-mutation
+  // prop can't clobber the optimistic value we just set.
+  useEffect(() => {
+    if (isPending) return;
+    setDisplayValue(value);
+  }, [value, isPending]);
 
   function handleSave() {
     const num = parseFloat(inputValue);
@@ -29,25 +42,30 @@ export function InlineBaseCell({
       toast.error("Invalid amount");
       return;
     }
+    // Optimistic flip — instant, no reload.
+    const previous = displayValue;
+    setDisplayValue(num);
+    setEditing(false);
     startTransition(async () => {
       try {
         await adjustRainBase(rainId, num);
         toast.success("Base amount updated");
-        setEditing(false);
-        router.refresh();
       } catch (e) {
+        // Roll back to the last server-truth value and surface the error.
+        setDisplayValue(previous);
+        setInputValue(String(previous));
         toast.error(e instanceof Error ? e.message : "Failed to update");
       }
     });
   }
 
   function handleCancel() {
-    setInputValue(String(value));
+    setInputValue(String(displayValue));
     setEditing(false);
   }
 
   if (!isActive) {
-    return <span>{formatCurrency(value)}</span>;
+    return <span>{formatCurrency(displayValue)}</span>;
   }
 
   if (editing) {
@@ -94,10 +112,11 @@ export function InlineBaseCell({
       onClick={(e) => {
         e.stopPropagation();
         e.preventDefault();
+        setInputValue(String(displayValue));
         setEditing(true);
       }}
     >
-      {formatCurrency(value)}
+      {formatCurrency(displayValue)}
       <Pencil className="size-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
     </span>
   );

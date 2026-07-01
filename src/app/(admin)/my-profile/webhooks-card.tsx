@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Plus, Trash2, Send, Copy } from "lucide-react";
@@ -40,6 +40,8 @@ export function CreatorWebhooksCard({ webhooks }: { webhooks: Webhook[] }) {
         toast.success("Webhook created");
         setNewUrl("");
         setAdding(false);
+        // Create mints a new server-side row (id + one-time secret) the
+        // client can't synthesize, so a scoped refresh pulls the new row in.
         router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to create webhook");
@@ -52,21 +54,11 @@ export function CreatorWebhooksCard({ webhooks }: { webhooks: Webhook[] }) {
       try {
         await deleteCreatorWebhook(webhookId);
         toast.success("Webhook deleted");
+        // Delete removes a server-side row; a scoped refresh re-pulls the
+        // list so the removed row drops out.
         router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to delete webhook");
-      }
-    });
-  }
-
-  function handleToggle(webhookId: string, enabled: boolean) {
-    startTransition(async () => {
-      try {
-        await updateCreatorWebhook(webhookId, { enabled });
-        toast.success(enabled ? "Webhook enabled" : "Webhook disabled");
-        router.refresh();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to update webhook");
       }
     });
   }
@@ -128,37 +120,13 @@ export function CreatorWebhooksCard({ webhooks }: { webhooks: Webhook[] }) {
         )}
 
         {webhooks.map((w) => (
-          <div key={w.id} className="flex items-center justify-between rounded-md border p-3">
-            <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground" title={w.url}>
-              {w.url}
-            </span>
-            <div className="flex items-center gap-2">
-              <Switch
-                checked={w.enabled}
-                onCheckedChange={(enabled) => handleToggle(w.id, enabled)}
-                disabled={isPending}
-              />
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7"
-                onClick={() => handleTest(w.id)}
-                disabled={isPending}
-                title="Send test"
-              >
-                <Send className="size-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7 text-destructive hover:text-destructive"
-                onClick={() => handleDelete(w.id)}
-                disabled={isPending}
-              >
-                <Trash2 className="size-3.5" />
-              </Button>
-            </div>
-          </div>
+          <WebhookRow
+            key={w.id}
+            webhook={w}
+            listPending={isPending}
+            onDelete={handleDelete}
+            onTest={handleTest}
+          />
         ))}
 
         {webhooks.length === 0 && !adding && (
@@ -191,5 +159,83 @@ export function CreatorWebhooksCard({ webhooks }: { webhooks: Webhook[] }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * One webhook row. The enabled/disabled Switch is an in-place boolean toggle
+ * on an existing row, so it flips a LOCAL optimistic value and runs the action
+ * WITHOUT a router.refresh() — the whole card no longer re-renders / loses
+ * scroll on a toggle. The server stays source of truth via the action's
+ * revalidatePath; the effect re-syncs the local flag to a genuine prop change
+ * unless the toggle is mid-flight, and a failed toggle rolls back + toasts.
+ * Delete stays on the parent's scoped refresh (it removes a server row).
+ */
+function WebhookRow({
+  webhook,
+  listPending,
+  onDelete,
+  onTest,
+}: {
+  webhook: Webhook;
+  listPending: boolean;
+  onDelete: (id: string) => void;
+  onTest: (id: string) => void;
+}) {
+  const [enabled, setEnabled] = useState(webhook.enabled);
+  const [togglePending, startToggle] = useTransition();
+
+  useEffect(() => {
+    if (togglePending) return;
+    setEnabled(webhook.enabled);
+  }, [webhook.enabled, togglePending]);
+
+  function handleToggle(next: boolean) {
+    const previous = enabled;
+    // Optimistic flip — instant, no reload.
+    setEnabled(next);
+    startToggle(async () => {
+      try {
+        await updateCreatorWebhook(webhook.id, { enabled: next });
+        toast.success(next ? "Webhook enabled" : "Webhook disabled");
+      } catch (e) {
+        setEnabled(previous);
+        toast.error(e instanceof Error ? e.message : "Failed to update webhook");
+      }
+    });
+  }
+
+  return (
+    <div className="flex items-center justify-between rounded-md border p-3">
+      <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground" title={webhook.url}>
+        {webhook.url}
+      </span>
+      <div className="flex items-center gap-2">
+        <Switch
+          checked={enabled}
+          onCheckedChange={handleToggle}
+          disabled={togglePending}
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          onClick={() => onTest(webhook.id)}
+          disabled={listPending}
+          title="Send test"
+        >
+          <Send className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 text-destructive hover:text-destructive"
+          onClick={() => onDelete(webhook.id)}
+          disabled={listPending}
+        >
+          <Trash2 className="size-3.5" />
+        </Button>
+      </div>
+    </div>
   );
 }
