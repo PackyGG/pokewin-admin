@@ -2,6 +2,8 @@ import "server-only";
 
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 
 /** One fill-program conversion payout minted in the window. */
 export type ConvertedFillSessionRow = {
@@ -31,12 +33,18 @@ export type ConvertedFillSessionRow = {
  *     `converted_to_raw_usd` drifts.
  *
  * Multiplier deal payouts stay separate (`creator_multiplier_payout`).
+ *
+ * SCOPE: the admin-managed `excluded_users` BLACKLIST is applied to the
+ * receiving `user_id` so a blacklisted recipient never appears (matching the
+ * dashboard Creators-Costs card + withdrawals drilldown that consume this).
+ * Staff/creator roles are NOT dropped — creators are the legitimate subject.
  */
 export async function getConvertedFillSessionsInWindow(
   since: Date,
 ): Promise<ConvertedFillSessionRow[]> {
   const db = await getDb();
   const sinceIso = since.toISOString();
+  const excludedIds = await getExcludedUserIds();
 
   type Row = {
     voucher_id: string;
@@ -61,6 +69,7 @@ export async function getConvertedFillSessionsInWindow(
      LEFT JOIN "user" u ON u.id = v.user_id
      WHERE v.origin::text = 'creator_fill_conversion'
        AND v.created_at >= '${sinceIso}'::timestamptz
+       ${blacklistNotInClause("v.user_id", excludedIds)}
      ORDER BY v.created_at DESC`,
   );
 

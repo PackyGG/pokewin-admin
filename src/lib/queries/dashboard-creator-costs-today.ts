@@ -3,9 +3,9 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import { withTiming } from "@/lib/observability/query-timings";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { resolveAdminRead } from "@/lib/clickhouse/resolve-read";
 import { getCreatorCostsTodayFromClickHouse } from "@/lib/clickhouse/queries/dashboard/creator-costs-today";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
@@ -62,17 +62,20 @@ import {
  * ─── PERFORMANCE ────────────────────────────────────────────────────────
  *
  * Today-only window — no lifetime scan. `unstable_cache` keyed on the UTC
- * day string (revalidate 60s, same cadence as the reward-costs tile),
- * wrapped in `safeQuery` at the call site, streamed in its own `<Suspense>`
- * so it never blocks the dashboard shell. Two today-bounded reads (one
- * withdrawal-voucher aggregate, one ledger tips+leaderboard aggregate). No
- * staff/blacklist scope: these are creator-fill / deal / leaderboard spend
- * legs (the receiving user is whoever the creator paid/sponsored), so the
- * gross house spend is the honest figure — matching how the canonical
- * per-creator + tile definitions sum them. The per-leaderboard / per-claimant
- * drilldown and the per-creator / per-request withdrawals drilldown are
- * SEPARATE lazy reads (`getLeaderboardGrossClaimants`,
- * `getCreatorWithdrawalsBreakdown`), fetched only when an admin expands them.
+ * day string + the serialized blacklist (revalidate 60s, same cadence as the
+ * reward-costs tile), wrapped in `safeQuery` at the call site, streamed in its
+ * own `<Suspense>` so it never blocks the dashboard shell. Two today-bounded
+ * reads (one withdrawal-voucher aggregate, one ledger tips+leaderboard
+ * aggregate). SCOPE: the admin-managed `excluded_users` BLACKLIST is applied to
+ * the receiving `user_id` on every line so a blacklisted user who receives a
+ * leaderboard prize, tip, or converted/multiplier payout never shows up. Staff
+ * and creator roles are NOT dropped: creators are the legitimate recipients of
+ * creator costs, so a full customer scope (which drops creators wholesale)
+ * would zero the box — only the blacklist is applied. The per-leaderboard /
+ * per-claimant drilldown and the per-creator / per-request withdrawals
+ * drilldown are SEPARATE lazy reads (`getLeaderboardGrossClaimants`,
+ * `getCreatorWithdrawalsBreakdown`), fetched only when an admin expands them —
+ * both apply the same blacklist so they reconcile to the card lines.
  */
 
 /** One creator-cost line on the box. */
@@ -129,12 +132,14 @@ const cachedCreatorCostsToday = unstable_cache(
   async (
     dayKey: string,
     sinceIso: string,
+    blacklistKey: string,
   ): Promise<{
     creatorWithdrawals: number;
     tips: number;
     leaderboardGross: number;
   }> => {
     void dayKey; // part of the cache key only
+    void blacklistKey; // part of the cache key only (ids re-resolved below)
     return withTiming("dashboard.creatorCostsToday", async () => {
       // CQRS serve-path: clickhouse serves the CH twin (SOLE read);
       // off/comparison serve Postgres. Parity confirmed exact (CDC-lag only).
@@ -145,7 +150,10 @@ const cachedCreatorCostsToday = unstable_cache(
       }>("dashboard_creator_costs_today", {
         pg: () => creatorCostsTodayFromPg(sinceIso),
         ch: async () => {
-          const r = await getCreatorCostsTodayFromClickHouse(new Date(sinceIso));
+          const r = await getCreatorCostsTodayFromClickHouse(
+            new Date(sinceIso),
+            await getExcludedUserIds(),
+          );
           return {
             creatorWithdrawals: r.creatorWithdrawals,
             tips: r.tips,
@@ -155,7 +163,7 @@ const cachedCreatorCostsToday = unstable_cache(
       });
     });
   },
-  ["dashboard-creator-costs-today-v5-fill-vouchers"],
+  ["dashboard-creator-costs-today-v6-blacklist"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -167,8 +175,14 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
   const db = await getDb();
   const since = `'${sinceIso}'::timestamptz`;
 
+  // Admin-managed excluded_users blacklist — applied to the receiving
+  // user_id on every line so a blacklisted user never shows up. Staff /
+  // creator roles are NOT dropped (creators are the legitimate subject).
+  const excludedIds = await getExcludedUserIds();
+
       // ── Converted deal payouts today ───────────────────────────────────
-      // Fill: `creator_fill_conversion` vouchers minted in the window.
+      // Fill: `creator_fill_conversion` vouchers minted in the window
+      // (blacklist applied inside getConvertedFillSessionsInWindow).
       // Multiplier: payout vouchers minted in the window (no fill session).
       const sinceDate = new Date(sinceIso);
       const fillSessions = await getConvertedFillSessionsInWindow(sinceDate);
@@ -179,7 +193,8 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
         `SELECT COALESCE(SUM(v.value::numeric), 0)::text AS multiplier_payouts
          FROM vouchers v
          WHERE v.origin::text = 'creator_multiplier_payout'
-           AND v.created_at >= ${since}`,
+           AND v.created_at >= ${since}
+           ${blacklistNotInClause("v.user_id", excludedIds)}`,
       );
       const creatorWithdrawals =
         fillConverted + toNumber(multiplierRows[0]?.multiplier_payouts);
@@ -195,7 +210,8 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
          FROM ledger_transactions
          WHERE status = 'completed'
            AND type::text = 'creator_fill_spend_tip'
-           AND created_at >= ${since}`,
+           AND created_at >= ${since}
+           ${blacklistNotInClause("user_id", excludedIds)}`,
       );
       const tips = toNumber(tipsRows[0]?.tips);
 
@@ -211,7 +227,8 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
          FROM ledger_transactions
          WHERE status = 'completed'
            AND type::text = 'affiliate_leaderboard_prize'
-           AND created_at >= ${since}`,
+           AND created_at >= ${since}
+           ${blacklistNotInClause("user_id", excludedIds)}`,
       );
   const leaderboardGross = toNumber(leaderboardRows[0]?.gross);
 
@@ -234,8 +251,15 @@ export async function getCreatorCostsToday(): Promise<CreatorCostsToday> {
     // YYYY-MM-DD in UTC — stable cache key for "today" that rolls at 00:00.
     const dayKey = sinceIso.slice(0, 10);
 
+    // Serialized blacklist signature — part of the cache key so an admin
+    // edit to the excluded-users list busts the cache on the next tick.
+    // getExcludedUserIds is React-cached, so the aggregate re-resolves the
+    // same list without an extra DB round.
+    const blacklist = await getExcludedUserIds();
+    const blacklistKey = [...blacklist].sort().join(",");
+
     const { creatorWithdrawals, tips, leaderboardGross } =
-      await cachedCreatorCostsToday(dayKey, sinceIso);
+      await cachedCreatorCostsToday(dayKey, sinceIso, blacklistKey);
 
     // Lines for the breakdown popover. The leaderboard line carries the FULL
     // gross (the figure that sums into the total). Keep every line — even $0
@@ -313,11 +337,12 @@ export type LeaderboardGrossBreakdown = {
  *
  * ─── SCOPE / WINDOW (identical to the card's leaderboard line) ──────────
  *
- * SAME un-scoped gross + SAME window [today 00:00 UTC, now) as the card's
- * leaderboard line (`affiliate_leaderboard_prize`, status='completed', no
- * staff/blacklist filter — matching how the line total sums it), recomputed
- * from a live `now` here (the window is not passed in from the client — only
- * trusted server time defines it, so a tampered value can't widen the scan).
+ * SAME window [today 00:00 UTC, now) and SAME excluded_users BLACKLIST as the
+ * card's leaderboard line (`affiliate_leaderboard_prize`, status='completed',
+ * blacklisted recipients dropped so they never appear; staff/creator roles are
+ * NOT dropped — matching how the line total sums it), recomputed from a live
+ * `now` here (the window is not passed in from the client — only trusted server
+ * time defines it, so a tampered value can't widen the scan).
  *
  * ─── PERFORMANCE (lazy) ─────────────────────────────────────────────────
  *
@@ -337,22 +362,12 @@ export async function getLeaderboardGrossClaimants(): Promise<LeaderboardGrossBr
 
       const db = await getDb();
       const sinceSql = `'${sinceIso}'::timestamptz`;
+      const excludedIds = await getExcludedUserIds();
 
-      // Blacklist gate: drop excluded (staff-flagged / owner-locked) claimant
-      // ids from this identifiable per-claimant prize drilldown. A leaderboard
-      // prize is a PRIZE, not a card/balance withdrawal, but it is still
-      // identifiable money paid to the recipient, so it is gated conservatively
-      // per the owner's total-lockdown intent. Guarded for the empty set so
-      // the SQL stays valid when nothing is excluded.
-      const excluded = await getExcludedUserIds();
-      const leaderboardBlacklistClause =
-        excluded.length > 0
-          ? `AND lt.user_id NOT IN (${escapeBlacklistIds(excluded)})`
-          : "";
-
-      // Per (leaderboard, claimant) gross prize today, over the SAME un-scoped
-      // window as the card's leaderboard line. NULL/missing leaderboard_id
-      // folds into a single null-board bucket.
+      // Per (leaderboard, claimant) gross prize today, over the SAME window
+      // and SAME blacklist as the card's leaderboard line (blacklisted
+      // recipients dropped). NULL/missing leaderboard_id folds into a single
+      // null-board bucket.
       type ClaimantRow = {
         leaderboard_id: string | null;
         user_id: string;
@@ -370,7 +385,7 @@ export async function getLeaderboardGrossClaimants(): Promise<LeaderboardGrossBr
          WHERE lt.status = 'completed'
            AND lt.type::text = 'affiliate_leaderboard_prize'
            AND lt.created_at >= ${sinceSql}
-           ${leaderboardBlacklistClause}
+           ${blacklistNotInClause("lt.user_id", excludedIds)}
          GROUP BY lt.metadata->>'leaderboard_id', lt.user_id, u.username`,
       );
 
@@ -495,7 +510,9 @@ export type CreatorWithdrawalsBreakdown = {
  *
  * ─── SCOPE / WINDOW (identical to the card's payouts line) ────────────
  *
- * SAME window [today 00:00 UTC, now). Window derived from trusted server
+ * SAME window [today 00:00 UTC, now) and SAME excluded_users BLACKLIST as the
+ * card's payouts line (blacklisted recipients dropped; staff/creator roles are
+ * NOT dropped — creators are the subject). Window derived from trusted server
  * time only.
  *
  * ─── PERFORMANCE (lazy) ─────────────────────────────────────────────────
@@ -514,20 +531,10 @@ export async function getCreatorWithdrawalsBreakdown(): Promise<CreatorWithdrawa
 
       const db = await getDb();
       const sinceSql = `'${sinceIso}'::timestamptz`;
+      const excludedIds = await getExcludedUserIds();
 
-      // Blacklist gate: drop excluded (staff-flagged / owner-locked) creator
-      // ids from this identifiable per-creator payout drilldown. Applied in
-      // JS to the fill sessions and inline to the multiplier voucher SQL so
-      // the drilldown never surfaces a locked-down recipient. Guarded for the
-      // empty set so the SQL stays valid when nothing is excluded.
-      const excluded = new Set(await getExcludedUserIds());
-      const excludedList = escapeBlacklistIds([...excluded]);
-      const multiplierBlacklistClause =
-        excluded.size > 0 ? `AND v.user_id NOT IN (${excludedList})` : "";
-
-      const fillSessions = (
-        await getConvertedFillSessionsInWindow(since)
-      ).filter((s) => !excluded.has(s.userId));
+      // Fill sessions apply the blacklist inside getConvertedFillSessionsInWindow.
+      const fillSessions = await getConvertedFillSessionsInWindow(since);
 
       type MultiplierVoucherRow = {
         creator_user_id: string;
@@ -547,7 +554,7 @@ export async function getCreatorWithdrawalsBreakdown(): Promise<CreatorWithdrawa
          JOIN "user" u ON u.id = v.user_id
          WHERE v.origin::text = 'creator_multiplier_payout'
            AND v.created_at >= ${sinceSql}
-           ${multiplierBlacklistClause}
+           ${blacklistNotInClause("v.user_id", excludedIds)}
          ORDER BY v.created_at DESC`,
       );
 

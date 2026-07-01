@@ -2,6 +2,7 @@ import "server-only";
 
 import { logError } from "@/lib/errors/logger";
 import { getAdminReadMode } from "@/lib/feature-flags/admin-read-source";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 import { getCreatorCostsTodayFromClickHouse } from "../queries/dashboard/creator-costs-today";
 import { computeDrift, logComparison, timeCh } from "./_core";
@@ -13,9 +14,10 @@ import { computeDrift, logComparison, timeCh } from "./_core";
  * Swallows every error — the served Postgres payload is never affected.
  *
  * The CH twin reuses the SAME window start the PG path computed (today 00:00
- * UTC, carried as `dayStartIso`) so the two windows are identical. No blacklist
- * — the PG twin applies NO user scope (gross creator spend), so neither does
- * this comparison.
+ * UTC, carried as `dayStartIso`) so the two windows are identical. It also
+ * threads the SAME `excluded_users` BLACKLIST the PG path applies (staff/creator
+ * roles are NOT dropped — creators are the subject), so the parity comparison
+ * stays apples-to-apples.
  */
 export async function compareDashboardCreatorCostsToday(pgValues: {
   total: number;
@@ -29,8 +31,9 @@ export async function compareDashboardCreatorCostsToday(pgValues: {
     if (mode !== "comparison") return;
 
     const since = new Date(pgValues.dayStartIso);
+    const excludedIds = await getExcludedUserIds();
     const { result: ch, durationMs } = await timeCh(async () =>
-      getCreatorCostsTodayFromClickHouse(since),
+      getCreatorCostsTodayFromClickHouse(since, excludedIds),
     );
     const drift = computeDrift(
       {

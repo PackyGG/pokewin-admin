@@ -23,12 +23,14 @@ import { CH_DB, chDateTime, toNumber } from "../_shared";
  *                          AND status='completed', created_at >= since (FULL gross).
  *   • total            = creatorWithdrawals + tips + leaderboardGross.
  *
- * ─── Scope (mirrors the PG twin EXACTLY — NO user scope) ──────────────
+ * ─── Scope (mirrors the PG twin EXACTLY — blacklist ONLY) ─────────────
  *
- * The PG twin applies NO staff/blacklist/role filter: these are creator-fill /
- * deal / leaderboard spend legs (the receiving user is whoever the creator
- * paid/sponsored), so the gross house spend is the honest figure. This twin
- * mirrors that exactly — no real-customer CTE, no blacklist.
+ * The PG twin applies the admin-managed `excluded_users` BLACKLIST to the
+ * receiving `user_id` on every line (so a blacklisted recipient never appears)
+ * but does NOT drop staff/creator roles — creators are the legitimate subject
+ * of creator costs. This twin mirrors that exactly: no real-customer CTE, just
+ * the blacklist passed IN by the caller as a `NOT IN` residual filter on each
+ * read's `user_id` (empty list → no clause, matching PG's empty-list behavior).
  *
  * ClickHouse correctness (PeerDB / SharedReplacingMergeTree mirrors):
  *   • FINAL + `_peerdb_is_deleted = 0` on every mirrored table.
@@ -52,9 +54,19 @@ type LedgerRow = { tips: string; leaderboard_gross: string };
 
 export async function getCreatorCostsTodayFromClickHouse(
   since: Date,
+  blacklist: string[],
 ): Promise<CreatorCostsTodayCh> {
   const cutoff = chDateTime(since);
-  const params: Record<string, unknown> = { cutoff };
+  const hasBlacklist = blacklist.length > 0;
+  const params: Record<string, unknown> = { cutoff, blacklist };
+  // Blacklist residual filter — mirrors the PG `NOT IN (...)` on the receiving
+  // user_id. Empty list → no clause (matches PG's empty-list behavior).
+  const voucherBlacklistClause = hasBlacklist
+    ? "AND v.user_id NOT IN {blacklist:Array(String)}"
+    : "";
+  const ledgerBlacklistClause = hasBlacklist
+    ? "AND lt.user_id NOT IN {blacklist:Array(String)}"
+    : "";
 
   // Converted deal payouts today — fill-conversion + multiplier payout vouchers
   // minted in the window. `sumIf` keeps the Decimal scale (no §5b truncation).
@@ -65,7 +77,8 @@ export async function getCreatorCostsTodayFromClickHouse(
     FROM ${CH_DB}.public_vouchers AS v FINAL
     WHERE v._peerdb_is_deleted = 0
       AND v.created_at >= {cutoff:DateTime64(6)}
-      AND v.origin IN ('creator_fill_conversion','creator_multiplier_payout')`;
+      AND v.origin IN ('creator_fill_conversion','creator_multiplier_payout')
+      ${voucherBlacklistClause}`;
 
   // Tips (creator-funded fill-spend tips) + the FULL leaderboard prize gross,
   // both as Σ |amount| over completed ledger rows in the window.
@@ -77,7 +90,8 @@ export async function getCreatorCostsTodayFromClickHouse(
     WHERE lt._peerdb_is_deleted = 0
       AND lt.status = 'completed'
       AND lt.created_at >= {cutoff:DateTime64(6)}
-      AND lt.type IN ('creator_fill_spend_tip','affiliate_leaderboard_prize')`;
+      AND lt.type IN ('creator_fill_spend_tip','affiliate_leaderboard_prize')
+      ${ledgerBlacklistClause}`;
 
   const [vch, led] = await Promise.all([
     clickhouseRead.query<VoucherRow>({
