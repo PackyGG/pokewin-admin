@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
@@ -42,14 +43,24 @@ export type FunnelData = {
   steps: FunnelStep[];
 };
 
-export async function getFunnelData(period: FunnelPeriod): Promise<FunnelData> {
+/**
+ * Inner compute for {@link getFunnelData}. The resolved excluded-users
+ * blacklist is passed in (rather than fetched here) so it participates
+ * verbatim in the `unstable_cache` key of the public wrapper below — a
+ * different blacklist → a different cache key, and `getExcludedUserIds`
+ * reads the admin DB, which cannot run inside the cache scope. Do not
+ * re-fetch it here.
+ */
+async function computeFunnelData(
+  period: FunnelPeriod,
+  excluded: string[],
+): Promise<FunnelData> {
   const db = await getDb();
   const days = daysForPeriod(period);
   const dateFilter = days !== null ? `AND created_at >= NOW() - INTERVAL '${days} days'` : "";
   const usersDateFilter =
     days !== null ? `AND u.created_at >= NOW() - INTERVAL '${days} days'` : "";
   const maWCutoff = 30; // MAW = wager in the last 30 days
-  const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
   // Two parallel queries: one for the time-bounded top of the funnel
@@ -172,4 +183,43 @@ export async function getFunnelData(period: FunnelPeriod): Promise<FunnelData> {
   });
 
   return { period, steps };
+}
+
+/**
+ * Cross-request cache for the heavy {@link getFunnelData} cohort scan.
+ *
+ * `getFunnelData` is the Postgres fallback for the cut-over
+ * `analytics_funnel` surface, so a ClickHouse blip (or CH-off prod, the
+ * current reality) runs the full-cohort CTE (`"user"` × `ledger_transactions`
+ * per user, UNBOUNDED for `period='all'`) uncached fleet-wide — re-scanned
+ * on every 5-minute `AutoRefresh` tick and per viewer. Same idiom as
+ * `cachedAnalyticsData` (analytics.ts): two `unstable_cache` layers — 60s
+ * for the finite windows that move as new activity lands, 300s for the
+ * `all` lifetime view that barely shifts — BOTH keyed on
+ * `(period, sortedBlacklist)` so an admin edit to the excluded-users list
+ * busts stale funnel counts on the next tick (a different blacklist → a
+ * different cache key). Logic is byte-for-byte identical to
+ * `computeFunnelData`; this is perf/consistency only, no number change.
+ */
+const cachedFunnelData = unstable_cache(
+  computeFunnelData,
+  ["analytics-funnel-v1"],
+  { revalidate: 60, tags: ["analytics"] },
+);
+
+const cachedFunnelDataLifetime = unstable_cache(
+  computeFunnelData,
+  ["analytics-funnel-lifetime-v1"],
+  { revalidate: 300, tags: ["analytics"] },
+);
+
+export async function getFunnelData(period: FunnelPeriod): Promise<FunnelData> {
+  // Resolve the blacklist OUTSIDE unstable_cache (it reads the admin DB,
+  // which can't run inside the cache scope) and pass it in as a
+  // serializable arg so it becomes a cache-key dimension.
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return period === "all"
+    ? cachedFunnelDataLifetime(period, sorted)
+    : cachedFunnelData(period, sorted);
 }

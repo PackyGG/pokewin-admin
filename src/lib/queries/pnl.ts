@@ -1152,7 +1152,18 @@ const PAYOUT_CATEGORY_TYPES = {
 
 type PayoutCategoryKey = keyof typeof PAYOUT_CATEGORY_TYPES;
 
-export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
+/**
+ * Inner compute for {@link getPnlBreakdownWindows}. The resolved
+ * excluded-users blacklist is passed in (rather than fetched here) so it
+ * participates verbatim in the `unstable_cache` key of the public wrapper
+ * below — `getExcludedUserIds` reads the admin DB, which cannot run inside
+ * the cache scope. The SQL, scope, arithmetic, and returned numbers are
+ * byte-for-byte identical to the previous body — the ONLY change is that
+ * `excluded` arrives as an argument instead of being fetched inline.
+ */
+async function computePnlBreakdownWindows(
+  excluded: string[],
+): Promise<PnlBreakdownWindows> {
   return withTiming("pnl.breakdownWindows", async () => {
     const db = await getDb();
     const now = Date.now();
@@ -1160,7 +1171,6 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
     const d3 = new Date(now - 3 * 24 * 60 * 60 * 1000);
     const d7 = new Date(now - 7 * 24 * 60 * 60 * 1000);
 
-    const excluded = await getExcludedUserIds();
     const blacklist = blacklistNotInClause("u.id", excluded);
     // Real-user scope used identically in every query below.
     const scope = `user_id IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
@@ -1365,6 +1375,30 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
   });
 }
 
+/**
+ * Cross-request cache for the {@link getPnlBreakdownWindows} scan. The
+ * window is bounded (7d — the widest of the three rolling windows), but it
+ * was re-scanned uncached on every render / `AutoRefresh` tick across the
+ * ledger / card-withdrawal / inventory / voucher tables. The result is
+ * period-independent (all three windows are always computed together), so
+ * ONE cache key suffices; it is keyed only on the sorted excluded-users
+ * blacklist (resolved OUTSIDE the cache — the admin DB can't be read
+ * inside the cache scope) so an admin edit to that list busts stale
+ * numbers on the next tick. 60s (short bounded windows that move as new
+ * activity lands); the served numbers are unchanged (identical SQL, scope,
+ * and blacklist) — only the scan is memoized.
+ */
+const cachedPnlBreakdownWindows = unstable_cache(
+  computePnlBreakdownWindows,
+  ["pnl-breakdown-windows-v1"],
+  { revalidate: 60, tags: ["dashboard-activity"] },
+);
+
+export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
+  const excluded = await getExcludedUserIds();
+  return cachedPnlBreakdownWindows([...excluded].sort());
+}
+
 // ─── Pack & Battle Pure P&L (24h / 3d / 7d) ──────────────────────────
 //
 // Raw gameplay outcome for packs and battles ONLY. The "outcome" is
@@ -1420,7 +1454,18 @@ export type PackBattlePnlWindows = {
   all: PackBattlePnlRow;
 };
 
-export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
+/**
+ * Inner compute for {@link getPackBattlePurePnl}. The resolved
+ * excluded-users blacklist is passed in (rather than fetched here) so it
+ * participates verbatim in the `unstable_cache` key of the public wrapper
+ * below — `getExcludedUserIds` reads the admin DB, which cannot run inside
+ * the cache scope. The SQL, scope, arithmetic, and returned numbers are
+ * byte-for-byte identical to the previous body — the ONLY change is that
+ * `excluded` arrives as an argument instead of being fetched inline.
+ */
+async function computePackBattlePurePnl(
+  excluded: string[],
+): Promise<PackBattlePnlWindows> {
   return withTiming("pnl.packBattlePure", async () => {
     const db = await getDb();
     const now = Date.now();
@@ -1428,7 +1473,6 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
     const d3 = new Date(now - 3 * 24 * 60 * 60 * 1000);
     const d7 = new Date(now - 7 * 24 * 60 * 60 * 1000);
 
-    const excluded = await getExcludedUserIds();
     const blacklist = blacklistNotInClause("u.id", excluded);
     // Raw P&L scope: real customers ONLY. Creators are excluded
     // because their plays are house-funded promo / stream content;
@@ -1660,4 +1704,29 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
       all: buildRow("pack_wager_all", "battle_wager_all", "pack_payout_all", "battle_payout_all", "battle_excess_all", "battle_refund_all"),
     };
   });
+}
+
+/**
+ * Cross-request cache for the {@link getPackBattlePurePnl} pure-margin
+ * scan. This is the `pure_pnl` surface, rendered on BOTH the Overview and
+ * Raw P&L tabs, with an UNBOUNDED all-time window (the `*_all` legs scan
+ * the full ledger + inventory with no `created_at` lower bound) — it was
+ * re-scanned on every 5-minute `AutoRefresh` tick and per viewer with no
+ * cache. The result is period-independent (the four windows are always
+ * computed together), so ONE cache key suffices; it is keyed only on the
+ * sorted excluded-users blacklist (resolved OUTSIDE the cache — the admin
+ * DB can't be read inside the cache scope) so an admin edit to that list
+ * busts stale numbers on the next tick. 300s per the audit; the served
+ * numbers are unchanged (identical SQL, scope, and blacklist) — only the
+ * scan is memoized. Mirrors `cachedDailyPnl` above.
+ */
+const cachedPackBattlePurePnl = unstable_cache(
+  computePackBattlePurePnl,
+  ["pnl-pack-battle-pure-v1"],
+  { revalidate: 300, tags: ["dashboard-activity"] },
+);
+
+export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
+  const excluded = await getExcludedUserIds();
+  return cachedPackBattlePurePnl([...excluded].sort());
 }

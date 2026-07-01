@@ -18,7 +18,8 @@ import { HeatmapTab } from "./tab-heatmap";
 import { PacksBattlesTab } from "./tab-packs";
 import { MapTab } from "./tab-map";
 import { parseMetric } from "./map/utils";
-import { TabSkeleton } from "./tab-skeleton";
+import { TabSkeleton, TabSkeletonBars, TabSkeletonTable } from "./tab-skeleton";
+import type { ReactNode } from "react";
 import type { CohortGranularity } from "@/lib/queries/analytics-cohorts";
 
 export const metadata = { title: "Analytics" };
@@ -44,6 +45,27 @@ function parseTab(value: string | undefined): AnalyticsTab {
 
 function parseCohortBy(value: string | undefined): CohortGranularity {
   return value === "month" ? "month" : "week";
+}
+
+/**
+ * Pick the Suspense fallback that matches the active tab's real shape, so
+ * the swap from skeleton → content doesn't jump the layout:
+ *   • funnel        → stacked horizontal bars (mirrors `FunnelBars`)
+ *   • top/ltv/packs → KPI strip + data table (leaderboard-style tabs)
+ *   • everything else (overview, map, cohorts, retention, revenue,
+ *     heatmap, pure-pnl) → KPIs + chart (the dominant shape).
+ */
+function fallbackForTab(tab: AnalyticsTab): ReactNode {
+  switch (tab) {
+    case "funnel":
+      return <TabSkeletonBars />;
+    case "top":
+    case "ltv":
+    case "packs":
+      return <TabSkeletonTable />;
+    default:
+      return <TabSkeleton />;
+  }
 }
 
 export default async function AnalyticsPage({
@@ -96,10 +118,13 @@ export default async function AnalyticsPage({
       {/* Each tab is an independent async segment. We render only the one
           that matches `tab` so nothing else hits the DB — important because
           several of these tabs run heavy raw SQL. Suspense + per-tab skeleton
-          keeps navigation snappy between tabs. */}
+          keeps navigation snappy between tabs. The fallback matches each
+          tab's real shape (bars for the funnel, a table for the leaderboard-
+          style tabs, KPIs+chart for the rest) so the swap into real content
+          doesn't jump the layout. */}
       <Suspense
         key={`${tab}-${period}-${cohortBy}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}`}
-        fallback={<TabSkeleton />}
+        fallback={fallbackForTab(tab)}
       >
         {tab === "overview" && <OverviewTab period={period} />}
         {tab === "pure-pnl" && <PurePnlTab />}
