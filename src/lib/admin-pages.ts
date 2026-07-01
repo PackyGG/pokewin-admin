@@ -114,7 +114,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Content", label: "Upgrader Transactions", key: "/transactions/upgrader" },
   // Rewards
   { group: "Rewards", label: "Rewards", key: "/rewards" },
-  { group: "Rewards", label: "Deposit Bonus", key: "/rewards/deposit-bonus" },
+  // Deposit Bonus was merged into the /rewards tab hub (Deposit Bonus tab);
+  // the page now gates on /rewards, so the standalone /rewards/deposit-bonus
+  // key was retired. The /insights/rewards/deposit-bonus deep-dive keeps its
+  // own key.
   { group: "Rewards", label: "Analytics", key: "/rewards/analytics" },
   // Rakeback was merged into the /rewards tab hub (Rakeback tab); the page
   // now gates on /rewards, so the standalone /rewards/rakeback key was
@@ -136,13 +139,27 @@ export const ADMIN_PAGES: AdminPage[] = [
   // the page now gates on /rewards, so the standalone /rewards/leaderboards
   // key was retired. Its write actions gate on requireAdmin (not a page key),
   // so no orphaned grant token remains.
-  { group: "Rewards", label: "Level Up", key: "/rewards/level-up" },
-  { group: "Rewards", label: "Affiliate Settings", key: "/creators/settings" },
-  { group: "Rewards", label: "Settings", key: "/rewards/settings" },
+  // Level Up + Reward Settings were merged into the /rewards tab hub (Level Up
+  // and Settings tabs); both pages now gate on /rewards, so the standalone
+  // /rewards/level-up and /rewards/settings keys were retired.
+  // Affiliate config surfaces as the /rewards Affiliate tab, but the
+  // /creators/settings ROUTE + KEY are RETAINED: the standalone route still
+  // exists and its server actions (affiliate-claims-wager-requirement-actions,
+  // creators/actions, security/wager-requirement-actions) still gate /
+  // revalidate on "/creators/settings". Only the Rewards nav entry was removed.
+  { group: "Creators", label: "Affiliate Settings", key: "/creators/settings" },
   // Creator analytics — palette-only; no sidebar link. Ads and gift cards
   // were removed; bookmarks redirect to /creators and /rewards.
   { group: "Navigation", label: "Creator Analytics", key: "/creators/analytics" },
-  { group: "Employees", label: "Shifts", key: "/shifts" },
+  // Shifts page + the Employees sidebar section were removed. The /shifts KEY
+  // is RETAINED as legacy: 8 live support users carry it in their stored
+  // allowed_pages (pinned by the CI parity harness parity-fixture.json) and
+  // sanitizePermissionKeys drops unknown keys — dropping it here would rewrite
+  // those users' effective access and break the parity test. Mirrors the
+  // /withdrawals + /ggr "keys retained so existing grants don't become
+  // unknown" pattern above. The route itself is gone (404s), so the grant is
+  // now inert.
+  { group: "System", label: "Shifts (legacy)", key: "/shifts" },
   // Creator Portal
   { group: "Creator Portal", label: "My Profile", key: "/my-profile" },
   // Multiplier review queue removed — settlement is automatic at end-stream.

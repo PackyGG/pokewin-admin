@@ -1,6 +1,17 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { CloudRain, Target, Sparkles, Percent, Ticket, Trophy } from "lucide-react";
+import {
+  CloudRain,
+  Target,
+  Sparkles,
+  Percent,
+  Ticket,
+  Trophy,
+  Coins,
+  TrendingUp,
+  Users,
+  Settings,
+} from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import {
   TableSkeleton,
@@ -15,6 +26,10 @@ import { XpSalesTab } from "./xp-sales-tab";
 import { RakebackTab } from "./rakeback-tab";
 import { PromoCodesTab } from "./promo-codes-tab";
 import { LeaderboardsTab } from "./leaderboards-tab";
+import { DepositBonusTab } from "./deposit-bonus-tab";
+import { LevelUpTab } from "./level-up-tab";
+import { AffiliateTab } from "./affiliate-tab";
+import { SettingsTab } from "./settings-tab";
 
 export const metadata = { title: "Rewards" };
 
@@ -25,6 +40,10 @@ const TABS = [
   { value: "rakeback", label: "Rakeback", icon: Percent },
   { value: "promo-codes", label: "Promo Codes", icon: Ticket },
   { value: "leaderboards", label: "Leaderboards", icon: Trophy },
+  { value: "deposit-bonus", label: "Deposit Bonus", icon: Coins },
+  { value: "level-up", label: "Level Up", icon: TrendingUp },
+  { value: "affiliate", label: "Affiliate", icon: Users },
+  { value: "settings", label: "Settings", icon: Settings },
 ] as const;
 
 type TabValue = (typeof TABS)[number]["value"];
@@ -46,7 +65,7 @@ export default async function RewardsPage({
           icon={CloudRain}
           accent="blue"
           title="Rewards"
-          subtitle="Rain, challenges, XP sales, rakeback, promo codes, and leaderboards."
+          subtitle="Rain, challenges, XP sales, rakeback, promo codes, leaderboards, deposit bonus, level-up, affiliate, and settings."
         />
       </PageHero>
 
@@ -92,6 +111,10 @@ export default async function RewardsPage({
           {tab === "rakeback" && <RakebackTab params={params} />}
           {tab === "promo-codes" && <PromoCodesTab params={params} />}
           {tab === "leaderboards" && <LeaderboardsTab params={params} />}
+          {tab === "deposit-bonus" && <DepositBonusTab params={params} />}
+          {tab === "level-up" && <LevelUpTab params={params} />}
+          {tab === "affiliate" && <AffiliateTab />}
+          {tab === "settings" && <SettingsTab />}
         </Suspense>
       </div>
     </div>

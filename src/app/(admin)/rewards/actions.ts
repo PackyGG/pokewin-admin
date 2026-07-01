@@ -27,8 +27,9 @@ export async function reloadPacks() {
 }
 
 function revalidateRewardPages() {
+  // Rewards list + level-up + rakeback + settings all live under the /rewards
+  // tab hub now, so a single revalidate of /rewards refreshes every tab.
   revalidatePath("/rewards");
-  revalidatePath("/rewards/level-up");
 }
 
 export async function createReward(data: {
@@ -182,6 +183,7 @@ export async function updateRakebackConfig(
     metadata: { config_id: id, ...data },
   });
 
+  // Rakeback config surfaces on both the Rakeback and Settings tabs of the
+  // /rewards hub — a single revalidate refreshes both.
   revalidatePath("/rewards");
-  revalidatePath("/rewards/settings");
 }

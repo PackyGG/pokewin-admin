@@ -482,6 +482,8 @@ export async function updateLevelConfig(
   });
 
   revalidatePath("/creators/settings");
+  // Affiliate config also surfaces on the /rewards Affiliate tab.
+  revalidatePath("/rewards");
 }
 
 /**
@@ -538,6 +540,8 @@ export async function updateAffiliateCutExpiration(
   });
 
   revalidatePath("/creators/settings");
+  // Affiliate config also surfaces on the /rewards Affiliate tab.
+  revalidatePath("/rewards");
   return { success: true };
 }
 

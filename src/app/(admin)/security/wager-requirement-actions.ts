@@ -93,6 +93,8 @@ export async function updateWagerRequirementDefaultsAction(
 
   revalidatePath("/security");
   revalidatePath("/creators/settings");
+  // Affiliate config also surfaces on the /rewards Affiliate tab.
+  revalidatePath("/rewards");
   revalidateTag(SECURITY_CACHE_TAG);
   return { success: true, data: updated };
 }

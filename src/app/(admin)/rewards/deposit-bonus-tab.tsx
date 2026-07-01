@@ -11,13 +11,7 @@ import {
   Scissors,
   Trophy,
 } from "lucide-react";
-import { requirePageAccess } from "@/lib/dal";
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-  KpiTile,
-} from "@/components/modern-panels";
+import { SectionHeading, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPending } from "@/components/ux";
 import { Badge } from "@/components/ui/badge";
@@ -30,43 +24,36 @@ import {
   DEPOSIT_BONUS_RATE_PCT,
 } from "@/lib/queries/rewards/deposit-bonus-tracker";
 import { getDepositBonusConfig } from "@/lib/backend-api/deposit-bonus-config";
-import { DepositBonusTrendChart } from "./_components/trend-chart";
+import { DepositBonusTrendChart } from "./deposit-bonus/_components/trend-chart";
 
-export const metadata = { title: "Deposit Bonus" };
-
-const TABS = [
+/**
+ * Deposit Bonus tab of the merged /rewards page (was /rewards/deposit-bonus).
+ * Its OWN Overview|Top Recipients inner switch is namespaced to `?dbtab=` so
+ * it never collides with the top-level `?tab=`. Only the active inner sub-tab
+ * awaits its data (active-tab-only).
+ */
+const DB_SUBTABS = [
   { value: "overview", label: "Overview" },
   { value: "recipients", label: "Top Recipients" },
 ];
 
-export default async function DepositBonusPage({
-  searchParams,
+export function DepositBonusTab({
+  params,
 }: {
-  searchParams: Promise<Record<string, string | undefined>>;
+  params: Record<string, string | undefined>;
 }) {
-  await requirePageAccess("/rewards/deposit-bonus");
-  const params = await searchParams;
-  const tab = params.tab === "recipients" ? "recipients" : "overview";
+  const dbtab = params.dbtab === "recipients" ? "recipients" : "overview";
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={Coins}
-          accent="rose"
-          title="Deposit Bonus"
-          subtitle={`${DEPOSIT_BONUS_RATE_PCT}% of every deposit, capped per rolling window. Live spend plus savings vs the old system.`}
-        />
-      </PageHero>
-
       <div className="flex gap-1 rounded-lg bg-muted p-1">
-        {TABS.map((t) => (
+        {DB_SUBTABS.map((t) => (
           <Link
             key={t.value}
-            href={`/rewards/deposit-bonus?tab=${t.value}`}
+            href={`/rewards?tab=deposit-bonus&dbtab=${t.value}`}
             className={cn(
               "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-              tab === t.value
+              dbtab === t.value
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
             )}
@@ -77,12 +64,12 @@ export default async function DepositBonusPage({
         ))}
       </div>
 
-      {tab === "recipients" ? (
-        <Suspense fallback={<RecipientsSkeleton />}>
+      {dbtab === "recipients" ? (
+        <Suspense key="db-recipients" fallback={<RecipientsSkeleton />}>
           <RecipientsBody />
         </Suspense>
       ) : (
-        <Suspense fallback={<TrackerSkeleton />}>
+        <Suspense key="db-overview" fallback={<TrackerSkeleton />}>
           <TrackerBody />
         </Suspense>
       )}

@@ -33,9 +33,7 @@
 export type NavGroupKey =
   | "Overview"
   | "Insights"
-  | "Employees"
   | "Content"
-  | "Rewards"
   | "Creator Portal"
   | "Test Tools"
   | "System";
@@ -99,13 +97,11 @@ export const NAV_GROUP_META: NavGroupMeta[] = [
   { label: "Overview" },
   { label: "Insights" },
   { label: "Content" },
-  { label: "Rewards" },
   { label: "Creator Portal", creatorOnly: true },
   { label: "Test Tools", devEnvOnly: true },
-  // Owner: "move employees over system overview" — the Employees group now
-  // sits directly above the System group (its previous slot was higher up,
-  // between Insights and Content).
-  { label: "Employees" },
+  // The "Rewards" group was collapsed into the Rewards hub (moved into
+  // Overview below Users). The "Employees" group was deleted (Salaries moved
+  // into System, Shifts removed).
   { label: "System" },
 ];
 
@@ -179,6 +175,23 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     icon: "Users",
     description: "Browse end-users",
     keywords: ["players", "accounts", "search"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
+    // Rewards hub — the former "Rewards" sidebar SECTION was collapsed into
+    // this single tabbed hub (Rain | Challenges | XP Sales | Rakeback | Promo
+    // Codes | Leaderboards | Deposit Bonus | Level Up | Affiliate | Settings)
+    // and moved into Overview, directly below Users. Icon "Award" is already
+    // in the sidebar ICONS map (app-sidebar.tsx).
+    id: "nav.rewards",
+    group: "Overview",
+    label: "Rewards",
+    href: "/rewards",
+    pageKey: "/rewards",
+    icon: "Award",
+    description: "Rain, challenges, rakeback, promos, leaderboards, and more",
+    keywords: ["rewards", "rain", "challenges", "rakeback", "promo", "leaderboards"],
     inSidebar: true,
     inPalette: true,
   },
@@ -386,39 +399,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
 
-  // ── Employees ──────────────────────────────────────────────────────────
-  {
-    // Salaries — sidebar-only, founder username-gated. Not in ADMIN_PAGES
-    // (the page enforces requireMotha server-side); pageKey set to "/salaries"
-    // to preserve today's sidebar gate (isAdmin || allowed_pages includes it,
-    // which non-admins never have → effectively admin+username gated).
-    id: "nav.salaries",
-    group: "Employees",
-    label: "Salaries",
-    href: "/salaries",
-    pageKey: "/salaries",
-    icon: "Coins",
-    // Owner-only now (was the founder username allowlist motha/void/kotha). The
-    // sidebar lets ANY owner bypass this cosmetic gate (`isOwner` prop), so the
-    // list is just the permanent root owner; void/kotha no longer see the link
-    // (the route's `requireMotha` is owner-gated and would redirect them).
-    usernameAllowlist: ["motha"],
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
-    id: "nav.shifts",
-    group: "Employees",
-    label: "Shifts",
-    href: "/shifts",
-    pageKey: "/shifts",
-    icon: "CalendarClock",
-    description: "Weekly support rota",
-    keywords: ["schedule", "rota", "shift", "team", "planner", "support"],
-    inSidebar: true,
-    inPalette: true,
-  },
-
   // ── Content ────────────────────────────────────────────────────────────
   {
     id: "nav.packs",
@@ -505,82 +485,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
 
-  // ── Rewards ────────────────────────────────────────────────────────────
-  {
-    // Legacy per-category stats — redirects to /insights/rewards/*.
-    id: "nav.rewards.analytics",
-    group: "Rewards",
-    label: "Analytics",
-    href: "/rewards/analytics",
-    pageKey: "/rewards/analytics",
-    icon: "BarChart3",
-    inSidebar: false,
-    inPalette: false,
-  },
-  {
-    id: "nav.rewards",
-    group: "Rewards",
-    label: "Rewards",
-    href: "/rewards",
-    pageKey: "/rewards",
-    icon: "Award",
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Deposit Bonus — tracks the rebuilt affiliate deposit bonus (fixed 5%
-    // of each deposit, capped per rolling window) + the empirical savings
-    // vs the old regime. Icon string "Coins" is already in the sidebar
-    // ICONS map (app-sidebar.tsx), so no React #130 risk.
-    id: "nav.rewards.deposit-bonus",
-    group: "Rewards",
-    label: "Deposit Bonus",
-    href: "/rewards/deposit-bonus",
-    pageKey: "/rewards/deposit-bonus",
-    icon: "Coins",
-    description: "Deposit-bonus spend + savings vs the old system",
-    keywords: ["deposit", "bonus", "deposit bonus", "affiliate bonus", "savings"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    id: "nav.rewards.level-up",
-    group: "Rewards",
-    label: "Level Up",
-    href: "/rewards/level-up",
-    pageKey: "/rewards/level-up",
-    icon: "TrendingUp",
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Affiliate tier + commission config (/creators/settings).
-    id: "nav.creators.settings",
-    group: "Rewards",
-    label: "Affiliate",
-    paletteLabel: "Creator Settings",
-    href: "/creators/settings",
-    pageKey: "/creators/settings",
-    icon: "Share2",
-    description: "Affiliate level tiers, commission rates, and policies",
-    keywords: ["affiliate", "creator", "commission", "tiers"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Reward Settings — sidebar group "Rewards" labeled "Settings"; palette
-    // labels it "Reward Settings".
-    id: "nav.rewards.settings",
-    group: "Rewards",
-    label: "Settings",
-    paletteLabel: "Reward Settings",
-    href: "/rewards/settings",
-    pageKey: "/rewards/settings",
-    icon: "Settings",
-    inSidebar: true,
-    inPalette: true,
-  },
-
   // ── Creator Portal (creator-only group) ────────────────────────────────
   {
     id: "nav.my-profile",
@@ -607,6 +511,22 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
   },
 
   // ── System ─────────────────────────────────────────────────────────────
+  {
+    // Salaries — moved here from the (now-deleted) Employees section. Still
+    // sidebar-only, owner username-gated. Not in ADMIN_PAGES (the page enforces
+    // requireMotha server-side); pageKey "/salaries" preserves today's sidebar
+    // gate (isAdmin || allowed_pages includes it, which non-admins never have
+    // → effectively admin+username gated). Icon "Coins" is in the ICONS map.
+    id: "nav.salaries",
+    group: "System",
+    label: "Salaries",
+    href: "/salaries",
+    pageKey: "/salaries",
+    icon: "Coins",
+    usernameAllowlist: ["motha"],
+    inSidebar: true,
+    inPalette: false,
+  },
   {
     id: "nav.security",
     group: "System",
@@ -718,10 +638,10 @@ export function getSidebarFooterItems(): NavEntry[] {
 // references ids — all entry DATA still lives in `NAV_ENTRIES`.
 const PALETTE_ORDER: string[] = [
   "nav.dashboard",
-  "nav.shifts",
   "nav.analytics",
   "nav.map",
   "nav.users",
+  "nav.rewards",
   "nav.crm",
   "nav.deposits",
   "nav.withdrawals",
@@ -731,11 +651,6 @@ const PALETTE_ORDER: string[] = [
   "nav.rewards.shards",
   "nav.cards",
   "nav.battles",
-  "nav.rewards",
-  "nav.rewards.deposit-bonus",
-  "nav.rewards.level-up",
-  "nav.creators.settings",
-  "nav.rewards.settings",
   "nav.my-profile",
   "nav.admin-users",
   "nav.security",

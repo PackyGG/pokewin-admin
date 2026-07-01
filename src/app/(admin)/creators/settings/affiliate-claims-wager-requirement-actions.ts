@@ -70,6 +70,8 @@ export async function updateAffiliateClaimsWagerRequirementAction(
   });
 
   revalidatePath("/creators/settings");
+  // Affiliate config also surfaces on the /rewards Affiliate tab.
+  revalidatePath("/rewards");
   revalidatePath("/security");
   return { success: true, data: updated };
 }

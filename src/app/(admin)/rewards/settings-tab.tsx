@@ -1,27 +1,48 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Settings, Percent } from "lucide-react";
-import { requirePageAccess } from "@/lib/dal";
+import { Percent } from "lucide-react";
 import { getRakebackConfigs } from "@/lib/queries/rewards";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 
-export const metadata = { title: "Rewards Settings" };
+/**
+ * Settings tab of the merged /rewards page (was /rewards/settings) — global
+ * switches + rakeback configuration read-out. Streamed behind its own
+ * Suspense so the hub shell paints instantly; the read is safeQuery-wrapped.
+ */
+export function SettingsTab() {
+  return (
+    <div className="space-y-3">
+      <SectionHeading
+        icon={Percent}
+        title="Rakeback Configuration"
+        action={
+          <Button
+            variant="outline"
+            size="sm"
+            nativeButton={false}
+            render={<Link href="/rewards?tab=rakeback" />}
+          >
+            Manage
+          </Button>
+        }
+      />
+      <Suspense
+        fallback={
+          <div className="h-40 animate-pulse rounded-2xl border bg-muted/30" />
+        }
+      >
+        <RakebackConfigContent />
+      </Suspense>
+    </div>
+  );
+}
 
-// Streamed in its own Suspense boundary so the PageHero + section heading
-// paint instantly instead of waiting on the rakeback-config read. The read
-// is wrapped in safeQuery so a slow/failed fetch degrades to a calm fallback
-// tile rather than tearing down the whole /rewards route via the segment
-// error boundary.
 async function RakebackConfigContent() {
   const { data: configs, error } = await safeQuery<
     Awaited<ReturnType<typeof getRakebackConfigs>>
@@ -59,7 +80,8 @@ async function RakebackConfigContent() {
                 <div className="flex items-center gap-3">
                   <Badge variant="outline">{config.displayName}</Badge>
                   <span className="text-sm text-muted-foreground">
-                    {(config.percentage * 100).toFixed(2)}% &middot; {config.expirationDays}d expiry
+                    {(config.percentage * 100).toFixed(2)}% &middot;{" "}
+                    {config.expirationDays}d expiry
                   </span>
                 </div>
                 <Badge
@@ -78,40 +100,5 @@ async function RakebackConfigContent() {
         )}
       </div>
     </FadeIn>
-  );
-}
-
-export default async function RewardsSettingsPage() {
-  await requirePageAccess("/rewards/settings");
-
-  return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={Settings}
-          title="Rewards Settings"
-          subtitle="Global switches and rakeback configuration."
-        />
-      </PageHero>
-
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Percent}
-          title="Rakeback Configuration"
-          action={
-            <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/rewards?tab=rakeback" />}>
-              Manage
-            </Button>
-          }
-        />
-        <Suspense
-          fallback={
-            <div className="h-40 animate-pulse rounded-2xl border bg-muted/30" />
-          }
-        >
-          <RakebackConfigContent />
-        </Suspense>
-      </div>
-    </div>
   );
 }

@@ -1,6 +1,4 @@
 import { Suspense } from "react";
-import { TrendingUp } from "lucide-react";
-import { requirePageAccess } from "@/lib/dal";
 import { getLevelUpRewards } from "@/lib/queries/rewards";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
@@ -9,12 +7,47 @@ import {
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
-import { CreateRewardButton } from "../create-reward-button";
-import { LevelUpTable } from "./level-up-table";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { CreateRewardButton } from "./create-reward-button";
+import { LevelUpTable } from "./level-up/level-up-table";
+import { SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { TrendingUp } from "lucide-react";
 
-export const metadata = { title: "Level Up" };
+/**
+ * Level Up tab of the merged /rewards page (was /rewards/level-up).
+ * Server-side paginated on `?page=`/`?perPage=` (shared list params, only
+ * read when this tab is active). No inner sub-switch, so no namespacing
+ * needed beyond the top-level `?tab=`.
+ */
+export function LevelUpTab({
+  params,
+}: {
+  params: Record<string, string | undefined>;
+}) {
+  const page = Number(params.page) || 1;
+  const perPage = Number(params.perPage) || 20;
+
+  return (
+    <div className="space-y-4">
+      <SectionHeading
+        icon={TrendingUp}
+        title="Level Up Rewards"
+        action={<CreateRewardButton />}
+      />
+      <Suspense
+        key={`${page}|${perPage}`}
+        fallback={
+          <>
+            <TableSkeleton rows={10} columns={7} />
+            <PaginationSkeleton />
+          </>
+        }
+      >
+        <LevelUpContent page={page} perPage={perPage} />
+      </Suspense>
+    </div>
+  );
+}
 
 async function LevelUpContent({
   page,
@@ -25,7 +58,7 @@ async function LevelUpContent({
 }) {
   // Wrapped in safeQuery so a slow/failed paginated read degrades to a calm
   // fallback tile instead of tearing down the whole /rewards route via the
-  // segment error boundary; PageHero (rendered outside this Suspense) stays.
+  // segment error boundary; the shell (rendered outside this Suspense) stays.
   const EMPTY: Awaited<ReturnType<typeof getLevelUpRewards>> = {
     data: [],
     total: 0,
@@ -62,43 +95,5 @@ async function LevelUpContent({
         perPage={rewards.perPage}
       />
     </>
-  );
-}
-
-export default async function LevelUpPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | undefined>>;
-}) {
-  await requirePageAccess("/rewards/level-up");
-  const params = await searchParams;
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
-
-  return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={TrendingUp}
-          title="Level Up Rewards"
-          subtitle="Rewards users unlock when they reach specific levels."
-          action={<CreateRewardButton />}
-        />
-      </PageHero>
-
-      <div className="space-y-4">
-        <Suspense
-          key={`${page}|${perPage}`}
-          fallback={
-            <>
-              <TableSkeleton rows={10} columns={7} />
-              <PaginationSkeleton />
-            </>
-          }
-        >
-          <LevelUpContent page={page} perPage={perPage} />
-        </Suspense>
-      </div>
-    </div>
   );
 }
