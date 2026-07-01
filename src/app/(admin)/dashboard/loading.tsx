@@ -31,12 +31,11 @@ export default function DashboardLoading() {
           so the right edge doesn't jump when they stream in. */}
       <PageHeroSkeleton action />
 
-      {/* Today-since-00:00 tiles — P&L · Reward · Creators · Chat. Rendered
+      {/* Today-since-00:00 tiles — P&L · Reward · Creators. Rendered
           ABOVE the KPI strips to match page.tsx (which renders this row
           directly under the hero), so the real content swaps in with no
           layout shift. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
-        <Skeleton className="h-[148px] w-full rounded-xl" />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
         <Skeleton className="h-[148px] w-full rounded-xl" />
         <Skeleton className="h-[148px] w-full rounded-xl" />
         <Skeleton className="h-[148px] w-full rounded-xl" />

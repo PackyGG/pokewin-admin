@@ -113,7 +113,6 @@ export const ANALYTICS_OVERVIEW_PACKS_SURFACE_KEYS = [
 export const DASHBOARD_DAILY_LEGS_SURFACE_KEYS = [
   "dashboard_creator_costs_today",
   "dashboard_affiliate_referred_pnl_today",
-  "dashboard_chat_messages_today",
   "dashboard_net_holdings_movers",
 ] as const;
 
@@ -209,14 +208,13 @@ const CUTOVER_DEFAULT_CLICKHOUSE: ReadonlySet<string> = new Set([
   // Standalone dashboard legs cut over after a 2nd aligned-window parity pass
   // confirmed each SAFE-TO-CUTOVER (only freshest-tail CDC-lag, no structural
   // drift). P&L Today + Avg P&L 7d (windowed-pnl twin), lifetime Upgrader
-  // stats, and the four "today" tiles (reward costs DB lines [rain stays PG],
-  // creator costs, chat messages, affiliate-referred P&L).
+  // stats, and the "today" tiles (reward costs DB lines [rain stays PG],
+  // creator costs, affiliate-referred P&L).
   "dashboard_today_pnl",
   "dashboard_avg_pnl_7d",
   "dashboard_upgrader_stats",
   "dashboard_reward_costs_today",
   "dashboard_creator_costs_today",
-  "dashboard_chat_messages_today",
   "dashboard_affiliate_referred_pnl_today",
   // Standalone dashboard movers + breakdown helpers.
   "dashboard_net_holdings_movers",

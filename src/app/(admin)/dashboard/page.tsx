@@ -15,14 +15,12 @@ import { getRealizedPnlSnapshot } from "@/lib/queries/_realized-pnl";
 import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today";
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
-import { getChatMessagesToday } from "@/lib/queries/dashboard-chat-messages-today";
 import { getCryptoFeeProfitCounter } from "@/lib/queries/dashboard-crypto-fee-counter";
 import { compareDashboardTodayPnl } from "@/lib/clickhouse/compare/dashboard-today-pnl";
 import { compareDashboardAvgPnl7d } from "@/lib/clickhouse/compare/dashboard-avg-pnl-7d";
 import { compareDashboardUpgraderStats } from "@/lib/clickhouse/compare/dashboard-upgrader-stats";
 import { compareDashboardCreatorCostsToday } from "@/lib/clickhouse/compare/dashboard-creator-costs-today";
 import { compareDashboardAffiliateReferredPnlToday } from "@/lib/clickhouse/compare/dashboard-affiliate-referred-pnl-today";
-import { compareDashboardChatMessagesToday } from "@/lib/clickhouse/compare/dashboard-chat-messages-today";
 import { compareDashboardRewardCostsToday } from "@/lib/clickhouse/compare/dashboard-reward-costs-today";
 import { requirePageAccess } from "@/lib/dal";
 import { formatRelative } from "@/lib/utils/format";
@@ -38,7 +36,6 @@ import { buildKpiWindowPayload } from "./kpi-window-data";
 import { TodayPnlStatCard } from "./today-pnl-stat-card";
 import { RewardCostsTodayCard } from "./reward-costs-today-card";
 import { CreatorCostsTodayCard } from "./creator-costs-today-card";
-import { ChatMessagesTodayCard } from "./chat-messages-today-card";
 import { AutoRefresh } from "./auto-refresh";
 import {
   WagerChart,
@@ -122,12 +119,12 @@ export default async function DashboardPage() {
         />
       </PageHero>
 
-      {/* TODAY BOXES — P&L Today + Reward Costs + Creators Costs + Chat
-          Messages, in that order, at the top. All four use the CURRENT
-          CALENDAR DAY since 00:00 UTC (NOT a rolling past-24h window) and
-          share the same UTC-midnight boundary. Each streams behind its OWN
-          Suspense + safeQuery. Full-width on mobile, 2-up at sm, 4-up at xl. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
+      {/* TODAY BOXES — P&L Today + Reward Costs + Creators Costs, in that
+          order, at the top. All three use the CURRENT CALENDAR DAY since
+          00:00 UTC (NOT a rolling past-24h window) and share the same
+          UTC-midnight boundary. Each streams behind its OWN Suspense +
+          safeQuery. Full-width on mobile, 2-up at sm, 3-up at xl. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
         <Suspense
           fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
         >
@@ -142,11 +139,6 @@ export default async function DashboardPage() {
           fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
         >
           <DashboardCreatorCostsToday />
-        </Suspense>
-        <Suspense
-          fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
-        >
-          <DashboardChatMessagesToday />
         </Suspense>
       </div>
 
@@ -718,47 +710,6 @@ async function DashboardCreatorCostsToday() {
       // Aggregate house P&L on affiliate-referred players for the same "today"
       // window — null when the scan failed/degraded (badge then omitted).
       affiliateReferredPnl={pnlResult.data?.pnl ?? null}
-    />
-  );
-}
-
-/**
- * Chat Messages Today tile — on-site chat volume for the current calendar
- * day since 00:00 UTC. Standalone query (getChatMessagesToday, 60s cache +
- * UTC day key), streamed in its own Suspense.
- */
-async function DashboardChatMessagesToday() {
-  const { data, error, kind } = await safeQuery(
-    () => getChatMessagesToday(),
-    null,
-    "dashboard.chatMessagesToday",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
-  if (error || !data) {
-    return (
-      <TileErrorFallback
-        label="Chat Messages"
-        hint="The today-window chat scan timed out — refresh to retry."
-        kind={kind ?? undefined}
-        size="compact"
-      />
-    );
-  }
-  // CQRS rollout: comparison-mode ClickHouse twin (fire-and-forget, never
-  // throws). No-op unless `dashboard_chat_messages_today` is `comparison`.
-  void compareDashboardChatMessagesToday({
-    messageCount: data.messageCount,
-    uniqueChatters: data.uniqueChatters,
-    deletedCount: data.deletedCount,
-    dayStartIso: data.dayStartIso,
-  });
-  const dayLabel = data.dayStartIso.slice(0, 10);
-  return (
-    <ChatMessagesTodayCard
-      messageCount={data.messageCount}
-      uniqueChatters={data.uniqueChatters}
-      deletedCount={data.deletedCount}
-      dayLabel={dayLabel}
     />
   );
 }
