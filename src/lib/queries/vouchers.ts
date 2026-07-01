@@ -2,7 +2,17 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
+import { withTimeout } from "@/lib/errors/safe-query";
 import type { PaginatedResult } from "@/lib/types";
+
+/**
+ * Wall-clock budget for the paginated voucher list. This is a live,
+ * mutation-sensitive list (claims land continuously) so it is deliberately
+ * NOT cross-request cached — but it can still fan across two DBs plus an
+ * enrichment pass, so it gets a timeout so a slow/hung round-trip degrades
+ * to a fallback at the call site instead of blocking the streamed section.
+ */
+const VOUCHERS_QUERY_TIMEOUT_MS = 12_000;
 
 export type VoucherListItem = {
   id: string;
@@ -49,6 +59,20 @@ export async function getVouchers(params: {
   minValue?: number;
   maxValue?: number;
   createdBy?: string; // admin user id, or "system" for vouchers without an admin action
+}): Promise<PaginatedResult<VoucherListItem>> {
+  // Bound the multi-DB fan-out so a slow round-trip degrades at the call
+  // site (safeQuery in page.tsx) instead of hanging the streamed section.
+  return withTimeout(() => getVouchersImpl(params), VOUCHERS_QUERY_TIMEOUT_MS);
+}
+
+async function getVouchersImpl(params: {
+  page?: number;
+  perPage?: number;
+  claimed?: boolean;
+  search?: string;
+  minValue?: number;
+  maxValue?: number;
+  createdBy?: string;
 }): Promise<PaginatedResult<VoucherListItem>> {
   const db = await getDb();
   const { page = 1, perPage = 20, claimed, search, minValue, maxValue, createdBy } = params;

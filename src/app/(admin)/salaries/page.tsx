@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/admin-db";
 import { requireMotha } from "@/lib/salary/motha-gate";
 import { ensureSalarySchema } from "@/lib/salary/ensure-schema";
 import { addressKind } from "@/lib/salary/wallet";
+import { logError } from "@/lib/errors/logger";
 import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { SalariesClient } from "./salaries-client";
@@ -41,8 +42,14 @@ export default async function SalariesPage() {
   // Defensive — the original migration created salary_wallet which
   // the latest schema drops. ensureSalarySchema runs the DROP +
   // CREATE-IF-NOT-EXISTS sequence so a stale env self-converges.
-  await ensureSalarySchema().catch(() => {
-    /* swallow — the queries below will surface a clearer error */
+  //
+  // We still don't rethrow (the reads below will surface a clearer error if
+  // the schema is genuinely missing), but a silent swallow hid real DDL
+  // failures — log it so a broken self-heal is visible in the server logs
+  // (ADMIN-DB writes are permitted; the failure is worth seeing). No secrets
+  // are logged — the logger only emits err.name/.message.
+  await ensureSalarySchema().catch((err) => {
+    logError("salaries.ensureSchema", "ensureSalarySchema failed", err);
   });
 
   const [employees, payments] = await Promise.all([

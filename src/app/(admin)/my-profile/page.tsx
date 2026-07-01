@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { after } from "next/server";
 import {
   User,
@@ -16,6 +17,7 @@ import {
 import { verifySession, sessionHasRole } from "@/lib/dal";
 import { getMyProfileData } from "@/lib/queries/my-profile";
 import { refreshStaleSocials } from "@/lib/queries/creators";
+import { safeQueryOrNull, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -30,6 +32,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
 import { AFFILIATE_LEVEL_COLORS, AFFILIATE_LEVEL_LABELS } from "@/lib/constants";
 import { PageHero, KpiTile, SectionHeading } from "@/components/modern-panels";
+import {
+  KpiStripSkeleton,
+  SectionHeadingSkeleton,
+  TabBarSkeleton,
+  TableSkeleton,
+} from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
 import { SocialsCard } from "./socials-card";
@@ -50,30 +59,91 @@ export default async function MyProfilePage() {
   // creators still only ever read their own data via session.userId.
   const session = await verifySession();
   const isCreator = sessionHasRole(session, "creator");
-  const data = isCreator ? await getMyProfileData(session.userId) : null;
 
-  if (!data) {
-    return (
-      <div className="space-y-6">
-        <PageHero>
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-cyan-500/10">
-              <User className="size-5 text-cyan-500" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">My Profile</h1>
-              <p className="text-sm text-muted-foreground">
-                Creator affiliate profile
-              </p>
-            </div>
+  // Shell-first: the hero paints immediately; the heavy cross-DB read
+  // (adminDb.admin_users + main-DB user/affiliate/account fan-out inside
+  // getMyProfileData) streams behind a <Suspense> boundary so it never
+  // blocks first paint. Non-creators short-circuit to the empty state with
+  // no data call at all.
+  return (
+    <div className="space-y-6">
+      <PageHero>
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-cyan-500/10">
+            <User className="size-5 text-cyan-500" />
           </div>
-        </PageHero>
+          <div>
+            <h1 className="text-2xl font-bold leading-tight">My Profile</h1>
+            <p className="text-sm text-muted-foreground">
+              Creator affiliate profile
+            </p>
+          </div>
+        </div>
+      </PageHero>
+
+      {isCreator ? (
+        <Suspense
+          fallback={
+            <>
+              <KpiStripSkeleton count={4} />
+              <KpiStripSkeleton count={4} />
+              <Skeleton className="h-48 rounded-2xl" />
+              <div className="space-y-3">
+                <TabBarSkeleton count={4} />
+                <SectionHeadingSkeleton titleWidth={120} />
+                <TableSkeleton rows={6} columns={5} />
+              </div>
+            </>
+          }
+        >
+          <MyProfileContent userId={session.userId} />
+        </Suspense>
+      ) : (
         <EmptyState
           icon={User}
           title="No creator profile"
           description="My Profile shows affiliate stats, payouts and deals for creator accounts. This account doesn't have a creator role — creators are managed under /creators."
         />
-      </div>
+      )}
+    </div>
+  );
+}
+
+async function MyProfileContent({ userId }: { userId: string }) {
+  // safeQuery-wrapped + timeout: any leg of the cross-DB read throwing (or a
+  // pathological hang) degrades this section to a band instead of tripping
+  // the route error boundary AND blocking the whole page. `data === null`
+  // here means EITHER a hard failure (error set) OR a legitimate "no linked
+  // creator profile" (getMyProfileData returns null when the admin user has
+  // no matching main-site creator) — the two are disambiguated by `error`.
+  const { data, error } = await safeQueryOrNull(
+    () => getMyProfileData(userId),
+    "my-profile.data",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+
+  if (error) {
+    // Neutral/info degrade — this is an admin self-view, not a money POV
+    // number, so rose (house-loss) semantics don't apply. A load failure is
+    // an operational error → amber, matching TileErrorFallback conventions.
+    return (
+      <EmptyState
+        icon={User}
+        accent="amber"
+        title="Couldn’t load your profile"
+        description="Your affiliate stats, payouts and deals failed to load or timed out. Refresh to retry — no data was changed."
+      />
+    );
+  }
+
+  if (!data) {
+    // No linked creator profile — genuine empty state, not an error.
+    return (
+      <EmptyState
+        icon={User}
+        title="No creator profile"
+        description="My Profile shows affiliate stats, payouts and deals for creator accounts. This account isn't linked to a main-site creator yet — creators are managed under /creators."
+      />
     );
   }
 
@@ -91,17 +161,21 @@ export default async function MyProfilePage() {
   });
 
   return (
-    <div className="space-y-6">
-      <PageHero>
+    <>
+      {/* Identity detail block — streamed under the instant shell hero. Not a
+          second PageHero (avoids two stacked gradient heroes); a plain
+          bordered card matching the house style, carrying the creator's
+          resolved name/code/level and the not-linked warning. */}
+      <div className="rounded-2xl border bg-card p-5">
         <div className="flex items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-xl bg-cyan-500/10">
             <User className="size-5 text-cyan-500" />
           </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold leading-tight">
+              <h2 className="text-xl font-bold leading-tight">
                 {data.username ?? data.email}
-              </h1>
+              </h2>
               {data.code && (
                 <Badge variant="outline" className="font-mono">
                   {data.code}
@@ -123,7 +197,7 @@ export default async function MyProfilePage() {
             )}
           </div>
         </div>
-      </PageHero>
+      </div>
 
       {/* House-POV financial colors:
           - Wager Volume: money flowing FROM users TO us → emerald (house wins)
@@ -329,6 +403,6 @@ export default async function MyProfilePage() {
           </TabsContent>
         </Tabs>
       </FadeIn>
-    </div>
+    </>
   );
 }

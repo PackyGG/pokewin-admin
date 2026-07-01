@@ -27,7 +27,7 @@ import {
 import { FadeIn } from "@/components/fade-in";
 import { LinkPending } from "@/components/ux";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, safeQueryOrNull } from "@/lib/errors/safe-query";
 
 export const metadata = { title: "Vouchers" };
 
@@ -123,6 +123,11 @@ export default async function VouchersPage({
             <Link
               key={t.value}
               href={`/vouchers?tab=${t.value}`}
+              // Don't eager-prefetch the other tab's list read on hover — the
+              // Claimed list query (plus its FTD-balance enrichment) should
+              // only run when the tab is actually clicked (Active-Timeframe-
+              // Only / active-tab-only, per CLAUDE.md).
+              prefetch={false}
               className={cn(
                 "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                 tab === t.value
@@ -183,15 +188,32 @@ async function VouchersListAsync({
   const perPage = Number(params.perPage) || 20;
   const claimed = tab === "claimed";
 
-  const result = await getVouchers({
-    page,
-    perPage,
-    claimed,
-    search: params.search,
-    minValue: params.minValue ? Number(params.minValue) : undefined,
-    maxValue: params.maxValue ? Number(params.maxValue) : undefined,
-    createdBy: params.createdBy,
-  });
+  // safeQuery-wrapped so a slow/failed list read degrades to a band instead
+  // of tripping the route error boundary and white-screening the whole page
+  // (the stats + creators reads above are already safeQuery-wrapped;
+  // getVouchers itself carries a timeout, see queries/vouchers.ts).
+  const { data: result } = await safeQueryOrNull(
+    () =>
+      getVouchers({
+        page,
+        perPage,
+        claimed,
+        search: params.search,
+        minValue: params.minValue ? Number(params.minValue) : undefined,
+        maxValue: params.maxValue ? Number(params.maxValue) : undefined,
+        createdBy: params.createdBy,
+      }),
+    "vouchers.list",
+  );
+
+  if (!result) {
+    return (
+      <TileErrorFallback
+        label="Voucher list"
+        hint="The voucher list failed to load or timed out. Refresh to retry — the stats above are unaffected."
+      />
+    );
+  }
 
   return (
     <>

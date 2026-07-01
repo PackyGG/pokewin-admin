@@ -10,7 +10,9 @@ import {
   Info,
   Gift,
   Ticket,
+  AlertTriangle,
 } from "lucide-react";
+import type { SafeQueryFailureKind } from "@/lib/errors/safe-query";
 import {
   getRainEntries,
   type RainEntryItem,
@@ -202,11 +204,32 @@ export default async function RainDetailPage({
 }
 
 async function TipsSection({ id }: { id: string }) {
-  const { data: tips } = await safeQueryOrNull(
+  const { data: tips, error, kind } = await safeQueryOrNull(
     () => getRainTipsCached(id),
     "rain.detail.tips",
     SECTION_TIMEOUT_MS,
   );
+
+  // Distinguish a real failure (data === null WITH an error) from a genuinely
+  // empty tip list (data === [] with no error). A failure renders a rose
+  // error/retry band; a real empty list keeps the neutral empty state.
+  if (error) {
+    return (
+      <div className="space-y-3">
+        <SectionHeading icon={Gift} title="Tips" />
+        <SectionErrorBand
+          kind={kind}
+          what="tips"
+          description={
+            kind === "timeout"
+              ? "The tips list took too long to load."
+              : "The tips list failed to load."
+          }
+        />
+      </div>
+    );
+  }
+
   const list: RainTipItem[] = tips ?? [];
 
   return (
@@ -273,11 +296,31 @@ async function EntriesSection({
   page: number;
   perPage: number;
 }) {
-  const { data: entries } = await safeQueryOrNull(
+  const { data: entries, error, kind } = await safeQueryOrNull(
     () => getRainEntries(id, page, perPage),
     "rain.detail.entries",
     SECTION_TIMEOUT_MS,
   );
+
+  // Real failure → rose error/retry band; a genuinely empty entries page keeps
+  // the neutral empty state below.
+  if (error) {
+    return (
+      <div className="space-y-3">
+        <SectionHeading icon={Ticket} title="Entries" />
+        <SectionErrorBand
+          kind={kind}
+          what="entries"
+          description={
+            kind === "timeout"
+              ? "The entries list took too long to load."
+              : "The entries list failed to load."
+          }
+        />
+      </div>
+    );
+  }
+
   const result = entries ?? {
     data: [] as RainEntryItem[],
     total: 0,
@@ -333,6 +376,39 @@ async function EntriesSection({
           perPage={result.perPage}
         />
       </FadeIn>
+    </div>
+  );
+}
+
+/**
+ * Rose error/retry band for a rain detail section (Tips / Entries) whose
+ * safeQueryOrNull read FAILED — as opposed to the neutral empty state shown
+ * when the read succeeded but returned no rows. Distinguishing the two is the
+ * whole point: a failure must not masquerade as "no tips yet". Rose because
+ * it's an operational error band (House-POV money colors don't apply here —
+ * this is chrome, not a money value). These are server components, so the
+ * retry is a page refresh (link back to this rain), not a client onClick.
+ */
+function SectionErrorBand({
+  kind,
+  what,
+  description,
+}: {
+  kind?: SafeQueryFailureKind | null;
+  what: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-md border border-rose-500/30 bg-rose-500/5">
+      <EmptyState
+        icon={AlertTriangle}
+        accent="rose"
+        title={
+          kind === "timeout" ? `Couldn’t load ${what} in time` : `Couldn’t load ${what}`
+        }
+        description={`${description} Refresh the page to retry — nothing was changed.`}
+        compact
+      />
     </div>
   );
 }
