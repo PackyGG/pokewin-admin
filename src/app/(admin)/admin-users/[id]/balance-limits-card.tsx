@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,14 +36,24 @@ export function BalanceLimitsCard({
   adminUserId: string;
   initialLimits: BalanceLimit[];
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  // We rely on the server (via router.refresh) for the source of
-  // truth — `initialLimits` is the canonical view. Optimistic local
-  // state only existed previously to hide deleted rows; the refresh
-  // below handles that without the risk of UI/DB drift.
-  const limitMap = new Map(initialLimits.map((l) => [l.period_type, l]));
+  // Optimistic, no-reload source of truth for THIS card. Setting or clearing a
+  // per-period cap only affects this card's own three rows, so we mirror the
+  // amounts in local state and update them in place on a successful action —
+  // no `router.refresh()` (which would re-run every server component on the
+  // detail page, replay FadeIn, and jump the scroll). The action still fires a
+  // server-side `revalidatePath` so the next real navigation is fresh; the
+  // effect below re-syncs to `initialLimits` when a genuine revalidation
+  // streams a new prop in (unless an edit is mid-flight).
+  const [limits, setLimits] = useState<BalanceLimit[]>(initialLimits);
+
+  useEffect(() => {
+    if (isPending) return;
+    setLimits(initialLimits);
+  }, [initialLimits, isPending]);
+
+  const limitMap = new Map(limits.map((l) => [l.period_type, l]));
 
   function handleSet(periodType: limit_period_type, value: string) {
     const amount = parseFloat(value);
@@ -52,6 +61,31 @@ export function BalanceLimitsCard({
       toast.error("Enter a positive amount");
       return;
     }
+    // Snapshot for rollback if the action fails.
+    const previous = limits;
+    // Optimistic upsert of this period's amount — instant, no reload.
+    setLimits((prev) => {
+      const now = new Date().toISOString();
+      const idx = prev.findIndex((l) => l.period_type === periodType);
+      if (idx === -1) {
+        return [
+          ...prev,
+          {
+            id: `optimistic-${periodType}`,
+            admin_user_id: adminUserId,
+            period_type: periodType,
+            max_amount: amount,
+            created_at: now,
+            updated_at: now,
+            created_by: null,
+            updated_by: null,
+          },
+        ];
+      }
+      const next = [...prev];
+      next[idx] = { ...next[idx], max_amount: amount, updated_at: now };
+      return next;
+    });
     startTransition(async () => {
       const result = await setAdminLimit({
         adminUserId,
@@ -59,29 +93,32 @@ export function BalanceLimitsCard({
         maxAmount: amount,
       });
       if (!result.success) {
+        setLimits(previous);
         toast.error(result.error);
         return;
       }
       toast.success(
         `${PERIOD_LABELS[periodType]} limit set to $${amount.toFixed(2)}`,
       );
-      router.refresh();
     });
   }
 
   function handleDelete(periodType: limit_period_type) {
+    const previous = limits;
+    // Optimistic removal — instant, no reload.
+    setLimits((prev) => prev.filter((l) => l.period_type !== periodType));
     startTransition(async () => {
       const result = await deleteAdminLimit(adminUserId, periodType);
       if (!result.success) {
+        setLimits(previous);
         toast.error(result.error);
         return;
       }
       toast.success(`${PERIOD_LABELS[periodType]} limit removed`);
-      router.refresh();
     });
   }
 
-  const activeLimitsCount = initialLimits.length;
+  const activeLimitsCount = limits.length;
 
   return (
     <Card id="balance-limits" className="scroll-mt-24">

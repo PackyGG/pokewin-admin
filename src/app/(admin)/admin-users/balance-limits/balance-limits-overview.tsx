@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -89,16 +89,43 @@ export function BalanceLimitsOverview({
 }) {
   const [query, setQuery] = useState("");
 
+  // Optimistic, no-reload source of truth for the cap list. An inline cap edit
+  // or a row delete updates this in place with NO `router.refresh()` — that
+  // full-route refresh is what re-ran every server component, replayed the
+  // FadeIn, and dumped the operator at a random scroll spot mid-edit. Adding a
+  // brand-new cap (the dialog flow) still refreshes because the new row needs
+  // server-derived fields (id, setBy, updatedAt); the effect below re-syncs to
+  // the fresh `rows` prop when that (or any real revalidation) streams in.
+  const [liveRows, setLiveRows] = useState<Row[]>(rows);
+
+  useEffect(() => {
+    setLiveRows(rows);
+  }, [rows]);
+
+  function handleRowUpdated(id: string, maxAmount: number) {
+    setLiveRows((prev) =>
+      prev.map((r) =>
+        r.id === id
+          ? { ...r, maxAmount, updatedAt: new Date().toISOString() }
+          : r,
+      ),
+    );
+  }
+
+  function handleRowDeleted(id: string) {
+    setLiveRows((prev) => prev.filter((r) => r.id !== id));
+  }
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
+    if (!q) return liveRows;
+    return liveRows.filter(
       (r) =>
         r.adminUsername.toLowerCase().includes(q) ||
         r.adminEmail.toLowerCase().includes(q) ||
         r.adminRole.toLowerCase().includes(q),
     );
-  }, [rows, query]);
+  }, [liveRows, query]);
 
   return (
     <div className="space-y-4">
@@ -119,7 +146,7 @@ export function BalanceLimitsOverview({
 
       {filtered.length === 0 ? (
         <div className="rounded-2xl border">
-          {rows.length === 0 ? (
+          {liveRows.length === 0 ? (
             <EmptyState
               icon={Wallet}
               title="No balance caps set on any admin"
@@ -171,7 +198,12 @@ export function BalanceLimitsOverview({
               </thead>
               <tbody>
                 {filtered.map((row) => (
-                  <LimitRow key={row.id} row={row} />
+                  <LimitRow
+                    key={row.id}
+                    row={row}
+                    onUpdated={handleRowUpdated}
+                    onDeleted={handleRowDeleted}
+                  />
                 ))}
               </tbody>
             </table>
@@ -182,7 +214,12 @@ export function BalanceLimitsOverview({
               edit + delete. */}
           <div className="space-y-2 md:hidden">
             {filtered.map((row) => (
-              <LimitMobileCard key={row.id} row={row} />
+              <LimitMobileCard
+                key={row.id}
+                row={row}
+                onUpdated={handleRowUpdated}
+                onDeleted={handleRowDeleted}
+              />
             ))}
           </div>
         </>
@@ -195,8 +232,15 @@ export function BalanceLimitsOverview({
 // Row with inline edit + delete
 // ---------------------------------------------------------------------------
 
-function LimitRow({ row }: { row: Row }) {
-  const router = useRouter();
+function LimitRow({
+  row,
+  onUpdated,
+  onDeleted,
+}: {
+  row: Row;
+  onUpdated: (id: string, maxAmount: number) => void;
+  onDeleted: (id: string) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(String(row.maxAmount));
   const [pending, startTransition] = useTransition();
@@ -224,7 +268,8 @@ function LimitRow({ row }: { row: Row }) {
         `${PERIOD_LABEL[row.periodType]} cap for ${row.adminUsername} → $${amount.toFixed(2)}`,
       );
       setEditing(false);
-      router.refresh();
+      // Update the cap in place — no full-route refresh (no scroll jump).
+      onUpdated(row.id, amount);
     });
   }
 
@@ -319,7 +364,7 @@ function LimitRow({ row }: { row: Row }) {
               >
                 <Pencil className="size-3.5" />
               </Button>
-              <DeleteLimitButton row={row} />
+              <DeleteLimitButton row={row} onDeleted={onDeleted} />
             </>
           )}
         </div>
@@ -333,8 +378,15 @@ function LimitRow({ row }: { row: Row }) {
 // Same actions + server calls as the desktop row; touch targets >=36px.
 // ---------------------------------------------------------------------------
 
-function LimitMobileCard({ row }: { row: Row }) {
-  const router = useRouter();
+function LimitMobileCard({
+  row,
+  onUpdated,
+  onDeleted,
+}: {
+  row: Row;
+  onUpdated: (id: string, maxAmount: number) => void;
+  onDeleted: (id: string) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(String(row.maxAmount));
   const [pending, startTransition] = useTransition();
@@ -362,7 +414,8 @@ function LimitMobileCard({ row }: { row: Row }) {
         `${PERIOD_LABEL[row.periodType]} cap for ${row.adminUsername} → $${amount.toFixed(2)}`,
       );
       setEditing(false);
-      router.refresh();
+      // Update the cap in place — no full-route refresh (no scroll jump).
+      onUpdated(row.id, amount);
     });
   }
 
@@ -454,7 +507,11 @@ function LimitMobileCard({ row }: { row: Row }) {
               >
                 <Pencil className="size-4" />
               </Button>
-              <DeleteLimitButton row={row} className="size-9" />
+              <DeleteLimitButton
+                row={row}
+                onDeleted={onDeleted}
+                className="size-9"
+              />
             </>
           )}
         </div>
@@ -474,12 +531,13 @@ function LimitMobileCard({ row }: { row: Row }) {
 
 function DeleteLimitButton({
   row,
+  onDeleted,
   className,
 }: {
   row: Row;
+  onDeleted: (id: string) => void;
   className?: string;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
 
@@ -494,7 +552,8 @@ function DeleteLimitButton({
         `${PERIOD_LABEL[row.periodType]} cap for ${row.adminUsername} removed`,
       );
       setOpen(false);
-      router.refresh();
+      // Drop the row in place — no full-route refresh (no scroll jump).
+      onDeleted(row.id);
     });
   }
 
