@@ -77,13 +77,16 @@ export default async function DashboardPage() {
   // own snapshots on the client (SSE / polling), so the dashboard's 60s
   // refresh stays scoped to KPI numbers only.
   return (
-    // `pr-*` reserves a comfortable gutter on the right so the KPI strips,
-    // charts, and cards never run flush under the fixed right-edge docked
-    // rail (Live / Recent / Chat tabs sit at `right-0`). The gutter widens
-    // at wide breakpoints — where there's room — so an open 320px rail panel
-    // doesn't crowd the card edge; on smaller laptops it stays a small
-    // clearance for the always-present collapsed tab.
-    <div className="space-y-6 pr-6 sm:pr-10 xl:pr-12 2xl:pr-16">
+    // The right-edge docked rail (Live / Recent / Chat tabs at `right-0`)
+    // is cleared by the admin shell's own gutter: the scroll container
+    // reserves `calc(1.5rem + var(--rail-occupied))` at lg+ (globals.css),
+    // where `--rail-occupied` is the constant collapsed-tab width. We must
+    // NOT add an extra `pr-*` here — doing so double-reserves the space and
+    // leaves an empty white column between the content and the rail (the
+    // exact bug this page had). An expanded 320px panel is a fixed overlay
+    // that floats on top, so no page-level padding needs to account for it.
+    // This matches loading.tsx, which uses a plain `space-y-6` wrapper.
+    <div className="space-y-6">
       {/* Dashboard polls at 60s for the KPI numbers only — KPIs settle
           slowly and the docked widgets own their own data on the client,
           so this refresh no longer re-queries any of the live feeds. */}

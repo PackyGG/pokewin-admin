@@ -58,7 +58,7 @@ export function DockedChat({ role }: { role: string }) {
         title="Open chat & mutes panel"
         style={railSlotStyle("chat", allOpen, mounted)}
         className={cn(
-          "fixed right-0 z-30 flex flex-col items-center justify-center gap-2 rounded-l-lg border border-r-0 bg-card/95 px-2 shadow-md backdrop-blur",
+          "fixed right-0 z-30 flex w-14 flex-col items-center justify-center gap-2 rounded-l-lg border border-r-0 bg-card/95 px-2 shadow-md backdrop-blur",
           "hover:bg-card transition-colors",
         )}
       >
