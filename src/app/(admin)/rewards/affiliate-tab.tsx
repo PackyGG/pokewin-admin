@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { AlertTriangle } from "lucide-react";
 import { getAffiliateLevelConfigs } from "@/lib/queries/creators";
 import { getSiteConfigValues } from "@/lib/queries/site-config";
 import { LevelConfigCard } from "../creators/settings/level-config-card";
@@ -6,6 +7,7 @@ import { AffiliateExpirationCard } from "../creators/settings/affiliate-expirati
 import { AffiliateClaimsWagerRequirementCard } from "../creators/settings/affiliate-claims-wager-requirement-card";
 import { FadeIn } from "@/components/fade-in";
 import { getWagerRequirementDefaults } from "@/lib/backend-api/wager-requirements";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 
 /**
  * Affiliate tab of the merged /rewards page — affiliate tier / commission
@@ -38,11 +40,56 @@ export function AffiliateTab() {
   );
 }
 
+/**
+ * Inline "couldn't load" band — mirrors the amber notice the sibling tabs
+ * render when a safeQuery-wrapped read fails, so a slow / failing affiliate
+ * config read degrades to a per-tab notice instead of throwing to the /rewards
+ * route error boundary (which blanks the WHOLE hub).
+ */
+function AffiliateLoadErrorBand() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+    >
+      <AlertTriangle
+        aria-hidden
+        className="mt-0.5 size-4 shrink-0 text-amber-500"
+      />
+      <p className="text-xs text-amber-700 dark:text-amber-300">
+        Couldn&apos;t load affiliate config — the query timed out or failed.
+        This is a{" "}
+        <span className="font-medium">request error, not zero results</span>.
+        Refresh to retry.
+      </p>
+    </div>
+  );
+}
+
 async function AffiliateBody() {
-  const [configs, siteConfig] = await Promise.all([
-    getAffiliateLevelConfigs(),
-    getSiteConfigValues(["affiliate_cut_expiration_days"]),
-  ]);
+  // safeQuery so a slow / failing affiliate-config read degrades to an inline
+  // band instead of throwing up the /rewards route boundary (which blanks the
+  // WHOLE hub). Fallbacks: empty level-config list + empty site-config map.
+  const [{ data: configs, error: configsError }, { data: siteConfig, error: siteConfigError }] =
+    await Promise.all([
+      safeQuery(
+        () => getAffiliateLevelConfigs(),
+        [] as Awaited<ReturnType<typeof getAffiliateLevelConfigs>>,
+        "affiliate.levelConfigs",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => getSiteConfigValues(["affiliate_cut_expiration_days"]),
+        {} as Awaited<ReturnType<typeof getSiteConfigValues>>,
+        "affiliate.siteConfig",
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+    ]);
+
+  if (configsError !== null || siteConfigError !== null) {
+    return <AffiliateLoadErrorBand />;
+  }
 
   const expirationRaw = siteConfig["affiliate_cut_expiration_days"];
   const expirationDays =

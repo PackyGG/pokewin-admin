@@ -16,6 +16,7 @@ import { requirePageAccess } from "@/lib/dal";
 import {
   TableSkeleton,
   PaginationSkeleton,
+  KpiStripSkeleton,
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
@@ -47,6 +48,34 @@ const TABS = [
 ] as const;
 
 type TabValue = (typeof TABS)[number]["value"];
+
+// The active tab's fallback SHAPE — a table-shaped skeleton jumps when the tab
+// leads with a KPI strip / config cards / a chart instead of a table. These
+// tabs open on KPI tiles or stacked config cards, so they get a KPI-strip
+// skeleton; every other tab leads with a table + pagination.
+const KPI_SHAPED_TABS = new Set<TabValue>([
+  "xp-sales",
+  "deposit-bonus",
+  "affiliate",
+  "settings",
+]);
+
+function TabFallback({ tab }: { tab: TabValue }) {
+  if (KPI_SHAPED_TABS.has(tab)) {
+    return (
+      <div className="space-y-6">
+        <KpiStripSkeleton count={4} />
+        <KpiStripSkeleton count={2} />
+      </div>
+    );
+  }
+  return (
+    <>
+      <TableSkeleton rows={12} columns={tab === "rain" ? 9 : 7} />
+      <PaginationSkeleton />
+    </>
+  );
+}
 
 export default async function RewardsPage({
   searchParams,
@@ -96,15 +125,7 @@ export default async function RewardsPage({
             and awaited. Switching tabs is a `?tab=` navigation that swaps the
             child under a keyed Suspense boundary — the hidden tab never fires
             its queries on first paint (CLAUDE.md Active-Timeframe-Only). */}
-        <Suspense
-          key={tab}
-          fallback={
-            <>
-              <TableSkeleton rows={12} columns={tab === "rain" ? 9 : 7} />
-              <PaginationSkeleton />
-            </>
-          }
-        >
+        <Suspense key={tab} fallback={<TabFallback tab={tab} />}>
           {tab === "rain" && <RainTab params={params} />}
           {tab === "challenges" && <ChallengesTab params={params} />}
           {tab === "xp-sales" && <XpSalesTab params={params} />}

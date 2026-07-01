@@ -105,6 +105,12 @@ export async function createPromoCode(
   });
 
   revalidatePath("/rewards");
+  // Bust the cached KPI-strip aggregates so the count tiles + the money strip
+  // ("Allocated / offered", "Given out / claimed") recompute with the new code
+  // instead of serving the (60s / 300s) stale cache. `revalidatePath` does NOT
+  // bust tagged data-cache entries — each tag has to be busted explicitly.
+  revalidateTag("promo-codes-list-stats");
+  revalidateTag("promo-codes-money-stats");
 }
 
 /**
@@ -223,6 +229,10 @@ export async function deletePromoCode(promoCodeId: string) {
   // recompute without the deleted code instead of serving the 60s-stale
   // cache.
   revalidateTag("promo-codes-list-stats");
+  // Also bust the lifetime money strip — deleting a code drops its
+  // value × max_uses from "Allocated / offered", so the money tiles must
+  // recompute too (they'd otherwise stay 300s stale).
+  revalidateTag("promo-codes-money-stats");
   return { deleted: result.count };
 }
 
@@ -293,5 +303,9 @@ export async function deletePromoCodesBulk(promoCodeIds: string[]) {
   // recompute without the deleted codes instead of serving the 60s-stale
   // cache.
   revalidateTag("promo-codes-list-stats");
+  // Also bust the lifetime money strip — a bulk delete drops the deleted
+  // codes' value × max_uses from "Allocated / offered", so the money tiles
+  // must recompute too (they'd otherwise stay 300s stale).
+  revalidateTag("promo-codes-money-stats");
   return { deleted };
 }

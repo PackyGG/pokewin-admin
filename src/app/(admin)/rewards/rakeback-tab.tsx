@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { AlertTriangle } from "lucide-react";
 import { getRakebackConfigs, getRakebackClaims } from "@/lib/queries/rewards";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import {
@@ -13,7 +14,7 @@ import { InstantClaimSection } from "./rakeback/instant-claim-section";
 import { InstantClaimSummaryBox } from "./rakeback/instant-claim-summary-box";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPending } from "@/components/ux";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
   getRakebackInstantClaimConfig,
   getRakebackInstantClaimUsage,
@@ -31,6 +32,32 @@ const RB_SUBTABS = [
   { value: "claims", label: "Claims" },
   { value: "config", label: "Config" },
 ];
+
+/**
+ * Inline "couldn't load" band — mirrors the amber notice the Challenges /
+ * Leaderboards tabs render when their safeQuery-wrapped read fails, so a slow /
+ * failing rakeback read degrades to a per-sub-tab notice instead of throwing to
+ * the /rewards route error boundary (which blanks the WHOLE hub).
+ */
+function RakebackLoadErrorBand({ what }: { what: string }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+    >
+      <AlertTriangle
+        aria-hidden
+        className="mt-0.5 size-4 shrink-0 text-amber-500"
+      />
+      <p className="text-xs text-amber-700 dark:text-amber-300">
+        Couldn&apos;t load {what} — the query timed out or failed. This is a{" "}
+        <span className="font-medium">request error, not zero results</span>.
+        Refresh to retry.
+      </p>
+    </div>
+  );
+}
 
 export function RakebackTab({
   params,
@@ -163,7 +190,18 @@ async function InstantClaimTab({ period }: { period: InstantClaimPeriod }) {
 }
 
 async function ConfigTab() {
-  const configs = await getRakebackConfigs();
+  // safeQuery so a slow / failing rakeback-config read degrades to an inline
+  // band instead of throwing up the /rewards route boundary (which blanks the
+  // WHOLE hub). Fallback is an empty config list.
+  const { data: configs, error } = await safeQuery(
+    () => getRakebackConfigs(),
+    [] as Awaited<ReturnType<typeof getRakebackConfigs>>,
+    "rakeback.configs",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  if (error !== null) {
+    return <RakebackLoadErrorBand what="rakeback config" />;
+  }
   return (
     <FadeIn>
       <RakebackConfigTable configs={configs} />
@@ -213,7 +251,22 @@ async function ClaimsTable({
   search?: string;
   icPeriod: InstantClaimPeriod;
 }) {
-  const claims = await getRakebackClaims({ page, perPage, type, search });
+  // safeQuery so a slow / failing claims scan degrades to an inline band +
+  // empty table instead of throwing up the /rewards route boundary (which
+  // blanks the WHOLE hub). Fallback is an empty page of claims.
+  const { data: claims, error } = await safeQuery(
+    () => getRakebackClaims({ page, perPage, type, search }),
+    {
+      data: [],
+      total: 0,
+      page,
+      perPage,
+      totalPages: 1,
+    } as Awaited<ReturnType<typeof getRakebackClaims>>,
+    "rakeback.claims",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const failed = error !== null;
 
   function claimsTypeHref(t: string) {
     const p = new URLSearchParams({
@@ -245,6 +298,7 @@ async function ClaimsTable({
           </Link>
         ))}
       </div>
+      {failed && <RakebackLoadErrorBand what="rakeback claims" />}
       <FadeIn>
         <RakebackClaimsTable data={claims.data} />
       </FadeIn>
@@ -253,6 +307,7 @@ async function ClaimsTable({
         totalPages={claims.totalPages}
         total={claims.total}
         perPage={claims.perPage}
+        degraded={failed}
       />
     </div>
   );

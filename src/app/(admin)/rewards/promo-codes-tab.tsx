@@ -1,8 +1,18 @@
 import { Suspense } from "react";
-import { CheckCircle2, Clock, Users, HandCoins, Wallet, Ticket } from "lucide-react";
+import { unstable_cache } from "next/cache";
+import {
+  CheckCircle2,
+  Clock,
+  Users,
+  HandCoins,
+  Wallet,
+  Ticket,
+  AlertTriangle,
+} from "lucide-react";
 import { getPromoCodes, getPromoCodesListStats } from "@/lib/queries/promo-codes";
 import { getPromoCodesMoneyStats } from "@/lib/queries/promo-codes-stats";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { readDbEnv } from "@/lib/db-env";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { formatCurrency } from "@/lib/utils/format";
 import { PromoCodesDataTable } from "../promo-codes/data-table";
 import { PromoCodesSelectionProvider } from "../promo-codes/promo-codes-selection-context";
@@ -18,6 +28,47 @@ import {
 import { SectionHeading, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
+
+// Prod-only, 60s cross-request cache for the two hero-strip stats reads.
+//
+// The underlying queries are already `unstable_cache`d in their own modules,
+// but WITHOUT a prod-only guard: `unstable_cache` runs its callback outside the
+// request's dynamic scope, so a dev-toggled admin's `admin_db_env` cookie read
+// falls back to "prod" inside the callback and they'd be served PROD numbers.
+// This call-site layer caches ONLY on prod (keyed on the resolved env so the
+// two envs never share an entry) and bypasses to the live read on a dev-toggled
+// admin — the same prod-only pattern as `users-detail-cache.ts`. Tags mirror
+// the underlying queries so a promo mutation's `revalidateTag` busts this layer
+// too. 60s TTL keeps the strip near-live.
+const cachedPromoStripStats = unstable_cache(
+  async () => {
+    const [listStats, moneyStats] = await Promise.all([
+      getPromoCodesListStats(),
+      getPromoCodesMoneyStats(),
+    ]);
+    return { listStats, moneyStats };
+  },
+  ["promo-codes-tab-strip-stats-v1"],
+  {
+    revalidate: 60,
+    tags: ["promo-codes-list-stats", "promo-codes-money-stats"],
+  },
+);
+
+async function getPromoStripStats(): Promise<{
+  listStats: Awaited<ReturnType<typeof getPromoCodesListStats>>;
+  moneyStats: Awaited<ReturnType<typeof getPromoCodesMoneyStats>>;
+}> {
+  const env = await readDbEnv();
+  if (env !== "prod") {
+    const [listStats, moneyStats] = await Promise.all([
+      getPromoCodesListStats(),
+      getPromoCodesMoneyStats(),
+    ]);
+    return { listStats, moneyStats };
+  }
+  return cachedPromoStripStats();
+}
 
 /**
  * Promo Codes tab of the merged /rewards page (was the standalone
@@ -35,21 +86,17 @@ export async function PromoCodesTab({
 }) {
   // Stats stay stable across the region / status filter — admins get a fixed
   // read-out of the promo-code pool while they refine the table on screen.
-  // Both stats reads are wrapped in safeQuery so a slow / failing aggregate
-  // degrades its own tiles instead of crashing the tab; the table still
-  // renders behind its keyed <Suspense>.
-  const [{ data: stats }, { data: money }] = await Promise.all([
-    safeQuery(
-      () => getPromoCodesListStats(),
-      null as Awaited<ReturnType<typeof getPromoCodesListStats>> | null,
-      "promoCodes.listStats",
-    ),
-    safeQuery(
-      () => getPromoCodesMoneyStats(),
-      null as Awaited<ReturnType<typeof getPromoCodesMoneyStats>> | null,
-      "promoCodes.moneyStats",
-    ),
-  ]);
+  // Both stats reads share ONE prod-only 60s cache entry (getPromoStripStats)
+  // and are wrapped in safeQuery so a slow / failing aggregate degrades its own
+  // tiles to "—" instead of crashing the tab; the table still renders behind
+  // its keyed <Suspense>.
+  const { data: strip } = await safeQuery(
+    () => getPromoStripStats(),
+    null as Awaited<ReturnType<typeof getPromoStripStats>> | null,
+    "promoCodes.stripStats",
+  );
+  const stats = strip?.listStats ?? null;
+  const money = strip?.moneyStats ?? null;
 
   return (
     <div className="space-y-6">
@@ -164,15 +211,49 @@ async function PromoCodesListAsync({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const result = await getPromoCodes({
-    page,
-    perPage,
-    region: params.region,
-    status: params.status,
-  });
+  // safeQuery so a slow / failing list read degrades to an inline band +
+  // empty table instead of throwing up the /rewards route boundary (which
+  // blanks the WHOLE hub). Fallback is an empty page of codes.
+  const { data: result, error } = await safeQuery(
+    () =>
+      getPromoCodes({
+        page,
+        perPage,
+        region: params.region,
+        status: params.status,
+      }),
+    {
+      data: [],
+      total: 0,
+      page,
+      perPage,
+      totalPages: 1,
+    } as Awaited<ReturnType<typeof getPromoCodes>>,
+    "promoCodes.list",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const failed = error !== null;
 
   return (
     <>
+      {failed && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+        >
+          <AlertTriangle
+            aria-hidden
+            className="mt-0.5 size-4 shrink-0 text-amber-500"
+          />
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Couldn&apos;t load promo codes — the query timed out or failed. This
+            is a{" "}
+            <span className="font-medium">request error, not zero results</span>
+            . Refresh to retry.
+          </p>
+        </div>
+      )}
       <FadeIn>
         <PromoCodesDataTable data={result.data} />
       </FadeIn>
@@ -181,6 +262,7 @@ async function PromoCodesListAsync({
         totalPages={result.totalPages}
         total={result.total}
         perPage={result.perPage}
+        degraded={failed}
       />
     </>
   );

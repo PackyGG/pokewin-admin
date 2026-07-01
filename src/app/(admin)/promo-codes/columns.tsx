@@ -129,8 +129,21 @@ function RequirementsCell({ row }: { row: PromoCodeListItem }) {
   if (row.minimumAccountAgeDays > 0) {
     parts.push(`${row.minimumAccountAgeDays}d age`);
   }
+  // Brand-new-signup gate — max account age in hours ("≤24h age"). Distinct
+  // from the min-age gate above; without this the whole "new signups only"
+  // eligibility was invisible on the list.
+  if (row.maximumAccountAgeHours > 0) {
+    parts.push(`≤${row.maximumAccountAgeHours}h age`);
+  }
   if (row.minimumDepositAmount > 0) {
     parts.push(`${formatCurrency(row.minimumDepositAmount)}d`);
+  }
+  // Windowed recent-deposit gate ("$50 / 60m"). Both fields must be > 0 to be
+  // active — mirrors the detail-page rendering + the backend enable rule.
+  if (row.minimumRecentDepositAmount > 0 && row.recentDepositPeriodMinutes > 0) {
+    parts.push(
+      `${formatCurrency(row.minimumRecentDepositAmount)} / ${row.recentDepositPeriodMinutes}m`,
+    );
   }
   if (row.requiredAffiliateCode) {
     parts.push(`code ${row.requiredAffiliateCode}`);

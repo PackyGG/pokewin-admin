@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
@@ -8,7 +9,10 @@ import {
   ShieldCheck,
   Activity,
 } from "lucide-react";
-import { getPromoCodeDetail } from "@/lib/queries/promo-codes";
+import {
+  getPromoCodeDetail,
+  getPromoCodeRedemptionRows,
+} from "@/lib/queries/promo-codes";
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +36,7 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
+import { TableSkeleton } from "@/components/loading-skeletons";
 
 export const metadata = { title: "Promo Code Detail" };
 
@@ -44,12 +49,17 @@ export default async function PromoCodeDetailPage({
   const { id } = await params;
   // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
+  // Header read only (config + REAL redemption count). The redemption ROWS
+  // stream separately below so this shell + KPI strip paint immediately
+  // (shell-first, per docs/BACKEND_QUERY_SYSTEM.md §3).
   const data = await getPromoCodeDetail(id);
 
   if (!data) notFound();
 
   const isExpired = data.expiresAt && new Date(data.expiresAt) < new Date();
-  const redemptionsLeft = Math.max(0, data.maxUses - data.redemptions.length);
+  // Remaining / "n / max" derive from the REAL unbounded count, not a capped
+  // row array — so they stay correct past the 100-row table cap.
+  const redemptionsLeft = Math.max(0, data.maxUses - data.redemptionCount);
 
   return (
     <div className="space-y-6">
@@ -89,7 +99,7 @@ export default async function PromoCodeDetailPage({
         />
         <KpiTile
           label="Redemptions"
-          value={`${data.redemptions.length} / ${data.maxUses}`}
+          value={`${data.redemptionCount} / ${data.maxUses}`}
           icon={Users}
           accent="blue"
         />
@@ -114,7 +124,7 @@ export default async function PromoCodeDetailPage({
           <PanelRow label="Max Uses" value={String(data.maxUses)} />
           <PanelRow
             label="Redemptions"
-            value={`${data.redemptions.length} / ${data.maxUses}`}
+            value={`${data.redemptionCount} / ${data.maxUses}`}
           />
           <PanelRow
             label="Expires"
@@ -204,50 +214,63 @@ export default async function PromoCodeDetailPage({
       <div className="space-y-3">
         <SectionHeading
           icon={Activity}
-          title={`Redemptions (${data.redemptions.length})`}
+          title={`Redemptions (${data.redemptionCount})`}
         />
-        <FadeIn className="rounded-2xl border bg-card/60 overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>IP Address</TableHead>
-                <TableHead>Date</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.redemptions.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell>
-                    <Link
-                      href={`/users/${r.userId}`}
-                      className="hover:underline"
-                    >
-                      {r.username ?? r.email ?? r.userId}
-                    </Link>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {r.ipAddress}
-                  </TableCell>
-                  <TableCell>{formatDateTime(r.redeemedAt)}</TableCell>
-                </TableRow>
-              ))}
-              {data.redemptions.length === 0 && (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={3} className="p-0">
-                    <EmptyState
-                      icon={Activity}
-                      title="No redemptions yet"
-                      description="Players who redeem this code will be listed here."
-                      compact
-                    />
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </FadeIn>
+        {/* Streamed behind its own Suspense so the shell + KPIs above paint
+            first and the (potentially large) redemption row read never blocks
+            first paint. */}
+        <Suspense fallback={<TableSkeleton rows={8} columns={3} />}>
+          <RedemptionsTable id={data.id} />
+        </Suspense>
       </div>
     </div>
+  );
+}
+
+async function RedemptionsTable({ id }: { id: string }) {
+  const { rows, totalCount, truncated } = await getPromoCodeRedemptionRows(id);
+
+  return (
+    <FadeIn className="rounded-2xl border bg-card/60 overflow-x-auto">
+      {truncated && (
+        <p className="border-b px-4 py-2 text-xs text-muted-foreground">
+          Showing the most recent {rows.length} of {totalCount} redemptions.
+        </p>
+      )}
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>User</TableHead>
+            <TableHead>IP Address</TableHead>
+            <TableHead>Date</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((r) => (
+            <TableRow key={r.id}>
+              <TableCell>
+                <Link href={`/users/${r.userId}`} className="hover:underline">
+                  {r.username ?? r.email ?? r.userId}
+                </Link>
+              </TableCell>
+              <TableCell className="font-mono text-xs">{r.ipAddress}</TableCell>
+              <TableCell>{formatDateTime(r.redeemedAt)}</TableCell>
+            </TableRow>
+          ))}
+          {rows.length === 0 && (
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={3} className="p-0">
+                <EmptyState
+                  icon={Activity}
+                  title="No redemptions yet"
+                  description="Players who redeem this code will be listed here."
+                  compact
+                />
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+    </FadeIn>
   );
 }

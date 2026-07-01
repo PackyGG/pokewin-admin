@@ -20,8 +20,20 @@ export type PromoCodeListItem = {
   wagerPeriodDays: number;
   /** Minimum account age in days before the user can redeem. 0 = no gate. */
   minimumAccountAgeDays: number;
+  /**
+   * Brand-new-signup gate — max account age in HOURS. 0 = no maximum
+   * (redeemable at any age). Non-zero means "new signups only, first N hours".
+   */
+  maximumAccountAgeHours: number;
   /** All-time deposit total (USD) the user must reach before redeeming. 0 = no gate. */
   minimumDepositAmount: number;
+  /**
+   * Windowed recent-deposit gate — USD the user must have deposited within the
+   * last `recentDepositPeriodMinutes`. 0 = no gate (both must be > 0 to enable).
+   */
+  minimumRecentDepositAmount: number;
+  /** Window (minutes) the recent-deposit gate is evaluated over. 0 = no gate. */
+  recentDepositPeriodMinutes: number;
   /** If set, the user must have signed up with this exact affiliate code (case-insensitive). */
   requiredAffiliateCode: string | null;
   /** Whether the user must have a linked Discord account to redeem. */
@@ -115,20 +127,28 @@ export async function getPromoCodes(params: {
   };
 }
 
+// The redemptions list on the detail page is BOUNDED at this limit so a
+// heavily-redeemed code can't drag an unbounded row-set into the page. The
+// real (unbounded) count lives on the header (`getPromoCodeDetail`) via
+// `count()` so "Remaining" / "Redemptions n/max" stay correct past the cap.
+const DETAIL_REDEMPTIONS_LIMIT = 100;
+
+/**
+ * Header + config + REAL (unbounded) redemption count for the /promo-codes/[id]
+ * detail page shell. Deliberately does NOT pull the redemption rows — those
+ * stream in separately via `getPromoCodeRedemptionRows` behind the page's
+ * Suspense boundary so the PageHero + KPI strip paint immediately.
+ *
+ * `redemptionCount` is a real `count()` (not a capped `.length`) so the
+ * "Remaining" tile and the "n / max" figure are correct even past the
+ * DETAIL_REDEMPTIONS_LIMIT row cap.
+ */
 export async function getPromoCodeDetail(id: string) {
   const db = await getDb();
-  const code = await db.promo_codes.findUnique({
-    where: { id },
-    include: {
-      promo_code_redemptions: {
-        include: {
-          user: { select: { username: true, email: true } },
-        },
-        orderBy: { redeemed_at: "desc" },
-        take: 100,
-      },
-    },
-  });
+  const [code, redemptionCount] = await Promise.all([
+    db.promo_codes.findUnique({ where: { id } }),
+    db.promo_code_redemptions.count({ where: { promo_code_id: id } }),
+  ]);
 
   if (!code) return null;
 
@@ -153,7 +173,53 @@ export async function getPromoCodeDetail(id: string) {
     expiresAt: code.expires_at?.toISOString() ?? null,
     metadata: code.metadata,
     createdAt: code.created_at.toISOString(),
-    redemptions: code.promo_code_redemptions.map((r) => ({
+    /** Real unbounded redemption count — use this for Remaining / n-of-max. */
+    redemptionCount,
+  };
+}
+
+export type PromoCodeRedemptionRow = {
+  id: string;
+  userId: string;
+  username: string | null;
+  email: string | null;
+  ipAddress: string;
+  redeemedAt: string;
+};
+
+export type PromoCodeRedemptionRows = {
+  /** Most-recent-first, capped at DETAIL_REDEMPTIONS_LIMIT. */
+  rows: PromoCodeRedemptionRow[];
+  /** Real unbounded count for this code. */
+  totalCount: number;
+  /** Whether `rows` was truncated by the cap. */
+  truncated: boolean;
+};
+
+/**
+ * The bounded redemption row-set for the /promo-codes/[id] table. Streamed in
+ * a Suspense child so the heavy row read never blocks the detail shell's first
+ * paint. Capped at DETAIL_REDEMPTIONS_LIMIT; `totalCount` is the real
+ * unbounded figure so the table header can honestly say "showing 100 of N".
+ */
+export async function getPromoCodeRedemptionRows(
+  id: string,
+): Promise<PromoCodeRedemptionRows> {
+  const db = await getDb();
+  const [rows, totalCount] = await Promise.all([
+    db.promo_code_redemptions.findMany({
+      where: { promo_code_id: id },
+      include: {
+        user: { select: { username: true, email: true } },
+      },
+      orderBy: { redeemed_at: "desc" },
+      take: DETAIL_REDEMPTIONS_LIMIT,
+    }),
+    db.promo_code_redemptions.count({ where: { promo_code_id: id } }),
+  ]);
+
+  return {
+    rows: rows.map((r) => ({
       id: r.id,
       userId: r.user_id,
       username: r.user?.username ?? null,
@@ -161,6 +227,8 @@ export async function getPromoCodeDetail(id: string) {
       ipAddress: r.ip_address,
       redeemedAt: r.redeemed_at.toISOString(),
     })),
+    totalCount,
+    truncated: totalCount > rows.length,
   };
 }
 
