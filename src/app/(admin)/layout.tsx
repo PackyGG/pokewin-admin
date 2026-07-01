@@ -12,6 +12,7 @@ import { DockedRecentActivity } from "@/components/docked-recent-activity";
 import { LiveMoneyChat } from "@/components/live-money-chat";
 import { RightRailProvider } from "@/components/right-rail-context";
 import { RailWidthSync } from "@/components/rail-width-sync";
+import { readRailOpenOrder } from "@/lib/right-rail-server";
 import { CommandPalette } from "@/components/command-palette";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { redirect } from "next/navigation";
@@ -277,6 +278,7 @@ export default async function AdminLayout({
     hubAccessSettings,
     studioAccessSettings,
     studioUserAccess,
+    railOpenOrder,
   ] = await Promise.all([
     loadUserPermissions(session.userId),
     loadHeaderProfile(session.userId),
@@ -290,6 +292,11 @@ export default async function AdminLayout({
     loadCreatorHubAccessSettings(),
     loadPackStudioAccessSettings(),
     loadPackStudioUserAccess(),
+    // Open dock keys from the `admin_rail` cookie. Passed to the
+    // RightRailProvider so SSR + the first client paint reflect the admin's
+    // SAVED rail layout — no post-mount open/close flip. Returns null when
+    // the cookie is absent (first-ever visit → provider default).
+    readRailOpenOrder(),
   ]);
   // Only surface the switcher to admins on servers where a dev DB is
   // actually configured; otherwise the toggle would be a dead option.
@@ -440,7 +447,10 @@ export default async function AdminLayout({
             every admin user. `mounted={{ chat }}` tells the rail
             geometry whether to reserve space for chat — without it the
             non-admin shell would leave a 5rem empty band at the bottom. */}
-        <RightRailProvider mounted={{ chat: canOpenChatPanel, alerts: false }}>
+        <RightRailProvider
+          mounted={{ chat: canOpenChatPanel, alerts: false }}
+          initialOpenOrder={railOpenOrder}
+        >
           <RailWidthSync />
           <LiveMoneyChat />
           <DockedRecentActivity />

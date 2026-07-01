@@ -12,6 +12,7 @@ import { DockedRecentActivity } from "@/components/docked-recent-activity";
 import { LiveMoneyChat } from "@/components/live-money-chat";
 import { RightRailProvider } from "@/components/right-rail-context";
 import { RailWidthSync } from "@/components/rail-width-sync";
+import { readRailOpenOrder } from "@/lib/right-rail-server";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { DevDbBanner } from "@/components/dev-db-banner";
 
@@ -218,13 +219,17 @@ export default async function PackStudioLayout({
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }
 
-  const [allowedPages, profile, preferences, dbEnv, tzCookie] =
+  const [allowedPages, profile, preferences, dbEnv, tzCookie, railOpenOrder] =
     await Promise.all([
       loadUserPermissions(session.userId),
       loadHeaderProfile(session.userId),
       loadPreferences(session.userId),
       readDbEnvFromCookie(),
       readTzCookie(),
+      // Open dock keys from the `admin_rail` cookie — seeds the rail so SSR +
+      // first client paint match the admin's saved layout (no open/close
+      // flip). Shared 1:1 with the main (admin) shell.
+      readRailOpenOrder(),
     ]);
 
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
@@ -289,7 +294,10 @@ export default async function PackStudioLayout({
         {/* Right-edge docks — reused 1:1 from the main shell so live money /
             recent activity stay available inside the Studio. Chat dock is
             gated to the same permission boundary as the main layout. */}
-        <RightRailProvider mounted={{ chat: canOpenChatPanel }}>
+        <RightRailProvider
+          mounted={{ chat: canOpenChatPanel }}
+          initialOpenOrder={railOpenOrder}
+        >
           <RailWidthSync />
           <LiveMoneyChat />
           <DockedRecentActivity />

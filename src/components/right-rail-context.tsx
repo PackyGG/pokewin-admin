@@ -1,6 +1,18 @@
 "use client";
 
 import * as React from "react";
+import {
+    RAIL_KEYS,
+    railCookieWriteString,
+    type RailKey,
+} from "@/lib/right-rail-cookie";
+
+// Re-export the shared key list + type from the dependency-free cookie module
+// so it stays the single source of truth (the codec, the server reader and
+// this context all agree on the same 4 keys) while existing consumers keep
+// importing `RAIL_KEYS` / `RailKey` from this module unchanged.
+export { RAIL_KEYS };
+export type { RailKey };
 
 /**
  * Shared state for the right-edge widget rail. Three docked widgets live
@@ -30,9 +42,6 @@ import * as React from "react";
  * defaults to "live + chat open" (the historical layout before recent was
  * added) until the mount effect reads the stored values.
  */
-
-export const RAIL_KEYS = ["live", "recent", "alerts", "chat"] as const;
-export type RailKey = (typeof RAIL_KEYS)[number];
 
 type RailState = {
     /** Open/closed flag per widget. */
@@ -119,6 +128,47 @@ function applyToggle(state: RailState, key: RailKey, next: boolean): RailState {
     return enforceAtMostTwo(tentative);
 }
 
+/**
+ * Build a `RailState` from an insertion-ordered list of open keys (the shape
+ * the `admin_rail` cookie stores). `open` is derived from the order — a key
+ * is open iff it appears in the order. Passes through `enforceAtMostTwo` so a
+ * tampered cookie with 3+ entries can't break the at-most-2 invariant.
+ */
+function stateFromOpenOrder(openOrder: readonly RailKey[]): RailState {
+    const open: Record<RailKey, boolean> = {
+        live: false,
+        recent: false,
+        alerts: false,
+        chat: false,
+    };
+    const order: RailKey[] = [];
+    const seen = new Set<RailKey>();
+    for (const k of openOrder) {
+        if (!seen.has(k)) {
+            seen.add(k);
+            open[k] = true;
+            order.push(k);
+        }
+    }
+    return enforceAtMostTwo({ open, openOrder: order });
+}
+
+/**
+ * Persist the current open-order to the `admin_rail` cookie so the NEXT
+ * request's server render can seed the provider with the admin's saved
+ * layout (removing the post-mount flip). Client-only + wrapped in try/catch:
+ * `document.cookie` can throw in locked-down embeds — non-fatal, the
+ * localStorage store still carries the state for this session.
+ */
+function writeCookie(state: RailState): void {
+    if (typeof document === "undefined") return;
+    try {
+        document.cookie = railCookieWriteString(state.openOrder);
+    } catch {
+        // Non-fatal — localStorage remains the durable store.
+    }
+}
+
 function readStoredState(): RailState {
     if (typeof window === "undefined") {
         return {
@@ -173,9 +223,17 @@ export function RightRailProvider({
      *  the current user doesn't have the permission boundary to see the
      *  chat dock, so the rail geometry doesn't reserve dead space for it. */
     mounted,
+    /** Insertion-ordered list of open dock keys, read server-side from the
+     *  `admin_rail` cookie and passed down by the layout. Seeds the initial
+     *  state so SSR + the first client render match the admin's SAVED layout
+     *  — no post-mount open/close flip. `null` (cookie absent, e.g. a
+     *  first-ever visit) falls back to the historical default (live + chat
+     *  open). */
+    initialOpenOrder,
 }: {
     children: React.ReactNode;
     mounted?: Partial<Record<RailKey, boolean>>;
+    initialOpenOrder?: RailKey[] | null;
 }) {
     // Coalesce the optional `mounted` prop into a fully-populated record so
     // every callsite can read `mounted[key]` without a null-check. Missing
@@ -190,16 +248,43 @@ export function RightRailProvider({
         [mounted?.live, mounted?.recent, mounted?.alerts, mounted?.chat],
     );
 
-    // SSR default mirrors the historical layout (live + chat open). On
-    // mount we silently flip to the persisted state — the brief default
-    // flash is visually quiet because the panels share the same chrome.
-    const [state, setState] = React.useState<RailState>(() => ({
-        open: { ...DEFAULT_OPEN },
-        openOrder: RAIL_KEYS.filter((k) => DEFAULT_OPEN[k]),
-    }));
+    // Seed the initial state from the SERVER-provided cookie value
+    // (`initialOpenOrder`) so SSR and the first client render use the admin's
+    // ACTUAL saved layout — eliminating the post-mount open/close flip that a
+    // pure localStorage read caused (the cookie mirrors the same choice, so
+    // the server can read it). When the cookie is absent (`null`, e.g. a
+    // first-ever visit) we fall back to the historical default (live + chat
+    // open). localStorage remains the durable client store and is reconciled
+    // once on mount below — after cookie seeding the two agree on a normal
+    // reload, so that reconciliation is a no-op and nothing flips.
+    const [state, setState] = React.useState<RailState>(() =>
+        initialOpenOrder != null
+            ? stateFromOpenOrder(initialOpenOrder)
+            : {
+                  open: { ...DEFAULT_OPEN },
+                  openOrder: RAIL_KEYS.filter((k) => DEFAULT_OPEN[k]),
+              },
+    );
 
+    // Reconcile against localStorage exactly once on mount. This is the
+    // client's durable store; the cookie is only the SSR hint. In the normal
+    // case the cookie (server) and localStorage (client) agree, so this
+    // resolves to the same state and React bails out of the re-render — no
+    // visible flip. It only ever changes anything if the two diverge (cleared
+    // cookie, cross-device sync, an older tab that pre-dates the cookie), in
+    // which case localStorage — the authoritative durable store — wins, AND we
+    // re-write the cookie so the next request's SSR is already correct.
     React.useEffect(() => {
-        setState(readStoredState());
+        const stored = readStoredState();
+        setState((prev) => {
+            const same =
+                RAIL_KEYS.every((k) => prev.open[k] === stored.open[k]) &&
+                prev.openOrder.length === stored.openOrder.length &&
+                prev.openOrder.every((k, i) => k === stored.openOrder[i]);
+            return same ? prev : stored;
+        });
+        // Keep the SSR hint in sync with the durable store for next time.
+        writeCookie(stored);
     }, []);
 
     const persist = React.useCallback((next: RailState) => {
@@ -208,6 +293,7 @@ export function RightRailProvider({
             window.localStorage.setItem(STORAGE_KEYS[key], next.open[key] ? "1" : "0");
         }
         window.localStorage.setItem(STORAGE_ORDER, JSON.stringify(next.openOrder));
+        writeCookie(next);
     }, []);
 
     const setOpen = React.useCallback(
