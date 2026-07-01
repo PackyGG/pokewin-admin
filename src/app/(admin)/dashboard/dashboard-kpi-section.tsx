@@ -542,15 +542,16 @@ export function DashboardKpiSection({
           );
         })()}
 
-        {/* Withdrawals — money out. Pink identity (matches the old tile);
-            chip row carries the completed/shipped request count. */}
+        {/* Withdrawals — money out. Rose identity (House-POV: user pulls
+            money out → house loss → red), matching the rose breakdown chips
+            below; chip row carries the completed/shipped request count. */}
         {(() => {
           const p = payloadFor("withdrawals");
           const mode = modeFor("withdrawals");
           return (
             <KpiPanel
               title="Withdrawals"
-              tint="pink"
+              tint="rose"
               headerRight={
                 <WindowToggle
                   active={mode}
