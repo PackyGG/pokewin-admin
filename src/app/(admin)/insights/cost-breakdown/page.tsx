@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import {
   TrendingDown,
@@ -29,6 +30,9 @@ import {
 import { FadeIn } from "@/components/fade-in";
 import { ExportButton } from "@/components/export-button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SkeletonText } from "@/components/ux";
+import { SectionHeadingSkeleton } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
@@ -36,6 +40,7 @@ import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
   parseInsightsPeriod,
   INSIGHTS_PERIOD_LABELS,
+  type InsightsPeriod,
 } from "@/lib/queries/insights-analytics/period";
 import {
   getCostBreakdownCached,
@@ -127,6 +132,51 @@ export default async function CostBreakdownPage({
   await requirePageAccess("/insights/cost-breakdown");
   const params = await searchParams;
   const period = parseInsightsPeriod(params.period);
+
+  // Shell-first (docs/BACKEND_QUERY_SYSTEM.md §3): paint the hero + static
+  // controls (period filter, export) instantly from `searchParams` — no DB —
+  // and stream the heavy cost-breakdown assembly (~the heaviest read in the
+  // app: the canonical metric layer + the bridge terms + the contributor
+  // sweep + the lifetime realized-P&L snapshot) in behind a Suspense
+  // boundary keyed on `period` so a period switch re-streams. First paint no
+  // longer blocks up to the read timeout. The `loading.tsx` sibling renders
+  // the same shell + waterfall skeleton for the route-level pending state.
+  return (
+    <div className="space-y-6">
+      <PageHero>
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <PageHeroIdentity
+            icon={TrendingDown}
+            accent="rose"
+            title="Cost Breakdown"
+            subtitle="Where the wager goes — wager → net result, every leak named"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <CostBreakdownPeriodFilter />
+            <ExportButton page="cost-breakdown" params={{ period }} />
+          </div>
+        </div>
+      </PageHero>
+
+      <Suspense key={period} fallback={<CostBreakdownBodySkeleton />}>
+        <CostBreakdownBody period={period} />
+      </Suspense>
+    </div>
+  );
+}
+
+/**
+ * The streamed body: the two heavy reads (period cost-breakdown assembly +
+ * the lifetime realized-P&L snapshot) + the fire-and-forget CQRS comparison,
+ * then the full per-period story tree. Isolated behind the page's Suspense
+ * boundary so the hero + controls never wait on it. Served numbers are
+ * unchanged from the previous page-body implementation.
+ */
+async function CostBreakdownBody({
+  period,
+}: {
+  period: InsightsPeriod;
+}) {
   const periodLabel = INSIGHTS_PERIOD_LABELS[period];
 
   const [{ data, error }, { data: lifetimeSnapshot }] = await Promise.all([
@@ -161,91 +211,126 @@ export default async function CostBreakdownPage({
   // the served Postgres payload (`data`) is never affected.
   if (data) void compareCostBreakdown(period, data);
 
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Cost Breakdown"
+        hint="The cost-breakdown aggregation failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <PageHeroIdentity
-            icon={TrendingDown}
-            accent="rose"
-            title="Cost Breakdown"
-            subtitle="Where the wager goes — wager → net result, every leak named"
+    <FadeIn>
+      <div className="space-y-6">
+        <LifetimePnlReference snapshot={lifetimeSnapshot} />
+
+        <StoryLead data={data} periodLabel={periodLabel} />
+
+        <section className="space-y-3">
+          <SectionHeading
+            icon={Layers}
+            title={`The story in four moves · ${periodLabel}`}
           />
-          <div className="flex flex-wrap items-center gap-2">
-            <CostBreakdownPeriodFilter />
-            <ExportButton page="cost-breakdown" params={{ period }} />
+          <SummaryFlow data={data} periodLabel={periodLabel} />
+        </section>
+
+        <section className="space-y-3">
+          <SectionHeading
+            icon={Scale}
+            title={`The waterfall — wager → net result · ${periodLabel}`}
+          />
+          <WaterfallPanel data={data} />
+        </section>
+
+        <section className="space-y-3">
+          <SectionHeading
+            icon={ListOrdered}
+            title={`Cost categories ranked — biggest leak first · ${periodLabel}`}
+          />
+          <RankedCosts data={data} />
+        </section>
+
+        <section className="space-y-3">
+          <SectionHeading
+            icon={Activity}
+            title={`Margin health · ${periodLabel}`}
+          />
+          <MarginHealth data={data} />
+        </section>
+
+        {data.contributors.length > 0 && (
+          <section className="space-y-3">
+            <SectionHeading
+              icon={Users}
+              title="Who drove the margin · lifetime wager loss"
+            />
+            <Contributors data={data} />
+          </section>
+        )}
+
+        {data.trend.length > 0 && (
+          <section className="space-y-3">
+            <SectionHeading
+              icon={TrendingUp}
+              title={`Trend — is leakage growing? · ${periodLabel}`}
+            />
+            <CostTrendChart data={data.trend} />
+          </section>
+        )}
+      </div>
+    </FadeIn>
+  );
+}
+
+/**
+ * The waterfall-skeleton silhouette rendered inside the page's Suspense
+ * fallback while the body streams (and by `loading.tsx` for the route-level
+ * pending state). Layout-matching so nothing jumps when the data lands:
+ * the story-lead block, the four-move summary grid, and the waterfall panel.
+ */
+function CostBreakdownBodySkeleton() {
+  return (
+    <>
+      {/* Story lead */}
+      <div className="overflow-hidden rounded-2xl border bg-card">
+        <div className="flex items-center gap-3 border-b bg-muted/30 px-4 py-3 sm:px-5">
+          <Skeleton className="size-8 shrink-0 rounded-lg" />
+          <div className="space-y-1.5">
+            <Skeleton className="h-4 w-56" />
+            <Skeleton className="h-3 w-40" />
           </div>
         </div>
-      </PageHero>
+        <div className="p-4 sm:p-5">
+          <SkeletonText lines={4} />
+        </div>
+      </div>
 
-      {error || !data ? (
-        <TileErrorFallback
-          label="Cost Breakdown"
-          hint="The cost-breakdown aggregation failed. Server logs hold the digest."
-          size="panel"
-        />
-      ) : (
-        <FadeIn>
-          <div className="space-y-6">
-            <LifetimePnlReference snapshot={lifetimeSnapshot} />
+      {/* Four-move summary grid */}
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={220} />
+        <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, g) => (
+            <div key={g} className="space-y-2">
+              <Skeleton className="h-4 w-32" />
+              <div className="grid gap-3">
+                <Skeleton className="h-[5.5rem] rounded-xl" />
+                <Skeleton className="h-[5.5rem] rounded-xl" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
-            <StoryLead data={data} periodLabel={periodLabel} />
-
-            <section className="space-y-3">
-              <SectionHeading
-                icon={Layers}
-                title={`The story in four moves · ${periodLabel}`}
-              />
-              <SummaryFlow data={data} periodLabel={periodLabel} />
-            </section>
-
-            <section className="space-y-3">
-              <SectionHeading
-                icon={Scale}
-                title={`The waterfall — wager → net result · ${periodLabel}`}
-              />
-              <WaterfallPanel data={data} />
-            </section>
-
-            <section className="space-y-3">
-              <SectionHeading
-                icon={ListOrdered}
-                title={`Cost categories ranked — biggest leak first · ${periodLabel}`}
-              />
-              <RankedCosts data={data} />
-            </section>
-
-            <section className="space-y-3">
-              <SectionHeading
-                icon={Activity}
-                title={`Margin health · ${periodLabel}`}
-              />
-              <MarginHealth data={data} />
-            </section>
-
-            {data.contributors.length > 0 && (
-              <section className="space-y-3">
-                <SectionHeading
-                  icon={Users}
-                  title="Who drove the margin · lifetime wager loss"
-                />
-                <Contributors data={data} />
-              </section>
-            )}
-
-            {data.trend.length > 0 && (
-              <section className="space-y-3">
-                <SectionHeading
-                  icon={TrendingUp}
-                  title={`Trend — is leakage growing? · ${periodLabel}`}
-                />
-                <CostTrendChart data={data.trend} />
-              </section>
-            )}
-          </div>
-        </FadeIn>
-      )}
-    </div>
+      {/* Waterfall */}
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={260} />
+        <div className="rounded-xl border bg-card p-3 ring-1 ring-foreground/10 sm:p-4">
+          <SkeletonText lines={12} />
+        </div>
+      </div>
+    </>
   );
 }
 
