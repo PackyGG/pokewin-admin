@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2, Ticket, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -227,7 +226,6 @@ function VoucherRemoveDialog({
   const [totpCode, setTotpCode] = useState("");
   const abuser = useAbuserTags();
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   function handleClose(next: boolean) {
     if (isPending) return;
@@ -269,8 +267,12 @@ function VoucherRemoveDialog({
         setTotpCode("");
         abuser.reset();
         onOpenChange(false);
+        // The panel re-fetches its own voucher list (onRemoved -> load()), so
+        // the removed row + total update in place. No `router.refresh()` — a
+        // full-tree refresh here re-suspends the page and loses scroll. The
+        // `deleteUserVoucher` action busts the per-user cache tag, so any other
+        // holdings surface reconciles on the next render / 60s AutoRefresh.
         onRemoved?.();
-        router.refresh();
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Failed to remove voucher",

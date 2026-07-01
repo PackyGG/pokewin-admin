@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Archive, Ban, ShieldAlert, ShieldBan, ShieldCheck, ShieldOff, Lock, Unlock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -321,7 +320,6 @@ export const ModerationSection = React.memo(function ModerationSection({
 // error toast when they submit.
 
 function BanButton({ userId }: { userId: string }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -341,7 +339,9 @@ function BanButton({ userId }: { userId: string }) {
       toast.success("User banned");
       setOpen(false);
       setReason("");
-      router.refresh();
+      // No `router.refresh()` — the banUser server action already revalidates
+      // the route, which flips the Ban→Unban button. A client refresh on top
+      // just triggers a second full-tree refetch (extra re-suspend / churn).
     });
   }
 
@@ -386,7 +386,6 @@ function BanButton({ userId }: { userId: string }) {
 }
 
 function UnbanButton({ userId }: { userId: string }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -396,7 +395,8 @@ function UnbanButton({ userId }: { userId: string }) {
         await unbanUser(userId);
         toast.success("User unbanned");
         setOpen(false);
-        router.refresh();
+        // No `router.refresh()` — the unbanUser server action revalidates the
+        // route, flipping the Unban→Ban button without a client full refetch.
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Unban failed");
       }
@@ -432,7 +432,6 @@ function UnbanButton({ userId }: { userId: string }) {
 }
 
 function LockButton({ userId }: { userId: string }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -452,7 +451,8 @@ function LockButton({ userId }: { userId: string }) {
       toast.success("User locked");
       setOpen(false);
       setReason("");
-      router.refresh();
+      // No `router.refresh()` — the lockUser server action revalidates the
+      // route, flipping the Lock→Unlock button without a client full refetch.
     });
   }
 
@@ -498,7 +498,6 @@ function LockButton({ userId }: { userId: string }) {
 }
 
 function UnlockButton({ userId }: { userId: string }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -508,7 +507,8 @@ function UnlockButton({ userId }: { userId: string }) {
         await unlockUser(userId);
         toast.success("User unlocked");
         setOpen(false);
-        router.refresh();
+        // No `router.refresh()` — the unlockUser server action revalidates the
+        // route, flipping the Unlock→Lock button without a client full refetch.
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Unlock failed");
       }
@@ -560,7 +560,6 @@ function MoveToVaultButton({
   lockedBalance: number;
   unlockAt: string | null;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   // The "I understand" checkbox is only required when there's actual
   // existing vault state that this action will overwrite; empty state
@@ -592,7 +591,10 @@ function MoveToVaultButton({
       );
       setOpen(false);
       setAcknowledged(false);
-      router.refresh();
+      // No `router.refresh()` — the moveBalanceToVault server action already
+      // revalidates the route (this move re-prices available/locked balance,
+      // P&L and vault surfaces across the page, so it keeps the broad
+      // revalidate). A client refresh on top is a redundant second refetch.
     });
   }
 

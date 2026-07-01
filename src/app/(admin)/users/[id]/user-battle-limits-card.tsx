@@ -17,7 +17,6 @@
  */
 
 import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,15 +47,29 @@ export function UserBattleLimitsCard({
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const [isClearing, startClearTransition] = useTransition();
-  const router = useRouter();
+
+  // Optimistic, locally-tracked limits. Seeded from the `limits` prop and
+  // updated in place on a successful Save / Clear so the InfoRows flip
+  // instantly WITHOUT a `router.refresh()` (which would re-suspend the page
+  // and lose the admin's scroll — see use-toggle-action.ts). Re-synced to the
+  // prop whenever the narrow `users-detail-${userId}` revalidation streams a
+  // fresh value in.
+  const [localLimits, setLocalLimits] = useState<BattleLimits>(limits);
+  useEffect(() => {
+    setLocalLimits(limits);
+  }, [limits]);
 
   const handleClear = () => {
+    // Snapshot for rollback on failure.
+    const before = localLimits;
     startClearTransition(async () => {
       const result = await clearUserBattleLimits(userId);
       if (result.success) {
+        // Cleared → fall back to platform defaults (null override).
+        setLocalLimits(null);
         toast.success("Battle limit overrides removed");
-        router.refresh();
       } else {
+        setLocalLimits(before);
         toast.error(result.error);
       }
     });
@@ -69,16 +82,16 @@ export function UserBattleLimitsCard({
           <InfoRow
             label="Max Battle Value"
             value={
-              limits?.maxValueUsd != null
-                ? formatCurrency(limits.maxValueUsd)
+              localLimits?.maxValueUsd != null
+                ? formatCurrency(localLimits.maxValueUsd)
                 : "Default ($10,000)"
             }
           />
           <InfoRow
             label="Base Bet Limit"
             value={
-              limits?.baseBetLimitUsd != null
-                ? formatCurrency(limits.baseBetLimitUsd)
+              localLimits?.baseBetLimitUsd != null
+                ? formatCurrency(localLimits.baseBetLimitUsd)
                 : "Default ($3,500)"
             }
           />
@@ -96,9 +109,9 @@ export function UserBattleLimitsCard({
               variant="outline"
               onClick={() => setEditOpen(true)}
             >
-              {limits ? "Edit Limits" : "Set Custom Limits"}
+              {localLimits ? "Edit Limits" : "Set Custom Limits"}
             </Button>
-            {limits && (
+            {localLimits && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -113,9 +126,10 @@ export function UserBattleLimitsCard({
 
         <UserBattleLimitsDialog
           userId={userId}
-          limits={limits}
+          limits={localLimits}
           open={editOpen}
           onOpenChange={setEditOpen}
+          onSaved={setLocalLimits}
         />
       </CardContent>
     </Card>
@@ -127,11 +141,17 @@ function UserBattleLimitsDialog({
   limits,
   open,
   onOpenChange,
+  onSaved,
 }: {
   userId: string;
   limits: BattleLimits;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // Push the just-saved limits up so the parent card reflects them
+  // optimistically — no `router.refresh()`. The values are exactly what the
+  // admin entered (the backend stores them verbatim), so the optimistic value
+  // is authoritative; the server action busts the per-user cache tag.
+  onSaved: (next: BattleLimits) => void;
 }) {
   const [maxValueUsd, setMaxValueUsd] = useState(
     limits?.maxValueUsd != null ? String(limits.maxValueUsd) : "",
@@ -140,7 +160,6 @@ function UserBattleLimitsDialog({
     limits?.baseBetLimitUsd != null ? String(limits.baseBetLimitUsd) : "",
   );
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   // Reset form whenever the dialog re-opens — admins editing repeatedly
   // shouldn't see stale input from a previous cancel.
@@ -177,9 +196,12 @@ function UserBattleLimitsDialog({
         baseBetLimitUsd: parsedBase,
       });
       if (result.success) {
+        // Push the exact saved values up so the card reflects them in place.
+        // The upsert always leaves a row (both fields may be null = "fall back
+        // to platform default"), so we hand back the object, not null.
+        onSaved({ maxValueUsd: parsedMax, baseBetLimitUsd: parsedBase });
         toast.success("Battle limits updated");
         onOpenChange(false);
-        router.refresh();
       } else {
         toast.error(result.error);
       }

@@ -22,7 +22,6 @@
  */
 
 import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   Wallet,
@@ -45,7 +44,10 @@ import {
 } from "@/components/ui/dialog";
 import { StatPanel, KpiTile } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
-import { setUserWagerRemainingAction } from "./wager-requirement-actions";
+import {
+  setUserWagerRemainingAction,
+  refreshUserWagerProgressAction,
+} from "./wager-requirement-actions";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 
 const BPS_PER_X = 10000;
@@ -61,23 +63,37 @@ export function UserWagerProgressCard({
   data: UserWagerProgress | null;
   canManage: boolean;
 }) {
-  const router = useRouter();
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+
+  // Locally-tracked standing. Seeded from the `data` prop and updated via a
+  // SCOPED re-fetch after a debt mutation — NOT a `router.refresh()` (which
+  // re-suspends the page and loses scroll). The gate figures (withdrawable /
+  // locked / per-source unwagered) are recomputed server-side, so we re-read
+  // them exactly rather than fabricating an optimistic value. Re-synced to the
+  // prop whenever the narrow `users-detail-${userId}` revalidation or the 60s
+  // AutoRefresh streams a fresh value in (never while a mutation is in flight).
+  const [localData, setLocalData] = useState<UserWagerProgress | null>(data);
+  useEffect(() => {
+    if (isPending) return;
+    setLocalData(data);
+  }, [data, isPending]);
 
   const handleClearDebt = () => {
     startTransition(async () => {
       const result = await setUserWagerRemainingAction({ userId, amountUsd: "0" });
       if (result.success) {
+        // Re-read the recomputed standing in place — no full-route refresh.
+        const fresh = await refreshUserWagerProgressAction(userId);
+        setLocalData(fresh);
         toast.success("Wager debt cleared — user can withdraw immediately");
-        router.refresh();
       } else {
         toast.error(result.error);
       }
     });
   };
 
-  if (!data) {
+  if (!localData) {
     return (
       <Card className="border-dashed">
         <CardContent className="pt-6">
@@ -112,7 +128,7 @@ export function UserWagerProgressCard({
     shards,
     shardWagerProgress,
     backendAvailable,
-  } = data;
+  } = localData;
 
   // Balance composition: of the available balance, how much is free to
   // withdraw vs reserved behind the locked debt. Only meaningful when there is
@@ -327,6 +343,7 @@ export function UserWagerProgressCard({
         currentRemainingUsd={remainingUsd}
         open={adjustOpen}
         onOpenChange={setAdjustOpen}
+        onSaved={setLocalData}
       />
     </div>
   );
@@ -337,13 +354,17 @@ function AdjustRemainingDialog({
   currentRemainingUsd,
   open,
   onOpenChange,
+  onSaved,
 }: {
   userId: string;
   currentRemainingUsd: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // Push the recomputed standing up after a save so the parent card refreshes
+  // in place — no `router.refresh()`. The dialog re-reads it server-side (the
+  // gate figures are recomputed) via `refreshUserWagerProgressAction`.
+  onSaved: (next: UserWagerProgress | null) => void;
 }) {
-  const router = useRouter();
   const [value, setValue] = useState(
     currentRemainingUsd > 0 ? currentRemainingUsd.toFixed(2) : "",
   );
@@ -375,9 +396,12 @@ function AdjustRemainingDialog({
         amountUsd: num.toFixed(2),
       });
       if (result.success) {
+        // Re-read the recomputed standing and hand it to the parent — the card
+        // updates in place instead of a full-route refresh (no scroll jump).
+        const fresh = await refreshUserWagerProgressAction(userId);
+        onSaved(fresh);
         toast.success("Wager remaining debt updated");
         onOpenChange(false);
-        router.refresh();
       } else {
         toast.error(result.error);
       }

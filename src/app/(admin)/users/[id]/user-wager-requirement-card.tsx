@@ -16,7 +16,6 @@
  */
 
 import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -104,11 +103,23 @@ export function UserWagerRequirementCard({
   data: UserWagerRequirement | null;
   canManage: boolean;
 }) {
-  const router = useRouter();
   const [editOpen, setEditOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
-  if (!data) {
+  // Optimistic, locally-tracked overrides. Seeded from the `data` prop and
+  // updated in place on a successful Save / Clear so the table flips instantly
+  // WITHOUT a `router.refresh()` (which would re-suspend the page and lose the
+  // admin's scroll — see use-toggle-action.ts). The override bps are stored
+  // verbatim by the backend, so the optimistic value is authoritative. Re-synced
+  // to the prop whenever the narrow `users-detail-${userId}` revalidation
+  // streams a fresh value in (never while a mutation is mid-flight).
+  const [localData, setLocalData] = useState<UserWagerRequirement | null>(data);
+  useEffect(() => {
+    if (isPending) return;
+    setLocalData(data);
+  }, [data, isPending]);
+
+  if (!localData) {
     return (
       <Card className="border-dashed">
         <CardContent className="pt-6">
@@ -128,16 +139,31 @@ export function UserWagerRequirementCard({
     );
   }
 
-  const rows = buildRows(data);
+  const rows = buildRows(localData);
   const hasAnyOverride = rows.some((r) => r.override !== null);
 
   const handleClear = () => {
+    // Snapshot for rollback on failure.
+    const before = localData;
     startTransition(async () => {
       const result = await clearUserWagerRequirementAction(userId);
       if (result.success) {
+        // Cleared → all per-user overrides drop to null (user falls back to
+        // the site-wide global for every source). Update in place, no refresh.
+        setLocalData({
+          ...before,
+          wager_requirement_bps: null,
+          bonus_wager_requirement_bps: null,
+          affiliate_wager_requirement_bps: null,
+          affiliate_leaderboard_wager_requirement_bps: null,
+          rakeback_wager_requirement_bps: null,
+          tips_wager_requirement_bps: null,
+          admin_adjustment_wager_requirement_bps: null,
+          effective_wager_requirement_bps: before.default_wager_requirement_bps,
+        });
         toast.success("Override removed — user falls back to the default");
-        router.refresh();
       } else {
+        setLocalData(before);
         toast.error(result.error);
       }
     });
@@ -231,9 +257,10 @@ export function UserWagerRequirementCard({
 
         <UserWagerRequirementDialog
           userId={userId}
-          data={data}
+          data={localData}
           open={editOpen}
           onOpenChange={setEditOpen}
+          onSaved={setLocalData}
         />
       </CardContent>
     </Card>
@@ -282,13 +309,18 @@ function UserWagerRequirementDialog({
   data,
   open,
   onOpenChange,
+  onSaved,
 }: {
   userId: string;
   data: UserWagerRequirement;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // Push the just-saved config up so the card reflects it optimistically —
+  // no `router.refresh()`. Only the fields the admin actually entered are
+  // merged (blank = "keep global" = untouched), matching the backend, which
+  // only updates the sent fields.
+  onSaved: (next: UserWagerRequirement) => void;
 }) {
-  const router = useRouter();
   const [values, setValues] = useState<FormValues>(() => ({
     wager_requirement_bps: bpsToInputValue(data.wager_requirement_bps),
     bonus_wager_requirement_bps: bpsToInputValue(data.bonus_wager_requirement_bps),
@@ -374,9 +406,14 @@ function UserWagerRequirementDialog({
     startTransition(async () => {
       const result = await setUserWagerRequirementAction(payload);
       if (result.success) {
+        // Merge ONLY the entered fields onto the current data — the backend
+        // updates just the sent fields, so untouched overrides keep their
+        // value. `payload` carries `userId` too; strip it before merging.
+        const { userId: _userId, ...savedFields } = payload;
+        void _userId;
+        onSaved({ ...data, ...savedFields });
         toast.success("Wager requirement overrides saved");
         onOpenChange(false);
-        router.refresh();
       } else {
         toast.error(result.error);
       }

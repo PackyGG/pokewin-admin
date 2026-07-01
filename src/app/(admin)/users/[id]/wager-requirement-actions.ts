@@ -1,16 +1,14 @@
 "use server";
 
-import { revalidatePath, revalidateTag } from "next/cache";
-
-/**
- * Bust BOTH the route segment AND the per-user `unstable_cache` entries.
- * `revalidatePath` alone does NOT drop unstable_cache entries — see
- * `users/[id]/actions.ts` invalidateUserCaches for the full rationale.
- */
-function invalidateUserCaches(userId: string): void {
-  revalidatePath(`/users/${userId}`);
-  revalidateTag(`users-detail-${userId}`);
-}
+// TAG-ONLY invalidation for the user-detail surface. We deliberately do NOT
+// `revalidatePath('/users/[id]')` here: the wager-requirement / progress cards
+// update in place (optimistically for config, via a scoped re-fetch for the
+// recomputed gate figures), so a current-route path revalidate would only
+// re-render + re-suspend the page and lose the admin's scroll (see
+// `use-toggle-action.ts`). Busting the per-user `users-detail-${userId}` tag
+// — which every per-user `unstable_cache` entry carries — keeps the cached
+// reads fresh without that churn.
+import { revalidateTag } from "next/cache";
 import { z } from "zod";
 import { requirePageAccess, requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -21,6 +19,10 @@ import {
   clearUserWagerRequirement,
   setUserWagerRemainingDebt,
 } from "@/lib/backend-api/wager-requirements";
+import {
+  getUserWagerProgress,
+  type UserWagerProgress,
+} from "@/lib/queries/users-wager-progress";
 
 /**
  * Per-user withdrawal wager-requirement overrides.
@@ -111,7 +113,11 @@ export async function setUserWagerRequirementAction(input: {
     metadata: { old: oldValues, new: fields },
   });
 
-  invalidateUserCaches(userId);
+  // TAG-ONLY — the wager-requirement card reflects the saved config
+  // optimistically, so a current-route `revalidatePath('/users/[id]')` would
+  // only re-render + re-suspend the page and lose the admin's scroll. Busting
+  // the per-user cache tag keeps the cached getUserDetail fresh without churn.
+  revalidateTag(`users-detail-${userId}`);
   return { success: true };
 }
 
@@ -146,7 +152,9 @@ export async function clearUserWagerRequirementAction(
     metadata: { old_bps: oldBps ?? null },
   });
 
-  invalidateUserCaches(userId);
+  // TAG-ONLY (see setUserWagerRequirementAction) — the card drops overrides
+  // optimistically, so no current-route path revalidate.
+  revalidateTag(`users-detail-${userId}`);
   return { success: true };
 }
 
@@ -199,6 +207,30 @@ export async function setUserWagerRemainingAction(input: {
     },
   });
 
-  invalidateUserCaches(userId);
+  // TAG-ONLY — the wager-progress card re-fetches its own standing via
+  // `refreshUserWagerProgressAction` (the derived gate figures are recomputed
+  // server-side, so we don't fabricate them optimistically), so a current-route
+  // `revalidatePath('/users/[id]')` would only re-render + re-suspend the page
+  // and lose the admin's scroll. Busting the per-user cache tag keeps the
+  // cached getUserDetail fresh for the next full render / AutoRefresh.
+  revalidateTag(`users-detail-${userId}`);
   return { success: true };
+}
+
+/**
+ * Scoped re-read of the user's wager standing for the progress card. Called
+ * right after a debt adjust / clear so the card refreshes its numbers IN PLACE
+ * (updating its local `data`) instead of `router.refresh()`ing the whole route
+ * — which re-suspends the page and loses the admin's scroll. The gate figures
+ * (withdrawable / locked / per-source unwagered) are recomputed server-side, so
+ * they can't be reconstructed optimistically without fabricating money values;
+ * a scoped re-fetch is the correct, exact update (mirrors the vouchers panel's
+ * `getUserVouchers` self-reload). Same `/users` page-access gate as the reads.
+ */
+export async function refreshUserWagerProgressAction(
+  userId: string,
+): Promise<UserWagerProgress | null> {
+  await requirePageAccess("/users");
+  if (!userId || typeof userId !== "string") return null;
+  return getUserWagerProgress(userId);
 }

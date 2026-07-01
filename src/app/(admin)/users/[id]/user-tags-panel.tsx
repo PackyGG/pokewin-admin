@@ -1,7 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   Crown,
@@ -76,8 +75,11 @@ const ALL_TAGS: UserTagValue[] = [
  * checkbox, and presses Save — which diffs the staged selection against
  * the user's current tags and fires ONLY the delta through the existing
  * `setUserTag` / `removeUserTag` server actions (no new mutations, no new
- * tag types). On success it `router.refresh()`es so the audit log + every
- * server-driven tag view picks up the change.
+ * tag types). On success it updates a LOCAL committed set optimistically —
+ * no `router.refresh()`. The server actions revalidate the per-user
+ * `users-detail-${userId}` cache tag, so the audit log + every server-driven
+ * tag view stays consistent WITHOUT the full-route re-render that used to
+ * lose the admin's scroll position (see use-toggle-action.ts rationale).
  *
  * Read-only path (viewers without the capability): just the existing tag
  * badges with a who/when tooltip — no dropdown, no Save.
@@ -94,16 +96,27 @@ export function UserTagsPanel({
   initialTags: UserTagRow[];
   canManage: boolean;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isSaving, startTransition] = useTransition();
 
-  // The committed, server-known set of tags. Updated optimistically after a
-  // successful Save; router.refresh() then re-seeds it from the server.
-  const currentSet = useMemo(
+  // Server-truth seed from the prop. When the narrow `users-detail-${userId}`
+  // revalidation streams fresh `initialTags` in, we re-sync the committed set
+  // to it (effect below) — but a successful Save updates it optimistically
+  // FIRST so the badge count flips instantly, no `router.refresh()`.
+  const serverSet = useMemo(
     () => new Set(initialTags.map((t) => t.tag)),
     [initialTags],
   );
+
+  // The committed, locally-tracked set of tags. Seeded from the server prop
+  // and updated optimistically on a successful Save. Re-synced to the server
+  // prop whenever a real revalidation streams a new value in (never while a
+  // Save is mid-flight, so an in-progress optimistic update isn't clobbered).
+  const [currentSet, setCurrentSet] = useState<Set<UserTagValue>>(serverSet);
+  useEffect(() => {
+    if (isSaving) return;
+    setCurrentSet(serverSet);
+  }, [serverSet, isSaving]);
 
   // Staged selection inside the open dropdown. Seeded from the committed set
   // every time the dropdown opens so a cancelled edit never sticks.
@@ -134,30 +147,44 @@ export function UserTagsPanel({
 
   function handleSave() {
     if (isSaving || !hasChanges) return;
+    // Snapshot the committed set so a partial failure can roll back to the
+    // exact tags that ARE persisted (each successful delta call is applied to
+    // the optimistic set as it lands, so we never over- or under-count).
+    const committedBefore = new Set(currentSet);
+    const optimistic = new Set(currentSet);
     startTransition(async () => {
       try {
         // Apply the delta through the existing actions. Each returns a
         // result object (never throws for handled failures); we surface the
         // first failure and stop so the staged selection still reflects the
-        // operator's intent for a retry.
+        // operator's intent for a retry. We advance the optimistic set per
+        // successful call, then commit it — no `router.refresh()`, so the
+        // page never re-suspends / loses scroll (the actions bust the
+        // per-user cache tag to keep the server in sync).
         for (const tag of toRemove) {
           const result = await removeUserTag(userId, tag);
           if (!result.success) {
+            setCurrentSet(new Set(optimistic));
             toast.error(result.error);
             return;
           }
+          optimistic.delete(tag);
         }
         for (const tag of toAdd) {
           const result = await setUserTag(userId, tag);
           if (!result.success) {
+            setCurrentSet(new Set(optimistic));
             toast.error(result.error);
             return;
           }
+          optimistic.add(tag);
         }
+        setCurrentSet(new Set(optimistic));
         toast.success("Tags updated");
         setOpen(false);
-        router.refresh();
       } catch (err) {
+        // Unexpected throw — roll back to what was persisted before.
+        setCurrentSet(committedBefore);
         toast.error(
           err instanceof Error ? err.message : "Failed to update tags",
         );

@@ -2244,7 +2244,11 @@ export async function deleteUserVoucher(data: {
     },
   });
 
-  invalidateUserCaches(parsed.data.userId);
+  // TAG-ONLY — the vouchers panel re-fetches its own list client-side, so a
+  // current-route `revalidatePath('/users/[id]')` would only re-render +
+  // re-suspend the page and lose scroll. Busting the per-user cache tag keeps
+  // the cached getUserDetail holdings fresh for the next render / AutoRefresh.
+  revalidateTag(`users-detail-${parsed.data.userId}`);
   return { success: true };
 }
 
@@ -3496,7 +3500,11 @@ export async function updateUserBattleLimits(data: {
     },
   });
 
-  invalidateUserCaches(parsed.userId);
+  // TAG-ONLY — the battle-limits card reflects the saved value optimistically,
+  // so a current-route `revalidatePath('/users/[id]')` would only re-render +
+  // re-suspend the page and lose scroll. Busting the per-user cache tag keeps
+  // the cached getUserDetail (which carries this tag) fresh without the churn.
+  revalidateTag(`users-detail-${parsed.userId}`);
   return { success: true };
 }
 
@@ -3527,7 +3535,9 @@ export async function clearUserBattleLimits(
     metadata: {},
   });
 
-  invalidateUserCaches(userId);
+  // TAG-ONLY (see updateUserBattleLimits) — the card falls back to defaults
+  // optimistically, so no current-route path revalidate.
+  revalidateTag(`users-detail-${userId}`);
   return { success: true };
 }
 
@@ -3606,7 +3616,14 @@ export async function setUserTag(
     metadata: { tag: parsed.data.tag },
   });
 
-  invalidateUserCaches(parsed.data.userId);
+  // TAG-ONLY for the user-detail surface — NO `revalidatePath('/users/[id]')`.
+  // The client (user-tags-panel) updates its committed set optimistically, so
+  // a broad current-route path revalidate would only re-render + re-suspend
+  // the page and lose the admin's scroll (see use-toggle-action.ts). Busting
+  // the per-user cache tag keeps every server-driven tag view + the cached
+  // getUserDetail in sync without that churn. The wager-abusers list is a
+  // DIFFERENT route, so its path revalidate is safe + still needed.
+  revalidateTag(`users-detail-${parsed.data.userId}`);
   revalidatePath("/creator-hub/wager-abusers");
   return { success: true };
 }
@@ -3656,7 +3673,9 @@ export async function removeUserTag(
     return { success: false, error: "Failed to remove tag" };
   }
 
-  invalidateUserCaches(parsed.data.userId);
+  // TAG-ONLY for the user-detail surface (see setUserTag) — the client flips
+  // its committed set optimistically, so no current-route path revalidate.
+  revalidateTag(`users-detail-${parsed.data.userId}`);
   revalidatePath("/creator-hub/wager-abusers");
   return { success: true };
 }
