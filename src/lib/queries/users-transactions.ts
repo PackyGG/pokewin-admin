@@ -16,7 +16,29 @@ import { getMothaAdjustmentLedgerTxIdsForUser } from "@/lib/queries/users-motha-
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import { isAdjustmentVisibilityOwner } from "@/lib/users/owner-adjustments-visibility";
 import { verifySession } from "@/lib/dal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import type { ledger_transaction_type } from "@/generated/prisma/enums";
+
+/**
+ * Withdrawal-side ledger types (the user cashing out): the crypto/card
+ * payout (`card_withdrawal`), the sweepstakes balance-withdrawal cash leg
+ * (`balance_withdrawal`), and the physical-card shipping-fee leg
+ * (`withdrawal_shipping_fee`). Mirrors `WITHDRAWAL_TX_TYPES` in
+ * `users/[id]/user-tabs-types.ts` — kept LOCAL here (server query layer) so
+ * the blacklist suppression below doesn't reach into the page module.
+ *
+ * For a BLACKLISTED user (present in `getExcludedUserIds()`) these rows —
+ * and their amounts — are suppressed from every per-user transactions
+ * surface (Deposits & Withdrawals feed, the Withdrawals filter segment,
+ * pagination / load-more, and the transaction-detail modal, which only
+ * renders rows already in the table). Consistent with the user being fully
+ * hidden per owner request 2026-07-01.
+ */
+const BLACKLIST_HIDDEN_WITHDRAWAL_TYPES: readonly ledger_transaction_type[] = [
+  "card_withdrawal",
+  "balance_withdrawal",
+  "withdrawal_shipping_fee",
+] as ledger_transaction_type[];
 
 /** Ledger types that pull in pack/battle/upgrader enrichment (expensive). */
 const GAMING_LEDGER_TYPES = new Set<string>([
@@ -259,6 +281,31 @@ export async function getUserTransactions(
     };
   }
   where.user_id = canonicalUserId;
+
+  // ── BLACKLISTED-USER WITHDRAWAL SUPPRESSION ─────────────────────────
+  //
+  // A user on the excluded_users blacklist (getExcludedUserIds — the RAW
+  // set, applied to EVERYONE incl. owners) is fully hidden across the admin
+  // (owner request 2026-07-01). On the per-user surfaces that still render
+  // for them (their /users/[id] page stays viewable), their WITHDRAWAL rows
+  // + amounts are suppressed at this single chokepoint so both the rows and
+  // the `count` (page totals) omit them — the Deposits & Withdrawals feed,
+  // the Withdrawals filter segment, the Recent Activity timeline, load-more
+  // via fetchUserTransactions, and the transaction-detail modal all read
+  // this function, so they all drop the withdrawal entries consistently.
+  // Deposits and every other type are untouched.
+  const excludedIds = await getExcludedUserIds();
+  if (excludedIds.includes(canonicalUserId)) {
+    const hideWithdrawals: Prisma.ledger_transactionsWhereInput = {
+      type: { notIn: [...BLACKLIST_HIDDEN_WITHDRAWAL_TYPES] },
+    };
+    const existingAnd = where.AND
+      ? Array.isArray(where.AND)
+        ? where.AND
+        : [where.AND]
+      : [];
+    where.AND = [...existingAnd, hideWithdrawals];
+  }
 
   // ── OWNER-ONLY ADMIN-ADJUSTMENT VISIBILITY (security) ───────────────
   //

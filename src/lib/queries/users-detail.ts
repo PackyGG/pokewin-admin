@@ -5,6 +5,7 @@ import { isUserId, isUuid } from "@/lib/utils/ids";
 import { filterLedgerTxTypesLive } from "./_ledger-tx-types";
 import { calculateUserPnl } from "./pnl";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 
@@ -692,6 +693,21 @@ export async function getUserDetail(id: string) {
 
   if (!user) return null;
 
+  // WITHDRAWAL SUPPRESSION for blacklisted (excluded_users) users. A
+  // blacklisted user (e.g. kartos) is hidden wholesale from analytics/PnL
+  // elsewhere; on the per-user detail surface we additionally hide ALL of
+  // their WITHDRAWAL entries + amounts (every method, not just balance) while
+  // keeping the rest of the page viewable. Deposits, inventory, gaming and
+  // every other section are untouched.
+  //
+  // Gated GENERICALLY on blacklist membership (no hardcoded id) and applied
+  // for EVERYONE viewing — there is no per-admin override that re-exposes it.
+  // `getExcludedUserIds` reads the ADMIN DB (allowed), is React-cache()'d so
+  // it costs one admin-DB round trip per request, and fails CLOSED (throws if
+  // the blacklist is unavailable and no prior good list exists) — matching how
+  // the rest of the app scopes on this list.
+  const isBlacklisted = (await getExcludedUserIds()).includes(user.id);
+
   // Resolve referred_by username + the EXACT code that was used at
   // signup time (from affiliate_code_usages). The code string is what
   // admins ask for ("which code did this user use?") — having it on
@@ -880,7 +896,17 @@ export async function getUserDetail(id: string) {
           // P&L components come from the shared helper so this view can
           // never drift from users-list / dashboard.
           totalDeposited: userPnl.deposits,
-          totalWithdrawn: userPnl.withdrawals,
+          // Blacklisted user → hide the lifetime withdrawn total. Every
+          // consumer composes the displayed P&L client-side as
+          // `deposits − totalWithdrawn − onSiteBalance − inventory − vouchers`
+          // (see user-view-modern*.tsx / user-tabs-cards.tsx), so zeroing the
+          // withdrawals term HERE keeps the shown "Total Withdrawn" KPI, the
+          // balance breakdown, AND the composed P&L / net internally
+          // consistent (P&L recomputed as if withdrawals were 0 — never a
+          // stale/original withdrawal figure). `availableBalance` is derived
+          // from `userPnl.onSiteBalance`, which never included withdrawals, so
+          // the balance is untouched.
+          totalWithdrawn: isBlacklisted ? 0 : userPnl.withdrawals,
           totalWagered: toNumber(balances.total_wagered),
           totalWon: toNumber(balances.total_won),
           bonusPoints: balancePoints,
@@ -1002,18 +1028,22 @@ export async function getUserDetail(id: string) {
       unmutedBy: m.unmuted_by,
       createdAt: m.created_at.toISOString(),
     })),
-    cardWithdrawals: cardWithdrawals.map((cw) => ({
-      id: cw.id,
-      method: cw.method,
-      totalValueUsd: toNumber(cw.total_value_usd),
-      shippingFeeUsd: cw.shipping_fee_usd ? toNumber(cw.shipping_fee_usd) : null,
-      trackingNumber: cw.tracking_number,
-      carrier: cw.carrier,
-      status: cw.status,
-      failureReason: cw.failure_reason,
-      requestedAt: cw.requested_at.toISOString(),
-      completedAt: cw.completed_at?.toISOString() ?? null,
-    })),
+    // Blacklisted user → hide the whole card-withdrawal-requests list (the
+    // "Card Withdrawals" sub-table on the Deposits & Withdrawals tab).
+    cardWithdrawals: isBlacklisted
+      ? []
+      : cardWithdrawals.map((cw) => ({
+          id: cw.id,
+          method: cw.method,
+          totalValueUsd: toNumber(cw.total_value_usd),
+          shippingFeeUsd: cw.shipping_fee_usd ? toNumber(cw.shipping_fee_usd) : null,
+          trackingNumber: cw.tracking_number,
+          carrier: cw.carrier,
+          status: cw.status,
+          failureReason: cw.failure_reason,
+          requestedAt: cw.requested_at.toISOString(),
+          completedAt: cw.completed_at?.toISOString() ?? null,
+        })),
     activeSeed: activeSeed
       ? {
           clientSeed: activeSeed.client_seed,
@@ -1031,7 +1061,9 @@ export async function getUserDetail(id: string) {
     })),
     counts: {
       deposits: depositCount,
-      withdrawals: withdrawalCount,
+      // Blacklisted user → hide the withdrawal count in the deposits/
+      // withdrawals count tile.
+      withdrawals: isBlacklisted ? 0 : withdrawalCount,
       avgDeposit:
         depositCount > 0
           ? toNumber(depositTotalAgg._sum.amount ?? 0) / depositCount
