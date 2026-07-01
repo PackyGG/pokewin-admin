@@ -191,7 +191,11 @@ export const CREATORS_DETAIL_SURFACE_KEYS = [
  *     rolls back instantly via Edge Config.
  */
 const CUTOVER_DEFAULT_CLICKHOUSE: ReadonlySet<string> = new Set([
-  "dashboard_headline_ggr",
+  // NOTE: `dashboard_headline_ggr` (getWindowMetrics) is intentionally NOT cut
+  // over — the CH mirror doesn't yet have `battle_double_down_offers`, so its
+  // GGR would omit the Double Down leg (PG path fix from d8022b32 hasn't
+  // reached CH). Pull back to Postgres until the CH twin is re-verified with
+  // DD included.
   "dashboard_trend_series",
   "dashboard_realized_pnl_lifetime",
   "dashboard_cashflow",

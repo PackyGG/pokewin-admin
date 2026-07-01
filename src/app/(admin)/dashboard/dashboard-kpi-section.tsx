@@ -457,7 +457,7 @@ export function DashboardKpiSection({
                   secondary Cash P&L figure. */}
               <p className="text-tiny text-muted-foreground leading-snug">
                 gross gaming margin (wager − payouts on packs, battles,
-                upgrader). Pre-rewards, pre-promo.
+                upgrader, double down). Pre-rewards, pre-promo.
               </p>
             </KpiPanel>
           );
