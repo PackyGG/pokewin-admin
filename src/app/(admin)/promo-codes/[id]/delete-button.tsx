@@ -26,7 +26,7 @@ export function DeletePromoCodeButton({ promoCodeId }: { promoCodeId: string }) 
       try {
         await deletePromoCode(promoCodeId);
         toast.success("Promo code deleted");
-        router.push("/promo-codes");
+        router.push("/rewards?tab=promo-codes");
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to delete");
       }

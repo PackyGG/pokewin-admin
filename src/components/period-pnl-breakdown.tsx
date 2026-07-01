@@ -137,7 +137,7 @@ const PAYOUT_ROWS: RowDef[] = [
     contribution: (b) => -b.rakebackClaims,
     icon: Coins,
     accent: "rose",
-    href: "/rewards/rakeback",
+    href: "/rewards?tab=rakeback",
   },
   {
     label: "Affiliate Claims",

@@ -56,7 +56,7 @@ export default async function PromoCodeDetailPage({
       <PageHero>
         <PageHeroIdentity
           icon={Ticket}
-          backHref="/promo-codes"
+          backHref="/rewards?tab=promo-codes"
           title={data.code ?? "Promo Code"}
           titleClassName="truncate"
           badges={

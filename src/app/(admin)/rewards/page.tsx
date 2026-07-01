@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { CloudRain, Target } from "lucide-react";
+import { CloudRain, Target, Sparkles, Percent, Ticket, Trophy } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import {
   TableSkeleton,
@@ -11,12 +11,20 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { LinkPendingShell } from "@/components/ux";
 import { RainTab } from "./rain-tab";
 import { ChallengesTab } from "./challenges-tab";
+import { XpSalesTab } from "./xp-sales-tab";
+import { RakebackTab } from "./rakeback-tab";
+import { PromoCodesTab } from "./promo-codes-tab";
+import { LeaderboardsTab } from "./leaderboards-tab";
 
 export const metadata = { title: "Rewards" };
 
 const TABS = [
   { value: "rain", label: "Rain", icon: CloudRain },
   { value: "challenges", label: "Challenges", icon: Target },
+  { value: "xp-sales", label: "XP Sales", icon: Sparkles },
+  { value: "rakeback", label: "Rakeback", icon: Percent },
+  { value: "promo-codes", label: "Promo Codes", icon: Ticket },
+  { value: "leaderboards", label: "Leaderboards", icon: Trophy },
 ] as const;
 
 type TabValue = (typeof TABS)[number]["value"];
@@ -38,7 +46,7 @@ export default async function RewardsPage({
           icon={CloudRain}
           accent="blue"
           title="Rewards"
-          subtitle="Community rain instances and game challenges."
+          subtitle="Rain, challenges, XP sales, rakeback, promo codes, and leaderboards."
         />
       </PageHero>
 
@@ -80,6 +88,10 @@ export default async function RewardsPage({
         >
           {tab === "rain" && <RainTab params={params} />}
           {tab === "challenges" && <ChallengesTab params={params} />}
+          {tab === "xp-sales" && <XpSalesTab params={params} />}
+          {tab === "rakeback" && <RakebackTab params={params} />}
+          {tab === "promo-codes" && <PromoCodesTab params={params} />}
+          {tab === "leaderboards" && <LeaderboardsTab params={params} />}
         </Suspense>
       </div>
     </div>

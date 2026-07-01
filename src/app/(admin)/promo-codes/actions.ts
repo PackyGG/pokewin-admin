@@ -104,7 +104,7 @@ export async function createPromoCode(
     metadata: { code_hash: codeHash, value: v.value, region: v.region },
   });
 
-  revalidatePath("/promo-codes");
+  revalidatePath("/rewards");
 }
 
 /**
@@ -217,7 +217,7 @@ export async function deletePromoCode(promoCodeId: string) {
     });
   }
 
-  revalidatePath("/promo-codes");
+  revalidatePath("/rewards");
   // Bust the cached list-stats + the full-dataset deletable-id set (both
   // share this tag) so the KPI strip counts and the Quick-select totals
   // recompute without the deleted code instead of serving the 60s-stale
@@ -287,7 +287,7 @@ export async function deletePromoCodesBulk(promoCodeIds: string[]) {
     });
   }
 
-  revalidatePath("/promo-codes");
+  revalidatePath("/rewards");
   // Bust the cached list-stats + the full-dataset deletable-id set (both
   // share this tag) so the KPI strip counts and the Quick-select totals
   // recompute without the deleted codes instead of serving the 60s-stale

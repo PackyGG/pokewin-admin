@@ -544,60 +544,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // XP Sales — global view of every xp_purchase (users buying XP with
-    // their own withdrawable balance). Moved here from the Overview group
-    // (owner: relocate XP Sales under Rewards). Same /xp-sales route +
-    // permission key; only the sidebar/palette grouping changed. "Sparkles"
-    // is already in the sidebar ICONS map (app-sidebar.tsx), so no React #130
-    // risk.
-    id: "nav.xp-sales",
-    group: "Rewards",
-    label: "XP Sales",
-    href: "/xp-sales",
-    pageKey: "/xp-sales",
-    icon: "Sparkles",
-    description: "XP purchases — balance spent on XP",
-    keywords: ["xp", "experience", "level", "xp purchase", "xp_purchase", "sales"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    id: "nav.rewards.rakeback",
-    group: "Rewards",
-    label: "Rakeback",
-    href: "/rewards/rakeback",
-    pageKey: "/rewards/rakeback",
-    icon: "Percent",
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Promo Codes — sidebar uses the Tag icon. Palette has it too.
-    id: "nav.promo",
-    group: "Rewards",
-    label: "Promo Codes",
-    href: "/promo-codes",
-    pageKey: "/promo-codes",
-    icon: "Tag",
-    description: "Bonus code directory",
-    keywords: ["coupons", "bonus"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Rewards Leaderboards (wager/race board). Palette adds the "races"
-    // keyword so the legacy term still finds it.
-    id: "nav.rewards.leaderboards",
-    group: "Rewards",
-    label: "Leaderboards",
-    href: "/rewards/leaderboards",
-    pageKey: "/rewards/leaderboards",
-    icon: "Trophy",
-    keywords: ["races"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
     id: "nav.rewards.level-up",
     group: "Rewards",
     label: "Level Up",
@@ -781,15 +727,12 @@ const PALETTE_ORDER: string[] = [
   "nav.withdrawals",
   "nav.creators",
   "nav.creators.analytics",
-  "nav.promo",
   "nav.packs",
   "nav.rewards.shards",
   "nav.cards",
   "nav.battles",
   "nav.rewards",
   "nav.rewards.deposit-bonus",
-  "nav.rewards.rakeback",
-  "nav.rewards.leaderboards",
   "nav.rewards.level-up",
   "nav.creators.settings",
   "nav.rewards.settings",

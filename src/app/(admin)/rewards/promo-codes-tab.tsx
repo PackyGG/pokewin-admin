@@ -1,20 +1,13 @@
 import { Suspense } from "react";
-import {
-  Ticket,
-  CheckCircle2,
-  Clock,
-  Users,
-  HandCoins,
-  Wallet,
-} from "lucide-react";
+import { CheckCircle2, Clock, Users, HandCoins, Wallet, Ticket } from "lucide-react";
 import { getPromoCodes, getPromoCodesListStats } from "@/lib/queries/promo-codes";
 import { getPromoCodesMoneyStats } from "@/lib/queries/promo-codes-stats";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { formatCurrency } from "@/lib/utils/format";
-import { requirePageAccess } from "@/lib/dal";
-import { PromoCodesDataTable } from "./data-table";
-import { PromoCodesSelectionProvider } from "./promo-codes-selection-context";
-import { PromoCodesQuickSelect } from "./promo-codes-quick-select";
+import { PromoCodesDataTable } from "../promo-codes/data-table";
+import { PromoCodesSelectionProvider } from "../promo-codes/promo-codes-selection-context";
+import { PromoCodesQuickSelect } from "../promo-codes/promo-codes-quick-select";
+import { CreatePromoCodeButton } from "../promo-codes/create-button";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,37 +15,29 @@ import {
   TableSkeleton,
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
-import { CreatePromoCodeButton } from "./create-button";
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-  KpiTile,
-} from "@/components/modern-panels";
+import { SectionHeading, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 
-export const metadata = { title: "Promo Codes" };
-
-export default async function PromoCodesPage({
-  searchParams,
+/**
+ * Promo Codes tab of the merged /rewards page (was the standalone
+ * /promo-codes LIST page). The /promo-codes/[id] detail route stays and its
+ * back-link points to /rewards?tab=promo-codes.
+ *
+ * Only rendered/awaited when the top-level tab is `promo-codes`
+ * (active-tab-only). Its own filter params (`?status=`, `?region=`, `?page=`)
+ * don't collide with the top-level `?tab=`.
+ */
+export async function PromoCodesTab({
+  params,
 }: {
-  searchParams: Promise<Record<string, string | undefined>>;
+  params: Record<string, string | undefined>;
 }) {
-  await requirePageAccess("/promo-codes");
-  const params = await searchParams;
-
-  // Stats stay stable across the region / status filter — admins get a
-  // fixed read-out of the promo-code pool while they refine the table on
-  // screen. Awaited up-front; the table streams in behind a keyed
-  // <Suspense> so a filter / page change shows a table skeleton instead
-  // of blocking the page on the previous render.
-  //
-  // Money stats are lifetime aggregates (no timeframe). Both stats reads
-  // are wrapped in safeQuery so a slow / failing aggregate degrades its
-  // own tiles — the count strip collapses to a TileErrorFallback row, the
-  // two money tiles fall back to "—" — instead of crashing the page; the
-  // table still renders.
+  // Stats stay stable across the region / status filter — admins get a fixed
+  // read-out of the promo-code pool while they refine the table on screen.
+  // Both stats reads are wrapped in safeQuery so a slow / failing aggregate
+  // degrades its own tiles instead of crashing the tab; the table still
+  // renders behind its keyed <Suspense>.
   const [{ data: stats }, { data: money }] = await Promise.all([
     safeQuery(
       () => getPromoCodesListStats(),
@@ -68,15 +53,6 @@ export default async function PromoCodesPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={Ticket}
-          title="Promo Codes"
-          subtitle="Manage promotional codes — track usage, restrictions, and expirations."
-          action={<CreatePromoCodeButton />}
-        />
-      </PageHero>
-
       {stats ? (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <KpiTile
@@ -112,11 +88,7 @@ export default async function PromoCodesPage({
       )}
 
       {/* Lifetime promo-code money strip. House-POV: promo value handed to
-          users is a house COST → rose headline. "Given out / claimed" is
-          sourced from the immutable ledger (promo_code_redeemed) so it
-          includes deleted / old codes; "Allocated / offered" is Σ(value ×
-          max_uses) over CURRENT codes only (deleted codes' allocation is
-          unrecoverable) — labelled as such. Both degrade to "—" via
+          users is a house COST → rose headline. Both degrade to "—" via
           safeQuery. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <KpiTile
@@ -136,15 +108,14 @@ export default async function PromoCodesPage({
       </div>
 
       <div className="space-y-3">
-        <SectionHeading icon={Ticket} title="All Codes" />
+        <SectionHeading
+          icon={Ticket}
+          title="All Codes"
+          action={<CreatePromoCodeButton />}
+        />
         {/* Selection provider wraps BOTH the toolbar (outside the keyed
             Suspense, so the search input stays mounted/focused while the
-            table streams) AND the table (inside it). This lets the
-            Quick-select buttons — rendered as the toolbar's trailing
-            `children`, so they share the search + status-filter row — drive
-            the table's row-selection, and lets the table publish the
-            exhausted / expired candidate sets back up to those buttons.
-            Mirrors CreatorsViewProvider / CreatorsSearchProvider. */}
+            table streams) AND the table (inside it). */}
         <PromoCodesSelectionProvider>
           <div className="space-y-4">
             <Suspense fallback={<Skeleton className="h-10 w-full" />}>
@@ -161,16 +132,12 @@ export default async function PromoCodesPage({
                   },
                 ]}
               >
-                {/* One-click select of the spent codes on this page → hands
-                    them to the existing bulk-delete. Sits next to the status
-                    filter, same height; renders nothing when there are none
-                    (and while the table streams). */}
                 <PromoCodesQuickSelect />
               </DataTableToolbar>
             </Suspense>
             {/* Keyed on the table inputs so a filter / page change re-shows
                 the table skeleton instead of blocking on the previous
-                render — matches the rain / rewards pattern. */}
+                render. */}
             <Suspense
               key={`${params.status ?? ""}|${params.region ?? ""}|${params.page ?? "1"}|${params.perPage ?? "20"}`}
               fallback={

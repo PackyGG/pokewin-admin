@@ -44,7 +44,7 @@ function PeriodTabs({ active }: { active: InstantClaimPeriod }) {
       {INSTANT_CLAIM_PERIODS.map((p) => (
         <Link
           key={p}
-          href={`/rewards/rakeback?tab=config&icPeriod=${p}`}
+          href={`/rewards?tab=rakeback&rbtab=config&icPeriod=${p}`}
           scroll={false}
           className={cn(
             "inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors",

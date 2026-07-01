@@ -77,7 +77,7 @@ export async function upsertRacePrizeTier(
     },
   });
 
-  revalidatePath("/rewards/leaderboards");
+  revalidatePath("/rewards");
 }
 
 /**
@@ -192,7 +192,7 @@ export async function upsertRacePrizeTiersBulk(
     },
   });
 
-  revalidatePath("/rewards/leaderboards");
+  revalidatePath("/rewards");
   return { upserted: rows.length };
 }
 
@@ -232,7 +232,7 @@ export async function deleteRacePrizeTier(id: string) {
     },
   });
 
-  revalidatePath("/rewards/leaderboards");
+  revalidatePath("/rewards");
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -349,7 +349,7 @@ export async function startRacePeriod(params: {
     },
   });
 
-  revalidatePath("/rewards/leaderboards");
+  revalidatePath("/rewards");
 }
 
 /**
@@ -392,7 +392,7 @@ export async function toggleRacePeriodAutoRenew(periodId: string) {
     },
   });
 
-  revalidatePath("/rewards/leaderboards");
+  revalidatePath("/rewards");
 }
 
 /**
@@ -487,7 +487,7 @@ export async function endRacePeriodNow(periodId: string) {
     },
   });
 
-  revalidatePath("/rewards/leaderboards");
+  revalidatePath("/rewards");
 }
 
 /**
@@ -561,7 +561,7 @@ export async function setRacePeriodClaimsFrozen(
     },
   });
 
-  revalidatePath("/rewards/leaderboards");
+  revalidatePath("/rewards");
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -663,7 +663,7 @@ export async function freezeUserRaceClaim(params: {
     },
   });
 
-  revalidatePath("/rewards/leaderboards");
+  revalidatePath("/rewards");
 }
 
 export async function unfreezeUserRaceClaim(params: {
@@ -723,5 +723,5 @@ export async function unfreezeUserRaceClaim(params: {
     },
   });
 
-  revalidatePath("/rewards/leaderboards");
+  revalidatePath("/rewards");
 }

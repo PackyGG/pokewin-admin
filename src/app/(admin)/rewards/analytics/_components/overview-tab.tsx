@@ -401,7 +401,7 @@ export async function OverviewTab({ period }: { period: RewardsPeriod }) {
             title="Platform leaderboards"
             action={
               <Link
-                href="/rewards/leaderboards"
+                href="/rewards?tab=leaderboards"
                 className="text-xs font-medium text-muted-foreground hover:text-foreground"
               >
                 Manage leaderboards →
@@ -548,7 +548,7 @@ function LeaderboardTopWinners({
       <EmptyState
         icon={Trophy}
         title="No race configured"
-        description="Start a race on /rewards/leaderboards to populate this panel."
+        description="Start a race on /rewards?tab=leaderboards to populate this panel."
         compact
       />
     );

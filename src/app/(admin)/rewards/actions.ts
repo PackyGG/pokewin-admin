@@ -182,6 +182,6 @@ export async function updateRakebackConfig(
     metadata: { config_id: id, ...data },
   });
 
-  revalidatePath("/rewards/rakeback");
+  revalidatePath("/rewards");
   revalidatePath("/rewards/settings");
 }

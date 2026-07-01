@@ -96,7 +96,7 @@ export function PnlBreakdown({
       value: breakdown.unclaimedRakeback,
       sign: "−",
       icon: Coins,
-      href: "/rewards/rakeback",
+      href: "/rewards?tab=rakeback",
     },
   ];
 

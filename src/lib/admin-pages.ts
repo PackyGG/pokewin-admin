@@ -18,9 +18,9 @@ export const ADMIN_PAGES: AdminPage[] = [
   // permission inherits from /insights/real-numbers, so the standalone /crm
   // page key was retired (mirrors how /map dropped its key into /analytics).
   { group: "Navigation", label: "Creators", key: "/creators" },
-  // XP Sales — global view of every xp_purchase (users buying XP with their
-  // own withdrawable balance). House-POV revenue surface, customer-scoped.
-  { group: "Navigation", label: "XP Sales", key: "/xp-sales" },
+  // XP Sales was merged into the /rewards tab hub (XP Sales tab); the page
+  // now gates on /rewards, so the standalone /xp-sales key was retired. The
+  // ClickHouse twin + insights-xp-sales data layer are unaffected.
   // Recovery bin for hard-deleted users — 7-day snapshot window. Gated
   // by the same __can_delete_user capability since restoring is the
   // inverse of deleting.
@@ -116,9 +116,13 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Rewards", label: "Rewards", key: "/rewards" },
   { group: "Rewards", label: "Deposit Bonus", key: "/rewards/deposit-bonus" },
   { group: "Rewards", label: "Analytics", key: "/rewards/analytics" },
-  { group: "Rewards", label: "Rakeback", key: "/rewards/rakeback" },
-  // Promo Codes — moved here from the Marketing group so the role
-  // editor mirrors the sidebar grouping. Permission key is unchanged.
+  // Rakeback was merged into the /rewards tab hub (Rakeback tab); the page
+  // now gates on /rewards, so the standalone /rewards/rakeback key was
+  // retired. The /insights/rewards/rakeback deep-dive keeps its own key.
+  // Promo Codes list was merged into the /rewards tab hub (Promo Codes tab),
+  // but the /promo-codes KEY is retained — the /promo-codes/[id] detail route
+  // still gates on it (requirePageAccess("/promo-codes")). Only the
+  // sidebar/palette nav entry for the standalone list was removed.
   { group: "Rewards", label: "Promo Codes", key: "/promo-codes" },
   // The standalone /challenges CRUD page was merged into /rewards as its
   // "Challenges" tab (the page now gates on /rewards); its own key was
@@ -128,7 +132,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // (requirePageAccess("/rain")). Only the sidebar/palette nav entry for the
   // standalone list was removed.
   { group: "Rewards", label: "Rain", key: "/rain" },
-  { group: "Rewards", label: "Leaderboards", key: "/rewards/leaderboards" },
+  // Leaderboards was merged into the /rewards tab hub (Leaderboards tab);
+  // the page now gates on /rewards, so the standalone /rewards/leaderboards
+  // key was retired. Its write actions gate on requireAdmin (not a page key),
+  // so no orphaned grant token remains.
   { group: "Rewards", label: "Level Up", key: "/rewards/level-up" },
   { group: "Rewards", label: "Affiliate Settings", key: "/creators/settings" },
   { group: "Rewards", label: "Settings", key: "/rewards/settings" },

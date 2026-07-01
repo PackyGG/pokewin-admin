@@ -67,7 +67,7 @@ export function PeriodSelect({
       onValueChange={(v) =>
         startTransition(() =>
           router.push(
-            `/rewards/leaderboards?tab=standings&raceType=${raceType}&periodStart=${v}`,
+            `/rewards?tab=leaderboards&lbtab=standings&raceType=${raceType}&periodStart=${v}`,
           ),
         )
       }

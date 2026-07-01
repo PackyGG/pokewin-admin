@@ -1,7 +1,5 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Trophy } from "lucide-react";
-import { requirePageAccess } from "@/lib/dal";
 import {
   getRaceLeaderboard,
   getRaceLeaderboardPeriods,
@@ -17,118 +15,103 @@ import {
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
-import { PeriodSelect } from "./period-select";
-import { RaceTiersTable } from "./race-tiers-table";
-import { StandingsTable } from "./standings-table";
-import { RaceClaimExpiryBanner } from "./race-claim-expiry-banner";
-import { HistoryTable } from "./history-table";
-import { PeriodsTable } from "./periods-table";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { PeriodSelect } from "./leaderboards/period-select";
+import { RaceTiersTable } from "./leaderboards/race-tiers-table";
+import { StandingsTable } from "./leaderboards/standings-table";
+import { RaceClaimExpiryBanner } from "./leaderboards/race-claim-expiry-banner";
+import { HistoryTable } from "./leaderboards/history-table";
+import { PeriodsTable } from "./leaderboards/periods-table";
 import { FadeIn } from "@/components/fade-in";
 import { LinkPending } from "@/components/ux";
 
-export const metadata = { title: "Leaderboards" };
-
-// Leaderboards is the single entry point for everything race-related now
-// that /rewards/races is gone:
-//   - Standings:  current wager standings per period (daily/weekly/monthly)
-//   - Prize Tiers: admin-editable prize amounts per position and race type
-//   - History:    historical claims (who won what, when)
-//   - Periods:    race_periods management — start/end/auto-renew toggle.
-//                 Monthly only ever runs after admin starts a period here.
-const TABS = [
+/**
+ * Leaderboards tab of the merged /rewards page (was the standalone
+ * /rewards/leaderboards page). Single entry point for everything
+ * race-related. Its OWN Standings|Tiers|History|Periods inner switch is
+ * namespaced to `?lbtab=` so it never collides with the top-level `?tab=`.
+ * Only the active inner sub-tab awaits its data.
+ */
+const LB_SUBTABS = [
   { value: "standings", label: "Standings" },
   { value: "tiers", label: "Prize Tiers" },
   { value: "history", label: "History" },
   { value: "periods", label: "Periods" },
 ] as const;
 
-type TabValue = (typeof TABS)[number]["value"];
+type LbSubTab = (typeof LB_SUBTABS)[number]["value"];
 
 const RACE_TYPE_FILTERS = ["all", "monthly", "weekly", "daily"] as const;
 
-export default async function LeaderboardsPage({
-  searchParams,
+export function LeaderboardsTab({
+  params,
 }: {
-  searchParams: Promise<Record<string, string | undefined>>;
+  params: Record<string, string | undefined>;
 }) {
-  await requirePageAccess("/rewards/leaderboards");
-  const params = await searchParams;
-  const tab: TabValue = (
-    TABS.find((t) => t.value === params.tab) ?? TABS[0]
+  const lbtab: LbSubTab = (
+    LB_SUBTABS.find((t) => t.value === params.lbtab) ?? LB_SUBTABS[0]
   ).value;
 
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={Trophy}
-          title="Leaderboards"
-          subtitle="Wager standings, prize tiers, race periods, and historical claims."
-        />
-      </PageHero>
-
-      <div className="space-y-4">
-        <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1 w-fit">
-          {TABS.map((t) => (
-            <Link
-              key={t.value}
-              href={`/rewards/leaderboards?tab=${t.value}`}
-              className={cn(
-                "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                tab === t.value
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {t.label}
-              <LinkPending size={13} />
-            </Link>
-          ))}
-        </div>
-
-        {tab === "standings" && (
-          <Suspense
-            key={`standings|${params.raceType ?? ""}|${params.periodStart ?? ""}|${params.page ?? ""}|${params.perPage ?? ""}|${params.search ?? ""}`}
-            fallback={
-              <div className="space-y-4">
-                <TableSkeleton rows={10} columns={3} />
-                <PaginationSkeleton />
-              </div>
-            }
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1 w-fit">
+        {LB_SUBTABS.map((t) => (
+          <Link
+            key={t.value}
+            href={`/rewards?tab=leaderboards&lbtab=${t.value}`}
+            className={cn(
+              "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              lbtab === t.value
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
           >
-            <StandingsTab params={params} />
-          </Suspense>
-        )}
-        {tab === "tiers" && (
-          <Suspense fallback={<TableSkeleton rows={6} columns={4} />}>
-            <TiersTab />
-          </Suspense>
-        )}
-        {tab === "history" && (
-          <Suspense
-            key={`history|${params.raceType ?? ""}|${params.page ?? ""}|${params.perPage ?? ""}`}
-            fallback={
-              <div className="space-y-4">
-                <TableSkeleton rows={10} columns={6} />
-                <PaginationSkeleton />
-              </div>
-            }
-          >
-            <HistoryTab params={params} />
-          </Suspense>
-        )}
-        {tab === "periods" && (
-          <Suspense fallback={<TableSkeleton rows={4} columns={6} />}>
-            <PeriodsTab />
-          </Suspense>
-        )}
+            {t.label}
+            <LinkPending size={13} />
+          </Link>
+        ))}
       </div>
+
+      {lbtab === "standings" && (
+        <Suspense
+          key={`standings|${params.raceType ?? ""}|${params.periodStart ?? ""}|${params.page ?? ""}|${params.perPage ?? ""}|${params.search ?? ""}`}
+          fallback={
+            <div className="space-y-4">
+              <TableSkeleton rows={10} columns={3} />
+              <PaginationSkeleton />
+            </div>
+          }
+        >
+          <StandingsSubTab params={params} />
+        </Suspense>
+      )}
+      {lbtab === "tiers" && (
+        <Suspense fallback={<TableSkeleton rows={6} columns={4} />}>
+          <TiersSubTab />
+        </Suspense>
+      )}
+      {lbtab === "history" && (
+        <Suspense
+          key={`history|${params.raceType ?? ""}|${params.page ?? ""}|${params.perPage ?? ""}`}
+          fallback={
+            <div className="space-y-4">
+              <TableSkeleton rows={10} columns={6} />
+              <PaginationSkeleton />
+            </div>
+          }
+        >
+          <HistorySubTab params={params} />
+        </Suspense>
+      )}
+      {lbtab === "periods" && (
+        <Suspense fallback={<TableSkeleton rows={4} columns={6} />}>
+          <PeriodsSubTab />
+        </Suspense>
+      )}
     </div>
   );
 }
 
-async function StandingsTab({
+async function StandingsSubTab({
   params,
 }: {
   params: Record<string, string | undefined>;
@@ -140,8 +123,6 @@ async function StandingsTab({
 
   // The selectable leaderboards come straight from the DB (the periods that
   // actually have snapshot rows for this race type) — no calendar guessing.
-  // The effective period is the one in the URL when it's a real leaderboard,
-  // otherwise the most recent one that exists.
   const periods =
     raceType === "all"
       ? []
@@ -178,12 +159,12 @@ async function StandingsTab({
               key={type}
               // Don't carry periodStart across race types — periods differ per
               // type, so the target type defaults to its own latest leaderboard.
-              href={`/rewards/leaderboards?tab=standings&raceType=${type}`}
+              href={`/rewards?tab=leaderboards&lbtab=standings&raceType=${type}`}
               className={cn(
                 "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors capitalize",
                 raceType === type
                   ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               {type}
@@ -223,7 +204,7 @@ async function StandingsTab({
   );
 }
 
-async function TiersTab() {
+async function TiersSubTab() {
   const tiers = await getRacePrizeTiers();
   return (
     <FadeIn>
@@ -232,7 +213,7 @@ async function TiersTab() {
   );
 }
 
-async function HistoryTab({
+async function HistorySubTab({
   params,
 }: {
   params: Record<string, string | undefined>;
@@ -248,12 +229,12 @@ async function HistoryTab({
         {RACE_TYPE_FILTERS.map((type) => (
           <Link
             key={type}
-            href={`/rewards/leaderboards?tab=history&raceType=${type}`}
+            href={`/rewards?tab=leaderboards&lbtab=history&raceType=${type}`}
             className={cn(
               "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors capitalize",
               (raceType || "all") === type
                 ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
             {type}
@@ -274,7 +255,7 @@ async function HistoryTab({
   );
 }
 
-async function PeriodsTab() {
+async function PeriodsSubTab() {
   const { active, recent } = await getRacePeriodsOverview();
   return (
     <FadeIn>

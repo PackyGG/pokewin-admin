@@ -584,7 +584,7 @@ function TipPanel({
                         </span>
                         {race?.raceType ? (
                           <Link
-                            href="/rewards/leaderboards"
+                            href="/rewards?tab=leaderboards"
                             className="mt-0.5 block truncate text-[11px] font-medium text-foreground hover:text-primary hover:underline"
                           >
                             {labelForRaceType(race.raceType)}

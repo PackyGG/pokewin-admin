@@ -18,9 +18,13 @@ function buildClaimsPeriodHref(
   period: InstantClaimPeriod,
   type?: string,
 ): string {
-  const params = new URLSearchParams({ tab: "claims", icPeriod: period });
+  const params = new URLSearchParams({
+    tab: "rakeback",
+    rbtab: "claims",
+    icPeriod: period,
+  });
   if (type && type !== "all") params.set("type", type);
-  return `/rewards/rakeback?${params.toString()}`;
+  return `/rewards?${params.toString()}`;
 }
 
 /**
