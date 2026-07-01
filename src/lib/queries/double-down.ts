@@ -3,6 +3,9 @@ import { Prisma } from "@/generated/prisma/client";
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { CUSTOMER_EXCLUDED_ROLES } from "@/lib/metrics/scope";
+import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import {
   daysForDoubleDownPeriodCapped,
   cacheTtlForDoubleDownPeriod,
@@ -144,6 +147,52 @@ function num(v: string | null): number | null {
  */
 const STARTED_STATUS = Prisma.sql`o.status IN ('accepted','resolved')`;
 
+/**
+ * CANONICAL customer scope for the AGGREGATE Double Down surfaces (Insights
+ * stats / log / time-series + the dashboard panel). Reuses the SAME two
+ * exclusions the rest of customer-analytics uses (CLAUDE.md "Staff-Exclusion
+ * in Analytics"; `src/lib/metrics/scope.ts` `getMetricsScope`;
+ * `src/lib/queries/_blacklist.ts`):
+ *
+ *   1. `excluded_users` BLACKLIST — the admin-managed blacklist resolved by
+ *      `getExcludedUserIds()` (from the ADMIN DB, cross-DB applied here as a
+ *      `NOT IN` on the MAIN query), same as every other money aggregate.
+ *   2. CREATORS dropped WHOLESALE — `role NOT IN CUSTOMER_EXCLUDED_ROLES`
+ *      (`'admin','support','creator'`). This is the canonical CUSTOMER
+ *      population (`scope.ts` §1). Dropping every creator is a SUPERSET that
+ *      covers creator-FILL / on-stream sessions: the codebase's fill/stream
+ *      definition is the best-effort backend session-window CTE
+ *      (`getCreatorSessionWindowsCte`), which `scope.ts` §3 documents as a
+ *      REDUNDANT no-op once creators are dropped wholesale — so we drop
+ *      creators wholesale (non-best-effort, no backend dependency) rather than
+ *      re-plumbing the session-window CTE into these tiny reads. There is NO
+ *      game_sessions/battle-level "fill" marker on MAIN (verified read-only:
+ *      only `game_sessions.bot_id` + `battles.sponsorship_*` exist, and the
+ *      creator DD rounds link to NO `creator_fill_conversion`), so a
+ *      session-level fill filter cannot be built without guessing.
+ *
+ * The excluded ids are resolved OUTSIDE any `unstable_cache` and passed in as a
+ * serializable cache-key arg (same pattern as the other cached aggregates).
+ * NOT applied to the /users/[id] per-user history — that page intentionally
+ * shows a specific user's own rounds even if they're a creator/blacklisted.
+ */
+const CUSTOMER_EXCLUDED_ROLES_SQL = Prisma.join(
+  CUSTOMER_EXCLUDED_ROLES.map((r) => Prisma.sql`${r}`),
+);
+
+function customerScopeSql(excludedIds: string[]): Prisma.Sql {
+  // Blacklist tail — reuse escapeBlacklistIds (the single canonical escaper);
+  // Prisma.raw is safe here because the ids are already quote-escaped literals.
+  const blacklistTail =
+    excludedIds.length > 0
+      ? Prisma.sql` AND id NOT IN (${Prisma.raw(escapeBlacklistIds(excludedIds))})`
+      : Prisma.empty;
+  return Prisma.sql`o.user_id IN (
+    SELECT id FROM "user"
+    WHERE role NOT IN (${CUSTOMER_EXCLUDED_ROLES_SQL})${blacklistTail}
+  )`;
+}
+
 function mapLogRow(r: RawLogRow): DoubleDownLogRow {
   return {
     id: r.id,
@@ -160,10 +209,14 @@ function mapLogRow(r: RawLogRow): DoubleDownLogRow {
 
 // ── SURFACE 1: global windowed aggregate (KPI strip) ──────────────────────────
 
-async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> {
+async function computeStats(
+  period: DoubleDownPeriod,
+  excludedIds: string[],
+): Promise<DoubleDownStats> {
   const db = await getDb();
   const days = daysForDoubleDownPeriodCapped(period);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const scope = customerScopeSql(excludedIds);
 
   // STARTED-only (owner rule): only rounds the user actually played
   // (status IN accepted/resolved) — offered/expired offers are excluded.
@@ -200,7 +253,7 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
     LEFT JOIN vouchers v
       ON v.id = o.won_voucher_id
      AND v.origin = 'battle_double_down_payout'
-    WHERE ${STARTED_STATUS} AND o.created_at >= ${since}
+    WHERE ${STARTED_STATUS} AND o.created_at >= ${since} AND ${scope}
   `);
 
   const r = rows[0];
@@ -227,29 +280,34 @@ async function computeStats(period: DoubleDownPeriod): Promise<DoubleDownStats> 
   };
 }
 
-/** KPI-strip aggregate for the /insights/double-down page. Cached on prod. */
+/** KPI-strip aggregate for the /insights/double-down page. Cached on prod.
+ *  Excluded ids (blacklist + customer scope) resolved OUTSIDE the cache and
+ *  keyed on the sorted list — same pattern as the other money aggregates. */
 export async function getDoubleDownStats(
   period: DoubleDownPeriod,
 ): Promise<DoubleDownStats> {
+  const excludedIds = [...(await getExcludedUserIds())].sort();
   const env = await readDbEnv();
-  if (env !== "prod") return computeStats(period);
+  if (env !== "prod") return computeStats(period, excludedIds);
   // unstable_cache does not let us vary revalidate per-call from outside, so we
   // key the cache on the period AND pick the TTL via a period-specific wrapper.
   return unstable_cache(
-    (p: DoubleDownPeriod) => computeStats(p),
-    ["double-down-stats-v1", period],
+    (p: DoubleDownPeriod, ids: string[]) => computeStats(p, ids),
+    ["double-down-stats-v2", period, excludedIds.join(",")],
     { revalidate: cacheTtlForDoubleDownPeriod(period), tags: ["double-down"] },
-  )(period);
+  )(period, excludedIds);
 }
 
 // ── SURFACE 1: hourly time series (Usage + House P&L charts) ──────────────────
 
 async function computeTimeSeries(
   period: DoubleDownPeriod,
+  excludedIds: string[],
 ): Promise<DoubleDownTimeSeriesPoint[]> {
   const db = await getDb();
   const days = daysForDoubleDownPeriodCapped(period);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const scope = customerScopeSql(excludedIds);
 
   // HOURLY buckets (date_trunc('hour', …)). The feature is only a few days old
   // with tiny volume — daily buckets collapse to 1 bar; hourly shows the trend.
@@ -270,7 +328,7 @@ async function computeTimeSeries(
     LEFT JOIN vouchers v
       ON v.id = o.won_voucher_id
      AND v.origin = 'battle_double_down_payout'
-    WHERE ${STARTED_STATUS} AND o.created_at >= ${since}
+    WHERE ${STARTED_STATUS} AND o.created_at >= ${since} AND ${scope}
     GROUP BY 1
     ORDER BY 1
   `);
@@ -298,13 +356,14 @@ async function computeTimeSeries(
 export async function getDoubleDownTimeSeries(
   period: DoubleDownPeriod,
 ): Promise<DoubleDownTimeSeriesPoint[]> {
+  const excludedIds = [...(await getExcludedUserIds())].sort();
   const env = await readDbEnv();
-  if (env !== "prod") return computeTimeSeries(period);
+  if (env !== "prod") return computeTimeSeries(period, excludedIds);
   return unstable_cache(
-    (p: DoubleDownPeriod) => computeTimeSeries(p),
-    ["double-down-timeseries-v1", period],
+    (p: DoubleDownPeriod, ids: string[]) => computeTimeSeries(p, ids),
+    ["double-down-timeseries-v2", period, excludedIds.join(",")],
     { revalidate: cacheTtlForDoubleDownPeriod(period), tags: ["double-down"] },
-  )(period);
+  )(period, excludedIds);
 }
 
 // ── SURFACE 1: paginated audit log ────────────────────────────────────────────
@@ -337,22 +396,26 @@ async function computeLog(args: {
   page: number;
   perPage: number;
   search: string;
+  excludedIds: string[];
 }): Promise<DoubleDownLog> {
   const db = await getDb();
-  const { period, page, perPage, search } = args;
+  const { period, page, perPage, search, excludedIds } = args;
   const days = daysForDoubleDownPeriodCapped(period);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const scope = customerScopeSql(excludedIds);
 
   // STARTED-only (owner rule): the audit log shows ONLY rounds the user
   // actually played (status IN accepted/resolved) — offered/expired offers
-  // never appear. Optional username search (prefix, case-insensitive,
-  // parameterized). The window filter seq-scans (tiny table, no created_at
-  // index, flagged); the status + username predicates narrow the same scan.
+  // never appear. Canonical customer scope (blacklist + creators dropped
+  // wholesale) also applied — see customerScopeSql. Optional username search
+  // (prefix, case-insensitive, parameterized). The window filter seq-scans
+  // (tiny table, no created_at index, flagged); the status + scope + username
+  // predicates narrow the same scan.
   const trimmed = search.trim().toLowerCase();
   const searchClause = trimmed
     ? Prisma.sql`AND lower(u.username) LIKE ${trimmed + "%"}`
     : Prisma.empty;
-  const whereClause = Prisma.sql`WHERE ${STARTED_STATUS} AND o.created_at >= ${since} ${searchClause}`;
+  const whereClause = Prisma.sql`WHERE ${STARTED_STATUS} AND o.created_at >= ${since} AND ${scope} ${searchClause}`;
 
   const offset = (page - 1) * perPage;
 
@@ -392,19 +455,22 @@ export async function getDoubleDownLog(args: {
   perPage: number;
   search: string;
 }): Promise<DoubleDownLog> {
+  const excludedIds = [...(await getExcludedUserIds())].sort();
+  const full = { ...args, excludedIds };
   const env = await readDbEnv();
-  if (env !== "prod") return computeLog(args);
+  if (env !== "prod") return computeLog(full);
   return unstable_cache(
-    (a: typeof args) => computeLog(a),
+    (a: typeof full) => computeLog(a),
     [
-      "double-down-log-v1",
+      "double-down-log-v2",
       args.period,
       String(args.page),
       String(args.perPage),
       args.search.trim().toLowerCase(),
+      excludedIds.join(","),
     ],
     { revalidate: cacheTtlForDoubleDownPeriod(args.period), tags: ["double-down"] },
-  )(args);
+  )(full);
 }
 
 // ── SURFACE 2: per-user history (INDEXED lookup) ──────────────────────────────
@@ -501,8 +567,11 @@ const EMPTY_DASHBOARD_STATS: DoubleDownDashboardStats = {
   netHousePnl: 0,
 };
 
-async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
+async function computeDashboardStats(
+  excludedIds: string[],
+): Promise<DoubleDownDashboardStats> {
   const db = await getDb();
+  const scope = customerScopeSql(excludedIds);
 
   // DEV's CANONICAL method (source of truth for the dashboard's game-type
   // counting): start from game_sessions filtered to game_type
@@ -547,7 +616,7 @@ async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
     LEFT JOIN vouchers v
       ON v.id = o.won_voucher_id
      AND v.origin = 'battle_double_down_payout'
-    WHERE gs.game_type = 'battle_double_down'
+    WHERE gs.game_type = 'battle_double_down' AND ${scope}
   `);
 
   const r = rows[0];
@@ -581,7 +650,8 @@ async function computeDashboardStats(): Promise<DoubleDownDashboardStats> {
  * panel instead of throwing 42P01.
  */
 export async function getDoubleDownDashboardStats(): Promise<DoubleDownDashboardStats> {
-  const guarded = async () => {
+  const excludedIds = [...(await getExcludedUserIds())].sort();
+  const guarded = async (ids: string[]) => {
     const db = await getDb();
     // to_regclass guard: on a DB without the table (e.g. an old snapshot) skip
     // the read and return zeros rather than throwing 42P01 — matches how
@@ -590,12 +660,13 @@ export async function getDoubleDownDashboardStats(): Promise<DoubleDownDashboard
       Prisma.sql`SELECT to_regclass('public.battle_double_down_offers')::text AS reg`,
     );
     if (!exists[0]?.reg) return EMPTY_DASHBOARD_STATS;
-    return computeDashboardStats();
+    return computeDashboardStats(ids);
   };
   const env = await readDbEnv();
-  if (env !== "prod") return guarded();
-  return unstable_cache(guarded, ["dashboard-double-down-lifetime-v1"], {
-    revalidate: 300,
-    tags: ["dashboard-lifetime", "double-down"],
-  })();
+  if (env !== "prod") return guarded(excludedIds);
+  return unstable_cache(
+    (ids: string[]) => guarded(ids),
+    ["dashboard-double-down-lifetime-v2", excludedIds.join(",")],
+    { revalidate: 300, tags: ["dashboard-lifetime", "double-down"] },
+  )(excludedIds);
 }
