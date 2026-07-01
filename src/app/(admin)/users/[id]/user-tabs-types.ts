@@ -450,6 +450,27 @@ export type Transaction = {
    */
   upgraderHouseEdge: number | null;
   /**
+   * Post-battle DOUBLE-DOWN outcome for a WON battle_bet row — the user
+   * gambled their battle winnings (double-or-nothing) after the win.
+   * Sourced from `battle_double_down_offers` (resolved rounds only), joined
+   * to the battle_bet row by game_session_id.
+   *   - "win"  → the double-down WON → user kept MORE money → house LOSS (rose)
+   *   - "lose" → the double-down LOST → winnings forfeited → house WIN (emerald)
+   *   - null   → no resolved double-down for this row's game session.
+   *
+   * A LOST double-down produces NO ledger row, so without this field it would
+   * be invisible on the gaming tab (which is otherwise ledger-driven).
+   */
+  doubleDownResult: "win" | "lose" | null;
+  /**
+   * USD tied to the double-down:
+   *   - on a WIN  → the REAL credited payout (the payout voucher's value).
+   *   - on a LOSE → the forfeited stake (the battle winnings the user lost;
+   *                 the house kept it).
+   *   - null when there's no resolved double-down for this row.
+   */
+  doubleDownAmount: number | null;
+  /**
    * Instant-rakeback flag for `rakeback_claim` rows.
    *   - true  → this claim used the instant/early-claim flow
    *             (`rakeback_claims.last_preclaim_at` is non-null), so the row

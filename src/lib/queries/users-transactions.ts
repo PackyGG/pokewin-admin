@@ -149,6 +149,10 @@ function mapFinancialLedgerRow(t: LedgerRow, instantRakebackIds?: Set<string>) {
     upgraderTargetChance: null,
     upgraderTargetChanceDerived: null,
     upgraderHouseEdge: null,
+    // Post-battle double-down never applies to a financial-only row (this
+    // light mapper serves the deposits/withdrawals feed — no battle_bet rows).
+    doubleDownResult: null,
+    doubleDownAmount: null,
     // Instant (early-claimed) rakeback flag. null on non-rakeback rows or
     // when the early-claim column is absent on this DB env (drift-safe).
     isInstantRakeback:
@@ -808,6 +812,85 @@ export async function getUserTransactions(
     }
   }
 
+  // ── Post-battle DOUBLE-DOWN outcome (for battle_bet rows) ──────────
+  // After WINNING a battle, a user may gamble those winnings
+  // (double-or-nothing). A LOSE produces NO ledger row and NO voucher
+  // (the winnings are forfeited entirely), so the gaming tab — which is
+  // otherwise ledger-driven — cannot see it. We enrich it directly onto
+  // the paired battle_bet row via the offer's game_session_id (== the
+  // winning battle_bet row's game_session_id).
+  //
+  // `battle_double_down_offers` is NOT modeled in prisma/schema.prisma —
+  // there is no generated accessor — so this is hand-written READ-ONLY raw
+  // SQL through the prod client, mirroring the existing verified read layer
+  // in src/lib/queries/double-down.ts (same table, same voucher LEFT JOIN
+  // for the real payout value). MAIN is strictly read-only — SELECT only.
+  //
+  // NO double-counting: the WIN payout voucher's origin_id is the dd OFFER
+  // id (NOT the gsid), so it does NOT collide with the gsid-keyed
+  // `voucherValueByGameSession` battle-win enrichment above.
+  //
+  // Only status='resolved' + non-null result counts as a PLAYED round.
+  // Non-fatal: a failure here must NOT take down the gaming tab (same
+  // convention as the battle lookup) — on error the map stays empty.
+  const ddByGsid = new Map<
+    string,
+    { result: "win" | "lose"; amount: number }
+  >();
+  const ddGsids = [
+    ...new Set(
+      transactions
+        .filter((t) => t.type === "battle_bet")
+        .map((t) => t.game_session_id)
+        .filter((id): id is string => typeof id === "string"),
+    ),
+  ];
+  if (ddGsids.length > 0) {
+    try {
+      const ddRows = await db.$queryRaw<
+        {
+          game_session_id: string;
+          result: "win" | "lose";
+          won_amount_usd: string;
+          payout_amount_usd: string | null;
+        }[]
+      >(Prisma.sql`
+        SELECT o.game_session_id,
+               o.result,
+               o.won_amount_usd,
+               CASE WHEN o.result = 'win' THEN v.value::text END AS payout_amount_usd
+        FROM battle_double_down_offers o
+        LEFT JOIN vouchers v
+          ON v.id = o.won_voucher_id
+         AND v.origin = 'battle_double_down_payout'
+        WHERE o.game_session_id IN (${Prisma.join(ddGsids)})
+          AND o.status = 'resolved'
+          AND o.result IS NOT NULL
+          AND o.user_id = ${canonicalUserId}
+      `);
+      const ddNum = (v: string | null): number | null => {
+        if (v === null) return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      };
+      for (const r of ddRows) {
+        // WIN → the REAL credited payout (the payout voucher's value; fall
+        // back to the stake if the voucher value is missing). LOSE → the
+        // forfeited stake (won_amount_usd — the winnings the user lost).
+        const amount =
+          r.result === "win"
+            ? ddNum(r.payout_amount_usd) ?? ddNum(r.won_amount_usd) ?? 0
+            : ddNum(r.won_amount_usd) ?? 0;
+        ddByGsid.set(r.game_session_id, { result: r.result, amount });
+      }
+    } catch (e) {
+      console.error(
+        "[getUserTransactions] double-down lookup failed (non-fatal):",
+        e,
+      );
+    }
+  }
+
   // Upgrader winnings — sourced DIRECTLY from `upgrader_games`, the
   // canonical per-play record (also used by /transactions/upgrader and
   // the dashboard Upgrader Stats section). It carries `won_amount`
@@ -1128,6 +1211,18 @@ export async function getUserTransactions(
         upgraderTargetChance,
         upgraderTargetChanceDerived,
         upgraderHouseEdge,
+        // Post-battle double-down outcome for this battle_bet's game session
+        // (resolved rounds only). null when the row isn't a battle_bet or the
+        // session had no resolved double-down. `amount` = real payout on a win
+        // / forfeited stake on a lose (built in ddByGsid above).
+        doubleDownResult:
+          t.type === "battle_bet" && t.game_session_id
+            ? ddByGsid.get(t.game_session_id)?.result ?? null
+            : null,
+        doubleDownAmount:
+          t.type === "battle_bet" && t.game_session_id
+            ? ddByGsid.get(t.game_session_id)?.amount ?? null
+            : null,
         isInstantRakeback:
           t.type === "rakeback_claim"
             ? instantRakebackIds.has(t.id)

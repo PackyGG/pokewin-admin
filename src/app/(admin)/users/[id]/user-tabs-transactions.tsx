@@ -832,6 +832,36 @@ export const CategoryTransactionsTable = React.memo(
                         return <MergedPnlCell profit={t.amount} won={null} />;
                       }
                       if (t.type === "battle_bet") {
+                        // Post-battle DOUBLE-DOWN badge — after winning, the
+                        // user may gamble those winnings (double-or-nothing).
+                        // A LOST double-down leaves NO ledger row, so it would
+                        // otherwise be invisible here; enriched onto this
+                        // battle_bet row by game_session_id. House-POV colors:
+                        //   • dd WON  → user kept MORE → house LOSS → rose
+                        //   • dd LOST → winnings forfeited → house WIN → emerald
+                        const ddBadge =
+                          t.doubleDownResult != null ? (
+                            <span
+                              className={
+                                t.doubleDownResult === "win"
+                                  ? "inline-flex items-center rounded border border-rose-500/30 bg-rose-500/15 px-1.5 py-0 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+                                  : "inline-flex items-center rounded border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+                              }
+                              title={
+                                t.doubleDownResult === "win"
+                                  ? "User gambled their battle winnings (double-or-nothing) and WON — house paid out more"
+                                  : "User gambled their battle winnings (double-or-nothing) and LOST — winnings forfeited to the house"
+                              }
+                            >
+                              {t.doubleDownResult === "win"
+                                ? `Double-down WON +${formatCurrency(
+                                    t.doubleDownAmount ?? 0,
+                                  )}`
+                                : `Double-down LOST ${formatCurrency(
+                                    t.doubleDownAmount ?? 0,
+                                  )}`}
+                            </span>
+                          ) : null;
                         // Win/loss is the battle outcome (winner_team vs
                         // team_number), surfaced as gameResult. null = the
                         // battle hasn't resolved yet.
@@ -889,8 +919,16 @@ export const CategoryTransactionsTable = React.memo(
                         if (t.gameResult === "lose") {
                           // LOSS: player won nothing → house keeps the
                           // full bet. Won Value = $0, House Profit = +bet
-                          // (house gain = emerald).
-                          return <MergedPnlCell profit={t.amount} won={0} />;
+                          // (house gain = emerald). A lost battle has no
+                          // winnings to double-down, so ddBadge is normally
+                          // null here — pass it defensively.
+                          return (
+                            <MergedPnlCell
+                              profit={t.amount}
+                              won={0}
+                              extra={ddBadge}
+                            />
+                          );
                         }
                         // WIN: winnings = the cards the player actually took
                         // from the battle (their battle-sourced inventory).
@@ -905,16 +943,21 @@ export const CategoryTransactionsTable = React.memo(
                             <MergedPnlCell
                               wonLabel="Player won"
                               profitColor="text-rose-600 dark:text-rose-400"
+                              extra={ddBadge}
                             />
                           );
                         }
                         // House P&L on the battle = bet we took in minus the
                         // winnings we paid out. Negative = house lost (rose),
                         // positive = house won (emerald) — already house-POV.
+                        // ddBadge (if any) shows what happened to those
+                        // winnings afterward, as an ADDITIONAL badge — it does
+                        // not alter this win's P&L number.
                         return (
                           <MergedPnlCell
                             profit={t.amount - t.battleWinnings}
                             won={t.battleWinnings}
+                            extra={ddBadge}
                           />
                         );
                       }
